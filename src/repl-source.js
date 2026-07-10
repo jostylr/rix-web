@@ -16,7 +16,7 @@ function canEndStatement(token) {
 function canStartStatement(token) {
     if (!token || isComment(token) || token.type === "End") return false;
     if (token.type !== "Symbol") return true;
-    return ["(", "[", "{", "-", "+", "!", "_", "@", "@_"].includes(token.value);
+    return ["(", "[", "{", "-", "+", "!", "_", "@", "@_"].includes(token.value) || String(token.value).startsWith("{");
 }
 
 /**
