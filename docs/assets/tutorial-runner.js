@@ -46,6 +46,10 @@ document.querySelectorAll("[data-tutorial-source]").forEach((input) => {
     }
   });
 });
+document.querySelector("#object-help-dialog")?.addEventListener("click", (event) => {
+  if (event.target === event.currentTarget)
+    event.currentTarget.close();
+});
 function openObjectHelp(name, requestedFunction = null) {
   const entry = objectHelp[name];
   if (!entry)
@@ -56,5 +60,5 @@ function openObjectHelp(name, requestedFunction = null) {
   dialog.showModal();
 }
 
-//# debugId=8B864AA15B3A6EE164756E2164756E21
+//# debugId=1B47CCAB8A8B099164756E2164756E21
 //# sourceMappingURL=tutorial-runner.js.map

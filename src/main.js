@@ -225,6 +225,11 @@ input.addEventListener("keydown", (event) => {
 });
 helpSearch.addEventListener("input", () => renderHelp(helpSearch.value));
 fileInput.addEventListener("change", async () => { const [file] = fileInput.files; if (file) await loadFile(file); fileInput.value = ""; });
+[helpDialog, tutorialDialog, inspectDialog].forEach((dialog) => {
+    dialog.addEventListener("click", (event) => {
+        if (event.target === dialog) dialog.close();
+    });
+});
 
 displayWelcome();
 input.focus();

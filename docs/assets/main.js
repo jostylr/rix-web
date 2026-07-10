@@ -271,8 +271,14 @@ fileInput.addEventListener("change", async () => {
     await loadFile(file);
   fileInput.value = "";
 });
+[helpDialog, tutorialDialog, inspectDialog].forEach((dialog) => {
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog)
+      dialog.close();
+  });
+});
 displayWelcome();
 input.focus();
 
-//# debugId=DAF34636D86D8A6464756E2164756E21
+//# debugId=E8BF68FCEDF2A92D64756E2164756E21
 //# sourceMappingURL=main.js.map

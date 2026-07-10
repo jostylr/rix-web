@@ -38,6 +38,10 @@ document.querySelectorAll("[data-tutorial-source]").forEach((input) => {
     });
 });
 
+document.querySelector("#object-help-dialog")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) event.currentTarget.close();
+});
+
 function openObjectHelp(name, requestedFunction = null) {
     const entry = objectHelp[name];
     if (!entry) return;
