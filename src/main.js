@@ -1,72 +1,20 @@
-import {
-    Context,
-    createDefaultRegistry,
-    createDefaultSystemContext,
-    formatValue,
-    parseAndEvaluate,
-} from "../../rix/src/index.js";
-import { installSymbolicBindings } from "../../rix/src/eval/functions/symbolic.js";
-import { normalizeReplSource } from "./repl-source.js";
+import { createRixRepl, findHelp } from "./repl-runtime.js";
 
-const starterCode = `radius := 7
-area := radius ^ 2 * 22 / 7
-area`;
-const storageKey = "rix-lab:editor";
-const codeInput = document.querySelector("#code-input");
-const flow = document.querySelector("#result-flow");
-const variablesPanel = document.querySelector("#variables-panel");
+const repl = createRixRepl();
+const outputHistory = document.querySelector("#output-history");
+const input = document.querySelector("#calculator-input");
+const calculator = document.querySelector(".calculator");
+const scriptToggle = document.querySelector("#script-toggle");
+const scriptNote = document.querySelector("#script-note");
 const helpDialog = document.querySelector("#help-dialog");
-const moduleDialog = document.querySelector("#module-dialog");
+const helpSearch = document.querySelector("#help-search");
+const helpContent = document.querySelector("#help-content");
 const fileInput = document.querySelector("#file-input");
-const modulePreview = document.querySelector("#module-preview");
 
-const state = {
-    context: new Context(),
-    registry: createDefaultRegistry(),
-    systemContext: createDefaultSystemContext(),
-    runCount: 0,
-};
-installSymbolicBindings(state.context);
-
-const helpGroups = [
-    {
-        title: "Everyday syntax",
-        items: [
-            ["x := 3", "Bind a fresh value. Use this for ordinary assignments."],
-            ["y = x", "Alias x's cell. An in-place update to either name is shared."],
-            ["x ~= 9", "Replace the value in an existing cell, preserving aliases."],
-            ["7 / 2", "Exact division. The result remains the rational 7/2."],
-        ],
-    },
-    {
-        title: "Collections & intervals",
-        items: [
-            ["[1, 2, 3]", "An array. Indexes begin at 1: a[2] is 2."],
-            ["{| 1, 2 |}", "A set."],
-            ["{= a=3, b=5 }", "A map."],
-            ["2:5", "A rational interval from 2 to 5."],
-        ],
-    },
-    {
-        title: "Functions & capabilities",
-        items: [
-            ["Square(x) -> x ^ 2", "Define a callable with an uppercase name."],
-            ["Square(12)", "Call a user-defined function."],
-            [".SIN(x)", "Call a system capability via the dot prefix."],
-            ["x > 0 ?? x ?: -x", "A compact conditional expression."],
-        ],
-    },
-    {
-        title: "Notebook commands",
-        items: [
-            ["Run cell", "Evaluate the editor in the current workspace. Results flow into the trail below."],
-            ["New line", "At the top level of a notebook cell, a completed line starts the next statement. Use semicolons when you prefer explicit separators."],
-            ["New session", "Clear variables and start a fresh persistent workspace."],
-            ["Load .rix", "Put a RiX file into the editor, ready to run."],
-            ["Load .js", "Preview a JavaScript module; execution is intentionally reserved for an explicit trust model."],
-        ],
-    },
-];
+let scriptMode = false;
+let history = [];
+let historyIndex = -1;
+let transcript = [];
 
 function escapeHtml(value) {
     return String(value).replace(/[&<>'"]/g, (character) => ({
@@ -74,165 +22,179 @@ function escapeHtml(value) {
     })[character]);
 }
 
-function sourcePreview(source) {
-    const lines = source.trim().split("\n");
-    return lines.length > 7 ? `${lines.slice(0, 7).join("\n")}\n…` : source.trim();
+function scrollTranscript() {
+    requestAnimationFrame(() => { outputHistory.scrollTop = outputHistory.scrollHeight; });
 }
 
-function resetWorkspace() {
-    state.context.clear();
-    installSymbolicBindings(state.context);
-    state.runCount = 0;
-    flow.innerHTML = `<div class="empty-flow"><span>→</span><p>Fresh workspace, clear trail.<br />Your next result starts here.</p></div>`;
-    renderVariables();
+function setInput(value) {
+    input.value = value;
+    input.style.height = "auto";
+    input.style.height = `${Math.min(input.scrollHeight, 160)}px`;
+    input.focus();
 }
 
-function renderVariables() {
-    const names = state.context.getAllNames();
-    if (names.length === 0) {
-        variablesPanel.innerHTML = `<p class="mini-heading">Current scope</p><p class="variables-empty">No names yet. Run a line with <code>:=</code> to keep a value.</p>`;
-        return;
+function appendOutput(source, response) {
+    const entry = document.createElement("article");
+    entry.className = "output-entry";
+    const sourceLine = document.createElement("div");
+    sourceLine.className = "input-line";
+    sourceLine.innerHTML = `<span class="prompt">&gt;</span>${escapeHtml(source)}<span class="reload-icon" title="Reload expression">↻</span>`;
+    sourceLine.addEventListener("click", () => setInput(source));
+    entry.appendChild(sourceLine);
+
+    if (response.type === "help") {
+        entry.appendChild(inlineHelp(response));
+    } else {
+        const outputLine = document.createElement("div");
+        outputLine.className = response.type === "error" ? "error-line" : "output-line";
+        outputLine.innerHTML = response.type === "error"
+            ? escapeHtml(response.text)
+            : `${escapeHtml(response.text)}<span class="inject-icon" title="Use this value">→</span>`;
+        if (response.type === "result") outputLine.addEventListener("click", () => setInput(response.text));
+        entry.appendChild(outputLine);
     }
-    const items = names.map((name) => {
-        let preview = "function";
-        try {
-            preview = formatValue(state.context.get(name), { context: state.context, evaluate: null });
-        } catch {
-            preview = "value";
-        }
-        return `<li><code>${escapeHtml(name)}</code><span>${escapeHtml(preview)}</span></li>`;
-    }).join("");
-    variablesPanel.innerHTML = `<p class="mini-heading">Current scope · ${names.length}</p><ul class="variable-list">${items}</ul>`;
+    outputHistory.appendChild(entry);
+    transcript.push({ source, text: response.type === "help" ? `.Help: ${response.query || "all topics"}` : response.text });
+    scrollTranscript();
 }
 
-function appendResult(source, result, error = null) {
-    state.runCount += 1;
-    flow.querySelector(".empty-flow")?.remove();
-    const output = error
-        ? error.message || String(error)
-        : formatValue(result, { context: state.context, evaluate: null });
-    const card = document.createElement("article");
-    card.className = `result-card${error ? " error" : ""}`;
-    card.innerHTML = `<div class="result-index">${String(state.runCount).padStart(2, "0")}</div>
-      <div class="result-body"><pre class="result-source">${escapeHtml(sourcePreview(source))}</pre>
-      <div class="result-output"><span class="result-badge">${error ? "error" : "result"}</span><code>${escapeHtml(output)}</code></div></div>`;
-    flow.prepend(card);
-}
-
-function runCode() {
-    const source = codeInput.value.trim();
-    if (!source) return;
-    try {
-        const result = parseAndEvaluate(normalizeReplSource(source), {
-            context: state.context,
-            registry: state.registry,
-            systemContext: state.systemContext,
-            file: "<browser-repl>",
-        });
-        appendResult(source, result);
-        renderVariables();
-    } catch (error) {
-        appendResult(source, null, error);
-        renderVariables();
-    }
+function inlineHelp({ query, groups }) {
+    const panel = document.createElement("section");
+    panel.className = "inline-help";
+    const title = query ? `Help for “${escapeHtml(query)}”` : "RiX and RatCalc help";
+    const body = groups.length
+        ? groups.map((group) => `<h4>${escapeHtml(group.title)}</h4><ul>${group.items.map(([syntax, description]) => `<li><code>${escapeHtml(syntax)}</code> — ${escapeHtml(description)}</li>`).join("")}</ul>`).join("")
+        : `<p>No help topic matched “${escapeHtml(query)}”. Try <code>.Help("interval")</code>.</p>`;
+    panel.innerHTML = `<h3>${title}</h3>${body}`;
+    return panel;
 }
 
 function renderHelp(query = "") {
-    const normalized = query.trim().toLowerCase();
-    const groups = helpGroups.map((group) => ({
-        ...group,
-        items: group.items.filter(([syntax, description]) => !normalized || `${syntax} ${description} ${group.title}`.toLowerCase().includes(normalized)),
-    })).filter((group) => group.items.length > 0);
-    document.querySelector("#help-content").innerHTML = groups.length
-        ? groups.map((group) => `<section class="help-group"><h3>${group.title}</h3>${group.items.map(([syntax, description]) => `<div class="help-item"><code>${escapeHtml(syntax)}</code><p>${escapeHtml(description)}</p></div>`).join("")}</section>`).join("")
-        : `<p class="variables-empty">No matching reference entry. Try “array”, “assignment”, or “function”.</p>`;
+    const { groups } = findHelp(query);
+    const intro = query ? "" : `<section class="help-intro"><b>Welcome to RatCalc.</b><br />Type an exact expression and press Enter. Use <code>:=</code> for a fresh value, <code>2:5</code> for an interval, and <code>.Help(\"topic\")</code> when you want help printed directly in the transcript.</section>`;
+    const sections = groups.length
+        ? groups.map((group) => `<section class="help-group"><h3>${escapeHtml(group.title)}</h3>${group.items.map(([syntax, description]) => `<div class="help-item"><code>${escapeHtml(syntax)}</code><p>${escapeHtml(description)}</p></div>`).join("")}</section>`).join("")
+        : `<p class="help-intro">No matching help topic. Try “interval”, “function”, or “assignment”.</p>`;
+    helpContent.innerHTML = intro + sections;
 }
 
-function openHelp() {
-    renderHelp();
+function openHelp(query = "") {
+    helpSearch.value = query;
+    renderHelp(query);
     helpDialog.showModal();
-    document.querySelector("#help-search-input").focus();
+    helpSearch.focus();
 }
 
-function saveCode() {
-    const blob = new Blob([codeInput.value], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "experiment.rix";
-    anchor.click();
-    URL.revokeObjectURL(url);
+function clearSession() {
+    repl.reset();
+    history = [];
+    historyIndex = -1;
+    transcript = [];
+    outputHistory.innerHTML = "";
+    displayWelcome();
+    setInput("");
+}
+
+function displayWelcome() {
+    const welcome = document.createElement("section");
+    welcome.className = "welcome";
+    welcome.innerHTML = `<b>Welcome to RatCalc!</b><br />Type a RiX expression and press Enter to calculate.<br />Use <code>.help</code> for the guide or <code>.Help("interval")</code> for inline help.`;
+    outputHistory.appendChild(welcome);
+}
+
+function showVariables(source) {
+    const variables = repl.variables();
+    const text = variables.length
+        ? `Variables:\n${variables.map(({ name, value }) => `  ${name} = ${value}`).join("\n")}`
+        : "No variables or functions defined.";
+    appendOutput(source, { type: "result", text });
+}
+
+function execute(source = input.value) {
+    const command = source.trim();
+    if (!command) return;
+    if (/^\.help(?:\s+.*)?$/i.test(command)) {
+        openHelp(command.replace(/^\.help/i, "").trim());
+        setInput("");
+        return;
+    }
+    if (/^\.clear$/i.test(command)) { clearSession(); return; }
+    if (/^\.vars$/i.test(command)) { showVariables(source); setInput(""); return; }
+
+    if (history.at(-1) !== source) history.push(source);
+    historyIndex = -1;
+    const response = repl.run(source);
+    appendOutput(source, response);
+    setInput("");
+}
+
+function setScriptMode(next) {
+    scriptMode = next;
+    calculator.classList.toggle("script-mode", scriptMode);
+    scriptToggle.classList.toggle("active", scriptMode);
+    scriptToggle.textContent = `Script entry: ${scriptMode ? "on" : "off"}`;
+    scriptNote.hidden = !scriptMode;
+    document.querySelector("#entry-mode-label").textContent = scriptMode ? "Script mode · Ctrl/⌘ + Enter runs" : "Command mode · Enter runs";
+    setInput(input.value);
+}
+
+function continueCommand() {
+    const position = input.selectionStart;
+    const before = input.value.slice(0, position);
+    const after = input.value.slice(position);
+    const slash = before.lastIndexOf("\\");
+    input.value = `${before.slice(0, slash)}\n${after}`;
+    input.selectionStart = input.selectionEnd = slash + 1;
+    setInput(input.value);
+}
+
+function navigateHistory(direction) {
+    if (scriptMode || history.length === 0) return;
+    if (direction < 0) historyIndex = historyIndex < 0 ? history.length - 1 : Math.max(0, historyIndex - 1);
+    else historyIndex = historyIndex >= history.length - 1 ? -1 : historyIndex + 1;
+    setInput(historyIndex < 0 ? "" : history[historyIndex]);
 }
 
 async function loadFile(file) {
     const text = await file.text();
     if (file.name.toLowerCase().endsWith(".js")) {
-        modulePreview.textContent = text.slice(0, 1800);
-        moduleDialog.showModal();
-        return;
-    }
-    codeInput.value = text;
-    localStorage.setItem(storageKey, text);
-    codeInput.focus();
-}
-
-function loadTutorialCode() {
-    const encoded = new URLSearchParams(location.search).get("code");
-    if (!encoded) return false;
-    try {
-        codeInput.value = decodeURIComponent(encoded);
-        history.replaceState({}, "", location.pathname);
-        return true;
-    } catch {
-        return false;
+        appendOutput(`.load ${file.name}`, { type: "result", text: "JavaScript module selected. Browser execution is intentionally held behind a future trust policy." });
+    } else {
+        setScriptMode(true);
+        setInput(text);
     }
 }
 
 document.addEventListener("click", (event) => {
-    const trigger = event.target.closest("[data-action]");
-    if (!trigger) return;
-    const action = trigger.dataset.action;
-    if (action === "run") runCode();
-    if (action === "reset") resetWorkspace();
-    if (action === "load") fileInput.click();
-    if (action === "save") saveCode();
-    if (action === "help") openHelp();
-    if (action === "close-help") helpDialog.close();
-    if (action === "close-module") moduleDialog.close();
-    if (action === "clear-results") {
-        state.runCount = 0;
-        flow.innerHTML = `<div class="empty-flow"><span>→</span><p>The trail is clear.<br />Your next result will land here.</p></div>`;
+    const control = event.target.closest("[data-action]");
+    if (!control) return;
+    switch (control.dataset.action) {
+    case "run": execute(); break;
+    case "help": openHelp(); break;
+    case "close-help": helpDialog.close(); input.focus(); break;
+    case "clear": clearSession(); break;
+    case "script": setScriptMode(!scriptMode); break;
+    case "copy": navigator.clipboard?.writeText(transcript.map((entry) => `> ${entry.source}\n${entry.text}`).join("\n\n")); break;
+    case "load": fileInput.click(); break;
+    default: break;
     }
 });
 
-document.querySelectorAll("[data-inspector]").forEach((button) => {
-    button.addEventListener("click", () => {
-        document.querySelectorAll("[data-inspector]").forEach((item) => item.classList.toggle("active", item === button));
-        variablesPanel.classList.toggle("hidden", button.dataset.inspector !== "variables");
-        document.querySelector("#quick-help-panel").classList.toggle("hidden", button.dataset.inspector !== "help");
-    });
-});
-
-document.querySelector("#help-search-input").addEventListener("input", (event) => renderHelp(event.target.value));
-fileInput.addEventListener("change", async () => {
-    const [file] = fileInput.files;
-    if (file) await loadFile(file);
-    fileInput.value = "";
-});
-codeInput.addEventListener("input", () => localStorage.setItem(storageKey, codeInput.value));
-codeInput.addEventListener("keydown", (event) => {
-    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+input.addEventListener("input", () => setInput(input.value));
+input.addEventListener("keydown", (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); execute(); return; }
+    if (event.key === "Enter" && !scriptMode) {
         event.preventDefault();
-        runCode();
+        const currentLine = input.value.slice(0, input.selectionStart).split("\n").at(-1).trimEnd();
+        if (currentLine.endsWith("\\")) continueCommand();
+        else execute();
+        return;
     }
-    if (event.key === "Tab") {
-        event.preventDefault();
-        const start = codeInput.selectionStart;
-        const end = codeInput.selectionEnd;
-        codeInput.setRangeText("  ", start, end, "end");
-    }
+    if (event.key === "ArrowUp" && input.selectionStart === 0) { event.preventDefault(); navigateHistory(-1); }
+    if (event.key === "ArrowDown" && input.selectionStart === input.value.length) { event.preventDefault(); navigateHistory(1); }
 });
+helpSearch.addEventListener("input", () => renderHelp(helpSearch.value));
+fileInput.addEventListener("change", async () => { const [file] = fileInput.files; if (file) await loadFile(file); fileInput.value = ""; });
 
-const loadedFromTutorial = loadTutorialCode();
-if (!loadedFromTutorial) codeInput.value = localStorage.getItem(storageKey) || starterCode;
-renderVariables();
+displayWelcome();
+input.focus();

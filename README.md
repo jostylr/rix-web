@@ -1,8 +1,8 @@
 # RiX Lab
 
-RiX Lab is a static browser REPL and learning site for the Rational Interval
-Expression Language. It uses the actual RiX parser and evaluator, so values
-and a workspace persist across executed cells.
+RatCalc is a static browser calculator and learning site for the Rational
+Interval Expression Language. It uses the actual RiX parser and evaluator, so
+values and a workspace persist across executed commands and tutorial cells.
 
 ## Develop and build
 
@@ -17,6 +17,6 @@ bun run serve
 `tutorials/` into runnable lesson pages. The complete static site is written to
 `docs/`, ready for a docs-folder static host.
 
-The workspace accepts `.rix` files directly. Selecting a `.js` module opens an
-intentional preview: browser module execution is held behind an explicit trust
+The calculator accepts `.rix` files directly. Selecting a `.js` module shows an
+intentional notice: browser module execution is held behind an explicit trust
 boundary until RiX module permissions are designed.

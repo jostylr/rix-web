@@ -24,11 +24,12 @@ await Bun.write(path.join(output, "index.html"), await readFile(path.join(source
 await Bun.write(path.join(output, ".nojekyll"), "");
 await Bun.write(path.join(output, "assets", "app.css"), await readFile(path.join(source, "app.css")));
 const result = await Bun.build({
-    entrypoints: [path.join(source, "main.js")],
+    entrypoints: [path.join(source, "main.js"), path.join(source, "tutorial-runner.js")],
     outdir: path.join(output, "assets"),
     target: "browser",
     format: "esm",
     sourcemap: "linked",
+    splitting: true,
     plugins: [browserNodeShims],
 });
 if (!result.success) {

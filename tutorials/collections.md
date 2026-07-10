@@ -1,5 +1,5 @@
 ---
-number: "02"
+number: 02
 title: Shape a collection
 description: Keep a handful of exact values together, select one, and turn a small data set into an answer.
 ---
@@ -28,8 +28,6 @@ The output trail renders the map in the same readable RiX notation you typed.
 
 :::challenge Find the middle value
 Make an array called `scores` containing 4, 9, and 16. Return the middle item using RiX's one-based index.
-    scores := [4, 9, 16]
-    scores[2]
 :::
 
 ## Keep an interval in view

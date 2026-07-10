@@ -1,7 +1,7 @@
 ---
-number: "01"
+number: 01
 title: Start with exact numbers
-description: Fractions stay fractions, names persist, and every example opens straight into the workspace.
+description: Fractions stay fractions, names persist, and every example runs directly in this lesson.
 ---
 
 ## A workspace that remembers
@@ -30,8 +30,6 @@ Every time you run a cell, its final value appears in the trail below the editor
 
 :::challenge Make a rectangle helper
 Write a function named `Area` that accepts `width` and `height`, then use it to find the area of a 7 by 11 rectangle. A function name begins with an uppercase letter.
-    Area(width, height) -> width * height
-    Area(7, 11)
 :::
 
 ## One distinction that matters

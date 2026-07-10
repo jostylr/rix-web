@@ -23,10 +23,6 @@ function parseFrontmatter(source) {
     return [meta, match[2]];
 }
 
-function runLink(code) {
-    return `../?code=${encodeURIComponent(code)}`;
-}
-
 function renderMarkdown(markdown) {
     const lines = markdown.split("\n");
     const html = [];
@@ -40,13 +36,13 @@ function renderMarkdown(markdown) {
     };
     const flushCode = () => {
         if (code === null) return;
-        html.push(`<section class="code-lesson"><header><span>Runnable RiX</span><button type="button" data-code="${escapeHtml(code)}">Open in workspace →</button></header><pre><code>${escapeHtml(code)}</code></pre></section>`);
+        html.push(`<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source spellcheck="false">${escapeHtml(code)}</textarea><div class="tutorial-output" data-tutorial-output></div></section>`);
         code = null;
     };
     const flushChallenge = () => {
         if (!challenge) return;
-        const challengeCode = challenge.code || "# Write your RiX solution here\n";
-        html.push(`<aside class="challenge"><p class="eyebrow">Challenge</p><h3>${escapeHtml(challenge.title || "Make it yours")}</h3><p>${escapeHtml(challenge.body.join(" "))}</p><button class="run-challenge" type="button" data-code="${escapeHtml(challengeCode)}">Try it in the workspace →</button></aside>`);
+        const challengeCode = challenge.code || "";
+        html.push(`<aside class="challenge"><p class="eyebrow">Challenge</p><h3>${escapeHtml(challenge.title || "Make it yours")}</h3><p>${escapeHtml(challenge.body.join(" "))}</p><section class="tutorial-cell"><header><span>Your RiX answer</span><button type="button" data-tutorial-run>Run answer</button></header><textarea class="tutorial-source" data-tutorial-source spellcheck="false" placeholder="# Write your RiX solution here">${escapeHtml(challengeCode)}</textarea><div class="tutorial-output" data-tutorial-output></div></section></aside>`);
         challenge = null;
     };
     for (let index = 0; index < lines.length; index += 1) {
@@ -75,7 +71,7 @@ function renderMarkdown(markdown) {
 }
 
 function pageTemplate(meta, body) {
-    return `<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="${escapeHtml(meta.description || "A runnable RiX lesson")}" /><title>${escapeHtml(meta.title || "RiX tutorial")} — RiX Lab</title><link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin /><link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet" /><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /></head><body><div class="tutorial-page"><header class="topbar"><a class="brand" href="../" aria-label="RiX Lab home"><span class="brand-mark">R</span><span>RiX <b>Lab</b></span></a><nav><a href="../#workspace">Workspace</a><a href="../#learn">Lessons</a></nav></header><main class="tutorial-layout"><aside class="lesson-nav"><span>In this lesson</span><a href="#start">Start</a><a href="../">Open REPL →</a></aside><article class="lesson-content" id="start"><p class="lesson-kicker">RiX walkthrough · ${escapeHtml(meta.number || "01")}</p><h1>${escapeHtml(meta.title || "RiX tutorial")}</h1><p class="deck">${escapeHtml(meta.description || "Read, run, then change the next line.")}</p>${body}<footer class="lesson-footer">Ready for a blank page? <a href="../">Return to the RiX workspace →</a></footer></article></main></div><script>document.addEventListener('click', event => { const button = event.target.closest('[data-code]'); if (!button) return; location.href = '../?code=' + encodeURIComponent(button.dataset.code); });</script></body></html>`;
+    return `<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="${escapeHtml(meta.description || "A runnable RiX lesson")}" /><title>${escapeHtml(meta.title || "RiX tutorial")} — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><a href="../">Open calculator</a></header><article class="lesson-card"><p class="lesson-kicker">RiX walkthrough · ${escapeHtml(meta.number || "01")}</p><h1>${escapeHtml(meta.title || "RiX tutorial")}</h1><p class="deck">${escapeHtml(meta.description || "Read, run, then change the next line.")}</p><div class="lesson-content">${body}</div><footer class="lesson-footer">Every cell above runs in this page and shares one RiX session. <a href="../">Open a fresh RatCalc session →</a></footer></article></div></main><script type="module" src="../assets/tutorial-runner.js"></script></body></html>`;
 }
 
 const markdownFiles = [];

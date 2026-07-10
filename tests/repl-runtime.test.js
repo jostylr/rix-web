@@ -8,6 +8,7 @@ import {
 } from "../../rix/src/index.js";
 import { installSymbolicBindings } from "../../rix/src/eval/functions/symbolic.js";
 import { normalizeReplSource } from "../src/repl-source.js";
+import { createRixRepl } from "../src/repl-runtime.js";
 
 test("the web REPL runtime keeps its RiX context between cells", () => {
     const context = new Context();
@@ -43,4 +44,12 @@ total`;
 total := 3 +
   4;
 total`);
+});
+
+test(".Help(topic) returns matching inline RiX REPL help", () => {
+    const repl = createRixRepl();
+    const response = repl.run('.Help("interval")');
+
+    expect(response.type).toBe("help");
+    expect(response.groups.flatMap((group) => group.items).some(([syntax]) => syntax === "2:5")).toBe(true);
 });

@@ -3,108 +3,50 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="An interactive RiX notebook for exact mathematics." />
-    <title>RiX Lab — the rational interval expression language</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet" />
+    <meta name="description" content="RatCalc — Exact rational arithmetic calculator with interval support powered by RiX." />
+    <title>RatCalc — powered by RiX</title>
     <link rel="stylesheet" href="./assets/app.css" />
   </head>
   <body>
-    <div class="site-shell">
-      <header class="topbar">
-        <a class="brand" href="./" aria-label="RiX Lab home"><span class="brand-mark">R</span><span>RiX <b>Lab</b></span></a>
-        <nav aria-label="Main navigation">
-          <a href="#workspace">Workspace</a>
-          <a href="#learn">Learn</a>
-          <button class="link-button" type="button" data-action="help">Reference <kbd>?</kbd></button>
-        </nav>
-        <div class="topbar-actions">
-          <span class="status-dot"><i></i> browser runtime</span>
-          <button class="quiet-button" type="button" data-action="reset">New session</button>
-        </div>
+    <main class="container">
+      <header class="app-header">
+        <a class="brand" href="./" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a>
+        <p>Exact rational arithmetic calculator with interval support powered by RiX</p>
+        <nav aria-label="RatCalc navigation"><a href="./learn/getting-started.html">Tutorials</a><button type="button" data-action="help">Help</button></nav>
       </header>
 
-      <main>
-        <section class="hero" aria-labelledby="page-title">
-          <p class="eyebrow">A small notebook for exact thinking</p>
-          <h1 id="page-title">Make the answer<br /><em>hold still.</em></h1>
-          <p class="hero-copy">RiX keeps fractions exact, treats intervals as first-class values, and gives your experiments a place to grow.</p>
-          <div class="hero-pills" aria-label="RiX highlights"><span>exact arithmetic</span><span>persistent workspace</span><span>runs in your browser</span></div>
-        </section>
+      <section class="calculator" aria-label="RatCalc calculator">
+        <div class="calculator-toolbar">
+          <span><i></i> RiX browser session</span>
+          <span id="entry-mode-label">Command mode · Enter runs</span>
+        </div>
+        <div id="output-history" class="output-history" aria-live="polite"></div>
+        <div id="input-section" class="input-section">
+          <span class="prompt">&gt;</span>
+          <label class="sr-only" for="calculator-input">RatCalc command entry</label>
+          <textarea id="calculator-input" class="calculator-input" rows="1" spellcheck="false" placeholder="Enter a RiX expression — .help for help"></textarea>
+          <button class="run-button" type="button" data-action="run">Run</button>
+        </div>
+        <p id="script-note" class="script-note" hidden>Script mode: Enter adds a line; Ctrl/⌘ + Enter runs the script.</p>
+      </section>
 
-        <section id="workspace" class="workspace" aria-labelledby="workspace-title">
-          <div class="workspace-heading">
-            <div>
-              <p class="eyebrow">Your notebook</p>
-              <h2 id="workspace-title">Workspace <span>01</span></h2>
-            </div>
-            <div class="session-tools">
-              <button class="icon-text-button" type="button" data-action="load">Load</button>
-              <button class="icon-text-button" type="button" data-action="save">Save</button>
-              <input id="file-input" type="file" accept=".rix,.js,text/plain,application/javascript" hidden />
-            </div>
-          </div>
-
-          <div class="notebook-grid">
-            <section class="editor-card" aria-label="RiX editor">
-              <div class="cell-bar"><span class="cell-number">01</span><span class="cell-kind">RiX</span><span class="cell-hint">⌘ / Ctrl + Enter to run</span></div>
-              <label class="sr-only" for="code-input">RiX code</label>
-              <textarea id="code-input" spellcheck="false" aria-describedby="editor-note">radius := 7
-area := radius ^ 2 * 22 / 7
-area</textarea>
-              <div class="editor-footer">
-                <span id="editor-note">The workspace remembers names between runs.</span>
-                <button class="run-button" type="button" data-action="run"><span>Run cell</span><kbd>⌘↵</kbd></button>
-              </div>
-            </section>
-
-            <aside class="inspector-card" aria-label="Workspace details">
-              <div class="inspector-tabs"><button class="active" type="button" data-inspector="variables">Variables</button><button type="button" data-inspector="help">Quick help</button></div>
-              <div id="variables-panel" class="inspector-panel"></div>
-              <div id="quick-help-panel" class="inspector-panel hidden">
-                <p class="mini-heading">Useful moves</p>
-                <dl class="quick-reference">
-                  <div><dt><code>:=</code></dt><dd>fresh value</dd></div>
-                  <div><dt><code>=</code></dt><dd>alias a cell</dd></div>
-                  <div><dt><code>~=</code></dt><dd>update in place</dd></div>
-                  <div><dt><code>.SIN(x)</code></dt><dd>system capability</dd></div>
-                </dl>
-                <button class="text-action" type="button" data-action="help">Open full reference →</button>
-              </div>
-            </aside>
-          </div>
-
-          <section class="flow-section" aria-live="polite" aria-labelledby="flow-title">
-            <div class="flow-heading"><div><p class="eyebrow">Execution trail</p><h3 id="flow-title">Results flow down</h3></div><button class="clear-button" type="button" data-action="clear-results">Clear trail</button></div>
-            <div id="result-flow" class="result-flow"><div class="empty-flow"><span>→</span><p>Your results will appear here.<br />Try running the example above.</p></div></div>
-          </section>
-        </section>
-
-        <section id="learn" class="learn-section" aria-labelledby="learn-title">
-          <div class="section-intro"><p class="eyebrow">A guided first hour</p><h2 id="learn-title">Learn by changing<br />the <em>next line.</em></h2><p>The walkthroughs are short, executable, and leave space for your own answer.</p></div>
-          <div id="tutorial-cards" class="tutorial-cards">
-            <a class="tutorial-card featured" href="./learn/getting-started.html"><span class="lesson-index">01</span><h3>Start with exact numbers</h3><p>Variables, fractions, and the persistent workspace.</p><span class="card-arrow">Read &amp; run →</span></a>
-            <a class="tutorial-card" href="./learn/collections.html"><span class="lesson-index">02</span><h3>Shape a collection</h3><p>Arrays, maps, and working with a small data set.</p><span class="card-arrow">Read &amp; run →</span></a>
-            <button class="tutorial-card coming-soon" type="button" data-action="help"><span class="lesson-index">+</span><h3>Explore the reference</h3><p>Operators, containers, functions, and system capabilities.</p><span class="card-arrow">Open reference →</span></button>
-          </div>
-        </section>
-      </main>
-
-      <footer><span>RiX · Rational Interval Expression Language</span><span>Exact by default</span></footer>
-    </div>
+      <div class="controls" aria-label="Calculator controls">
+        <button type="button" data-action="copy">Copy session</button>
+        <button type="button" data-action="help">? Help</button>
+        <button id="script-toggle" type="button" data-action="script">Script entry: off</button>
+        <button type="button" data-action="load">Load</button>
+        <button type="button" data-action="clear">Clear</button>
+        <input id="file-input" type="file" accept=".rix,.js,text/plain,application/javascript" hidden />
+      </div>
+    </main>
 
     <dialog id="help-dialog" class="help-dialog" aria-labelledby="help-title">
-      <div class="dialog-head"><div><p class="eyebrow">Language reference</p><h2 id="help-title">Find your footing.</h2></div><button class="close-button" data-action="close-help" aria-label="Close help">×</button></div>
-      <div class="help-search"><label class="sr-only" for="help-search-input">Search reference</label><input id="help-search-input" type="search" placeholder="Search operators, syntax, capabilities…" /></div>
-      <div id="help-content" class="help-content"></div>
-    </dialog>
-
-    <dialog id="module-dialog" class="module-dialog" aria-labelledby="module-title">
-      <div class="dialog-head"><div><p class="eyebrow">Module loading</p><h2 id="module-title">JavaScript modules</h2></div><button class="close-button" data-action="close-module" aria-label="Close module notice">×</button></div>
-      <p>RiX scripts can be loaded into this notebook now. JavaScript modules are deliberately sketched as a browser permission boundary: the file has been selected, but it will not run until module imports have an explicit trust model.</p>
-      <pre id="module-preview" class="module-preview"></pre>
-      <button class="run-button" type="button" data-action="close-module">Got it</button>
+      <header class="modal-header"><div><h2 id="help-title">RatCalc help</h2><p>Start with exact values. Keep going with RiX.</p></div><button type="button" data-action="close-help" aria-label="Close help">×</button></header>
+      <div class="modal-body">
+        <label class="sr-only" for="help-search">Search RatCalc help</label>
+        <input id="help-search" class="help-search" type="search" placeholder="Search syntax, intervals, assignments…" />
+        <div id="help-content"></div>
+      </div>
     </dialog>
     <script type="module" src="./assets/main.js"></script>
   </body>
