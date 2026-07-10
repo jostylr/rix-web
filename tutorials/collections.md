@@ -1,30 +1,35 @@
 ---
-number: 02
+number: 2
 title: Shape a collection
 description: Keep a handful of exact values together, select one, and turn a small data set into an answer.
 ---
 
-## Put values in a row
+## Three useful shapes
 
-Square brackets make an array. RiX uses one-based indexes, so the first item is at position `1`.
+Collections let a formula keep several values together. RiX gives you a few compact shapes with different jobs:
+
+```rix
+array := [3 / 2, 7 / 4, 2]
+record := {= flour=3 / 2, water=1 }
+choices := {| 1, 2, 2 |}
+```
+
+- An **array** keeps order and supports one-based indexes.
+- A **map** labels each entry with a key.
+- A **set** keeps only unique members.
+
+Use the Details button below to move into a focused page for each shape. Those pages have runnable examples and a complete object-method reference.
+
+## Read one value
+
+Arrays are a useful first collection because their indexes are explicit and exact.
 
 ```rix
 measurements := [3 / 2, 7 / 4, 2]
 measurements[2]
 ```
 
-That second measurement remains the exact rational `1 3/4`. Arrays can hold any RiX values, including other arrays and functions.
-
-## Build a small table
-
-A map holds named entries. It is a useful shape for a compact record or a group of related constants.
-
-```rix
-recipe := {= flour=3 / 2, water=1, salt=1 / 40 }
-recipe
-```
-
-The output trail renders the map in the same readable RiX notation you typed.
+That second measurement is still the exact rational `1 3/4`.
 
 :::challenge Find the middle value
 Make an array called `scores` containing 4, 9, and 16. Return the middle item using RiX's one-based index.

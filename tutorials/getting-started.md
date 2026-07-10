@@ -1,5 +1,5 @@
 ---
-number: 01
+number: 1
 title: Start with exact numbers
 description: Fractions stay fractions, names persist, and every example runs directly in this lesson.
 ---

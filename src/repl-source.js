@@ -1,6 +1,7 @@
 import { tokenize } from "../../rix/src/index.js";
 
-const statementClosers = new Set([")", "]", "}"]);
+const statementClosers = new Set([")", "]", "}", "|}", ";}", "@}", "!}", ":}"]);
+const containerOpeners = new Set(["(", "[", "{", "{|", "{=", "{;", "{@", "{!", "{:" ]);
 
 function isComment(token) {
     return token?.type === "String" && token.kind === "comment";
@@ -51,8 +52,8 @@ export function normalizeReplSource(source) {
         }
 
         if (!isComment(token)) {
-            if (["(", "[", "{"].includes(token.value)) depth += 1;
-            if ([")", "]", "}"].includes(token.value)) depth = Math.max(0, depth - 1);
+            if (containerOpeners.has(token.value)) depth += 1;
+            if (statementClosers.has(token.value)) depth = Math.max(0, depth - 1);
             previous = token;
         }
     }

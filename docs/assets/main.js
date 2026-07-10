@@ -1,7 +1,9 @@
 import {
+  childrenOf,
   createRixRepl,
-  findHelp
-} from "./chunk-yg7w3en2.js";
+  findHelp,
+  rootTutorials
+} from "./chunk-wapmjt3w.js";
 
 // src/main.js
 var repl = createRixRepl();
@@ -14,6 +16,11 @@ var helpDialog = document.querySelector("#help-dialog");
 var helpSearch = document.querySelector("#help-search");
 var helpContent = document.querySelector("#help-content");
 var fileInput = document.querySelector("#file-input");
+var tutorialDialog = document.querySelector("#tutorial-dialog");
+var tutorialContent = document.querySelector("#tutorial-content");
+var inspectDialog = document.querySelector("#inspect-dialog");
+var inspectSource = document.querySelector("#inspect-source");
+var inspectValue = document.querySelector("#inspect-value");
 var scriptMode = false;
 var history = [];
 var historyIndex = -1;
@@ -50,9 +57,16 @@ function appendOutput(source, response) {
     entry.appendChild(inlineHelp(response));
   } else {
     const outputLine = document.createElement("div");
-    outputLine.className = response.type === "error" ? "error-line" : "output-line";
-    outputLine.innerHTML = response.type === "error" ? escapeHtml(response.text) : `${escapeHtml(response.text)}<span class="inject-icon" title="Use this value">→</span>`;
-    if (response.type === "result")
+    const inspectable = response.text.includes(`
+`);
+    const preview = inspectable ? `${response.text.split(`
+`)[0]}
+… inspect full result` : response.text;
+    outputLine.className = `${response.type === "error" ? "error-line" : "output-line"}${inspectable ? " truncated" : ""}`;
+    outputLine.innerHTML = response.type === "error" ? escapeHtml(preview) : `${escapeHtml(preview)}<span class="inject-icon" title="Use this value">→</span>`;
+    if (inspectable)
+      outputLine.addEventListener("click", () => openInspection(source, response.text));
+    else if (response.type === "result")
       outputLine.addEventListener("click", () => setInput(response.text));
     entry.appendChild(outputLine);
   }
@@ -79,6 +93,21 @@ function openHelp(query = "") {
   renderHelp(query);
   helpDialog.showModal();
   helpSearch.focus();
+}
+function renderTutorialIndex() {
+  tutorialContent.innerHTML = rootTutorials.map((tutorial) => {
+    const children = childrenOf(tutorial.number);
+    return `<section class="tutorial-index-section"><a href="./learn/${tutorial.file}"><b>${escapeHtml(tutorial.number)} · ${escapeHtml(tutorial.title)}</b><span>${escapeHtml(tutorial.description)}</span></a>${children.length ? `<div class="tutorial-index-children">${children.map((child) => `<a href="./learn/${child.file}">${escapeHtml(child.number)} · ${escapeHtml(child.title)}</a>`).join("")}</div>` : ""}</section>`;
+  }).join("");
+}
+function openTutorials() {
+  renderTutorialIndex();
+  tutorialDialog.showModal();
+}
+function openInspection(source, value) {
+  inspectSource.textContent = source;
+  inspectValue.textContent = value;
+  inspectDialog.showModal();
 }
 function clearSession() {
   repl.reset();
@@ -179,6 +208,17 @@ document.addEventListener("click", (event) => {
       helpDialog.close();
       input.focus();
       break;
+    case "tutorials":
+      openTutorials();
+      break;
+    case "close-tutorials":
+      tutorialDialog.close();
+      input.focus();
+      break;
+    case "close-inspect":
+      inspectDialog.close();
+      input.focus();
+      break;
     case "clear":
       clearSession();
       break;
@@ -234,5 +274,5 @@ fileInput.addEventListener("change", async () => {
 displayWelcome();
 input.focus();
 
-//# debugId=64992ADBEBE3BAB864756E2164756E21
+//# debugId=DAF34636D86D8A6464756E2164756E21
 //# sourceMappingURL=main.js.map

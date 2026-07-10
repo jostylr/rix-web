@@ -1,4 +1,5 @@
 import { createRixRepl, findHelp } from "./repl-runtime.js";
+import { childrenOf, rootTutorials } from "./tutorial-index.js";
 
 const repl = createRixRepl();
 const outputHistory = document.querySelector("#output-history");
@@ -10,6 +11,11 @@ const helpDialog = document.querySelector("#help-dialog");
 const helpSearch = document.querySelector("#help-search");
 const helpContent = document.querySelector("#help-content");
 const fileInput = document.querySelector("#file-input");
+const tutorialDialog = document.querySelector("#tutorial-dialog");
+const tutorialContent = document.querySelector("#tutorial-content");
+const inspectDialog = document.querySelector("#inspect-dialog");
+const inspectSource = document.querySelector("#inspect-source");
+const inspectValue = document.querySelector("#inspect-value");
 
 let scriptMode = false;
 let history = [];
@@ -46,11 +52,14 @@ function appendOutput(source, response) {
         entry.appendChild(inlineHelp(response));
     } else {
         const outputLine = document.createElement("div");
-        outputLine.className = response.type === "error" ? "error-line" : "output-line";
+        const inspectable = response.text.includes("\n");
+        const preview = inspectable ? `${response.text.split("\n")[0]}\n… inspect full result` : response.text;
+        outputLine.className = `${response.type === "error" ? "error-line" : "output-line"}${inspectable ? " truncated" : ""}`;
         outputLine.innerHTML = response.type === "error"
-            ? escapeHtml(response.text)
-            : `${escapeHtml(response.text)}<span class="inject-icon" title="Use this value">→</span>`;
-        if (response.type === "result") outputLine.addEventListener("click", () => setInput(response.text));
+            ? escapeHtml(preview)
+            : `${escapeHtml(preview)}<span class="inject-icon" title="Use this value">→</span>`;
+        if (inspectable) outputLine.addEventListener("click", () => openInspection(source, response.text));
+        else if (response.type === "result") outputLine.addEventListener("click", () => setInput(response.text));
         entry.appendChild(outputLine);
     }
     outputHistory.appendChild(entry);
@@ -83,6 +92,24 @@ function openHelp(query = "") {
     renderHelp(query);
     helpDialog.showModal();
     helpSearch.focus();
+}
+
+function renderTutorialIndex() {
+    tutorialContent.innerHTML = rootTutorials.map((tutorial) => {
+        const children = childrenOf(tutorial.number);
+        return `<section class="tutorial-index-section"><a href="./learn/${tutorial.file}"><b>${escapeHtml(tutorial.number)} · ${escapeHtml(tutorial.title)}</b><span>${escapeHtml(tutorial.description)}</span></a>${children.length ? `<div class="tutorial-index-children">${children.map((child) => `<a href="./learn/${child.file}">${escapeHtml(child.number)} · ${escapeHtml(child.title)}</a>`).join("")}</div>` : ""}</section>`;
+    }).join("");
+}
+
+function openTutorials() {
+    renderTutorialIndex();
+    tutorialDialog.showModal();
+}
+
+function openInspection(source, value) {
+    inspectSource.textContent = source;
+    inspectValue.textContent = value;
+    inspectDialog.showModal();
 }
 
 function clearSession() {
@@ -172,6 +199,9 @@ document.addEventListener("click", (event) => {
     case "run": execute(); break;
     case "help": openHelp(); break;
     case "close-help": helpDialog.close(); input.focus(); break;
+    case "tutorials": openTutorials(); break;
+    case "close-tutorials": tutorialDialog.close(); input.focus(); break;
+    case "close-inspect": inspectDialog.close(); input.focus(); break;
     case "clear": clearSession(); break;
     case "script": setScriptMode(!scriptMode); break;
     case "copy": navigator.clipboard?.writeText(transcript.map((entry) => `> ${entry.source}\n${entry.text}`).join("\n\n")); break;

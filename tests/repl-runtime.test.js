@@ -46,10 +46,26 @@ total := 3 +
 total`);
 });
 
+test("notebook newlines separate statements following a sigil container", () => {
+    const repl = createRixRepl();
+    const response = repl.run(`warm := {| 1, 2 |}
+cool := {| 2, 3 |}
+warm.Union(cool)`);
+    expect(response.type).toBe("result");
+    expect(response.text).toBe("{| 1, 2, 3 |}");
+});
+
 test(".Help(topic) returns matching inline RiX REPL help", () => {
     const repl = createRixRepl();
     const response = repl.run('.Help("interval")');
 
     expect(response.type).toBe("help");
     expect(response.groups.flatMap((group) => group.items).some(([syntax]) => syntax === "2:5")).toBe(true);
+});
+
+test("a fresh RatCalc session does not expose host symbolic bindings as variables", () => {
+    const repl = createRixRepl();
+    expect(repl.variables()).toEqual([]);
+    repl.run("radius := 7");
+    expect(repl.variables().map(({ name }) => name)).toEqual(["radius"]);
 });

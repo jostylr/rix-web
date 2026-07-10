@@ -1,4 +1,5 @@
 import { createRixRepl } from "./repl-runtime.js";
+import { objectHelp } from "./tutorial-index.js";
 
 const repl = createRixRepl();
 
@@ -24,6 +25,9 @@ function runCell(cell) {
 document.addEventListener("click", (event) => {
     const button = event.target.closest("[data-tutorial-run]");
     if (button) runCell(button.closest(".tutorial-cell"));
+    const objectButton = event.target.closest("[data-object-help]");
+    if (objectButton) openObjectHelp(objectButton.dataset.objectHelp, objectButton.dataset.objectFunction);
+    if (event.target.closest("[data-close-object-help]")) document.querySelector("#object-help-dialog")?.close();
 });
 document.querySelectorAll("[data-tutorial-source]").forEach((input) => {
     input.addEventListener("keydown", (event) => {
@@ -33,3 +37,14 @@ document.querySelectorAll("[data-tutorial-source]").forEach((input) => {
         }
     });
 });
+
+function openObjectHelp(name, requestedFunction = null) {
+    const entry = objectHelp[name];
+    if (!entry) return;
+    const functions = requestedFunction
+        ? entry.functions.filter(([functionName]) => functionName === requestedFunction)
+        : entry.functions;
+    const dialog = document.querySelector("#object-help-dialog");
+    dialog.innerHTML = `<header><div><h2>${escapeHtml(requestedFunction || entry.title)}</h2><p>${escapeHtml(entry.intro)}</p></div><button type="button" data-close-object-help aria-label="Close object help">×</button></header><div class="object-help-body">${functions.map(([nameText, syntax, description, example]) => `<section><h3>${escapeHtml(nameText)}</h3><code>${escapeHtml(syntax)}</code><p>${escapeHtml(description)}</p><pre>${escapeHtml(example)}</pre></section>`).join("")}</div>`;
+    dialog.showModal();
+}

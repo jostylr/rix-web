@@ -1,5 +1,6 @@
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { childrenOf, objectHelp, rootTutorials, tutorialByNumber } from "../src/tutorial-index.js";
 
 const root = path.resolve(import.meta.dir, "..");
 const tutorialsDir = path.join(root, "tutorials");
@@ -70,8 +71,37 @@ function renderMarkdown(markdown) {
     return html.join("\n");
 }
 
+function normalizedNumber(number) {
+    return String(number || "").replace(/^0+(\d)/, "$1");
+}
+
+function sidebar(current) {
+    const activeRoot = current.parent || current.number;
+    return `<aside class="lesson-sidebar"><p>Contents</p>${rootTutorials.map((root) => {
+        const children = childrenOf(root.number);
+        if (!children.length) return `<a class="${current.number === root.number ? "current" : ""}" href="./${root.file}">${escapeHtml(root.number)} · ${escapeHtml(root.title)}</a>`;
+        return `<details ${activeRoot === root.number ? "open" : ""}><summary>${escapeHtml(root.number)} · ${escapeHtml(root.title)}</summary><a class="overview ${current.number === root.number ? "current" : ""}" href="./${root.file}">Overview</a>${children.map((child) => `<a class="${current.number === child.number ? "current" : ""}" href="./${child.file}">${escapeHtml(child.number)} · ${escapeHtml(child.title)}</a>`).join("")}</details>`;
+    }).join("")}</aside>`;
+}
+
+function navigation(current) {
+    const siblings = current.parent ? childrenOf(current.parent) : rootTutorials;
+    const position = siblings.findIndex((item) => item.number === current.number);
+    const previous = siblings[position - 1];
+    const next = siblings[position + 1];
+    const details = !current.parent ? childrenOf(current.number)[0] : null;
+    return `<nav class="lesson-navigation" aria-label="Lesson navigation"><span>${previous ? `<a href="./${previous.file}">← ${escapeHtml(previous.number)} Previous</a>` : ""}</span>${details ? `<a class="details-link" href="./${details.file}">Details ↓</a>` : ""}<span>${next ? `<a href="./${next.file}">Next ${escapeHtml(next.number)} →</a>` : ""}</span></nav>`;
+}
+
+function relatedFunctions(current) {
+    if (!current.object) return "";
+    const methods = objectHelp[current.object]?.functions || [];
+    return `<section class="related-functions"><h2>${escapeHtml(current.title)} reference</h2><p>Open a method for its full description and RiX examples.</p><ul>${methods.map(([name]) => `<li><button type="button" data-object-help="${escapeHtml(current.object)}" data-object-function="${escapeHtml(name)}"><code>${escapeHtml(name)}</code></button></li>`).join("")}</ul></section>`;
+}
+
 function pageTemplate(meta, body) {
-    return `<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="${escapeHtml(meta.description || "A runnable RiX lesson")}" /><title>${escapeHtml(meta.title || "RiX tutorial")} — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><a href="../">Open calculator</a></header><article class="lesson-card"><p class="lesson-kicker">RiX walkthrough · ${escapeHtml(meta.number || "01")}</p><h1>${escapeHtml(meta.title || "RiX tutorial")}</h1><p class="deck">${escapeHtml(meta.description || "Read, run, then change the next line.")}</p><div class="lesson-content">${body}</div><footer class="lesson-footer">Every cell above runs in this page and shares one RiX session. <a href="../">Open a fresh RatCalc session →</a></footer></article></div></main><script type="module" src="../assets/tutorial-runner.js"></script></body></html>`;
+    const current = tutorialByNumber(normalizedNumber(meta.number)) || { number: normalizedNumber(meta.number), title: meta.title, file: "", parent: null };
+    return `<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="${escapeHtml(meta.description || "A runnable RiX lesson")}" /><title>${escapeHtml(meta.title || "RiX tutorial")} — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><a href="../">Open calculator</a></header><div class="lesson-layout">${sidebar(current)}<article class="lesson-card"><p class="lesson-kicker">RiX walkthrough · ${escapeHtml(current.number)}</p><h1>${escapeHtml(meta.title || "RiX tutorial")}</h1><p class="deck">${escapeHtml(meta.description || "Read, run, then change the next line.")}</p><div class="lesson-content">${body}</div>${relatedFunctions(current)}${navigation(current)}<footer class="lesson-footer">Every cell above runs in this page and shares one RiX session. <a href="../">Open a fresh RatCalc session →</a></footer></article></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>`;
 }
 
 const markdownFiles = [];

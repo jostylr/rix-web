@@ -12,7 +12,7 @@
       <header class="app-header">
         <a class="brand" href="./" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a>
         <p>Exact rational arithmetic calculator with interval support powered by RiX</p>
-        <nav aria-label="RatCalc navigation"><a href="./learn/getting-started.html">Tutorials</a><button type="button" data-action="help">Help</button></nav>
+        <nav aria-label="RatCalc navigation"><button type="button" data-action="tutorials">Tutorials</button><button type="button" data-action="help">Help</button></nav>
       </header>
 
       <section class="calculator" aria-label="RatCalc calculator">
@@ -47,6 +47,14 @@
         <input id="help-search" class="help-search" type="search" placeholder="Search syntax, intervals, assignments…" />
         <div id="help-content"></div>
       </div>
+    </dialog>
+    <dialog id="tutorial-dialog" class="help-dialog" aria-labelledby="tutorial-title">
+      <header class="modal-header"><div><h2 id="tutorial-title">RiX tutorials</h2><p>Start broad, then open the details that matter.</p></div><button type="button" data-action="close-tutorials" aria-label="Close tutorials">×</button></header>
+      <div id="tutorial-content" class="modal-body tutorial-content"></div>
+    </dialog>
+    <dialog id="inspect-dialog" class="inspect-dialog" aria-labelledby="inspect-title">
+      <header class="inspect-header"><div><h2 id="inspect-title">Full result</h2><p id="inspect-source"></p></div><button type="button" data-action="close-inspect" aria-label="Close inspection">×</button></header>
+      <pre id="inspect-value" class="inspect-value"></pre>
     </dialog>
     <script type="module" src="./assets/main.js"></script>
   </body>

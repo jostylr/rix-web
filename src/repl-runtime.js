@@ -68,6 +68,7 @@ export function createRixRepl() {
         systemContext: createDefaultSystemContext(),
     };
     installSymbolicBindings(state.context);
+    let initialNames = new Set(state.context.getAllNames());
 
     return {
         run(source) {
@@ -84,7 +85,7 @@ export function createRixRepl() {
             }
         },
         variables() {
-            return state.context.getAllNames().map((name) => ({
+            return state.context.getAllNames().filter((name) => !initialNames.has(name)).map((name) => ({
                 name,
                 value: formatValue(state.context.get(name), { context: state.context, evaluate: null }),
             }));
@@ -92,6 +93,7 @@ export function createRixRepl() {
         reset() {
             state.context.clear();
             installSymbolicBindings(state.context);
+            initialNames = new Set(state.context.getAllNames());
         },
     };
 }
