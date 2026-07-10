@@ -159,6 +159,20 @@ RiX source.
    evaluation so learners can discover *why* RiX differs from conventional
    expression languages.
 
+## Capstones and comparative problems
+
+Every top-level section now ends with a Markdown capstone that combines the
+ideas introduced up to that point into one inspectable task. The capstones are
+numbered as the last subsection in their section and appear in the generated
+sidebar and previous/next sequence.
+
+Section 11 adds six comparative problems. Three introductory problems cover
+Newton square root, FizzBuzz, and a bounded Collatz test. Prime filtering and
+matrix multiplication provide moderate collection and structure exercises.
+Symbolic differentiation is the advanced problem. Each page shows static
+JavaScript, Python, and Julia landmarks, followed by an explained, runnable
+RiX solution and a blank RiX challenge.
+
 ## Source material coverage checklist
 
 - `rix/docs/introduction.md`: the main learner path, including cells, scopes,

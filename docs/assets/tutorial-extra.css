@@ -1,0 +1,8 @@
+.comparison-code { margin: 20px 0 26px; overflow: hidden; border: 1px solid #dbe0e5; border-radius: 7px; background: #1f2937; }
+.comparison-code header { padding: 8px 12px; background: #111827; color: #c7d2fe; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+.comparison-code pre { margin: 0; padding: 15px; overflow: auto; color: #f3f4f6; font: 13px/1.55 "SF Mono", Monaco, monospace; }
+.lesson-content a { color: #2563eb; }
+.api-links { margin-top: 30px; padding: 18px 20px; border: 1px solid #bfdbfe; border-radius: 7px; background: #eff6ff; }
+.api-links h2 { margin: 0 0 10px; color: #1d4ed8; font-size: 18px; }
+.api-links ul { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.api-links a { display: block; padding: 6px 9px; border-radius: 4px; background: #fff; color: #2563eb; text-decoration: none; font-size: 12px; }

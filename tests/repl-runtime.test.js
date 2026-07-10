@@ -56,6 +56,16 @@ warm.Union(cool)`);
     expect(response.text).toBe("{| 1, 2, 3 |}");
 });
 
+test("a standalone null ends a notebook statement", () => {
+    const repl = createRixRepl();
+    const response = repl.run(`reading := _
+bounds := 18:22
+bounds`);
+
+    expect(response.type).toBe("result");
+    expect(response.text).toBe("18:22");
+});
+
 test(".Help(topic) returns matching inline RiX REPL help", () => {
     const repl = createRixRepl();
     const response = repl.run('.Help("interval")');
@@ -75,5 +85,16 @@ test("every indexed tutorial has a Markdown source file", async () => {
     for (const tutorial of tutorials) {
         const source = Bun.file(new URL(`../tutorials/${tutorial.file.replace(/\.html$/, ".md")}`, import.meta.url));
         expect(await source.exists(), `lesson ${tutorial.number}`).toBe(true);
+    }
+});
+
+test("every published RiX tutorial cell executes", async () => {
+    for (const tutorial of tutorials) {
+        const source = await Bun.file(new URL(`../tutorials/${tutorial.file.replace(/\.html$/, ".md")}`, import.meta.url)).text();
+        const cells = source.matchAll(/(?:~~~|```)rix\n([\s\S]*?)\n(?:~~~|```)/g);
+        for (const [, code] of cells) {
+            const response = createRixRepl().run(code);
+            expect(response.type, `lesson ${tutorial.number}: ${response.text}`).toBe("result");
+        }
     }
 });

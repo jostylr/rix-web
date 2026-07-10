@@ -10,7 +10,7 @@ function isComment(token) {
 function canEndStatement(token) {
     if (!token || isComment(token)) return false;
     if (token.type !== "Symbol") return token.type !== "End";
-    return statementClosers.has(token.value) || token.value === "^^";
+    return statementClosers.has(token.value) || token.value === "^^" || token.value === "_";
 }
 
 function canStartStatement(token) {

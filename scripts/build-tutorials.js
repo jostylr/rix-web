@@ -9,9 +9,18 @@ const assetsDir = path.join(root, "docs", "assets");
 await mkdir(outDir, { recursive: true });
 await mkdir(assetsDir, { recursive: true });
 await Bun.write(path.join(assetsDir, "tutorial.css"), await readFile(path.join(root, "src", "tutorial.css")));
+await Bun.write(path.join(assetsDir, "tutorial-extra.css"), await readFile(path.join(root, "src", "tutorial-extra.css")));
 
 function escapeHtml(text) {
     return String(text).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#039;", '"': "&quot;" })[character]);
+}
+
+function renderInline(text) {
+    let html = escapeHtml(text);
+    html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+    html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    html = html.replace(/\[([^\]]+)\]\((https:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
+    return html;
 }
 
 function parseFrontmatter(source) {
@@ -29,28 +38,34 @@ function renderMarkdown(markdown) {
     const html = [];
     let paragraph = [];
     let code = null;
+    let codeLanguage = "";
     let challenge = null;
     const flushParagraph = () => {
         if (!paragraph.length) return;
-        html.push(`<p>${escapeHtml(paragraph.join(" "))}</p>`);
+        html.push(`<p>${renderInline(paragraph.join(" "))}</p>`);
         paragraph = [];
     };
     const flushCode = () => {
         if (code === null) return;
-        html.push(`<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source spellcheck="false">${escapeHtml(code)}</textarea><div class="tutorial-output" data-tutorial-output></div></section>`);
+        if (codeLanguage.toLowerCase() === "rix") {
+            html.push(`<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source spellcheck="false">${escapeHtml(code)}</textarea><div class="tutorial-output" data-tutorial-output></div></section>`);
+        } else {
+            html.push(`<section class="comparison-code"><header>${escapeHtml(codeLanguage || "code")}</header><pre><code>${escapeHtml(code)}</code></pre></section>`);
+        }
         code = null;
+        codeLanguage = "";
     };
     const flushChallenge = () => {
         if (!challenge) return;
         const challengeCode = challenge.code || "";
-        html.push(`<aside class="challenge"><p class="eyebrow">Challenge</p><h3>${escapeHtml(challenge.title || "Make it yours")}</h3><p>${escapeHtml(challenge.body.join(" "))}</p><section class="tutorial-cell"><header><span>Your RiX answer</span><button type="button" data-tutorial-run>Run answer</button></header><textarea class="tutorial-source" data-tutorial-source spellcheck="false" placeholder="# Write your RiX solution here">${escapeHtml(challengeCode)}</textarea><div class="tutorial-output" data-tutorial-output></div></section></aside>`);
+        html.push(`<aside class="challenge"><p class="eyebrow">Challenge</p><h3>${renderInline(challenge.title || "Make it yours")}</h3><p>${renderInline(challenge.body.join(" "))}</p><section class="tutorial-cell"><header><span>Your RiX answer</span><button type="button" data-tutorial-run>Run answer</button></header><textarea class="tutorial-source" data-tutorial-source spellcheck="false" placeholder="# Write your RiX solution here">${escapeHtml(challengeCode)}</textarea><div class="tutorial-output" data-tutorial-output></div></section></aside>`);
         challenge = null;
     };
     for (let index = 0; index < lines.length; index += 1) {
         const line = lines[index];
-        if (line.startsWith("```")) {
+        if (line.startsWith("```") || line.startsWith("~~~")) {
             if (code !== null) flushCode();
-            else { flushParagraph(); code = ""; }
+            else { flushParagraph(); code = ""; codeLanguage = line.slice(3).trim(); }
             continue;
         }
         if (code !== null) { code += `${code ? "\n" : ""}${line}`; continue; }
@@ -63,8 +78,8 @@ function renderMarkdown(markdown) {
         }
         if (!line.trim()) { flushParagraph(); continue; }
         const heading = line.match(/^(#{1,3})\s+(.+)$/);
-        if (heading) { flushParagraph(); const level = heading[1].length; html.push(`<h${level}>${escapeHtml(heading[2])}</h${level}>`); continue; }
-        if (line.startsWith("- ")) { flushParagraph(); const list = []; while (index < lines.length && lines[index].startsWith("- ")) { list.push(`<li>${escapeHtml(lines[index].slice(2))}</li>`); index += 1; } index -= 1; html.push(`<ul>${list.join("")}</ul>`); continue; }
+        if (heading) { flushParagraph(); const level = heading[1].length; html.push(`<h${level}>${renderInline(heading[2])}</h${level}>`); continue; }
+        if (line.startsWith("- ")) { flushParagraph(); const list = []; while (index < lines.length && lines[index].startsWith("- ")) { list.push(`<li>${renderInline(lines[index].slice(2))}</li>`); index += 1; } index -= 1; html.push(`<ul>${list.join("")}</ul>`); continue; }
         paragraph.push(line.trim());
     }
     flushParagraph(); flushCode(); flushChallenge();
@@ -99,9 +114,29 @@ function relatedFunctions(current) {
     return `<section class="related-functions"><h2>${escapeHtml(current.title)} reference</h2><p>Open a method for its full description and RiX examples.</p><ul>${methods.map(([name]) => `<li><button type="button" data-object-help="${escapeHtml(current.object)}" data-object-function="${escapeHtml(name)}"><code>${escapeHtml(name)}</code></button></li>`).join("")}</ul></section>`;
 }
 
+function referenceLinks(current) {
+    const rootNumber = current.parent || current.number;
+    const root = Number.parseInt(rootNumber, 10);
+    const links = {
+        1: [["RiX introduction", "https://github.com/jostylr/ratmath/blob/main/rix/docs/introduction.md"]],
+        2: [["Methods API", "https://github.com/jostylr/ratmath/blob/main/rix/docs/eval/methods-guide.md"], ["Collection syntax", "https://github.com/jostylr/ratmath/blob/main/rix/docs/eval/syntax-guide.md#collection-syntax"]],
+        3: [["Syntax and operators", "https://github.com/jostylr/ratmath/blob/main/rix/docs/eval/syntax-guide.md"], ["Number notation", "https://github.com/jostylr/ratmath/blob/main/rix/docs/introduction.md#number-systems-and-notation"]],
+        4: [["Cells and assignments", "https://github.com/jostylr/ratmath/blob/main/rix/docs/design/eval/cells-assignments.md"], ["Destructuring reference", "https://github.com/jostylr/ratmath/blob/main/rix/docs/eval/syntax-guide.md#left-hand-destructuring"]],
+        5: [["Functions reference", "https://github.com/jostylr/ratmath/blob/main/rix/docs/eval/syntax-guide.md#assignment--definition"], ["Function rationale", "https://github.com/jostylr/ratmath/blob/main/rix/docs/rix-rationales.md#multifunctions-2026-04-01"]],
+        6: [["Control-flow syntax", "https://github.com/jostylr/ratmath/blob/main/rix/docs/eval/syntax-guide.md#brace-containers"], ["Ternary reference", "https://github.com/jostylr/ratmath/blob/main/rix/docs/parser/ternary-operator.md"]],
+        7: [["Pipes API", "https://github.com/jostylr/ratmath/blob/main/rix/docs/eval/syntax-guide.md#pipe-operators"], ["Generator reference", "https://github.com/jostylr/ratmath/blob/main/rix/docs/parser/array-generators-implementation.md"]],
+        8: [["Types and traits API", "https://github.com/jostylr/ratmath/blob/main/rix/docs/eval/types-and-traits-guide.md"], ["Semantic conversion", "https://github.com/jostylr/ratmath/blob/main/rix/docs/eval/syntax-guide.md#semantic-inquiry-and-conversion"]],
+        9: [["System function API", "https://github.com/jostylr/ratmath/blob/main/rix/docs/eval/syntax-guide.md#part-2-system-function-reference"], ["Diagnostics API", "https://github.com/jostylr/ratmath/blob/main/rix/docs/eval/syntax-guide.md#part-4-diagnostics-testing-and-debugging"]],
+        10: [["Script imports", "https://github.com/jostylr/ratmath/blob/main/rix/docs/eval/syntax-guide.md#script-import-expressions"], ["Three-tier extension system", "https://github.com/jostylr/ratmath/blob/main/rix/docs/parser/three-tier-system.md"]],
+        11: [["RiX examples", "https://github.com/jostylr/ratmath/tree/main/rix/examples"], ["Evaluator syntax API", "https://github.com/jostylr/ratmath/blob/main/rix/docs/eval/syntax-guide.md"]],
+    }[root] || [];
+    if (!links.length) return "";
+    return `<section class="api-links"><h2>Reference</h2><ul>${links.map(([label, url]) => `<li><a href="${url}" target="_blank" rel="noreferrer">${escapeHtml(label)} ↗</a></li>`).join("")}</ul></section>`;
+}
+
 function pageTemplate(meta, body) {
     const current = tutorialByNumber(normalizedNumber(meta.number)) || { number: normalizedNumber(meta.number), title: meta.title, file: "", parent: null };
-    return `<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="${escapeHtml(meta.description || "A runnable RiX lesson")}" /><title>${escapeHtml(meta.title || "RiX tutorial")} — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><a href="../">Open calculator</a></header><div class="lesson-layout">${sidebar(current)}<article class="lesson-card"><p class="lesson-kicker">RiX walkthrough · ${escapeHtml(current.number)}</p><h1>${escapeHtml(meta.title || "RiX tutorial")}</h1><p class="deck">${escapeHtml(meta.description || "Read, run, then change the next line.")}</p><div class="lesson-content">${body}</div>${relatedFunctions(current)}${navigation(current)}<footer class="lesson-footer">Every cell above runs in this page and shares one RiX session. <a href="../">Open a fresh RatCalc session →</a></footer></article></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>`;
+    return `<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="${escapeHtml(meta.description || "A runnable RiX lesson")}" /><title>${escapeHtml(meta.title || "RiX tutorial")} — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><a href="../">Open calculator</a></header><div class="lesson-layout">${sidebar(current)}<article class="lesson-card"><p class="lesson-kicker">RiX walkthrough · ${escapeHtml(current.number)}</p><h1>${escapeHtml(meta.title || "RiX tutorial")}</h1><p class="deck">${escapeHtml(meta.description || "Read, run, then change the next line.")}</p><div class="lesson-content">${body}</div>${relatedFunctions(current)}${referenceLinks(current)}${navigation(current)}<footer class="lesson-footer">Every RiX cell above runs in this page and shares one RiX session. <a href="../">Open a fresh RatCalc session →</a></footer></article></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>`;
 }
 
 const markdownFiles = [];
