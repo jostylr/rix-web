@@ -1,0 +1,20 @@
+<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Keep a handful of exact values together, select one, and turn a small data set into an answer." /><title>Shape a collection — RiX Lab</title><link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin /><link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet" /><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /></head><body><div class="tutorial-page"><header class="topbar"><a class="brand" href="../" aria-label="RiX Lab home"><span class="brand-mark">R</span><span>RiX <b>Lab</b></span></a><nav><a href="../#workspace">Workspace</a><a href="../#learn">Lessons</a></nav></header><main class="tutorial-layout"><aside class="lesson-nav"><span>In this lesson</span><a href="#start">Start</a><a href="../">Open REPL →</a></aside><article class="lesson-content" id="start"><p class="lesson-kicker">RiX walkthrough · &quot;02&quot;</p><h1>Shape a collection</h1><p class="deck">Keep a handful of exact values together, select one, and turn a small data set into an answer.</p><h2>Put values in a row</h2>
+<p>Square brackets make an array. RiX uses one-based indexes, so the first item is at position `1`.</p>
+<section class="code-lesson"><header><span>Runnable RiX</span><button type="button" data-code="measurements := [3 / 2, 7 / 4, 2]
+measurements[2]">Open in workspace →</button></header><pre><code>measurements := [3 / 2, 7 / 4, 2]
+measurements[2]</code></pre></section>
+<p>That second measurement remains the exact rational `1 3/4`. Arrays can hold any RiX values, including other arrays and functions.</p>
+<h2>Build a small table</h2>
+<p>A map holds named entries. It is a useful shape for a compact record or a group of related constants.</p>
+<section class="code-lesson"><header><span>Runnable RiX</span><button type="button" data-code="recipe := {= flour=3 / 2, water=1, salt=1 / 40 }
+recipe">Open in workspace →</button></header><pre><code>recipe := {= flour=3 / 2, water=1, salt=1 / 40 }
+recipe</code></pre></section>
+<p>The output trail renders the map in the same readable RiX notation you typed.</p>
+<aside class="challenge"><p class="eyebrow">Challenge</p><h3>Find the middle value</h3><p>Make an array called `scores` containing 4, 9, and 16. Return the middle item using RiX&#039;s one-based index.</p><button class="run-challenge" type="button" data-code="scores := [4, 9, 16]
+scores[2]">Try it in the workspace →</button></aside>
+<h2>Keep an interval in view</h2>
+<p>An interval is as concise as its endpoints. Use a colon to place both bounds in a value you can name, pass around, and inspect.</p>
+<section class="code-lesson"><header><span>Runnable RiX</span><button type="button" data-code="safeTemperature := 18:24
+safeTemperature">Open in workspace →</button></header><pre><code>safeTemperature := 18:24
+safeTemperature</code></pre></section>
+<p>Try changing either endpoint, then return to the reference when you want to explore tuples, sets, slices, and tensors.</p><footer class="lesson-footer">Ready for a blank page? <a href="../">Return to the RiX workspace →</a></footer></article></main></div><script>document.addEventListener('click', event => { const button = event.target.closest('[data-code]'); if (!button) return; location.href = '../?code=' + encodeURIComponent(button.dataset.code); });</script></body></html>

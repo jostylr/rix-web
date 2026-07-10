@@ -1,0 +1,13 @@
+{
+  "name": "rix-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun run build:app && bun run build:tutorials",
+    "build:app": "bun scripts/build-app.js",
+    "build:tutorials": "bun scripts/build-tutorials.js",
+    "test": "bun test",
+    "serve": "python3 -m http.server 3000 --directory docs"
+  }
+}
