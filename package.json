@@ -5,7 +5,6 @@
   "type": "module",
   "scripts": {
     "build": "bun run build:app && bun run build:tutorials",
-    "materialize-tutorials": "bun scripts/materialize-lessons.js",
     "build:app": "bun scripts/build-app.js",
     "build:tutorials": "bun scripts/build-tutorials.js",
     "test": "bun test",

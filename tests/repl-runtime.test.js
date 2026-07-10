@@ -9,7 +9,7 @@ import {
 import { installSymbolicBindings } from "../../rix/src/eval/functions/symbolic.js";
 import { normalizeReplSource } from "../src/repl-source.js";
 import { createRixRepl } from "../src/repl-runtime.js";
-import { lessonContent } from "../src/lesson-content.js";
+import { tutorials } from "../src/tutorial-index.js";
 
 test("the web REPL runtime keeps its RiX context between cells", () => {
     const context = new Context();
@@ -71,8 +71,9 @@ test("a fresh RatCalc session does not expose host symbolic bindings as variable
     expect(repl.variables().map(({ name }) => name)).toEqual(["radius"]);
 });
 
-test("every generated tutorial starter runs in a fresh RatCalc session", () => {
-    for (const [number, [, source]] of Object.entries(lessonContent)) {
-        expect(createRixRepl().run(source).type, `lesson ${number}`).not.toBe("error");
+test("every indexed tutorial has a Markdown source file", async () => {
+    for (const tutorial of tutorials) {
+        const source = Bun.file(new URL(`../tutorials/${tutorial.file.replace(/\.html$/, ".md")}`, import.meta.url));
+        expect(await source.exists(), `lesson ${tutorial.number}`).toBe(true);
     }
 });

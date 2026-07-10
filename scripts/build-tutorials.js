@@ -1,7 +1,6 @@
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { childrenOf, objectHelp, rootTutorials, tutorialByNumber, tutorials } from "../src/tutorial-index.js";
-import { lessonContent } from "../src/lesson-content.js";
 
 const root = path.resolve(import.meta.dir, "..");
 const tutorialsDir = path.join(root, "tutorials");
@@ -114,8 +113,7 @@ for (const filename of markdownFiles) {
     generatedFiles.add(`${path.basename(filename, ".md")}.html`);
 }
 for (const lesson of tutorials) {
-    if (generatedFiles.has(lesson.file)) continue;
-    const [intro, example, note, challenge] = lessonContent[lesson.number] || [lesson.description, "1 + 1", "Use the language reference for complete syntax.", "Write a small RiX expression that applies this topic."];
-    const markdown = `## The idea\n\n${intro}\n\n## Run an example\n\n\`\`\`rix\n${example}\n\`\`\`\n\n## What to notice\n\n${note}\n\n:::challenge Try it yourself\n${challenge}\n:::\n\n## Go further\nUse the help panel and the language reference for complete syntax, edge cases, and related capabilities.`;
-    await Bun.write(path.join(outDir, lesson.file), pageTemplate(lesson, renderMarkdown(markdown)));
+    if (!generatedFiles.has(lesson.file)) {
+        throw new Error(`Missing Markdown source for tutorial ${lesson.number}: ${lesson.file.replace(/\.html$/, ".md")}`);
+    }
 }
