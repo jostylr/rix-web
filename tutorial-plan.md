@@ -121,7 +121,9 @@ RiX source.
   exact symbolic quantity magnitudes.
 - **8e Exact complex numbers** — algebraic division, conjugation, real and
   imaginary parts, and norm squared.
-- **8f Capstone: exact measurement** — combine physical dimensions with an
+- **8f Exact Cayley polar form** — exact magnitude generators, stereographic
+  half-angle direction, projective infinity, and Cayley arithmetic.
+- **8g Capstone: exact measurement** — combine physical dimensions with an
   exact symbolic magnitude.
 
 ### 9. System capabilities and symbolic work

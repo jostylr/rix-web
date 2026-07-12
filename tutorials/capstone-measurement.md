@@ -1,5 +1,5 @@
 ---
-number: 8f
+number: 8g
 title: Capstone: semantic measurement
 description: Attach meaning to an exact measurement workflow.
 ---

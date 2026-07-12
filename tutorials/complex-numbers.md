@@ -61,8 +61,9 @@ z := 3 + 4~{i};
 {: z.NormSquared(), .Complex.NormSquared(z) }
 ```
 
-Both entries are exactly `25`. `Magnitude` and `Arg` are deferred until RiX's
-real-number and trigonometric policies are ready.
+Both entries are exactly `25`. The next lesson introduces an exact magnitude
+through Cayley polar form. `Arg` remains deferred until RiX's real-number and
+trigonometric policies are ready.
 
 :::challenge Complex arithmetic practice
 Divide `3 + 4i` by `1 - i`, then verify the result by multiplying it by `1 - i`.
