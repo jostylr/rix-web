@@ -7,7 +7,6 @@ var symbols = [
   ":<=:",
   ":>:",
   ":<:",
-  ":=>",
   ":->",
   "\\/=",
   "/\\=",
@@ -711,7 +710,7 @@ function tryMatchBrace(input, position) {
       };
     }
   }
-  const sigilChars = new Set(["@", ";", "|", ":", "=", "?", "$", "#", "^"]);
+  const sigilChars = new Set(["@", ";", "|", ":", "=", "?", "$", "#", "^", ">"]);
   if (sigilChars.has(ch)) {
     const sigil = ch;
     const after = input[position + 2];
@@ -776,7 +775,7 @@ function tryMatchBrace(input, position) {
     return null;
   }
   const { line, col } = posToLineCol(input, position);
-  throw new Error(`'{' must be followed by a space, a sigil (@;|:=?$#^), or an operator (+, *, &&, ||, \\/, /\\, ++, <<, >>) at line ${line}:${col}`);
+  throw new Error(`'{' must be followed by a space, a sigil (@;|:=?$#^>), or an operator (+, *, &&, ||, \\/, /\\, ++, <<, >>) at line ${line}:${col}`);
 }
 function tryMatchSystemSpecHeader(input, position) {
   const start = position + 2;
@@ -1138,11 +1137,6 @@ var SYMBOL_TABLE = {
     associativity: "right",
     type: "infix"
   },
-  ":=>": {
-    precedence: PRECEDENCE.ASSIGNMENT,
-    associativity: "right",
-    type: "infix"
-  },
   "|>": { precedence: PRECEDENCE.PIPE, associativity: "left", type: "infix" },
   "||>": { precedence: PRECEDENCE.PIPE, associativity: "left", type: "infix" },
   "|>>": { precedence: PRECEDENCE.PIPE, associativity: "left", type: "infix" },
@@ -1483,6 +1477,7 @@ var SYMBOL_TABLE = {
   "{#": { precedence: 0, type: "brace_sigil" },
   "{$": { precedence: 0, type: "brace_sigil" },
   "{^": { precedence: 0, type: "brace_sigil" },
+  "{>": { precedence: 0, type: "brace_sigil" },
   "{!": { precedence: 0, type: "brace_sigil" },
   "..": { precedence: PRECEDENCE.PROPERTY, associativity: "left", type: "infix" },
   ".|": { precedence: PRECEDENCE.PROPERTY, associativity: "left", type: "postfix" },
@@ -1740,7 +1735,7 @@ class Parser {
           return this.parseAngleForm();
         } else if (token.value === "{") {
           return this.parseBraceContainer();
-        } else if (token.value === "{=" || token.value === "{?" || token.value === "{;" || token.value === "{|" || token.value === "{:" || token.value === "{@" || token.value === "{#" || token.value === "{.." || token.value === "{^" || token.value === "{$") {
+        } else if (token.value === "{=" || token.value === "{?" || token.value === "{;" || token.value === "{|" || token.value === "{:" || token.value === "{@" || token.value === "{#" || token.value === "{.." || token.value === "{>" || token.value === "{^" || token.value === "{$") {
           if (token.value === "{#") {
             return this.parseSystemSpecLiteral();
           }
@@ -1768,7 +1763,7 @@ class Parser {
         } else if (token.value === "@") {
           this.advance();
           const nextVal = this.current.value;
-          if (nextVal === "{" || nextVal === "{;" || nextVal === "{?" || nextVal === "{=" || nextVal === "{|" || nextVal === "{:" || nextVal === "{@" || nextVal === "{#" || nextVal === "{$" || nextVal === "{.." || nextVal === "{^") {
+          if (nextVal === "{" || nextVal === "{;" || nextVal === "{?" || nextVal === "{=" || nextVal === "{|" || nextVal === "{:" || nextVal === "{@" || nextVal === "{#" || nextVal === "{$" || nextVal === "{.." || nextVal === "{^" || nextVal === "{>") {
             let inner;
             if (nextVal === "{") {
               inner = this.parseBraceContainer();
@@ -1986,78 +1981,6 @@ class Parser {
       if (operator.value === "=>" || operator.value === "^=>") {
         this.error("Append/prepend syntax requires a named function signature like F(x) => body");
       }
-    } else if (operator.value === ":=>") {
-      right = this.parseExpression(rightPrec);
-      let funcName = left;
-      let parameters = {
-        positional: [],
-        keyword: [],
-        conditionals: [],
-        metadata: {}
-      };
-      let patterns = [];
-      let globalMetadata = {};
-      if (left.type === "FunctionCall") {
-        funcName = left.function;
-        parameters = this.convertArgsToParams(left.arguments);
-      }
-      let rawPatterns = [];
-      if (right.type === "Array") {
-        rawPatterns = right.elements;
-      } else if (right.type === "WithMetadata" && right.primary && right.primary.type === "Array") {
-        if (Array.isArray(right.primary.elements) && right.primary.elements.length > 0 && right.primary.elements[0].type === "Array") {
-          rawPatterns = right.primary.elements[0].elements;
-        } else {
-          rawPatterns = right.primary.elements;
-        }
-        globalMetadata = right.metadata;
-      } else {
-        rawPatterns = [right];
-      }
-      for (const pattern of rawPatterns) {
-        if (pattern.type === "FunctionLambda") {
-          const patternFunc = {
-            parameters: pattern.parameters,
-            body: pattern.body
-          };
-          patterns.push(patternFunc);
-        } else if (pattern.type === "BinaryOperation" && pattern.operator === "->") {
-          const patternFunc = {
-            parameters: {
-              positional: [],
-              keyword: [],
-              conditionals: [],
-              metadata: {}
-            },
-            body: pattern.right
-          };
-          if (pattern.left.type === "Grouping") {
-            const paramExpr = pattern.left.expression;
-            if (paramExpr.type === "BinaryOperation" && paramExpr.operator === "?") {
-              const paramName = paramExpr.left.name || paramExpr.left.value;
-              patternFunc.parameters.positional.push({
-                name: paramName,
-                defaultValue: null
-              });
-              patternFunc.parameters.conditionals.push(paramExpr.right);
-            } else if (paramExpr.type === "UserIdentifier") {
-              patternFunc.parameters.positional.push({
-                name: paramExpr.name || paramExpr.value,
-                defaultValue: null
-              });
-            }
-          }
-          patterns.push(patternFunc);
-        }
-      }
-      return this.createNode("PatternMatchingFunction", {
-        name: funcName,
-        parameters,
-        patterns,
-        metadata: globalMetadata,
-        pos: left.pos,
-        original: left.original + operator.original
-      });
     } else if (operator.value === "->") {
       right = this.parseExpression(rightPrec);
       if (left.type === "Grouping" && left.expression && left.expression.type === "ParameterList") {
@@ -3346,7 +3269,8 @@ class Parser {
       "{:": "TupleContainer",
       "{@": "LoopContainer",
       "{$": "BlockContainer",
-      "{^": "ValueOutfit"
+      "{^": "ValueOutfit",
+      "{>": "MultifunctionContainer"
     };
     const nodeType = sigilTypeMap[effectiveSigil];
     const temporalSigils = new Set(["{?", "{;", "{@", "{$"]);
@@ -5794,14 +5718,6 @@ var LOWERERS = {
     const body = lowerFunctionBody(node.body);
     return ir("MULTIFUNCDEF", name, node.mode, params, body);
   },
-  PatternMatchingFunction(node) {
-    const name = node.name.name || node.name.value;
-    const patterns = node.patterns.map((p) => ({
-      params: lowerParams(p.parameters),
-      body: lowerFunctionBody(p.body)
-    }));
-    return ir("PATTERNDEF", name, patterns);
-  },
   Grouping(node) {
     if (node.expression) {
       return lowerNode(node.expression);
@@ -5922,6 +5838,9 @@ var LOWERERS = {
   ArrayContainer(node) {
     const meta = node.header ? { header: lowerNode(node.header) } : null;
     return meta ? ir("ARRAY_CAPTURE", meta, ...node.elements.map(lowerNode)) : ir("ARRAY_CAPTURE", ...node.elements.map(lowerNode));
+  },
+  MultifunctionContainer(node) {
+    return ir("MULTIFUNCTION", ...node.elements.map(lowerNode));
   },
   LoopContainer(node) {
     const hasMeta = node.imports && node.imports.length > 0 || node.name || node.maxIterations !== undefined || node.unlimited === true;
@@ -9843,10 +9762,24 @@ function composeCayleyDirections(left, right) {
     return CAYLEY_INFINITY;
   return divideScalars(addScalars(left, right), denominator);
 }
+function isUnsupportedExactDivision(error) {
+  return error instanceof Error && /Division by a multi-term exact expression is not implemented/.test(error.message);
+}
+function cayleyProductViaCartesian(left, right) {
+  const iGenerator = left.iGenerator || right.iGenerator;
+  const product = multiplyScalars(cayleyCartesian(left), cayleyCartesian(right));
+  return cayleyFromCartesian(product, iGenerator);
+}
 function multiplyCayley(left, right) {
   const a = asCayley(left, right);
   const b = asCayley(right, a);
-  return createCayley(multiplyScalars(a.magnitude, b.magnitude), composeCayleyDirections(a.direction, b.direction), a.iGenerator || b.iGenerator);
+  try {
+    return createCayley(multiplyScalars(a.magnitude, b.magnitude), composeCayleyDirections(a.direction, b.direction), a.iGenerator || b.iGenerator);
+  } catch (error) {
+    if (!isUnsupportedExactDivision(error))
+      throw error;
+    return cayleyProductViaCartesian(a, b);
+  }
 }
 function conjugateCayley(value) {
   return createCayley(value.magnitude, negateCayleyDirection(value.direction), value.iGenerator);
@@ -10876,9 +10809,6 @@ function formatValue(val, options = {}) {
     if (val.type === "function" || val.type === "lambda") {
       return formatCallablePreview(val, val.type === "lambda" ? "Lambda" : "Function");
     }
-    if (val.type === "pattern_function") {
-      return `[PatternFunction: ${val.name || "Anonymous"}]`;
-    }
     if (val.type === "system_context") {
       const names = val.context.getAllNames();
       const frozenMark = val.context.frozen ? " frozen" : " mutable";
@@ -11422,7 +11352,7 @@ function ensureNumeric(val) {
     }
     return new Integer(BigInt(Math.floor(val)));
   }
-  if (typeof val === "function" || val && typeof val === "object" && (val.type === "lambda" || val.type === "function" || val.type === "pattern_function" || val.type === "sysref" || val.type === "partial" || val.type === "arityCap")) {
+  if (typeof val === "function" || val && typeof val === "object" && (val.type === "lambda" || val.type === "function" || val.type === "sysref" || val.type === "partial" || val.type === "arityCap")) {
     throw new Error("Cannot use function/lambda in arithmetic. If you intended to call a function, its name must be Capitalised.");
   }
   throw new Error(`Cannot use ${typeof val} in arithmetic`);
@@ -14651,20 +14581,28 @@ var functionFunctions = {
     },
     doc: "Append or prepend a multifunction variant"
   },
-  PATTERNDEF: {
+  MULTIFUNCTION: {
     lazy: true,
     impl(args, context, evaluate) {
-      const name = args[0];
-      const patterns = evaluate(args[1]);
-      const funcDef = {
-        type: "pattern_function",
-        name,
-        patterns
+      const variants = [];
+      const append = (value2) => {
+        if (isMultifunctionValue(value2)) {
+          for (const nested of value2.values)
+            append(nested);
+          return;
+        }
+        if (!value2 || value2.type !== "function" && value2.type !== "lambda") {
+          throw new Error("Multifunction literal entries must be functions or multifunctions");
+        }
+        variants.push(value2);
       };
-      context.defineFunction(name, funcDef);
-      return funcDef;
+      for (const arg of args)
+        append(evaluate(arg));
+      const value = createMultifunctionValue(variants);
+      rebuildMultifunctionState(value);
+      return value;
     },
-    doc: "Define a pattern-matching function"
+    doc: "Create an ordered multifunction literal, flattening nested multifunctions"
   },
   PIPE: {
     lazy: true,
@@ -19050,7 +18988,7 @@ var coreFunctions = {
       return { type: "placeholder", index: args[0] };
     },
     pure: true,
-    doc: "Placeholder for pattern matching"
+    doc: "Numbered placeholder for partial application and explicit pipes"
   },
   ASSIGN_EXPR: {
     lazy: true,
@@ -22486,5 +22424,5 @@ var objectHelp = {
 
 export { findHelp, createRixRepl, rootTutorials, childrenOf, objectHelp };
 
-//# debugId=529713F3EF4B6B1864756E2164756E21
-//# sourceMappingURL=chunk-p6zbrad8.js.map
+//# debugId=F345440340930ADA64756E2164756E21
+//# sourceMappingURL=chunk-h84fe54e.js.map

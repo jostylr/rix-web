@@ -3,7 +3,7 @@ import {
   createRixRepl,
   findHelp,
   rootTutorials
-} from "./chunk-kk28c7aw.js";
+} from "./chunk-h84fe54e.js";
 
 // src/main.js
 var repl = createRixRepl();
