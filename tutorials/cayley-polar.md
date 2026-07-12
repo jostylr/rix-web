@@ -57,6 +57,20 @@ cube := b^3;
 Multiplication, division, integer powers, reciprocal, negation, and conjugation
 all stay in Cayley coordinates.
 
+If two directions use independent square-root generators and the exact
+inverter cannot simplify the Möbius denominator directly, RiX takes an exact
+Cartesian bridge and returns the canonical Cayley result. This remains exact:
+
+```rix
+a := (5 + 3~{i}).Cayley();
+b := 1/2 - 1/2~{i};
+product := a * b;
+{: product, product.Cartesian() }
+```
+
+The result is `Cayley(sqrt17, 4 - sqrt17)` and `4 - i`, with no floating
+approximation.
+
 ## Addition takes the Cartesian bridge
 
 Complex addition is simplest in Cartesian coordinates. RiX converts exactly,
@@ -114,4 +128,3 @@ The first implementation adjoins a magnitude root when the Cartesian norm
 squared is rational. That covers Gaussian rational values. General
 real-algebraic root isolation is future work; RiX reports this boundary instead
 of approximating silently.
-

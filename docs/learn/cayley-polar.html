@@ -22,6 +22,12 @@ quotient := a / b;
 cube := b^3;
 {: product.Cartesian(), quotient.Cartesian(), cube.Cartesian() }</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Multiplication, division, integer powers, reciprocal, negation, and conjugation all stay in Cayley coordinates.</p>
+<p>If two directions use independent square-root generators and the exact inverter cannot simplify the Möbius denominator directly, RiX takes an exact Cartesian bridge and returns the canonical Cayley result. This remains exact:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source spellcheck="false">a := (5 + 3~{i}).Cayley();
+b := 1/2 - 1/2~{i};
+product := a * b;
+{: product, product.Cartesian() }</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The result is <code>Cayley(sqrt17, 4 - sqrt17)</code> and <code>4 - i</code>, with no floating approximation.</p>
 <h2>Addition takes the Cartesian bridge</h2>
 <p>Complex addition is simplest in Cartesian coordinates. RiX converts exactly, adds there, and converts the result back. The operator still returns a Cayley value.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source spellcheck="false">a := .Complex.Cayley(3 + 4~{i});
