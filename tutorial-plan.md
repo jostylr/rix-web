@@ -115,10 +115,14 @@ RiX source.
   built-in numeric semantics, and conversion diagnostics.
 - **8b Headers, capture, and traits** — semantic headers, sticky versus
   ephemeral metadata, capture modes, semantic names, and trait checks.
-- **8c Define a type or trait** — registry concepts, prototypes, method
-  installation, type export/import, and protocol-style trait bundles.
-- **8d Units** — scientific and algebraic unit notation, dimensions, and the
-  distinction between units and semantic types.
+- **8c Physical units and quantities** — unit values, conversion, dimensions,
+  affine coordinates, and lexical registry overlays.
+- **8d Exact generators** — algebraic relations, transcendental constants, and
+  exact symbolic quantity magnitudes.
+- **8e Exact complex numbers** — algebraic division, conjugation, real and
+  imaginary parts, and norm squared.
+- **8f Capstone: exact measurement** — combine physical dimensions with an
+  exact symbolic magnitude.
 
 ### 9. System capabilities and symbolic work
 
@@ -183,7 +187,8 @@ RiX solution and a blank RiX challenge.
   function catalog.
 - `rix/docs/eval/methods-guide.md`: object-specific lesson references and
   generated method help for arrays, maps, sets, strings, tuples, and tensors.
-- `rix/docs/eval/types-and-traits-guide.md`: lessons 8a–8c.
+- `rix/docs/eval/types-and-traits-guide.md` and
+  `rix/docs/design/eval/units-and-exact-generators.md`: section 8.
 - `rix/docs/parser/*.md`: learner-facing syntax clarifications plus the
   advanced extension track; parser architecture remains supplementary.
 - `rix/docs/rix-rationales.md`: rationale callouts, especially where semantics

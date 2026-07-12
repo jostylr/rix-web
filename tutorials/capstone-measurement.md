@@ -1,32 +1,35 @@
 ---
-number: 8d
+number: 8f
 title: Capstone: semantic measurement
 description: Attach meaning to an exact measurement workflow.
 ---
 
 ## The problem
 
-A measurement is more than a number: it has a stable conceptual name and may participate in type or trait protocols. The example begins with a semantic name while preserving an exact underlying value.
+A measurement has an exact magnitude, physical dimensions, and a chosen
+display unit. This capstone combines quantities with an exact symbolic constant.
 
 This capstone deliberately reuses ideas from every lesson in its section. Read the setup first, predict the last value, and only then run the cell. If the result surprises you, inspect each named intermediate rather than changing several lines at once.
 
 ## Build the solution
 
 ~~~rix
-reading := {^ /#roomTemperature/ 21 }
-adjusted := reading + 1 / 2
-{: reading, adjusted }
+radius := 5~[cm];
+circumference := 2 * .Exact[:pi] * radius;
+inMetres := .ConvertUnit(circumference, .Units[:m]);
+{: radius, circumference, inMetres }
 ~~~
 
 ## How the pieces fit
 
-The header gives the first value a sticky semantic name. Arithmetic still works through its exact numeric representation. In a host with a registered temperature type and unit protocol, the same pattern can add conversion and validation without changing the cell model learned earlier.
+The radius is a physical quantity, π remains an exact generator, and conversion
+changes only the display unit. Nothing is forced through a floating approximation.
 
 ## Meaning is part of the interface
 
-The semantic header documents what the raw twenty-one represents. That differs from merely naming a variable: a variable name belongs to one scope, while supported semantic metadata can travel with a value and guide validation or dispatch.
-
-The exact half-unit adjustment separates meaning from representation. RatCalc demonstrates that core honestly without inventing a complete temperature conversion system. A host package can explicitly register dimensions, conversion rules, and traits at its trust boundary, leaving the underlying calculation inspectable.
+The quantity runtime enforces dimensional compatibility rather than relying on
+a comment or sticky metadata. Display choice remains separate: centimetres and
+metres share a Length dimension and an exact conversion factor.
 
 The important design choice is visible in the notation: collection shape, assignment mode, scope marker, or system boundary communicates an intention that would otherwise have to live in a comment.
 
@@ -35,11 +38,11 @@ The important design choice is visible in the notation: collection shape, assign
 Once the first version works, change one input and observe which outputs change. Then add one intermediate name so the next reader can inspect the new rule without mentally executing the entire program.
 
 :::challenge Capstone extension
-Create named lower and upper readings and return an interval from their exact numeric values.
+Compute the area of the same circle in square centimetres and square metres.
 :::
 
 ## Review questions
 
-- Which values are exact points, and which preserve uncertainty?
-- Which names introduce fresh values, aliases, or outer-scope updates?
-- Where would an assertion or diagnostic make this model safer?
+- Which layer records dimensions, and which records the exact π factor?
+- Why does conversion not need the source unit as an argument?
+- Which incompatible operation would you test to protect this model?

@@ -1,44 +1,96 @@
 ---
 number: 8c
-title: Units
-description: Scientific and algebraic unit notation.
+title: Physical units and quantities
+description: Compose units as values, convert exactly, and catch dimensional mistakes.
 ---
 
-## Orientation
+## Units are ordinary values
 
-Units are separate from ordinary number parsing and semantic types. Scientific and algebraic unit notation should make the physical meaning of a value visible.
-
-Read this chapter with RatCalc open. Predict the result before running an
-example, then change a single part and run it again. That small loop of
-prediction, execution, and inspection is the fastest way to make RiX syntax
-feel like a language rather than a table of symbols.
-
-## A worked example
+RiX loads its standard units into the `.Units` map. A unit can be retrieved,
+assigned, passed around, multiplied, or divided like another value:
 
 ```rix
-distance := 3
-distance
+m := .Units[:m];
+s := .Units[:s];
+distance := 120 * m;
+elapsed := 10 * s;
+distance / elapsed
 ```
 
-The final line is the displayed value; the earlier lines set up the experiment.
-Keep the setup visible so you can tell whether a name, a cell, or a collection
-is being reused when the expression changes.
+The result is `12~[m/s]`. Internally RiX keeps an exact magnitude, a physical
+dimension vector, and a display unit.
 
-## Read the result
+## Concise scientific notation
 
-Unit-heavy examples depend on the active unit capability; RatCalc keeps the core exact-number lesson runnable.
+The bracket form is lookup-and-multiply sugar over the same `.Units` values:
 
-Try a second value of your own. When an advanced feature depends on files,
-JavaScript, or extension registration, RatCalc explains the concept but does
-not grant browser permissions implicitly. Use the detail pages and the help
-panel to connect this experiment to the broader language rules.
+```rix
+explicit := 9 * .Units[:m] / .Units[:s]^2;
+concise := 9~[m/s^2];
+explicit == concise
+```
 
-:::challenge Units practice
-Record a quantity and write a comment describing its intended unit before extending it in a unit-enabled host.
+Unknown names inside `~[...]` are errors rather than silently becoming labels.
+
+## Compatible addition
+
+Compatible quantities are normalized before arithmetic. Addition preserves the
+left operand's display unit:
+
+```rix
+inSeconds := 30~[s] + 2~[min];
+inMinutes := 2~[min] + 30~[s];
+{: inSeconds, inMinutes }
+```
+
+The values describe the same duration but display as `150~[s]` and
+`2..1/2~[min]`. Trying `1~[m] + 1~[s]` raises a dimensional error.
+
+## Explicit conversion
+
+The quantity already knows its source unit, so conversion only needs a target:
+
+```rix
+speed := 36~[km/h];
+.ConvertUnit(speed, .Units[:m] / .Units[:s])
+```
+
+Target strings are also accepted: `.ConvertUnit(speed, "m/s")`.
+
+## Affine temperature coordinates
+
+Units double as one-argument constructors. This matters for Celsius and
+Fahrenheit because their zero points differ:
+
+```rix
+roomC := .Units[:degC](20);
+.ConvertUnit(roomC, .Units[:degF])
+```
+
+Subtracting two temperature points produces a linear difference:
+
+```rix
+.Units[:degC](20) - .Units[:degC](12)
+```
+
+Adding two temperature points or compounding an affine coordinate is rejected.
+
+## Extend the active collection
+
+`.DefineUnit` returns a unit value. Put it in an ordinary map overlay named
+`Units`; the sugar checks that lexical map before the system default:
+
+```rix
+fortnight := .DefineUnit(:fortnight, 14 * .Units[:day]);
+Units := .Units.Merge({= fortnight=fortnight });
+.ConvertUnit(1~[fortnight], .Units[:day])
+```
+
+:::challenge Unit conversion practice
+Compute a 10-kilometre race pace in minutes per kilometre when the elapsed time is 50 minutes.
 :::
 
-## Keep going
+## Next
 
-Return to the overview when you need context, or continue to the next sibling
-lesson for a focused variation. Collection chapters also end with method help
-that includes signatures and examples.
+The next lesson uses the parallel `.Exact` collection for π, `i`, and algebraic
+generators. Physical units and exact symbolic magnitudes can be composed.
