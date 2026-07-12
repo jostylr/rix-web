@@ -26,7 +26,7 @@ export const tutorials = [
     { number: "5d", parent: "5", file: "partials.html", title: "Partial application", description: "Placeholders and arity-capped callables." },
     { number: "5e", parent: "5", file: "capstone-dispatch.html", title: "Capstone: rule dispatcher", description: "Compose functions, scope, and variants into one task." },
     { number: "6", file: "control.html", title: "Control and deferred work", description: "Ternaries, braces, loops, and deferred execution." },
-    { number: "6a", parent: "6", file: "ternaries.html", title: "Ternaries and cases", description: "Choose values without losing expression flow." },
+    { number: "6a", parent: "6", file: "ternaries.html", title: "Ternaries and cases", description: "Choose values with branches, prepared trials, and ordered recovery." },
     { number: "6b", parent: "6", file: "brace-containers.html", title: "Brace containers", description: "Blocks, sigils, loops, and break blocks." },
     { number: "6c", parent: "6", file: "deferred.html", title: "Deferred execution", description: "Delay and evaluate code deliberately." },
     { number: "6d", parent: "6", file: "capstone-simulation.html", title: "Capstone: bounded simulation", description: "Use branches, blocks, and loops to model a process." },
