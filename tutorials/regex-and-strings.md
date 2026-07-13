@@ -1,5 +1,5 @@
 ---
-number: 7c
+number: 7d
 title: Regexes and strings
 description: Pattern literals and text transformation.
 ---

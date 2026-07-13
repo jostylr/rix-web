@@ -1,5 +1,5 @@
 ---
-number: 7d
+number: 7e
 title: Capstone: transform a report
 description: Turn a small collection into a derived result.
 ---

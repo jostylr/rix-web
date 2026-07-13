@@ -66,6 +66,16 @@ bounds`);
     expect(response.text).toBe("18:22");
 });
 
+test("a dot-prefixed system call starts a new notebook statement", () => {
+    const repl = createRixRepl();
+    const response = repl.run(`grid := 0:1 :: 5
+.RandomSeed(7)
+0:1 :% (1, 1000)`);
+
+    expect(response.type).toBe("result");
+    expect(response.text).toBe("11/1000");
+});
+
 test(".Help(topic) returns matching inline RiX REPL help", () => {
     const repl = createRixRepl();
     const response = repl.run('.Help("interval")');
