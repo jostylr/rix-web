@@ -47,6 +47,17 @@ total := 3 +
 total`);
 });
 
+test("automatic top-level line separation can be disabled for script parity", () => {
+    const repl = createRixRepl({ autoSeparateLines: false });
+    const source = `value := 2
+value`;
+
+    expect(repl.run(source).type).toBe("error");
+
+    repl.setAutoSeparateLines(true);
+    expect(repl.run(source).text).toBe("2");
+});
+
 test("notebook newlines separate statements following a sigil container", () => {
     const repl = createRixRepl();
     const response = repl.run(`warm := {| 1, 2 |}

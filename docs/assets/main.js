@@ -3,7 +3,7 @@ import {
   createRixRepl,
   findHelp,
   rootTutorials
-} from "./chunk-0zr7mb1q.js";
+} from "./chunk-evc91ry6.js";
 
 // src/main.js
 var repl = createRixRepl();
@@ -11,6 +11,7 @@ var outputHistory = document.querySelector("#output-history");
 var input = document.querySelector("#calculator-input");
 var calculator = document.querySelector(".calculator");
 var scriptToggle = document.querySelector("#script-toggle");
+var lineSeparatorToggle = document.querySelector("#line-separator-toggle");
 var scriptNote = document.querySelector("#script-note");
 var helpDialog = document.querySelector("#help-dialog");
 var helpSearch = document.querySelector("#help-search");
@@ -25,6 +26,7 @@ var scriptMode = false;
 var history = [];
 var historyIndex = -1;
 var transcript = [];
+var autoSeparateLines = true;
 function escapeHtml(value) {
   return String(value).replace(/[&<>'"]/g, (character) => ({
     "&": "&amp;",
@@ -160,10 +162,18 @@ function setScriptMode(next) {
   scriptMode = next;
   calculator.classList.toggle("script-mode", scriptMode);
   scriptToggle.classList.toggle("active", scriptMode);
+  scriptToggle.setAttribute("aria-pressed", String(scriptMode));
   scriptToggle.textContent = `Script entry: ${scriptMode ? "on" : "off"}`;
   scriptNote.hidden = !scriptMode;
-  document.querySelector("#entry-mode-label").textContent = scriptMode ? "Script mode · Ctrl/⌘ + Enter runs" : "Command mode · Enter runs";
+  document.querySelector("#entry-mode-label").textContent = scriptMode ? "Script mode · Enter adds a line · Ctrl/⌘ + Enter runs" : "Command mode · Enter runs · Shift+↑ edits a script";
   setInput(input.value);
+}
+function setAutoSeparateLines(next) {
+  autoSeparateLines = next;
+  repl.setAutoSeparateLines(autoSeparateLines);
+  lineSeparatorToggle.classList.toggle("active", autoSeparateLines);
+  lineSeparatorToggle.setAttribute("aria-pressed", String(autoSeparateLines));
+  lineSeparatorToggle.textContent = `Auto-separate lines: ${autoSeparateLines ? "on" : "off"}`;
 }
 function continueCommand() {
   const position = input.selectionStart;
@@ -225,6 +235,9 @@ document.addEventListener("click", (event) => {
     case "script":
       setScriptMode(!scriptMode);
       break;
+    case "line-separators":
+      setAutoSeparateLines(!autoSeparateLines);
+      break;
     case "copy":
       navigator.clipboard?.writeText(transcript.map((entry) => `> ${entry.source}
 ${entry.text}`).join(`
@@ -240,6 +253,16 @@ ${entry.text}`).join(`
 });
 input.addEventListener("input", () => setInput(input.value));
 input.addEventListener("keydown", (event) => {
+  if (event.shiftKey && event.key === "ArrowUp") {
+    event.preventDefault();
+    setScriptMode(true);
+    return;
+  }
+  if (event.shiftKey && event.key === "ArrowDown") {
+    event.preventDefault();
+    setScriptMode(false);
+    return;
+  }
   if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
     event.preventDefault();
     execute();
@@ -278,7 +301,8 @@ fileInput.addEventListener("change", async () => {
   });
 });
 displayWelcome();
+setAutoSeparateLines(autoSeparateLines);
 input.focus();
 
-//# debugId=E8BF68FCEDF2A92D64756E2164756E21
+//# debugId=6FD31F7BC81EC72B64756E2164756E21
 //# sourceMappingURL=main.js.map

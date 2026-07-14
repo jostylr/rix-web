@@ -61,7 +61,7 @@ function inlineHelpRequest(source) {
     return match ? (match[1] ?? match[2] ?? match[3] ?? "").trim() : null;
 }
 
-export function createRixRepl() {
+export function createRixRepl({ autoSeparateLines = true } = {}) {
     const state = {
         context: new Context(),
         registry: createDefaultRegistry(),
@@ -69,13 +69,14 @@ export function createRixRepl() {
     };
     installSymbolicBindings(state.context);
     let initialNames = new Set(state.context.getAllNames());
+    let separateLines = autoSeparateLines;
 
     return {
         run(source) {
             const topic = inlineHelpRequest(source);
             if (topic !== null) return { type: "help", source, ...findHelp(topic) };
             try {
-                const result = parseAndEvaluate(normalizeReplSource(source), {
+                const result = parseAndEvaluate(separateLines ? normalizeReplSource(source) : source, {
                     ...state,
                     file: "<ratcalc>",
                 });
@@ -94,6 +95,12 @@ export function createRixRepl() {
             state.context.clear();
             installSymbolicBindings(state.context);
             initialNames = new Set(state.context.getAllNames());
+        },
+        setAutoSeparateLines(enabled) {
+            separateLines = Boolean(enabled);
+        },
+        autoSeparatesLines() {
+            return separateLines;
         },
     };
 }

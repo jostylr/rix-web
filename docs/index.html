@@ -18,7 +18,7 @@
       <section class="calculator" aria-label="RatCalc calculator">
         <div class="calculator-toolbar">
           <span><i></i> RiX browser session</span>
-          <span id="entry-mode-label">Command mode · Enter runs</span>
+          <span id="entry-mode-label">Command mode · Enter runs · Shift+↑ edits a script</span>
         </div>
         <div id="output-history" class="output-history" aria-live="polite"></div>
         <div id="input-section" class="input-section">
@@ -27,13 +27,14 @@
           <textarea id="calculator-input" class="calculator-input" rows="1" spellcheck="false" placeholder="Enter a RiX expression — .help for help"></textarea>
           <button class="run-button" type="button" data-action="run">Run</button>
         </div>
-        <p id="script-note" class="script-note" hidden>Script mode: Enter adds a line; Ctrl/⌘ + Enter runs the script.</p>
+        <p id="script-note" class="script-note" hidden>Script mode: Enter adds a line; ↑ and ↓ move through the text; Ctrl/⌘ + Enter runs the script; Shift+↓ returns to command mode.</p>
       </section>
 
       <div class="controls" aria-label="Calculator controls">
         <button type="button" data-action="copy">Copy session</button>
         <button type="button" data-action="help">? Help</button>
-        <button id="script-toggle" type="button" data-action="script">Script entry: off</button>
+        <button id="script-toggle" type="button" data-action="script" aria-pressed="false">Script entry: off</button>
+        <button id="line-separator-toggle" type="button" data-action="line-separators" aria-pressed="true">Auto-separate lines: on</button>
         <button type="button" data-action="load">Load</button>
         <button type="button" data-action="clear">Clear</button>
         <input id="file-input" type="file" accept=".rix,.js,text/plain,application/javascript" hidden />

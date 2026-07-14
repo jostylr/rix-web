@@ -6,6 +6,7 @@ const outputHistory = document.querySelector("#output-history");
 const input = document.querySelector("#calculator-input");
 const calculator = document.querySelector(".calculator");
 const scriptToggle = document.querySelector("#script-toggle");
+const lineSeparatorToggle = document.querySelector("#line-separator-toggle");
 const scriptNote = document.querySelector("#script-note");
 const helpDialog = document.querySelector("#help-dialog");
 const helpSearch = document.querySelector("#help-search");
@@ -21,6 +22,7 @@ let scriptMode = false;
 let history = [];
 let historyIndex = -1;
 let transcript = [];
+let autoSeparateLines = true;
 
 function escapeHtml(value) {
     return String(value).replace(/[&<>'"]/g, (character) => ({
@@ -159,10 +161,21 @@ function setScriptMode(next) {
     scriptMode = next;
     calculator.classList.toggle("script-mode", scriptMode);
     scriptToggle.classList.toggle("active", scriptMode);
+    scriptToggle.setAttribute("aria-pressed", String(scriptMode));
     scriptToggle.textContent = `Script entry: ${scriptMode ? "on" : "off"}`;
     scriptNote.hidden = !scriptMode;
-    document.querySelector("#entry-mode-label").textContent = scriptMode ? "Script mode · Ctrl/⌘ + Enter runs" : "Command mode · Enter runs";
+    document.querySelector("#entry-mode-label").textContent = scriptMode
+        ? "Script mode · Enter adds a line · Ctrl/⌘ + Enter runs"
+        : "Command mode · Enter runs · Shift+↑ edits a script";
     setInput(input.value);
+}
+
+function setAutoSeparateLines(next) {
+    autoSeparateLines = next;
+    repl.setAutoSeparateLines(autoSeparateLines);
+    lineSeparatorToggle.classList.toggle("active", autoSeparateLines);
+    lineSeparatorToggle.setAttribute("aria-pressed", String(autoSeparateLines));
+    lineSeparatorToggle.textContent = `Auto-separate lines: ${autoSeparateLines ? "on" : "off"}`;
 }
 
 function continueCommand() {
@@ -204,6 +217,7 @@ document.addEventListener("click", (event) => {
     case "close-inspect": inspectDialog.close(); input.focus(); break;
     case "clear": clearSession(); break;
     case "script": setScriptMode(!scriptMode); break;
+    case "line-separators": setAutoSeparateLines(!autoSeparateLines); break;
     case "copy": navigator.clipboard?.writeText(transcript.map((entry) => `> ${entry.source}\n${entry.text}`).join("\n\n")); break;
     case "load": fileInput.click(); break;
     default: break;
@@ -212,6 +226,18 @@ document.addEventListener("click", (event) => {
 
 input.addEventListener("input", () => setInput(input.value));
 input.addEventListener("keydown", (event) => {
+    // Keep ordinary arrows available for moving through a multiline textarea.
+    // Shift+ArrowUp/Down are deliberate mode changes rather than history navigation.
+    if (event.shiftKey && event.key === "ArrowUp") {
+        event.preventDefault();
+        setScriptMode(true);
+        return;
+    }
+    if (event.shiftKey && event.key === "ArrowDown") {
+        event.preventDefault();
+        setScriptMode(false);
+        return;
+    }
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); execute(); return; }
     if (event.key === "Enter" && !scriptMode) {
         event.preventDefault();
@@ -232,4 +258,5 @@ fileInput.addEventListener("change", async () => { const [file] = fileInput.file
 });
 
 displayWelcome();
+setAutoSeparateLines(autoSeparateLines);
 input.focus();
