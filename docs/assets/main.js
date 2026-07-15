@@ -3,7 +3,7 @@ import {
   createRixRepl,
   findHelp,
   rootTutorials
-} from "./chunk-cmrwvgvg.js";
+} from "./chunk-nxzms51x.js";
 
 // src/main.js
 var repl = createRixRepl();
@@ -312,7 +312,8 @@ input.addEventListener("scroll", () => {
 input.addEventListener("keydown", (event) => {
   if (event.key === "Tab") {
     event.preventDefault();
-    beginCompletion();
+    if (!acceptCompletion())
+      beginCompletion();
     return;
   }
   if (event.key === "ArrowUp" && moveCompletion(-1)) {
@@ -383,5 +384,5 @@ displayWelcome();
 setAutoSeparateLines(autoSeparateLines);
 input.focus();
 
-//# debugId=365DB0C642A5870264756E2164756E21
+//# debugId=74CB10A1A9B8E12F64756E2164756E21
 //# sourceMappingURL=main.js.map

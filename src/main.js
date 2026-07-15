@@ -280,7 +280,7 @@ document.addEventListener("click", (event) => {
 input.addEventListener("input", () => setInput(input.value));
 input.addEventListener("scroll", () => { if (completionState) renderCompletion(); });
 input.addEventListener("keydown", (event) => {
-    if (event.key === "Tab") { event.preventDefault(); beginCompletion(); return; }
+    if (event.key === "Tab") { event.preventDefault(); if (!acceptCompletion()) beginCompletion(); return; }
     if (event.key === "ArrowUp" && moveCompletion(-1)) { event.preventDefault(); return; }
     if (event.key === "ArrowDown" && moveCompletion(1)) { event.preventDefault(); return; }
     if (event.key === "ArrowRight" && acceptCompletion()) { event.preventDefault(); return; }
