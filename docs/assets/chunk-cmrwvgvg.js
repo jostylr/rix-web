@@ -5418,969 +5418,6 @@ class SystemLoader {
   }
 }
 var defaultSystemLoader = new SystemLoader;
-// ../rix/src/eval/ir.js
-function ir(fn, ...args) {
-  return { fn, args };
-}
-
-// ../rix/src/eval/lower.js
-var BINARY_OP_MAP = {
-  "+": "ADD",
-  "-": "SUB",
-  "*": "MUL",
-  "/": "DIV",
-  "//": "INTDIV",
-  "%": "MOD",
-  "^": "POW",
-  "**": "POWPROD",
-  "==": "EQ",
-  "!=": "NEQ",
-  "<": "LT",
-  ">": "GT",
-  "<=": "LTE",
-  ">=": "GTE",
-  "===": "SAME_CELL",
-  AND: "AND",
-  "&&": "AND",
-  OR: "OR",
-  "||": "OR",
-  "\\/": "UNION",
-  "/\\": "INTERSECT",
-  "\\": "SET_DIFF",
-  "<>": "SET_SYMDIFF",
-  "?": "MEMBER",
-  "!?": "NOT_MEMBER",
-  "?&": "INTERSECTS",
-  "++": "CONCAT",
-  "/^": "DIVUP",
-  "/~": "DIVROUND",
-  "/%": "DIVMOD",
-  "?|": "HOLE_COALESCE"
-};
-function lower(ast) {
-  if (!Array.isArray(ast)) {
-    return lowerNode(ast);
-  }
-  return ast.map(lowerNode);
-}
-function lowerNode(node) {
-  if (!node || !node.type) {
-    return node;
-  }
-  const handler = LOWERERS[node.type];
-  if (!handler) {
-    throw new Error(`Unknown AST node type: ${node.type}`);
-  }
-  const result = handler(node);
-  if (result && typeof result === "object" && !Array.isArray(result) && node.pos) {
-    result.pos = node.pos;
-  }
-  return result;
-}
-function lowerFunctionBody(node) {
-  if (!node || !node.type) {
-    return lowerNode(node);
-  }
-  if (node.type === "Grouping") {
-    if (node.expression) {
-      return lowerFunctionBody(node.expression);
-    }
-    return ir("NULL");
-  }
-  if (node.type === "TernaryOperation") {
-    return ir("TERNARY", lowerNode(node.condition), ir("DEFER", lowerFunctionBody(node.trueExpression)), ir("DEFER", lowerFunctionBody(node.falseExpression)));
-  }
-  if (node.type === "Call" && node.target?.type === "SelfRef") {
-    const args = lowerCallArgs(node.arguments);
-    return ir("TAIL_SELF", ...args);
-  }
-  if (node.type === "BlockContainer" || node.type === "SystemContainer") {
-    const elements = node.elements || [];
-    const loweredElements = elements.map((element, index) => index === elements.length - 1 ? lowerFunctionBody(element) : lowerNode(element));
-    const fn = node.type === "BlockContainer" ? "BLOCK" : "SYSTEM";
-    const hasMeta = node.imports && node.imports.length > 0 || node.name;
-    if (!hasMeta) {
-      return ir(fn, ...loweredElements);
-    }
-    const meta = {};
-    if (node.imports && node.imports.length > 0)
-      meta.imports = lowerImports(node.imports);
-    if (node.name)
-      meta.name = node.name;
-    return ir(fn, meta, ...loweredElements);
-  }
-  return lowerNode(node);
-}
-var COMBO_ASSIGN_OP_MAP = {
-  "+=": "+",
-  "-=": "-",
-  "*=": "*",
-  "++=": "++",
-  "/=": "/",
-  "//=": "//",
-  "/\\=": "/\\",
-  "/^=": "/^",
-  "/~=": "/~",
-  "%=": "%",
-  "^=": "^",
-  "**=": "**",
-  "\\/=": "\\/",
-  "\\=": "\\"
-};
-var LOWERERS = {
-  Number(node) {
-    if (node.value && node.value.includes(":")) {
-      const parts = node.value.split(":");
-      return ir("INTERVAL", ...parts.map((p) => ir("LITERAL", p)));
-    }
-    return ir("LITERAL", node.value);
-  },
-  String(node) {
-    return ir("STRING", node.value);
-  },
-  ScriptImportExpression(node) {
-    return ir("SCRIPT_IMPORT", {
-      path: node.path.value,
-      capabilityModifiers: lowerCapabilityModifiers(node.capabilityModifiers || []),
-      inputs: lowerBindingSpecs(node.inputs || []),
-      outputs: lowerBindingSpecs(node.outputs || [])
-    });
-  },
-  ScriptBindingsDeclaration() {
-    throw new Error("Script input/export declarations are only valid as the first or last statement of an imported script");
-  },
-  RegexLiteral(node) {
-    const modeMap = {
-      ONE: 0,
-      TEST: 1,
-      ALL: 2,
-      ITER: 3
-    };
-    return ir("REGEX", ir("STRING", node.pattern), ir("STRING", node.flags), ir("LITERAL", modeMap[node.mode] || 0));
-  },
-  NULL() {
-    return ir("NULL");
-  },
-  Hole() {
-    return ir("HOLE");
-  },
-  SemanticHas(node) {
-    return ir("SEMANTIC_HAS", lowerNode(node.expression), node.name);
-  },
-  SemanticConvertSoft(node) {
-    return ir("SEMANTIC_CONVERT_SOFT", lowerNode(node.expression), node.typeName);
-  },
-  SemanticConvertStrict(node) {
-    return ir("SEMANTIC_CONVERT_STRICT", lowerNode(node.expression), node.typeName);
-  },
-  SelfRef() {
-    return ir("SELF");
-  },
-  ParentSelfRef() {
-    return ir("PARENT_SELF");
-  },
-  UserIdentifier(node) {
-    return ir("RETRIEVE", node.name);
-  },
-  SystemIdentifier(node) {
-    if (node.original && node.original.trim().startsWith("@")) {
-      return ir("SYSREF", node.name);
-    }
-    return ir("RETRIEVE", node.name);
-  },
-  OuterIdentifier(node) {
-    return ir("OUTER_RETRIEVE", node.name);
-  },
-  SystemFunctionRef(node) {
-    return ir("SYSREF", node.name);
-  },
-  PlaceHolder(node) {
-    return ir("PLACEHOLDER", node.place);
-  },
-  Statement(node) {
-    return lowerNode(node.expression);
-  },
-  SequenceExpression(node) {
-    return ir("SEQ", ...node.expressions.map(lowerNode));
-  },
-  Comment() {
-    return ir("NOP");
-  },
-  BinaryOperation(node) {
-    const op = node.operator;
-    if (op === "=" || op === ":=" || op === "~=" || op === "::=" || op === "~~=") {
-      const leftType = node.left?.type || "";
-      if (leftType.startsWith("Destructure")) {
-        return ir("DESTRUCTURE_ASSIGN", lowerDestructureTarget(node.left), op, lowerNode(node.right));
-      }
-    }
-    if (op === "=")
-      return lowerAssignment(node, "ASSIGN");
-    if (op === ":=")
-      return lowerAssignment(node, "ASSIGN_COPY");
-    if (op === "~=")
-      return lowerAssignment(node, "ASSIGN_UPDATE");
-    if (op === "::=")
-      return lowerAssignment(node, "ASSIGN_DEEP_COPY");
-    if (op === "~~=")
-      return lowerAssignment(node, "ASSIGN_DEEP_UPDATE");
-    if (op === ".=") {
-      return ir("META_MERGE", lowerNode(node.left), lowerNode(node.right));
-    }
-    const mathOpStr = COMBO_ASSIGN_OP_MAP[op];
-    if (mathOpStr) {
-      const mathAstNode = {
-        type: "BinaryOperation",
-        operator: mathOpStr,
-        left: node.left,
-        right: node.right,
-        pos: node.pos
-      };
-      const assignAstNode = {
-        type: "BinaryOperation",
-        operator: "~=",
-        left: node.left,
-        right: mathAstNode,
-        pos: node.pos
-      };
-      return lowerAssignment(assignAstNode, "ASSIGN_UPDATE");
-    }
-    if (op === ":=:") {
-      const left = node.left;
-      if (left.type === "UserIdentifier" || left.type === "SystemIdentifier") {
-        return ir("SOLVE", left.name, lowerNode(node.right));
-      }
-      return ir("SOLVE", lowerNode(left), lowerNode(node.right));
-    }
-    if (op === ":<:") {
-      return ir("ASSERT_LT", lowerNode(node.left), lowerNode(node.right));
-    }
-    if (op === ":>:") {
-      return ir("ASSERT_GT", lowerNode(node.left), lowerNode(node.right));
-    }
-    if (op === ":>=:") {
-      return ir("ASSERT_GTE", lowerNode(node.left), lowerNode(node.right));
-    }
-    if (op === ":<=:") {
-      return ir("ASSERT_LTE", lowerNode(node.left), lowerNode(node.right));
-    }
-    if (op === ":") {
-      const args = [];
-      const extractArgs = (n) => {
-        if (n && n.type === "BinaryOperation" && n.operator === ":") {
-          extractArgs(n.left);
-          extractArgs(n.right);
-        } else {
-          const lowered = lowerNode(n);
-          if (lowered && typeof lowered === "object" && lowered.fn === "INTERVAL") {
-            args.push(...lowered.args);
-          } else {
-            args.push(lowered);
-          }
-        }
-      };
-      extractArgs(node.left);
-      extractArgs(node.right);
-      return ir("INTERVAL", ...args);
-    }
-    if (op === "_>") {
-      return ir("TOBASE", lowerNode(node.left), lowerNode(node.right));
-    }
-    if (op === "<_") {
-      return ir("FROMBASE", lowerNode(node.left), lowerNode(node.right));
-    }
-    if (op === "?=") {
-      throw new Error(`'?=' is not a comparison operator — use '==' for equality comparison, or use '?=' only in parameter default position (e.g., (x ?= 2) -> ...)`);
-    }
-    const sysFn = BINARY_OP_MAP[op];
-    if (sysFn) {
-      return ir(sysFn, lowerNode(node.left), lowerNode(node.right));
-    }
-    if (op.startsWith("|")) {
-      return ir("PIPE_OP", op, lowerNode(node.left), lowerNode(node.right));
-    }
-    if (op === "->") {
-      const left = node.left;
-      if (left.type === "FunctionCall" && left.function) {
-        const fn = left.function;
-        const funcName = fn.name || fn.value;
-        if (funcName) {
-          const positionalArgs = left.arguments?.positional || [];
-          const paramPosArgs = positionalArgs.map((arg) => ({
-            name: arg.name || arg.value || String(arg),
-            defaultValue: null
-          }));
-          const params = lowerParams({
-            positional: paramPosArgs,
-            keyword: [],
-            conditionals: [],
-            metadata: {}
-          });
-          const body = lowerFunctionBody(node.right);
-          return ir("FUNCDEF", funcName, params, body);
-        }
-      }
-    }
-    return ir("BINOP", op, lowerNode(node.left), lowerNode(node.right));
-  },
-  UnaryOperation(node) {
-    if (node.operator === "-") {
-      return ir("NEG", lowerNode(node.operand));
-    }
-    if (node.operator === "+") {
-      return lowerNode(node.operand);
-    }
-    if (node.operator === "NOT" || node.operator === "!") {
-      return ir("NOT", lowerNode(node.operand));
-    }
-    return ir("UNARY", node.operator, lowerNode(node.operand));
-  },
-  ImplicitMultiplication(node) {
-    return ir("MUL", lowerNode(node.left), lowerNode(node.right));
-  },
-  ImplicitApplication(node) {
-    const callable = node.callable;
-    const arg = lowerNode(node.argument);
-    if (callable.type === "SystemIdentifier" || callable.type === "UserIdentifier") {
-      return ir("CALL", callable.name, arg);
-    }
-    return ir("CALL_EXPR", lowerNode(callable), arg);
-  },
-  FunctionCall(node) {
-    const fn = node.function;
-    const args = lowerCallArgs(node.arguments);
-    if (fn.type === "SystemIdentifier" || fn.type === "UserIdentifier") {
-      const name = fn.name;
-      if (args.length === 1) {
-        if (name === "-")
-          return ir("NEG", args[0]);
-        if (name === "+")
-          return args[0];
-        if (name === "!" || name === "NOT")
-          return ir("NOT", args[0]);
-      } else if (args.length === 2) {
-        if (name === "+")
-          return ir("ADD", args[0], args[1]);
-        if (name === "-")
-          return ir("SUB", args[0], args[1]);
-        if (name === "*")
-          return ir("MUL", args[0], args[1]);
-        if (name === "/")
-          return ir("DIV", args[0], args[1]);
-      }
-      if (node.fromBrace) {
-        return ir(name, ...args);
-      }
-      return ir("CALL", name, ...args);
-    }
-    return ir("CALL_EXPR", lowerNode(fn), ...args);
-  },
-  SystemCall(node) {
-    const args = lowerCallArgs(node.arguments);
-    return ir("SYS_CALL", node.name, ...args);
-  },
-  SystemCapabilityCall(node) {
-    const args = lowerCallArgs(node.arguments);
-    return ir("SYS_CALL", node.property, ...args);
-  },
-  SystemObject(_node) {
-    return ir("SYS_OBJ");
-  },
-  SystemAccess(node) {
-    return ir("SYS_GET", node.property);
-  },
-  Call(node) {
-    const args = lowerCallArgs(node.arguments);
-    return ir("CALL_EXPR", lowerNode(node.target), ...args);
-  },
-  MethodCall(node) {
-    const args = lowerCallArgs(node.arguments);
-    return ir("CALL_METHOD", lowerNode(node.object), node.method, ...args);
-  },
-  PreparedTrial(node) {
-    const gates = (node.gates || []).map((gate) => ({
-      pattern: lowerDestructureTarget(gate.pattern),
-      prep: gate.prep?.type === "Array" ? gate.prep.elements.map(lowerNode) : [],
-      strict: gate.strict === true
-    }));
-    return ir("PREP_TRIAL", lowerNode(node.candidate), ...gates);
-  },
-  FunctionDefinition(node) {
-    const name = node.name.name || node.name.value;
-    const params = lowerParams(node.parameters, node.prep, node.prepStrict, node.variantName);
-    const body = lowerFunctionBody(node.body);
-    return ir("FUNCDEF", name, params, body);
-  },
-  FunctionLambda(node) {
-    const params = lowerParams(node.parameters, node.prep, node.prepStrict, node.variantName);
-    const body = lowerFunctionBody(node.body);
-    return ir("LAMBDA", params, body);
-  },
-  FunctionVariantDefinition(node) {
-    const name = node.name.name || node.name.value;
-    const params = lowerParams(node.parameters, node.prep, node.prepStrict, node.variantName);
-    const body = lowerFunctionBody(node.body);
-    return ir("MULTIFUNCDEF", name, node.mode, params, body);
-  },
-  Grouping(node) {
-    if (node.expression) {
-      return lowerNode(node.expression);
-    }
-    return ir("NULL");
-  },
-  Tuple(node) {
-    return ir("TUPLE", ...node.elements.map(lowerNode));
-  },
-  ParameterList(node) {
-    return lowerParams(node.parameters);
-  },
-  Spread(node) {
-    return ir("SPREAD", lowerNode(node.expression));
-  },
-  CapturedEntry(node) {
-    return {
-      captureMode: node.captureMode,
-      expression: lowerNode(node.expression)
-    };
-  },
-  SemanticHeader(node) {
-    return {
-      captureMode: node.captureMode || null,
-      name: node.name || null,
-      typeName: node.typeName || null,
-      traits: (node.traits || []).map((trait) => ({
-        name: trait.name,
-        checkMode: trait.checkMode || null,
-        order: trait.order ?? null
-      }))
-    };
-  },
-  MapEntry(node) {
-    return {
-      key: lowerNode(node.key),
-      value: lowerNode(node.value),
-      captureMode: node.captureMode || null,
-      keyType: node.key?.type || null
-    };
-  },
-  Array(node) {
-    return ir("ARRAY", ...node.elements.map(lowerNode));
-  },
-  Matrix(node) {
-    const rows = node.rows.map((row) => ir("ARRAY", ...row.map(lowerNode)));
-    return ir("MATRIX", ...rows);
-  },
-  Tensor(node) {
-    return ir("TENSOR", ...node.elements.map(lowerNode));
-  },
-  TensorLiteral(node) {
-    const meta = node.header ? { header: lowerNode(node.header) } : null;
-    return meta ? ir("TENSOR_LITERAL", meta, node.shape, ...node.elements.map(lowerNode)) : ir("TENSOR_LITERAL", node.shape, ...node.elements.map(lowerNode));
-  },
-  ValueOutfit(node) {
-    const header = node.header ? lowerNode(node.header) : null;
-    return header ? ir("VALUE_OUTFIT", header, lowerNode(node.expression)) : ir("VALUE_OUTFIT", null, lowerNode(node.expression));
-  },
-  MapContainer(node) {
-    const constructorMeta = node.header ? { header: lowerNode(node.header) } : null;
-    const loweredElements = node.elements.map((el) => {
-      if (el?.type === "MapEntry") {
-        const keyNode = el.key;
-        if (keyNode?.type === "UserIdentifier" || keyNode?.type === "SystemIdentifier") {
-          return ir("MAP_PAIR", "identifier", keyNode.name, lowerNode(el.value), el.captureMode || null);
-        }
-        if (keyNode?.type === "Grouping") {
-          return ir("MAP_PAIR", "expression", lowerNode(keyNode.expression), lowerNode(el.value), el.captureMode || null);
-        }
-        throw new Error("Map key expressions must be parenthesized in literals: use {= (expr)=value }");
-      }
-      if (el && el.type === "BinaryOperation" && (el.operator === "=" || el.operator === ":=")) {
-        if (el.left?.type === "UserIdentifier" || el.left?.type === "SystemIdentifier") {
-          return ir("MAP_PAIR", "identifier", el.left.name, lowerNode(el.right), el.operator === ":=" ? "copy" : null);
-        }
-        if (el.left?.type === "Grouping") {
-          return ir("MAP_PAIR", "expression", lowerNode(el.left.expression), lowerNode(el.right), el.operator === ":=" ? "copy" : null);
-        }
-        throw new Error("Map key expressions must be parenthesized in literals: use {= (expr)=value }");
-      }
-      return lowerNode(el);
-    });
-    return constructorMeta ? ir("MAP_OBJ", constructorMeta, ...loweredElements) : ir("MAP_OBJ", ...loweredElements);
-  },
-  CaseContainer(node) {
-    const lowerCaseElement = (element) => {
-      if (element?.type === "BinaryOperation" && element.operator === "?") {
-        return ir("DEFER", ir("CONDITION", lowerNode(element.left), lowerNode(element.right)));
-      }
-      return ir("DEFER", lowerNode(element));
-    };
-    if (node.name) {
-      return ir("CASE", { name: node.name }, ...node.elements.map(lowerCaseElement));
-    }
-    return ir("CASE", ...node.elements.map(lowerCaseElement));
-  },
-  BlockContainer(node) {
-    const hasMeta = node.imports && node.imports.length > 0 || node.name;
-    if (hasMeta) {
-      const meta = {};
-      if (node.imports && node.imports.length > 0)
-        meta.imports = lowerImports(node.imports);
-      if (node.name)
-        meta.name = node.name;
-      return ir("BLOCK", meta, ...node.elements.map(lowerNode));
-    }
-    return ir("BLOCK", ...node.elements.map(lowerNode));
-  },
-  SetContainer(node) {
-    const meta = node.header ? { header: lowerNode(node.header) } : null;
-    return meta ? ir("SET", meta, ...node.elements.map(lowerNode)) : ir("SET", ...node.elements.map(lowerNode));
-  },
-  TupleContainer(node) {
-    const meta = node.header ? { header: lowerNode(node.header) } : null;
-    return meta ? ir("TUPLE", meta, ...node.elements.map(lowerNode)) : ir("TUPLE", ...node.elements.map(lowerNode));
-  },
-  ArrayContainer(node) {
-    const meta = node.header ? { header: lowerNode(node.header) } : null;
-    return meta ? ir("ARRAY_CAPTURE", meta, ...node.elements.map(lowerNode)) : ir("ARRAY_CAPTURE", ...node.elements.map(lowerNode));
-  },
-  MultifunctionContainer(node) {
-    return ir("MULTIFUNCTION", ...node.elements.map(lowerNode));
-  },
-  LoopContainer(node) {
-    const hasMeta = node.imports && node.imports.length > 0 || node.name || node.maxIterations !== undefined || node.unlimited === true;
-    if (hasMeta) {
-      const meta = {};
-      if (node.imports && node.imports.length > 0)
-        meta.imports = lowerImports(node.imports);
-      if (node.name)
-        meta.name = node.name;
-      if (node.maxIterations !== undefined)
-        meta.maxIterations = node.maxIterations;
-      if (node.unlimited === true)
-        meta.unlimited = true;
-      return ir("LOOP", meta, ...node.elements.map((el) => ir("DEFER", lowerNode(el))));
-    }
-    return ir("LOOP", ...node.elements.map((el) => ir("DEFER", lowerNode(el))));
-  },
-  SystemContainer(node) {
-    const hasMeta = node.imports && node.imports.length > 0 || node.name;
-    if (hasMeta) {
-      const meta = {};
-      if (node.imports && node.imports.length > 0)
-        meta.imports = lowerImports(node.imports);
-      if (node.name)
-        meta.name = node.name;
-      return ir("SYSTEM", meta, ...node.elements.map(lowerNode));
-    }
-    return ir("SYSTEM", ...node.elements.map(lowerNode));
-  },
-  SystemSpecLiteral(node) {
-    const meta = {
-      inputs: [...node.inputs || []],
-      outputs: [...node.outputs || []],
-      outputsDeclared: node.outputsDeclared === true,
-      outputMode: node.outputMode || "named",
-      ...node.expression ? { expression: lowerNode(node.expression) } : {},
-      statements: (node.statements || []).map((statement) => ({
-        kind: "assign",
-        target: statement.target,
-        expr: lowerNode(statement.expr)
-      }))
-    };
-    if (node.imports && node.imports.length > 0) {
-      meta.imports = lowerImports(node.imports);
-    }
-    return ir("SYSTEM_SPEC", meta);
-  },
-  SpecAssign(node) {
-    return {
-      kind: "assign",
-      target: node.target,
-      expr: lowerNode(node.expr)
-    };
-  },
-  BreakBlock(node) {
-    const meta = {};
-    if (node.targetType)
-      meta.targetType = node.targetType;
-    if (node.targetName)
-      meta.targetName = node.targetName;
-    return ir("BREAK", meta, lowerNode(node.value));
-  },
-  DeferredBlock(node) {
-    return ir("DEFER", lowerNode(node.body));
-  },
-  DotAccess(node) {
-    return ir("META_GET", lowerNode(node.object), node.property);
-  },
-  PropertyAccess(node) {
-    const obj = lowerNode(node.object);
-    if (node.property && node.property.type === "KeyLiteral") {
-      return ir("INDEX_GET", obj, node.property.name);
-    }
-    return ir("INDEX_GET", obj, lowerNode(node.property));
-  },
-  BracketIndex(node) {
-    return ir("BRACKET_GET", lowerNode(node.object), node.specs.length, ...node.specs.map(lowerBracketSpec));
-  },
-  ExternalAccess(node) {
-    return ir("META_ALL", lowerNode(node.object));
-  },
-  KeySet(node) {
-    return ir("KEYS", lowerNode(node.object));
-  },
-  ValueSet(node) {
-    return ir("VALUES", lowerNode(node.object));
-  },
-  Mutation(node) {
-    const target = lowerNode(node.target);
-    const ops = node.operations.map((op) => ({
-      action: op.action,
-      key: op.key,
-      value: op.value ? lowerNode(op.value) : null
-    }));
-    const fn = node.mutate ? "MUTINPLACE" : "MUTCOPY";
-    return ir(fn, target, ops);
-  },
-  Pipe(node) {
-    return ir("PIPE", lowerNode(node.left), lowerNode(node.right));
-  },
-  ExplicitPipe(node) {
-    return ir("PIPE_EXPLICIT", lowerNode(node.left), lowerNode(node.right));
-  },
-  SliceStrict(node) {
-    return ir("PSLICE_STRICT", lowerNode(node.left), lowerNode(node.right));
-  },
-  SliceClamp(node) {
-    return ir("PSLICE_CLAMP", lowerNode(node.left), lowerNode(node.right));
-  },
-  Split(node) {
-    return ir("PSPLIT", lowerNode(node.left), lowerNode(node.right));
-  },
-  Chunk(node) {
-    return ir("PCHUNK", lowerNode(node.left), lowerNode(node.right));
-  },
-  Map(node) {
-    return ir("PMAP", lowerNode(node.left), lowerNode(node.right));
-  },
-  Filter(node) {
-    return ir("PFILTER", lowerNode(node.left), lowerNode(node.right));
-  },
-  Every(node) {
-    return ir("PALL", lowerNode(node.left), lowerNode(node.right));
-  },
-  Some(node) {
-    return ir("PANY", lowerNode(node.left), lowerNode(node.right));
-  },
-  Reduce(node) {
-    if (node.init) {
-      return ir("PREDUCE", lowerNode(node.left), lowerNode(node.right), lowerNode(node.init));
-    }
-    return ir("PREDUCE", lowerNode(node.left), lowerNode(node.right));
-  },
-  Reverse(node) {
-    return ir("PREVERSE", lowerNode(node.target));
-  },
-  Sort(node) {
-    return ir("PSORT", lowerNode(node.left), lowerNode(node.right));
-  },
-  TernaryOperation(node) {
-    return ir("TERNARY", lowerNode(node.condition), ir("DEFER", lowerNode(node.trueExpression)), ir("DEFER", lowerNode(node.falseExpression)));
-  },
-  At(node) {
-    return ir("AT", lowerNode(node.target), lowerNode(node.arg));
-  },
-  Ask(node) {
-    return ir("ASK", lowerNode(node.target), lowerNode(node.arg));
-  },
-  Transpose(node) {
-    return ir("TENSOR_TRANSPOSE", lowerNode(node.expression));
-  },
-  Derivative(node) {
-    if (node.operations?.length) {
-      throw new Error("Calculus operation sequences are not yet part of the exact symbolic subset");
-    }
-    if (node.variables?.length > 1) {
-      throw new Error("Exact symbolic calculus currently accepts one variable per quote operation");
-    }
-    const variable = node.variables?.length ? ir("STRING", node.variables[0].name) : ir("NULL");
-    let result = ir("DERIVATIVE", lowerNode(node.function), node.order, variable);
-    if (node.evaluation?.length)
-      result = ir("CALL_EXPR", result, ...node.evaluation.map(lowerNode));
-    return result;
-  },
-  Integral(node) {
-    if (node.operations?.length) {
-      throw new Error("Calculus operation sequences are not yet part of the exact symbolic subset");
-    }
-    if (node.variables?.length > 1) {
-      throw new Error("Exact symbolic calculus currently accepts one variable per quote operation");
-    }
-    const variable = node.variables?.length ? ir("STRING", node.variables[0].name) : ir("NULL");
-    let result = ir("INTEGRAL", lowerNode(node.function), node.order, variable);
-    if (node.evaluation?.length)
-      result = ir("CALL_EXPR", result, ...node.evaluation.map(lowerNode));
-    return result;
-  },
-  IntervalStepping(node) {
-    return ir("STEP", lowerNode(node.interval), lowerNode(node.step));
-  },
-  IntervalDivision(node) {
-    return ir("DIVIDE", lowerNode(node.interval), lowerNode(node.count));
-  },
-  IntervalPartition(node) {
-    return ir("PARTITION", lowerNode(node.interval), lowerNode(node.count));
-  },
-  IntervalMediants(node) {
-    return ir("MEDIANTS", lowerNode(node.interval), lowerNode(node.levels));
-  },
-  IntervalMediantPartition(node) {
-    return ir("MEDIANT_PARTITION", lowerNode(node.interval), lowerNode(node.levels));
-  },
-  IntervalRandom(node) {
-    return ir("RANDOM", lowerNode(node.interval), lowerNode(node.parameters));
-  },
-  IntervalRandomPartition(node) {
-    return ir("RANDOM_PARTITION", lowerNode(node.interval), lowerNode(node.count));
-  },
-  InfiniteSequence(node) {
-    return ir("INFSEQ", lowerNode(node.start), node.step ? lowerNode(node.step) : null);
-  },
-  ScientificUnit(node) {
-    return ir("UNIT", lowerNode(node.target), node.unit);
-  },
-  MathematicalUnit(node) {
-    return ir("MATHUNIT", lowerNode(node.target), node.unit);
-  },
-  GeneratorChain(node) {
-    const start = node.start ? lowerNode(node.start) : null;
-    const ops = node.operators.map(lowerNode);
-    return ir("GENERATOR", start, ...ops);
-  },
-  GeneratorAdd(node) {
-    return ir("GEN_ADD", lowerNode(node.operand));
-  },
-  GeneratorMultiply(node) {
-    return ir("GEN_MUL", lowerNode(node.operand));
-  },
-  GeneratorFunction(node) {
-    return ir("GEN_FUNC", lowerNode(node.operand));
-  },
-  GeneratorFilter(node) {
-    return ir("GEN_FILTER", lowerNode(node.operand));
-  },
-  GeneratorLimit(node) {
-    return ir("GEN_LIMIT", lowerNode(node.operand));
-  },
-  GeneratorEagerLimit(node) {
-    return ir("GEN_EAGER_LIMIT", lowerNode(node.operand));
-  },
-  GeneratorPipe(node) {
-    return ir("GEN_PIPE", lowerNode(node.operand));
-  },
-  WithMetadata(node) {
-    const expr = lowerNode(node.expression);
-    const meta = {};
-    for (const [key, value] of Object.entries(node.metadata)) {
-      meta[key] = lowerNode(value);
-    }
-    return ir("WITH_META", expr, meta);
-  },
-  EmbeddedLanguage(node) {
-    return ir("EMBEDDED", node.language, node.code);
-  }
-};
-function lowerImports(imports) {
-  return imports.map((spec) => ({
-    local: spec.local,
-    source: spec.source,
-    mode: spec.mode
-  }));
-}
-function lowerBindingSpecs(specs) {
-  return specs.map((spec) => ({
-    target: spec.target,
-    source: spec.source,
-    mode: spec.mode,
-    ...spec.sourceScope ? { sourceScope: spec.sourceScope } : {}
-  }));
-}
-function lowerCapabilityModifiers(modifiers) {
-  return modifiers.map((modifier) => ({
-    action: modifier.action,
-    targetType: modifier.targetType,
-    target: modifier.target
-  }));
-}
-function lowerAssignment(node, irFn) {
-  const left = node.left;
-  if (left.type === "Number" && typeof left.value === "string") {
-    const m = left.value.match(/^0([A-Z])$/);
-    if (m) {
-      return ir("DEFINEBASE", m[1], lowerNode(node.right));
-    }
-  }
-  if (left.type === "OuterIdentifier") {
-    const outerFn = irFn === "ASSIGN" ? "OUTER_ASSIGN" : irFn === "ASSIGN_COPY" || irFn === "ASSIGN_DEEP_COPY" ? "OUTER_ASSIGN" : "OUTER_UPDATE";
-    const depth = irFn === "ASSIGN_DEEP_COPY" || irFn === "ASSIGN_DEEP_UPDATE" ? "deep" : "shallow";
-    if (outerFn === "OUTER_UPDATE") {
-      return ir("OUTER_UPDATE", left.name, lowerNode(node.right), depth);
-    }
-    return ir("OUTER_ASSIGN", left.name, lowerNode(node.right));
-  }
-  if (left.type === "UserIdentifier" || left.type === "SystemIdentifier") {
-    return ir(irFn, left.name, lowerNode(node.right));
-  }
-  if (left.type === "SelfRef") {
-    throw new Error("Cannot assign to '$'; it is read-only and only valid within a function body");
-  }
-  if (left.type === "SystemAccess") {
-    return ir("SYS_SET", left.property, lowerNode(node.right));
-  }
-  if (left.type === "DotAccess") {
-    return ir("META_SET", lowerNode(left.object), left.property, lowerNode(node.right));
-  }
-  if (left.type === "ExternalAccess") {
-    throw new Error("a..prop assignment is no longer supported; use a.prop = val for meta access");
-  }
-  if (left.type === "PropertyAccess") {
-    const obj = lowerNode(left.object);
-    if (left.property && left.property.type === "KeyLiteral") {
-      return ir("INDEX_SET", obj, left.property.name, lowerNode(node.right));
-    }
-    return ir("INDEX_SET", obj, lowerNode(left.property), lowerNode(node.right));
-  }
-  if (left.type === "BracketIndex") {
-    return ir("BRACKET_SET", lowerNode(left.object), left.specs.length, ...left.specs.map(lowerBracketSpec), lowerNode(node.right));
-  }
-  if (irFn === "ASSIGN_UPDATE" || irFn === "ASSIGN_DEEP_UPDATE") {
-    throw new Error("Invalid update target");
-  }
-  return ir("ASSIGN_EXPR", lowerNode(left), lowerNode(node.right));
-}
-function lowerDestructureTarget(node) {
-  if (!node || !node.type) {
-    throw new Error("Invalid destructure target");
-  }
-  switch (node.type) {
-    case "DestructureVariableTarget":
-      return { type: node.type, name: node.name };
-    case "DestructureBindingModeTarget":
-      return { type: node.type, bindingMode: node.bindingMode, target: lowerDestructureTarget(node.target) };
-    case "DestructureSemanticTarget":
-      return { type: node.type, header: node.header ? lowerNode(node.header) : null, target: lowerDestructureTarget(node.target) };
-    case "DestructureRestTarget":
-      return { type: node.type, target: lowerDestructureTarget(node.target) };
-    case "DestructureIndexedTarget":
-      return {
-        type: node.type,
-        wholeTarget: node.wholeTarget ? lowerDestructureTarget(node.wholeTarget) : null,
-        specs: (node.specs || []).map((spec) => {
-          if (spec?.type === "FullSlice") {
-            return { kind: "full" };
-          }
-          if (spec?.type === "SliceSpec") {
-            return {
-              kind: "slice",
-              start: lowerNode(spec.start),
-              end: lowerNode(spec.end)
-            };
-          }
-          return {
-            kind: "index",
-            value: lowerNode(spec)
-          };
-        }),
-        nestedTarget: node.nestedTarget ? lowerDestructureTarget(node.nestedTarget) : null
-      };
-    case "DestructureArrayPattern":
-    case "DestructureTuplePattern":
-      return {
-        type: node.type,
-        entries: (node.entries || []).map(lowerDestructureTarget),
-        rest: node.rest ? lowerDestructureTarget(node.rest) : null
-      };
-    case "DestructureMapPattern":
-      return {
-        type: node.type,
-        entries: (node.entries || []).map(lowerDestructureTarget),
-        rest: node.rest ? lowerDestructureTarget(node.rest) : null
-      };
-    case "DestructureMapEntry": {
-      let loweredKey;
-      if (node.sourceKey?.type === "UserIdentifier" || node.sourceKey?.type === "SystemIdentifier") {
-        loweredKey = { type: "MapKeyIdentifier", value: node.sourceKey.name };
-      } else {
-        loweredKey = lowerNode(node.sourceKey);
-      }
-      return {
-        type: node.type,
-        sourceKey: loweredKey,
-        wholeTarget: node.wholeTarget ? lowerDestructureTarget(node.wholeTarget) : null,
-        nestedTarget: node.nestedTarget ? lowerDestructureTarget(node.nestedTarget) : null
-      };
-    }
-    case "DestructureTensorPattern":
-      return {
-        type: node.type,
-        shape: [...node.shape || []],
-        rows: (node.rows || []).map((row) => row.map(lowerDestructureTarget))
-      };
-    default:
-      throw new Error(`Unknown destructure target node type: ${node.type}`);
-  }
-}
-function lowerCallArgs(args) {
-  if (!args)
-    return [];
-  const result = [];
-  if (args.positional) {
-    for (const arg of args.positional) {
-      result.push(lowerNode(arg));
-    }
-  }
-  if (args.keyword) {
-    for (const [key, value] of Object.entries(args.keyword)) {
-      result.push(ir("KWARG", key, lowerNode(value)));
-    }
-  }
-  return result;
-}
-function lowerParams(params, prep = null, prepStrict = false, variantName = null) {
-  if (!params)
-    return { positional: [], keyword: [], conditionals: [] };
-  return {
-    positional: (params.positional || []).map((p) => {
-      const res = {
-        name: p.name,
-        holeDefault: p.holeDefault ? lowerNode(p.holeDefault) : null
-      };
-      if (p.isRest) {
-        res.isRest = true;
-      }
-      return res;
-    }),
-    keyword: (params.keyword || []).map((p) => ({
-      name: p.name
-    })),
-    conditionals: (params.conditionals || []).map(lowerNode),
-    prep: prep && prep.type === "Array" ? prep.elements.map(lowerNode) : [],
-    prepStrict: prepStrict === true,
-    metadata: {
-      ...params.metadata || {},
-      ...variantName ? { variantName } : {}
-    }
-  };
-}
-function lowerBracketSpec(spec) {
-  if (spec.type === "FullSlice") {
-    return ir("FULL_SLICE");
-  }
-  if (spec.type === "SliceSpec") {
-    return ir("SLICE_SPEC", lowerNode(spec.start), lowerNode(spec.end));
-  }
-  return lowerNode(spec);
-}
 // ../packages/core/src/base-system.js
 class BaseSystem {
   #base;
@@ -6678,11 +5715,11 @@ class BaseSystem {
     if (BaseSystem.#prefixMap.has(prefix)) {
       return BaseSystem.#prefixMap.get(prefix);
     }
-    const lower2 = prefix.toLowerCase();
-    if (BaseSystem.#prefixMap.has(lower2)) {
-      if (lower2 === "d" && prefix !== "d")
+    const lower = prefix.toLowerCase();
+    if (BaseSystem.#prefixMap.has(lower)) {
+      if (lower === "d" && prefix !== "d")
         return;
-      return BaseSystem.#prefixMap.get(lower2);
+      return BaseSystem.#prefixMap.get(lower);
     }
     return;
   }
@@ -9059,6 +8096,41 @@ class Integer {
 var HOLE = Object.freeze({ __rix_hole__: true });
 var isHole = (v) => v === HOLE;
 
+// ../rix/src/eval/functions/keyof.js
+function normalizeKeyPrimitive(value) {
+  if (typeof value === "string")
+    return value;
+  if (value && value.type === "string")
+    return value.value;
+  if (value instanceof Integer)
+    return value.value.toString();
+  if (typeof value === "number" || typeof value === "bigint")
+    return String(value);
+  return null;
+}
+function keyOf(value) {
+  const direct = normalizeKeyPrimitive(value);
+  if (direct !== null)
+    return direct;
+  const meta = value?._ext;
+  const metaKey = meta instanceof Map ? meta.get("key") : null;
+  if (metaKey === null || metaKey === undefined) {
+    throw new Error("Value cannot be used as a map key (not string/int and no .key property)");
+  }
+  const normalizedMeta = normalizeKeyPrimitive(metaKey);
+  if (normalizedMeta === null) {
+    throw new Error("Invalid .key type; must be string or integer");
+  }
+  return normalizedMeta;
+}
+function canonicalizeMetaKey(value) {
+  const normalized = normalizeKeyPrimitive(value);
+  if (normalized === null) {
+    throw new Error("Invalid .key type; must be string or integer");
+  }
+  return normalized;
+}
+
 // ../rix/src/runtime/tensor.js
 function exactInteger(value, label = "Index") {
   if (value instanceof Integer) {
@@ -9331,39 +8403,55 @@ function coerceShapeValue(shapeValue) {
   throw new Error("TGEN expects a tensor or tuple shape");
 }
 
-// ../rix/src/eval/functions/keyof.js
-function normalizeKeyPrimitive(value) {
-  if (typeof value === "string")
-    return value;
-  if (value && value.type === "string")
-    return value.value;
-  if (value instanceof Integer)
-    return value.value.toString();
-  if (typeof value === "number" || typeof value === "bigint")
-    return String(value);
-  return null;
+// ../rix/src/eval/ir-to-text.js
+function irToText(node, options = {}) {
+  const { langPrefix = false, indent = 0, pretty = false } = options;
+  const prefix = langPrefix ? "@_" : "";
+  const indentStr = pretty ? "  ".repeat(indent) : "";
+  if (node === null || node === undefined) {
+    return "null";
+  }
+  if (typeof node === "string") {
+    return JSON.stringify(node);
+  }
+  if (typeof node === "number" || typeof node === "bigint") {
+    return String(node);
+  }
+  if (typeof node === "boolean") {
+    return String(node);
+  }
+  if (Array.isArray(node)) {
+    const items = node.map((item) => irToText(item, { langPrefix, indent: indent + 1, pretty }));
+    return `[${items.join(", ")}]`;
+  }
+  if (node.fn) {
+    const fnName = `${prefix}${node.fn}`;
+    const argTexts = node.args.map((arg) => irToText(arg, { langPrefix, indent: indent + 1, pretty }));
+    if (pretty && argTexts.length > 0 && argTexts.join(", ").length > 60) {
+      const innerIndent = "  ".repeat(indent + 1);
+      return `${fnName}(
+${argTexts.map((a) => `${innerIndent}${a}`).join(`,
+`)}
+${indentStr})`;
+    }
+    return `${fnName}(${argTexts.join(", ")})`;
+  }
+  if (typeof node === "object") {
+    return serializeObject(node, { langPrefix, indent, pretty });
+  }
+  return String(node);
 }
-function keyOf(value) {
-  const direct = normalizeKeyPrimitive(value);
-  if (direct !== null)
-    return direct;
-  const meta = value?._ext;
-  const metaKey = meta instanceof Map ? meta.get("key") : null;
-  if (metaKey === null || metaKey === undefined) {
-    throw new Error("Value cannot be used as a map key (not string/int and no .key property)");
-  }
-  const normalizedMeta = normalizeKeyPrimitive(metaKey);
-  if (normalizedMeta === null) {
-    throw new Error("Invalid .key type; must be string or integer");
-  }
-  return normalizedMeta;
-}
-function canonicalizeMetaKey(value) {
-  const normalized = normalizeKeyPrimitive(value);
-  if (normalized === null) {
-    throw new Error("Invalid .key type; must be string or integer");
-  }
-  return normalized;
+function serializeObject(obj, options) {
+  const { langPrefix, indent, pretty } = options;
+  const entries = Object.entries(obj).map(([key, value]) => {
+    const valText = irToText(value, {
+      langPrefix,
+      indent: indent + 1,
+      pretty
+    });
+    return `${key}: ${valText}`;
+  });
+  return `{${entries.join(", ")}}`;
 }
 
 // ../rix/src/runtime/exact-values.js
@@ -10612,55 +9700,330 @@ function unitName(value) {
   return stringValue(value, "Unit name");
 }
 
-// ../rix/src/eval/ir-to-text.js
-function irToText(node, options = {}) {
-  const { langPrefix = false, indent = 0, pretty = false } = options;
-  const prefix = langPrefix ? "@_" : "";
-  const indentStr = pretty ? "  ".repeat(indent) : "";
-  if (node === null || node === undefined) {
-    return "null";
+// ../rix/src/runtime/diagnostics.js
+class RixAbort extends Error {
+  constructor(event) {
+    const label = event?.entries?.get("label")?.value ?? "RiX abort";
+    super(label);
+    this.name = "RixAbort";
+    this.event = event;
   }
-  if (typeof node === "string") {
-    return JSON.stringify(node);
-  }
-  if (typeof node === "number" || typeof node === "bigint") {
-    return String(node);
-  }
-  if (typeof node === "boolean") {
-    return String(node);
-  }
-  if (Array.isArray(node)) {
-    const items = node.map((item) => irToText(item, { langPrefix, indent: indent + 1, pretty }));
-    return `[${items.join(", ")}]`;
-  }
-  if (node.fn) {
-    const fnName = `${prefix}${node.fn}`;
-    const argTexts = node.args.map((arg) => irToText(arg, { langPrefix, indent: indent + 1, pretty }));
-    if (pretty && argTexts.length > 0 && argTexts.join(", ").length > 60) {
-      const innerIndent = "  ".repeat(indent + 1);
-      return `${fnName}(
-${argTexts.map((a) => `${innerIndent}${a}`).join(`,
-`)}
-${indentStr})`;
-    }
-    return `${fnName}(${argTexts.join(", ")})`;
-  }
-  if (typeof node === "object") {
-    return serializeObject(node, { langPrefix, indent, pretty });
-  }
-  return String(node);
 }
-function serializeObject(obj, options) {
-  const { langPrefix, indent, pretty } = options;
-  const entries = Object.entries(obj).map(([key, value]) => {
-    const valText = irToText(value, {
-      langPrefix,
-      indent: indent + 1,
-      pretty
+var eventCounter = 0;
+function createEvent(fields) {
+  const entries = new Map;
+  entries.set("kind", { type: "string", value: fields.kind });
+  entries.set("label", typeof fields.label === "string" ? { type: "string", value: fields.label } : fields.label);
+  if (fields.level !== undefined) {
+    entries.set("level", fields.level instanceof Integer ? fields.level : new Integer(fields.level));
+  }
+  if (fields.file !== undefined) {
+    entries.set("file", { type: "string", value: fields.file });
+  }
+  if (fields.line !== undefined) {
+    entries.set("line", new Integer(fields.line));
+  }
+  if (fields.col !== undefined) {
+    entries.set("col", new Integer(fields.col));
+  }
+  if (fields.scope !== undefined) {
+    entries.set("scope", { type: "string", value: fields.scope });
+  }
+  entries.set("time", new Integer(BigInt(Date.now())));
+  if (fields.data !== undefined) {
+    entries.set("data", fields.data);
+  } else {
+    entries.set("data", { type: "map", entries: new Map });
+  }
+  if (fields.extra) {
+    for (const [k, v] of Object.entries(fields.extra)) {
+      entries.set(k, v);
+    }
+  }
+  eventCounter++;
+  return { type: "map", entries };
+}
+var DIAG_ENV_KEY = "__diagnostics__";
+
+class DiagnosticsRegistry {
+  constructor() {
+    this.events = [];
+    this.testResultsByFile = new Map;
+  }
+  addEvent(event) {
+    this.events.push(event);
+  }
+  registerTestResult(filePath, label, result) {
+    if (!this.testResultsByFile.has(filePath)) {
+      this.testResultsByFile.set(filePath, new Map);
+    }
+    const fileResults = this.testResultsByFile.get(filePath);
+    if (fileResults.has(label)) {
+      throw new Error(`Duplicate test group label "${label}" in file "${filePath}"`);
+    }
+    fileResults.set(label, result);
+  }
+  getFileResults(filePath) {
+    return this.testResultsByFile.get(filePath) || new Map;
+  }
+  getTestFiles() {
+    return Array.from(this.testResultsByFile.keys());
+  }
+  getSummary() {
+    let totalGroups = 0;
+    let passedGroups = 0;
+    let failedGroups = 0;
+    let erroredGroups = 0;
+    for (const [_file, results] of this.testResultsByFile) {
+      for (const [_label, result] of results) {
+        totalGroups++;
+        const passedEntry = result.entries?.get("passed");
+        if (passedEntry === null) {
+          const summary = result.entries?.get("summary");
+          const errored = summary?.entries?.get("errored");
+          if (errored !== null && errored !== undefined) {
+            const erVal = errored instanceof Integer ? Number(errored.value) : Number(errored);
+            if (erVal > 0) {
+              erroredGroups++;
+            } else {
+              failedGroups++;
+            }
+          } else {
+            failedGroups++;
+          }
+        } else {
+          passedGroups++;
+        }
+      }
+    }
+    return { totalGroups, passedGroups, failedGroups, erroredGroups };
+  }
+  getEventsByKind(kind) {
+    return this.events.filter((e) => {
+      const k = e.entries?.get("kind");
+      return k?.value === kind;
     });
-    return `${key}: ${valText}`;
+  }
+}
+function getDiagnostics(context) {
+  let diag = context.getEnv(DIAG_ENV_KEY);
+  if (!diag) {
+    diag = new DiagnosticsRegistry;
+    context.setEnv(DIAG_ENV_KEY, diag);
+  }
+  return diag;
+}
+function getCurrentFilePath(context) {
+  const runtime = context.getEnv("__script_runtime__");
+  if (runtime && runtime.frameStack.length > 0) {
+    return runtime.frameStack[runtime.frameStack.length - 1].path;
+  }
+  return context.getEnv("__current_file__", "<repl>");
+}
+function rixStringValue(val) {
+  if (val === null || val === undefined)
+    return null;
+  if (typeof val === "string")
+    return val;
+  if (val.type === "string")
+    return val.value;
+  return null;
+}
+function rixIntValue(val) {
+  if (val === null || val === undefined)
+    return null;
+  if (val instanceof Integer)
+    return Number(val.value);
+  if (typeof val === "number")
+    return val;
+  if (typeof val === "bigint")
+    return Number(val);
+  return null;
+}
+function isRixMap(val) {
+  return val && val.type === "map" && val.entries instanceof Map;
+}
+function isRixArray(val) {
+  return val && (val.type === "sequence" || val.type === "array") && Array.isArray(val.values);
+}
+
+// ../rix/src/runtime/runtime-config.js
+var runtimeDefaults = Object.freeze({
+  defaultLoopMax: 1e4,
+  defaultConstructorCaptureMode: "deep_copy",
+  symbolicAutoSpec: "safe",
+  warnings: Object.freeze({
+    conversion: false,
+    multifunctionConversion: false,
+    multifunctionNoPrep: false,
+    implicitUnitConversion: false
+  }),
+  scriptPermissionNames: Object.freeze(["IMPORTS", "NET", "FILES"]),
+  defaultScriptCapabilityPolicy: Object.freeze({
+    includeAllFunctions: true,
+    permissions: Object.freeze(["IMPORTS"])
+  }),
+  capabilityGroups: Object.freeze({
+    Core: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "IF", "LOOP", "MULTI", "RAND_NAME", "PRINT", "TGEN", "KEYOF", "KEYS", "VALUES"]),
+    Arith: Object.freeze(["ADD", "SUB", "MUL", "DIV", "INTDIV", "MOD", "POW"]),
+    Logic: Object.freeze(["EQ", "NEQ", "LT", "GT", "LTE", "GTE", "AND", "OR", "NOT"]),
+    Collections: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "MAP", "FILTER", "REDUCE", "TGEN"]),
+    Maps: Object.freeze(["MAP", "KEYOF", "KEYS", "VALUES"]),
+    Arrays: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "MAP", "FILTER", "REDUCE", "TGEN"]),
+    Strings: Object.freeze(["UPPER", "SUBSTR", "PRINT"]),
+    Imports: Object.freeze(["IMPORTS"]),
+    Net: Object.freeze(["NET"]),
+    Files: Object.freeze(["FILES"]),
+    Units: Object.freeze(["UNITS", "Units", "CONVERTUNIT", "ConvertUnit", "DEFINEUNIT", "DefineUnit"]),
+    Exact: Object.freeze(["EXACT", "Exact", "COMPLEX", "Complex", "DEFINEEXACTGENERATOR", "DefineExactGenerator"]),
+    Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC"]),
+    Random: Object.freeze(["RANDOMSEED", "RandomSeed", "RAND_NAME"])
+  })
+});
+
+// ../rix/src/runtime/multifunction.js
+function stringObj(value) {
+  return { type: "string", value };
+}
+function ensureExt(value) {
+  if (!value || typeof value !== "object") {
+    throw new Error("Multifunctions must be sequence values");
+  }
+  if (!value._ext) {
+    value._ext = new Map;
+  }
+  return value._ext;
+}
+function getWarningsConfig(context) {
+  return context?.getEnv?.("warnings", runtimeDefaults.warnings) ?? runtimeDefaults.warnings;
+}
+function emitWarning(context, label, data = new Map) {
+  if (!context?.getEnv)
+    return;
+  getDiagnostics(context).addEvent(createEvent({
+    kind: "warning",
+    label,
+    file: getCurrentFilePath(context),
+    data: { type: "map", entries: data }
+  }));
+}
+function ensureState(value) {
+  if (!value.__multifunction__) {
+    Object.defineProperty(value, "__multifunction__", {
+      value: {
+        namedVariants: new Map
+      },
+      writable: true,
+      configurable: true,
+      enumerable: false
+    });
+  }
+  return value.__multifunction__;
+}
+function canonicalVariantKey(name) {
+  return String(name).toUpperCase();
+}
+function isMultifunctionValue(value) {
+  return Boolean(value && value.type === "sequence" && value._ext instanceof Map && value._ext.get("_type")?.value === "multifunction");
+}
+function markAsMultifunction(value) {
+  if (!value || value.type !== "sequence" || !Array.isArray(value.values)) {
+    throw new Error("Only arrays/sequences can be marked as multifunctions");
+  }
+  attachBuiltinProto(value);
+  const ext = ensureExt(value);
+  ext.set("_type", stringObj("multifunction"));
+  ensureState(value);
+  return value;
+}
+function maybeAutoMarkMultifunction(name, value) {
+  if (!/^[A-Z]/.test(name || "")) {
+    return value;
+  }
+  if (!value || value.type !== "sequence" || !Array.isArray(value.values)) {
+    return value;
+  }
+  const marked = markAsMultifunction(value);
+  if (!marked.__name) {
+    marked.__name = name;
+  }
+  return marked;
+}
+function createMultifunctionValue(variants) {
+  return markAsMultifunction({
+    type: "sequence",
+    values: [...variants],
+    _ext: new Map([["_mutable", new Integer(1n)]])
   });
-  return `{${entries.join(", ")}}`;
+}
+function rebuildMultifunctionState(value) {
+  if (!isMultifunctionValue(value)) {
+    return null;
+  }
+  const state = ensureState(value);
+  const namedVariants = new Map;
+  for (let index = 0;index < value.values.length; index++) {
+    const variant = value.values[index];
+    const name = variant?.__name;
+    if (variant && typeof variant === "object") {
+      variant.__parentMultifunction = value;
+    }
+    if (!name)
+      continue;
+    const key = canonicalVariantKey(name);
+    if (namedVariants.has(key)) {
+      throw new Error(`Duplicate multifunction variant name: ${name}`);
+    }
+    namedVariants.set(key, variant);
+  }
+  state.namedVariants = namedVariants;
+  return state;
+}
+function getNamedMultifunctionVariant(value, name) {
+  const state = rebuildMultifunctionState(value);
+  if (!state) {
+    return null;
+  }
+  return state.namedVariants.get(canonicalVariantKey(name)) ?? null;
+}
+function appendMultifunctionVariant(currentValue, variant, mode, context, ownerName = null) {
+  if (currentValue === undefined) {
+    const created = createMultifunctionValue([variant]);
+    rebuildMultifunctionState(created);
+    return created;
+  }
+  if (isMultifunctionValue(currentValue)) {
+    if (mode === "prepend") {
+      currentValue.values.unshift(variant);
+    } else {
+      currentValue.values.push(variant);
+    }
+    rebuildMultifunctionState(currentValue);
+    return currentValue;
+  }
+  const callableKinds = new Set(["function", "lambda"]);
+  if (currentValue && callableKinds.has(currentValue.type)) {
+    if (getWarningsConfig(context)?.multifunctionConversion === true) {
+      emitWarning(context, "Converted function to multifunction", new Map([
+        ["name", stringObj(ownerName || currentValue.name || "<anonymous>")]
+      ]));
+    }
+    const variants = mode === "prepend" ? [variant, currentValue] : [currentValue, variant];
+    const created = createMultifunctionValue(variants);
+    rebuildMultifunctionState(created);
+    return created;
+  }
+  throw new Error(`${ownerName || "Value"} is not a function or multifunction`);
+}
+function shouldWarnNoPrep(context) {
+  return getWarningsConfig(context)?.multifunctionNoPrep === true;
+}
+function emitNoPrepWarning(context, multifnName, index, variantName) {
+  emitWarning(context, "Multifunction variant without prep is not last", new Map([
+    ["function", stringObj(multifnName || "<anonymous>")],
+    ["variantIndex", new Integer(BigInt(index + 1))],
+    ...variantName ? [["variantName", stringObj(variantName)]] : []
+  ]));
 }
 
 // ../rix/src/runtime/lazy-sequence.js
@@ -10824,40 +10187,6 @@ function filterLazySequence(source, predicate, options = {}) {
   return filtered;
 }
 
-// ../rix/src/runtime/runtime-config.js
-var runtimeDefaults = Object.freeze({
-  defaultLoopMax: 1e4,
-  defaultConstructorCaptureMode: "deep_copy",
-  symbolicAutoSpec: "safe",
-  warnings: Object.freeze({
-    conversion: false,
-    multifunctionConversion: false,
-    multifunctionNoPrep: false,
-    implicitUnitConversion: false
-  }),
-  scriptPermissionNames: Object.freeze(["IMPORTS", "NET", "FILES"]),
-  defaultScriptCapabilityPolicy: Object.freeze({
-    includeAllFunctions: true,
-    permissions: Object.freeze(["IMPORTS"])
-  }),
-  capabilityGroups: Object.freeze({
-    Core: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "IF", "LOOP", "MULTI", "RAND_NAME", "PRINT", "TGEN", "KEYOF", "KEYS", "VALUES"]),
-    Arith: Object.freeze(["ADD", "SUB", "MUL", "DIV", "INTDIV", "MOD", "POW"]),
-    Logic: Object.freeze(["EQ", "NEQ", "LT", "GT", "LTE", "GTE", "AND", "OR", "NOT"]),
-    Collections: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "MAP", "FILTER", "REDUCE", "TGEN"]),
-    Maps: Object.freeze(["MAP", "KEYOF", "KEYS", "VALUES"]),
-    Arrays: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "MAP", "FILTER", "REDUCE", "TGEN"]),
-    Strings: Object.freeze(["UPPER", "SUBSTR", "PRINT"]),
-    Imports: Object.freeze(["IMPORTS"]),
-    Net: Object.freeze(["NET"]),
-    Files: Object.freeze(["FILES"]),
-    Units: Object.freeze(["UNITS", "Units", "CONVERTUNIT", "ConvertUnit", "DEFINEUNIT", "DefineUnit"]),
-    Exact: Object.freeze(["EXACT", "Exact", "COMPLEX", "Complex", "DEFINEEXACTGENERATOR", "DefineExactGenerator"]),
-    Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC"]),
-    Random: Object.freeze(["RANDOMSEED", "RandomSeed", "RAND_NAME"])
-  })
-});
-
 // ../rix/src/eval/functions/symbolic.js
 var BINARY_TEXT = new Map([
   ["ADD", "+"],
@@ -10869,9 +10198,9 @@ var BINARY_TEXT = new Map([
   ["MOD", "%"]
 ]);
 var TEXT_BINARY = new Map(Array.from(BINARY_TEXT, ([name, text]) => [text, name]));
-var ir2 = (fn, ...args) => ({ fn, args });
-var literal = (value) => ir2("LITERAL", String(value));
-var retrieve = (name) => ir2("RETRIEVE", name);
+var ir = (fn, ...args) => ({ fn, args });
+var literal = (value) => ir("LITERAL", String(value));
+var retrieve = (name) => ir("RETRIEVE", name);
 var cloneIr = (node) => {
   if (Array.isArray(node))
     return node.map(cloneIr);
@@ -11150,7 +10479,7 @@ function exactToIr(value) {
   if (value instanceof Integer)
     return literal(value.value);
   if (value instanceof Rational) {
-    return value.denominator === 1n ? literal(value.numerator) : ir2("DIV", literal(value.numerator), literal(value.denominator));
+    return value.denominator === 1n ? literal(value.numerator) : ir("DIV", literal(value.numerator), literal(value.denominator));
   }
   if (typeof value === "bigint" || Number.isInteger(value))
     return literal(value);
@@ -11173,7 +10502,7 @@ function rationalFromIr(node) {
   return null;
 }
 function rationalToIr(value) {
-  return value.denominator === 1n ? literal(value.numerator) : ir2("DIV", literal(value.numerator), literal(value.denominator));
+  return value.denominator === 1n ? literal(value.numerator) : ir("DIV", literal(value.numerator), literal(value.denominator));
 }
 function isZero2(node) {
   const value = rationalFromIr(node);
@@ -11185,7 +10514,7 @@ function isOne2(node) {
 }
 function neg(node) {
   const value = rationalFromIr(node);
-  return value ? rationalToIr(new Rational(-value.numerator, value.denominator)) : ir2("NEG", node);
+  return value ? rationalToIr(new Rational(-value.numerator, value.denominator)) : ir("NEG", node);
 }
 function binary(fn, left, right) {
   if (fn === "ADD") {
@@ -11231,7 +10560,7 @@ function binary(fn, left, right) {
     if (fn === "DIV")
       return rationalToIr(a.divide(b));
   }
-  return ir2(fn, left, right);
+  return ir(fn, left, right);
 }
 function derivative(node, variable) {
   if (["LITERAL", "STRING", "NULL"].includes(node.fn))
@@ -11314,7 +10643,7 @@ function integrate(node, variable) {
   if (mono) {
     const next = mono.power + 1n;
     const coefficient = mono.coefficient.divide(new Rational(next, 1n));
-    const power = next === 1n ? retrieve(variable) : ir2("POW", retrieve(variable), literal(next));
+    const power = next === 1n ? retrieve(variable) : ir("POW", retrieve(variable), literal(next));
     return binary("MUL", rationalToIr(coefficient), power);
   }
   if (node.fn === "MUL" && independentOf(node.args[0], variable))
@@ -11445,7 +10774,7 @@ function combineSymbolic(operator, leftValue, rightValue = null) {
   if (!left || rightValue !== null && !right)
     throw new Error("Unsupported symbolic arithmetic operand");
   const template = left.spec || right?.spec;
-  const expression = right ? ir2(operator, cloneIr(left.expression), cloneIr(right.expression)) : ir2(operator, cloneIr(left.expression));
+  const expression = right ? ir(operator, cloneIr(left.expression), cloneIr(right.expression)) : ir(operator, cloneIr(left.expression));
   const inputs = unionNames([left.spec?.inputs || [], right?.spec?.inputs || []]);
   const capturedNames = retrieveNames(expression);
   for (const input of inputs)
@@ -11462,17 +10791,17 @@ function simplifyIr(node, directions) {
   if (!node?.fn || ["LITERAL", "RETRIEVE", "OUTER_RETRIEVE"].includes(node.fn))
     return cloneIr(node);
   if (node.fn === "NEG")
-    return directions.has("identities") || directions.has("constants") ? neg(simplifyIr(node.args[0], directions)) : ir2("NEG", simplifyIr(node.args[0], directions));
+    return directions.has("identities") || directions.has("constants") ? neg(simplifyIr(node.args[0], directions)) : ir("NEG", simplifyIr(node.args[0], directions));
   if (!BINARY_TEXT.has(node.fn))
     return cloneIr(node);
   let left = simplifyIr(node.args[0], directions), right = simplifyIr(node.args[1], directions);
   if (directions.has("expand") && node.fn === "MUL") {
     if (left.fn === "ADD" || left.fn === "SUB")
-      return simplifyIr(ir2(left.fn, ir2("MUL", left.args[0], right), ir2("MUL", left.args[1], right)), directions);
+      return simplifyIr(ir(left.fn, ir("MUL", left.args[0], right), ir("MUL", left.args[1], right)), directions);
     if (right.fn === "ADD" || right.fn === "SUB")
-      return simplifyIr(ir2(right.fn, ir2("MUL", left, right.args[0]), ir2("MUL", left, right.args[1])), directions);
+      return simplifyIr(ir(right.fn, ir("MUL", left, right.args[0]), ir("MUL", left, right.args[1])), directions);
   }
-  return directions.has("identities") || directions.has("constants") || directions.has("powers") ? binary(node.fn, left, right) : ir2(node.fn, left, right);
+  return directions.has("identities") || directions.has("constants") || directions.has("powers") ? binary(node.fn, left, right) : ir(node.fn, left, right);
 }
 var DIRECTION_ALIASES = new Map([
   ["identity", "identities"],
@@ -11587,8 +10916,8 @@ function signedTerm(coefficient, basis, power) {
   const magnitude = exact && exact.numerator < 0n ? rationalToIr(new Rational(-exact.numerator, exact.denominator)) : structuralNegative ? cloneIr(coefficient.args[0]) : coefficient;
   if (power === 0n)
     return { negative, expression: magnitude };
-  const powered = power === 1n ? cloneIr(basis) : ir2("POW", cloneIr(basis), literal(power));
-  return { negative, expression: isOne2(magnitude) ? powered : ir2("MUL", magnitude, powered) };
+  const powered = power === 1n ? cloneIr(basis) : ir("POW", cloneIr(basis), literal(power));
+  return { negative, expression: isOne2(magnitude) ? powered : ir("MUL", magnitude, powered) };
 }
 function polynomialToIr(polynomial, basis) {
   const powers = Array.from(polynomial.keys()).sort((a, b) => a > b ? -1 : a < b ? 1 : 0);
@@ -11600,7 +10929,7 @@ function polynomialToIr(polynomial, basis) {
     if (result === null)
       result = term.negative ? neg(term.expression) : term.expression;
     else
-      result = ir2(term.negative ? "SUB" : "ADD", result, term.expression);
+      result = ir(term.negative ? "SUB" : "ADD", result, term.expression);
   }
   return result;
 }
@@ -11612,7 +10941,7 @@ function exactCenter(value) {
   return rationalFromIr(exactToIr(value));
 }
 function centerBasis(variable, center) {
-  return center.numerator === 0n ? retrieve(variable) : center.numerator < 0n ? ir2("ADD", retrieve(variable), rationalToIr(new Rational(-center.numerator, center.denominator))) : ir2("SUB", retrieve(variable), rationalToIr(center));
+  return center.numerator === 0n ? retrieve(variable) : center.numerator < 0n ? ir("ADD", retrieve(variable), rationalToIr(new Rational(-center.numerator, center.denominator))) : ir("SUB", retrieve(variable), rationalToIr(center));
 }
 function centerIr(node, variable, centerValue) {
   const center = exactCenter(centerValue);
@@ -11727,7 +11056,7 @@ function gadicIr(node, variable, args) {
     if (expression === null)
       expression = term.negative ? neg(term.expression) : term.expression;
     else
-      expression = ir2(term.negative ? "SUB" : "ADD", expression, term.expression);
+      expression = ir(term.negative ? "SUB" : "ADD", expression, term.expression);
   }
   return { expression: expression || literal(0), closureScopes: [base.closureScopes] };
 }
@@ -11746,12 +11075,12 @@ function sameIr(left, right) {
 }
 function distributeProduct(factor, sum, factorOnLeft) {
   if (sameIr(sum, factor)) {
-    return factorOnLeft ? ir2("MUL", cloneIr(factor), cloneIr(sum)) : ir2("MUL", cloneIr(sum), cloneIr(factor));
+    return factorOnLeft ? ir("MUL", cloneIr(factor), cloneIr(sum)) : ir("MUL", cloneIr(sum), cloneIr(factor));
   }
   if (sum.fn === "ADD" || sum.fn === "SUB") {
-    return ir2(sum.fn, distributeProduct(factor, sum.args[0], factorOnLeft), distributeProduct(factor, sum.args[1], factorOnLeft));
+    return ir(sum.fn, distributeProduct(factor, sum.args[0], factorOnLeft), distributeProduct(factor, sum.args[1], factorOnLeft));
   }
-  return factorOnLeft ? ir2("MUL", cloneIr(factor), cloneIr(sum)) : ir2("MUL", cloneIr(sum), cloneIr(factor));
+  return factorOnLeft ? ir("MUL", cloneIr(factor), cloneIr(sum)) : ir("MUL", cloneIr(sum), cloneIr(factor));
 }
 function exactCount(value) {
   if (value === null || value === undefined)
@@ -11932,3852 +11261,8 @@ var symbolicFunctions = {
   }
 };
 
-// ../rix/src/eval/format.js
-function tensorValueAtTuple(tensor, tuple) {
-  const value = tensor.data[tensorOffsetForTuple(tensor, tuple)];
-  return value;
-}
-function tensorDisplayLevels(shape) {
-  if (shape.length === 0)
-    return [];
-  if (shape.length === 1) {
-    return [{ size: shape[0], separatorCount: 0 }];
-  }
-  const levels = [];
-  for (let axis = shape.length - 1;axis >= 2; axis--) {
-    levels.push({ size: shape[axis], separatorCount: axis });
-  }
-  levels.push({ size: shape[0], separatorCount: 1 });
-  levels.push({ size: shape[1], separatorCount: 0 });
-  return levels;
-}
-function displayPathToExternalTuple(displayPath) {
-  if (displayPath.length === 1) {
-    return [displayPath[0]];
-  }
-  const higher = displayPath.slice(0, -2).reverse();
-  return [displayPath[displayPath.length - 2], displayPath[displayPath.length - 1], ...higher];
-}
-function tensorSeparator(separatorCount) {
-  if (separatorCount <= 0)
-    return ", ";
-  if (separatorCount === 1)
-    return "; ";
-  return ` ${";".repeat(separatorCount)} `;
-}
-function formatTensorBody(tensor, formatValue, levels, levelIndex = 0, displayPath = []) {
-  const level = levels[levelIndex];
-  if (level.separatorCount === 0) {
-    const values = [];
-    for (let i = 1;i <= level.size; i++) {
-      const tuple = displayPathToExternalTuple([...displayPath, i]);
-      values.push(formatValue(tensorValueAtTuple(tensor, tuple)));
-    }
-    return values.join(", ");
-  }
-  const parts = [];
-  for (let i = 1;i <= level.size; i++) {
-    parts.push(formatTensorBody(tensor, formatValue, levels, levelIndex + 1, [...displayPath, i]));
-  }
-  return parts.join(tensorSeparator(level.separatorCount));
-}
-function formatTensor(tensor, formatValue) {
-  const shapeText = tensor.shape.join("x");
-  if (tensorSize(tensor) === 0) {
-    return `{:${shapeText}:}`;
-  }
-  const levels = tensorDisplayLevels(tensor.shape);
-  return `{:${shapeText}: ${formatTensorBody(tensor, formatValue, levels)} }`;
-}
-function truncate(text, limit = 40) {
-  if (text.length <= limit)
-    return text;
-  return `${text.slice(0, Math.max(0, limit - 3))}...`;
-}
-var BINARY_OPS = new Map([
-  ["ADD", "+"],
-  ["SUB", "-"],
-  ["MUL", "*"],
-  ["DIV", "/"],
-  ["INTDIV", "//"],
-  ["MOD", "%"],
-  ["POW", "^"],
-  ["POWPROD", "**"],
-  ["EQ", "=="],
-  ["NEQ", "!="],
-  ["LT", "<"],
-  ["GT", ">"],
-  ["LTE", "<="],
-  ["GTE", ">="],
-  ["AND", "&&"],
-  ["OR", "||"]
-]);
-function previewIr(node, options = {}) {
-  const { maxLen = 40, depth = 0 } = options;
-  if (node === null)
-    return "_";
-  if (node === undefined)
-    return "undefined";
-  if (typeof node === "string")
-    return node;
-  if (typeof node === "number" || typeof node === "bigint" || typeof node === "boolean") {
-    return String(node);
-  }
-  if (Array.isArray(node)) {
-    return truncate(`[${node.map((item) => previewIr(item, { maxLen: 12, depth: depth + 1 })).join(", ")}]`, maxLen);
-  }
-  if (!node || typeof node !== "object") {
-    return truncate(String(node), maxLen);
-  }
-  if (!node.fn) {
-    return truncate(irToText(node), maxLen);
-  }
-  if (depth >= 5) {
-    return truncate(irToText(node), maxLen);
-  }
-  switch (node.fn) {
-    case "LITERAL":
-      return String(node.args[0]);
-    case "STRING":
-      return JSON.stringify(node.args[0]);
-    case "NULL":
-      return "_";
-    case "RETRIEVE":
-      return node.args[0];
-    case "OUTER_RETRIEVE":
-      return `@${node.args[0]}`;
-    case "SELF":
-      return "$";
-    case "PARENT_SELF":
-      return "$$";
-    case "NEG":
-      return truncate(`-${previewIr(node.args[0], { maxLen: maxLen - 1, depth: depth + 1 })}`, maxLen);
-    case "CALL":
-      return truncate(`${node.args[0]}(${node.args.slice(1).map((arg) => previewIr(arg, { maxLen: 16, depth: depth + 1 })).join(", ")})`, maxLen);
-    case "CALL_EXPR":
-      return truncate(`${previewIr(node.args[0], { maxLen: 14, depth: depth + 1 })}(${node.args.slice(1).map((arg) => previewIr(arg, { maxLen: 12, depth: depth + 1 })).join(", ")})`, maxLen);
-    case "BLOCK": {
-      const start = node.args[0]?.kind === "block_meta" ? 1 : 0;
-      const statements = node.args.slice(start).map((stmt) => previewIr(stmt, { maxLen: 18, depth: depth + 1 }));
-      return truncate(`{ ${statements.join("; ")} }`, maxLen);
-    }
-    case "ASSIGN":
-    case "ASSIGN_COPY":
-    case "ASSIGN_UPDATE":
-    case "ASSIGN_DEEP_COPY":
-    case "ASSIGN_DEEP_UPDATE":
-    case "OUTER_ASSIGN":
-      return truncate(`${node.args[0]} = ${previewIr(node.args[1], { maxLen: Math.max(12, maxLen - String(node.args[0]).length - 3), depth: depth + 1 })}`, maxLen);
-    case "ASSIGN_EXPR":
-      return truncate(`${previewIr(node.args[0], { maxLen: 12, depth: depth + 1 })} = ${previewIr(node.args[1], { maxLen: 16, depth: depth + 1 })}`, maxLen);
-    case "OUTER_UPDATE":
-      return truncate(`@${node.args[0]} ~= ${previewIr(node.args[1], { maxLen: Math.max(12, maxLen - String(node.args[0]).length - 5), depth: depth + 1 })}`, maxLen);
-    default:
-      break;
-  }
-  const op = BINARY_OPS.get(node.fn);
-  if (op && node.args.length >= 2) {
-    return truncate(`${previewIr(node.args[0], { maxLen: 14, depth: depth + 1 })} ${op} ${previewIr(node.args[1], { maxLen: 14, depth: depth + 1 })}`, maxLen);
-  }
-  return truncate(irToText(node), maxLen);
-}
-function formatCallablePreview(fn, label) {
-  const attachedSpec = getAttachedSpec(fn);
-  const symbolicKind = fn._ext?.get?.("_symbolicKind")?.value || null;
-  if (attachedSpec && symbolicKind === "Poly") {
-    const params2 = fn.params?.positional?.map((param) => param.name).join(", ") || "";
-    return `[Poly ${params2} -> ${renderSymbolicIr(fn.body)}; Spec ${formatSymbolicSpec(attachedSpec)}]`;
-  }
-  const params = fn.params?.positional?.map((param) => param.isRest ? `...${param.name}` : param.name).join(", ") || "";
-  const prepEntries = [
-    ...Array.isArray(fn.params?.conditionals) ? fn.params.conditionals : [],
-    ...Array.isArray(fn.params?.prep) ? fn.params.prep : []
-  ];
-  const prepText = prepEntries.length > 0 ? ` ${fn.params?.prepStrict ? "?!-" : "?-"} [${truncate(prepEntries.map((entry) => previewIr(entry, { maxLen: 18 })).join(", "), 42)}]` : "";
-  const bodyText = previewIr(fn.body, { maxLen: 48 });
-  const displayName = fn.__name || fn.name || null;
-  const nameText = displayName ? ` ${displayName}:` : ":";
-  const specText = attachedSpec ? `; Spec ${formatSymbolicSpec(attachedSpec)}` : "";
-  return `[${label}${nameText} (${params})${prepText} -> ${bodyText}${specText}]`;
-}
-function formatMultifunctionPreview(multifn) {
-  const displayName = multifn.__name || null;
-  const variants = (multifn.values || []).map((variant, index) => {
-    if (!variant || variant.type !== "function" && variant.type !== "lambda") {
-      return `#${index + 1}: <invalid>`;
-    }
-    const params = variant.params?.positional?.map((param) => param.isRest ? `...${param.name}` : param.name).join(", ") || "";
-    const prepEntries = [
-      ...Array.isArray(variant.params?.conditionals) ? variant.params.conditionals : [],
-      ...Array.isArray(variant.params?.prep) ? variant.params.prep : []
-    ];
-    const prepText = prepEntries.length > 0 ? ` ${variant.params?.prepStrict ? "?!-" : "?-"} [${truncate(prepEntries.map((entry) => previewIr(entry, { maxLen: 12 })).join(", "), 24)}]` : "";
-    const variantName = variant.__name ? `/${variant.__name}/ ` : "";
-    const bodyText = previewIr(variant.body, { maxLen: 20 });
-    return `${variantName}(${params})${prepText} -> ${bodyText}`;
-  });
-  if (variants.length === 0) {
-    return displayName ? `[Multifunction ${displayName}: empty]` : "[Multifunction: empty]";
-  }
-  const prefix = displayName ? `[Multifunction ${displayName}:
-` : `[Multifunction:
-`;
-  return `${prefix}${variants.map((variant) => `${variant},`).join(`
-`)}
-]`;
-}
-function isSemanticObject(value) {
-  return value && typeof value === "object" && value._ext instanceof Map && value._ext.has("__type");
-}
-function formatViaSemanticDisplay(value, options) {
-  if (!isSemanticObject(value) || !options?.context || !options?.evaluate)
-    return null;
-  for (const methodName of ["ToString", "TOSTRING", "Value", "VALUE"]) {
-    let fn;
-    try {
-      fn = resolveMethod(value, methodName);
-    } catch {
-      continue;
-    }
-    try {
-      const displayed = fn?.type === "method_builtin" ? fn.impl([value], options.context, options.evaluate, callWithConcreteArgs) : callWithConcreteArgs(fn, [value], options.context, options.evaluate);
-      if (displayed === value)
-        continue;
-      return formatValue(displayed, { ...options, semanticDisplay: false });
-    } catch {
-      continue;
-    }
-  }
-  return null;
-}
-function formatValue(val, options = {}) {
-  const formatChild = (child) => formatValue(child, options);
-  if (isHole(val))
-    return "undefined";
-  if (val === null)
-    return "_";
-  if (val === undefined)
-    return "undefined";
-  if (typeof val === "object" && val !== null) {
-    if (isSymbolicSpec(val))
-      return formatSymbolicSpec(val);
-    if (isLazySequence(val)) {
-      const cached = val._lazy.cache.slice(0, 8).map(formatChild).join(", ");
-      const more = val._lazy.cache.length > 8 || !val._lazy.done ? cached ? ", …" : "…" : "";
-      const length = lazyKnownLength(val);
-      const suffix = length === null ? "" : `; length ${length}`;
-      return `[LazySequence${suffix}: ${cached}${more}]`;
-    }
-    if (val.type === "iterator") {
-      return val.cursor === null ? "[Iterator: done]" : `[Iterator: index ${val.cursor}]`;
-    }
-    if (val.type === "string")
-      return val.value;
-    if (isCayleyInfinity(val))
-      return "Infinity";
-    if (isCayleyValue(val)) {
-      return `Cayley(${formatChild(val.magnitude)}, ${formatChild(val.direction)})`;
-    }
-    if (isQuantity(val))
-      return formatQuantity(val, formatChild);
-    if (isUnitValue(val))
-      return `~[${formatUnit(val)}]`;
-    if (val.type === "exact_generator" || val.type === "exact_expression") {
-      return formatExact(val, formatChild);
-    }
-    if (isTensor(val))
-      return formatTensor(val, formatChild);
-    if (val.type === "sequence" && val._ext instanceof Map && val._ext.get("_type")?.value === "multifunction") {
-      return formatMultifunctionPreview(val);
-    }
-    if (val.type === "sequence") {
-      const open = val.kind === "set" ? "{| " : val.kind === "tuple" ? "( " : "[";
-      const close = val.kind === "set" ? " |}" : val.kind === "tuple" ? " )" : "]";
-      const items = val.values || val.elements || [];
-      return open + items.map(formatChild).join(", ") + close;
-    }
-    if (val.type === "set" || val.type === "tuple") {
-      const open = val.type === "set" ? "{| " : "( ";
-      const close = val.type === "set" ? " |}" : " )";
-      return open + val.values.map(formatChild).join(", ") + close;
-    }
-    if (val.type === "map") {
-      const entries = [];
-      const mapObj = val.entries || val.elements || new Map;
-      mapObj.forEach((entryValue, key) => {
-        entries.push(`${key}=${formatChild(entryValue)}`);
-      });
-      return `{= ${entries.join(", ")} }`;
-    }
-    if (val.type === "export_bundle") {
-      const entries = [];
-      const mapObj = val.entries || new Map;
-      mapObj.forEach((cell, key) => {
-        entries.push(`${key}=${formatChild(cell?.value)}`);
-      });
-      return `{= ${entries.join(", ")} }`;
-    }
-    if (val.type === "function" || val.type === "lambda") {
-      return formatCallablePreview(val, val.type === "lambda" ? "Lambda" : "Function");
-    }
-    if (val.type === "system_context") {
-      const names = val.context.getAllNames();
-      const frozenMark = val.context.frozen ? " frozen" : " mutable";
-      return `[SystemContext${frozenMark}: ${names.slice(0, 5).join(", ")}${names.length > 5 ? ", ..." : ""}]`;
-    }
-    if (val.type === "sysref") {
-      return `[SystemFunction: ${val.name}]`;
-    }
-    if (val.type === "partial") {
-      const arity = (val.template || []).reduce((max, templateValue) => templateValue && templateValue.type === "placeholder" ? Math.max(max, templateValue.index) : max, 0);
-      return `[Partial: ${arity}]`;
-    }
-    if (val.type === "interval") {
-      return `${val.start || val.lo}:${val.end || val.hi}`;
-    }
-    if (options.semanticDisplay !== false) {
-      const semanticDisplay = formatViaSemanticDisplay(val, options);
-      if (semanticDisplay !== null)
-        return semanticDisplay;
-    }
-    if (val.fn === "DEFER") {
-      const inner = val.args && val.args[0];
-      const kind = inner ? inner.fn || inner.type || "AST" : "AST";
-      return `[Deferred ${kind}]`;
-    }
-  }
-  if (val instanceof Rational)
-    return val.toMixedString();
-  if (val instanceof RationalInterval)
-    return val.toMixedString();
-  return val.toString();
-}
-
-// ../rix/src/eval/functions/deferred.js
-function desugarNode(node, maxDepth, currentDepth = 0) {
-  if (node === null || node === undefined)
-    return "_";
-  if (isHole(node))
-    return "undefined";
-  if (node instanceof Integer)
-    return node.toString();
-  if (typeof node === "string")
-    return JSON.stringify(node);
-  if (typeof node === "number" || typeof node === "bigint")
-    return String(node);
-  if (typeof node === "boolean")
-    return String(node);
-  if (typeof node !== "object")
-    return String(node);
-  if (node.type === "string")
-    return JSON.stringify(node.value);
-  if (typeof node.fn === "string") {
-    if (maxDepth >= 0 && currentDepth >= maxDepth) {
-      return `${node.fn}(...)`;
-    }
-    if (!node.args || node.args.length === 0) {
-      return node.fn;
-    }
-    const argStrs = node.args.map((a) => desugarNode(a, maxDepth, currentDepth + 1));
-    const isBlock = node.fn === "BLOCK";
-    const hasMultilineArg = argStrs.some((s) => s.includes(`
-`));
-    if (isBlock || hasMultilineArg) {
-      const indented = argStrs.map((s) => s.split(`
-`).map((line) => "  " + line).join(`
-`));
-      return `${node.fn}(
-${indented.join(`,
-`)}
-)`;
-    }
-    return `${node.fn}(${argStrs.join(", ")})`;
-  }
-  try {
-    return JSON.stringify(node);
-  } catch {
-    return "[object]";
-  }
-}
-function nodeLabel(irNode) {
-  if (!irNode || typeof irNode !== "object" || !irNode.fn) {
-    return desugarNode(irNode, 0);
-  }
-  if (!irNode.args || irNode.args.length === 0)
-    return irNode.fn;
-  const argLabels = irNode.args.map((a) => {
-    if (typeof a === "string")
-      return JSON.stringify(a);
-    if (a instanceof Integer)
-      return a.toString();
-    if (typeof a === "number" || typeof a === "bigint")
-      return String(a);
-    if (a && typeof a === "object" && a.fn)
-      return "...";
-    try {
-      return JSON.stringify(a);
-    } catch {
-      return "[...]";
-    }
-  });
-  return `${irNode.fn}(${argLabels.join(", ")})`;
-}
-function traceNode(irNode, evaluate, maxDepth, currentDepth, lines, indent) {
-  if (!irNode || typeof irNode !== "object" || !irNode.fn) {
-    return evaluate(irNode);
-  }
-  if (maxDepth >= 0 && currentDepth > maxDepth) {
-    return evaluate(irNode);
-  }
-  const fn = irNode.fn;
-  if (fn === "DEFER") {
-    const result2 = evaluate(irNode);
-    lines.push(`${indent}DEFER → ${formatValue(result2)}`);
-    return result2;
-  }
-  if (fn === "BLOCK") {
-    let result2 = null;
-    for (const stmt of irNode.args) {
-      result2 = traceNode(stmt, evaluate, maxDepth, currentDepth, lines, indent);
-    }
-    return result2;
-  }
-  let result;
-  try {
-    result = evaluate(irNode);
-  } catch (e) {
-    lines.push(`${indent}${nodeLabel(irNode)} → ERROR: ${e.message}`);
-    throw e;
-  }
-  lines.push(`${indent}${nodeLabel(irNode)} → ${formatValue(result)}`);
-  if (maxDepth < 0 || currentDepth < maxDepth) {
-    if (Array.isArray(irNode.args)) {
-      const childIndent = indent + "  ";
-      for (const arg of irNode.args) {
-        if (arg && typeof arg === "object" && arg.fn) {
-          traceNode(arg, evaluate, maxDepth, currentDepth + 1, lines, childIndent);
-        }
-      }
-    }
-  }
-  return result;
-}
-function resolveIntArg(val, name) {
-  if (val === null || val === undefined || isHole(val))
-    return -1;
-  if (val instanceof Integer)
-    return Number(val.value);
-  if (typeof val === "number")
-    return Math.trunc(val);
-  throw new Error(`${name} must be an integer, got ${formatValue(val)}`);
-}
-function resolveBindings(val, name) {
-  if (val === null || val === undefined || isHole(val))
-    return null;
-  if (val.type === "map")
-    return val;
-  throw new Error(`${name} must be a map or null, got ${formatValue(val)}`);
-}
-var Eval = {
-  type: "method_builtin",
-  name: "Eval",
-  impl([target, bindings, mode], context, evaluate) {
-    const evalNodes = [target.args[0]];
-    bindings = resolveBindings(bindings, "Eval bindings");
-    let modeStr = "inherit";
-    if (mode !== null && mode !== undefined && !isHole(mode)) {
-      if (mode.type === "string") {
-        modeStr = mode.value;
-      } else {
-        throw new Error("Eval mode must be a string or colon-string like :fresh or :inherit");
-      }
-    }
-    if (modeStr !== "inherit" && modeStr !== "fresh") {
-      throw new Error(`Eval mode must be 'inherit' or 'fresh', got '${modeStr}'`);
-    }
-    if (modeStr === "inherit" && (!bindings || bindings.entries.size === 0)) {
-      let res = null;
-      const runBody = () => {
-        for (const irNode of evalNodes)
-          res = evaluate(irNode);
-        return res;
-      };
-      return context.withSharedBody(evalNodes[0], runBody);
-    }
-    context.push(undefined, { isolated: modeStr === "fresh" });
-    try {
-      if (bindings && bindings.entries) {
-        for (const [k, v] of bindings.entries) {
-          if (typeof k !== "string") {
-            throw new Error(`Eval binding key must be a string, got ${String(k)}`);
-          }
-          context.setFresh(k, v);
-        }
-      }
-      let res = null;
-      const runBody = () => {
-        for (const irNode of evalNodes)
-          res = evaluate(irNode);
-        return res;
-      };
-      if (evalNodes.length === 1) {
-        return context.withSharedBody(evalNodes[0], runBody);
-      }
-      return runBody();
-    } finally {
-      context.pop();
-    }
-  }
-};
-var Desugar = {
-  type: "method_builtin",
-  name: "Desugar",
-  impl([target, depth]) {
-    const maxDepth = resolveIntArg(depth, "Desugar depth");
-    const result = desugarNode(target, maxDepth, 0);
-    return { type: "string", value: result };
-  }
-};
-var Inspect = {
-  type: "method_builtin",
-  name: "Inspect",
-  impl([target, bindings, depth], context, evaluate) {
-    bindings = resolveBindings(bindings, "Inspect bindings");
-    const maxDepth = resolveIntArg(depth, "Inspect depth");
-    context.push(undefined, { isolated: true });
-    let result = null;
-    let errorMsg = null;
-    const traceLines = [];
-    try {
-      if (bindings && bindings.entries) {
-        for (const [k, v] of bindings.entries) {
-          context.setFresh(k, v);
-        }
-      }
-      const evalNode = target.args[0];
-      if (maxDepth === 0) {
-        result = context.withSharedBody(evalNode, () => evaluate(evalNode));
-      } else {
-        result = context.withSharedBody(evalNode, () => traceNode(evalNode, evaluate, maxDepth, 0, traceLines, "  "));
-      }
-    } catch (e) {
-      errorMsg = e.message ?? String(e);
-    } finally {
-      context.pop();
-    }
-    const lines = ["--- Deferred Inspection ---", "Inputs:"];
-    if (bindings && bindings.entries && bindings.entries.size > 0) {
-      for (const [k, v] of bindings.entries) {
-        lines.push(`  ${k} = ${formatValue(v)}`);
-      }
-    } else {
-      lines.push("  (none)");
-    }
-    if (traceLines.length > 0) {
-      lines.push("Trace:");
-      lines.push(...traceLines);
-    }
-    if (errorMsg !== null) {
-      lines.push(`Error: ${errorMsg}`);
-    } else {
-      lines.push(`Output: ${formatValue(result)}`);
-    }
-    return { type: "string", value: lines.join(`
-`) };
-  }
-};
-var deferredMethods = { EVAL: Eval, DESUGAR: Desugar, INSPECT: Inspect };
-
-// ../rix/src/runtime/cell.js
-class Cell {
-  constructor(value) {
-    this.value = value;
-  }
-}
-function classifyMetaKey(name) {
-  if (name.startsWith("__"))
-    return "sticky";
-  if (name.startsWith("_"))
-    return "ephemeral";
-  return "ordinary";
-}
-function shallowCopyValue(value) {
-  if (value == null)
-    return value;
-  if (typeof value !== "object")
-    return value;
-  if (value instanceof Integer)
-    return new Integer(value.value);
-  if (value instanceof Rational)
-    return new Rational(value.numerator, value.denominator);
-  if (value instanceof RationalInterval) {
-    return new RationalInterval(new Rational(value.low.numerator, value.low.denominator), new Rational(value.high.numerator, value.high.denominator));
-  }
-  if (value.type === "string")
-    return { type: "string", value: value.value };
-  if (isLazySequence(value))
-    return cloneLazySequence(value);
-  if (value.type === "iterator") {
-    return {
-      type: "iterator",
-      source: value.source,
-      cursor: value.cursor,
-      _ext: value._ext ? new Map(value._ext) : undefined
-    };
-  }
-  if (value.type === "sequence") {
-    return {
-      type: "sequence",
-      values: [...value.values],
-      _ext: value._ext ? new Map(value._ext) : undefined
-    };
-  }
-  if (value.type === "tuple") {
-    return {
-      type: "tuple",
-      values: [...value.values],
-      _ext: value._ext ? new Map(value._ext) : undefined
-    };
-  }
-  if (value.type === "map" && value.entries instanceof Map) {
-    return {
-      type: "map",
-      entries: new Map(value.entries),
-      _ext: value._ext ? new Map(value._ext) : undefined
-    };
-  }
-  if (value.type === "export_bundle" && value.entries instanceof Map) {
-    return {
-      type: "export_bundle",
-      entries: new Map(value.entries),
-      _ext: value._ext ? new Map(value._ext) : undefined
-    };
-  }
-  if (value.type === "set") {
-    return {
-      type: "set",
-      values: [...value.values],
-      _ext: value._ext ? new Map(value._ext) : undefined
-    };
-  }
-  if (isTensor(value)) {
-    return {
-      type: "tensor",
-      data: [...value.data],
-      shape: [...value.shape],
-      strides: [...value.strides],
-      offset: value.offset,
-      _ext: value._ext ? new Map(value._ext) : undefined
-    };
-  }
-  if (value.type === "quantity") {
-    return { ...value, _ext: value._ext ? new Map(value._ext) : undefined };
-  }
-  if (value.type === "unit_expr") {
-    return { ...value, factors: new Map(value.factors), _ext: value._ext ? new Map(value._ext) : undefined };
-  }
-  if (value.type === "exact_expression") {
-    return { ...value, terms: new Map(value.terms), _ext: value._ext ? new Map(value._ext) : undefined };
-  }
-  if (value.type === "cayley") {
-    return { ...value, _ext: value._ext ? new Map(value._ext) : undefined };
-  }
-  return value;
-}
-function deepCopyValue(value) {
-  if (value == null)
-    return value;
-  if (typeof value !== "object")
-    return value;
-  if (value instanceof Integer)
-    return new Integer(value.value);
-  if (value instanceof Rational)
-    return new Rational(value.numerator, value.denominator);
-  if (value instanceof RationalInterval) {
-    return new RationalInterval(new Rational(value.low.numerator, value.low.denominator), new Rational(value.high.numerator, value.high.denominator));
-  }
-  if (value.type === "string")
-    return { type: "string", value: value.value };
-  if (isLazySequence(value)) {
-    return cloneLazySequence(value, { restart: true, cloneValue: deepCopyValue });
-  }
-  if (value.type === "iterator") {
-    return {
-      type: "iterator",
-      source: deepCopyValue(value.source),
-      cursor: value.cursor,
-      _ext: value._ext ? deepCopyMeta(value._ext) : undefined
-    };
-  }
-  if (value.type === "sequence") {
-    return {
-      type: "sequence",
-      values: value.values.map(deepCopyValue),
-      _ext: value._ext ? deepCopyMeta(value._ext) : undefined
-    };
-  }
-  if (value.type === "tuple") {
-    return {
-      type: "tuple",
-      values: value.values.map(deepCopyValue),
-      _ext: value._ext ? deepCopyMeta(value._ext) : undefined
-    };
-  }
-  if (value.type === "map" && value.entries instanceof Map) {
-    const newEntries = new Map;
-    for (const [k, v] of value.entries) {
-      newEntries.set(k, deepCopyValue(v));
-    }
-    return {
-      type: "map",
-      entries: newEntries,
-      _ext: value._ext ? deepCopyMeta(value._ext) : undefined
-    };
-  }
-  if (value.type === "export_bundle" && value.entries instanceof Map) {
-    const newEntries = new Map;
-    for (const [k, v] of value.entries) {
-      newEntries.set(k, new Cell(deepCopyValue(v.value)));
-    }
-    return {
-      type: "export_bundle",
-      entries: newEntries,
-      _ext: value._ext ? deepCopyMeta(value._ext) : undefined
-    };
-  }
-  if (value.type === "set") {
-    return {
-      type: "set",
-      values: value.values.map(deepCopyValue),
-      _ext: value._ext ? deepCopyMeta(value._ext) : undefined
-    };
-  }
-  if (isTensor(value)) {
-    return {
-      type: "tensor",
-      data: value.data.map(deepCopyValue),
-      shape: [...value.shape],
-      strides: [...value.strides],
-      offset: value.offset,
-      _ext: value._ext ? deepCopyMeta(value._ext) : undefined
-    };
-  }
-  if (value.type === "quantity") {
-    return {
-      ...value,
-      baseMagnitude: deepCopyValue(value.baseMagnitude),
-      displayUnit: deepCopyValue(value.displayUnit),
-      _ext: value._ext ? deepCopyMeta(value._ext) : undefined
-    };
-  }
-  if (value.type === "unit_expr") {
-    return {
-      ...value,
-      factors: new Map(value.factors),
-      _ext: value._ext ? deepCopyMeta(value._ext) : undefined
-    };
-  }
-  if (value.type === "exact_expression") {
-    const terms = new Map;
-    for (const [key, term] of value.terms) {
-      terms.set(key, {
-        powers: new Map(term.powers),
-        coefficient: deepCopyValue(term.coefficient)
-      });
-    }
-    return { ...value, terms, _ext: value._ext ? deepCopyMeta(value._ext) : undefined };
-  }
-  if (value.type === "cayley") {
-    return {
-      ...value,
-      magnitude: deepCopyValue(value.magnitude),
-      direction: deepCopyValue(value.direction),
-      _ext: value._ext ? deepCopyMeta(value._ext) : undefined
-    };
-  }
-  return value;
-}
-function deepCopyMeta(meta) {
-  const result = new Map;
-  for (const [key, val] of meta) {
-    result.set(key, deepCopyValue(val));
-  }
-  return result;
-}
-function ensureExt(obj) {
-  if (!obj || typeof obj !== "object") {
-    throw new Error(`Cannot attach meta properties to ${typeof obj}`);
-  }
-  if (!obj._ext) {
-    obj._ext = new Map;
-  }
-  return obj._ext;
-}
-function copyAllMeta(source, target, depth) {
-  const srcMeta = source?._ext;
-  if (!srcMeta || srcMeta.size === 0)
-    return;
-  if (!target || typeof target !== "object")
-    return;
-  const tgtMeta = ensureExt(target);
-  for (const [key, val] of srcMeta) {
-    tgtMeta.set(key, depth === "deep" ? deepCopyValue(val) : val);
-  }
-}
-function transferMetaForUpdate(oldValue, newValue, rhsValue, depth) {
-  if (!newValue || typeof newValue !== "object")
-    return;
-  const oldMeta = oldValue?._ext;
-  const rhsMeta = rhsValue?._ext;
-  if (!oldMeta && !rhsMeta)
-    return;
-  const tgtMeta = new Map;
-  newValue._ext = tgtMeta;
-  const copyVal = depth === "deep" ? deepCopyValue : (v) => v;
-  if (oldMeta) {
-    for (const [key, val] of oldMeta) {
-      if (classifyMetaKey(key) === "ordinary") {
-        tgtMeta.set(key, copyVal(val));
-      }
-    }
-  }
-  if (oldMeta) {
-    for (const [key, val] of oldMeta) {
-      if (classifyMetaKey(key) === "sticky") {
-        tgtMeta.set(key, copyVal(val));
-      }
-    }
-  }
-  if (rhsMeta) {
-    for (const [key, val] of rhsMeta) {
-      if (classifyMetaKey(key) === "sticky") {
-        tgtMeta.set(key, copyVal(val));
-      }
-    }
-  }
-  if (rhsMeta) {
-    for (const [key, val] of rhsMeta) {
-      if (classifyMetaKey(key) === "ephemeral") {
-        tgtMeta.set(key, copyVal(val));
-      }
-    }
-  }
-}
-
-// ../rix/src/eval/functions/arithmetic.js
-function ensureNumeric(val) {
-  if (val instanceof Integer || val instanceof Rational)
-    return val;
-  if (val && typeof val === "object" && typeof val.add === "function" && typeof val.multiply === "function")
-    return val;
-  if (typeof val === "bigint")
-    return new Integer(val);
-  if (typeof val === "number") {
-    if (Number.isInteger(val))
-      return new Integer(val);
-    const str = val.toString();
-    const parts = str.split(".");
-    if (parts.length === 2) {
-      const den = 10n ** BigInt(parts[1].length);
-      const num = BigInt(parts[0]) * den + BigInt(parts[1]);
-      return new Rational(num, den);
-    }
-    return new Integer(BigInt(Math.floor(val)));
-  }
-  if (typeof val === "function" || val && typeof val === "object" && (val.type === "lambda" || val.type === "function" || val.type === "sysref" || val.type === "partial" || val.type === "arityCap")) {
-    throw new Error("Cannot use function/lambda in arithmetic. If you intended to call a function, its name must be Capitalised.");
-  }
-  throw new Error(`Cannot use ${typeof val} in arithmetic`);
-}
-function stringify(val) {
-  return formatValue(val);
-}
-function toQuotientParts(value) {
-  if (value instanceof Integer) {
-    return { numerator: value.value, denominator: 1n };
-  }
-  if (value instanceof Rational) {
-    return { numerator: value.numerator, denominator: value.denominator };
-  }
-  return { numerator: BigInt(value.toString()), denominator: 1n };
-}
-function ceilDiv(numerator, denominator) {
-  const q = numerator / denominator;
-  const r = numerator % denominator;
-  if (r === 0n)
-    return q;
-  return numerator >= 0n ? q + 1n : q;
-}
-function roundDiv(numerator, denominator) {
-  const absNum = numerator < 0n ? -numerator : numerator;
-  const floor = absNum / denominator;
-  const remainder = absNum % denominator;
-  const rounded = remainder * 2n >= denominator ? floor + 1n : floor;
-  return numerator < 0n ? -rounded : rounded;
-}
-var arithmeticFunctions = {
-  ADD: {
-    impl(args) {
-      if (args.length === 0)
-        return new Integer(0n);
-      if (args.length === 1)
-        return args[0];
-      const isStr = (v) => typeof v === "string" || v && typeof v === "object" && v.type === "string";
-      const getStr = (v) => stringify(v);
-      if (args.some(isStr)) {
-        return { type: "string", value: args.map(getStr).join("") };
-      }
-      let result = ensureNumeric(args[0]);
-      for (let i = 1;i < args.length; i++) {
-        result = result.add(ensureNumeric(args[i]));
-      }
-      return result;
-    },
-    pure: true,
-    doc: "Addition or string concatenation"
-  },
-  SUB: {
-    impl(args) {
-      const a = ensureNumeric(args[0]);
-      const b = ensureNumeric(args[1]);
-      return a.subtract(b);
-    },
-    pure: true,
-    doc: "Subtraction"
-  },
-  MUL: {
-    impl(args) {
-      if (args.length === 0)
-        return new Integer(1n);
-      if (args.length === 1)
-        return ensureNumeric(args[0]);
-      let result = ensureNumeric(args[0]);
-      for (let i = 1;i < args.length; i++) {
-        result = result.multiply(ensureNumeric(args[i]));
-      }
-      return result;
-    },
-    pure: true,
-    doc: "Multiplication (Product of values)"
-  },
-  DIV: {
-    impl(args) {
-      const a = ensureNumeric(args[0]);
-      const b = ensureNumeric(args[1]);
-      return a.divide(b);
-    },
-    pure: true,
-    doc: "Division"
-  },
-  INTDIV: {
-    impl(args) {
-      const a = ensureNumeric(args[0]);
-      const b = ensureNumeric(args[1]);
-      if (a instanceof Integer && b instanceof Integer) {
-        const result = a.value / b.value;
-        return new Integer(result);
-      }
-      const rat2 = a.divide(b);
-      if (rat2 instanceof Rational) {
-        return new Integer(rat2.numerator / rat2.denominator);
-      }
-      return new Integer(rat2.value);
-    },
-    pure: true,
-    doc: "Integer division (floor)"
-  },
-  DIVUP: {
-    impl(args) {
-      const a = ensureNumeric(args[0]);
-      const b = ensureNumeric(args[1]);
-      const quotient = a.divide(b);
-      const { numerator, denominator } = toQuotientParts(quotient);
-      return new Integer(ceilDiv(numerator, denominator));
-    },
-    pure: true,
-    doc: "Ceiling division"
-  },
-  DIVROUND: {
-    impl(args) {
-      const a = ensureNumeric(args[0]);
-      const b = ensureNumeric(args[1]);
-      const quotient = a.divide(b);
-      const { numerator, denominator } = toQuotientParts(quotient);
-      return new Integer(roundDiv(numerator, denominator));
-    },
-    pure: true,
-    doc: "Rounded division"
-  },
-  MOD: {
-    impl(args) {
-      const a = ensureNumeric(args[0]);
-      const b = ensureNumeric(args[1]);
-      if (a instanceof Integer && b instanceof Integer) {
-        return a.modulo(b);
-      }
-      const aVal = a instanceof Integer ? a.value : a.numerator;
-      const bVal = b instanceof Integer ? b.value : b.numerator;
-      return new Integer(aVal % bVal);
-    },
-    pure: true,
-    doc: "Modulo"
-  },
-  POW: {
-    impl(args) {
-      const base = ensureNumeric(args[0]);
-      const exp = ensureNumeric(args[1]);
-      const expValue = exp instanceof Integer ? exp.value : Number(exp.toString());
-      return base.pow(expValue);
-    },
-    pure: true,
-    doc: "Exponentiation"
-  },
-  POWPROD: {
-    impl(args) {
-      const base = ensureNumeric(args[0]);
-      const exp = ensureNumeric(args[1]);
-      const expValue = exp instanceof Integer ? exp.value : Number(exp.toString());
-      return base.pow(expValue);
-    },
-    pure: true,
-    doc: "Exponentiation/product power (currently same implementation as POW)"
-  },
-  NEG: {
-    impl(args) {
-      const a = ensureNumeric(args[0]);
-      return a.negate();
-    },
-    pure: true,
-    doc: "Negation"
-  },
-  ABS: {
-    impl(args) {
-      const a = ensureNumeric(args[0]);
-      return a instanceof Integer ? new Integer(a.value < 0n ? -a.value : a.value) : new Rational(a.numerator < 0n ? -a.numerator : a.numerator, a.denominator);
-    },
-    pure: true,
-    doc: "Absolute value"
-  },
-  SQRT: {
-    impl(args) {
-      const a = ensureNumeric(args[0]);
-      const val = a instanceof Rational ? Number(a.numerator) / Number(a.denominator) : Number(a.toString());
-      const root = Math.sqrt(val);
-      if (Number.isInteger(root))
-        return new Integer(BigInt(root));
-      const str = root.toString();
-      const parts = str.split(".");
-      if (parts.length === 2) {
-        const den = 10n ** BigInt(parts[1].length);
-        const num = BigInt(parts[0]) * den + BigInt(parts[1]);
-        return new Rational(num, den);
-      }
-      return new Integer(BigInt(Math.floor(root)));
-    },
-    pure: true,
-    doc: "Square root (approximate rational)"
-  }
-};
-
-// ../rix/src/runtime/constructor-capture.js
-var CONSTRUCTOR_CAPTURE_MODES = Object.freeze({
-  alias: "alias",
-  copy: "copy",
-  refresh: "refresh",
-  deepCopy: "deep_copy",
-  deepRefresh: "deep_refresh"
-});
-function constructorDefaultCaptureMode(context) {
-  return context?.getEnv?.("defaultConstructorCaptureMode") || runtimeDefaults.defaultConstructorCaptureMode;
-}
-function captureResolvedValue(value, mode) {
-  if (mode === CONSTRUCTOR_CAPTURE_MODES.alias) {
-    return value;
-  }
-  if (mode === CONSTRUCTOR_CAPTURE_MODES.copy) {
-    const next = shallowCopyValue(value);
-    copyAllMeta(value, next, "shallow");
-    return next;
-  }
-  if (mode === CONSTRUCTOR_CAPTURE_MODES.deepCopy) {
-    const next = deepCopyValue(value);
-    copyAllMeta(value, next, "deep");
-    return next;
-  }
-  if (mode === CONSTRUCTOR_CAPTURE_MODES.refresh) {
-    const next = shallowCopyValue(value);
-    transferMetaForUpdate(null, next, value, "shallow");
-    return next;
-  }
-  if (mode === CONSTRUCTOR_CAPTURE_MODES.deepRefresh) {
-    const next = deepCopyValue(value);
-    transferMetaForUpdate(null, next, value, "deep");
-    return next;
-  }
-  return captureResolvedValue(value, runtimeDefaults.defaultConstructorCaptureMode);
-}
-function captureIrValue(irNode, mode, context, evaluate) {
-  if (mode === CONSTRUCTOR_CAPTURE_MODES.alias && irNode?.fn === "RETRIEVE") {
-    const cell = context.getCell(irNode.args[0]);
-    if (cell)
-      return cell.value;
-  }
-  if (mode === CONSTRUCTOR_CAPTURE_MODES.alias && irNode?.fn === "OUTER_RETRIEVE") {
-    const cell = context.getOuterCell(irNode.args[0]);
-    if (cell)
-      return cell.value;
-  }
-  const value = evaluate(irNode);
-  return captureResolvedValue(value, mode);
-}
-
-// ../rix/src/runtime/diagnostics.js
-class RixAbort extends Error {
-  constructor(event) {
-    const label = event?.entries?.get("label")?.value ?? "RiX abort";
-    super(label);
-    this.name = "RixAbort";
-    this.event = event;
-  }
-}
-var eventCounter = 0;
-function createEvent(fields) {
-  const entries = new Map;
-  entries.set("kind", { type: "string", value: fields.kind });
-  entries.set("label", typeof fields.label === "string" ? { type: "string", value: fields.label } : fields.label);
-  if (fields.level !== undefined) {
-    entries.set("level", fields.level instanceof Integer ? fields.level : new Integer(fields.level));
-  }
-  if (fields.file !== undefined) {
-    entries.set("file", { type: "string", value: fields.file });
-  }
-  if (fields.line !== undefined) {
-    entries.set("line", new Integer(fields.line));
-  }
-  if (fields.col !== undefined) {
-    entries.set("col", new Integer(fields.col));
-  }
-  if (fields.scope !== undefined) {
-    entries.set("scope", { type: "string", value: fields.scope });
-  }
-  entries.set("time", new Integer(BigInt(Date.now())));
-  if (fields.data !== undefined) {
-    entries.set("data", fields.data);
-  } else {
-    entries.set("data", { type: "map", entries: new Map });
-  }
-  if (fields.extra) {
-    for (const [k, v] of Object.entries(fields.extra)) {
-      entries.set(k, v);
-    }
-  }
-  eventCounter++;
-  return { type: "map", entries };
-}
-var DIAG_ENV_KEY = "__diagnostics__";
-
-class DiagnosticsRegistry {
-  constructor() {
-    this.events = [];
-    this.testResultsByFile = new Map;
-  }
-  addEvent(event) {
-    this.events.push(event);
-  }
-  registerTestResult(filePath, label, result) {
-    if (!this.testResultsByFile.has(filePath)) {
-      this.testResultsByFile.set(filePath, new Map);
-    }
-    const fileResults = this.testResultsByFile.get(filePath);
-    if (fileResults.has(label)) {
-      throw new Error(`Duplicate test group label "${label}" in file "${filePath}"`);
-    }
-    fileResults.set(label, result);
-  }
-  getFileResults(filePath) {
-    return this.testResultsByFile.get(filePath) || new Map;
-  }
-  getTestFiles() {
-    return Array.from(this.testResultsByFile.keys());
-  }
-  getSummary() {
-    let totalGroups = 0;
-    let passedGroups = 0;
-    let failedGroups = 0;
-    let erroredGroups = 0;
-    for (const [_file, results] of this.testResultsByFile) {
-      for (const [_label, result] of results) {
-        totalGroups++;
-        const passedEntry = result.entries?.get("passed");
-        if (passedEntry === null) {
-          const summary = result.entries?.get("summary");
-          const errored = summary?.entries?.get("errored");
-          if (errored !== null && errored !== undefined) {
-            const erVal = errored instanceof Integer ? Number(errored.value) : Number(errored);
-            if (erVal > 0) {
-              erroredGroups++;
-            } else {
-              failedGroups++;
-            }
-          } else {
-            failedGroups++;
-          }
-        } else {
-          passedGroups++;
-        }
-      }
-    }
-    return { totalGroups, passedGroups, failedGroups, erroredGroups };
-  }
-  getEventsByKind(kind) {
-    return this.events.filter((e) => {
-      const k = e.entries?.get("kind");
-      return k?.value === kind;
-    });
-  }
-}
-function getDiagnostics(context) {
-  let diag = context.getEnv(DIAG_ENV_KEY);
-  if (!diag) {
-    diag = new DiagnosticsRegistry;
-    context.setEnv(DIAG_ENV_KEY, diag);
-  }
-  return diag;
-}
-function getCurrentFilePath(context) {
-  const runtime = context.getEnv("__script_runtime__");
-  if (runtime && runtime.frameStack.length > 0) {
-    return runtime.frameStack[runtime.frameStack.length - 1].path;
-  }
-  return context.getEnv("__current_file__", "<repl>");
-}
-function rixStringValue(val) {
-  if (val === null || val === undefined)
-    return null;
-  if (typeof val === "string")
-    return val;
-  if (val.type === "string")
-    return val.value;
-  return null;
-}
-function rixIntValue(val) {
-  if (val === null || val === undefined)
-    return null;
-  if (val instanceof Integer)
-    return Number(val.value);
-  if (typeof val === "number")
-    return val;
-  if (typeof val === "bigint")
-    return Number(val);
-  return null;
-}
-function isRixMap(val) {
-  return val && val.type === "map" && val.entries instanceof Map;
-}
-function isRixArray(val) {
-  return val && (val.type === "sequence" || val.type === "array") && Array.isArray(val.values);
-}
-
-// ../rix/src/runtime/semantic.js
-function int3(value) {
-  return new Integer(BigInt(value));
-}
-function mutableExt() {
-  return new Map([["_mutable", int3(1)]]);
-}
-function ensureExt2(value) {
-  if (!value || typeof value !== "object") {
-    throw new Error("Semantic metadata requires an object value");
-  }
-  if (!(value._ext instanceof Map)) {
-    value._ext = new Map;
-  }
-  return value._ext;
-}
-function traitOrderSequence(names) {
-  return { type: "sequence", values: names.map(stringObj), _ext: mutableExt() };
-}
-function createTraitSet(names, order = names) {
-  return {
-    type: "set",
-    values: Array.from(new Set(names)).map(stringObj),
-    _ext: new Map([["order", traitOrderSequence(order)]])
-  };
-}
-function traitNamesFromSet(value) {
-  if (!value || value.type !== "set" || !Array.isArray(value.values))
-    return [];
-  return value.values.map((entry) => entry?.type === "string" ? entry.value : String(entry)).filter(Boolean);
-}
-function traitOrderFromSet(value) {
-  const explicit = value?._ext?.get("order");
-  if (explicit?.type === "sequence") {
-    return explicit.values.map((entry) => entry?.type === "string" ? entry.value : String(entry)).filter(Boolean);
-  }
-  return traitNamesFromSet(value);
-}
-function getLabel(value) {
-  if (value?.type === "string")
-    return value.value;
-  return String(value);
-}
-function summarizeValue(value) {
-  if (value === null)
-    return "_";
-  if (value instanceof Integer || value instanceof Rational || value instanceof RationalInterval) {
-    return value.toString();
-  }
-  if (value?.type === "string")
-    return JSON.stringify(value.value);
-  if (value?.type)
-    return `<${value.type}>`;
-  return getLabel(value);
-}
-function emitWarning(context, label, data = new Map) {
-  if (!context?.getEnv)
-    return;
-  const diagnostics = getDiagnostics(context);
-  diagnostics.addEvent(createEvent({
-    kind: "warning",
-    label,
-    file: getCurrentFilePath(context),
-    data: { type: "map", entries: data }
-  }));
-}
-function cloneHeader(header) {
-  return {
-    captureMode: header?.captureMode || null,
-    name: header?.name || null,
-    typeName: header?.typeName || null,
-    traits: Array.isArray(header?.traits) ? header.traits.map((trait) => ({ ...trait })) : []
-  };
-}
-var traitChecks = new Map([
-  ["positive", (value) => {
-    if (value instanceof Integer)
-      return value.value > 0n;
-    if (typeof value === "number" || typeof value === "bigint")
-      return Number(value) > 0;
-    return true;
-  }]
-]);
-function refreshSemanticProto(value) {
-  const ext = ensureExt2(value);
-  const typeName = ext.get("__type")?.value ?? null;
-  const traitsValue = ext.get("__traits") ?? null;
-  const traitOrder = traitOrderFromSet(traitsValue);
-  const typeLayer = typeName ? typeRegistry.get(typeName)?.proto?.(value) ?? makeProto() : null;
-  const traitEntries = new Map;
-  for (const traitName of traitOrder) {
-    const traitLayer = traitRegistry.get(traitName)?.proto?.(value);
-    if (!traitLayer?.entries)
-      continue;
-    for (const [key, entry] of traitLayer.entries) {
-      traitEntries.set(key, entry);
-    }
-  }
-  const traitsLayer = makeProto(Array.from(traitEntries.entries()));
-  ext.set("__proto", makeProto([
-    ["type", typeLayer],
-    ["traits", traitsLayer]
-  ]));
-  return ext.get("__proto");
-}
-function refreshRuntimeMetadata(value, builtinProto = null) {
-  const ext = ensureExt2(value);
-  ext.set("_type", stringObj(runtimeTypeName(value)));
-  ext.set("_proto", builtinProto ?? ext.get("_proto") ?? null);
-  return value;
-}
-function shouldValidateTraits(context, value) {
-  const globalValidate = context?.getEnv?.("validateTraits", false);
-  const hasVerify = traitNamesFromSet(value?._ext?.get("__traits")).includes("verify");
-  return globalValidate || hasVerify;
-}
-function checkTraits(value, context, { warnOnly = false } = {}) {
-  const traits = traitOrderFromSet(value?._ext?.get("__traits"));
-  for (const traitName of traits) {
-    if (traitName === "verify")
-      continue;
-    const check = traitChecks.get(traitName);
-    if (!check)
-      continue;
-    if (!check(value)) {
-      if (warnOnly) {
-        emitWarning(context, `Trait check failed: ${traitName}`, new Map([["trait", stringObj(traitName)]]));
-        return null;
-      }
-      throw new Error(`Trait check failed: ${traitName}`);
-    }
-  }
-  return int3(1);
-}
-function applyType(header, value, context, evaluate = null) {
-  const typeName = header.typeName;
-  if (!typeName)
-    return value;
-  const result = convertToRegisteredType(value, typeName, context, evaluate);
-  if (result === null) {
-    throw new Error(`Cannot convert value to semantic type ${typeName}`);
-  }
-  return result.value;
-}
-function valueHasSemanticMembership(value, name) {
-  const requestedType = typeRegistry.get(name);
-  const runtimeType = typeRegistry.get(runtimeTypeName(value));
-  if (requestedType && runtimeType && requestedType.name === runtimeType.name) {
-    return true;
-  }
-  const ext = value?._ext;
-  if (!(ext instanceof Map) || !name) {
-    return false;
-  }
-  if (ext.get("__type")?.value === name) {
-    return true;
-  }
-  if (ext.get("_type")?.value === name) {
-    return true;
-  }
-  return traitNamesFromSet(ext.get("__traits")).includes(name);
-}
-function convertSemanticType(value, typeName, context, { strict = true, warnOnFailure = false, evaluate = null } = {}) {
-  const header = {
-    captureMode: null,
-    name: null,
-    typeName,
-    traits: []
-  };
-  const effectiveHeader = mergeStickyHeader(readStickyHeader(value), header);
-  try {
-    return applySemanticHeader(value, effectiveHeader, context, {
-      inheritMissing: true,
-      warnOnTypeChange: true,
-      evaluate
-    });
-  } catch (error) {
-    if (error.message === `Unknown semantic type: ${typeName}`) {
-      throw error;
-    }
-    if (strict) {
-      throw error;
-    }
-    if (warnOnFailure) {
-      const ext = value?._ext instanceof Map ? value._ext : null;
-      const data = new Map([
-        ["requestedType", stringObj(typeName)],
-        ["sourceSummary", stringObj(summarizeValue(value))]
-      ]);
-      const runtimeType = ext?.get("_type");
-      if (runtimeType)
-        data.set("sourceType", runtimeType);
-      const semanticType = ext?.get("__type");
-      if (semanticType)
-        data.set("sourceSemanticType", semanticType);
-      const traits = ext?.get("__traits");
-      if (traits)
-        data.set("sourceTraits", traits);
-      emitWarning(context, "conversion failed", data);
-    }
-    return null;
-  }
-}
-function valueSatisfiesTrait(value, traitName) {
-  if (traitOrderFromSet(value?._ext?.get("__traits")).includes(traitName)) {
-    return true;
-  }
-  const check = traitChecks.get(traitName);
-  if (!check) {
-    return false;
-  }
-  return Boolean(check(value));
-}
-function readStickyHeader(value) {
-  const ext = value?._ext;
-  if (!(ext instanceof Map))
-    return cloneHeader(null);
-  return {
-    captureMode: null,
-    name: ext.get("__name")?.value ?? null,
-    typeName: ext.get("__type")?.value ?? null,
-    traits: traitOrderFromSet(ext.get("__traits")).map((name, order) => ({ name, checkMode: null, order }))
-  };
-}
-function mergeStickyHeader(baseHeader, overrideHeader) {
-  const base = cloneHeader(baseHeader);
-  const override = cloneHeader(overrideHeader);
-  return {
-    captureMode: override.captureMode ?? base.captureMode ?? null,
-    name: override.name ?? base.name ?? null,
-    typeName: override.typeName ?? base.typeName ?? null,
-    traits: override.traits.length > 0 ? override.traits : base.traits
-  };
-}
-function applySemanticHeader(value, header, context, options = {}) {
-  const effectiveHeader = cloneHeader(header);
-  if (!value || typeof value !== "object") {
-    throw new Error("Cannot outfit a non-object value");
-  }
-  const previous = readStickyHeader(value);
-  let nextValue = value;
-  nextValue = applyType(effectiveHeader, nextValue, context, options.evaluate ?? null);
-  const ext = ensureExt2(nextValue);
-  if (effectiveHeader.name) {
-    ext.set("__name", stringObj(effectiveHeader.name));
-  } else if (options.inheritMissing && previous.name) {
-    ext.set("__name", stringObj(previous.name));
-  }
-  const nextTypeName = effectiveHeader.typeName ?? (options.inheritMissing ? previous.typeName : null);
-  if (nextTypeName) {
-    ext.set("__type", stringObj(nextTypeName));
-  }
-  const explicitTraits = effectiveHeader.traits.length > 0 ? effectiveHeader.traits.map((trait) => trait.name) : options.inheritMissing ? previous.traits.map((trait) => trait.name) : [];
-  const typeDefaultTraits = nextTypeName ? typeRegistry.get(nextTypeName)?.defaultTraits || [] : [];
-  const nextTraits = resolveTraitNames([...typeDefaultTraits, ...explicitTraits]);
-  if (nextTraits.length > 0) {
-    ext.set("__traits", createTraitSet(nextTraits, nextTraits));
-  }
-  if (options.warnOnTypeChange && previous.typeName && nextTypeName && previous.typeName !== nextTypeName && nextTraits.length > 0) {
-    emitWarning(context, "Semantic type changed while traits were preserved", new Map([
-      ["from", stringObj(previous.typeName)],
-      ["to", stringObj(nextTypeName)]
-    ]));
-  }
-  refreshSemanticProto(nextValue);
-  if (shouldValidateTraits(context, nextValue)) {
-    checkTraits(nextValue, context);
-  }
-  return nextValue;
-}
-function applyUpdateSemantics(oldValue, newValue, context, evaluate = null) {
-  const inherited = readStickyHeader(oldValue);
-  if (!inherited.name && !inherited.typeName && inherited.traits.length === 0) {
-    return newValue;
-  }
-  return applySemanticHeader(newValue, inherited, context, { inheritMissing: true, evaluate });
-}
-function rebuildSemanticMetadata(value, context) {
-  refreshSemanticProto(value);
-  if (shouldValidateTraits(context, value)) {
-    checkTraits(value, context);
-  }
-  return value;
-}
-
-// ../rix/src/eval/functions/collections.js
-function isTruthy(val) {
-  return val !== null && val !== undefined;
-}
-function valueKey(val) {
-  if (val === null || val === undefined)
-    return "null";
-  if (typeof val === "object") {
-    if (typeof val.toString === "function" && val.toString !== Object.prototype.toString) {
-      return val.toString();
-    }
-    if (val.type) {
-      if (val.type === "tuple" || val.type === "sequence" || val.type === "set" || val.type === "array") {
-        const vals = val.values || val.elements || [];
-        return `${val.type}[${vals.map(valueKey).join(",")}]`;
-      }
-      if (val.type === "string")
-        return JSON.stringify(val.value);
-      return JSON.stringify(val, (k, v) => typeof v === "bigint" ? v.toString() : v);
-    }
-  }
-  return String(val);
-}
-var getValues = (arg) => {
-  if (arg && typeof arg === "object") {
-    if (arg.type === "set" && Array.isArray(arg.values)) {
-      return arg.values;
-    }
-    if (arg instanceof RationalInterval) {
-      return [arg.start, arg.end];
-    }
-    if (arg.type === "interval") {
-      return [arg.lo, arg.hi];
-    }
-  }
-  return [arg];
-};
-var toRationalOrNull = (value) => {
-  if (value instanceof Rational)
-    return value;
-  if (value instanceof Integer || value && typeof value === "object" && value.constructor.name === "Integer") {
-    return new Rational(value.value, 1n);
-  }
-  if (typeof value === "bigint") {
-    return new Rational(value, 1n);
-  }
-  if (typeof value === "number") {
-    if (!Number.isInteger(value))
-      return null;
-    return new Rational(BigInt(value), 1n);
-  }
-  if (typeof value === "string") {
-    try {
-      return new Rational(value);
-    } catch (error) {
-      if (error instanceof SyntaxError || error instanceof RangeError || error instanceof TypeError) {
-        return null;
-      }
-      if (/Invalid|Cannot convert|Denominator cannot be zero/.test(error.message)) {
-        return null;
-      }
-      throw error;
-    }
-  }
-  return null;
-};
-var compare = (a, b) => {
-  const aRat = toRationalOrNull(a);
-  const bRat = toRationalOrNull(b);
-  if (aRat && bRat) {
-    return aRat.compareTo(bRat);
-  }
-  if (a < b)
-    return -1;
-  if (a > b)
-    return 1;
-  return 0;
-};
-var classifyUnionIntersectDomain = (val) => {
-  if (val && typeof val === "object") {
-    if (val.type === "set")
-      return "set";
-    if (val instanceof RationalInterval || val.type === "interval")
-      return "interval";
-  }
-  return null;
-};
-var generatorCount = (value) => {
-  if (value instanceof Integer)
-    return Number(value.value);
-  if (value instanceof Rational && value.denominator === 1n)
-    return Number(value.numerator);
-  if (typeof value === "number" && Number.isInteger(value))
-    return value;
-  if (typeof value === "bigint")
-    return Number(value);
-  return null;
-};
-var generatorCallable = (value) => Boolean(value && (value.type === "function" || value.type === "lambda" || value.type === "partial" || value.type === "arityCap" || value.type === "sysref" || value.type === "multifunction")) || typeof value === "function";
-var partialHistoryWidth = (callable) => {
-  if (!callable || callable.type !== "partial")
-    return null;
-  return (callable.template || []).reduce((max, item) => item?.type === "placeholder" ? Math.max(max, item.index) : max, 0);
-};
-function createGeneratorValue(args, ctx, evaluate, defaultMode) {
-  const firstGenerator = args.findIndex((arg) => arg?.fn === "GENERATOR");
-  if (firstGenerator < 0)
-    return null;
-  if (args.slice(firstGenerator).some((arg) => arg?.fn !== "GENERATOR")) {
-    throw new Error("Ordinary array elements cannot follow a generator chain");
-  }
-  const seedValues = args.slice(0, firstGenerator).map((arg) => captureIrValue(arg, defaultMode, ctx, evaluate));
-  const operators = [];
-  for (const generator of args.slice(firstGenerator)) {
-    if (generator.args[0]) {
-      if (operators.length > 0)
-        throw new Error("A generator chain may only declare one inline seed segment");
-      seedValues.push(captureIrValue(generator.args[0], defaultMode, ctx, evaluate));
-    }
-    operators.push(...generator.args.slice(1));
-  }
-  const sourceKinds = new Set(["GEN_ADD", "GEN_MUL", "GEN_FUNC"]);
-  let sourceIndex = operators.findIndex((op) => sourceKinds.has(op?.fn));
-  if (sourceIndex < 0)
-    sourceIndex = operators.findIndex((op) => op?.fn === "GEN_PIPE");
-  const source = sourceIndex < 0 ? null : operators[sourceIndex];
-  if (sourceIndex > 0 && operators.slice(0, sourceIndex).some((op) => op?.fn === "GEN_PIPE" || op?.fn === "GEN_FILTER")) {
-    throw new Error("The primary generation source must precede transforms and filters");
-  }
-  for (let i = 0;i < operators.length; i++) {
-    if (i === sourceIndex)
-      continue;
-    if (sourceKinds.has(operators[i]?.fn)) {
-      throw new Error("A generator chain may contain only one primary generation source");
-    }
-  }
-  const evaluatedOps = operators.map((op, index) => ({
-    fn: op.fn,
-    value: op.args?.[0] ? evaluate(op.args[0]) : null,
-    source: index === sourceIndex
-  }));
-  const sourceOp = evaluatedOps.find((op) => op.source) || null;
-  const terminalOps = evaluatedOps.filter((op) => op.fn === "GEN_EAGER_LIMIT" || op.fn === "GEN_LIMIT");
-  if (terminalOps.length > 1)
-    throw new Error("A generator chain may contain only one termination operator");
-  if (terminalOps.length === 1 && evaluatedOps.at(-1) !== terminalOps[0]) {
-    throw new Error("The generator termination operator must be last in its chain");
-  }
-  const stages = evaluatedOps.filter((op) => !op.source && !["GEN_EAGER_LIMIT", "GEN_LIMIT"].includes(op.fn));
-  const terminal = terminalOps[0] || null;
-  const eager = terminal?.fn === "GEN_EAGER_LIMIT" || !source && terminal?.fn !== "GEN_LIMIT";
-  const numericLimit = terminal ? generatorCount(terminal.value) : null;
-  if (numericLimit !== null && numericLimit < 0)
-    throw new Error("Generator limit must be non-negative");
-  if (terminal && numericLimit === null && !generatorCallable(terminal.value)) {
-    throw new Error("Generator limit must be an integer or callable predicate");
-  }
-  const maxIterations = ctx.getEnv?.("generatorMaxIterations", ctx.getEnv?.("defaultLoopMax", 1e4)) ?? 1e4;
-  let sequence;
-  const invoke = (callable, concreteArgs) => callWithConcreteArgs(callable, concreteArgs, ctx, evaluate);
-  const copySeed = (value, cloneValue) => cloneValue ? cloneValue(value) : value;
-  const makeState = (cloneOptions = {}) => ({
-    seeds: seedValues.map((value) => copySeed(value, cloneOptions.cloneValue)),
-    seedIndex: 0,
-    sourceHistory: [],
-    sourcePosition: 0,
-    emitted: 0,
-    stop: false
-  });
-  sequence = createLazySequence({
-    createState: makeState,
-    cloneState: (state, { cloneValue } = {}) => ({
-      seeds: state.seeds.map((value) => copySeed(value, cloneValue)),
-      seedIndex: state.seedIndex,
-      sourceHistory: state.sourceHistory.map((value) => copySeed(value, cloneValue)),
-      sourcePosition: state.sourcePosition,
-      emitted: state.emitted,
-      stop: state.stop
-    }),
-    knownLength: numericLimit,
-    maxIterations,
-    label: "sequence generator",
-    pull(state, self, budget) {
-      if (state.stop || numericLimit !== null && state.emitted >= numericLimit)
-        return { done: true };
-      let attempts = 0;
-      while (attempts < budget) {
-        let candidate;
-        if (state.seedIndex < state.seeds.length) {
-          candidate = state.seeds[state.seedIndex++];
-          state.sourceHistory.push(candidate);
-        } else if (!sourceOp) {
-          return { done: true, attempts };
-        } else {
-          if ((sourceOp.fn === "GEN_ADD" || sourceOp.fn === "GEN_MUL") && state.sourceHistory.length === 0) {
-            throw new Error("Arithmetic generator requires at least one seed value");
-          }
-          if (sourceOp.fn === "GEN_ADD") {
-            candidate = evaluate({ fn: "ADD", args: [state.sourceHistory.at(-1), sourceOp.value] });
-          } else if (sourceOp.fn === "GEN_MUL") {
-            candidate = evaluate({ fn: "MUL", args: [state.sourceHistory.at(-1), sourceOp.value] });
-          } else if (sourceOp.fn === "GEN_FUNC") {
-            const index = new Integer(BigInt(state.sourceHistory.length + 1));
-            candidate = invoke(sourceOp.value, [index, self]);
-          } else if (sourceOp.fn === "GEN_PIPE") {
-            if (state.sourceHistory.length === 0)
-              throw new Error("History generator requires seed values");
-            const placeholderWidth = partialHistoryWidth(sourceOp.value);
-            const parameterWidth = sourceOp.value?.params?.positional?.length;
-            const width = placeholderWidth ?? parameterWidth;
-            if (width === undefined) {
-              throw new Error("History system/variadic callables require explicit _n placeholders");
-            }
-            if (state.sourceHistory.length < width) {
-              throw new Error(`History generator requires ${width} seed values but only ${state.sourceHistory.length} are available`);
-            }
-            const args2 = width === 0 ? [] : state.sourceHistory.slice(-width).reverse().map(shallowCopyValue);
-            candidate = invoke(sourceOp.value, args2);
-          }
-          state.sourceHistory.push(candidate);
-        }
-        attempts++;
-        state.sourcePosition++;
-        let value = candidate;
-        let accepted = true;
-        for (const stage of stages) {
-          if (stage.fn === "GEN_PIPE") {
-            value = invoke(stage.value, [value]);
-          } else if (stage.fn === "GEN_FILTER") {
-            accepted = isTruthy(invoke(stage.value, [value, new Integer(BigInt(state.sourcePosition)), self]));
-            if (!accepted)
-              break;
-          }
-        }
-        if (!accepted)
-          continue;
-        state.emitted++;
-        if (terminal && numericLimit === null) {
-          state.stop = isTruthy(invoke(terminal.value, [value, new Integer(BigInt(state.sourcePosition)), self]));
-        }
-        return { done: false, value: captureResolvedValue(value, defaultMode), attempts };
-      }
-      return { attempts: budget + 1 };
-    }
-  });
-  if (!eager)
-    return sequence;
-  const materialized = materializeLazySequence(sequence, { allowUnknown: true, maxIterations });
-  materialized._ext = new Map([["_mutable", new Integer(1n)]]);
-  return attachBuiltinProto(materialized);
-}
-var collectionFunctions = {
-  ARRAY: {
-    lazy: true,
-    impl(args, ctx, evaluate) {
-      const defaultMode = constructorDefaultCaptureMode(ctx);
-      const generated = createGeneratorValue(args, ctx, evaluate, defaultMode);
-      if (generated)
-        return attachBuiltinProto(generated);
-      const values = [];
-      let i = 0;
-      while (i < args.length) {
-        const arg = args[i];
-        if (arg && arg.fn === "HOLE") {
-          values.push(HOLE);
-        } else if (arg && arg.fn === "SPREAD") {
-          let spreadVal = evaluate(arg.args[0]);
-          if (spreadVal?.type === "lazy_sequence")
-            spreadVal = materializeLazySequence(spreadVal);
-          if (spreadVal && (spreadVal.type === "tuple" || spreadVal.type === "sequence" || spreadVal.type === "array" || spreadVal.type === "set")) {
-            const items = spreadVal.values || spreadVal.elements || [];
-            values.push(...items.map((item) => captureResolvedValue(item, defaultMode)));
-          } else {
-            throw new Error("Spread operator requires an iterable collection (array, tuple, sequence, set)");
-          }
-        } else {
-          values.push(captureIrValue(arg, defaultMode, ctx, evaluate));
-        }
-        i++;
-      }
-      return attachBuiltinProto({
-        type: "sequence",
-        values,
-        _ext: new Map([["_mutable", new Integer(1n)]])
-      });
-    },
-    pure: true,
-    doc: "Create an array/sequence (supports sequence generators)"
-  },
-  TUPLE: {
-    lazy: true,
-    impl(args, ctx, evaluate) {
-      const header = args[0]?.header || null;
-      const defaultMode = header?.captureMode || constructorDefaultCaptureMode(ctx);
-      const start = header ? 1 : 0;
-      const value = { type: "tuple", values: args.slice(start).map((arg) => captureIrValue(arg.expression || arg, arg.captureMode || defaultMode, ctx, evaluate)) };
-      return applySemanticHeader(attachBuiltinProto(value), header, ctx);
-    },
-    pure: true,
-    doc: "Create a tuple"
-  },
-  SET: {
-    lazy: true,
-    impl(args, ctx, evaluate) {
-      const header = args[0]?.header || null;
-      const defaultMode = header?.captureMode || constructorDefaultCaptureMode(ctx);
-      const start = header ? 1 : 0;
-      const seen = new Set;
-      const values = [];
-      for (const arg of args.slice(start)) {
-        const val = captureIrValue(arg.expression || arg, arg.captureMode || defaultMode, ctx, evaluate);
-        const key = valueKey(val);
-        if (!seen.has(key)) {
-          seen.add(key);
-          values.push(val);
-        }
-      }
-      const value = {
-        type: "set",
-        values,
-        _ext: new Map([["_mutable", new Integer(1n)]])
-      };
-      return applySemanticHeader(attachBuiltinProto(value), header, ctx);
-    },
-    pure: true,
-    doc: "Create a set (unique values)"
-  },
-  MAP_OBJ: {
-    lazy: true,
-    impl(args, context, evaluate) {
-      const header = args[0]?.header || null;
-      const defaultMode = header?.captureMode || constructorDefaultCaptureMode(context);
-      const actualArgs = header ? args.slice(1) : args;
-      const entries = new Map;
-      const seenKeys = new Set;
-      for (const arg of actualArgs) {
-        if (arg && arg.fn === "ASSIGN") {
-          const name = arg.args[0];
-          const val = captureIrValue(arg.args[1], defaultMode, context, evaluate);
-          if (seenKeys.has(name)) {
-            throw new Error(`Duplicate key in map literal: "${name}"`);
-          }
-          seenKeys.add(name);
-          entries.set(name, val);
-        } else if (arg && arg.fn === "MAP_PAIR") {
-          const [kind, keyExpr, valueExpr, entryMode] = arg.args;
-          const keyStr = kind === "identifier" ? keyExpr : keyOf(evaluate(keyExpr));
-          const val = captureIrValue(valueExpr, entryMode || defaultMode, context, evaluate);
-          if (seenKeys.has(keyStr)) {
-            throw new Error(`Duplicate key in map literal: "${keyStr}"`);
-          }
-          seenKeys.add(keyStr);
-          entries.set(keyStr, val);
-        } else if (arg && arg.fn === "ASSIGN_EXPR") {
-          const keyVal = evaluate(arg.args[0]);
-          const val = captureIrValue(arg.args[1], defaultMode, context, evaluate);
-          const keyStr = keyOf(keyVal);
-          if (seenKeys.has(keyStr)) {
-            throw new Error(`Duplicate key in map literal: "${keyStr}"`);
-          }
-          seenKeys.add(keyStr);
-          entries.set(keyStr, val);
-        } else if (arg && arg.fn === "KWARG") {
-          const name = arg.args[0];
-          const val = captureIrValue(arg.args[1], defaultMode, context, evaluate);
-          if (seenKeys.has(name)) {
-            throw new Error(`Duplicate key in map literal: "${name}"`);
-          }
-          seenKeys.add(name);
-          entries.set(name, val);
-        } else {
-          const val = captureIrValue(arg, defaultMode, context, evaluate);
-          const keyStr = keyOf(val);
-          if (seenKeys.has(keyStr)) {
-            throw new Error(`Duplicate key in map literal: "${keyStr}"`);
-          }
-          seenKeys.add(keyStr);
-          entries.set(keyStr, val);
-        }
-      }
-      const value = {
-        type: "map",
-        entries,
-        _ext: new Map([["_mutable", new Integer(1n)]])
-      };
-      return applySemanticHeader(attachBuiltinProto(value), header, context);
-    },
-    pure: true,
-    doc: "Create a map/object"
-  },
-  ARRAY_CAPTURE: {
-    lazy: true,
-    impl(args, ctx, evaluate) {
-      const header = args[0]?.header || null;
-      const defaultMode = header?.captureMode || constructorDefaultCaptureMode(ctx);
-      const start = header ? 1 : 0;
-      const values = args.slice(start).map((arg) => captureIrValue(arg.expression || arg, arg.captureMode || defaultMode, ctx, evaluate));
-      return applySemanticHeader(attachBuiltinProto({
-        type: "sequence",
-        values,
-        _ext: new Map([["_mutable", new Integer(1n)]])
-      }), header, ctx);
-    },
-    pure: true,
-    doc: "Create an array/sequence with constructor capture controls"
-  },
-  INTERVAL: {
-    impl(args) {
-      if (args.length === 2) {
-        const lo = args[0];
-        const hi = args[1];
-        const loRat = toRationalOrNull(lo);
-        const hiRat = toRationalOrNull(hi);
-        if (loRat && hiRat) {
-          return new RationalInterval(loRat, hiRat);
-        }
-        return { type: "interval", lo, hi };
-      }
-      let allAscending = true;
-      let allDescending = true;
-      const checkPaths = (idx, currentVal, direction) => {
-        if (idx === args.length)
-          return true;
-        const nextVals = getValues(args[idx]);
-        for (const nextVal of nextVals) {
-          const cmp = compare(currentVal, nextVal);
-          if (direction === 1 && cmp > 0)
-            return false;
-          if (direction === -1 && cmp < 0)
-            return false;
-          if (!checkPaths(idx + 1, nextVal, direction)) {
-            return false;
-          }
-        }
-        return true;
-      };
-      const firstVals = getValues(args[0]);
-      for (const firstVal of firstVals) {
-        if (allAscending && !checkPaths(1, firstVal, 1)) {
-          allAscending = false;
-        }
-        if (allDescending && !checkPaths(1, firstVal, -1)) {
-          allDescending = false;
-        }
-        if (!allAscending && !allDescending)
-          break;
-      }
-      if (allAscending || allDescending) {
-        return new Integer(1);
-      }
-      return null;
-    },
-    pure: true,
-    doc: "Create an interval [lo, hi] or test betweenness like a:b:c"
-  },
-  MEMBER: {
-    impl(args) {
-      const [x, coll] = args;
-      if (!coll || typeof coll !== "object")
-        return null;
-      if (coll.type === "set" || coll.type === "tuple" || coll.type === "sequence") {
-        const values = coll.values || coll.elements || [];
-        const xKey = valueKey(x);
-        for (const v of values) {
-          if (valueKey(v) === xKey)
-            return new Integer(1);
-        }
-      } else if (coll instanceof RationalInterval || coll.type === "interval") {
-        const lo = coll instanceof RationalInterval ? coll.start : coll.lo;
-        const hi = coll instanceof RationalInterval ? coll.end : coll.hi;
-        const cmpLo = compare(lo, x);
-        const cmpHi = compare(x, hi);
-        if (cmpLo <= 0 && cmpHi <= 0)
-          return new Integer(1);
-      } else if (coll.type === "map") {
-        const entries = coll.entries || coll.elements || new Map;
-        const k = keyOf(x);
-        if (entries.has(k))
-          return new Integer(1);
-      }
-      return null;
-    },
-    pure: true,
-    doc: "Check membership (1 if present, null otherwise)"
-  },
-  NOT_MEMBER: {
-    impl(args) {
-      return isTruthy(collectionFunctions.MEMBER.impl(args)) ? null : new Integer(1);
-    },
-    pure: true,
-    doc: "Check non-membership (1 if not present, null otherwise)"
-  },
-  INTERSECTS: {
-    impl(args) {
-      const [a, b] = args;
-      const intersect = collectionFunctions.INTERSECT.impl([a, b]);
-      return isTruthy(intersect) ? new Integer(1) : null;
-    },
-    pure: true,
-    doc: "Check if two collections intersect (1 if true, null otherwise)"
-  },
-  UNION: {
-    impl(args) {
-      const [a, b] = args;
-      if (!a || !b)
-        return null;
-      if (a.type === "set" && b.type === "set") {
-        const seen = new Set;
-        const values = [];
-        for (const v of [...a.values, ...b.values]) {
-          const key = valueKey(v);
-          if (!seen.has(key)) {
-            seen.add(key);
-            values.push(v);
-          }
-        }
-        return { type: "set", values };
-      }
-      if ((a instanceof RationalInterval || a.type === "interval") && (b instanceof RationalInterval || b.type === "interval")) {
-        const alo = a instanceof RationalInterval ? a.start : a.lo;
-        const ahi = a instanceof RationalInterval ? a.end : a.hi;
-        const blo = b instanceof RationalInterval ? b.start : b.lo;
-        const bhi = b instanceof RationalInterval ? b.end : b.hi;
-        const lo = compare(alo, blo) <= 0 ? alo : blo;
-        const hi = compare(ahi, bhi) >= 0 ? ahi : bhi;
-        return collectionFunctions.INTERVAL.impl([lo, hi]);
-      }
-      throw new Error(`UNION not defined for these types: ${a.type || a.constructor?.name || typeof a} and ${b.type || b.constructor?.name || typeof b}`);
-    },
-    pure: true,
-    doc: "Join/Union of two collections (set union or interval hull)"
-  },
-  INTERSECT: {
-    impl(args) {
-      const [a, b] = args;
-      if (!a || !b)
-        return null;
-      if (a.type === "set" && b.type === "set") {
-        const bValues = b.values.map(valueKey);
-        const values = a.values.filter((v) => bValues.includes(valueKey(v)));
-        return { type: "set", values };
-      }
-      if ((a instanceof RationalInterval || a.type === "interval") && (b instanceof RationalInterval || b.type === "interval")) {
-        const alo = a instanceof RationalInterval ? a.start : a.lo;
-        const ahi = a instanceof RationalInterval ? a.end : a.hi;
-        const blo = b instanceof RationalInterval ? b.start : b.lo;
-        const bhi = b instanceof RationalInterval ? b.end : b.hi;
-        const lo = compare(alo, blo) >= 0 ? alo : blo;
-        const hi = compare(ahi, bhi) <= 0 ? ahi : bhi;
-        if (compare(lo, hi) <= 0) {
-          return collectionFunctions.INTERVAL.impl([lo, hi]);
-        }
-        return null;
-      }
-      return null;
-    },
-    pure: true,
-    doc: "Intersection of two collections (set intersection or interval overlap)"
-  },
-  NARY_UNION: {
-    impl(args) {
-      if (args.length === 0)
-        return { type: "set", values: [] };
-      if (args.length === 1)
-        return args[0];
-      const domain = classifyUnionIntersectDomain(args[0]);
-      if (!domain) {
-        throw new Error("NARY_UNION expects sets or intervals");
-      }
-      for (let i = 1;i < args.length; i++) {
-        if (classifyUnionIntersectDomain(args[i]) !== domain) {
-          throw new Error("NARY_UNION operands must all be sets or all be intervals");
-        }
-      }
-      let acc = args[0];
-      for (let i = 1;i < args.length; i++) {
-        acc = collectionFunctions.UNION.impl([acc, args[i]]);
-      }
-      return acc;
-    },
-    pure: true,
-    doc: "N-ary union/hull fold for sets or intervals"
-  },
-  NARY_INTERSECT: {
-    impl(args) {
-      if (args.length === 0)
-        return { type: "set", values: [] };
-      if (args.length === 1)
-        return args[0];
-      const domain = classifyUnionIntersectDomain(args[0]);
-      if (!domain) {
-        throw new Error("NARY_INTERSECT expects sets or intervals");
-      }
-      for (let i = 1;i < args.length; i++) {
-        if (classifyUnionIntersectDomain(args[i]) !== domain) {
-          throw new Error("NARY_INTERSECT operands must all be sets or all be intervals");
-        }
-      }
-      let acc = args[0];
-      for (let i = 1;i < args.length; i++) {
-        acc = collectionFunctions.INTERSECT.impl([acc, args[i]]);
-        if (acc === null)
-          return null;
-      }
-      return acc;
-    },
-    pure: true,
-    doc: "N-ary intersection/overlap fold for sets or intervals"
-  },
-  SET_DIFF: {
-    impl(args) {
-      const [a, b] = args;
-      if (a.type === "set" && b.type === "set") {
-        const bValues = b.values.map(valueKey);
-        const values = a.values.filter((v) => !bValues.includes(valueKey(v)));
-        return { type: "set", values };
-      }
-      if (a.type === "map") {
-        const newEntries = new Map(a.entries);
-        if (b.type === "set") {
-          for (const k of b.values)
-            newEntries.delete(keyOf(k));
-        } else {
-          newEntries.delete(keyOf(b));
-        }
-        return { type: "map", entries: newEntries };
-      }
-      throw new Error("Difference only defined for sets and maps");
-    },
-    pure: true
-  },
-  SET_SYMDIFF: {
-    impl(args) {
-      const [a, b] = args;
-      const diff1 = collectionFunctions.SET_DIFF.impl([a, b]);
-      const diff2 = collectionFunctions.SET_DIFF.impl([b, a]);
-      return collectionFunctions.UNION.impl([diff1, diff2]);
-    },
-    pure: true
-  },
-  SET_PROD: {
-    impl(args) {
-      const [a, b] = args;
-      if (a.type !== "set" || b.type !== "set")
-        throw new Error("Cartesian product only for sets");
-      const values = [];
-      for (const va of a.values) {
-        for (const vb of b.values) {
-          values.push({ type: "tuple", values: [va, vb] });
-        }
-      }
-      return { type: "set", values };
-    },
-    pure: true
-  },
-  CONCAT: {
-    impl(args) {
-      const [a, b] = args;
-      if (a.type === "string" || b.type === "string") {
-        const getStr = (v) => v && typeof v === "object" && v.type === "string" ? v.value : String(v);
-        return { type: "string", value: getStr(a) + getStr(b) };
-      }
-      if (a.type === "sequence" || a.type === "tuple" || a.type === "array" || b.type === "sequence" || b.type === "tuple" || b.type === "array") {
-        const getVals = (v) => v.values || v.elements || (Array.isArray(v) ? v : [v]);
-        const vals = [...getVals(a), ...getVals(b)];
-        if (a.type === "tuple" && b.type === "tuple")
-          return { type: "tuple", values: vals };
-        return { type: "sequence", values: vals };
-      }
-      if (a.type === "map" && b.type === "map") {
-        return { type: "map", entries: new Map([...a.entries, ...b.entries]) };
-      }
-      throw new Error("Concatenation not defined for these types");
-    },
-    pure: true
-  },
-  NARY_CONCAT: {
-    impl(args) {
-      if (args.length === 0) {
-        throw new Error("NARY_CONCAT requires at least one argument");
-      }
-      if (args.length === 1)
-        return args[0];
-      let acc = args[0];
-      for (let i = 1;i < args.length; i++) {
-        acc = collectionFunctions.CONCAT.impl([acc, args[i]]);
-      }
-      return acc;
-    },
-    pure: true,
-    doc: "N-ary concatenation fold"
-  }
-};
-
-// ../rix/src/runtime/methods.js
-function int4(value) {
-  return new Integer(BigInt(value));
-}
-function truthy(value) {
-  return value !== null && value !== undefined;
-}
-function bool(flag) {
-  return flag ? int4(1) : null;
-}
-function stringValue2(value) {
-  if (value?.type === "string")
-    return value.value;
-  if (value === null || value === undefined)
-    return "";
-  return String(value);
-}
-function stringObj2(value) {
-  return { type: "string", value };
-}
-function createFrozenMeta() {
-  return new Map([
-    ["frozen", int4(1)],
-    ["immutable", int4(1)]
-  ]);
-}
-function createBuiltinProto(entries) {
-  return {
-    type: "map",
-    entries: new Map(entries),
-    _ext: createFrozenMeta()
-  };
-}
-function method(name, impl) {
-  return { type: "method_builtin", name, impl };
-}
-function mutableExt2() {
-  return new Map([["_mutable", int4(1)]]);
-}
-function ensureExt3(value) {
-  if (!value._ext)
-    value._ext = new Map;
-  return value._ext;
-}
-function createEmptySequence() {
-  return { type: "sequence", values: [], _ext: mutableExt2() };
-}
-function createEmptyMap() {
-  return { type: "map", entries: new Map, _ext: mutableExt2() };
-}
-function createEmptySet() {
-  return { type: "set", values: [], _ext: mutableExt2() };
-}
-function createEmptyTupleLike(tuple) {
-  return {
-    type: "tuple",
-    values: new Array(tuple.values.length).fill(HOLE),
-    _ext: mutableExt2()
-  };
-}
-function createEmptyTensorLike(tensor) {
-  return createTensor(tensor.shape, null, { ext: mutableExt2() });
-}
-function defaultAccumulator(target) {
-  if (target?.type === "sequence")
-    return createEmptySequence();
-  if (target?.type === "map")
-    return createEmptyMap();
-  if (target?.type === "set")
-    return createEmptySet();
-  if (target?.type === "tuple")
-    return createEmptyTupleLike(target);
-  if (target?.type === "string")
-    return stringObj2("");
-  if (isTensor(target))
-    return createEmptyTensorLike(target);
-  throw new Error("Reduce does not know how to build a default accumulator for this value");
-}
-function valueKey2(value) {
-  if (isHole(value))
-    return "__hole__";
-  if (value === null || value === undefined)
-    return "null";
-  if (value instanceof Integer)
-    return value.toString();
-  if (value?.type === "string")
-    return JSON.stringify(value.value);
-  if (value?.type === "tuple" || value?.type === "sequence" || value?.type === "set") {
-    return `${value.type}[${value.values.map(valueKey2).join(",")}]`;
-  }
-  if (value?.type === "map") {
-    return `map{${Array.from(value.entries.entries()).map(([k, v]) => `${k}:${valueKey2(v)}`).join(",")}}`;
-  }
-  if (isTensor(value)) {
-    return `tensor(${value.shape.join("x")})[${value.data.map(valueKey2).join(",")}]`;
-  }
-  if (typeof value?.toString === "function" && value.toString !== Object.prototype.toString) {
-    return value.toString();
-  }
-  return JSON.stringify(value);
-}
-function isInterval(value) {
-  if (!value || typeof value !== "object")
-    return false;
-  if (value instanceof RationalInterval)
-    return true;
-  if (value.type === "interval")
-    return true;
-  return false;
-}
-function getIntervalRange(value, length) {
-  let lo, hi;
-  if (value && (value.type === "interval" || value instanceof RationalInterval)) {
-    lo = value.start;
-    hi = value.end;
-  } else {
-    lo = value.lo;
-    hi = value.hi;
-  }
-  const startNum = normalizeLookupIndex(lo, length);
-  const start = startNum === null ? numericIndex(lo) < 1 ? 1 : length + 1 : startNum;
-  const endNum = normalizeLookupIndex(hi, length);
-  const end = endNum === null ? numericIndex(hi) < 1 ? 1 : length + 1 : endNum;
-  return { start, end };
-}
-function numericIndex(value, label = "Index") {
-  if (value instanceof Integer)
-    return Number(value.value);
-  if (value instanceof Rational) {
-    if (value.denominator !== 1n) {
-      throw new Error(`${label} must be an integer, got ${value}`);
-    }
-    return Number(value.numerator);
-  }
-  if (value && typeof value === "object") {
-    if (typeof value.value === "bigint")
-      return Number(value.value);
-    if (typeof value.numerator === "bigint" && typeof value.denominator === "bigint") {
-      if (value.denominator !== 1n) {
-        throw new Error(`${label} must be an integer, got ${value}`);
-      }
-      return Number(value.numerator);
-    }
-  }
-  if (typeof value === "number" || typeof value === "bigint")
-    return Number(value);
-  if (typeof value === "string" && !isNaN(value))
-    return Number(value);
-  throw new Error(`${label} must be numeric, got ${typeof value} (${value})`);
-}
-function normalizeLookupIndex(rawIndex, length) {
-  const index = numericIndex(rawIndex);
-  const normalized = index < 0 ? length + 1 + index : index;
-  if (normalized < 1 || normalized > length)
-    return null;
-  return normalized;
-}
-function normalizeWritableIndex(rawIndex, length, allowEnd = false) {
-  let index = numericIndex(rawIndex);
-  if (index < 0)
-    index = length + 1 + index;
-  const max = allowEnd ? length + 1 : Math.max(length, 1);
-  if (index < 1)
-    index = 1;
-  if (index > max)
-    index = max;
-  return index;
-}
-function normalizeSliceStart(rawIndex, length) {
-  if (rawIndex === undefined || rawIndex === null)
-    return 1;
-  let index = numericIndex(rawIndex);
-  if (index < 0)
-    index = length + 1 + index;
-  if (index < 1)
-    index = 1;
-  if (index > length + 1)
-    index = length + 1;
-  return index;
-}
-function normalizeSliceEnd(rawIndex, length) {
-  if (rawIndex === undefined || rawIndex === null)
-    return length + 1;
-  let index = numericIndex(rawIndex);
-  if (index < 0)
-    index = length + 1 + index;
-  if (index < 1)
-    index = 1;
-  if (index > length + 1)
-    index = length + 1;
-  return index;
-}
-function jsSlice(values, startArg, endArg) {
-  const start = normalizeSliceStart(startArg, values.length);
-  const end = normalizeSliceEnd(endArg, values.length);
-  return values.slice(start - 1, end - 1);
-}
-function charsOf(value) {
-  return Array.from(stringValue2(value)).map((char) => stringObj2(char));
-}
-function fromChars(chars) {
-  return stringObj2(chars.map((char) => stringValue2(char)).join(""));
-}
-function compareValues(a, b) {
-  const ak = valueKey2(a);
-  const bk = valueKey2(b);
-  if (ak < bk)
-    return -1;
-  if (ak > bk)
-    return 1;
-  return 0;
-}
-function arrayEntries(target) {
-  return target.values.map((value, index) => ({
-    value,
-    key: int4(index + 1)
-  }));
-}
-function tupleEntries(target) {
-  return target.values.map((value, index) => ({
-    value,
-    key: int4(index + 1)
-  }));
-}
-function mapEntries(target) {
-  return Array.from(target.entries.entries()).map(([key, value]) => ({
-    value,
-    key: stringObj2(key)
-  }));
-}
-function setEntries(target) {
-  return target.values.map((value) => ({
-    value,
-    key: value
-  }));
-}
-function stringEntries(target) {
-  return charsOf(target).map((value, index) => ({
-    value,
-    key: int4(index + 1)
-  }));
-}
-function tensorEntries(target) {
-  const entries = [];
-  forEachTensorCell(target, (value, tuple) => {
-    entries.push({
-      value,
-      key: tensorIndexTuple(tuple)
-    });
-  });
-  return entries;
-}
-function isIndexedIteratorSource(target) {
-  return target?.type === "sequence" || target?.type === "lazy_sequence" || target?.type === "tuple" || target?.type === "string" || isTensor(target);
-}
-function iteratorStep(value, label) {
-  const step = numericIndex(value, label);
-  if (!Number.isSafeInteger(step))
-    throw new Error(`${label} must be an integer`);
-  return step;
-}
-function iteratorLookup(source, index) {
-  if (!Number.isSafeInteger(index) || index < 1)
-    return { found: false, value: null };
-  if (source?.type === "lazy_sequence") {
-    ensureLazyIndex(source, index);
-    if (index <= source._lazy.cache.length) {
-      return { found: true, value: source._lazy.cache[index - 1] };
-    }
-    return { found: false, value: null };
-  }
-  const entries = iterateEntries(source);
-  if (index > entries.length)
-    return { found: false, value: null };
-  return { found: true, value: entries[index - 1].value };
-}
-function iteratorLength(source) {
-  if (source?.type === "lazy_sequence")
-    return lazyKnownLength(source);
-  return iterateEntries(source).length;
-}
-function createCollectionIterator(source) {
-  return attachBuiltinProto({
-    type: "iterator",
-    source,
-    cursor: 0,
-    _ext: new Map
-  });
-}
-function iterateEntries(target) {
-  if (target?.type === "sequence")
-    return arrayEntries(target);
-  if (target?.type === "tuple")
-    return tupleEntries(target);
-  if (target?.type === "map")
-    return mapEntries(target);
-  if (target?.type === "set")
-    return setEntries(target);
-  if (target?.type === "string")
-    return stringEntries(target);
-  if (isTensor(target))
-    return tensorEntries(target);
-  throw new Error("Value is not iterable for this method");
-}
-function callIterator(fn, args, context, evaluate, invoke) {
-  if (!fn) {
-    return args[1];
-  }
-  return invoke(fn, args, context, evaluate);
-}
-function predicateResult(fn, args, context, evaluate, invoke) {
-  return truthy(callIterator(fn, args, context, evaluate, invoke));
-}
-function sequenceAt(target, rawIndex) {
-  const index = normalizeLookupIndex(rawIndex, target.values.length);
-  if (index === null)
-    return null;
-  return target.values[index - 1];
-}
-function stringAt(target, rawIndex) {
-  const chars = charsOf(target);
-  const index = normalizeLookupIndex(rawIndex, chars.length);
-  if (index === null)
-    return null;
-  return chars[index - 1];
-}
-function mapValue(target, key) {
-  const canonical = keyOf(key);
-  return target.entries.has(canonical) ? target.entries.get(canonical) : null;
-}
-function setHas(target, value) {
-  const wanted = valueKey2(value);
-  return target.values.some((entry) => valueKey2(entry) === wanted);
-}
-function mapLikeKeys(arg) {
-  if (arg?.type === "set" || arg?.type === "sequence" || arg?.type === "tuple") {
-    return (arg.values || []).map((value) => keyOf(value));
-  }
-  return [keyOf(arg)];
-}
-function ensureSequence(target, name) {
-  if (!target || target.type !== "sequence")
-    throw new Error(`${name} is only defined for sequences`);
-}
-function ensureMap(target, name) {
-  if (!target || target.type !== "map")
-    throw new Error(`${name} is only defined for maps`);
-}
-function ensureSet(target, name) {
-  if (!target || target.type !== "set")
-    throw new Error(`${name} is only defined for sets`);
-}
-function ensureTuple(target, name) {
-  if (!target || target.type !== "tuple")
-    throw new Error(`${name} is only defined for tuples`);
-}
-function ensureString(target, name) {
-  if (!target || target.type !== "string")
-    throw new Error(`${name} is only defined for strings`);
-}
-function ensureTensor(target, name) {
-  if (!isTensor(target))
-    throw new Error(`${name} is only defined for tensors`);
-}
-function mutableSetValue(target, rawIndex, value) {
-  const index = normalizeWritableIndex(rawIndex, target.values.length, true);
-  while (target.values.length < index - 1)
-    target.values.push(HOLE);
-  if (index === target.values.length + 1) {
-    target.values.push(value);
-  } else {
-    target.values[index - 1] = value;
-  }
-  return target;
-}
-function nonMutatingSetValue(target, rawIndex, value) {
-  const copy = shallowCopyValue(target);
-  mutableSetValue(copy, rawIndex, value);
-  return copy;
-}
-function removeDuplicates(values) {
-  const seen = new Set;
-  const out = [];
-  for (const value of values) {
-    const key = valueKey2(value);
-    if (!seen.has(key)) {
-      seen.add(key);
-      out.push(value);
-    }
-  }
-  return out;
-}
-function flattenValues(values, depth) {
-  if (depth <= 0)
-    return [...values];
-  const out = [];
-  for (const value of values) {
-    if (value?.type === "sequence" || value?.type === "tuple" || value?.type === "set") {
-      out.push(...flattenValues(value.values, depth - 1));
-    } else {
-      out.push(value);
-    }
-  }
-  return out;
-}
-function reduceEntries(target, iterator, initial, context, evaluate, invoke, entryMapper = (entry) => [entry.value, entry.key, target]) {
-  const entries = iterateEntries(target);
-  let accumulator = initial === undefined ? defaultAccumulator(target) : initial;
-  for (const entry of entries) {
-    accumulator = invoke(iterator, [accumulator, ...entryMapper(entry)], context, evaluate);
-  }
-  return accumulator;
-}
-function anyEntries(target, iterator, context, evaluate, invoke) {
-  for (const entry of iterateEntries(target)) {
-    if (predicateResult(iterator, [entry.value, entry.key, target], context, evaluate, invoke)) {
-      return int4(1);
-    }
-  }
-  return null;
-}
-function allEntries(target, iterator, context, evaluate, invoke) {
-  for (const entry of iterateEntries(target)) {
-    if (!predicateResult(iterator, [entry.value, entry.key, target], context, evaluate, invoke)) {
-      return null;
-    }
-  }
-  return int4(1);
-}
-function countEntries(target, iterator, context, evaluate, invoke) {
-  let count = 0;
-  for (const entry of iterateEntries(target)) {
-    if (!iterator || predicateResult(iterator, [entry.value, entry.key, target], context, evaluate, invoke)) {
-      count += 1;
-    }
-  }
-  return int4(count);
-}
-function findEntry(target, iterator, context, evaluate, invoke, wantKey = false) {
-  for (const entry of iterateEntries(target)) {
-    if (predicateResult(iterator, [entry.value, entry.key, target], context, evaluate, invoke)) {
-      return wantKey ? entry.key : entry.value;
-    }
-  }
-  return null;
-}
-function arithmeticAdd(a, b) {
-  return arithmeticFunctions.ADD.impl([a, b]);
-}
-function arithmeticMul(a, b) {
-  return arithmeticFunctions.MUL.impl([a, b]);
-}
-function arithmeticDiv(a, b) {
-  return arithmeticFunctions.DIV.impl([a, b]);
-}
-var arrayMethods = {
-  LEN: method("LEN", ([target]) => {
-    ensureSequence(target, "Len");
-    return int4(target.values.length);
-  }),
-  ISEMPTY: method("ISEMPTY", ([target]) => {
-    ensureSequence(target, "IsEmpty");
-    return bool(target.values.length === 0);
-  }),
-  GET: method("GET", ([target, index]) => {
-    ensureSequence(target, "Get");
-    return sequenceAt(target, index);
-  }),
-  FIRST: method("FIRST", ([target]) => {
-    ensureSequence(target, "First");
-    return target.values[0] ?? null;
-  }),
-  LAST: method("LAST", ([target]) => {
-    ensureSequence(target, "Last");
-    return target.values[target.values.length - 1] ?? null;
-  }),
-  INCLUDES: method("INCLUDES", ([target, value]) => {
-    ensureSequence(target, "Includes");
-    return bool(target.values.some((entry) => valueKey2(entry) === valueKey2(value)));
-  }),
-  INDEXOF: method("INDEXOF", ([target, value]) => {
-    ensureSequence(target, "IndexOf");
-    const idx = target.values.findIndex((entry) => valueKey2(entry) === valueKey2(value));
-    return idx === -1 ? null : int4(idx + 1);
-  }),
-  LASTINDEXOF: method("LASTINDEXOF", ([target, value]) => {
-    ensureSequence(target, "LastIndexOf");
-    for (let i = target.values.length - 1;i >= 0; i--) {
-      if (valueKey2(target.values[i]) === valueKey2(value))
-        return int4(i + 1);
-    }
-    return null;
-  }),
-  HASAT: method("HASAT", ([target, index]) => {
-    ensureSequence(target, "HasAt");
-    const found = sequenceAt(target, index);
-    return bool(found !== null && !isHole(found));
-  }),
-  SLICE: method("SLICE", ([target, start, end]) => {
-    ensureSequence(target, "Slice");
-    return { type: "sequence", values: jsSlice(target.values, start, end), _ext: mutableExt2() };
-  }),
-  JOIN: method("JOIN", ([target, separator]) => {
-    ensureSequence(target, "Join");
-    return stringObj2(target.values.map((value) => stringValue2(value)).join(stringValue2(separator ?? stringObj2(","))));
-  }),
-  PUSH: method("PUSH", ([target, ...values]) => {
-    ensureSequence(target, "Push");
-    const copy = shallowCopyValue(target);
-    copy.values.push(...values);
-    return copy;
-  }),
-  "PUSH!": method("PUSH!", ([target, ...values]) => {
-    ensureSequence(target, "Push!");
-    target.values.push(...values);
-    return target;
-  }),
-  UNSHIFT: method("UNSHIFT", ([target, ...values]) => {
-    ensureSequence(target, "Unshift");
-    const copy = shallowCopyValue(target);
-    copy.values.unshift(...values);
-    return copy;
-  }),
-  "UNSHIFT!": method("UNSHIFT!", ([target, ...values]) => {
-    ensureSequence(target, "Unshift!");
-    target.values.unshift(...values);
-    return target;
-  }),
-  SET: method("SET", ([target, index, value]) => {
-    ensureSequence(target, "Set");
-    return nonMutatingSetValue(target, index, value);
-  }),
-  "SET!": method("SET!", ([target, index, value]) => {
-    ensureSequence(target, "Set!");
-    mutableSetValue(target, index, value);
-    return target;
-  }),
-  INSERT: method("INSERT", ([target, index, value]) => {
-    ensureSequence(target, "Insert");
-    const copy = shallowCopyValue(target);
-    const at = normalizeWritableIndex(index, copy.values.length, true);
-    copy.values.splice(at - 1, 0, value);
-    return copy;
-  }),
-  "INSERT!": method("INSERT!", ([target, index, value]) => {
-    ensureSequence(target, "Insert!");
-    const at = normalizeWritableIndex(index, target.values.length, true);
-    target.values.splice(at - 1, 0, value);
-    return target;
-  }),
-  REMOVEAT: method("REMOVEAT", ([target, index]) => {
-    ensureSequence(target, "RemoveAt");
-    const copy = shallowCopyValue(target);
-    const at = normalizeLookupIndex(index, copy.values.length);
-    if (at !== null)
-      copy.values.splice(at - 1, 1);
-    return copy;
-  }),
-  "REMOVEAT!": method("REMOVEAT!", ([target, index]) => {
-    ensureSequence(target, "RemoveAt!");
-    const at = normalizeLookupIndex(index, target.values.length);
-    if (at !== null)
-      target.values[at - 1] = HOLE;
-    return target;
-  }),
-  CONCAT: method("CONCAT", ([target, ...others]) => {
-    ensureSequence(target, "Concat");
-    return others.reduce((acc, other) => collectionFunctions.CONCAT.impl([acc, other]), target);
-  }),
-  "CONCAT!": method("CONCAT!", ([target, ...others]) => {
-    ensureSequence(target, "Concat!");
-    for (const other of others) {
-      const values = other?.values || [other];
-      target.values.push(...values);
-    }
-    return target;
-  }),
-  REVERSE: method("REVERSE", ([target]) => {
-    ensureSequence(target, "Reverse");
-    const copy = shallowCopyValue(target);
-    copy.values.reverse();
-    return copy;
-  }),
-  "REVERSE!": method("REVERSE!", ([target]) => {
-    ensureSequence(target, "Reverse!");
-    target.values.reverse();
-    return target;
-  }),
-  SORT: method("SORT", ([target]) => {
-    ensureSequence(target, "Sort");
-    const copy = shallowCopyValue(target);
-    copy.values.sort(compareValues);
-    return copy;
-  }),
-  "SORT!": method("SORT!", ([target]) => {
-    ensureSequence(target, "Sort!");
-    target.values.sort(compareValues);
-    return target;
-  }),
-  DISTINCT: method("DISTINCT", ([target]) => {
-    ensureSequence(target, "Distinct");
-    return { type: "sequence", values: removeDuplicates(target.values), _ext: mutableExt2() };
-  }),
-  "DISTINCT!": method("DISTINCT!", ([target]) => {
-    ensureSequence(target, "Distinct!");
-    target.values = removeDuplicates(target.values);
-    return target;
-  }),
-  FLATTEN: method("FLATTEN", ([target, depth]) => {
-    ensureSequence(target, "Flatten");
-    const levels = depth === undefined ? 1 : numericIndex(depth, "Flatten depth");
-    return { type: "sequence", values: flattenValues(target.values, levels), _ext: mutableExt2() };
-  }),
-  "FLATTEN!": method("FLATTEN!", ([target, depth]) => {
-    ensureSequence(target, "Flatten!");
-    const levels = depth === undefined ? 1 : numericIndex(depth, "Flatten depth");
-    target.values = flattenValues(target.values, levels);
-    return target;
-  }),
-  DROPFIRST: method("DROPFIRST", ([target, count]) => {
-    ensureSequence(target, "DropFirst");
-    const n = count === undefined ? 1 : Math.max(0, numericIndex(count));
-    return { type: "sequence", values: target.values.slice(n), _ext: mutableExt2() };
-  }),
-  DROPLAST: method("DROPLAST", ([target, count]) => {
-    ensureSequence(target, "DropLast");
-    const n = count === undefined ? 1 : Math.max(0, numericIndex(count));
-    return { type: "sequence", values: target.values.slice(0, Math.max(0, target.values.length - n)), _ext: mutableExt2() };
-  }),
-  "POP!": method("POP!", ([target]) => {
-    ensureSequence(target, "Pop!");
-    return target.values.length === 0 ? HOLE : target.values.pop();
-  }),
-  "SHIFT!": method("SHIFT!", ([target]) => {
-    ensureSequence(target, "Shift!");
-    return target.values.length === 0 ? HOLE : target.values.shift();
-  }),
-  MAP: method("MAP", ([target, iterator], context, evaluate, invoke) => {
-    ensureSequence(target, "Map");
-    return {
-      type: "sequence",
-      values: iterateEntries(target).map((entry) => invoke(iterator, [entry.value, entry.key, target], context, evaluate)),
-      _ext: mutableExt2()
-    };
-  }),
-  FILTER: method("FILTER", ([target, iterator], context, evaluate, invoke) => {
-    ensureSequence(target, "Filter");
-    return {
-      type: "sequence",
-      values: iterateEntries(target).filter((entry) => predicateResult(iterator, [entry.value, entry.key, target], context, evaluate, invoke)).map((entry) => entry.value),
-      _ext: mutableExt2()
-    };
-  }),
-  ANY: method("ANY", ([target, iterator], context, evaluate, invoke) => anyEntries(target, iterator, context, evaluate, invoke)),
-  ALL: method("ALL", ([target, iterator], context, evaluate, invoke) => allEntries(target, iterator, context, evaluate, invoke)),
-  COUNT: method("COUNT", ([target, iterator], context, evaluate, invoke) => countEntries(target, iterator, context, evaluate, invoke)),
-  FIND: method("FIND", ([target, iterator], context, evaluate, invoke) => findEntry(target, iterator, context, evaluate, invoke, false)),
-  FINDINDEX: method("FINDINDEX", ([target, iterator], context, evaluate, invoke) => findEntry(target, iterator, context, evaluate, invoke, true)),
-  REDUCE: method("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke)),
-  "SWAP!": method("SWAP!", ([target, i, j]) => {
-    ensureSequence(target, "Swap!");
-    const len = target.values.length;
-    const idxI = normalizeLookupIndex(i, len);
-    const idxJ = normalizeLookupIndex(j, len);
-    if (idxI === null || idxJ === null)
-      throw new Error("Index out of bounds for Swap!");
-    const tmp = target.values[idxI - 1];
-    target.values[idxI - 1] = target.values[idxJ - 1];
-    target.values[idxJ - 1] = tmp;
-    return target;
-  }),
-  SWAP: method("SWAP", ([target, i, j]) => {
-    ensureSequence(target, "Swap");
-    const copy = shallowCopyValue(target);
-    copy.values = [...target.values];
-    return arrayMethods["SWAP!"].impl([copy, i, j]);
-  }),
-  "MOVE!": method("MOVE!", ([target, rangeOrIdx, targetIdx]) => {
-    ensureSequence(target, "Move!");
-    const len = target.values.length;
-    let s, e;
-    if (isInterval(rangeOrIdx)) {
-      const range = getIntervalRange(rangeOrIdx, len);
-      s = range.start;
-      e = range.end;
-    } else {
-      s = normalizeLookupIndex(rangeOrIdx, len);
-      e = s;
-    }
-    if (s === null || e === null)
-      throw new Error("Index out of bounds for Move!");
-    const actualStart = Math.min(s, e);
-    const actualEnd = Math.max(s, e);
-    const count = actualEnd - actualStart + 1;
-    const movedItems = target.values.splice(actualStart - 1, count);
-    let insertPos;
-    const newLen = target.values.length;
-    const rawTargetIdx = numericIndex(targetIdx);
-    if (rawTargetIdx > 0) {
-      insertPos = normalizeWritableIndex(targetIdx, newLen, true);
-    } else if (rawTargetIdx < 0) {
-      let idx = normalizeLookupIndex(targetIdx, newLen);
-      insertPos = idx === null ? newLen + 1 : idx + 1;
-    } else {
-      insertPos = 1;
-    }
-    target.values.splice(insertPos - 1, 0, ...movedItems);
-    return target;
-  }),
-  MOVE: method("MOVE", ([target, rangeOrIdx, targetIdx]) => {
-    ensureSequence(target, "Move");
-    const copy = shallowCopyValue(target);
-    copy.values = [...target.values];
-    return arrayMethods["MOVE!"].impl([copy, rangeOrIdx, targetIdx]);
-  })
-};
-var lazySequenceMethods = {
-  LEN: method("LEN", ([target]) => {
-    const length = lazyKnownLength(target);
-    if (length === null)
-      throw new Error("Length is unknown for this lazy sequence");
-    return int4(length);
-  }),
-  ISEMPTY: method("ISEMPTY", ([target]) => {
-    ensureLazyIndex(target, 1);
-    return bool(target._lazy.done && target._lazy.cache.length === 0);
-  }),
-  GET: method("GET", ([target, index]) => {
-    const raw = numericIndex(index);
-    if (raw < 0)
-      return sequenceAt(materializeLazySequence(target), index);
-    if (raw === 0)
-      throw new Error("Sequence indexes are 1-based; zero is invalid");
-    return ensureLazyIndex(target, raw);
-  }),
-  FIRST: method("FIRST", ([target]) => ensureLazyIndex(target, 1)),
-  LAST: method("LAST", ([target]) => {
-    const sequence = materializeLazySequence(target);
-    return sequence.values.at(-1) ?? null;
-  }),
-  MATERIALIZE: method("MATERIALIZE", ([target]) => materializeLazySequence(target))
-};
-var iterableMethods = {
-  ITERATOR: method("ITERATOR", ([target]) => createCollectionIterator(target))
-};
-var iteratorMethods = {
-  NEXT: method("NEXT", ([target, step]) => {
-    if (target.cursor === null)
-      return null;
-    const amount = step === undefined ? 1 : iteratorStep(step, "Iterator step");
-    const destination = target.cursor + amount;
-    if (amount === 0 && target.cursor === 0)
-      return null;
-    const result = iteratorLookup(target.source, destination);
-    if (!result.found) {
-      target.cursor = null;
-      return null;
-    }
-    target.cursor = destination;
-    return result.value;
-  }),
-  PEEK: method("PEEK", ([target, offset]) => {
-    if (target.cursor === null)
-      return null;
-    const amount = offset === undefined ? 0 : iteratorStep(offset, "Iterator peek offset");
-    return iteratorLookup(target.source, target.cursor + amount).value;
-  }),
-  DONE: method("DONE", ([target]) => bool(target.cursor === null)),
-  INDEX: method("INDEX", ([target]) => target.cursor === null ? null : int4(target.cursor)),
-  RESET: method("RESET", ([target, index]) => {
-    if (index === undefined || !isIndexedIteratorSource(target.source)) {
-      target.cursor = 0;
-      return target;
-    }
-    let destination = iteratorStep(index, "Iterator reset index");
-    if (destination < 0) {
-      const length = iteratorLength(target.source);
-      if (length === null)
-        throw new Error("Cannot reset an unbounded lazy iterator from the end");
-      destination = length + 1 + destination;
-    }
-    if (destination === 0) {
-      target.cursor = 0;
-      return target;
-    }
-    const result = iteratorLookup(target.source, destination);
-    target.cursor = result.found ? destination : null;
-    return target;
-  })
-};
-var mapMethods = {
-  LEN: method("LEN", ([target]) => {
-    ensureMap(target, "Len");
-    return int4(target.entries.size);
-  }),
-  ISEMPTY: method("ISEMPTY", ([target]) => {
-    ensureMap(target, "IsEmpty");
-    return bool(target.entries.size === 0);
-  }),
-  HAS: method("HAS", ([target, key]) => {
-    ensureMap(target, "Has");
-    return bool(target.entries.has(keyOf(key)));
-  }),
-  GET: method("GET", ([target, key]) => {
-    ensureMap(target, "Get");
-    return mapValue(target, key);
-  }),
-  KEYS: method("KEYS", ([target]) => {
-    ensureMap(target, "Keys");
-    return { type: "set", values: Array.from(target.entries.keys()) };
-  }),
-  VALUES: method("VALUES", ([target]) => {
-    ensureMap(target, "Values");
-    return { type: "set", values: Array.from(target.entries.values()) };
-  }),
-  ENTRIES: method("ENTRIES", ([target]) => {
-    ensureMap(target, "Entries");
-    return {
-      type: "sequence",
-      values: Array.from(target.entries.entries()).map(([key, value]) => ({
-        type: "tuple",
-        values: [stringObj2(key), value]
-      })),
-      _ext: mutableExt2()
-    };
-  }),
-  SET: method("SET", ([target, key, value]) => {
-    ensureMap(target, "Set");
-    const copy = shallowCopyValue(target);
-    copy.entries.set(keyOf(key), value);
-    return copy;
-  }),
-  "SET!": method("SET!", ([target, key, value]) => {
-    ensureMap(target, "Set!");
-    target.entries.set(keyOf(key), value);
-    return target;
-  }),
-  REMOVE: method("REMOVE", ([target, key]) => {
-    ensureMap(target, "Remove");
-    const copy = shallowCopyValue(target);
-    copy.entries.delete(keyOf(key));
-    return copy;
-  }),
-  "REMOVE!": method("REMOVE!", ([target, key]) => {
-    ensureMap(target, "Remove!");
-    target.entries.delete(keyOf(key));
-    return target;
-  }),
-  MERGE: method("MERGE", ([target, other]) => {
-    ensureMap(target, "Merge");
-    ensureMap(other, "Merge");
-    return { type: "map", entries: new Map([...target.entries, ...other.entries]), _ext: mutableExt2() };
-  }),
-  "MERGE!": method("MERGE!", ([target, other]) => {
-    ensureMap(target, "Merge!");
-    ensureMap(other, "Merge!");
-    for (const [key, value] of other.entries)
-      target.entries.set(key, value);
-    return target;
-  }),
-  UPDATE: method("UPDATE", ([target, key, updater], context, evaluate, invoke) => {
-    ensureMap(target, "Update");
-    const canonical = keyOf(key);
-    const current = target.entries.has(canonical) ? target.entries.get(canonical) : null;
-    const next = invoke(updater, [current, stringObj2(canonical), target], context, evaluate);
-    const copy = shallowCopyValue(target);
-    copy.entries.set(canonical, next);
-    return copy;
-  }),
-  "UPDATE!": method("UPDATE!", ([target, key, updater], context, evaluate, invoke) => {
-    ensureMap(target, "Update!");
-    const canonical = keyOf(key);
-    const current = target.entries.has(canonical) ? target.entries.get(canonical) : null;
-    const next = invoke(updater, [current, stringObj2(canonical), target], context, evaluate);
-    target.entries.set(canonical, next);
-    return target;
-  }),
-  DEFAULT: method("DEFAULT", ([target, key, value]) => {
-    ensureMap(target, "Default");
-    const canonical = keyOf(key);
-    if (target.entries.has(canonical))
-      return shallowCopyValue(target);
-    const copy = shallowCopyValue(target);
-    copy.entries.set(canonical, value);
-    return copy;
-  }),
-  "DEFAULT!": method("DEFAULT!", ([target, key, value]) => {
-    ensureMap(target, "Default!");
-    const canonical = keyOf(key);
-    if (!target.entries.has(canonical))
-      target.entries.set(canonical, value);
-    return target;
-  }),
-  KEEP: method("KEEP", ([target, keys]) => {
-    ensureMap(target, "Keep");
-    const wanted = new Set(mapLikeKeys(keys));
-    return {
-      type: "map",
-      entries: new Map(Array.from(target.entries.entries()).filter(([key]) => wanted.has(key))),
-      _ext: mutableExt2()
-    };
-  }),
-  "KEEP!": method("KEEP!", ([target, keys]) => {
-    ensureMap(target, "Keep!");
-    const wanted = new Set(mapLikeKeys(keys));
-    for (const key of Array.from(target.entries.keys())) {
-      if (!wanted.has(key))
-        target.entries.delete(key);
-    }
-    return target;
-  }),
-  OMIT: method("OMIT", ([target, keys]) => {
-    ensureMap(target, "Omit");
-    const blocked = new Set(mapLikeKeys(keys));
-    return {
-      type: "map",
-      entries: new Map(Array.from(target.entries.entries()).filter(([key]) => !blocked.has(key))),
-      _ext: mutableExt2()
-    };
-  }),
-  "OMIT!": method("OMIT!", ([target, keys]) => {
-    ensureMap(target, "Omit!");
-    const blocked = new Set(mapLikeKeys(keys));
-    for (const key of blocked)
-      target.entries.delete(key);
-    return target;
-  }),
-  MAPVALUES: method("MAPVALUES", ([target, iterator], context, evaluate, invoke) => {
-    ensureMap(target, "MapValues");
-    const entries = new Map;
-    for (const [key, value] of target.entries) {
-      entries.set(key, invoke(iterator, [value, stringObj2(key), target], context, evaluate));
-    }
-    return { type: "map", entries, _ext: mutableExt2() };
-  }),
-  REDUCEKEYS: method("REDUCEKEYS", ([target, iterator, initial], context, evaluate, invoke) => {
-    ensureMap(target, "ReduceKeys");
-    let acc = initial === undefined ? defaultAccumulator(target) : initial;
-    for (const [key, value] of target.entries) {
-      acc = invoke(iterator, [acc, stringObj2(key), value, target], context, evaluate);
-    }
-    return acc;
-  }),
-  FILTER: method("FILTER", ([target, iterator], context, evaluate, invoke) => {
-    ensureMap(target, "Filter");
-    const entries = new Map;
-    for (const [key, value] of target.entries) {
-      if (predicateResult(iterator, [value, stringObj2(key), target], context, evaluate, invoke)) {
-        entries.set(key, value);
-      }
-    }
-    return { type: "map", entries, _ext: mutableExt2() };
-  }),
-  ANY: method("ANY", ([target, iterator], context, evaluate, invoke) => anyEntries(target, iterator, context, evaluate, invoke)),
-  ALL: method("ALL", ([target, iterator], context, evaluate, invoke) => allEntries(target, iterator, context, evaluate, invoke)),
-  COUNT: method("COUNT", ([target, iterator], context, evaluate, invoke) => countEntries(target, iterator, context, evaluate, invoke)),
-  REDUCE: method("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke))
-};
-var setMethods = {
-  LEN: method("LEN", ([target]) => {
-    ensureSet(target, "Len");
-    return int4(target.values.length);
-  }),
-  ISEMPTY: method("ISEMPTY", ([target]) => {
-    ensureSet(target, "IsEmpty");
-    return bool(target.values.length === 0);
-  }),
-  HAS: method("HAS", ([target, value]) => {
-    ensureSet(target, "Has");
-    return bool(setHas(target, value));
-  }),
-  VALUES: method("VALUES", ([target]) => {
-    ensureSet(target, "Values");
-    return { type: "sequence", values: [...target.values], _ext: mutableExt2() };
-  }),
-  ADD: method("ADD", ([target, value]) => {
-    ensureSet(target, "Add");
-    if (setHas(target, value))
-      return shallowCopyValue(target);
-    const copy = shallowCopyValue(target);
-    copy.values.push(value);
-    return copy;
-  }),
-  "ADD!": method("ADD!", ([target, value]) => {
-    ensureSet(target, "Add!");
-    if (!setHas(target, value))
-      target.values.push(value);
-    return target;
-  }),
-  REMOVE: method("REMOVE", ([target, value]) => {
-    ensureSet(target, "Remove");
-    const copy = shallowCopyValue(target);
-    copy.values = copy.values.filter((entry) => valueKey2(entry) !== valueKey2(value));
-    return copy;
-  }),
-  "REMOVE!": method("REMOVE!", ([target, value]) => {
-    ensureSet(target, "Remove!");
-    target.values = target.values.filter((entry) => valueKey2(entry) !== valueKey2(value));
-    return target;
-  }),
-  UNION: method("UNION", ([target, other]) => collectionFunctions.UNION.impl([target, other])),
-  "UNION!": method("UNION!", ([target, other]) => {
-    ensureSet(target, "Union!");
-    ensureSet(other, "Union!");
-    target.values = collectionFunctions.UNION.impl([target, other]).values;
-    return target;
-  }),
-  INTERSECT: method("INTERSECT", ([target, other]) => collectionFunctions.INTERSECT.impl([target, other])),
-  "INTERSECT!": method("INTERSECT!", ([target, other]) => {
-    ensureSet(target, "Intersect!");
-    ensureSet(other, "Intersect!");
-    const next = collectionFunctions.INTERSECT.impl([target, other]);
-    target.values = next ? next.values : [];
-    return target;
-  }),
-  DIFF: method("DIFF", ([target, other]) => collectionFunctions.SET_DIFF.impl([target, other])),
-  "DIFF!": method("DIFF!", ([target, other]) => {
-    ensureSet(target, "Diff!");
-    const next = collectionFunctions.SET_DIFF.impl([target, other]);
-    target.values = next.values;
-    return target;
-  }),
-  SYMDIFF: method("SYMDIFF", ([target, other]) => collectionFunctions.SET_SYMDIFF.impl([target, other])),
-  "SYMDIFF!": method("SYMDIFF!", ([target, other]) => {
-    ensureSet(target, "SymDiff!");
-    const next = collectionFunctions.SET_SYMDIFF.impl([target, other]);
-    target.values = next.values;
-    return target;
-  }),
-  SUBSETOF: method("SUBSETOF", ([target, other]) => {
-    ensureSet(target, "SubsetOf");
-    ensureSet(other, "SubsetOf");
-    return bool(target.values.every((value) => setHas(other, value)));
-  }),
-  SUPERSETOF: method("SUPERSETOF", ([target, other]) => {
-    ensureSet(target, "SupersetOf");
-    ensureSet(other, "SupersetOf");
-    return bool(other.values.every((value) => setHas(target, value)));
-  }),
-  DISJOINT: method("DISJOINT", ([target, other]) => {
-    ensureSet(target, "Disjoint");
-    ensureSet(other, "Disjoint");
-    return bool(target.values.every((value) => !setHas(other, value)));
-  }),
-  FILTER: method("FILTER", ([target, iterator], context, evaluate, invoke) => {
-    ensureSet(target, "Filter");
-    return {
-      type: "set",
-      values: target.values.filter((value) => predicateResult(iterator, [value, value, target], context, evaluate, invoke)),
-      _ext: mutableExt2()
-    };
-  }),
-  ANY: method("ANY", ([target, iterator], context, evaluate, invoke) => anyEntries(target, iterator, context, evaluate, invoke)),
-  ALL: method("ALL", ([target, iterator], context, evaluate, invoke) => allEntries(target, iterator, context, evaluate, invoke)),
-  COUNT: method("COUNT", ([target, iterator], context, evaluate, invoke) => countEntries(target, iterator, context, evaluate, invoke)),
-  REDUCE: method("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke))
-};
-var stringMethods = {
-  LEN: method("LEN", ([target]) => {
-    ensureString(target, "Len");
-    return int4(Array.from(target.value).length);
-  }),
-  ISEMPTY: method("ISEMPTY", ([target]) => {
-    ensureString(target, "IsEmpty");
-    return bool(target.value.length === 0);
-  }),
-  GET: method("GET", ([target, index]) => {
-    ensureString(target, "Get");
-    return stringAt(target, index);
-  }),
-  FIRST: method("FIRST", ([target]) => {
-    ensureString(target, "First");
-    return charsOf(target)[0] ?? null;
-  }),
-  LAST: method("LAST", ([target]) => {
-    ensureString(target, "Last");
-    const chars = charsOf(target);
-    return chars[chars.length - 1] ?? null;
-  }),
-  INCLUDES: method("INCLUDES", ([target, needle]) => {
-    ensureString(target, "Includes");
-    return bool(target.value.includes(stringValue2(needle)));
-  }),
-  STARTSWITH: method("STARTSWITH", ([target, prefix]) => {
-    ensureString(target, "StartsWith");
-    return bool(target.value.startsWith(stringValue2(prefix)));
-  }),
-  ENDSWITH: method("ENDSWITH", ([target, suffix]) => {
-    ensureString(target, "EndsWith");
-    return bool(target.value.endsWith(stringValue2(suffix)));
-  }),
-  INDEXOF: method("INDEXOF", ([target, needle]) => {
-    ensureString(target, "IndexOf");
-    const idx = target.value.indexOf(stringValue2(needle));
-    return idx === -1 ? null : int4(idx + 1);
-  }),
-  LASTINDEXOF: method("LASTINDEXOF", ([target, needle]) => {
-    ensureString(target, "LastIndexOf");
-    const idx = target.value.lastIndexOf(stringValue2(needle));
-    return idx === -1 ? null : int4(idx + 1);
-  }),
-  SLICE: method("SLICE", ([target, start, end]) => {
-    ensureString(target, "Slice");
-    return fromChars(jsSlice(charsOf(target), start, end));
-  }),
-  CONCAT: method("CONCAT", ([target, ...parts]) => {
-    ensureString(target, "Concat");
-    return stringObj2([target, ...parts].map((part) => stringValue2(part)).join(""));
-  }),
-  SPLIT: method("SPLIT", ([target, separator]) => {
-    ensureString(target, "Split");
-    const parts = separator === undefined ? Array.from(target.value) : target.value.split(stringValue2(separator));
-    return { type: "sequence", values: parts.map((part) => stringObj2(part)), _ext: mutableExt2() };
-  }),
-  TRIM: method("TRIM", ([target]) => {
-    ensureString(target, "Trim");
-    return stringObj2(target.value.trim());
-  }),
-  TRIMSTART: method("TRIMSTART", ([target]) => {
-    ensureString(target, "TrimStart");
-    return stringObj2(target.value.trimStart());
-  }),
-  TRIMEND: method("TRIMEND", ([target]) => {
-    ensureString(target, "TrimEnd");
-    return stringObj2(target.value.trimEnd());
-  }),
-  UPPER: method("UPPER", ([target]) => {
-    ensureString(target, "Upper");
-    return stringObj2(target.value.toUpperCase());
-  }),
-  LOWER: method("LOWER", ([target]) => {
-    ensureString(target, "Lower");
-    return stringObj2(target.value.toLowerCase());
-  }),
-  REPLACE: method("REPLACE", ([target, search, replacement]) => {
-    ensureString(target, "Replace");
-    return stringObj2(target.value.replace(stringValue2(search), stringValue2(replacement)));
-  }),
-  REPLACEALL: method("REPLACEALL", ([target, search, replacement]) => {
-    ensureString(target, "ReplaceAll");
-    return stringObj2(target.value.split(stringValue2(search)).join(stringValue2(replacement)));
-  }),
-  PADLEFT: method("PADLEFT", ([target, length, pad]) => {
-    ensureString(target, "PadLeft");
-    return stringObj2(target.value.padStart(numericIndex(length), stringValue2(pad ?? stringObj2(" "))));
-  }),
-  PADRIGHT: method("PADRIGHT", ([target, length, pad]) => {
-    ensureString(target, "PadRight");
-    return stringObj2(target.value.padEnd(numericIndex(length), stringValue2(pad ?? stringObj2(" "))));
-  }),
-  REPEAT: method("REPEAT", ([target, count]) => {
-    ensureString(target, "Repeat");
-    return stringObj2(target.value.repeat(numericIndex(count)));
-  }),
-  REDUCE: method("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke))
-};
-var tupleMethods = {
-  LEN: method("LEN", ([target]) => {
-    ensureTuple(target, "Len");
-    return int4(target.values.length);
-  }),
-  GET: method("GET", ([target, index]) => {
-    ensureTuple(target, "Get");
-    const at = normalizeLookupIndex(index, target.values.length);
-    return at === null ? null : target.values[at - 1];
-  }),
-  FIRST: method("FIRST", ([target]) => {
-    ensureTuple(target, "First");
-    return target.values[0] ?? null;
-  }),
-  LAST: method("LAST", ([target]) => {
-    ensureTuple(target, "Last");
-    return target.values[target.values.length - 1] ?? null;
-  }),
-  SLICE: method("SLICE", ([target, start, end]) => {
-    ensureTuple(target, "Slice");
-    return { type: "tuple", values: jsSlice(target.values, start, end) };
-  }),
-  SET: method("SET", ([target, index, value]) => {
-    ensureTuple(target, "Set");
-    const copy = shallowCopyValue(target);
-    const at = normalizeLookupIndex(index, copy.values.length);
-    if (at === null)
-      return copy;
-    copy.values[at - 1] = value;
-    return copy;
-  }),
-  TOARRAY: method("TOARRAY", ([target]) => {
-    ensureTuple(target, "ToArray");
-    return { type: "sequence", values: [...target.values], _ext: mutableExt2() };
-  }),
-  REDUCE: method("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke))
-};
-function tensorSelectorsFromArgs(args) {
-  if (args.length === 1 && args[0]?.type === "tuple") {
-    return args[0].values.map((value) => ({ kind: "index", value }));
-  }
-  return args.map((value) => ({ kind: "index", value }));
-}
-var tensorMethods = {
-  SHAPE: method("SHAPE", ([target]) => {
-    ensureTensor(target, "Shape");
-    return { type: "tuple", values: tensorShape(target).map((dim) => int4(dim)) };
-  }),
-  RANK: method("RANK", ([target]) => {
-    ensureTensor(target, "Rank");
-    return int4(tensorRank(target));
-  }),
-  SIZE: method("SIZE", ([target]) => {
-    ensureTensor(target, "Size");
-    return int4(tensorSize(target));
-  }),
-  GET: method("GET", ([target, ...selectors]) => {
-    ensureTensor(target, "Get");
-    return tensorGetBySelectors(target, tensorSelectorsFromArgs(selectors));
-  }),
-  SET: method("SET", ([target, ...selectorsAndValue]) => {
-    ensureTensor(target, "Set");
-    const value = selectorsAndValue[selectorsAndValue.length - 1];
-    const selectors = selectorsAndValue.slice(0, -1);
-    const copy = shallowCopyValue(target);
-    tensorAssignBySelectors(copy, tensorSelectorsFromArgs(selectors), value);
-    return copy;
-  }),
-  "SET!": method("SET!", ([target, ...selectorsAndValue]) => {
-    ensureTensor(target, "Set!");
-    const value = selectorsAndValue[selectorsAndValue.length - 1];
-    const selectors = selectorsAndValue.slice(0, -1);
-    tensorAssignBySelectors(target, tensorSelectorsFromArgs(selectors), value);
-    return target;
-  }),
-  RESHAPE: method("RESHAPE", ([target, shape]) => {
-    ensureTensor(target, "Reshape");
-    const nextShape = shape?.type === "tuple" ? shape.values.map((value) => numericIndex(value)) : null;
-    if (!nextShape)
-      throw new Error("Reshape expects a shape tuple");
-    const expected = nextShape.reduce((product, dim) => product * dim, 1);
-    if (expected !== tensorSize(target))
-      throw new Error("Reshape size mismatch");
-    return createTensor(nextShape, target.data);
-  }),
-  FLATTEN: method("FLATTEN", ([target]) => {
-    ensureTensor(target, "Flatten");
-    return createTensor([tensorSize(target)], [...target.data]);
-  }),
-  TRANSPOSE: method("TRANSPOSE", ([target]) => {
-    ensureTensor(target, "Transpose");
-    if (tensorRank(target) !== 2)
-      throw new Error("Transpose currently expects a rank-2 tensor");
-    return createTensorView(target, {
-      shape: [target.shape[1], target.shape[0]],
-      strides: [target.strides[1], target.strides[0]],
-      offset: target.offset
-    });
-  }),
-  PERMUTE: method("PERMUTE", ([target, order]) => {
-    ensureTensor(target, "Permute");
-    if (order?.type !== "tuple")
-      throw new Error("Permute expects a tuple of axis numbers");
-    const axes = order.values.map((value) => numericIndex(value) - 1);
-    if (axes.length !== target.shape.length)
-      throw new Error("Permute rank mismatch");
-    return createTensorView(target, {
-      shape: axes.map((axis) => target.shape[axis]),
-      strides: axes.map((axis) => target.strides[axis]),
-      offset: target.offset
-    });
-  }),
-  MAP: method("MAP", ([target, iterator], context, evaluate, invoke) => {
-    ensureTensor(target, "Map");
-    const data = [];
-    forEachTensorCell(target, (value, tuple) => {
-      data.push(invoke(iterator, [value, tensorIndexTuple(tuple), target], context, evaluate));
-    });
-    return createTensor(target.shape, data);
-  }),
-  "FILL!": method("FILL!", ([target, value]) => {
-    ensureTensor(target, "Fill!");
-    forEachTensorCell(target, (_entry, _tuple, offset) => {
-      target.data[offset] = value;
-    });
-    return target;
-  }),
-  SUM: method("SUM", ([target]) => {
-    ensureTensor(target, "Sum");
-    let acc = int4(0);
-    forEachTensorCell(target, (value) => {
-      if (!isHole(value))
-        acc = arithmeticAdd(acc, value);
-    });
-    return acc;
-  }),
-  MEAN: method("MEAN", ([target]) => {
-    ensureTensor(target, "Mean");
-    const size = tensorSize(target);
-    if (size === 0)
-      return null;
-    return arithmeticDiv(tensorMethods.SUM.impl([target]), int4(size));
-  }),
-  DOT: method("DOT", ([target, other]) => {
-    ensureTensor(target, "Dot");
-    ensureTensor(other, "Dot");
-    if (tensorRank(target) !== 1 || tensorRank(other) !== 1 || tensorSize(target) !== tensorSize(other)) {
-      throw new Error("Dot expects rank-1 tensors of equal size");
-    }
-    let acc = int4(0);
-    for (let i = 0;i < target.data.length; i++) {
-      acc = arithmeticAdd(acc, arithmeticMul(target.data[i], other.data[i]));
-    }
-    return acc;
-  }),
-  MATMUL: method("MATMUL", ([target, other]) => {
-    ensureTensor(target, "MatMul");
-    ensureTensor(other, "MatMul");
-    if (tensorRank(target) !== 2 || tensorRank(other) !== 2) {
-      throw new Error("MatMul expects rank-2 tensors");
-    }
-    const [rows, inner] = target.shape;
-    const [otherInner, cols] = other.shape;
-    if (inner !== otherInner)
-      throw new Error("MatMul inner dimensions must agree");
-    const data = [];
-    for (let r = 1;r <= rows; r++) {
-      for (let c = 1;c <= cols; c++) {
-        let acc = int4(0);
-        for (let k = 1;k <= inner; k++) {
-          const a = tensorGetBySelectors(target, [{ kind: "index", value: int4(r) }, { kind: "index", value: int4(k) }]);
-          const b = tensorGetBySelectors(other, [{ kind: "index", value: int4(k) }, { kind: "index", value: int4(c) }]);
-          acc = arithmeticAdd(acc, arithmeticMul(a, b));
-        }
-        data.push(acc);
-      }
-    }
-    return createTensor([rows, cols], data);
-  }),
-  REDUCE: method("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke))
-};
-var commonMethods = {
-  CHECKTRAITS: method("CHECKTRAITS", ([target], context) => checkTraits(target, context, { warnOnly: true })),
-  CheckTraits: method("CheckTraits", ([target], context) => checkTraits(target, context, { warnOnly: true }))
-};
-var PROTOS = new Map([
-  ["sequence", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iterableMethods), ...Object.entries(arrayMethods)])],
-  ["lazy_sequence", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iterableMethods), ...Object.entries(lazySequenceMethods)])],
-  ["map", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iterableMethods), ...Object.entries(mapMethods)])],
-  ["set", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iterableMethods), ...Object.entries(setMethods)])],
-  ["string", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iterableMethods), ...Object.entries(stringMethods)])],
-  ["tuple", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iterableMethods), ...Object.entries(tupleMethods)])],
-  ["tensor", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iterableMethods), ...Object.entries(tensorMethods)])],
-  ["iterator", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iteratorMethods)])],
-  ["deferred", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(deferredMethods)])],
-  ["exact_generator", createBuiltinProto([
-    ...Object.entries(commonMethods),
-    ["CONJUGATE", method("Conjugate", ([target]) => complexConjugate(target))],
-    ["RE", method("Re", ([target]) => complexParts(target).real)],
-    ["IM", method("Im", ([target]) => complexParts(target).imaginary)],
-    ["NORMSQUARED", method("NormSquared", ([target]) => complexNormSquared(target))],
-    ["CAYLEY", method("Cayley", ([target]) => cayleyFromCartesian(target))]
-  ])],
-  ["exact_expression", createBuiltinProto([
-    ...Object.entries(commonMethods),
-    ["CONJUGATE", method("Conjugate", ([target]) => complexConjugate(target))],
-    ["RE", method("Re", ([target]) => complexParts(target).real)],
-    ["IM", method("Im", ([target]) => complexParts(target).imaginary)],
-    ["NORMSQUARED", method("NormSquared", ([target]) => complexNormSquared(target))],
-    ["CAYLEY", method("Cayley", ([target]) => cayleyFromCartesian(target))]
-  ])],
-  ["cayley", createBuiltinProto([
-    ...Object.entries(commonMethods),
-    ["CARTESIAN", method("Cartesian", ([target]) => cayleyCartesian(target))],
-    ["CAYLEY", method("Cayley", ([target]) => target)],
-    ["CONJUGATE", method("Conjugate", ([target]) => conjugateCayley(target))],
-    ["RE", method("Re", ([target]) => cayleyReal(target))],
-    ["IM", method("Im", ([target]) => cayleyImaginary(target))],
-    ["NORMSQUARED", method("NormSquared", ([target]) => multiplyScalars(target.magnitude, target.magnitude))],
-    ["MAGNITUDE", method("Magnitude", ([target]) => target.magnitude)],
-    ["DIRECTION", method("Direction", ([target]) => target.direction)],
-    ["INVERSE", method("Inverse", ([target]) => inverseCayley(target))]
-  ])]
-]);
-function isCallableValue(value) {
-  return typeof value === "function" || value && (value.type === "function" || value.type === "lambda" || value.type === "sysref" || value.type === "partial" || value.type === "arityCap" || value.type === "method_builtin") || isUnitValue(value) || isExactValue(value);
-}
-function ensureCallableMethod(value, name) {
-  if (!isCallableValue(value)) {
-    throw new Error(`Method "${name}" is not callable`);
-  }
-  return value;
-}
-function checkTraitsMethod(name) {
-  if (name !== "CHECKTRAITS" && name !== "CheckTraits")
-    return null;
-  return method(name, ([target], context) => checkTraits(target, context, { warnOnly: true }));
-}
-function builtinProtoFor(target) {
-  if (isTensor(target))
-    return PROTOS.get("tensor");
-  if (target && typeof target === "object" && target.fn === "DEFER")
-    return PROTOS.get("deferred");
-  return PROTOS.get(target?.type) ?? null;
-}
-function resolveFromProto(proto, candidates, methodName) {
-  if (proto === null || proto === undefined)
-    return null;
-  if (proto.type !== "map" || !(proto.entries instanceof Map)) {
-    throw new Error("Method prototype must be a map or null");
-  }
-  for (const candidate of candidates) {
-    if (proto.entries.has(candidate)) {
-      return ensureCallableMethod(proto.entries.get(candidate), methodName);
-    }
-  }
-  return null;
-}
-function getBuiltinProto(target) {
-  const ext = target?._ext;
-  if (ext instanceof Map && ext.has("_proto")) {
-    const proto = ext.get("_proto");
-    if (proto === null)
-      return null;
-    if (proto?.type !== "map" || !(proto.entries instanceof Map)) {
-      throw new Error("Method prototype must be a map or null");
-    }
-    return proto;
-  }
-  return builtinProtoFor(target);
-}
-function resolveMethod(target, name) {
-  const ext = target?._ext;
-  const candidates = [name, `__${name}`, `_${name}`];
-  const special = checkTraitsMethod(name);
-  if (special) {
-    return special;
-  }
-  if (ext instanceof Map) {
-    for (const candidate of candidates) {
-      if (ext.has(candidate)) {
-        return ensureCallableMethod(ext.get(candidate), name);
-      }
-    }
-  }
-  const semanticProto = ext instanceof Map ? ext.get("__proto") : null;
-  const traitProto = semanticProto?.type === "map" ? semanticProto.entries?.get("traits") : null;
-  const typeProto = semanticProto?.type === "map" ? semanticProto.entries?.get("type") : null;
-  const semanticResolved = resolveFromProto(traitProto, candidates, name) || resolveFromProto(typeProto, candidates, name);
-  if (semanticResolved) {
-    return semanticResolved;
-  }
-  const resolved = resolveFromProto(getBuiltinProto(target), candidates, name);
-  if (resolved) {
-    return resolved;
-  }
-  throw new Error(`Method not found: ${name}`);
-}
-function ensureMutableReceiver(target) {
-  const ext = target?._ext;
-  if (!ext?.get("_mutable") || ext.get("frozen") || ext.get("immutable")) {
-    throw new Error("Cannot mutate immutable value");
-  }
-}
-function attachBuiltinProto(value) {
-  if (!value || typeof value !== "object")
-    return value;
-  const proto = builtinProtoFor(value);
-  if (!proto)
-    return value;
-  ensureExt3(value);
-  if (!value._ext.has("_proto")) {
-    value._ext.set("_proto", proto);
-  }
-  refreshRuntimeMetadata(value, proto);
-  return value;
-}
-
-// ../rix/src/runtime/multifunction.js
-function stringObj3(value) {
-  return { type: "string", value };
-}
-function ensureExt4(value) {
-  if (!value || typeof value !== "object") {
-    throw new Error("Multifunctions must be sequence values");
-  }
-  if (!value._ext) {
-    value._ext = new Map;
-  }
-  return value._ext;
-}
-function getWarningsConfig(context) {
-  return context?.getEnv?.("warnings", runtimeDefaults.warnings) ?? runtimeDefaults.warnings;
-}
-function emitWarning2(context, label, data = new Map) {
-  if (!context?.getEnv)
-    return;
-  getDiagnostics(context).addEvent(createEvent({
-    kind: "warning",
-    label,
-    file: getCurrentFilePath(context),
-    data: { type: "map", entries: data }
-  }));
-}
-function ensureState(value) {
-  if (!value.__multifunction__) {
-    Object.defineProperty(value, "__multifunction__", {
-      value: {
-        namedVariants: new Map
-      },
-      writable: true,
-      configurable: true,
-      enumerable: false
-    });
-  }
-  return value.__multifunction__;
-}
-function canonicalVariantKey(name) {
-  return String(name).toUpperCase();
-}
-function isMultifunctionValue(value) {
-  return Boolean(value && value.type === "sequence" && value._ext instanceof Map && value._ext.get("_type")?.value === "multifunction");
-}
-function markAsMultifunction(value) {
-  if (!value || value.type !== "sequence" || !Array.isArray(value.values)) {
-    throw new Error("Only arrays/sequences can be marked as multifunctions");
-  }
-  attachBuiltinProto(value);
-  const ext = ensureExt4(value);
-  ext.set("_type", stringObj3("multifunction"));
-  ensureState(value);
-  return value;
-}
-function maybeAutoMarkMultifunction(name, value) {
-  if (!/^[A-Z]/.test(name || "")) {
-    return value;
-  }
-  if (!value || value.type !== "sequence" || !Array.isArray(value.values)) {
-    return value;
-  }
-  const marked = markAsMultifunction(value);
-  if (!marked.__name) {
-    marked.__name = name;
-  }
-  return marked;
-}
-function createMultifunctionValue(variants) {
-  return markAsMultifunction({
-    type: "sequence",
-    values: [...variants],
-    _ext: new Map([["_mutable", new Integer(1n)]])
-  });
-}
-function rebuildMultifunctionState(value) {
-  if (!isMultifunctionValue(value)) {
-    return null;
-  }
-  const state = ensureState(value);
-  const namedVariants = new Map;
-  for (let index = 0;index < value.values.length; index++) {
-    const variant = value.values[index];
-    const name = variant?.__name;
-    if (variant && typeof variant === "object") {
-      variant.__parentMultifunction = value;
-    }
-    if (!name)
-      continue;
-    const key = canonicalVariantKey(name);
-    if (namedVariants.has(key)) {
-      throw new Error(`Duplicate multifunction variant name: ${name}`);
-    }
-    namedVariants.set(key, variant);
-  }
-  state.namedVariants = namedVariants;
-  return state;
-}
-function getNamedMultifunctionVariant(value, name) {
-  const state = rebuildMultifunctionState(value);
-  if (!state) {
-    return null;
-  }
-  return state.namedVariants.get(canonicalVariantKey(name)) ?? null;
-}
-function appendMultifunctionVariant(currentValue, variant, mode, context, ownerName = null) {
-  if (currentValue === undefined) {
-    const created = createMultifunctionValue([variant]);
-    rebuildMultifunctionState(created);
-    return created;
-  }
-  if (isMultifunctionValue(currentValue)) {
-    if (mode === "prepend") {
-      currentValue.values.unshift(variant);
-    } else {
-      currentValue.values.push(variant);
-    }
-    rebuildMultifunctionState(currentValue);
-    return currentValue;
-  }
-  const callableKinds = new Set(["function", "lambda"]);
-  if (currentValue && callableKinds.has(currentValue.type)) {
-    if (getWarningsConfig(context)?.multifunctionConversion === true) {
-      emitWarning2(context, "Converted function to multifunction", new Map([
-        ["name", stringObj3(ownerName || currentValue.name || "<anonymous>")]
-      ]));
-    }
-    const variants = mode === "prepend" ? [variant, currentValue] : [currentValue, variant];
-    const created = createMultifunctionValue(variants);
-    rebuildMultifunctionState(created);
-    return created;
-  }
-  throw new Error(`${ownerName || "Value"} is not a function or multifunction`);
-}
-function shouldWarnNoPrep(context) {
-  return getWarningsConfig(context)?.multifunctionNoPrep === true;
-}
-function emitNoPrepWarning(context, multifnName, index, variantName) {
-  emitWarning2(context, "Multifunction variant without prep is not last", new Map([
-    ["function", stringObj3(multifnName || "<anonymous>")],
-    ["variantIndex", new Integer(BigInt(index + 1))],
-    ...variantName ? [["variantName", stringObj3(variantName)]] : []
-  ]));
-}
-
 // ../rix/src/eval/functions/functions.js
-var isTruthy2 = (val) => val !== null && val !== undefined;
+var isTruthy = (val) => val !== null && val !== undefined;
 function evaluateArgs(argNodes, evaluate) {
   const evaluatedArgs = [];
   for (const arg of argNodes) {
@@ -16588,7 +12073,7 @@ var functionFunctions = {
         for (let i = 0;i < items.length; i++) {
           const item = items[i];
           const loc = new Integer(BigInt(i + 1));
-          const isSep = isTruthy2(invokeTraversalCallback(sepVal, [item, loc, collection], context, evaluate));
+          const isSep = isTruthy(invokeTraversalCallback(sepVal, [item, loc, collection], context, evaluate));
           if (isSep) {
             if (!inSeparator) {
               results.push(currentPiece);
@@ -16715,7 +12200,7 @@ var functionFunctions = {
         let currentChunk = [];
         for (let i = 0;i < items.length; i++) {
           const loc = new Integer(BigInt(i + 1));
-          const isBound = isTruthy2(invokeTraversalCallback(boundVal, [items[i], loc, collection], context, evaluate));
+          const isBound = isTruthy(invokeTraversalCallback(boundVal, [items[i], loc, collection], context, evaluate));
           currentChunk.push(items[i]);
           if (isBound) {
             results.push(currentChunk);
@@ -16839,12 +12324,12 @@ var functionFunctions = {
         return null;
       const func = evaluate(funcNode);
       if (isLazySequence(collection)) {
-        return filterLazySequence(collection, (item, index, source) => isTruthy2(invokeTraversalCallback(func, [item, new Integer(BigInt(index)), source], context, evaluate)));
+        return filterLazySequence(collection, (item, index, source) => isTruthy(invokeTraversalCallback(func, [item, new Integer(BigInt(index)), source], context, evaluate)));
       }
       if (isTensor(collection)) {
         const results2 = [];
         forEachTensorCell(collection, (item, tuple) => {
-          if (isTruthy2(invokeTraversalCallback(func, [item, tensorIndexTuple(tuple), collection], context, evaluate))) {
+          if (isTruthy(invokeTraversalCallback(func, [item, tensorIndexTuple(tuple), collection], context, evaluate))) {
             results2.push({
               type: "tuple",
               values: [item, tensorIndexTuple(tuple)]
@@ -16860,7 +12345,7 @@ var functionFunctions = {
         const newEntries = new Map;
         for (const [k, v] of entries) {
           const loc = { type: "string", value: k };
-          if (isTruthy2(invokeTraversalCallback(func, [v, loc, collection], context, evaluate))) {
+          if (isTruthy(invokeTraversalCallback(func, [v, loc, collection], context, evaluate))) {
             newEntries.set(k, v);
           }
         }
@@ -16878,7 +12363,7 @@ var functionFunctions = {
       }
       const results = items.filter((item, i) => {
         const loc = new Integer(BigInt(i + 1));
-        return isTruthy2(invokeTraversalCallback(func, [item, loc, collection], context, evaluate));
+        return isTruthy(invokeTraversalCallback(func, [item, loc, collection], context, evaluate));
       });
       if (isString) {
         const filteredStr = results.map((r) => r && r.type === "string" ? r.value : r).join("");
@@ -16920,20 +12405,20 @@ var functionFunctions = {
         const entries = collection.entries;
         if (!(entries instanceof Map))
           throw new Error("PREDUCE: invalid map");
-        const mapEntries2 = Array.from(entries.entries());
+        const mapEntries = Array.from(entries.entries());
         let acc2;
         let startIdx2;
         if (!initProvided) {
-          if (mapEntries2.length === 0)
+          if (mapEntries.length === 0)
             return null;
-          acc2 = mapEntries2[0][1];
+          acc2 = mapEntries[0][1];
           startIdx2 = 1;
         } else {
           acc2 = explicitInit;
           startIdx2 = 0;
         }
-        for (let i = startIdx2;i < mapEntries2.length; i++) {
-          const [k, v] = mapEntries2[i];
+        for (let i = startIdx2;i < mapEntries.length; i++) {
+          const [k, v] = mapEntries[i];
           const loc = { type: "string", value: k };
           acc2 = invokeTraversalCallback(func, [acc2, v, loc, collection], context, evaluate);
         }
@@ -17078,7 +12563,7 @@ var functionFunctions = {
           const item = ensureLazyIndex(collection, index);
           if (collection._lazy.done && collection._lazy.cache.length < index)
             return index === 1 ? null : last;
-          if (!isTruthy2(invokeTraversalCallback(func, [item, new Integer(BigInt(index)), collection], context, evaluate)))
+          if (!isTruthy(invokeTraversalCallback(func, [item, new Integer(BigInt(index)), collection], context, evaluate)))
             return null;
           last = item;
           index++;
@@ -17092,7 +12577,7 @@ var functionFunctions = {
           if (!sawAny) {
             sawAny = true;
           }
-          if (failed || !isTruthy2(invokeTraversalCallback(func, [item, tensorIndexTuple(tuple), collection], context, evaluate))) {
+          if (failed || !isTruthy(invokeTraversalCallback(func, [item, tensorIndexTuple(tuple), collection], context, evaluate))) {
             failed = true;
             return;
           }
@@ -17113,7 +12598,7 @@ var functionFunctions = {
         let lastVal = null;
         for (const [k, v] of entries) {
           const loc = { type: "string", value: k };
-          if (!isTruthy2(invokeTraversalCallback(func, [v, loc, collection], context, evaluate))) {
+          if (!isTruthy(invokeTraversalCallback(func, [v, loc, collection], context, evaluate))) {
             return null;
           }
           lastVal = v;
@@ -17137,7 +12622,7 @@ var functionFunctions = {
       for (let i = 0;i < items.length; i++) {
         const item = items[i];
         const loc = new Integer(BigInt(i + 1));
-        if (!isTruthy2(invokeTraversalCallback(func, [item, loc, collection], context, evaluate))) {
+        if (!isTruthy(invokeTraversalCallback(func, [item, loc, collection], context, evaluate))) {
           return null;
         }
         lastItem = item;
@@ -17160,7 +12645,7 @@ var functionFunctions = {
           const item = ensureLazyIndex(collection, index);
           if (collection._lazy.done && collection._lazy.cache.length < index)
             return null;
-          if (isTruthy2(invokeTraversalCallback(func, [item, new Integer(BigInt(index)), collection], context, evaluate)))
+          if (isTruthy(invokeTraversalCallback(func, [item, new Integer(BigInt(index)), collection], context, evaluate)))
             return item;
           index++;
         }
@@ -17169,7 +12654,7 @@ var functionFunctions = {
         let found = null;
         let foundAny = false;
         forEachTensorCell(collection, (item, tuple) => {
-          if (!foundAny && isTruthy2(invokeTraversalCallback(func, [item, tensorIndexTuple(tuple), collection], context, evaluate))) {
+          if (!foundAny && isTruthy(invokeTraversalCallback(func, [item, tensorIndexTuple(tuple), collection], context, evaluate))) {
             found = item;
             foundAny = true;
           }
@@ -17182,7 +12667,7 @@ var functionFunctions = {
           throw new Error("PANY: invalid map");
         for (const [k, v] of entries) {
           const loc = { type: "string", value: k };
-          if (isTruthy2(invokeTraversalCallback(func, [v, loc, collection], context, evaluate))) {
+          if (isTruthy(invokeTraversalCallback(func, [v, loc, collection], context, evaluate))) {
             return v;
           }
         }
@@ -17201,7 +12686,7 @@ var functionFunctions = {
       for (let i = 0;i < items.length; i++) {
         const item = items[i];
         const loc = new Integer(BigInt(i + 1));
-        if (isTruthy2(invokeTraversalCallback(func, [item, loc, collection], context, evaluate))) {
+        if (isTruthy(invokeTraversalCallback(func, [item, loc, collection], context, evaluate))) {
           return item;
         }
       }
@@ -17218,11 +12703,1110 @@ var functionFunctions = {
   }
 };
 
+// ../rix/src/eval/format.js
+function tensorValueAtTuple(tensor, tuple) {
+  const value = tensor.data[tensorOffsetForTuple(tensor, tuple)];
+  return value;
+}
+function tensorDisplayLevels(shape) {
+  if (shape.length === 0)
+    return [];
+  if (shape.length === 1) {
+    return [{ size: shape[0], separatorCount: 0 }];
+  }
+  const levels = [];
+  for (let axis = shape.length - 1;axis >= 2; axis--) {
+    levels.push({ size: shape[axis], separatorCount: axis });
+  }
+  levels.push({ size: shape[0], separatorCount: 1 });
+  levels.push({ size: shape[1], separatorCount: 0 });
+  return levels;
+}
+function displayPathToExternalTuple(displayPath) {
+  if (displayPath.length === 1) {
+    return [displayPath[0]];
+  }
+  const higher = displayPath.slice(0, -2).reverse();
+  return [displayPath[displayPath.length - 2], displayPath[displayPath.length - 1], ...higher];
+}
+function tensorSeparator(separatorCount) {
+  if (separatorCount <= 0)
+    return ", ";
+  if (separatorCount === 1)
+    return "; ";
+  return ` ${";".repeat(separatorCount)} `;
+}
+function formatTensorBody(tensor, formatValue, levels, levelIndex = 0, displayPath = []) {
+  const level = levels[levelIndex];
+  if (level.separatorCount === 0) {
+    const values = [];
+    for (let i = 1;i <= level.size; i++) {
+      const tuple = displayPathToExternalTuple([...displayPath, i]);
+      values.push(formatValue(tensorValueAtTuple(tensor, tuple)));
+    }
+    return values.join(", ");
+  }
+  const parts = [];
+  for (let i = 1;i <= level.size; i++) {
+    parts.push(formatTensorBody(tensor, formatValue, levels, levelIndex + 1, [...displayPath, i]));
+  }
+  return parts.join(tensorSeparator(level.separatorCount));
+}
+function formatTensor(tensor, formatValue) {
+  const shapeText = tensor.shape.join("x");
+  if (tensorSize(tensor) === 0) {
+    return `{:${shapeText}:}`;
+  }
+  const levels = tensorDisplayLevels(tensor.shape);
+  return `{:${shapeText}: ${formatTensorBody(tensor, formatValue, levels)} }`;
+}
+function truncate(text, limit = 40) {
+  if (text.length <= limit)
+    return text;
+  return `${text.slice(0, Math.max(0, limit - 3))}...`;
+}
+var BINARY_OPS = new Map([
+  ["ADD", "+"],
+  ["SUB", "-"],
+  ["MUL", "*"],
+  ["DIV", "/"],
+  ["INTDIV", "//"],
+  ["MOD", "%"],
+  ["POW", "^"],
+  ["POWPROD", "**"],
+  ["EQ", "=="],
+  ["NEQ", "!="],
+  ["LT", "<"],
+  ["GT", ">"],
+  ["LTE", "<="],
+  ["GTE", ">="],
+  ["AND", "&&"],
+  ["OR", "||"]
+]);
+function previewIr(node, options = {}) {
+  const { maxLen = 40, depth = 0 } = options;
+  if (node === null)
+    return "_";
+  if (node === undefined)
+    return "undefined";
+  if (typeof node === "string")
+    return node;
+  if (typeof node === "number" || typeof node === "bigint" || typeof node === "boolean") {
+    return String(node);
+  }
+  if (Array.isArray(node)) {
+    return truncate(`[${node.map((item) => previewIr(item, { maxLen: 12, depth: depth + 1 })).join(", ")}]`, maxLen);
+  }
+  if (!node || typeof node !== "object") {
+    return truncate(String(node), maxLen);
+  }
+  if (!node.fn) {
+    return truncate(irToText(node), maxLen);
+  }
+  if (depth >= 5) {
+    return truncate(irToText(node), maxLen);
+  }
+  switch (node.fn) {
+    case "LITERAL":
+      return String(node.args[0]);
+    case "STRING":
+      return JSON.stringify(node.args[0]);
+    case "NULL":
+      return "_";
+    case "RETRIEVE":
+      return node.args[0];
+    case "OUTER_RETRIEVE":
+      return `@${node.args[0]}`;
+    case "SELF":
+      return "$";
+    case "PARENT_SELF":
+      return "$$";
+    case "NEG":
+      return truncate(`-${previewIr(node.args[0], { maxLen: maxLen - 1, depth: depth + 1 })}`, maxLen);
+    case "CALL":
+      return truncate(`${node.args[0]}(${node.args.slice(1).map((arg) => previewIr(arg, { maxLen: 16, depth: depth + 1 })).join(", ")})`, maxLen);
+    case "CALL_EXPR":
+      return truncate(`${previewIr(node.args[0], { maxLen: 14, depth: depth + 1 })}(${node.args.slice(1).map((arg) => previewIr(arg, { maxLen: 12, depth: depth + 1 })).join(", ")})`, maxLen);
+    case "BLOCK": {
+      const start = node.args[0]?.kind === "block_meta" ? 1 : 0;
+      const statements = node.args.slice(start).map((stmt) => previewIr(stmt, { maxLen: 18, depth: depth + 1 }));
+      return truncate(`{ ${statements.join("; ")} }`, maxLen);
+    }
+    case "ASSIGN":
+    case "ASSIGN_COPY":
+    case "ASSIGN_UPDATE":
+    case "ASSIGN_DEEP_COPY":
+    case "ASSIGN_DEEP_UPDATE":
+    case "OUTER_ASSIGN":
+      return truncate(`${node.args[0]} = ${previewIr(node.args[1], { maxLen: Math.max(12, maxLen - String(node.args[0]).length - 3), depth: depth + 1 })}`, maxLen);
+    case "ASSIGN_EXPR":
+      return truncate(`${previewIr(node.args[0], { maxLen: 12, depth: depth + 1 })} = ${previewIr(node.args[1], { maxLen: 16, depth: depth + 1 })}`, maxLen);
+    case "OUTER_UPDATE":
+      return truncate(`@${node.args[0]} ~= ${previewIr(node.args[1], { maxLen: Math.max(12, maxLen - String(node.args[0]).length - 5), depth: depth + 1 })}`, maxLen);
+    default:
+      break;
+  }
+  const op = BINARY_OPS.get(node.fn);
+  if (op && node.args.length >= 2) {
+    return truncate(`${previewIr(node.args[0], { maxLen: 14, depth: depth + 1 })} ${op} ${previewIr(node.args[1], { maxLen: 14, depth: depth + 1 })}`, maxLen);
+  }
+  return truncate(irToText(node), maxLen);
+}
+function formatCallablePreview(fn, label) {
+  const attachedSpec = getAttachedSpec(fn);
+  const symbolicKind = fn._ext?.get?.("_symbolicKind")?.value || null;
+  if (attachedSpec && symbolicKind === "Poly") {
+    const params2 = fn.params?.positional?.map((param) => param.name).join(", ") || "";
+    return `[Poly ${params2} -> ${renderSymbolicIr(fn.body)}; Spec ${formatSymbolicSpec(attachedSpec)}]`;
+  }
+  const params = fn.params?.positional?.map((param) => param.isRest ? `...${param.name}` : param.name).join(", ") || "";
+  const prepEntries = [
+    ...Array.isArray(fn.params?.conditionals) ? fn.params.conditionals : [],
+    ...Array.isArray(fn.params?.prep) ? fn.params.prep : []
+  ];
+  const prepText = prepEntries.length > 0 ? ` ${fn.params?.prepStrict ? "?!-" : "?-"} [${truncate(prepEntries.map((entry) => previewIr(entry, { maxLen: 18 })).join(", "), 42)}]` : "";
+  const bodyText = previewIr(fn.body, { maxLen: 48 });
+  const displayName = fn.__name || fn.name || null;
+  const nameText = displayName ? ` ${displayName}:` : ":";
+  const specText = attachedSpec ? `; Spec ${formatSymbolicSpec(attachedSpec)}` : "";
+  return `[${label}${nameText} (${params})${prepText} -> ${bodyText}${specText}]`;
+}
+function formatMultifunctionPreview(multifn) {
+  const displayName = multifn.__name || null;
+  const variants = (multifn.values || []).map((variant, index) => {
+    if (!variant || variant.type !== "function" && variant.type !== "lambda") {
+      return `#${index + 1}: <invalid>`;
+    }
+    const params = variant.params?.positional?.map((param) => param.isRest ? `...${param.name}` : param.name).join(", ") || "";
+    const prepEntries = [
+      ...Array.isArray(variant.params?.conditionals) ? variant.params.conditionals : [],
+      ...Array.isArray(variant.params?.prep) ? variant.params.prep : []
+    ];
+    const prepText = prepEntries.length > 0 ? ` ${variant.params?.prepStrict ? "?!-" : "?-"} [${truncate(prepEntries.map((entry) => previewIr(entry, { maxLen: 12 })).join(", "), 24)}]` : "";
+    const variantName = variant.__name ? `/${variant.__name}/ ` : "";
+    const bodyText = previewIr(variant.body, { maxLen: 20 });
+    return `${variantName}(${params})${prepText} -> ${bodyText}`;
+  });
+  if (variants.length === 0) {
+    return displayName ? `[Multifunction ${displayName}: empty]` : "[Multifunction: empty]";
+  }
+  const prefix = displayName ? `[Multifunction ${displayName}:
+` : `[Multifunction:
+`;
+  return `${prefix}${variants.map((variant) => `${variant},`).join(`
+`)}
+]`;
+}
+function isSemanticObject(value) {
+  return value && typeof value === "object" && value._ext instanceof Map && value._ext.has("__type");
+}
+function formatViaSemanticDisplay(value, options) {
+  if (!isSemanticObject(value) || !options?.context || !options?.evaluate)
+    return null;
+  for (const methodName of ["ToString", "TOSTRING", "Value", "VALUE"]) {
+    let fn;
+    try {
+      fn = resolveMethod(value, methodName);
+    } catch {
+      continue;
+    }
+    try {
+      const displayed = fn?.type === "method_builtin" ? fn.impl([value], options.context, options.evaluate, callWithConcreteArgs) : callWithConcreteArgs(fn, [value], options.context, options.evaluate);
+      if (displayed === value)
+        continue;
+      return formatValue(displayed, { ...options, semanticDisplay: false });
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+function formatValue(val, options = {}) {
+  const formatChild = (child) => formatValue(child, options);
+  if (isHole(val))
+    return "undefined";
+  if (val === null)
+    return "_";
+  if (val === undefined)
+    return "undefined";
+  if (typeof val === "object" && val !== null) {
+    if (isSymbolicSpec(val))
+      return formatSymbolicSpec(val);
+    if (isLazySequence(val)) {
+      const cached = val._lazy.cache.slice(0, 8).map(formatChild).join(", ");
+      const more = val._lazy.cache.length > 8 || !val._lazy.done ? cached ? ", …" : "…" : "";
+      const length = lazyKnownLength(val);
+      const suffix = length === null ? "" : `; length ${length}`;
+      return `[LazySequence${suffix}: ${cached}${more}]`;
+    }
+    if (val.type === "iterator") {
+      return val.cursor === null ? "[Iterator: done]" : `[Iterator: index ${val.cursor}]`;
+    }
+    if (val.type === "string")
+      return val.value;
+    if (isCayleyInfinity(val))
+      return "Infinity";
+    if (isCayleyValue(val)) {
+      return `Cayley(${formatChild(val.magnitude)}, ${formatChild(val.direction)})`;
+    }
+    if (isQuantity(val))
+      return formatQuantity(val, formatChild);
+    if (isUnitValue(val))
+      return `~[${formatUnit(val)}]`;
+    if (val.type === "exact_generator" || val.type === "exact_expression") {
+      return formatExact(val, formatChild);
+    }
+    if (isTensor(val))
+      return formatTensor(val, formatChild);
+    if (val.type === "sequence" && val._ext instanceof Map && val._ext.get("_type")?.value === "multifunction") {
+      return formatMultifunctionPreview(val);
+    }
+    if (val.type === "sequence") {
+      const open = val.kind === "set" ? "{| " : val.kind === "tuple" ? "( " : "[";
+      const close = val.kind === "set" ? " |}" : val.kind === "tuple" ? " )" : "]";
+      const items = val.values || val.elements || [];
+      return open + items.map(formatChild).join(", ") + close;
+    }
+    if (val.type === "set" || val.type === "tuple") {
+      const open = val.type === "set" ? "{| " : "( ";
+      const close = val.type === "set" ? " |}" : " )";
+      return open + val.values.map(formatChild).join(", ") + close;
+    }
+    if (val.type === "map") {
+      const entries = [];
+      const mapObj = val.entries || val.elements || new Map;
+      mapObj.forEach((entryValue, key) => {
+        entries.push(`${key}=${formatChild(entryValue)}`);
+      });
+      return `{= ${entries.join(", ")} }`;
+    }
+    if (val.type === "export_bundle") {
+      const entries = [];
+      const mapObj = val.entries || new Map;
+      mapObj.forEach((cell, key) => {
+        entries.push(`${key}=${formatChild(cell?.value)}`);
+      });
+      return `{= ${entries.join(", ")} }`;
+    }
+    if (val.type === "function" || val.type === "lambda") {
+      return formatCallablePreview(val, val.type === "lambda" ? "Lambda" : "Function");
+    }
+    if (val.type === "system_context") {
+      const names = val.context.getAllNames();
+      const frozenMark = val.context.frozen ? " frozen" : " mutable";
+      return `[SystemContext${frozenMark}: ${names.slice(0, 5).join(", ")}${names.length > 5 ? ", ..." : ""}]`;
+    }
+    if (val.type === "sysref") {
+      return `[SystemFunction: ${val.name}]`;
+    }
+    if (val.type === "partial") {
+      const arity = (val.template || []).reduce((max, templateValue) => templateValue && templateValue.type === "placeholder" ? Math.max(max, templateValue.index) : max, 0);
+      return `[Partial: ${arity}]`;
+    }
+    if (val.type === "interval") {
+      return `${val.start || val.lo}:${val.end || val.hi}`;
+    }
+    if (options.semanticDisplay !== false) {
+      const semanticDisplay = formatViaSemanticDisplay(val, options);
+      if (semanticDisplay !== null)
+        return semanticDisplay;
+    }
+    if (val.fn === "DEFER") {
+      const inner = val.args && val.args[0];
+      const kind = inner ? inner.fn || inner.type || "AST" : "AST";
+      return `[Deferred ${kind}]`;
+    }
+  }
+  if (val instanceof Rational)
+    return val.toMixedString();
+  if (val instanceof RationalInterval)
+    return val.toMixedString();
+  return val.toString();
+}
+
+// ../rix/src/eval/functions/deferred.js
+function desugarNode(node, maxDepth, currentDepth = 0) {
+  if (node === null || node === undefined)
+    return "_";
+  if (isHole(node))
+    return "undefined";
+  if (node instanceof Integer)
+    return node.toString();
+  if (typeof node === "string")
+    return JSON.stringify(node);
+  if (typeof node === "number" || typeof node === "bigint")
+    return String(node);
+  if (typeof node === "boolean")
+    return String(node);
+  if (typeof node !== "object")
+    return String(node);
+  if (node.type === "string")
+    return JSON.stringify(node.value);
+  if (typeof node.fn === "string") {
+    if (maxDepth >= 0 && currentDepth >= maxDepth) {
+      return `${node.fn}(...)`;
+    }
+    if (!node.args || node.args.length === 0) {
+      return node.fn;
+    }
+    const argStrs = node.args.map((a) => desugarNode(a, maxDepth, currentDepth + 1));
+    const isBlock = node.fn === "BLOCK";
+    const hasMultilineArg = argStrs.some((s) => s.includes(`
+`));
+    if (isBlock || hasMultilineArg) {
+      const indented = argStrs.map((s) => s.split(`
+`).map((line) => "  " + line).join(`
+`));
+      return `${node.fn}(
+${indented.join(`,
+`)}
+)`;
+    }
+    return `${node.fn}(${argStrs.join(", ")})`;
+  }
+  try {
+    return JSON.stringify(node);
+  } catch {
+    return "[object]";
+  }
+}
+function nodeLabel(irNode) {
+  if (!irNode || typeof irNode !== "object" || !irNode.fn) {
+    return desugarNode(irNode, 0);
+  }
+  if (!irNode.args || irNode.args.length === 0)
+    return irNode.fn;
+  const argLabels = irNode.args.map((a) => {
+    if (typeof a === "string")
+      return JSON.stringify(a);
+    if (a instanceof Integer)
+      return a.toString();
+    if (typeof a === "number" || typeof a === "bigint")
+      return String(a);
+    if (a && typeof a === "object" && a.fn)
+      return "...";
+    try {
+      return JSON.stringify(a);
+    } catch {
+      return "[...]";
+    }
+  });
+  return `${irNode.fn}(${argLabels.join(", ")})`;
+}
+function traceNode(irNode, evaluate, maxDepth, currentDepth, lines, indent) {
+  if (!irNode || typeof irNode !== "object" || !irNode.fn) {
+    return evaluate(irNode);
+  }
+  if (maxDepth >= 0 && currentDepth > maxDepth) {
+    return evaluate(irNode);
+  }
+  const fn = irNode.fn;
+  if (fn === "DEFER") {
+    const result2 = evaluate(irNode);
+    lines.push(`${indent}DEFER → ${formatValue(result2)}`);
+    return result2;
+  }
+  if (fn === "BLOCK") {
+    let result2 = null;
+    for (const stmt of irNode.args) {
+      result2 = traceNode(stmt, evaluate, maxDepth, currentDepth, lines, indent);
+    }
+    return result2;
+  }
+  let result;
+  try {
+    result = evaluate(irNode);
+  } catch (e) {
+    lines.push(`${indent}${nodeLabel(irNode)} → ERROR: ${e.message}`);
+    throw e;
+  }
+  lines.push(`${indent}${nodeLabel(irNode)} → ${formatValue(result)}`);
+  if (maxDepth < 0 || currentDepth < maxDepth) {
+    if (Array.isArray(irNode.args)) {
+      const childIndent = indent + "  ";
+      for (const arg of irNode.args) {
+        if (arg && typeof arg === "object" && arg.fn) {
+          traceNode(arg, evaluate, maxDepth, currentDepth + 1, lines, childIndent);
+        }
+      }
+    }
+  }
+  return result;
+}
+function resolveIntArg(val, name) {
+  if (val === null || val === undefined || isHole(val))
+    return -1;
+  if (val instanceof Integer)
+    return Number(val.value);
+  if (typeof val === "number")
+    return Math.trunc(val);
+  throw new Error(`${name} must be an integer, got ${formatValue(val)}`);
+}
+function resolveBindings(val, name) {
+  if (val === null || val === undefined || isHole(val))
+    return null;
+  if (val.type === "map")
+    return val;
+  throw new Error(`${name} must be a map or null, got ${formatValue(val)}`);
+}
+var Eval = {
+  type: "method_builtin",
+  name: "Eval",
+  impl([target, bindings, mode], context, evaluate) {
+    const evalNodes = [target.args[0]];
+    bindings = resolveBindings(bindings, "Eval bindings");
+    let modeStr = "inherit";
+    if (mode !== null && mode !== undefined && !isHole(mode)) {
+      if (mode.type === "string") {
+        modeStr = mode.value;
+      } else {
+        throw new Error("Eval mode must be a string or colon-string like :fresh or :inherit");
+      }
+    }
+    if (modeStr !== "inherit" && modeStr !== "fresh") {
+      throw new Error(`Eval mode must be 'inherit' or 'fresh', got '${modeStr}'`);
+    }
+    if (modeStr === "inherit" && (!bindings || bindings.entries.size === 0)) {
+      let res = null;
+      const runBody = () => {
+        for (const irNode of evalNodes)
+          res = evaluate(irNode);
+        return res;
+      };
+      return context.withSharedBody(evalNodes[0], runBody);
+    }
+    context.push(undefined, { isolated: modeStr === "fresh" });
+    try {
+      if (bindings && bindings.entries) {
+        for (const [k, v] of bindings.entries) {
+          if (typeof k !== "string") {
+            throw new Error(`Eval binding key must be a string, got ${String(k)}`);
+          }
+          context.setFresh(k, v);
+        }
+      }
+      let res = null;
+      const runBody = () => {
+        for (const irNode of evalNodes)
+          res = evaluate(irNode);
+        return res;
+      };
+      if (evalNodes.length === 1) {
+        return context.withSharedBody(evalNodes[0], runBody);
+      }
+      return runBody();
+    } finally {
+      context.pop();
+    }
+  }
+};
+var Desugar = {
+  type: "method_builtin",
+  name: "Desugar",
+  impl([target, depth]) {
+    const maxDepth = resolveIntArg(depth, "Desugar depth");
+    const result = desugarNode(target, maxDepth, 0);
+    return { type: "string", value: result };
+  }
+};
+var Inspect = {
+  type: "method_builtin",
+  name: "Inspect",
+  impl([target, bindings, depth], context, evaluate) {
+    bindings = resolveBindings(bindings, "Inspect bindings");
+    const maxDepth = resolveIntArg(depth, "Inspect depth");
+    context.push(undefined, { isolated: true });
+    let result = null;
+    let errorMsg = null;
+    const traceLines = [];
+    try {
+      if (bindings && bindings.entries) {
+        for (const [k, v] of bindings.entries) {
+          context.setFresh(k, v);
+        }
+      }
+      const evalNode = target.args[0];
+      if (maxDepth === 0) {
+        result = context.withSharedBody(evalNode, () => evaluate(evalNode));
+      } else {
+        result = context.withSharedBody(evalNode, () => traceNode(evalNode, evaluate, maxDepth, 0, traceLines, "  "));
+      }
+    } catch (e) {
+      errorMsg = e.message ?? String(e);
+    } finally {
+      context.pop();
+    }
+    const lines = ["--- Deferred Inspection ---", "Inputs:"];
+    if (bindings && bindings.entries && bindings.entries.size > 0) {
+      for (const [k, v] of bindings.entries) {
+        lines.push(`  ${k} = ${formatValue(v)}`);
+      }
+    } else {
+      lines.push("  (none)");
+    }
+    if (traceLines.length > 0) {
+      lines.push("Trace:");
+      lines.push(...traceLines);
+    }
+    if (errorMsg !== null) {
+      lines.push(`Error: ${errorMsg}`);
+    } else {
+      lines.push(`Output: ${formatValue(result)}`);
+    }
+    return { type: "string", value: lines.join(`
+`) };
+  }
+};
+var deferredMethods = { EVAL: Eval, DESUGAR: Desugar, INSPECT: Inspect };
+
+// ../rix/src/runtime/cell.js
+class Cell {
+  constructor(value) {
+    this.value = value;
+  }
+}
+function classifyMetaKey(name) {
+  if (name.startsWith("__"))
+    return "sticky";
+  if (name.startsWith("_"))
+    return "ephemeral";
+  return "ordinary";
+}
+function shallowCopyValue(value) {
+  if (value == null)
+    return value;
+  if (typeof value !== "object")
+    return value;
+  if (value instanceof Integer)
+    return new Integer(value.value);
+  if (value instanceof Rational)
+    return new Rational(value.numerator, value.denominator);
+  if (value instanceof RationalInterval) {
+    return new RationalInterval(new Rational(value.low.numerator, value.low.denominator), new Rational(value.high.numerator, value.high.denominator));
+  }
+  if (value.type === "string")
+    return { type: "string", value: value.value };
+  if (isLazySequence(value))
+    return cloneLazySequence(value);
+  if (value.type === "iterator") {
+    return {
+      type: "iterator",
+      source: value.source,
+      cursor: value.cursor,
+      _ext: value._ext ? new Map(value._ext) : undefined
+    };
+  }
+  if (value.type === "sequence") {
+    return {
+      type: "sequence",
+      values: [...value.values],
+      _ext: value._ext ? new Map(value._ext) : undefined
+    };
+  }
+  if (value.type === "tuple") {
+    return {
+      type: "tuple",
+      values: [...value.values],
+      _ext: value._ext ? new Map(value._ext) : undefined
+    };
+  }
+  if (value.type === "map" && value.entries instanceof Map) {
+    return {
+      type: "map",
+      entries: new Map(value.entries),
+      _ext: value._ext ? new Map(value._ext) : undefined
+    };
+  }
+  if (value.type === "export_bundle" && value.entries instanceof Map) {
+    return {
+      type: "export_bundle",
+      entries: new Map(value.entries),
+      _ext: value._ext ? new Map(value._ext) : undefined
+    };
+  }
+  if (value.type === "set") {
+    return {
+      type: "set",
+      values: [...value.values],
+      _ext: value._ext ? new Map(value._ext) : undefined
+    };
+  }
+  if (isTensor(value)) {
+    return {
+      type: "tensor",
+      data: [...value.data],
+      shape: [...value.shape],
+      strides: [...value.strides],
+      offset: value.offset,
+      _ext: value._ext ? new Map(value._ext) : undefined
+    };
+  }
+  if (value.type === "quantity") {
+    return { ...value, _ext: value._ext ? new Map(value._ext) : undefined };
+  }
+  if (value.type === "unit_expr") {
+    return { ...value, factors: new Map(value.factors), _ext: value._ext ? new Map(value._ext) : undefined };
+  }
+  if (value.type === "exact_expression") {
+    return { ...value, terms: new Map(value.terms), _ext: value._ext ? new Map(value._ext) : undefined };
+  }
+  if (value.type === "cayley") {
+    return { ...value, _ext: value._ext ? new Map(value._ext) : undefined };
+  }
+  return value;
+}
+function deepCopyValue(value) {
+  if (value == null)
+    return value;
+  if (typeof value !== "object")
+    return value;
+  if (value instanceof Integer)
+    return new Integer(value.value);
+  if (value instanceof Rational)
+    return new Rational(value.numerator, value.denominator);
+  if (value instanceof RationalInterval) {
+    return new RationalInterval(new Rational(value.low.numerator, value.low.denominator), new Rational(value.high.numerator, value.high.denominator));
+  }
+  if (value.type === "string")
+    return { type: "string", value: value.value };
+  if (isLazySequence(value)) {
+    return cloneLazySequence(value, { restart: true, cloneValue: deepCopyValue });
+  }
+  if (value.type === "iterator") {
+    return {
+      type: "iterator",
+      source: deepCopyValue(value.source),
+      cursor: value.cursor,
+      _ext: value._ext ? deepCopyMeta(value._ext) : undefined
+    };
+  }
+  if (value.type === "sequence") {
+    return {
+      type: "sequence",
+      values: value.values.map(deepCopyValue),
+      _ext: value._ext ? deepCopyMeta(value._ext) : undefined
+    };
+  }
+  if (value.type === "tuple") {
+    return {
+      type: "tuple",
+      values: value.values.map(deepCopyValue),
+      _ext: value._ext ? deepCopyMeta(value._ext) : undefined
+    };
+  }
+  if (value.type === "map" && value.entries instanceof Map) {
+    const newEntries = new Map;
+    for (const [k, v] of value.entries) {
+      newEntries.set(k, deepCopyValue(v));
+    }
+    return {
+      type: "map",
+      entries: newEntries,
+      _ext: value._ext ? deepCopyMeta(value._ext) : undefined
+    };
+  }
+  if (value.type === "export_bundle" && value.entries instanceof Map) {
+    const newEntries = new Map;
+    for (const [k, v] of value.entries) {
+      newEntries.set(k, new Cell(deepCopyValue(v.value)));
+    }
+    return {
+      type: "export_bundle",
+      entries: newEntries,
+      _ext: value._ext ? deepCopyMeta(value._ext) : undefined
+    };
+  }
+  if (value.type === "set") {
+    return {
+      type: "set",
+      values: value.values.map(deepCopyValue),
+      _ext: value._ext ? deepCopyMeta(value._ext) : undefined
+    };
+  }
+  if (isTensor(value)) {
+    return {
+      type: "tensor",
+      data: value.data.map(deepCopyValue),
+      shape: [...value.shape],
+      strides: [...value.strides],
+      offset: value.offset,
+      _ext: value._ext ? deepCopyMeta(value._ext) : undefined
+    };
+  }
+  if (value.type === "quantity") {
+    return {
+      ...value,
+      baseMagnitude: deepCopyValue(value.baseMagnitude),
+      displayUnit: deepCopyValue(value.displayUnit),
+      _ext: value._ext ? deepCopyMeta(value._ext) : undefined
+    };
+  }
+  if (value.type === "unit_expr") {
+    return {
+      ...value,
+      factors: new Map(value.factors),
+      _ext: value._ext ? deepCopyMeta(value._ext) : undefined
+    };
+  }
+  if (value.type === "exact_expression") {
+    const terms = new Map;
+    for (const [key, term] of value.terms) {
+      terms.set(key, {
+        powers: new Map(term.powers),
+        coefficient: deepCopyValue(term.coefficient)
+      });
+    }
+    return { ...value, terms, _ext: value._ext ? deepCopyMeta(value._ext) : undefined };
+  }
+  if (value.type === "cayley") {
+    return {
+      ...value,
+      magnitude: deepCopyValue(value.magnitude),
+      direction: deepCopyValue(value.direction),
+      _ext: value._ext ? deepCopyMeta(value._ext) : undefined
+    };
+  }
+  return value;
+}
+function deepCopyMeta(meta) {
+  const result = new Map;
+  for (const [key, val] of meta) {
+    result.set(key, deepCopyValue(val));
+  }
+  return result;
+}
+function ensureExt2(obj) {
+  if (!obj || typeof obj !== "object") {
+    throw new Error(`Cannot attach meta properties to ${typeof obj}`);
+  }
+  if (!obj._ext) {
+    obj._ext = new Map;
+  }
+  return obj._ext;
+}
+function copyAllMeta(source, target, depth) {
+  const srcMeta = source?._ext;
+  if (!srcMeta || srcMeta.size === 0)
+    return;
+  if (!target || typeof target !== "object")
+    return;
+  const tgtMeta = ensureExt2(target);
+  for (const [key, val] of srcMeta) {
+    tgtMeta.set(key, depth === "deep" ? deepCopyValue(val) : val);
+  }
+}
+function transferMetaForUpdate(oldValue, newValue, rhsValue, depth) {
+  if (!newValue || typeof newValue !== "object")
+    return;
+  const oldMeta = oldValue?._ext;
+  const rhsMeta = rhsValue?._ext;
+  if (!oldMeta && !rhsMeta)
+    return;
+  const tgtMeta = new Map;
+  newValue._ext = tgtMeta;
+  const copyVal = depth === "deep" ? deepCopyValue : (v) => v;
+  if (oldMeta) {
+    for (const [key, val] of oldMeta) {
+      if (classifyMetaKey(key) === "ordinary") {
+        tgtMeta.set(key, copyVal(val));
+      }
+    }
+  }
+  if (oldMeta) {
+    for (const [key, val] of oldMeta) {
+      if (classifyMetaKey(key) === "sticky") {
+        tgtMeta.set(key, copyVal(val));
+      }
+    }
+  }
+  if (rhsMeta) {
+    for (const [key, val] of rhsMeta) {
+      if (classifyMetaKey(key) === "sticky") {
+        tgtMeta.set(key, copyVal(val));
+      }
+    }
+  }
+  if (rhsMeta) {
+    for (const [key, val] of rhsMeta) {
+      if (classifyMetaKey(key) === "ephemeral") {
+        tgtMeta.set(key, copyVal(val));
+      }
+    }
+  }
+}
+
+// ../rix/src/eval/functions/arithmetic.js
+function ensureNumeric(val) {
+  if (val instanceof Integer || val instanceof Rational)
+    return val;
+  if (val && typeof val === "object" && typeof val.add === "function" && typeof val.multiply === "function")
+    return val;
+  if (typeof val === "bigint")
+    return new Integer(val);
+  if (typeof val === "number") {
+    if (Number.isInteger(val))
+      return new Integer(val);
+    const str = val.toString();
+    const parts = str.split(".");
+    if (parts.length === 2) {
+      const den = 10n ** BigInt(parts[1].length);
+      const num = BigInt(parts[0]) * den + BigInt(parts[1]);
+      return new Rational(num, den);
+    }
+    return new Integer(BigInt(Math.floor(val)));
+  }
+  if (typeof val === "function" || val && typeof val === "object" && (val.type === "lambda" || val.type === "function" || val.type === "sysref" || val.type === "partial" || val.type === "arityCap")) {
+    throw new Error("Cannot use function/lambda in arithmetic. If you intended to call a function, its name must be Capitalised.");
+  }
+  throw new Error(`Cannot use ${typeof val} in arithmetic`);
+}
+function stringify(val) {
+  return formatValue(val);
+}
+function toQuotientParts(value) {
+  if (value instanceof Integer) {
+    return { numerator: value.value, denominator: 1n };
+  }
+  if (value instanceof Rational) {
+    return { numerator: value.numerator, denominator: value.denominator };
+  }
+  return { numerator: BigInt(value.toString()), denominator: 1n };
+}
+function ceilDiv(numerator, denominator) {
+  const q = numerator / denominator;
+  const r = numerator % denominator;
+  if (r === 0n)
+    return q;
+  return numerator >= 0n ? q + 1n : q;
+}
+function roundDiv(numerator, denominator) {
+  const absNum = numerator < 0n ? -numerator : numerator;
+  const floor = absNum / denominator;
+  const remainder = absNum % denominator;
+  const rounded = remainder * 2n >= denominator ? floor + 1n : floor;
+  return numerator < 0n ? -rounded : rounded;
+}
+var arithmeticFunctions = {
+  ADD: {
+    impl(args) {
+      if (args.length === 0)
+        return new Integer(0n);
+      if (args.length === 1)
+        return args[0];
+      const isStr = (v) => typeof v === "string" || v && typeof v === "object" && v.type === "string";
+      const getStr = (v) => stringify(v);
+      if (args.some(isStr)) {
+        return { type: "string", value: args.map(getStr).join("") };
+      }
+      let result = ensureNumeric(args[0]);
+      for (let i = 1;i < args.length; i++) {
+        result = result.add(ensureNumeric(args[i]));
+      }
+      return result;
+    },
+    pure: true,
+    doc: "Addition or string concatenation"
+  },
+  SUB: {
+    impl(args) {
+      const a = ensureNumeric(args[0]);
+      const b = ensureNumeric(args[1]);
+      return a.subtract(b);
+    },
+    pure: true,
+    doc: "Subtraction"
+  },
+  MUL: {
+    impl(args) {
+      if (args.length === 0)
+        return new Integer(1n);
+      if (args.length === 1)
+        return ensureNumeric(args[0]);
+      let result = ensureNumeric(args[0]);
+      for (let i = 1;i < args.length; i++) {
+        result = result.multiply(ensureNumeric(args[i]));
+      }
+      return result;
+    },
+    pure: true,
+    doc: "Multiplication (Product of values)"
+  },
+  DIV: {
+    impl(args) {
+      const a = ensureNumeric(args[0]);
+      const b = ensureNumeric(args[1]);
+      return a.divide(b);
+    },
+    pure: true,
+    doc: "Division"
+  },
+  INTDIV: {
+    impl(args) {
+      const a = ensureNumeric(args[0]);
+      const b = ensureNumeric(args[1]);
+      if (a instanceof Integer && b instanceof Integer) {
+        const result = a.value / b.value;
+        return new Integer(result);
+      }
+      const rat2 = a.divide(b);
+      if (rat2 instanceof Rational) {
+        return new Integer(rat2.numerator / rat2.denominator);
+      }
+      return new Integer(rat2.value);
+    },
+    pure: true,
+    doc: "Integer division (floor)"
+  },
+  DIVUP: {
+    impl(args) {
+      const a = ensureNumeric(args[0]);
+      const b = ensureNumeric(args[1]);
+      const quotient = a.divide(b);
+      const { numerator, denominator } = toQuotientParts(quotient);
+      return new Integer(ceilDiv(numerator, denominator));
+    },
+    pure: true,
+    doc: "Ceiling division"
+  },
+  DIVROUND: {
+    impl(args) {
+      const a = ensureNumeric(args[0]);
+      const b = ensureNumeric(args[1]);
+      const quotient = a.divide(b);
+      const { numerator, denominator } = toQuotientParts(quotient);
+      return new Integer(roundDiv(numerator, denominator));
+    },
+    pure: true,
+    doc: "Rounded division"
+  },
+  MOD: {
+    impl(args) {
+      const a = ensureNumeric(args[0]);
+      const b = ensureNumeric(args[1]);
+      if (a instanceof Integer && b instanceof Integer) {
+        return a.modulo(b);
+      }
+      const aVal = a instanceof Integer ? a.value : a.numerator;
+      const bVal = b instanceof Integer ? b.value : b.numerator;
+      return new Integer(aVal % bVal);
+    },
+    pure: true,
+    doc: "Modulo"
+  },
+  POW: {
+    impl(args) {
+      const base = ensureNumeric(args[0]);
+      const exp = ensureNumeric(args[1]);
+      const expValue = exp instanceof Integer ? exp.value : Number(exp.toString());
+      return base.pow(expValue);
+    },
+    pure: true,
+    doc: "Exponentiation"
+  },
+  POWPROD: {
+    impl(args) {
+      const base = ensureNumeric(args[0]);
+      const exp = ensureNumeric(args[1]);
+      const expValue = exp instanceof Integer ? exp.value : Number(exp.toString());
+      return base.pow(expValue);
+    },
+    pure: true,
+    doc: "Exponentiation/product power (currently same implementation as POW)"
+  },
+  NEG: {
+    impl(args) {
+      const a = ensureNumeric(args[0]);
+      return a.negate();
+    },
+    pure: true,
+    doc: "Negation"
+  },
+  ABS: {
+    impl(args) {
+      const a = ensureNumeric(args[0]);
+      return a instanceof Integer ? new Integer(a.value < 0n ? -a.value : a.value) : new Rational(a.numerator < 0n ? -a.numerator : a.numerator, a.denominator);
+    },
+    pure: true,
+    doc: "Absolute value"
+  },
+  SQRT: {
+    impl(args) {
+      const a = ensureNumeric(args[0]);
+      const val = a instanceof Rational ? Number(a.numerator) / Number(a.denominator) : Number(a.toString());
+      const root = Math.sqrt(val);
+      if (Number.isInteger(root))
+        return new Integer(BigInt(root));
+      const str = root.toString();
+      const parts = str.split(".");
+      if (parts.length === 2) {
+        const den = 10n ** BigInt(parts[1].length);
+        const num = BigInt(parts[0]) * den + BigInt(parts[1]);
+        return new Rational(num, den);
+      }
+      return new Integer(BigInt(Math.floor(root)));
+    },
+    pure: true,
+    doc: "Square root (approximate rational)"
+  }
+};
+
+// ../rix/src/runtime/constructor-capture.js
+var CONSTRUCTOR_CAPTURE_MODES = Object.freeze({
+  alias: "alias",
+  copy: "copy",
+  refresh: "refresh",
+  deepCopy: "deep_copy",
+  deepRefresh: "deep_refresh"
+});
+function constructorDefaultCaptureMode(context) {
+  return context?.getEnv?.("defaultConstructorCaptureMode") || runtimeDefaults.defaultConstructorCaptureMode;
+}
+function captureResolvedValue(value, mode) {
+  if (mode === CONSTRUCTOR_CAPTURE_MODES.alias) {
+    return value;
+  }
+  if (mode === CONSTRUCTOR_CAPTURE_MODES.copy) {
+    const next = shallowCopyValue(value);
+    copyAllMeta(value, next, "shallow");
+    return next;
+  }
+  if (mode === CONSTRUCTOR_CAPTURE_MODES.deepCopy) {
+    const next = deepCopyValue(value);
+    copyAllMeta(value, next, "deep");
+    return next;
+  }
+  if (mode === CONSTRUCTOR_CAPTURE_MODES.refresh) {
+    const next = shallowCopyValue(value);
+    transferMetaForUpdate(null, next, value, "shallow");
+    return next;
+  }
+  if (mode === CONSTRUCTOR_CAPTURE_MODES.deepRefresh) {
+    const next = deepCopyValue(value);
+    transferMetaForUpdate(null, next, value, "deep");
+    return next;
+  }
+  return captureResolvedValue(value, runtimeDefaults.defaultConstructorCaptureMode);
+}
+function captureIrValue(irNode, mode, context, evaluate) {
+  if (mode === CONSTRUCTOR_CAPTURE_MODES.alias && irNode?.fn === "RETRIEVE") {
+    const cell = context.getCell(irNode.args[0]);
+    if (cell)
+      return cell.value;
+  }
+  if (mode === CONSTRUCTOR_CAPTURE_MODES.alias && irNode?.fn === "OUTER_RETRIEVE") {
+    const cell = context.getOuterCell(irNode.args[0]);
+    if (cell)
+      return cell.value;
+  }
+  const value = evaluate(irNode);
+  return captureResolvedValue(value, mode);
+}
+
 // ../rix/src/runtime/type-system.js
-function int5(value) {
+function int3(value) {
   return new Integer(BigInt(value));
 }
-function stringObj(value) {
+function stringObj2(value) {
   return { type: "string", value };
 }
 function colonName(value) {
@@ -17244,7 +13828,7 @@ function makeProto(entries = []) {
   return {
     type: "map",
     entries: entryMap,
-    _ext: new Map([["frozen", int5(1)], ["immutable", int5(1)], ...entryMap.entries()])
+    _ext: new Map([["frozen", int3(1)], ["immutable", int3(1)], ...entryMap.entries()])
   };
 }
 function valueMethod(name, fn) {
@@ -17313,7 +13897,7 @@ function invokeMaybeCallable(fn, args, context, evaluate) {
   }
   throw new Error("Type/trait registry hook must be callable");
 }
-function truthy2(value) {
+function truthy(value) {
   return value !== null && value !== undefined;
 }
 
@@ -17426,7 +14010,7 @@ function convertToRegisteredType(value, requestedTypeName, context = null, evalu
   } else if (entry.name === sourceType || typeName === sourceType || entry.nativeType === sourceType) {
     next = value;
   } else if (entry.convert) {
-    next = invokeMaybeCallable(entry.convert, [value, stringObj(sourceType)], context, evaluate);
+    next = invokeMaybeCallable(entry.convert, [value, stringObj2(sourceType)], context, evaluate);
   }
   if (next === null || next === undefined) {
     return null;
@@ -17435,7 +14019,7 @@ function convertToRegisteredType(value, requestedTypeName, context = null, evalu
   if (next === null || next === undefined) {
     return null;
   }
-  if (entry.validate && !truthy2(invokeMaybeCallable(entry.validate, [next], context, evaluate))) {
+  if (entry.validate && !truthy(invokeMaybeCallable(entry.validate, [next], context, evaluate))) {
     return null;
   }
   return { value: next, entry, requestedTypeName: typeName };
@@ -17548,8 +14132,8 @@ function registerBuiltinSemanticTypes() {
       name,
       implies,
       proto: () => makeProto([
-        ["Describe", valueMethod("Describe", () => stringObj(`trait:${name}`))],
-        ["KIND", valueMethod("KIND", () => stringObj(`trait:${name}`))]
+        ["Describe", valueMethod("Describe", () => stringObj2(`trait:${name}`))],
+        ["KIND", valueMethod("KIND", () => stringObj2(`trait:${name}`))]
       ]),
       description: `${name} semantic trait`
     });
@@ -17573,7 +14157,7 @@ function registerBuiltinSemanticTypes() {
       nativeType,
       defaultTraits,
       convert,
-      proto: () => makeProto([["Describe", valueMethod("Describe", () => stringObj(`type:${name}`))]])
+      proto: () => makeProto([["Describe", valueMethod("Describe", () => stringObj2(`type:${name}`))]])
     });
   }
   registerType({
@@ -17604,7 +14188,7 @@ function registerBuiltinSemanticTypes() {
       return {
         type: "map",
         entries: new Map([
-          ["type", stringObj("Rational")],
+          ["type", stringObj2("Rational")],
           ["data", { type: "map", entries: new Map([
             ["num", new Integer(parts.numerator)],
             ["den", new Integer(parts.denominator)]
@@ -17623,9 +14207,9 @@ function registerBuiltinSemanticTypes() {
     proto: () => makeProto([
       ["Num", valueMethod("Num", (self) => new Integer(rationalParts2(self).numerator))],
       ["Den", valueMethod("Den", (self) => new Integer(rationalParts2(self).denominator))],
-      ["ToString", valueMethod("ToString", (self) => stringObj(self.toString()))],
-      ["Describe", valueMethod("Describe", () => stringObj("type:Rational"))],
-      ["KIND", valueMethod("KIND", () => stringObj("type:Rational"))]
+      ["ToString", valueMethod("ToString", (self) => stringObj2(self.toString()))],
+      ["Describe", valueMethod("Describe", () => stringObj2("type:Rational"))],
+      ["KIND", valueMethod("KIND", () => stringObj2("type:Rational"))]
     ]),
     installs: {
       ADD: [{
@@ -17679,7 +14263,7 @@ function registerBuiltinSemanticTypes() {
       return {
         type: "map",
         entries: new Map([
-          ["type", stringObj("Integer")],
+          ["type", stringObj2("Integer")],
           ["data", { type: "map", entries: new Map([["value", new Integer(value.value)]]) }],
           ["cache", null],
           ["version", new Integer(1n)]
@@ -17690,8 +14274,8 @@ function registerBuiltinSemanticTypes() {
       return new Integer(value?.entries?.get("data")?.entries?.get("value")?.value ?? 0n);
     },
     proto: () => makeProto([
-      ["ToString", valueMethod("ToString", (self) => stringObj(self.toString()))],
-      ["Describe", valueMethod("Describe", () => stringObj("type:Integer"))]
+      ["ToString", valueMethod("ToString", (self) => stringObj2(self.toString()))],
+      ["Describe", valueMethod("Describe", () => stringObj2("type:Integer"))]
     ]),
     installs: {}
   });
@@ -17712,7 +14296,7 @@ function registerBuiltinSemanticTypes() {
       return {
         type: "map",
         entries: new Map([
-          ["type", stringObj("RationalInterval")],
+          ["type", stringObj2("RationalInterval")],
           ["data", { type: "map", entries: new Map([
             ["low", value.low],
             ["high", value.high]
@@ -17729,8 +14313,8 @@ function registerBuiltinSemanticTypes() {
     proto: () => makeProto([
       ["Low", valueMethod("Low", (self) => self.low)],
       ["High", valueMethod("High", (self) => self.high)],
-      ["ToString", valueMethod("ToString", (self) => stringObj(self.toString()))],
-      ["Describe", valueMethod("Describe", () => stringObj("type:RationalInterval"))]
+      ["ToString", valueMethod("ToString", (self) => stringObj2(self.toString()))],
+      ["Describe", valueMethod("Describe", () => stringObj2("type:RationalInterval"))]
     ]),
     installs: {}
   });
@@ -17756,7 +14340,7 @@ function registerBuiltinSemanticTypes() {
       return {
         type: "map",
         entries: new Map([
-          ["type", stringObj("Tensor")],
+          ["type", stringObj2("Tensor")],
           ["data", { type: "map", entries: new Map([
             ["shape", { type: "sequence", values: value.shape.map((n) => new Integer(BigInt(n))) }],
             ["elems", { type: "sequence", values: [...value.data] }]
@@ -17776,7 +14360,7 @@ function registerBuiltinSemanticTypes() {
       ["Shape", valueMethod("Shape", (self) => ({ type: "sequence", values: self.shape.map((n) => new Integer(BigInt(n))) }))],
       ["Rank", valueMethod("Rank", (self) => new Integer(BigInt(self.shape.length)))],
       ["Flatten", valueMethod("Flatten", (self) => ({ type: "sequence", values: [...self.data] }))],
-      ["Describe", valueMethod("Describe", () => stringObj("type:Tensor"))]
+      ["Describe", valueMethod("Describe", () => stringObj2("type:Tensor"))]
     ]),
     installs: {}
   });
@@ -17786,13 +14370,13 @@ function registerBuiltinSemanticTypes() {
     defaultTraits: [],
     convert: (value) => value,
     proto: () => makeProto([
-      ["Describe", valueMethod("Describe", () => stringObj("type:length"))],
-      ["KIND", valueMethod("KIND", () => stringObj("type:length"))]
+      ["Describe", valueMethod("Describe", () => stringObj2("type:length"))],
+      ["KIND", valueMethod("KIND", () => stringObj2("type:length"))]
     ])
   });
-  registerType({ name: "Point", nativeType: "Point", defaultTraits: [], convert: (value) => value, proto: () => makeProto([["Describe", valueMethod("Describe", () => stringObj("type:point"))]]) });
-  registerType({ name: "Matrix", nativeType: "Matrix", parent: "Tensor", defaultTraits: ["tensor"], convert: (value) => value, proto: () => makeProto([["Describe", valueMethod("Describe", () => stringObj("type:matrix"))]]) });
-  registerType({ name: "Vector", nativeType: "Vector", defaultTraits: [], convert: (value) => value, proto: () => makeProto([["Describe", valueMethod("Describe", () => stringObj("type:vector"))], ["KIND", valueMethod("KIND", () => stringObj("type:vector"))]]) });
+  registerType({ name: "Point", nativeType: "Point", defaultTraits: [], convert: (value) => value, proto: () => makeProto([["Describe", valueMethod("Describe", () => stringObj2("type:point"))]]) });
+  registerType({ name: "Matrix", nativeType: "Matrix", parent: "Tensor", defaultTraits: ["tensor"], convert: (value) => value, proto: () => makeProto([["Describe", valueMethod("Describe", () => stringObj2("type:matrix"))]]) });
+  registerType({ name: "Vector", nativeType: "Vector", defaultTraits: [], convert: (value) => value, proto: () => makeProto([["Describe", valueMethod("Describe", () => stringObj2("type:vector"))], ["KIND", valueMethod("KIND", () => stringObj2("type:vector"))]]) });
   builtinsRegistered = true;
 }
 function exportByRegisteredTypeRuntime(value, context = null, evaluate = null) {
@@ -17806,20 +14390,20 @@ function finalizeImportedRegisteredValue(imported, typeName, entry) {
   if (imported && typeof imported === "object") {
     if (!(imported._ext instanceof Map))
       imported._ext = new Map;
-    imported._ext.set("__type", stringObj(typeName));
+    imported._ext.set("__type", stringObj2(typeName));
     const traits = resolveTraitNames(entry.defaultTraits || []);
     if (traits.length > 0) {
       imported._ext.set("__traits", {
         type: "set",
-        values: traits.map(stringObj),
-        _ext: new Map([["order", { type: "sequence", values: traits.map(stringObj) }]])
+        values: traits.map(stringObj2),
+        _ext: new Map([["order", { type: "sequence", values: traits.map(stringObj2) }]])
       });
     }
     imported._ext.set("__proto", makeProto([
       ["type", entry.proto?.(imported) ?? makeProto()],
       ["traits", makeProto()]
     ]));
-    imported._ext.set("_type", stringObj(runtimeTypeName(imported)));
+    imported._ext.set("_type", stringObj2(runtimeTypeName(imported)));
   }
   return imported;
 }
@@ -17860,13 +14444,13 @@ function installRegisteredTypes(registry, typeNames = ["Integer", "Rational", "R
     }
   }
 }
-function mapGet(mapValue2, key) {
-  if (mapValue2?.type !== "map" || !(mapValue2.entries instanceof Map))
+function mapGet(mapValue, key) {
+  if (mapValue?.type !== "map" || !(mapValue.entries instanceof Map))
     return;
-  if (mapValue2.entries.has(key))
-    return mapValue2.entries.get(key);
+  if (mapValue.entries.has(key))
+    return mapValue.entries.get(key);
   const lowerKey = key.toLowerCase();
-  for (const [entryKey, value] of mapValue2.entries) {
+  for (const [entryKey, value] of mapValue.entries) {
     if (String(entryKey).toLowerCase() === lowerKey)
       return value;
   }
@@ -17977,6 +14561,3533 @@ function registerTypeFromRixSpec(spec, context = null) {
 }
 registerBuiltinSemanticTypes();
 
+// ../rix/src/runtime/semantic.js
+function int4(value) {
+  return new Integer(BigInt(value));
+}
+function mutableExt() {
+  return new Map([["_mutable", int4(1)]]);
+}
+function ensureExt3(value) {
+  if (!value || typeof value !== "object") {
+    throw new Error("Semantic metadata requires an object value");
+  }
+  if (!(value._ext instanceof Map)) {
+    value._ext = new Map;
+  }
+  return value._ext;
+}
+function traitOrderSequence(names) {
+  return { type: "sequence", values: names.map(stringObj2), _ext: mutableExt() };
+}
+function createTraitSet(names, order = names) {
+  return {
+    type: "set",
+    values: Array.from(new Set(names)).map(stringObj2),
+    _ext: new Map([["order", traitOrderSequence(order)]])
+  };
+}
+function traitNamesFromSet(value) {
+  if (!value || value.type !== "set" || !Array.isArray(value.values))
+    return [];
+  return value.values.map((entry) => entry?.type === "string" ? entry.value : String(entry)).filter(Boolean);
+}
+function traitOrderFromSet(value) {
+  const explicit = value?._ext?.get("order");
+  if (explicit?.type === "sequence") {
+    return explicit.values.map((entry) => entry?.type === "string" ? entry.value : String(entry)).filter(Boolean);
+  }
+  return traitNamesFromSet(value);
+}
+function getLabel(value) {
+  if (value?.type === "string")
+    return value.value;
+  return String(value);
+}
+function summarizeValue(value) {
+  if (value === null)
+    return "_";
+  if (value instanceof Integer || value instanceof Rational || value instanceof RationalInterval) {
+    return value.toString();
+  }
+  if (value?.type === "string")
+    return JSON.stringify(value.value);
+  if (value?.type)
+    return `<${value.type}>`;
+  return getLabel(value);
+}
+function emitWarning2(context, label, data = new Map) {
+  if (!context?.getEnv)
+    return;
+  const diagnostics = getDiagnostics(context);
+  diagnostics.addEvent(createEvent({
+    kind: "warning",
+    label,
+    file: getCurrentFilePath(context),
+    data: { type: "map", entries: data }
+  }));
+}
+function cloneHeader(header) {
+  return {
+    captureMode: header?.captureMode || null,
+    name: header?.name || null,
+    typeName: header?.typeName || null,
+    traits: Array.isArray(header?.traits) ? header.traits.map((trait) => ({ ...trait })) : []
+  };
+}
+var traitChecks = new Map([
+  ["positive", (value) => {
+    if (value instanceof Integer)
+      return value.value > 0n;
+    if (typeof value === "number" || typeof value === "bigint")
+      return Number(value) > 0;
+    return true;
+  }]
+]);
+function refreshSemanticProto(value) {
+  const ext = ensureExt3(value);
+  const typeName = ext.get("__type")?.value ?? null;
+  const traitsValue = ext.get("__traits") ?? null;
+  const traitOrder = traitOrderFromSet(traitsValue);
+  const typeLayer = typeName ? typeRegistry.get(typeName)?.proto?.(value) ?? makeProto() : null;
+  const traitEntries = new Map;
+  for (const traitName of traitOrder) {
+    const traitLayer = traitRegistry.get(traitName)?.proto?.(value);
+    if (!traitLayer?.entries)
+      continue;
+    for (const [key, entry] of traitLayer.entries) {
+      traitEntries.set(key, entry);
+    }
+  }
+  const traitsLayer = makeProto(Array.from(traitEntries.entries()));
+  ext.set("__proto", makeProto([
+    ["type", typeLayer],
+    ["traits", traitsLayer]
+  ]));
+  return ext.get("__proto");
+}
+function refreshRuntimeMetadata(value, builtinProto = null) {
+  const ext = ensureExt3(value);
+  ext.set("_type", stringObj2(runtimeTypeName(value)));
+  ext.set("_proto", builtinProto ?? ext.get("_proto") ?? null);
+  return value;
+}
+function shouldValidateTraits(context, value) {
+  const globalValidate = context?.getEnv?.("validateTraits", false);
+  const hasVerify = traitNamesFromSet(value?._ext?.get("__traits")).includes("verify");
+  return globalValidate || hasVerify;
+}
+function checkTraits(value, context, { warnOnly = false } = {}) {
+  const traits = traitOrderFromSet(value?._ext?.get("__traits"));
+  for (const traitName of traits) {
+    if (traitName === "verify")
+      continue;
+    const check = traitChecks.get(traitName);
+    if (!check)
+      continue;
+    if (!check(value)) {
+      if (warnOnly) {
+        emitWarning2(context, `Trait check failed: ${traitName}`, new Map([["trait", stringObj2(traitName)]]));
+        return null;
+      }
+      throw new Error(`Trait check failed: ${traitName}`);
+    }
+  }
+  return int4(1);
+}
+function applyType(header, value, context, evaluate = null) {
+  const typeName = header.typeName;
+  if (!typeName)
+    return value;
+  const result = convertToRegisteredType(value, typeName, context, evaluate);
+  if (result === null) {
+    throw new Error(`Cannot convert value to semantic type ${typeName}`);
+  }
+  return result.value;
+}
+function valueHasSemanticMembership(value, name) {
+  const requestedType = typeRegistry.get(name);
+  const runtimeType = typeRegistry.get(runtimeTypeName(value));
+  if (requestedType && runtimeType && requestedType.name === runtimeType.name) {
+    return true;
+  }
+  const ext = value?._ext;
+  if (!(ext instanceof Map) || !name) {
+    return false;
+  }
+  if (ext.get("__type")?.value === name) {
+    return true;
+  }
+  if (ext.get("_type")?.value === name) {
+    return true;
+  }
+  return traitNamesFromSet(ext.get("__traits")).includes(name);
+}
+function convertSemanticType(value, typeName, context, { strict = true, warnOnFailure = false, evaluate = null } = {}) {
+  const header = {
+    captureMode: null,
+    name: null,
+    typeName,
+    traits: []
+  };
+  const effectiveHeader = mergeStickyHeader(readStickyHeader(value), header);
+  try {
+    return applySemanticHeader(value, effectiveHeader, context, {
+      inheritMissing: true,
+      warnOnTypeChange: true,
+      evaluate
+    });
+  } catch (error) {
+    if (error.message === `Unknown semantic type: ${typeName}`) {
+      throw error;
+    }
+    if (strict) {
+      throw error;
+    }
+    if (warnOnFailure) {
+      const ext = value?._ext instanceof Map ? value._ext : null;
+      const data = new Map([
+        ["requestedType", stringObj2(typeName)],
+        ["sourceSummary", stringObj2(summarizeValue(value))]
+      ]);
+      const runtimeType = ext?.get("_type");
+      if (runtimeType)
+        data.set("sourceType", runtimeType);
+      const semanticType = ext?.get("__type");
+      if (semanticType)
+        data.set("sourceSemanticType", semanticType);
+      const traits = ext?.get("__traits");
+      if (traits)
+        data.set("sourceTraits", traits);
+      emitWarning2(context, "conversion failed", data);
+    }
+    return null;
+  }
+}
+function valueSatisfiesTrait(value, traitName) {
+  if (traitOrderFromSet(value?._ext?.get("__traits")).includes(traitName)) {
+    return true;
+  }
+  const check = traitChecks.get(traitName);
+  if (!check) {
+    return false;
+  }
+  return Boolean(check(value));
+}
+function readStickyHeader(value) {
+  const ext = value?._ext;
+  if (!(ext instanceof Map))
+    return cloneHeader(null);
+  return {
+    captureMode: null,
+    name: ext.get("__name")?.value ?? null,
+    typeName: ext.get("__type")?.value ?? null,
+    traits: traitOrderFromSet(ext.get("__traits")).map((name, order) => ({ name, checkMode: null, order }))
+  };
+}
+function mergeStickyHeader(baseHeader, overrideHeader) {
+  const base = cloneHeader(baseHeader);
+  const override = cloneHeader(overrideHeader);
+  return {
+    captureMode: override.captureMode ?? base.captureMode ?? null,
+    name: override.name ?? base.name ?? null,
+    typeName: override.typeName ?? base.typeName ?? null,
+    traits: override.traits.length > 0 ? override.traits : base.traits
+  };
+}
+function applySemanticHeader(value, header, context, options = {}) {
+  const effectiveHeader = cloneHeader(header);
+  if (!value || typeof value !== "object") {
+    throw new Error("Cannot outfit a non-object value");
+  }
+  const previous = readStickyHeader(value);
+  let nextValue = value;
+  nextValue = applyType(effectiveHeader, nextValue, context, options.evaluate ?? null);
+  const ext = ensureExt3(nextValue);
+  if (effectiveHeader.name) {
+    ext.set("__name", stringObj2(effectiveHeader.name));
+  } else if (options.inheritMissing && previous.name) {
+    ext.set("__name", stringObj2(previous.name));
+  }
+  const nextTypeName = effectiveHeader.typeName ?? (options.inheritMissing ? previous.typeName : null);
+  if (nextTypeName) {
+    ext.set("__type", stringObj2(nextTypeName));
+  }
+  const explicitTraits = effectiveHeader.traits.length > 0 ? effectiveHeader.traits.map((trait) => trait.name) : options.inheritMissing ? previous.traits.map((trait) => trait.name) : [];
+  const typeDefaultTraits = nextTypeName ? typeRegistry.get(nextTypeName)?.defaultTraits || [] : [];
+  const nextTraits = resolveTraitNames([...typeDefaultTraits, ...explicitTraits]);
+  if (nextTraits.length > 0) {
+    ext.set("__traits", createTraitSet(nextTraits, nextTraits));
+  }
+  if (options.warnOnTypeChange && previous.typeName && nextTypeName && previous.typeName !== nextTypeName && nextTraits.length > 0) {
+    emitWarning2(context, "Semantic type changed while traits were preserved", new Map([
+      ["from", stringObj2(previous.typeName)],
+      ["to", stringObj2(nextTypeName)]
+    ]));
+  }
+  refreshSemanticProto(nextValue);
+  if (shouldValidateTraits(context, nextValue)) {
+    checkTraits(nextValue, context);
+  }
+  return nextValue;
+}
+function applyUpdateSemantics(oldValue, newValue, context, evaluate = null) {
+  const inherited = readStickyHeader(oldValue);
+  if (!inherited.name && !inherited.typeName && inherited.traits.length === 0) {
+    return newValue;
+  }
+  return applySemanticHeader(newValue, inherited, context, { inheritMissing: true, evaluate });
+}
+function rebuildSemanticMetadata(value, context) {
+  refreshSemanticProto(value);
+  if (shouldValidateTraits(context, value)) {
+    checkTraits(value, context);
+  }
+  return value;
+}
+
+// ../rix/src/eval/functions/collections.js
+function isTruthy2(val) {
+  return val !== null && val !== undefined;
+}
+function valueKey(val) {
+  if (val === null || val === undefined)
+    return "null";
+  if (typeof val === "object") {
+    if (typeof val.toString === "function" && val.toString !== Object.prototype.toString) {
+      return val.toString();
+    }
+    if (val.type) {
+      if (val.type === "tuple" || val.type === "sequence" || val.type === "set" || val.type === "array") {
+        const vals = val.values || val.elements || [];
+        return `${val.type}[${vals.map(valueKey).join(",")}]`;
+      }
+      if (val.type === "string")
+        return JSON.stringify(val.value);
+      return JSON.stringify(val, (k, v) => typeof v === "bigint" ? v.toString() : v);
+    }
+  }
+  return String(val);
+}
+var getValues = (arg) => {
+  if (arg && typeof arg === "object") {
+    if (arg.type === "set" && Array.isArray(arg.values)) {
+      return arg.values;
+    }
+    if (arg instanceof RationalInterval) {
+      return [arg.start, arg.end];
+    }
+    if (arg.type === "interval") {
+      return [arg.lo, arg.hi];
+    }
+  }
+  return [arg];
+};
+var toRationalOrNull = (value) => {
+  if (value instanceof Rational)
+    return value;
+  if (value instanceof Integer || value && typeof value === "object" && value.constructor.name === "Integer") {
+    return new Rational(value.value, 1n);
+  }
+  if (typeof value === "bigint") {
+    return new Rational(value, 1n);
+  }
+  if (typeof value === "number") {
+    if (!Number.isInteger(value))
+      return null;
+    return new Rational(BigInt(value), 1n);
+  }
+  if (typeof value === "string") {
+    try {
+      return new Rational(value);
+    } catch (error) {
+      if (error instanceof SyntaxError || error instanceof RangeError || error instanceof TypeError) {
+        return null;
+      }
+      if (/Invalid|Cannot convert|Denominator cannot be zero/.test(error.message)) {
+        return null;
+      }
+      throw error;
+    }
+  }
+  return null;
+};
+var compare = (a, b) => {
+  const aRat = toRationalOrNull(a);
+  const bRat = toRationalOrNull(b);
+  if (aRat && bRat) {
+    return aRat.compareTo(bRat);
+  }
+  if (a < b)
+    return -1;
+  if (a > b)
+    return 1;
+  return 0;
+};
+var classifyUnionIntersectDomain = (val) => {
+  if (val && typeof val === "object") {
+    if (val.type === "set")
+      return "set";
+    if (val instanceof RationalInterval || val.type === "interval")
+      return "interval";
+  }
+  return null;
+};
+var generatorCount = (value) => {
+  if (value instanceof Integer)
+    return Number(value.value);
+  if (value instanceof Rational && value.denominator === 1n)
+    return Number(value.numerator);
+  if (typeof value === "number" && Number.isInteger(value))
+    return value;
+  if (typeof value === "bigint")
+    return Number(value);
+  return null;
+};
+var generatorCallable = (value) => Boolean(value && (value.type === "function" || value.type === "lambda" || value.type === "partial" || value.type === "arityCap" || value.type === "sysref" || value.type === "multifunction")) || typeof value === "function";
+var partialHistoryWidth = (callable) => {
+  if (!callable || callable.type !== "partial")
+    return null;
+  return (callable.template || []).reduce((max, item) => item?.type === "placeholder" ? Math.max(max, item.index) : max, 0);
+};
+function createGeneratorValue(args, ctx, evaluate, defaultMode) {
+  const firstGenerator = args.findIndex((arg) => arg?.fn === "GENERATOR");
+  if (firstGenerator < 0)
+    return null;
+  if (args.slice(firstGenerator).some((arg) => arg?.fn !== "GENERATOR")) {
+    throw new Error("Ordinary array elements cannot follow a generator chain");
+  }
+  const seedValues = args.slice(0, firstGenerator).map((arg) => captureIrValue(arg, defaultMode, ctx, evaluate));
+  const operators = [];
+  for (const generator of args.slice(firstGenerator)) {
+    if (generator.args[0]) {
+      if (operators.length > 0)
+        throw new Error("A generator chain may only declare one inline seed segment");
+      seedValues.push(captureIrValue(generator.args[0], defaultMode, ctx, evaluate));
+    }
+    operators.push(...generator.args.slice(1));
+  }
+  const sourceKinds = new Set(["GEN_ADD", "GEN_MUL", "GEN_FUNC"]);
+  let sourceIndex = operators.findIndex((op) => sourceKinds.has(op?.fn));
+  if (sourceIndex < 0)
+    sourceIndex = operators.findIndex((op) => op?.fn === "GEN_PIPE");
+  const source = sourceIndex < 0 ? null : operators[sourceIndex];
+  if (sourceIndex > 0 && operators.slice(0, sourceIndex).some((op) => op?.fn === "GEN_PIPE" || op?.fn === "GEN_FILTER")) {
+    throw new Error("The primary generation source must precede transforms and filters");
+  }
+  for (let i = 0;i < operators.length; i++) {
+    if (i === sourceIndex)
+      continue;
+    if (sourceKinds.has(operators[i]?.fn)) {
+      throw new Error("A generator chain may contain only one primary generation source");
+    }
+  }
+  const evaluatedOps = operators.map((op, index) => ({
+    fn: op.fn,
+    value: op.args?.[0] ? evaluate(op.args[0]) : null,
+    source: index === sourceIndex
+  }));
+  const sourceOp = evaluatedOps.find((op) => op.source) || null;
+  const terminalOps = evaluatedOps.filter((op) => op.fn === "GEN_EAGER_LIMIT" || op.fn === "GEN_LIMIT");
+  if (terminalOps.length > 1)
+    throw new Error("A generator chain may contain only one termination operator");
+  if (terminalOps.length === 1 && evaluatedOps.at(-1) !== terminalOps[0]) {
+    throw new Error("The generator termination operator must be last in its chain");
+  }
+  const stages = evaluatedOps.filter((op) => !op.source && !["GEN_EAGER_LIMIT", "GEN_LIMIT"].includes(op.fn));
+  const terminal = terminalOps[0] || null;
+  const eager = terminal?.fn === "GEN_EAGER_LIMIT" || !source && terminal?.fn !== "GEN_LIMIT";
+  const numericLimit = terminal ? generatorCount(terminal.value) : null;
+  if (numericLimit !== null && numericLimit < 0)
+    throw new Error("Generator limit must be non-negative");
+  if (terminal && numericLimit === null && !generatorCallable(terminal.value)) {
+    throw new Error("Generator limit must be an integer or callable predicate");
+  }
+  const maxIterations = ctx.getEnv?.("generatorMaxIterations", ctx.getEnv?.("defaultLoopMax", 1e4)) ?? 1e4;
+  let sequence;
+  const invoke = (callable, concreteArgs) => callWithConcreteArgs(callable, concreteArgs, ctx, evaluate);
+  const copySeed = (value, cloneValue) => cloneValue ? cloneValue(value) : value;
+  const makeState = (cloneOptions = {}) => ({
+    seeds: seedValues.map((value) => copySeed(value, cloneOptions.cloneValue)),
+    seedIndex: 0,
+    sourceHistory: [],
+    sourcePosition: 0,
+    emitted: 0,
+    stop: false
+  });
+  sequence = createLazySequence({
+    createState: makeState,
+    cloneState: (state, { cloneValue } = {}) => ({
+      seeds: state.seeds.map((value) => copySeed(value, cloneValue)),
+      seedIndex: state.seedIndex,
+      sourceHistory: state.sourceHistory.map((value) => copySeed(value, cloneValue)),
+      sourcePosition: state.sourcePosition,
+      emitted: state.emitted,
+      stop: state.stop
+    }),
+    knownLength: numericLimit,
+    maxIterations,
+    label: "sequence generator",
+    pull(state, self, budget) {
+      if (state.stop || numericLimit !== null && state.emitted >= numericLimit)
+        return { done: true };
+      let attempts = 0;
+      while (attempts < budget) {
+        let candidate;
+        if (state.seedIndex < state.seeds.length) {
+          candidate = state.seeds[state.seedIndex++];
+          state.sourceHistory.push(candidate);
+        } else if (!sourceOp) {
+          return { done: true, attempts };
+        } else {
+          if ((sourceOp.fn === "GEN_ADD" || sourceOp.fn === "GEN_MUL") && state.sourceHistory.length === 0) {
+            throw new Error("Arithmetic generator requires at least one seed value");
+          }
+          if (sourceOp.fn === "GEN_ADD") {
+            candidate = evaluate({ fn: "ADD", args: [state.sourceHistory.at(-1), sourceOp.value] });
+          } else if (sourceOp.fn === "GEN_MUL") {
+            candidate = evaluate({ fn: "MUL", args: [state.sourceHistory.at(-1), sourceOp.value] });
+          } else if (sourceOp.fn === "GEN_FUNC") {
+            const index = new Integer(BigInt(state.sourceHistory.length + 1));
+            candidate = invoke(sourceOp.value, [index, self]);
+          } else if (sourceOp.fn === "GEN_PIPE") {
+            if (state.sourceHistory.length === 0)
+              throw new Error("History generator requires seed values");
+            const placeholderWidth = partialHistoryWidth(sourceOp.value);
+            const parameterWidth = sourceOp.value?.params?.positional?.length;
+            const width = placeholderWidth ?? parameterWidth;
+            if (width === undefined) {
+              throw new Error("History system/variadic callables require explicit _n placeholders");
+            }
+            if (state.sourceHistory.length < width) {
+              throw new Error(`History generator requires ${width} seed values but only ${state.sourceHistory.length} are available`);
+            }
+            const args2 = width === 0 ? [] : state.sourceHistory.slice(-width).reverse().map(shallowCopyValue);
+            candidate = invoke(sourceOp.value, args2);
+          }
+          state.sourceHistory.push(candidate);
+        }
+        attempts++;
+        state.sourcePosition++;
+        let value = candidate;
+        let accepted = true;
+        for (const stage of stages) {
+          if (stage.fn === "GEN_PIPE") {
+            value = invoke(stage.value, [value]);
+          } else if (stage.fn === "GEN_FILTER") {
+            accepted = isTruthy2(invoke(stage.value, [value, new Integer(BigInt(state.sourcePosition)), self]));
+            if (!accepted)
+              break;
+          }
+        }
+        if (!accepted)
+          continue;
+        state.emitted++;
+        if (terminal && numericLimit === null) {
+          state.stop = isTruthy2(invoke(terminal.value, [value, new Integer(BigInt(state.sourcePosition)), self]));
+        }
+        return { done: false, value: captureResolvedValue(value, defaultMode), attempts };
+      }
+      return { attempts: budget + 1 };
+    }
+  });
+  if (!eager)
+    return sequence;
+  const materialized = materializeLazySequence(sequence, { allowUnknown: true, maxIterations });
+  materialized._ext = new Map([["_mutable", new Integer(1n)]]);
+  return attachBuiltinProto(materialized);
+}
+var collectionFunctions = {
+  ARRAY: {
+    lazy: true,
+    impl(args, ctx, evaluate) {
+      const defaultMode = constructorDefaultCaptureMode(ctx);
+      const generated = createGeneratorValue(args, ctx, evaluate, defaultMode);
+      if (generated)
+        return attachBuiltinProto(generated);
+      const values = [];
+      let i = 0;
+      while (i < args.length) {
+        const arg = args[i];
+        if (arg && arg.fn === "HOLE") {
+          values.push(HOLE);
+        } else if (arg && arg.fn === "SPREAD") {
+          let spreadVal = evaluate(arg.args[0]);
+          if (spreadVal?.type === "lazy_sequence")
+            spreadVal = materializeLazySequence(spreadVal);
+          if (spreadVal && (spreadVal.type === "tuple" || spreadVal.type === "sequence" || spreadVal.type === "array" || spreadVal.type === "set")) {
+            const items = spreadVal.values || spreadVal.elements || [];
+            values.push(...items.map((item) => captureResolvedValue(item, defaultMode)));
+          } else {
+            throw new Error("Spread operator requires an iterable collection (array, tuple, sequence, set)");
+          }
+        } else {
+          values.push(captureIrValue(arg, defaultMode, ctx, evaluate));
+        }
+        i++;
+      }
+      return attachBuiltinProto({
+        type: "sequence",
+        values,
+        _ext: new Map([["_mutable", new Integer(1n)]])
+      });
+    },
+    pure: true,
+    doc: "Create an array/sequence (supports sequence generators)"
+  },
+  TUPLE: {
+    lazy: true,
+    impl(args, ctx, evaluate) {
+      const header = args[0]?.header || null;
+      const defaultMode = header?.captureMode || constructorDefaultCaptureMode(ctx);
+      const start = header ? 1 : 0;
+      const value = { type: "tuple", values: args.slice(start).map((arg) => captureIrValue(arg.expression || arg, arg.captureMode || defaultMode, ctx, evaluate)) };
+      return applySemanticHeader(attachBuiltinProto(value), header, ctx);
+    },
+    pure: true,
+    doc: "Create a tuple"
+  },
+  SET: {
+    lazy: true,
+    impl(args, ctx, evaluate) {
+      const header = args[0]?.header || null;
+      const defaultMode = header?.captureMode || constructorDefaultCaptureMode(ctx);
+      const start = header ? 1 : 0;
+      const seen = new Set;
+      const values = [];
+      for (const arg of args.slice(start)) {
+        const val = captureIrValue(arg.expression || arg, arg.captureMode || defaultMode, ctx, evaluate);
+        const key = valueKey(val);
+        if (!seen.has(key)) {
+          seen.add(key);
+          values.push(val);
+        }
+      }
+      const value = {
+        type: "set",
+        values,
+        _ext: new Map([["_mutable", new Integer(1n)]])
+      };
+      return applySemanticHeader(attachBuiltinProto(value), header, ctx);
+    },
+    pure: true,
+    doc: "Create a set (unique values)"
+  },
+  MAP_OBJ: {
+    lazy: true,
+    impl(args, context, evaluate) {
+      const header = args[0]?.header || null;
+      const defaultMode = header?.captureMode || constructorDefaultCaptureMode(context);
+      const actualArgs = header ? args.slice(1) : args;
+      const entries = new Map;
+      const seenKeys = new Set;
+      for (const arg of actualArgs) {
+        if (arg && arg.fn === "ASSIGN") {
+          const name = arg.args[0];
+          const val = captureIrValue(arg.args[1], defaultMode, context, evaluate);
+          if (seenKeys.has(name)) {
+            throw new Error(`Duplicate key in map literal: "${name}"`);
+          }
+          seenKeys.add(name);
+          entries.set(name, val);
+        } else if (arg && arg.fn === "MAP_PAIR") {
+          const [kind, keyExpr, valueExpr, entryMode] = arg.args;
+          const keyStr = kind === "identifier" ? keyExpr : keyOf(evaluate(keyExpr));
+          const val = captureIrValue(valueExpr, entryMode || defaultMode, context, evaluate);
+          if (seenKeys.has(keyStr)) {
+            throw new Error(`Duplicate key in map literal: "${keyStr}"`);
+          }
+          seenKeys.add(keyStr);
+          entries.set(keyStr, val);
+        } else if (arg && arg.fn === "ASSIGN_EXPR") {
+          const keyVal = evaluate(arg.args[0]);
+          const val = captureIrValue(arg.args[1], defaultMode, context, evaluate);
+          const keyStr = keyOf(keyVal);
+          if (seenKeys.has(keyStr)) {
+            throw new Error(`Duplicate key in map literal: "${keyStr}"`);
+          }
+          seenKeys.add(keyStr);
+          entries.set(keyStr, val);
+        } else if (arg && arg.fn === "KWARG") {
+          const name = arg.args[0];
+          const val = captureIrValue(arg.args[1], defaultMode, context, evaluate);
+          if (seenKeys.has(name)) {
+            throw new Error(`Duplicate key in map literal: "${name}"`);
+          }
+          seenKeys.add(name);
+          entries.set(name, val);
+        } else {
+          const val = captureIrValue(arg, defaultMode, context, evaluate);
+          const keyStr = keyOf(val);
+          if (seenKeys.has(keyStr)) {
+            throw new Error(`Duplicate key in map literal: "${keyStr}"`);
+          }
+          seenKeys.add(keyStr);
+          entries.set(keyStr, val);
+        }
+      }
+      const value = {
+        type: "map",
+        entries,
+        _ext: new Map([["_mutable", new Integer(1n)]])
+      };
+      return applySemanticHeader(attachBuiltinProto(value), header, context);
+    },
+    pure: true,
+    doc: "Create a map/object"
+  },
+  ARRAY_CAPTURE: {
+    lazy: true,
+    impl(args, ctx, evaluate) {
+      const header = args[0]?.header || null;
+      const defaultMode = header?.captureMode || constructorDefaultCaptureMode(ctx);
+      const start = header ? 1 : 0;
+      const values = args.slice(start).map((arg) => captureIrValue(arg.expression || arg, arg.captureMode || defaultMode, ctx, evaluate));
+      return applySemanticHeader(attachBuiltinProto({
+        type: "sequence",
+        values,
+        _ext: new Map([["_mutable", new Integer(1n)]])
+      }), header, ctx);
+    },
+    pure: true,
+    doc: "Create an array/sequence with constructor capture controls"
+  },
+  INTERVAL: {
+    impl(args) {
+      if (args.length === 2) {
+        const lo = args[0];
+        const hi = args[1];
+        const loRat = toRationalOrNull(lo);
+        const hiRat = toRationalOrNull(hi);
+        if (loRat && hiRat) {
+          return new RationalInterval(loRat, hiRat);
+        }
+        return { type: "interval", lo, hi };
+      }
+      let allAscending = true;
+      let allDescending = true;
+      const checkPaths = (idx, currentVal, direction) => {
+        if (idx === args.length)
+          return true;
+        const nextVals = getValues(args[idx]);
+        for (const nextVal of nextVals) {
+          const cmp = compare(currentVal, nextVal);
+          if (direction === 1 && cmp > 0)
+            return false;
+          if (direction === -1 && cmp < 0)
+            return false;
+          if (!checkPaths(idx + 1, nextVal, direction)) {
+            return false;
+          }
+        }
+        return true;
+      };
+      const firstVals = getValues(args[0]);
+      for (const firstVal of firstVals) {
+        if (allAscending && !checkPaths(1, firstVal, 1)) {
+          allAscending = false;
+        }
+        if (allDescending && !checkPaths(1, firstVal, -1)) {
+          allDescending = false;
+        }
+        if (!allAscending && !allDescending)
+          break;
+      }
+      if (allAscending || allDescending) {
+        return new Integer(1);
+      }
+      return null;
+    },
+    pure: true,
+    doc: "Create an interval [lo, hi] or test betweenness like a:b:c"
+  },
+  MEMBER: {
+    impl(args) {
+      const [x, coll] = args;
+      if (!coll || typeof coll !== "object")
+        return null;
+      if (coll.type === "set" || coll.type === "tuple" || coll.type === "sequence") {
+        const values = coll.values || coll.elements || [];
+        const xKey = valueKey(x);
+        for (const v of values) {
+          if (valueKey(v) === xKey)
+            return new Integer(1);
+        }
+      } else if (coll instanceof RationalInterval || coll.type === "interval") {
+        const lo = coll instanceof RationalInterval ? coll.start : coll.lo;
+        const hi = coll instanceof RationalInterval ? coll.end : coll.hi;
+        const cmpLo = compare(lo, x);
+        const cmpHi = compare(x, hi);
+        if (cmpLo <= 0 && cmpHi <= 0)
+          return new Integer(1);
+      } else if (coll.type === "map") {
+        const entries = coll.entries || coll.elements || new Map;
+        const k = keyOf(x);
+        if (entries.has(k))
+          return new Integer(1);
+      }
+      return null;
+    },
+    pure: true,
+    doc: "Check membership (1 if present, null otherwise)"
+  },
+  NOT_MEMBER: {
+    impl(args) {
+      return isTruthy2(collectionFunctions.MEMBER.impl(args)) ? null : new Integer(1);
+    },
+    pure: true,
+    doc: "Check non-membership (1 if not present, null otherwise)"
+  },
+  INTERSECTS: {
+    impl(args) {
+      const [a, b] = args;
+      const intersect = collectionFunctions.INTERSECT.impl([a, b]);
+      return isTruthy2(intersect) ? new Integer(1) : null;
+    },
+    pure: true,
+    doc: "Check if two collections intersect (1 if true, null otherwise)"
+  },
+  UNION: {
+    impl(args) {
+      const [a, b] = args;
+      if (!a || !b)
+        return null;
+      if (a.type === "set" && b.type === "set") {
+        const seen = new Set;
+        const values = [];
+        for (const v of [...a.values, ...b.values]) {
+          const key = valueKey(v);
+          if (!seen.has(key)) {
+            seen.add(key);
+            values.push(v);
+          }
+        }
+        return { type: "set", values };
+      }
+      if ((a instanceof RationalInterval || a.type === "interval") && (b instanceof RationalInterval || b.type === "interval")) {
+        const alo = a instanceof RationalInterval ? a.start : a.lo;
+        const ahi = a instanceof RationalInterval ? a.end : a.hi;
+        const blo = b instanceof RationalInterval ? b.start : b.lo;
+        const bhi = b instanceof RationalInterval ? b.end : b.hi;
+        const lo = compare(alo, blo) <= 0 ? alo : blo;
+        const hi = compare(ahi, bhi) >= 0 ? ahi : bhi;
+        return collectionFunctions.INTERVAL.impl([lo, hi]);
+      }
+      throw new Error(`UNION not defined for these types: ${a.type || a.constructor?.name || typeof a} and ${b.type || b.constructor?.name || typeof b}`);
+    },
+    pure: true,
+    doc: "Join/Union of two collections (set union or interval hull)"
+  },
+  INTERSECT: {
+    impl(args) {
+      const [a, b] = args;
+      if (!a || !b)
+        return null;
+      if (a.type === "set" && b.type === "set") {
+        const bValues = b.values.map(valueKey);
+        const values = a.values.filter((v) => bValues.includes(valueKey(v)));
+        return { type: "set", values };
+      }
+      if ((a instanceof RationalInterval || a.type === "interval") && (b instanceof RationalInterval || b.type === "interval")) {
+        const alo = a instanceof RationalInterval ? a.start : a.lo;
+        const ahi = a instanceof RationalInterval ? a.end : a.hi;
+        const blo = b instanceof RationalInterval ? b.start : b.lo;
+        const bhi = b instanceof RationalInterval ? b.end : b.hi;
+        const lo = compare(alo, blo) >= 0 ? alo : blo;
+        const hi = compare(ahi, bhi) <= 0 ? ahi : bhi;
+        if (compare(lo, hi) <= 0) {
+          return collectionFunctions.INTERVAL.impl([lo, hi]);
+        }
+        return null;
+      }
+      return null;
+    },
+    pure: true,
+    doc: "Intersection of two collections (set intersection or interval overlap)"
+  },
+  NARY_UNION: {
+    impl(args) {
+      if (args.length === 0)
+        return { type: "set", values: [] };
+      if (args.length === 1)
+        return args[0];
+      const domain = classifyUnionIntersectDomain(args[0]);
+      if (!domain) {
+        throw new Error("NARY_UNION expects sets or intervals");
+      }
+      for (let i = 1;i < args.length; i++) {
+        if (classifyUnionIntersectDomain(args[i]) !== domain) {
+          throw new Error("NARY_UNION operands must all be sets or all be intervals");
+        }
+      }
+      let acc = args[0];
+      for (let i = 1;i < args.length; i++) {
+        acc = collectionFunctions.UNION.impl([acc, args[i]]);
+      }
+      return acc;
+    },
+    pure: true,
+    doc: "N-ary union/hull fold for sets or intervals"
+  },
+  NARY_INTERSECT: {
+    impl(args) {
+      if (args.length === 0)
+        return { type: "set", values: [] };
+      if (args.length === 1)
+        return args[0];
+      const domain = classifyUnionIntersectDomain(args[0]);
+      if (!domain) {
+        throw new Error("NARY_INTERSECT expects sets or intervals");
+      }
+      for (let i = 1;i < args.length; i++) {
+        if (classifyUnionIntersectDomain(args[i]) !== domain) {
+          throw new Error("NARY_INTERSECT operands must all be sets or all be intervals");
+        }
+      }
+      let acc = args[0];
+      for (let i = 1;i < args.length; i++) {
+        acc = collectionFunctions.INTERSECT.impl([acc, args[i]]);
+        if (acc === null)
+          return null;
+      }
+      return acc;
+    },
+    pure: true,
+    doc: "N-ary intersection/overlap fold for sets or intervals"
+  },
+  SET_DIFF: {
+    impl(args) {
+      const [a, b] = args;
+      if (a.type === "set" && b.type === "set") {
+        const bValues = b.values.map(valueKey);
+        const values = a.values.filter((v) => !bValues.includes(valueKey(v)));
+        return { type: "set", values };
+      }
+      if (a.type === "map") {
+        const newEntries = new Map(a.entries);
+        if (b.type === "set") {
+          for (const k of b.values)
+            newEntries.delete(keyOf(k));
+        } else {
+          newEntries.delete(keyOf(b));
+        }
+        return { type: "map", entries: newEntries };
+      }
+      throw new Error("Difference only defined for sets and maps");
+    },
+    pure: true
+  },
+  SET_SYMDIFF: {
+    impl(args) {
+      const [a, b] = args;
+      const diff1 = collectionFunctions.SET_DIFF.impl([a, b]);
+      const diff2 = collectionFunctions.SET_DIFF.impl([b, a]);
+      return collectionFunctions.UNION.impl([diff1, diff2]);
+    },
+    pure: true
+  },
+  SET_PROD: {
+    impl(args) {
+      const [a, b] = args;
+      if (a.type !== "set" || b.type !== "set")
+        throw new Error("Cartesian product only for sets");
+      const values = [];
+      for (const va of a.values) {
+        for (const vb of b.values) {
+          values.push({ type: "tuple", values: [va, vb] });
+        }
+      }
+      return { type: "set", values };
+    },
+    pure: true
+  },
+  CONCAT: {
+    impl(args) {
+      const [a, b] = args;
+      if (a.type === "string" || b.type === "string") {
+        const getStr = (v) => v && typeof v === "object" && v.type === "string" ? v.value : String(v);
+        return { type: "string", value: getStr(a) + getStr(b) };
+      }
+      if (a.type === "sequence" || a.type === "tuple" || a.type === "array" || b.type === "sequence" || b.type === "tuple" || b.type === "array") {
+        const getVals = (v) => v.values || v.elements || (Array.isArray(v) ? v : [v]);
+        const vals = [...getVals(a), ...getVals(b)];
+        if (a.type === "tuple" && b.type === "tuple")
+          return { type: "tuple", values: vals };
+        return { type: "sequence", values: vals };
+      }
+      if (a.type === "map" && b.type === "map") {
+        return { type: "map", entries: new Map([...a.entries, ...b.entries]) };
+      }
+      throw new Error("Concatenation not defined for these types");
+    },
+    pure: true
+  },
+  NARY_CONCAT: {
+    impl(args) {
+      if (args.length === 0) {
+        throw new Error("NARY_CONCAT requires at least one argument");
+      }
+      if (args.length === 1)
+        return args[0];
+      let acc = args[0];
+      for (let i = 1;i < args.length; i++) {
+        acc = collectionFunctions.CONCAT.impl([acc, args[i]]);
+      }
+      return acc;
+    },
+    pure: true,
+    doc: "N-ary concatenation fold"
+  }
+};
+
+// ../rix/src/runtime/methods.js
+function int5(value) {
+  return new Integer(BigInt(value));
+}
+function truthy2(value) {
+  return value !== null && value !== undefined;
+}
+function bool(flag) {
+  return flag ? int5(1) : null;
+}
+function stringValue2(value) {
+  if (value?.type === "string")
+    return value.value;
+  if (value === null || value === undefined)
+    return "";
+  return String(value);
+}
+function stringObj3(value) {
+  return { type: "string", value };
+}
+function createFrozenMeta() {
+  return new Map([
+    ["frozen", int5(1)],
+    ["immutable", int5(1)]
+  ]);
+}
+function createBuiltinProto(entries) {
+  return {
+    type: "map",
+    entries: new Map(entries),
+    _ext: createFrozenMeta()
+  };
+}
+function method(name, impl) {
+  return { type: "method_builtin", name, impl };
+}
+function mutableExt2() {
+  return new Map([["_mutable", int5(1)]]);
+}
+function ensureExt4(value) {
+  if (!value._ext)
+    value._ext = new Map;
+  return value._ext;
+}
+function createEmptySequence() {
+  return { type: "sequence", values: [], _ext: mutableExt2() };
+}
+function createEmptyMap() {
+  return { type: "map", entries: new Map, _ext: mutableExt2() };
+}
+function createEmptySet() {
+  return { type: "set", values: [], _ext: mutableExt2() };
+}
+function createEmptyTupleLike(tuple) {
+  return {
+    type: "tuple",
+    values: new Array(tuple.values.length).fill(HOLE),
+    _ext: mutableExt2()
+  };
+}
+function createEmptyTensorLike(tensor) {
+  return createTensor(tensor.shape, null, { ext: mutableExt2() });
+}
+function defaultAccumulator(target) {
+  if (target?.type === "sequence")
+    return createEmptySequence();
+  if (target?.type === "map")
+    return createEmptyMap();
+  if (target?.type === "set")
+    return createEmptySet();
+  if (target?.type === "tuple")
+    return createEmptyTupleLike(target);
+  if (target?.type === "string")
+    return stringObj3("");
+  if (isTensor(target))
+    return createEmptyTensorLike(target);
+  throw new Error("Reduce does not know how to build a default accumulator for this value");
+}
+function valueKey2(value) {
+  if (isHole(value))
+    return "__hole__";
+  if (value === null || value === undefined)
+    return "null";
+  if (value instanceof Integer)
+    return value.toString();
+  if (value?.type === "string")
+    return JSON.stringify(value.value);
+  if (value?.type === "tuple" || value?.type === "sequence" || value?.type === "set") {
+    return `${value.type}[${value.values.map(valueKey2).join(",")}]`;
+  }
+  if (value?.type === "map") {
+    return `map{${Array.from(value.entries.entries()).map(([k, v]) => `${k}:${valueKey2(v)}`).join(",")}}`;
+  }
+  if (isTensor(value)) {
+    return `tensor(${value.shape.join("x")})[${value.data.map(valueKey2).join(",")}]`;
+  }
+  if (typeof value?.toString === "function" && value.toString !== Object.prototype.toString) {
+    return value.toString();
+  }
+  return JSON.stringify(value);
+}
+function isInterval(value) {
+  if (!value || typeof value !== "object")
+    return false;
+  if (value instanceof RationalInterval)
+    return true;
+  if (value.type === "interval")
+    return true;
+  return false;
+}
+function getIntervalRange(value, length) {
+  let lo, hi;
+  if (value && (value.type === "interval" || value instanceof RationalInterval)) {
+    lo = value.start;
+    hi = value.end;
+  } else {
+    lo = value.lo;
+    hi = value.hi;
+  }
+  const startNum = normalizeLookupIndex(lo, length);
+  const start = startNum === null ? numericIndex(lo) < 1 ? 1 : length + 1 : startNum;
+  const endNum = normalizeLookupIndex(hi, length);
+  const end = endNum === null ? numericIndex(hi) < 1 ? 1 : length + 1 : endNum;
+  return { start, end };
+}
+function numericIndex(value, label = "Index") {
+  if (value instanceof Integer)
+    return Number(value.value);
+  if (value instanceof Rational) {
+    if (value.denominator !== 1n) {
+      throw new Error(`${label} must be an integer, got ${value}`);
+    }
+    return Number(value.numerator);
+  }
+  if (value && typeof value === "object") {
+    if (typeof value.value === "bigint")
+      return Number(value.value);
+    if (typeof value.numerator === "bigint" && typeof value.denominator === "bigint") {
+      if (value.denominator !== 1n) {
+        throw new Error(`${label} must be an integer, got ${value}`);
+      }
+      return Number(value.numerator);
+    }
+  }
+  if (typeof value === "number" || typeof value === "bigint")
+    return Number(value);
+  if (typeof value === "string" && !isNaN(value))
+    return Number(value);
+  throw new Error(`${label} must be numeric, got ${typeof value} (${value})`);
+}
+function normalizeLookupIndex(rawIndex, length) {
+  const index = numericIndex(rawIndex);
+  const normalized = index < 0 ? length + 1 + index : index;
+  if (normalized < 1 || normalized > length)
+    return null;
+  return normalized;
+}
+function normalizeWritableIndex(rawIndex, length, allowEnd = false) {
+  let index = numericIndex(rawIndex);
+  if (index < 0)
+    index = length + 1 + index;
+  const max = allowEnd ? length + 1 : Math.max(length, 1);
+  if (index < 1)
+    index = 1;
+  if (index > max)
+    index = max;
+  return index;
+}
+function normalizeSliceStart(rawIndex, length) {
+  if (rawIndex === undefined || rawIndex === null)
+    return 1;
+  let index = numericIndex(rawIndex);
+  if (index < 0)
+    index = length + 1 + index;
+  if (index < 1)
+    index = 1;
+  if (index > length + 1)
+    index = length + 1;
+  return index;
+}
+function normalizeSliceEnd(rawIndex, length) {
+  if (rawIndex === undefined || rawIndex === null)
+    return length + 1;
+  let index = numericIndex(rawIndex);
+  if (index < 0)
+    index = length + 1 + index;
+  if (index < 1)
+    index = 1;
+  if (index > length + 1)
+    index = length + 1;
+  return index;
+}
+function jsSlice(values, startArg, endArg) {
+  const start = normalizeSliceStart(startArg, values.length);
+  const end = normalizeSliceEnd(endArg, values.length);
+  return values.slice(start - 1, end - 1);
+}
+function charsOf(value) {
+  return Array.from(stringValue2(value)).map((char) => stringObj3(char));
+}
+function fromChars(chars) {
+  return stringObj3(chars.map((char) => stringValue2(char)).join(""));
+}
+function compareValues(a, b) {
+  const ak = valueKey2(a);
+  const bk = valueKey2(b);
+  if (ak < bk)
+    return -1;
+  if (ak > bk)
+    return 1;
+  return 0;
+}
+function arrayEntries(target) {
+  return target.values.map((value, index) => ({
+    value,
+    key: int5(index + 1)
+  }));
+}
+function tupleEntries(target) {
+  return target.values.map((value, index) => ({
+    value,
+    key: int5(index + 1)
+  }));
+}
+function mapEntries(target) {
+  return Array.from(target.entries.entries()).map(([key, value]) => ({
+    value,
+    key: stringObj3(key)
+  }));
+}
+function setEntries(target) {
+  return target.values.map((value) => ({
+    value,
+    key: value
+  }));
+}
+function stringEntries(target) {
+  return charsOf(target).map((value, index) => ({
+    value,
+    key: int5(index + 1)
+  }));
+}
+function tensorEntries(target) {
+  const entries = [];
+  forEachTensorCell(target, (value, tuple) => {
+    entries.push({
+      value,
+      key: tensorIndexTuple(tuple)
+    });
+  });
+  return entries;
+}
+function isIndexedIteratorSource(target) {
+  return target?.type === "sequence" || target?.type === "lazy_sequence" || target?.type === "tuple" || target?.type === "string" || isTensor(target);
+}
+function iteratorStep(value, label) {
+  const step = numericIndex(value, label);
+  if (!Number.isSafeInteger(step))
+    throw new Error(`${label} must be an integer`);
+  return step;
+}
+function iteratorLookup(source, index) {
+  if (!Number.isSafeInteger(index) || index < 1)
+    return { found: false, value: null };
+  if (source?.type === "lazy_sequence") {
+    ensureLazyIndex(source, index);
+    if (index <= source._lazy.cache.length) {
+      return { found: true, value: source._lazy.cache[index - 1] };
+    }
+    return { found: false, value: null };
+  }
+  const entries = iterateEntries(source);
+  if (index > entries.length)
+    return { found: false, value: null };
+  return { found: true, value: entries[index - 1].value };
+}
+function iteratorLength(source) {
+  if (source?.type === "lazy_sequence")
+    return lazyKnownLength(source);
+  return iterateEntries(source).length;
+}
+function createCollectionIterator(source) {
+  return attachBuiltinProto({
+    type: "iterator",
+    source,
+    cursor: 0,
+    _ext: new Map
+  });
+}
+function iterateEntries(target) {
+  if (target?.type === "sequence")
+    return arrayEntries(target);
+  if (target?.type === "tuple")
+    return tupleEntries(target);
+  if (target?.type === "map")
+    return mapEntries(target);
+  if (target?.type === "set")
+    return setEntries(target);
+  if (target?.type === "string")
+    return stringEntries(target);
+  if (isTensor(target))
+    return tensorEntries(target);
+  throw new Error("Value is not iterable for this method");
+}
+function callIterator(fn, args, context, evaluate, invoke) {
+  if (!fn) {
+    return args[1];
+  }
+  return invoke(fn, args, context, evaluate);
+}
+function predicateResult(fn, args, context, evaluate, invoke) {
+  return truthy2(callIterator(fn, args, context, evaluate, invoke));
+}
+function sequenceAt(target, rawIndex) {
+  const index = normalizeLookupIndex(rawIndex, target.values.length);
+  if (index === null)
+    return null;
+  return target.values[index - 1];
+}
+function stringAt(target, rawIndex) {
+  const chars = charsOf(target);
+  const index = normalizeLookupIndex(rawIndex, chars.length);
+  if (index === null)
+    return null;
+  return chars[index - 1];
+}
+function mapValue(target, key) {
+  const canonical = keyOf(key);
+  return target.entries.has(canonical) ? target.entries.get(canonical) : null;
+}
+function setHas(target, value) {
+  const wanted = valueKey2(value);
+  return target.values.some((entry) => valueKey2(entry) === wanted);
+}
+function mapLikeKeys(arg) {
+  if (arg?.type === "set" || arg?.type === "sequence" || arg?.type === "tuple") {
+    return (arg.values || []).map((value) => keyOf(value));
+  }
+  return [keyOf(arg)];
+}
+function ensureSequence(target, name) {
+  if (!target || target.type !== "sequence")
+    throw new Error(`${name} is only defined for sequences`);
+}
+function ensureMap(target, name) {
+  if (!target || target.type !== "map")
+    throw new Error(`${name} is only defined for maps`);
+}
+function ensureSet(target, name) {
+  if (!target || target.type !== "set")
+    throw new Error(`${name} is only defined for sets`);
+}
+function ensureTuple(target, name) {
+  if (!target || target.type !== "tuple")
+    throw new Error(`${name} is only defined for tuples`);
+}
+function ensureString(target, name) {
+  if (!target || target.type !== "string")
+    throw new Error(`${name} is only defined for strings`);
+}
+function ensureTensor(target, name) {
+  if (!isTensor(target))
+    throw new Error(`${name} is only defined for tensors`);
+}
+function mutableSetValue(target, rawIndex, value) {
+  const index = normalizeWritableIndex(rawIndex, target.values.length, true);
+  while (target.values.length < index - 1)
+    target.values.push(HOLE);
+  if (index === target.values.length + 1) {
+    target.values.push(value);
+  } else {
+    target.values[index - 1] = value;
+  }
+  return target;
+}
+function nonMutatingSetValue(target, rawIndex, value) {
+  const copy = shallowCopyValue(target);
+  mutableSetValue(copy, rawIndex, value);
+  return copy;
+}
+function removeDuplicates(values) {
+  const seen = new Set;
+  const out = [];
+  for (const value of values) {
+    const key = valueKey2(value);
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push(value);
+    }
+  }
+  return out;
+}
+function flattenValues(values, depth) {
+  if (depth <= 0)
+    return [...values];
+  const out = [];
+  for (const value of values) {
+    if (value?.type === "sequence" || value?.type === "tuple" || value?.type === "set") {
+      out.push(...flattenValues(value.values, depth - 1));
+    } else {
+      out.push(value);
+    }
+  }
+  return out;
+}
+function reduceEntries(target, iterator, initial, context, evaluate, invoke, entryMapper = (entry) => [entry.value, entry.key, target]) {
+  const entries = iterateEntries(target);
+  let accumulator = initial === undefined ? defaultAccumulator(target) : initial;
+  for (const entry of entries) {
+    accumulator = invoke(iterator, [accumulator, ...entryMapper(entry)], context, evaluate);
+  }
+  return accumulator;
+}
+function anyEntries(target, iterator, context, evaluate, invoke) {
+  for (const entry of iterateEntries(target)) {
+    if (predicateResult(iterator, [entry.value, entry.key, target], context, evaluate, invoke)) {
+      return int5(1);
+    }
+  }
+  return null;
+}
+function allEntries(target, iterator, context, evaluate, invoke) {
+  for (const entry of iterateEntries(target)) {
+    if (!predicateResult(iterator, [entry.value, entry.key, target], context, evaluate, invoke)) {
+      return null;
+    }
+  }
+  return int5(1);
+}
+function countEntries(target, iterator, context, evaluate, invoke) {
+  let count = 0;
+  for (const entry of iterateEntries(target)) {
+    if (!iterator || predicateResult(iterator, [entry.value, entry.key, target], context, evaluate, invoke)) {
+      count += 1;
+    }
+  }
+  return int5(count);
+}
+function findEntry(target, iterator, context, evaluate, invoke, wantKey = false) {
+  for (const entry of iterateEntries(target)) {
+    if (predicateResult(iterator, [entry.value, entry.key, target], context, evaluate, invoke)) {
+      return wantKey ? entry.key : entry.value;
+    }
+  }
+  return null;
+}
+function arithmeticAdd(a, b) {
+  return arithmeticFunctions.ADD.impl([a, b]);
+}
+function arithmeticMul(a, b) {
+  return arithmeticFunctions.MUL.impl([a, b]);
+}
+function arithmeticDiv(a, b) {
+  return arithmeticFunctions.DIV.impl([a, b]);
+}
+var arrayMethods = {
+  LEN: method("LEN", ([target]) => {
+    ensureSequence(target, "Len");
+    return int5(target.values.length);
+  }),
+  ISEMPTY: method("ISEMPTY", ([target]) => {
+    ensureSequence(target, "IsEmpty");
+    return bool(target.values.length === 0);
+  }),
+  GET: method("GET", ([target, index]) => {
+    ensureSequence(target, "Get");
+    return sequenceAt(target, index);
+  }),
+  FIRST: method("FIRST", ([target]) => {
+    ensureSequence(target, "First");
+    return target.values[0] ?? null;
+  }),
+  LAST: method("LAST", ([target]) => {
+    ensureSequence(target, "Last");
+    return target.values[target.values.length - 1] ?? null;
+  }),
+  INCLUDES: method("INCLUDES", ([target, value]) => {
+    ensureSequence(target, "Includes");
+    return bool(target.values.some((entry) => valueKey2(entry) === valueKey2(value)));
+  }),
+  INDEXOF: method("INDEXOF", ([target, value]) => {
+    ensureSequence(target, "IndexOf");
+    const idx = target.values.findIndex((entry) => valueKey2(entry) === valueKey2(value));
+    return idx === -1 ? null : int5(idx + 1);
+  }),
+  LASTINDEXOF: method("LASTINDEXOF", ([target, value]) => {
+    ensureSequence(target, "LastIndexOf");
+    for (let i = target.values.length - 1;i >= 0; i--) {
+      if (valueKey2(target.values[i]) === valueKey2(value))
+        return int5(i + 1);
+    }
+    return null;
+  }),
+  HASAT: method("HASAT", ([target, index]) => {
+    ensureSequence(target, "HasAt");
+    const found = sequenceAt(target, index);
+    return bool(found !== null && !isHole(found));
+  }),
+  SLICE: method("SLICE", ([target, start, end]) => {
+    ensureSequence(target, "Slice");
+    return { type: "sequence", values: jsSlice(target.values, start, end), _ext: mutableExt2() };
+  }),
+  JOIN: method("JOIN", ([target, separator]) => {
+    ensureSequence(target, "Join");
+    return stringObj3(target.values.map((value) => stringValue2(value)).join(stringValue2(separator ?? stringObj3(","))));
+  }),
+  PUSH: method("PUSH", ([target, ...values]) => {
+    ensureSequence(target, "Push");
+    const copy = shallowCopyValue(target);
+    copy.values.push(...values);
+    return copy;
+  }),
+  "PUSH!": method("PUSH!", ([target, ...values]) => {
+    ensureSequence(target, "Push!");
+    target.values.push(...values);
+    return target;
+  }),
+  UNSHIFT: method("UNSHIFT", ([target, ...values]) => {
+    ensureSequence(target, "Unshift");
+    const copy = shallowCopyValue(target);
+    copy.values.unshift(...values);
+    return copy;
+  }),
+  "UNSHIFT!": method("UNSHIFT!", ([target, ...values]) => {
+    ensureSequence(target, "Unshift!");
+    target.values.unshift(...values);
+    return target;
+  }),
+  SET: method("SET", ([target, index, value]) => {
+    ensureSequence(target, "Set");
+    return nonMutatingSetValue(target, index, value);
+  }),
+  "SET!": method("SET!", ([target, index, value]) => {
+    ensureSequence(target, "Set!");
+    mutableSetValue(target, index, value);
+    return target;
+  }),
+  INSERT: method("INSERT", ([target, index, value]) => {
+    ensureSequence(target, "Insert");
+    const copy = shallowCopyValue(target);
+    const at = normalizeWritableIndex(index, copy.values.length, true);
+    copy.values.splice(at - 1, 0, value);
+    return copy;
+  }),
+  "INSERT!": method("INSERT!", ([target, index, value]) => {
+    ensureSequence(target, "Insert!");
+    const at = normalizeWritableIndex(index, target.values.length, true);
+    target.values.splice(at - 1, 0, value);
+    return target;
+  }),
+  REMOVEAT: method("REMOVEAT", ([target, index]) => {
+    ensureSequence(target, "RemoveAt");
+    const copy = shallowCopyValue(target);
+    const at = normalizeLookupIndex(index, copy.values.length);
+    if (at !== null)
+      copy.values.splice(at - 1, 1);
+    return copy;
+  }),
+  "REMOVEAT!": method("REMOVEAT!", ([target, index]) => {
+    ensureSequence(target, "RemoveAt!");
+    const at = normalizeLookupIndex(index, target.values.length);
+    if (at !== null)
+      target.values[at - 1] = HOLE;
+    return target;
+  }),
+  CONCAT: method("CONCAT", ([target, ...others]) => {
+    ensureSequence(target, "Concat");
+    return others.reduce((acc, other) => collectionFunctions.CONCAT.impl([acc, other]), target);
+  }),
+  "CONCAT!": method("CONCAT!", ([target, ...others]) => {
+    ensureSequence(target, "Concat!");
+    for (const other of others) {
+      const values = other?.values || [other];
+      target.values.push(...values);
+    }
+    return target;
+  }),
+  REVERSE: method("REVERSE", ([target]) => {
+    ensureSequence(target, "Reverse");
+    const copy = shallowCopyValue(target);
+    copy.values.reverse();
+    return copy;
+  }),
+  "REVERSE!": method("REVERSE!", ([target]) => {
+    ensureSequence(target, "Reverse!");
+    target.values.reverse();
+    return target;
+  }),
+  SORT: method("SORT", ([target]) => {
+    ensureSequence(target, "Sort");
+    const copy = shallowCopyValue(target);
+    copy.values.sort(compareValues);
+    return copy;
+  }),
+  "SORT!": method("SORT!", ([target]) => {
+    ensureSequence(target, "Sort!");
+    target.values.sort(compareValues);
+    return target;
+  }),
+  DISTINCT: method("DISTINCT", ([target]) => {
+    ensureSequence(target, "Distinct");
+    return { type: "sequence", values: removeDuplicates(target.values), _ext: mutableExt2() };
+  }),
+  "DISTINCT!": method("DISTINCT!", ([target]) => {
+    ensureSequence(target, "Distinct!");
+    target.values = removeDuplicates(target.values);
+    return target;
+  }),
+  FLATTEN: method("FLATTEN", ([target, depth]) => {
+    ensureSequence(target, "Flatten");
+    const levels = depth === undefined ? 1 : numericIndex(depth, "Flatten depth");
+    return { type: "sequence", values: flattenValues(target.values, levels), _ext: mutableExt2() };
+  }),
+  "FLATTEN!": method("FLATTEN!", ([target, depth]) => {
+    ensureSequence(target, "Flatten!");
+    const levels = depth === undefined ? 1 : numericIndex(depth, "Flatten depth");
+    target.values = flattenValues(target.values, levels);
+    return target;
+  }),
+  DROPFIRST: method("DROPFIRST", ([target, count]) => {
+    ensureSequence(target, "DropFirst");
+    const n = count === undefined ? 1 : Math.max(0, numericIndex(count));
+    return { type: "sequence", values: target.values.slice(n), _ext: mutableExt2() };
+  }),
+  DROPLAST: method("DROPLAST", ([target, count]) => {
+    ensureSequence(target, "DropLast");
+    const n = count === undefined ? 1 : Math.max(0, numericIndex(count));
+    return { type: "sequence", values: target.values.slice(0, Math.max(0, target.values.length - n)), _ext: mutableExt2() };
+  }),
+  "POP!": method("POP!", ([target]) => {
+    ensureSequence(target, "Pop!");
+    return target.values.length === 0 ? HOLE : target.values.pop();
+  }),
+  "SHIFT!": method("SHIFT!", ([target]) => {
+    ensureSequence(target, "Shift!");
+    return target.values.length === 0 ? HOLE : target.values.shift();
+  }),
+  MAP: method("MAP", ([target, iterator], context, evaluate, invoke) => {
+    ensureSequence(target, "Map");
+    return {
+      type: "sequence",
+      values: iterateEntries(target).map((entry) => invoke(iterator, [entry.value, entry.key, target], context, evaluate)),
+      _ext: mutableExt2()
+    };
+  }),
+  FILTER: method("FILTER", ([target, iterator], context, evaluate, invoke) => {
+    ensureSequence(target, "Filter");
+    return {
+      type: "sequence",
+      values: iterateEntries(target).filter((entry) => predicateResult(iterator, [entry.value, entry.key, target], context, evaluate, invoke)).map((entry) => entry.value),
+      _ext: mutableExt2()
+    };
+  }),
+  ANY: method("ANY", ([target, iterator], context, evaluate, invoke) => anyEntries(target, iterator, context, evaluate, invoke)),
+  ALL: method("ALL", ([target, iterator], context, evaluate, invoke) => allEntries(target, iterator, context, evaluate, invoke)),
+  COUNT: method("COUNT", ([target, iterator], context, evaluate, invoke) => countEntries(target, iterator, context, evaluate, invoke)),
+  FIND: method("FIND", ([target, iterator], context, evaluate, invoke) => findEntry(target, iterator, context, evaluate, invoke, false)),
+  FINDINDEX: method("FINDINDEX", ([target, iterator], context, evaluate, invoke) => findEntry(target, iterator, context, evaluate, invoke, true)),
+  REDUCE: method("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke)),
+  "SWAP!": method("SWAP!", ([target, i, j]) => {
+    ensureSequence(target, "Swap!");
+    const len = target.values.length;
+    const idxI = normalizeLookupIndex(i, len);
+    const idxJ = normalizeLookupIndex(j, len);
+    if (idxI === null || idxJ === null)
+      throw new Error("Index out of bounds for Swap!");
+    const tmp = target.values[idxI - 1];
+    target.values[idxI - 1] = target.values[idxJ - 1];
+    target.values[idxJ - 1] = tmp;
+    return target;
+  }),
+  SWAP: method("SWAP", ([target, i, j]) => {
+    ensureSequence(target, "Swap");
+    const copy = shallowCopyValue(target);
+    copy.values = [...target.values];
+    return arrayMethods["SWAP!"].impl([copy, i, j]);
+  }),
+  "MOVE!": method("MOVE!", ([target, rangeOrIdx, targetIdx]) => {
+    ensureSequence(target, "Move!");
+    const len = target.values.length;
+    let s, e;
+    if (isInterval(rangeOrIdx)) {
+      const range = getIntervalRange(rangeOrIdx, len);
+      s = range.start;
+      e = range.end;
+    } else {
+      s = normalizeLookupIndex(rangeOrIdx, len);
+      e = s;
+    }
+    if (s === null || e === null)
+      throw new Error("Index out of bounds for Move!");
+    const actualStart = Math.min(s, e);
+    const actualEnd = Math.max(s, e);
+    const count = actualEnd - actualStart + 1;
+    const movedItems = target.values.splice(actualStart - 1, count);
+    let insertPos;
+    const newLen = target.values.length;
+    const rawTargetIdx = numericIndex(targetIdx);
+    if (rawTargetIdx > 0) {
+      insertPos = normalizeWritableIndex(targetIdx, newLen, true);
+    } else if (rawTargetIdx < 0) {
+      let idx = normalizeLookupIndex(targetIdx, newLen);
+      insertPos = idx === null ? newLen + 1 : idx + 1;
+    } else {
+      insertPos = 1;
+    }
+    target.values.splice(insertPos - 1, 0, ...movedItems);
+    return target;
+  }),
+  MOVE: method("MOVE", ([target, rangeOrIdx, targetIdx]) => {
+    ensureSequence(target, "Move");
+    const copy = shallowCopyValue(target);
+    copy.values = [...target.values];
+    return arrayMethods["MOVE!"].impl([copy, rangeOrIdx, targetIdx]);
+  })
+};
+var lazySequenceMethods = {
+  LEN: method("LEN", ([target]) => {
+    const length = lazyKnownLength(target);
+    if (length === null)
+      throw new Error("Length is unknown for this lazy sequence");
+    return int5(length);
+  }),
+  ISEMPTY: method("ISEMPTY", ([target]) => {
+    ensureLazyIndex(target, 1);
+    return bool(target._lazy.done && target._lazy.cache.length === 0);
+  }),
+  GET: method("GET", ([target, index]) => {
+    const raw = numericIndex(index);
+    if (raw < 0)
+      return sequenceAt(materializeLazySequence(target), index);
+    if (raw === 0)
+      throw new Error("Sequence indexes are 1-based; zero is invalid");
+    return ensureLazyIndex(target, raw);
+  }),
+  FIRST: method("FIRST", ([target]) => ensureLazyIndex(target, 1)),
+  LAST: method("LAST", ([target]) => {
+    const sequence = materializeLazySequence(target);
+    return sequence.values.at(-1) ?? null;
+  }),
+  MATERIALIZE: method("MATERIALIZE", ([target]) => materializeLazySequence(target))
+};
+var iterableMethods = {
+  ITERATOR: method("ITERATOR", ([target]) => createCollectionIterator(target))
+};
+var iteratorMethods = {
+  NEXT: method("NEXT", ([target, step]) => {
+    if (target.cursor === null)
+      return null;
+    const amount = step === undefined ? 1 : iteratorStep(step, "Iterator step");
+    const destination = target.cursor + amount;
+    if (amount === 0 && target.cursor === 0)
+      return null;
+    const result = iteratorLookup(target.source, destination);
+    if (!result.found) {
+      target.cursor = null;
+      return null;
+    }
+    target.cursor = destination;
+    return result.value;
+  }),
+  PEEK: method("PEEK", ([target, offset]) => {
+    if (target.cursor === null)
+      return null;
+    const amount = offset === undefined ? 0 : iteratorStep(offset, "Iterator peek offset");
+    return iteratorLookup(target.source, target.cursor + amount).value;
+  }),
+  DONE: method("DONE", ([target]) => bool(target.cursor === null)),
+  INDEX: method("INDEX", ([target]) => target.cursor === null ? null : int5(target.cursor)),
+  RESET: method("RESET", ([target, index]) => {
+    if (index === undefined || !isIndexedIteratorSource(target.source)) {
+      target.cursor = 0;
+      return target;
+    }
+    let destination = iteratorStep(index, "Iterator reset index");
+    if (destination < 0) {
+      const length = iteratorLength(target.source);
+      if (length === null)
+        throw new Error("Cannot reset an unbounded lazy iterator from the end");
+      destination = length + 1 + destination;
+    }
+    if (destination === 0) {
+      target.cursor = 0;
+      return target;
+    }
+    const result = iteratorLookup(target.source, destination);
+    target.cursor = result.found ? destination : null;
+    return target;
+  })
+};
+var mapMethods = {
+  LEN: method("LEN", ([target]) => {
+    ensureMap(target, "Len");
+    return int5(target.entries.size);
+  }),
+  ISEMPTY: method("ISEMPTY", ([target]) => {
+    ensureMap(target, "IsEmpty");
+    return bool(target.entries.size === 0);
+  }),
+  HAS: method("HAS", ([target, key]) => {
+    ensureMap(target, "Has");
+    return bool(target.entries.has(keyOf(key)));
+  }),
+  GET: method("GET", ([target, key]) => {
+    ensureMap(target, "Get");
+    return mapValue(target, key);
+  }),
+  KEYS: method("KEYS", ([target]) => {
+    ensureMap(target, "Keys");
+    return { type: "set", values: Array.from(target.entries.keys()) };
+  }),
+  VALUES: method("VALUES", ([target]) => {
+    ensureMap(target, "Values");
+    return { type: "set", values: Array.from(target.entries.values()) };
+  }),
+  ENTRIES: method("ENTRIES", ([target]) => {
+    ensureMap(target, "Entries");
+    return {
+      type: "sequence",
+      values: Array.from(target.entries.entries()).map(([key, value]) => ({
+        type: "tuple",
+        values: [stringObj3(key), value]
+      })),
+      _ext: mutableExt2()
+    };
+  }),
+  SET: method("SET", ([target, key, value]) => {
+    ensureMap(target, "Set");
+    const copy = shallowCopyValue(target);
+    copy.entries.set(keyOf(key), value);
+    return copy;
+  }),
+  "SET!": method("SET!", ([target, key, value]) => {
+    ensureMap(target, "Set!");
+    target.entries.set(keyOf(key), value);
+    return target;
+  }),
+  REMOVE: method("REMOVE", ([target, key]) => {
+    ensureMap(target, "Remove");
+    const copy = shallowCopyValue(target);
+    copy.entries.delete(keyOf(key));
+    return copy;
+  }),
+  "REMOVE!": method("REMOVE!", ([target, key]) => {
+    ensureMap(target, "Remove!");
+    target.entries.delete(keyOf(key));
+    return target;
+  }),
+  MERGE: method("MERGE", ([target, other]) => {
+    ensureMap(target, "Merge");
+    ensureMap(other, "Merge");
+    return { type: "map", entries: new Map([...target.entries, ...other.entries]), _ext: mutableExt2() };
+  }),
+  "MERGE!": method("MERGE!", ([target, other]) => {
+    ensureMap(target, "Merge!");
+    ensureMap(other, "Merge!");
+    for (const [key, value] of other.entries)
+      target.entries.set(key, value);
+    return target;
+  }),
+  UPDATE: method("UPDATE", ([target, key, updater], context, evaluate, invoke) => {
+    ensureMap(target, "Update");
+    const canonical = keyOf(key);
+    const current = target.entries.has(canonical) ? target.entries.get(canonical) : null;
+    const next = invoke(updater, [current, stringObj3(canonical), target], context, evaluate);
+    const copy = shallowCopyValue(target);
+    copy.entries.set(canonical, next);
+    return copy;
+  }),
+  "UPDATE!": method("UPDATE!", ([target, key, updater], context, evaluate, invoke) => {
+    ensureMap(target, "Update!");
+    const canonical = keyOf(key);
+    const current = target.entries.has(canonical) ? target.entries.get(canonical) : null;
+    const next = invoke(updater, [current, stringObj3(canonical), target], context, evaluate);
+    target.entries.set(canonical, next);
+    return target;
+  }),
+  DEFAULT: method("DEFAULT", ([target, key, value]) => {
+    ensureMap(target, "Default");
+    const canonical = keyOf(key);
+    if (target.entries.has(canonical))
+      return shallowCopyValue(target);
+    const copy = shallowCopyValue(target);
+    copy.entries.set(canonical, value);
+    return copy;
+  }),
+  "DEFAULT!": method("DEFAULT!", ([target, key, value]) => {
+    ensureMap(target, "Default!");
+    const canonical = keyOf(key);
+    if (!target.entries.has(canonical))
+      target.entries.set(canonical, value);
+    return target;
+  }),
+  KEEP: method("KEEP", ([target, keys]) => {
+    ensureMap(target, "Keep");
+    const wanted = new Set(mapLikeKeys(keys));
+    return {
+      type: "map",
+      entries: new Map(Array.from(target.entries.entries()).filter(([key]) => wanted.has(key))),
+      _ext: mutableExt2()
+    };
+  }),
+  "KEEP!": method("KEEP!", ([target, keys]) => {
+    ensureMap(target, "Keep!");
+    const wanted = new Set(mapLikeKeys(keys));
+    for (const key of Array.from(target.entries.keys())) {
+      if (!wanted.has(key))
+        target.entries.delete(key);
+    }
+    return target;
+  }),
+  OMIT: method("OMIT", ([target, keys]) => {
+    ensureMap(target, "Omit");
+    const blocked = new Set(mapLikeKeys(keys));
+    return {
+      type: "map",
+      entries: new Map(Array.from(target.entries.entries()).filter(([key]) => !blocked.has(key))),
+      _ext: mutableExt2()
+    };
+  }),
+  "OMIT!": method("OMIT!", ([target, keys]) => {
+    ensureMap(target, "Omit!");
+    const blocked = new Set(mapLikeKeys(keys));
+    for (const key of blocked)
+      target.entries.delete(key);
+    return target;
+  }),
+  MAPVALUES: method("MAPVALUES", ([target, iterator], context, evaluate, invoke) => {
+    ensureMap(target, "MapValues");
+    const entries = new Map;
+    for (const [key, value] of target.entries) {
+      entries.set(key, invoke(iterator, [value, stringObj3(key), target], context, evaluate));
+    }
+    return { type: "map", entries, _ext: mutableExt2() };
+  }),
+  REDUCEKEYS: method("REDUCEKEYS", ([target, iterator, initial], context, evaluate, invoke) => {
+    ensureMap(target, "ReduceKeys");
+    let acc = initial === undefined ? defaultAccumulator(target) : initial;
+    for (const [key, value] of target.entries) {
+      acc = invoke(iterator, [acc, stringObj3(key), value, target], context, evaluate);
+    }
+    return acc;
+  }),
+  FILTER: method("FILTER", ([target, iterator], context, evaluate, invoke) => {
+    ensureMap(target, "Filter");
+    const entries = new Map;
+    for (const [key, value] of target.entries) {
+      if (predicateResult(iterator, [value, stringObj3(key), target], context, evaluate, invoke)) {
+        entries.set(key, value);
+      }
+    }
+    return { type: "map", entries, _ext: mutableExt2() };
+  }),
+  ANY: method("ANY", ([target, iterator], context, evaluate, invoke) => anyEntries(target, iterator, context, evaluate, invoke)),
+  ALL: method("ALL", ([target, iterator], context, evaluate, invoke) => allEntries(target, iterator, context, evaluate, invoke)),
+  COUNT: method("COUNT", ([target, iterator], context, evaluate, invoke) => countEntries(target, iterator, context, evaluate, invoke)),
+  REDUCE: method("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke))
+};
+var setMethods = {
+  LEN: method("LEN", ([target]) => {
+    ensureSet(target, "Len");
+    return int5(target.values.length);
+  }),
+  ISEMPTY: method("ISEMPTY", ([target]) => {
+    ensureSet(target, "IsEmpty");
+    return bool(target.values.length === 0);
+  }),
+  HAS: method("HAS", ([target, value]) => {
+    ensureSet(target, "Has");
+    return bool(setHas(target, value));
+  }),
+  VALUES: method("VALUES", ([target]) => {
+    ensureSet(target, "Values");
+    return { type: "sequence", values: [...target.values], _ext: mutableExt2() };
+  }),
+  ADD: method("ADD", ([target, value]) => {
+    ensureSet(target, "Add");
+    if (setHas(target, value))
+      return shallowCopyValue(target);
+    const copy = shallowCopyValue(target);
+    copy.values.push(value);
+    return copy;
+  }),
+  "ADD!": method("ADD!", ([target, value]) => {
+    ensureSet(target, "Add!");
+    if (!setHas(target, value))
+      target.values.push(value);
+    return target;
+  }),
+  REMOVE: method("REMOVE", ([target, value]) => {
+    ensureSet(target, "Remove");
+    const copy = shallowCopyValue(target);
+    copy.values = copy.values.filter((entry) => valueKey2(entry) !== valueKey2(value));
+    return copy;
+  }),
+  "REMOVE!": method("REMOVE!", ([target, value]) => {
+    ensureSet(target, "Remove!");
+    target.values = target.values.filter((entry) => valueKey2(entry) !== valueKey2(value));
+    return target;
+  }),
+  UNION: method("UNION", ([target, other]) => collectionFunctions.UNION.impl([target, other])),
+  "UNION!": method("UNION!", ([target, other]) => {
+    ensureSet(target, "Union!");
+    ensureSet(other, "Union!");
+    target.values = collectionFunctions.UNION.impl([target, other]).values;
+    return target;
+  }),
+  INTERSECT: method("INTERSECT", ([target, other]) => collectionFunctions.INTERSECT.impl([target, other])),
+  "INTERSECT!": method("INTERSECT!", ([target, other]) => {
+    ensureSet(target, "Intersect!");
+    ensureSet(other, "Intersect!");
+    const next = collectionFunctions.INTERSECT.impl([target, other]);
+    target.values = next ? next.values : [];
+    return target;
+  }),
+  DIFF: method("DIFF", ([target, other]) => collectionFunctions.SET_DIFF.impl([target, other])),
+  "DIFF!": method("DIFF!", ([target, other]) => {
+    ensureSet(target, "Diff!");
+    const next = collectionFunctions.SET_DIFF.impl([target, other]);
+    target.values = next.values;
+    return target;
+  }),
+  SYMDIFF: method("SYMDIFF", ([target, other]) => collectionFunctions.SET_SYMDIFF.impl([target, other])),
+  "SYMDIFF!": method("SYMDIFF!", ([target, other]) => {
+    ensureSet(target, "SymDiff!");
+    const next = collectionFunctions.SET_SYMDIFF.impl([target, other]);
+    target.values = next.values;
+    return target;
+  }),
+  SUBSETOF: method("SUBSETOF", ([target, other]) => {
+    ensureSet(target, "SubsetOf");
+    ensureSet(other, "SubsetOf");
+    return bool(target.values.every((value) => setHas(other, value)));
+  }),
+  SUPERSETOF: method("SUPERSETOF", ([target, other]) => {
+    ensureSet(target, "SupersetOf");
+    ensureSet(other, "SupersetOf");
+    return bool(other.values.every((value) => setHas(target, value)));
+  }),
+  DISJOINT: method("DISJOINT", ([target, other]) => {
+    ensureSet(target, "Disjoint");
+    ensureSet(other, "Disjoint");
+    return bool(target.values.every((value) => !setHas(other, value)));
+  }),
+  FILTER: method("FILTER", ([target, iterator], context, evaluate, invoke) => {
+    ensureSet(target, "Filter");
+    return {
+      type: "set",
+      values: target.values.filter((value) => predicateResult(iterator, [value, value, target], context, evaluate, invoke)),
+      _ext: mutableExt2()
+    };
+  }),
+  ANY: method("ANY", ([target, iterator], context, evaluate, invoke) => anyEntries(target, iterator, context, evaluate, invoke)),
+  ALL: method("ALL", ([target, iterator], context, evaluate, invoke) => allEntries(target, iterator, context, evaluate, invoke)),
+  COUNT: method("COUNT", ([target, iterator], context, evaluate, invoke) => countEntries(target, iterator, context, evaluate, invoke)),
+  REDUCE: method("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke))
+};
+var stringMethods = {
+  LEN: method("LEN", ([target]) => {
+    ensureString(target, "Len");
+    return int5(Array.from(target.value).length);
+  }),
+  ISEMPTY: method("ISEMPTY", ([target]) => {
+    ensureString(target, "IsEmpty");
+    return bool(target.value.length === 0);
+  }),
+  GET: method("GET", ([target, index]) => {
+    ensureString(target, "Get");
+    return stringAt(target, index);
+  }),
+  FIRST: method("FIRST", ([target]) => {
+    ensureString(target, "First");
+    return charsOf(target)[0] ?? null;
+  }),
+  LAST: method("LAST", ([target]) => {
+    ensureString(target, "Last");
+    const chars = charsOf(target);
+    return chars[chars.length - 1] ?? null;
+  }),
+  INCLUDES: method("INCLUDES", ([target, needle]) => {
+    ensureString(target, "Includes");
+    return bool(target.value.includes(stringValue2(needle)));
+  }),
+  STARTSWITH: method("STARTSWITH", ([target, prefix]) => {
+    ensureString(target, "StartsWith");
+    return bool(target.value.startsWith(stringValue2(prefix)));
+  }),
+  ENDSWITH: method("ENDSWITH", ([target, suffix]) => {
+    ensureString(target, "EndsWith");
+    return bool(target.value.endsWith(stringValue2(suffix)));
+  }),
+  INDEXOF: method("INDEXOF", ([target, needle]) => {
+    ensureString(target, "IndexOf");
+    const idx = target.value.indexOf(stringValue2(needle));
+    return idx === -1 ? null : int5(idx + 1);
+  }),
+  LASTINDEXOF: method("LASTINDEXOF", ([target, needle]) => {
+    ensureString(target, "LastIndexOf");
+    const idx = target.value.lastIndexOf(stringValue2(needle));
+    return idx === -1 ? null : int5(idx + 1);
+  }),
+  SLICE: method("SLICE", ([target, start, end]) => {
+    ensureString(target, "Slice");
+    return fromChars(jsSlice(charsOf(target), start, end));
+  }),
+  CONCAT: method("CONCAT", ([target, ...parts]) => {
+    ensureString(target, "Concat");
+    return stringObj3([target, ...parts].map((part) => stringValue2(part)).join(""));
+  }),
+  SPLIT: method("SPLIT", ([target, separator]) => {
+    ensureString(target, "Split");
+    const parts = separator === undefined ? Array.from(target.value) : target.value.split(stringValue2(separator));
+    return { type: "sequence", values: parts.map((part) => stringObj3(part)), _ext: mutableExt2() };
+  }),
+  TRIM: method("TRIM", ([target]) => {
+    ensureString(target, "Trim");
+    return stringObj3(target.value.trim());
+  }),
+  TRIMSTART: method("TRIMSTART", ([target]) => {
+    ensureString(target, "TrimStart");
+    return stringObj3(target.value.trimStart());
+  }),
+  TRIMEND: method("TRIMEND", ([target]) => {
+    ensureString(target, "TrimEnd");
+    return stringObj3(target.value.trimEnd());
+  }),
+  UPPER: method("UPPER", ([target]) => {
+    ensureString(target, "Upper");
+    return stringObj3(target.value.toUpperCase());
+  }),
+  LOWER: method("LOWER", ([target]) => {
+    ensureString(target, "Lower");
+    return stringObj3(target.value.toLowerCase());
+  }),
+  REPLACE: method("REPLACE", ([target, search, replacement]) => {
+    ensureString(target, "Replace");
+    return stringObj3(target.value.replace(stringValue2(search), stringValue2(replacement)));
+  }),
+  REPLACEALL: method("REPLACEALL", ([target, search, replacement]) => {
+    ensureString(target, "ReplaceAll");
+    return stringObj3(target.value.split(stringValue2(search)).join(stringValue2(replacement)));
+  }),
+  PADLEFT: method("PADLEFT", ([target, length, pad]) => {
+    ensureString(target, "PadLeft");
+    return stringObj3(target.value.padStart(numericIndex(length), stringValue2(pad ?? stringObj3(" "))));
+  }),
+  PADRIGHT: method("PADRIGHT", ([target, length, pad]) => {
+    ensureString(target, "PadRight");
+    return stringObj3(target.value.padEnd(numericIndex(length), stringValue2(pad ?? stringObj3(" "))));
+  }),
+  REPEAT: method("REPEAT", ([target, count]) => {
+    ensureString(target, "Repeat");
+    return stringObj3(target.value.repeat(numericIndex(count)));
+  }),
+  REDUCE: method("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke))
+};
+var tupleMethods = {
+  LEN: method("LEN", ([target]) => {
+    ensureTuple(target, "Len");
+    return int5(target.values.length);
+  }),
+  GET: method("GET", ([target, index]) => {
+    ensureTuple(target, "Get");
+    const at = normalizeLookupIndex(index, target.values.length);
+    return at === null ? null : target.values[at - 1];
+  }),
+  FIRST: method("FIRST", ([target]) => {
+    ensureTuple(target, "First");
+    return target.values[0] ?? null;
+  }),
+  LAST: method("LAST", ([target]) => {
+    ensureTuple(target, "Last");
+    return target.values[target.values.length - 1] ?? null;
+  }),
+  SLICE: method("SLICE", ([target, start, end]) => {
+    ensureTuple(target, "Slice");
+    return { type: "tuple", values: jsSlice(target.values, start, end) };
+  }),
+  SET: method("SET", ([target, index, value]) => {
+    ensureTuple(target, "Set");
+    const copy = shallowCopyValue(target);
+    const at = normalizeLookupIndex(index, copy.values.length);
+    if (at === null)
+      return copy;
+    copy.values[at - 1] = value;
+    return copy;
+  }),
+  TOARRAY: method("TOARRAY", ([target]) => {
+    ensureTuple(target, "ToArray");
+    return { type: "sequence", values: [...target.values], _ext: mutableExt2() };
+  }),
+  REDUCE: method("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke))
+};
+function tensorSelectorsFromArgs(args) {
+  if (args.length === 1 && args[0]?.type === "tuple") {
+    return args[0].values.map((value) => ({ kind: "index", value }));
+  }
+  return args.map((value) => ({ kind: "index", value }));
+}
+var tensorMethods = {
+  SHAPE: method("SHAPE", ([target]) => {
+    ensureTensor(target, "Shape");
+    return { type: "tuple", values: tensorShape(target).map((dim) => int5(dim)) };
+  }),
+  RANK: method("RANK", ([target]) => {
+    ensureTensor(target, "Rank");
+    return int5(tensorRank(target));
+  }),
+  SIZE: method("SIZE", ([target]) => {
+    ensureTensor(target, "Size");
+    return int5(tensorSize(target));
+  }),
+  GET: method("GET", ([target, ...selectors]) => {
+    ensureTensor(target, "Get");
+    return tensorGetBySelectors(target, tensorSelectorsFromArgs(selectors));
+  }),
+  SET: method("SET", ([target, ...selectorsAndValue]) => {
+    ensureTensor(target, "Set");
+    const value = selectorsAndValue[selectorsAndValue.length - 1];
+    const selectors = selectorsAndValue.slice(0, -1);
+    const copy = shallowCopyValue(target);
+    tensorAssignBySelectors(copy, tensorSelectorsFromArgs(selectors), value);
+    return copy;
+  }),
+  "SET!": method("SET!", ([target, ...selectorsAndValue]) => {
+    ensureTensor(target, "Set!");
+    const value = selectorsAndValue[selectorsAndValue.length - 1];
+    const selectors = selectorsAndValue.slice(0, -1);
+    tensorAssignBySelectors(target, tensorSelectorsFromArgs(selectors), value);
+    return target;
+  }),
+  RESHAPE: method("RESHAPE", ([target, shape]) => {
+    ensureTensor(target, "Reshape");
+    const nextShape = shape?.type === "tuple" ? shape.values.map((value) => numericIndex(value)) : null;
+    if (!nextShape)
+      throw new Error("Reshape expects a shape tuple");
+    const expected = nextShape.reduce((product, dim) => product * dim, 1);
+    if (expected !== tensorSize(target))
+      throw new Error("Reshape size mismatch");
+    return createTensor(nextShape, target.data);
+  }),
+  FLATTEN: method("FLATTEN", ([target]) => {
+    ensureTensor(target, "Flatten");
+    return createTensor([tensorSize(target)], [...target.data]);
+  }),
+  TRANSPOSE: method("TRANSPOSE", ([target]) => {
+    ensureTensor(target, "Transpose");
+    if (tensorRank(target) !== 2)
+      throw new Error("Transpose currently expects a rank-2 tensor");
+    return createTensorView(target, {
+      shape: [target.shape[1], target.shape[0]],
+      strides: [target.strides[1], target.strides[0]],
+      offset: target.offset
+    });
+  }),
+  PERMUTE: method("PERMUTE", ([target, order]) => {
+    ensureTensor(target, "Permute");
+    if (order?.type !== "tuple")
+      throw new Error("Permute expects a tuple of axis numbers");
+    const axes = order.values.map((value) => numericIndex(value) - 1);
+    if (axes.length !== target.shape.length)
+      throw new Error("Permute rank mismatch");
+    return createTensorView(target, {
+      shape: axes.map((axis) => target.shape[axis]),
+      strides: axes.map((axis) => target.strides[axis]),
+      offset: target.offset
+    });
+  }),
+  MAP: method("MAP", ([target, iterator], context, evaluate, invoke) => {
+    ensureTensor(target, "Map");
+    const data = [];
+    forEachTensorCell(target, (value, tuple) => {
+      data.push(invoke(iterator, [value, tensorIndexTuple(tuple), target], context, evaluate));
+    });
+    return createTensor(target.shape, data);
+  }),
+  "FILL!": method("FILL!", ([target, value]) => {
+    ensureTensor(target, "Fill!");
+    forEachTensorCell(target, (_entry, _tuple, offset) => {
+      target.data[offset] = value;
+    });
+    return target;
+  }),
+  SUM: method("SUM", ([target]) => {
+    ensureTensor(target, "Sum");
+    let acc = int5(0);
+    forEachTensorCell(target, (value) => {
+      if (!isHole(value))
+        acc = arithmeticAdd(acc, value);
+    });
+    return acc;
+  }),
+  MEAN: method("MEAN", ([target]) => {
+    ensureTensor(target, "Mean");
+    const size = tensorSize(target);
+    if (size === 0)
+      return null;
+    return arithmeticDiv(tensorMethods.SUM.impl([target]), int5(size));
+  }),
+  DOT: method("DOT", ([target, other]) => {
+    ensureTensor(target, "Dot");
+    ensureTensor(other, "Dot");
+    if (tensorRank(target) !== 1 || tensorRank(other) !== 1 || tensorSize(target) !== tensorSize(other)) {
+      throw new Error("Dot expects rank-1 tensors of equal size");
+    }
+    let acc = int5(0);
+    for (let i = 0;i < target.data.length; i++) {
+      acc = arithmeticAdd(acc, arithmeticMul(target.data[i], other.data[i]));
+    }
+    return acc;
+  }),
+  MATMUL: method("MATMUL", ([target, other]) => {
+    ensureTensor(target, "MatMul");
+    ensureTensor(other, "MatMul");
+    if (tensorRank(target) !== 2 || tensorRank(other) !== 2) {
+      throw new Error("MatMul expects rank-2 tensors");
+    }
+    const [rows, inner] = target.shape;
+    const [otherInner, cols] = other.shape;
+    if (inner !== otherInner)
+      throw new Error("MatMul inner dimensions must agree");
+    const data = [];
+    for (let r = 1;r <= rows; r++) {
+      for (let c = 1;c <= cols; c++) {
+        let acc = int5(0);
+        for (let k = 1;k <= inner; k++) {
+          const a = tensorGetBySelectors(target, [{ kind: "index", value: int5(r) }, { kind: "index", value: int5(k) }]);
+          const b = tensorGetBySelectors(other, [{ kind: "index", value: int5(k) }, { kind: "index", value: int5(c) }]);
+          acc = arithmeticAdd(acc, arithmeticMul(a, b));
+        }
+        data.push(acc);
+      }
+    }
+    return createTensor([rows, cols], data);
+  }),
+  REDUCE: method("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke))
+};
+var commonMethods = {
+  CHECKTRAITS: method("CHECKTRAITS", ([target], context) => checkTraits(target, context, { warnOnly: true })),
+  CheckTraits: method("CheckTraits", ([target], context) => checkTraits(target, context, { warnOnly: true }))
+};
+var PROTOS = new Map([
+  ["sequence", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iterableMethods), ...Object.entries(arrayMethods)])],
+  ["lazy_sequence", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iterableMethods), ...Object.entries(lazySequenceMethods)])],
+  ["map", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iterableMethods), ...Object.entries(mapMethods)])],
+  ["set", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iterableMethods), ...Object.entries(setMethods)])],
+  ["string", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iterableMethods), ...Object.entries(stringMethods)])],
+  ["tuple", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iterableMethods), ...Object.entries(tupleMethods)])],
+  ["tensor", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iterableMethods), ...Object.entries(tensorMethods)])],
+  ["iterator", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iteratorMethods)])],
+  ["deferred", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(deferredMethods)])],
+  ["exact_generator", createBuiltinProto([
+    ...Object.entries(commonMethods),
+    ["CONJUGATE", method("Conjugate", ([target]) => complexConjugate(target))],
+    ["RE", method("Re", ([target]) => complexParts(target).real)],
+    ["IM", method("Im", ([target]) => complexParts(target).imaginary)],
+    ["NORMSQUARED", method("NormSquared", ([target]) => complexNormSquared(target))],
+    ["CAYLEY", method("Cayley", ([target]) => cayleyFromCartesian(target))]
+  ])],
+  ["exact_expression", createBuiltinProto([
+    ...Object.entries(commonMethods),
+    ["CONJUGATE", method("Conjugate", ([target]) => complexConjugate(target))],
+    ["RE", method("Re", ([target]) => complexParts(target).real)],
+    ["IM", method("Im", ([target]) => complexParts(target).imaginary)],
+    ["NORMSQUARED", method("NormSquared", ([target]) => complexNormSquared(target))],
+    ["CAYLEY", method("Cayley", ([target]) => cayleyFromCartesian(target))]
+  ])],
+  ["cayley", createBuiltinProto([
+    ...Object.entries(commonMethods),
+    ["CARTESIAN", method("Cartesian", ([target]) => cayleyCartesian(target))],
+    ["CAYLEY", method("Cayley", ([target]) => target)],
+    ["CONJUGATE", method("Conjugate", ([target]) => conjugateCayley(target))],
+    ["RE", method("Re", ([target]) => cayleyReal(target))],
+    ["IM", method("Im", ([target]) => cayleyImaginary(target))],
+    ["NORMSQUARED", method("NormSquared", ([target]) => multiplyScalars(target.magnitude, target.magnitude))],
+    ["MAGNITUDE", method("Magnitude", ([target]) => target.magnitude)],
+    ["DIRECTION", method("Direction", ([target]) => target.direction)],
+    ["INVERSE", method("Inverse", ([target]) => inverseCayley(target))]
+  ])]
+]);
+function isCallableValue(value) {
+  return typeof value === "function" || value && (value.type === "function" || value.type === "lambda" || value.type === "sysref" || value.type === "partial" || value.type === "arityCap" || value.type === "method_builtin") || isUnitValue(value) || isExactValue(value);
+}
+function ensureCallableMethod(value, name) {
+  if (!isCallableValue(value)) {
+    throw new Error(`Method "${name}" is not callable`);
+  }
+  return value;
+}
+function checkTraitsMethod(name) {
+  if (name !== "CHECKTRAITS" && name !== "CheckTraits")
+    return null;
+  return method(name, ([target], context) => checkTraits(target, context, { warnOnly: true }));
+}
+function builtinProtoFor(target) {
+  if (isTensor(target))
+    return PROTOS.get("tensor");
+  if (target && typeof target === "object" && target.fn === "DEFER")
+    return PROTOS.get("deferred");
+  return PROTOS.get(target?.type) ?? null;
+}
+function resolveFromProto(proto, candidates, methodName) {
+  if (proto === null || proto === undefined)
+    return null;
+  if (proto.type !== "map" || !(proto.entries instanceof Map)) {
+    throw new Error("Method prototype must be a map or null");
+  }
+  for (const candidate of candidates) {
+    if (proto.entries.has(candidate)) {
+      return ensureCallableMethod(proto.entries.get(candidate), methodName);
+    }
+  }
+  return null;
+}
+function getBuiltinProto(target) {
+  const ext = target?._ext;
+  if (ext instanceof Map && ext.has("_proto")) {
+    const proto = ext.get("_proto");
+    if (proto === null)
+      return null;
+    if (proto?.type !== "map" || !(proto.entries instanceof Map)) {
+      throw new Error("Method prototype must be a map or null");
+    }
+    return proto;
+  }
+  return builtinProtoFor(target);
+}
+function resolveMethod(target, name) {
+  const ext = target?._ext;
+  const candidates = [name, `__${name}`, `_${name}`];
+  const special = checkTraitsMethod(name);
+  if (special) {
+    return special;
+  }
+  if (ext instanceof Map) {
+    for (const candidate of candidates) {
+      if (ext.has(candidate)) {
+        return ensureCallableMethod(ext.get(candidate), name);
+      }
+    }
+  }
+  const semanticProto = ext instanceof Map ? ext.get("__proto") : null;
+  const traitProto = semanticProto?.type === "map" ? semanticProto.entries?.get("traits") : null;
+  const typeProto = semanticProto?.type === "map" ? semanticProto.entries?.get("type") : null;
+  const semanticResolved = resolveFromProto(traitProto, candidates, name) || resolveFromProto(typeProto, candidates, name);
+  if (semanticResolved) {
+    return semanticResolved;
+  }
+  const resolved = resolveFromProto(getBuiltinProto(target), candidates, name);
+  if (resolved) {
+    return resolved;
+  }
+  throw new Error(`Method not found: ${name}`);
+}
+function ensureMutableReceiver(target) {
+  const ext = target?._ext;
+  if (!ext?.get("_mutable") || ext.get("frozen") || ext.get("immutable")) {
+    throw new Error("Cannot mutate immutable value");
+  }
+}
+function attachBuiltinProto(value) {
+  if (!value || typeof value !== "object")
+    return value;
+  const proto = builtinProtoFor(value);
+  if (!proto)
+    return value;
+  ensureExt4(value);
+  if (!value._ext.has("_proto")) {
+    value._ext.set("_proto", proto);
+  }
+  refreshRuntimeMetadata(value, proto);
+  return value;
+}
+
+// ../rix/src/repl/completion.js
+var REPL_COMMANDS = ["help", "exit", "load", "vars", "fns", "reset", "ast", "tokens"];
+function preview(value, formatValue2) {
+  if (value === undefined)
+    return "";
+  try {
+    const text = formatValue2 ? formatValue2(value) : String(value);
+    return text.length > 72 ? `${text.slice(0, 69)}…` : text;
+  } catch {
+    return "";
+  }
+}
+function propertyValue(target, name) {
+  if (!target || typeof target !== "object")
+    return;
+  if (name === "_proto")
+    return getBuiltinProto(target);
+  return target._ext instanceof Map ? target._ext.get(name) : undefined;
+}
+function resolveReceiver(path, context) {
+  const names = path.split(".");
+  let value = context.get(names.shift());
+  if (value === undefined)
+    return;
+  for (const name of names) {
+    value = propertyValue(value, name);
+    if (value === undefined)
+      return;
+  }
+  return value;
+}
+function propertyCandidates(receiver, query, formatValue2) {
+  if (!receiver || typeof receiver !== "object")
+    return [];
+  const entries = new Map;
+  if (receiver._ext instanceof Map) {
+    for (const [name, value] of receiver._ext) {
+      entries.set(name, { kind: "property", value, detail: "metadata property" });
+    }
+  }
+  const proto = getBuiltinProto(receiver);
+  if (proto?.entries instanceof Map) {
+    for (const [name, value] of proto.entries) {
+      if (!entries.has(name))
+        entries.set(name, { kind: "method", value, detail: "built-in method" });
+    }
+  }
+  if (!entries.has("_proto"))
+    entries.set("_proto", { kind: "property", value: proto, detail: "method prototype" });
+  return [...entries].map(([insertText, entry]) => ({
+    insertText,
+    kind: entry.kind,
+    detail: entry.detail,
+    preview: entry.kind === "property" ? preview(entry.value, formatValue2) : ""
+  }));
+}
+function filterAndSort(candidates, query) {
+  const folded = query.toLowerCase();
+  return candidates.filter((candidate) => candidate.insertText.replace(/^@_/, "").replace(/^\./, "").toLowerCase().startsWith(folded)).sort((a, b) => {
+    return a.insertText.localeCompare(b.insertText);
+  });
+}
+function complete(source, cursor, { context, systemContext, formatValue: formatValue2 } = {}) {
+  const before = String(source).slice(0, cursor);
+  let token = before.match(/[@.]?[A-Za-z_][A-Za-z0-9_]*$|[@.]?$/)?.[0] ?? "";
+  if (token === "." && before.length > 1)
+    token = "";
+  const from = cursor - token.length;
+  const query = token.replace(/^@_?/, "").replace(/^\./, "");
+  const prior = before.slice(0, from);
+  let candidates = [];
+  if (token.startsWith("@_") || prior.endsWith("@_")) {
+    const prefix = token.startsWith("@_") ? "@_" : "@_";
+    candidates = systemContext.getAllNames().map((name) => ({
+      insertText: `${prefix}${name}`,
+      kind: "system function",
+      detail: systemContext.get(name)?.doc || "system capability",
+      preview: ""
+    }));
+  } else if (prior.endsWith(".")) {
+    const receiverMatch = prior.slice(0, -1).match(/([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)$/);
+    if (receiverMatch) {
+      candidates = propertyCandidates(resolveReceiver(receiverMatch[1], context), query, formatValue2);
+    } else {
+      candidates = systemContext.getAllNames().map((name) => ({
+        insertText: name,
+        kind: "system function",
+        detail: systemContext.get(name)?.doc || "system capability",
+        preview: ""
+      }));
+    }
+  } else if (token.startsWith(".")) {
+    candidates = systemContext.getAllNames().map((name) => ({
+      insertText: `.${name}`,
+      kind: "system function",
+      detail: systemContext.get(name)?.doc || "system capability",
+      preview: ""
+    }));
+  } else if (prior.length === 0 || /[\s(\[{,;=:+\-*/?]/.test(prior.at(-1))) {
+    candidates = [
+      ...context.getAllNames().map((name) => ({
+        insertText: name,
+        kind: "binding",
+        detail: "current session binding",
+        preview: preview(context.get(name), formatValue2)
+      })),
+      ...REPL_COMMANDS.map((name) => ({ insertText: `.${name}`, kind: "command", detail: "REPL command", preview: "" }))
+    ];
+  }
+  return { from, to: cursor, query, candidates: filterAndSort(candidates, query) };
+}
+// ../rix/src/eval/ir.js
+function ir2(fn, ...args) {
+  return { fn, args };
+}
+
+// ../rix/src/eval/lower.js
+var BINARY_OP_MAP = {
+  "+": "ADD",
+  "-": "SUB",
+  "*": "MUL",
+  "/": "DIV",
+  "//": "INTDIV",
+  "%": "MOD",
+  "^": "POW",
+  "**": "POWPROD",
+  "==": "EQ",
+  "!=": "NEQ",
+  "<": "LT",
+  ">": "GT",
+  "<=": "LTE",
+  ">=": "GTE",
+  "===": "SAME_CELL",
+  AND: "AND",
+  "&&": "AND",
+  OR: "OR",
+  "||": "OR",
+  "\\/": "UNION",
+  "/\\": "INTERSECT",
+  "\\": "SET_DIFF",
+  "<>": "SET_SYMDIFF",
+  "?": "MEMBER",
+  "!?": "NOT_MEMBER",
+  "?&": "INTERSECTS",
+  "++": "CONCAT",
+  "/^": "DIVUP",
+  "/~": "DIVROUND",
+  "/%": "DIVMOD",
+  "?|": "HOLE_COALESCE"
+};
+function lower(ast) {
+  if (!Array.isArray(ast)) {
+    return lowerNode(ast);
+  }
+  return ast.map(lowerNode);
+}
+function lowerNode(node) {
+  if (!node || !node.type) {
+    return node;
+  }
+  const handler = LOWERERS[node.type];
+  if (!handler) {
+    throw new Error(`Unknown AST node type: ${node.type}`);
+  }
+  const result = handler(node);
+  if (result && typeof result === "object" && !Array.isArray(result) && node.pos) {
+    result.pos = node.pos;
+  }
+  return result;
+}
+function lowerFunctionBody(node) {
+  if (!node || !node.type) {
+    return lowerNode(node);
+  }
+  if (node.type === "Grouping") {
+    if (node.expression) {
+      return lowerFunctionBody(node.expression);
+    }
+    return ir2("NULL");
+  }
+  if (node.type === "TernaryOperation") {
+    return ir2("TERNARY", lowerNode(node.condition), ir2("DEFER", lowerFunctionBody(node.trueExpression)), ir2("DEFER", lowerFunctionBody(node.falseExpression)));
+  }
+  if (node.type === "Call" && node.target?.type === "SelfRef") {
+    const args = lowerCallArgs(node.arguments);
+    return ir2("TAIL_SELF", ...args);
+  }
+  if (node.type === "BlockContainer" || node.type === "SystemContainer") {
+    const elements = node.elements || [];
+    const loweredElements = elements.map((element, index) => index === elements.length - 1 ? lowerFunctionBody(element) : lowerNode(element));
+    const fn = node.type === "BlockContainer" ? "BLOCK" : "SYSTEM";
+    const hasMeta = node.imports && node.imports.length > 0 || node.name;
+    if (!hasMeta) {
+      return ir2(fn, ...loweredElements);
+    }
+    const meta = {};
+    if (node.imports && node.imports.length > 0)
+      meta.imports = lowerImports(node.imports);
+    if (node.name)
+      meta.name = node.name;
+    return ir2(fn, meta, ...loweredElements);
+  }
+  return lowerNode(node);
+}
+var COMBO_ASSIGN_OP_MAP = {
+  "+=": "+",
+  "-=": "-",
+  "*=": "*",
+  "++=": "++",
+  "/=": "/",
+  "//=": "//",
+  "/\\=": "/\\",
+  "/^=": "/^",
+  "/~=": "/~",
+  "%=": "%",
+  "^=": "^",
+  "**=": "**",
+  "\\/=": "\\/",
+  "\\=": "\\"
+};
+var LOWERERS = {
+  Number(node) {
+    if (node.value && node.value.includes(":")) {
+      const parts = node.value.split(":");
+      return ir2("INTERVAL", ...parts.map((p) => ir2("LITERAL", p)));
+    }
+    return ir2("LITERAL", node.value);
+  },
+  String(node) {
+    return ir2("STRING", node.value);
+  },
+  ScriptImportExpression(node) {
+    return ir2("SCRIPT_IMPORT", {
+      path: node.path.value,
+      capabilityModifiers: lowerCapabilityModifiers(node.capabilityModifiers || []),
+      inputs: lowerBindingSpecs(node.inputs || []),
+      outputs: lowerBindingSpecs(node.outputs || [])
+    });
+  },
+  ScriptBindingsDeclaration() {
+    throw new Error("Script input/export declarations are only valid as the first or last statement of an imported script");
+  },
+  RegexLiteral(node) {
+    const modeMap = {
+      ONE: 0,
+      TEST: 1,
+      ALL: 2,
+      ITER: 3
+    };
+    return ir2("REGEX", ir2("STRING", node.pattern), ir2("STRING", node.flags), ir2("LITERAL", modeMap[node.mode] || 0));
+  },
+  NULL() {
+    return ir2("NULL");
+  },
+  Hole() {
+    return ir2("HOLE");
+  },
+  SemanticHas(node) {
+    return ir2("SEMANTIC_HAS", lowerNode(node.expression), node.name);
+  },
+  SemanticConvertSoft(node) {
+    return ir2("SEMANTIC_CONVERT_SOFT", lowerNode(node.expression), node.typeName);
+  },
+  SemanticConvertStrict(node) {
+    return ir2("SEMANTIC_CONVERT_STRICT", lowerNode(node.expression), node.typeName);
+  },
+  SelfRef() {
+    return ir2("SELF");
+  },
+  ParentSelfRef() {
+    return ir2("PARENT_SELF");
+  },
+  UserIdentifier(node) {
+    return ir2("RETRIEVE", node.name);
+  },
+  SystemIdentifier(node) {
+    if (node.original && node.original.trim().startsWith("@")) {
+      return ir2("SYSREF", node.name);
+    }
+    return ir2("RETRIEVE", node.name);
+  },
+  OuterIdentifier(node) {
+    return ir2("OUTER_RETRIEVE", node.name);
+  },
+  SystemFunctionRef(node) {
+    return ir2("SYSREF", node.name);
+  },
+  PlaceHolder(node) {
+    return ir2("PLACEHOLDER", node.place);
+  },
+  Statement(node) {
+    return lowerNode(node.expression);
+  },
+  SequenceExpression(node) {
+    return ir2("SEQ", ...node.expressions.map(lowerNode));
+  },
+  Comment() {
+    return ir2("NOP");
+  },
+  BinaryOperation(node) {
+    const op = node.operator;
+    if (op === "=" || op === ":=" || op === "~=" || op === "::=" || op === "~~=") {
+      const leftType = node.left?.type || "";
+      if (leftType.startsWith("Destructure")) {
+        return ir2("DESTRUCTURE_ASSIGN", lowerDestructureTarget(node.left), op, lowerNode(node.right));
+      }
+    }
+    if (op === "=")
+      return lowerAssignment(node, "ASSIGN");
+    if (op === ":=")
+      return lowerAssignment(node, "ASSIGN_COPY");
+    if (op === "~=")
+      return lowerAssignment(node, "ASSIGN_UPDATE");
+    if (op === "::=")
+      return lowerAssignment(node, "ASSIGN_DEEP_COPY");
+    if (op === "~~=")
+      return lowerAssignment(node, "ASSIGN_DEEP_UPDATE");
+    if (op === ".=") {
+      return ir2("META_MERGE", lowerNode(node.left), lowerNode(node.right));
+    }
+    const mathOpStr = COMBO_ASSIGN_OP_MAP[op];
+    if (mathOpStr) {
+      const mathAstNode = {
+        type: "BinaryOperation",
+        operator: mathOpStr,
+        left: node.left,
+        right: node.right,
+        pos: node.pos
+      };
+      const assignAstNode = {
+        type: "BinaryOperation",
+        operator: "~=",
+        left: node.left,
+        right: mathAstNode,
+        pos: node.pos
+      };
+      return lowerAssignment(assignAstNode, "ASSIGN_UPDATE");
+    }
+    if (op === ":=:") {
+      const left = node.left;
+      if (left.type === "UserIdentifier" || left.type === "SystemIdentifier") {
+        return ir2("SOLVE", left.name, lowerNode(node.right));
+      }
+      return ir2("SOLVE", lowerNode(left), lowerNode(node.right));
+    }
+    if (op === ":<:") {
+      return ir2("ASSERT_LT", lowerNode(node.left), lowerNode(node.right));
+    }
+    if (op === ":>:") {
+      return ir2("ASSERT_GT", lowerNode(node.left), lowerNode(node.right));
+    }
+    if (op === ":>=:") {
+      return ir2("ASSERT_GTE", lowerNode(node.left), lowerNode(node.right));
+    }
+    if (op === ":<=:") {
+      return ir2("ASSERT_LTE", lowerNode(node.left), lowerNode(node.right));
+    }
+    if (op === ":") {
+      const args = [];
+      const extractArgs = (n) => {
+        if (n && n.type === "BinaryOperation" && n.operator === ":") {
+          extractArgs(n.left);
+          extractArgs(n.right);
+        } else {
+          const lowered = lowerNode(n);
+          if (lowered && typeof lowered === "object" && lowered.fn === "INTERVAL") {
+            args.push(...lowered.args);
+          } else {
+            args.push(lowered);
+          }
+        }
+      };
+      extractArgs(node.left);
+      extractArgs(node.right);
+      return ir2("INTERVAL", ...args);
+    }
+    if (op === "_>") {
+      return ir2("TOBASE", lowerNode(node.left), lowerNode(node.right));
+    }
+    if (op === "<_") {
+      return ir2("FROMBASE", lowerNode(node.left), lowerNode(node.right));
+    }
+    if (op === "?=") {
+      throw new Error(`'?=' is not a comparison operator — use '==' for equality comparison, or use '?=' only in parameter default position (e.g., (x ?= 2) -> ...)`);
+    }
+    const sysFn = BINARY_OP_MAP[op];
+    if (sysFn) {
+      return ir2(sysFn, lowerNode(node.left), lowerNode(node.right));
+    }
+    if (op.startsWith("|")) {
+      return ir2("PIPE_OP", op, lowerNode(node.left), lowerNode(node.right));
+    }
+    if (op === "->") {
+      const left = node.left;
+      if (left.type === "FunctionCall" && left.function) {
+        const fn = left.function;
+        const funcName = fn.name || fn.value;
+        if (funcName) {
+          const positionalArgs = left.arguments?.positional || [];
+          const paramPosArgs = positionalArgs.map((arg) => ({
+            name: arg.name || arg.value || String(arg),
+            defaultValue: null
+          }));
+          const params = lowerParams({
+            positional: paramPosArgs,
+            keyword: [],
+            conditionals: [],
+            metadata: {}
+          });
+          const body = lowerFunctionBody(node.right);
+          return ir2("FUNCDEF", funcName, params, body);
+        }
+      }
+    }
+    return ir2("BINOP", op, lowerNode(node.left), lowerNode(node.right));
+  },
+  UnaryOperation(node) {
+    if (node.operator === "-") {
+      return ir2("NEG", lowerNode(node.operand));
+    }
+    if (node.operator === "+") {
+      return lowerNode(node.operand);
+    }
+    if (node.operator === "NOT" || node.operator === "!") {
+      return ir2("NOT", lowerNode(node.operand));
+    }
+    return ir2("UNARY", node.operator, lowerNode(node.operand));
+  },
+  ImplicitMultiplication(node) {
+    return ir2("MUL", lowerNode(node.left), lowerNode(node.right));
+  },
+  ImplicitApplication(node) {
+    const callable = node.callable;
+    const arg = lowerNode(node.argument);
+    if (callable.type === "SystemIdentifier" || callable.type === "UserIdentifier") {
+      return ir2("CALL", callable.name, arg);
+    }
+    return ir2("CALL_EXPR", lowerNode(callable), arg);
+  },
+  FunctionCall(node) {
+    const fn = node.function;
+    const args = lowerCallArgs(node.arguments);
+    if (fn.type === "SystemIdentifier" || fn.type === "UserIdentifier") {
+      const name = fn.name;
+      if (args.length === 1) {
+        if (name === "-")
+          return ir2("NEG", args[0]);
+        if (name === "+")
+          return args[0];
+        if (name === "!" || name === "NOT")
+          return ir2("NOT", args[0]);
+      } else if (args.length === 2) {
+        if (name === "+")
+          return ir2("ADD", args[0], args[1]);
+        if (name === "-")
+          return ir2("SUB", args[0], args[1]);
+        if (name === "*")
+          return ir2("MUL", args[0], args[1]);
+        if (name === "/")
+          return ir2("DIV", args[0], args[1]);
+      }
+      if (node.fromBrace) {
+        return ir2(name, ...args);
+      }
+      return ir2("CALL", name, ...args);
+    }
+    return ir2("CALL_EXPR", lowerNode(fn), ...args);
+  },
+  SystemCall(node) {
+    const args = lowerCallArgs(node.arguments);
+    return ir2("SYS_CALL", node.name, ...args);
+  },
+  SystemCapabilityCall(node) {
+    const args = lowerCallArgs(node.arguments);
+    return ir2("SYS_CALL", node.property, ...args);
+  },
+  SystemObject(_node) {
+    return ir2("SYS_OBJ");
+  },
+  SystemAccess(node) {
+    return ir2("SYS_GET", node.property);
+  },
+  Call(node) {
+    const args = lowerCallArgs(node.arguments);
+    return ir2("CALL_EXPR", lowerNode(node.target), ...args);
+  },
+  MethodCall(node) {
+    const args = lowerCallArgs(node.arguments);
+    return ir2("CALL_METHOD", lowerNode(node.object), node.method, ...args);
+  },
+  PreparedTrial(node) {
+    const gates = (node.gates || []).map((gate) => ({
+      pattern: lowerDestructureTarget(gate.pattern),
+      prep: gate.prep?.type === "Array" ? gate.prep.elements.map(lowerNode) : [],
+      strict: gate.strict === true
+    }));
+    return ir2("PREP_TRIAL", lowerNode(node.candidate), ...gates);
+  },
+  FunctionDefinition(node) {
+    const name = node.name.name || node.name.value;
+    const params = lowerParams(node.parameters, node.prep, node.prepStrict, node.variantName);
+    const body = lowerFunctionBody(node.body);
+    return ir2("FUNCDEF", name, params, body);
+  },
+  FunctionLambda(node) {
+    const params = lowerParams(node.parameters, node.prep, node.prepStrict, node.variantName);
+    const body = lowerFunctionBody(node.body);
+    return ir2("LAMBDA", params, body);
+  },
+  FunctionVariantDefinition(node) {
+    const name = node.name.name || node.name.value;
+    const params = lowerParams(node.parameters, node.prep, node.prepStrict, node.variantName);
+    const body = lowerFunctionBody(node.body);
+    return ir2("MULTIFUNCDEF", name, node.mode, params, body);
+  },
+  Grouping(node) {
+    if (node.expression) {
+      return lowerNode(node.expression);
+    }
+    return ir2("NULL");
+  },
+  Tuple(node) {
+    return ir2("TUPLE", ...node.elements.map(lowerNode));
+  },
+  ParameterList(node) {
+    return lowerParams(node.parameters);
+  },
+  Spread(node) {
+    return ir2("SPREAD", lowerNode(node.expression));
+  },
+  CapturedEntry(node) {
+    return {
+      captureMode: node.captureMode,
+      expression: lowerNode(node.expression)
+    };
+  },
+  SemanticHeader(node) {
+    return {
+      captureMode: node.captureMode || null,
+      name: node.name || null,
+      typeName: node.typeName || null,
+      traits: (node.traits || []).map((trait) => ({
+        name: trait.name,
+        checkMode: trait.checkMode || null,
+        order: trait.order ?? null
+      }))
+    };
+  },
+  MapEntry(node) {
+    return {
+      key: lowerNode(node.key),
+      value: lowerNode(node.value),
+      captureMode: node.captureMode || null,
+      keyType: node.key?.type || null
+    };
+  },
+  Array(node) {
+    return ir2("ARRAY", ...node.elements.map(lowerNode));
+  },
+  Matrix(node) {
+    const rows = node.rows.map((row) => ir2("ARRAY", ...row.map(lowerNode)));
+    return ir2("MATRIX", ...rows);
+  },
+  Tensor(node) {
+    return ir2("TENSOR", ...node.elements.map(lowerNode));
+  },
+  TensorLiteral(node) {
+    const meta = node.header ? { header: lowerNode(node.header) } : null;
+    return meta ? ir2("TENSOR_LITERAL", meta, node.shape, ...node.elements.map(lowerNode)) : ir2("TENSOR_LITERAL", node.shape, ...node.elements.map(lowerNode));
+  },
+  ValueOutfit(node) {
+    const header = node.header ? lowerNode(node.header) : null;
+    return header ? ir2("VALUE_OUTFIT", header, lowerNode(node.expression)) : ir2("VALUE_OUTFIT", null, lowerNode(node.expression));
+  },
+  MapContainer(node) {
+    const constructorMeta = node.header ? { header: lowerNode(node.header) } : null;
+    const loweredElements = node.elements.map((el) => {
+      if (el?.type === "MapEntry") {
+        const keyNode = el.key;
+        if (keyNode?.type === "UserIdentifier" || keyNode?.type === "SystemIdentifier") {
+          return ir2("MAP_PAIR", "identifier", keyNode.name, lowerNode(el.value), el.captureMode || null);
+        }
+        if (keyNode?.type === "Grouping") {
+          return ir2("MAP_PAIR", "expression", lowerNode(keyNode.expression), lowerNode(el.value), el.captureMode || null);
+        }
+        throw new Error("Map key expressions must be parenthesized in literals: use {= (expr)=value }");
+      }
+      if (el && el.type === "BinaryOperation" && (el.operator === "=" || el.operator === ":=")) {
+        if (el.left?.type === "UserIdentifier" || el.left?.type === "SystemIdentifier") {
+          return ir2("MAP_PAIR", "identifier", el.left.name, lowerNode(el.right), el.operator === ":=" ? "copy" : null);
+        }
+        if (el.left?.type === "Grouping") {
+          return ir2("MAP_PAIR", "expression", lowerNode(el.left.expression), lowerNode(el.right), el.operator === ":=" ? "copy" : null);
+        }
+        throw new Error("Map key expressions must be parenthesized in literals: use {= (expr)=value }");
+      }
+      return lowerNode(el);
+    });
+    return constructorMeta ? ir2("MAP_OBJ", constructorMeta, ...loweredElements) : ir2("MAP_OBJ", ...loweredElements);
+  },
+  CaseContainer(node) {
+    const lowerCaseElement = (element) => {
+      if (element?.type === "BinaryOperation" && element.operator === "?") {
+        return ir2("DEFER", ir2("CONDITION", lowerNode(element.left), lowerNode(element.right)));
+      }
+      return ir2("DEFER", lowerNode(element));
+    };
+    if (node.name) {
+      return ir2("CASE", { name: node.name }, ...node.elements.map(lowerCaseElement));
+    }
+    return ir2("CASE", ...node.elements.map(lowerCaseElement));
+  },
+  BlockContainer(node) {
+    const hasMeta = node.imports && node.imports.length > 0 || node.name;
+    if (hasMeta) {
+      const meta = {};
+      if (node.imports && node.imports.length > 0)
+        meta.imports = lowerImports(node.imports);
+      if (node.name)
+        meta.name = node.name;
+      return ir2("BLOCK", meta, ...node.elements.map(lowerNode));
+    }
+    return ir2("BLOCK", ...node.elements.map(lowerNode));
+  },
+  SetContainer(node) {
+    const meta = node.header ? { header: lowerNode(node.header) } : null;
+    return meta ? ir2("SET", meta, ...node.elements.map(lowerNode)) : ir2("SET", ...node.elements.map(lowerNode));
+  },
+  TupleContainer(node) {
+    const meta = node.header ? { header: lowerNode(node.header) } : null;
+    return meta ? ir2("TUPLE", meta, ...node.elements.map(lowerNode)) : ir2("TUPLE", ...node.elements.map(lowerNode));
+  },
+  ArrayContainer(node) {
+    const meta = node.header ? { header: lowerNode(node.header) } : null;
+    return meta ? ir2("ARRAY_CAPTURE", meta, ...node.elements.map(lowerNode)) : ir2("ARRAY_CAPTURE", ...node.elements.map(lowerNode));
+  },
+  MultifunctionContainer(node) {
+    return ir2("MULTIFUNCTION", ...node.elements.map(lowerNode));
+  },
+  LoopContainer(node) {
+    const hasMeta = node.imports && node.imports.length > 0 || node.name || node.maxIterations !== undefined || node.unlimited === true;
+    if (hasMeta) {
+      const meta = {};
+      if (node.imports && node.imports.length > 0)
+        meta.imports = lowerImports(node.imports);
+      if (node.name)
+        meta.name = node.name;
+      if (node.maxIterations !== undefined)
+        meta.maxIterations = node.maxIterations;
+      if (node.unlimited === true)
+        meta.unlimited = true;
+      return ir2("LOOP", meta, ...node.elements.map((el) => ir2("DEFER", lowerNode(el))));
+    }
+    return ir2("LOOP", ...node.elements.map((el) => ir2("DEFER", lowerNode(el))));
+  },
+  SystemContainer(node) {
+    const hasMeta = node.imports && node.imports.length > 0 || node.name;
+    if (hasMeta) {
+      const meta = {};
+      if (node.imports && node.imports.length > 0)
+        meta.imports = lowerImports(node.imports);
+      if (node.name)
+        meta.name = node.name;
+      return ir2("SYSTEM", meta, ...node.elements.map(lowerNode));
+    }
+    return ir2("SYSTEM", ...node.elements.map(lowerNode));
+  },
+  SystemSpecLiteral(node) {
+    const meta = {
+      inputs: [...node.inputs || []],
+      outputs: [...node.outputs || []],
+      outputsDeclared: node.outputsDeclared === true,
+      outputMode: node.outputMode || "named",
+      ...node.expression ? { expression: lowerNode(node.expression) } : {},
+      statements: (node.statements || []).map((statement) => ({
+        kind: "assign",
+        target: statement.target,
+        expr: lowerNode(statement.expr)
+      }))
+    };
+    if (node.imports && node.imports.length > 0) {
+      meta.imports = lowerImports(node.imports);
+    }
+    return ir2("SYSTEM_SPEC", meta);
+  },
+  SpecAssign(node) {
+    return {
+      kind: "assign",
+      target: node.target,
+      expr: lowerNode(node.expr)
+    };
+  },
+  BreakBlock(node) {
+    const meta = {};
+    if (node.targetType)
+      meta.targetType = node.targetType;
+    if (node.targetName)
+      meta.targetName = node.targetName;
+    return ir2("BREAK", meta, lowerNode(node.value));
+  },
+  DeferredBlock(node) {
+    return ir2("DEFER", lowerNode(node.body));
+  },
+  DotAccess(node) {
+    return ir2("META_GET", lowerNode(node.object), node.property);
+  },
+  PropertyAccess(node) {
+    const obj = lowerNode(node.object);
+    if (node.property && node.property.type === "KeyLiteral") {
+      return ir2("INDEX_GET", obj, node.property.name);
+    }
+    return ir2("INDEX_GET", obj, lowerNode(node.property));
+  },
+  BracketIndex(node) {
+    return ir2("BRACKET_GET", lowerNode(node.object), node.specs.length, ...node.specs.map(lowerBracketSpec));
+  },
+  ExternalAccess(node) {
+    return ir2("META_ALL", lowerNode(node.object));
+  },
+  KeySet(node) {
+    return ir2("KEYS", lowerNode(node.object));
+  },
+  ValueSet(node) {
+    return ir2("VALUES", lowerNode(node.object));
+  },
+  Mutation(node) {
+    const target = lowerNode(node.target);
+    const ops = node.operations.map((op) => ({
+      action: op.action,
+      key: op.key,
+      value: op.value ? lowerNode(op.value) : null
+    }));
+    const fn = node.mutate ? "MUTINPLACE" : "MUTCOPY";
+    return ir2(fn, target, ops);
+  },
+  Pipe(node) {
+    return ir2("PIPE", lowerNode(node.left), lowerNode(node.right));
+  },
+  ExplicitPipe(node) {
+    return ir2("PIPE_EXPLICIT", lowerNode(node.left), lowerNode(node.right));
+  },
+  SliceStrict(node) {
+    return ir2("PSLICE_STRICT", lowerNode(node.left), lowerNode(node.right));
+  },
+  SliceClamp(node) {
+    return ir2("PSLICE_CLAMP", lowerNode(node.left), lowerNode(node.right));
+  },
+  Split(node) {
+    return ir2("PSPLIT", lowerNode(node.left), lowerNode(node.right));
+  },
+  Chunk(node) {
+    return ir2("PCHUNK", lowerNode(node.left), lowerNode(node.right));
+  },
+  Map(node) {
+    return ir2("PMAP", lowerNode(node.left), lowerNode(node.right));
+  },
+  Filter(node) {
+    return ir2("PFILTER", lowerNode(node.left), lowerNode(node.right));
+  },
+  Every(node) {
+    return ir2("PALL", lowerNode(node.left), lowerNode(node.right));
+  },
+  Some(node) {
+    return ir2("PANY", lowerNode(node.left), lowerNode(node.right));
+  },
+  Reduce(node) {
+    if (node.init) {
+      return ir2("PREDUCE", lowerNode(node.left), lowerNode(node.right), lowerNode(node.init));
+    }
+    return ir2("PREDUCE", lowerNode(node.left), lowerNode(node.right));
+  },
+  Reverse(node) {
+    return ir2("PREVERSE", lowerNode(node.target));
+  },
+  Sort(node) {
+    return ir2("PSORT", lowerNode(node.left), lowerNode(node.right));
+  },
+  TernaryOperation(node) {
+    return ir2("TERNARY", lowerNode(node.condition), ir2("DEFER", lowerNode(node.trueExpression)), ir2("DEFER", lowerNode(node.falseExpression)));
+  },
+  At(node) {
+    return ir2("AT", lowerNode(node.target), lowerNode(node.arg));
+  },
+  Ask(node) {
+    return ir2("ASK", lowerNode(node.target), lowerNode(node.arg));
+  },
+  Transpose(node) {
+    return ir2("TENSOR_TRANSPOSE", lowerNode(node.expression));
+  },
+  Derivative(node) {
+    if (node.operations?.length) {
+      throw new Error("Calculus operation sequences are not yet part of the exact symbolic subset");
+    }
+    if (node.variables?.length > 1) {
+      throw new Error("Exact symbolic calculus currently accepts one variable per quote operation");
+    }
+    const variable = node.variables?.length ? ir2("STRING", node.variables[0].name) : ir2("NULL");
+    let result = ir2("DERIVATIVE", lowerNode(node.function), node.order, variable);
+    if (node.evaluation?.length)
+      result = ir2("CALL_EXPR", result, ...node.evaluation.map(lowerNode));
+    return result;
+  },
+  Integral(node) {
+    if (node.operations?.length) {
+      throw new Error("Calculus operation sequences are not yet part of the exact symbolic subset");
+    }
+    if (node.variables?.length > 1) {
+      throw new Error("Exact symbolic calculus currently accepts one variable per quote operation");
+    }
+    const variable = node.variables?.length ? ir2("STRING", node.variables[0].name) : ir2("NULL");
+    let result = ir2("INTEGRAL", lowerNode(node.function), node.order, variable);
+    if (node.evaluation?.length)
+      result = ir2("CALL_EXPR", result, ...node.evaluation.map(lowerNode));
+    return result;
+  },
+  IntervalStepping(node) {
+    return ir2("STEP", lowerNode(node.interval), lowerNode(node.step));
+  },
+  IntervalDivision(node) {
+    return ir2("DIVIDE", lowerNode(node.interval), lowerNode(node.count));
+  },
+  IntervalPartition(node) {
+    return ir2("PARTITION", lowerNode(node.interval), lowerNode(node.count));
+  },
+  IntervalMediants(node) {
+    return ir2("MEDIANTS", lowerNode(node.interval), lowerNode(node.levels));
+  },
+  IntervalMediantPartition(node) {
+    return ir2("MEDIANT_PARTITION", lowerNode(node.interval), lowerNode(node.levels));
+  },
+  IntervalRandom(node) {
+    return ir2("RANDOM", lowerNode(node.interval), lowerNode(node.parameters));
+  },
+  IntervalRandomPartition(node) {
+    return ir2("RANDOM_PARTITION", lowerNode(node.interval), lowerNode(node.count));
+  },
+  InfiniteSequence(node) {
+    return ir2("INFSEQ", lowerNode(node.start), node.step ? lowerNode(node.step) : null);
+  },
+  ScientificUnit(node) {
+    return ir2("UNIT", lowerNode(node.target), node.unit);
+  },
+  MathematicalUnit(node) {
+    return ir2("MATHUNIT", lowerNode(node.target), node.unit);
+  },
+  GeneratorChain(node) {
+    const start = node.start ? lowerNode(node.start) : null;
+    const ops = node.operators.map(lowerNode);
+    return ir2("GENERATOR", start, ...ops);
+  },
+  GeneratorAdd(node) {
+    return ir2("GEN_ADD", lowerNode(node.operand));
+  },
+  GeneratorMultiply(node) {
+    return ir2("GEN_MUL", lowerNode(node.operand));
+  },
+  GeneratorFunction(node) {
+    return ir2("GEN_FUNC", lowerNode(node.operand));
+  },
+  GeneratorFilter(node) {
+    return ir2("GEN_FILTER", lowerNode(node.operand));
+  },
+  GeneratorLimit(node) {
+    return ir2("GEN_LIMIT", lowerNode(node.operand));
+  },
+  GeneratorEagerLimit(node) {
+    return ir2("GEN_EAGER_LIMIT", lowerNode(node.operand));
+  },
+  GeneratorPipe(node) {
+    return ir2("GEN_PIPE", lowerNode(node.operand));
+  },
+  WithMetadata(node) {
+    const expr = lowerNode(node.expression);
+    const meta = {};
+    for (const [key, value] of Object.entries(node.metadata)) {
+      meta[key] = lowerNode(value);
+    }
+    return ir2("WITH_META", expr, meta);
+  },
+  EmbeddedLanguage(node) {
+    return ir2("EMBEDDED", node.language, node.code);
+  }
+};
+function lowerImports(imports) {
+  return imports.map((spec) => ({
+    local: spec.local,
+    source: spec.source,
+    mode: spec.mode
+  }));
+}
+function lowerBindingSpecs(specs) {
+  return specs.map((spec) => ({
+    target: spec.target,
+    source: spec.source,
+    mode: spec.mode,
+    ...spec.sourceScope ? { sourceScope: spec.sourceScope } : {}
+  }));
+}
+function lowerCapabilityModifiers(modifiers) {
+  return modifiers.map((modifier) => ({
+    action: modifier.action,
+    targetType: modifier.targetType,
+    target: modifier.target
+  }));
+}
+function lowerAssignment(node, irFn) {
+  const left = node.left;
+  if (left.type === "Number" && typeof left.value === "string") {
+    const m = left.value.match(/^0([A-Z])$/);
+    if (m) {
+      return ir2("DEFINEBASE", m[1], lowerNode(node.right));
+    }
+  }
+  if (left.type === "OuterIdentifier") {
+    const outerFn = irFn === "ASSIGN" ? "OUTER_ASSIGN" : irFn === "ASSIGN_COPY" || irFn === "ASSIGN_DEEP_COPY" ? "OUTER_ASSIGN" : "OUTER_UPDATE";
+    const depth = irFn === "ASSIGN_DEEP_COPY" || irFn === "ASSIGN_DEEP_UPDATE" ? "deep" : "shallow";
+    if (outerFn === "OUTER_UPDATE") {
+      return ir2("OUTER_UPDATE", left.name, lowerNode(node.right), depth);
+    }
+    return ir2("OUTER_ASSIGN", left.name, lowerNode(node.right));
+  }
+  if (left.type === "UserIdentifier" || left.type === "SystemIdentifier") {
+    return ir2(irFn, left.name, lowerNode(node.right));
+  }
+  if (left.type === "SelfRef") {
+    throw new Error("Cannot assign to '$'; it is read-only and only valid within a function body");
+  }
+  if (left.type === "SystemAccess") {
+    return ir2("SYS_SET", left.property, lowerNode(node.right));
+  }
+  if (left.type === "DotAccess") {
+    return ir2("META_SET", lowerNode(left.object), left.property, lowerNode(node.right));
+  }
+  if (left.type === "ExternalAccess") {
+    throw new Error("a..prop assignment is no longer supported; use a.prop = val for meta access");
+  }
+  if (left.type === "PropertyAccess") {
+    const obj = lowerNode(left.object);
+    if (left.property && left.property.type === "KeyLiteral") {
+      return ir2("INDEX_SET", obj, left.property.name, lowerNode(node.right));
+    }
+    return ir2("INDEX_SET", obj, lowerNode(left.property), lowerNode(node.right));
+  }
+  if (left.type === "BracketIndex") {
+    return ir2("BRACKET_SET", lowerNode(left.object), left.specs.length, ...left.specs.map(lowerBracketSpec), lowerNode(node.right));
+  }
+  if (irFn === "ASSIGN_UPDATE" || irFn === "ASSIGN_DEEP_UPDATE") {
+    throw new Error("Invalid update target");
+  }
+  return ir2("ASSIGN_EXPR", lowerNode(left), lowerNode(node.right));
+}
+function lowerDestructureTarget(node) {
+  if (!node || !node.type) {
+    throw new Error("Invalid destructure target");
+  }
+  switch (node.type) {
+    case "DestructureVariableTarget":
+      return { type: node.type, name: node.name };
+    case "DestructureBindingModeTarget":
+      return { type: node.type, bindingMode: node.bindingMode, target: lowerDestructureTarget(node.target) };
+    case "DestructureSemanticTarget":
+      return { type: node.type, header: node.header ? lowerNode(node.header) : null, target: lowerDestructureTarget(node.target) };
+    case "DestructureRestTarget":
+      return { type: node.type, target: lowerDestructureTarget(node.target) };
+    case "DestructureIndexedTarget":
+      return {
+        type: node.type,
+        wholeTarget: node.wholeTarget ? lowerDestructureTarget(node.wholeTarget) : null,
+        specs: (node.specs || []).map((spec) => {
+          if (spec?.type === "FullSlice") {
+            return { kind: "full" };
+          }
+          if (spec?.type === "SliceSpec") {
+            return {
+              kind: "slice",
+              start: lowerNode(spec.start),
+              end: lowerNode(spec.end)
+            };
+          }
+          return {
+            kind: "index",
+            value: lowerNode(spec)
+          };
+        }),
+        nestedTarget: node.nestedTarget ? lowerDestructureTarget(node.nestedTarget) : null
+      };
+    case "DestructureArrayPattern":
+    case "DestructureTuplePattern":
+      return {
+        type: node.type,
+        entries: (node.entries || []).map(lowerDestructureTarget),
+        rest: node.rest ? lowerDestructureTarget(node.rest) : null
+      };
+    case "DestructureMapPattern":
+      return {
+        type: node.type,
+        entries: (node.entries || []).map(lowerDestructureTarget),
+        rest: node.rest ? lowerDestructureTarget(node.rest) : null
+      };
+    case "DestructureMapEntry": {
+      let loweredKey;
+      if (node.sourceKey?.type === "UserIdentifier" || node.sourceKey?.type === "SystemIdentifier") {
+        loweredKey = { type: "MapKeyIdentifier", value: node.sourceKey.name };
+      } else {
+        loweredKey = lowerNode(node.sourceKey);
+      }
+      return {
+        type: node.type,
+        sourceKey: loweredKey,
+        wholeTarget: node.wholeTarget ? lowerDestructureTarget(node.wholeTarget) : null,
+        nestedTarget: node.nestedTarget ? lowerDestructureTarget(node.nestedTarget) : null
+      };
+    }
+    case "DestructureTensorPattern":
+      return {
+        type: node.type,
+        shape: [...node.shape || []],
+        rows: (node.rows || []).map((row) => row.map(lowerDestructureTarget))
+      };
+    default:
+      throw new Error(`Unknown destructure target node type: ${node.type}`);
+  }
+}
+function lowerCallArgs(args) {
+  if (!args)
+    return [];
+  const result = [];
+  if (args.positional) {
+    for (const arg of args.positional) {
+      result.push(lowerNode(arg));
+    }
+  }
+  if (args.keyword) {
+    for (const [key, value] of Object.entries(args.keyword)) {
+      result.push(ir2("KWARG", key, lowerNode(value)));
+    }
+  }
+  return result;
+}
+function lowerParams(params, prep = null, prepStrict = false, variantName = null) {
+  if (!params)
+    return { positional: [], keyword: [], conditionals: [] };
+  return {
+    positional: (params.positional || []).map((p) => {
+      const res = {
+        name: p.name,
+        holeDefault: p.holeDefault ? lowerNode(p.holeDefault) : null
+      };
+      if (p.isRest) {
+        res.isRest = true;
+      }
+      return res;
+    }),
+    keyword: (params.keyword || []).map((p) => ({
+      name: p.name
+    })),
+    conditionals: (params.conditionals || []).map(lowerNode),
+    prep: prep && prep.type === "Array" ? prep.elements.map(lowerNode) : [],
+    prepStrict: prepStrict === true,
+    metadata: {
+      ...params.metadata || {},
+      ...variantName ? { variantName } : {}
+    }
+  };
+}
+function lowerBracketSpec(spec) {
+  if (spec.type === "FullSlice") {
+    return ir2("FULL_SLICE");
+  }
+  if (spec.type === "SliceSpec") {
+    return ir2("SLICE_SPEC", lowerNode(spec.start), lowerNode(spec.end));
+  }
+  return lowerNode(spec);
+}
 // ../rix/src/eval/registry.js
 class Registry {
   constructor() {
@@ -24005,6 +24116,13 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
         value: formatValue(state.context.get(name), { context: state.context, evaluate: null })
       }));
     },
+    complete(source, cursor = String(source).length) {
+      return complete(source, cursor, {
+        context: state.context,
+        systemContext: state.systemContext,
+        formatValue: (value) => formatValue(value, { context: state.context, evaluate: null })
+      });
+    },
     reset() {
       state.context.clear();
       initialNames = new Set(state.context.getAllNames());
@@ -24131,5 +24249,5 @@ var objectHelp = {
 
 export { findHelp, createRixRepl, rootTutorials, childrenOf, objectHelp };
 
-//# debugId=3F205D85178BC01164756E2164756E21
-//# sourceMappingURL=chunk-t40s4j4s.js.map
+//# debugId=AE53C3A67397E7A064756E2164756E21
+//# sourceMappingURL=chunk-cmrwvgvg.js.map

@@ -3,12 +3,14 @@ import {
   createRixRepl,
   findHelp,
   rootTutorials
-} from "./chunk-t40s4j4s.js";
+} from "./chunk-cmrwvgvg.js";
 
 // src/main.js
 var repl = createRixRepl();
 var outputHistory = document.querySelector("#output-history");
 var input = document.querySelector("#calculator-input");
+var completionGhost = document.querySelector("#completion-ghost");
+var completionHint = document.querySelector("#completion-hint");
 var calculator = document.querySelector(".calculator");
 var scriptToggle = document.querySelector("#script-toggle");
 var lineSeparatorToggle = document.querySelector("#line-separator-toggle");
@@ -27,6 +29,7 @@ var history = [];
 var historyIndex = -1;
 var transcript = [];
 var autoSeparateLines = true;
+var completionState = null;
 function escapeHtml(value) {
   return String(value).replace(/[&<>'"]/g, (character) => ({
     "&": "&amp;",
@@ -42,10 +45,60 @@ function scrollTranscript() {
   });
 }
 function setInput(value) {
+  clearCompletion();
   input.value = value;
   input.style.height = "auto";
   input.style.height = `${Math.min(input.scrollHeight, 160)}px`;
   input.focus();
+}
+function clearCompletion() {
+  completionState = null;
+  completionGhost.replaceChildren();
+  completionHint.hidden = true;
+  completionHint.replaceChildren();
+}
+function renderCompletion() {
+  if (!completionState)
+    return;
+  const candidate = completionState.result.candidates[completionState.index];
+  const { from, to } = completionState.result;
+  const typed = input.value.slice(from, to);
+  const startsWithTyped = candidate.insertText.toLowerCase().startsWith(typed.toLowerCase());
+  const suffix = startsWithTyped ? candidate.insertText.slice(typed.length) : "";
+  completionGhost.replaceChildren(document.createTextNode(input.value.slice(0, to)), Object.assign(document.createElement("span"), { className: "suffix", textContent: suffix }));
+  completionGhost.scrollTop = input.scrollTop;
+  completionHint.hidden = false;
+  completionHint.innerHTML = `<b>${escapeHtml(candidate.insertText)}</b> · ${escapeHtml(candidate.detail)}${candidate.preview ? ` — ${escapeHtml(candidate.preview)}` : ""}`;
+}
+function beginCompletion() {
+  if (input.selectionStart !== input.selectionEnd)
+    return clearCompletion();
+  const result = repl.complete(input.value, input.selectionStart);
+  if (!result.candidates.length)
+    return clearCompletion();
+  completionState = { result, index: 0 };
+  renderCompletion();
+}
+function moveCompletion(direction) {
+  if (!completionState)
+    return false;
+  const { candidates } = completionState.result;
+  completionState.index = (completionState.index + direction + candidates.length) % candidates.length;
+  renderCompletion();
+  return true;
+}
+function acceptCompletion() {
+  if (!completionState)
+    return false;
+  const { from, to, candidates } = completionState.result;
+  const candidate = candidates[completionState.index];
+  const value = `${input.value.slice(0, from)}${candidate.insertText}${input.value.slice(to)}`;
+  const cursor = from + candidate.insertText.length;
+  clearCompletion();
+  input.value = value;
+  input.selectionStart = input.selectionEnd = cursor;
+  setInput(value);
+  return true;
 }
 function appendOutput(source, response) {
   const entry = document.createElement("article");
@@ -252,7 +305,33 @@ ${entry.text}`).join(`
   }
 });
 input.addEventListener("input", () => setInput(input.value));
+input.addEventListener("scroll", () => {
+  if (completionState)
+    renderCompletion();
+});
 input.addEventListener("keydown", (event) => {
+  if (event.key === "Tab") {
+    event.preventDefault();
+    beginCompletion();
+    return;
+  }
+  if (event.key === "ArrowUp" && moveCompletion(-1)) {
+    event.preventDefault();
+    return;
+  }
+  if (event.key === "ArrowDown" && moveCompletion(1)) {
+    event.preventDefault();
+    return;
+  }
+  if (event.key === "ArrowRight" && acceptCompletion()) {
+    event.preventDefault();
+    return;
+  }
+  if ((event.key === "ArrowLeft" || event.key === "Escape") && completionState) {
+    event.preventDefault();
+    clearCompletion();
+    return;
+  }
   if (event.shiftKey && event.key === "ArrowUp") {
     event.preventDefault();
     setScriptMode(true);
@@ -304,5 +383,5 @@ displayWelcome();
 setAutoSeparateLines(autoSeparateLines);
 input.focus();
 
-//# debugId=6FD31F7BC81EC72B64756E2164756E21
+//# debugId=365DB0C642A5870264756E2164756E21
 //# sourceMappingURL=main.js.map

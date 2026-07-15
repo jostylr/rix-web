@@ -2,6 +2,7 @@ import {
     Context,
     createDefaultRegistry,
     createDefaultSystemContext,
+    complete,
     formatValue,
     parseAndEvaluate,
 } from "../../rix/src/index.js";
@@ -97,6 +98,13 @@ export function createRixRepl({ autoSeparateLines = true } = {}) {
                 name,
                 value: formatValue(state.context.get(name), { context: state.context, evaluate: null }),
             }));
+        },
+        complete(source, cursor = String(source).length) {
+            return complete(source, cursor, {
+                context: state.context,
+                systemContext: state.systemContext,
+                formatValue: (value) => formatValue(value, { context: state.context, evaluate: null }),
+            });
         },
         reset() {
             state.context.clear();

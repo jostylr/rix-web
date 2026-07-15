@@ -24,9 +24,13 @@
         <div id="input-section" class="input-section">
           <span class="prompt">&gt;</span>
           <label class="sr-only" for="calculator-input">RatCalc command entry</label>
-          <textarea id="calculator-input" class="calculator-input" rows="1" spellcheck="false" placeholder="Enter a RiX expression — .help for help"></textarea>
+          <div class="input-editor">
+            <div id="completion-ghost" class="completion-ghost" aria-hidden="true"></div>
+            <textarea id="calculator-input" class="calculator-input" rows="1" spellcheck="false" placeholder="Enter a RiX expression — .help for help"></textarea>
+          </div>
           <button class="run-button" type="button" data-action="run">Run</button>
         </div>
+        <p id="completion-hint" class="completion-hint" role="status" hidden></p>
         <p id="script-note" class="script-note" hidden>Script mode: Enter adds a line; ↑ and ↓ move through the text; Ctrl/⌘ + Enter runs the script; Shift+↓ returns to command mode.</p>
       </section>
 

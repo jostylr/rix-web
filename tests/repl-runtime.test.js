@@ -100,6 +100,15 @@ test("a fresh RatCalc session does not expose host symbolic bindings as variable
     expect(repl.variables().map(({ name }) => name)).toEqual(["radius"]);
 });
 
+test("the web REPL exposes contextual completion without evaluating the draft", () => {
+    const repl = createRixRepl();
+    repl.run("values := [1, 2, 3]");
+    const result = repl.complete("values.");
+
+    expect(result.candidates.some((candidate) => candidate.kind === "method")).toBe(true);
+    expect(result.candidates.map((candidate) => candidate.insertText)).toContain("_proto");
+});
+
 test("every indexed tutorial has a Markdown source file", async () => {
     for (const tutorial of tutorials) {
         const source = Bun.file(new URL(`../tutorials/${tutorial.file.replace(/\.html$/, ".md")}`, import.meta.url));

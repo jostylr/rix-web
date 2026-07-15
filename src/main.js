@@ -4,6 +4,8 @@ import { childrenOf, rootTutorials } from "./tutorial-index.js";
 const repl = createRixRepl();
 const outputHistory = document.querySelector("#output-history");
 const input = document.querySelector("#calculator-input");
+const completionGhost = document.querySelector("#completion-ghost");
+const completionHint = document.querySelector("#completion-hint");
 const calculator = document.querySelector(".calculator");
 const scriptToggle = document.querySelector("#script-toggle");
 const lineSeparatorToggle = document.querySelector("#line-separator-toggle");
@@ -23,6 +25,7 @@ let history = [];
 let historyIndex = -1;
 let transcript = [];
 let autoSeparateLines = true;
+let completionState = null;
 
 function escapeHtml(value) {
     return String(value).replace(/[&<>'"]/g, (character) => ({
@@ -35,10 +38,60 @@ function scrollTranscript() {
 }
 
 function setInput(value) {
+    clearCompletion();
     input.value = value;
     input.style.height = "auto";
     input.style.height = `${Math.min(input.scrollHeight, 160)}px`;
     input.focus();
+}
+
+function clearCompletion() {
+    completionState = null;
+    completionGhost.replaceChildren();
+    completionHint.hidden = true;
+    completionHint.replaceChildren();
+}
+
+function renderCompletion() {
+    if (!completionState) return;
+    const candidate = completionState.result.candidates[completionState.index];
+    const { from, to } = completionState.result;
+    const typed = input.value.slice(from, to);
+    const startsWithTyped = candidate.insertText.toLowerCase().startsWith(typed.toLowerCase());
+    const suffix = startsWithTyped ? candidate.insertText.slice(typed.length) : "";
+    completionGhost.replaceChildren(document.createTextNode(input.value.slice(0, to)), Object.assign(document.createElement("span"), { className: "suffix", textContent: suffix }));
+    completionGhost.scrollTop = input.scrollTop;
+    completionHint.hidden = false;
+    completionHint.innerHTML = `<b>${escapeHtml(candidate.insertText)}</b> · ${escapeHtml(candidate.detail)}${candidate.preview ? ` — ${escapeHtml(candidate.preview)}` : ""}`;
+}
+
+function beginCompletion() {
+    if (input.selectionStart !== input.selectionEnd) return clearCompletion();
+    const result = repl.complete(input.value, input.selectionStart);
+    if (!result.candidates.length) return clearCompletion();
+    completionState = { result, index: 0 };
+    renderCompletion();
+}
+
+function moveCompletion(direction) {
+    if (!completionState) return false;
+    const { candidates } = completionState.result;
+    completionState.index = (completionState.index + direction + candidates.length) % candidates.length;
+    renderCompletion();
+    return true;
+}
+
+function acceptCompletion() {
+    if (!completionState) return false;
+    const { from, to, candidates } = completionState.result;
+    const candidate = candidates[completionState.index];
+    const value = `${input.value.slice(0, from)}${candidate.insertText}${input.value.slice(to)}`;
+    const cursor = from + candidate.insertText.length;
+    clearCompletion();
+    input.value = value;
+    input.selectionStart = input.selectionEnd = cursor;
+    setInput(value);
+    return true;
 }
 
 function appendOutput(source, response) {
@@ -225,7 +278,13 @@ document.addEventListener("click", (event) => {
 });
 
 input.addEventListener("input", () => setInput(input.value));
+input.addEventListener("scroll", () => { if (completionState) renderCompletion(); });
 input.addEventListener("keydown", (event) => {
+    if (event.key === "Tab") { event.preventDefault(); beginCompletion(); return; }
+    if (event.key === "ArrowUp" && moveCompletion(-1)) { event.preventDefault(); return; }
+    if (event.key === "ArrowDown" && moveCompletion(1)) { event.preventDefault(); return; }
+    if (event.key === "ArrowRight" && acceptCompletion()) { event.preventDefault(); return; }
+    if ((event.key === "ArrowLeft" || event.key === "Escape") && completionState) { event.preventDefault(); clearCompletion(); return; }
     // Keep ordinary arrows available for moving through a multiline textarea.
     // Shift+ArrowUp/Down are deliberate mode changes rather than history navigation.
     if (event.shiftKey && event.key === "ArrowUp") {
