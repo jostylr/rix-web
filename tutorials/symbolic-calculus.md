@@ -121,19 +121,32 @@ P := {#x# (x - 1) * (x + 2) }
 The optional exact center writes the complete polynomial in powers of
 `(x - center)`; it does not truncate or numerically approximate.
 
-`:factor` records ordered polynomial divisions by roots or polynomial factors
+`:decompose` records ordered polynomial divisions by roots or polynomial factors
 that you provide. A number `a` denotes `(x - a)`.
 
 ```rix
 P := {#x# x^4 }
 Q := {#x# x^2 + 1 }
-{: .Transform(P, :factor, 4, Q),
-   .Transform(P, {: :identities, [:factor, 4, Q] }) }
+{: .Transform(P, :decompose, 4, Q),
+   .Transform(P, {: :identities, [:decompose, 4, Q] }) }
 ```
 
 In a transformation tuple, a bare direction takes no arguments and an array
-holds one parameterized operation. Operations run left to right. The complete
-list of rewrites and non-rewrites is in the [symbolic transformation
+holds one parameterized operation. Operations run left to right.
+
+`:gadic` repeatedly divides by one polynomial and returns the flattened sum in
+powers of that polynomial. `:distribute` expands only a selected factor, unlike
+the global `:expand` direction.
+
+```rix
+P := {#x# x^4 }
+Q := {#x# x^2 + 1 }
+G := .Transform(P, :gadic, Q)
+H := .Transform(P, :decompose, 5, 5, 5, 5)
+{: G, .Transform(H, :distribute, 5), .Transform(H, :center, 5) }
+```
+
+The complete list of rewrites and non-rewrites is in the [symbolic transformation
 reference](https://jostylr.github.io/rix/design/eval/transformation-reference.html).
 
 ## Speccability

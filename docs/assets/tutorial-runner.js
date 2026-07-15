@@ -1,7 +1,7 @@
 import {
   createRixRepl,
   objectHelp
-} from "./chunk-wayywycz.js";
+} from "./chunk-t40s4j4s.js";
 
 // src/tutorial-runner.js
 var repl = createRixRepl();
