@@ -793,6 +793,21 @@ function tryMatchSystemSpecHeader(input, position) {
       pos: [position, position, position + 2]
     };
   }
+  const identityMatch = input.slice(start).match(/^([\p{L}_][\p{L}\p{N}_]*)\}/u);
+  if (identityMatch) {
+    const name = normalizeIdentifierValue(identityMatch[1]);
+    return {
+      type: "Symbol",
+      original: input.slice(position, start + identityMatch[1].length),
+      value: "{#",
+      specHeaderPresent: true,
+      specIdentity: true,
+      specInputs: [name],
+      specOutputs: [],
+      specOutputsDeclared: false,
+      pos: [position, position, start + identityMatch[1].length]
+    };
+  }
   const closing = input.indexOf("#", start);
   if (closing === -1) {
     const { line, col } = posToLineCol(input, position);
@@ -3423,8 +3438,31 @@ class Parser {
     };
     this.validateSystemSpecHeader(header);
     this.advance();
+    if (startToken.specIdentity === true) {
+      if (this.current.value !== "}") {
+        this.error("Expected closing } for symbolic identity");
+      }
+      this.advance();
+      const name = header.inputs[0];
+      return this.createNode("SystemSpecLiteral", {
+        sigil: "{#",
+        inputs: [name],
+        outputs: [],
+        outputsDeclared: false,
+        outputMode: "identity",
+        expression: this.createNode("UserIdentifier", {
+          name,
+          pos: startToken.pos,
+          original: name
+        }),
+        statements: [],
+        pos: startToken.pos,
+        original: startToken.original + "}"
+      });
+    }
     const imports = this.startsImportHeader() ? this.parseImportHeader() : [];
     const statements = [];
+    let expressionBody = null;
     if (this.current.value !== "}") {
       do {
         if (this.current.value === ";") {
@@ -3432,7 +3470,17 @@ class Parser {
           continue;
         }
         const expression = this.parseExpression(0);
-        statements.push(this.parseSystemSpecStatement(expression));
+        if (expression?.type === "BinaryOperation" && expression.operator === "=") {
+          if (expressionBody) {
+            this.error("A symbolic expression body cannot be mixed with assignments");
+          }
+          statements.push(this.parseSystemSpecStatement(expression));
+        } else {
+          if (statements.length > 0 || expressionBody) {
+            this.error("A symbolic expression spec must contain exactly one expression");
+          }
+          expressionBody = expression;
+        }
         if (this.current.value === ";") {
           this.advance();
           if (this.current.value === "}")
@@ -3454,13 +3502,18 @@ class Parser {
       this.error("Expected closing } for system spec literal");
     }
     this.advance();
-    const finalized = this.finalizeSystemSpecStatements(header, statements);
+    if (expressionBody && header.outputsDeclared) {
+      this.error("An anonymous symbolic expression cannot declare named outputs");
+    }
+    const finalized = expressionBody ? { outputs: [], statements: [] } : this.finalizeSystemSpecStatements(header, statements);
     return this.createNode("SystemSpecLiteral", {
       sigil: "{#",
       ...imports.length > 0 ? { imports } : {},
       inputs: header.inputs,
       outputs: finalized.outputs,
       outputsDeclared: header.outputsDeclared,
+      outputMode: expressionBody ? "expression" : "named",
+      ...expressionBody ? { expression: expressionBody } : {},
       statements: finalized.statements,
       pos: startToken.pos,
       original: startToken.original
@@ -5926,6 +5979,8 @@ var LOWERERS = {
       inputs: [...node.inputs || []],
       outputs: [...node.outputs || []],
       outputsDeclared: node.outputsDeclared === true,
+      outputMode: node.outputMode || "named",
+      ...node.expression ? { expression: lowerNode(node.expression) } : {},
       statements: (node.statements || []).map((statement) => ({
         kind: "assign",
         target: statement.target,
@@ -6042,10 +6097,30 @@ var LOWERERS = {
     return ir("TENSOR_TRANSPOSE", lowerNode(node.expression));
   },
   Derivative(node) {
-    return ir("DERIVATIVE", lowerNode(node.function), node.order);
+    if (node.operations?.length) {
+      throw new Error("Calculus operation sequences are not yet part of the exact symbolic subset");
+    }
+    if (node.variables?.length > 1) {
+      throw new Error("Exact symbolic calculus currently accepts one variable per quote operation");
+    }
+    const variable = node.variables?.length ? ir("STRING", node.variables[0].name) : ir("NULL");
+    let result = ir("DERIVATIVE", lowerNode(node.function), node.order, variable);
+    if (node.evaluation?.length)
+      result = ir("CALL_EXPR", result, ...node.evaluation.map(lowerNode));
+    return result;
   },
   Integral(node) {
-    return ir("INTEGRAL", lowerNode(node.expression));
+    if (node.operations?.length) {
+      throw new Error("Calculus operation sequences are not yet part of the exact symbolic subset");
+    }
+    if (node.variables?.length > 1) {
+      throw new Error("Exact symbolic calculus currently accepts one variable per quote operation");
+    }
+    const variable = node.variables?.length ? ir("STRING", node.variables[0].name) : ir("NULL");
+    let result = ir("INTEGRAL", lowerNode(node.function), node.order, variable);
+    if (node.evaluation?.length)
+      result = ir("CALL_EXPR", result, ...node.evaluation.map(lowerNode));
+    return result;
   },
   IntervalStepping(node) {
     return ir("STEP", lowerNode(node.interval), lowerNode(node.step));
@@ -10749,6 +10824,757 @@ function filterLazySequence(source, predicate, options = {}) {
   return filtered;
 }
 
+// ../rix/src/runtime/runtime-config.js
+var runtimeDefaults = Object.freeze({
+  defaultLoopMax: 1e4,
+  defaultConstructorCaptureMode: "deep_copy",
+  symbolicAutoSpec: "safe",
+  warnings: Object.freeze({
+    conversion: false,
+    multifunctionConversion: false,
+    multifunctionNoPrep: false,
+    implicitUnitConversion: false
+  }),
+  scriptPermissionNames: Object.freeze(["IMPORTS", "NET", "FILES"]),
+  defaultScriptCapabilityPolicy: Object.freeze({
+    includeAllFunctions: true,
+    permissions: Object.freeze(["IMPORTS"])
+  }),
+  capabilityGroups: Object.freeze({
+    Core: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "IF", "LOOP", "MULTI", "RAND_NAME", "PRINT", "TGEN", "KEYOF", "KEYS", "VALUES"]),
+    Arith: Object.freeze(["ADD", "SUB", "MUL", "DIV", "INTDIV", "MOD", "POW"]),
+    Logic: Object.freeze(["EQ", "NEQ", "LT", "GT", "LTE", "GTE", "AND", "OR", "NOT"]),
+    Collections: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "MAP", "FILTER", "REDUCE", "TGEN"]),
+    Maps: Object.freeze(["MAP", "KEYOF", "KEYS", "VALUES"]),
+    Arrays: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "MAP", "FILTER", "REDUCE", "TGEN"]),
+    Strings: Object.freeze(["UPPER", "SUBSTR", "PRINT"]),
+    Imports: Object.freeze(["IMPORTS"]),
+    Net: Object.freeze(["NET"]),
+    Files: Object.freeze(["FILES"]),
+    Units: Object.freeze(["UNITS", "Units", "CONVERTUNIT", "ConvertUnit", "DEFINEUNIT", "DefineUnit"]),
+    Exact: Object.freeze(["EXACT", "Exact", "COMPLEX", "Complex", "DEFINEEXACTGENERATOR", "DefineExactGenerator"]),
+    Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC"]),
+    Random: Object.freeze(["RANDOMSEED", "RandomSeed", "RAND_NAME"])
+  })
+});
+
+// ../rix/src/eval/functions/symbolic.js
+var BINARY_TEXT = new Map([
+  ["ADD", "+"],
+  ["SUB", "-"],
+  ["MUL", "*"],
+  ["DIV", "/"],
+  ["POW", "^"],
+  ["INTDIV", "//"],
+  ["MOD", "%"]
+]);
+var TEXT_BINARY = new Map(Array.from(BINARY_TEXT, ([name, text]) => [text, name]));
+var ir2 = (fn, ...args) => ({ fn, args });
+var literal = (value) => ir2("LITERAL", String(value));
+var retrieve = (name) => ir2("RETRIEVE", name);
+var cloneIr = (node) => {
+  if (Array.isArray(node))
+    return node.map(cloneIr);
+  if (!node || typeof node !== "object")
+    return node;
+  return Object.fromEntries(Object.entries(node).map(([key, value]) => [key, cloneIr(value)]));
+};
+function rixString(value) {
+  return { type: "string", value: String(value) };
+}
+function rixTuple(values) {
+  return { type: "tuple", values };
+}
+function rixMap(entries) {
+  return { type: "map", entries: new Map(entries) };
+}
+function isSymbolicSpec(value) {
+  return value?.type === "symbolic_spec";
+}
+function getAttachedSpec(value) {
+  if (isSymbolicSpec(value))
+    return value;
+  return value?._spec || value?._ext?.get?.("_spec") || null;
+}
+function attachSpec(value, spec, kind = null) {
+  value._spec = spec;
+  if (!(value._ext instanceof Map))
+    value._ext = new Map;
+  value._ext.set("_spec", spec);
+  if (kind)
+    value._ext.set("_symbolicKind", rixString(kind));
+  return value;
+}
+function expressionOf(spec) {
+  if (!isSymbolicSpec(spec))
+    throw new Error("Expected a symbolic specification");
+  if (spec.expression)
+    return spec.expression;
+  if (spec.outputs.length !== 1 || spec.statements.length !== 1) {
+    throw new Error("Symbolic operations currently require a single explicitly solved output");
+  }
+  return spec.statements[0].expr;
+}
+function outputModeOf(spec) {
+  return spec.outputMode || (spec.expression ? "expression" : "named");
+}
+function createSpec(meta, context = null) {
+  const outputMode = meta.outputMode || (meta.expression ? "expression" : "named");
+  const inputs = [...meta.inputs || []];
+  let outputs = [...meta.outputs || []];
+  let expression = meta.expression ? cloneIr(meta.expression) : null;
+  let statements = (meta.statements || []).map((statement) => ({
+    kind: "assign",
+    target: statement.target,
+    expr: cloneIr(statement.expr)
+  }));
+  if (outputMode === "identity") {
+    expression = expression || retrieve(inputs[0]);
+    outputs = [];
+    statements = [];
+  } else if (outputMode === "expression") {
+    outputs = [];
+    statements = [];
+  }
+  return {
+    type: "symbolic_spec",
+    syntax: "#",
+    inputs,
+    outputs,
+    outputsDeclared: meta.outputsDeclared === true,
+    outputMode,
+    expression,
+    statements,
+    imports: cloneIr(meta.imports || []),
+    __closureScopes: meta.__closureScopes || context?.captureClosureScopes?.() || [],
+    origin: meta.origin || null,
+    transform: meta.transform || null
+  };
+}
+function specWithExpression(source, expression, options = {}) {
+  const outputMode = options.outputMode || outputModeOf(source);
+  const common = {
+    inputs: options.inputs || source.inputs,
+    imports: source.imports,
+    __closureScopes: options.__closureScopes || source.__closureScopes,
+    origin: options.origin || source.origin,
+    transform: options.transform || source.transform
+  };
+  if (outputMode === "named") {
+    const target = source.outputs[0];
+    return createSpec({
+      ...common,
+      outputMode: "named",
+      outputs: [target],
+      outputsDeclared: source.outputsDeclared,
+      statements: [{ target, expr: expression }]
+    });
+  }
+  return createSpec({ ...common, outputMode: "expression", expression });
+}
+function precedence(node) {
+  if (!node?.fn)
+    return 100;
+  if (node.fn === "ADD" || node.fn === "SUB")
+    return 10;
+  if (node.fn === "MUL" || node.fn === "DIV" || node.fn === "INTDIV" || node.fn === "MOD")
+    return 20;
+  if (node.fn === "NEG")
+    return 30;
+  if (node.fn === "POW")
+    return 40;
+  return 100;
+}
+function renderSymbolicIr(node, parentPrecedence = 0, side = null) {
+  if (!node || typeof node !== "object" || !node.fn)
+    return String(node);
+  if (node.fn === "LITERAL")
+    return String(node.args[0]);
+  if (node.fn === "STRING")
+    return JSON.stringify(node.args[0]);
+  if (node.fn === "NULL")
+    return "_";
+  if (node.fn === "RETRIEVE")
+    return node.args[0];
+  if (node.fn === "OUTER_RETRIEVE")
+    return `@${node.args[0]}`;
+  if (node.fn === "SYSREF")
+    return `.${node.args[0]}`;
+  if (node.fn === "NEG") {
+    const text = `-${renderSymbolicIr(node.args[0], precedence(node))}`;
+    return precedence(node) < parentPrecedence ? `(${text})` : text;
+  }
+  if (node.fn === "CALL") {
+    return `${node.args[0]}(${node.args.slice(1).map((arg) => renderSymbolicIr(arg)).join(", ")})`;
+  }
+  if (node.fn === "CALL_EXPR") {
+    return `${renderSymbolicIr(node.args[0])}(${node.args.slice(1).map((arg) => renderSymbolicIr(arg)).join(", ")})`;
+  }
+  if (node.fn === "SYS_CALL") {
+    return `.${node.args[0]}(${node.args.slice(1).map((arg) => renderSymbolicIr(arg)).join(", ")})`;
+  }
+  const op = BINARY_TEXT.get(node.fn);
+  if (op) {
+    const own = precedence(node);
+    const left = renderSymbolicIr(node.args[0], own, "left");
+    const rightNeedsTighter = node.fn === "SUB" || node.fn === "DIV" || node.fn === "POW";
+    const right = renderSymbolicIr(node.args[1], own + (rightNeedsTighter ? 1 : 0), "right");
+    const text = `${left} ${op} ${right}`;
+    const parens = own < parentPrecedence || side === "left" && node.fn === "POW" && own === parentPrecedence;
+    return parens ? `(${text})` : text;
+  }
+  throw new Error(`Cannot render unsupported symbolic IR '${node.fn}'`);
+}
+function formatSymbolicSpec(spec) {
+  const inputs = spec.inputs.join(",");
+  if (spec.outputMode === "identity" && spec.inputs.length === 1)
+    return `{#${spec.inputs[0]}}`;
+  const imports = spec.imports?.length ? `<${spec.imports.map((item) => {
+    if (item.mode === "copy" && item.local === item.source)
+      return item.local;
+    return `${item.local}${item.mode === "alias" ? "=" : "~"}${item.source}`;
+  }).join(",")}> ` : "";
+  if (outputModeOf(spec) === "named") {
+    const header2 = spec.outputsDeclared ? `${inputs}:${spec.outputs.join(",")}# ` : inputs ? `${inputs}# ` : " ";
+    return `{#${header2}${imports}${spec.statements.map((s) => `${s.target} = ${renderSymbolicIr(s.expr)}`).join("; ")} }`;
+  }
+  const header = inputs ? `${inputs}# ` : " ";
+  return `{#${header}${imports}${renderSymbolicIr(expressionOf(spec))} }`;
+}
+function serializeIr(node) {
+  if (!node?.fn)
+    return rixString(String(node));
+  if (node.fn === "LITERAL")
+    return rixMap([["kind", rixString("number")], ["value", rixString(node.args[0])]]);
+  if (node.fn === "RETRIEVE")
+    return rixMap([["kind", rixString("identifier")], ["name", rixString(node.args[0])]]);
+  if (node.fn === "OUTER_RETRIEVE")
+    return rixMap([["kind", rixString("outer")], ["name", rixString(node.args[0])]]);
+  if (node.fn === "NEG")
+    return rixMap([["kind", rixString("unary")], ["op", rixString("-")], ["expr", serializeIr(node.args[0])]]);
+  const op = BINARY_TEXT.get(node.fn);
+  if (op)
+    return rixMap([["kind", rixString("binary")], ["op", rixString(op)], ["left", serializeIr(node.args[0])], ["right", serializeIr(node.args[1])]]);
+  return rixMap([["kind", rixString("ir")], ["fn", rixString(node.fn)], ["args", rixTuple(node.args.map(serializeIr))]]);
+}
+function inspectSymbolicSpec(spec) {
+  const inspectExpression = spec.expression ? serializeIr(spec.expression) : spec.statements.length === 1 ? serializeIr(spec.statements[0].expr) : null;
+  return rixMap([
+    ["kind", rixString("systemSpec")],
+    ["syntax", rixString("#")],
+    ["form", rixString(outputModeOf(spec))],
+    ["source", rixString(formatSymbolicSpec(spec))],
+    ["inputs", rixTuple(spec.inputs.map(rixString))],
+    ["outputs", rixTuple(spec.outputs.map(rixString))],
+    ["statements", rixTuple(spec.statements.map((statement) => rixMap([
+      ["kind", rixString("assign")],
+      ["target", rixString(statement.target)],
+      ["expr", serializeIr(statement.expr)]
+    ])))],
+    ["expression", inspectExpression]
+  ]);
+}
+function supportedExpression(node) {
+  if (!node?.fn)
+    return false;
+  if (["LITERAL", "RETRIEVE", "OUTER_RETRIEVE"].includes(node.fn))
+    return true;
+  if (node.fn === "NEG")
+    return supportedExpression(node.args[0]);
+  if (["ADD", "SUB", "MUL", "DIV", "POW"].includes(node.fn)) {
+    return supportedExpression(node.args[0]) && supportedExpression(node.args[1]);
+  }
+  return false;
+}
+function analyzeCallable(value) {
+  if (!value || !["lambda", "function"].includes(value.type)) {
+    return { speccable: false, reason: "value is not a RiX function" };
+  }
+  const positional = value.params?.positional || [];
+  if (positional.some((param) => param.isRest || param.holeDefault) || (value.params?.keyword || []).length) {
+    return { speccable: false, reason: "only ordinary positional parameters are supported" };
+  }
+  if ((value.params?.conditionals || []).length || (value.params?.prep || []).length) {
+    return { speccable: false, reason: "prepared functions are not automatically speccable" };
+  }
+  if (!supportedExpression(value.body)) {
+    return { speccable: false, reason: `unsupported or effectful IR '${value.body?.fn || "value"}'` };
+  }
+  return {
+    speccable: true,
+    profile: "exact-arithmetic",
+    spec: createSpec({
+      inputs: positional.map((param) => param.name),
+      outputMode: "expression",
+      expression: value.body,
+      __closureScopes: value.__closureScopes || [],
+      origin: value.name || value.__name || null
+    })
+  };
+}
+function attachAutoSpec(value, context) {
+  if (getAttachedSpec(value))
+    return value;
+  const mode = context?.getEnv?.("symbolicAutoSpec", runtimeDefaults.symbolicAutoSpec) ?? runtimeDefaults.symbolicAutoSpec;
+  if (mode === false || mode === "off" || mode === "none")
+    return value;
+  const analysis = analyzeCallable(value);
+  if (analysis.speccable)
+    attachSpec(value, analysis.spec);
+  return value;
+}
+function polyFromSpec(spec) {
+  const expression = expressionOf(spec);
+  if (!supportedExpression(expression)) {
+    throw new Error(`Poly cannot compile unsupported or effectful symbolic IR '${expression?.fn || "value"}'`);
+  }
+  return attachSpec({
+    type: "lambda",
+    params: {
+      positional: spec.inputs.map((name) => ({ name, holeDefault: null })),
+      keyword: [],
+      conditionals: [],
+      prep: [],
+      prepStrict: false,
+      metadata: {}
+    },
+    body: cloneIr(expression),
+    __closureScopes: spec.__closureScopes || [],
+    __name: "Poly"
+  }, spec, "Poly");
+}
+function isExactScalar(value) {
+  return value instanceof Integer || value instanceof Rational || typeof value === "bigint" || Number.isInteger(value);
+}
+function exactToIr(value) {
+  if (value instanceof Integer)
+    return literal(value.value);
+  if (value instanceof Rational) {
+    return value.denominator === 1n ? literal(value.numerator) : ir2("DIV", literal(value.numerator), literal(value.denominator));
+  }
+  if (typeof value === "bigint" || Number.isInteger(value))
+    return literal(value);
+  throw new Error("Symbolic operations only lift exact integer and rational scalars");
+}
+function rationalFromIr(node) {
+  if (node?.fn === "LITERAL" && /^-?\d+$/.test(String(node.args[0])))
+    return new Rational(BigInt(node.args[0]), 1n);
+  if (node?.fn === "DIV") {
+    const a = rationalFromIr(node.args[0]);
+    const b = rationalFromIr(node.args[1]);
+    if (a && b)
+      return a.divide(b);
+  }
+  if (node?.fn === "NEG") {
+    const value = rationalFromIr(node.args[0]);
+    if (value)
+      return new Rational(-value.numerator, value.denominator);
+  }
+  return null;
+}
+function rationalToIr(value) {
+  return value.denominator === 1n ? literal(value.numerator) : ir2("DIV", literal(value.numerator), literal(value.denominator));
+}
+function isZero2(node) {
+  const value = rationalFromIr(node);
+  return Boolean(value && value.numerator === 0n);
+}
+function isOne2(node) {
+  const value = rationalFromIr(node);
+  return Boolean(value && value.numerator === value.denominator);
+}
+function neg(node) {
+  const value = rationalFromIr(node);
+  return value ? rationalToIr(new Rational(-value.numerator, value.denominator)) : ir2("NEG", node);
+}
+function binary(fn, left, right) {
+  if (fn === "ADD") {
+    if (isZero2(left))
+      return right;
+    if (isZero2(right))
+      return left;
+  }
+  if (fn === "SUB") {
+    if (isZero2(right))
+      return left;
+    if (isZero2(left))
+      return neg(right);
+  }
+  if (fn === "MUL") {
+    if (isZero2(left) || isZero2(right))
+      return literal(0);
+    if (isOne2(left))
+      return right;
+    if (isOne2(right))
+      return left;
+  }
+  if (fn === "DIV") {
+    if (isZero2(left))
+      return literal(0);
+    if (isOne2(right))
+      return left;
+  }
+  if (fn === "POW") {
+    if (isZero2(right))
+      return literal(1);
+    if (isOne2(right))
+      return left;
+  }
+  const a = rationalFromIr(left), b = rationalFromIr(right);
+  if (a && b) {
+    if (fn === "ADD")
+      return rationalToIr(a.add(b));
+    if (fn === "SUB")
+      return rationalToIr(a.subtract(b));
+    if (fn === "MUL")
+      return rationalToIr(a.multiply(b));
+    if (fn === "DIV")
+      return rationalToIr(a.divide(b));
+  }
+  return ir2(fn, left, right);
+}
+function derivative(node, variable) {
+  if (["LITERAL", "STRING", "NULL"].includes(node.fn))
+    return literal(0);
+  if (node.fn === "RETRIEVE")
+    return literal(node.args[0] === variable ? 1 : 0);
+  if (node.fn === "OUTER_RETRIEVE")
+    return literal(0);
+  if (node.fn === "NEG")
+    return neg(derivative(node.args[0], variable));
+  const [left, right] = node.args;
+  if (node.fn === "ADD" || node.fn === "SUB")
+    return binary(node.fn, derivative(left, variable), derivative(right, variable));
+  if (node.fn === "MUL") {
+    return binary("ADD", binary("MUL", derivative(left, variable), cloneIr(right)), binary("MUL", cloneIr(left), derivative(right, variable)));
+  }
+  if (node.fn === "DIV") {
+    const numerator = binary("SUB", binary("MUL", derivative(left, variable), cloneIr(right)), binary("MUL", cloneIr(left), derivative(right, variable)));
+    return binary("DIV", numerator, binary("POW", cloneIr(right), literal(2)));
+  }
+  if (node.fn === "POW") {
+    const exponent = rationalFromIr(right);
+    if (!exponent || exponent.denominator !== 1n)
+      throw new Error("Deriv supports only exact integer literal powers");
+    return binary("MUL", binary("MUL", literal(exponent.numerator), binary("POW", cloneIr(left), literal(exponent.numerator - 1n))), derivative(left, variable));
+  }
+  throw new Error(`Deriv does not support symbolic IR '${node.fn}'`);
+}
+function independentOf(node, variable) {
+  if (node.fn === "RETRIEVE")
+    return node.args[0] !== variable;
+  if (node.fn === "OUTER_RETRIEVE" || node.fn === "LITERAL")
+    return true;
+  return (node.args || []).filter((arg) => arg?.fn).every((arg) => independentOf(arg, variable));
+}
+function monomial(node, variable) {
+  if (node.fn === "RETRIEVE" && node.args[0] === variable)
+    return { coefficient: new Rational(1n), power: 1n };
+  if (node.fn === "POW" && node.args[0]?.fn === "RETRIEVE" && node.args[0].args[0] === variable) {
+    const power = rationalFromIr(node.args[1]);
+    if (power?.denominator === 1n && power.numerator >= 0n)
+      return { coefficient: new Rational(1n), power: power.numerator };
+  }
+  const constant = rationalFromIr(node);
+  if (constant)
+    return { coefficient: constant, power: 0n };
+  if (node.fn === "MUL") {
+    const leftMono = monomial(node.args[0], variable);
+    const rightMono = monomial(node.args[1], variable);
+    if (leftMono && rightMono) {
+      return {
+        coefficient: leftMono.coefficient.multiply(rightMono.coefficient),
+        power: leftMono.power + rightMono.power
+      };
+    }
+    const a = rationalFromIr(node.args[0]);
+    const b = monomial(node.args[1], variable);
+    if (a && b)
+      return { coefficient: a.multiply(b.coefficient), power: b.power };
+    const c = monomial(node.args[0], variable);
+    const d = rationalFromIr(node.args[1]);
+    if (c && d)
+      return { coefficient: c.coefficient.multiply(d), power: c.power };
+  }
+  if (node.fn === "DIV") {
+    const numerator = monomial(node.args[0], variable);
+    const denominator = rationalFromIr(node.args[1]);
+    if (numerator && denominator) {
+      return { coefficient: numerator.coefficient.divide(denominator), power: numerator.power };
+    }
+  }
+  return null;
+}
+function integrate(node, variable) {
+  if (node.fn === "ADD" || node.fn === "SUB")
+    return binary(node.fn, integrate(node.args[0], variable), integrate(node.args[1], variable));
+  if (node.fn === "NEG")
+    return neg(integrate(node.args[0], variable));
+  const mono = monomial(node, variable);
+  if (mono) {
+    const next = mono.power + 1n;
+    const coefficient = mono.coefficient.divide(new Rational(next, 1n));
+    const power = next === 1n ? retrieve(variable) : ir2("POW", retrieve(variable), literal(next));
+    return binary("MUL", rationalToIr(coefficient), power);
+  }
+  if (node.fn === "MUL" && independentOf(node.args[0], variable))
+    return binary("MUL", cloneIr(node.args[0]), integrate(node.args[1], variable));
+  if (node.fn === "MUL" && independentOf(node.args[1], variable))
+    return binary("MUL", integrate(node.args[0], variable), cloneIr(node.args[1]));
+  if (node.fn === "DIV" && independentOf(node.args[1], variable))
+    return binary("DIV", integrate(node.args[0], variable), cloneIr(node.args[1]));
+  if (independentOf(node, variable))
+    return binary("MUL", cloneIr(node), retrieve(variable));
+  throw new Error(`Integrate cannot integrate '${renderSymbolicIr(node)}' in its current form; simplify or rewrite it first`);
+}
+function variableName(value, spec, operation) {
+  if (value === null || value === undefined) {
+    if (spec.inputs.length === 1)
+      return spec.inputs[0];
+    throw new Error(`${operation} needs an explicit variable for a multi-input spec`);
+  }
+  if (typeof value === "string")
+    return value;
+  if (value?.type === "string")
+    return value.value;
+  const selector = getAttachedSpec(value);
+  if (selector && selector.inputs.length === 1 && renderSymbolicIr(expressionOf(selector)) === selector.inputs[0])
+    return selector.inputs[0];
+  throw new Error(`${operation} variable must be an identity spec such as {#x} or a string`);
+}
+function calculus(value, variableValue, operation) {
+  const source = getAttachedSpec(value);
+  if (!source)
+    throw new Error(`${operation} expects a symbolic spec or a function with an attached spec`);
+  const variable = variableName(variableValue, source, operation);
+  const transformed = operation === "Deriv" ? derivative(expressionOf(source), variable) : integrate(expressionOf(source), variable);
+  const spec = specWithExpression(source, transformed, { transform: { operation, variable } });
+  return isSymbolicSpec(value) ? spec : polyFromSpec(spec);
+}
+function substituteIr(node, substitutions) {
+  if (node.fn === "RETRIEVE" && substitutions.has(node.args[0]))
+    return cloneIr(substitutions.get(node.args[0]));
+  return { ...node, args: (node.args || []).map((arg) => arg?.fn ? substituteIr(arg, substitutions) : cloneIr(arg)) };
+}
+function unionNames(groups) {
+  const result = [];
+  for (const group of groups)
+    for (const name of group)
+      if (!result.includes(name))
+        result.push(name);
+  return result;
+}
+function retrieveNames(node, names = new Set) {
+  if (node?.fn === "RETRIEVE")
+    names.add(node.args[0]);
+  for (const arg of node?.args || [])
+    if (arg?.fn)
+      retrieveNames(arg, names);
+  return names;
+}
+function unionScopes(groups, referencedNames = null) {
+  const result = [];
+  const seen = new Set;
+  const captured = new Map;
+  for (const group of groups) {
+    const effective = new Map;
+    for (const scope of group || []) {
+      const bindings = scope?.bindings || scope;
+      if (bindings instanceof Map)
+        for (const [name, cell] of bindings)
+          effective.set(name, cell);
+    }
+    for (const [name, cell] of effective) {
+      if (referencedNames && !referencedNames.has(name))
+        continue;
+      if (captured.has(name) && captured.get(name) !== cell) {
+        throw new Error(`Cannot combine symbolic closures with different captured cells named '${name}'; substitute or rename explicitly`);
+      }
+      captured.set(name, cell);
+    }
+    for (const scope of group || []) {
+      const identity = scope?.bindings || scope;
+      if (!seen.has(identity)) {
+        seen.add(identity);
+        result.push(scope);
+      }
+    }
+  }
+  return result;
+}
+function applySymbolicSpec(spec, args) {
+  if (args.length > spec.inputs.length)
+    throw new Error(`Symbolic spec expected at most ${spec.inputs.length} argument(s), received ${args.length}`);
+  const substitutions = new Map;
+  const argumentSpecs = [];
+  for (let index = 0;index < args.length; index++) {
+    const argSpec = getAttachedSpec(args[index]);
+    if (argSpec) {
+      substitutions.set(spec.inputs[index], expressionOf(argSpec));
+      argumentSpecs.push(argSpec);
+    } else if (isExactScalar(args[index])) {
+      substitutions.set(spec.inputs[index], exactToIr(args[index]));
+    } else {
+      throw new Error("Symbolic substitution arguments must be specs, spec-backed functions, or exact scalars");
+    }
+  }
+  const remaining = spec.inputs.slice(args.length);
+  const expression = substituteIr(expressionOf(spec), substitutions);
+  const inputs = unionNames([...argumentSpecs.map((item) => item.inputs), remaining]);
+  const capturedNames = retrieveNames(expression);
+  for (const input of inputs)
+    capturedNames.delete(input);
+  return specWithExpression(spec, expression, {
+    inputs,
+    __closureScopes: unionScopes([spec.__closureScopes, ...argumentSpecs.map((item) => item.__closureScopes)], capturedNames),
+    outputMode: outputModeOf(spec) === "named" ? "named" : "expression",
+    transform: { operation: "substitute" }
+  });
+}
+function symbolicOperand(value) {
+  const spec = getAttachedSpec(value);
+  if (spec)
+    return { spec, expression: expressionOf(spec), callable: !isSymbolicSpec(value) };
+  if (isExactScalar(value))
+    return { spec: null, expression: exactToIr(value), callable: false };
+  return null;
+}
+function combineSymbolic(operator, leftValue, rightValue = null) {
+  const left = symbolicOperand(leftValue);
+  const right = rightValue === null ? null : symbolicOperand(rightValue);
+  if (!left || rightValue !== null && !right)
+    throw new Error("Unsupported symbolic arithmetic operand");
+  const template = left.spec || right?.spec;
+  const expression = right ? ir2(operator, cloneIr(left.expression), cloneIr(right.expression)) : ir2(operator, cloneIr(left.expression));
+  const inputs = unionNames([left.spec?.inputs || [], right?.spec?.inputs || []]);
+  const capturedNames = retrieveNames(expression);
+  for (const input of inputs)
+    capturedNames.delete(input);
+  const spec = specWithExpression(template, expression, {
+    inputs,
+    __closureScopes: unionScopes([left.spec?.__closureScopes, right?.spec?.__closureScopes], capturedNames),
+    outputMode: outputModeOf(template) === "named" ? "named" : "expression",
+    transform: { operation: BINARY_TEXT.get(operator) || operator }
+  });
+  return left.callable || right?.callable ? polyFromSpec(spec) : spec;
+}
+function simplifyIr(node, directions) {
+  if (!node?.fn || ["LITERAL", "RETRIEVE", "OUTER_RETRIEVE"].includes(node.fn))
+    return cloneIr(node);
+  if (node.fn === "NEG")
+    return directions.has("identities") || directions.has("constants") ? neg(simplifyIr(node.args[0], directions)) : ir2("NEG", simplifyIr(node.args[0], directions));
+  if (!BINARY_TEXT.has(node.fn))
+    return cloneIr(node);
+  let left = simplifyIr(node.args[0], directions), right = simplifyIr(node.args[1], directions);
+  if (directions.has("expand") && node.fn === "MUL") {
+    if (left.fn === "ADD" || left.fn === "SUB")
+      return simplifyIr(ir2(left.fn, ir2("MUL", left.args[0], right), ir2("MUL", left.args[1], right)), directions);
+    if (right.fn === "ADD" || right.fn === "SUB")
+      return simplifyIr(ir2(right.fn, ir2("MUL", left, right.args[0]), ir2("MUL", left, right.args[1])), directions);
+  }
+  return directions.has("identities") || directions.has("constants") || directions.has("powers") ? binary(node.fn, left, right) : ir2(node.fn, left, right);
+}
+function directionSet(value) {
+  if (value === null || value === undefined)
+    return new Set(["identities", "constants", "powers"]);
+  const values = value?.values || [value];
+  return new Set([
+    "identities",
+    "constants",
+    "powers",
+    ...values.map((item) => (item?.value ?? item).toString().toLowerCase().replaceAll("-", ""))
+  ]);
+}
+function simplifyValue(value, directionsValue) {
+  const source = getAttachedSpec(value);
+  if (!source)
+    throw new Error("Simplify expects a symbolic spec or function with an attached spec");
+  const spec = specWithExpression(source, simplifyIr(expressionOf(source), directionSet(directionsValue)), { transform: { operation: "Simplify" } });
+  return isSymbolicSpec(value) ? spec : polyFromSpec(spec);
+}
+function speccabilityValue(value) {
+  const attached = getAttachedSpec(value);
+  const result = attached ? { speccable: true, profile: "attached", spec: attached } : analyzeCallable(value);
+  const entries = [["speccable", result.speccable ? new Integer(1n) : null]];
+  if (result.profile)
+    entries.push(["profile", rixString(result.profile)]);
+  if (result.reason)
+    entries.push(["reason", rixString(result.reason)]);
+  if (result.spec)
+    entries.push(["spec", result.spec]);
+  return rixMap(entries);
+}
+function explicitSpec(value) {
+  const attached = getAttachedSpec(value);
+  if (attached)
+    return attached;
+  const analysis = analyzeCallable(value);
+  if (!analysis.speccable)
+    throw new Error(`Function is not speccable: ${analysis.reason}`);
+  attachSpec(value, analysis.spec, "Function");
+  return analysis.spec;
+}
+function installSymbolicVariants(registry) {
+  for (const [name, operator] of [["ADD", "ADD"], ["SUB", "SUB"], ["MUL", "MUL"], ["DIV", "DIV"], ["POW", "POW"]]) {
+    registry.installVariant(name, {
+      name: `Symbolic_${name}`,
+      prep: (args) => {
+        if (args.length !== 2 || !args.some((value) => Boolean(getAttachedSpec(value))) || !args.every((value) => Boolean(symbolicOperand(value))))
+          return false;
+        const callableCount = args.filter((value) => getAttachedSpec(value) && !isSymbolicSpec(value)).length;
+        return callableCount === 0 || args.every((value) => Boolean(getAttachedSpec(value)));
+      },
+      impl: ([left, right]) => combineSymbolic(operator, left, right)
+    });
+  }
+  registry.installVariant("NEG", {
+    name: "Symbolic_NEG",
+    prep: (args) => args.length === 1 && Boolean(getAttachedSpec(args[0])),
+    impl: ([value]) => combineSymbolic("NEG", value)
+  });
+}
+var symbolicCapabilities = {
+  POLY: { impl: ([value]) => polyFromSpec(getAttachedSpec(value) || value), pure: true, doc: "Compile a single-output symbolic spec into an exact callable" },
+  DERIV: { impl: ([value, variable]) => calculus(value, variable, "Deriv"), pure: true, doc: "Differentiate a symbolic spec or spec-backed function exactly" },
+  INTEGRATE: { impl: ([value, variable]) => calculus(value, variable, "Integrate"), pure: true, doc: "Integrate a supported symbolic spec or spec-backed function exactly" },
+  SIMPLIFY: { impl: ([value, directions]) => simplifyValue(value, directions), pure: true, doc: "Return an explicitly simplified symbolic value" },
+  SPEC: { impl: ([value]) => explicitSpec(value), doc: "Analyze a pure function and attach/return its symbolic spec" },
+  SPECCABILITY: { impl: ([value]) => speccabilityValue(value), pure: true, doc: "Report whether a pure function can be represented by the exact symbolic subset" },
+  INSPECTSPEC: { impl: ([value]) => inspectSymbolicSpec(getAttachedSpec(value) || value), pure: true, doc: "Return the structural inspection map for a symbolic spec" }
+};
+var symbolicFunctions = {
+  SYSTEM_SPEC: {
+    lazy: true,
+    impl(args, context) {
+      return createSpec(args[0] || {}, context);
+    },
+    pure: true,
+    doc: "Create a first-class symbolic system specification"
+  },
+  DERIVATIVE: {
+    impl: ([value, order = 1, variable = null]) => {
+      let result = value;
+      const count = order instanceof Integer ? Number(order.value) : Number(order || 1);
+      for (let index = 0;index < count; index++)
+        result = calculus(result, variable, "Deriv");
+      return result;
+    },
+    pure: true,
+    doc: "Postfix exact symbolic derivative"
+  },
+  INTEGRAL: {
+    impl: ([value, order = 1, variable = null]) => {
+      let result = value;
+      const count = order instanceof Integer ? Number(order.value) : Number(order || 1);
+      for (let index = 0;index < count; index++)
+        result = calculus(result, variable, "Integrate");
+      return result;
+    },
+    pure: true,
+    doc: "Prefix exact symbolic integral"
+  }
+};
+
 // ../rix/src/eval/format.js
 function tensorValueAtTuple(tensor, tuple) {
   const value = tensor.data[tensorOffsetForTuple(tensor, tuple)];
@@ -10899,6 +11725,12 @@ function previewIr(node, options = {}) {
   return truncate(irToText(node), maxLen);
 }
 function formatCallablePreview(fn, label) {
+  const attachedSpec = getAttachedSpec(fn);
+  const symbolicKind = fn._ext?.get?.("_symbolicKind")?.value || null;
+  if (attachedSpec && symbolicKind === "Poly") {
+    const params2 = fn.params?.positional?.map((param) => param.name).join(", ") || "";
+    return `[Poly ${params2} -> ${renderSymbolicIr(fn.body)}; Spec ${formatSymbolicSpec(attachedSpec)}]`;
+  }
   const params = fn.params?.positional?.map((param) => param.isRest ? `...${param.name}` : param.name).join(", ") || "";
   const prepEntries = [
     ...Array.isArray(fn.params?.conditionals) ? fn.params.conditionals : [],
@@ -10908,7 +11740,8 @@ function formatCallablePreview(fn, label) {
   const bodyText = previewIr(fn.body, { maxLen: 48 });
   const displayName = fn.__name || fn.name || null;
   const nameText = displayName ? ` ${displayName}:` : ":";
-  return `[${label}${nameText} (${params})${prepText} -> ${bodyText}]`;
+  const specText = attachedSpec ? `; Spec ${formatSymbolicSpec(attachedSpec)}` : "";
+  return `[${label}${nameText} (${params})${prepText} -> ${bodyText}${specText}]`;
 }
 function formatMultifunctionPreview(multifn) {
   const displayName = multifn.__name || null;
@@ -10969,6 +11802,8 @@ function formatValue(val, options = {}) {
   if (val === undefined)
     return "undefined";
   if (typeof val === "object" && val !== null) {
+    if (isSymbolicSpec(val))
+      return formatSymbolicSpec(val);
     if (isLazySequence(val)) {
       const cached = val._lazy.cache.slice(0, 8).map(formatChild).join(", ");
       const more = val._lazy.cache.length > 8 || !val._lazy.done ? cached ? ", …" : "…" : "";
@@ -11786,38 +12621,6 @@ var arithmeticFunctions = {
     doc: "Square root (approximate rational)"
   }
 };
-
-// ../rix/src/runtime/runtime-config.js
-var runtimeDefaults = Object.freeze({
-  defaultLoopMax: 1e4,
-  defaultConstructorCaptureMode: "deep_copy",
-  warnings: Object.freeze({
-    conversion: false,
-    multifunctionConversion: false,
-    multifunctionNoPrep: false,
-    implicitUnitConversion: false
-  }),
-  scriptPermissionNames: Object.freeze(["IMPORTS", "NET", "FILES"]),
-  defaultScriptCapabilityPolicy: Object.freeze({
-    includeAllFunctions: true,
-    permissions: Object.freeze(["IMPORTS"])
-  }),
-  capabilityGroups: Object.freeze({
-    Core: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "IF", "LOOP", "MULTI", "RAND_NAME", "PRINT", "TGEN", "KEYOF", "KEYS", "VALUES"]),
-    Arith: Object.freeze(["ADD", "SUB", "MUL", "DIV", "INTDIV", "MOD", "POW"]),
-    Logic: Object.freeze(["EQ", "NEQ", "LT", "GT", "LTE", "GTE", "AND", "OR", "NOT"]),
-    Collections: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "MAP", "FILTER", "REDUCE", "TGEN"]),
-    Maps: Object.freeze(["MAP", "KEYOF", "KEYS", "VALUES"]),
-    Arrays: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "MAP", "FILTER", "REDUCE", "TGEN"]),
-    Strings: Object.freeze(["UPPER", "SUBSTR", "PRINT"]),
-    Imports: Object.freeze(["IMPORTS"]),
-    Net: Object.freeze(["NET"]),
-    Files: Object.freeze(["FILES"]),
-    Units: Object.freeze(["UNITS", "Units", "CONVERTUNIT", "ConvertUnit", "DEFINEUNIT", "DefineUnit"]),
-    Exact: Object.freeze(["EXACT", "Exact", "COMPLEX", "Complex", "DEFINEEXACTGENERATOR", "DefineExactGenerator"]),
-    Random: Object.freeze(["RANDOMSEED", "RandomSeed", "RAND_NAME"])
-  })
-});
 
 // ../rix/src/runtime/constructor-capture.js
 var CONSTRUCTOR_CAPTURE_MODES = Object.freeze({
@@ -14876,6 +15679,9 @@ function callWithConcreteArgs(fn, callArgs, context, evaluate) {
     const { fn: innerFn, args } = resolvePartial(fn, callArgs);
     return callWithConcreteArgs(innerFn, args, context, evaluate);
   }
+  if (isSymbolicSpec(fn)) {
+    return applySymbolicSpec(fn, callArgs);
+  }
   if (fn.type === "function" || fn.type === "lambda") {
     return invokeUserCallable(fn, callArgs, context, evaluate, { callName: fn.name });
   }
@@ -14942,6 +15748,9 @@ var functionFunctions = {
       if (!funcDef) {
         throw new Error(`Undefined identifier: ${name}. System capabilities must be called via dot syntax: .${name}(args)`);
       }
+      if (isSymbolicSpec(funcDef)) {
+        return applySymbolicSpec(funcDef, evaluateArgs(argNodes, evaluate));
+      }
       if (funcDef.type === "partial" || funcDef.type === "arityCap") {
         const callArgs = evaluateArgs(argNodes, evaluate);
         return callWithConcreteArgs(funcDef, callArgs, context, evaluate);
@@ -14977,6 +15786,9 @@ var functionFunctions = {
       }
       const funcVal = evaluate(funcNode);
       const callArgs = evaluateArgs(argNodes, evaluate);
+      if (isSymbolicSpec(funcVal)) {
+        return applySymbolicSpec(funcVal, callArgs);
+      }
       if (funcVal && (funcVal.type === "partial" || funcVal.type === "arityCap")) {
         return callWithConcreteArgs(funcVal, callArgs, context, evaluate);
       }
@@ -15023,13 +15835,13 @@ var functionFunctions = {
     lazy: true,
     impl(args, context, evaluate) {
       const params = evaluate(args[0]);
-      return {
+      return attachAutoSpec({
         type: "lambda",
         params,
         body: args[1],
         __closureScopes: context.captureClosureScopes(),
         ...params?.metadata?.variantName ? { __name: params.metadata.variantName } : {}
-      };
+      }, context);
     },
     doc: "Create a lambda/anonymous function"
   },
@@ -15047,6 +15859,7 @@ var functionFunctions = {
         __closureScopes: context.captureClosureScopes(),
         ...params?.metadata?.variantName ? { __name: params.metadata.variantName } : {}
       };
+      attachAutoSpec(funcDef, context);
       context.defineFunction(name, funcDef);
       return funcDef;
     },
@@ -18378,7 +19191,7 @@ function parseLiteral(str) {
   }
   const explicitPrefixed = str.match(/^~(-?)(?:0z\[(\d+)\]|0([a-zA-Z]))(.+)$/);
   if (explicitPrefixed) {
-    const neg = explicitPrefixed[1] === "-" ? "-" : "";
+    const neg2 = explicitPrefixed[1] === "-" ? "-" : "";
     const custom = explicitPrefixed[2];
     const prefix = explicitPrefixed[3];
     const tail = explicitPrefixed[4];
@@ -18386,7 +19199,7 @@ function parseLiteral(str) {
     if (!baseSystem2) {
       throw new Error(`Unknown base prefix in explicit continued fraction: ${str}`);
     }
-    return fromBaseString(`~${neg}${tail}`, baseSystem2);
+    return fromBaseString(`~${neg2}${tail}`, baseSystem2);
   }
   if (str.startsWith("~")) {
     const cfStr = str.slice(1);
@@ -20499,30 +21312,6 @@ var advancedFunctions = {
     pure: true,
     doc: "Assert a >= b (:>=:)"
   },
-  DERIVATIVE: {
-    impl(args) {
-      return {
-        type: "stub",
-        name: "DERIVATIVE",
-        args,
-        message: "Symbolic derivatives are not yet implemented"
-      };
-    },
-    pure: true,
-    doc: "Symbolic derivative (future)"
-  },
-  INTEGRAL: {
-    impl(args) {
-      return {
-        type: "stub",
-        name: "INTEGRAL",
-        args,
-        message: "Symbolic integration is not yet implemented"
-      };
-    },
-    pure: true,
-    doc: "Symbolic integral (future)"
-  },
   GENERATOR: {
     impl(args) {
       throw new Error("Generator IR must be evaluated inside an array constructor");
@@ -21718,442 +22507,6 @@ var diagnosticFunctions = {
   TRACE
 };
 
-// ../rix/src/eval/functions/symbolic.js
-function rixString(value) {
-  return { type: "string", value };
-}
-function rixTuple(values) {
-  return { type: "tuple", values };
-}
-function rixMap(entries) {
-  return {
-    type: "map",
-    entries: new Map(entries)
-  };
-}
-function mapEntry(mapValue2, key) {
-  if (!mapValue2 || mapValue2.type !== "map" || !(mapValue2.entries instanceof Map)) {
-    throw new Error(`Expected map value while reading '${key}'`);
-  }
-  return mapValue2.entries.get(key);
-}
-function tupleValues(value, label) {
-  if (!value || value.type !== "tuple" || !Array.isArray(value.values)) {
-    throw new Error(`Expected tuple for ${label}`);
-  }
-  return value.values;
-}
-function stringValue3(value, label) {
-  if (typeof value === "string")
-    return value;
-  if (value && value.type === "string")
-    return value.value;
-  throw new Error(`Expected string for ${label}`);
-}
-function operatorName(fn) {
-  const names = {
-    ADD: "+",
-    SUB: "-",
-    MUL: "*",
-    DIV: "/",
-    INTDIV: "//",
-    MOD: "%",
-    POW: "^",
-    EQ: "==",
-    NEQ: "!=",
-    LT: "<",
-    GT: ">",
-    LTE: "<=",
-    GTE: ">=",
-    AND: "&&",
-    OR: "||"
-  };
-  return names[fn] ?? null;
-}
-function serializeIrArg(arg) {
-  if (arg === null || arg === undefined) {
-    return rixMap([["kind", rixString("null")]]);
-  }
-  if (typeof arg === "string") {
-    return rixString(arg);
-  }
-  if (typeof arg === "number" || typeof arg === "bigint") {
-    return rixMap([
-      ["kind", rixString("number")],
-      ["value", rixString(String(arg))]
-    ]);
-  }
-  if (Array.isArray(arg)) {
-    return rixTuple(arg.map(serializeIrArg));
-  }
-  if (!arg.fn) {
-    return rixMap(Object.entries(arg).map(([key, value]) => [key, serializeIrArg(value)]));
-  }
-  return serializeExprIr(arg);
-}
-function serializeExprIr(node) {
-  if (!node || typeof node !== "object" || !node.fn) {
-    return serializeIrArg(node);
-  }
-  if (node.fn === "LITERAL") {
-    return rixMap([
-      ["kind", rixString("number")],
-      ["value", rixString(node.args[0])]
-    ]);
-  }
-  if (node.fn === "STRING") {
-    return rixMap([
-      ["kind", rixString("string")],
-      ["value", rixString(node.args[0])]
-    ]);
-  }
-  if (node.fn === "NULL") {
-    return rixMap([["kind", rixString("null")]]);
-  }
-  if (node.fn === "RETRIEVE") {
-    return rixMap([
-      ["kind", rixString("identifier")],
-      ["name", rixString(node.args[0])]
-    ]);
-  }
-  if (node.fn === "OUTER_RETRIEVE") {
-    return rixMap([
-      ["kind", rixString("outer")],
-      ["name", rixString(node.args[0])]
-    ]);
-  }
-  if (node.fn === "SYSREF") {
-    return rixMap([
-      ["kind", rixString("sysref")],
-      ["name", rixString(node.args[0])]
-    ]);
-  }
-  if (node.fn === "NEG") {
-    return rixMap([
-      ["kind", rixString("unary")],
-      ["op", rixString("-")],
-      ["expr", serializeExprIr(node.args[0])]
-    ]);
-  }
-  const op = operatorName(node.fn);
-  if (op) {
-    return rixMap([
-      ["kind", rixString("binary")],
-      ["op", rixString(op)],
-      ["left", serializeExprIr(node.args[0])],
-      ["right", serializeExprIr(node.args[1])]
-    ]);
-  }
-  if (node.fn === "CALL") {
-    return rixMap([
-      ["kind", rixString("call")],
-      ["target", rixMap([
-        ["kind", rixString("identifier")],
-        ["name", rixString(node.args[0])]
-      ])],
-      ["args", rixTuple(node.args.slice(1).map(serializeExprIr))]
-    ]);
-  }
-  if (node.fn === "CALL_EXPR") {
-    return rixMap([
-      ["kind", rixString("call")],
-      ["target", serializeExprIr(node.args[0])],
-      ["args", rixTuple(node.args.slice(1).map(serializeExprIr))]
-    ]);
-  }
-  if (node.fn === "SYS_CALL") {
-    return rixMap([
-      ["kind", rixString("call")],
-      ["target", rixMap([
-        ["kind", rixString("sysref")],
-        ["name", rixString(node.args[0])]
-      ])],
-      ["args", rixTuple(node.args.slice(1).map(serializeExprIr))]
-    ]);
-  }
-  return rixMap([
-    ["kind", rixString("ir")],
-    ["fn", rixString(node.fn)],
-    ["args", rixTuple(node.args.map(serializeIrArg))]
-  ]);
-}
-function specValue(meta) {
-  const entries = [
-    ["kind", rixString("systemSpec")],
-    ["syntax", rixString("#")],
-    ["inputs", rixTuple((meta.inputs || []).map(rixString))],
-    ["outputs", rixTuple((meta.outputs || []).map(rixString))],
-    ["statements", rixTuple((meta.statements || []).map((statement) => rixMap([
-      ["kind", rixString("assign")],
-      ["target", rixString(statement.target)],
-      ["expr", serializeExprIr(statement.expr)]
-    ])))]
-  ];
-  if (meta.imports && meta.imports.length > 0) {
-    entries.push(["imports", rixTuple(meta.imports.map((spec) => rixMap([
-      ["local", rixString(spec.local)],
-      ["source", rixString(spec.source)],
-      ["mode", rixString(spec.mode)]
-    ])))]);
-  }
-  return rixMap(entries);
-}
-function parseNumberLiteral(text) {
-  if (/^-?\d+$/.test(text)) {
-    return new Integer(BigInt(text));
-  }
-  const rational = text.match(/^(-?\d+)\/(\d+)$/);
-  if (rational) {
-    return new Rational(BigInt(rational[1]), BigInt(rational[2]));
-  }
-  const decimal = text.match(/^(-?\d+)\.(\d+)$/);
-  if (decimal) {
-    const sign = decimal[1].startsWith("-") ? -1n : 1n;
-    const whole = BigInt(decimal[1].replace("-", ""));
-    const frac = decimal[2];
-    const den = 10n ** BigInt(frac.length);
-    return new Rational(sign * (whole * den + BigInt(frac)), den);
-  }
-  throw new Error(`Unsupported numeric literal '${text}' in symbolic polynomial helper`);
-}
-function exactInteger2(value, label) {
-  if (value instanceof Integer) {
-    return Number(value.value);
-  }
-  if (value instanceof Rational && value.denominator === 1n) {
-    return Number(value.numerator);
-  }
-  throw new Error(`${label} must be an exact integer`);
-}
-function evalPolyExpr(node, env) {
-  const kind = stringValue3(mapEntry(node, "kind"), "expression kind");
-  if (kind === "number") {
-    return parseNumberLiteral(stringValue3(mapEntry(node, "value"), "number literal"));
-  }
-  if (kind === "identifier") {
-    const name = stringValue3(mapEntry(node, "name"), "identifier name");
-    if (!env.has(name)) {
-      throw new Error(`Poly cannot resolve symbolic identifier '${name}'`);
-    }
-    return env.get(name);
-  }
-  if (kind === "outer") {
-    const name = stringValue3(mapEntry(node, "name"), "outer identifier name");
-    throw new Error(`Poly does not support unresolved outer reference '@${name}'`);
-  }
-  if (kind === "unary") {
-    const op = stringValue3(mapEntry(node, "op"), "unary operator");
-    if (op !== "-") {
-      throw new Error(`Poly does not support unary operator '${op}'`);
-    }
-    return new Integer(0).subtract(evalPolyExpr(mapEntry(node, "expr"), env));
-  }
-  if (kind === "binary") {
-    const op = stringValue3(mapEntry(node, "op"), "binary operator");
-    const left = evalPolyExpr(mapEntry(node, "left"), env);
-    const right = evalPolyExpr(mapEntry(node, "right"), env);
-    if (op === "+")
-      return left.add(right);
-    if (op === "-")
-      return left.subtract(right);
-    if (op === "*")
-      return left.multiply(right);
-    if (op === "^")
-      return left.pow(exactInteger2(right, "Exponent"));
-    throw new Error(`Poly does not support operator '${op}'`);
-  }
-  throw new Error(`Poly does not support symbolic node kind '${kind}'`);
-}
-function derivExpr(node, variableName) {
-  const kind = stringValue3(mapEntry(node, "kind"), "expression kind");
-  if (kind === "number" || kind === "null" || kind === "string") {
-    return rixMap([
-      ["kind", rixString("number")],
-      ["value", rixString("0")]
-    ]);
-  }
-  if (kind === "identifier") {
-    const name = stringValue3(mapEntry(node, "name"), "identifier name");
-    return rixMap([
-      ["kind", rixString("number")],
-      ["value", rixString(name === variableName ? "1" : "0")]
-    ]);
-  }
-  if (kind === "outer") {
-    return rixMap([
-      ["kind", rixString("number")],
-      ["value", rixString("0")]
-    ]);
-  }
-  if (kind === "unary") {
-    const op2 = stringValue3(mapEntry(node, "op"), "unary operator");
-    if (op2 !== "-") {
-      throw new Error(`Deriv does not support unary operator '${op2}'`);
-    }
-    return rixMap([
-      ["kind", rixString("unary")],
-      ["op", rixString("-")],
-      ["expr", derivExpr(mapEntry(node, "expr"), variableName)]
-    ]);
-  }
-  if (kind !== "binary") {
-    throw new Error(`Deriv does not support symbolic node kind '${kind}'`);
-  }
-  const op = stringValue3(mapEntry(node, "op"), "binary operator");
-  const left = mapEntry(node, "left");
-  const right = mapEntry(node, "right");
-  if (op === "+") {
-    return rixMap([
-      ["kind", rixString("binary")],
-      ["op", rixString("+")],
-      ["left", derivExpr(left, variableName)],
-      ["right", derivExpr(right, variableName)]
-    ]);
-  }
-  if (op === "-") {
-    return rixMap([
-      ["kind", rixString("binary")],
-      ["op", rixString("-")],
-      ["left", derivExpr(left, variableName)],
-      ["right", derivExpr(right, variableName)]
-    ]);
-  }
-  if (op === "*") {
-    return rixMap([
-      ["kind", rixString("binary")],
-      ["op", rixString("+")],
-      ["left", rixMap([
-        ["kind", rixString("binary")],
-        ["op", rixString("*")],
-        ["left", derivExpr(left, variableName)],
-        ["right", right]
-      ])],
-      ["right", rixMap([
-        ["kind", rixString("binary")],
-        ["op", rixString("*")],
-        ["left", left],
-        ["right", derivExpr(right, variableName)]
-      ])]
-    ]);
-  }
-  if (op === "^") {
-    const exponentNode = right;
-    const exponentKind = stringValue3(mapEntry(exponentNode, "kind"), "power exponent kind");
-    if (exponentKind !== "number") {
-      throw new Error("Deriv only supports powers with nonnegative integer literal exponents");
-    }
-    const exponentText = stringValue3(mapEntry(exponentNode, "value"), "power exponent");
-    if (!/^\d+$/.test(exponentText)) {
-      throw new Error("Deriv only supports powers with nonnegative integer literal exponents");
-    }
-    const exponent = BigInt(exponentText);
-    if (exponent === 0n) {
-      return rixMap([
-        ["kind", rixString("number")],
-        ["value", rixString("0")]
-      ]);
-    }
-    const decremented = rixMap([
-      ["kind", rixString("number")],
-      ["value", rixString(String(exponent - 1n))]
-    ]);
-    return rixMap([
-      ["kind", rixString("binary")],
-      ["op", rixString("*")],
-      ["left", rixMap([
-        ["kind", rixString("number")],
-        ["value", rixString(String(exponent))]
-      ])],
-      ["right", rixMap([
-        ["kind", rixString("binary")],
-        ["op", rixString("*")],
-        ["left", rixMap([
-          ["kind", rixString("binary")],
-          ["op", rixString("^")],
-          ["left", left],
-          ["right", decremented]
-        ])],
-        ["right", derivExpr(left, variableName)]
-      ])]
-    ]);
-  }
-  throw new Error(`Deriv does not support operator '${op}'`);
-}
-function cloneSpecWithStatements(spec, statements) {
-  const entries = new Map(spec.entries);
-  entries.set("statements", rixTuple(statements));
-  return {
-    type: "map",
-    entries
-  };
-}
-function polyFromSpec(spec) {
-  const kind = stringValue3(mapEntry(spec, "kind"), "spec kind");
-  if (kind !== "systemSpec") {
-    throw new Error("Poly expects a systemSpec value");
-  }
-  const inputNames = tupleValues(mapEntry(spec, "inputs"), "spec inputs").map((value) => stringValue3(value, "input name"));
-  const outputNames = tupleValues(mapEntry(spec, "outputs"), "spec outputs").map((value) => stringValue3(value, "output name"));
-  const statements = tupleValues(mapEntry(spec, "statements"), "spec statements");
-  if (outputNames.length !== 1) {
-    throw new Error("Poly currently supports exactly one output");
-  }
-  return (...args) => {
-    if (args.length !== inputNames.length) {
-      throw new Error(`Poly expected ${inputNames.length} argument(s) but received ${args.length}`);
-    }
-    const env = new Map;
-    for (let i = 0;i < inputNames.length; i++) {
-      env.set(inputNames[i], args[i]);
-    }
-    for (const statement of statements) {
-      const statementKind = stringValue3(mapEntry(statement, "kind"), "statement kind");
-      if (statementKind !== "assign") {
-        throw new Error(`Poly only supports assign statements, got '${statementKind}'`);
-      }
-      const target = stringValue3(mapEntry(statement, "target"), "assignment target");
-      const value = evalPolyExpr(mapEntry(statement, "expr"), env);
-      env.set(target, value);
-    }
-    return env.get(outputNames[0]) ?? null;
-  };
-}
-function derivSpec(spec, variableNameRaw) {
-  const kind = stringValue3(mapEntry(spec, "kind"), "spec kind");
-  if (kind !== "systemSpec") {
-    throw new Error("Deriv expects a systemSpec value");
-  }
-  const variableName = stringValue3(variableNameRaw, "derivative variable");
-  const statements = tupleValues(mapEntry(spec, "statements"), "spec statements").map((statement) => {
-    const statementKind = stringValue3(mapEntry(statement, "kind"), "statement kind");
-    if (statementKind !== "assign") {
-      throw new Error(`Deriv only supports assign statements, got '${statementKind}'`);
-    }
-    return rixMap([
-      ["kind", rixString("assign")],
-      ["target", mapEntry(statement, "target")],
-      ["expr", derivExpr(mapEntry(statement, "expr"), variableName)]
-    ]);
-  });
-  return cloneSpecWithStatements(spec, statements);
-}
-function installSymbolicBindings(context) {
-  context.setGlobal("POLY", polyFromSpec);
-  context.setGlobal("DERIV", derivSpec);
-  context.setGlobal("Poly", polyFromSpec);
-  context.setGlobal("Deriv", derivSpec);
-}
-var symbolicFunctions = {
-  SYSTEM_SPEC: {
-    lazy: true,
-    impl(args) {
-      return specValue(args[0] || {});
-    },
-    pure: true,
-    doc: "Create a symbolic system specification value"
-  }
-};
-
 // ../rix/src/eval/functions/math.js
 function numberFrom(value) {
   if (value instanceof Integer)
@@ -22175,7 +22528,7 @@ function finiteNumberFrom(value) {
 function unary(fn) {
   return (args) => fn(finiteNumberFrom(args[0]));
 }
-function binary(fn) {
+function binary2(fn) {
   return (args) => fn(finiteNumberFrom(args[0]), finiteNumberFrom(args[1]));
 }
 var MATH_FUNCTION_NAMES = [
@@ -22198,7 +22551,7 @@ var mathFunctions = {
   ASIN: { impl: unary(Math.asin), pure: true, doc: "Arcsine" },
   ACOS: { impl: unary(Math.acos), pure: true, doc: "Arccosine" },
   ATAN: { impl: unary(Math.atan), pure: true, doc: "Arctangent" },
-  ATAN2: { impl: binary(Math.atan2), pure: true, doc: "Two-argument arctangent" },
+  ATAN2: { impl: binary2(Math.atan2), pure: true, doc: "Two-argument arctangent" },
   LOG: { impl: unary(Math.log), pure: true, doc: "Natural logarithm" },
   LN: { impl: unary(Math.log), pure: true, doc: "Natural logarithm" },
   LOG10: { impl: unary(Math.log10), pure: true, doc: "Base-10 logarithm" },
@@ -22209,7 +22562,7 @@ var mathFunctions = {
 function int6(value) {
   return new Integer(BigInt(value));
 }
-function stringValue4(value, label) {
+function stringValue3(value, label) {
   if (typeof value === "string")
     return value;
   if (value?.type === "string")
@@ -22329,7 +22682,7 @@ function divideWithUnits(left, right) {
 function resolveTargetUnit(target, context, systemContext) {
   if (isUnitValue(target))
     return target;
-  const text = stringValue4(target, "ConvertUnit target");
+  const text = stringValue3(target, "ConvertUnit target");
   const collection = activeCollection(context, systemContext, "Units", ["UNITS", "Units"]);
   return parseUnitExpression(text, collection);
 }
@@ -22498,6 +22851,7 @@ function createDefaultRegistry(options = {}) {
   registry.registerAll(mathFunctions);
   installRegisteredTypes(registry);
   installUnitExactVariants(registry);
+  installSymbolicVariants(registry);
   for (const loadStartup of options.startupLoaders || []) {
     loadStartup(registry);
   }
@@ -22539,6 +22893,7 @@ function createDefaultSystemContext(options = {}) {
   ctx.registerValue("COMPLEX", complex, { doc: "Exact complex-number operations" });
   ctx.registerValue("Complex", complex, { doc: "Exact complex-number operations" });
   ctx.registerAll(stdlibFunctions);
+  ctx.registerAll(symbolicCapabilities);
   ctx.register("EVAL", coreFunctions.EVAL);
   ctx.register("TypeExport", coreFunctions.TYPE_EXPORT);
   ctx.register("TypeImport", coreFunctions.TYPE_IMPORT);
@@ -22953,7 +23308,6 @@ function evaluateScriptImport(spec, context, registry, systemContext) {
   const capabilityFrame = deriveScriptCapabilityFrame(systemContext, parentPermissions, spec.capabilityModifiers || [], context);
   const scriptContext = new Context;
   scriptContext.env = context.env;
-  installSymbolicBindings(scriptContext);
   scriptContext.push(undefined, { isolated: true, callableBoundary: true });
   runtime.activeImports.push(resolvedPath);
   runtime.frameStack.push({
@@ -23112,9 +23466,6 @@ function evaluate(irNode, context, registry, systemContext) {
 }
 function parseAndEvaluate(code, options = {}) {
   const context = options.context || new Context;
-  if (!options.context) {
-    installSymbolicBindings(context);
-  }
   const registry = options.registry || createDefaultRegistry();
   const systemContext = options.systemContext || createDefaultSystemContext();
   context.setEnv("__system_context__", systemContext);
@@ -23238,6 +23589,15 @@ var helpGroups = [
     ]
   },
   {
+    title: "Exact symbolic work",
+    items: [
+      ["{#x}", "Create the identity-symbol spec for x."],
+      ["{#x# x^2 + 1 }", "Create a single-output symbolic expression."],
+      [".Deriv(S, {#x})", "Differentiate a spec or spec-backed function exactly."],
+      [".Integrate(S, {#x})", "Build a supported zero-constant antiderivative."]
+    ]
+  },
+  {
     title: "Calculator commands",
     items: [
       [".help", "Open this reference and its quick-start guide."],
@@ -23265,7 +23625,6 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
     registry: createDefaultRegistry(),
     systemContext: createDefaultSystemContext()
   };
-  installSymbolicBindings(state.context);
   let initialNames = new Set(state.context.getAllNames());
   let separateLines = autoSeparateLines;
   return {
@@ -23291,12 +23650,10 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
     },
     reset() {
       state.context.clear();
-      installSymbolicBindings(state.context);
       initialNames = new Set(state.context.getAllNames());
     },
     setAutoSeparateLines(enabled) {
       separateLines = Boolean(enabled);
-      console.log(separateLines, " sepLines");
     },
     autoSeparatesLines() {
       return separateLines;
@@ -23355,8 +23712,9 @@ var tutorials = [
   { number: "9", file: "system.html", title: "System and symbolic work", description: "Capabilities, assertions, and diagnostics." },
   { number: "9a", parent: "9", file: "system-context.html", title: "System capabilities", description: "The dot object, aliases, and permissions." },
   { number: "9b", parent: "9", file: "assertions-and-symbols.html", title: "Assertions and symbolic specs", description: "Constraints and symbolic construction." },
-  { number: "9c", parent: "9", file: "diagnostics.html", title: "Diagnostics and tests", description: "Warnings, tracing, and test helpers." },
-  { number: "9d", parent: "9", file: "capstone-verified-rule.html", title: "Capstone: verified rule", description: "Build a small rule and validate it with system helpers." },
+  { number: "9c", parent: "9", file: "symbolic-calculus.html", title: "Exact symbolic calculus", description: "Compose, differentiate, integrate, and simplify symbolic specs." },
+  { number: "9d", parent: "9", file: "diagnostics.html", title: "Diagnostics and tests", description: "Warnings, tracing, and test helpers." },
+  { number: "9e", parent: "9", file: "capstone-verified-rule.html", title: "Capstone: verified rule", description: "Build a small rule and validate it with system helpers." },
   { number: "10", file: "scripts.html", title: "Scripts and extensions", description: "RiX modules, host boundaries, and language extension." },
   { number: "10a", parent: "10", file: "rix-scripts.html", title: "RiX scripts", description: "Imports, interface bindings, and capability frames." },
   { number: "10b", parent: "10", file: "javascript-modules.html", title: "JavaScript modules", description: "Host modules and the browser trust boundary." },
@@ -23416,5 +23774,5 @@ var objectHelp = {
 
 export { findHelp, createRixRepl, rootTutorials, childrenOf, objectHelp };
 
-//# debugId=F4DB9B1448E54BB264756E2164756E21
-//# sourceMappingURL=chunk-8n935qff.js.map
+//# debugId=555D2E7FCA393D2064756E2164756E21
+//# sourceMappingURL=chunk-rbys9rax.js.map

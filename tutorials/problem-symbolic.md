@@ -43,10 +43,10 @@ println(Symbolics.substitute(derivative, Dict(x=>2, y=>3, z=>4)))
 ## RiX
 
 ~~~rix
-spec := {#x,y,z:p# p = x^2 * y + z }
-derivativeSpec := Deriv(spec, "x")
-Polynomial := Poly(spec)
-Derivative := Poly(derivativeSpec)
+Source := {#x,y,z:p# p = x^2 * y + z }
+DerivativeSpec := .Deriv(Source, {#x})
+Polynomial := .Poly(Source)
+Derivative := .Poly(DerivativeSpec)
 
 {: Polynomial(2, 3, 4), Derivative(2, 3, 4) }
 ~~~
@@ -55,10 +55,10 @@ Derivative := Poly(derivativeSpec)
 
 The symbolic-specification form names x, y, and z as symbolic inputs and p as the expression. RiX preserves an expression tree instead of trying to recover structure from a source string.
 
-Deriv constructs another compatible symbolic specification. It transforms mathematics rather than evaluating at a point. Poly compiles either specification into a callable. The capitalized callable names follow RiX's visible naming convention for functions. The phases remain separate: inspect or transform structure first, and choose numeric inputs only when ready to evaluate.
+.Deriv constructs another compatible symbolic specification. It transforms mathematics rather than evaluating at a point. .Poly compiles either specification into a callable. The capitalized callable names follow RiX's visible naming convention for functions. The phases remain separate: inspect or transform structure first, and choose numeric inputs only when ready to evaluate.
 
-At (2, 3, 4), the polynomial is sixteen and its x derivative is twelve. The tuple returns both. The current consumer intentionally supports a polynomial subset: constants, identifiers, addition, subtraction, multiplication, and nonnegative integer powers. Unsupported transcendental rules require future capabilities or a host module.
+At (2, 3, 4), the polynomial is sixteen and its x derivative is twelve. The tuple returns both. RiX's exact symbolic core also supports positional substitution, name-preserving arithmetic, quotient differentiation, structural polynomial integration, and explicit simplification. Unsupported transcendental rules fail instead of switching to numerical calculus.
 
 :::challenge A second derivative
-Differentiate derivativeSpec with respect to x, compile it with Poly, and evaluate all three callables at (2, 3, 4).
+Differentiate DerivativeSpec with respect to `{#x}`, compile it with `.Poly`, and evaluate all three callables at (2, 3, 4).
 :::

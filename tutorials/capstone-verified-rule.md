@@ -1,5 +1,5 @@
 ---
-number: 9d
+number: 9e
 title: Capstone: verified rule
 description: Build a small rule and validate it with system helpers.
 ---

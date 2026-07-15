@@ -6,14 +6,12 @@ import {
     formatValue,
     parseAndEvaluate,
 } from "../../rix/src/index.js";
-import { installSymbolicBindings } from "../../rix/src/eval/functions/symbolic.js";
 import { normalizeReplSource } from "../src/repl-source.js";
 import { createRixRepl } from "../src/repl-runtime.js";
 import { tutorials } from "../src/tutorial-index.js";
 
 test("the web REPL runtime keeps its RiX context between cells", () => {
     const context = new Context();
-    installSymbolicBindings(context);
     const options = {
         context,
         registry: createDefaultRegistry(),

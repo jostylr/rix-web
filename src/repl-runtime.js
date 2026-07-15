@@ -5,7 +5,6 @@ import {
     formatValue,
     parseAndEvaluate,
 } from "../../rix/src/index.js";
-import { installSymbolicBindings } from "../../rix/src/eval/functions/symbolic.js";
 import { normalizeReplSource } from "./repl-source.js";
 
 export const helpGroups = [
@@ -34,6 +33,15 @@ export const helpGroups = [
             ["{| 1, 2 |}", "A set."],
             ["{= a=3, b=5 }", "A map."],
             ["values[2]", "Read the second array item."],
+        ],
+    },
+    {
+        title: "Exact symbolic work",
+        items: [
+            ["{#x}", "Create the identity-symbol spec for x."],
+            ["{#x# x^2 + 1 }", "Create a single-output symbolic expression."],
+            [".Deriv(S, {#x})", "Differentiate a spec or spec-backed function exactly."],
+            [".Integrate(S, {#x})", "Build a supported zero-constant antiderivative."],
         ],
     },
     {
@@ -67,7 +75,6 @@ export function createRixRepl({ autoSeparateLines = true } = {}) {
         registry: createDefaultRegistry(),
         systemContext: createDefaultSystemContext(),
     };
-    installSymbolicBindings(state.context);
     let initialNames = new Set(state.context.getAllNames());
     let separateLines = autoSeparateLines;
 
@@ -93,7 +100,6 @@ export function createRixRepl({ autoSeparateLines = true } = {}) {
         },
         reset() {
             state.context.clear();
-            installSymbolicBindings(state.context);
             initialNames = new Set(state.context.getAllNames());
         },
         setAutoSeparateLines(enabled) {

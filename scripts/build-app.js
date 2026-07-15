@@ -1,4 +1,4 @@
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, unlink } from "node:fs/promises";
 import path from "node:path";
 
 const root = path.resolve(import.meta.dir, "..");
@@ -19,13 +19,17 @@ const browserNodeShims = {
     },
 };
 
-await mkdir(path.join(output, "assets"), { recursive: true });
+const assets = path.join(output, "assets");
+await mkdir(assets, { recursive: true });
+for (const name of await readdir(assets)) {
+    if (/^chunk-[a-z0-9]+\.js(?:\.map)?$/.test(name)) await unlink(path.join(assets, name));
+}
 await Bun.write(path.join(output, "index.html"), await readFile(path.join(source, "index.html")));
 await Bun.write(path.join(output, ".nojekyll"), "");
 await Bun.write(path.join(output, "assets", "app.css"), await readFile(path.join(source, "app.css")));
 const result = await Bun.build({
     entrypoints: [path.join(source, "main.js"), path.join(source, "tutorial-runner.js")],
-    outdir: path.join(output, "assets"),
+    outdir: assets,
     target: "browser",
     format: "esm",
     sourcemap: "linked",

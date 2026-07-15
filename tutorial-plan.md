@@ -131,9 +131,11 @@ RiX source.
 - **9a The system object** — `.` calls, `@_` syntax, capability groups,
   operator aliases, and the boundary between user and system scope.
 - **9b Assertions and symbolic specs** — assertions, solve-style expressions,
-  system specs, symbolic polynomial operations, and safe examples of `Poly`
-  and `Deriv`.
-- **9c Diagnostics and tests** — `.Warn`, `.Info`, `.Error`, `.Stop`,
+  and the three symbolic spec literal forms.
+- **9c Exact symbolic calculus** — identity symbols, anonymous outputs,
+  substitution/composition, name-preserving arithmetic, `.Poly`, `.Deriv`,
+  `.Integrate`, `.Simplify`, attached function specs, and speccability.
+- **9d Diagnostics and tests** — `.Warn`, `.Info`, `.Error`, `.Stop`,
   `.Debug`, `.Trace`, `.Test`, `.TestError`, `.TestStop`, and the CLI test
   runner. This is the capstone for writing maintainable RiX programs.
 
