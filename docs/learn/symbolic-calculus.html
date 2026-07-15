@@ -42,6 +42,10 @@ a ~= 3
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source spellcheck="false">A := {#x# x*1 + 0 }
 B := {#x# x*(x + 1) }
 {: A, .Simplify(A), .Simplify(B, &quot;expand&quot;) }</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Direction names may be colon-strings or quoted strings and ignore case, so <code>:expand</code>, <code>&quot;expand&quot;</code>, and <code>:Expand</code> are equivalent. Use <code>:taylor</code> for the stronger polynomial form: it expands products, collects powers, and combines exact coefficients.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source spellcheck="false">P := {#x# (x - 1) * (x + 2) }
+{: .Simplify(P, :taylor), .Simplify(P, :Taylor, 3) }</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The optional exact center writes the complete polynomial in powers of <code>(x - center)</code>; it does not truncate or numerically approximate. The complete list of rewrites and non-rewrites is in the <a href="https://jostylr.github.io/rix/design/eval/simplification-reference.html" target="_blank" rel="noreferrer">symbolic simplification reference</a>.</p>
 <h2>Speccability</h2>
 <p>Automatic specs intentionally cover a safe pure subset: positional functions built from exact constants, identifiers, negation, arithmetic, division, and exact powers. <code>.Speccability</code> explains whether a function fits that profile; <code>.Spec</code> attaches and returns the spec when analysis succeeds.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source spellcheck="false">F := x -&gt; x^2 + 1

@@ -108,6 +108,21 @@ B := {#x# x*(x + 1) }
 {: A, .Simplify(A), .Simplify(B, "expand") }
 ```
 
+Direction names may be colon-strings or quoted strings and ignore case, so
+`:expand`, `"expand"`, and `:Expand` are equivalent. Use `:taylor` for the
+stronger polynomial form: it expands products, collects powers, and combines
+exact coefficients.
+
+```rix
+P := {#x# (x - 1) * (x + 2) }
+{: .Simplify(P, :taylor), .Simplify(P, :Taylor, 3) }
+```
+
+The optional exact center writes the complete polynomial in powers of
+`(x - center)`; it does not truncate or numerically approximate. The complete
+list of rewrites and non-rewrites is in the [symbolic simplification
+reference](https://jostylr.github.io/rix/design/eval/simplification-reference.html).
+
 ## Speccability
 
 Automatic specs intentionally cover a safe pure subset: positional functions
