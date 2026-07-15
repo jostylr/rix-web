@@ -37,15 +37,21 @@ F := x -&gt; a*x^2
 D := .Deriv(F, {#x})
 a ~= 3
 {: F(2), D(2) }</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<h2>Simplification is deliberate</h2>
-<p>Calculus removes only artifacts required by its rules. Ordinary symbolic arithmetic preserves what you wrote. <code>.Simplify</code> returns a new symbolic value; the original is unchanged. Pass <code>&quot;expand&quot;</code> to request distributive expansion in addition to exact constants, identities, and powers.</p>
+<h2>Transformations are deliberate</h2>
+<p>Calculus removes only artifacts required by its rules. Ordinary symbolic arithmetic preserves what you wrote. <code>.Transform</code> returns a new symbolic value; the original is unchanged. Pass <code>:expand</code> to request distributive expansion in addition to exact constants, identities, and powers.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source spellcheck="false">A := {#x# x*1 + 0 }
 B := {#x# x*(x + 1) }
-{: A, .Simplify(A), .Simplify(B, &quot;expand&quot;) }</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>Direction names may be colon-strings or quoted strings and ignore case, so <code>:expand</code>, <code>&quot;expand&quot;</code>, and <code>:Expand</code> are equivalent. Use <code>:taylor</code> for the stronger polynomial form: it expands products, collects powers, and combines exact coefficients.</p>
+{: A, .Transform(A), .Transform(B, :expand) }</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Direction names may be colon-strings or quoted strings and ignore case, so <code>:expand</code>, <code>&quot;expand&quot;</code>, and <code>:Expand</code> are equivalent. Use <code>:center</code> for the stronger polynomial form: it expands products, collects powers, and combines exact coefficients.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source spellcheck="false">P := {#x# (x - 1) * (x + 2) }
-{: .Simplify(P, :taylor), .Simplify(P, :Taylor, 3) }</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>The optional exact center writes the complete polynomial in powers of <code>(x - center)</code>; it does not truncate or numerically approximate. The complete list of rewrites and non-rewrites is in the <a href="https://jostylr.github.io/rix/design/eval/simplification-reference.html" target="_blank" rel="noreferrer">symbolic simplification reference</a>.</p>
+{: .Transform(P, :center), .Transform(P, :Center, 3) }</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The optional exact center writes the complete polynomial in powers of <code>(x - center)</code>; it does not truncate or numerically approximate.</p>
+<p><code>:factor</code> records ordered polynomial divisions by roots or polynomial factors that you provide. A number <code>a</code> denotes <code>(x - a)</code>.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source spellcheck="false">P := {#x# x^4 }
+Q := {#x# x^2 + 1 }
+{: .Transform(P, :factor, 4, Q),
+   .Transform(P, {: :identities, [:factor, 4, Q] }) }</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>In a transformation tuple, a bare direction takes no arguments and an array holds one parameterized operation. Operations run left to right. The complete list of rewrites and non-rewrites is in the <a href="https://jostylr.github.io/rix/design/eval/transformation-reference.html" target="_blank" rel="noreferrer">symbolic transformation reference</a>.</p>
 <h2>Speccability</h2>
 <p>Automatic specs intentionally cover a safe pure subset: positional functions built from exact constants, identifiers, negation, arithmetic, division, and exact powers. <code>.Speccability</code> explains whether a function fits that profile; <code>.Spec</code> attaches and returns the spec when analysis succeeds.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source spellcheck="false">F := x -&gt; x^2 + 1

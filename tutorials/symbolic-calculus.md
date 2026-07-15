@@ -95,33 +95,46 @@ a ~= 3
 {: F(2), D(2) }
 ```
 
-## Simplification is deliberate
+## Transformations are deliberate
 
 Calculus removes only artifacts required by its rules. Ordinary symbolic
-arithmetic preserves what you wrote. `.Simplify` returns a new symbolic value;
-the original is unchanged. Pass `"expand"` to request distributive expansion
+arithmetic preserves what you wrote. `.Transform` returns a new symbolic value;
+the original is unchanged. Pass `:expand` to request distributive expansion
 in addition to exact constants, identities, and powers.
 
 ```rix
 A := {#x# x*1 + 0 }
 B := {#x# x*(x + 1) }
-{: A, .Simplify(A), .Simplify(B, "expand") }
+{: A, .Transform(A), .Transform(B, :expand) }
 ```
 
 Direction names may be colon-strings or quoted strings and ignore case, so
-`:expand`, `"expand"`, and `:Expand` are equivalent. Use `:taylor` for the
+`:expand`, `"expand"`, and `:Expand` are equivalent. Use `:center` for the
 stronger polynomial form: it expands products, collects powers, and combines
 exact coefficients.
 
 ```rix
 P := {#x# (x - 1) * (x + 2) }
-{: .Simplify(P, :taylor), .Simplify(P, :Taylor, 3) }
+{: .Transform(P, :center), .Transform(P, :Center, 3) }
 ```
 
 The optional exact center writes the complete polynomial in powers of
-`(x - center)`; it does not truncate or numerically approximate. The complete
-list of rewrites and non-rewrites is in the [symbolic simplification
-reference](https://jostylr.github.io/rix/design/eval/simplification-reference.html).
+`(x - center)`; it does not truncate or numerically approximate.
+
+`:factor` records ordered polynomial divisions by roots or polynomial factors
+that you provide. A number `a` denotes `(x - a)`.
+
+```rix
+P := {#x# x^4 }
+Q := {#x# x^2 + 1 }
+{: .Transform(P, :factor, 4, Q),
+   .Transform(P, {: :identities, [:factor, 4, Q] }) }
+```
+
+In a transformation tuple, a bare direction takes no arguments and an array
+holds one parameterized operation. Operations run left to right. The complete
+list of rewrites and non-rewrites is in the [symbolic transformation
+reference](https://jostylr.github.io/rix/design/eval/transformation-reference.html).
 
 ## Speccability
 

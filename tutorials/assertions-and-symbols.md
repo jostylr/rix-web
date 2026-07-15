@@ -50,7 +50,7 @@ G({#x})
 ```
 
 Continue to **Exact symbolic calculus** for arithmetic, `.Poly`, `.Deriv`,
-`.Integrate`, `.Simplify`, and pure-function specs.
+`.Integrate`, `.Transform`, and pure-function specs.
 
 ## Read the result
 
