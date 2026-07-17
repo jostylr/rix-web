@@ -1,6 +1,6 @@
 import {
   createRixRepl
-} from "./chunk-swcp6nrg.js";
+} from "./chunk-zdq1wnwp.js";
 
 // src/tutorial-index.js
 var tutorials = [
@@ -67,7 +67,8 @@ var tutorials = [
   { number: "11c", parent: "11", file: "problem-collatz.html", title: "Collatz test", description: "Test a starting value up to a step limit." },
   { number: "11d", parent: "11", file: "problem-primes.html", title: "Prime filtering", description: "Moderate example: generate and filter candidates." },
   { number: "11e", parent: "11", file: "problem-matrix.html", title: "Matrix product", description: "Moderate example: structured numeric data." },
-  { number: "11f", parent: "11", file: "problem-symbolic.html", title: "Symbolic differentiation", description: "Advanced example: structured expressions and symbolic rules." }
+  { number: "11f", parent: "11", file: "problem-symbolic.html", title: "Symbolic differentiation", description: "Advanced example: structured expressions and symbolic rules." },
+  { number: "12", file: "structured-output.html", title: "Structured output", description: "Tables, ruled mathematical layouts, templates, and portable SVG graphics." }
 ];
 var rootTutorials = tutorials.filter((tutorial) => !tutorial.parent);
 var objectHelp = {
@@ -133,6 +134,10 @@ function runCell(cell) {
     const lines = response.groups.flatMap((group) => group.items.map(([syntax, description]) => `${syntax} — ${description}`));
     output.innerHTML = `<div class="result">${escapeHtml(lines.join(`
 `))}</div>`;
+    return;
+  }
+  if (response.type !== "error" && response.html) {
+    output.innerHTML = `<div class="result rich-output">${response.html}</div>`;
     return;
   }
   output.innerHTML = `<div class="${response.type === "error" ? "error" : "result"}">${escapeHtml(response.text)}</div>`;
@@ -216,5 +221,5 @@ function openObjectHelp(name, requestedFunction = null) {
   dialog.showModal();
 }
 
-//# debugId=5B712BC3BE99EC2F64756E2164756E21
+//# debugId=285CBEB47FEF1B4564756E2164756E21
 //# sourceMappingURL=tutorial-runner.js.map

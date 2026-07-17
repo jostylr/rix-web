@@ -19,6 +19,10 @@ function runCell(cell) {
         output.innerHTML = `<div class="result">${escapeHtml(lines.join("\n"))}</div>`;
         return;
     }
+    if (response.type !== "error" && response.html) {
+        output.innerHTML = `<div class="result rich-output">${response.html}</div>`;
+        return;
+    }
     output.innerHTML = `<div class="${response.type === "error" ? "error" : "result"}">${escapeHtml(response.text)}</div>`;
 }
 

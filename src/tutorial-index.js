@@ -63,6 +63,7 @@ export const tutorials = [
     { number: "11d", parent: "11", file: "problem-primes.html", title: "Prime filtering", description: "Moderate example: generate and filter candidates." },
     { number: "11e", parent: "11", file: "problem-matrix.html", title: "Matrix product", description: "Moderate example: structured numeric data." },
     { number: "11f", parent: "11", file: "problem-symbolic.html", title: "Symbolic differentiation", description: "Advanced example: structured expressions and symbolic rules." },
+    { number: "12", file: "structured-output.html", title: "Structured output", description: "Tables, ruled mathematical layouts, templates, and portable SVG graphics." },
 ];
 
 export const rootTutorials = tutorials.filter((tutorial) => !tutorial.parent);
