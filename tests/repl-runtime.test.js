@@ -27,6 +27,16 @@ area`), options);
     expect(context.getAllNames()).toContain("area");
 });
 
+test("the web REPL returns structured HTML for portable output values", () => {
+    const repl = createRixRepl();
+    const response = repl.run(".Algebra.SyntheticDivision(1, [2, -6, 2, -1])");
+
+    expect(response.type).toBe("result");
+    expect(response.html).toContain("rix-output-grid");
+    expect(response.html).toContain("rix-grid-rule-top");
+    expect(response.text).toContain("-3");
+});
+
 test("notebook newlines leave nested and continued expressions alone", () => {
     const source = `values := [
   1,

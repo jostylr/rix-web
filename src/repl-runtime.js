@@ -4,7 +4,9 @@ import {
     createDefaultSystemContext,
     complete,
     formatValue,
+    isOutputValue,
     parseAndEvaluate,
+    renderOutputHtml,
 } from "../../rix/src/index.js";
 import { normalizeReplSource } from "./repl-source.js";
 
@@ -88,7 +90,14 @@ export function createRixRepl({ autoSeparateLines = true } = {}) {
                     ...state,
                     file: "<ratcalc>",
                 });
-                return { type: "result", source, value: result, text: formatValue(result, { context: state.context, evaluate: null }) };
+                const format = (value) => formatValue(value, { context: state.context, evaluate: null });
+                return {
+                    type: "result",
+                    source,
+                    value: result,
+                    text: format(result),
+                    html: isOutputValue(result) ? renderOutputHtml(result, format) : null,
+                };
             } catch (error) {
                 return { type: "error", source, text: error.message || String(error) };
             }

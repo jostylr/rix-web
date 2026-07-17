@@ -9864,6 +9864,7 @@ var runtimeDefaults = Object.freeze({
     permissions: Object.freeze(["IMPORTS"])
   }),
   capabilityGroups: Object.freeze({
+    Output: Object.freeze(["TEXT", "PARAGRAPH", "HEADING", "FRAGMENT", "TABLE", "GRID", "PATH", "GRAPHIC", "FIGURE", "SLIDE", "SLIDES", "ALGEBRA"]),
     Core: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "IF", "LOOP", "MULTI", "RAND_NAME", "PRINT", "TGEN", "KEYOF", "KEYS", "VALUES"]),
     Arith: Object.freeze(["ADD", "SUB", "MUL", "DIV", "INTDIV", "MOD", "POW"]),
     Logic: Object.freeze(["EQ", "NEQ", "LT", "GT", "LTE", "GTE", "AND", "OR", "NOT"]),
@@ -12703,6 +12704,281 @@ var functionFunctions = {
   }
 };
 
+// ../rix/src/runtime/output.js
+var int3 = (value) => new Integer(BigInt(value));
+var isSequence = (value) => value && ["sequence", "tuple", "set", "array"].includes(value.type);
+var asString = (value) => value?.type === "string" ? value.value : typeof value === "string" ? value : null;
+function sequence(value, label) {
+  if (Array.isArray(value))
+    return value;
+  if (isSequence(value))
+    return value.values || value.elements || [];
+  throw new Error(`${label} must be an array, tuple, or sequence`);
+}
+function map(value, label) {
+  if (value?.type !== "map" || !(value.entries instanceof Map))
+    throw new Error(`${label} must be a map`);
+  return value.entries;
+}
+function get(entries, name, fallback = null) {
+  return entries.has(name) ? entries.get(name) : fallback;
+}
+function optionalMap(value, label) {
+  return value === null || value === undefined ? null : map(value, label);
+}
+function spec(args, positional, name) {
+  if (args.length === 1 && args[0]?.type === "map")
+    return map(args[0], `${name} specification`);
+  if (args.length > positional.length)
+    throw new Error(`${name} received too many arguments`);
+  return new Map(positional.slice(0, args.length).map((key, index) => [key, args[index]]));
+}
+function output(kind, fields) {
+  return Object.freeze({
+    type: "output",
+    kind,
+    ...fields,
+    _ext: new Map([
+      ["_type", { type: "string", value: "output" }],
+      ["kind", { type: "string", value: kind }],
+      ["immutable", int3(1)]
+    ])
+  });
+}
+function exactInteger2(value, label) {
+  if (value instanceof Integer)
+    return Number(value.value);
+  if (value instanceof Rational && value.denominator === 1n)
+    return Number(value.numerator);
+  if (typeof value === "number" && Number.isInteger(value))
+    return value;
+  throw new Error(`${label} must be an integer`);
+}
+function exactNumber(value, label) {
+  if (value instanceof Integer || value instanceof Rational)
+    return value;
+  throw new Error(`${label} must be an exact integer or rational`);
+}
+function normalizeColumns(value) {
+  return sequence(value, "Table columns").map((column, index) => {
+    const label = asString(column);
+    if (label !== null)
+      return { id: `column${index + 1}`, label, align: null, format: null };
+    const entry = map(column, `Table column ${index + 1}`);
+    const id = asString(get(entry, "id")) || `column${index + 1}`;
+    return { id, label: asString(get(entry, "label")) || id, align: asString(get(entry, "align")), format: get(entry, "format") };
+  });
+}
+function isOutputValue(value) {
+  return Boolean(value && value.type === "output" && typeof value.kind === "string");
+}
+function createText(args) {
+  const entry = spec(args, ["value", "style"], "Text");
+  const value = get(entry, "value");
+  if (value === null)
+    throw new Error("Text requires a value");
+  return output("text", { value, style: optionalMap(get(entry, "style"), "Text style") });
+}
+function createParagraph(args) {
+  const entry = spec(args, ["children", "style"], "Paragraph");
+  const childrenValue = get(entry, "children");
+  const children = isSequence(childrenValue) || Array.isArray(childrenValue) ? sequence(childrenValue, "Paragraph children") : [childrenValue];
+  return output("paragraph", { children, style: optionalMap(get(entry, "style"), "Paragraph style") });
+}
+function createHeading(args) {
+  const entry = spec(args, ["level", "content", "id", "style"], "Heading");
+  const level = exactInteger2(get(entry, "level"), "Heading level");
+  if (level < 1 || level > 6)
+    throw new Error("Heading level must be between 1 and 6");
+  const content = get(entry, "content");
+  if (content === null)
+    throw new Error("Heading requires content");
+  return output("heading", { level, content, id: asString(get(entry, "id")), style: optionalMap(get(entry, "style"), "Heading style") });
+}
+function createFragment(args) {
+  const entry = spec(args, ["children", "metadata"], "Fragment");
+  return output("fragment", { children: sequence(get(entry, "children"), "Fragment children"), metadata: optionalMap(get(entry, "metadata"), "Fragment metadata") });
+}
+function createTable(args) {
+  const entry = spec(args, ["columns", "rows", "options"], "Table");
+  const columns = normalizeColumns(get(entry, "columns"));
+  const rows = sequence(get(entry, "rows"), "Table rows").map((row, index) => {
+    const cells = sequence(row, `Table row ${index + 1}`);
+    if (cells.length !== columns.length)
+      throw new Error(`Table row ${index + 1} has ${cells.length} cells; expected ${columns.length}`);
+    return [...cells];
+  });
+  return output("table", { columns, rows, caption: asString(get(entry, "caption")), options: optionalMap(get(entry, "options"), "Table options") });
+}
+function createGrid(args) {
+  const entry = spec(args, ["columns", "rows", "rules", "style"], "Grid");
+  const columns = sequence(get(entry, "columns"), "Grid columns");
+  const rows = sequence(get(entry, "rows"), "Grid rows").map((row, index) => {
+    const cells = sequence(row, `Grid row ${index + 1}`);
+    if (cells.length !== columns.length)
+      throw new Error(`Grid row ${index + 1} has ${cells.length} cells; expected ${columns.length}`);
+    return [...cells];
+  });
+  return output("grid", {
+    columns,
+    rows,
+    rules: sequence(get(entry, "rules", { type: "sequence", values: [] }), "Grid rules"),
+    style: optionalMap(get(entry, "style"), "Grid style")
+  });
+}
+function createPath(args) {
+  const entry = spec(args, ["points", "style"], "Path");
+  return output("path", { points: sequence(get(entry, "points"), "Path points"), style: optionalMap(get(entry, "style"), "Path style") });
+}
+function createGraphic(args) {
+  const entry = spec(args, ["size", "children", "metadata"], "Graphic");
+  const size = sequence(get(entry, "size"), "Graphic size");
+  if (size.length !== 2)
+    throw new Error("Graphic size must contain width and height");
+  return output("graphic", { size, children: sequence(get(entry, "children"), "Graphic children"), metadata: optionalMap(get(entry, "metadata"), "Graphic metadata") });
+}
+function createFigure(args) {
+  const entry = spec(args, ["content", "caption", "label", "alt"], "Figure");
+  const content = get(entry, "content");
+  if (content === null)
+    throw new Error("Figure requires content");
+  return output("figure", { content, caption: asString(get(entry, "caption")), label: asString(get(entry, "label")), alt: asString(get(entry, "alt")) });
+}
+function createSlide(args) {
+  const entry = spec(args, ["content", "title", "id", "notes", "metadata"], "Slide");
+  const content = get(entry, "content");
+  if (content === null)
+    throw new Error("Slide requires content");
+  return output("slide", { content, title: asString(get(entry, "title")), id: asString(get(entry, "id")), notes: asString(get(entry, "notes")), metadata: optionalMap(get(entry, "metadata"), "Slide metadata") });
+}
+function createSlides(args) {
+  const entry = spec(args, ["slides", "title", "theme", "metadata"], "Slides");
+  const slides = sequence(get(entry, "slides"), "Slides entries");
+  if (!slides.every((slide) => isOutputValue(slide) && slide.kind === "slide"))
+    throw new Error("Slides requires an array of Slide values");
+  return output("slides", { slides, title: asString(get(entry, "title")), theme: asString(get(entry, "theme")), metadata: optionalMap(get(entry, "metadata"), "Slides metadata") });
+}
+function createSyntheticDivision(root, coefficients) {
+  root = exactNumber(root, "SyntheticDivision root");
+  const values = sequence(coefficients, "SyntheticDivision coefficients").map((value, index) => exactNumber(value, `SyntheticDivision coefficient ${index + 1}`));
+  if (values.length < 2)
+    throw new Error("SyntheticDivision requires at least two coefficients");
+  const products = Array(values.length).fill(null);
+  const bottom = Array(values.length).fill(null);
+  bottom[0] = values[0];
+  for (let index = 1;index < values.length; index += 1) {
+    products[index] = root.multiply(bottom[index - 1]);
+    bottom[index] = values[index].add(products[index]);
+  }
+  return output("grid", {
+    columns: Array.from({ length: values.length + 1 }, () => null),
+    rows: [[root, ...values], [null, null, ...products.slice(1)], [null, ...bottom]],
+    rules: [{ kind: "vertical", afterColumn: 1 }, { kind: "horizontal", aboveRow: 3 }],
+    style: new Map([["align", { type: "string", value: "right" }]]),
+    semantic: { type: "synthetic_division", root, coefficients: values, products, bottom }
+  });
+}
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
+}
+function cellText(value, format) {
+  return value === null || value === undefined ? "" : format(value);
+}
+function hasRule(grid, kind, value) {
+  return grid.rules.some((rule) => rule?.kind === kind && (kind === "vertical" ? rule.afterColumn === value : rule.aboveRow === value));
+}
+function formatOutputText(value, format) {
+  if (!isOutputValue(value))
+    return format(value);
+  if (value.kind === "text")
+    return cellText(value.value, format);
+  if (value.kind === "paragraph")
+    return value.children.map((child) => cellText(child, format)).join("");
+  if (value.kind === "heading")
+    return `${"#".repeat(value.level)} ${cellText(value.content, format)}`;
+  if (value.kind === "fragment")
+    return value.children.map((child) => formatOutputText(child, format)).join(`
+
+`);
+  if (value.kind === "table") {
+    const strings = value.rows.map((row) => row.map((cell) => cellText(cell, format)));
+    const widths = value.columns.map((column, index) => Math.max(column.label.length, ...strings.map((row) => row[index].length)));
+    const line = (row) => row.map((cell, index) => String(cell).padStart(widths[index])).join("  ");
+    return [value.caption, line(value.columns.map((column) => column.label)), widths.map((width) => "-".repeat(width)).join("  "), ...strings.map(line)].filter(Boolean).join(`
+`);
+  }
+  if (value.kind === "grid") {
+    const strings = value.rows.map((row) => row.map((cell) => cellText(cell, format)));
+    const widths = value.columns.map((_, index) => Math.max(1, ...strings.map((row) => row[index].length)));
+    const lines = [];
+    for (let index = 0;index < strings.length; index += 1) {
+      if (hasRule(value, "horizontal", index + 1))
+        lines.push(`  ${widths.slice(1).map((width) => "-".repeat(width + 2)).join("")}`);
+      const parts = strings[index].map((cell, column) => cell.padStart(widths[column]));
+      lines.push(hasRule(value, "vertical", 1) ? `${parts[0]} │ ${parts.slice(1).join("  ")}` : parts.join("  "));
+    }
+    return lines.join(`
+`);
+  }
+  if (value.kind === "figure")
+    return [formatOutputText(value.content, format), value.caption].filter(Boolean).join(`
+`);
+  if (value.kind === "graphic")
+    return `[Graphic: ${cellText(value.size[0], format)} × ${cellText(value.size[1], format)}, ${value.children.length} scene nodes]`;
+  if (value.kind === "path")
+    return `[Path: ${value.points.length} points]`;
+  if (value.kind === "slide")
+    return [value.title, formatOutputText(value.content, format)].filter(Boolean).join(`
+`);
+  if (value.kind === "slides")
+    return value.slides.map((slide, index) => `Slide ${index + 1}:
+${formatOutputText(slide, format)}`).join(`
+
+`);
+  return `[Output: ${value.kind}]`;
+}
+function renderOutputHtml(value, format = (item) => String(item ?? "")) {
+  const text = (item) => escapeHtml(isOutputValue(item) ? formatOutputText(item, format) : cellText(item, format));
+  if (!isOutputValue(value))
+    return `<pre>${text(value)}</pre>`;
+  if (value.kind === "text")
+    return `<span class="rix-output-text">${text(value.value)}</span>`;
+  if (value.kind === "paragraph")
+    return `<p class="rix-output-paragraph">${value.children.map(text).join("")}</p>`;
+  if (value.kind === "heading")
+    return `<h${value.level} class="rix-output-heading">${text(value.content)}</h${value.level}>`;
+  if (value.kind === "fragment")
+    return `<section class="rix-output-fragment">${value.children.map((child) => renderOutputHtml(child, format)).join("")}</section>`;
+  if (value.kind === "table")
+    return `<table class="rix-output-table">${value.caption ? `<caption>${escapeHtml(value.caption)}</caption>` : ""}<thead><tr>${value.columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}</tr></thead><tbody>${value.rows.map((row) => `<tr>${row.map((cell) => `<td>${text(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+  if (value.kind === "grid")
+    return `<table class="rix-output-grid"><tbody>${value.rows.map((row, rowIndex) => `<tr${hasRule(value, "horizontal", rowIndex + 1) ? ' class="rix-grid-rule-top"' : ""}>${row.map((cell, column) => `<td${hasRule(value, "vertical", column + 1) ? ' class="rix-grid-rule-left"' : ""}>${text(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+  if (value.kind === "figure")
+    return `<figure class="rix-output-figure">${renderOutputHtml(value.content, format)}${value.caption ? `<figcaption>${escapeHtml(value.caption)}</figcaption>` : ""}</figure>`;
+  if (value.kind === "graphic")
+    return `<div class="rix-output-graphic">${escapeHtml(formatOutputText(value, format))}</div>`;
+  if (value.kind === "slide")
+    return `<section class="rix-output-slide">${value.title ? `<h2>${escapeHtml(value.title)}</h2>` : ""}${renderOutputHtml(value.content, format)}</section>`;
+  if (value.kind === "slides")
+    return `<section class="rix-output-slides">${value.slides.map((slide) => renderOutputHtml(slide, format)).join("")}</section>`;
+  return `<pre>${escapeHtml(formatOutputText(value, format))}</pre>`;
+}
+function createAlgebraOutputCollection() {
+  const syntheticDivision = (root, coefficients) => createSyntheticDivision(root, coefficients);
+  return {
+    type: "map",
+    entries: new Map([["SyntheticDivision", syntheticDivision], ["SYNTHETICDIVISION", syntheticDivision]]),
+    _ext: new Map([
+      ["SYNTHETICDIVISION", {
+        type: "method_builtin",
+        name: "SyntheticDivision",
+        impl: (args) => syntheticDivision(...args.slice(1))
+      }],
+      ["immutable", int3(1)]
+    ])
+  };
+}
+
 // ../rix/src/eval/format.js
 function tensorValueAtTuple(tensor, tuple) {
   const value = tensor.data[tensorOffsetForTuple(tensor, tuple)];
@@ -12930,6 +13206,8 @@ function formatValue(val, options = {}) {
   if (val === undefined)
     return "undefined";
   if (typeof val === "object" && val !== null) {
+    if (isOutputValue(val))
+      return formatOutputText(val, formatChild);
     if (isSymbolicSpec(val))
       return formatSymbolicSpec(val);
     if (isLazySequence(val)) {
@@ -13803,7 +14081,7 @@ function captureIrValue(irNode, mode, context, evaluate) {
 }
 
 // ../rix/src/runtime/type-system.js
-function int3(value) {
+function int4(value) {
   return new Integer(BigInt(value));
 }
 function stringObj2(value) {
@@ -13828,7 +14106,7 @@ function makeProto(entries = []) {
   return {
     type: "map",
     entries: entryMap,
-    _ext: new Map([["frozen", int3(1)], ["immutable", int3(1)], ...entryMap.entries()])
+    _ext: new Map([["frozen", int4(1)], ["immutable", int4(1)], ...entryMap.entries()])
   };
 }
 function valueMethod(name, fn) {
@@ -13842,24 +14120,24 @@ function valueMethod(name, fn) {
     }
   };
 }
-function immutableCloneSpec(spec) {
-  const clone = { ...spec };
-  if (Array.isArray(spec.defaultTraits))
-    clone.defaultTraits = Object.freeze([...spec.defaultTraits]);
-  if (Array.isArray(spec.implies))
-    clone.implies = Object.freeze([...spec.implies]);
-  if (Array.isArray(spec.aliases))
-    clone.aliases = Object.freeze([...spec.aliases]);
-  if (spec.convertFrom instanceof Map)
-    clone.convertFrom = new Map(spec.convertFrom);
-  else if (spec.convertFrom && typeof spec.convertFrom === "object")
-    clone.convertFrom = new Map(Object.entries(spec.convertFrom));
+function immutableCloneSpec(spec2) {
+  const clone = { ...spec2 };
+  if (Array.isArray(spec2.defaultTraits))
+    clone.defaultTraits = Object.freeze([...spec2.defaultTraits]);
+  if (Array.isArray(spec2.implies))
+    clone.implies = Object.freeze([...spec2.implies]);
+  if (Array.isArray(spec2.aliases))
+    clone.aliases = Object.freeze([...spec2.aliases]);
+  if (spec2.convertFrom instanceof Map)
+    clone.convertFrom = new Map(spec2.convertFrom);
+  else if (spec2.convertFrom && typeof spec2.convertFrom === "object")
+    clone.convertFrom = new Map(Object.entries(spec2.convertFrom));
   else
     clone.convertFrom = new Map;
-  if (spec.installs instanceof Map)
-    clone.installs = new Map(spec.installs);
-  else if (spec.installs && typeof spec.installs === "object")
-    clone.installs = new Map(Object.entries(spec.installs));
+  if (spec2.installs instanceof Map)
+    clone.installs = new Map(spec2.installs);
+  else if (spec2.installs && typeof spec2.installs === "object")
+    clone.installs = new Map(Object.entries(spec2.installs));
   else
     clone.installs = new Map;
   return Object.freeze(clone);
@@ -13907,14 +14185,14 @@ class ImmutableSemanticRegistry {
     this.entries = new Map;
     this.aliases = new Map;
   }
-  register(spec) {
-    const name = colonName(spec?.name);
+  register(spec2) {
+    const name = colonName(spec2?.name);
     if (!name)
       throw new Error(`${this.kind} registration requires a name`);
     if (this.entries.has(name) || this.aliases.has(name)) {
       throw new Error(`Duplicate ${this.kind} registration: ${name}`);
     }
-    const entry = immutableCloneSpec({ ...spec, name });
+    const entry = immutableCloneSpec({ ...spec2, name });
     this.entries.set(name, entry);
     for (const alias of entry.aliases || []) {
       const aliasName = colonName(alias);
@@ -13942,11 +14220,11 @@ class ImmutableSemanticRegistry {
 }
 var traitRegistry = new ImmutableSemanticRegistry("trait");
 var typeRegistry = new ImmutableSemanticRegistry("type");
-function registerTrait(spec) {
-  return traitRegistry.register(spec);
+function registerTrait(spec2) {
+  return traitRegistry.register(spec2);
 }
-function registerType(spec) {
-  return typeRegistry.register(spec);
+function registerType(spec2) {
+  return typeRegistry.register(spec2);
 }
 function resolveTraitNames(names) {
   const result = [];
@@ -14523,50 +14801,50 @@ function installsFromRixMap(value, context = null) {
     variantsFromRixList(variants, context)
   ]));
 }
-function registerTraitFromRixSpec(spec, context = null) {
-  if (!spec || spec.type !== "map" || !(spec.entries instanceof Map)) {
+function registerTraitFromRixSpec(spec2, context = null) {
+  if (!spec2 || spec2.type !== "map" || !(spec2.entries instanceof Map)) {
     throw new Error("TraitRegister expects a map spec");
   }
-  const proto = protoFromRixMap(mapGet(spec, "proto"), context) || makeProto();
+  const proto = protoFromRixMap(mapGet(spec2, "proto"), context) || makeProto();
   return registerTrait({
-    name: colonName(mapGet(spec, "name")),
-    implies: listNames(mapGet(spec, "implies")),
-    verify: captureHook(mapGet(spec, "verify") || null, context),
+    name: colonName(mapGet(spec2, "name")),
+    implies: listNames(mapGet(spec2, "implies")),
+    verify: captureHook(mapGet(spec2, "verify") || null, context),
     proto: () => proto,
-    description: mapGet(spec, "description")?.value ?? ""
+    description: mapGet(spec2, "description")?.value ?? ""
   });
 }
-function registerTypeFromRixSpec(spec, context = null) {
-  if (!spec || spec.type !== "map" || !(spec.entries instanceof Map)) {
+function registerTypeFromRixSpec(spec2, context = null) {
+  if (!spec2 || spec2.type !== "map" || !(spec2.entries instanceof Map)) {
     throw new Error("TypeRegister expects a map spec");
   }
-  const proto = protoFromRixMap(mapGet(spec, "proto"), context) || makeProto();
+  const proto = protoFromRixMap(mapGet(spec2, "proto"), context) || makeProto();
   return registerType({
-    name: colonName(mapGet(spec, "name")),
-    aliases: listNames(mapGet(spec, "aliases")),
-    nativeType: colonName(mapGet(spec, "nativeType")),
-    parent: colonName(mapGet(spec, "parent")),
-    defaultTraits: listNames(mapGet(spec, "defaultTraits")),
-    construct: captureHook(mapGet(spec, "construct") || null, context),
-    convert: captureHook(mapGet(spec, "convert") || null, context),
-    convertFrom: hooksFromRixMap(mapGet(spec, "convertFrom"), context),
-    normalize: captureHook(mapGet(spec, "normalize") || null, context),
-    validate: captureHook(mapGet(spec, "validate") || null, context),
-    export: captureHook(mapGet(spec, "export") || null, context),
-    import: captureHook(mapGet(spec, "import") || null, context),
+    name: colonName(mapGet(spec2, "name")),
+    aliases: listNames(mapGet(spec2, "aliases")),
+    nativeType: colonName(mapGet(spec2, "nativeType")),
+    parent: colonName(mapGet(spec2, "parent")),
+    defaultTraits: listNames(mapGet(spec2, "defaultTraits")),
+    construct: captureHook(mapGet(spec2, "construct") || null, context),
+    convert: captureHook(mapGet(spec2, "convert") || null, context),
+    convertFrom: hooksFromRixMap(mapGet(spec2, "convertFrom"), context),
+    normalize: captureHook(mapGet(spec2, "normalize") || null, context),
+    validate: captureHook(mapGet(spec2, "validate") || null, context),
+    export: captureHook(mapGet(spec2, "export") || null, context),
+    import: captureHook(mapGet(spec2, "import") || null, context),
     proto: () => proto,
-    installs: installsFromRixMap(mapGet(spec, "installs"), context),
-    display: captureHook(mapGet(spec, "display") || null, context)
+    installs: installsFromRixMap(mapGet(spec2, "installs"), context),
+    display: captureHook(mapGet(spec2, "display") || null, context)
   });
 }
 registerBuiltinSemanticTypes();
 
 // ../rix/src/runtime/semantic.js
-function int4(value) {
+function int5(value) {
   return new Integer(BigInt(value));
 }
 function mutableExt() {
-  return new Map([["_mutable", int4(1)]]);
+  return new Map([["_mutable", int5(1)]]);
 }
 function ensureExt3(value) {
   if (!value || typeof value !== "object") {
@@ -14693,7 +14971,7 @@ function checkTraits(value, context, { warnOnly = false } = {}) {
       throw new Error(`Trait check failed: ${traitName}`);
     }
   }
-  return int4(1);
+  return int5(1);
 }
 function applyType(header, value, context, evaluate = null) {
   const typeName = header.typeName;
@@ -15004,7 +15282,7 @@ function createGeneratorValue(args, ctx, evaluate, defaultMode) {
     throw new Error("Generator limit must be an integer or callable predicate");
   }
   const maxIterations = ctx.getEnv?.("generatorMaxIterations", ctx.getEnv?.("defaultLoopMax", 1e4)) ?? 1e4;
-  let sequence;
+  let sequence2;
   const invoke = (callable, concreteArgs) => callWithConcreteArgs(callable, concreteArgs, ctx, evaluate);
   const copySeed = (value, cloneValue) => cloneValue ? cloneValue(value) : value;
   const makeState = (cloneOptions = {}) => ({
@@ -15015,7 +15293,7 @@ function createGeneratorValue(args, ctx, evaluate, defaultMode) {
     emitted: 0,
     stop: false
   });
-  sequence = createLazySequence({
+  sequence2 = createLazySequence({
     createState: makeState,
     cloneState: (state, { cloneValue } = {}) => ({
       seeds: state.seeds.map((value) => copySeed(value, cloneValue)),
@@ -15092,8 +15370,8 @@ function createGeneratorValue(args, ctx, evaluate, defaultMode) {
     }
   });
   if (!eager)
-    return sequence;
-  const materialized = materializeLazySequence(sequence, { allowUnknown: true, maxIterations });
+    return sequence2;
+  const materialized = materializeLazySequence(sequence2, { allowUnknown: true, maxIterations });
   materialized._ext = new Map([["_mutable", new Integer(1n)]]);
   return attachBuiltinProto(materialized);
 }
@@ -15541,14 +15819,14 @@ var collectionFunctions = {
 };
 
 // ../rix/src/runtime/methods.js
-function int5(value) {
+function int6(value) {
   return new Integer(BigInt(value));
 }
 function truthy2(value) {
   return value !== null && value !== undefined;
 }
 function bool(flag) {
-  return flag ? int5(1) : null;
+  return flag ? int6(1) : null;
 }
 function stringValue2(value) {
   if (value?.type === "string")
@@ -15562,8 +15840,8 @@ function stringObj3(value) {
 }
 function createFrozenMeta() {
   return new Map([
-    ["frozen", int5(1)],
-    ["immutable", int5(1)]
+    ["frozen", int6(1)],
+    ["immutable", int6(1)]
   ]);
 }
 function createBuiltinProto(entries) {
@@ -15577,7 +15855,7 @@ function method(name, impl) {
   return { type: "method_builtin", name, impl };
 }
 function mutableExt2() {
-  return new Map([["_mutable", int5(1)]]);
+  return new Map([["_mutable", int6(1)]]);
 }
 function ensureExt4(value) {
   if (!value._ext)
@@ -15755,13 +16033,13 @@ function compareValues(a, b) {
 function arrayEntries(target) {
   return target.values.map((value, index) => ({
     value,
-    key: int5(index + 1)
+    key: int6(index + 1)
   }));
 }
 function tupleEntries(target) {
   return target.values.map((value, index) => ({
     value,
-    key: int5(index + 1)
+    key: int6(index + 1)
   }));
 }
 function mapEntries(target) {
@@ -15779,7 +16057,7 @@ function setEntries(target) {
 function stringEntries(target) {
   return charsOf(target).map((value, index) => ({
     value,
-    key: int5(index + 1)
+    key: int6(index + 1)
   }));
 }
 function tensorEntries(target) {
@@ -15956,7 +16234,7 @@ function reduceEntries(target, iterator, initial, context, evaluate, invoke, ent
 function anyEntries(target, iterator, context, evaluate, invoke) {
   for (const entry of iterateEntries(target)) {
     if (predicateResult(iterator, [entry.value, entry.key, target], context, evaluate, invoke)) {
-      return int5(1);
+      return int6(1);
     }
   }
   return null;
@@ -15967,7 +16245,7 @@ function allEntries(target, iterator, context, evaluate, invoke) {
       return null;
     }
   }
-  return int5(1);
+  return int6(1);
 }
 function countEntries(target, iterator, context, evaluate, invoke) {
   let count = 0;
@@ -15976,7 +16254,7 @@ function countEntries(target, iterator, context, evaluate, invoke) {
       count += 1;
     }
   }
-  return int5(count);
+  return int6(count);
 }
 function findEntry(target, iterator, context, evaluate, invoke, wantKey = false) {
   for (const entry of iterateEntries(target)) {
@@ -15998,7 +16276,7 @@ function arithmeticDiv(a, b) {
 var arrayMethods = {
   LEN: method("LEN", ([target]) => {
     ensureSequence(target, "Len");
-    return int5(target.values.length);
+    return int6(target.values.length);
   }),
   ISEMPTY: method("ISEMPTY", ([target]) => {
     ensureSequence(target, "IsEmpty");
@@ -16023,13 +16301,13 @@ var arrayMethods = {
   INDEXOF: method("INDEXOF", ([target, value]) => {
     ensureSequence(target, "IndexOf");
     const idx = target.values.findIndex((entry) => valueKey2(entry) === valueKey2(value));
-    return idx === -1 ? null : int5(idx + 1);
+    return idx === -1 ? null : int6(idx + 1);
   }),
   LASTINDEXOF: method("LASTINDEXOF", ([target, value]) => {
     ensureSequence(target, "LastIndexOf");
     for (let i = target.values.length - 1;i >= 0; i--) {
       if (valueKey2(target.values[i]) === valueKey2(value))
-        return int5(i + 1);
+        return int6(i + 1);
     }
     return null;
   }),
@@ -16261,7 +16539,7 @@ var lazySequenceMethods = {
     const length = lazyKnownLength(target);
     if (length === null)
       throw new Error("Length is unknown for this lazy sequence");
-    return int5(length);
+    return int6(length);
   }),
   ISEMPTY: method("ISEMPTY", ([target]) => {
     ensureLazyIndex(target, 1);
@@ -16277,8 +16555,8 @@ var lazySequenceMethods = {
   }),
   FIRST: method("FIRST", ([target]) => ensureLazyIndex(target, 1)),
   LAST: method("LAST", ([target]) => {
-    const sequence = materializeLazySequence(target);
-    return sequence.values.at(-1) ?? null;
+    const sequence2 = materializeLazySequence(target);
+    return sequence2.values.at(-1) ?? null;
   }),
   MATERIALIZE: method("MATERIALIZE", ([target]) => materializeLazySequence(target))
 };
@@ -16308,7 +16586,7 @@ var iteratorMethods = {
     return iteratorLookup(target.source, target.cursor + amount).value;
   }),
   DONE: method("DONE", ([target]) => bool(target.cursor === null)),
-  INDEX: method("INDEX", ([target]) => target.cursor === null ? null : int5(target.cursor)),
+  INDEX: method("INDEX", ([target]) => target.cursor === null ? null : int6(target.cursor)),
   RESET: method("RESET", ([target, index]) => {
     if (index === undefined || !isIndexedIteratorSource(target.source)) {
       target.cursor = 0;
@@ -16333,7 +16611,7 @@ var iteratorMethods = {
 var mapMethods = {
   LEN: method("LEN", ([target]) => {
     ensureMap(target, "Len");
-    return int5(target.entries.size);
+    return int6(target.entries.size);
   }),
   ISEMPTY: method("ISEMPTY", ([target]) => {
     ensureMap(target, "IsEmpty");
@@ -16501,7 +16779,7 @@ var mapMethods = {
 var setMethods = {
   LEN: method("LEN", ([target]) => {
     ensureSet(target, "Len");
-    return int5(target.values.length);
+    return int6(target.values.length);
   }),
   ISEMPTY: method("ISEMPTY", ([target]) => {
     ensureSet(target, "IsEmpty");
@@ -16600,7 +16878,7 @@ var setMethods = {
 var stringMethods = {
   LEN: method("LEN", ([target]) => {
     ensureString(target, "Len");
-    return int5(Array.from(target.value).length);
+    return int6(Array.from(target.value).length);
   }),
   ISEMPTY: method("ISEMPTY", ([target]) => {
     ensureString(target, "IsEmpty");
@@ -16634,12 +16912,12 @@ var stringMethods = {
   INDEXOF: method("INDEXOF", ([target, needle]) => {
     ensureString(target, "IndexOf");
     const idx = target.value.indexOf(stringValue2(needle));
-    return idx === -1 ? null : int5(idx + 1);
+    return idx === -1 ? null : int6(idx + 1);
   }),
   LASTINDEXOF: method("LASTINDEXOF", ([target, needle]) => {
     ensureString(target, "LastIndexOf");
     const idx = target.value.lastIndexOf(stringValue2(needle));
-    return idx === -1 ? null : int5(idx + 1);
+    return idx === -1 ? null : int6(idx + 1);
   }),
   SLICE: method("SLICE", ([target, start, end]) => {
     ensureString(target, "Slice");
@@ -16699,7 +16977,7 @@ var stringMethods = {
 var tupleMethods = {
   LEN: method("LEN", ([target]) => {
     ensureTuple(target, "Len");
-    return int5(target.values.length);
+    return int6(target.values.length);
   }),
   GET: method("GET", ([target, index]) => {
     ensureTuple(target, "Get");
@@ -16742,15 +17020,15 @@ function tensorSelectorsFromArgs(args) {
 var tensorMethods = {
   SHAPE: method("SHAPE", ([target]) => {
     ensureTensor(target, "Shape");
-    return { type: "tuple", values: tensorShape(target).map((dim) => int5(dim)) };
+    return { type: "tuple", values: tensorShape(target).map((dim) => int6(dim)) };
   }),
   RANK: method("RANK", ([target]) => {
     ensureTensor(target, "Rank");
-    return int5(tensorRank(target));
+    return int6(tensorRank(target));
   }),
   SIZE: method("SIZE", ([target]) => {
     ensureTensor(target, "Size");
-    return int5(tensorSize(target));
+    return int6(tensorSize(target));
   }),
   GET: method("GET", ([target, ...selectors]) => {
     ensureTensor(target, "Get");
@@ -16825,7 +17103,7 @@ var tensorMethods = {
   }),
   SUM: method("SUM", ([target]) => {
     ensureTensor(target, "Sum");
-    let acc = int5(0);
+    let acc = int6(0);
     forEachTensorCell(target, (value) => {
       if (!isHole(value))
         acc = arithmeticAdd(acc, value);
@@ -16837,7 +17115,7 @@ var tensorMethods = {
     const size = tensorSize(target);
     if (size === 0)
       return null;
-    return arithmeticDiv(tensorMethods.SUM.impl([target]), int5(size));
+    return arithmeticDiv(tensorMethods.SUM.impl([target]), int6(size));
   }),
   DOT: method("DOT", ([target, other]) => {
     ensureTensor(target, "Dot");
@@ -16845,7 +17123,7 @@ var tensorMethods = {
     if (tensorRank(target) !== 1 || tensorRank(other) !== 1 || tensorSize(target) !== tensorSize(other)) {
       throw new Error("Dot expects rank-1 tensors of equal size");
     }
-    let acc = int5(0);
+    let acc = int6(0);
     for (let i = 0;i < target.data.length; i++) {
       acc = arithmeticAdd(acc, arithmeticMul(target.data[i], other.data[i]));
     }
@@ -16864,10 +17142,10 @@ var tensorMethods = {
     const data = [];
     for (let r = 1;r <= rows; r++) {
       for (let c = 1;c <= cols; c++) {
-        let acc = int5(0);
+        let acc = int6(0);
         for (let k = 1;k <= inner; k++) {
-          const a = tensorGetBySelectors(target, [{ kind: "index", value: int5(r) }, { kind: "index", value: int5(k) }]);
-          const b = tensorGetBySelectors(other, [{ kind: "index", value: int5(k) }, { kind: "index", value: int5(c) }]);
+          const a = tensorGetBySelectors(target, [{ kind: "index", value: int6(r) }, { kind: "index", value: int6(k) }]);
+          const b = tensorGetBySelectors(other, [{ kind: "index", value: int6(k) }, { kind: "index", value: int6(c) }]);
           acc = arithmeticAdd(acc, arithmeticMul(a, b));
         }
         data.push(acc);
@@ -17965,18 +18243,18 @@ var LOWERERS = {
   }
 };
 function lowerImports(imports) {
-  return imports.map((spec) => ({
-    local: spec.local,
-    source: spec.source,
-    mode: spec.mode
+  return imports.map((spec2) => ({
+    local: spec2.local,
+    source: spec2.source,
+    mode: spec2.mode
   }));
 }
 function lowerBindingSpecs(specs) {
-  return specs.map((spec) => ({
-    target: spec.target,
-    source: spec.source,
-    mode: spec.mode,
-    ...spec.sourceScope ? { sourceScope: spec.sourceScope } : {}
+  return specs.map((spec2) => ({
+    target: spec2.target,
+    source: spec2.source,
+    mode: spec2.mode,
+    ...spec2.sourceScope ? { sourceScope: spec2.sourceScope } : {}
   }));
 }
 function lowerCapabilityModifiers(modifiers) {
@@ -18049,20 +18327,20 @@ function lowerDestructureTarget(node) {
       return {
         type: node.type,
         wholeTarget: node.wholeTarget ? lowerDestructureTarget(node.wholeTarget) : null,
-        specs: (node.specs || []).map((spec) => {
-          if (spec?.type === "FullSlice") {
+        specs: (node.specs || []).map((spec2) => {
+          if (spec2?.type === "FullSlice") {
             return { kind: "full" };
           }
-          if (spec?.type === "SliceSpec") {
+          if (spec2?.type === "SliceSpec") {
             return {
               kind: "slice",
-              start: lowerNode(spec.start),
-              end: lowerNode(spec.end)
+              start: lowerNode(spec2.start),
+              end: lowerNode(spec2.end)
             };
           }
           return {
             kind: "index",
-            value: lowerNode(spec)
+            value: lowerNode(spec2)
           };
         }),
         nestedTarget: node.nestedTarget ? lowerDestructureTarget(node.nestedTarget) : null
@@ -18146,14 +18424,14 @@ function lowerParams(params, prep = null, prepStrict = false, variantName = null
     }
   };
 }
-function lowerBracketSpec(spec) {
-  if (spec.type === "FullSlice") {
+function lowerBracketSpec(spec2) {
+  if (spec2.type === "FullSlice") {
     return ir2("FULL_SLICE");
   }
-  if (spec.type === "SliceSpec") {
-    return ir2("SLICE_SPEC", lowerNode(spec.start), lowerNode(spec.end));
+  if (spec2.type === "SliceSpec") {
+    return ir2("SLICE_SPEC", lowerNode(spec2.start), lowerNode(spec2.end));
   }
-  return lowerNode(spec);
+  return lowerNode(spec2);
 }
 // ../rix/src/eval/registry.js
 class Registry {
@@ -18772,20 +19050,20 @@ function clampSequenceIndex(raw, length) {
     normalized = length;
   return normalized;
 }
-function sliceSequenceLike(obj, spec) {
+function sliceSequenceLike(obj, spec2) {
   if (isLazySequence(obj)) {
-    const startRaw = spec.kind === "full" ? 1 : toInteger(spec.start);
+    const startRaw = spec2.kind === "full" ? 1 : toInteger(spec2.start);
     let endRaw;
-    if (spec.kind === "full") {
+    if (spec2.kind === "full") {
       const known = lazyKnownLength(obj);
       if (known === null)
         throw new Error("A full slice of an unbounded lazy sequence is not available");
       endRaw = known;
     } else {
-      endRaw = toInteger(spec.end);
+      endRaw = toInteger(spec2.end);
     }
     if (startRaw < 0 || endRaw < 0)
-      return sliceSequenceLike(materializeLazySequence(obj), spec);
+      return sliceSequenceLike(materializeLazySequence(obj), spec2);
     if (startRaw < 1 || endRaw < 1)
       throw new Error("Lazy sequence slices require non-zero indices");
     ensureLazyIndex(obj, Math.max(startRaw, endRaw));
@@ -18802,8 +19080,8 @@ function sliceSequenceLike(obj, spec) {
     if (values.length === 0) {
       return obj.type === "tuple" ? { type: "tuple", values: [] } : { type: "sequence", values: [], _ext: new Map([["_mutable", new Integer(1n)]]) };
     }
-    const startRaw = spec.kind === "full" ? 1 : spec.start;
-    const endRaw = spec.kind === "full" ? values.length : spec.end;
+    const startRaw = spec2.kind === "full" ? 1 : spec2.start;
+    const endRaw = spec2.kind === "full" ? values.length : spec2.end;
     const start = clampSequenceIndex(startRaw, values.length);
     const end = clampSequenceIndex(endRaw, values.length);
     const out = [];
@@ -18818,8 +19096,8 @@ function sliceSequenceLike(obj, spec) {
     if (chars.length === 0) {
       return { type: "string", value: "" };
     }
-    const startRaw = spec.kind === "full" ? 1 : spec.start;
-    const endRaw = spec.kind === "full" ? chars.length : spec.end;
+    const startRaw = spec2.kind === "full" ? 1 : spec2.start;
+    const endRaw = spec2.kind === "full" ? chars.length : spec2.end;
     const start = clampSequenceIndex(startRaw, chars.length);
     const end = clampSequenceIndex(endRaw, chars.length);
     let out = "";
@@ -19238,12 +19516,12 @@ function jsExportToRix(value) {
   return value ?? null;
 }
 function importJSModule(filename, context) {
-  const spec = filename?.type === "string" ? filename.value : String(filename ?? "");
-  if (!spec.endsWith(".js")) {
+  const spec2 = filename?.type === "string" ? filename.value : String(filename ?? "");
+  if (!spec2.endsWith(".js")) {
     throw new Error("ImportJS expects a local .js module path");
   }
   const baseDir = context.getEnv("jsImportBaseDir", context.getEnv("scriptBaseDir", process.cwd()));
-  const resolved = path_default.isAbsolute(spec) ? spec : path_default.resolve(baseDir, spec);
+  const resolved = path_default.isAbsolute(spec2) ? spec2 : path_default.resolve(baseDir, spec2);
   const cache = context.getEnv("__js_import_cache__", new Map);
   context.setEnv("__js_import_cache__", cache);
   if (!cache.has(resolved)) {
@@ -20127,31 +20405,31 @@ function bindDestructureTarget(target, sourceRef, outerMode, context, evaluate =
   }
   return bindDestructuredName(resolved.base.name, preparedRef, resolved.bindingMode, context, evaluate);
 }
-function evaluatePatternKey(spec, evaluate) {
-  if (typeof spec === "string")
-    return spec;
-  if (spec?.type === "MapKeyIdentifier")
-    return spec.value;
-  if (spec && typeof spec === "object" && !spec.fn && spec.type === "String") {
-    return keyOf({ type: "string", value: spec.value });
+function evaluatePatternKey(spec2, evaluate) {
+  if (typeof spec2 === "string")
+    return spec2;
+  if (spec2?.type === "MapKeyIdentifier")
+    return spec2.value;
+  if (spec2 && typeof spec2 === "object" && !spec2.fn && spec2.type === "String") {
+    return keyOf({ type: "string", value: spec2.value });
   }
-  return keyOf(evaluate(spec));
+  return keyOf(evaluate(spec2));
 }
 function evaluateIndexedSpecs(specs, evaluate) {
-  return (specs || []).map((spec) => {
-    if (spec.kind === "full") {
+  return (specs || []).map((spec2) => {
+    if (spec2.kind === "full") {
       return { kind: "full" };
     }
-    if (spec.kind === "slice") {
+    if (spec2.kind === "slice") {
       return {
         kind: "slice",
-        start: evaluate(spec.start),
-        end: evaluate(spec.end)
+        start: evaluate(spec2.start),
+        end: evaluate(spec2.end)
       };
     }
     return {
       kind: "index",
-      value: evaluate(spec.value)
+      value: evaluate(spec2.value)
     };
   });
 }
@@ -21367,11 +21645,11 @@ function evaluateShared(node, context, evaluate) {
   return context.withSharedBody(node, () => evaluate(node));
 }
 function applyImports(imports, context) {
-  for (const spec of imports) {
-    if (spec.mode === "alias") {
-      context.importAlias(spec.local, spec.source);
+  for (const spec2 of imports) {
+    if (spec2.mode === "alias") {
+      context.importAlias(spec2.local, spec2.source);
     } else {
-      context.importCopy(spec.local, spec.source);
+      context.importCopy(spec2.local, spec2.source);
     }
   }
 }
@@ -23042,6 +23320,22 @@ var diagnosticFunctions = {
   TRACE
 };
 
+// ../rix/src/eval/functions/output.js
+var capability = (impl, doc) => ({ impl: (args) => impl(args), pure: true, doc });
+var outputFunctions = {
+  TEXT: capability(createText, "Create a portable text output node"),
+  PARAGRAPH: capability(createParagraph, "Create a portable paragraph output node"),
+  HEADING: capability(createHeading, "Create a portable document heading"),
+  FRAGMENT: capability(createFragment, "Compose portable output values"),
+  TABLE: capability(createTable, "Create a structured output table"),
+  GRID: capability(createGrid, "Create a mathematical layout grid"),
+  PATH: capability(createPath, "Create a portable 2D path scene node"),
+  GRAPHIC: capability(createGraphic, "Create a portable 2D scene"),
+  FIGURE: capability(createFigure, "Wrap output with figure metadata"),
+  SLIDE: capability(createSlide, "Create a presentation slide"),
+  SLIDES: capability(createSlides, "Create a sequential presentation deck")
+};
+
 // ../rix/src/eval/functions/math.js
 function numberFrom(value) {
   if (value instanceof Integer)
@@ -23094,7 +23388,7 @@ var mathFunctions = {
 };
 
 // ../rix/src/eval/functions/units.js
-function int6(value) {
+function int7(value) {
   return new Integer(BigInt(value));
 }
 function stringValue3(value, label) {
@@ -23164,7 +23458,7 @@ function parseExactExpression(source, collection) {
       if (!match)
         throw new Error(`Expected integer exponent in exact expression '${source}'`);
       index += match[0].length;
-      value = powScalar(value, int6(match[0]));
+      value = powScalar(value, int7(match[0]));
     }
     return value;
   }
@@ -23192,10 +23486,10 @@ function multiplyWithUnits(left, right) {
   if (isScalar(left) && isUnitValue(right))
     return constructQuantity(left, right);
   if (isQuantity(left) && isUnitValue(right)) {
-    return multiplyQuantityValues(left, constructQuantity(int6(1), right));
+    return multiplyQuantityValues(left, constructQuantity(int7(1), right));
   }
   if (isUnitValue(left) && isQuantity(right)) {
-    return multiplyQuantityValues(constructQuantity(int6(1), left), right);
+    return multiplyQuantityValues(constructQuantity(int7(1), left), right);
   }
   return multiplyQuantityValues(left, right);
 }
@@ -23205,12 +23499,12 @@ function divideWithUnits(left, right) {
   if (isScalar(left) && isUnitValue(right))
     return constructQuantity(left, invertUnit(right));
   if (isUnitValue(left) && isScalar(right))
-    return constructQuantity(divideScalars(int6(1), right), left);
+    return constructQuantity(divideScalars(int7(1), right), left);
   if (isQuantity(left) && isUnitValue(right)) {
-    return divideQuantityValues(left, constructQuantity(int6(1), right));
+    return divideQuantityValues(left, constructQuantity(int7(1), right));
   }
   if (isUnitValue(left) && isQuantity(right)) {
-    return divideQuantityValues(constructQuantity(int6(1), left), right);
+    return divideQuantityValues(constructQuantity(int7(1), left), right);
   }
   return divideQuantityValues(left, right);
 }
@@ -23263,7 +23557,7 @@ var unitExactFunctions = {
   }
 };
 function boolResult3(value) {
-  return value ? int6(1) : null;
+  return value ? int7(1) : null;
 }
 function addWithOptionalWarning([left, right], context) {
   const warnings = context?.getEnv?.("warnings", runtimeDefaults.warnings) ?? runtimeDefaults.warnings;
@@ -23427,8 +23721,12 @@ function createDefaultSystemContext(options = {}) {
   ctx.registerValue("Exact", exact, { doc: "Canonical RiX exact-generator collection" });
   ctx.registerValue("COMPLEX", complex, { doc: "Exact complex-number operations" });
   ctx.registerValue("Complex", complex, { doc: "Exact complex-number operations" });
+  const algebra = createAlgebraOutputCollection();
+  ctx.registerValue("ALGEBRA", algebra, { doc: "Algebra presentation helpers" });
+  ctx.registerValue("Algebra", algebra, { doc: "Algebra presentation helpers" });
   ctx.registerAll(stdlibFunctions);
   ctx.registerAll(symbolicCapabilities);
+  ctx.registerAll(outputFunctions);
   ctx.register("EVAL", coreFunctions.EVAL);
   ctx.register("TypeExport", coreFunctions.TYPE_EXPORT);
   ctx.register("TypeImport", coreFunctions.TYPE_IMPORT);
@@ -23552,12 +23850,12 @@ function applyBindingToCurrentScope(context, target, sourceCell, mode) {
   context.setCell(target, clonedCell);
   return clonedCell.value;
 }
-function resolveCallerBindingCell(context, spec) {
-  const sourceScope = spec.sourceScope || "current";
-  const cell = sourceScope === "ancestor" ? context.getAncestorCell(spec.source) : context.getImmediateCell(spec.source);
+function resolveCallerBindingCell(context, spec2) {
+  const sourceScope = spec2.sourceScope || "current";
+  const cell = sourceScope === "ancestor" ? context.getAncestorCell(spec2.source) : context.getImmediateCell(spec2.source);
   if (!cell) {
     const scopeLabel = sourceScope === "ancestor" ? "ancestor" : "current";
-    throw new Error(`Undefined ${scopeLabel} variable for script binding: ${spec.source}`);
+    throw new Error(`Undefined ${scopeLabel} variable for script binding: ${spec2.source}`);
   }
   return cell;
 }
@@ -23772,7 +24070,7 @@ function validateInputsAgainstContract(inputSpecs, inputContract) {
   if (!Array.isArray(inputContract) || inputContract.length === 0) {
     return;
   }
-  const actualByTarget = new Map((inputSpecs || []).map((spec) => [spec.target, spec]));
+  const actualByTarget = new Map((inputSpecs || []).map((spec2) => [spec2.target, spec2]));
   for (const contract of inputContract) {
     const actual = actualByTarget.get(contract.target);
     if (!actual) {
@@ -23788,19 +24086,19 @@ function validateInputsAgainstContract(inputSpecs, inputContract) {
 }
 function bindScriptInputs(scriptContext, parentContext, inputSpecs, inputContract) {
   validateInputsAgainstContract(inputSpecs, inputContract);
-  for (const spec of inputSpecs || []) {
-    const sourceCell = resolveCallerBindingCell(parentContext, spec);
-    applyBindingToCurrentScope(scriptContext, spec.target, sourceCell, spec.mode);
+  for (const spec2 of inputSpecs || []) {
+    const sourceCell = resolveCallerBindingCell(parentContext, spec2);
+    applyBindingToCurrentScope(scriptContext, spec2.target, sourceCell, spec2.mode);
   }
 }
 function buildExportBundle(scriptContext, exportBindings) {
   const entries = new Map;
-  for (const spec of exportBindings || []) {
-    const sourceCell = scriptContext.getCell(spec.source);
+  for (const spec2 of exportBindings || []) {
+    const sourceCell = scriptContext.getCell(spec2.source);
     if (!sourceCell) {
-      throw new Error(`Cannot export undefined script binding: ${spec.source}`);
+      throw new Error(`Cannot export undefined script binding: ${spec2.source}`);
     }
-    entries.set(spec.target, buildBoundCell(sourceCell, spec.mode));
+    entries.set(spec2.target, buildBoundCell(sourceCell, spec2.mode));
   }
   return {
     type: "export_bundle",
@@ -23814,12 +24112,12 @@ function getExportBundleCell(bundle, name) {
   return bundle.entries.get(name) ?? null;
 }
 function applyCallerOutputBindings(context, outputSpecs, bundle) {
-  for (const spec of outputSpecs || []) {
-    const sourceCell = getExportBundleCell(bundle, spec.source);
+  for (const spec2 of outputSpecs || []) {
+    const sourceCell = getExportBundleCell(bundle, spec2.source);
     if (!sourceCell) {
-      throw new Error(`Unknown script export: ${spec.source}`);
+      throw new Error(`Unknown script export: ${spec2.source}`);
     }
-    applyBindingToCurrentScope(context, spec.target, sourceCell, spec.mode);
+    applyBindingToCurrentScope(context, spec2.target, sourceCell, spec2.mode);
   }
 }
 function resolveScriptPath(requestedPath, runtime, context) {
@@ -23828,19 +24126,19 @@ function resolveScriptPath(requestedPath, runtime, context) {
   const relativePath = requestedPath.endsWith(".rix") ? requestedPath : `${requestedPath}.rix`;
   return path_default.resolve(baseDir, relativePath);
 }
-function evaluateScriptImport(spec, context, registry, systemContext) {
+function evaluateScriptImport(spec2, context, registry, systemContext) {
   const runtime = getScriptRuntime(context);
   const parentFrame = runtime.frameStack[runtime.frameStack.length - 1] || null;
   if (parentFrame && !parentFrame.permissions.has("IMPORTS")) {
     throw new Error("Script imports are not allowed in this script context");
   }
-  const resolvedPath = resolveScriptPath(spec.path, runtime, context);
+  const resolvedPath = resolveScriptPath(spec2.path, runtime, context);
   if (runtime.activeImports.includes(resolvedPath)) {
     throw new Error(`Cyclic script import detected: ${[...runtime.activeImports, resolvedPath].join(" -> ")}`);
   }
   const prepared = prepareScript(resolvedPath, runtime);
   const parentPermissions = parentFrame ? new Set(parentFrame.permissions) : getHostAvailablePermissions(context);
-  const capabilityFrame = deriveScriptCapabilityFrame(systemContext, parentPermissions, spec.capabilityModifiers || [], context);
+  const capabilityFrame = deriveScriptCapabilityFrame(systemContext, parentPermissions, spec2.capabilityModifiers || [], context);
   const scriptContext = new Context;
   scriptContext.env = context.env;
   scriptContext.push(undefined, { isolated: true, callableBoundary: true });
@@ -23852,19 +24150,19 @@ function evaluateScriptImport(spec, context, registry, systemContext) {
     permissions: capabilityFrame.permissions
   });
   try {
-    bindScriptInputs(scriptContext, context, spec.inputs || [], prepared.inputContract);
+    bindScriptInputs(scriptContext, context, spec2.inputs || [], prepared.inputContract);
     let finalResult = null;
     for (const node of prepared.bodyIr) {
       finalResult = evaluate(node, scriptContext, registry, capabilityFrame.systemContext);
     }
     if (!prepared.exportBindings || prepared.exportBindings.length === 0) {
-      if (spec.outputs && spec.outputs.length > 0) {
+      if (spec2.outputs && spec2.outputs.length > 0) {
         throw new Error("Caller-side script outputs require the imported script to declare exports");
       }
       return finalResult;
     }
     const bundle = buildExportBundle(scriptContext, prepared.exportBindings);
-    applyCallerOutputBindings(context, spec.outputs || [], bundle);
+    applyCallerOutputBindings(context, spec2.outputs || [], bundle);
     return bundle;
   } finally {
     runtime.frameStack.pop();
@@ -24172,7 +24470,14 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
           ...state,
           file: "<ratcalc>"
         });
-        return { type: "result", source, value: result, text: formatValue(result, { context: state.context, evaluate: null }) };
+        const format = (value) => formatValue(value, { context: state.context, evaluate: null });
+        return {
+          type: "result",
+          source,
+          value: result,
+          text: format(result),
+          html: isOutputValue(result) ? renderOutputHtml(result, format) : null
+        };
       } catch (error) {
         return { type: "error", source, text: error.message || String(error) };
       }
@@ -24205,5 +24510,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { findHelp, createRixRepl };
 
-//# debugId=752CAEECFA3832CB64756E2164756E21
-//# sourceMappingURL=chunk-0a1kjjz6.js.map
+//# debugId=26D343CC1EC24A6864756E2164756E21
+//# sourceMappingURL=chunk-swcp6nrg.js.map

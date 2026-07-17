@@ -106,14 +106,20 @@ function appendOutput(source, response) {
         entry.appendChild(inlineHelp(response));
     } else {
         const outputLine = document.createElement("div");
-        const inspectable = response.text.includes("\n");
+        const inspectable = Boolean(response.html) || response.text.includes("\n");
         const preview = inspectable ? `${response.text.split("\n")[0]}\n… inspect full result` : response.text;
         outputLine.className = `${response.type === "error" ? "error-line" : "output-line"}${inspectable ? " truncated" : ""}`;
-        outputLine.innerHTML = response.type === "error"
-            ? escapeHtml(preview)
-            : `${escapeHtml(preview)}<span class="inject-icon" title="Use this value">→</span>`;
-        if (inspectable) outputLine.addEventListener("click", () => openInspection(source, response.text));
-        else if (response.type === "result") outputLine.addEventListener("click", () => setInput(response.text));
+        if (response.html) {
+            outputLine.classList.add("rich-output");
+            outputLine.innerHTML = response.html;
+            outputLine.addEventListener("click", () => openInspection(source, response.text));
+        } else {
+            outputLine.innerHTML = response.type === "error"
+                ? escapeHtml(preview)
+                : `${escapeHtml(preview)}<span class="inject-icon" title="Use this value">→</span>`;
+            if (inspectable) outputLine.addEventListener("click", () => openInspection(source, response.text));
+            else if (response.type === "result") outputLine.addEventListener("click", () => setInput(response.text));
+        }
         entry.appendChild(outputLine);
     }
     outputHistory.appendChild(entry);
