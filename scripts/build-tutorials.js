@@ -106,8 +106,13 @@ function navigation(current) {
     const position = siblings.findIndex((item) => item.number === current.number);
     const previous = siblings[position - 1];
     const next = siblings[position + 1];
-    const details = !current.parent ? childrenOf(current.number)[0] : null;
-    return `<nav class="lesson-navigation" aria-label="Lesson navigation"><span>${previous ? `<a href="./${previous.file}">← ${escapeHtml(previous.number)} Previous</a>` : ""}</span>${details ? `<a class="details-link" href="./${details.file}">Details ↓</a>` : ""}<span>${next ? `<a href="./${next.file}">Next ${escapeHtml(next.number)} →</a>` : ""}</span></nav>`;
+    const section = current.parent ? tutorialByNumber(current.parent) : current;
+    const sectionHref = current.parent ? `./${section.file}` : "#lesson-start";
+    const down = current.parent ? next : childrenOf(current.number)[0];
+    const label = (tutorial) => `${tutorial.number} ${tutorial.title.split(/\s+/)[0]}`;
+    const sectionLink = `<a href="${sectionHref}">↑ ${escapeHtml(label(section))}</a>`;
+    const downLink = down ? `<a href="./${down.file}">↓ ${escapeHtml(label(down))}</a>` : "";
+    return `<nav class="lesson-navigation" aria-label="Lesson navigation"><span class="previous-link">${previous ? `<a href="./${previous.file}">← ${escapeHtml(label(previous))}</a>` : ""}</span><span class="section-links">${sectionLink}${downLink}</span><span class="next-link">${next ? `<a href="./${next.file}">${escapeHtml(label(next))} →</a>` : ""}</span></nav>`;
 }
 
 function relatedFunctions(current) {
@@ -120,17 +125,17 @@ function referenceLinks(current) {
     const rootNumber = current.parent || current.number;
     const root = Number.parseInt(rootNumber, 10);
     const links = {
-        1: [["RiX introduction", "https://github.com/jostylr/ratmath/blob/main/rix/docs/introduction.md"]],
-        2: [["Methods API", "https://github.com/jostylr/ratmath/blob/main/rix/docs/eval/methods-guide.md"], ["Collection syntax", "https://github.com/jostylr/ratmath/blob/main/rix/docs/eval/syntax-guide.md#collection-syntax"]],
-        3: [["Syntax and operators", "https://github.com/jostylr/ratmath/blob/main/rix/docs/eval/syntax-guide.md"], ["Number notation", "https://github.com/jostylr/ratmath/blob/main/rix/docs/introduction.md#number-systems-and-notation"]],
-        4: [["Cells and assignments", "https://github.com/jostylr/ratmath/blob/main/rix/docs/design/eval/cells-assignments.md"], ["Destructuring reference", "https://github.com/jostylr/ratmath/blob/main/rix/docs/eval/syntax-guide.md#left-hand-destructuring"]],
-        5: [["Functions reference", "https://github.com/jostylr/ratmath/blob/main/rix/docs/eval/syntax-guide.md#assignment--definition"], ["Function rationale", "https://github.com/jostylr/ratmath/blob/main/rix/docs/rix-rationales.md#multifunctions-2026-04-01"]],
-        6: [["Control-flow syntax", "https://github.com/jostylr/ratmath/blob/main/rix/docs/eval/syntax-guide.md#brace-containers"], ["Ternary reference", "https://github.com/jostylr/ratmath/blob/main/rix/docs/parser/ternary-operator.md"]],
-        7: [["Pipes API", "https://github.com/jostylr/ratmath/blob/main/rix/docs/eval/syntax-guide.md#pipe-operators"], ["Generator reference", "https://github.com/jostylr/ratmath/blob/main/rix/docs/parser/array-generators-implementation.md"]],
-        8: [["Units and exact generators", "https://github.com/jostylr/ratmath/blob/main/rix/docs/design/eval/units-and-exact-generators.md"], ["Cayley polar design", "https://github.com/jostylr/ratmath/blob/main/rix/docs/design/eval/cayley-polar.md"], ["Types and traits API", "https://github.com/jostylr/ratmath/blob/main/rix/docs/eval/types-and-traits-guide.md"]],
-        9: [["System function API", "https://github.com/jostylr/ratmath/blob/main/rix/docs/eval/syntax-guide.md#part-2-system-function-reference"], ["Diagnostics API", "https://github.com/jostylr/ratmath/blob/main/rix/docs/eval/syntax-guide.md#part-4-diagnostics-testing-and-debugging"]],
-        10: [["Script imports", "https://github.com/jostylr/ratmath/blob/main/rix/docs/eval/syntax-guide.md#script-import-expressions"], ["Three-tier extension system", "https://github.com/jostylr/ratmath/blob/main/rix/docs/parser/three-tier-system.md"]],
-        11: [["RiX examples", "https://github.com/jostylr/ratmath/tree/main/rix/examples"], ["Evaluator syntax API", "https://github.com/jostylr/ratmath/blob/main/rix/docs/eval/syntax-guide.md"]],
+        1: [["RiX introduction", "https://docs.rix.ratmath.com/introduction.html"]],
+        2: [["Methods API", "https://docs.rix.ratmath.com/eval/methods-guide.html"], ["Collection syntax", "https://docs.rix.ratmath.com/eval/syntax-guide.html#collection-syntax"]],
+        3: [["Syntax and operators", "https://docs.rix.ratmath.com/eval/syntax-guide.html#operators"], ["Number notation", "https://docs.rix.ratmath.com/introduction.html#number-systems-and-notation"]],
+        4: [["Cells and assignments", "https://docs.rix.ratmath.com/design/eval/cells-assignments.html"], ["Destructuring reference", "https://docs.rix.ratmath.com/eval/syntax-guide.html#left-hand-destructuring"]],
+        5: [["Functions reference", "https://docs.rix.ratmath.com/eval/syntax-guide.html#assignment-definition"], ["Function rationale", "https://docs.rix.ratmath.com/rix-rationales.html#multifunctions-2026-04-01"]],
+        6: [["Control-flow syntax", "https://docs.rix.ratmath.com/eval/syntax-guide.html#brace-containers"], ["Ternary reference", "https://docs.rix.ratmath.com/eval/syntax-guide.html#ternary-operator"]],
+        7: [["Pipes API", "https://docs.rix.ratmath.com/eval/syntax-guide.html#pipe-operators"], ["Generator reference", "https://docs.rix.ratmath.com/parser/array-generators-implementation.html"]],
+        8: [["Units and exact generators", "https://docs.rix.ratmath.com/design/eval/units-and-exact-generators.html"], ["Cayley polar design", "https://docs.rix.ratmath.com/design/eval/cayley-polar.html"], ["Types and traits API", "https://docs.rix.ratmath.com/eval/types-and-traits-guide.html"]],
+        9: [["System function API", "https://docs.rix.ratmath.com/eval/syntax-guide.html#part-2-system-function-reference"], ["Diagnostics API", "https://docs.rix.ratmath.com/eval/syntax-guide.html#part-4-diagnostics-testing-and-debugging"]],
+        10: [["Script imports", "https://docs.rix.ratmath.com/eval/syntax-guide.html#script-import-expressions"], ["Adding extensions", "https://docs.rix.ratmath.com/developer-guide.html#adding-a-user-facing-capability"]],
+        11: [["RiX at a glance", "https://docs.rix.ratmath.com/language-at-a-glance.html"], ["Evaluator syntax API", "https://docs.rix.ratmath.com/eval/syntax-guide.html#part-1-syntax-system-function"]],
     }[root] || [];
     if (!links.length) return "";
     return `<section class="api-links"><h2>Reference</h2><ul>${links.map(([label, url]) => `<li><a href="${url}" target="_blank" rel="noreferrer">${escapeHtml(label)} ↗</a></li>`).join("")}</ul></section>`;
@@ -146,7 +151,10 @@ function tutorialIndexTemplate() {
 
 function pageTemplate(meta, body) {
     const current = tutorialByNumber(normalizedNumber(meta.number)) || { number: normalizedNumber(meta.number), title: meta.title, file: "", parent: null };
-    return `<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="${escapeHtml(meta.description || "A runnable RiX lesson")}" /><title>${escapeHtml(meta.title || "RiX tutorial")} — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><a href="../">Open calculator</a></header><div class="lesson-layout">${sidebar(current)}<article class="lesson-card"><p class="lesson-kicker">RiX walkthrough · ${escapeHtml(current.number)}</p><h1>${escapeHtml(meta.title || "RiX tutorial")}</h1><p class="deck">${escapeHtml(meta.description || "Read, run, then change the next line.")}</p><div class="lesson-content">${body}</div>${relatedFunctions(current)}${referenceLinks(current)}${navigation(current)}<footer class="lesson-footer">Every RiX cell above runs in this page and shares one RiX session. <a href="../">Open a fresh RatCalc session →</a></footer></article></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>`;
+    const section = current.parent ? tutorialByNumber(current.parent) : current;
+    const sectionHref = current.parent ? `./${section.file}` : "#lesson-start";
+    const suffix = current.parent ? current.number.slice(section.number.length) : "";
+    return `<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="${escapeHtml(meta.description || "A runnable RiX lesson")}" /><title>${escapeHtml(meta.title || "RiX tutorial")} — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><a href="../">Open calculator</a></header><div class="lesson-layout">${sidebar(current)}<article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="${sectionHref}" title="${escapeHtml(section.title)}">${escapeHtml(section.number)}</a>${escapeHtml(suffix)}</p><h1>${escapeHtml(meta.title || "RiX tutorial")}</h1><p class="deck">${escapeHtml(meta.description || "Read, run, then change the next line.")}</p><div class="lesson-content">${body}</div>${relatedFunctions(current)}${referenceLinks(current)}${navigation(current)}<footer class="lesson-footer">Every RiX cell above runs in this page and shares one RiX session. <a href="../">Open a fresh RatCalc session →</a></footer></article></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>`;
 }
 
 const markdownFiles = [];
