@@ -94,7 +94,7 @@ function normalizedNumber(number) {
 
 function sidebar(current) {
     const activeRoot = current.parent || current.number;
-    return `<aside class="lesson-sidebar"><p>Contents</p>${rootTutorials.map((root) => {
+    return `<aside id="lesson-sidebar" class="lesson-sidebar"><p>Contents</p>${rootTutorials.map((root) => {
         const children = childrenOf(root.number);
         if (!children.length) return `<a class="${current.number === root.number ? "current" : ""}" href="./${root.file}">${escapeHtml(root.number)} · ${escapeHtml(root.title)}</a>`;
         return `<details ${activeRoot === root.number ? "open" : ""}><summary>${escapeHtml(root.number)} · ${escapeHtml(root.title)}</summary><a class="overview ${current.number === root.number ? "current" : ""}" href="./${root.file}">Overview</a>${children.map((child) => `<a class="${current.number === child.number ? "current" : ""}" href="./${child.file}">${escapeHtml(child.number)} · ${escapeHtml(child.title)}</a>`).join("")}</details>`;
@@ -102,14 +102,13 @@ function sidebar(current) {
 }
 
 function navigation(current) {
-    const siblings = current.parent ? childrenOf(current.parent) : rootTutorials;
-    const position = siblings.findIndex((item) => item.number === current.number);
-    const previous = siblings[position - 1];
-    const next = siblings[position + 1];
+    const position = tutorials.findIndex((item) => item.number === current.number);
+    const previous = tutorials[position - 1];
+    const next = tutorials[position + 1];
     const section = current.parent ? tutorialByNumber(current.parent) : current;
-    const sectionHref = current.parent ? `./${section.file}` : "#lesson-start";
-    const down = current.parent ? next : childrenOf(current.number)[0];
-    const label = (tutorial) => `${tutorial.number} ${tutorial.title.split(/\s+/)[0]}`;
+    const sectionHref = current.parent ? `./${section.file}#lesson-start` : "#lesson-start";
+    const down = rootTutorials[rootTutorials.findIndex((item) => item.number === section.number) + 1];
+    const label = (tutorial) => `${tutorial.number} ${tutorial.title.split(/\s+/)[0].replace(/[^\p{L}\p{N}]+$/u, "")}`;
     const sectionLink = `<a href="${sectionHref}">↑ ${escapeHtml(label(section))}</a>`;
     const downLink = down ? `<a href="./${down.file}">↓ ${escapeHtml(label(down))}</a>` : "";
     return `<nav class="lesson-navigation" aria-label="Lesson navigation"><span class="previous-link">${previous ? `<a href="./${previous.file}">← ${escapeHtml(label(previous))}</a>` : ""}</span><span class="section-links">${sectionLink}${downLink}</span><span class="next-link">${next ? `<a href="./${next.file}">${escapeHtml(label(next))} →</a>` : ""}</span></nav>`;
@@ -138,7 +137,7 @@ function referenceLinks(current) {
         11: [["RiX at a glance", "https://docs.rix.ratmath.com/language-at-a-glance.html"], ["Evaluator syntax API", "https://docs.rix.ratmath.com/eval/syntax-guide.html#part-1-syntax-system-function"]],
     }[root] || [];
     if (!links.length) return "";
-    return `<section class="api-links"><h2>Reference</h2><ul>${links.map(([label, url]) => `<li><a href="${url}" target="_blank" rel="noreferrer">${escapeHtml(label)} ↗</a></li>`).join("")}</ul></section>`;
+    return `<section class="api-links"><h2>Reference</h2><ul>${links.map(([label, url]) => `<li><a href="${url}" data-doc-reference target="_blank" rel="noreferrer">${escapeHtml(label)} ↗</a></li>`).join("")}</ul></section>`;
 }
 
 function tutorialIndexTemplate() {
@@ -152,9 +151,10 @@ function tutorialIndexTemplate() {
 function pageTemplate(meta, body) {
     const current = tutorialByNumber(normalizedNumber(meta.number)) || { number: normalizedNumber(meta.number), title: meta.title, file: "", parent: null };
     const section = current.parent ? tutorialByNumber(current.parent) : current;
-    const sectionHref = current.parent ? `./${section.file}` : "#lesson-start";
+    const sectionHref = current.parent ? `./${section.file}#lesson-start` : "#lesson-start";
     const suffix = current.parent ? current.number.slice(section.number.length) : "";
-    return `<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="${escapeHtml(meta.description || "A runnable RiX lesson")}" /><title>${escapeHtml(meta.title || "RiX tutorial")} — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><a href="../">Open calculator</a></header><div class="lesson-layout">${sidebar(current)}<article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="${sectionHref}" title="${escapeHtml(section.title)}">${escapeHtml(section.number)}</a>${escapeHtml(suffix)}</p><h1>${escapeHtml(meta.title || "RiX tutorial")}</h1><p class="deck">${escapeHtml(meta.description || "Read, run, then change the next line.")}</p><div class="lesson-content">${body}</div>${relatedFunctions(current)}${referenceLinks(current)}${navigation(current)}<footer class="lesson-footer">Every RiX cell above runs in this page and shares one RiX session. <a href="../">Open a fresh RatCalc session →</a></footer></article></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>`;
+    const suffixLabel = suffix ? ` <span aria-hidden="true">·</span> <span>${escapeHtml(suffix)}</span>` : "";
+    return `<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="${escapeHtml(meta.description || "A runnable RiX lesson")}" /><title>${escapeHtml(meta.title || "RiX tutorial")} — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout">${sidebar(current)}<article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="${sectionHref}" title="${escapeHtml(section.title)}">${escapeHtml(section.number)}</a>${suffixLabel}</p><h1>${escapeHtml(meta.title || "RiX tutorial")}</h1><p class="deck">${escapeHtml(meta.description || "Read, run, then change the next line.")}</p><div class="lesson-content">${body}</div>${relatedFunctions(current)}${referenceLinks(current)}${navigation(current)}<footer class="lesson-footer">Every RiX cell above runs in this page and shares one RiX session. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>`;
 }
 
 const markdownFiles = [];
