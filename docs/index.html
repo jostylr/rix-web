@@ -12,36 +12,43 @@
       <header class="app-header">
         <a class="brand" href="./" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a>
         <p>Exact rational arithmetic calculator with interval support powered by RiX</p>
-        <nav aria-label="RatCalc navigation"><button type="button" data-action="tutorials">Tutorials</button><button type="button" data-action="help">Help</button></nav>
+        <nav aria-label="RatCalc navigation"><a href="/tutorial/">Tutorials</a><button id="docs-toggle" type="button" data-action="docs" aria-pressed="false">Docs</button><button type="button" data-action="help">Help</button></nav>
       </header>
 
-      <section class="calculator" aria-label="RatCalc calculator">
-        <div class="calculator-toolbar">
-          <span><i></i> RiX browser session</span>
-          <span id="entry-mode-label">Command mode · Enter runs · Shift+↑ edits a script</span>
-        </div>
-        <div id="output-history" class="output-history" aria-live="polite"></div>
-        <div id="input-section" class="input-section">
-          <span class="prompt">&gt;</span>
-          <label class="sr-only" for="calculator-input">RatCalc command entry</label>
-          <div class="input-editor">
-            <div id="completion-ghost" class="completion-ghost" aria-hidden="true"></div>
-            <textarea id="calculator-input" class="calculator-input" rows="1" spellcheck="false" placeholder="Enter a RiX expression — .help for help"></textarea>
+      <div class="app-workspace">
+        <div class="calculator-column">
+          <section class="calculator" aria-label="RatCalc calculator">
+            <div class="calculator-toolbar">
+              <span><i></i> RiX browser session</span>
+              <span id="entry-mode-label">Command mode · Enter runs · Shift+↑ edits a script</span>
+            </div>
+            <div id="output-history" class="output-history" aria-live="polite"></div>
+            <div id="input-section" class="input-section">
+              <span class="prompt">&gt;</span>
+              <label class="sr-only" for="calculator-input">RatCalc command entry</label>
+              <div class="input-editor">
+                <div id="completion-ghost" class="completion-ghost" aria-hidden="true"></div>
+                <textarea id="calculator-input" class="calculator-input" rows="1" spellcheck="false" placeholder="Enter a RiX expression — .help for help"></textarea>
+              </div>
+              <button class="run-button" type="button" data-action="run">Run</button>
+            </div>
+            <p id="completion-hint" class="completion-hint" role="status" hidden></p>
+            <p id="script-note" class="script-note" hidden>Script mode: Enter adds a line; ↑ and ↓ move through the text; Ctrl/⌘ + Enter runs the script; Shift+↓ returns to command mode.</p>
+          </section>
+          <div class="controls" aria-label="Calculator controls">
+            <button type="button" data-action="copy">Copy session</button>
+            <button type="button" data-action="help">? Help</button>
+            <button id="script-toggle" type="button" data-action="script" aria-pressed="false">Script entry: off</button>
+            <button id="line-separator-toggle" type="button" data-action="line-separators" aria-pressed="true">Auto-separate lines: on</button>
+            <button type="button" data-action="load">Load</button>
+            <button type="button" data-action="clear">Clear</button>
+            <input id="file-input" type="file" accept=".rix,.js,text/plain,application/javascript" hidden />
           </div>
-          <button class="run-button" type="button" data-action="run">Run</button>
         </div>
-        <p id="completion-hint" class="completion-hint" role="status" hidden></p>
-        <p id="script-note" class="script-note" hidden>Script mode: Enter adds a line; ↑ and ↓ move through the text; Ctrl/⌘ + Enter runs the script; Shift+↓ returns to command mode.</p>
-      </section>
-
-      <div class="controls" aria-label="Calculator controls">
-        <button type="button" data-action="copy">Copy session</button>
-        <button type="button" data-action="help">? Help</button>
-        <button id="script-toggle" type="button" data-action="script" aria-pressed="false">Script entry: off</button>
-        <button id="line-separator-toggle" type="button" data-action="line-separators" aria-pressed="true">Auto-separate lines: on</button>
-        <button type="button" data-action="load">Load</button>
-        <button type="button" data-action="clear">Clear</button>
-        <input id="file-input" type="file" accept=".rix,.js,text/plain,application/javascript" hidden />
+        <aside id="docs-panel" class="docs-panel" aria-label="RiX documentation" hidden>
+          <header class="docs-panel-header"><span>RiX documentation</span><div><a href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-action="close-docs" aria-label="Close documentation">×</button></div></header>
+          <iframe src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe>
+        </aside>
       </div>
     </main>
 
@@ -52,10 +59,6 @@
         <input id="help-search" class="help-search" type="search" placeholder="Search syntax, intervals, assignments…" />
         <div id="help-content"></div>
       </div>
-    </dialog>
-    <dialog id="tutorial-dialog" class="help-dialog" aria-labelledby="tutorial-title">
-      <header class="modal-header"><div><h2 id="tutorial-title">RiX tutorials</h2><p>Start broad, then open the details that matter.</p></div><button type="button" data-action="close-tutorials" aria-label="Close tutorials">×</button></header>
-      <div id="tutorial-content" class="modal-body tutorial-content"></div>
     </dialog>
     <dialog id="inspect-dialog" class="inspect-dialog" aria-labelledby="inspect-title">
       <header class="inspect-header"><div><h2 id="inspect-title">Full result</h2><p id="inspect-source"></p></div><button type="button" data-action="close-inspect" aria-label="Close inspection">×</button></header>

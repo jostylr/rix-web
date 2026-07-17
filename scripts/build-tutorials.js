@@ -1,11 +1,13 @@
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { childrenOf, objectHelp, rootTutorials, tutorialByNumber, tutorials } from "../src/tutorial-index.js";
 
 const root = path.resolve(import.meta.dir, "..");
 const tutorialsDir = path.join(root, "tutorials");
-const outDir = path.join(root, "docs", "learn");
+const outDir = path.join(root, "docs", "tutorial");
+const legacyOutDir = path.join(root, "docs", "learn");
 const assetsDir = path.join(root, "docs", "assets");
+await rm(legacyOutDir, { recursive: true, force: true });
 await mkdir(outDir, { recursive: true });
 await mkdir(assetsDir, { recursive: true });
 await Bun.write(path.join(assetsDir, "tutorial.css"), await readFile(path.join(root, "src", "tutorial.css")));
@@ -134,6 +136,14 @@ function referenceLinks(current) {
     return `<section class="api-links"><h2>Reference</h2><ul>${links.map(([label, url]) => `<li><a href="${url}" target="_blank" rel="noreferrer">${escapeHtml(label)} ↗</a></li>`).join("")}</ul></section>`;
 }
 
+function tutorialIndexTemplate() {
+    const contents = rootTutorials.map((tutorial) => {
+        const children = childrenOf(tutorial.number);
+        return `<section class="tutorial-index-section"><a href="./${tutorial.file}"><b>${escapeHtml(tutorial.number)} · ${escapeHtml(tutorial.title)}</b><span>${escapeHtml(tutorial.description)}</span></a>${children.length ? `<div class="tutorial-index-children">${children.map((child) => `<a href="./${child.file}">${escapeHtml(child.number)} · ${escapeHtml(child.title)}</a>`).join("")}</div>` : ""}</section>`;
+    }).join("");
+    return `<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="An interactive introduction to the RiX language and RatCalc." /><title>RiX tutorials — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><a href="../">Open calculator</a></header><article class="lesson-card tutorial-index-card"><p class="lesson-kicker">RiX walkthroughs</p><h1>Learn RiX by running it.</h1><p class="deck">These tutorials introduce RiX one concept at a time. Each lesson has live examples in its own persistent session, so you can run a cell, change it, and see what happens.</p><p class="tutorial-index-intro">Start with exact numbers, then follow the topics that match what you want to build. Capstone lessons combine the material into a small practical exercise.</p><nav class="tutorial-index" aria-label="Tutorial table of contents">${contents}</nav><footer class="lesson-footer">Want to try an expression first? <a href="../">Open RatCalc →</a></footer></article></div></main></body></html>`;
+}
+
 function pageTemplate(meta, body) {
     const current = tutorialByNumber(normalizedNumber(meta.number)) || { number: normalizedNumber(meta.number), title: meta.title, file: "", parent: null };
     return `<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="${escapeHtml(meta.description || "A runnable RiX lesson")}" /><title>${escapeHtml(meta.title || "RiX tutorial")} — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><a href="../">Open calculator</a></header><div class="lesson-layout">${sidebar(current)}<article class="lesson-card"><p class="lesson-kicker">RiX walkthrough · ${escapeHtml(current.number)}</p><h1>${escapeHtml(meta.title || "RiX tutorial")}</h1><p class="deck">${escapeHtml(meta.description || "Read, run, then change the next line.")}</p><div class="lesson-content">${body}</div>${relatedFunctions(current)}${referenceLinks(current)}${navigation(current)}<footer class="lesson-footer">Every RiX cell above runs in this page and shares one RiX session. <a href="../">Open a fresh RatCalc session →</a></footer></article></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>`;
@@ -152,3 +162,4 @@ for (const lesson of tutorials) {
         throw new Error(`Missing Markdown source for tutorial ${lesson.number}: ${lesson.file.replace(/\.html$/, ".md")}`);
     }
 }
+await Bun.write(path.join(outDir, "index.html"), tutorialIndexTemplate());

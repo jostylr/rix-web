@@ -1,7 +1,116 @@
 import {
-  createRixRepl,
-  objectHelp
-} from "./chunk-nxzms51x.js";
+  createRixRepl
+} from "./chunk-0a1kjjz6.js";
+
+// src/tutorial-index.js
+var tutorials = [
+  { number: "1", file: "getting-started.html", title: "Start with exact numbers", description: "Variables, fractions, and a persistent RiX session." },
+  { number: "1a", parent: "1", file: "capstone-exact-recipe.html", title: "Capstone: exact recipe scaling", description: "Combine variables, fractions, intervals, and calculator workflow." },
+  { number: "2", file: "collections.html", title: "Collections", description: "A high-level tour of arrays, maps, and sets." },
+  { number: "2a", parent: "2", file: "arrays.html", title: "Arrays", description: "Ordered values, one-based indexes, and immutable updates.", object: "array" },
+  { number: "2b", parent: "2", file: "maps.html", title: "Maps", description: "Named entries and record-like data.", object: "map" },
+  { number: "2c", parent: "2", file: "sets.html", title: "Sets", description: "Unique values and set algebra.", object: "set" },
+  { number: "2d", parent: "2", file: "tuples-and-strings.html", title: "Tuples and strings", description: "Positional data and textual values." },
+  { number: "2e", parent: "2", file: "tensors.html", title: "Tensors", description: "Structured multidimensional exact data." },
+  { number: "2f", parent: "2", file: "capstone-inventory.html", title: "Capstone: exact inventory", description: "Model a small inventory with arrays, maps, and sets." },
+  { number: "3", file: "expressions.html", title: "Expressions and exact notation", description: "Operators, exact numbers, intervals, and holes." },
+  { number: "3a", parent: "3", file: "operators.html", title: "Operators and precedence", description: "Arithmetic, comparisons, and implicit application." },
+  { number: "3b", parent: "3", file: "number-notation.html", title: "Number notation", description: "Repeating decimals, bases, and continued fractions." },
+  { number: "3c", parent: "3", file: "intervals.html", title: "Intervals", description: "Exact bounds, uncertainty, and betweenness." },
+  { number: "3d", parent: "3", file: "interval-generation.html", title: "Interval generation and sampling", description: "Produce exact ranges, partitions, mediants, and seeded samples." },
+  { number: "3e", parent: "3", file: "holes.html", title: "Nulls and holes", description: "Undefined values, defaults, and coalescing." },
+  { number: "3f", parent: "3", file: "capstone-bounds.html", title: "Capstone: bounds check", description: "Use exact notation, intervals, and safe defaults together." },
+  { number: "4", file: "binding.html", title: "Binding and patterns", description: "Cells, assignments, destructuring, and metadata." },
+  { number: "4a", parent: "4", file: "cells.html", title: "Cells and assignment", description: "Aliases, copies, updates, and identity." },
+  { number: "4b", parent: "4", file: "destructuring.html", title: "Destructuring", description: "Pull structured values into named bindings." },
+  { number: "4c", parent: "4", file: "properties.html", title: "Properties and metadata", description: "Receiver-first methods and value annotations." },
+  { number: "4d", parent: "4", file: "capstone-ledger.html", title: "Capstone: shared ledger", description: "Use cells, destructuring, and updates in a small model." },
+  { number: "5", file: "functions.html", title: "Functions and scope", description: "Callables, multifunctions, closures, and partials." },
+  { number: "5a", parent: "5", file: "function-basics.html", title: "Define and call", description: "Functions, lambdas, rest parameters, and spread." },
+  { number: "5b", parent: "5", file: "multifunctions.html", title: "Multifunctions", description: "Prepared variants, dispatch, and recursion." },
+  { number: "5c", parent: "5", file: "scope.html", title: "Scope and imports", description: "Closures, outer names, and block headers." },
+  { number: "5d", parent: "5", file: "partials.html", title: "Partial application", description: "Placeholders and arity-capped callables." },
+  { number: "5e", parent: "5", file: "capstone-dispatch.html", title: "Capstone: rule dispatcher", description: "Compose functions, scope, and variants into one task." },
+  { number: "6", file: "control.html", title: "Control and deferred work", description: "Ternaries, braces, loops, and deferred execution." },
+  { number: "6a", parent: "6", file: "ternaries.html", title: "Ternaries and cases", description: "Choose values with branches, prepared trials, and ordered recovery." },
+  { number: "6b", parent: "6", file: "brace-containers.html", title: "Brace containers", description: "Blocks, sigils, loops, and break blocks." },
+  { number: "6c", parent: "6", file: "deferred.html", title: "Deferred execution", description: "Delay and evaluate code deliberately." },
+  { number: "6d", parent: "6", file: "capstone-simulation.html", title: "Capstone: bounded simulation", description: "Use branches, blocks, and loops to model a process." },
+  { number: "7", file: "transformations.html", title: "Transforming data", description: "Pipes, generators, regexes, and embedded values." },
+  { number: "7a", parent: "7", file: "pipes.html", title: "Pipes", description: "Map, filter, reduce, and callback context." },
+  { number: "7b", parent: "7", file: "generators.html", title: "Generators", description: "Build and filter generated sequences." },
+  { number: "7c", parent: "7", file: "lazy-generators.html", title: "Lazy generators", description: "Contrast eager arrays with cached on-demand sequences." },
+  { number: "7d", parent: "7", file: "regex-and-strings.html", title: "Regexes and strings", description: "Pattern literals and text transformation." },
+  { number: "7e", parent: "7", file: "capstone-report.html", title: "Capstone: transform a report", description: "Turn a small collection into a derived result." },
+  { number: "8", file: "semantics.html", title: "Semantics, types, and units", description: "Conversions, traits, headers, and dimensions." },
+  { number: "8a", parent: "8", file: "conversions.html", title: "Conversions", description: "Ask and convert semantic types." },
+  { number: "8b", parent: "8", file: "headers-and-traits.html", title: "Headers and traits", description: "Sticky semantics and protocol bundles." },
+  { number: "8c", parent: "8", file: "units.html", title: "Physical units and quantities", description: "Compose units, convert exactly, and catch dimensional mistakes." },
+  { number: "8d", parent: "8", file: "exact-generators.html", title: "Exact generators", description: "Keep pi and algebraic roots exact through arithmetic." },
+  { number: "8e", parent: "8", file: "complex-numbers.html", title: "Exact complex numbers", description: "Divide, conjugate, and inspect exact complex values." },
+  { number: "8f", parent: "8", file: "cayley-polar.html", title: "Exact Cayley polar form", description: "Represent exact complex direction without a transcendental angle." },
+  { number: "8g", parent: "8", file: "capstone-measurement.html", title: "Capstone: exact measurement", description: "Combine physical dimensions with an exact symbolic magnitude." },
+  { number: "9", file: "system.html", title: "System and symbolic work", description: "Capabilities, assertions, and diagnostics." },
+  { number: "9a", parent: "9", file: "system-context.html", title: "System capabilities", description: "The dot object, aliases, and permissions." },
+  { number: "9b", parent: "9", file: "assertions-and-symbols.html", title: "Assertions and symbolic specs", description: "Constraints and symbolic construction." },
+  { number: "9c", parent: "9", file: "symbolic-calculus.html", title: "Exact symbolic calculus", description: "Compose, differentiate, integrate, and simplify symbolic specs." },
+  { number: "9d", parent: "9", file: "diagnostics.html", title: "Diagnostics and tests", description: "Warnings, tracing, and test helpers." },
+  { number: "9e", parent: "9", file: "capstone-verified-rule.html", title: "Capstone: verified rule", description: "Build a small rule and validate it with system helpers." },
+  { number: "10", file: "scripts.html", title: "Scripts and extensions", description: "RiX modules, host boundaries, and language extension." },
+  { number: "10a", parent: "10", file: "rix-scripts.html", title: "RiX scripts", description: "Imports, interface bindings, and capability frames." },
+  { number: "10b", parent: "10", file: "javascript-modules.html", title: "JavaScript modules", description: "Host modules and the browser trust boundary." },
+  { number: "10c", parent: "10", file: "extensions.html", title: "Language extensions", description: "System loaders, keywords, and custom operators." },
+  { number: "10d", parent: "10", file: "capstone-package-design.html", title: "Capstone: package design", description: "Design a safe RiX package boundary." },
+  { number: "11", file: "problems.html", title: "Problems in four languages", description: "Compare familiar JavaScript, Python, Julia, and RiX solutions." },
+  { number: "11a", parent: "11", file: "problem-newton.html", title: "Newton square root", description: "Approximate a root to a supplied tolerance." },
+  { number: "11b", parent: "11", file: "problem-fizzbuzz.html", title: "FizzBuzz", description: "Separate branching rules from iteration." },
+  { number: "11c", parent: "11", file: "problem-collatz.html", title: "Collatz test", description: "Test a starting value up to a step limit." },
+  { number: "11d", parent: "11", file: "problem-primes.html", title: "Prime filtering", description: "Moderate example: generate and filter candidates." },
+  { number: "11e", parent: "11", file: "problem-matrix.html", title: "Matrix product", description: "Moderate example: structured numeric data." },
+  { number: "11f", parent: "11", file: "problem-symbolic.html", title: "Symbolic differentiation", description: "Advanced example: structured expressions and symbolic rules." }
+];
+var rootTutorials = tutorials.filter((tutorial) => !tutorial.parent);
+var objectHelp = {
+  array: {
+    title: "Array functions",
+    intro: "Arrays are ordered, one-based sequences. Non-bang methods return a new value; bang methods update a mutable target.",
+    functions: [
+      ["Len", "values.Len()", "Return the number of elements.", "[3, 5, 8].Len()"],
+      ["Get", "values.Get(index)", "Read an item by one-based index.", "[3, 5, 8].Get(2)"],
+      ["Push", "values.Push(value)", "Return a new array with values appended.", "[1, 2].Push(3)"],
+      ["Set", "values.Set(index, value)", "Return an array with one position replaced.", "[1, 2].Set(2, 9)"],
+      ["RemoveAt", "values.RemoveAt(index)", "Return an array without one position.", "[1, 2, 3].RemoveAt(2)"],
+      ["Join", "values.Join(separator)", "Join string-like values into a string.", '["a", "b"].Join("-")'],
+      ["Iterator", "values.Iterator()", "Create a cursor that can move and peek without changing the array.", "[10, 20, 30].Iterator().Next(2)"]
+    ]
+  },
+  map: {
+    title: "Map functions",
+    intro: "Maps hold named values. Use non-bang methods for a returned copy and bang methods when deliberately mutating a mutable map.",
+    functions: [
+      ["Len", "record.Len()", "Return the number of entries.", "{= a=3, b=5 }.Len()"],
+      ["Has", "record.Has(key)", "Check whether a key is present.", '{= a=3 }.Has("a")'],
+      ["Get", "record.Get(key)", "Read an entry by key.", '{= a=3 }.Get("a")'],
+      ["Keys", "record.Keys()", "Return an array of keys.", "{= a=3, b=5 }.Keys()"],
+      ["Values", "record.Values()", "Return an array of values.", "{= a=3, b=5 }.Values()"],
+      ["Set", "record.Set(key, value)", "Return a copy with an entry added or replaced.", '{= a=3 }.Set("b", 5)'],
+      ["Iterator", "record.Iterator()", "Create a cursor over map values in entry order.", "{= a=3, b=5 }.Iterator().Next()"]
+    ]
+  },
+  set: {
+    title: "Set functions",
+    intro: "Sets keep one copy of each value. Their collection methods make it easy to test membership and compose exact sets.",
+    functions: [
+      ["Len", "items.Len()", "Return the count of unique members.", "{| 1, 2, 2 |}.Len()"],
+      ["Has", "items.Has(value)", "Test whether a member is present.", "{| 1, 2 |}.Has(2)"],
+      ["Values", "items.Values()", "Return the set members as a sequence.", "{| 1, 2 |}.Values()"],
+      ["Add", "items.Add(value)", "Return a set containing a new value.", "{| 1, 2 |}.Add(3)"],
+      ["Remove", "items.Remove(value)", "Return a set without a member.", "{| 1, 2 |}.Remove(1)"],
+      ["Union", "items.Union(other)", "Combine the members of two sets.", "{| 1, 2 |}.Union({| 2, 3 |})"],
+      ["Iterator", "items.Iterator()", "Create a cursor over set members in iteration order.", "{| 1, 2 |}.Iterator().Next()"]
+    ]
+  }
+};
 
 // src/tutorial-runner.js
 var repl = createRixRepl();
@@ -60,5 +169,5 @@ function openObjectHelp(name, requestedFunction = null) {
   dialog.showModal();
 }
 
-//# debugId=1B47CCAB8A8B099164756E2164756E21
+//# debugId=CC94E3E929FE808A64756E2164756E21
 //# sourceMappingURL=tutorial-runner.js.map

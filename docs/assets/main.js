@@ -1,9 +1,7 @@
 import {
-  childrenOf,
   createRixRepl,
-  findHelp,
-  rootTutorials
-} from "./chunk-nxzms51x.js";
+  findHelp
+} from "./chunk-0a1kjjz6.js";
 
 // src/main.js
 var repl = createRixRepl();
@@ -19,8 +17,8 @@ var helpDialog = document.querySelector("#help-dialog");
 var helpSearch = document.querySelector("#help-search");
 var helpContent = document.querySelector("#help-content");
 var fileInput = document.querySelector("#file-input");
-var tutorialDialog = document.querySelector("#tutorial-dialog");
-var tutorialContent = document.querySelector("#tutorial-content");
+var docsPanel = document.querySelector("#docs-panel");
+var docsToggle = document.querySelector("#docs-toggle");
 var inspectDialog = document.querySelector("#inspect-dialog");
 var inspectSource = document.querySelector("#inspect-source");
 var inspectValue = document.querySelector("#inspect-value");
@@ -149,15 +147,11 @@ function openHelp(query = "") {
   helpDialog.showModal();
   helpSearch.focus();
 }
-function renderTutorialIndex() {
-  tutorialContent.innerHTML = rootTutorials.map((tutorial) => {
-    const children = childrenOf(tutorial.number);
-    return `<section class="tutorial-index-section"><a href="./learn/${tutorial.file}"><b>${escapeHtml(tutorial.number)} · ${escapeHtml(tutorial.title)}</b><span>${escapeHtml(tutorial.description)}</span></a>${children.length ? `<div class="tutorial-index-children">${children.map((child) => `<a href="./learn/${child.file}">${escapeHtml(child.number)} · ${escapeHtml(child.title)}</a>`).join("")}</div>` : ""}</section>`;
-  }).join("");
-}
-function openTutorials() {
-  renderTutorialIndex();
-  tutorialDialog.showModal();
+function setDocsOpen(next) {
+  docsPanel.hidden = !next;
+  document.querySelector(".container").classList.toggle("docs-open", next);
+  docsToggle.setAttribute("aria-pressed", String(next));
+  docsToggle.textContent = next ? "Close docs" : "Docs";
 }
 function openInspection(source, value) {
   inspectSource.textContent = source;
@@ -271,11 +265,11 @@ document.addEventListener("click", (event) => {
       helpDialog.close();
       input.focus();
       break;
-    case "tutorials":
-      openTutorials();
+    case "docs":
+      setDocsOpen(docsPanel.hidden);
       break;
-    case "close-tutorials":
-      tutorialDialog.close();
+    case "close-docs":
+      setDocsOpen(false);
       input.focus();
       break;
     case "close-inspect":
@@ -374,7 +368,7 @@ fileInput.addEventListener("change", async () => {
     await loadFile(file);
   fileInput.value = "";
 });
-[helpDialog, tutorialDialog, inspectDialog].forEach((dialog) => {
+[helpDialog, inspectDialog].forEach((dialog) => {
   dialog.addEventListener("click", (event) => {
     if (event.target === dialog)
       dialog.close();
@@ -384,5 +378,5 @@ displayWelcome();
 setAutoSeparateLines(autoSeparateLines);
 input.focus();
 
-//# debugId=74CB10A1A9B8E12F64756E2164756E21
+//# debugId=582A52B468C264E164756E2164756E21
 //# sourceMappingURL=main.js.map

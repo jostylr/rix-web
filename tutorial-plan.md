@@ -5,7 +5,7 @@
 Build a complete, runnable learning path for RiX that starts as a friendly exact
 calculator and gradually exposes the language's scripting, semantic, and
 extension features. Every lesson is a Markdown source in `tutorials/`, is built
-to a static page in `docs/learn/`, and has one persistent RiX context per page.
+to a static page in `docs/tutorial/`, and has one persistent RiX context per page.
 
 This plan is based on the user-facing introduction, the evaluator syntax and
 methods guides, the types-and-traits guide, the parser documentation, and the
