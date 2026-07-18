@@ -43,6 +43,25 @@ plot</textarea><div class="tutorial-output" data-tutorial-output></div></section
               {= stroke=&quot;#dc2626&quot;, width=3 })
     ]
 )</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Compose a scene from basic primitives</h2>
+<p><code>Group</code> provides scene hierarchy and shared styling. <code>Transform2D</code> applies a translation, rotation, and/or scale without changing its children. <code>Rectangle</code>, <code>Circle</code>, and <code>TextMark</code> are portable shape nodes; <code>Clip</code> limits a subtree to <code>[x, y, width, height]</code>. All coordinates are in the graphic’s own coordinate space, with the origin at the upper-left in the SVG renderer.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source spellcheck="false">.Graphic([360, 220], [
+    .Rectangle([0, 0], [360, 220],
+               {= fill=&quot;#f8fafc&quot;, stroke=&quot;#cbd5e1&quot; }),
+    .Clip([
+        .Transform2D([
+            .Group([
+                .Circle([80, 80], 45,
+                        {= fill=&quot;#bfdbfe&quot;, stroke=&quot;#2563eb&quot;, width=2 }),
+                .Rectangle([60, 60], [80, 40],
+                           {= fill=&quot;#fde68a&quot;, stroke=&quot;#d97706&quot;, width=2 }),
+                .TextMark([100, 85], &quot;RiX&quot;,
+                          {= anchor=:middle, size=18, weight=&quot;bold&quot; })
+            ], {= opacity=1 })
+        ], {= translate=[80, 15], rotate=18, origin=[100, 85] })
+    ], [20, 20, 320, 160])
+])</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>This small vocabulary is intended to be the common target for geometry, diagram, and plotting plugins. A plugin can return a nested scene; hosts only need to render the standardized nodes.</p>
 <h2>Quick document templates</h2>
 <p>Use <code>@&quot;...&quot;</code> when you only need interpolated text. <code>@&quot;&quot;&quot;...&quot;&quot;&quot;</code> produces a <code>Fragment</code>: blank lines separate blocks, <code>h1:</code> through <code>h6:</code> create headings, and <code>fig:</code> or <code>table:</code> wrap a standalone <code>@{...}</code> value with a caption and optional <code>#label</code>.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source spellcheck="false">values := .Table(
