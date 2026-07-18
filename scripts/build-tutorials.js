@@ -25,6 +25,10 @@ function renderInline(text) {
     return html;
 }
 
+function textareaRows(source, minimum = 5) {
+    return Math.max(minimum, source.split("\n").length);
+}
+
 function parseFrontmatter(source) {
     const match = source.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
     if (!match) return [{}, source];
@@ -50,7 +54,7 @@ function renderMarkdown(markdown) {
     const flushCode = () => {
         if (code === null) return;
         if (codeLanguage.toLowerCase() === "rix") {
-            html.push(`<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source spellcheck="false">${escapeHtml(code)}</textarea><div class="tutorial-output" data-tutorial-output></div></section>`);
+            html.push(`<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="${textareaRows(code)}" spellcheck="false">${escapeHtml(code)}</textarea><div class="tutorial-output" data-tutorial-output></div></section>`);
         } else {
             html.push(`<section class="comparison-code"><header>${escapeHtml(codeLanguage || "code")}</header><pre><code>${escapeHtml(code)}</code></pre></section>`);
         }
@@ -60,7 +64,7 @@ function renderMarkdown(markdown) {
     const flushChallenge = () => {
         if (!challenge) return;
         const challengeCode = challenge.code || "";
-        html.push(`<aside class="challenge"><p class="eyebrow">Challenge</p><h3>${renderInline(challenge.title || "Make it yours")}</h3><p>${renderInline(challenge.body.join(" "))}</p><section class="tutorial-cell"><header><span>Your RiX answer</span><button type="button" data-tutorial-run>Run answer</button></header><textarea class="tutorial-source" data-tutorial-source spellcheck="false" placeholder="# Write your RiX solution here">${escapeHtml(challengeCode)}</textarea><div class="tutorial-output" data-tutorial-output></div></section></aside>`);
+        html.push(`<aside class="challenge"><p class="eyebrow">Challenge</p><h3>${renderInline(challenge.title || "Make it yours")}</h3><p>${renderInline(challenge.body.join(" "))}</p><section class="tutorial-cell"><header><span>Your RiX answer</span><button type="button" data-tutorial-run>Run answer</button></header><textarea class="tutorial-source" data-tutorial-source rows="${textareaRows(challengeCode)}" spellcheck="false" placeholder="# Write your RiX solution here">${escapeHtml(challengeCode)}</textarea><div class="tutorial-output" data-tutorial-output></div></section></aside>`);
         challenge = null;
     };
     for (let index = 0; index < lines.length; index += 1) {

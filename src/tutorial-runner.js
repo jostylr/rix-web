@@ -9,6 +9,11 @@ function escapeHtml(value) {
     })[character]);
 }
 
+function sizeTutorialSource(input) {
+    input.style.height = "auto";
+    input.style.height = `${input.scrollHeight}px`;
+}
+
 function runCell(cell) {
     const source = cell.querySelector("[data-tutorial-source]").value.trim();
     if (!source) return;
@@ -69,7 +74,8 @@ document.addEventListener("click", (event) => {
     if (event.target.closest("[data-close-tutorial-docs]")) closeDocumentation();
     if (event.target.closest("[data-toggle-contents]")) toggleContents();
 });
-document.querySelectorAll("[data-tutorial-source]").forEach((input) => {
+const tutorialSources = document.querySelectorAll("[data-tutorial-source]");
+tutorialSources.forEach((input) => {
     input.addEventListener("keydown", (event) => {
         if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
             event.preventDefault();
@@ -77,6 +83,8 @@ document.querySelectorAll("[data-tutorial-source]").forEach((input) => {
         }
     });
 });
+
+requestAnimationFrame(() => tutorialSources.forEach(sizeTutorialSource));
 
 document.querySelector("#object-help-dialog")?.addEventListener("click", (event) => {
     if (event.target === event.currentTarget) event.currentTarget.close();

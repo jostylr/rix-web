@@ -124,6 +124,10 @@ function escapeHtml(value) {
     '"': "&quot;"
   })[character]);
 }
+function sizeTutorialSource(input) {
+  input.style.height = "auto";
+  input.style.height = `${input.scrollHeight}px`;
+}
 function runCell(cell) {
   const source = cell.querySelector("[data-tutorial-source]").value.trim();
   if (!source)
@@ -192,7 +196,8 @@ document.addEventListener("click", (event) => {
   if (event.target.closest("[data-toggle-contents]"))
     toggleContents();
 });
-document.querySelectorAll("[data-tutorial-source]").forEach((input) => {
+var tutorialSources = document.querySelectorAll("[data-tutorial-source]");
+tutorialSources.forEach((input) => {
   input.addEventListener("keydown", (event) => {
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
       event.preventDefault();
@@ -200,6 +205,7 @@ document.querySelectorAll("[data-tutorial-source]").forEach((input) => {
     }
   });
 });
+requestAnimationFrame(() => tutorialSources.forEach(sizeTutorialSource));
 document.querySelector("#object-help-dialog")?.addEventListener("click", (event) => {
   if (event.target === event.currentTarget)
     event.currentTarget.close();
@@ -221,5 +227,5 @@ function openObjectHelp(name, requestedFunction = null) {
   dialog.showModal();
 }
 
-//# debugId=285CBEB47FEF1B4564756E2164756E21
+//# debugId=6022A9185B9EB92A64756E2164756E21
 //# sourceMappingURL=tutorial-runner.js.map

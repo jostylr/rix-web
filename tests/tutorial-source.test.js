@@ -6,6 +6,16 @@ test("tutorial sources use runnable RiX blocks and a challenge", async () => {
     expect(source).toContain(":::challenge");
 });
 
+test("tutorial code fields initially fit their supplied code", async () => {
+    const generator = await Bun.file(new URL("../scripts/build-tutorials.js", import.meta.url)).text();
+    const runner = await Bun.file(new URL("../src/tutorial-runner.js", import.meta.url)).text();
+    expect(generator).toContain("function textareaRows(source, minimum = 5)");
+    expect(generator).toContain('rows="${textareaRows(code)}"');
+    expect(generator).toContain('rows="${textareaRows(challengeCode)}"');
+    expect(runner).toContain("function sizeTutorialSource(input)");
+    expect(runner).toContain("input.style.height = `${input.scrollHeight}px`");
+});
+
 test("tutorial generator writes a tutorial index and removes the legacy learn path", async () => {
     const source = await Bun.file(new URL("../scripts/build-tutorials.js", import.meta.url)).text();
     expect(source).toContain('path.join(root, "docs", "tutorial")');
