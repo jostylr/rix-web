@@ -63,4 +63,26 @@ fig: Graph of p(x) #fig:polynomial
     @{plot}
 &quot;&quot;&quot;
 report</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p><code>@{...}</code> inside a template evaluates now and inserts the resulting value. That is distinct from the existing deferred-code form <code>@{; ...}</code>: templates insert computed content, while deferred blocks retain code to run later.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation"><span class="previous-link"><a href="./problem-symbolic.html">← 11f Symbolic</a></span><span class="section-links"><a href="#lesson-start">↑ 12 Structured</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page and shares one RiX session. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
+<p><code>@{...}</code> inside a template evaluates now and inserts the resulting value. That is distinct from the existing deferred-code form <code>@{; ...}</code>: templates insert computed content, while deferred blocks retain code to run later.</p>
+<h2>Slides are sequential fragments</h2>
+<p><code>.Slide</code> attaches title and optional metadata to one output value; <code>.Slides</code> holds an ordered deck. The current web and notebook renderers show the deck as clearly separated slides, while the CLI prints each slide in order. Future renderers can use this same structure for presenter navigation, animated GIFs, or PowerPoint without asking an author to rewrite the content.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source spellcheck="false">deck := .Slides(
+    [
+        .Slide(
+            .Fragment([
+                .Heading(1, &quot;Synthetic division&quot;),
+                .Algebra.SyntheticDivision(1, [2, -6, 2, -1])
+            ]),
+            &quot;Division&quot;
+        ),
+        .Slide(
+            .Fragment([
+                .Heading(1, &quot;Polynomial graph&quot;),
+                .Plot.Polynomial([1, -2, -1], [-1, 4])
+            ]),
+            &quot;Graph&quot;
+        )
+    ],
+    &quot;Output building blocks&quot;
+)
+deck</textarea><div class="tutorial-output" data-tutorial-output></div></section></div><nav class="lesson-navigation" aria-label="Lesson navigation"><span class="previous-link"><a href="./problem-symbolic.html">← 11f Symbolic</a></span><span class="section-links"><a href="#lesson-start">↑ 12 Structured</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page and shares one RiX session. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

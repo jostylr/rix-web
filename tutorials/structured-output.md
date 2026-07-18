@@ -122,3 +122,34 @@ report
 `@{...}` inside a template evaluates now and inserts the resulting value. That
 is distinct from the existing deferred-code form `@{; ...}`: templates insert
 computed content, while deferred blocks retain code to run later.
+
+## Slides are sequential fragments
+
+`.Slide` attaches title and optional metadata to one output value; `.Slides`
+holds an ordered deck. The current web and notebook renderers show the deck as
+clearly separated slides, while the CLI prints each slide in order. Future
+renderers can use this same structure for presenter navigation, animated GIFs,
+or PowerPoint without asking an author to rewrite the content.
+
+~~~rix
+deck := .Slides(
+    [
+        .Slide(
+            .Fragment([
+                .Heading(1, "Synthetic division"),
+                .Algebra.SyntheticDivision(1, [2, -6, 2, -1])
+            ]),
+            "Division"
+        ),
+        .Slide(
+            .Fragment([
+                .Heading(1, "Polynomial graph"),
+                .Plot.Polynomial([1, -2, -1], [-1, 4])
+            ]),
+            "Graph"
+        )
+    ],
+    "Output building blocks"
+)
+deck
+~~~
