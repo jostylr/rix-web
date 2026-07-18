@@ -63,7 +63,11 @@ export const tutorials = [
     { number: "11d", parent: "11", file: "problem-primes.html", title: "Prime filtering", description: "Moderate example: generate and filter candidates." },
     { number: "11e", parent: "11", file: "problem-matrix.html", title: "Matrix product", description: "Moderate example: structured numeric data." },
     { number: "11f", parent: "11", file: "problem-symbolic.html", title: "Symbolic differentiation", description: "Advanced example: structured expressions and symbolic rules." },
-    { number: "12", file: "structured-output.html", title: "Structured output", description: "Tables, ruled mathematical layouts, templates, and portable SVG graphics." },
+    { number: "12", file: "structured-output.html", title: "Structured output", description: "Keep tables, documents, slides, and graphics meaningful across RiX hosts." },
+    { number: "12a", parent: "12", file: "tables-and-grids.html", title: "Tables and mathematical grids", description: "Present labeled data and textbook-style ruled layouts." },
+    { number: "12b", parent: "12", file: "documents-and-slides.html", title: "Documents and slides", description: "Compose report fragments, captions, and portable slide decks." },
+    { number: "12c", parent: "12", file: "plots-and-graphics.html", title: "Plots and graphics", description: "Plot exact polynomials and understand portable SVG scenes." },
+    { number: "12d", parent: "12", file: "drawing-with-draw.html", title: "Drawing with .Draw", description: "Build diagrams from paths, shapes, groups, transforms, and clips." },
 ];
 
 export const rootTutorials = tutorials.filter((tutorial) => !tutorial.parent);
