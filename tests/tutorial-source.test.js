@@ -23,8 +23,8 @@ test("structured output has focused table, document, graphic, and drawing lesson
     expect(tutorialByNumber("12c")?.file).toBe("plots-and-graphics.html");
     expect(tutorialByNumber("12d")?.file).toBe("drawing-with-draw.html");
     const drawing = await Bun.file(new URL("../tutorials/drawing-with-draw.md", import.meta.url)).text();
-    expect(drawing).toContain(".Draw.Transform");
-    expect(drawing).toContain(".Draw.Clip");
+    expect(drawing).toContain(".Graphics.Transform");
+    expect(drawing).toContain(".Graphics.Clip");
 });
 
 test("tutorial generator writes a tutorial index and removes the legacy learn path", async () => {

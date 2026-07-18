@@ -1,6 +1,6 @@
 import {
   createRixRepl
-} from "./chunk-jp2fb7xe.js";
+} from "./chunk-wprky859.js";
 
 // src/tutorial-index.js
 var tutorials = [
@@ -72,7 +72,7 @@ var tutorials = [
   { number: "12a", parent: "12", file: "tables-and-grids.html", title: "Tables and mathematical grids", description: "Present labeled data and textbook-style ruled layouts." },
   { number: "12b", parent: "12", file: "documents-and-slides.html", title: "Documents and slides", description: "Compose report fragments, captions, and portable slide decks." },
   { number: "12c", parent: "12", file: "plots-and-graphics.html", title: "Plots and graphics", description: "Plot exact polynomials and understand portable SVG scenes." },
-  { number: "12d", parent: "12", file: "drawing-with-draw.html", title: "Drawing with .Draw", description: "Build diagrams from paths, shapes, groups, transforms, and clips." }
+  { number: "12d", parent: "12", file: "drawing-with-draw.html", title: "Drawing with .Graphics", description: "Build portable scenes from paths, shapes, groups, transforms, and clips." }
 ];
 var rootTutorials = tutorials.filter((tutorial) => !tutorial.parent);
 var objectHelp = {
@@ -231,5 +231,5 @@ function openObjectHelp(name, requestedFunction = null) {
   dialog.showModal();
 }
 
-//# debugId=41E8B405A8AD65A564756E2164756E21
+//# debugId=D7E8D06EAA91BADB64756E2164756E21
 //# sourceMappingURL=tutorial-runner.js.map

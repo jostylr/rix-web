@@ -150,6 +150,25 @@ RiX source.
   custom operators, system functions, three-tier roles, and sandboxing. This
   is an advanced maintainer/tutorial track, not a prerequisite for using RiX.
 
+### 13. Core, host, and lowering
+
+**Status:** implemented as a maintainer-facing, runnable sequence.
+
+- **13a Core operations** — expression syntax and its public PascalCase core
+  counterparts, including arithmetic, comparisons, containers, and absolute
+  value.
+- **13b Lazy structural forms** — named representations for assignment, maps,
+  lambdas, and definitions; distinguish values that are evaluated now from
+  bodies and targets that the evaluator must receive structurally.
+- **13c Lowering syntax** — the parser → AST → IR → evaluator route, why
+  several spellings share one operation, and how lazy IR arguments preserve
+  source-level evaluation rules.
+- **13d Host objects and plugins** — the `.camelCase` host/plugin boundary,
+  nested PascalCase callables, display names, registration, and capability
+  grants.
+- **13e Capstone: explicit core** — translate a small expression-oriented
+  calculation to a compact program built from named core calls.
+
 ## Cross-cutting reference work
 
 1. Generate method reference data from `rix/src/runtime/methods.js` rather

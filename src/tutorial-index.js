@@ -67,7 +67,13 @@ export const tutorials = [
     { number: "12a", parent: "12", file: "tables-and-grids.html", title: "Tables and mathematical grids", description: "Present labeled data and textbook-style ruled layouts." },
     { number: "12b", parent: "12", file: "documents-and-slides.html", title: "Documents and slides", description: "Compose report fragments, captions, and portable slide decks." },
     { number: "12c", parent: "12", file: "plots-and-graphics.html", title: "Plots and graphics", description: "Plot exact polynomials and understand portable SVG scenes." },
-    { number: "12d", parent: "12", file: "drawing-with-draw.html", title: "Drawing with .Draw", description: "Build diagrams from paths, shapes, groups, transforms, and clips." },
+    { number: "12d", parent: "12", file: "drawing-with-draw.html", title: "Drawing with .Graphics", description: "Build portable scenes from paths, shapes, groups, transforms, and clips." },
+    { number: "13", file: "core-host-lowering.html", title: "Core, host, and lowering", description: "See how RiX syntax reaches named operations and capability owners." },
+    { number: "13a", parent: "13", file: "core-operations.html", title: "Core operations", description: "Use public PascalCase calls alongside expression syntax." },
+    { number: "13b", parent: "13", file: "lazy-core-forms.html", title: "Lazy structural forms", description: "Build assignments, maps, and lambdas from explicit core forms." },
+    { number: "13c", parent: "13", file: "lowering-and-ir.html", title: "Lowering syntax", description: "Trace source syntax through IR operations and evaluator dispatch." },
+    { number: "13d", parent: "13", file: "host-and-plugins.html", title: "Host objects and plugins", description: "Understand camelCase host roots, registration, and capability boundaries." },
+    { number: "13e", parent: "13", file: "capstone-explicit-core.html", title: "Capstone: explicit core", description: "Translate a compact RiX calculation into named core calls." },
 ];
 
 export const rootTutorials = tutorials.filter((tutorial) => !tutorial.parent);

@@ -1600,8 +1600,12 @@ class Parser {
       return true;
     if (node.type === "FunctionCall")
       return true;
-    if (node.type === "SystemAccess")
-      return true;
+    if (node.type === "SystemAccess") {
+      return !node.systemPathInfo || node.systemPathInfo.kind === "function";
+    }
+    if (node.type === "DotAccess") {
+      return node.systemPathInfo?.kind === "function";
+    }
     if (node.type === "SystemCall")
       return true;
     if (node.type === "Call")
@@ -1625,6 +1629,17 @@ class Parser {
       return { name: baseName + "!", original: baseOriginal + bangOriginal };
     }
     return { name: baseName, original: baseOriginal };
+  }
+  resolveSystemRoot(name) {
+    return this.systemLookup?.resolveSystemRoot?.(name) || null;
+  }
+  resolveSystemMember(parent, name) {
+    return this.systemLookup?.resolveSystemMember?.(parent, name) || null;
+  }
+  validateKnownSystemCallable(target) {
+    if (target?.systemPathInfo && target.systemPathInfo.kind !== "function") {
+      this.error(`System ${target.systemPathInfo.kind} '${target.systemPathInfo.displayName}' is not callable`);
+    }
   }
   canStartImplicitOperand() {
     const t = this.current;
@@ -1746,6 +1761,8 @@ class Parser {
           });
         } else if (token.value === "(") {
           return this.parseGrouping();
+        } else if (token.value === "|") {
+          return this.parseAbsoluteValue();
         } else if (token.value === "[") {
           return this.parseArray();
         } else if (token.value === "<") {
@@ -1851,8 +1868,10 @@ class Parser {
           this.advance();
           if (this.current.type === "Identifier") {
             const property = this.parseMethodName();
+            const systemPathInfo = this.resolveSystemRoot(property.name);
             return this.createNode("SystemAccess", {
               property: property.name,
+              ...systemPathInfo ? { systemPathInfo } : {},
               original: token.original + property.original
             });
           }
@@ -2268,9 +2287,23 @@ class Parser {
       });
     } else if (operator.value === ".") {
       const property = this.parseMethodName();
+      let systemPathInfo = null;
+      if (left.systemPathInfo) {
+        const resolution = this.resolveSystemMember(left.systemPathInfo, property.name);
+        if (resolution?.state === "not-object") {
+          this.error(`System ${left.systemPathInfo.kind} '${left.systemPathInfo.displayName}' has no members`);
+        }
+        if (resolution?.state === "unknown-member") {
+          this.error(`Unknown system member '${left.systemPathInfo.displayName}.${property.name}'`);
+        }
+        if (resolution?.state === "resolved") {
+          systemPathInfo = resolution.member;
+        }
+      }
       return this.createNode("DotAccess", {
         object: left,
         property: property.name,
+        ...systemPathInfo ? { systemPathInfo } : {},
         pos: left.pos,
         original: left.original + operator.original + property.original
       });
@@ -2500,6 +2533,7 @@ class Parser {
         break;
       }
       if (this.current.value === "(") {
+        this.validateKnownSystemCallable(left);
         if (!this.isCallableNode(left)) {
           if (JUXTAPOSITION_PRECEDENCE < minPrec) {
             break;
@@ -3143,6 +3177,30 @@ class Parser {
       fromBrace: true,
       pos: startToken.pos,
       original: sigil
+    });
+  }
+  parseAbsoluteValue() {
+    const startToken = this.current;
+    this.advance();
+    const expression = this.parseExpression(0);
+    if (this.current.value !== "|") {
+      this.error("Expected '|' to close absolute-value expression");
+    }
+    const endToken = this.current;
+    this.advance();
+    return this.createNode("FunctionCall", {
+      function: this.createNode("SystemIdentifier", {
+        name: "ABS",
+        systemInfo: this.systemLookup("ABS"),
+        original: "|"
+      }),
+      arguments: {
+        positional: [expression],
+        keyword: {}
+      },
+      fromBrace: true,
+      pos: [startToken.pos[0], startToken.pos[1], endToken.pos[2]],
+      original: `|${expression.original || ""}|`
     });
   }
   isConstructorCaptureOperator(value) {
@@ -4978,35 +5036,6 @@ function parse(input, systemLookup) {
 }
 // ../rix/src/parser/system-loader.js
 var DEFAULT_SYSTEM_REGISTRY = {
-  SIN: {
-    type: "function",
-    arity: 1,
-    precedence: 120,
-    category: "trigonometric"
-  },
-  COS: {
-    type: "function",
-    arity: 1,
-    precedence: 120,
-    category: "trigonometric"
-  },
-  TAN: {
-    type: "function",
-    arity: 1,
-    precedence: 120,
-    category: "trigonometric"
-  },
-  LOG: { type: "function", arity: 1, precedence: 120, category: "logarithmic" },
-  EXP: { type: "function", arity: 1, precedence: 120, category: "exponential" },
-  SQRT: { type: "function", arity: 1, precedence: 120, category: "arithmetic" },
-  ABS: { type: "function", arity: 1, precedence: 120, category: "arithmetic" },
-  MAX: { type: "function", arity: -1, precedence: 120, category: "aggregate" },
-  MIN: { type: "function", arity: -1, precedence: 120, category: "aggregate" },
-  SUM: { type: "function", arity: -1, precedence: 120, category: "aggregate" },
-  PI: { type: "constant", value: Math.PI, category: "mathematical" },
-  EX: { type: "constant", value: Math.E, category: "mathematical" },
-  INFINITY: { type: "constant", value: Infinity, category: "mathematical" },
-  I: { type: "constant", category: "complex" },
   LIST: { type: "constructor", category: "collection" },
   SET: { type: "constructor", category: "collection" },
   MAP: { type: "constructor", category: "collection" },
@@ -5226,8 +5255,7 @@ class SystemLoader {
     return {
       ...definition,
       name,
-      resolvedAt: Date.now(),
-      context: this.getCurrentContext()
+      resolvedAt: Date.now()
     };
   }
   registerHook(eventName, callback) {
@@ -5321,9 +5349,6 @@ class SystemLoader {
     };
     this.contexts.set(name, context);
     return context;
-  }
-  getCurrentContext() {
-    return "global";
   }
   getControlArity(name, definition) {
     switch (definition.structure) {
@@ -5428,6 +5453,345 @@ class SystemLoader {
   }
 }
 var defaultSystemLoader = new SystemLoader;
+// ../rix/src/runtime/system-context.js
+function firstLetterIsUppercase(name) {
+  for (const character of String(name)) {
+    if (/\p{L}/u.test(character))
+      return character === character.toUpperCase();
+  }
+  return false;
+}
+function normalizeCapabilityName(name) {
+  const source = String(name ?? "");
+  if (!source)
+    throw new Error("Capability name must be a non-empty string");
+  return firstLetterIsUppercase(source) ? source.toUpperCase() : source.toLowerCase();
+}
+function capabilityNamespace(name) {
+  return firstLetterIsUppercase(name) ? "core" : "host";
+}
+function stringValue(value) {
+  return { type: "string", value: String(value) };
+}
+function rixString(value, label) {
+  if (value?.type === "string")
+    return value.value;
+  if (typeof value === "string")
+    return value;
+  throw new Error(`${label} must be a string`);
+}
+function rixStringList(value, label) {
+  if (value === null || value === undefined)
+    return [];
+  const items = value?.values;
+  if (!Array.isArray(items))
+    throw new Error(`${label} must be a sequence of strings`);
+  return items.map((item) => rixString(item, label));
+}
+function namespaceEntry(context, namespace) {
+  const title = namespace === "core" ? "Core" : "Host";
+  const canRegister = (evaluationContext) => {
+    const runtime = evaluationContext?.getEnv?.("__script_runtime__", null);
+    const frame = runtime?.frameStack?.[runtime.frameStack.length - 1];
+    if (namespace === "core") {
+      return !frame && (evaluationContext?.getEnv?.("allowCoreRegister", false) || evaluationContext?.getEnv?.("allowCapabilityRegister", false));
+    }
+    return !frame || frame.permissions?.has("PLUGINS");
+  };
+  const registryContext = namespace === "host" ? context._hostContext : context;
+  const value = {
+    type: "system_namespace",
+    namespace,
+    _ext: new Map
+  };
+  value._ext.set("REGISTER", {
+    type: "method_builtin",
+    name: "Register",
+    impl(args, evaluationContext, _evaluate, callWithConcreteArgs) {
+      if (!canRegister(evaluationContext)) {
+        throw new Error(`.${title}.Register is not permitted in this execution context`);
+      }
+      const name = rixString(args[1], `.${title}.Register name`);
+      const callable = args[2];
+      const doc = args[3]?.type === "string" ? args[3].value : "";
+      const groups = rixStringList(args[4], `.${title}.Register groups`);
+      const definition = {
+        impl(callArgs, callContext, callEvaluate) {
+          return callWithConcreteArgs(callable, callArgs, callContext, callEvaluate);
+        },
+        doc
+      };
+      const register = namespace === "core" ? registryContext.registerTrusted.bind(registryContext) : registryContext.registerHost.bind(registryContext);
+      register(name, definition, { namespace, groups });
+      if (namespace === "host" && registryContext !== context) {
+        context.registerHost(name, definition, { namespace, groups });
+      }
+      return stringValue(name);
+    }
+  });
+  value._ext.set("FIND", {
+    type: "method_builtin",
+    name: "Find",
+    impl(args) {
+      const name = rixString(args[1], `.${title}.Find name`);
+      const entry = registryContext.get(name);
+      if (!entry || entry.namespace !== namespace)
+        return null;
+      return {
+        type: "map",
+        entries: new Map([
+          ["name", stringValue(entry.displayName)],
+          ["kind", stringValue(entry.kind)],
+          ["namespace", stringValue(entry.namespace)],
+          ["groups", { type: "sequence", values: (entry.groups || []).map(stringValue) }]
+        ])
+      };
+    }
+  });
+  value._ext.set("LIST", {
+    type: "method_builtin",
+    name: "List",
+    impl() {
+      return {
+        type: "sequence",
+        values: registryContext.getAllEntries({ namespace }).map((entry) => stringValue(entry.displayName))
+      };
+    }
+  });
+  return value;
+}
+
+class SystemContext {
+  constructor(capabilities = new Map, frozen = false, options = {}) {
+    this._capabilities = new Map;
+    this._groups = new Map;
+    this._frozen = false;
+    this._hostContext = options.hostContext || this;
+    for (const [name, entry] of capabilities) {
+      const normalised = normalizeCapabilityName(name);
+      const inferredKind = entry?.kind || "function";
+      this._capabilities.set(normalised, {
+        ...entry,
+        kind: inferredKind,
+        namespace: entry?.namespace || capabilityNamespace(name),
+        displayName: entry?.displayName || name,
+        groups: [...entry?.groups || []]
+      });
+    }
+    for (const [group, members] of Object.entries(options.groups || {})) {
+      this.registerGroup(group, members);
+    }
+    this._frozen = frozen;
+  }
+  _checkMutable() {
+    if (this._frozen)
+      throw new Error("System context is frozen and cannot be modified");
+  }
+  register(name, def, options = {}) {
+    return this._register(name, def, options, false);
+  }
+  registerTrusted(name, def, options = {}) {
+    return this._register(name, def, { ...options, namespace: "core" }, true);
+  }
+  registerHost(name, def, options = {}) {
+    return this._register(name, def, { ...options, namespace: "host" }, true);
+  }
+  registerCallableValue(name, value, def, options = {}) {
+    return this._registerCallableValue(name, value, def, options, false);
+  }
+  registerHostCallableValue(name, value, def, options = {}) {
+    return this._registerCallableValue(name, value, def, { ...options, namespace: "host" }, true);
+  }
+  _registerCallableValue(name, value, def, options, bypassFrozen) {
+    this._register(name, def, options, bypassFrozen);
+    this._capabilities.get(normalizeCapabilityName(name)).value = value;
+    return this;
+  }
+  _register(name, def, options, bypassFrozen) {
+    if (!bypassFrozen)
+      this._checkMutable();
+    const normalised = normalizeCapabilityName(name);
+    const namespace = options.namespace || capabilityNamespace(name);
+    if (namespace !== capabilityNamespace(name)) {
+      throw new Error(`Capability '${name}' does not use ${namespace === "core" ? "PascalCase" : "camelCase"} namespace spelling`);
+    }
+    const entry = {
+      kind: "function",
+      impl: typeof def === "function" ? def : def.impl,
+      lazy: def?.lazy || false,
+      pure: def?.pure || false,
+      doc: options.doc ?? def?.doc ?? "",
+      namespace,
+      displayName: options.displayName || name,
+      groups: [...new Set(options.groups || def?.groups || [])]
+    };
+    if (typeof entry.impl !== "function") {
+      throw new Error(`Capability '${name}' requires an implementation function`);
+    }
+    this._capabilities.set(normalised, entry);
+    this._addEntryToGroups(normalised, entry.groups);
+    return this;
+  }
+  registerValue(name, value, options = {}) {
+    return this._registerValue(name, value, options, false);
+  }
+  registerHostValue(name, value, options = {}) {
+    return this._registerValue(name, value, { ...options, namespace: "host" }, true);
+  }
+  _registerValue(name, value, options, bypassFrozen) {
+    if (!bypassFrozen)
+      this._checkMutable();
+    const normalised = normalizeCapabilityName(name);
+    const namespace = options.namespace || capabilityNamespace(name);
+    if (namespace !== capabilityNamespace(name)) {
+      throw new Error(`Capability '${name}' does not use ${namespace === "core" ? "PascalCase" : "camelCase"} namespace spelling`);
+    }
+    const entry = {
+      kind: options.kind || "value",
+      value,
+      doc: options.doc || "",
+      namespace,
+      displayName: options.displayName || name,
+      groups: [...new Set(options.groups || [])]
+    };
+    this._capabilities.set(normalised, entry);
+    this._addEntryToGroups(normalised, entry.groups);
+    return this;
+  }
+  registerGroup(name, members = []) {
+    this._checkMutable();
+    const group = String(name);
+    const normalisedMembers = new Set(Array.from(members, normalizeCapabilityName));
+    this._groups.set(group, normalisedMembers);
+    for (const member of normalisedMembers) {
+      const entry = this._capabilities.get(member);
+      if (entry && !entry.groups.includes(group))
+        entry.groups.push(group);
+    }
+    return this;
+  }
+  _addEntryToGroups(name, groups) {
+    for (const group of groups || []) {
+      if (!this._groups.has(group))
+        this._groups.set(group, new Set);
+      this._groups.get(group).add(name);
+    }
+  }
+  registerAll(defs) {
+    for (const [name, def] of Object.entries(defs)) {
+      this.register(name, def);
+    }
+  }
+  delete(name) {
+    this._checkMutable();
+    const normalised = normalizeCapabilityName(name);
+    this._capabilities.delete(normalised);
+    for (const members of this._groups.values())
+      members.delete(normalised);
+  }
+  freeze() {
+    this._frozen = true;
+    return this;
+  }
+  get(name) {
+    return this._capabilities.get(normalizeCapabilityName(name));
+  }
+  has(name) {
+    return this._capabilities.has(normalizeCapabilityName(name));
+  }
+  get frozen() {
+    return this._frozen;
+  }
+  call(name, args, context, evaluate) {
+    const cap = this.get(name);
+    if (!cap)
+      throw new Error(`Unknown system capability: ${name}. Use .${name}() or check available capabilities.`);
+    if (cap.kind !== "function")
+      throw new Error(`System ${cap.kind} .${cap.displayName} is not a capability function`);
+    return cap.impl(args, context, evaluate);
+  }
+  callLazy(name, args, context, evaluate) {
+    const cap = this.get(name);
+    if (!cap)
+      throw new Error(`Unknown system capability: ${name}.`);
+    if (cap.kind !== "function")
+      throw new Error(`System ${cap.kind} .${cap.displayName} is not a capability function`);
+    return cap.impl(args, context, evaluate);
+  }
+  getAllNames() {
+    return Array.from(this._capabilities.keys()).sort();
+  }
+  getAllEntries({ namespace } = {}) {
+    return Array.from(this._capabilities.values()).filter((entry) => !namespace || entry.namespace === namespace).sort((a, b) => a.displayName.localeCompare(b.displayName));
+  }
+  getAllDisplayNames(options = {}) {
+    return this.getAllEntries(options).map((entry) => entry.displayName);
+  }
+  getCapabilityGroups() {
+    return Object.fromEntries(Array.from(this._groups, ([name, members]) => [name, Array.from(members)]));
+  }
+  installManagementNamespaces() {
+    this._checkMutable();
+    if (!this.has("Core")) {
+      this.registerValue("Core", namespaceEntry(this, "core"), {
+        kind: "namespace",
+        doc: "Core capability registration and discovery"
+      });
+    }
+    if (!this.has("Host")) {
+      this.registerValue("Host", namespaceEntry(this, "host"), {
+        kind: "namespace",
+        doc: "Host/plugin capability registration and discovery"
+      });
+    }
+    return this;
+  }
+  _rebindManagementNamespaces() {
+    for (const [name, namespace] of [["Core", "core"], ["Host", "host"]]) {
+      const normalised = normalizeCapabilityName(name);
+      const entry = this._capabilities.get(normalised);
+      if (entry?.kind === "namespace") {
+        this._capabilities.set(normalised, { ...entry, value: namespaceEntry(this, namespace) });
+      }
+    }
+    return this;
+  }
+  _derivedContext(capabilities, frozen) {
+    const available = new Set(Array.from(capabilities.keys(), normalizeCapabilityName));
+    const groups = Object.fromEntries(Object.entries(this.getCapabilityGroups()).map(([group, members]) => [
+      group,
+      members.filter((name) => available.has(name))
+    ]));
+    const hostContext = this._hostContext === this ? undefined : this._hostContext;
+    return new SystemContext(capabilities, frozen, { groups, hostContext })._rebindManagementNamespaces();
+  }
+  copy() {
+    return this._derivedContext(new Map(this._capabilities), false);
+  }
+  withhold(...names) {
+    const caps = new Map(this._capabilities);
+    for (const name of names) {
+      caps.delete(normalizeCapabilityName(name));
+    }
+    return this._derivedContext(caps, true);
+  }
+  with(name, def) {
+    const result = this.copy();
+    if (def?.kind === "function" && Object.prototype.hasOwnProperty.call(def || {}, "value")) {
+      result.registerCallableValue(name, def.value, def, def);
+    } else if (def?.kind === "value" || Object.prototype.hasOwnProperty.call(def || {}, "value")) {
+      result.registerValue(name, def.value, def);
+    } else {
+      result.register(name, def, def);
+    }
+    result.freeze();
+    return result;
+  }
+  toRixValue() {
+    return { type: "system_context", context: this };
+  }
+}
+
 // ../packages/core/src/base-system.js
 class BaseSystem {
   #base;
@@ -9246,7 +9610,7 @@ function int2(value) {
 function rat(numerator, denominator = 1n) {
   return denominator === 1n ? new Integer(numerator) : new Rational(numerator, denominator);
 }
-function stringValue(value, label = "name") {
+function stringValue2(value, label = "name") {
   if (typeof value === "string")
     return value;
   if (value?.type === "string")
@@ -9620,7 +9984,7 @@ function parseUnitExpression(source, collection) {
   return result;
 }
 function defineUnitFromValue(nameValue, definition) {
-  const name = stringValue(nameValue, "Unit name");
+  const name = stringValue2(nameValue, "Unit name");
   if (isUnitValue(definition)) {
     return createUnit(name, {
       symbol: name,
@@ -9707,7 +10071,7 @@ function createDefaultUnitCollection() {
   };
 }
 function unitName(value) {
-  return stringValue(value, "Unit name");
+  return stringValue2(value, "Unit name");
 }
 
 // ../rix/src/runtime/diagnostics.js
@@ -9868,13 +10232,15 @@ var runtimeDefaults = Object.freeze({
     multifunctionNoPrep: false,
     implicitUnitConversion: false
   }),
-  scriptPermissionNames: Object.freeze(["IMPORTS", "NET", "FILES"]),
+  scriptPermissionNames: Object.freeze(["IMPORTS", "NET", "FILES", "PLUGINS"]),
   defaultScriptCapabilityPolicy: Object.freeze({
     includeAllFunctions: true,
     permissions: Object.freeze(["IMPORTS"])
   }),
   capabilityGroups: Object.freeze({
-    Output: Object.freeze(["TEXT", "PARAGRAPH", "HEADING", "FRAGMENT", "TABLE", "GRID", "GRAPHIC", "FIGURE", "SLIDE", "SLIDES", "ALGEBRA", "DRAW", "PLOT"]),
+    Output: Object.freeze(["TEXT", "PARAGRAPH", "HEADING", "FRAGMENT", "TABLE", "GRID", "FIGURE", "SLIDE", "SLIDES", "Algebra", "Plot"]),
+    Graphics: Object.freeze(["Graphics"]),
+    Draw: Object.freeze(["Draw"]),
     Core: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "IF", "LOOP", "MULTI", "RAND_NAME", "PRINT", "TGEN", "KEYOF", "KEYS", "VALUES"]),
     Arith: Object.freeze(["ADD", "SUB", "MUL", "DIV", "INTDIV", "MOD", "POW"]),
     Logic: Object.freeze(["EQ", "NEQ", "LT", "GT", "LTE", "GTE", "AND", "OR", "NOT"]),
@@ -9883,6 +10249,7 @@ var runtimeDefaults = Object.freeze({
     Arrays: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "MAP", "FILTER", "REDUCE", "TGEN"]),
     Strings: Object.freeze(["UPPER", "SUBSTR", "PRINT"]),
     Imports: Object.freeze(["IMPORTS"]),
+    Plugins: Object.freeze(["PLUGINS"]),
     Net: Object.freeze(["NET"]),
     Files: Object.freeze(["FILES"]),
     Units: Object.freeze(["UNITS", "Units", "CONVERTUNIT", "ConvertUnit", "DEFINEUNIT", "DefineUnit"]),
@@ -10219,7 +10586,7 @@ var cloneIr = (node) => {
     return node;
   return Object.fromEntries(Object.entries(node).map(([key, value]) => [key, cloneIr(value)]));
 };
-function rixString(value) {
+function rixString2(value) {
   return { type: "string", value: String(value) };
 }
 function rixTuple(values) {
@@ -10242,7 +10609,7 @@ function attachSpec(value, spec, kind = null) {
     value._ext = new Map;
   value._ext.set("_spec", spec);
   if (kind)
-    value._ext.set("_symbolicKind", rixString(kind));
+    value._ext.set("_symbolicKind", rixString2(kind));
   return value;
 }
 function expressionOf(spec) {
@@ -10383,32 +10750,32 @@ function formatSymbolicSpec(spec) {
 }
 function serializeIr(node) {
   if (!node?.fn)
-    return rixString(String(node));
+    return rixString2(String(node));
   if (node.fn === "LITERAL")
-    return rixMap([["kind", rixString("number")], ["value", rixString(node.args[0])]]);
+    return rixMap([["kind", rixString2("number")], ["value", rixString2(node.args[0])]]);
   if (node.fn === "RETRIEVE")
-    return rixMap([["kind", rixString("identifier")], ["name", rixString(node.args[0])]]);
+    return rixMap([["kind", rixString2("identifier")], ["name", rixString2(node.args[0])]]);
   if (node.fn === "OUTER_RETRIEVE")
-    return rixMap([["kind", rixString("outer")], ["name", rixString(node.args[0])]]);
+    return rixMap([["kind", rixString2("outer")], ["name", rixString2(node.args[0])]]);
   if (node.fn === "NEG")
-    return rixMap([["kind", rixString("unary")], ["op", rixString("-")], ["expr", serializeIr(node.args[0])]]);
+    return rixMap([["kind", rixString2("unary")], ["op", rixString2("-")], ["expr", serializeIr(node.args[0])]]);
   const op = BINARY_TEXT.get(node.fn);
   if (op)
-    return rixMap([["kind", rixString("binary")], ["op", rixString(op)], ["left", serializeIr(node.args[0])], ["right", serializeIr(node.args[1])]]);
-  return rixMap([["kind", rixString("ir")], ["fn", rixString(node.fn)], ["args", rixTuple(node.args.map(serializeIr))]]);
+    return rixMap([["kind", rixString2("binary")], ["op", rixString2(op)], ["left", serializeIr(node.args[0])], ["right", serializeIr(node.args[1])]]);
+  return rixMap([["kind", rixString2("ir")], ["fn", rixString2(node.fn)], ["args", rixTuple(node.args.map(serializeIr))]]);
 }
 function inspectSymbolicSpec(spec) {
   const inspectExpression = spec.expression ? serializeIr(spec.expression) : spec.statements.length === 1 ? serializeIr(spec.statements[0].expr) : null;
   return rixMap([
-    ["kind", rixString("systemSpec")],
-    ["syntax", rixString("#")],
-    ["form", rixString(outputModeOf(spec))],
-    ["source", rixString(formatSymbolicSpec(spec))],
-    ["inputs", rixTuple(spec.inputs.map(rixString))],
-    ["outputs", rixTuple(spec.outputs.map(rixString))],
+    ["kind", rixString2("systemSpec")],
+    ["syntax", rixString2("#")],
+    ["form", rixString2(outputModeOf(spec))],
+    ["source", rixString2(formatSymbolicSpec(spec))],
+    ["inputs", rixTuple(spec.inputs.map(rixString2))],
+    ["outputs", rixTuple(spec.outputs.map(rixString2))],
     ["statements", rixTuple(spec.statements.map((statement) => rixMap([
-      ["kind", rixString("assign")],
-      ["target", rixString(statement.target)],
+      ["kind", rixString2("assign")],
+      ["target", rixString2(statement.target)],
       ["expr", serializeIr(statement.expr)]
     ])))],
     ["expression", inspectExpression]
@@ -11193,9 +11560,9 @@ function speccabilityValue(value) {
   const result = attached ? { speccable: true, profile: "attached", spec: attached } : analyzeCallable(value);
   const entries = [["speccable", result.speccable ? new Integer(1n) : null]];
   if (result.profile)
-    entries.push(["profile", rixString(result.profile)]);
+    entries.push(["profile", rixString2(result.profile)]);
   if (result.reason)
-    entries.push(["reason", rixString(result.reason)]);
+    entries.push(["reason", rixString2(result.reason)]);
   if (result.spec)
     entries.push(["spec", result.spec]);
   return rixMap(entries);
@@ -12850,7 +13217,20 @@ function createGrid(args) {
 }
 function createPath(args) {
   const entry = spec(args, ["points", "style"], "Path");
-  return output("path", { points: sequence(get(entry, "points"), "Path points"), style: optionalMap(get(entry, "style"), "Path style") });
+  const commands = get(entry, "commands");
+  const points = get(entry, "points");
+  if (commands !== null && commands !== undefined) {
+    return output("path", {
+      commands: sequence(commands, "Path commands"),
+      points: null,
+      style: optionalMap(get(entry, "style"), "Path style")
+    });
+  }
+  return output("path", {
+    commands: null,
+    points: sequence(points, "Path points"),
+    style: optionalMap(get(entry, "style"), "Path style")
+  });
 }
 function createGroup(args) {
   const entry = spec(args, ["children", "style", "metadata"], "Group");
@@ -13066,6 +13446,61 @@ function svgPair(value, label) {
     throw new Error(`${label} must contain two coordinates`);
   return [svgNumber(pair[0], `${label} x`), svgNumber(pair[1], `${label} y`)];
 }
+function sceneField(value, name) {
+  if (value?.type === "map" && value.entries instanceof Map)
+    return get(value.entries, name);
+  return value?.[name] ?? null;
+}
+function svgFlag(value, label) {
+  if (value === true)
+    return "1";
+  if (value === false || value === null || value === undefined)
+    return "0";
+  return numericValue(value, label) === 0 ? "0" : "1";
+}
+function svgPathData(path) {
+  if (!path.commands) {
+    if (path.points.length === 0)
+      return "";
+    const points = path.points.map(svgPoint);
+    const closed = styleEntry(path.style, "closed")?.value === 1n || styleEntry(path.style, "closed") === true;
+    return points.map(([x, y], index) => `${index === 0 ? "M" : "L"}${x} ${y}`).join(" ") + (closed ? " Z" : "");
+  }
+  return path.commands.map((command, index) => {
+    const op = (asString(sceneField(command, "op")) ?? sceneField(command, "op") ?? "").toLowerCase();
+    const destination = () => svgPair(sceneField(command, "to"), `Path command ${index + 1} destination`);
+    if (op === "move" || op === "m") {
+      const [x, y] = destination();
+      return `M${x} ${y}`;
+    }
+    if (op === "line" || op === "l") {
+      const [x, y] = destination();
+      return `L${x} ${y}`;
+    }
+    if (op === "quadratic" || op === "quad" || op === "q") {
+      const [cx, cy] = svgPair(sceneField(command, "control"), `Path command ${index + 1} control`);
+      const [x, y] = destination();
+      return `Q${cx} ${cy} ${x} ${y}`;
+    }
+    if (op === "cubic" || op === "curve" || op === "c") {
+      const [c1x, c1y] = svgPair(sceneField(command, "control1"), `Path command ${index + 1} control1`);
+      const [c2x, c2y] = svgPair(sceneField(command, "control2"), `Path command ${index + 1} control2`);
+      const [x, y] = destination();
+      return `C${c1x} ${c1y} ${c2x} ${c2y} ${x} ${y}`;
+    }
+    if (op === "arc" || op === "a") {
+      const [rx, ry] = svgPair(sceneField(command, "radius"), `Path command ${index + 1} radius`);
+      const rotation = svgNumber(sceneField(command, "rotation") ?? int3(0), `Path command ${index + 1} rotation`);
+      const large = svgFlag(sceneField(command, "large"), `Path command ${index + 1} large flag`);
+      const sweep = svgFlag(sceneField(command, "sweep"), `Path command ${index + 1} sweep flag`);
+      const [x, y] = destination();
+      return `A${rx} ${ry} ${rotation} ${large} ${sweep} ${x} ${y}`;
+    }
+    if (op === "close" || op === "z")
+      return "Z";
+    throw new Error(`Unsupported Path command '${op || "(missing op)"}'`);
+  }).join(" ");
+}
 function svgStyle(style, defaultFill = null) {
   const attrs = [];
   const stroke = asString(styleEntry(style, "stroke"));
@@ -13123,11 +13558,9 @@ function renderSvgNode(node, format, defs) {
   if (!isOutputValue(node))
     return "";
   if (node.kind === "path") {
-    if (node.points.length === 0)
+    const d = svgPathData(node);
+    if (!d)
       return "";
-    const points = node.points.map(svgPoint);
-    const closed = styleEntry(node.style, "closed")?.value === 1n || styleEntry(node.style, "closed") === true;
-    const d = points.map(([x, y], index) => `${index === 0 ? "M" : "L"}${x} ${y}`).join(" ") + (closed ? " Z" : "");
     return `<path d="${d}" ${svgStyle(node.style, "none")}/>`;
   }
   if (node.kind === "rectangle") {
@@ -13202,7 +13635,7 @@ function formatOutputText(value, format) {
   if (value.kind === "graphic")
     return `[Graphic: ${cellText(value.size[0], format)} × ${cellText(value.size[1], format)}, ${value.children.length} scene nodes]`;
   if (value.kind === "path")
-    return `[Path: ${value.points.length} points]`;
+    return value.commands ? `[Path: ${value.commands.length} commands]` : `[Path: ${value.points.length} points]`;
   if (value.kind === "slide")
     return [value.title, formatOutputText(value.content, format)].filter(Boolean).join(`
 `);
@@ -13254,8 +13687,9 @@ function createAlgebraOutputCollection() {
     ])
   };
 }
-function createDrawOutputCollection() {
+function createGraphicsOutputCollection() {
   const methods = new Map([
+    ["Graphic", createGraphic],
     ["Path", createPath],
     ["Group", createGroup],
     ["Transform", createTransform],
@@ -15011,14 +15445,21 @@ function importByRegisteredTypeRuntime(value, context = null, evaluate = null) {
     throw new Error(`No type import registered for ${typeName}`);
   return finalizeImportedRegisteredValue(invokeMaybeCallable(entry.import, [value], context, evaluate), typeName, entry);
 }
-function installRegisteredTypes(registry, typeNames = ["Integer", "Rational", "RationalInterval", "Tensor"]) {
+function installRegisteredTypes(registry, typeNames = ["Integer", "Rational", "RationalInterval", "Tensor"], options = {}) {
   let order = 0;
   for (const typeName of typeNames) {
     const entry = typeRegistry.get(typeName);
     if (!entry)
       throw new Error(`Unknown semantic type: ${typeName}`);
     for (const [targetFunction, variants] of entry.installs || []) {
+      if (options.onlyFunctions && !options.onlyFunctions.has(targetFunction))
+        continue;
+      if (options.skipMissing && !registry.get(targetFunction))
+        continue;
       for (const variant of variants || []) {
+        if (options.skipExisting && registry.get(targetFunction)?.variants?.some((existing) => existing.name === variant.name && existing.installedByType === entry.name)) {
+          continue;
+        }
         registry.installVariant(targetFunction, {
           ...variant,
           impl(args, context, evaluate) {
@@ -15808,6 +16249,13 @@ var collectionFunctions = {
           }
           seenKeys.add(name);
           entries.set(name, val);
+        } else if (arg?.type === "map_pair") {
+          const keyStr = keyOf(arg.key);
+          if (seenKeys.has(keyStr)) {
+            throw new Error(`Duplicate key in map literal: "${keyStr}"`);
+          }
+          seenKeys.add(keyStr);
+          entries.set(keyStr, arg.value);
         } else {
           const val = captureIrValue(arg, defaultMode, context, evaluate);
           const keyStr = keyOf(val);
@@ -16142,7 +16590,7 @@ function truthy2(value) {
 function bool(flag) {
   return flag ? int6(1) : null;
 }
-function stringValue2(value) {
+function stringValue3(value) {
   if (value?.type === "string")
     return value.value;
   if (value === null || value === undefined)
@@ -16330,10 +16778,10 @@ function jsSlice(values, startArg, endArg) {
   return values.slice(start - 1, end - 1);
 }
 function charsOf(value) {
-  return Array.from(stringValue2(value)).map((char) => stringObj3(char));
+  return Array.from(stringValue3(value)).map((char) => stringObj3(char));
 }
 function fromChars(chars) {
-  return stringObj3(chars.map((char) => stringValue2(char)).join(""));
+  return stringObj3(chars.map((char) => stringValue3(char)).join(""));
 }
 function compareValues(a, b) {
   const ak = valueKey2(a);
@@ -16636,7 +17084,7 @@ var arrayMethods = {
   }),
   JOIN: method("JOIN", ([target, separator]) => {
     ensureSequence(target, "Join");
-    return stringObj3(target.values.map((value) => stringValue2(value)).join(stringValue2(separator ?? stringObj3(","))));
+    return stringObj3(target.values.map((value) => stringValue3(value)).join(stringValue3(separator ?? stringObj3(","))));
   }),
   PUSH: method("PUSH", ([target, ...values]) => {
     ensureSequence(target, "Push");
@@ -17213,24 +17661,24 @@ var stringMethods = {
   }),
   INCLUDES: method("INCLUDES", ([target, needle]) => {
     ensureString(target, "Includes");
-    return bool(target.value.includes(stringValue2(needle)));
+    return bool(target.value.includes(stringValue3(needle)));
   }),
   STARTSWITH: method("STARTSWITH", ([target, prefix]) => {
     ensureString(target, "StartsWith");
-    return bool(target.value.startsWith(stringValue2(prefix)));
+    return bool(target.value.startsWith(stringValue3(prefix)));
   }),
   ENDSWITH: method("ENDSWITH", ([target, suffix]) => {
     ensureString(target, "EndsWith");
-    return bool(target.value.endsWith(stringValue2(suffix)));
+    return bool(target.value.endsWith(stringValue3(suffix)));
   }),
   INDEXOF: method("INDEXOF", ([target, needle]) => {
     ensureString(target, "IndexOf");
-    const idx = target.value.indexOf(stringValue2(needle));
+    const idx = target.value.indexOf(stringValue3(needle));
     return idx === -1 ? null : int6(idx + 1);
   }),
   LASTINDEXOF: method("LASTINDEXOF", ([target, needle]) => {
     ensureString(target, "LastIndexOf");
-    const idx = target.value.lastIndexOf(stringValue2(needle));
+    const idx = target.value.lastIndexOf(stringValue3(needle));
     return idx === -1 ? null : int6(idx + 1);
   }),
   SLICE: method("SLICE", ([target, start, end]) => {
@@ -17239,11 +17687,11 @@ var stringMethods = {
   }),
   CONCAT: method("CONCAT", ([target, ...parts]) => {
     ensureString(target, "Concat");
-    return stringObj3([target, ...parts].map((part) => stringValue2(part)).join(""));
+    return stringObj3([target, ...parts].map((part) => stringValue3(part)).join(""));
   }),
   SPLIT: method("SPLIT", ([target, separator]) => {
     ensureString(target, "Split");
-    const parts = separator === undefined ? Array.from(target.value) : target.value.split(stringValue2(separator));
+    const parts = separator === undefined ? Array.from(target.value) : target.value.split(stringValue3(separator));
     return { type: "sequence", values: parts.map((part) => stringObj3(part)), _ext: mutableExt2() };
   }),
   TRIM: method("TRIM", ([target]) => {
@@ -17268,19 +17716,19 @@ var stringMethods = {
   }),
   REPLACE: method("REPLACE", ([target, search, replacement]) => {
     ensureString(target, "Replace");
-    return stringObj3(target.value.replace(stringValue2(search), stringValue2(replacement)));
+    return stringObj3(target.value.replace(stringValue3(search), stringValue3(replacement)));
   }),
   REPLACEALL: method("REPLACEALL", ([target, search, replacement]) => {
     ensureString(target, "ReplaceAll");
-    return stringObj3(target.value.split(stringValue2(search)).join(stringValue2(replacement)));
+    return stringObj3(target.value.split(stringValue3(search)).join(stringValue3(replacement)));
   }),
   PADLEFT: method("PADLEFT", ([target, length, pad]) => {
     ensureString(target, "PadLeft");
-    return stringObj3(target.value.padStart(numericIndex(length), stringValue2(pad ?? stringObj3(" "))));
+    return stringObj3(target.value.padStart(numericIndex(length), stringValue3(pad ?? stringObj3(" "))));
   }),
   PADRIGHT: method("PADRIGHT", ([target, length, pad]) => {
     ensureString(target, "PadRight");
-    return stringObj3(target.value.padEnd(numericIndex(length), stringValue2(pad ?? stringObj3(" "))));
+    return stringObj3(target.value.padEnd(numericIndex(length), stringValue3(pad ?? stringObj3(" "))));
   }),
   REPEAT: method("REPEAT", ([target, count]) => {
     ensureString(target, "Repeat");
@@ -17606,8 +18054,70 @@ function attachBuiltinProto(value) {
   return value;
 }
 
+// ../rix/src/runtime/system-manifest.js
+function memberDescriptor(name, value) {
+  return {
+    kind: value?.type === "method_builtin" ? "function" : "value",
+    displayName: value?.name || name,
+    members: null
+  };
+}
+function valueMembers(value) {
+  const extension = value?._ext instanceof Map ? value._ext : new Map;
+  const prototype = getBuiltinProto(value)?.entries instanceof Map ? getBuiltinProto(value).entries : new Map;
+  if (extension.size === 0 && prototype.size === 0)
+    return null;
+  const members = new Map;
+  for (const [name, member] of [...prototype, ...extension]) {
+    if (String(name).startsWith("_"))
+      continue;
+    const descriptor = memberDescriptor(name, member);
+    members.set(normalizeCapabilityName(descriptor.displayName), descriptor);
+  }
+  return members;
+}
+function rootDescriptor(entry) {
+  const value = entry.value;
+  return {
+    kind: entry.kind,
+    displayName: entry.displayName,
+    members: valueMembers(value)
+  };
+}
+function createSystemManifest(systemContext) {
+  const roots = new Map;
+  for (const entry of systemContext?.getAllEntries?.() || []) {
+    roots.set(normalizeCapabilityName(entry.displayName), rootDescriptor(entry));
+  }
+  return {
+    resolveRoot(name) {
+      return roots.get(normalizeCapabilityName(name)) || null;
+    },
+    resolveMember(parent, name) {
+      if (!parent?.members)
+        return { state: "not-object", parent };
+      const member = parent.members.get(normalizeCapabilityName(name));
+      return member ? { state: "resolved", member } : { state: "unknown-member", parent };
+    }
+  };
+}
+function createSystemLookup(systemContext, identifierLookup = () => ({ type: "identifier" })) {
+  const manifest = createSystemManifest(systemContext);
+  const lookup = (name) => identifierLookup(name);
+  lookup.resolveSystemRoot = (name) => manifest.resolveRoot(name);
+  lookup.resolveSystemMember = (parent, name) => manifest.resolveMember(parent, name);
+  return lookup;
+}
 // ../rix/src/repl/completion.js
 var REPL_COMMANDS = ["help", "exit", "load", "vars", "fns", "reset", "ast", "tokens"];
+function systemCandidates(systemContext, prefix = "") {
+  return systemContext.getAllEntries().map((entry) => ({
+    insertText: `${prefix}${entry.displayName}`,
+    kind: `system ${entry.kind}`,
+    detail: entry.doc || `${entry.namespace} capability`,
+    preview: ""
+  }));
+}
 var METHOD_HELP = {
   LEN: [".Len() → integer", "number of items"],
   ISEMPTY: [".IsEmpty() → truthy/null", "whether the collection has no items"],
@@ -17746,31 +18256,16 @@ function complete(source, cursor, { context, systemContext, formatValue: formatV
   let candidates = [];
   if (token.startsWith("@_") || prior.endsWith("@_")) {
     const prefix = token.startsWith("@_") ? "@_" : "@_";
-    candidates = systemContext.getAllNames().map((name) => ({
-      insertText: `${prefix}${name}`,
-      kind: "system function",
-      detail: systemContext.get(name)?.doc || "system capability",
-      preview: ""
-    }));
+    candidates = systemCandidates(systemContext, prefix);
   } else if (prior.endsWith(".")) {
     const receiverMatch = prior.slice(0, -1).match(/([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)$/);
     if (receiverMatch) {
       candidates = propertyCandidates(resolveReceiver(receiverMatch[1], context), query, formatValue2);
     } else {
-      candidates = systemContext.getAllNames().map((name) => ({
-        insertText: name,
-        kind: "system function",
-        detail: systemContext.get(name)?.doc || "system capability",
-        preview: ""
-      }));
+      candidates = systemCandidates(systemContext);
     }
   } else if (token.startsWith(".")) {
-    candidates = systemContext.getAllNames().map((name) => ({
-      insertText: `.${name}`,
-      kind: "system function",
-      detail: systemContext.get(name)?.doc || "system capability",
-      preview: ""
-    }));
+    candidates = systemCandidates(systemContext, ".");
   } else if (prior.length === 0 || /[\s(\[{,;=:+\-*/?]/.test(prior.at(-1))) {
     candidates = [
       ...context.getAllNames().map((name) => ({
@@ -18115,6 +18610,12 @@ var LOWERERS = {
     const arg = lowerNode(node.argument);
     if (callable.type === "SystemIdentifier" || callable.type === "UserIdentifier") {
       return ir2("CALL", callable.name, arg);
+    }
+    if (callable.type === "SystemAccess") {
+      return ir2("SYS_CALL", callable.property, arg);
+    }
+    if (callable.type === "DotAccess" && callable.systemPathInfo?.kind === "function") {
+      return ir2("CALL_METHOD", lowerNode(callable.object), callable.property, arg);
     }
     return ir2("CALL_EXPR", lowerNode(callable), arg);
   },
@@ -18895,99 +19396,6 @@ var unavailable2 = () => {
   throw new Error("Local path imports are unavailable in the browser REPL.");
 };
 var path_default = { isAbsolute: unavailable2, resolve: unavailable2, dirname: unavailable2 };
-
-// ../rix/src/runtime/system-context.js
-class SystemContext {
-  constructor(capabilities = new Map, frozen = false) {
-    this._capabilities = capabilities;
-    this._frozen = frozen;
-  }
-  _checkMutable() {
-    if (this._frozen)
-      throw new Error("System context is frozen and cannot be modified");
-  }
-  register(name, def) {
-    this._checkMutable();
-    this._capabilities.set(name, {
-      impl: typeof def === "function" ? def : def.impl,
-      lazy: def.lazy || false,
-      pure: def.pure || false,
-      doc: def.doc || ""
-    });
-  }
-  registerValue(name, value, options = {}) {
-    this._checkMutable();
-    this._capabilities.set(name, {
-      kind: "value",
-      value,
-      doc: options.doc || ""
-    });
-  }
-  registerAll(defs) {
-    for (const [name, def] of Object.entries(defs)) {
-      this.register(name, def);
-    }
-  }
-  delete(name) {
-    this._checkMutable();
-    this._capabilities.delete(name);
-  }
-  freeze() {
-    this._frozen = true;
-    return this;
-  }
-  get(name) {
-    return this._capabilities.get(name);
-  }
-  has(name) {
-    return this._capabilities.has(name);
-  }
-  get frozen() {
-    return this._frozen;
-  }
-  call(name, args, context, evaluate) {
-    const cap = this._capabilities.get(name);
-    if (!cap)
-      throw new Error(`Unknown system capability: ${name}. Use .${name}() or check available capabilities.`);
-    if (cap.kind === "value")
-      throw new Error(`System value .${name} is not a capability function`);
-    return cap.impl(args, context, evaluate);
-  }
-  callLazy(name, args, context, evaluate) {
-    const cap = this._capabilities.get(name);
-    if (!cap)
-      throw new Error(`Unknown system capability: ${name}.`);
-    if (cap.kind === "value")
-      throw new Error(`System value .${name} is not a capability function`);
-    return cap.impl(args, context, evaluate);
-  }
-  getAllNames() {
-    return Array.from(this._capabilities.keys()).sort();
-  }
-  copy() {
-    return new SystemContext(new Map(this._capabilities), false);
-  }
-  withhold(...names) {
-    const caps = new Map(this._capabilities);
-    for (const name of names) {
-      caps.delete(name.toUpperCase ? name.toUpperCase() : name);
-    }
-    return new SystemContext(caps, true);
-  }
-  with(name, def) {
-    const caps = new Map(this._capabilities);
-    caps.set(name, def?.kind === "value" || Object.prototype.hasOwnProperty.call(def || {}, "value") ? { kind: "value", value: def.value, doc: def.doc || "" } : {
-      impl: typeof def === "function" ? def : def.impl,
-      lazy: def.lazy || false,
-      pure: def.pure || false,
-      doc: def.doc || ""
-    });
-    return new SystemContext(caps, true);
-  }
-  toRixValue() {
-    return { type: "system_context", context: this };
-  }
-}
 
 // ../rix/src/runtime/context.js
 class Context {
@@ -21073,16 +21481,15 @@ var coreFunctions = {
         throw new Error("CapabilityRegister requires an active system context");
       }
       const rawName = args[0]?.type === "string" ? args[0].value : String(args[0] ?? "");
-      const name = rawName.toUpperCase();
-      if (!name)
+      if (!rawName)
         throw new Error("CapabilityRegister requires a capability name");
       const fn = capturePackageCallable(args[1], context);
-      systemContext._capabilities.set(name, {
+      systemContext.registerTrusted(rawName, {
         impl(callArgs, callContext, callEvaluate) {
           return callWithConcreteArgs(fn, callArgs, callContext, callEvaluate);
-        },
-        lazy: false,
-        pure: false,
+        }
+      }, {
+        namespace: "core",
         doc: args[2]?.type === "string" ? args[2].value : "Package capability"
       });
       return args[0];
@@ -21102,7 +21509,7 @@ var coreFunctions = {
       if (!registry)
         throw new Error("TypeInstall requires an active registry");
       const name = args[0]?.type === "string" ? args[0].value : String(args[0]);
-      installRegisteredTypes(registry, [name]);
+      installRegisteredTypes(registry, [name], { skipMissing: true });
       return args[0];
     },
     doc: "Install a registered semantic type into system multifunctions"
@@ -23746,7 +24153,6 @@ var outputFunctions = {
   FRAGMENT: capability(createFragment, "Compose portable output values"),
   TABLE: capability(createTable, "Create a structured output table"),
   GRID: capability(createGrid, "Create a mathematical layout grid"),
-  GRAPHIC: capability(createGraphic, "Create a portable 2D scene"),
   FIGURE: capability(createFigure, "Wrap output with figure metadata"),
   SLIDE: capability(createSlide, "Create a presentation slide"),
   SLIDES: capability(createSlides, "Create a sequential presentation deck"),
@@ -23754,67 +24160,72 @@ var outputFunctions = {
   DOCUMENT_TEMPLATE: documentTemplateFunction
 };
 
-// ../rix/src/eval/functions/math.js
-function numberFrom(value) {
-  if (value instanceof Integer)
-    return Number(value.value);
-  if (value instanceof Rational)
-    return Number(value.numerator) / Number(value.denominator);
-  if (typeof value === "bigint")
-    return Number(value);
-  if (value?.type === "string")
-    return Number(value.value);
-  return Number(value);
+// ../rix/src/plugins/draw.js
+function entriesFor(args, positional, name) {
+  if (args.length === 1 && args[0]?.type === "map" && args[0].entries instanceof Map)
+    return args[0].entries;
+  if (args.length > positional.length)
+    throw new Error(`${name} received too many arguments`);
+  return new Map(positional.slice(0, args.length).map((key, index) => [key, args[index]]));
 }
-function finiteNumberFrom(value) {
-  const number = numberFrom(value);
-  if (Number.isNaN(number))
-    throw new Error("Math function expected a numeric value");
-  return number;
+function get2(entries, name, fallback = null) {
+  return entries.has(name) ? entries.get(name) : entries.get(name.toLowerCase()) ?? fallback;
 }
-function unary(fn) {
-  return (args) => fn(finiteNumberFrom(args[0]));
+function mergedStyle(style, additions) {
+  const entries = style?.type === "map" && style.entries instanceof Map ? style.entries : new Map;
+  return { type: "map", entries: new Map([...entries, ...additions]) };
 }
-function binary2(fn) {
-  return (args) => fn(finiteNumberFrom(args[0]), finiteNumberFrom(args[1]));
+function line(args) {
+  const entries = entriesFor(args, ["from", "to", "style"], "Draw.Line");
+  return createPath([[get2(entries, "from"), get2(entries, "to")], get2(entries, "style")]);
 }
-var MATH_FUNCTION_NAMES = [
-  "SIN",
-  "COS",
-  "TAN",
-  "ASIN",
-  "ACOS",
-  "ATAN",
-  "ATAN2",
-  "LOG",
-  "LN",
-  "LOG10",
-  "EXP"
-];
-var mathFunctions = {
-  SIN: { impl: unary(Math.sin), pure: true, doc: "Sine" },
-  COS: { impl: unary(Math.cos), pure: true, doc: "Cosine" },
-  TAN: { impl: unary(Math.tan), pure: true, doc: "Tangent" },
-  ASIN: { impl: unary(Math.asin), pure: true, doc: "Arcsine" },
-  ACOS: { impl: unary(Math.acos), pure: true, doc: "Arccosine" },
-  ATAN: { impl: unary(Math.atan), pure: true, doc: "Arctangent" },
-  ATAN2: { impl: binary2(Math.atan2), pure: true, doc: "Two-argument arctangent" },
-  LOG: { impl: unary(Math.log), pure: true, doc: "Natural logarithm" },
-  LN: { impl: unary(Math.log), pure: true, doc: "Natural logarithm" },
-  LOG10: { impl: unary(Math.log10), pure: true, doc: "Base-10 logarithm" },
-  EXP: { impl: unary(Math.exp), pure: true, doc: "Exponential" }
-};
+function polygon(args) {
+  const entries = entriesFor(args, ["points", "style"], "Draw.Polygon");
+  return createPath([get2(entries, "points"), mergedStyle(get2(entries, "style"), [["closed", true]])]);
+}
+function label(args) {
+  const entries = entriesFor(args, ["position", "text", "style"], "Draw.Label");
+  return createTextMark([get2(entries, "position"), get2(entries, "text"), get2(entries, "style")]);
+}
+function box(args) {
+  const entries = entriesFor(args, ["origin", "size", "style"], "Draw.Box");
+  return createRectangle([get2(entries, "origin"), get2(entries, "size"), get2(entries, "style")]);
+}
+function circle(args) {
+  const entries = entriesFor(args, ["center", "radius", "style"], "Draw.Circle");
+  return createCircle([get2(entries, "center"), get2(entries, "radius"), get2(entries, "style")]);
+}
+function createDrawPluginCollection() {
+  const methods = new Map([["Line", line], ["Polygon", polygon], ["Label", label], ["Box", box], ["Circle", circle]]);
+  const entries = new Map;
+  const extension = new Map([["immutable", new Integer(1n)]]);
+  for (const [name, helper] of methods) {
+    entries.set(name, helper);
+    entries.set(name.toUpperCase(), helper);
+    extension.set(name.toUpperCase(), {
+      type: "method_builtin",
+      name,
+      impl: (args) => helper(args.slice(1))
+    });
+  }
+  return { type: "map", entries, _ext: extension };
+}
+function installDrawPlugin(systemContext) {
+  const draw = createDrawPluginCollection();
+  systemContext.registerValue("Draw", draw, { doc: "Convenient authoring helpers that produce intrinsic Graphics nodes" });
+  return draw;
+}
 
 // ../rix/src/eval/functions/units.js
 function int7(value) {
   return new Integer(BigInt(value));
 }
-function stringValue3(value, label) {
+function stringValue4(value, label2) {
   if (typeof value === "string")
     return value;
   if (value?.type === "string")
     return value.value;
-  throw new Error(`${label} must be a string or colon string`);
+  throw new Error(`${label2} must be a string or colon string`);
 }
 function systemValue(systemContext, ...names) {
   for (const name of names) {
@@ -23929,7 +24340,7 @@ function divideWithUnits(left, right) {
 function resolveTargetUnit(target, context, systemContext) {
   if (isUnitValue(target))
     return target;
-  const text = stringValue3(target, "ConvertUnit target");
+  const text = stringValue4(target, "ConvertUnit target");
   const collection = activeCollection(context, systemContext, "Units", ["UNITS", "Units"]);
   return parseUnitExpression(text, collection);
 }
@@ -24095,7 +24506,6 @@ function createDefaultRegistry(options = {}) {
   registry.registerAll(advancedFunctions);
   registry.registerAll(unitExactFunctions);
   registry.registerAll(symbolicFunctions);
-  registry.registerAll(mathFunctions);
   registry.registerAll(outputFunctions);
   installRegisteredTypes(registry);
   installUnitExactVariants(registry);
@@ -24105,26 +24515,107 @@ function createDefaultRegistry(options = {}) {
   }
   return registry;
 }
-var OPERATOR_ALIAS_NAMES = [
-  "ADD",
-  "SUB",
-  "MUL",
-  "DIV",
-  "INTDIV",
-  "MOD",
-  "POW",
-  "POWPROD",
-  "EQ",
-  "NEQ",
-  "LT",
-  "GT",
-  "LTE",
-  "GTE",
-  "SAME_CELL",
-  "AND",
-  "OR",
-  "NOT"
-];
+var CORE_SYNTAX_CAPABILITIES = {
+  Add: "ADD",
+  Sub: "SUB",
+  Mul: "MUL",
+  Div: "DIV",
+  IntDiv: "INTDIV",
+  DivUp: "DIVUP",
+  DivRound: "DIVROUND",
+  Mod: "MOD",
+  Pow: "POW",
+  PowProd: "POWPROD",
+  Neg: "NEG",
+  Abs: "ABS",
+  Sqrt: "SQRT",
+  Equal: "EQ",
+  NotEqual: "NEQ",
+  Less: "LT",
+  Greater: "GT",
+  LessEqual: "LTE",
+  GreaterEqual: "GTE",
+  SameCell: "SAME_CELL",
+  Min: "MIN",
+  Max: "MAX",
+  And: "AND",
+  Or: "OR",
+  Not: "NOT",
+  Array: "ARRAY",
+  Tuple: "TUPLE",
+  Set: "SET",
+  Interval: "INTERVAL",
+  Union: "UNION",
+  Intersect: "INTERSECT",
+  Difference: "SET_DIFF",
+  SymmetricDifference: "SET_SYMDIFF",
+  Product: "SET_PROD",
+  Concat: "CONCAT",
+  Block: "BLOCK",
+  Case: "CASE",
+  Loop: "LOOP",
+  If: "TERNARY",
+  Pipe: "PIPE",
+  PipeExplicit: "PIPE_EXPLICIT",
+  Slice: "PSLICE_STRICT",
+  SliceClamp: "PSLICE_CLAMP",
+  Split: "PSPLIT",
+  Chunk: "PCHUNK",
+  PMap: "PMAP",
+  Filter: "PFILTER",
+  Reduce: "PREDUCE",
+  Reverse: "PREVERSE",
+  Sort: "PSORT",
+  All: "PALL",
+  Any: "PANY",
+  Assign: "ASSIGN",
+  AssignCopy: "ASSIGN_COPY",
+  AssignUpdate: "ASSIGN_UPDATE",
+  AssignDeepCopy: "ASSIGN_DEEP_COPY",
+  AssignDeepUpdate: "ASSIGN_DEEP_UPDATE",
+  Lambda: "LAMBDA"
+};
+var LEGACY_OPERATOR_CAPABILITIES = ["EQ", "NEQ", "LT", "GT", "LTE", "GTE", "SAME_CELL"];
+function coreOperationCapability(operation, definition) {
+  return {
+    lazy: definition.lazy === true,
+    pure: definition.pure === true,
+    doc: definition.doc || `Core operation ${operation}`,
+    impl(args, _context, evaluate) {
+      return evaluate({ fn: operation, args });
+    }
+  };
+}
+function coreString(value, label2) {
+  if (value?.type === "string")
+    return value.value;
+  if (typeof value === "string")
+    return value;
+  throw new Error(`${label2} must be a string or colon-string`);
+}
+function parameterListCapability(args) {
+  return {
+    positional: args.map((value) => ({ name: coreString(value, ".Params entry"), holeDefault: null })),
+    keyword: [],
+    conditionals: [],
+    prep: [],
+    prepStrict: false,
+    metadata: {}
+  };
+}
+function mapPairCapability(args) {
+  if (args.length !== 2)
+    throw new Error(".Pair expects exactly a key and a value");
+  return { type: "map_pair", key: args[0], value: args[1] };
+}
+function coreMapCapability(args, _context, evaluate) {
+  return evaluate({ fn: "MAP_OBJ", args });
+}
+function defineCapability(args, _context, evaluate) {
+  const name = coreString(evaluate(args[0]), ".Define name");
+  const params = evaluate(args[1]);
+  return evaluate({ fn: "FUNCDEF", args: [name, params, args[2]] });
+}
 var SCRIPT_RUNTIME_ENV_KEY = "__script_runtime__";
 var SOURCE_ENV_KEY = "__source__";
 var CURRENT_FILE_ENV_KEY = "__current_file__";
@@ -24134,20 +24625,15 @@ function createDefaultSystemContext(options = {}) {
   const units = options.units || createDefaultUnitCollection();
   const exact = options.exact || createDefaultExactCollection();
   const complex = options.complex || createDefaultComplexCollection(exact);
-  ctx.registerValue("UNITS", units, { doc: "Canonical RiX unit collection" });
   ctx.registerValue("Units", units, { doc: "Canonical RiX unit collection" });
-  ctx.registerValue("EXACT", exact, { doc: "Canonical RiX exact-generator collection" });
   ctx.registerValue("Exact", exact, { doc: "Canonical RiX exact-generator collection" });
-  ctx.registerValue("COMPLEX", complex, { doc: "Exact complex-number operations" });
   ctx.registerValue("Complex", complex, { doc: "Exact complex-number operations" });
   const algebra = createAlgebraOutputCollection();
-  ctx.registerValue("ALGEBRA", algebra, { doc: "Algebra presentation helpers" });
   ctx.registerValue("Algebra", algebra, { doc: "Algebra presentation helpers" });
-  const draw = createDrawOutputCollection();
-  ctx.registerValue("DRAW", draw, { doc: "Portable 2D scene constructors" });
-  ctx.registerValue("Draw", draw, { doc: "Portable 2D scene constructors" });
+  const graphics = createGraphicsOutputCollection();
+  ctx.registerValue("Graphics", graphics, { doc: "Intrinsic portable 2D scene language" });
+  installDrawPlugin(ctx);
   const plot = createPlotOutputCollection();
-  ctx.registerValue("PLOT", plot, { doc: "Portable plotting helpers" });
   ctx.registerValue("Plot", plot, { doc: "Portable plotting helpers" });
   ctx.registerAll(stdlibFunctions);
   ctx.registerAll(symbolicCapabilities);
@@ -24155,46 +24641,54 @@ function createDefaultSystemContext(options = {}) {
   ctx.register("EVAL", coreFunctions.EVAL);
   ctx.register("TypeExport", coreFunctions.TYPE_EXPORT);
   ctx.register("TypeImport", coreFunctions.TYPE_IMPORT);
-  ctx.register("TYPEEXPORT", coreFunctions.TYPE_EXPORT);
-  ctx.register("TYPEIMPORT", coreFunctions.TYPE_IMPORT);
   ctx.register("TraitRegister", coreFunctions.TRAIT_REGISTER);
   ctx.register("TypeRegister", coreFunctions.TYPE_REGISTER);
   ctx.register("TypeInstall", coreFunctions.TYPE_INSTALL);
   ctx.register("CapabilityRegister", coreFunctions.CAPABILITY_REGISTER);
   ctx.register("ImportJS", coreFunctions.IMPORT_JS);
   ctx.register("JSCall", coreFunctions.JS_CALL);
-  ctx.register("TRAITREGISTER", coreFunctions.TRAIT_REGISTER);
-  ctx.register("TYPEREGISTER", coreFunctions.TYPE_REGISTER);
-  ctx.register("TYPEINSTALL", coreFunctions.TYPE_INSTALL);
-  ctx.register("CAPABILITYREGISTER", coreFunctions.CAPABILITY_REGISTER);
-  ctx.register("IMPORTJS", coreFunctions.IMPORT_JS);
-  ctx.register("JSCALL", coreFunctions.JS_CALL);
   ctx.register("LOOP", controlFunctions.LOOP);
-  for (const name of MATH_FUNCTION_NAMES) {
-    ctx.register(name, {
-      impl(args, _context, evaluate) {
-        return evaluate({ fn: name, args });
-      },
-      doc: `Dispatch ${name} through the active system multifunction registry`
-    });
-  }
   const userPropertyNames = ["KEYOF", "KEYS", "VALUES"];
   for (const name of userPropertyNames) {
     if (propertyFunctions[name])
       ctx.register(name, propertyFunctions[name]);
   }
-  const opSources = { ...arithmeticFunctions, ...comparisonFunctions, ...logicFunctions };
-  for (const name of OPERATOR_ALIAS_NAMES) {
-    if (opSources[name])
-      ctx.register(name, opSources[name]);
+  const syntaxSources = {
+    ...coreFunctions,
+    ...arithmeticFunctions,
+    ...comparisonFunctions,
+    ...logicFunctions,
+    ...controlFunctions,
+    ...collectionFunctions,
+    ...functionFunctions
+  };
+  for (const [displayName, operation] of Object.entries(CORE_SYNTAX_CAPABILITIES)) {
+    const definition = syntaxSources[operation];
+    if (definition) {
+      ctx.register(displayName, coreOperationCapability(operation, definition));
+    }
   }
+  for (const operation of LEGACY_OPERATOR_CAPABILITIES) {
+    const definition = syntaxSources[operation];
+    if (definition)
+      ctx.register(operation, coreOperationCapability(operation, definition));
+  }
+  ctx.register("Params", { impl: parameterListCapability, doc: "Create a positional parameter descriptor from names" });
+  ctx.register("Pair", { impl: mapPairCapability, doc: "Create a key/value entry for .Map" });
+  ctx.register("Map", { impl: coreMapCapability, doc: "Create a map from .Pair(key, value) entries" });
+  ctx.register("Define", {
+    lazy: true,
+    impl: defineCapability,
+    doc: "Define a named function from a name, .Params descriptor, and body"
+  });
   ctx.registerAll(diagnosticFunctions);
-  ctx.register("CONVERTUNIT", unitExactFunctions.CONVERTUNIT);
   ctx.register("ConvertUnit", unitExactFunctions.CONVERTUNIT);
-  ctx.register("DEFINEUNIT", unitExactFunctions.DEFINEUNIT);
   ctx.register("DefineUnit", unitExactFunctions.DEFINEUNIT);
-  ctx.register("DEFINEEXACTGENERATOR", unitExactFunctions.DEFINEEXACTGENERATOR);
   ctx.register("DefineExactGenerator", unitExactFunctions.DEFINEEXACTGENERATOR);
+  ctx.installManagementNamespaces();
+  for (const [group, members] of Object.entries(runtimeDefaults.capabilityGroups)) {
+    ctx.registerGroup(group, members);
+  }
   if (frozen)
     ctx.freeze();
   return ctx;
@@ -24216,13 +24710,14 @@ function getScriptRuntime(context, options = {}) {
   }
   return runtime;
 }
-function getScriptCapabilityConfig(context) {
+function getScriptCapabilityConfig(context, systemContext = null) {
   const groupOverride = context.getEnv("capabilityGroups", null);
   const policyOverride = context.getEnv("defaultScriptCapabilityPolicy", null);
   const permissionOverride = context.getEnv("scriptPermissionNames", null);
   return {
     capabilityGroups: {
       ...runtimeDefaults.capabilityGroups,
+      ...systemContext?.getCapabilityGroups?.() || {},
       ...groupOverride || {}
     },
     defaultPolicy: {
@@ -24381,9 +24876,9 @@ function getNodeLocation(irNode, context) {
       offset = nameOffset;
     }
   }
-  const { line, col } = posToLineCol(source, offset);
+  const { line: line2, col } = posToLineCol(source, offset);
   const filePart = file && file !== "<repl>" ? `${file}:` : "";
-  return `${filePart}line ${line}, column ${col}`;
+  return `${filePart}line ${line2}, column ${col}`;
 }
 function findIdentifierOffset(source, name, approximateOffset) {
   const isIdentChar = (ch) => /[A-Za-z0-9_]/.test(ch);
@@ -24416,16 +24911,22 @@ function annotateEvaluationError(error, irNode, context) {
   return error;
 }
 function restrictSystemContext(systemContext, allowedNames) {
-  const child = new SystemContext(new Map, false);
+  const child = new SystemContext(new Map, false, { hostContext: systemContext._hostContext });
   for (const name of systemContext.getAllNames()) {
     if (allowedNames.has(name)) {
       const entry = systemContext.get(name);
-      if (entry.kind === "value")
-        child.registerValue(name, entry.value, entry);
-      else
-        child.register(name, entry);
+      if (entry.kind !== "function")
+        child.registerValue(entry.displayName, entry.value, entry);
+      else if (Object.prototype.hasOwnProperty.call(entry, "value")) {
+        child.registerCallableValue(entry.displayName, entry.value, entry, entry);
+      } else
+        child.register(entry.displayName, entry, entry);
     }
   }
+  for (const [group, members] of Object.entries(systemContext.getCapabilityGroups())) {
+    child.registerGroup(group, members.filter((name) => allowedNames.has(name)));
+  }
+  child._rebindManagementNamespaces();
   child.freeze();
   return child;
 }
@@ -24458,7 +24959,7 @@ function expandCapabilityTarget(modifier, availableFunctions, availablePermissio
   return { functions, permissions };
 }
 function deriveScriptCapabilityFrame(systemContext, parentPermissions, modifiers, context) {
-  const { capabilityGroups, defaultPolicy, permissionNames } = getScriptCapabilityConfig(context);
+  const { capabilityGroups, defaultPolicy, permissionNames } = getScriptCapabilityConfig(context, systemContext);
   const availableFunctions = new Set(systemContext.getAllNames());
   const availablePermissions = new Set(parentPermissions);
   const allowedFunctions = defaultPolicy.includeAllFunctions ? new Set(availableFunctions) : new Set((defaultPolicy.functions || []).filter((name) => availableFunctions.has(name)));
@@ -24633,7 +25134,9 @@ function evaluate(irNode, context, registry, systemContext) {
         throw new Error(`Unknown system capability: ${name}`);
       }
       const entry = systemContext.get(name);
-      if (entry.kind === "value")
+      if (Object.prototype.hasOwnProperty.call(entry, "value"))
+        return entry.value;
+      if (entry.kind !== "function")
         return entry.value;
       return { type: "sysref", name };
     }
@@ -24646,8 +25149,8 @@ function evaluate(irNode, context, registry, systemContext) {
       if (!cap) {
         throw new Error(`Unknown system capability: ${name}. Use .${name}() only if the capability exists.`);
       }
-      if (cap.kind === "value") {
-        throw new Error(`System value .${name} is not directly callable; index it or assign one of its entries`);
+      if (cap.kind !== "function") {
+        throw new Error(`System ${cap.kind} .${cap.displayName} is not directly callable; index it or assign one of its entries`);
       }
       const isPlaceholder = (n) => n && typeof n === "object" && n.fn === "PLACEHOLDER";
       if (callArgNodes.some(isPlaceholder)) {
@@ -24727,7 +25230,7 @@ function parseAndEvaluate(code, options = {}) {
   const registry = options.registry || createDefaultRegistry();
   const systemContext = options.systemContext || createDefaultSystemContext();
   context.setEnv("__system_context__", systemContext);
-  const systemLookup = options.systemLookup || defaultSystemLookup;
+  const systemLookup = createSystemLookup(systemContext, options.systemLookup || defaultSystemLookup);
   getScriptRuntime(context, { systemLookup });
   context.setEnv("__registry__", registry);
   if (typeof options.rng === "function")
@@ -24745,17 +25248,9 @@ function parseAndEvaluate(code, options = {}) {
 }
 function defaultSystemLookup(name) {
   const builtins = {
-    SIN: { type: "function", arity: 1 },
-    COS: { type: "function", arity: 1 },
-    TAN: { type: "function", arity: 1 },
-    LOG: { type: "function", arity: 1 },
-    EXP: { type: "function", arity: 1 },
-    SQRT: { type: "function", arity: 1 },
     ABS: { type: "function", arity: 1 },
     MAX: { type: "function", arity: -1 },
     MIN: { type: "function", arity: -1 },
-    PI: { type: "constant" },
-    E: { type: "constant" },
     AND: { type: "function", lazy: true },
     OR: { type: "function", lazy: true },
     NOT: { type: "function" },
@@ -24935,5 +25430,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { findHelp, createRixRepl };
 
-//# debugId=4DE47BBCE727F5FA64756E2164756E21
-//# sourceMappingURL=chunk-jp2fb7xe.js.map
+//# debugId=F6507DE1E411366664756E2164756E21
+//# sourceMappingURL=chunk-wprky859.js.map

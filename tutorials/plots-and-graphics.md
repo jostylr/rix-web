@@ -6,7 +6,7 @@ description: Plot exact polynomials and understand portable SVG scenes.
 
 # Plots and graphics
 
-A `.Graphic` is a portable two-dimensional scene. Its size and scene nodes are
+A `.Graphics.Graphic` is a portable two-dimensional scene. Its size and scene nodes are
 part of the value; RiX Web turns that value into SVG. The plotting helper is
 deliberately small: it produces an ordinary graphic made of paths, so it works
 wherever the base graphic vocabulary works.
@@ -31,15 +31,15 @@ Change the domain first to see how the same polynomial gains a different view.
 
 ## A graphic has a coordinate space
 
-`.Graphic([width, height], children)` establishes its own coordinate space.
+`.Graphics.Graphic([width, height], children)` establishes its own coordinate space.
 In the SVG renderer the origin is at the upper-left: x increases to the right
 and y increases downward. This small scene has one red path.
 
 ~~~rix
-.Graphic(
+.Graphics.Graphic(
     [240, 120],
     [
-        .Draw.Path(
+        .Graphics.Path(
             [[15, 105], [120, 15], [225, 105]],
             {= stroke="#dc2626", width=3 }
         )
@@ -47,8 +47,8 @@ and y increases downward. This small scene has one red path.
 )
 ~~~
 
-`.Draw.Path` connects points in order. It is a scene leaf, so it must appear
-inside a `.Graphic` before a host has the size and coordinate system needed to
+`.Graphics.Path` connects points in order. It is a scene leaf, so it must appear
+inside a `.Graphics.Graphic` before a host has the size and coordinate system needed to
 render it.
 
 ## Combine a plot with document output
@@ -66,7 +66,7 @@ parabola := .Plot.Polynomial([1, 0, -1], [-2, 2])
 ])
 ~~~
 
-For diagrams and custom illustrations, move on to **Drawing with .Draw**. It
+For diagrams and custom illustrations, move on to **Drawing with .Graphics**. It
 introduces rectangles, circles, text, groups, transforms, and clipping.
 
 :::challenge Change the view

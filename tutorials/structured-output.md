@@ -36,11 +36,11 @@ future export.
 - Use `.Grid` when spacing and rules are part of mathematical notation.
 - Use `.Fragment`, `.Heading`, `.Paragraph`, and `.Figure` for documents.
 - Use `.Slide` and `.Slides` for an ordered presentation.
-- Use `.Graphic`, `.Plot`, and `.Draw` for portable two-dimensional scenes.
+- Use `.Graphics`, `.Plot`, and `.Draw` for portable two-dimensional scenes.
 
 The following lessons give each of these forms enough room to explore. Start
 with tables and grids if your output is primarily data; go straight to
-**Drawing with .Draw** when you want to construct a diagram from shapes.
+**Drawing with .Graphics and .Draw** when you want to construct a diagram from shapes.
 
 ## One calculation, several destinations
 

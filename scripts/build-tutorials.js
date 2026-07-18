@@ -139,6 +139,7 @@ function referenceLinks(current) {
         9: [["System function API", "https://docs.rix.ratmath.com/eval/syntax-guide.html#part-2-system-function-reference"], ["Diagnostics API", "https://docs.rix.ratmath.com/eval/syntax-guide.html#part-4-diagnostics-testing-and-debugging"]],
         10: [["Script imports", "https://docs.rix.ratmath.com/eval/syntax-guide.html#script-import-expressions"], ["Adding extensions", "https://docs.rix.ratmath.com/developer-guide.html#adding-a-user-facing-capability"]],
         11: [["RiX at a glance", "https://docs.rix.ratmath.com/language-at-a-glance.html"], ["Evaluator syntax API", "https://docs.rix.ratmath.com/eval/syntax-guide.html#part-1-syntax-system-function"]],
+        13: [["Evaluator syntax API", "https://docs.rix.ratmath.com/eval/syntax-guide.html#part-1-syntax-system-function"], ["Adding user-facing capabilities", "https://docs.rix.ratmath.com/developer-guide.html#adding-a-user-facing-capability"]],
     }[root] || [];
     if (!links.length) return "";
     return `<section class="api-links"><h2>Reference</h2><ul>${links.map(([label, url]) => `<li><a href="${url}" data-doc-reference target="_blank" rel="noreferrer">${escapeHtml(label)} ↗</a></li>`).join("")}</ul></section>`;
