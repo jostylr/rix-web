@@ -9874,7 +9874,7 @@ var runtimeDefaults = Object.freeze({
     permissions: Object.freeze(["IMPORTS"])
   }),
   capabilityGroups: Object.freeze({
-    Output: Object.freeze(["TEXT", "PARAGRAPH", "HEADING", "FRAGMENT", "TABLE", "GRID", "PATH", "GROUP", "TRANSFORM2D", "TEXTMARK", "RECTANGLE", "CIRCLE", "CLIP", "GRAPHIC", "FIGURE", "SLIDE", "SLIDES", "ALGEBRA", "PLOT"]),
+    Output: Object.freeze(["TEXT", "PARAGRAPH", "HEADING", "FRAGMENT", "TABLE", "GRID", "GRAPHIC", "FIGURE", "SLIDE", "SLIDES", "ALGEBRA", "DRAW", "PLOT"]),
     Core: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "IF", "LOOP", "MULTI", "RAND_NAME", "PRINT", "TGEN", "KEYOF", "KEYS", "VALUES"]),
     Arith: Object.freeze(["ADD", "SUB", "MUL", "DIV", "INTDIV", "MOD", "POW"]),
     Logic: Object.freeze(["EQ", "NEQ", "LT", "GT", "LTE", "GTE", "AND", "OR", "NOT"]),
@@ -13253,6 +13253,29 @@ function createAlgebraOutputCollection() {
       ["immutable", int3(1)]
     ])
   };
+}
+function createDrawOutputCollection() {
+  const methods = new Map([
+    ["Path", createPath],
+    ["Group", createGroup],
+    ["Transform", createTransform],
+    ["Text", createTextMark],
+    ["Rectangle", createRectangle],
+    ["Circle", createCircle],
+    ["Clip", createClip]
+  ]);
+  const entries = new Map;
+  const extension = new Map([["immutable", int3(1)]]);
+  for (const [name, constructor] of methods) {
+    entries.set(name, constructor);
+    entries.set(name.toUpperCase(), constructor);
+    extension.set(name.toUpperCase(), {
+      type: "method_builtin",
+      name,
+      impl: (args) => constructor(args.slice(1))
+    });
+  }
+  return { type: "map", entries, _ext: extension };
 }
 function createPlotOutputCollection() {
   const polynomial = (coefficients, domain, options = null) => createPolynomialPlot(coefficients, domain, options);
@@ -23723,13 +23746,6 @@ var outputFunctions = {
   FRAGMENT: capability(createFragment, "Compose portable output values"),
   TABLE: capability(createTable, "Create a structured output table"),
   GRID: capability(createGrid, "Create a mathematical layout grid"),
-  PATH: capability(createPath, "Create a portable 2D path scene node"),
-  GROUP: capability(createGroup, "Group scene nodes for shared style or structure"),
-  TRANSFORM2D: capability(createTransform, "Apply translation, rotation, or scale to scene nodes"),
-  TEXTMARK: capability(createTextMark, "Place text in a portable 2D scene"),
-  RECTANGLE: capability(createRectangle, "Draw a portable rectangle scene node"),
-  CIRCLE: capability(createCircle, "Draw a portable circle scene node"),
-  CLIP: capability(createClip, "Clip scene nodes to rectangular bounds"),
   GRAPHIC: capability(createGraphic, "Create a portable 2D scene"),
   FIGURE: capability(createFigure, "Wrap output with figure metadata"),
   SLIDE: capability(createSlide, "Create a presentation slide"),
@@ -24127,6 +24143,9 @@ function createDefaultSystemContext(options = {}) {
   const algebra = createAlgebraOutputCollection();
   ctx.registerValue("ALGEBRA", algebra, { doc: "Algebra presentation helpers" });
   ctx.registerValue("Algebra", algebra, { doc: "Algebra presentation helpers" });
+  const draw = createDrawOutputCollection();
+  ctx.registerValue("DRAW", draw, { doc: "Portable 2D scene constructors" });
+  ctx.registerValue("Draw", draw, { doc: "Portable 2D scene constructors" });
   const plot = createPlotOutputCollection();
   ctx.registerValue("PLOT", plot, { doc: "Portable plotting helpers" });
   ctx.registerValue("Plot", plot, { doc: "Portable plotting helpers" });
@@ -24916,5 +24935,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { findHelp, createRixRepl };
 
-//# debugId=B3C1BC663ABE18EB64756E2164756E21
-//# sourceMappingURL=chunk-ktsjb9h2.js.map
+//# debugId=4DE47BBCE727F5FA64756E2164756E21
+//# sourceMappingURL=chunk-jp2fb7xe.js.map

@@ -85,7 +85,7 @@ You can also construct a scene directly when a plugin would be excessive:
 .Graphic(
     [240, 120],
     [
-        .Path([[15, 105], [120, 15], [225, 105]],
+        .Draw.Path([[15, 105], [120, 15], [225, 105]],
               {= stroke="#dc2626", width=3 })
     ]
 )
@@ -93,7 +93,9 @@ You can also construct a scene directly when a plugin would be excessive:
 
 ## Compose a scene from basic primitives
 
-`Group` provides scene hierarchy and shared styling. `Transform2D` applies a
+The `.Draw` collection owns the 2D leaf vocabulary, keeping broad names such
+as `Group` free for other mathematical domains. `.Draw.Group` provides scene
+hierarchy and shared styling. `.Draw.Transform` applies a
 translation, rotation, and/or scale without changing its children. `Rectangle`,
 `Circle`, and `TextMark` are portable shape nodes; `Clip` limits a subtree to
 `[x, y, width, height]`. All coordinates are in the graphic’s own coordinate
@@ -101,16 +103,16 @@ space, with the origin at the upper-left in the SVG renderer.
 
 ~~~rix
 .Graphic([360, 220], [
-    .Rectangle([0, 0], [360, 220],
+    .Draw.Rectangle([0, 0], [360, 220],
                {= fill="#f8fafc", stroke="#cbd5e1" }),
-    .Clip([
-        .Transform2D([
-            .Group([
-                .Circle([80, 80], 45,
+    .Draw.Clip([
+        .Draw.Transform([
+            .Draw.Group([
+                .Draw.Circle([80, 80], 45,
                         {= fill="#bfdbfe", stroke="#2563eb", width=2 }),
-                .Rectangle([60, 60], [80, 40],
+                .Draw.Rectangle([60, 60], [80, 40],
                            {= fill="#fde68a", stroke="#d97706", width=2 }),
-                .TextMark([100, 85], "RiX",
+                .Draw.Text([100, 85], "RiX",
                           {= anchor=:middle, size=18, weight="bold" })
             ], {= opacity=1 })
         ], {= translate=[80, 15], rotate=18, origin=[100, 85] })

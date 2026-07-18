@@ -39,23 +39,23 @@ plot</textarea><div class="tutorial-output" data-tutorial-output></div></section
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source spellcheck="false">.Graphic(
     [240, 120],
     [
-        .Path([[15, 105], [120, 15], [225, 105]],
+        .Draw.Path([[15, 105], [120, 15], [225, 105]],
               {= stroke=&quot;#dc2626&quot;, width=3 })
     ]
 )</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>Compose a scene from basic primitives</h2>
-<p><code>Group</code> provides scene hierarchy and shared styling. <code>Transform2D</code> applies a translation, rotation, and/or scale without changing its children. <code>Rectangle</code>, <code>Circle</code>, and <code>TextMark</code> are portable shape nodes; <code>Clip</code> limits a subtree to <code>[x, y, width, height]</code>. All coordinates are in the graphic’s own coordinate space, with the origin at the upper-left in the SVG renderer.</p>
+<p>The <code>.Draw</code> collection owns the 2D leaf vocabulary, keeping broad names such as <code>Group</code> free for other mathematical domains. <code>.Draw.Group</code> provides scene hierarchy and shared styling. <code>.Draw.Transform</code> applies a translation, rotation, and/or scale without changing its children. <code>Rectangle</code>, <code>Circle</code>, and <code>TextMark</code> are portable shape nodes; <code>Clip</code> limits a subtree to <code>[x, y, width, height]</code>. All coordinates are in the graphic’s own coordinate space, with the origin at the upper-left in the SVG renderer.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source spellcheck="false">.Graphic([360, 220], [
-    .Rectangle([0, 0], [360, 220],
+    .Draw.Rectangle([0, 0], [360, 220],
                {= fill=&quot;#f8fafc&quot;, stroke=&quot;#cbd5e1&quot; }),
-    .Clip([
-        .Transform2D([
-            .Group([
-                .Circle([80, 80], 45,
+    .Draw.Clip([
+        .Draw.Transform([
+            .Draw.Group([
+                .Draw.Circle([80, 80], 45,
                         {= fill=&quot;#bfdbfe&quot;, stroke=&quot;#2563eb&quot;, width=2 }),
-                .Rectangle([60, 60], [80, 40],
+                .Draw.Rectangle([60, 60], [80, 40],
                            {= fill=&quot;#fde68a&quot;, stroke=&quot;#d97706&quot;, width=2 }),
-                .TextMark([100, 85], &quot;RiX&quot;,
+                .Draw.Text([100, 85], &quot;RiX&quot;,
                           {= anchor=:middle, size=18, weight=&quot;bold&quot; })
             ], {= opacity=1 })
         ], {= translate=[80, 15], rotate=18, origin=[100, 85] })
