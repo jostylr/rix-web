@@ -1,7 +1,7 @@
 import {
   createRixRepl,
   findHelp
-} from "./chunk-hkcwp6bb.js";
+} from "./chunk-1ftg4j3n.js";
 
 // src/main.js
 var repl = createRixRepl();

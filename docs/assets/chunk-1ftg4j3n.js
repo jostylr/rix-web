@@ -14091,6 +14091,8 @@ function formatValue(val, options = {}) {
     }
     if (val.type === "string")
       return val.value;
+    if (val.type === "float" && !(val._ext instanceof Map && val._ext.has("__type")))
+      return String(val.value);
     if (isCayleyInfinity(val))
       return "Infinity";
     if (isCayleyValue(val)) {
@@ -22428,6 +22430,8 @@ function classifyMinMaxType(val) {
     return null;
   if (val instanceof Integer || val instanceof Rational)
     return "number";
+  if (val?.type === "float")
+    return "number";
   if (typeof val === "number" || typeof val === "bigint")
     return "number";
   if (typeof val === "string")
@@ -25630,6 +25634,162 @@ function normalizeReplSource(source) {
   return insertions.sort((left, right) => right - left).reduce((result, position) => `${result.slice(0, position)};${result.slice(position)}`, source);
 }
 
+// ../rix/src/plugins/approx-math-browser.js
+function toNumber2(value) {
+  if (value?.type === "float")
+    return value.value;
+  if (value instanceof Integer)
+    return Number(value.value);
+  if (value instanceof Rational)
+    return Number(value.numerator) / Number(value.denominator);
+  if (typeof value === "number")
+    return value;
+  if (typeof value === "bigint")
+    return Number(value);
+  if (value?.type === "string")
+    return Number(value.value);
+  return Number(value);
+}
+function float(value) {
+  const number = toNumber2(value);
+  if (!Number.isFinite(number))
+    throw new Error("Cannot convert value to finite Float");
+  return {
+    type: "float",
+    value: number,
+    add(other) {
+      return float(number + toNumber2(other));
+    },
+    subtract(other) {
+      return float(number - toNumber2(other));
+    },
+    multiply(other) {
+      return float(number * toNumber2(other));
+    },
+    divide(other) {
+      return float(number / toNumber2(other));
+    },
+    negate() {
+      return float(-number);
+    },
+    pow(other) {
+      return float(number ** toNumber2(other));
+    },
+    equals(other) {
+      return number === toNumber2(other);
+    },
+    sign() {
+      return new Integer(number < 0 ? -1n : number > 0 ? 1n : 0n);
+    },
+    toString() {
+      return String(number);
+    }
+  };
+}
+function exactFloatRational(value) {
+  const number = float(value).value;
+  if (number === 0)
+    return new Rational(0n, 1n);
+  const bytes = new ArrayBuffer(8);
+  const view = new DataView(bytes);
+  view.setFloat64(0, number, false);
+  const bits = view.getBigUint64(0, false);
+  const negative = bits >> 63n !== 0n;
+  const exponent = Number(bits >> 52n & 0x7ffn);
+  const fraction = bits & (1n << 52n) - 1n;
+  const significand = exponent === 0 ? fraction : 1n << 52n | fraction;
+  const binaryExponent = exponent === 0 ? -1074 : exponent - 1075;
+  const numerator = negative ? -significand : significand;
+  return binaryExponent >= 0 ? new Rational(numerator << BigInt(binaryExponent), 1n) : new Rational(numerator, 1n << BigInt(-binaryExponent));
+}
+function decimalPlaces(value) {
+  if (value === undefined || value === null)
+    return 0;
+  if (!(value instanceof Integer) || value.value < 0n || value.value > 10000n) {
+    throw new Error("Float rounding places must be a non-negative integer no greater than 10000");
+  }
+  return Number(value.value);
+}
+function floorDiv2(numerator, denominator) {
+  return numerator >= 0n ? numerator / denominator : -((-numerator + denominator - 1n) / denominator);
+}
+function decimalRounded(value, places, mode) {
+  const exact = exactFloatRational(value);
+  const scale = 10n ** BigInt(places);
+  const scaled = exact.numerator * scale;
+  const lower2 = floorDiv2(scaled, exact.denominator);
+  let coefficient = lower2;
+  if (mode === "ceiling" && scaled !== lower2 * exact.denominator)
+    coefficient += 1n;
+  if (mode === "round") {
+    const remainder = scaled - lower2 * exact.denominator;
+    const doubled = remainder * 2n;
+    if (doubled > exact.denominator || doubled === exact.denominator && (lower2 & 1n) !== 0n)
+      coefficient += 1n;
+  }
+  return new Rational(coefficient, scale);
+}
+function method2(name, impl) {
+  return { type: "method_builtin", name, impl };
+}
+function installBrowserApproxMathPlugin({ systemContext }) {
+  const entries = new Map;
+  const extension = new Map;
+  const add = (name, impl) => {
+    const entry = method2(name, impl);
+    entries.set(name, entry);
+    extension.set(name.toUpperCase(), entry);
+  };
+  add("Float", (args) => float(args[1]));
+  add("Interval", (args) => {
+    const exact = exactFloatRational(args[1]);
+    return new RationalInterval(exact, exact);
+  });
+  add("Round", (args) => decimalRounded(args[1], decimalPlaces(args[2]), "round"));
+  add("Floor", (args) => decimalRounded(args[1], decimalPlaces(args[2]), "floor"));
+  add("Ceiling", (args) => decimalRounded(args[1], decimalPlaces(args[2]), "ceiling"));
+  for (const [name, fn] of Object.entries({
+    Abs: Math.abs,
+    Sqrt: Math.sqrt,
+    Sin: Math.sin,
+    Cos: Math.cos,
+    Tan: Math.tan,
+    Asin: Math.asin,
+    Acos: Math.acos,
+    Atan: Math.atan,
+    Log: Math.log,
+    Ln: Math.log,
+    Log10: Math.log10,
+    Exp: Math.exp
+  })) {
+    add(name, (args) => float(fn(toNumber2(args[1]))));
+  }
+  add("Atan2", (args) => float(Math.atan2(toNumber2(args[1]), toNumber2(args[2]))));
+  const value = { type: "map", entries, _ext: extension };
+  systemContext.registerHostCallableValue("float", value, {
+    impl(args) {
+      return float(args[0]);
+    }
+  }, {
+    doc: "Optional browser-native Float conversion and approximate math",
+    groups: ["ApproximateMath", "Float"]
+  });
+  return systemContext;
+}
+
+// plugins/approx-math.plugin.rix.js
+function install(api) {
+  return installBrowserApproxMathPlugin(api);
+}
+
+// src/generated/bundled-plugin-catalog.js
+function createBundledPluginCatalog() {
+  const catalog = new PluginCatalog;
+  catalog.addMetadata({ id: "approx-math-js", description: "JavaScript IEEE-754 Float conversion and optional approximate math.", kind: "host", mount: "float", exports: ["Float", "Interval", "Round", "Floor", "Ceiling", "Abs", "Sqrt", "Sin", "Cos", "Tan", "Log", "Exp"], groups: ["ApproximateMath", "Float"], permissions: [], defaultEnabled: false, sourcePath: "bundled:approx-math-js" }, { sourcePath: "bundled:approx-math-js", kind: "host" });
+  catalog.registerInstaller("approx-math-js", install);
+  return catalog;
+}
+
 // src/repl-runtime.js
 var helpGroups = [
   {
@@ -25694,7 +25854,7 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
   const state = {
     context: new Context,
     registry: createDefaultRegistry(),
-    systemContext: createDefaultSystemContext()
+    systemContext: createDefaultSystemContext({ pluginCatalog: createBundledPluginCatalog() })
   };
   let initialNames = new Set(state.context.getAllNames());
   let separateLines = autoSeparateLines;
@@ -25748,5 +25908,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { findHelp, createRixRepl };
 
-//# debugId=AEE224F37C1A7FDC64756E2164756E21
-//# sourceMappingURL=chunk-hkcwp6bb.js.map
+//# debugId=7819505843394DF064756E2164756E21
+//# sourceMappingURL=chunk-1ftg4j3n.js.map

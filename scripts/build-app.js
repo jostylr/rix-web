@@ -1,6 +1,8 @@
 import { mkdir, readFile, readdir, unlink } from "node:fs/promises";
 import path from "node:path";
 
+await import("./generate-plugin-catalog.js");
+
 const root = path.resolve(import.meta.dir, "..");
 const source = path.join(root, "src");
 const output = path.join(root, "docs");

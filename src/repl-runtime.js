@@ -9,6 +9,7 @@ import {
     renderOutputHtml,
 } from "../../rix/src/index.js";
 import { normalizeReplSource } from "./repl-source.js";
+import { createBundledPluginCatalog } from "./generated/bundled-plugin-catalog.js";
 
 export const helpGroups = [
     {
@@ -76,7 +77,7 @@ export function createRixRepl({ autoSeparateLines = true } = {}) {
     const state = {
         context: new Context(),
         registry: createDefaultRegistry(),
-        systemContext: createDefaultSystemContext(),
+        systemContext: createDefaultSystemContext({ pluginCatalog: createBundledPluginCatalog() }),
     };
     let initialNames = new Set(state.context.getAllNames());
     let separateLines = autoSeparateLines;
