@@ -15,9 +15,9 @@ feel like a language rather than a table of symbols.
 
 ## A worked example
 
-```rix
-values := [1, 2]
-values.Push(3)
+```rix edu
+values := [1, 2];
+values.Push(3) ;
 ```
 
 The final line is the displayed value; the earlier lines set up the experiment.

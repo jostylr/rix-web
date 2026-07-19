@@ -2,9 +2,9 @@
 <p>A savings simulation starts with an exact balance and applies a fixed contribution four times. A loop is appropriate because the same state transition repeats and the stopping condition is known.</p>
 <p>This capstone deliberately reuses ideas from every lesson in its section. Read the setup first, predict the last value, and only then run the cell. If the result surprises you, inspect each named intermediate rather than changing several lines at once.</p>
 <h2>Build the solution</h2>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">balance := 5 / 2
-{@ i = 0; i &lt; 4; {; @balance += 3 / 4; i += 1 } }
-balance</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">balance := 5 / 2;
+{@ i = 0; i &lt; 4; {; @balance += 3 / 4; i += 1 } };
+balance ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>How the pieces fit</h2>
 <p>The loop initializes i, checks a bound, and executes a block that updates both the outer balance and the local counter. The @ prefix states that balance belongs to an outer scope. Because all contributions are rational, the final result is exact and reproducible.</p>
 <h2>Separate state, transition, and budget</h2>

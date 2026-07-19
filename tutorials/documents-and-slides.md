@@ -16,18 +16,18 @@ generated handout, or the content of a presentation slide.
 `.Paragraph` establish document structure; `.Figure` adds a caption and label
 around any output value.
 
-~~~rix
+```rix edu
 summary := .Table(
     ["quantity", "value"],
     [["side", 7], ["area", 49]]
-)
+);
 
 .Fragment([
     .Heading(1, "Square report"),
     .Paragraph("All values in this report are exact."),
     .Figure(summary, "Measurements for one square", "fig:square")
-])
-~~~
+]) ;
+```
 
 The label is useful to a renderer or exporter even though RiX Web simply shows
 the figure in place. Keep labels stable when you expect a document to grow.
@@ -39,11 +39,11 @@ separate document blocks. Prefix a block with `h1:` through `h6:` for a heading
 or `fig:` / `table:` for a captioned standalone value. `@{...}` evaluates now
 and inserts the resulting value.
 
-~~~rix
+```rix edu
 values := .Table(
     ["x", "x squared"],
     [[1, 1], [2, 4], [3, 9]]
-)
+);
 
 @"""
 h1: Exact square values
@@ -52,8 +52,8 @@ The square of 3 is @{3 ^ 2}.
 
 table: Selected values #tbl:squares
     @{values}
-"""
-~~~
+""" ;
+```
 
 Interpolation here is different from a deferred block such as `@{; ...}`.
 The template evaluates the interpolation immediately and stores the resulting
@@ -65,10 +65,10 @@ Figures are not limited to tables. This creates a small plot, then gives it a
 caption and a stable label that a future document renderer can use for cross
 references.
 
-~~~rix
-curve := .Plot.Polynomial([1, -2, -1], [-1, 4])
-.Figure(curve, "Graph of x squared minus 2x minus 1", "fig:curve")
-~~~
+```rix edu
+curve := .Plot.Polynomial([1, -2, -1], [-1, 4]);
+.Figure(curve, "Graph of x squared minus 2x minus 1", "fig:curve") ;
+```
 
 ## Build a deck one slide at a time
 
@@ -77,7 +77,7 @@ preserves the order of those slides. RiX Web renders the current deck as a
 series of clearly separated slide sections; other hosts can add navigation or
 export without changing the RiX source.
 
-~~~rix
+```rix edu
 deck := .Slides(
     [
         .Slide(
@@ -96,9 +96,9 @@ deck := .Slides(
         )
     ],
     "Output building blocks"
-)
-deck
-~~~
+);
+deck ;
+```
 
 :::challenge A two-part note
 Create a `.Fragment` with a level-one heading and a paragraph. Then add a

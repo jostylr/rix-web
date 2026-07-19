@@ -93,8 +93,8 @@ rest of a name, so call-site casing is forgiving after the first-letter role
 has selected the core or host namespace. That first letter still matters: it
 protects the visible core/host separation.
 
-```rix
-.Len([1, 2, 3])
+```rix edu
+.Len([1, 2, 3]) ;
 ```
 
 :::challenge Describe a plugin surface

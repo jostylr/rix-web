@@ -46,15 +46,15 @@ println(reaches_one(27, 120))
 
 ## RiX
 
-~~~rix
-NextCollatz(n) -> n % 2 == 0 ?? n / 2 ?: 3 * n + 1
+```rix edu
+NextCollatz(n) -> n % 2 == 0 ?? n / 2 ?: 3 * n + 1;
 CollatzWithin(n, steps) ->
     n == 1 ?? 1 ?:
     steps == 0 ?? 0 ?:
-    CollatzWithin(NextCollatz(n), steps - 1)
+    CollatzWithin(NextCollatz(n), steps - 1);
 
-CollatzWithin(27, 120)
-~~~
+CollatzWithin(27, 120) ;
+```
 
 ## Reading the RiX solution
 
@@ -67,4 +67,3 @@ Run NextCollatz on a few values before testing the recursive function. That mirr
 :::challenge Include the stopping time
 Define CollatzSteps(n, remaining, used). Return used at one and _ when the budget is exhausted.
 :::
-

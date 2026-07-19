@@ -15,9 +15,9 @@ feel like a language rather than a table of symbols.
 
 ## A worked example
 
-```rix
-x := -4
-x > 0 ?? x ?: -x
+```rix edu
+x := -4;
+x > 0 ?? x ?: -x ;
 ```
 
 The final line is the displayed value; the earlier lines set up the experiment.

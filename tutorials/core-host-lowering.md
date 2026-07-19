@@ -12,8 +12,8 @@ For example, `2 + 3` and `.Add(2, 3)` reach the same core arithmetic operation.
 The first is the notation most people write; the second is a useful explicit
 form when code is being generated, inspected, or taught.
 
-```rix
-{; ordinary = 2 + 3; explicit = .Add(2, 3); ordinary == explicit }
+```rix edu
+{; ordinary = 2 + 3; explicit = .Add(2, 3); ordinary == explicit } ;
 ```
 
 This is not a second evaluator. Source is parsed, lowered to an internal

@@ -29,9 +29,9 @@ println(fizz_buzz.(1:15))</code></pre></section>
     n % 15 == 0 ?? &quot;FizzBuzz&quot; ?:
     n % 3 == 0 ?? &quot;Fizz&quot; ?:
     n % 5 == 0 ?? &quot;Buzz&quot; ?:
-    n
+    n;
 
-[1, |+1, |; 15] |&gt;&gt; (n) -&gt; FizzBuzz(n)</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+[1, |+1, |; 15] |&gt;&gt; (n) -&gt; FizzBuzz(n) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>Reading the RiX solution</h2>
 <p>The function contains the rules; the final line contains the traversal. Testing divisibility by fifteen first handles the overlap before either more general rule matches. Each conditional produces a value, so the whole function is one expression.</p>
 <p>The bracket form is RiX&#039;s supported eager arithmetic generator: start at one, add one, and make fifteen values. The map pipe applies FizzBuzz to every generated value and returns the transformed array. Because RiX collections may contain mixed values, unmatched numbers can remain numbers.</p>

@@ -2,13 +2,13 @@
 <p>A tiny ledger entry contains an account and an amount. A live balance and a display binding should intentionally share updates, while an archived value should remain independent. This is a compact demonstration of why RiX has several assignment forms.</p>
 <p>This capstone deliberately reuses ideas from every lesson in its section. Read the setup first, predict the last value, and only then run the cell. If the result surprises you, inspect each named intermediate rather than changing several lines at once.</p>
 <h2>Build the solution</h2>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">entry := {= account=&quot;cash&quot;, amount=7 / 2 }
-{= account, amount } := entry
-balance := amount
-display = balance
-archive := balance
-balance += 1 / 2
-{: display, archive }</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">entry := {= account=&quot;cash&quot;, amount=7 / 2 };
+{= account, amount } := entry;
+balance := amount;
+display = balance;
+archive := balance;
+balance += 1 / 2;
+{: display, archive } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>How the pieces fit</h2>
 <p>Destructuring extracts the map entries. The display name aliases balance because plain equals shares a cell. The archive uses fresh-copy assignment, so it keeps the earlier value. Updating balance therefore changes display but not archive. The final tuple makes the contrast easy to inspect.</p>
 <h2>Trace identity, not only value</h2>

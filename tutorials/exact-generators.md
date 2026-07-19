@@ -8,18 +8,18 @@ description: Keep pi and algebraic roots exact, define relations, and combine th
 
 `.Exact` is an ordinary RiX map containing canonical symbolic generators:
 
-```rix
+```rix edu
 pi := .Exact[:pi];
 sqrt2 := .Exact[:sqrt2];
-{: 3*pi, 1 + 2*sqrt2 }
+{: 3*pi, 1 + 2*sqrt2 } ;
 ```
 
 The concise form again means lookup and multiplication:
 
-```rix
+```rix edu
 explicit := 3/2 * .Exact[:pi];
 concise := 3/2~{pi};
-explicit == concise
+explicit == concise ;
 ```
 
 Unlike a floating approximation, these remain exact expressions.
@@ -29,10 +29,10 @@ Unlike a floating approximation, these remain exact expressions.
 Algebraic generators carry a monic minimal polynomial. RiX reduces powers by
 that relation:
 
-```rix
+```rix edu
 iSquared := .Exact[:i]^2;
 rootSquared := .Exact[:sqrt2]^2;
-{: iSquared, rootSquared }
+{: iSquared, rootSquared } ;
 ```
 
 The results are exactly `-1` and `2`.
@@ -41,10 +41,10 @@ The results are exactly `-1` and `2`.
 
 RiX can invert an expression in one algebraic extension:
 
-```rix
+```rix edu
 a := 1 / .Exact[:i];
 b := 1 / (1 + .Exact[:sqrt2]);
-{: a, b }
+{: a, b } ;
 ```
 
 This produces `-i` and `-1 + sqrt2`. A sum involving a transcendental
@@ -54,10 +54,10 @@ generator, such as `1 + pi`, is not currently inverted automatically.
 
 Exact expressions can be quantity magnitudes:
 
-```rix
+```rix edu
 halfTurn := 1/2~{pi}~[rad];
 diameter := 2~[m];
-halfTurn * diameter
+halfTurn * diameter ;
 ```
 
 The π factor and the physical dimensions remain distinct layers.
@@ -66,10 +66,10 @@ The π factor and the physical dimensions remain distinct layers.
 
 Polynomial coefficients are listed from constant term upward:
 
-```rix
+```rix edu
 sqrt3 := .DefineExactGenerator(:sqrt3, [-3, 0, 1]);
 Exact := .Exact.Merge({= sqrt3=sqrt3 });
-1~{sqrt3}^2
+1~{sqrt3}^2 ;
 ```
 
 :::challenge Exact generator practice

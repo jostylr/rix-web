@@ -15,8 +15,8 @@ feel like a language rather than a table of symbols.
 
 ## A worked example
 
-```rix
-{; x := 2; y := 3; x * y }
+```rix edu
+{; x := 2; y := 3; x * y } ;
 ```
 
 The final line is the displayed value; the earlier lines set up the experiment.

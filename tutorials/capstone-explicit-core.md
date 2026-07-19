@@ -11,7 +11,7 @@ and wants to report both the signed change and its magnitude. Here is an
 explicit-core version. It uses named assignment, arithmetic, map pairs, and
 absolute value without relying on operator or map-literal syntax.
 
-```rix
+```rix edu
 {;
   .Assign(:subtotal, .Add(2, 3));
   .Assign(:change, .Sub(10, subtotal));
@@ -20,7 +20,7 @@ absolute value without relying on operator or map-literal syntax.
     .Pair(:change, change),
     .Pair(:magnitude, .Abs(change))
   )
-}
+} ;
 ```
 
 Every operation above is exact and uses the same core implementation as the

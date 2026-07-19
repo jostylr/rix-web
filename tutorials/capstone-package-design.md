@@ -12,12 +12,12 @@ This capstone deliberately reuses ideas from every lesson in its section. Read t
 
 ## Build the solution
 
-~~~rix
-ApplyTax(price, rate) -> price * (1 + rate)
-prices := [3 / 2, 2, 9 / 4]
-taxed := prices |>> (price) -> ApplyTax(price, 1 / 20)
-taxed
-~~~
+```rix edu
+ApplyTax(price, rate) -> price * (1 + rate);
+prices := [3 / 2, 2, 9 / 4];
+taxed := prices |>> (price) -> ApplyTax(price, 1 / 20);
+taxed ;
+```
 
 ## How the pieces fit
 

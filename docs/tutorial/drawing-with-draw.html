@@ -7,7 +7,7 @@
     .Draw.Line([35, 95], [125, 25], {= stroke=&quot;#2563eb&quot;, width=3 }),
     .Draw.Polygon([[125, 25], [108, 31], [118, 44]], {= fill=&quot;#2563eb&quot; }),
     .Draw.Label([125, 112], &quot;convenience helpers&quot;, {= anchor=:middle, size=14 })
-])</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+]) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Use <code>.Graphics</code> directly when you want exact control over scene hierarchy, paths, transforms, clipping, and the renderer-facing representation.</p>
 <h2>Draw a path and close a shape</h2>
 <p>Every path is an ordered list of <code>[x, y]</code> points. Add <code>closed=1</code> when the last point should connect back to the first. Style maps use SVG-like names: <code>stroke</code>, <code>fill</code>, <code>width</code>, <code>dash</code>, and <code>opacity</code>.</p>
@@ -16,7 +16,7 @@
         {= fill=&quot;#f8fafc&quot;, stroke=&quot;#cbd5e1&quot; }),
     .Graphics.Path([[60, 140], [150, 35], [240, 140]],
         {= closed=1, fill=&quot;#bfdbfe&quot;, stroke=&quot;#2563eb&quot;, width=3 })
-])</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+]) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The coordinates describe the graphic, not browser pixels. A host can scale the scene to fit its available width while preserving its internal relationships.</p>
 <h2>Add rectangles, circles, and text</h2>
 <p><code>Rectangle</code> takes an upper-left origin and <code>[width, height]</code>. <code>Circle</code> takes a center and radius. <code>.Graphics.Text</code> is positioned at its baseline; use <code>anchor=:middle</code> to center it on the x coordinate.</p>
@@ -31,7 +31,7 @@
         {= anchor=:middle, size=16, weight=&quot;bold&quot; }),
     .Graphics.Text([242, 96], &quot;box&quot;,
         {= anchor=:middle, size=16, weight=&quot;bold&quot; })
-])</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+]) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Colors, opacity, strokes, and text settings belong to the individual node&#039;s style map. Use a group when several nodes should share a style or move together.</p>
 <h2>Group related nodes</h2>
 <p><code>.Graphics.Group</code> collects children into one scene subtree. A group may also carry a style map, allowing a parent to set a common opacity or other shared SVG style. This badge consists of a circle and a text mark.</p>
@@ -40,12 +40,12 @@
         {= fill=&quot;#4f46e5&quot;, stroke=&quot;#312e81&quot;, width=2 }),
     .Graphics.Text([0, 6], &quot;RiX&quot;,
         {= anchor=:middle, size=18, weight=&quot;bold&quot;, fill=&quot;#fff&quot; })
-])
+]);
 
 .Graphics.Graphic([260, 140], [
     .Graphics.Rectangle([0, 0], [260, 140], {= fill=&quot;#eef2ff&quot; }),
     .Graphics.Transform([badge], {= translate=[130, 70] })
-])</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+]) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Notice that the badge is designed around <code>[0, 0]</code>, then placed later. This makes a small scene component reusable at several positions or scales.</p>
 <h2>Transform a scene without changing its children</h2>
 <p><code>.Graphics.Transform</code> applies translation, rotation, and scale to a subtree. Its second argument is a transform map; <code>origin</code> sets the center for rotation. Transforms happen in the order shown by the renderer: translate, rotate, then scale.</p>
@@ -53,12 +53,12 @@
     .Graphics.Path([[0, 0], [70, 0]], {= stroke=&quot;#0f766e&quot;, width=5 }),
     .Graphics.Path([[70, 0], [48, -14], [48, 14]],
         {= closed=1, fill=&quot;#0f766e&quot; })
-])
+]);
 
 .Graphics.Graphic([320, 200], [
     .Graphics.Rectangle([0, 0], [320, 200], {= fill=&quot;#f0fdfa&quot; }),
     .Graphics.Transform([arrow], {= translate=[75, 100], rotate=-25, scale=1.6 })
-])</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+]) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Because the arrow was defined around the origin, its transformation is easy to read. If you prefer, <code>Transform</code> also accepts one map containing <code>children</code>, <code>translate</code>, <code>rotate</code>, <code>scale</code>, and <code>origin</code>.</p>
 <h2>Limit a subtree with a clip</h2>
 <p><code>.Graphics.Clip(children, [x, y, width, height])</code> keeps only the part of its children inside the specified rectangle. Clipping is useful for viewports, cropped diagrams, and decorations that intentionally extend beyond a panel.</p>
@@ -67,7 +67,7 @@
         {= stroke=&quot;#7c3aed&quot;, width=18, opacity=1 / 3 }),
     .Graphics.Path([[20, 200], [220, 0]],
         {= stroke=&quot;#db2777&quot;, width=18, opacity=1 / 3 })
-])
+]);
 
 .Graphics.Graphic([300, 190], [
     .Graphics.Rectangle([0, 0], [300, 190], {= fill=&quot;#fff&quot; }),
@@ -76,6 +76,6 @@
         {= fill=&quot;none&quot;, stroke=&quot;#475569&quot;, width=2 }),
     .Graphics.Text([150, 105], &quot;clipped view&quot;,
         {= anchor=:middle, size=16, weight=&quot;bold&quot; })
-])</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+]) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The final rectangle is not part of the clip: it draws the visible border after the clipped artwork. Ordering children is therefore also the paint order.</p>
 <aside class="challenge"><p class="eyebrow">Challenge</p><h3>Build a labeled marker</h3><p>Make a <code>240</code> by <code>160</code> graphic with a background rectangle, one circle, and a centered <code>.Graphics.Text</code> label. Then place both the circle and text in a group and move that group with <code>.Graphics.Transform</code>.</p><section class="tutorial-cell"><header><span>Your RiX answer</span><button type="button" data-tutorial-run>Run answer</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false" placeholder="# Write your RiX solution here"></textarea><div class="tutorial-output" data-tutorial-output></div></section></aside></div><nav class="lesson-navigation" aria-label="Lesson navigation"><span class="previous-link"><a href="./plots-and-graphics.html">← 12c Plots</a></span><span class="section-links"><a href="./structured-output.html#lesson-start">↑ 12 Structured</a><a href="./core-host-lowering.html">↓ 13 Core</a></span><span class="next-link"><a href="./core-host-lowering.html">13 Core →</a></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page and shares one RiX session. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

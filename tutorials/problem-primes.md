@@ -41,16 +41,16 @@ println(filter(n -> !has_divisor(n), 2:30))
 
 ## RiX
 
-~~~rix
+```rix edu
 HasDivisor(n, d) ->
     d * d > n ?? 0 ?:
     n % d == 0 ?? 1 ?:
-    HasDivisor(n, d + 1)
+    HasDivisor(n, d + 1);
 
-IsPrime(n) -> n >= 2 && HasDivisor(n, 2) == 0
+IsPrime(n) -> n >= 2 && HasDivisor(n, 2) == 0;
 
-[2, |+1, |; 29] |>? (n) -> IsPrime(n)
-~~~
+[2, |+1, |; 29] |>? (n) -> IsPrime(n) ;
+```
 
 ## Reading the RiX solution
 
@@ -63,4 +63,3 @@ Three layers cooperate here: recursive search, public predicate, and collection 
 :::challenge Prime pairs
 Find primes p through 30 for which p + 2 is also prime. Return tuples {: p, p + 2 }.
 :::
-

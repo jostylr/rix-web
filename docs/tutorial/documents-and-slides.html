@@ -5,20 +5,20 @@
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">summary := .Table(
     [&quot;quantity&quot;, &quot;value&quot;],
     [[&quot;side&quot;, 7], [&quot;area&quot;, 49]]
-)
+);
 
 .Fragment([
     .Heading(1, &quot;Square report&quot;),
     .Paragraph(&quot;All values in this report are exact.&quot;),
     .Figure(summary, &quot;Measurements for one square&quot;, &quot;fig:square&quot;)
-])</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+]) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The label is useful to a renderer or exporter even though RiX Web simply shows the figure in place. Keep labels stable when you expect a document to grow.</p>
 <h2>Write a compact document template</h2>
 <p>For text-heavy reports, <code>@&quot;&quot;&quot;...&quot;&quot;&quot;</code> makes a <code>Fragment</code> directly. Blank lines separate document blocks. Prefix a block with <code>h1:</code> through <code>h6:</code> for a heading or <code>fig:</code> / <code>table:</code> for a captioned standalone value. <code>@{...}</code> evaluates now and inserts the resulting value.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="13" spellcheck="false">values := .Table(
     [&quot;x&quot;, &quot;x squared&quot;],
     [[1, 1], [2, 4], [3, 9]]
-)
+);
 
 @&quot;&quot;&quot;
 h1: Exact square values
@@ -27,12 +27,12 @@ The square of 3 is @{3 ^ 2}.
 
 table: Selected values #tbl:squares
     @{values}
-&quot;&quot;&quot;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+&quot;&quot;&quot; ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Interpolation here is different from a deferred block such as <code>@{; ...}</code>. The template evaluates the interpolation immediately and stores the resulting text or output value in the document.</p>
 <h2>Wrap a graphic as a figure</h2>
 <p>Figures are not limited to tables. This creates a small plot, then gives it a caption and a stable label that a future document renderer can use for cross references.</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">curve := .Plot.Polynomial([1, -2, -1], [-1, 4])
-.Figure(curve, &quot;Graph of x squared minus 2x minus 1&quot;, &quot;fig:curve&quot;)</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">curve := .Plot.Polynomial([1, -2, -1], [-1, 4]);
+.Figure(curve, &quot;Graph of x squared minus 2x minus 1&quot;, &quot;fig:curve&quot;) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>Build a deck one slide at a time</h2>
 <p><code>.Slide</code> attaches a title and optional metadata to one output value. <code>.Slides</code> preserves the order of those slides. RiX Web renders the current deck as a series of clearly separated slide sections; other hosts can add navigation or export without changing the RiX source.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="20" spellcheck="false">deck := .Slides(
@@ -53,6 +53,6 @@ table: Selected values #tbl:squares
         )
     ],
     &quot;Output building blocks&quot;
-)
-deck</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+);
+deck ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <aside class="challenge"><p class="eyebrow">Challenge</p><h3>A two-part note</h3><p>Create a <code>.Fragment</code> with a level-one heading and a paragraph. Then add a small table as its third child.</p><section class="tutorial-cell"><header><span>Your RiX answer</span><button type="button" data-tutorial-run>Run answer</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false" placeholder="# Write your RiX solution here"></textarea><div class="tutorial-output" data-tutorial-output></div></section></aside></div><nav class="lesson-navigation" aria-label="Lesson navigation"><span class="previous-link"><a href="./tables-and-grids.html">← 12a Tables</a></span><span class="section-links"><a href="./structured-output.html#lesson-start">↑ 12 Structured</a><a href="./core-host-lowering.html">↓ 13 Core</a></span><span class="next-link"><a href="./plots-and-graphics.html">12c Plots →</a></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page and shares one RiX session. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

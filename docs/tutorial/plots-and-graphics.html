@@ -6,8 +6,8 @@
     [1, -2, -1],
     [-1, 4],
     {= size=[640, 360], stroke=&quot;#2563eb&quot;, width=3 }
-)
-plot</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+);
+plot ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The helper chooses a useful vertical range and draws axes when zero is visible. Change the domain first to see how the same polynomial gains a different view.</p>
 <h2>A graphic has a coordinate space</h2>
 <p><code>.Graphics.Graphic([width, height], children)</code> establishes its own coordinate space. In the SVG renderer the origin is at the upper-left: x increases to the right and y increases downward. This small scene has one red path.</p>
@@ -19,15 +19,15 @@ plot</textarea><div class="tutorial-output" data-tutorial-output></div></section
             {= stroke=&quot;#dc2626&quot;, width=3 }
         )
     ]
-)</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p><code>.Graphics.Path</code> connects points in order. It is a scene leaf, so it must appear inside a <code>.Graphics.Graphic</code> before a host has the size and coordinate system needed to render it.</p>
 <h2>Combine a plot with document output</h2>
 <p>The output constructors compose. A graphic can be the content of a figure, a fragment, or a slide. The calculation remains separate from the document structure around it.</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">parabola := .Plot.Polynomial([1, 0, -1], [-2, 2])
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">parabola := .Plot.Polynomial([1, 0, -1], [-2, 2]);
 
 .Fragment([
     .Heading(2, &quot;A portable plot&quot;),
     .Figure(parabola, &quot;The curve y = x squared minus 1&quot;, &quot;fig:parabola&quot;)
-])</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+]) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>For diagrams and custom illustrations, move on to <strong>Drawing with .Graphics</strong>. It introduces rectangles, circles, text, groups, transforms, and clipping.</p>
 <aside class="challenge"><p class="eyebrow">Challenge</p><h3>Change the view</h3><p>Plot <code>x squared - 4</code> over the domain <code>[-3, 3]</code>. Give the curve a different stroke color and set a size that is wider than it is tall.</p><section class="tutorial-cell"><header><span>Your RiX answer</span><button type="button" data-tutorial-run>Run answer</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false" placeholder="# Write your RiX solution here"></textarea><div class="tutorial-output" data-tutorial-output></div></section></aside></div><nav class="lesson-navigation" aria-label="Lesson navigation"><span class="previous-link"><a href="./documents-and-slides.html">← 12b Documents</a></span><span class="section-links"><a href="./structured-output.html#lesson-start">↑ 12 Structured</a><a href="./core-host-lowering.html">↓ 13 Core</a></span><span class="next-link"><a href="./drawing-with-draw.html">12d Drawing →</a></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page and shares one RiX session. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

@@ -2,10 +2,10 @@
 <p>Imagine a package that converts a list of exact prices into taxed prices. Before writing an import header, prototype the pure calculation and identify the smallest capability surface the package needs.</p>
 <p>This capstone deliberately reuses ideas from every lesson in its section. Read the setup first, predict the last value, and only then run the cell. If the result surprises you, inspect each named intermediate rather than changing several lines at once.</p>
 <h2>Build the solution</h2>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">ApplyTax(price, rate) -&gt; price * (1 + rate)
-prices := [3 / 2, 2, 9 / 4]
-taxed := prices |&gt;&gt; (price) -&gt; ApplyTax(price, 1 / 20)
-taxed</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">ApplyTax(price, rate) -&gt; price * (1 + rate);
+prices := [3 / 2, 2, 9 / 4];
+taxed := prices |&gt;&gt; (price) -&gt; ApplyTax(price, 1 / 20);
+taxed ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>How the pieces fit</h2>
 <p>The computational core needs only arithmetic, functions, arrays, and a map pipe. It does not need file, network, or JavaScript permissions. A package interface can later declare prices and rate as inputs and taxed as an output while withholding unrelated capabilities.</p>
 <h2>Design from the pure core outward</h2>

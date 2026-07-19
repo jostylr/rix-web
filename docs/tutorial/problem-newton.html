@@ -23,14 +23,14 @@ print(newton_sqrt(2, 1e-6))</code></pre></section>
 end
 println(newton_sqrt(2, 1e-6))</code></pre></section>
 <h2>RiX</h2>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="8" spellcheck="false">Gap(n, x) -&gt; x * x &gt; n ?? x * x - n ?: n - x * x
-NewtonStep(n, x) -&gt; (x + n / x) / 2
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="8" spellcheck="false">Gap(n, x) -&gt; x * x &gt; n ?? x * x - n ?: n - x * x;
+NewtonStep(n, x) -&gt; (x + n / x) / 2;
 NewtonSqrt(n, tolerance, guess) -&gt;
     Gap(n, guess) &lt; tolerance ??
         guess ?:
-        NewtonSqrt(n, tolerance, NewtonStep(n, guess))
+        NewtonSqrt(n, tolerance, NewtonStep(n, guess));
 
-NewtonSqrt(2, 1 / 1000000, 1)</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+NewtonSqrt(2, 1 / 1000000, 1) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>Reading the RiX solution</h2>
 <p>Gap computes an absolute difference using a conditional expression, while NewtonStep expresses the mathematical recurrence directly. Naming both ideas leaves NewtonSqrt responsible only for deciding whether to stop or recur.</p>
 <p>The tolerance is the exact rational 1 / 1000000. Every intermediate guess is rational too. The printed answer may be a sizable fraction, but its square is within the exact requested bound. Decimal formatting can happen at the presentation boundary rather than contaminating the calculation.</p>

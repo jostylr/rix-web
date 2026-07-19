@@ -12,14 +12,14 @@ This capstone deliberately reuses ideas from every lesson in its section. Read t
 
 ## Build the solution
 
-~~~rix
-batches := 3 / 2
-flourPerBatch := 2..1/4
-waterPerBatch := 1:1..1/8
-flour := batches * flourPerBatch
-water := batches * waterPerBatch
-{: flour, water }
-~~~
+```rix edu
+batches := 3 / 2;
+flourPerBatch := 2..1/4;
+waterPerBatch := 1:1..1/8;
+flour := batches * flourPerBatch;
+water := batches * waterPerBatch;
+{: flour, water } ;
+```
 
 ## How the pieces fit
 

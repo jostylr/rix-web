@@ -15,9 +15,9 @@ feel like a language rather than a table of symbols.
 
 ## A worked example
 
-```rix
-third := 1 / 3
-third + third + third
+```rix edu
+third := 1 / 3;
+third + third + third ;
 ```
 
 The final line is the displayed value; the earlier lines set up the experiment.

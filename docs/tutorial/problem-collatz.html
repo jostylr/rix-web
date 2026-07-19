@@ -25,13 +25,13 @@ print(reaches_one(27, 120))</code></pre></section>
 end
 println(reaches_one(27, 120))</code></pre></section>
 <h2>RiX</h2>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">NextCollatz(n) -&gt; n % 2 == 0 ?? n / 2 ?: 3 * n + 1
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">NextCollatz(n) -&gt; n % 2 == 0 ?? n / 2 ?: 3 * n + 1;
 CollatzWithin(n, steps) -&gt;
     n == 1 ?? 1 ?:
     steps == 0 ?? 0 ?:
-    CollatzWithin(NextCollatz(n), steps - 1)
+    CollatzWithin(NextCollatz(n), steps - 1);
 
-CollatzWithin(27, 120)</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+CollatzWithin(27, 120) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>Reading the RiX solution</h2>
 <p>NextCollatz owns the mathematical transition. CollatzWithin owns termination. The first base case succeeds at one; it appears before the exhausted-step case so reaching one on the last permitted transition succeeds.</p>
 <p>Division remains exact, and every recursive call reduces steps. That supplies a structural reason the program terminates even though the Collatz conjecture remains unresolved. A zero result means only “not reached under this budget,” not “the conjecture is false.”</p>

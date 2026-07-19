@@ -42,14 +42,14 @@ println(Symbolics.substitute(derivative, Dict(x=>2, y=>3, z=>4)))
 
 ## RiX
 
-~~~rix
-Source := {#x,y,z:p# p = x^2 * y + z }
-DerivativeSpec := .Deriv(Source, {#x})
-Polynomial := .Poly(Source)
-Derivative := .Poly(DerivativeSpec)
+```rix edu
+Source := {#x,y,z:p# p = x^2 * y + z };
+DerivativeSpec := .Deriv(Source, {#x});
+Polynomial := .Poly(Source);
+Derivative := .Poly(DerivativeSpec);
 
-{: Polynomial(2, 3, 4), Derivative(2, 3, 4) }
-~~~
+{: Polynomial(2, 3, 4), Derivative(2, 3, 4) } ;
+```
 
 ## Reading the RiX solution
 

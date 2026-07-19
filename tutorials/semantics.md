@@ -17,10 +17,10 @@ feel like a language rather than a table of symbols.
 
 ## A worked example
 
-```rix
+```rix edu
 value := 7;
 elapsed := 90~[s];
-{: value ? :integer, .ConvertUnit(elapsed, .Units[:min]) }
+{: value ? :integer, .ConvertUnit(elapsed, .Units[:min]) } ;
 ```
 
 The final line is the displayed value; the earlier lines set up the experiment.

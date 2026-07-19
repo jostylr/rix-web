@@ -1,10 +1,28 @@
 import { expect, test } from "bun:test";
+import { parse, tokenize } from "../../rix/src/index.js";
 import { tutorialByNumber } from "../src/tutorial-index.js";
+import { normalizeReplSource } from "../src/repl-source.js";
 
 test("tutorial sources use runnable RiX blocks and a challenge", async () => {
     const source = await Bun.file(new URL("../tutorials/getting-started.md", import.meta.url)).text();
-    expect(source).toContain("```rix");
+    expect(source).toContain("```rix edu");
     expect(source).toContain(":::challenge");
+});
+
+test("tutorial RiX cells are ready to edit in the notebook", async () => {
+    const tutorialsDir = new URL("../tutorials/", import.meta.url).pathname;
+    for await (const file of new Bun.Glob("*.md").scan({ cwd: tutorialsDir })) {
+        const source = await Bun.file(new URL(`../tutorials/${file}`, import.meta.url)).text();
+        for (const header of source.match(/^```rix.*$/gim) || []) expect(header).toBe("```rix edu");
+        for (const [, code] of source.matchAll(/^```rix edu\n([\s\S]*?)^```[ \t]*$/gim)) {
+            expect(normalizeReplSource(code), file).toBe(code);
+            const finalToken = tokenize(code)
+                .filter((token) => token.type !== "End" && !(token.type === "String" && token.kind === "comment"))
+                .at(-1);
+            expect(finalToken?.value, file).toBe(";");
+            expect(() => parse(code), file).not.toThrow();
+        }
+    }
 });
 
 test("tutorial code fields initially fit their supplied code", async () => {

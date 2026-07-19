@@ -15,9 +15,9 @@ feel like a language rather than a table of symbols.
 
 ## A worked example
 
-```rix
-pair := ( 3, 5 )
-pair[2]
+```rix edu
+pair := ( 3, 5 );
+pair[2] ;
 ```
 
 The final line is the displayed value; the earlier lines set up the experiment.

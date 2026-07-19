@@ -3,7 +3,7 @@
 <p>For <code>1 + i</code>, both coordinates stay algebraic:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">z := 1 + 1~{i};
 c := .Complex.Cayley(z);
-{: c, c.Magnitude(), c.Direction() }</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+{: c, c.Magnitude(), c.Direction() } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The result is <code>Cayley(sqrt2, sqrt2 - 1)</code>. The positive <code>sqrt2</code> generator is adjoined exactly; no decimal approximation or symbolic angle is introduced.</p>
 <h2>Exact conversion in both directions</h2>
 <p>For Cartesian <code>x + iy</code>, RiX computes <code>r = sqrt(x^2 + y^2)</code> and <code>t = (r - x)/y</code>. Conversion back uses only field arithmetic:</p>
@@ -11,7 +11,7 @@ c := .Complex.Cayley(z);
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">c := .Complex.Cayley(5, 1/2);
 z := c.Cartesian();
 roundTrip := .Complex.Cayley(z);
-{: z, roundTrip }</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+{: z, roundTrip } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>This reconstructs <code>3 + 4i</code>, and the round trip returns <code>Cayley(5, 1/2)</code>. The namespace spelling <code>.Complex.Cartesian(c)</code> is equivalent to the receiver method.</p>
 <h2>Multiplication is direction composition</h2>
 <p>If directions are <code>t1</code> and <code>t2</code>, the product direction is <code>(t1 + t2)/(1 - t1*t2)</code>. This is the tangent half-angle addition law. Magnitudes simply multiply.</p>
@@ -20,13 +20,13 @@ b := .Complex.Cayley(1 + 1~{i});
 product := a * b;
 quotient := a / b;
 cube := b^3;
-{: product.Cartesian(), quotient.Cartesian(), cube.Cartesian() }</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+{: product.Cartesian(), quotient.Cartesian(), cube.Cartesian() } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Multiplication, division, integer powers, reciprocal, negation, and conjugation all stay in Cayley coordinates.</p>
 <p>If two directions use independent square-root generators and the exact inverter cannot simplify the Möbius denominator directly, RiX takes an exact Cartesian bridge and returns the canonical Cayley result. This remains exact:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">a := (5 + 3~{i}).Cayley();
 b := 1/2 - 1/2~{i};
 product := a * b;
-{: product, product.Cartesian() }</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+{: product, product.Cartesian() } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The result is <code>Cayley(sqrt17, 4 - sqrt17)</code> and <code>4 - i</code>, with no floating approximation.</p>
 <h2>Addition takes the Cartesian bridge</h2>
 <p>Complex addition is simplest in Cartesian coordinates. RiX converts exactly, adds there, and converts the result back. The operator still returns a Cayley value.</p>
@@ -34,18 +34,18 @@ product := a * b;
 b := .Complex.Cayley(1 + 2~{i});
 sum := a + b;
 difference := a - b;
-{: sum, sum.Cartesian(), difference.Cartesian() }</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+{: sum, sum.Cartesian(), difference.Cartesian() } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>Conjugation and inspection</h2>
 <p>Conjugation keeps the magnitude and negates the finite direction. Component methods reconstruct exact values only when requested.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">c := .Complex.Cayley(3 + 4~{i});
-{: c.Conjugate(), c.Re(), c.Im(), c.NormSquared(), c.Inverse().Cartesian() }</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+{: c.Conjugate(), c.Re(), c.Im(), c.NormSquared(), c.Inverse().Cartesian() } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p><code>Direction</code> is deliberately not called <code>Arg</code>: it is <code>tan(Arg/2)</code>, not an angle measured in radians.</p>
 <h2>The projective infinity direction</h2>
 <p>The negative real axis corresponds to <code>t = Infinity</code>. This is one projective direction, not floating-point infinity. RiX branches on it algebraically:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">negative := .Complex.Cayley(-1);
 positiveAgain := negative * negative;
 rotated := negative * .Complex.Cayley(1 + 1~{i});
-{: negative, positiveAgain, rotated.Cartesian() }</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+{: negative, positiveAgain, rotated.Cartesian() } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Here <code>Infinity</code> composed with itself gives direction zero, matching <code>(-1)(-1) = 1</code>.</p>
 <aside class="challenge"><p class="eyebrow">Challenge</p><h3>Compose exact directions</h3><p>Create Cayley forms for <code>1 + i</code> and <code>1 - i</code>. Multiply them and confirm through <code>Cartesian()</code> that the result is the exact real number <code>2</code>.</p><section class="tutorial-cell"><header><span>Your RiX answer</span><button type="button" data-tutorial-run>Run answer</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false" placeholder="# Write your RiX solution here">a := .Complex.Cayley(1 + 1~{i});
 b := .Complex.Cayley(1 - 1~{i});

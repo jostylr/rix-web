@@ -2,12 +2,12 @@
 <p>A baker has a formula written for one batch, but today needs three halves of a batch. Flour is known exactly; water has a small acceptable range. The goal is to scale both quantities without turning either into an early decimal approximation.</p>
 <p>This capstone deliberately reuses ideas from every lesson in its section. Read the setup first, predict the last value, and only then run the cell. If the result surprises you, inspect each named intermediate rather than changing several lines at once.</p>
 <h2>Build the solution</h2>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">batches := 3 / 2
-flourPerBatch := 2..1/4
-waterPerBatch := 1:1..1/8
-flour := batches * flourPerBatch
-water := batches * waterPerBatch
-{: flour, water }</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">batches := 3 / 2;
+flourPerBatch := 2..1/4;
+waterPerBatch := 1:1..1/8;
+flour := batches * flourPerBatch;
+water := batches * waterPerBatch;
+{: flour, water } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>How the pieces fit</h2>
 <p>The first three names are inputs. The next two are derived values. Because every number is rational, flour stays a single exact value. Because water starts as an interval, its uncertainty is propagated through multiplication. The final tuple keeps the two answers together without pretending they have the same kind of certainty.</p>
 <h2>Audit the calculation</h2>

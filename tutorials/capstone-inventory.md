@@ -12,13 +12,13 @@ This capstone deliberately reuses ideas from every lesson in its section. Read t
 
 ## Build the solution
 
-~~~rix
-stock := {= bolts=24, nuts=18, washers=30 }
-pickList := ["bolts", "washers", "bolts"]
-requested := {| "bolts", "washers", "bolts" |}
-boltCount := stock.Get("bolts")
-{: boltCount, pickList, requested }
-~~~
+```rix edu
+stock := {= bolts=24, nuts=18, washers=30 };
+pickList := ["bolts", "washers", "bolts"];
+requested := {| "bolts", "washers", "bolts" |};
+boltCount := stock.Get("bolts");
+{: boltCount, pickList, requested } ;
+```
 
 ## How the pieces fit
 

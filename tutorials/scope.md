@@ -15,10 +15,10 @@ feel like a language rather than a table of symbols.
 
 ## A worked example
 
-```rix
-x := 10
-ReadOuter() -> @x
-ReadOuter()
+```rix edu
+x := 10;
+ReadOuter() -> @x;
+ReadOuter() ;
 ```
 
 The final line is the displayed value; the earlier lines set up the experiment.

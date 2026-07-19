@@ -2,10 +2,10 @@
 <p>A pricing rule gives a small discount to positive quantities, rejects zero with a distinct result, and converts a negative quantity to its magnitude before pricing. Multifunction variants let each condition remain close to the expression it selects.</p>
 <p>This capstone deliberately reuses ideas from every lesson in its section. Read the setup first, predict the last value, and only then run the cell. If the result surprises you, inspect each named intermediate rather than changing several lines at once.</p>
 <h2>Build the solution</h2>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">Price(q) ?- [q &gt; 0] =&gt; q * 9 / 10
-Price(q) ?- [q == 0] =&gt; 0
-Price(q) =&gt; Price(-q)
-{: Price(10), Price(0), Price(-5) }</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">Price(q) ?- [q &gt; 0] =&gt; q * 9 / 10;
+Price(q) ?- [q == 0] =&gt; 0;
+Price(q) =&gt; Price(-q);
+{: Price(10), Price(0), Price(-5) } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>How the pieces fit</h2>
 <p>Variants are tried in order. A prep clause that returns false causes dispatch to continue. The fallback has no prep and recursively calls the same multifunction with a positive value. The result is a concise rule table whose control flow is still explicit.</p>
 <h2>Read dispatch as a policy table</h2>

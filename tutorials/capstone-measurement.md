@@ -13,12 +13,12 @@ This capstone deliberately reuses ideas from every lesson in its section. Read t
 
 ## Build the solution
 
-~~~rix
+```rix edu
 radius := 5~[cm];
 circumference := 2 * .Exact[:pi] * radius;
 inMetres := .ConvertUnit(circumference, .Units[:m]);
-{: radius, circumference, inMetres }
-~~~
+{: radius, circumference, inMetres } ;
+```
 
 ## How the pieces fit
 

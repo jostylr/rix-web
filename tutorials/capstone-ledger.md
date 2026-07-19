@@ -12,15 +12,15 @@ This capstone deliberately reuses ideas from every lesson in its section. Read t
 
 ## Build the solution
 
-~~~rix
-entry := {= account="cash", amount=7 / 2 }
-{= account, amount } := entry
-balance := amount
-display = balance
-archive := balance
-balance += 1 / 2
-{: display, archive }
-~~~
+```rix edu
+entry := {= account="cash", amount=7 / 2 };
+{= account, amount } := entry;
+balance := amount;
+display = balance;
+archive := balance;
+balance += 1 / 2;
+{: display, archive } ;
+```
 
 ## How the pieces fit
 

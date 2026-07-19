@@ -15,8 +15,8 @@ feel like a language rather than a table of symbols.
 
 ## A worked example
 
-```rix
-.Info("lesson", 1)
+```rix edu
+.Info("lesson", 1) ;
 ```
 
 The final line is the displayed value; the earlier lines set up the experiment.

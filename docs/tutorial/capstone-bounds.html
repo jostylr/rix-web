@@ -2,10 +2,10 @@
 <p>A sensor pipeline sometimes receives no reading. When that happens, it should preserve an agreed safe range rather than inventing a point value. When a reading is present, it should classify that exact reading against the safe bounds.</p>
 <p>This capstone deliberately reuses ideas from every lesson in its section. Read the setup first, predict the last value, and only then run the cell. If the result surprises you, inspect each named intermediate rather than changing several lines at once.</p>
 <h2>Build the solution</h2>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">reading := [,,][1]
-permitted := 18:22
-effective := reading ?| permitted
-effective</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">reading := [,,][1];
+permitted := 18:22;
+effective := reading ?| permitted;
+effective ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>How the pieces fit</h2>
 <p>The first line extracts an unfilled array slot, producing a hole that represents missing information. This is distinct from the explicit null value <code>_</code>. Hole coalescing chooses the interval only because the reading is a hole. The fallback is itself an exact value with two bounds, so downstream work can see what is known. Replace the first line with <code>reading := 20</code> and the same expression keeps the reading instead.</p>
 <h2>Distinguish three states</h2>

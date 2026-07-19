@@ -17,8 +17,8 @@ feel like a language rather than a table of symbols.
 
 ## Assertions
 
-```rix
-3 < 5
+```rix edu
+3 < 5 ;
 ```
 
 The final line is the displayed value; the earlier lines set up the experiment.
@@ -27,14 +27,14 @@ is being reused when the expression changes.
 
 Assertion operators such as `:<:` abort when their relation does not hold:
 
-```rix
-3 :<: 5
+```rix edu
+3 :<: 5 ;
 ```
 
 ## Three useful spec forms
 
-```rix
-{: {#x}, {#x# x^2 + 1 }, {#x:p# p = x^2 + 1 } }
+```rix edu
+{: {#x}, {#x# x^2 + 1 }, {#x:p# p = x^2 + 1 } } ;
 ```
 
 `{#x}` is the identity symbol used for explicit substitution and variable
@@ -44,9 +44,9 @@ bodies do not assign runtime variables.
 
 Calling a spec substitutes positionally and still returns a spec:
 
-```rix
-G := {#t# t^2 - 4 }
-G({#x})
+```rix edu
+G := {#t# t^2 - 4 };
+G({#x}) ;
 ```
 
 Continue to **Exact symbolic calculus** for arithmetic, `.Poly`, `.Deriv`,

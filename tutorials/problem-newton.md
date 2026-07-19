@@ -44,16 +44,16 @@ println(newton_sqrt(2, 1e-6))
 
 ## RiX
 
-~~~rix
-Gap(n, x) -> x * x > n ?? x * x - n ?: n - x * x
-NewtonStep(n, x) -> (x + n / x) / 2
+```rix edu
+Gap(n, x) -> x * x > n ?? x * x - n ?: n - x * x;
+NewtonStep(n, x) -> (x + n / x) / 2;
 NewtonSqrt(n, tolerance, guess) ->
     Gap(n, guess) < tolerance ??
         guess ?:
-        NewtonSqrt(n, tolerance, NewtonStep(n, guess))
+        NewtonSqrt(n, tolerance, NewtonStep(n, guess));
 
-NewtonSqrt(2, 1 / 1000000, 1)
-~~~
+NewtonSqrt(2, 1 / 1000000, 1) ;
+```
 
 ## Reading the RiX solution
 
@@ -66,4 +66,3 @@ A production version should validate positive inputs and impose an iteration lim
 :::challenge A safer square root
 Define SafeNewtonSqrt with a fourth parameter for remaining steps. Return _ if the steps reach zero before the tolerance is met.
 :::
-

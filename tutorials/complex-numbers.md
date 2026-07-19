@@ -8,10 +8,10 @@ description: Divide by i, conjugate exact expressions, and inspect real and imag
 
 The canonical imaginary generator is available from `.Exact` and `.Complex`:
 
-```rix
+```rix edu
 z := 3 + 4~{i};
 w := .Complex.FromParts(1, -2);
-{: z, w }
+{: z, w } ;
 ```
 
 Complex numbers are exact expressions in `i`, whose relation is `i^2 + 1 = 0`.
@@ -20,10 +20,10 @@ Complex numbers are exact expressions in `i`, whose relation is `i^2 + 1 = 0`.
 
 Division uses algebraic inversion rather than floating approximation:
 
-```rix
+```rix edu
 inverseI := 1 / .Exact[:i];
 quotient := (1 + .Exact[:i]) / (1 - .Exact[:i]);
-{: inverseI, quotient }
+{: inverseI, quotient } ;
 ```
 
 The results are `-i` and `i`.
@@ -32,11 +32,11 @@ The results are `-i` and `i`.
 
 Use the namespace operation or the receiver method:
 
-```rix
+```rix edu
 z := 3 + 4~{i};
 byNamespace := .Complex.Conjugate(z);
 byMethod := z.Conjugate();
-{: byNamespace, byMethod }
+{: byNamespace, byMethod } ;
 ```
 
 Conjugating twice returns the original exact value.
@@ -45,9 +45,9 @@ Conjugating twice returns the original exact value.
 
 `Re` and `Im` preserve exact coefficients, including other real generators:
 
-```rix
+```rix edu
 z := .Exact[:pi] + .Exact[:sqrt2] * .Exact[:i];
-{: .Complex.Re(z), .Complex.Im(z) }
+{: .Complex.Re(z), .Complex.Im(z) } ;
 ```
 
 The result is `(pi, sqrt2)`, still exact.
@@ -56,9 +56,9 @@ The result is `(pi, sqrt2)`, still exact.
 
 Magnitude would require a square root. `NormSquared` avoids that decision:
 
-```rix
+```rix edu
 z := 3 + 4~{i};
-{: z.NormSquared(), .Complex.NormSquared(z) }
+{: z.NormSquared(), .Complex.NormSquared(z) } ;
 ```
 
 Both entries are exactly `25`. The next lesson introduces an exact magnitude

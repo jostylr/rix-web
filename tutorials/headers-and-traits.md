@@ -15,8 +15,8 @@ feel like a language rather than a table of symbols.
 
 ## A worked example
 
-```rix
-{^ /#answer/ 42}
+```rix edu
+{^ /#answer/ 42} ;
 ```
 
 The final line is the displayed value; the earlier lines set up the experiment.

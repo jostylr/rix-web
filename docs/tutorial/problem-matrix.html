@@ -24,17 +24,17 @@ print(mat2_mul([[1,2],[3,4]], [[5,6],[7,8]]))</code></pre></section>
 b = [5 6; 7 8]
 println(a * b)</code></pre></section>
 <h2>RiX</h2>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">a := {:2x2: 1, 2; 3, 4 }
-b := {:2x2: 5, 6; 7, 8 }
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">a := {:2x2: 1, 2; 3, 4 };
+b := {:2x2: 5, 6; 7, 8 };
 
 Mat2Mul(left, right) -&gt; {:2x2:
     left[1,1] * right[1,1] + left[1,2] * right[2,1],
     left[1,1] * right[1,2] + left[1,2] * right[2,2];
     left[2,1] * right[1,1] + left[2,2] * right[2,1],
     left[2,1] * right[1,2] + left[2,2] * right[2,2]
-}
+};
 
-Mat2Mul(a, b)</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+Mat2Mul(a, b) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>Reading the RiX solution</h2>
 <p>These are tensor literals, not arrays of arrays. The 2x2 header records the shape and semicolons separate rows. RiX indexes from one, matching mathematical subscripts: left[1,2] means row one, column two.</p>
 <p>Every output entry is a two-term dot product. The fixed-size implementation is repetitive by design; it exposes the invariant a general implementation must capture. For output (i, j), multiply left[i, k] by right[k, j] and add over valid k.</p>

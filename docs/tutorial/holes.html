@@ -2,8 +2,8 @@
 <p>A hole means a missing value; it is distinct from the explicit null value <code>_</code>. Hole coalescing gives a fallback without treating every false-like value as absent.</p>
 <p>Read this chapter with RatCalc open. Predict the result before running an example, then change a single part and run it again. That small loop of prediction, execution, and inspection is the fastest way to make RiX syntax feel like a language rather than a table of symbols.</p>
 <h2>A worked example</h2>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">values := [1]
-values[2] ?| 99</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">values := [1];
+values[2] ?| 99 ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The final line is the displayed value; the earlier lines set up the experiment. Keep the setup visible so you can tell whether a name, a cell, or a collection is being reused when the expression changes.</p>
 <h2>Read the result</h2>
 <p>Holes are useful in partial collections, optional call arguments, and soft matching.</p>

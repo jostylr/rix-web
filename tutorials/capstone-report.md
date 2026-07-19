@@ -12,12 +12,12 @@ This capstone deliberately reuses ideas from every lesson in its section. Read t
 
 ## Build the solution
 
-~~~rix
-measurements := [-1, 1 / 2, 3 / 2, 2]
-positive := measurements |>? (x) -> x > 0
-squares := positive |>> (x) -> x ^ 2
-squares
-~~~
+```rix edu
+measurements := [-1, 1 / 2, 3 / 2, 2];
+positive := measurements |>? (x) -> x > 0;
+squares := positive |>> (x) -> x ^ 2;
+squares ;
+```
 
 ## How the pieces fit
 

@@ -13,12 +13,12 @@ evaluator. Evaluation dispatches that tree through the core registry.
 The key point is that lowering preserves semantics, not punctuation. An
 absolute-value delimiter and an explicit core call both end up at `ABS`.
 
-```rix
-| -7 |
+```rix edu
+| -7 | ;
 ```
 
-```rix
-.Abs(-7)
+```rix edu
+.Abs(-7) ;
 ```
 
 ## Esoteric syntax still has an operation
@@ -26,8 +26,8 @@ absolute-value delimiter and an explicit core call both end up at `ABS`.
 RiX offers notation that can be excellent for mathematics but awkward to emit
 from a tool. The core name gives that tool an ordinary call-shaped alternative.
 
-```rix
-{; least = {<< 8, 3, 5 }; explicit = .Min(8, 3, 5); least == explicit }
+```rix edu
+{; least = {<< 8, 3, 5 }; explicit = .Min(8, 3, 5); least == explicit } ;
 ```
 
 This is also why public names are useful for teaching: one can identify the
@@ -39,8 +39,8 @@ Lowering does not eagerly run every child expression. A lambda body is stored
 as IR so its parameter has a meaning later; the same idea applies to branches,
 blocks, loop pieces, assignment targets, and other structural forms.
 
-```rix
-{; .Assign(:F, .Lambda(.Params(:x), .Add(x, 1))); F(9) }
+```rix edu
+{; .Assign(:F, .Lambda(.Params(:x), .Add(x, 1))); F(9) } ;
 ```
 
 When the lambda is created, its `.Add(x, 1)` body is captured. Only `F(9)`

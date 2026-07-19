@@ -12,12 +12,12 @@ This capstone deliberately reuses ideas from every lesson in its section. Read t
 
 ## Build the solution
 
-~~~rix
-reading := [,,][1]
-permitted := 18:22
-effective := reading ?| permitted
-effective
-~~~
+```rix edu
+reading := [,,][1];
+permitted := 18:22;
+effective := reading ?| permitted;
+effective ;
+```
 
 ## How the pieces fit
 

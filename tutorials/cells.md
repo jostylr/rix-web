@@ -15,11 +15,11 @@ feel like a language rather than a table of symbols.
 
 ## A worked example
 
-```rix
-x := 5
-y = x
-x ~= 9
-x === y
+```rix edu
+x := 5;
+y = x;
+x ~= 9;
+x === y ;
 ```
 
 The final line is the displayed value; the earlier lines set up the experiment.

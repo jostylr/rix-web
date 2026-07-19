@@ -21,12 +21,12 @@ derivative = Symbolics.derivative(expression, x)
 println(Symbolics.substitute(expression, Dict(x=&gt;2, y=&gt;3, z=&gt;4)))
 println(Symbolics.substitute(derivative, Dict(x=&gt;2, y=&gt;3, z=&gt;4)))</code></pre></section>
 <h2>RiX</h2>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">Source := {#x,y,z:p# p = x^2 * y + z }
-DerivativeSpec := .Deriv(Source, {#x})
-Polynomial := .Poly(Source)
-Derivative := .Poly(DerivativeSpec)
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">Source := {#x,y,z:p# p = x^2 * y + z };
+DerivativeSpec := .Deriv(Source, {#x});
+Polynomial := .Poly(Source);
+Derivative := .Poly(DerivativeSpec);
 
-{: Polynomial(2, 3, 4), Derivative(2, 3, 4) }</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+{: Polynomial(2, 3, 4), Derivative(2, 3, 4) } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>Reading the RiX solution</h2>
 <p>The symbolic-specification form names x, y, and z as symbolic inputs and p as the expression. RiX preserves an expression tree instead of trying to recover structure from a source string.</p>
 <p>.Deriv constructs another compatible symbolic specification. It transforms mathematics rather than evaluating at a point. .Poly compiles either specification into a callable. The capitalized callable names follow RiX&#039;s visible naming convention for functions. The phases remain separate: inspect or transform structure first, and choose numeric inputs only when ready to evaluate.</p>

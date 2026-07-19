@@ -12,11 +12,11 @@ This capstone deliberately reuses ideas from every lesson in its section. Read t
 
 ## Build the solution
 
-~~~rix
-balance := 5 / 2
-{@ i = 0; i < 4; {; @balance += 3 / 4; i += 1 } }
-balance
-~~~
+```rix edu
+balance := 5 / 2;
+{@ i = 0; i < 4; {; @balance += 3 / 4; i += 1 } };
+balance ;
+```
 
 ## How the pieces fit
 

@@ -2,11 +2,11 @@
 <p>A workshop needs to represent stock counts, an ordered pick list, and the distinct part names involved in an order. One collection type could hold all three, but using the collection that matches each question makes the model easier to read.</p>
 <p>This capstone deliberately reuses ideas from every lesson in its section. Read the setup first, predict the last value, and only then run the cell. If the result surprises you, inspect each named intermediate rather than changing several lines at once.</p>
 <h2>Build the solution</h2>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">stock := {= bolts=24, nuts=18, washers=30 }
-pickList := [&quot;bolts&quot;, &quot;washers&quot;, &quot;bolts&quot;]
-requested := {| &quot;bolts&quot;, &quot;washers&quot;, &quot;bolts&quot; |}
-boltCount := stock.Get(&quot;bolts&quot;)
-{: boltCount, pickList, requested }</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">stock := {= bolts=24, nuts=18, washers=30 };
+pickList := [&quot;bolts&quot;, &quot;washers&quot;, &quot;bolts&quot;];
+requested := {| &quot;bolts&quot;, &quot;washers&quot;, &quot;bolts&quot; |};
+boltCount := stock.Get(&quot;bolts&quot;);
+{: boltCount, pickList, requested } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>How the pieces fit</h2>
 <p>The map answers a keyed lookup, the array preserves order and repetition, and the set collapses duplicate requests. The tuple returned at the end is only a report: it groups three results without giving them new keys. Notice that collection choice is part of the program&#039;s meaning, not merely presentation.</p>
 <h2>Follow the data shapes</h2>

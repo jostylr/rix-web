@@ -15,9 +15,9 @@ feel like a language rather than a table of symbols.
 
 ## A worked example
 
-```rix
+```rix edu
 ## JavaScript module execution is intentionally disabled in RatCalc
-1 + 1
+1 + 1 ;
 ```
 
 The final line is the displayed value; the earlier lines set up the experiment.

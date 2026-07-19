@@ -15,8 +15,8 @@ The core registry therefore marks those arguments as lazy IR where needed.
 The evaluator still uses the same assignment and function machinery as the
 surface syntax.
 
-```rix
-{; .Assign(:x, 7); .AssignCopy(:copy, x); x ~= 9; {: x, copy } }
+```rix edu
+{; .Assign(:x, 7); .AssignCopy(:copy, x); x ~= 9; {: x, copy } } ;
 ```
 
 `Assign`, `AssignCopy`, `AssignUpdate`, `AssignDeepCopy`, and
@@ -29,8 +29,8 @@ target without using assignment punctuation.
 `.Map` receives `.Pair` values. Each pair keeps its key/value relationship
 while the enclosing map constructor preserves the normal map semantics.
 
-```rix
-.Map(.Pair(:sum, .Add(2, 3)), .Pair(:magnitude, .Abs(-7)))
+```rix edu
+.Map(.Pair(:sum, .Add(2, 3)), .Pair(:magnitude, .Abs(-7))) ;
 ```
 
 This is especially useful for a tool that is constructing a record from a
@@ -43,12 +43,12 @@ is usually the friendlier spelling.
 body lazily, and `.Define` gives the resulting function a callable name. In
 the current evaluator, uppercase user names are callable.
 
-```rix
-{; .Assign(:F, .Lambda(.Params(:x), .Add(x, 1))); F(4) }
+```rix edu
+{; .Assign(:F, .Lambda(.Params(:x), .Add(x, 1))); F(4) } ;
 ```
 
-```rix
-{; .Define(:DOUBLE, .Params(:x), .Mul(x, 2)); DOUBLE(4) }
+```rix edu
+{; .Define(:DOUBLE, .Params(:x), .Mul(x, 2)); DOUBLE(4) } ;
 ```
 
 The public `.Params` form currently expresses positional parameters. More

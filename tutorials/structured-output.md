@@ -18,13 +18,13 @@ Create an output value with a system constructor, bind it like any other value,
 then return it. RiX Web renders this small table as a table; a text-only host can
 still show the same headers and rows faithfully.
 
-~~~rix
+```rix edu
 results := .Table(
     ["measurement", "exact value"],
     [["width", 3 / 2], ["height", 7 / 4], ["area", 21 / 8]]
-)
-results
-~~~
+);
+results ;
+```
 
 The value is portable data, not a browser widget. Keep the calculation that
 produces it separate from the choice to show it here, in a report, or in a
@@ -47,11 +47,11 @@ with tables and grids if your output is primarily data; go straight to
 This polynomial is ordinary exact RiX data. The next lessons will use the same
 coefficient array both in a table and in a graphic.
 
-~~~rix
-coefficients := [1, -2, -1]
-valueAtThree := 3 ^ 2 - 2 * 3 - 1
-[coefficients, valueAtThree]
-~~~
+```rix edu
+coefficients := [1, -2, -1];
+valueAtThree := 3 ^ 2 - 2 * 3 - 1;
+[coefficients, valueAtThree] ;
+```
 
 :::challenge Pick an output form
 Create a small `.Table` with two columns: a label and an exact value. Use any

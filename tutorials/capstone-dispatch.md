@@ -12,12 +12,12 @@ This capstone deliberately reuses ideas from every lesson in its section. Read t
 
 ## Build the solution
 
-~~~rix
-Price(q) ?- [q > 0] => q * 9 / 10
-Price(q) ?- [q == 0] => 0
-Price(q) => Price(-q)
-{: Price(10), Price(0), Price(-5) }
-~~~
+```rix edu
+Price(q) ?- [q > 0] => q * 9 / 10;
+Price(q) ?- [q == 0] => 0;
+Price(q) => Price(-q);
+{: Price(10), Price(0), Price(-5) } ;
+```
 
 ## How the pieces fit
 

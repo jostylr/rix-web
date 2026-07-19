@@ -15,9 +15,9 @@ feel like a language rather than a table of symbols.
 
 ## A worked example
 
-```rix
-[first, second, ...rest] := [1, 2, 3, 4]
-rest
+```rix edu
+[first, second, ...rest] := [1, 2, 3, 4];
+rest ;
 ```
 
 The final line is the displayed value; the earlier lines set up the experiment.

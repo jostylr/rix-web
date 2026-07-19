@@ -8,9 +8,9 @@ description: Use named entries when a collection reads more like a compact recor
 
 A map is written with the `{=` sigil. Each entry has a key and an exact RiX value.
 
-```rix
-recipe := {= flour=3 / 2, water=1, salt=1 / 40 }
-recipe.Get("flour")
+```rix edu
+recipe := {= flour=3 / 2, water=1, salt=1 / 40 };
+recipe.Get("flour") ;
 ```
 
 Maps make it clear what each value represents, even when several values have the same numeric type.
@@ -21,9 +21,9 @@ Keys are strings at runtime. The identifier-like spelling inside the literal is 
 
 Use `Keys` and `Values` to see the two sides of a map.
 
-```rix
-recipe := {= flour=3 / 2, water=1 }
-recipe.Keys()
+```rix edu
+recipe := {= flour=3 / 2, water=1 };
+recipe.Keys() ;
 ```
 
 Map order is not a programming guarantee. Keys, values, and entries are useful for inspection and transformation, but code should not assign meaning to the order in which a map happens to print. Use an array of tuples when order is part of the data.
@@ -32,11 +32,11 @@ Map order is not a programming guarantee. Keys, values, and entries are useful f
 
 Like array methods, ordinary map methods return a new value. `Set`, `Remove`, `Merge`, and `Update` let a program name each revision without losing the previous record.
 
-```rix
-base := {= flour=3 / 2, water=1 }
-scaled := base |>> (amount, ingredient) -> amount * 2
-finished := scaled.Set("salt", 1 / 20)
-{: base, finished }
+```rix edu
+base := {= flour=3 / 2, water=1 };
+scaled := base |>> (amount, ingredient) -> amount * 2;
+finished := scaled.Set("salt", 1 / 20);
+{: base, finished } ;
 ```
 
 The map form of the mapping pipe preserves the existing keys and transforms only values. Its callback receives value first and key second. That same receiver-first convention is used throughout collection traversal, although the locator changes shape: an array supplies a one-based position and a map supplies its key.

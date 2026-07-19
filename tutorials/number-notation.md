@@ -15,10 +15,10 @@ feel like a language rather than a table of symbols.
 
 ## A worked example
 
-```rix
-a := 0.#3
-b := 1..2/3
-a + b
+```rix edu
+a := 0.#3;
+b := 1..2/3;
+a + b ;
 ```
 
 The final line is the displayed value; the earlier lines set up the experiment.

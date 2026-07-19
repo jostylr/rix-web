@@ -15,9 +15,9 @@ feel like a language rather than a table of symbols.
 
 ## A worked example
 
-```rix
-x := 7
-x % 2 == 0 ?? "even" ?: "odd"
+```rix edu
+x := 7;
+x % 2 == 0 ?? "even" ?: "odd" ;
 ```
 
 The final line is the displayed value; the earlier lines set up the experiment.
@@ -28,13 +28,13 @@ is being reused when the expression changes.
 
 Case containers are useful when several guarded alternatives need to stay together.
 
-```rix
-score := -2
+```rix edu
+score := -2;
 {?
     score > 0 ? "positive";
     score < 0 ? "negative";
     "zero"
-}
+} ;
 ```
 
 ## Try a computed value
@@ -42,9 +42,9 @@ score := -2
 A prepared trial evaluates a candidate once, gives it a temporary name, and
 checks that name from left to right:
 
-```rix
-ReadScore = x -> x
-ReadScore(7) ?- value: [value ? :Integer, value > 0]
+```rix edu
+ReadScore = x -> x;
+ReadScore(7) ?- value: [value ? :Integer, value > 0] ;
 ```
 
 On success, the result is the original candidate. If candidate evaluation,
@@ -54,41 +54,41 @@ does not escape the trial.
 Prepared trials become ordered alternatives inside a case container. A soft
 failure advances to the next arm:
 
-```rix
-ReadScore = x -> x
+```rix edu
+ReadScore = x -> x;
 {?
     ReadScore(-3) ?- value: [value > 0];
     ReadScore(4) ?- value: [value > 0];
     5
-}
+} ;
 ```
 
 Use `?!-` for a fact that must hold. Gates can be mixed on the same candidate;
 the first gate also decides what happens if evaluating the candidate throws:
 
-```rix
-ReadScore = x -> x
+```rix edu
+ReadScore = x -> x;
 ReadScore(4)
     ?- value: [value ? :Integer]
-    ?!- value: [value > 0]
+    ?!- value: [value > 0] ;
 ```
 
 Here a non-integer is a recoverable failure, while an integer that is not
 positive is an error. Destructuring patterns work too, and a structural mismatch
 follows the gate's soft or strict policy:
 
-```rix
-pair := {: 2, -1 }
-pair ?- {: x, y }: [x + y == 1]
+```rix edu
+pair := {: 2, -1 };
+pair ?- {: x, y }: [x + y == 1] ;
 ```
 
 Assignments use the same expression directly. A soft failure assigns `_`; a
 strict failure throws before the assignment commits:
 
-```rix
-ReadScore = x -> x
-accepted := ReadScore(6) ?!- value: [value ? :Integer, value > 0]
-accepted
+```rix edu
+ReadScore = x -> x;
+accepted := ReadScore(6) ?!- value: [value ? :Integer, value > 0];
+accepted ;
 ```
 
 Try a second value of your own. When an advanced feature depends on files,

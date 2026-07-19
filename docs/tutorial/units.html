@@ -4,37 +4,37 @@
 s := .Units[:s];
 distance := 120 * m;
 elapsed := 10 * s;
-distance / elapsed</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+distance / elapsed ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The result is <code>12~[m/s]</code>. Internally RiX keeps an exact magnitude, a physical dimension vector, and a display unit.</p>
 <h2>Concise scientific notation</h2>
 <p>The bracket form is lookup-and-multiply sugar over the same <code>.Units</code> values:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">explicit := 9 * .Units[:m] / .Units[:s]^2;
 concise := 9~[m/s^2];
-explicit == concise</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+explicit == concise ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Unknown names inside <code>~[...]</code> are errors rather than silently becoming labels.</p>
 <h2>Compatible addition</h2>
 <p>Compatible quantities are normalized before arithmetic. Addition preserves the left operand&#039;s display unit:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">inSeconds := 30~[s] + 2~[min];
 inMinutes := 2~[min] + 30~[s];
-{: inSeconds, inMinutes }</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+{: inSeconds, inMinutes } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The values describe the same duration but display as <code>150~[s]</code> and <code>2..1/2~[min]</code>. Trying <code>1~[m] + 1~[s]</code> raises a dimensional error.</p>
 <h2>Explicit conversion</h2>
 <p>The quantity already knows its source unit, so conversion only needs a target:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">speed := 36~[km/h];
-.ConvertUnit(speed, .Units[:m] / .Units[:s])</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+.ConvertUnit(speed, .Units[:m] / .Units[:s]) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Target strings are also accepted: <code>.ConvertUnit(speed, &quot;m/s&quot;)</code>.</p>
 <h2>Affine temperature coordinates</h2>
 <p>Units double as one-argument constructors. This matters for Celsius and Fahrenheit because their zero points differ:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">roomC := .Units[:degC](20);
-.ConvertUnit(roomC, .Units[:degF])</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+.ConvertUnit(roomC, .Units[:degF]) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Subtracting two temperature points produces a linear difference:</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Units[:degC](20) - .Units[:degC](12)</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Units[:degC](20) - .Units[:degC](12) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Adding two temperature points or compounding an affine coordinate is rejected.</p>
 <h2>Extend the active collection</h2>
 <p><code>.DefineUnit</code> returns a unit value. Put it in an ordinary map overlay named <code>Units</code>; the sugar checks that lexical map before the system default:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">fortnight := .DefineUnit(:fortnight, 14 * .Units[:day]);
 Units := .Units.Merge({= fortnight=fortnight });
-.ConvertUnit(1~[fortnight], .Units[:day])</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+.ConvertUnit(1~[fortnight], .Units[:day]) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <aside class="challenge"><p class="eyebrow">Challenge</p><h3>Unit conversion practice</h3><p>Compute a 10-kilometre race pace in minutes per kilometre when the elapsed time is 50 minutes.</p><section class="tutorial-cell"><header><span>Your RiX answer</span><button type="button" data-tutorial-run>Run answer</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false" placeholder="# Write your RiX solution here"></textarea><div class="tutorial-output" data-tutorial-output></div></section></aside>
 <h2>Next</h2>
 <p>The next lesson uses the parallel <code>.Exact</code> collection for π, <code>i</code>, and algebraic generators. Physical units and exact symbolic magnitudes can be composed.</p></div><section class="api-links"><h2>Reference</h2><ul><li><a href="https://docs.rix.ratmath.com/design/eval/units-and-exact-generators.html" data-doc-reference target="_blank" rel="noreferrer">Units and exact generators ↗</a></li><li><a href="https://docs.rix.ratmath.com/design/eval/cayley-polar.html" data-doc-reference target="_blank" rel="noreferrer">Cayley polar design ↗</a></li><li><a href="https://docs.rix.ratmath.com/eval/types-and-traits-guide.html" data-doc-reference target="_blank" rel="noreferrer">Types and traits API ↗</a></li></ul></section><nav class="lesson-navigation" aria-label="Lesson navigation"><span class="previous-link"><a href="./headers-and-traits.html">← 8b Headers</a></span><span class="section-links"><a href="./semantics.html#lesson-start">↑ 8 Semantics</a><a href="./system.html">↓ 9 System</a></span><span class="next-link"><a href="./exact-generators.html">8d Exact →</a></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page and shares one RiX session. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

@@ -15,9 +15,9 @@ feel like a language rather than a table of symbols.
 
 ## A worked example
 
-```rix
-Add(x, y) -> x + y
-Add(3, 4)
+```rix edu
+Add(x, y) -> x + y;
+Add(3, 4) ;
 ```
 
 The final line is the displayed value; the earlier lines set up the experiment.

@@ -141,7 +141,7 @@ test("every indexed tutorial has a Markdown source file", async () => {
 test("every published RiX tutorial cell executes", async () => {
     for (const tutorial of tutorials) {
         const source = await Bun.file(new URL(`../tutorials/${tutorial.file.replace(/\.html$/, ".md")}`, import.meta.url)).text();
-        const cells = source.matchAll(/(?:~~~|```)rix\n([\s\S]*?)\n(?:~~~|```)/g);
+        const cells = source.matchAll(/```rix(?:[ \t]+[^\n]*)?[ \t]*\n([\s\S]*?)\n```/g);
         for (const [, code] of cells) {
             const response = createRixRepl().run(code);
             expect(response.type, `lesson ${tutorial.number}: ${response.text}`).toBe("result");

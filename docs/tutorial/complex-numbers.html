@@ -2,30 +2,30 @@
 <p>The canonical imaginary generator is available from <code>.Exact</code> and <code>.Complex</code>:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">z := 3 + 4~{i};
 w := .Complex.FromParts(1, -2);
-{: z, w }</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+{: z, w } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Complex numbers are exact expressions in <code>i</code>, whose relation is <code>i^2 + 1 = 0</code>.</p>
 <h2>Division by complex expressions</h2>
 <p>Division uses algebraic inversion rather than floating approximation:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">inverseI := 1 / .Exact[:i];
 quotient := (1 + .Exact[:i]) / (1 - .Exact[:i]);
-{: inverseI, quotient }</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+{: inverseI, quotient } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The results are <code>-i</code> and <code>i</code>.</p>
 <h2>Conjugation</h2>
 <p>Use the namespace operation or the receiver method:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">z := 3 + 4~{i};
 byNamespace := .Complex.Conjugate(z);
 byMethod := z.Conjugate();
-{: byNamespace, byMethod }</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+{: byNamespace, byMethod } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Conjugating twice returns the original exact value.</p>
 <h2>Real and imaginary parts</h2>
 <p><code>Re</code> and <code>Im</code> preserve exact coefficients, including other real generators:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">z := .Exact[:pi] + .Exact[:sqrt2] * .Exact[:i];
-{: .Complex.Re(z), .Complex.Im(z) }</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+{: .Complex.Re(z), .Complex.Im(z) } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The result is <code>(pi, sqrt2)</code>, still exact.</p>
 <h2>Norm squared</h2>
 <p>Magnitude would require a square root. <code>NormSquared</code> avoids that decision:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">z := 3 + 4~{i};
-{: z.NormSquared(), .Complex.NormSquared(z) }</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+{: z.NormSquared(), .Complex.NormSquared(z) } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Both entries are exactly <code>25</code>. The next lesson introduces an exact magnitude through Cayley polar form. <code>Arg</code> remains deferred until RiX&#039;s real-number and trigonometric policies are ready.</p>
 <aside class="challenge"><p class="eyebrow">Challenge</p><h3>Complex arithmetic practice</h3><p>Divide <code>3 + 4i</code> by <code>1 - i</code>, then verify the result by multiplying it by <code>1 - i</code>.</p><section class="tutorial-cell"><header><span>Your RiX answer</span><button type="button" data-tutorial-run>Run answer</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false" placeholder="# Write your RiX solution here"></textarea><div class="tutorial-output" data-tutorial-output></div></section></aside>
 <h2>Current boundary</h2>

@@ -53,7 +53,7 @@ function renderMarkdown(markdown) {
     };
     const flushCode = () => {
         if (code === null) return;
-        if (codeLanguage.toLowerCase() === "rix") {
+        if (codeLanguage.split(/\s+/, 1)[0].toLowerCase() === "rix") {
             html.push(`<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="${textareaRows(code)}" spellcheck="false">${escapeHtml(code)}</textarea><div class="tutorial-output" data-tutorial-output></div></section>`);
         } else {
             html.push(`<section class="comparison-code"><header>${escapeHtml(codeLanguage || "code")}</header><pre><code>${escapeHtml(code)}</code></pre></section>`);

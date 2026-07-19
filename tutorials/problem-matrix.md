@@ -45,19 +45,19 @@ println(a * b)
 
 ## RiX
 
-~~~rix
-a := {:2x2: 1, 2; 3, 4 }
-b := {:2x2: 5, 6; 7, 8 }
+```rix edu
+a := {:2x2: 1, 2; 3, 4 };
+b := {:2x2: 5, 6; 7, 8 };
 
 Mat2Mul(left, right) -> {:2x2:
     left[1,1] * right[1,1] + left[1,2] * right[2,1],
     left[1,1] * right[1,2] + left[1,2] * right[2,2];
     left[2,1] * right[1,1] + left[2,2] * right[2,1],
     left[2,1] * right[1,2] + left[2,2] * right[2,2]
-}
+};
 
-Mat2Mul(a, b)
-~~~
+Mat2Mul(a, b) ;
+```
 
 ## Reading the RiX solution
 
@@ -70,4 +70,3 @@ Exact arithmetic is preserved element by element. Replace one entry with 1 / 3 a
 :::challenge Matrix-vector product
 Define Mat2Vec(matrix, vector) for a two-by-two tensor and a two-item array.
 :::
-

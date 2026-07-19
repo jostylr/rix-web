@@ -11,16 +11,16 @@ lowers to. These calls are not intended to replace readable notation in every
 day code. They provide a stable, inspectable surface when a program needs to
 construct or name an operation directly.
 
-```rix
-{; sum = .Add(2, 3); product = .Mul(sum, 4); .Sub(product, 1) }
+```rix edu
+{; sum = .Add(2, 3); product = .Mul(sum, 4); .Sub(product, 1) } ;
 ```
 
 The same pattern covers comparison and common numeric forms. Here, `|x|` and
 `.Abs(x)` are equivalent routes to absolute value; the explicit form is handy
 inside code that is itself describing another RiX expression.
 
-```rix
-{; magnitude = .Abs(-7); .Greater(magnitude, 5) }
+```rix edu
+{; magnitude = .Abs(-7); .Greater(magnitude, 5) } ;
 ```
 
 ## Containers also have core forms
@@ -28,8 +28,8 @@ inside code that is itself describing another RiX expression.
 Core forms are not limited to arithmetic. Explicit constructor names make the
 structure visible when literals would be inconvenient to generate.
 
-```rix
-.Tuple(.Add(1, 2), .Min(8, 3, 5), .Interval(1, 2))
+```rix edu
+.Tuple(.Add(1, 2), .Min(8, 3, 5), .Interval(1, 2)) ;
 ```
 
 `Min`, `Max`, `Abs`, collection constructors, comparisons, set operations,

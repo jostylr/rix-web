@@ -12,12 +12,12 @@ This capstone deliberately reuses ideas from every lesson in its section. Read t
 
 ## Build the solution
 
-~~~rix
-ClampPositive(x) -> x > 0 ?? x ?: 0
-actual := ClampPositive(-3)
-expected := 0
-actual == expected
-~~~
+```rix edu
+ClampPositive(x) -> x > 0 ?? x ?: 0;
+actual := ClampPositive(-3);
+expected := 0;
+actual == expected ;
+```
 
 ## How the pieces fit
 

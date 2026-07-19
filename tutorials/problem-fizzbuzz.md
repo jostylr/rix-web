@@ -46,15 +46,15 @@ println(fizz_buzz.(1:15))
 
 ## RiX
 
-~~~rix
+```rix edu
 FizzBuzz(n) ->
     n % 15 == 0 ?? "FizzBuzz" ?:
     n % 3 == 0 ?? "Fizz" ?:
     n % 5 == 0 ?? "Buzz" ?:
-    n
+    n;
 
-[1, |+1, |; 15] |>> (n) -> FizzBuzz(n)
-~~~
+[1, |+1, |; 15] |>> (n) -> FizzBuzz(n) ;
+```
 
 ## Reading the RiX solution
 
@@ -67,4 +67,3 @@ Change the start, step, and count independently. Those pieces describe a sequenc
 :::challenge Configurable words
 Define ReplaceMultiples(n, divisor, word), then build a variant for multiples of two and seven.
 :::
-

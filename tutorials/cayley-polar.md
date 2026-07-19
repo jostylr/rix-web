@@ -12,10 +12,10 @@ stores `Cayley(r, t)`, where `r` is the exact nonnegative magnitude and
 
 For `1 + i`, both coordinates stay algebraic:
 
-```rix
+```rix edu
 z := 1 + 1~{i};
 c := .Complex.Cayley(z);
-{: c, c.Magnitude(), c.Direction() }
+{: c, c.Magnitude(), c.Direction() } ;
 ```
 
 The result is `Cayley(sqrt2, sqrt2 - 1)`. The positive `sqrt2` generator is
@@ -28,11 +28,11 @@ For Cartesian `x + iy`, RiX computes `r = sqrt(x^2 + y^2)` and
 
 `x = r(1 - t^2)/(1 + t^2)` and `y = r(2t)/(1 + t^2)`.
 
-```rix
+```rix edu
 c := .Complex.Cayley(5, 1/2);
 z := c.Cartesian();
 roundTrip := .Complex.Cayley(z);
-{: z, roundTrip }
+{: z, roundTrip } ;
 ```
 
 This reconstructs `3 + 4i`, and the round trip returns `Cayley(5, 1/2)`.
@@ -45,13 +45,13 @@ If directions are `t1` and `t2`, the product direction is
 `(t1 + t2)/(1 - t1*t2)`. This is the tangent half-angle addition law.
 Magnitudes simply multiply.
 
-```rix
+```rix edu
 a := .Complex.Cayley(3 + 4~{i});
 b := .Complex.Cayley(1 + 1~{i});
 product := a * b;
 quotient := a / b;
 cube := b^3;
-{: product.Cartesian(), quotient.Cartesian(), cube.Cartesian() }
+{: product.Cartesian(), quotient.Cartesian(), cube.Cartesian() } ;
 ```
 
 Multiplication, division, integer powers, reciprocal, negation, and conjugation
@@ -61,11 +61,11 @@ If two directions use independent square-root generators and the exact
 inverter cannot simplify the Möbius denominator directly, RiX takes an exact
 Cartesian bridge and returns the canonical Cayley result. This remains exact:
 
-```rix
+```rix edu
 a := (5 + 3~{i}).Cayley();
 b := 1/2 - 1/2~{i};
 product := a * b;
-{: product, product.Cartesian() }
+{: product, product.Cartesian() } ;
 ```
 
 The result is `Cayley(sqrt17, 4 - sqrt17)` and `4 - i`, with no floating
@@ -77,12 +77,12 @@ Complex addition is simplest in Cartesian coordinates. RiX converts exactly,
 adds there, and converts the result back. The operator still returns a Cayley
 value.
 
-```rix
+```rix edu
 a := .Complex.Cayley(3 + 4~{i});
 b := .Complex.Cayley(1 + 2~{i});
 sum := a + b;
 difference := a - b;
-{: sum, sum.Cartesian(), difference.Cartesian() }
+{: sum, sum.Cartesian(), difference.Cartesian() } ;
 ```
 
 ## Conjugation and inspection
@@ -90,9 +90,9 @@ difference := a - b;
 Conjugation keeps the magnitude and negates the finite direction. Component
 methods reconstruct exact values only when requested.
 
-```rix
+```rix edu
 c := .Complex.Cayley(3 + 4~{i});
-{: c.Conjugate(), c.Re(), c.Im(), c.NormSquared(), c.Inverse().Cartesian() }
+{: c.Conjugate(), c.Re(), c.Im(), c.NormSquared(), c.Inverse().Cartesian() } ;
 ```
 
 `Direction` is deliberately not called `Arg`: it is `tan(Arg/2)`, not an angle
@@ -103,11 +103,11 @@ measured in radians.
 The negative real axis corresponds to `t = Infinity`. This is one projective
 direction, not floating-point infinity. RiX branches on it algebraically:
 
-```rix
+```rix edu
 negative := .Complex.Cayley(-1);
 positiveAgain := negative * negative;
 rotated := negative * .Complex.Cayley(1 + 1~{i});
-{: negative, positiveAgain, rotated.Cartesian() }
+{: negative, positiveAgain, rotated.Cartesian() } ;
 ```
 
 Here `Infinity` composed with itself gives direction zero, matching

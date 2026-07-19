@@ -2,10 +2,10 @@
 <p>A short measurement report should discard nonpositive readings, square the remaining values, and preserve exact fractions. Pipes make the sequence of transformations read from left to right.</p>
 <p>This capstone deliberately reuses ideas from every lesson in its section. Read the setup first, predict the last value, and only then run the cell. If the result surprises you, inspect each named intermediate rather than changing several lines at once.</p>
 <h2>Build the solution</h2>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">measurements := [-1, 1 / 2, 3 / 2, 2]
-positive := measurements |&gt;? (x) -&gt; x &gt; 0
-squares := positive |&gt;&gt; (x) -&gt; x ^ 2
-squares</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">measurements := [-1, 1 / 2, 3 / 2, 2];
+positive := measurements |&gt;? (x) -&gt; x &gt; 0;
+squares := positive |&gt;&gt; (x) -&gt; x ^ 2;
+squares ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>How the pieces fit</h2>
 <p>The filter pipe keeps only values whose callback succeeds. The map pipe then transforms every retained value. Each intermediate collection has a useful name, which makes the report inspectable and gives errors a meaningful boundary.</p>
 <h2>Preserve the pipeline story</h2>

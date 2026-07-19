@@ -2,57 +2,57 @@
 <p>The ordinary value <code>a:b</code> retains two exact bounds. Generation operators use those bounds to produce either a lazy point sequence or an eager collection of touching subintervals.</p>
 <h2>Step through an interval lazily</h2>
 <p><code>:+</code> starts at the lower bound for a positive step and stops before crossing the upper bound. The result is lazy and cached.</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">oddPoints := 1:10 :+ 2
-oddPoints[1:5]</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">oddPoints := 1:10 :+ 2;
+oddPoints[1:5] ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>A negative step starts at the upper bound and walks downward.</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">descending := 1:10 :+ -3
-descending[1:4]</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">descending := 1:10 :+ -3;
+descending[1:4] ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The endpoint is included only when the chosen step lands on it exactly.</p>
 <h2>Ask for exactly n points</h2>
 <p><code>:: n</code> returns exactly <code>n</code> equally spaced points, including both endpoints. The sequence is lazy even though its length is known.</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">grid := 0:1 :: 5
-grid[1:5]</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">grid := 0:1 :: 5;
+grid[1:5] ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Exact rational arithmetic keeps values such as <code>1/4</code> and <code>3/4</code> exact.</p>
 <h2>Partition the whole interval</h2>
 <p><code>:/: n</code> eagerly returns <code>n</code> touching equal-width intervals. No gaps or overlaps are introduced.</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">0:12 :/: 4</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">0:12 :/: 4 ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Use partitions for bins and regions; use <code>::</code> when you need representative points.</p>
 <h2>Explore mediants</h2>
 <p>The mediant of <code>a/b</code> and <code>c/d</code> is <code>(a+c)/(b+d)</code>. <code>:~ levels</code> returns a nested array: the original endpoints, followed by the points inserted at each level.</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">1:2 :~ 2</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">1:2 :~ 2 ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p><code>:~/ levels</code> uses the same exact boundaries to return a flat sequence of touching intervals. Level <code>n</code> creates <code>2^n</code> subintervals.</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">1:2 :~/ 2</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">1:2 :~/ 2 ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>Continue forever from one point</h2>
 <p><code>::+</code> creates an unbounded lazy arithmetic sequence. Unlike <code>:+</code>, it has no upper interval bound.</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">walk := 5::+2
-walk[8]</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">walk := 5::+2;
+walk[8] ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Negative steps work the same way.</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">countdown := 10::+ -3
-countdown[1:6]</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">countdown := 10::+ -3;
+countdown[1:6] ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>Sample a fixed rational grid</h2>
 <p>For <code>:% (count, denominator)</code>, RiX chooses integer numerators uniformly from the requested denominator grid inside the interval. Returned rationals are reduced, so <code>500/1000</code> displays as <code>1/2</code>.</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.RandomSeed(7)
-0:1 :% (5, 1000)</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.RandomSeed(7);
+0:1 :% (5, 1000) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Seeding is local to the current RiX session. Run the cell again with the same seed to reproduce the same sample; change the seed to obtain another stream.</p>
 <h2>Sample with a tolerance</h2>
 <p>Without a denominator, RiX first samples a real-like point uniformly and then returns the simplest rational within a small default tolerance.</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.RandomSeed(21)
-0:1 :% 4</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.RandomSeed(21);
+0:1 :% 4 ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Supply <code>_</code> in the denominator position to override the tolerance explicitly.</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.RandomSeed(21)
-0:1 :% (4, _, 1/100)</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.RandomSeed(21);
+0:1 :% (4, _, 1/100) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>A count of one returns one rational value; larger counts return a finite sequence.</p>
 <h2>Create random partitions</h2>
 <p><code>:/%</code> chooses distinct interior points, sorts them, and returns touching subintervals containing the original endpoints. With a denominator, selection is without replacement on that rational grid.</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.RandomSeed(12)
-0:1 :/% (4, 1000)</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.RandomSeed(12);
+0:1 :/% (4, 1000) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The number is the number of resulting subintervals, so four partitions require three distinct interior points.</p>
 <h2>Keep interval and sequence types distinct</h2>
 <p>After <code>:+</code> or <code>::</code>, the result is a point sequence rather than another interval. Partition operators therefore apply to the original interval, not to an already generated sequence.</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">bounds := 0:10
-points := bounds :+ 2
-regions := bounds :/: 5
-[points[4], regions]</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">bounds := 0:10;
+points := bounds :+ 2;
+regions := bounds :/: 5;
+[points[4], regions] ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <aside class="challenge"><p class="eyebrow">Challenge</p><h3>Design a reproducible experiment</h3><p>Create eleven exact points from <code>-1:1</code>, partition the same interval into four equal regions, then seed the random stream and choose three points from a denominator-100 grid.</p><section class="tutorial-cell"><header><span>Your RiX answer</span><button type="button" data-tutorial-run>Run answer</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false" placeholder="# Write your RiX solution here">exactGrid := -1:1 :: 11
 regions := -1:1 :/: 4;
 .RandomSeed(42)

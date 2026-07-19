@@ -23,11 +23,11 @@ println(filter(n -&gt; !has_divisor(n), 2:30))</code></pre></section>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="8" spellcheck="false">HasDivisor(n, d) -&gt;
     d * d &gt; n ?? 0 ?:
     n % d == 0 ?? 1 ?:
-    HasDivisor(n, d + 1)
+    HasDivisor(n, d + 1);
 
-IsPrime(n) -&gt; n &gt;= 2 &amp;&amp; HasDivisor(n, 2) == 0
+IsPrime(n) -&gt; n &gt;= 2 &amp;&amp; HasDivisor(n, 2) == 0;
 
-[2, |+1, |; 29] |&gt;? (n) -&gt; IsPrime(n)</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+[2, |+1, |; 29] |&gt;? (n) -&gt; IsPrime(n) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>Reading the RiX solution</h2>
 <p>HasDivisor answers the useful internal question. Once d squared exceeds n, every possible factor pair is ruled out, so it returns zero. Clean division returns one; otherwise the search continues.</p>
 <p>IsPrime adds the domain rule that primes begin at two and interprets “no divisor found” as success. The filter pipe retains candidates for which that predicate succeeds. The eager generator starts at two and creates twenty-nine values, ending at thirty.</p>

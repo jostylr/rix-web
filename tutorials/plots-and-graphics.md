@@ -17,14 +17,14 @@ wherever the base graphic vocabulary works.
 The coefficients and domain stay exact. Sampling to pixel coordinates happens
 only when the plot is constructed for rendering.
 
-~~~rix
+```rix edu
 plot := .Plot.Polynomial(
     [1, -2, -1],
     [-1, 4],
     {= size=[640, 360], stroke="#2563eb", width=3 }
-)
-plot
-~~~
+);
+plot ;
+```
 
 The helper chooses a useful vertical range and draws axes when zero is visible.
 Change the domain first to see how the same polynomial gains a different view.
@@ -35,7 +35,7 @@ Change the domain first to see how the same polynomial gains a different view.
 In the SVG renderer the origin is at the upper-left: x increases to the right
 and y increases downward. This small scene has one red path.
 
-~~~rix
+```rix edu
 .Graphics.Graphic(
     [240, 120],
     [
@@ -44,8 +44,8 @@ and y increases downward. This small scene has one red path.
             {= stroke="#dc2626", width=3 }
         )
     ]
-)
-~~~
+) ;
+```
 
 `.Graphics.Path` connects points in order. It is a scene leaf, so it must appear
 inside a `.Graphics.Graphic` before a host has the size and coordinate system needed to
@@ -57,14 +57,14 @@ The output constructors compose. A graphic can be the content of a figure, a
 fragment, or a slide. The calculation remains separate from the document
 structure around it.
 
-~~~rix
-parabola := .Plot.Polynomial([1, 0, -1], [-2, 2])
+```rix edu
+parabola := .Plot.Polynomial([1, 0, -1], [-2, 2]);
 
 .Fragment([
     .Heading(2, "A portable plot"),
     .Figure(parabola, "The curve y = x squared minus 1", "fig:parabola")
-])
-~~~
+]) ;
+```
 
 For diagrams and custom illustrations, move on to **Drawing with .Graphics**. It
 introduces rectangles, circles, text, groups, transforms, and clipping.

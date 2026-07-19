@@ -5,8 +5,8 @@
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">samples := .Table(
     [&quot;x&quot;, &quot;p(x)&quot;],
     [[-1, 2], [0, -1], [1, -2], [2, -1], [3, 2]]
-)
-samples</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+);
+samples ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The web renderer supplies the visual table. The semantic data is the labels and rows you passed in, which makes it possible for another host to display, export, or inspect it differently.</p>
 <h2>Make the columns self-describing</h2>
 <p>A column may also be a map. <code>id</code> is a stable machine-oriented name while <code>label</code> is the text shown to a reader. This is useful when an output will later be collected by another tool.</p>
@@ -16,8 +16,8 @@ samples</textarea><div class="tutorial-output" data-tutorial-output></div></sect
         {= id=&quot;amount&quot;, label=&quot;Exact amount&quot; }
     ],
     [[&quot;flour&quot;, 3 / 2], [&quot;water&quot;, 5 / 4], [&quot;yeast&quot;, 1 / 16]]
-)
-ledger</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+);
+ledger ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>Use a grid when the rules mean something</h2>
 <p><code>.Grid</code> accepts column placeholders, rows, and a list of rules. <code>_</code> is an intentionally blank cell. A <code>vertical</code> rule after column one and a <code>horizontal</code> rule above row three form the familiar synthetic-division layout.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="13" spellcheck="false">manual := .Grid(
@@ -31,11 +31,11 @@ ledger</textarea><div class="tutorial-output" data-tutorial-output></div></secti
         {= kind=:vertical, afterColumn=1 },
         {= kind=:horizontal, aboveRow=3 }
     ]
-)
-manual</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+);
+manual ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The renderer only needs to understand a general grid and its rules. The mathematical convention belongs in the data, rather than in a special browser component.</p>
 <h2>Prefer a domain helper when one exists</h2>
 <p>The same layout is available as <code>.Algebra.SyntheticDivision</code>. It performs the exact arithmetic as well as constructing the grid. The bottom row contains the quotient coefficients followed by the remainder.</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Algebra.SyntheticDivision(1, [2, -6, 2, -1])</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Algebra.SyntheticDivision(1, [2, -6, 2, -1]) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Helpers and primitives work together: use a helper for a well-known notation, and use <code>.Grid</code> when your layout is novel or needs a different arrangement.</p>
 <aside class="challenge"><p class="eyebrow">Challenge</p><h3>A small value table</h3><p>Create a table with columns <code>n</code> and <code>n squared</code>. Include rows for 1, 2, 3, and 4. Keep the numeric cells as numbers rather than quoted strings.</p><section class="tutorial-cell"><header><span>Your RiX answer</span><button type="button" data-tutorial-run>Run answer</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false" placeholder="# Write your RiX solution here"></textarea><div class="tutorial-output" data-tutorial-output></div></section></aside></div><nav class="lesson-navigation" aria-label="Lesson navigation"><span class="previous-link"><a href="./structured-output.html">← 12 Structured</a></span><span class="section-links"><a href="./structured-output.html#lesson-start">↑ 12 Structured</a><a href="./core-host-lowering.html">↓ 13 Core</a></span><span class="next-link"><a href="./documents-and-slides.html">12b Documents →</a></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page and shares one RiX session. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
