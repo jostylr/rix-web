@@ -40,6 +40,35 @@ registration, discovery, and listing. They are not prefixes for the ordinary
 capabilities themselves—`.CoreStuff` remains a core root and `.hostStuff`
 remains a host root.
 
+## Discover before you load
+
+Hosts can scan `plugins/` folders for `.plugin.rix` and `.plugin.rix.js`
+files. Each file begins with a YAML doc-comment header, which is read without
+executing the plugin. The header describes the plugin id, short description,
+default camelCase mount, exports, and capability groups.
+
+```text
+.Plugin.List()
+.Plugin.Info("approx-math-js")
+.Plugin.Load("approx-math-js")
+.Plugin("approx-math-js")       # short form for Load
+```
+
+A discovered mount can be visible to the static checker while still refusing
+calls until loading is approved. JavaScript plugin files additionally require
+an installer that the host explicitly trusts; discovering a file never imports
+or runs arbitrary JavaScript. A load may choose another camelCase root for a
+separate session or REPL experiment:
+
+```text
+.Plugin.Load("approx-math-js", {= as = "jsFloat" })
+.jsFloat.Sin(x)
+```
+
+Because a complete RiX script is checked before its first expression runs,
+choose renamed mounts in a host startup configuration or a plugin-selection
+prelude when later source needs static checking against that name.
+
 ## Callable host objects
 
 A host object may itself be callable and also expose members. The optional

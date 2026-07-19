@@ -9,7 +9,8 @@
 .Core.Register(...)  # core management namespace
 .float(1 / 3)        # callable host/plugin object, if granted
 .float.Interval(x)   # callable member of that host object
-.float.precision     # host value</code></pre></section>
+.float.precision     # host value
+.Plugin.Load(&quot;...&quot;)  # core-facing request to a host plugin catalog</code></pre></section>
 <p>RatCalc deliberately does not grant plugin registration or optional math plugins to every browser session. The examples in this chapter therefore use the portable core surface; the host page explains the boundary without silently acquiring more authority.</p>
 <h2>The route through the implementation</h2>
 <p>Think of a RiX expression as taking this route:</p>

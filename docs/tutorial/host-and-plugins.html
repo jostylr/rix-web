@@ -10,6 +10,16 @@
 <section class="comparison-code"><header>text</header><pre><code>.Core.Register(...)    # bootstrap-only core registration surface
 .Host.Register(...)    # host registration surface, when granted</code></pre></section>
 <p>The <code>.Core</code> and <code>.Host</code> objects are management namespaces: they can support registration, discovery, and listing. They are not prefixes for the ordinary capabilities themselves—<code>.CoreStuff</code> remains a core root and <code>.hostStuff</code> remains a host root.</p>
+<h2>Discover before you load</h2>
+<p>Hosts can scan <code>plugins/</code> folders for <code>.plugin.rix</code> and <code>.plugin.rix.js</code> files. Each file begins with a YAML doc-comment header, which is read without executing the plugin. The header describes the plugin id, short description, default camelCase mount, exports, and capability groups.</p>
+<section class="comparison-code"><header>text</header><pre><code>.Plugin.List()
+.Plugin.Info(&quot;approx-math-js&quot;)
+.Plugin.Load(&quot;approx-math-js&quot;)
+.Plugin(&quot;approx-math-js&quot;)       # short form for Load</code></pre></section>
+<p>A discovered mount can be visible to the static checker while still refusing calls until loading is approved. JavaScript plugin files additionally require an installer that the host explicitly trusts; discovering a file never imports or runs arbitrary JavaScript. A load may choose another camelCase root for a separate session or REPL experiment:</p>
+<section class="comparison-code"><header>text</header><pre><code>.Plugin.Load(&quot;approx-math-js&quot;, {= as = &quot;jsFloat&quot; })
+.jsFloat.Sin(x)</code></pre></section>
+<p>Because a complete RiX script is checked before its first expression runs, choose renamed mounts in a host startup configuration or a plugin-selection prelude when later source needs static checking against that name.</p>
 <h2>Callable host objects</h2>
 <p>A host object may itself be callable and also expose members. The optional approximate-math plugin is the intended model:</p>
 <section class="comparison-code"><header>text</header><pre><code>.float(x)              # alias for .float.Float(x)

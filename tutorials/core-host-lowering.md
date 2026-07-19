@@ -38,6 +38,7 @@ float plugin can offer `.float.Sin(x)` while retaining data such as
 .float(1 / 3)        # callable host/plugin object, if granted
 .float.Interval(x)   # callable member of that host object
 .float.precision     # host value
+.Plugin.Load("...")  # core-facing request to a host plugin catalog
 ```
 
 RatCalc deliberately does not grant plugin registration or optional math
