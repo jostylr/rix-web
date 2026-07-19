@@ -14091,8 +14091,6 @@ function formatValue(val, options = {}) {
     }
     if (val.type === "string")
       return val.value;
-    if (val.type === "float" && !(val._ext instanceof Map && val._ext.has("__type")))
-      return String(val.value);
     if (isCayleyInfinity(val))
       return "Infinity";
     if (isCayleyValue(val)) {
@@ -22430,8 +22428,6 @@ function classifyMinMaxType(val) {
     return null;
   if (val instanceof Integer || val instanceof Rational)
     return "number";
-  if (val?.type === "float")
-    return "number";
   if (typeof val === "number" || typeof val === "bigint")
     return "number";
   if (typeof val === "string")
@@ -25634,9 +25630,52 @@ function normalizeReplSource(source) {
   return insertions.sort((left, right) => right - left).reduce((result, position) => `${result.slice(0, position)};${result.slice(position)}`, source);
 }
 
-// ../rix/src/plugins/approx-math-browser.js
-function toNumber2(value) {
-  if (value?.type === "float")
+// ../rix/src/eval/functions/math.js
+function numberFrom(value) {
+  if (value instanceof Integer)
+    return Number(value.value);
+  if (value instanceof Rational)
+    return Number(value.numerator) / Number(value.denominator);
+  if (typeof value === "bigint")
+    return Number(value);
+  if (value?.type === "string")
+    return Number(value.value);
+  return Number(value);
+}
+function finiteNumberFrom(value) {
+  const number = numberFrom(value);
+  if (Number.isNaN(number))
+    throw new Error("Math function expected a numeric value");
+  return number;
+}
+function unary(fn) {
+  return (args) => fn(finiteNumberFrom(args[0]));
+}
+function binary2(fn) {
+  return (args) => fn(finiteNumberFrom(args[0]), finiteNumberFrom(args[1]));
+}
+var mathFunctions = {
+  SIN: { impl: unary(Math.sin), pure: true, doc: "Sine" },
+  COS: { impl: unary(Math.cos), pure: true, doc: "Cosine" },
+  TAN: { impl: unary(Math.tan), pure: true, doc: "Tangent" },
+  ASIN: { impl: unary(Math.asin), pure: true, doc: "Arcsine" },
+  ACOS: { impl: unary(Math.acos), pure: true, doc: "Arccosine" },
+  ATAN: { impl: unary(Math.atan), pure: true, doc: "Arctangent" },
+  ATAN2: { impl: binary2(Math.atan2), pure: true, doc: "Two-argument arctangent" },
+  LOG: { impl: unary(Math.log), pure: true, doc: "Natural logarithm" },
+  LN: { impl: unary(Math.log), pure: true, doc: "Natural logarithm" },
+  LOG10: { impl: unary(Math.log10), pure: true, doc: "Base-10 logarithm" },
+  EXP: { impl: unary(Math.exp), pure: true, doc: "Exponential" }
+};
+
+// ../rix/examples/approx-math/approx-math-browser-plugin.js
+var TYPE_NAME = "FloatIEEE754";
+var NATIVE_TYPE = "float_ieee754";
+function isFloat(value) {
+  return value?.type === NATIVE_TYPE && typeof value.value === "number";
+}
+function numberFrom2(value) {
+  if (isFloat(value))
     return value.value;
   if (value instanceof Integer)
     return Number(value.value);
@@ -25651,40 +25690,15 @@ function toNumber2(value) {
   return Number(value);
 }
 function float(value) {
-  const number = toNumber2(value);
+  const number = numberFrom2(value);
   if (!Number.isFinite(number))
     throw new Error("Cannot convert value to finite Float");
-  return {
-    type: "float",
-    value: number,
-    add(other) {
-      return float(number + toNumber2(other));
-    },
-    subtract(other) {
-      return float(number - toNumber2(other));
-    },
-    multiply(other) {
-      return float(number * toNumber2(other));
-    },
-    divide(other) {
-      return float(number / toNumber2(other));
-    },
-    negate() {
-      return float(-number);
-    },
-    pow(other) {
-      return float(number ** toNumber2(other));
-    },
-    equals(other) {
-      return number === toNumber2(other);
-    },
-    sign() {
-      return new Integer(number < 0 ? -1n : number > 0 ? 1n : 0n);
-    },
-    toString() {
-      return String(number);
-    }
-  };
+  return { type: NATIVE_TYPE, value: number, toString() {
+    return String(number);
+  } };
+}
+function requireFloat(value, evaluate2) {
+  return evaluate2({ fn: "SEMANTIC_CONVERT_STRICT", args: [value, TYPE_NAME] });
 }
 function exactFloatRational(value) {
   const number = float(value).value;
@@ -25729,10 +25743,84 @@ function decimalRounded(value, places, mode) {
   }
   return new Rational(coefficient, scale);
 }
+function numericVariant(name, fn, arity = 2) {
+  return {
+    name,
+    prep(args) {
+      return args.length >= arity && args.some(isFloat);
+    },
+    impl(args) {
+      return float(fn(...args.map(numberFrom2)));
+    }
+  };
+}
+function compareVariant(name, relation) {
+  return {
+    name,
+    prep(args) {
+      return args.length === 2 && args.some(isFloat);
+    },
+    impl(args) {
+      return relation(numberFrom2(args[0]), numberFrom2(args[1])) ? new Integer(1n) : null;
+    }
+  };
+}
+function registerFloatType() {
+  if (typeRegistry.has(TYPE_NAME))
+    return;
+  const installs = new Map([
+    ["ADD", [numericVariant("FloatIEEE754Add", (...args) => args.reduce((total, value) => total + value, 0))]],
+    ["SUB", [numericVariant("FloatIEEE754Sub", (left, right) => left - right)]],
+    ["MUL", [numericVariant("FloatIEEE754Mul", (...args) => args.reduce((total, value) => total * value, 1))]],
+    ["DIV", [numericVariant("FloatIEEE754Div", (left, right) => left / right)]],
+    ["POW", [numericVariant("FloatIEEE754Pow", (left, right) => left ** right)]],
+    ["POWPROD", [numericVariant("FloatIEEE754PowProd", (left, right) => left ** right)]],
+    ["NEG", [numericVariant("FloatIEEE754Neg", (value) => -value, 1)]],
+    ["EQ", [compareVariant("FloatIEEE754Eq", (left, right) => left === right)]],
+    ["NEQ", [compareVariant("FloatIEEE754Neq", (left, right) => left !== right)]],
+    ["LT", [compareVariant("FloatIEEE754Lt", (left, right) => left < right)]],
+    ["GT", [compareVariant("FloatIEEE754Gt", (left, right) => left > right)]],
+    ["LTE", [compareVariant("FloatIEEE754Lte", (left, right) => left <= right)]],
+    ["GTE", [compareVariant("FloatIEEE754Gte", (left, right) => left >= right)]],
+    ["ABS", [numericVariant("FloatIEEE754Abs", Math.abs, 1)]],
+    ["SIN", [numericVariant("FloatIEEE754Sin", Math.sin, 1)]],
+    ["COS", [numericVariant("FloatIEEE754Cos", Math.cos, 1)]],
+    ["TAN", [numericVariant("FloatIEEE754Tan", Math.tan, 1)]],
+    ["ASIN", [numericVariant("FloatIEEE754Asin", Math.asin, 1)]],
+    ["ACOS", [numericVariant("FloatIEEE754Acos", Math.acos, 1)]],
+    ["ATAN", [numericVariant("FloatIEEE754Atan", Math.atan, 1)]],
+    ["ATAN2", [numericVariant("FloatIEEE754Atan2", Math.atan2, 2)]],
+    ["LOG", [numericVariant("FloatIEEE754Log", Math.log, 1)]],
+    ["LN", [numericVariant("FloatIEEE754Ln", Math.log, 1)]],
+    ["LOG10", [numericVariant("FloatIEEE754Log10", Math.log10, 1)]],
+    ["EXP", [numericVariant("FloatIEEE754Exp", Math.exp, 1)]]
+  ]);
+  registerType({
+    name: TYPE_NAME,
+    nativeType: NATIVE_TYPE,
+    defaultTraits: ["field", "ordered"],
+    convertFrom: new Map([
+      ["Integer", float],
+      ["Rational", float],
+      [NATIVE_TYPE, float]
+    ]),
+    convert: float,
+    normalize: float,
+    validate: isFloat,
+    proto: () => makeProto([
+      ["ToString", valueMethod("ToString", (value) => stringObj2(String(value.value)))],
+      ["Value", valueMethod("Value", (value) => stringObj2(String(value.value)))]
+    ]),
+    installs
+  });
+}
 function method2(name, impl) {
   return { type: "method_builtin", name, impl };
 }
-function installBrowserApproxMathPlugin({ systemContext }) {
+function installBrowserApproxMathPlugin({ systemContext, registry }) {
+  registerFloatType();
+  registry.registerAll(mathFunctions);
+  installRegisteredTypes(registry, [TYPE_NAME], { skipMissing: true, skipExisting: true });
   const entries = new Map;
   const extension = new Map;
   const add = (name, impl) => {
@@ -25740,38 +25828,26 @@ function installBrowserApproxMathPlugin({ systemContext }) {
     entries.set(name, entry);
     extension.set(name.toUpperCase(), entry);
   };
-  add("Float", (args) => float(args[1]));
-  add("Interval", (args) => {
-    const exact = exactFloatRational(args[1]);
+  add("Float", (args, _context, evaluate2) => requireFloat(args[1], evaluate2));
+  add("Interval", (args, _context, evaluate2) => {
+    const exact = exactFloatRational(requireFloat(args[1], evaluate2));
     return new RationalInterval(exact, exact);
   });
-  add("Round", (args) => decimalRounded(args[1], decimalPlaces(args[2]), "round"));
-  add("Floor", (args) => decimalRounded(args[1], decimalPlaces(args[2]), "floor"));
-  add("Ceiling", (args) => decimalRounded(args[1], decimalPlaces(args[2]), "ceiling"));
-  for (const [name, fn] of Object.entries({
-    Abs: Math.abs,
-    Sqrt: Math.sqrt,
-    Sin: Math.sin,
-    Cos: Math.cos,
-    Tan: Math.tan,
-    Asin: Math.asin,
-    Acos: Math.acos,
-    Atan: Math.atan,
-    Log: Math.log,
-    Ln: Math.log,
-    Log10: Math.log10,
-    Exp: Math.exp
-  })) {
-    add(name, (args) => float(fn(toNumber2(args[1]))));
+  add("Round", (args, _context, evaluate2) => decimalRounded(requireFloat(args[1], evaluate2), decimalPlaces(args[2]), "round"));
+  add("Floor", (args, _context, evaluate2) => decimalRounded(requireFloat(args[1], evaluate2), decimalPlaces(args[2]), "floor"));
+  add("Ceiling", (args, _context, evaluate2) => decimalRounded(requireFloat(args[1], evaluate2), decimalPlaces(args[2]), "ceiling"));
+  add("Abs", (args, _context, evaluate2) => evaluate2({ fn: "ABS", args: [requireFloat(args[1], evaluate2)] }));
+  for (const name of ["Sqrt", "Sin", "Cos", "Tan", "Asin", "Acos", "Atan", "Log", "Ln", "Log10", "Exp"]) {
+    add(name, (args, _context, evaluate2) => evaluate2({ fn: name.toUpperCase(), args: [requireFloat(args[1], evaluate2)] }));
   }
-  add("Atan2", (args) => float(Math.atan2(toNumber2(args[1]), toNumber2(args[2]))));
+  add("Atan2", (args, _context, evaluate2) => evaluate2({ fn: "ATAN2", args: [requireFloat(args[1], evaluate2), requireFloat(args[2], evaluate2)] }));
   const value = { type: "map", entries, _ext: extension };
   systemContext.registerHostCallableValue("float", value, {
-    impl(args) {
-      return float(args[0]);
+    impl(args, _context, evaluate2) {
+      return requireFloat(args[0], evaluate2);
     }
   }, {
-    doc: "Optional browser-native Float conversion and approximate math",
+    doc: "Optional IEEE-754 Float conversion and approximate math",
     groups: ["ApproximateMath", "Float"]
   });
   return systemContext;
@@ -25908,5 +25984,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { findHelp, createRixRepl };
 
-//# debugId=7819505843394DF064756E2164756E21
-//# sourceMappingURL=chunk-1ftg4j3n.js.map
+//# debugId=C8A33DF697E3AB7364756E2164756E21
+//# sourceMappingURL=chunk-fwpkfnwq.js.map

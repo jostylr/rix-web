@@ -9,7 +9,7 @@ permissions: []
 defaultEnabled: false
 **/
 
-import { installBrowserApproxMathPlugin } from "../../rix/src/plugins/approx-math-browser.js";
+import { installBrowserApproxMathPlugin } from "../../rix/examples/approx-math/approx-math-browser-plugin.js";
 
 export function install(api) {
   return installBrowserApproxMathPlugin(api);

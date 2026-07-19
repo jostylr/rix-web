@@ -45,6 +45,7 @@ test("the web REPL catalogs bundled plugins and loads approved JavaScript on dem
     expect(repl.run('.Plugin.Load("approx-math-js")').type).toBe("result");
     expect(repl.run(".float(1 / 3)").text).toBe("0.3333333333333333");
     expect(repl.run(".float(1 / 3) * .float(3)").text).toBe("1");
+    expect(repl.run(".float(1 / 2) + 2").text).toBe("2.5");
     expect(repl.run(".float.Round(.float(1 / 3), 2)").text).toBe("33/100");
 });
 
