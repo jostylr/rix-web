@@ -1,7 +1,7 @@
 import {
   createRixRepl,
   findHelp
-} from "./chunk-hkcwp6bb.js";
+} from "./chunk-f995js61.js";
 
 // src/main.js
 var repl = createRixRepl();
@@ -383,6 +383,3 @@ fileInput.addEventListener("change", async () => {
 displayWelcome();
 setAutoSeparateLines(autoSeparateLines);
 input.focus();
-
-//# debugId=4EC0A05498B91A7A64756E2164756E21
-//# sourceMappingURL=main.js.map

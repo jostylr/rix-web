@@ -1,6 +1,6 @@
 import {
   createRixRepl
-} from "./chunk-hkcwp6bb.js";
+} from "./chunk-f995js61.js";
 
 // src/tutorial-index.js
 var tutorials = [
@@ -236,6 +236,3 @@ function openObjectHelp(name, requestedFunction = null) {
   dialog.innerHTML = `<header><div><h2>${escapeHtml(requestedFunction || entry.title)}</h2><p>${escapeHtml(entry.intro)}</p></div><button type="button" data-close-object-help aria-label="Close object help">×</button></header><div class="object-help-body">${functions.map(([nameText, syntax, description, example]) => `<section><h3>${escapeHtml(nameText)}</h3><code>${escapeHtml(syntax)}</code><p>${escapeHtml(description)}</p><pre>${escapeHtml(example)}</pre></section>`).join("")}</div>`;
   dialog.showModal();
 }
-
-//# debugId=6C2F65DCED2B82BE64756E2164756E21
-//# sourceMappingURL=tutorial-runner.js.map
