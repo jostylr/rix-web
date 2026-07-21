@@ -4,7 +4,7 @@ import { install as install0 } from "../../plugins/approx-math.plugin.rix.js";
 
 export function createBundledPluginCatalog() {
   const catalog = new PluginCatalog();
-  catalog.addMetadata({"id":"approx-math-js","description":"JavaScript IEEE-754 Float conversion and optional approximate math.","kind":"host","mount":"float","exports":["Float","Interval","Round","Floor","Ceiling","Abs","Sqrt","Sin","Cos","Tan","Log","Exp"],"groups":["ApproximateMath","Float"],"permissions":[],"defaultEnabled":false,"sourcePath":"bundled:approx-math-js"}, { sourcePath: "bundled:approx-math-js", kind: "host" });
-  catalog.registerInstaller("approx-math-js", install0);
+  catalog.addMetadata({"id":"float","description":"JavaScript IEEE-754 Float conversion and optional approximate math.","kind":"host","mount":"float","exports":["Float","Interval","Round","Floor","Ceiling","Abs","Sqrt","Sin","Cos","Tan","Log","Exp"],"groups":["ApproximateMath","Float"],"permissions":[],"defaultEnabled":false,"sourcePath":"bundled:float"}, { sourcePath: "bundled:float", kind: "host" });
+  catalog.registerInstaller("float", install0);
   return catalog;
 }

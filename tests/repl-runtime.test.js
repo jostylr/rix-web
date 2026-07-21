@@ -40,12 +40,14 @@ test("the web REPL returns structured HTML for portable output values", () => {
 test("the web REPL catalogs bundled plugins and loads approved JavaScript on demand", () => {
     const repl = createRixRepl();
 
-    expect(repl.run('.Plugin.List()').text).toContain("approx-math-js");
+    expect(repl.run('.Plugin.List()').text).toContain("float");
     expect(repl.run(".float(1 / 3)").type).toBe("error");
-    expect(repl.run('.Plugin.Load("approx-math-js")').type).toBe("result");
+    expect(repl.run('.Plugin.Load("float")').type).toBe("result");
     expect(repl.run(".float(1 / 3)").text).toBe("0.3333333333333333");
     expect(repl.run(".float(1 / 3) * .float(3)").text).toBe("1");
     expect(repl.run(".float(1 / 2) + 2").text).toBe("2.5");
+    expect(repl.run(".Min(.float(1 / 2), 2)").text).toBe("0.5");
+    expect(repl.run(".Max(.float(1 / 2), 2)").text).toBe("2");
     expect(repl.run(".float.Round(.float(1 / 3), 2)").text).toBe("33/100");
 });
 

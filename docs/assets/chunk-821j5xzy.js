@@ -10359,9 +10359,10 @@ var runtimeDefaults = Object.freeze({
     permissions: Object.freeze(["IMPORTS"])
   }),
   capabilityGroups: Object.freeze({
-    Output: Object.freeze(["TEXT", "PARAGRAPH", "HEADING", "FRAGMENT", "TABLE", "GRID", "FIGURE", "SLIDE", "SLIDES", "Algebra", "Plot"]),
+    Output: Object.freeze(["TEXT", "PARAGRAPH", "HEADING", "FRAGMENT", "TABLE", "GRID", "FIGURE", "SLIDE", "SLIDES", "Algebra"]),
     Graphics: Object.freeze(["Graphics"]),
-    Draw: Object.freeze(["Draw"]),
+    Draw: Object.freeze(["draw"]),
+    Plot: Object.freeze(["plot"]),
     Core: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "IF", "LOOP", "MULTI", "RAND_NAME", "PRINT", "TGEN", "KEYOF", "KEYS", "VALUES"]),
     Arith: Object.freeze(["ADD", "SUB", "MUL", "DIV", "INTDIV", "MOD", "POW"]),
     Logic: Object.freeze(["EQ", "NEQ", "LT", "GT", "LTE", "GTE", "AND", "OR", "NOT"]),
@@ -15231,12 +15232,15 @@ var TYPE_INSTALL_FUNCTIONS = [
   "POW",
   "POWPROD",
   "NEG",
+  "COMPARE",
   "EQ",
   "NEQ",
   "LT",
   "GT",
   "LTE",
   "GTE",
+  "MIN",
+  "MAX",
   "ABS",
   "SQRT",
   "SIN",
@@ -19410,35 +19414,85 @@ class Registry {
       impl: (args, context, evaluate) => this._callSystemMultifunction(name, args, context, evaluate)
     };
   }
-  _callSystemMultifunction(name, args, context, evaluate) {
+  _prepareVariant(variant, args, context, evaluate) {
+    if (typeof variant.prepare === "function") {
+      const prepared = variant.prepare(args, context, evaluate);
+      if (!prepared)
+        return null;
+      if (prepared === true)
+        return { args };
+      if (Array.isArray(prepared))
+        return { args: prepared };
+      if (!Array.isArray(prepared.args)) {
+        throw new Error(`System variant '${variant.name}' prepare() must return false, an argument array, or { args }`);
+      }
+      return prepared;
+    }
+    if (variant.prep) {
+      let ok = false;
+      try {
+        ok = Boolean(variant.prep(args, context, evaluate));
+      } catch {
+        ok = false;
+      }
+      if (!ok)
+        return null;
+    }
+    return { args };
+  }
+  _invokeSystemMultifunction(name, args, context, evaluate) {
     const func = this.functions.get(name);
     if (!func?.systemMultifunction) {
       throw new Error(`${name} is not a system multifunction`);
     }
-    for (const variant of func.variants) {
-      if (variant.prep) {
-        let ok = false;
-        try {
-          ok = Boolean(variant.prep(args, context, evaluate));
-        } catch {
-          ok = false;
-        }
-        if (!ok)
-          continue;
+    const candidates = [];
+    for (const variant2 of func.variants) {
+      let prepared2;
+      try {
+        prepared2 = this._prepareVariant(variant2, args, context, evaluate);
+      } catch (error) {
+        if (!variant2.prep && !variant2.prepare)
+          throw error;
+        continue;
       }
-      const tc = context?.getEnv?.("__trace_context__");
-      if (tc?.active && context?.getEnv?.("traceSystemVariants", false)) {
-        tc.log.push({
-          event: "system_variant_selected",
-          fn: name,
-          variantName: variant.name,
-          installedByType: variant.installedByType ?? null,
-          depth: tc.currentDepth ?? 0
-        });
-      }
-      return variant.impl(args, context, evaluate);
+      if (!prepared2)
+        continue;
+      candidates.push({ variant: variant2, prepared: prepared2 });
     }
-    return null;
+    const prioritized = candidates.filter(({ variant: variant2 }) => Number.isFinite(variant2.priority));
+    let selected = candidates[0] || null;
+    if (prioritized.length > 0) {
+      const priority = Math.max(...prioritized.map(({ variant: variant2 }) => variant2.priority));
+      const winners = prioritized.filter(({ variant: variant2 }) => variant2.priority === priority);
+      if (winners.length > 1) {
+        throw new Error(`Ambiguous ${name} variants at priority ${priority}: ${winners.map(({ variant: variant2 }) => variant2.name).join(", ")}`);
+      }
+      selected = winners[0];
+    }
+    if (!selected)
+      return { value: null, args, variant: null };
+    const { variant, prepared } = selected;
+    const tc = context?.getEnv?.("__trace_context__");
+    if (tc?.active && context?.getEnv?.("traceSystemVariants", false)) {
+      tc.log.push({
+        event: "system_variant_selected",
+        fn: name,
+        variantName: variant.name,
+        installedByType: variant.installedByType ?? null,
+        depth: tc.currentDepth ?? 0
+      });
+    }
+    return {
+      value: variant.impl(prepared.args, context, evaluate),
+      args: prepared.args,
+      variant
+    };
+  }
+  _callSystemMultifunction(name, args, context, evaluate) {
+    return this._invokeSystemMultifunction(name, args, context, evaluate).value;
+  }
+  invokeWithVariant(name, args, context, evaluate) {
+    return this._invokeSystemMultifunction(name, args, context, evaluate);
   }
   installVariant(name, variant) {
     let func = this.functions.get(name);
@@ -22447,31 +22501,47 @@ function resolveCell(irNode, context) {
   }
   return null;
 }
-function minMaxImpl(args, mode) {
+function comparisonInteger(value) {
+  if (value instanceof Integer && [-1n, 0n, 1n].includes(value.value))
+    return Number(value.value);
+  throw new Error("COMPARE variants must return -1, 0, or 1 as a RiX integer");
+}
+function minMaxImpl(args, mode, context, evaluate) {
   const filtered = args.filter((v) => v !== null && v !== undefined);
   if (filtered.length === 0) {
     throw new Error(`${mode} requires at least one non-null comparable argument`);
   }
-  const valueType = classifyMinMaxType(filtered[0]);
-  if (valueType === "invalid") {
-    throw new Error(`${mode} only supports numbers or strings`);
-  }
-  for (let i = 1;i < filtered.length; i++) {
-    const t = classifyMinMaxType(filtered[i]);
-    if (t === "invalid" || t !== valueType) {
-      throw new Error(`${mode} arguments must all be numbers or all be strings`);
-    }
-  }
   let best = filtered[0];
   for (let i = 1;i < filtered.length; i++) {
-    const c = compare2(filtered[i], best);
+    const registry = context?.getEnv?.("__registry__", null);
+    if (!registry?.invokeWithVariant) {
+      throw new Error(`${mode} requires an active evaluator registry`);
+    }
+    const invocation = registry.invokeWithVariant("COMPARE", [filtered[i], best], context, evaluate);
+    const c = comparisonInteger(invocation.value);
+    const [candidate, normalizedBest] = invocation.args;
     if (mode === "MIN" && c < 0 || mode === "MAX" && c > 0) {
-      best = filtered[i];
+      best = candidate;
+    } else {
+      best = normalizedBest;
     }
   }
   return best;
 }
 var comparisonFunctions = {
+  COMPARE: {
+    impl(args) {
+      const leftType = classifyMinMaxType(args[0]);
+      const rightType = classifyMinMaxType(args[1]);
+      if (!leftType || leftType === "invalid" || leftType !== rightType) {
+        throw new Error("COMPARE requires two values from the same built-in ordered domain");
+      }
+      const result = compare2(args[0], args[1]);
+      return new Integer(BigInt(result < 0 ? -1 : result > 0 ? 1 : 0));
+    },
+    pure: true,
+    doc: "Compare two values; returns -1, 0, or 1"
+  },
   EQ: {
     impl(args) {
       const [a, b] = args;
@@ -22539,15 +22609,15 @@ var comparisonFunctions = {
     doc: "Identity comparison (===) — returns 1 if both sides refer to the same cell, null otherwise"
   },
   MIN: {
-    impl(args) {
-      return minMaxImpl(args, "MIN");
+    impl(args, context, evaluate) {
+      return minMaxImpl(args, "MIN", context, evaluate);
     },
     pure: true,
     doc: "Minimum over n arguments (ignores nulls)"
   },
   MAX: {
-    impl(args) {
-      return minMaxImpl(args, "MAX");
+    impl(args, context, evaluate) {
+      return minMaxImpl(args, "MAX", context, evaluate);
     },
     pure: true,
     doc: "Maximum over n arguments (ignores nulls)"
@@ -24475,23 +24545,23 @@ function mergedStyle(style, additions) {
   return { type: "map", entries: new Map([...entries, ...additions]) };
 }
 function line(args) {
-  const entries = entriesFor(args, ["from", "to", "style"], "Draw.Line");
+  const entries = entriesFor(args, ["from", "to", "style"], "draw.Line");
   return createPath([[get2(entries, "from"), get2(entries, "to")], get2(entries, "style")]);
 }
 function polygon(args) {
-  const entries = entriesFor(args, ["points", "style"], "Draw.Polygon");
+  const entries = entriesFor(args, ["points", "style"], "draw.Polygon");
   return createPath([get2(entries, "points"), mergedStyle(get2(entries, "style"), [["closed", true]])]);
 }
 function label(args) {
-  const entries = entriesFor(args, ["position", "text", "style"], "Draw.Label");
+  const entries = entriesFor(args, ["position", "text", "style"], "draw.Label");
   return createTextMark([get2(entries, "position"), get2(entries, "text"), get2(entries, "style")]);
 }
 function box(args) {
-  const entries = entriesFor(args, ["origin", "size", "style"], "Draw.Box");
+  const entries = entriesFor(args, ["origin", "size", "style"], "draw.Box");
   return createRectangle([get2(entries, "origin"), get2(entries, "size"), get2(entries, "style")]);
 }
 function circle(args) {
-  const entries = entriesFor(args, ["center", "radius", "style"], "Draw.Circle");
+  const entries = entriesFor(args, ["center", "radius", "style"], "draw.Circle");
   return createCircle([get2(entries, "center"), get2(entries, "radius"), get2(entries, "style")]);
 }
 function createDrawPluginCollection() {
@@ -24511,8 +24581,54 @@ function createDrawPluginCollection() {
 }
 function installDrawPlugin(systemContext) {
   const draw = createDrawPluginCollection();
-  systemContext.registerValue("Draw", draw, { doc: "Convenient authoring helpers that produce intrinsic Graphics nodes" });
+  systemContext.registerHostValue("draw", draw, { doc: "Convenient authoring helpers that produce intrinsic Graphics nodes" });
   return draw;
+}
+
+// ../rix/src/plugins/plot.js
+function installPlotPlugin(systemContext) {
+  const plot = createPlotOutputCollection();
+  systemContext.registerHostValue("plot", plot, { doc: "Portable plotting helpers that produce intrinsic Graphics scenes" });
+  return plot;
+}
+
+// ../rix/src/plugins/bundled.js
+var BUNDLED_PLUGINS = [
+  {
+    metadata: {
+      id: "draw",
+      description: "Convenient 2D drawing helpers that produce core Graphics nodes.",
+      kind: "host",
+      mount: "draw",
+      exports: ["Line", "Polygon", "Label", "Box", "Circle"],
+      groups: ["Draw"],
+      permissions: [],
+      defaultEnabled: false
+    },
+    install: ({ systemContext }) => installDrawPlugin(systemContext)
+  },
+  {
+    metadata: {
+      id: "plot",
+      description: "Portable plotting helpers that produce core Graphics scenes.",
+      kind: "host",
+      mount: "plot",
+      exports: ["Polynomial"],
+      groups: ["Plot"],
+      permissions: [],
+      defaultEnabled: false
+    },
+    install: ({ systemContext }) => installPlotPlugin(systemContext)
+  }
+];
+function installBundledPlugins(catalog) {
+  for (const { metadata, install } of BUNDLED_PLUGINS) {
+    if (catalog.info(metadata.id))
+      continue;
+    catalog.addMetadata(metadata, { kind: "host" });
+    catalog.registerInstaller(metadata.id, install);
+  }
+  return catalog;
 }
 
 // ../rix/src/eval/functions/units.js
@@ -24931,9 +25047,6 @@ function createDefaultSystemContext(options = {}) {
   ctx.registerValue("Algebra", algebra, { doc: "Algebra presentation helpers" });
   const graphics = createGraphicsOutputCollection();
   ctx.registerValue("Graphics", graphics, { doc: "Intrinsic portable 2D scene language" });
-  installDrawPlugin(ctx);
-  const plot = createPlotOutputCollection();
-  ctx.registerValue("Plot", plot, { doc: "Portable plotting helpers" });
   ctx.registerAll(stdlibFunctions);
   ctx.registerAll(symbolicCapabilities);
   ctx.registerAll(outputFunctions);
@@ -24985,7 +25098,8 @@ function createDefaultSystemContext(options = {}) {
   ctx.register("DefineUnit", unitExactFunctions.DEFINEUNIT);
   ctx.register("DefineExactGenerator", unitExactFunctions.DEFINEEXACTGENERATOR);
   ctx.installManagementNamespaces();
-  ctx.attachPluginCatalog(options.pluginCatalog || new PluginCatalog);
+  const pluginCatalog = installBundledPlugins(options.pluginCatalog || new PluginCatalog);
+  ctx.attachPluginCatalog(pluginCatalog);
   for (const [group, members] of Object.entries(runtimeDefaults.capabilityGroups)) {
     ctx.registerGroup(group, members);
   }
@@ -25765,6 +25879,15 @@ function compareVariant(name, relation) {
     }
   };
 }
+function prepareFloatComparison(args, _context, evaluate2) {
+  if (args.length !== 2 || !args.some(isFloat))
+    return false;
+  try {
+    return { args: args.map((value) => requireFloat(value, evaluate2)) };
+  } catch {
+    return false;
+  }
+}
 function registerFloatType() {
   if (typeRegistry.has(TYPE_NAME))
     return;
@@ -25776,6 +25899,14 @@ function registerFloatType() {
     ["POW", [numericVariant("FloatIEEE754Pow", (left, right) => left ** right)]],
     ["POWPROD", [numericVariant("FloatIEEE754PowProd", (left, right) => left ** right)]],
     ["NEG", [numericVariant("FloatIEEE754Neg", (value) => -value, 1)]],
+    ["COMPARE", [{
+      name: "FloatIEEE754Compare",
+      prepare: prepareFloatComparison,
+      impl(args) {
+        const [left, right] = args.map(numberFrom2);
+        return new Integer(left < right ? -1n : left > right ? 1n : 0n);
+      }
+    }]],
     ["EQ", [compareVariant("FloatIEEE754Eq", (left, right) => left === right)]],
     ["NEQ", [compareVariant("FloatIEEE754Neq", (left, right) => left !== right)]],
     ["LT", [compareVariant("FloatIEEE754Lt", (left, right) => left < right)]],
@@ -25861,8 +25992,8 @@ function install(api) {
 // src/generated/bundled-plugin-catalog.js
 function createBundledPluginCatalog() {
   const catalog = new PluginCatalog;
-  catalog.addMetadata({ id: "approx-math-js", description: "JavaScript IEEE-754 Float conversion and optional approximate math.", kind: "host", mount: "float", exports: ["Float", "Interval", "Round", "Floor", "Ceiling", "Abs", "Sqrt", "Sin", "Cos", "Tan", "Log", "Exp"], groups: ["ApproximateMath", "Float"], permissions: [], defaultEnabled: false, sourcePath: "bundled:approx-math-js" }, { sourcePath: "bundled:approx-math-js", kind: "host" });
-  catalog.registerInstaller("approx-math-js", install);
+  catalog.addMetadata({ id: "float", description: "JavaScript IEEE-754 Float conversion and optional approximate math.", kind: "host", mount: "float", exports: ["Float", "Interval", "Round", "Floor", "Ceiling", "Abs", "Sqrt", "Sin", "Cos", "Tan", "Log", "Exp"], groups: ["ApproximateMath", "Float"], permissions: [], defaultEnabled: false, sourcePath: "bundled:float" }, { sourcePath: "bundled:float", kind: "host" });
+  catalog.registerInstaller("float", install);
   return catalog;
 }
 
@@ -25984,5 +26115,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { findHelp, createRixRepl };
 
-//# debugId=C8A33DF697E3AB7364756E2164756E21
-//# sourceMappingURL=chunk-fwpkfnwq.js.map
+//# debugId=858E8AC39446EC6264756E2164756E21
+//# sourceMappingURL=chunk-821j5xzy.js.map

@@ -13,12 +13,14 @@ wherever the base graphic vocabulary works.
 
 ## Plot an exact polynomial
 
-`.Plot.Polynomial` takes coefficients in descending-power order and a domain.
+Load the optional plot plugin once with `.Plugin.Load("plot")`. Its
+`.plot.Polynomial` helper takes coefficients in descending-power order and a domain.
 The coefficients and domain stay exact. Sampling to pixel coordinates happens
 only when the plot is constructed for rendering.
 
 ```rix edu
-plot := .Plot.Polynomial(
+.Plugin.Load("plot");
+plot := .plot.Polynomial(
     [1, -2, -1],
     [-1, 4],
     {= size=[640, 360], stroke="#2563eb", width=3 }
@@ -58,7 +60,8 @@ fragment, or a slide. The calculation remains separate from the document
 structure around it.
 
 ```rix edu
-parabola := .Plot.Polynomial([1, 0, -1], [-2, 2]);
+.Plugin.Load("plot");
+parabola := .plot.Polynomial([1, 0, -1], [-2, 2]);
 
 .Fragment([
     .Heading(2, "A portable plot"),

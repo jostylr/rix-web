@@ -49,9 +49,9 @@ default camelCase mount, exports, and capability groups.
 
 ```text
 .Plugin.List()
-.Plugin.Info("approx-math-js")
-.Plugin.Load("approx-math-js")
-.Plugin("approx-math-js")       # short form for Load
+.Plugin.Info("float")
+.Plugin.Load("float")
+.Plugin("float")       # short form for Load
 ```
 
 A discovered mount can be visible to the static checker while still refusing
@@ -61,7 +61,7 @@ or runs arbitrary JavaScript. A load may choose another camelCase root for a
 separate session or REPL experiment:
 
 ```text
-.Plugin.Load("approx-math-js", {= as = "jsFloat" })
+.Plugin.Load("float", {= as = "jsFloat" })
 .jsFloat.Sin(x)
 ```
 

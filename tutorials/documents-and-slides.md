@@ -66,7 +66,8 @@ caption and a stable label that a future document renderer can use for cross
 references.
 
 ```rix edu
-curve := .Plot.Polynomial([1, -2, -1], [-1, 4]);
+.Plugin.Load("plot");
+curve := .plot.Polynomial([1, -2, -1], [-1, 4]);
 .Figure(curve, "Graph of x squared minus 2x minus 1", "fig:curve") ;
 ```
 
@@ -78,6 +79,7 @@ series of clearly separated slide sections; other hosts can add navigation or
 export without changing the RiX source.
 
 ```rix edu
+.Plugin.Load("plot");
 deck := .Slides(
     [
         .Slide(
@@ -90,7 +92,7 @@ deck := .Slides(
         .Slide(
             .Fragment([
                 .Heading(1, "Exact graph"),
-                .Plot.Polynomial([1, -2, -1], [-1, 4])
+                .plot.Polynomial([1, -2, -1], [-1, 4])
             ]),
             "Graph"
         )

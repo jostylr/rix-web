@@ -13,11 +13,11 @@
 <h2>Discover before you load</h2>
 <p>Hosts can scan <code>plugins/</code> folders for <code>.plugin.rix</code> and <code>.plugin.rix.js</code> files. Each file begins with a YAML doc-comment header, which is read without executing the plugin. The header describes the plugin id, short description, default camelCase mount, exports, and capability groups.</p>
 <section class="comparison-code"><header>text</header><pre><code>.Plugin.List()
-.Plugin.Info(&quot;approx-math-js&quot;)
-.Plugin.Load(&quot;approx-math-js&quot;)
-.Plugin(&quot;approx-math-js&quot;)       # short form for Load</code></pre></section>
+.Plugin.Info(&quot;float&quot;)
+.Plugin.Load(&quot;float&quot;)
+.Plugin(&quot;float&quot;)       # short form for Load</code></pre></section>
 <p>A discovered mount can be visible to the static checker while still refusing calls until loading is approved. JavaScript plugin files additionally require an installer that the host explicitly trusts; discovering a file never imports or runs arbitrary JavaScript. A load may choose another camelCase root for a separate session or REPL experiment:</p>
-<section class="comparison-code"><header>text</header><pre><code>.Plugin.Load(&quot;approx-math-js&quot;, {= as = &quot;jsFloat&quot; })
+<section class="comparison-code"><header>text</header><pre><code>.Plugin.Load(&quot;float&quot;, {= as = &quot;jsFloat&quot; })
 .jsFloat.Sin(x)</code></pre></section>
 <p>Because a complete RiX script is checked before its first expression runs, choose renamed mounts in a host startup configuration or a plugin-selection prelude when later source needs static checking against that name.</p>
 <h2>Callable host objects</h2>

@@ -31,11 +31,13 @@ table: Selected values #tbl:squares
 <p>Interpolation here is different from a deferred block such as <code>@{; ...}</code>. The template evaluates the interpolation immediately and stores the resulting text or output value in the document.</p>
 <h2>Wrap a graphic as a figure</h2>
 <p>Figures are not limited to tables. This creates a small plot, then gives it a caption and a stable label that a future document renderer can use for cross references.</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">curve := .Plot.Polynomial([1, -2, -1], [-1, 4]);
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Plugin.Load(&quot;plot&quot;);
+curve := .plot.Polynomial([1, -2, -1], [-1, 4]);
 .Figure(curve, &quot;Graph of x squared minus 2x minus 1&quot;, &quot;fig:curve&quot;) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>Build a deck one slide at a time</h2>
 <p><code>.Slide</code> attaches a title and optional metadata to one output value. <code>.Slides</code> preserves the order of those slides. RiX Web renders the current deck as a series of clearly separated slide sections; other hosts can add navigation or export without changing the RiX source.</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="20" spellcheck="false">deck := .Slides(
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="21" spellcheck="false">.Plugin.Load(&quot;plot&quot;);
+deck := .Slides(
     [
         .Slide(
             .Fragment([
@@ -47,7 +49,7 @@ table: Selected values #tbl:squares
         .Slide(
             .Fragment([
                 .Heading(1, &quot;Exact graph&quot;),
-                .Plot.Polynomial([1, -2, -1], [-1, 4])
+                .plot.Polynomial([1, -2, -1], [-1, 4])
             ]),
             &quot;Graph&quot;
         )

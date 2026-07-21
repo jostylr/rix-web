@@ -12,18 +12,20 @@ available to other math domains while giving graphics a stable namespace:
 `.Graphics.Path`, `.Graphics.Group`, and so on. Put the resulting nodes inside
 `.Graphics.Graphic` to render them.
 
-## Use `.Draw` when a convenience is enough
+## Use `.draw` when a convenience is enough
 
-`.Draw` is the bundled authoring plugin. Its small helpers compile directly to
+`.draw` is the bundled authoring plugin. Load it with `.Plugin.Load("draw")`.
+Its small helpers compile directly to
 intrinsic graphics nodes: `Line` produces a path, `Polygon` produces a closed
 path, `Label` produces text, and `Box` produces a rectangle.
 
 ```rix edu
+.Plugin.Load("draw");
 .Graphics.Graphic([250, 130], [
-    .Draw.Box([0, 0], [250, 130], {= fill="#f8fafc", stroke="#cbd5e1" }),
-    .Draw.Line([35, 95], [125, 25], {= stroke="#2563eb", width=3 }),
-    .Draw.Polygon([[125, 25], [108, 31], [118, 44]], {= fill="#2563eb" }),
-    .Draw.Label([125, 112], "convenience helpers", {= anchor=:middle, size=14 })
+    .draw.Box([0, 0], [250, 130], {= fill="#f8fafc", stroke="#cbd5e1" }),
+    .draw.Line([35, 95], [125, 25], {= stroke="#2563eb", width=3 }),
+    .draw.Polygon([[125, 25], [108, 31], [118, 44]], {= fill="#2563eb" }),
+    .draw.Label([125, 112], "convenience helpers", {= anchor=:middle, size=14 })
 ]) ;
 ```
 
