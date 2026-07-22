@@ -24529,7 +24529,7 @@ var outputFunctions = {
   DOCUMENT_TEMPLATE: documentTemplateFunction
 };
 
-// ../rix/src/plugins/draw.js
+// ../rix/plugins/draw/draw.plugin.rix.js
 function entriesFor(args, positional, name) {
   if (args.length === 1 && args[0]?.type === "map" && args[0].entries instanceof Map)
     return args[0].entries;
@@ -24579,20 +24579,20 @@ function createDrawPluginCollection() {
   }
   return { type: "map", entries, _ext: extension };
 }
-function installDrawPlugin(systemContext) {
+function install({ systemContext }) {
   const draw = createDrawPluginCollection();
   systemContext.registerHostValue("draw", draw, { doc: "Convenient authoring helpers that produce intrinsic Graphics nodes" });
   return draw;
 }
 
-// ../rix/src/plugins/plot.js
-function installPlotPlugin(systemContext) {
+// ../rix/plugins/plot/plot.plugin.rix.js
+function install2({ systemContext }) {
   const plot = createPlotOutputCollection();
   systemContext.registerHostValue("plot", plot, { doc: "Portable plotting helpers that produce intrinsic Graphics scenes" });
   return plot;
 }
 
-// ../rix/src/plugins/bundled.js
+// ../rix/plugins/bundled.js
 var BUNDLED_PLUGINS = [
   {
     metadata: {
@@ -24605,7 +24605,7 @@ var BUNDLED_PLUGINS = [
       permissions: [],
       defaultEnabled: false
     },
-    install: ({ systemContext }) => installDrawPlugin(systemContext)
+    install: ({ systemContext }) => install({ systemContext })
   },
   {
     metadata: {
@@ -24618,15 +24618,15 @@ var BUNDLED_PLUGINS = [
       permissions: [],
       defaultEnabled: false
     },
-    install: ({ systemContext }) => installPlotPlugin(systemContext)
+    install: ({ systemContext }) => install2({ systemContext })
   }
 ];
 function installBundledPlugins(catalog) {
-  for (const { metadata, install } of BUNDLED_PLUGINS) {
+  for (const { metadata, install: install3 } of BUNDLED_PLUGINS) {
     if (catalog.info(metadata.id))
       continue;
     catalog.addMetadata(metadata, { kind: "host" });
-    catalog.registerInstaller(metadata.id, install);
+    catalog.registerInstaller(metadata.id, install3);
   }
   return catalog;
 }
@@ -25744,6 +25744,56 @@ function normalizeReplSource(source) {
   return insertions.sort((left, right) => right - left).reduce((result, position) => `${result.slice(0, position)};${result.slice(position)}`, source);
 }
 
+// ../rix/examples/plugins/example-array-js/array-js.plugin.rix.js
+function valuesFrom(value) {
+  if (!value || !Array.isArray(value.values)) {
+    throw new Error("arrayJs expects an array or sequence");
+  }
+  return value.values;
+}
+function integerFrom(value) {
+  if (value instanceof Integer)
+    return value.value;
+  if (typeof value === "bigint")
+    return value;
+  throw new Error("arrayJs.Sum expects Integer values");
+}
+function sum(value) {
+  return new Integer(valuesFrom(value).reduce((total, item) => total + integerFrom(item), 0n));
+}
+function describe(value) {
+  const values = valuesFrom(value);
+  return { type: "string", value: `count ${values.length}; sum ${sum(value).value}` };
+}
+function reverse(value) {
+  return { type: "sequence", values: [...valuesFrom(value)].reverse() };
+}
+function collection() {
+  const entries = new Map;
+  const extension = new Map([["immutable", new Integer(1n)]]);
+  for (const [name, helper] of [["Sum", sum], ["Describe", describe], ["Reverse", reverse]]) {
+    entries.set(name, helper);
+    extension.set(name.toUpperCase(), {
+      type: "method_builtin",
+      name,
+      impl: (args) => helper(args[1])
+    });
+  }
+  return { type: "map", entries, _ext: extension };
+}
+function install3({ systemContext }) {
+  const value = collection();
+  systemContext.registerHostCallableValue("arrayJs", value, {
+    impl(args) {
+      return sum(args[0]);
+    }
+  }, {
+    doc: "Example JavaScript array plugin",
+    groups: ["Examples"]
+  });
+  return value;
+}
+
 // ../rix/src/eval/functions/math.js
 function numberFrom(value) {
   if (value instanceof Integer)
@@ -25782,7 +25832,7 @@ var mathFunctions = {
   EXP: { impl: unary(Math.exp), pure: true, doc: "Exponential" }
 };
 
-// ../rix/examples/approx-math/approx-math-browser-plugin.js
+// ../rix/plugins/float/browser-installer.js
 var TYPE_NAME = "FloatIEEE754";
 var NATIVE_TYPE = "float_ieee754";
 function isFloat(value) {
@@ -25983,17 +26033,30 @@ function installBrowserApproxMathPlugin({ systemContext, registry }) {
   });
   return systemContext;
 }
-
-// plugins/approx-math.plugin.rix.js
-function install(api) {
-  return installBrowserApproxMathPlugin(api);
-}
+var install4 = installBrowserApproxMathPlugin;
 
 // src/generated/bundled-plugin-catalog.js
 function createBundledPluginCatalog() {
   const catalog = new PluginCatalog;
+  catalog.addMetadata({ id: "example-array-js", description: "Teaching JavaScript plugin demonstrating array sum, summary text, and reversal.", kind: "host", mount: "arrayJs", exports: ["Sum", "Describe", "Reverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, sourcePath: "bundled:example-array-js" }, { sourcePath: "bundled:example-array-js", kind: "host" });
+  catalog.registerInstaller("example-array-js", install3);
+  catalog.addMetadata({ id: "example-array-rix", description: "Teaching RiX plugin demonstrating array sum, summary text, and reversal.", kind: "rix", mount: "arrayRix", exports: ["arrayRixSum", "arrayRixDescribe", "arrayRixReverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, sourcePath: "bundled:example-array-rix" }, { source: `/**
+id: example-array-rix
+description: Teaching RiX plugin demonstrating array sum, summary text, and reversal.
+kind: rix
+mount: arrayRix
+exports: [arrayRixSum, arrayRixDescribe, arrayRixReverse]
+groups: [Examples]
+permissions: []
+defaultEnabled: false
+**/
+
+.Host.Register("arrayRixSum", (values) -> values.Reduce((total, value) -> total + value, 0), "Sum an array of Integers", ["Examples"]);
+.Host.Register("arrayRixDescribe", (values) -> @"count @{values.Len()}; sum @{values.Reduce((total, value) -> total + value, 0)}", "Summarize an array of Integers", ["Examples"]);
+.Host.Register("arrayRixReverse", (values) -> values.Reverse(), "Reverse an array", ["Examples"]);
+`, sourcePath: "bundled:example-array-rix", kind: "rix" });
   catalog.addMetadata({ id: "float", description: "JavaScript IEEE-754 Float conversion and optional approximate math.", kind: "host", mount: "float", exports: ["Float", "Interval", "Round", "Floor", "Ceiling", "Abs", "Sqrt", "Sin", "Cos", "Tan", "Log", "Exp"], groups: ["ApproximateMath", "Float"], permissions: [], defaultEnabled: false, sourcePath: "bundled:float" }, { sourcePath: "bundled:float", kind: "host" });
-  catalog.registerInstaller("float", install);
+  catalog.registerInstaller("float", install4);
   return catalog;
 }
 
@@ -26115,5 +26178,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { findHelp, createRixRepl };
 
-//# debugId=858E8AC39446EC6264756E2164756E21
-//# sourceMappingURL=chunk-821j5xzy.js.map
+//# debugId=A9940DF202B69A8D64756E2164756E21
+//# sourceMappingURL=chunk-r4xgm9m0.js.map

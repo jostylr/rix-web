@@ -2,9 +2,18 @@ import path from "node:path";
 import { NodePluginCatalog } from "../../rix/src/runtime/plugin-catalog-node.js";
 
 const root = path.resolve(import.meta.dir, "..");
-const pluginRoot = path.join(root, "plugins");
+// Keep the browser's approved plugins explicit. The package source lives in
+// RiX itself; this generator turns only these reviewed packages into imports.
+const pluginRoots = [
+    path.resolve(root, "..", "rix", "plugins", "float"),
+    path.resolve(root, "..", "rix", "examples", "plugins", "example-array-js"),
+    path.resolve(root, "..", "rix", "examples", "plugins", "example-array-rix"),
+];
 const outputPath = path.join(root, "src", "generated", "bundled-plugin-catalog.js");
-const catalog = new NodePluginCatalog({ roots: [pluginRoot] }).scan();
+const catalog = new NodePluginCatalog({ roots: pluginRoots }).scan();
+const browserInstaller = {
+    float: path.resolve(root, "..", "rix", "plugins", "float", "browser-installer.js"),
+};
 const relativeImport = (from, to) => {
     const relative = path.relative(path.dirname(from), to).split(path.sep).join("/");
     return relative.startsWith(".") ? relative : `./${relative}`;
@@ -12,7 +21,7 @@ const relativeImport = (from, to) => {
 
 const hostEntries = catalog.list().filter((entry) => entry.kind === "host");
 const imports = hostEntries.map((entry, index) => (
-    `import { install as install${index} } from ${JSON.stringify(relativeImport(outputPath, entry.sourcePath))};`
+    `import { install as install${index} } from ${JSON.stringify(relativeImport(outputPath, browserInstaller[entry.id] || entry.sourcePath))};`
 ));
 const registrations = catalog.list().map((entry) => {
     const metadata = { ...entry };
