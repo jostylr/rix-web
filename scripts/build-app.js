@@ -2,6 +2,7 @@ import { mkdir, readFile, readdir, unlink } from "node:fs/promises";
 import path from "node:path";
 
 await import("./generate-plugin-catalog.js");
+await import("./generate-plugin-tutorial-index.js");
 
 const root = path.resolve(import.meta.dir, "..");
 const source = path.join(root, "src");

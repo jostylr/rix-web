@@ -1,4 +1,6 @@
-export const tutorials = [
+import { pluginTutorialGroups, pluginTutorials } from "./generated/plugin-tutorial-index.js";
+
+const coreTutorials = [
     { number: "1", file: "getting-started.html", title: "Start with exact numbers", description: "Variables, fractions, and a persistent RiX session." },
     { number: "1a", parent: "1", file: "capstone-exact-recipe.html", title: "Capstone: exact recipe scaling", description: "Combine variables, fractions, intervals, and calculator workflow." },
     { number: "2", file: "collections.html", title: "Collections", description: "A high-level tour of arrays, maps, and sets." },
@@ -75,6 +77,8 @@ export const tutorials = [
     { number: "13d", parent: "13", file: "host-and-plugins.html", title: "Host objects and plugins", description: "Understand camelCase host roots, registration, and capability boundaries." },
     { number: "13e", parent: "13", file: "capstone-explicit-core.html", title: "Capstone: explicit core", description: "Translate a compact RiX calculation into named core calls." },
 ];
+
+export const tutorials = [...coreTutorials, ...pluginTutorialGroups, ...pluginTutorials];
 
 export const rootTutorials = tutorials.filter((tutorial) => !tutorial.parent);
 export const tutorialByNumber = (number) => tutorials.find((tutorial) => tutorial.number === String(number));

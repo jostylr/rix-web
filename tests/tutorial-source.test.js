@@ -45,6 +45,26 @@ test("structured output has focused table, document, graphic, and drawing lesson
     expect(drawing).toContain(".Graphics.Clip");
 });
 
+test("plugin tutorials are generated after core lessons and grouped by theme", async () => {
+    expect(tutorialByNumber("14")?.title).toBe("Plugins: Numbers and numerics");
+    expect(tutorialByNumber("14a")?.file).toBe("plugin-float.html");
+    expect(tutorialByNumber("14b")?.status).toBe("proposed");
+    expect(tutorialByNumber("15")?.title).toBe("Plugins: Graphics and geometry");
+    expect(tutorialByNumber("15a")?.pluginId).toBe("draw");
+    expect(tutorialByNumber("15b")?.pluginId).toBe("plot");
+    const generator = await Bun.file(new URL("../scripts/generate-plugin-tutorial-index.js", import.meta.url)).text();
+    expect(generator).toContain('path.join(pluginsRoot, entry.name, "tutorial.md")');
+    expect(generator).toContain('"Numbers and numerics"');
+    expect(generator).toContain('"Graphics and geometry"');
+});
+
+test("proposed plugin tutorials render as non-runnable acceptance documentation", async () => {
+    const source = await Bun.file(new URL("../scripts/build-tutorials.js", import.meta.url)).text();
+    expect(source).toContain('runnable: lesson.status !== "proposed"');
+    expect(source).toContain("Proposed RiX API");
+    expect(source).toContain("This acceptance tutorial documents planned behavior.");
+});
+
 test("tutorial generator writes a tutorial index and removes the legacy learn path", async () => {
     const source = await Bun.file(new URL("../scripts/build-tutorials.js", import.meta.url)).text();
     expect(source).toContain('path.join(root, "docs", "tutorial")');

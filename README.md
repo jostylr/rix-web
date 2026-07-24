@@ -17,6 +17,12 @@ bun run serve
 `tutorials/` into runnable lesson pages. The complete static site is written to
 `docs/`, ready for a docs-folder static host.
 
+The tutorial build also discovers `../rix/plugins/*/tutorial.md`. Plugin lessons
+are appended after the core language walkthrough and grouped by their
+frontmatter `theme`. Lessons marked `status: implemented` are checked and
+runnable against the browser's approved plugin catalog; `status: proposed`
+publishes acceptance documentation without misleading Run buttons.
+
 The calculator accepts `.rix` files directly. Selecting a `.js` module shows an
 intentional notice: browser module execution is held behind an explicit trust
 boundary until RiX module permissions are designed.

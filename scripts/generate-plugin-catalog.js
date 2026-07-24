@@ -6,6 +6,8 @@ const root = path.resolve(import.meta.dir, "..");
 // RiX itself; this generator turns only these reviewed packages into imports.
 const pluginRoots = [
     path.resolve(root, "..", "rix", "plugins", "float"),
+    path.resolve(root, "..", "rix", "plugins", "draw"),
+    path.resolve(root, "..", "rix", "plugins", "plot"),
     path.resolve(root, "..", "rix", "examples", "plugins", "example-array-js"),
     path.resolve(root, "..", "rix", "examples", "plugins", "example-array-rix"),
 ];

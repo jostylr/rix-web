@@ -1,6 +1,8 @@
 import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
-import { childrenOf, objectHelp, rootTutorials, tutorialByNumber, tutorials } from "../src/tutorial-index.js";
+
+await import("./generate-plugin-tutorial-index.js");
+const { childrenOf, objectHelp, rootTutorials, tutorialByNumber, tutorials } = await import("../src/tutorial-index.js");
 
 const root = path.resolve(import.meta.dir, "..");
 const tutorialsDir = path.join(root, "tutorials");
@@ -39,7 +41,7 @@ function parseFrontmatter(source) {
     return [meta, match[2]];
 }
 
-function renderMarkdown(markdown) {
+function renderMarkdown(markdown, { runnable = true } = {}) {
     const lines = markdown.split("\n");
     const html = [];
     let paragraph = [];
@@ -53,10 +55,11 @@ function renderMarkdown(markdown) {
     };
     const flushCode = () => {
         if (code === null) return;
-        if (codeLanguage.split(/\s+/, 1)[0].toLowerCase() === "rix") {
+        if (codeLanguage.split(/\s+/, 1)[0].toLowerCase() === "rix" && runnable) {
             html.push(`<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="${textareaRows(code)}" spellcheck="false">${escapeHtml(code)}</textarea><div class="tutorial-output" data-tutorial-output></div></section>`);
         } else {
-            html.push(`<section class="comparison-code"><header>${escapeHtml(codeLanguage || "code")}</header><pre><code>${escapeHtml(code)}</code></pre></section>`);
+            const label = !runnable && codeLanguage.split(/\s+/, 1)[0].toLowerCase() === "rix" ? "Proposed RiX API" : codeLanguage || "code";
+            html.push(`<section class="comparison-code"><header>${escapeHtml(label)}</header><pre><code>${escapeHtml(code)}</code></pre></section>`);
         }
         code = null;
         codeLanguage = "";
@@ -146,11 +149,14 @@ function referenceLinks(current) {
 }
 
 function tutorialIndexTemplate() {
-    const contents = rootTutorials.map((tutorial) => {
+    const renderContents = (roots) => roots.map((tutorial) => {
         const children = childrenOf(tutorial.number);
         return `<section class="tutorial-index-section"><a href="./${tutorial.file}"><b>${escapeHtml(tutorial.number)} · ${escapeHtml(tutorial.title)}</b><span>${escapeHtml(tutorial.description)}</span></a>${children.length ? `<div class="tutorial-index-children">${children.map((child) => `<a href="./${child.file}">${escapeHtml(child.number)} · ${escapeHtml(child.title)}</a>`).join("")}</div>` : ""}</section>`;
     }).join("");
-    return `<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="An interactive introduction to the RiX language and RatCalc." /><title>RiX tutorials — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><a href="../">Open calculator</a></header><article class="lesson-card tutorial-index-card"><p class="lesson-kicker">RiX walkthroughs</p><h1>Learn RiX by running it.</h1><p class="deck">These tutorials introduce RiX one concept at a time. Each lesson has live examples in its own persistent session, so you can run a cell, change it, and see what happens.</p><p class="tutorial-index-intro">Start with exact numbers, then follow the topics that match what you want to build. Capstone lessons combine the material into a small practical exercise.</p><nav class="tutorial-index" aria-label="Tutorial table of contents">${contents}</nav><footer class="lesson-footer">Want to try an expression first? <a href="../">Open RatCalc →</a></footer></article></div></main></body></html>`;
+    const coreRoots = rootTutorials.filter((tutorial) => !tutorial.pluginGroup);
+    const pluginRoots = rootTutorials.filter((tutorial) => tutorial.pluginGroup);
+    const pluginSection = pluginRoots.length ? `<h2>Plugin tutorials</h2><p class="tutorial-index-intro">Plugin lessons follow the core language. The recommended implementation path begins with Oracle Phase 1, Numerics Phase 1, SVG and Canvas, then proceeds through geometry, data/documents, additional real backends, and publication renderers. Implemented lessons are runnable; proposed lessons show their planned API without a Run button.</p><nav class="tutorial-index tutorial-plugin-index" aria-label="Plugin tutorial table of contents">${renderContents(pluginRoots)}</nav>` : "";
+    return `<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="An interactive introduction to the RiX language and RatCalc." /><title>RiX tutorials — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><a href="../">Open calculator</a></header><article class="lesson-card tutorial-index-card"><p class="lesson-kicker">RiX walkthroughs</p><h1>Learn RiX by running it.</h1><p class="deck">These tutorials introduce RiX one concept at a time. Each lesson has live examples in its own persistent session, so you can run a cell, change it, and see what happens.</p><p class="tutorial-index-intro">Start with exact numbers, then follow the topics that match what you want to build. Capstone lessons combine the material into a small practical exercise.</p><nav class="tutorial-index" aria-label="Tutorial table of contents">${renderContents(coreRoots)}</nav>${pluginSection}<footer class="lesson-footer">Want to try an expression first? <a href="../">Open RatCalc →</a></footer></article></div></main></body></html>`;
 }
 
 function pageTemplate(meta, body) {
@@ -159,7 +165,11 @@ function pageTemplate(meta, body) {
     const sectionHref = current.parent ? `./${section.file}#lesson-start` : "#lesson-start";
     const suffix = current.parent ? current.number.slice(section.number.length) : "";
     const suffixLabel = suffix ? ` <span aria-hidden="true">·</span> <span>${escapeHtml(suffix)}</span>` : "";
-    return `<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="${escapeHtml(meta.description || "A runnable RiX lesson")}" /><title>${escapeHtml(meta.title || "RiX tutorial")} — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout">${sidebar(current)}<article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="${sectionHref}" title="${escapeHtml(section.title)}">${escapeHtml(section.number)}</a>${suffixLabel}</p><h1>${escapeHtml(meta.title || "RiX tutorial")}</h1><p class="deck">${escapeHtml(meta.description || "Read, run, then change the next line.")}</p><div class="lesson-content">${body}</div>${relatedFunctions(current)}${referenceLinks(current)}${navigation(current)}<footer class="lesson-footer">Every RiX cell above runs in this page and shares one RiX session. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>`;
+    const proposed = meta.status === "proposed";
+    const statusNotice = proposed ? `<aside class="challenge"><p class="eyebrow">Proposed plugin</p><p>This acceptance tutorial documents planned behavior. Its RiX examples are displayed as code until the plugin is implemented and tested.</p></aside>` : "";
+    const notebookNotice = meta.pluginId ? `<aside class="challenge"><p class="eyebrow">Develop in RiX Notebook</p><p>Open <code>rix/plugins/${escapeHtml(meta.pluginId)}/tutorial.md</code> in the macOS app to edit this lesson with live preview and plugin-aware code results. Use Reload plugins after changing project-local plugin source.</p></aside>` : "";
+    const footer = proposed ? `This is a design tutorial; its examples become runnable when Phase 1 is implemented.` : `Every RiX cell above runs in this page and shares one RiX session.`;
+    return `<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="${escapeHtml(meta.description || "A runnable RiX lesson")}" /><title>${escapeHtml(meta.title || "RiX tutorial")} — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout">${sidebar(current)}<article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="${sectionHref}" title="${escapeHtml(section.title)}">${escapeHtml(section.number)}</a>${suffixLabel}</p><h1>${escapeHtml(meta.title || "RiX tutorial")}</h1><p class="deck">${escapeHtml(meta.description || "Read, run, then change the next line.")}</p>${statusNotice}${notebookNotice}<div class="lesson-content">${body}</div>${relatedFunctions(current)}${referenceLinks(current)}${navigation(current)}<footer class="lesson-footer">${footer} <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>`;
 }
 
 const markdownFiles = [];
@@ -169,6 +179,18 @@ for (const filename of markdownFiles) {
     const [meta, markdown] = parseFrontmatter(await Bun.file(path.join(tutorialsDir, filename)).text());
     await Bun.write(path.join(outDir, `${path.basename(filename, ".md")}.html`), pageTemplate(meta, renderMarkdown(markdown)));
     generatedFiles.add(`${path.basename(filename, ".md")}.html`);
+}
+for (const lesson of tutorials.filter((item) => item.pluginTutorial)) {
+    const [meta, markdown] = parseFrontmatter(await Bun.file(path.resolve(root, lesson.sourcePath)).text());
+    const mergedMeta = { ...meta, number: lesson.number, title: lesson.title, description: lesson.description, status: lesson.status, pluginId: lesson.pluginId };
+    await Bun.write(path.join(outDir, lesson.file), pageTemplate(mergedMeta, renderMarkdown(markdown, { runnable: lesson.status !== "proposed" })));
+    generatedFiles.add(lesson.file);
+}
+for (const group of tutorials.filter((item) => item.pluginGroup)) {
+    const children = childrenOf(group.number);
+    const body = `<p>These optional packages share the <strong>${escapeHtml(group.theme)}</strong> theme. Phase 1 lessons emphasize one useful end-to-end result, documentation, tests, and a tutorial before the APIs become broad.</p><div class="tutorial-index-children">${children.map((child) => `<a href="./${child.file}">${escapeHtml(child.title)}${child.status === "proposed" ? " · proposed" : ""}</a>`).join("")}</div>`;
+    await Bun.write(path.join(outDir, group.file), pageTemplate(group, body));
+    generatedFiles.add(group.file);
 }
 for (const lesson of tutorials) {
     if (!generatedFiles.has(lesson.file)) {

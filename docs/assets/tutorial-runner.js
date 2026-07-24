@@ -1,9 +1,79 @@
 import {
   createRixRepl
-} from "./chunk-r4xgm9m0.js";
+} from "./chunk-3hf5rkcz.js";
+
+// src/generated/plugin-tutorial-index.js
+var pluginTutorialGroups = [
+  {
+    number: "14",
+    file: "plugins-numbers-and-numerics.html",
+    title: "Plugins: Numbers and numerics",
+    description: "Optional real-number representations, refinement, and numerical algorithms.",
+    pluginGroup: true,
+    theme: "Numbers and numerics"
+  },
+  {
+    number: "15",
+    file: "plugins-graphics-and-geometry.html",
+    title: "Plugins: Graphics and geometry",
+    description: "Portable drawing, plots, constructions, and scene authoring.",
+    pluginGroup: true,
+    theme: "Graphics and geometry"
+  }
+];
+var pluginTutorials = [
+  {
+    pluginId: "float",
+    title: "Optional Float math",
+    description: "Load IEEE-754 approximate math without making it a core RiX numeric type.",
+    status: "implemented",
+    theme: "Numbers and numerics",
+    sourcePath: "../rix/plugins/float/tutorial.md",
+    number: "14a",
+    parent: "14",
+    file: "plugin-float.html",
+    pluginTutorial: true
+  },
+  {
+    pluginId: "oracle",
+    title: "Rational betweenness oracles",
+    description: "Query and refine a real number through exact rational intervals.",
+    status: "proposed",
+    theme: "Numbers and numerics",
+    sourcePath: "../rix/plugins/oracle/tutorial.md",
+    number: "14b",
+    parent: "14",
+    file: "plugin-oracle.html",
+    pluginTutorial: true
+  },
+  {
+    pluginId: "draw",
+    title: "Drawing portable graphics",
+    description: "Use the optional draw package to create core graphics scene nodes.",
+    status: "implemented",
+    theme: "Graphics and geometry",
+    sourcePath: "../rix/plugins/draw/tutorial.md",
+    number: "15a",
+    parent: "15",
+    file: "plugin-draw.html",
+    pluginTutorial: true
+  },
+  {
+    pluginId: "plot",
+    title: "Plotting a polynomial",
+    description: "Build a portable graphics scene with the plot plugin.",
+    status: "implemented",
+    theme: "Graphics and geometry",
+    sourcePath: "../rix/plugins/plot/tutorial.md",
+    number: "15b",
+    parent: "15",
+    file: "plugin-plot.html",
+    pluginTutorial: true
+  }
+];
 
 // src/tutorial-index.js
-var tutorials = [
+var coreTutorials = [
   { number: "1", file: "getting-started.html", title: "Start with exact numbers", description: "Variables, fractions, and a persistent RiX session." },
   { number: "1a", parent: "1", file: "capstone-exact-recipe.html", title: "Capstone: exact recipe scaling", description: "Combine variables, fractions, intervals, and calculator workflow." },
   { number: "2", file: "collections.html", title: "Collections", description: "A high-level tour of arrays, maps, and sets." },
@@ -80,6 +150,7 @@ var tutorials = [
   { number: "13d", parent: "13", file: "host-and-plugins.html", title: "Host objects and plugins", description: "Understand camelCase host roots, registration, and capability boundaries." },
   { number: "13e", parent: "13", file: "capstone-explicit-core.html", title: "Capstone: explicit core", description: "Translate a compact RiX calculation into named core calls." }
 ];
+var tutorials = [...coreTutorials, ...pluginTutorialGroups, ...pluginTutorials];
 var rootTutorials = tutorials.filter((tutorial) => !tutorial.parent);
 var objectHelp = {
   array: {
@@ -237,5 +308,5 @@ function openObjectHelp(name, requestedFunction = null) {
   dialog.showModal();
 }
 
-//# debugId=6C2F65DCED2B82BE64756E2164756E21
+//# debugId=858994297AE25CAC64756E2164756E21
 //# sourceMappingURL=tutorial-runner.js.map

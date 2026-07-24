@@ -135,17 +135,24 @@ test("the web REPL exposes contextual completion without evaluating the draft", 
 
 test("every indexed tutorial has a Markdown source file", async () => {
     for (const tutorial of tutorials) {
-        const source = Bun.file(new URL(`../tutorials/${tutorial.file.replace(/\.html$/, ".md")}`, import.meta.url));
+        if (tutorial.pluginGroup) continue;
+        const source = tutorial.pluginTutorial
+            ? Bun.file(new URL(tutorial.sourcePath, new URL("../", import.meta.url)))
+            : Bun.file(new URL(`../tutorials/${tutorial.file.replace(/\.html$/, ".md")}`, import.meta.url));
         expect(await source.exists(), `lesson ${tutorial.number}`).toBe(true);
     }
 });
 
 test("every published RiX tutorial cell executes", async () => {
     for (const tutorial of tutorials) {
-        const source = await Bun.file(new URL(`../tutorials/${tutorial.file.replace(/\.html$/, ".md")}`, import.meta.url)).text();
+        if (tutorial.pluginGroup || tutorial.status === "proposed") continue;
+        const source = tutorial.pluginTutorial
+            ? await Bun.file(new URL(tutorial.sourcePath, new URL("../", import.meta.url))).text()
+            : await Bun.file(new URL(`../tutorials/${tutorial.file.replace(/\.html$/, ".md")}`, import.meta.url)).text();
         const cells = source.matchAll(/```rix(?:[ \t]+[^\n]*)?[ \t]*\n([\s\S]*?)\n```/g);
+        const repl = createRixRepl();
         for (const [, code] of cells) {
-            const response = createRixRepl().run(code);
+            const response = repl.run(code);
             expect(response.type, `lesson ${tutorial.number}: ${response.text}`).toBe("result");
         }
     }

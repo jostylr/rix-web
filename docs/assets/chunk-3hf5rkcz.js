@@ -26038,6 +26038,8 @@ var install4 = installBrowserApproxMathPlugin;
 // src/generated/bundled-plugin-catalog.js
 function createBundledPluginCatalog() {
   const catalog = new PluginCatalog;
+  catalog.addMetadata({ id: "draw", description: "Convenient 2D drawing helpers that produce core Graphics nodes.", kind: "host", mount: "draw", exports: ["Line", "Polygon", "Label", "Box", "Circle"], groups: ["Draw"], permissions: [], defaultEnabled: false, sourcePath: "bundled:draw" }, { sourcePath: "bundled:draw", kind: "host" });
+  catalog.registerInstaller("draw", install);
   catalog.addMetadata({ id: "example-array-js", description: "Teaching JavaScript plugin demonstrating array sum, summary text, and reversal.", kind: "host", mount: "arrayJs", exports: ["Sum", "Describe", "Reverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, sourcePath: "bundled:example-array-js" }, { sourcePath: "bundled:example-array-js", kind: "host" });
   catalog.registerInstaller("example-array-js", install3);
   catalog.addMetadata({ id: "example-array-rix", description: "Teaching RiX plugin demonstrating array sum, summary text, and reversal.", kind: "rix", mount: "arrayRix", exports: ["arrayRixSum", "arrayRixDescribe", "arrayRixReverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, sourcePath: "bundled:example-array-rix" }, { source: `/**
@@ -26057,6 +26059,8 @@ defaultEnabled: false
 `, sourcePath: "bundled:example-array-rix", kind: "rix" });
   catalog.addMetadata({ id: "float", description: "JavaScript IEEE-754 Float conversion and optional approximate math.", kind: "host", mount: "float", exports: ["Float", "Interval", "Round", "Floor", "Ceiling", "Abs", "Sqrt", "Sin", "Cos", "Tan", "Log", "Exp"], groups: ["ApproximateMath", "Float"], permissions: [], defaultEnabled: false, sourcePath: "bundled:float" }, { sourcePath: "bundled:float", kind: "host" });
   catalog.registerInstaller("float", install4);
+  catalog.addMetadata({ id: "plot", description: "Portable plotting helpers that produce core Graphics scenes.", kind: "host", mount: "plot", exports: ["Polynomial"], groups: ["Plot"], permissions: [], defaultEnabled: false, sourcePath: "bundled:plot" }, { sourcePath: "bundled:plot", kind: "host" });
+  catalog.registerInstaller("plot", install2);
   return catalog;
 }
 
@@ -26178,5 +26182,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { findHelp, createRixRepl };
 
-//# debugId=A9940DF202B69A8D64756E2164756E21
-//# sourceMappingURL=chunk-r4xgm9m0.js.map
+//# debugId=BBD244C2AE31206664756E2164756E21
+//# sourceMappingURL=chunk-3hf5rkcz.js.map
