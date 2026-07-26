@@ -19574,6 +19574,9 @@ var path_default = { isAbsolute: unavailable2, resolve: unavailable2, dirname: u
 
 // ../rix/src/runtime/plugin-catalog.js
 function validateMetadata(metadata, sourcePath, kind) {
+  if (metadata.ignore !== undefined && typeof metadata.ignore !== "boolean") {
+    throw new Error(`${sourcePath}: ignore must be true or false`);
+  }
   if (typeof metadata.id !== "string" || !metadata.id.trim()) {
     throw new Error(`${sourcePath}: plugin header requires a non-empty id`);
   }
@@ -19601,6 +19604,7 @@ function validateMetadata(metadata, sourcePath, kind) {
     groups: metadata.groups || [],
     permissions: metadata.permissions || [],
     defaultEnabled: metadata.defaultEnabled === true,
+    ignore: metadata.ignore === true,
     sourcePath
   };
 }
@@ -19647,6 +19651,8 @@ class PluginCatalog {
     return this;
   }
   addMetadata(metadata, { sourcePath = `<plugin:${metadata?.id || "unknown"}>`, source = null, kind = metadata?.kind } = {}) {
+    if (metadata?.ignore === true)
+      return null;
     const validatedKind = kind || metadata?.kind;
     if (validatedKind !== "rix" && validatedKind !== "host") {
       throw new Error(`${sourcePath}: plugin kind must be 'rix' or 'host'`);
@@ -26038,11 +26044,11 @@ var install4 = installBrowserApproxMathPlugin;
 // src/generated/bundled-plugin-catalog.js
 function createBundledPluginCatalog() {
   const catalog = new PluginCatalog;
-  catalog.addMetadata({ id: "draw", description: "Convenient 2D drawing helpers that produce core Graphics nodes.", kind: "host", mount: "draw", exports: ["Line", "Polygon", "Label", "Box", "Circle"], groups: ["Draw"], permissions: [], defaultEnabled: false, sourcePath: "bundled:draw" }, { sourcePath: "bundled:draw", kind: "host" });
+  catalog.addMetadata({ id: "draw", description: "Convenient 2D drawing helpers that produce core Graphics nodes.", kind: "host", mount: "draw", exports: ["Line", "Polygon", "Label", "Box", "Circle"], groups: ["Draw"], permissions: [], defaultEnabled: false, ignore: false, sourcePath: "bundled:draw" }, { sourcePath: "bundled:draw", kind: "host" });
   catalog.registerInstaller("draw", install);
-  catalog.addMetadata({ id: "example-array-js", description: "Teaching JavaScript plugin demonstrating array sum, summary text, and reversal.", kind: "host", mount: "arrayJs", exports: ["Sum", "Describe", "Reverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, sourcePath: "bundled:example-array-js" }, { sourcePath: "bundled:example-array-js", kind: "host" });
+  catalog.addMetadata({ id: "example-array-js", description: "Teaching JavaScript plugin demonstrating array sum, summary text, and reversal.", kind: "host", mount: "arrayJs", exports: ["Sum", "Describe", "Reverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, ignore: false, sourcePath: "bundled:example-array-js" }, { sourcePath: "bundled:example-array-js", kind: "host" });
   catalog.registerInstaller("example-array-js", install3);
-  catalog.addMetadata({ id: "example-array-rix", description: "Teaching RiX plugin demonstrating array sum, summary text, and reversal.", kind: "rix", mount: "arrayRix", exports: ["arrayRixSum", "arrayRixDescribe", "arrayRixReverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, sourcePath: "bundled:example-array-rix" }, { source: `/**
+  catalog.addMetadata({ id: "example-array-rix", description: "Teaching RiX plugin demonstrating array sum, summary text, and reversal.", kind: "rix", mount: "arrayRix", exports: ["arrayRixSum", "arrayRixDescribe", "arrayRixReverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, ignore: false, sourcePath: "bundled:example-array-rix" }, { source: `/**
 id: example-array-rix
 description: Teaching RiX plugin demonstrating array sum, summary text, and reversal.
 kind: rix
@@ -26057,9 +26063,9 @@ defaultEnabled: false
 .Host.Register("arrayRixDescribe", (values) -> @"count @{values.Len()}; sum @{values.Reduce((total, value) -> total + value, 0)}", "Summarize an array of Integers", ["Examples"]);
 .Host.Register("arrayRixReverse", (values) -> values.Reverse(), "Reverse an array", ["Examples"]);
 `, sourcePath: "bundled:example-array-rix", kind: "rix" });
-  catalog.addMetadata({ id: "float", description: "JavaScript IEEE-754 Float conversion and optional approximate math.", kind: "host", mount: "float", exports: ["Float", "Interval", "Round", "Floor", "Ceiling", "Abs", "Sqrt", "Sin", "Cos", "Tan", "Log", "Exp"], groups: ["ApproximateMath", "Float"], permissions: [], defaultEnabled: false, sourcePath: "bundled:float" }, { sourcePath: "bundled:float", kind: "host" });
+  catalog.addMetadata({ id: "float", description: "JavaScript IEEE-754 Float conversion and optional approximate math.", kind: "host", mount: "float", exports: ["Float", "Interval", "Round", "Floor", "Ceiling", "Abs", "Sqrt", "Sin", "Cos", "Tan", "Log", "Exp"], groups: ["ApproximateMath", "Float"], permissions: [], defaultEnabled: false, ignore: false, sourcePath: "bundled:float" }, { sourcePath: "bundled:float", kind: "host" });
   catalog.registerInstaller("float", install4);
-  catalog.addMetadata({ id: "plot", description: "Portable plotting helpers that produce core Graphics scenes.", kind: "host", mount: "plot", exports: ["Polynomial"], groups: ["Plot"], permissions: [], defaultEnabled: false, sourcePath: "bundled:plot" }, { sourcePath: "bundled:plot", kind: "host" });
+  catalog.addMetadata({ id: "plot", description: "Portable plotting helpers that produce core Graphics scenes.", kind: "host", mount: "plot", exports: ["Polynomial"], groups: ["Plot"], permissions: [], defaultEnabled: false, ignore: false, sourcePath: "bundled:plot" }, { sourcePath: "bundled:plot", kind: "host" });
   catalog.registerInstaller("plot", install2);
   return catalog;
 }
@@ -26182,5 +26188,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { findHelp, createRixRepl };
 
-//# debugId=BBD244C2AE31206664756E2164756E21
-//# sourceMappingURL=chunk-3hf5rkcz.js.map
+//# debugId=340829D6A894C4CD64756E2164756E21
+//# sourceMappingURL=chunk-2jrbsm5e.js.map

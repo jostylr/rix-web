@@ -1,6 +1,6 @@
 import {
   createRixRepl
-} from "./chunk-3hf5rkcz.js";
+} from "./chunk-2jrbsm5e.js";
 
 // src/generated/plugin-tutorial-index.js
 var pluginTutorialGroups = [

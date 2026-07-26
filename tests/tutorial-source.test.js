@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { parse, tokenize } from "../../rix/src/index.js";
-import { tutorialByNumber } from "../src/tutorial-index.js";
+import { tutorialByNumber, tutorials } from "../src/tutorial-index.js";
 import { normalizeReplSource } from "../src/repl-source.js";
 
 test("tutorial sources use runnable RiX blocks and a challenge", async () => {
@@ -21,6 +21,22 @@ test("tutorial RiX cells are ready to edit in the notebook", async () => {
                 .at(-1);
             expect(finalToken?.value, file).toBe(";");
             expect(() => parse(code), file).not.toThrow();
+        }
+    }
+});
+
+test("plugin tutorial RiX cells use complete semicolon-terminated script syntax", async () => {
+    for (const tutorial of tutorials.filter(({ pluginTutorial }) => pluginTutorial)) {
+        const source = await Bun.file(new URL(tutorial.sourcePath, new URL("../", import.meta.url))).text();
+        const cells = [...source.matchAll(/^```rix(?:[ \t]+[^\n]*)?\n([\s\S]*?)^```[ \t]*$/gim)];
+        expect(cells.length, tutorial.pluginId).toBeGreaterThan(0);
+        for (const [, code] of cells) {
+            expect(normalizeReplSource(code), tutorial.pluginId).toBe(code);
+            const finalToken = tokenize(code)
+                .filter((token) => token.type !== "End" && !(token.type === "String" && token.kind === "comment"))
+                .at(-1);
+            expect(finalToken?.value, tutorial.pluginId).toBe(";");
+            expect(() => parse(code), tutorial.pluginId).not.toThrow();
         }
     }
 });
