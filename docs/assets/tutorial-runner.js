@@ -1,6 +1,6 @@
 import {
   createRixRepl
-} from "./chunk-2jrbsm5e.js";
+} from "./chunk-34qxbec6.js";
 
 // src/generated/plugin-tutorial-index.js
 var pluginTutorialGroups = [
@@ -124,8 +124,10 @@ var coreTutorials = [
   { number: "9a", parent: "9", file: "system-context.html", title: "System capabilities", description: "The dot object, aliases, and permissions." },
   { number: "9b", parent: "9", file: "assertions-and-symbols.html", title: "Assertions and symbolic specs", description: "Constraints and symbolic construction." },
   { number: "9c", parent: "9", file: "symbolic-calculus.html", title: "Exact symbolic calculus", description: "Compose, differentiate, integrate, and simplify symbolic specs." },
-  { number: "9d", parent: "9", file: "diagnostics.html", title: "Diagnostics and tests", description: "Warnings, tracing, and test helpers." },
-  { number: "9e", parent: "9", file: "capstone-verified-rule.html", title: "Capstone: verified rule", description: "Build a small rule and validate it with system helpers." },
+  { number: "9d", parent: "9", file: "structural-arithmetic.html", title: "Structural arithmetic", description: "Use spacing to preserve forms, combine structures, and splice RiX values." },
+  { number: "9e", parent: "9", file: "backtick-parsers.html", title: "Backtick parsers and functions", description: "Select notation parsers and turn free symbols into callables." },
+  { number: "9f", parent: "9", file: "diagnostics.html", title: "Diagnostics and tests", description: "Warnings, tracing, and test helpers." },
+  { number: "9g", parent: "9", file: "capstone-verified-rule.html", title: "Capstone: verified rule", description: "Build a small rule and validate it with system helpers." },
   { number: "10", file: "scripts.html", title: "Scripts and extensions", description: "RiX modules, host boundaries, and language extension." },
   { number: "10a", parent: "10", file: "rix-scripts.html", title: "RiX scripts", description: "Imports, interface bindings, and capability frames." },
   { number: "10b", parent: "10", file: "javascript-modules.html", title: "JavaScript modules", description: "Host modules and the browser trust boundary." },
@@ -308,5 +310,5 @@ function openObjectHelp(name, requestedFunction = null) {
   dialog.showModal();
 }
 
-//# debugId=858994297AE25CAC64756E2164756E21
+//# debugId=3FB6FAA691EBF4D264756E2164756E21
 //# sourceMappingURL=tutorial-runner.js.map

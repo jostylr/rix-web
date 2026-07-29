@@ -1,5 +1,5 @@
 ---
-number: 9d
+number: 9f
 title: Diagnostics and tests
 description: Warnings, tracing, and test helpers.
 ---

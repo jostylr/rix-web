@@ -135,9 +135,15 @@ RiX source.
 - **9c Exact symbolic calculus** — identity symbols, anonymous outputs,
   substitution/composition, name-preserving arithmetic, `.Poly`, `.Deriv`,
   `.Integrate`, `.Transform`, attached function specs, and speccability.
-- **9d Diagnostics and tests** — `.Warn`, `.Info`, `.Error`, `.Stop`,
+- **9d Structural arithmetic** — Tight and spaced forms, `@name`, and
+  `@(RiX expression)` splices.
+- **9e Backtick parsers and functions** — `.Name.modifier:` dispatch,
+  alphabetical free symbols, `.Fun`, inferred callables, and `.Poly`.
+- **9f Diagnostics and tests** — `.Warn`, `.Info`, `.Error`, `.Stop`,
   `.Debug`, `.Trace`, `.Test`, `.TestError`, `.TestStop`, and the CLI test
-  runner. This is the capstone for writing maintainable RiX programs.
+  runner.
+- **9g Capstone: verified rule** — combine a reusable rule, expected values,
+  assertions, and diagnostics into a maintainable check.
 
 ### 10. Scripts, packages, and extensions
 

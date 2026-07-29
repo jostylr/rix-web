@@ -61,6 +61,17 @@ test("structured output has focused table, document, graphic, and drawing lesson
     expect(drawing).toContain(".Graphics.Clip");
 });
 
+test("structural arithmetic has focused notation and parser lessons", async () => {
+    expect(tutorialByNumber("9d")?.file).toBe("structural-arithmetic.html");
+    expect(tutorialByNumber("9e")?.file).toBe("backtick-parsers.html");
+    const structural = await Bun.file(new URL("../tutorials/structural-arithmetic.md", import.meta.url)).text();
+    const parsers = await Bun.file(new URL("../tutorials/backtick-parsers.md", import.meta.url)).text();
+    expect(structural).toContain("`@(offset^2 + 1)/4`");
+    expect(structural).toContain("`6/4 + 2/4`");
+    expect(parsers).toContain("`.SArith.Fun:");
+    expect(parsers).toContain("`.Poly:");
+});
+
 test("plugin tutorials are generated after core lessons and grouped by theme", async () => {
     expect(tutorialByNumber("14")?.title).toBe("Plugins: Numbers and numerics");
     expect(tutorialByNumber("14a")?.file).toBe("plugin-float.html");

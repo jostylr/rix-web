@@ -16,6 +16,7 @@ var symbols = [
   "?-",
   "^=>",
   "?&",
+  "!!",
   "!?",
   "++=",
   "++",
@@ -129,6 +130,7 @@ var symbols = [
   "'",
   ":",
   "?",
+  "!",
   "\\"
 ];
 function posToLineCol(input, pos) {
@@ -369,14 +371,8 @@ function tryMatchExplicitCF(input, position) {
 function tryMatchNumber(input, position) {
   const remaining = input.slice(position);
   let match;
-  if (!/^(-?\d|-?\.\d)/.test(remaining)) {
+  if (!/^(\d|\.\d)/.test(remaining)) {
     return null;
-  }
-  if (/^-\d+\.~\d/.test(remaining)) {
-    const { line, col } = posToLineCol(input, position);
-    const cfStr = remaining.match(/^-\d+\.~[\d~]*/)[0];
-    const posStr = cfStr.slice(1);
-    throw new Error(`Ambiguous continued fraction at ${line}:${col}: write ~${cfStr} for a negative first coefficient, or -~${posStr} to negate the continued fraction value.`);
   }
   match = remaining.match(/^-?(?:0z\[\d+\]|0[a-zA-Z])[0-9a-zA-Z]+\.~[0-9a-zA-Z]+(?:~[0-9a-zA-Z]+)*/);
   if (match) {
@@ -405,25 +401,7 @@ function tryMatchNumber(input, position) {
       pos: [position, position, position + match[0].length]
     };
   }
-  match = remaining.match(/^-?(?:(?:0z\[\d+\]|0[a-zA-Z])[0-9a-zA-Z]*(?:\.[0-9a-zA-Z]*)?|(?:\d+\.\.\d+\/\d+|\d+\.\d+#\d+|\.\d+#\d+|\d+#\d+|\d+\/\d+|\d+\.\d+|\.\d+|\d+)):-?(?:(?:0z\[\d+\]|0[a-zA-Z])[0-9a-zA-Z]*(?:\.[0-9a-zA-Z]*)?|(?:\d+\.\.\d+\/\d+|\d+\.\d+#\d+|\.\d+#\d+|\d+#\d+|\d+\/\d+|\d+\.\d+|\.\d+|\d+))/);
-  if (match) {
-    return {
-      type: "Number",
-      original: match[0],
-      value: match[0],
-      pos: [position, position, position + match[0].length]
-    };
-  }
   match = remaining.match(/^-?(?:0z\[\d+\]|0[a-zA-Z])[0-9a-zA-Z]*\.\.(?:0z\[\d+\]|0[a-zA-Z])?[0-9a-zA-Z]*\/(?:0z\[\d+\]|0[a-zA-Z])?[0-9a-zA-Z]*/);
-  if (match) {
-    return {
-      type: "Number",
-      original: match[0],
-      value: match[0],
-      pos: [position, position, position + match[0].length]
-    };
-  }
-  match = remaining.match(/^-?(?:0z\[\d+\]|0[a-zA-Z])[0-9a-zA-Z]*\/(?:0z\[\d+\]|0[a-zA-Z])?[0-9a-zA-Z]*/);
   if (match) {
     return {
       type: "Number",
@@ -450,15 +428,6 @@ function tryMatchNumber(input, position) {
       pos: [position, position, position + match[0].length]
     };
   }
-  match = remaining.match(/^-?(?:\d+\.\.\d+\/\d+|\d+\.\d*#\d+|\.\d*#\d+|\d+#\d+|\d+\/\d+|\d+\.\d+|\.\d+|\d+):-?(?:\d+\.\.\d+\/\d+|\d+\.\d*#\d+|\.\d*#\d+|\d+#\d+|\d+\/\d+|\d+\.\d+|\.\d+|\d+)/);
-  if (match) {
-    return {
-      type: "Number",
-      original: match[0],
-      value: match[0],
-      pos: [position, position, position + match[0].length]
-    };
-  }
   match = remaining.match(/^\d+\.~\d+(?:~\d+)*/);
   if (match) {
     return {
@@ -468,7 +437,7 @@ function tryMatchNumber(input, position) {
       pos: [position, position, position + match[0].length]
     };
   }
-  match = remaining.match(/^-?(?:\d(?:_?\d)*\.\d(?:_?\d)*#\d(?:_?\d)*|\.\d(?:_?\d)*#\d(?:_?\d)*|\d(?:_?\d)*\.\.\d(?:_?\d)*\/\d(?:_?\d)*|\d(?:_?\d)*\/\d(?:_?\d)*|\d(?:_?\d)*\.\d(?:_?\d)*|\.\d(?:_?\d)*|\d(?:_?\d)*)_\^[+-]?\d(?:_?\d)*/);
+  match = remaining.match(/^-?(?:\d(?:_?\d)*\.\d(?:_?\d)*#\d(?:_?\d)*|\.\d(?:_?\d)*#\d(?:_?\d)*|\d(?:_?\d)*\.\.\d(?:_?\d)*\/\d(?:_?\d)*|\d(?:_?\d)*\.\d(?:_?\d)*|\.\d(?:_?\d)*|\d(?:_?\d)*)_\^[+-]?\d(?:_?\d)*/);
   if (match) {
     return {
       type: "Number",
@@ -504,25 +473,7 @@ function tryMatchNumber(input, position) {
       pos: [position, position, position + match[0].length]
     };
   }
-  match = remaining.match(/^-?\d+\.\d+\[[^\]]+\]/);
-  if (match) {
-    return {
-      type: "Number",
-      original: match[0],
-      value: match[0],
-      pos: [position, position, position + match[0].length]
-    };
-  }
-  match = remaining.match(/^-?(?:\d+(?:\.\d+)?|\.\d+):-?(?:\d+(?:\.\d+)?|\.\d+)/);
-  if (match) {
-    return {
-      type: "Number",
-      original: match[0],
-      value: match[0],
-      pos: [position, position, position + match[0].length]
-    };
-  }
-  match = remaining.match(/^-?\d+\/\d+/);
+  match = remaining.match(/^-?(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)\[[^\]]+\]/);
   if (match) {
     return {
       type: "Number",
@@ -1114,7 +1065,7 @@ var PRECEDENCE = {
   ADDITION: 80,
   MULTIPLICATION: 90,
   EXPONENTIATION: 100,
-  UNARY: 110,
+  UNARY: 99,
   CALCULUS: 115,
   POSTFIX: 120,
   PROPERTY: 130
@@ -1405,6 +1356,16 @@ var SYMBOL_TABLE = {
     precedence: PRECEDENCE.MULTIPLICATION,
     associativity: "left",
     type: "infix"
+  },
+  "!": {
+    precedence: PRECEDENCE.POSTFIX,
+    associativity: "left",
+    type: "postfix"
+  },
+  "!!": {
+    precedence: PRECEDENCE.POSTFIX,
+    associativity: "left",
+    type: "postfix"
   },
   "^": {
     precedence: PRECEDENCE.EXPONENTIATION,
@@ -1860,6 +1821,21 @@ class Parser {
             name: "@",
             original: token.original
           });
+        } else if (token.value === "!!") {
+          this.advance();
+          const operand = this.parseExpression(PRECEDENCE.UNARY);
+          const inner = this.createNode("UnaryOperation", {
+            operator: "!",
+            operand,
+            pos: token.pos,
+            original: "!" + (operand.original || "")
+          });
+          return this.createNode("UnaryOperation", {
+            operator: "!",
+            operand: inner,
+            pos: token.pos,
+            original: token.original + (operand.original || "")
+          });
         } else if (token.value === "+" || token.value === "-" || token.value === "!") {
           return this.parseUnaryOperator();
         } else if (token.value === "'") {
@@ -1916,6 +1892,14 @@ class Parser {
   }
   parseInfix(left, symbolInfo) {
     const operator = this.current;
+    if (symbolInfo.type === "postfix" && (operator.value === "!" || operator.value === "!!")) {
+      this.advance();
+      return this.createNode(operator.value === "!" ? "Factorial" : "DoubleFactorial", {
+        expression: left,
+        pos: left.pos,
+        original: (left.original || "") + operator.original
+      });
+    }
     if (operator.value === "(" && (left.type === "UserIdentifier" || left.type === "SystemIdentifier" || left.type === "SystemFunctionRef")) {
       if (left.type === "UserIdentifier" && /^[\p{L}]/u.test(left.name)) {
         const grouping = this.parseGrouping();
@@ -4708,12 +4692,46 @@ class Parser {
   }
   parseEmbeddedLanguage(token) {
     const content = token.value;
-    if (content.startsWith(":") || content.indexOf(":") === -1) {
-      const body2 = content.startsWith(":") ? content.slice(1) : content;
+    if (content.startsWith(".")) {
+      const colonIndex2 = content.indexOf(":");
+      if (colonIndex2 === -1) {
+        this.error("Named backtick parser header requires ':' after .Name[.modifier...]");
+      }
+      const header2 = content.slice(1, colonIndex2).trim();
+      const parts = header2.split(".").map((part) => part.trim());
+      if (parts.length === 0 || parts.some((part) => !/^[\p{L}_][\p{L}\p{N}_]*$/u.test(part))) {
+        this.error("Invalid backtick parser header. Expected .Name[.modifier...]:body");
+      }
+      return this.createNode("EmbeddedLanguage", {
+        language: parts[0],
+        context: null,
+        modifiers: parts.slice(1),
+        body: content.slice(colonIndex2 + 1),
+        explicitParser: true,
+        original: token.original
+      });
+    }
+    if (content.startsWith(":")) {
       return this.createNode("EmbeddedLanguage", {
         language: "RiX-String",
         context: null,
-        body: body2,
+        body: content.slice(1),
+        original: token.original
+      });
+    }
+    if (content.indexOf(":") === -1) {
+      return this.createNode("EmbeddedLanguage", {
+        language: "SArith",
+        context: null,
+        body: content,
+        original: token.original
+      });
+    }
+    if (!/^[A-Z]/.test(content)) {
+      return this.createNode("EmbeddedLanguage", {
+        language: "SArith",
+        context: null,
+        body: content,
         original: token.original
       });
     }
@@ -5938,7 +5956,7 @@ class BaseSystem {
   ]);
   constructor(characters, name) {
     if (typeof characters === "string") {
-      this.#characters = characters.split("");
+      this.#characters = [...characters];
     } else if (Array.isArray(characters)) {
       this.#characters = [...characters];
     } else {
@@ -5946,6 +5964,9 @@ class BaseSystem {
     }
     if (this.#characters.length < 2) {
       throw new Error("Base system must have at least 2 characters");
+    }
+    if (this.#characters.some((character) => typeof character !== "string" || [...character].length !== 1)) {
+      throw new Error("Each base system character must be a single Unicode character");
     }
     this.#base = this.#characters.length;
     this.#charMap = this.#createCharacterMap();
@@ -5964,8 +5985,8 @@ class BaseSystem {
   }
   getChar(value) {
     const i = Number(value);
-    if (i < 0 || i >= this.#characters.length) {
-      throw new Error(`Value ${value} is out of range for base ${this.#base}`);
+    if (!Number.isSafeInteger(i) || i < 0 || i >= this.#characters.length) {
+      throw new Error(`Value ${value} must be an in-range integer for base ${this.#base}`);
     }
     return this.#characters[i];
   }
@@ -6047,10 +6068,12 @@ class BaseSystem {
       negative = true;
       str = str.slice(1);
     }
+    if (str.length === 0) {
+      throw new Error("A minus sign must be followed by at least one digit");
+    }
     let result = 0n;
     const baseBigInt = BigInt(this.#base);
-    for (let i = 0;i < str.length; i++) {
-      const char = str[i];
+    for (const char of str) {
       if (!this.#charMap.has(char)) {
         throw new Error(`Invalid character '${char}' for ${this.#name} (base ${this.#base})`);
       }
@@ -6773,11 +6796,6 @@ class Rational {
     }
     return count;
   }
-  bitLength() {
-    const numLen = bitLength(this.#numerator);
-    const denLen = bitLength(this.#denominator);
-    return Math.max(numLen, denLen);
-  }
   #computeWholePart() {
     if (this.#wholePart !== undefined)
       return;
@@ -7335,21 +7353,86 @@ class Rational {
     if (!(target instanceof Rational)) {
       throw new Error("Target must be a Rational");
     }
-    const diff = this.subtract(target);
-    return diff.isNegative ? diff.negate() : diff;
+    return this.subtract(target).abs();
   }
   bestApproximation(maxDenominator) {
-    const cf = this.toContinuedFraction();
-    let bestApprox = new Rational(cf[0], 1n);
-    const convergents = this.convergents();
-    for (const convergent of convergents) {
-      if (convergent.denominator <= maxDenominator) {
-        bestApprox = convergent;
-      } else {
+    if (typeof maxDenominator !== "bigint" || maxDenominator < 1n) {
+      throw new Error("Maximum denominator must be a positive bigint");
+    }
+    if (this.#denominator <= maxDenominator) {
+      return new Rational(this.#numerator, this.#denominator);
+    }
+    const negative = this.#numerator < 0n;
+    let numerator = negative ? -this.#numerator : this.#numerator;
+    let denominator = this.#denominator;
+    let previousNumerator = 0n;
+    let previousDenominator = 1n;
+    let currentNumerator = 1n;
+    let currentDenominator = 0n;
+    while (denominator !== 0n) {
+      const coefficient = numerator / denominator;
+      const nextDenominator = previousDenominator + coefficient * currentDenominator;
+      if (nextDenominator > maxDenominator) {
         break;
       }
+      [previousNumerator, currentNumerator] = [
+        currentNumerator,
+        previousNumerator + coefficient * currentNumerator
+      ];
+      [previousDenominator, currentDenominator] = [
+        currentDenominator,
+        nextDenominator
+      ];
+      [numerator, denominator] = [
+        denominator,
+        numerator - coefficient * denominator
+      ];
     }
-    return bestApprox;
+    const multiplier = (maxDenominator - previousDenominator) / currentDenominator;
+    const semiconvergentNumerator = previousNumerator + multiplier * currentNumerator;
+    const semiconvergentDenominator = previousDenominator + multiplier * currentDenominator;
+    const targetNumerator = negative ? -this.#numerator : this.#numerator;
+    const semiconvergentError = targetNumerator * semiconvergentDenominator - semiconvergentNumerator * this.#denominator;
+    const convergentError = targetNumerator * currentDenominator - currentNumerator * this.#denominator;
+    const absoluteSemiconvergentError = semiconvergentError < 0n ? -semiconvergentError : semiconvergentError;
+    const absoluteConvergentError = convergentError < 0n ? -convergentError : convergentError;
+    const useConvergent = absoluteConvergentError * semiconvergentDenominator <= absoluteSemiconvergentError * currentDenominator;
+    const resultNumerator = useConvergent ? currentNumerator : semiconvergentNumerator;
+    const resultDenominator = useConvergent ? currentDenominator : semiconvergentDenominator;
+    return new Rational(negative ? -resultNumerator : resultNumerator, resultDenominator);
+  }
+  bestConvergent(maxDenominator) {
+    if (typeof maxDenominator !== "bigint" || maxDenominator < 1n) {
+      throw new Error("Maximum denominator must be a positive bigint");
+    }
+    const negative = this.#numerator < 0n;
+    let numerator = negative ? -this.#numerator : this.#numerator;
+    let denominator = this.#denominator;
+    let previousNumerator = 0n;
+    let previousDenominator = 1n;
+    let currentNumerator = 1n;
+    let currentDenominator = 0n;
+    while (denominator !== 0n) {
+      const coefficient = numerator / denominator;
+      const nextNumerator = previousNumerator + coefficient * currentNumerator;
+      const nextDenominator = previousDenominator + coefficient * currentDenominator;
+      if (nextDenominator > maxDenominator) {
+        break;
+      }
+      [previousNumerator, currentNumerator] = [
+        currentNumerator,
+        nextNumerator
+      ];
+      [previousDenominator, currentDenominator] = [
+        currentDenominator,
+        nextDenominator
+      ];
+      [numerator, denominator] = [
+        denominator,
+        numerator - coefficient * denominator
+      ];
+    }
+    return new Rational(negative ? -currentNumerator : currentNumerator, currentDenominator);
   }
   bitLength() {
     return Math.max(bitLength(this.numerator), bitLength(this.denominator));
@@ -7622,12 +7705,14 @@ class RationalInterval {
     let r;
     if (value instanceof Rational) {
       r = value;
+    } else if (value && typeof value === "object" && typeof value.value === "bigint") {
+      r = new Rational(value.value);
     } else if (typeof value === "number") {
       r = new Rational(String(value));
     } else if (typeof value === "string" || typeof value === "bigint") {
       r = new Rational(value);
     } else {
-      r = new Rational(0);
+      throw new Error("Point value must be an Integer or Rational input");
     }
     return new RationalInterval(r, r);
   }
@@ -7673,13 +7758,19 @@ class RationalInterval {
     const offsetEnd = this.#end.subtract(midpoint);
     const offsetStart = this.#start.subtract(midpoint);
     const midpointStr = midpoint.toDecimal();
+    const decimalPlaces = midpointStr.includes(".") ? midpointStr.split(".")[1].length : 0;
+    const scaleFactor = decimalPlaces === 0 ? Rational.one : new Rational(10).pow(decimalPlaces + 1);
+    const scaledOffsetStart = offsetStart.multiply(scaleFactor);
+    const scaledOffsetEnd = offsetEnd.multiply(scaleFactor);
     if (offsetStart.equals(offsetEnd.negate())) {
-      const offsetStr = offsetEnd.abs().toDecimal();
+      const offsetStr = scaledOffsetEnd.abs().toDecimal();
       return `${midpointStr}[+-${offsetStr}]`;
     }
-    const offStartStr = offsetStart.toDecimal();
-    const offEndStr = offsetEnd.toDecimal();
-    return `${midpointStr}[${offStartStr > 0 ? "+" : ""}${offStartStr},${offEndStr > 0 ? "+" : ""}${offEndStr}]`;
+    const offStartStr = scaledOffsetStart.toDecimal();
+    const offEndStr = scaledOffsetEnd.toDecimal();
+    const startSign = scaledOffsetStart.compareTo(Rational.zero) > 0 ? "+" : "";
+    const endSign = scaledOffsetEnd.compareTo(Rational.zero) > 0 ? "+" : "";
+    return `${midpointStr}[${startSign}${offStartStr},${endSign}${offEndStr}]`;
   }
   relativeDecimalInterval() {
     const shortestDecimal = this.#findShortestPreciseDecimal();
@@ -7763,9 +7854,6 @@ class RationalInterval {
     } else {
       return new Rational(quotient - 1n, 1n);
     }
-  }
-  bitLength() {
-    return Math.max(this.#low.bitLength(), this.#high.bitLength());
   }
   mediant() {
     return new Rational(this.#low.numerator + this.#high.numerator, this.#low.denominator + this.#high.denominator);
@@ -7882,10 +7970,13 @@ class Fraction {
       this.#denominator = BigInt(denominator);
     }
     if (this.#denominator === 0n) {
-      if (options.allowInfinite && (this.#numerator === 1n || this.#numerator === -1n)) {
+      if (this.#numerator === 0n) {
+        throw new Error("The indeterminate fraction 0/0 is not allowed");
+      }
+      if (options.allowInfinite) {
         this._isInfinite = true;
       } else {
-        throw new Error("Denominator cannot be zero");
+        throw new Error("Denominator cannot be zero unless allowInfinite is true");
       }
     } else {
       this._isInfinite = false;
@@ -7900,26 +7991,31 @@ class Fraction {
   get isInfinite() {
     return this._isInfinite || false;
   }
+  static #fromComponents(numerator, denominator) {
+    return new Fraction(numerator, denominator, {
+      allowInfinite: denominator === 0n
+    });
+  }
   add(other) {
     if (this.#denominator !== other.denominator) {
       throw new Error("Addition only supported for equal denominators");
     }
-    return new Fraction(this.#numerator + other.numerator, this.#denominator);
+    return Fraction.#fromComponents(this.#numerator + other.numerator, this.#denominator);
   }
   subtract(other) {
     if (this.#denominator !== other.denominator) {
       throw new Error("Subtraction only supported for equal denominators");
     }
-    return new Fraction(this.#numerator - other.numerator, this.#denominator);
+    return Fraction.#fromComponents(this.#numerator - other.numerator, this.#denominator);
   }
   multiply(other) {
-    return new Fraction(this.#numerator * other.numerator, this.#denominator * other.denominator);
+    return Fraction.#fromComponents(this.#numerator * other.numerator, this.#denominator * other.denominator);
   }
   divide(other) {
     if (other.numerator === 0n) {
       throw new Error("Division by zero");
     }
-    return new Fraction(this.#numerator * other.denominator, this.#denominator * other.numerator);
+    return Fraction.#fromComponents(this.#numerator * other.denominator, this.#denominator * other.numerator);
   }
   pow(exponent) {
     const n = BigInt(exponent);
@@ -7933,13 +8029,13 @@ class Fraction {
       throw new Error("Zero cannot be raised to a negative power");
     }
     if (n < 0n) {
-      return new Fraction(this.#denominator ** -n, this.#numerator ** -n);
+      return Fraction.#fromComponents(this.#denominator ** -n, this.#numerator ** -n);
     }
-    return new Fraction(this.#numerator ** n, this.#denominator ** n);
+    return Fraction.#fromComponents(this.#numerator ** n, this.#denominator ** n);
   }
   scale(factor) {
     const scaleFactor = BigInt(factor);
-    return new Fraction(this.#numerator * scaleFactor, this.#denominator * scaleFactor);
+    return Fraction.#fromComponents(this.#numerator * scaleFactor, this.#denominator * scaleFactor);
   }
   static #gcd(a, b) {
     a = a < 0n ? -a : a;
@@ -7951,7 +8047,55 @@ class Fraction {
     }
     return a;
   }
+  static #compareValues(left, right) {
+    if (left.isInfinite && right.isInfinite) {
+      const leftSign = left.numerator < 0n ? -1 : 1;
+      const rightSign = right.numerator < 0n ? -1 : 1;
+      return leftSign < rightSign ? -1 : leftSign > rightSign ? 1 : 0;
+    }
+    if (left.isInfinite) {
+      return left.numerator < 0n ? -1 : 1;
+    }
+    if (right.isInfinite) {
+      return right.numerator < 0n ? 1 : -1;
+    }
+    let leftNumerator = left.numerator;
+    let leftDenominator = left.denominator;
+    let rightNumerator = right.numerator;
+    let rightDenominator = right.denominator;
+    if (leftDenominator < 0n) {
+      leftNumerator = -leftNumerator;
+      leftDenominator = -leftDenominator;
+    }
+    if (rightDenominator < 0n) {
+      rightNumerator = -rightNumerator;
+      rightDenominator = -rightDenominator;
+    }
+    const leftProduct = leftNumerator * rightDenominator;
+    const rightProduct = rightNumerator * leftDenominator;
+    return leftProduct < rightProduct ? -1 : leftProduct > rightProduct ? 1 : 0;
+  }
+  static #modInverse(value, modulus) {
+    let oldR = (value % modulus + modulus) % modulus;
+    let r = modulus;
+    let oldS = 1n;
+    let s = 0n;
+    while (r !== 0n) {
+      const quotient = oldR / r;
+      [oldR, r] = [r, oldR - quotient * r];
+      [oldS, s] = [s, oldS - quotient * s];
+    }
+    if (oldR !== 1n) {
+      throw new Error("A modular inverse does not exist");
+    }
+    return (oldS % modulus + modulus) % modulus;
+  }
   reduce() {
+    if (this.isInfinite) {
+      return new Fraction(this.#numerator < 0n ? -1n : 1n, 0n, {
+        allowInfinite: true
+      });
+    }
     if (this.#numerator === 0n) {
       return new Fraction(0, 1);
     }
@@ -7961,12 +8105,15 @@ class Fraction {
     if (reducedDen < 0n) {
       return new Fraction(-reducedNum, -reducedDen);
     }
-    return new Fraction(reducedNum, reducedDen);
+    return Fraction.#fromComponents(reducedNum, reducedDen);
   }
   static mediant(a, b) {
-    return new Fraction(a.numerator + b.numerator, a.denominator + b.denominator);
+    return a.mediant(b);
   }
   toRational() {
+    if (this.isInfinite) {
+      throw new Error("Cannot convert an infinite Fraction to Rational");
+    }
     return new Rational(this.#numerator, this.#denominator);
   }
   static fromRational(rational) {
@@ -7982,33 +8129,25 @@ class Fraction {
     return this.#numerator === other.numerator && this.#denominator === other.denominator;
   }
   lessThan(other) {
-    const leftSide = this.#numerator * other.denominator;
-    const rightSide = this.#denominator * other.numerator;
-    return leftSide < rightSide;
+    return Fraction.#compareValues(this, other) < 0;
   }
   lessThanOrEqual(other) {
-    const leftSide = this.#numerator * other.denominator;
-    const rightSide = this.#denominator * other.numerator;
-    return leftSide <= rightSide;
+    return Fraction.#compareValues(this, other) <= 0;
   }
   greaterThan(other) {
-    const leftSide = this.#numerator * other.denominator;
-    const rightSide = this.#denominator * other.numerator;
-    return leftSide > rightSide;
+    return Fraction.#compareValues(this, other) > 0;
   }
   greaterThanOrEqual(other) {
-    const leftSide = this.#numerator * other.denominator;
-    const rightSide = this.#denominator * other.numerator;
-    return leftSide >= rightSide;
+    return Fraction.#compareValues(this, other) >= 0;
   }
   E(exponent) {
     const exp = BigInt(exponent);
     if (exp >= 0n) {
       const newNumerator = this.#numerator * 10n ** exp;
-      return new Fraction(newNumerator, this.#denominator);
+      return Fraction.#fromComponents(newNumerator, this.#denominator);
     } else {
       const newDenominator = this.#denominator * 10n ** -exp;
-      return new Fraction(this.#numerator, newDenominator);
+      return Fraction.#fromComponents(this.#numerator, newDenominator);
     }
   }
   mediant(other) {
@@ -8026,67 +8165,73 @@ class Fraction {
       if (newNum2 === 0n && newDen2 === 0n) {
         throw new Error("Mediant would result in 0/0");
       }
-      return new Fraction(newNum2, newDen2);
+      return Fraction.#fromComponents(newNum2, newDen2);
     }
     const newNum = this.#numerator + other.numerator;
     const newDen = this.#denominator + other.denominator;
-    return new Fraction(newNum, newDen);
+    return Fraction.#fromComponents(newNum, newDen);
   }
   fareyParents() {
     if (this.isInfinite) {
       throw new Error("Cannot find Farey parents of infinite fraction");
     }
-    if (this.#numerator === 0n && this.#denominator === 1n) {
-      const left = new Fraction(-1n, 0n, { allowInfinite: true });
-      const right = new Fraction(1n, 0n, { allowInfinite: true });
-      return { left, right };
-    }
-    let leftBound = new Fraction(-1n, 0n, { allowInfinite: true });
-    let rightBound = new Fraction(1n, 0n, { allowInfinite: true });
-    let current = new Fraction(0n, 1n);
-    while (!current.equals(this)) {
-      if (this.lessThan(current)) {
-        rightBound = current;
-        current = leftBound.mediant(current);
-      } else {
-        leftBound = current;
-        current = current.mediant(rightBound);
+    const normalizedNumerator = this.#denominator < 0n ? -this.#numerator : this.#numerator;
+    const normalizedDenominator = this.#denominator < 0n ? -this.#denominator : this.#denominator;
+    const scale = Fraction.#gcd(normalizedNumerator, normalizedDenominator);
+    const reducedNumerator = normalizedNumerator / scale;
+    const reducedDenominator = normalizedDenominator / scale;
+    if (reducedNumerator === 0n) {
+      if (scale === 1n) {
+        return {
+          left: new Fraction(-1n, 0n, { allowInfinite: true }),
+          right: new Fraction(1n, 0n, { allowInfinite: true })
+        };
       }
+      const leftDenominator2 = scale / 2n;
+      return {
+        left: new Fraction(-1n, leftDenominator2),
+        right: new Fraction(1n, scale - leftDenominator2)
+      };
     }
-    return { left: leftBound, right: rightBound };
-  }
-  _extendedGcd(a, b) {
-    if (b === 0n) {
-      return { gcd: a, x: 1n, y: 0n };
+    let leftNumerator;
+    let leftDenominator;
+    let rightNumerator;
+    let rightDenominator;
+    if (reducedDenominator === 1n) {
+      if (reducedNumerator > 0n) {
+        leftNumerator = reducedNumerator - 1n;
+        leftDenominator = 1n;
+        rightNumerator = 1n;
+        rightDenominator = 0n;
+      } else {
+        leftNumerator = -1n;
+        leftDenominator = 0n;
+        rightNumerator = reducedNumerator + 1n;
+        rightDenominator = 1n;
+      }
+    } else {
+      leftDenominator = Fraction.#modInverse(reducedNumerator, reducedDenominator);
+      leftNumerator = (reducedNumerator * leftDenominator - 1n) / reducedDenominator;
+      rightNumerator = reducedNumerator - leftNumerator;
+      rightDenominator = reducedDenominator - leftDenominator;
     }
-    const result = this._extendedGcd(b, a % b);
-    const x = result.y;
-    const y = result.x - a / b * result.y;
-    return { gcd: result.gcd, x, y };
+    let leftCopies = (scale * reducedDenominator - 2n * leftDenominator + reducedDenominator) / (2n * reducedDenominator);
+    if (leftCopies < 0n) {
+      leftCopies = 0n;
+    } else if (leftCopies > scale - 1n) {
+      leftCopies = scale - 1n;
+    }
+    const rightCopies = scale - 1n - leftCopies;
+    return {
+      left: Fraction.#fromComponents(leftNumerator + leftCopies * reducedNumerator, leftDenominator + leftCopies * reducedDenominator),
+      right: Fraction.#fromComponents(rightNumerator + rightCopies * reducedNumerator, rightDenominator + rightCopies * reducedDenominator)
+    };
   }
   static mediantPartner(endpoint, mediant) {
-    if (endpoint.isInfinite || mediant.isInfinite) {
-      throw new Error("Cannot compute mediant partner with infinite fractions");
-    }
-    const p = endpoint.numerator;
-    const q = endpoint.denominator;
-    const a = mediant.numerator;
-    const b = mediant.denominator;
-    const s = 1n;
-    const numerator = a * (q + s) - b * p;
-    if (numerator % b !== 0n) {
-      const r2 = a * 2n - p;
-      const s_calculated = b * 2n - q;
-      return new Fraction(r2, s_calculated);
-    }
-    const r = numerator / b;
-    return new Fraction(r, s);
+    return Fraction.#fromComponents(mediant.numerator - endpoint.numerator, mediant.denominator - endpoint.denominator);
   }
   static isMediantTriple(left, mediant, right) {
     if (mediant.isInfinite) {
-      return false;
-    }
-    if (left.isInfinite && right.isInfinite) {
       return false;
     }
     try {
@@ -8100,15 +8245,12 @@ class Fraction {
     if (!Fraction.isMediantTriple(left, mediant, right)) {
       return false;
     }
-    if (!left.isInfinite && !right.isInfinite) {
-      const a = left.numerator;
-      const b = left.denominator;
-      const c = right.numerator;
-      const d = right.denominator;
-      const determinant = a * d - b * c;
-      return determinant === 1n || determinant === -1n;
+    if (mediant.numerator === 0n && mediant.denominator === 1n && left.denominator === 0n && right.denominator === 0n) {
+      return left.numerator === -1n && right.numerator === 1n || left.numerator === 1n && right.numerator === -1n;
     }
-    return left.isInfinite || right.isInfinite;
+    const determinant = left.numerator * right.denominator - left.denominator * right.numerator;
+    const magnitude = determinant < 0n ? -determinant : determinant;
+    return magnitude === Fraction.#gcd(mediant.numerator, mediant.denominator);
   }
   sternBrocotParent() {
     if (this.isInfinite) {
@@ -8214,105 +8356,6 @@ class Fraction {
     }
     ancestors.reverse();
     return ancestors;
-  }
-}
-
-// ../packages/core/src/fraction-interval.js
-class FractionInterval {
-  #low;
-  #high;
-  constructor(a, b) {
-    if (!(a instanceof Fraction) || !(b instanceof Fraction)) {
-      throw new Error("FractionInterval endpoints must be Fraction objects");
-    }
-    if (a.lessThanOrEqual(b)) {
-      this.#low = a;
-      this.#high = b;
-    } else {
-      this.#low = b;
-      this.#high = a;
-    }
-  }
-  get low() {
-    return this.#low;
-  }
-  get high() {
-    return this.#high;
-  }
-  mediantSplit() {
-    const mediant = Fraction.mediant(this.#low, this.#high);
-    return [
-      new FractionInterval(this.#low, mediant),
-      new FractionInterval(mediant, this.#high)
-    ];
-  }
-  partitionWithMediants(n = 1) {
-    if (n < 0) {
-      throw new Error("Depth of mediant partitioning must be non-negative");
-    }
-    if (n === 0) {
-      return [this];
-    }
-    let intervals = [this];
-    for (let level = 0;level < n; level++) {
-      const newIntervals = [];
-      for (const interval of intervals) {
-        const splitIntervals = interval.mediantSplit();
-        newIntervals.push(...splitIntervals);
-      }
-      intervals = newIntervals;
-    }
-    return intervals;
-  }
-  partitionWith(fn) {
-    const partitionPoints = fn(this.#low, this.#high);
-    if (!Array.isArray(partitionPoints)) {
-      throw new Error("Partition function must return an array of Fractions");
-    }
-    for (const point of partitionPoints) {
-      if (!(point instanceof Fraction)) {
-        throw new Error("Partition function must return Fraction objects");
-      }
-    }
-    const allPoints = [this.#low, ...partitionPoints, this.#high];
-    allPoints.sort((a, b) => {
-      if (a.equals(b))
-        return 0;
-      if (a.lessThan(b))
-        return -1;
-      return 1;
-    });
-    if (!allPoints[0].equals(this.#low) || !allPoints[allPoints.length - 1].equals(this.#high)) {
-      throw new Error("Partition points should be within the interval");
-    }
-    const uniquePoints = [];
-    for (let i = 0;i < allPoints.length; i++) {
-      if (i === 0 || !allPoints[i].equals(allPoints[i - 1])) {
-        uniquePoints.push(allPoints[i]);
-      }
-    }
-    const intervals = [];
-    for (let i = 0;i < uniquePoints.length - 1; i++) {
-      intervals.push(new FractionInterval(uniquePoints[i], uniquePoints[i + 1]));
-    }
-    return intervals;
-  }
-  toRationalInterval() {
-    return new RationalInterval(this.#low.toRational(), this.#high.toRational());
-  }
-  static fromRationalInterval(interval) {
-    return new FractionInterval(Fraction.fromRational(interval.low), Fraction.fromRational(interval.high));
-  }
-  toString() {
-    return `${this.#low.toString()}:${this.#high.toString()}`;
-  }
-  equals(other) {
-    return this.#low.equals(other.low) && this.#high.equals(other.high);
-  }
-  E(exponent) {
-    const newLow = this.#low.E(exponent);
-    const newHigh = this.#high.E(exponent);
-    return new FractionInterval(newLow, newHigh);
   }
 }
 
@@ -8585,6 +8628,234 @@ class Integer {
       return 0;
     return this.#value < 0n ? (-this.#value).toString(2).length : this.#value.toString(2).length;
   }
+}
+
+// ../packages/core/src/number-parser.js
+var DIGITS = String.raw`\d(?:_?\d)*`;
+var MAX_EXPANDED_DIGITS = 1e5;
+function inputString(input, label = "number") {
+  if (typeof input !== "string") {
+    throw new TypeError(`${label} must be a string`);
+  }
+  const value = input.trim();
+  if (value.length === 0) {
+    throw new Error(`${label} cannot be empty`);
+  }
+  return value;
+}
+function cleanDigits(value, { signed = false } = {}) {
+  const pattern = signed ? new RegExp(`^[+-]?${DIGITS}$`) : new RegExp(`^${DIGITS}$`);
+  if (!pattern.test(value)) {
+    throw new Error(`Invalid decimal digits: ${value}`);
+  }
+  return value.replaceAll("_", "");
+}
+function validateUnderscores(value) {
+  for (let index = 0;index < value.length; index++) {
+    if (value[index] !== "_")
+      continue;
+    if (!/\d/.test(value[index - 1] ?? "") || !/\d/.test(value[index + 1] ?? "")) {
+      throw new Error("Underscore separators must be between decimal digits");
+    }
+  }
+}
+function expandDigitRuns(value) {
+  let expandedLength = 0;
+  const expanded = value.replace(/\{(\d+)~(\d+)\}/g, (_match, digits, countText) => {
+    const count = Number(countText);
+    if (!Number.isSafeInteger(count) || count < 0) {
+      throw new Error(`Invalid repeated-digit count: ${countText}`);
+    }
+    expandedLength += digits.length * count;
+    if (expandedLength > MAX_EXPANDED_DIGITS) {
+      throw new Error(`Expanded decimal exceeds ${MAX_EXPANDED_DIGITS} digits`);
+    }
+    return digits.repeat(count);
+  });
+  if (/[{}]/.test(expanded)) {
+    throw new Error(`Invalid repeated-digit notation: ${value}`);
+  }
+  if (expanded.length > MAX_EXPANDED_DIGITS) {
+    throw new Error(`Decimal exceeds ${MAX_EXPANDED_DIGITS} digits`);
+  }
+  return expanded;
+}
+function parseDecimalValue(input) {
+  let value = inputString(input, "decimal");
+  validateUnderscores(value);
+  let sign = 1n;
+  if (value.startsWith("+") || value.startsWith("-")) {
+    sign = value[0] === "-" ? -1n : 1n;
+    value = value.slice(1);
+  }
+  const hashParts = value.split("#");
+  if (hashParts.length > 2) {
+    throw new Error("A repeating decimal can contain only one '#'");
+  }
+  let prefix = expandDigitRuns(hashParts[0].replaceAll("_", ""));
+  const repeating = hashParts.length === 2 ? expandDigitRuns(hashParts[1].replaceAll("_", "")) : null;
+  if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(prefix)) {
+    throw new Error(`Invalid decimal format: ${input}`);
+  }
+  const dot = prefix.indexOf(".");
+  const integerDigits = dot === -1 ? prefix : prefix.slice(0, dot) || "0";
+  const fractionalDigits = dot === -1 ? "" : prefix.slice(dot + 1);
+  const integer = BigInt(integerDigits);
+  const fractional = fractionalDigits.length === 0 ? 0n : BigInt(fractionalDigits);
+  const fractionalScale = 10n ** BigInt(fractionalDigits.length);
+  let result = new Rational(integer * fractionalScale + fractional, fractionalScale);
+  if (repeating !== null) {
+    if (!/^\d+$/.test(repeating)) {
+      throw new Error("The repeating part must contain one or more digits");
+    }
+    if (!/^0+$/.test(repeating)) {
+      const repeatScale = 10n ** BigInt(repeating.length) - 1n;
+      result = result.add(new Rational(BigInt(repeating), fractionalScale * repeatScale));
+    }
+  }
+  return sign < 0n ? result.negate() : result;
+}
+function parseRationalLiteral(input) {
+  let value = inputString(input, "rational");
+  if (value.startsWith("~")) {
+    value = value.slice(1);
+  }
+  const continued = value.match(new RegExp(`^([+-]?${DIGITS})\\.~(${DIGITS}(?:~${DIGITS})*)$`));
+  if (continued) {
+    const first = BigInt(cleanDigits(continued[1], { signed: true }));
+    const tail = continued[2].split("~").map((term) => BigInt(cleanDigits(term)));
+    if (tail.length === 1 && tail[0] === 0n) {
+      return new Rational(first);
+    }
+    return Rational.fromContinuedFraction([first, ...tail]);
+  }
+  const mixed = value.match(new RegExp(`^([+-]?)(${DIGITS})\\.\\.(${DIGITS})\\/(${DIGITS})$`));
+  if (mixed) {
+    const sign = mixed[1] === "-" ? -1n : 1n;
+    const whole = BigInt(cleanDigits(mixed[2]));
+    const numerator = BigInt(cleanDigits(mixed[3]));
+    const denominator = BigInt(cleanDigits(mixed[4]));
+    if (denominator === 0n) {
+      throw new Error("Denominator cannot be zero");
+    }
+    return new Rational(sign * (whole * denominator + numerator), denominator);
+  }
+  const fraction = value.match(new RegExp(`^([+-]?${DIGITS})\\/(${DIGITS})$`));
+  if (fraction) {
+    return new Rational(BigInt(cleanDigits(fraction[1], { signed: true })), BigInt(cleanDigits(fraction[2])));
+  }
+  if (value.includes("#") || value.includes(".")) {
+    return parseDecimalValue(value);
+  }
+  if (new RegExp(`^[+-]?${DIGITS}$`).test(value)) {
+    return new Rational(BigInt(cleanDigits(value, { signed: true })));
+  }
+  throw new Error(`Invalid rational number: ${input}`);
+}
+function decimalShape(input) {
+  const match = input.match(new RegExp(`^([+-]?)(?:(${DIGITS})(?:\\.(${DIGITS})?)?|\\.(${DIGITS}))$`));
+  if (!match) {
+    throw new Error("Decimal interval notation requires an integer or finite decimal base");
+  }
+  const sign = match[1] === "-" ? "-" : "";
+  const integer = match[2] ? cleanDigits(match[2]) : "0";
+  const fractional = match[3] ? cleanDigits(match[3]) : match[4] ? cleanDigits(match[4]) : "";
+  const hasPoint = input.includes(".");
+  return {
+    sign,
+    integer,
+    fractional,
+    hasPoint,
+    normalized: `${sign}${integer}${hasPoint ? `.${fractional}` : ""}`
+  };
+}
+function parseOffset(value) {
+  const normalized = value.startsWith("#") ? `0.${value}` : value;
+  return parseRationalLiteral(normalized);
+}
+function scaledOffset(value, decimalPlaces, hasPoint) {
+  const offset = parseOffset(value);
+  if (!hasPoint)
+    return offset;
+  const scalePower = value.startsWith("#") ? decimalPlaces : decimalPlaces + 1;
+  return offset.divide(new Rational(10n ** BigInt(scalePower)));
+}
+function parseUncertainty(input) {
+  const match = input.match(/^(.+)\[([^\[\]]+)\]$/);
+  if (!match) {
+    throw new Error(`Invalid decimal interval notation: ${input}`);
+  }
+  const shape = decimalShape(match[1]);
+  const body = match[2].trim();
+  const base = parseDecimalValue(shape.normalized);
+  if (body.startsWith("+-") || body.startsWith("-+")) {
+    const offsetText = body.slice(2).trim();
+    if (offsetText.length === 0) {
+      throw new Error("Symmetric notation must have a valid number after '+-' or '-+'");
+    }
+    const offset = scaledOffset(offsetText, shape.fractional.length, shape.hasPoint);
+    return new RationalInterval(base.subtract(offset), base.add(offset));
+  }
+  const parts = body.split(/\s*[:,]\s*/);
+  if (parts.length > 2 || parts.length === 0 || parts.some((part) => part.length === 0)) {
+    throw new Error("Decimal interval brackets require one or two comma- or colon-separated values");
+  }
+  const hasSignedPart = parts.some((part) => part.startsWith("+") || part.startsWith("-"));
+  if (hasSignedPart) {
+    let positive = null;
+    let negative = null;
+    for (const part of parts) {
+      if (part.startsWith("+") && positive === null) {
+        positive = part.slice(1);
+      } else if (part.startsWith("-") && negative === null) {
+        negative = part.slice(1);
+      } else {
+        throw new Error("Relative interval notation allows one '+' and one '-' offset");
+      }
+    }
+    const positiveOffset = positive === null ? Rational.zero : scaledOffset(positive, shape.fractional.length, shape.hasPoint);
+    const negativeOffset = negative === null ? Rational.zero : scaledOffset(negative, shape.fractional.length, shape.hasPoint);
+    return new RationalInterval(base.subtract(negativeOffset), base.add(positiveOffset));
+  }
+  if (parts.length !== 2) {
+    throw new Error("Compact interval notation requires exactly two endpoints");
+  }
+  const endpoint = (suffix) => {
+    if (shape.hasPoint && shape.fractional.length === 0) {
+      if (suffix.startsWith("#")) {
+        return parseDecimalValue(`${shape.sign}${shape.integer}.${suffix}`);
+      }
+      const cleanSuffix2 = cleanDigits(suffix);
+      if (!/^\d+$/.test(cleanSuffix2)) {
+        throw new Error(`Invalid decimal interval endpoint: ${suffix}`);
+      }
+      return parseDecimalValue(`${shape.sign}${shape.integer}.${cleanSuffix2}`);
+    }
+    const cleanSuffix = cleanDigits(suffix);
+    if (!/^\d+$/.test(cleanSuffix)) {
+      throw new Error(`Invalid compact interval endpoint: ${suffix}`);
+    }
+    const point = shape.hasPoint ? "." : "";
+    return parseDecimalValue(`${shape.sign}${shape.integer}${point}${shape.fractional}${cleanSuffix}`);
+  };
+  return new RationalInterval(endpoint(parts[0]), endpoint(parts[1]));
+}
+function parseNumber(input) {
+  const value = inputString(input);
+  if (value.includes("[") || value.includes("]")) {
+    return parseUncertainty(value);
+  }
+  const intervalParts = value.split(":");
+  if (intervalParts.length === 2) {
+    return new RationalInterval(parseRationalLiteral(intervalParts[0]), parseRationalLiteral(intervalParts[1]));
+  }
+  if (intervalParts.length > 2) {
+    throw new Error("An interval must contain exactly two endpoints");
+  }
+  if (new RegExp(`^[+-]?${DIGITS}$`).test(value)) {
+    return new Integer(BigInt(cleanDigits(value, { signed: true })));
+  }
+  return parseRationalLiteral(value);
 }
 
 // ../rix/src/runtime/hole.js
@@ -10364,7 +10635,7 @@ var runtimeDefaults = Object.freeze({
     Draw: Object.freeze(["draw"]),
     Plot: Object.freeze(["plot"]),
     Core: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "IF", "LOOP", "MULTI", "RAND_NAME", "PRINT", "TGEN", "KEYOF", "KEYS", "VALUES"]),
-    Arith: Object.freeze(["ADD", "SUB", "MUL", "DIV", "INTDIV", "MOD", "POW"]),
+    Arith: Object.freeze(["ADD", "SUB", "MUL", "DIV", "INTDIV", "DIVMOD", "MOD", "POW", "FACTORIAL", "DOUBLEFACTORIAL"]),
     Logic: Object.freeze(["EQ", "NEQ", "LT", "GT", "LTE", "GTE", "AND", "OR", "NOT"]),
     Collections: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "MAP", "FILTER", "REDUCE", "TGEN"]),
     Maps: Object.freeze(["MAP", "KEYOF", "KEYS", "VALUES"]),
@@ -10375,8 +10646,9 @@ var runtimeDefaults = Object.freeze({
     Net: Object.freeze(["NET"]),
     Files: Object.freeze(["FILES"]),
     Units: Object.freeze(["UNITS", "Units", "CONVERTUNIT", "ConvertUnit", "DEFINEUNIT", "DefineUnit"]),
-    Exact: Object.freeze(["EXACT", "Exact", "COMPLEX", "Complex", "DEFINEEXACTGENERATOR", "DefineExactGenerator"]),
-    Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC"]),
+    Exact: Object.freeze(["EXACT", "Exact", "COMPLEX", "Complex", "DEFINEEXACTGENERATOR", "DefineExactGenerator", "exactalgebras"]),
+    Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC", "SArith"]),
+    Notation: Object.freeze(["SArith", "Poly"]),
     Random: Object.freeze(["RANDOMSEED", "RandomSeed", "RAND_NAME"])
   })
 });
@@ -10747,7 +11019,7 @@ function expressionOf(spec) {
 function outputModeOf(spec) {
   return spec.outputMode || (spec.expression ? "expression" : "named");
 }
-function createSpec(meta, context = null) {
+function createSymbolicSpec(meta, context = null) {
   const outputMode = meta.outputMode || (meta.expression ? "expression" : "named");
   const inputs = [...meta.inputs || []];
   let outputs = [...meta.outputs || []];
@@ -10791,7 +11063,7 @@ function specWithExpression(source, expression, options = {}) {
   };
   if (outputMode === "named") {
     const target = source.outputs[0];
-    return createSpec({
+    return createSymbolicSpec({
       ...common,
       outputMode: "named",
       outputs: [target],
@@ -10799,7 +11071,7 @@ function specWithExpression(source, expression, options = {}) {
       statements: [{ target, expr: expression }]
     });
   }
-  return createSpec({ ...common, outputMode: "expression", expression });
+  return createSymbolicSpec({ ...common, outputMode: "expression", expression });
 }
 function precedence(node) {
   if (!node?.fn)
@@ -10932,7 +11204,7 @@ function analyzeCallable(value) {
   return {
     speccable: true,
     profile: "exact-arithmetic",
-    spec: createSpec({
+    spec: createSymbolicSpec({
       inputs: positional.map((param) => param.name),
       outputMode: "expression",
       expression: value.body,
@@ -11732,7 +12004,7 @@ var symbolicFunctions = {
   SYSTEM_SPEC: {
     lazy: true,
     impl(args, context) {
-      return createSpec(args[0] || {}, context);
+      return createSymbolicSpec(args[0] || {}, context);
     },
     pure: true,
     doc: "Create a first-class symbolic system specification"
@@ -13849,6 +14121,571 @@ function createPlotOutputCollection() {
   };
 }
 
+// ../rix/src/runtime/structural-arithmetic.js
+var BINARY = {
+  "+": { precedence: 80, associativity: "left", head: "Sum" },
+  "-": { precedence: 80, associativity: "left", head: "Difference" },
+  "*": { precedence: 90, associativity: "left", head: "Product" },
+  "/": { precedence: 90, associativity: "left", head: "Fraction" },
+  "^": { precedence: 100, associativity: "right", head: "Power" }
+};
+var PREFIX_PRECEDENCE = 99;
+var POSTFIX_PRECEDENCE = 120;
+var IMPLICIT_MULTIPLICATION_PRECEDENCE = 95;
+function compareNames(left, right) {
+  if (left < right)
+    return -1;
+  if (left > right)
+    return 1;
+  return 0;
+}
+function parseError(source, offset, message) {
+  const before = source.slice(0, offset);
+  const line = before.split(`
+`).length;
+  const lastNewline = before.lastIndexOf(`
+`);
+  const column = offset - lastNewline;
+  return new Error(`SArith parse error at ${line}:${column}: ${message}`);
+}
+function token(type, value, start, end, gapBefore) {
+  return { type, value, start, end, gapBefore };
+}
+function scanRiXExpression(source, atPosition) {
+  const segment = source.slice(atPosition + 1);
+  const rixTokens = tokenize(segment);
+  let depth = 0;
+  for (const current of rixTokens) {
+    if (current.type !== "Symbol")
+      continue;
+    if (current.value === "(") {
+      depth++;
+      continue;
+    }
+    if (current.value !== ")")
+      continue;
+    depth--;
+    if (depth === 0) {
+      return {
+        body: segment.slice(1, current.pos[1]),
+        end: atPosition + 1 + current.pos[2]
+      };
+    }
+  }
+  throw parseError(source, atPosition, "unclosed '@(' RiX expression splice");
+}
+function tokenizeStructuralArithmetic(source) {
+  const tokens = [];
+  let position = 0;
+  let previousEnd = 0;
+  while (position < source.length) {
+    while (position < source.length && /\s/u.test(source[position]))
+      position++;
+    if (position >= source.length)
+      break;
+    const start = position;
+    const gapBefore = start > previousEnd;
+    const rest = source.slice(position);
+    if (rest.startsWith("@(")) {
+      const splice = scanRiXExpression(source, position);
+      position = splice.end;
+      tokens.push(token("rix_expression", splice.body, start, position, gapBefore));
+      previousEnd = position;
+      continue;
+    }
+    const numberMatch = rest.match(/^(?:\d(?:_?\d)*(?:\.\d(?:_?\d)*)?(?:#\d(?:_?\d)*)?|\.\d(?:_?\d)*(?:#\d(?:_?\d)*)?)/u);
+    if (numberMatch) {
+      position += numberMatch[0].length;
+      tokens.push(token("number", numberMatch[0], start, position, gapBefore));
+      previousEnd = position;
+      continue;
+    }
+    const identifierMatch = rest.match(/^[\p{L}_][\p{L}\p{N}_]*/u);
+    if (identifierMatch) {
+      position += identifierMatch[0].length;
+      tokens.push(token("identifier", identifierMatch[0], start, position, gapBefore));
+      previousEnd = position;
+      continue;
+    }
+    const character = source[position];
+    if ("+-*/^!@()".includes(character)) {
+      position++;
+      const type = character === "(" ? "lparen" : character === ")" ? "rparen" : character === "@" ? "at" : "operator";
+      tokens.push(token(type, character, start, position, gapBefore));
+      previousEnd = position;
+      continue;
+    }
+    throw parseError(source, position, `unexpected character '${character}'`);
+  }
+  tokens.push(token("end", null, source.length, source.length, source.length > previousEnd));
+  return tokens;
+}
+function isStructuralSymbol(value) {
+  return value?.type === "structural_symbol";
+}
+function isStructuralForm(value) {
+  return value?.type === "structural_form";
+}
+function structuralSymbol(name) {
+  return Object.freeze({ type: "structural_symbol", name });
+}
+function structuralForm(head, args, mode = "construct") {
+  return Object.freeze({
+    type: "structural_form",
+    head,
+    args: Object.freeze([...args]),
+    mode
+  });
+}
+function integerValue(value) {
+  if (value instanceof Integer)
+    return value.value;
+  if (value instanceof Rational && value.denominator === 1n)
+    return value.numerator;
+  return null;
+}
+function asFraction(value) {
+  if (value instanceof Fraction)
+    return value;
+  const integer = integerValue(value);
+  return integer === null ? null : new Fraction(integer, 1n);
+}
+function isZero3(value) {
+  if (value instanceof Integer)
+    return value.value === 0n;
+  if (value instanceof Fraction)
+    return value.numerator === 0n;
+  return false;
+}
+function isOne3(value) {
+  if (value instanceof Integer)
+    return value.value === 1n;
+  if (value instanceof Fraction)
+    return value.numerator === value.denominator;
+  return false;
+}
+function liftStructuralValue(value) {
+  if (value instanceof Integer || value instanceof Fraction || isStructuralSymbol(value) || isStructuralForm(value)) {
+    return value;
+  }
+  if (value instanceof Rational) {
+    return value.denominator === 1n ? new Integer(value.numerator) : new Fraction(value.numerator, value.denominator);
+  }
+  return Object.freeze({ type: "structural_value", value });
+}
+function literalValue(text) {
+  const value = parseNumber(text.replaceAll("_", ""));
+  return liftStructuralValue(value);
+}
+function constructBinary(operator, left, right) {
+  if (operator === "/") {
+    const numerator = integerValue(left);
+    const denominator = integerValue(right);
+    if (numerator !== null && denominator !== null) {
+      return new Fraction(numerator, denominator);
+    }
+  }
+  return structuralForm(BINARY[operator].head, [left, right], "construct");
+}
+function constructPrefix(operator, operand) {
+  if (operator === "+")
+    return structuralForm("Positive", [operand], "construct");
+  return structuralForm("Negative", [operand], "construct");
+}
+function constructPostfix(operator, operand) {
+  if (operator === "!")
+    return structuralForm("Factorial", [operand], "construct");
+  throw new Error(`Unknown structural postfix operator '${operator}'`);
+}
+function applyAdd(left, right) {
+  if (isZero3(left))
+    return right;
+  if (isZero3(right))
+    return left;
+  if (left instanceof Integer && right instanceof Integer)
+    return left.add(right);
+  const leftFraction = asFraction(left);
+  const rightFraction = asFraction(right);
+  if (leftFraction && rightFraction && leftFraction.denominator === rightFraction.denominator) {
+    return leftFraction.add(rightFraction);
+  }
+  if (leftFraction && right instanceof Integer) {
+    return new Fraction(leftFraction.numerator + right.value * leftFraction.denominator, leftFraction.denominator);
+  }
+  if (left instanceof Integer && rightFraction) {
+    return new Fraction(left.value * rightFraction.denominator + rightFraction.numerator, rightFraction.denominator);
+  }
+  return structuralForm("Sum", [left, right], "apply");
+}
+function applySubtract(left, right) {
+  if (isZero3(right))
+    return left;
+  if (left instanceof Integer && right instanceof Integer)
+    return left.subtract(right);
+  const leftFraction = asFraction(left);
+  const rightFraction = asFraction(right);
+  if (leftFraction && rightFraction && leftFraction.denominator === rightFraction.denominator) {
+    return leftFraction.subtract(rightFraction);
+  }
+  if (leftFraction && right instanceof Integer) {
+    return new Fraction(leftFraction.numerator - right.value * leftFraction.denominator, leftFraction.denominator);
+  }
+  if (left instanceof Integer && rightFraction) {
+    return new Fraction(left.value * rightFraction.denominator - rightFraction.numerator, rightFraction.denominator);
+  }
+  return structuralForm("Difference", [left, right], "apply");
+}
+function applyMultiply(left, right) {
+  if (isZero3(left) || isZero3(right))
+    return new Integer(0n);
+  if (isOne3(left))
+    return right;
+  if (isOne3(right))
+    return left;
+  if (left instanceof Integer && right instanceof Integer)
+    return left.multiply(right);
+  const leftFraction = asFraction(left);
+  const rightFraction = asFraction(right);
+  if (leftFraction && rightFraction)
+    return leftFraction.multiply(rightFraction);
+  return structuralForm("Product", [left, right], "apply");
+}
+function applyDivide(left, right) {
+  if (isZero3(right))
+    throw new Error("Structural division by zero");
+  if (isOne3(right))
+    return left;
+  const leftFraction = asFraction(left);
+  const rightFraction = asFraction(right);
+  if (leftFraction && rightFraction)
+    return leftFraction.divide(rightFraction);
+  return structuralForm("Fraction", [left, right], "apply");
+}
+function applyPower(left, right) {
+  const exponent = integerValue(right);
+  if (exponent === 0n)
+    return new Integer(1n);
+  if (exponent === 1n)
+    return left;
+  if (exponent !== null && left instanceof Integer)
+    return left.pow(exponent);
+  if (exponent !== null && left instanceof Fraction)
+    return left.pow(exponent);
+  return structuralForm("Power", [left, right], "apply");
+}
+function applyStructuralBinary(operator, left, right) {
+  if (operator === "+")
+    return applyAdd(left, right);
+  if (operator === "-")
+    return applySubtract(left, right);
+  if (operator === "*")
+    return applyMultiply(left, right);
+  if (operator === "/")
+    return applyDivide(left, right);
+  if (operator === "^")
+    return applyPower(left, right);
+  throw new Error(`Unknown structural binary operator '${operator}'`);
+}
+function applyStructuralPrefix(operator, operand) {
+  if (operator === "+")
+    return operand;
+  if (operator === "-") {
+    if (operand instanceof Integer)
+      return operand.negate();
+    if (operand instanceof Fraction)
+      return new Fraction(-operand.numerator, operand.denominator);
+    return structuralForm("Negative", [operand], "apply");
+  }
+  throw new Error(`Unknown structural prefix operator '${operator}'`);
+}
+function applyStructuralPostfix(operator, operand) {
+  if (operator === "!") {
+    if (operand instanceof Integer)
+      return operand.factorial();
+    return structuralForm("Factorial", [operand], "apply");
+  }
+  throw new Error(`Unknown structural postfix operator '${operator}'`);
+}
+function startsOperand(current) {
+  return current.type === "number" || current.type === "identifier" || current.type === "rix_expression" || current.type === "at" || current.type === "lparen";
+}
+
+class StructuralParser {
+  constructor(source, context, options = {}) {
+    this.source = source;
+    this.context = context;
+    this.evaluateRiX = options.evaluateRiX || null;
+    this.tokens = tokenizeStructuralArithmetic(source);
+    this.index = 0;
+    this.groupedValues = new WeakSet;
+    this.tightPrefixValues = new WeakSet;
+  }
+  get current() {
+    return this.tokens[this.index];
+  }
+  get next() {
+    return this.tokens[this.index + 1];
+  }
+  advance() {
+    const current = this.current;
+    this.index++;
+    return current;
+  }
+  error(tokenValue, message) {
+    throw parseError(this.source, tokenValue?.start ?? this.source.length, message);
+  }
+  parse() {
+    if (this.current.type === "end")
+      this.error(this.current, "empty structural expression");
+    const value = this.parseExpression(0);
+    if (this.current.type !== "end") {
+      this.error(this.current, `unexpected token '${this.current.value}'`);
+    }
+    return value;
+  }
+  parseExpression(minimumPrecedence) {
+    let left = this.parsePrefix();
+    while (true) {
+      if (this.current.type === "operator" && this.current.value === "!") {
+        if (POSTFIX_PRECEDENCE < minimumPrecedence)
+          break;
+        const operator = this.advance();
+        left = operator.gapBefore ? applyStructuralPostfix(operator.value, left) : constructPostfix(operator.value, left);
+        continue;
+      }
+      if (this.current.type === "operator" && BINARY[this.current.value]) {
+        const operator = this.current;
+        const info = BINARY[operator.value];
+        if (info.precedence < minimumPrecedence)
+          break;
+        const gapAfter = this.next?.gapBefore === true;
+        if (operator.gapBefore !== gapAfter) {
+          this.error(operator, `operator '${operator.value}' must either touch both operands or be separated from both`);
+        }
+        this.advance();
+        if (operator.value === "^" && !operator.gapBefore && this.tightPrefixValues.has(left) && !this.groupedValues.has(left)) {
+          this.error(operator, `ambiguous tight prefix and power; use '${left.head === "Positive" ? "+" : "-"} x^n' or parenthesize the base`);
+        }
+        let rightMinimum = info.associativity === "right" ? info.precedence : info.precedence + 1;
+        if (operator.value === "/" && !operator.gapBefore) {
+          rightMinimum = Math.max(rightMinimum, IMPLICIT_MULTIPLICATION_PRECEDENCE + 1);
+        }
+        const right = this.parseExpression(rightMinimum);
+        if (operator.value === "/" && !operator.gapBefore && isStructuralForm(right) && (right.head === "Power" || right.head === "Factorial") && !this.groupedValues.has(right)) {
+          this.error(operator, "ambiguous tight fraction denominator; parenthesize the fraction or its denominator");
+        }
+        left = operator.gapBefore ? applyStructuralBinary(operator.value, left, right) : constructBinary(operator.value, left, right);
+        continue;
+      }
+      if (startsOperand(this.current)) {
+        if (IMPLICIT_MULTIPLICATION_PRECEDENCE < minimumPrecedence)
+          break;
+        const right = this.parseExpression(IMPLICIT_MULTIPLICATION_PRECEDENCE + 1);
+        left = structuralForm("Product", [left, right], "construct");
+        continue;
+      }
+      break;
+    }
+    return left;
+  }
+  parsePrefix() {
+    const current = this.current;
+    if (current.type === "number") {
+      this.advance();
+      return literalValue(current.value);
+    }
+    if (current.type === "identifier") {
+      this.advance();
+      return structuralSymbol(current.value);
+    }
+    if (current.type === "rix_expression") {
+      this.advance();
+      if (!this.evaluateRiX) {
+        this.error(current, "'@(expression)' requires an active RiX evaluator");
+      }
+      return liftStructuralValue(this.evaluateRiX(current.value));
+    }
+    if (current.type === "at") {
+      this.advance();
+      if (this.current.type !== "identifier") {
+        this.error(this.current, "'@' must be followed by an outer identifier");
+      }
+      const name = this.advance().value;
+      const value = this.context?.get?.(name);
+      if (value === undefined) {
+        this.error(current, `undefined outer value '@${name}'`);
+      }
+      return liftStructuralValue(value);
+    }
+    if (current.type === "lparen") {
+      this.advance();
+      const value = this.parseExpression(0);
+      if (this.current.type !== "rparen") {
+        this.error(this.current, "expected closing parenthesis");
+      }
+      this.advance();
+      if (value !== null && typeof value === "object") {
+        this.groupedValues.add(value);
+      }
+      return value;
+    }
+    if (current.type === "operator" && (current.value === "+" || current.value === "-")) {
+      const operator = this.advance();
+      const separated = this.current.gapBefore === true;
+      const operand = this.parseExpression(separated ? PREFIX_PRECEDENCE : BINARY["^"].precedence + 1);
+      if (!separated && isStructuralForm(operand) && operand.head === "Factorial" && !this.groupedValues.has(operand)) {
+        this.error(operator, "ambiguous tight prefix and postfix; parenthesize the prefix or its operand");
+      }
+      const result = separated ? applyStructuralPrefix(operator.value, operand) : constructPrefix(operator.value, operand);
+      if (!separated && result !== null && typeof result === "object") {
+        this.tightPrefixValues.add(result);
+      }
+      return result;
+    }
+    this.error(current, `expected an operand, got '${current.value ?? "end"}'`);
+  }
+}
+function parseStructuralArithmetic(source, context, options = {}) {
+  return new StructuralParser(String(source), context, options).parse();
+}
+function structuralFreeSymbols(value, names = new Set) {
+  if (isStructuralSymbol(value)) {
+    names.add(value.name);
+    return names;
+  }
+  if (isStructuralForm(value)) {
+    for (const argument of value.args)
+      structuralFreeSymbols(argument, names);
+  }
+  return names;
+}
+function sortedStructuralFreeSymbols(value) {
+  return [...structuralFreeSymbols(value)].sort(compareNames);
+}
+function resolveStructuralValue(value, context) {
+  if (isStructuralSymbol(value)) {
+    const resolved = context?.get?.(value.name);
+    if (resolved === undefined) {
+      throw new Error(`Undefined structural function argument: ${value.name}`);
+    }
+    return liftStructuralValue(resolved);
+  }
+  if (!isStructuralForm(value))
+    return value;
+  const args = value.args.map((argument) => resolveStructuralValue(argument, context));
+  if (value.mode === "construct") {
+    if (value.head === "Sum")
+      return constructBinary("+", args[0], args[1]);
+    if (value.head === "Difference")
+      return constructBinary("-", args[0], args[1]);
+    if (value.head === "Product")
+      return constructBinary("*", args[0], args[1]);
+    if (value.head === "Fraction")
+      return constructBinary("/", args[0], args[1]);
+    if (value.head === "Power")
+      return constructBinary("^", args[0], args[1]);
+    if (value.head === "Positive")
+      return constructPrefix("+", args[0]);
+    if (value.head === "Negative")
+      return constructPrefix("-", args[0]);
+    if (value.head === "Factorial")
+      return constructPostfix("!", args[0]);
+    return structuralForm(value.head, args, "construct");
+  }
+  if (value.head === "Sum")
+    return applyStructuralBinary("+", args[0], args[1]);
+  if (value.head === "Difference")
+    return applyStructuralBinary("-", args[0], args[1]);
+  if (value.head === "Product")
+    return applyStructuralBinary("*", args[0], args[1]);
+  if (value.head === "Fraction")
+    return applyStructuralBinary("/", args[0], args[1]);
+  if (value.head === "Power")
+    return applyStructuralBinary("^", args[0], args[1]);
+  if (value.head === "Positive")
+    return applyStructuralPrefix("+", args[0]);
+  if (value.head === "Negative")
+    return applyStructuralPrefix("-", args[0]);
+  if (value.head === "Factorial")
+    return applyStructuralPostfix("!", args[0]);
+  return structuralForm(value.head, args, "apply");
+}
+function createStructuralFunction(value, context, name = null) {
+  const symbols2 = sortedStructuralFreeSymbols(value);
+  return {
+    type: "lambda",
+    ...name ? { name } : {},
+    params: {
+      positional: symbols2.map((symbol) => ({ name: symbol, holeDefault: null })),
+      keyword: [],
+      conditionals: [],
+      prep: [],
+      prepStrict: false,
+      metadata: {}
+    },
+    body: { fn: "SARITH_FUNCTION_BODY", args: [value] },
+    __closureScopes: context?.captureClosureScopes?.() || []
+  };
+}
+function structuralValueToIr(value) {
+  if (isStructuralSymbol(value))
+    return { fn: "RETRIEVE", args: [value.name] };
+  if (value instanceof Integer)
+    return { fn: "LITERAL", args: [value.value.toString()] };
+  if (value instanceof Fraction) {
+    return {
+      fn: "DIV",
+      args: [
+        { fn: "LITERAL", args: [value.numerator.toString()] },
+        { fn: "LITERAL", args: [value.denominator.toString()] }
+      ]
+    };
+  }
+  if (value instanceof Rational) {
+    if (value.denominator === 1n) {
+      return { fn: "LITERAL", args: [value.numerator.toString()] };
+    }
+    return {
+      fn: "DIV",
+      args: [
+        { fn: "LITERAL", args: [value.numerator.toString()] },
+        { fn: "LITERAL", args: [value.denominator.toString()] }
+      ]
+    };
+  }
+  if (value?.type === "structural_value") {
+    return structuralValueToIr(value.value);
+  }
+  if (!isStructuralForm(value)) {
+    throw new Error("Structural value cannot be represented by the exact symbolic IR");
+  }
+  const args = value.args.map(structuralValueToIr);
+  const heads = {
+    Sum: "ADD",
+    Difference: "SUB",
+    Product: "MUL",
+    Fraction: "DIV",
+    Power: "POW",
+    Negative: "NEG",
+    Positive: null,
+    Factorial: "FACTORIAL"
+  };
+  if (!Object.prototype.hasOwnProperty.call(heads, value.head)) {
+    throw new Error(`Structural form '${value.head}' cannot be represented by the exact symbolic IR`);
+  }
+  const fn = heads[value.head];
+  return fn ? { fn, args } : args[0];
+}
+function formatStructuralValue(value, formatChild = String) {
+  if (isStructuralSymbol(value))
+    return value.name;
+  if (value?.type === "structural_value")
+    return `Value(${formatChild(value.value)})`;
+  if (!isStructuralForm(value))
+    return formatChild(value);
+  return `${value.head}(${value.args.map((argument) => formatStructuralValue(argument, formatChild)).join(", ")})`;
+}
+
 // ../rix/src/eval/format.js
 function tensorValueAtTuple(tensor, tuple) {
   const value = tensor.data[tensorOffsetForTuple(tensor, tuple)];
@@ -14080,6 +14917,9 @@ function formatValue(val, options = {}) {
       return formatOutputText(val, formatChild);
     if (isSymbolicSpec(val))
       return formatSymbolicSpec(val);
+    if (isStructuralForm(val) || isStructuralSymbol(val) || val.type === "structural_value") {
+      return formatStructuralValue(val, formatChild);
+    }
     if (isLazySequence(val)) {
       const cached = val._lazy.cache.slice(0, 8).map(formatChild).join(", ");
       const more = val._lazy.cache.length > 8 || !val._lazy.done ? cached ? ", …" : "…" : "";
@@ -14727,12 +15567,50 @@ function ceilDiv(numerator, denominator) {
     return q;
   return numerator >= 0n ? q + 1n : q;
 }
+function floorDiv(numerator, denominator) {
+  const q = numerator / denominator;
+  const r = numerator % denominator;
+  if (r === 0n)
+    return q;
+  return numerator < 0n ? q - 1n : q;
+}
 function roundDiv(numerator, denominator) {
   const absNum = numerator < 0n ? -numerator : numerator;
   const floor = absNum / denominator;
   const remainder = absNum % denominator;
   const rounded = remainder * 2n >= denominator ? floor + 1n : floor;
   return numerator < 0n ? -rounded : rounded;
+}
+function requirePositiveDivisor(value, operation) {
+  const { numerator } = toQuotientParts(value);
+  if (numerator <= 0n) {
+    throw new Error(`${operation} divisor must be positive`);
+  }
+}
+function rationalModulo(dividend, divisor) {
+  requirePositiveDivisor(divisor, "Modulo");
+  const quotient = dividend.divide(divisor);
+  const { numerator, denominator } = toQuotientParts(quotient);
+  const floor = new Integer(floorDiv(numerator, denominator));
+  const remainder = dividend.subtract(divisor.multiply(floor));
+  if (remainder instanceof Rational && remainder.denominator === 1n) {
+    return new Integer(remainder.numerator);
+  }
+  return remainder;
+}
+function requireNonNegativeInteger(value, operation) {
+  const numeric = ensureNumeric(value);
+  if (numeric instanceof Integer) {
+    if (numeric.value < 0n)
+      throw new Error(`${operation} is not defined for negative integers`);
+    return numeric;
+  }
+  if (numeric instanceof Rational && numeric.denominator === 1n) {
+    if (numeric.numerator < 0n)
+      throw new Error(`${operation} is not defined for negative integers`);
+    return new Integer(numeric.numerator);
+  }
+  throw new Error(`${operation} requires an integer`);
 }
 var arithmeticFunctions = {
   ADD: {
@@ -14792,15 +15670,9 @@ var arithmeticFunctions = {
     impl(args) {
       const a = ensureNumeric(args[0]);
       const b = ensureNumeric(args[1]);
-      if (a instanceof Integer && b instanceof Integer) {
-        const result = a.value / b.value;
-        return new Integer(result);
-      }
-      const rat2 = a.divide(b);
-      if (rat2 instanceof Rational) {
-        return new Integer(rat2.numerator / rat2.denominator);
-      }
-      return new Integer(rat2.value);
+      const quotient = a.divide(b);
+      const { numerator, denominator } = toQuotientParts(quotient);
+      return new Integer(floorDiv(numerator, denominator));
     },
     pure: true,
     doc: "Integer division (floor)"
@@ -14831,15 +15703,26 @@ var arithmeticFunctions = {
     impl(args) {
       const a = ensureNumeric(args[0]);
       const b = ensureNumeric(args[1]);
-      if (a instanceof Integer && b instanceof Integer) {
-        return a.modulo(b);
-      }
-      const aVal = a instanceof Integer ? a.value : a.numerator;
-      const bVal = b instanceof Integer ? b.value : b.numerator;
-      return new Integer(aVal % bVal);
+      return rationalModulo(a, b);
     },
     pure: true,
-    doc: "Modulo"
+    doc: "Floor modulo with a positive divisor"
+  },
+  DIVMOD: {
+    impl(args) {
+      const a = ensureNumeric(args[0]);
+      const b = ensureNumeric(args[1]);
+      requirePositiveDivisor(b, "Division with remainder");
+      const quotient = a.divide(b);
+      const parts = toQuotientParts(quotient);
+      const floor = new Integer(floorDiv(parts.numerator, parts.denominator));
+      return {
+        type: "tuple",
+        values: [floor, rationalModulo(a, b)]
+      };
+    },
+    pure: true,
+    doc: "Floor quotient and exact remainder for a positive divisor"
   },
   POW: {
     impl(args) {
@@ -14868,6 +15751,20 @@ var arithmeticFunctions = {
     },
     pure: true,
     doc: "Negation"
+  },
+  FACTORIAL: {
+    impl(args) {
+      return requireNonNegativeInteger(args[0], "Factorial").factorial();
+    },
+    pure: true,
+    doc: "Factorial of a non-negative integer"
+  },
+  DOUBLE_FACTORIAL: {
+    impl(args) {
+      return requireNonNegativeInteger(args[0], "Double factorial").doubleFactorial();
+    },
+    pure: true,
+    doc: "Double factorial of a non-negative integer"
   },
   ABS: {
     impl(args) {
@@ -18372,15 +19269,15 @@ function complete(source, cursor, { context, systemContext, formatValue: formatV
       candidates: filterAndSort(mapKeyCandidates(context.get(mapKeyMatch[1]), query2, formatValue2), query2)
     };
   }
-  let token = before.match(/[@.]?[A-Za-z_][A-Za-z0-9_]*$|[@.]?$/)?.[0] ?? "";
-  if (token === "." && before.length > 1)
-    token = "";
-  const from = cursor - token.length;
-  const query = token.replace(/^@_?/, "").replace(/^\./, "");
+  let token2 = before.match(/[@.]?[A-Za-z_][A-Za-z0-9_]*$|[@.]?$/)?.[0] ?? "";
+  if (token2 === "." && before.length > 1)
+    token2 = "";
+  const from = cursor - token2.length;
+  const query = token2.replace(/^@_?/, "").replace(/^\./, "");
   const prior = before.slice(0, from);
   let candidates = [];
-  if (token.startsWith("@_") || prior.endsWith("@_")) {
-    const prefix = token.startsWith("@_") ? "@_" : "@_";
+  if (token2.startsWith("@_") || prior.endsWith("@_")) {
+    const prefix = token2.startsWith("@_") ? "@_" : "@_";
     candidates = systemCandidates(systemContext, prefix);
   } else if (prior.endsWith(".")) {
     const receiverMatch = prior.slice(0, -1).match(/([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)$/);
@@ -18389,7 +19286,7 @@ function complete(source, cursor, { context, systemContext, formatValue: formatV
     } else {
       candidates = systemCandidates(systemContext);
     }
-  } else if (token.startsWith(".")) {
+  } else if (token2.startsWith(".")) {
     candidates = systemCandidates(systemContext, ".");
   } else if (prior.length === 0 || /[\s(\[{,;=:+\-*/?]/.test(prior.at(-1))) {
     candidates = [
@@ -18515,7 +19412,7 @@ var COMBO_ASSIGN_OP_MAP = {
 };
 var LOWERERS = {
   Number(node) {
-    if (node.value && node.value.includes(":")) {
+    if (node.value && node.value.includes(":") && !node.value.includes("[")) {
       const parts = node.value.split(":");
       return ir2("INTERVAL", ...parts.map((p) => ir2("LITERAL", p)));
     }
@@ -18726,6 +19623,12 @@ var LOWERERS = {
       return ir2("NOT", lowerNode(node.operand));
     }
     return ir2("UNARY", node.operator, lowerNode(node.operand));
+  },
+  Factorial(node) {
+    return ir2("FACTORIAL", lowerNode(node.expression));
+  },
+  DoubleFactorial(node) {
+    return ir2("DOUBLE_FACTORIAL", lowerNode(node.expression));
   },
   ImplicitMultiplication(node) {
     return ir2("MUL", lowerNode(node.left), lowerNode(node.right));
@@ -19185,7 +20088,13 @@ var LOWERERS = {
     return ir2("WITH_META", expr, meta);
   },
   EmbeddedLanguage(node) {
-    return ir2("EMBEDDED", node.language, node.code);
+    return ir2("EMBEDDED", node.language || "SArith", node.modifiers || [], node.body || "", {
+      context: node.context ?? null,
+      explicitParser: node.explicitParser === true,
+      expectedFunction: node.expectedFunction === true,
+      inferredName: node.inferredName ?? null,
+      legacyHeader: node.legacyHeader === true
+    });
   }
 };
 function lowerImports(imports) {
@@ -19227,7 +20136,12 @@ function lowerAssignment(node, irFn) {
     return ir2("OUTER_ASSIGN", left.name, lowerNode(node.right));
   }
   if (left.type === "UserIdentifier" || left.type === "SystemIdentifier") {
-    return ir2(irFn, left.name, lowerNode(node.right));
+    const right = left.type === "SystemIdentifier" && node.right?.type === "EmbeddedLanguage" ? {
+      ...node.right,
+      expectedFunction: true,
+      inferredName: left.name
+    } : node.right;
+    return ir2(irFn, left.name, lowerNode(right));
   }
   if (left.type === "SelfRef") {
     throw new Error("Cannot assign to '$'; it is read-only and only valid within a function body");
@@ -20002,22 +20916,22 @@ class Context {
     if (!bodyNode || !sharedFns.has(bodyNode.fn)) {
       return callback();
     }
-    const token = { fn: bodyNode.fn, consumed: false };
-    this.sharedBodyOverrides.push(token);
+    const token2 = { fn: bodyNode.fn, consumed: false };
+    this.sharedBodyOverrides.push(token2);
     try {
       return callback();
     } finally {
-      if (!token.consumed) {
+      if (!token2.consumed) {
         this.sharedBodyOverrides.pop();
       }
     }
   }
   consumeSharedBody(fnName) {
-    const token = this.sharedBodyOverrides[this.sharedBodyOverrides.length - 1];
-    if (!token || token.consumed || token.fn !== fnName) {
+    const token2 = this.sharedBodyOverrides[this.sharedBodyOverrides.length - 1];
+    if (!token2 || token2.consumed || token2.fn !== fnName) {
       return false;
     }
-    token.consumed = true;
+    token2.consumed = true;
     this.sharedBodyOverrides.pop();
     return true;
   }
@@ -21086,6 +22000,10 @@ function resolveBaseSpecFromValue(value) {
 function parseLiteral(str) {
   if (typeof str !== "string")
     return str;
+  const isCoreUncertainty = /^[+-]?(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)\[[^\]]+\]$/.test(str);
+  if (isCoreUncertainty) {
+    return parseNumber(str);
+  }
   if (/^0[a-zA-Z]$/.test(str) || /^0z\[\d+\]$/.test(str)) {
     return str;
   }
@@ -23081,7 +23999,7 @@ function finiteLazySequence(length, valueAt, label, maxIterations = 1e4) {
     }
   }));
 }
-function floorDiv(a, b) {
+function floorDiv2(a, b) {
   let q = a / b;
   const r = a % b;
   if (r !== 0n && r > 0n !== b > 0n)
@@ -23089,14 +24007,14 @@ function floorDiv(a, b) {
   return q;
 }
 function ceilDiv2(a, b) {
-  return -floorDiv(-a, b);
+  return -floorDiv2(-a, b);
 }
 function randomGridRational(lo, hi, denominator, context) {
   const d = BigInt(denominator);
   if (d <= 0n)
     throw new Error("Random denominator must be positive");
   const min = ceilDiv2(lo.numerator * d, lo.denominator);
-  const max = floorDiv(hi.numerator * d, hi.denominator);
+  const max = floorDiv2(hi.numerator * d, hi.denominator);
   if (min > max)
     throw new Error("The requested denominator has no points inside the interval");
   const width = max - min + 1n;
@@ -24535,6 +25453,176 @@ var outputFunctions = {
   DOCUMENT_TEMPLATE: documentTemplateFunction
 };
 
+// ../rix/src/eval/functions/embedded.js
+function stringValue4(value) {
+  return { type: "string", value: String(value) };
+}
+function stringFromValue(value, label) {
+  if (value?.type === "string")
+    return value.value;
+  if (typeof value === "string")
+    return value;
+  throw new Error(`${label} must be a string`);
+}
+function modifierNames(value) {
+  if (!value)
+    return [];
+  if (!Array.isArray(value.values))
+    throw new Error("Embedded parser modifiers must be a sequence");
+  return value.values.map((item) => stringFromValue(item, "Embedded parser modifier"));
+}
+function parseInfoValue(meta = {}) {
+  const entries = new Map;
+  entries.set("function", meta.expectedFunction ? new Integer(1n) : null);
+  entries.set("name", meta.inferredName ? stringValue4(meta.inferredName) : null);
+  entries.set("explicit", meta.explicitParser ? new Integer(1n) : null);
+  return { type: "map", entries };
+}
+function infoEntry(info, name) {
+  if (info?.type !== "map" || !(info.entries instanceof Map))
+    return null;
+  return info.entries.get(name);
+}
+function evaluateRiXExpression(source, context, evaluate) {
+  const runtime = context.getEnv("__script_runtime__", null);
+  const ast = parse(source, runtime?.systemLookup);
+  const irNodes = lower(ast);
+  if (irNodes.length === 0) {
+    throw new Error("'@(expression)' must contain a RiX expression");
+  }
+  let value = null;
+  for (const node of irNodes)
+    value = evaluate(node);
+  return value;
+}
+function sarithParse(args, context, evaluate) {
+  const body = stringFromValue(args[1], ".SArith.Parse body");
+  const modifiers = modifierNames(args[2]);
+  const info = args[3];
+  const unsupported = modifiers.filter((modifier) => modifier.toUpperCase() !== "FUN");
+  if (unsupported.length > 0) {
+    throw new Error(`Unknown .SArith modifier${unsupported.length === 1 ? "" : "s"}: ${unsupported.join(", ")}`);
+  }
+  const value = parseStructuralArithmetic(body, context, {
+    evaluateRiX: (source) => evaluateRiXExpression(source, context, evaluate)
+  });
+  const explicitFunction = modifiers.some((modifier) => modifier.toUpperCase() === "FUN");
+  const inferredFunction = infoEntry(info, "function") !== null;
+  if (!explicitFunction && !inferredFunction)
+    return value;
+  const inferredNameValue = infoEntry(info, "name");
+  const inferredName = inferredNameValue?.type === "string" ? inferredNameValue.value : null;
+  return createStructuralFunction(value, context, inferredName);
+}
+function createSArithSystemValue() {
+  return {
+    type: "structural_parser",
+    name: "SArith",
+    _ext: new Map([
+      ["Parse", {
+        type: "method_builtin",
+        name: "Parse",
+        impl: sarithParse
+      }]
+    ])
+  };
+}
+function polyParse(args, context, evaluate) {
+  const body = stringFromValue(args[1], ".Poly.Parse body");
+  const modifiers = modifierNames(args[2]);
+  const unsupported = modifiers.filter((modifier) => modifier.toUpperCase() !== "FUN");
+  if (unsupported.length > 0) {
+    throw new Error(`Unknown .Poly modifier${unsupported.length === 1 ? "" : "s"}: ${unsupported.join(", ")}`);
+  }
+  const structural = parseStructuralArithmetic(body, context, {
+    evaluateRiX: (source) => evaluateRiXExpression(source, context, evaluate)
+  });
+  const spec2 = createSymbolicSpec({
+    inputs: sortedStructuralFreeSymbols(structural),
+    outputMode: "expression",
+    expression: structuralValueToIr(structural),
+    origin: ".Poly.Parse"
+  }, context);
+  return polyFromSpec(spec2);
+}
+function createPolySystemValue() {
+  return {
+    type: "symbolic_parser",
+    name: "Poly",
+    _ext: new Map([
+      ["Parse", {
+        type: "method_builtin",
+        name: "Parse",
+        impl: polyParse
+      }]
+    ])
+  };
+}
+function callRegisteredParser(parserName, body, modifiers, meta, context, evaluate, systemContext) {
+  if (!systemContext)
+    throw new Error("No system context is available for embedded parsing");
+  const entry = systemContext.get(parserName);
+  if (!entry) {
+    throw new Error(`Unknown backtick parser '.${parserName}'`);
+  }
+  if (!Object.prototype.hasOwnProperty.call(entry, "value")) {
+    throw new Error(`Backtick parser '.${entry.displayName}' must be a registered object exposing .Parse`);
+  }
+  const parserObject = entry.value;
+  let parseMethod;
+  try {
+    parseMethod = resolveMethod(parserObject, "Parse");
+  } catch {
+    throw new Error(`Backtick parser '.${entry.displayName}' does not expose a callable .Parse method`);
+  }
+  const callArgs = [
+    stringValue4(body),
+    { type: "sequence", values: modifiers.map(stringValue4) },
+    parseInfoValue(meta)
+  ];
+  if (parseMethod?.type === "method_builtin") {
+    return parseMethod.impl([parserObject, ...callArgs], context, evaluate, callWithConcreteArgs);
+  }
+  return callWithConcreteArgs(parseMethod, [parserObject, ...callArgs], context, evaluate);
+}
+var embeddedFunctions = {
+  EMBEDDED: {
+    impl(args, context, evaluate, systemContext) {
+      const parserName = args[0] || "SArith";
+      const modifiers = Array.isArray(args[1]) ? args[1] : [];
+      const body = args[2] ?? "";
+      const meta = args[3] || {};
+      if (parserName === "RiX-String")
+        return stringValue4(body);
+      return callRegisteredParser(parserName, body, modifiers, meta, context, evaluate, systemContext);
+    },
+    doc: "Dispatch a backtick body to a registered .Name.Parse parser"
+  },
+  SARITH_FUNCTION_BODY: {
+    impl(args, context) {
+      return resolveStructuralValue(args[0], context);
+    },
+    doc: "Resolve a structural-arithmetic function template against its arguments"
+  }
+};
+var sArithCapability = {
+  create() {
+    const value = createSArithSystemValue();
+    return {
+      value,
+      definition: {
+        impl(args, context, evaluate) {
+          const body = args[0];
+          const modifiers = args[1] || { type: "sequence", values: [] };
+          const info = args[2] || { type: "map", entries: new Map };
+          return sarithParse([value, body, modifiers, info], context, evaluate);
+        },
+        doc: "Parse structural arithmetic; backticks use this parser by default"
+      }
+    };
+  }
+};
+
 // ../rix/plugins/draw/draw.plugin.rix.js
 function entriesFor(args, positional, name) {
   if (args.length === 1 && args[0]?.type === "map" && args[0].entries instanceof Map)
@@ -24591,8 +25679,220 @@ function install({ systemContext }) {
   return draw;
 }
 
+// ../rix/plugins/exact-algebras/exact-algebras.plugin.rix.js
+var ZERO = new Rational(0n, 1n);
+function toRational2(value, label2 = "component") {
+  if (value instanceof Rational)
+    return value;
+  if (value instanceof Integer)
+    return new Rational(value.value, 1n);
+  if (typeof value === "bigint")
+    return new Rational(value, 1n);
+  if (typeof value === "number" && Number.isInteger(value)) {
+    return new Rational(BigInt(value), 1n);
+  }
+  throw new Error(`Exact algebra ${label2} must be an Integer or Rational`);
+}
+function formatComponent(value) {
+  return value.denominator === 1n ? value.numerator.toString() : value.toString();
+}
+
+class ExactCayleyDickson {
+  constructor(components) {
+    if (components.length !== 4 && components.length !== 8) {
+      throw new Error("Exact Cayley-Dickson values require 4 or 8 components");
+    }
+    this.type = components.length === 4 ? "exact_quaternion" : "exact_octonion";
+    this.dimension = components.length;
+    this.components = Object.freeze(components.map((value, index) => toRational2(value, `component ${index}`)));
+    Object.freeze(this);
+  }
+  toString() {
+    const name = this.dimension === 4 ? "Quaternion" : "Octonion";
+    return `${name}(${this.components.map(formatComponent).join(", ")})`;
+  }
+}
+function isExactAlgebra(value) {
+  return value instanceof ExactCayleyDickson;
+}
+function hasExactAlgebra(left, right) {
+  return isExactAlgebra(left) || isExactAlgebra(right);
+}
+function conjugateComponents(components) {
+  if (components.length === 1)
+    return [components[0]];
+  const half = components.length / 2;
+  return [
+    ...conjugateComponents(components.slice(0, half)),
+    ...components.slice(half).map((value) => value.negate())
+  ];
+}
+function addComponents(left, right) {
+  return left.map((value, index) => value.add(right[index]));
+}
+function subtractComponents(left, right) {
+  return left.map((value, index) => value.subtract(right[index]));
+}
+function multiplyComponents(left, right) {
+  if (left.length === 1)
+    return [left[0].multiply(right[0])];
+  const half = left.length / 2;
+  const a = left.slice(0, half);
+  const b = left.slice(half);
+  const c = right.slice(0, half);
+  const d = right.slice(half);
+  return [
+    ...subtractComponents(multiplyComponents(a, c), multiplyComponents(conjugateComponents(d), b)),
+    ...addComponents(multiplyComponents(d, a), multiplyComponents(b, conjugateComponents(c)))
+  ];
+}
+function promote(value, dimension) {
+  if (isExactAlgebra(value)) {
+    if (value.dimension !== dimension) {
+      throw new Error("Quaternion and octonion operands must have the same dimension");
+    }
+    return value;
+  }
+  const scalar = toRational2(value, "scalar operand");
+  return new ExactCayleyDickson([
+    scalar,
+    ...Array.from({ length: dimension - 1 }, () => ZERO)
+  ]);
+}
+function commonDimension(left, right) {
+  if (isExactAlgebra(left) && isExactAlgebra(right)) {
+    if (left.dimension !== right.dimension) {
+      throw new Error("Quaternion and octonion operands must have the same dimension");
+    }
+    return left.dimension;
+  }
+  return isExactAlgebra(left) ? left.dimension : isExactAlgebra(right) ? right.dimension : null;
+}
+function binaryValues(left, right, operation) {
+  const dimension = commonDimension(left, right);
+  if (dimension === null)
+    return null;
+  const a = promote(left, dimension);
+  const b = promote(right, dimension);
+  return new ExactCayleyDickson(operation(a.components, b.components));
+}
+function conjugate(value) {
+  if (!isExactAlgebra(value))
+    throw new Error("Conjugate expects a quaternion or octonion");
+  return new ExactCayleyDickson(conjugateComponents(value.components));
+}
+function normSquared(value) {
+  if (!isExactAlgebra(value))
+    throw new Error("NormSquared expects a quaternion or octonion");
+  return value.components.reduce((sum, component) => sum.add(component.multiply(component)), ZERO);
+}
+function inverse(value) {
+  const norm = normSquared(value);
+  if (norm.numerator === 0n)
+    throw new Error("Zero has no multiplicative inverse");
+  return new ExactCayleyDickson(conjugateComponents(value.components).map((component) => component.divide(norm)));
+}
+function multiply(left, right) {
+  return binaryValues(left, right, multiplyComponents);
+}
+function divide(left, right) {
+  if (isExactAlgebra(right))
+    return multiply(left, inverse(right));
+  const dimension = commonDimension(left, right);
+  if (dimension === null)
+    return null;
+  const divisor = toRational2(right, "divisor");
+  if (divisor.numerator === 0n)
+    throw new Error("Division by zero");
+  const value = promote(left, dimension);
+  return new ExactCayleyDickson(value.components.map((component) => component.divide(divisor)));
+}
+function equal(left, right) {
+  const dimension = commonDimension(left, right);
+  if (dimension === null)
+    return null;
+  const a = promote(left, dimension);
+  const b = promote(right, dimension);
+  return a.components.every((value, index) => value.equals(b.components[index]));
+}
+function constructor(dimension, name) {
+  return (args) => {
+    if (args.length > dimension)
+      throw new Error(`${name} accepts at most ${dimension} components`);
+    return new ExactCayleyDickson([
+      ...args,
+      ...Array.from({ length: dimension - args.length }, () => ZERO)
+    ]);
+  };
+}
+function components(args) {
+  const value = args[0];
+  if (!isExactAlgebra(value))
+    throw new Error("Components expects a quaternion or octonion");
+  return { type: "sequence", values: [...value.components] };
+}
+function method2(name, impl) {
+  return {
+    type: "method_builtin",
+    name,
+    impl: (args) => impl(args.slice(1))
+  };
+}
+function createExactAlgebrasCollection() {
+  const helpers = new Map([
+    ["Quaternion", constructor(4, "Quaternion")],
+    ["Octonion", constructor(8, "Octonion")],
+    ["Components", components],
+    ["Conjugate", (args) => conjugate(args[0])],
+    ["NormSquared", (args) => normSquared(args[0])],
+    ["Inverse", (args) => inverse(args[0])]
+  ]);
+  const entries = new Map;
+  const extension = new Map([["immutable", new Integer(1n)]]);
+  for (const [name, helper] of helpers) {
+    entries.set(name, helper);
+    entries.set(name.toUpperCase(), helper);
+    extension.set(name.toUpperCase(), method2(name, helper));
+  }
+  return { type: "map", entries, _ext: extension };
+}
+function installArithmeticVariants(registry) {
+  if (!registry)
+    return;
+  const binary2 = (name, impl) => registry.installVariant(name, {
+    name: `ExactAlgebras.${name}`,
+    priority: 100,
+    prepare(args) {
+      return hasExactAlgebra(args[0], args[1]) ? { args } : false;
+    },
+    impl: ([left, right]) => impl(left, right)
+  });
+  binary2("ADD", (left, right) => binaryValues(left, right, addComponents));
+  binary2("SUB", (left, right) => binaryValues(left, right, subtractComponents));
+  binary2("MUL", multiply);
+  binary2("DIV", divide);
+  binary2("EQ", (left, right) => equal(left, right) ? new Integer(1n) : null);
+  binary2("NEQ", (left, right) => equal(left, right) ? null : new Integer(1n));
+  registry.installVariant("NEG", {
+    name: "ExactAlgebras.NEG",
+    priority: 100,
+    prepare(args) {
+      return isExactAlgebra(args[0]) ? { args } : false;
+    },
+    impl: ([value]) => new ExactCayleyDickson(value.components.map((component) => component.negate()))
+  });
+}
+function install2({ systemContext, registry }) {
+  const exactAlgebras = createExactAlgebrasCollection();
+  systemContext.registerHostValue("exactAlgebras", exactAlgebras, {
+    doc: "Exact rational quaternion and octonion constructors and operations"
+  });
+  installArithmeticVariants(registry);
+  return exactAlgebras;
+}
+
 // ../rix/plugins/plot/plot.plugin.rix.js
-function install2({ systemContext }) {
+function install3({ systemContext }) {
   const plot = createPlotOutputCollection();
   systemContext.registerHostValue("plot", plot, { doc: "Portable plotting helpers that produce intrinsic Graphics scenes" });
   return plot;
@@ -24600,6 +25900,19 @@ function install2({ systemContext }) {
 
 // ../rix/plugins/bundled.js
 var BUNDLED_PLUGINS = [
+  {
+    metadata: {
+      id: "exact-algebras",
+      description: "Exact rational quaternion and octonion values.",
+      kind: "host",
+      mount: "exactAlgebras",
+      exports: ["Quaternion", "Octonion", "Components", "Conjugate", "NormSquared", "Inverse"],
+      groups: ["Exact"],
+      permissions: [],
+      defaultEnabled: false
+    },
+    install: ({ systemContext, registry }) => install2({ systemContext, registry })
+  },
   {
     metadata: {
       id: "draw",
@@ -24624,15 +25937,15 @@ var BUNDLED_PLUGINS = [
       permissions: [],
       defaultEnabled: false
     },
-    install: ({ systemContext }) => install2({ systemContext })
+    install: ({ systemContext }) => install3({ systemContext })
   }
 ];
 function installBundledPlugins(catalog) {
-  for (const { metadata, install: install3 } of BUNDLED_PLUGINS) {
+  for (const { metadata, install: install4 } of BUNDLED_PLUGINS) {
     if (catalog.info(metadata.id))
       continue;
     catalog.addMetadata(metadata, { kind: "host" });
-    catalog.registerInstaller(metadata.id, install3);
+    catalog.registerInstaller(metadata.id, install4);
   }
   return catalog;
 }
@@ -24641,7 +25954,7 @@ function installBundledPlugins(catalog) {
 function int7(value) {
   return new Integer(BigInt(value));
 }
-function stringValue4(value, label2) {
+function stringValue5(value, label2) {
   if (typeof value === "string")
     return value;
   if (value?.type === "string")
@@ -24761,7 +26074,7 @@ function divideWithUnits(left, right) {
 function resolveTargetUnit(target, context, systemContext) {
   if (isUnitValue(target))
     return target;
-  const text = stringValue4(target, "ConvertUnit target");
+  const text = stringValue5(target, "ConvertUnit target");
   const collection = activeCollection(context, systemContext, "Units", ["UNITS", "Units"]);
   return parseUnitExpression(text, collection);
 }
@@ -24928,6 +26241,7 @@ function createDefaultRegistry(options = {}) {
   registry.registerAll(unitExactFunctions);
   registry.registerAll(symbolicFunctions);
   registry.registerAll(outputFunctions);
+  registry.registerAll(embeddedFunctions);
   installRegisteredTypes(registry);
   installUnitExactVariants(registry);
   installSymbolicVariants(registry);
@@ -24944,12 +26258,15 @@ var CORE_SYNTAX_CAPABILITIES = {
   IntDiv: "INTDIV",
   DivUp: "DIVUP",
   DivRound: "DIVROUND",
+  DivMod: "DIVMOD",
   Mod: "MOD",
   Pow: "POW",
   PowProd: "POWPROD",
   Neg: "NEG",
   Abs: "ABS",
   Sqrt: "SQRT",
+  Factorial: "FACTORIAL",
+  DoubleFactorial: "DOUBLE_FACTORIAL",
   Equal: "EQ",
   NotEqual: "NEQ",
   Less: "LT",
@@ -25055,7 +26372,16 @@ function createDefaultSystemContext(options = {}) {
   ctx.registerValue("Graphics", graphics, { doc: "Intrinsic portable 2D scene language" });
   ctx.registerAll(stdlibFunctions);
   ctx.registerAll(symbolicCapabilities);
+  ctx.registerCallableValue("Poly", createPolySystemValue(), symbolicCapabilities.POLY, {
+    doc: `${symbolicCapabilities.POLY.doc}; exposes .Parse for backtick polynomial forms`,
+    groups: ["Notation", "Symbolic"]
+  });
   ctx.registerAll(outputFunctions);
+  const sArith = sArithCapability.create();
+  ctx.registerCallableValue("SArith", sArith.value, sArith.definition, {
+    doc: sArith.definition.doc,
+    groups: ["Notation", "Symbolic"]
+  });
   ctx.register("EVAL", coreFunctions.EVAL);
   ctx.register("TypeExport", coreFunctions.TYPE_EXPORT);
   ctx.register("TypeImport", coreFunctions.TYPE_IMPORT);
@@ -25702,22 +27028,22 @@ function defaultSystemLookup(name) {
 // src/repl-source.js
 var statementClosers = new Set([")", "]", "}", "|}", ";}", "@}", "!}", ":}"]);
 var containerOpeners = new Set(["(", "[", "{", "{|", "{=", "{;", "{@", "{!", "{:"]);
-function isComment(token) {
-  return token?.type === "String" && token.kind === "comment";
+function isComment(token2) {
+  return token2?.type === "String" && token2.kind === "comment";
 }
-function canEndStatement(token) {
-  if (!token || isComment(token))
+function canEndStatement(token2) {
+  if (!token2 || isComment(token2))
     return false;
-  if (token.type !== "Symbol")
-    return token.type !== "End";
-  return statementClosers.has(token.value) || token.value === "^^" || token.value === "_";
+  if (token2.type !== "Symbol")
+    return token2.type !== "End";
+  return statementClosers.has(token2.value) || token2.value === "^^" || token2.value === "_";
 }
-function canStartStatement(token) {
-  if (!token || isComment(token) || token.type === "End")
+function canStartStatement(token2) {
+  if (!token2 || isComment(token2) || token2.type === "End")
     return false;
-  if (token.type !== "Symbol")
+  if (token2.type !== "Symbol")
     return true;
-  return ["(", "[", "{", "-", "+", "!", "_", "@", "@_", "."].includes(token.value) || String(token.value).startsWith("{");
+  return ["(", "[", "{", "-", "+", "!", "_", "@", "@_", "."].includes(token2.value) || String(token2.value).startsWith("{");
 }
 function normalizeReplSource(source) {
   let tokens;
@@ -25729,22 +27055,22 @@ function normalizeReplSource(source) {
   const insertions = [];
   let depth = 0;
   let previous = null;
-  for (const token of tokens) {
-    if (token.type === "End")
+  for (const token2 of tokens) {
+    if (token2.type === "End")
       break;
-    if (!isComment(token) && previous) {
-      const whitespaceBetween = source.slice(previous.pos[2], token.pos[1]);
+    if (!isComment(token2) && previous) {
+      const whitespaceBetween = source.slice(previous.pos[2], token2.pos[1]);
       if (depth === 0 && whitespaceBetween.includes(`
-`) && canEndStatement(previous) && canStartStatement(token)) {
+`) && canEndStatement(previous) && canStartStatement(token2)) {
         insertions.push(previous.pos[2]);
       }
     }
-    if (!isComment(token)) {
-      if (containerOpeners.has(token.value))
+    if (!isComment(token2)) {
+      if (containerOpeners.has(token2.value))
         depth += 1;
-      if (statementClosers.has(token.value))
+      if (statementClosers.has(token2.value))
         depth = Math.max(0, depth - 1);
-      previous = token;
+      previous = token2;
     }
   }
   return insertions.sort((left, right) => right - left).reduce((result, position) => `${result.slice(0, position)};${result.slice(position)}`, source);
@@ -25787,7 +27113,7 @@ function collection() {
   }
   return { type: "map", entries, _ext: extension };
 }
-function install3({ systemContext }) {
+function install4({ systemContext }) {
   const value = collection();
   systemContext.registerHostCallableValue("arrayJs", value, {
     impl(args) {
@@ -25894,14 +27220,14 @@ function decimalPlaces(value) {
   }
   return Number(value.value);
 }
-function floorDiv2(numerator, denominator) {
+function floorDiv3(numerator, denominator) {
   return numerator >= 0n ? numerator / denominator : -((-numerator + denominator - 1n) / denominator);
 }
 function decimalRounded(value, places, mode) {
   const exact = exactFloatRational(value);
   const scale = 10n ** BigInt(places);
   const scaled = exact.numerator * scale;
-  const lower2 = floorDiv2(scaled, exact.denominator);
+  const lower2 = floorDiv3(scaled, exact.denominator);
   let coefficient = lower2;
   if (mode === "ceiling" && scaled !== lower2 * exact.denominator)
     coefficient += 1n;
@@ -26001,7 +27327,7 @@ function registerFloatType() {
     installs
   });
 }
-function method2(name, impl) {
+function method3(name, impl) {
   return { type: "method_builtin", name, impl };
 }
 function installBrowserApproxMathPlugin({ systemContext, registry }) {
@@ -26011,7 +27337,7 @@ function installBrowserApproxMathPlugin({ systemContext, registry }) {
   const entries = new Map;
   const extension = new Map;
   const add = (name, impl) => {
-    const entry = method2(name, impl);
+    const entry = method3(name, impl);
     entries.set(name, entry);
     extension.set(name.toUpperCase(), entry);
   };
@@ -26039,7 +27365,7 @@ function installBrowserApproxMathPlugin({ systemContext, registry }) {
   });
   return systemContext;
 }
-var install4 = installBrowserApproxMathPlugin;
+var install5 = installBrowserApproxMathPlugin;
 
 // src/generated/bundled-plugin-catalog.js
 function createBundledPluginCatalog() {
@@ -26047,7 +27373,7 @@ function createBundledPluginCatalog() {
   catalog.addMetadata({ id: "draw", description: "Convenient 2D drawing helpers that produce core Graphics nodes.", kind: "host", mount: "draw", exports: ["Line", "Polygon", "Label", "Box", "Circle"], groups: ["Draw"], permissions: [], defaultEnabled: false, ignore: false, sourcePath: "bundled:draw" }, { sourcePath: "bundled:draw", kind: "host" });
   catalog.registerInstaller("draw", install);
   catalog.addMetadata({ id: "example-array-js", description: "Teaching JavaScript plugin demonstrating array sum, summary text, and reversal.", kind: "host", mount: "arrayJs", exports: ["Sum", "Describe", "Reverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, ignore: false, sourcePath: "bundled:example-array-js" }, { sourcePath: "bundled:example-array-js", kind: "host" });
-  catalog.registerInstaller("example-array-js", install3);
+  catalog.registerInstaller("example-array-js", install4);
   catalog.addMetadata({ id: "example-array-rix", description: "Teaching RiX plugin demonstrating array sum, summary text, and reversal.", kind: "rix", mount: "arrayRix", exports: ["arrayRixSum", "arrayRixDescribe", "arrayRixReverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, ignore: false, sourcePath: "bundled:example-array-rix" }, { source: `/**
 id: example-array-rix
 description: Teaching RiX plugin demonstrating array sum, summary text, and reversal.
@@ -26064,9 +27390,9 @@ defaultEnabled: false
 .Host.Register("arrayRixReverse", (values) -> values.Reverse(), "Reverse an array", ["Examples"]);
 `, sourcePath: "bundled:example-array-rix", kind: "rix" });
   catalog.addMetadata({ id: "float", description: "JavaScript IEEE-754 Float conversion and optional approximate math.", kind: "host", mount: "float", exports: ["Float", "Interval", "Round", "Floor", "Ceiling", "Abs", "Sqrt", "Sin", "Cos", "Tan", "Log", "Exp"], groups: ["ApproximateMath", "Float"], permissions: [], defaultEnabled: false, ignore: false, sourcePath: "bundled:float" }, { sourcePath: "bundled:float", kind: "host" });
-  catalog.registerInstaller("float", install4);
+  catalog.registerInstaller("float", install5);
   catalog.addMetadata({ id: "plot", description: "Portable plotting helpers that produce core Graphics scenes.", kind: "host", mount: "plot", exports: ["Polynomial"], groups: ["Plot"], permissions: [], defaultEnabled: false, ignore: false, sourcePath: "bundled:plot" }, { sourcePath: "bundled:plot", kind: "host" });
-  catalog.registerInstaller("plot", install2);
+  catalog.registerInstaller("plot", install3);
   return catalog;
 }
 
@@ -26188,5 +27514,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { findHelp, createRixRepl };
 
-//# debugId=340829D6A894C4CD64756E2164756E21
-//# sourceMappingURL=chunk-2jrbsm5e.js.map
+//# debugId=79DF8D5561F547EB64756E2164756E21
+//# sourceMappingURL=chunk-34qxbec6.js.map
