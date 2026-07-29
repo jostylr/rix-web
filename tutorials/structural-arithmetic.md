@@ -17,6 +17,11 @@ algebra.
 
 The first value is a `Sum` of two unreduced fractions. The second combines
 their equal denominators and returns `8/4`, deliberately not reduced to `2`.
+Unequal denominators use a least common denominator while staying fractions:
+
+```rix edu
+`1/2 + 1/3` ;
+```
 
 The distinction remains useful with symbols:
 
@@ -61,6 +66,49 @@ Nested parentheses and system calls work normally inside the splice.
 `@(…)` is real evaluation, so an effectful RiX expression would perform its
 effect when the structural form is created. Keep captures small and visible
 when preserving notation is the main goal.
+
+## Exact RiX presentations
+
+The structural parser shares RiX's exact-number spellings. Mixed numbers,
+continued fractions, and based numbers retain the notation that introduced
+them:
+
+```rix edu
+{: `1..3/4`, `1.~2~3`, `~1.~2~3`, `0xFF`, `0z[7]123` } ;
+```
+
+Intervals demonstrate the attachment rule directly:
+
+```rix edu
+{: `1:3`, `1 : 3` } ;
+```
+
+The tight colon records `Interval(1, 3)`. The spaced colon applies interval
+construction and returns the exact interval `1:3`.
+
+Line comments use `##`; block comments use `/* ... */`. Since comments
+separate tokens, they cannot be inserted into a tight operator without
+changing its attachment.
+
+## Inspect and transform a form
+
+Structural values have a small method surface:
+
+```rix edu
+form := `x*2/x`;
+{:
+  form.Head(),
+  form.Arguments(),
+  form.Render(),
+  form.Inspect(),
+  form.Simplify(:x)
+} ;
+```
+
+The `:x` argument states that `x` is nonzero, making cancellation sound.
+Without that assumption, symbolic cancellation is deliberately withheld.
+`Collapse()` forgets preserved presentation and computes the ordinary exact
+value; `SourceSpan()` reports where a node came from in the backtick body.
 
 :::challenge Preserve and combine
 Create two structural fractions with the same denominator. Show their tight

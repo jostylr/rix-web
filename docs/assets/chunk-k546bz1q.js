@@ -502,6 +502,9 @@ function tryMatchNumber(input, position) {
   }
   return null;
 }
+function scanNumberLiteral(input, position = 0) {
+  return tryMatchNumber(input, position) || tryMatchExplicitCF(input, position);
+}
 function tryMatchSystemFunctionRef(input, position) {
   const remaining = input.slice(position);
   if (remaining.startsWith("@_") && remaining.length > 2 && identifierStart.test(remaining[2])) {
@@ -4693,20 +4696,62 @@ class Parser {
   parseEmbeddedLanguage(token) {
     const content = token.value;
     if (content.startsWith(".")) {
-      const colonIndex2 = content.indexOf(":");
-      if (colonIndex2 === -1) {
+      let depth = 0;
+      let colonIndex = -1;
+      for (let index = 1;index < content.length; index++) {
+        const character = content[index];
+        if (character === "(")
+          depth++;
+        else if (character === ")") {
+          depth--;
+          if (depth < 0)
+            this.error("Unmatched ')' in backtick parser header");
+        } else if (character === ":" && depth === 0) {
+          colonIndex = index;
+          break;
+        }
+      }
+      if (colonIndex === -1) {
         this.error("Named backtick parser header requires ':' after .Name[.modifier...]");
       }
-      const header2 = content.slice(1, colonIndex2).trim();
-      const parts = header2.split(".").map((part) => part.trim());
-      if (parts.length === 0 || parts.some((part) => !/^[\p{L}_][\p{L}\p{N}_]*$/u.test(part))) {
+      if (depth !== 0)
+        this.error("Unmatched '(' in backtick parser header");
+      const header = content.slice(1, colonIndex).trim();
+      const parts = [];
+      let start = 0;
+      depth = 0;
+      for (let index = 0;index <= header.length; index++) {
+        const character = header[index];
+        if (character === "(")
+          depth++;
+        else if (character === ")")
+          depth--;
+        if (character === "." && depth === 0 || index === header.length) {
+          parts.push(header.slice(start, index).trim());
+          start = index + 1;
+        }
+      }
+      const parsedParts = parts.map((part) => {
+        const match = part.match(/^([\p{L}_][\p{L}\p{N}_]*)(?:\((.*)\))?$/u);
+        if (!match)
+          return null;
+        const args = match[2] === undefined ? null : match[2].split(",").map((argument) => argument.trim()).filter(Boolean);
+        if (args?.some((argument) => !/^[\p{L}_][\p{L}\p{N}_]*$/u.test(argument))) {
+          return null;
+        }
+        return args === null ? match[1] : { name: match[1], args };
+      });
+      if (parsedParts.length === 0 || parsedParts.some((part) => part === null)) {
         this.error("Invalid backtick parser header. Expected .Name[.modifier...]:body");
       }
+      if (typeof parsedParts[0] !== "string") {
+        this.error("The backtick parser name cannot have arguments");
+      }
       return this.createNode("EmbeddedLanguage", {
-        language: parts[0],
+        language: parsedParts[0],
         context: null,
-        modifiers: parts.slice(1),
-        body: content.slice(colonIndex2 + 1),
+        modifiers: parsedParts.slice(1),
+        body: content.slice(colonIndex + 1),
         explicitParser: true,
         original: token.original
       });
@@ -4719,91 +4764,10 @@ class Parser {
         original: token.original
       });
     }
-    if (content.indexOf(":") === -1) {
-      return this.createNode("EmbeddedLanguage", {
-        language: "SArith",
-        context: null,
-        body: content,
-        original: token.original
-      });
-    }
-    if (!/^[A-Z]/.test(content)) {
-      return this.createNode("EmbeddedLanguage", {
-        language: "SArith",
-        context: null,
-        body: content,
-        original: token.original
-      });
-    }
-    const parenStart = content.indexOf("(");
-    let colonIndex = -1;
-    let header = "";
-    let body = "";
-    if (parenStart !== -1) {
-      let parenCount = 0;
-      let parenEnd = -1;
-      for (let i = parenStart;i < content.length; i++) {
-        if (content[i] === "(") {
-          parenCount++;
-        } else if (content[i] === ")") {
-          parenCount--;
-          if (parenCount === 0) {
-            parenEnd = i;
-            break;
-          }
-        }
-      }
-      if (parenEnd !== -1) {
-        const afterParens = content.slice(parenEnd + 1);
-        const colonAfterParens = afterParens.indexOf(":");
-        if (colonAfterParens !== -1) {
-          colonIndex = parenEnd + 1 + colonAfterParens;
-        }
-      }
-    }
-    if (colonIndex === -1) {
-      colonIndex = content.indexOf(":");
-    }
-    header = content.slice(0, colonIndex).trim();
-    body = content.slice(colonIndex + 1);
-    let language = header;
-    let context = null;
-    const headerParenStart = header.indexOf("(");
-    const headerParenEnd = header.lastIndexOf(")");
-    if (headerParenEnd !== -1 && headerParenStart === -1) {
-      this.error("Unmatched closing parenthesis in embedded language header");
-    }
-    if (headerParenStart !== -1) {
-      let parenCount = 0;
-      let parenEnd = -1;
-      for (let i = headerParenStart;i < header.length; i++) {
-        if (header[i] === "(") {
-          parenCount++;
-        } else if (header[i] === ")") {
-          parenCount--;
-          if (parenCount === 0) {
-            parenEnd = i;
-            break;
-          }
-        }
-      }
-      if (parenEnd === -1) {
-        this.error("Unmatched opening parenthesis in embedded language header");
-      }
-      if (parenEnd !== header.length - 1) {
-        this.error("Invalid embedded language header format. Expected: LANGUAGE(CONTEXT):BODY");
-      }
-      const afterCloseParen = header.slice(parenEnd + 1);
-      if (afterCloseParen.includes("(")) {
-        this.error("Multiple parenthetical groups not allowed in embedded language header");
-      }
-      language = header.slice(0, headerParenStart).trim();
-      context = header.slice(headerParenStart + 1, parenEnd).trim();
-    }
     return this.createNode("EmbeddedLanguage", {
-      language: language || null,
-      context,
-      body,
+      language: "SArith",
+      context: null,
+      body: content,
       original: token.original
     });
   }
@@ -7751,7 +7715,7 @@ class RationalInterval {
     if (!/^\d+$/.test(startSuffix) || !/^\d+$/.test(endSuffix)) {
       return `${startStr}:${endStr}`;
     }
-    return `${commonPrefix}[${startSuffix},${endSuffix}]`;
+    return `${commonPrefix}[${startSuffix}:${endSuffix}]`;
   }
   relativeMidDecimalInterval() {
     const midpoint = this.#low.add(this.#high).divide(new Rational(2));
@@ -7759,7 +7723,7 @@ class RationalInterval {
     const offsetStart = this.#start.subtract(midpoint);
     const midpointStr = midpoint.toDecimal();
     const decimalPlaces = midpointStr.includes(".") ? midpointStr.split(".")[1].length : 0;
-    const scaleFactor = decimalPlaces === 0 ? Rational.one : new Rational(10).pow(decimalPlaces + 1);
+    const scaleFactor = decimalPlaces === 0 ? Rational.one : new Rational(10).pow(decimalPlaces);
     const scaledOffsetStart = offsetStart.multiply(scaleFactor);
     const scaledOffsetEnd = offsetEnd.multiply(scaleFactor);
     if (offsetStart.equals(offsetEnd.negate())) {
@@ -7770,7 +7734,7 @@ class RationalInterval {
     const offEndStr = scaledOffsetEnd.toDecimal();
     const startSign = scaledOffsetStart.compareTo(Rational.zero) > 0 ? "+" : "";
     const endSign = scaledOffsetEnd.compareTo(Rational.zero) > 0 ? "+" : "";
-    return `${midpointStr}[${startSign}${offStartStr},${endSign}${offEndStr}]`;
+    return `${midpointStr}[${startSign}${offStartStr}:${endSign}${offEndStr}]`;
   }
   relativeDecimalInterval() {
     const shortestDecimal = this.#findShortestPreciseDecimal();
@@ -7783,7 +7747,7 @@ class RationalInterval {
       scaledOffsetStart = offsetStart;
       scaledOffsetEnd = offsetEnd;
     } else {
-      const scaleFactor = new Rational(10).pow(decimalPlaces + 1);
+      const scaleFactor = new Rational(10).pow(decimalPlaces);
       scaledOffsetStart = offsetStart.multiply(scaleFactor);
       scaledOffsetEnd = offsetEnd.multiply(scaleFactor);
     }
@@ -7798,7 +7762,7 @@ class RationalInterval {
       const sorted = [off1, off2].sort((a, b) => b.v.compareTo(a.v));
       const s1 = "+" + sorted[0].v.abs().toDecimal();
       const s2 = "-" + sorted[1].v.abs().toDecimal();
-      return `${decimalStr}[${s1},${s2}]`;
+      return `${decimalStr}[${s1}:${s2}]`;
     }
   }
   #findShortestPreciseDecimal() {
@@ -8777,8 +8741,7 @@ function scaledOffset(value, decimalPlaces, hasPoint) {
   const offset = parseOffset(value);
   if (!hasPoint)
     return offset;
-  const scalePower = value.startsWith("#") ? decimalPlaces : decimalPlaces + 1;
-  return offset.divide(new Rational(10n ** BigInt(scalePower)));
+  return offset.divide(new Rational(10n ** BigInt(decimalPlaces)));
 }
 function parseUncertainty(input) {
   const match = input.match(/^(.+)\[([^\[\]]+)\]$/);
@@ -8788,6 +8751,9 @@ function parseUncertainty(input) {
   const shape = decimalShape(match[1]);
   const body = match[2].trim();
   const base = parseDecimalValue(shape.normalized);
+  if (body.includes(",")) {
+    throw new Error("Decimal interval notation requires ':' between bracketed values");
+  }
   if (body.startsWith("+-") || body.startsWith("-+")) {
     const offsetText = body.slice(2).trim();
     if (offsetText.length === 0) {
@@ -8796,7 +8762,7 @@ function parseUncertainty(input) {
     const offset = scaledOffset(offsetText, shape.fractional.length, shape.hasPoint);
     return new RationalInterval(base.subtract(offset), base.add(offset));
   }
-  const parts = body.split(/\s*[:,]\s*/);
+  const parts = body.split(/\s*:\s*/);
   if (parts.length > 2 || parts.length === 0 || parts.some((part) => part.length === 0)) {
     throw new Error("Decimal interval brackets require one or two comma- or colon-separated values");
   }
@@ -10648,7 +10614,7 @@ var runtimeDefaults = Object.freeze({
     Units: Object.freeze(["UNITS", "Units", "CONVERTUNIT", "ConvertUnit", "DEFINEUNIT", "DefineUnit"]),
     Exact: Object.freeze(["EXACT", "Exact", "COMPLEX", "Complex", "DEFINEEXACTGENERATOR", "DefineExactGenerator", "exactalgebras"]),
     Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC", "SArith"]),
-    Notation: Object.freeze(["SArith", "Poly"]),
+    Notation: Object.freeze(["SArith", "Poly", "NotationParser"]),
     Random: Object.freeze(["RANDOMSEED", "RandomSeed", "RAND_NAME"])
   })
 });
@@ -14122,16 +14088,70 @@ function createPlotOutputCollection() {
 }
 
 // ../rix/src/runtime/structural-arithmetic.js
-var BINARY = {
+var DEFAULT_BINARY = {
+  ":": { precedence: 70, associativity: "left", head: "Interval" },
   "+": { precedence: 80, associativity: "left", head: "Sum" },
   "-": { precedence: 80, associativity: "left", head: "Difference" },
   "*": { precedence: 90, associativity: "left", head: "Product" },
   "/": { precedence: 90, associativity: "left", head: "Fraction" },
   "^": { precedence: 100, associativity: "right", head: "Power" }
 };
+var DEFAULT_PREFIX = {
+  "+": { precedence: 99, head: "Positive" },
+  "-": { precedence: 99, head: "Negative" }
+};
+var DEFAULT_POSTFIX = {
+  "!": { precedence: 120, head: "Factorial" }
+};
 var PREFIX_PRECEDENCE = 99;
 var POSTFIX_PRECEDENCE = 120;
 var IMPLICIT_MULTIPLICATION_PRECEDENCE = 95;
+var STRUCTURAL_SPANS = new WeakMap;
+function createStructuralOperatorTable(declarations = []) {
+  const table = {
+    binary: { ...DEFAULT_BINARY },
+    prefix: { ...DEFAULT_PREFIX },
+    postfix: { ...DEFAULT_POSTFIX }
+  };
+  for (const declaration of declarations) {
+    const symbol = declaration?.symbol;
+    const fixity = String(declaration?.fixity || "infix").toLowerCase();
+    const head = declaration?.head;
+    if (!symbol || !head)
+      throw new Error("Structural operator declarations require symbol and head");
+    if (fixity === "infix" || fixity === "binary") {
+      table.binary[symbol] = {
+        precedence: Number(declaration.precedence ?? 80),
+        associativity: String(declaration.associativity || "left").toLowerCase(),
+        head,
+        apply: declaration.apply || null
+      };
+      if (!["left", "right"].includes(table.binary[symbol].associativity)) {
+        throw new Error(`Invalid associativity for structural operator '${symbol}'`);
+      }
+    } else if (fixity === "prefix") {
+      table.prefix[symbol] = {
+        precedence: Number(declaration.precedence ?? PREFIX_PRECEDENCE),
+        head,
+        apply: declaration.apply || null
+      };
+    } else if (fixity === "postfix") {
+      table.postfix[symbol] = {
+        precedence: Number(declaration.precedence ?? POSTFIX_PRECEDENCE),
+        head,
+        apply: declaration.apply || null
+      };
+    } else {
+      throw new Error(`Invalid fixity '${declaration.fixity}' for structural operator '${symbol}'`);
+    }
+  }
+  return Object.freeze({
+    binary: Object.freeze(table.binary),
+    prefix: Object.freeze(table.prefix),
+    postfix: Object.freeze(table.postfix)
+  });
+}
+var DEFAULT_OPERATORS = createStructuralOperatorTable();
 function compareNames(left, right) {
   if (left < right)
     return -1;
@@ -14150,6 +14170,35 @@ function parseError(source, offset, message) {
 }
 function token(type, value, start, end, gapBefore) {
   return { type, value, start, end, gapBefore };
+}
+function skipTrivia(source, start) {
+  let position = start;
+  let skipped = false;
+  while (position < source.length) {
+    if (/\s/u.test(source[position])) {
+      skipped = true;
+      position++;
+      continue;
+    }
+    if (source.startsWith("##", position)) {
+      skipped = true;
+      position += 2;
+      while (position < source.length && source[position] !== `
+`)
+        position++;
+      continue;
+    }
+    if (source.startsWith("/*", position)) {
+      skipped = true;
+      const close = source.indexOf("*/", position + 2);
+      if (close === -1)
+        throw parseError(source, position, "unclosed block comment");
+      position = close + 2;
+      continue;
+    }
+    break;
+  }
+  return { position, skipped };
 }
 function scanRiXExpression(source, atPosition) {
   const segment = source.slice(atPosition + 1);
@@ -14174,17 +14223,23 @@ function scanRiXExpression(source, atPosition) {
   }
   throw parseError(source, atPosition, "unclosed '@(' RiX expression splice");
 }
-function tokenizeStructuralArithmetic(source) {
+function tokenizeStructuralArithmetic(source, options = {}) {
+  const operators = options.operators || DEFAULT_OPERATORS;
+  const operatorGlyphs = [
+    ...Object.keys(operators.binary),
+    ...Object.keys(operators.prefix),
+    ...Object.keys(operators.postfix)
+  ].sort((left, right) => right.length - left.length);
   const tokens = [];
   let position = 0;
   let previousEnd = 0;
   while (position < source.length) {
-    while (position < source.length && /\s/u.test(source[position]))
-      position++;
+    const trivia = skipTrivia(source, position);
+    position = trivia.position;
     if (position >= source.length)
       break;
     const start = position;
-    const gapBefore = start > previousEnd;
+    const gapBefore = trivia.skipped || start > previousEnd;
     const rest = source.slice(position);
     if (rest.startsWith("@(")) {
       const splice = scanRiXExpression(source, position);
@@ -14193,10 +14248,10 @@ function tokenizeStructuralArithmetic(source) {
       previousEnd = position;
       continue;
     }
-    const numberMatch = rest.match(/^(?:\d(?:_?\d)*(?:\.\d(?:_?\d)*)?(?:#\d(?:_?\d)*)?|\.\d(?:_?\d)*(?:#\d(?:_?\d)*)?)/u);
+    const numberMatch = scanNumberLiteral(source, position);
     if (numberMatch) {
-      position += numberMatch[0].length;
-      tokens.push(token("number", numberMatch[0], start, position, gapBefore));
+      position = numberMatch.pos[2];
+      tokens.push(token("number", numberMatch.value, start, position, gapBefore));
       previousEnd = position;
       continue;
     }
@@ -14208,10 +14263,17 @@ function tokenizeStructuralArithmetic(source) {
       continue;
     }
     const character = source[position];
-    if ("+-*/^!@()".includes(character)) {
+    if ("@()".includes(character)) {
       position++;
-      const type = character === "(" ? "lparen" : character === ")" ? "rparen" : character === "@" ? "at" : "operator";
+      const type = character === "(" ? "lparen" : character === ")" ? "rparen" : "at";
       tokens.push(token(type, character, start, position, gapBefore));
+      previousEnd = position;
+      continue;
+    }
+    const operator = operatorGlyphs.find((glyph) => source.startsWith(glyph, position));
+    if (operator) {
+      position += operator.length;
+      tokens.push(token("operator", operator, start, position, gapBefore));
       previousEnd = position;
       continue;
     }
@@ -14226,16 +14288,53 @@ function isStructuralSymbol(value) {
 function isStructuralForm(value) {
   return value?.type === "structural_form";
 }
-function structuralSymbol(name) {
-  return Object.freeze({ type: "structural_symbol", name });
+function isStructuralLiteral(value) {
+  return value?.type === "structural_literal";
 }
-function structuralForm(head, args, mode = "construct") {
-  return Object.freeze({
+function rememberSpan(value, span) {
+  if (value && typeof value === "object" && span)
+    STRUCTURAL_SPANS.set(value, Object.freeze({ ...span }));
+  return value;
+}
+function structuralSourceSpan(value) {
+  return STRUCTURAL_SPANS.get(value) || value?.span || null;
+}
+function combinedSpan(left, right, fallback = null) {
+  const leftSpan = structuralSourceSpan(left);
+  const rightSpan = structuralSourceSpan(right);
+  if (leftSpan && rightSpan)
+    return { start: leftSpan.start, end: rightSpan.end };
+  return fallback;
+}
+function structuralSymbol(name, span = null) {
+  return rememberSpan(Object.freeze({
+    type: "structural_symbol",
+    name,
+    ...span ? { span: Object.freeze({ ...span }) } : {}
+  }), span);
+}
+function structuralLiteral(kind, notation, value, span = null) {
+  return rememberSpan(Object.freeze({
+    type: "structural_literal",
+    kind,
+    notation,
+    value,
+    ...span ? { span: Object.freeze({ ...span }) } : {}
+  }), span);
+}
+function structuralForm(head, args, mode = "construct", span = null) {
+  let normalized = [...args];
+  if ((head === "Sum" || head === "Product") && normalized.some((argument) => isStructuralForm(argument) && argument.head === head && argument.mode === mode)) {
+    normalized = normalized.flatMap((argument) => isStructuralForm(argument) && argument.head === head && argument.mode === mode ? argument.args : [argument]);
+  }
+  const form = Object.freeze({
     type: "structural_form",
     head,
-    args: Object.freeze([...args]),
-    mode
+    args: Object.freeze(normalized),
+    mode,
+    ...span ? { span: Object.freeze({ ...span }) } : {}
   });
+  return rememberSpan(form, span);
 }
 function integerValue(value) {
   if (value instanceof Integer)
@@ -14245,12 +14344,14 @@ function integerValue(value) {
   return null;
 }
 function asFraction(value) {
+  value = semanticLiteralValue(value);
   if (value instanceof Fraction)
     return value;
   const integer = integerValue(value);
   return integer === null ? null : new Fraction(integer, 1n);
 }
 function isZero3(value) {
+  value = semanticLiteralValue(value);
   if (value instanceof Integer)
     return value.value === 0n;
   if (value instanceof Fraction)
@@ -14258,6 +14359,7 @@ function isZero3(value) {
   return false;
 }
 function isOne3(value) {
+  value = semanticLiteralValue(value);
   if (value instanceof Integer)
     return value.value === 1n;
   if (value instanceof Fraction)
@@ -14265,7 +14367,7 @@ function isOne3(value) {
   return false;
 }
 function liftStructuralValue(value) {
-  if (value instanceof Integer || value instanceof Fraction || isStructuralSymbol(value) || isStructuralForm(value)) {
+  if (value instanceof Integer || value instanceof Fraction || value instanceof RationalInterval || isStructuralSymbol(value) || isStructuralLiteral(value) || isStructuralForm(value)) {
     return value;
   }
   if (value instanceof Rational) {
@@ -14273,11 +14375,33 @@ function liftStructuralValue(value) {
   }
   return Object.freeze({ type: "structural_value", value });
 }
-function literalValue(text) {
-  const value = parseNumber(text.replaceAll("_", ""));
-  return liftStructuralValue(value);
+function literalKind(text) {
+  if (text.includes(".."))
+    return "MixedNumber";
+  if (text.includes(".~"))
+    return "ContinuedFraction";
+  if (/^~?(?:0z\[\d+\]|0[A-Za-z])/u.test(text))
+    return "BasedNumber";
+  if (text.includes("[") || text.includes("]"))
+    return "UncertaintyInterval";
+  return null;
 }
-function constructBinary(operator, left, right) {
+function literalValue(text, options = {}, span = null) {
+  let value;
+  try {
+    value = parseNumber(text);
+  } catch (coreError) {
+    if (!options.evaluateRiX)
+      throw coreError;
+    value = options.evaluateRiX(text);
+  }
+  const lifted = liftStructuralValue(value);
+  const kind = literalKind(text);
+  if (kind)
+    return structuralLiteral(kind, text, lifted, span);
+  return rememberSpan(lifted, span);
+}
+function constructBinary(operator, left, right, span = null, table = DEFAULT_BINARY) {
   if (operator === "/") {
     const numerator = integerValue(left);
     const denominator = integerValue(right);
@@ -14285,29 +14409,39 @@ function constructBinary(operator, left, right) {
       return new Fraction(numerator, denominator);
     }
   }
-  return structuralForm(BINARY[operator].head, [left, right], "construct");
+  return structuralForm(table[operator].head, [left, right], "construct", span);
 }
-function constructPrefix(operator, operand) {
-  if (operator === "+")
-    return structuralForm("Positive", [operand], "construct");
-  return structuralForm("Negative", [operand], "construct");
+function constructPrefix(operator, operand, span = null, info = DEFAULT_PREFIX[operator]) {
+  if (!info)
+    throw new Error(`Unknown structural prefix operator '${operator}'`);
+  return structuralForm(info.head, [operand], "construct", span);
 }
-function constructPostfix(operator, operand) {
-  if (operator === "!")
-    return structuralForm("Factorial", [operand], "construct");
-  throw new Error(`Unknown structural postfix operator '${operator}'`);
+function constructPostfix(operator, operand, span = null, info = DEFAULT_POSTFIX[operator]) {
+  if (!info)
+    throw new Error(`Unknown structural postfix operator '${operator}'`);
+  return structuralForm(info.head, [operand], "construct", span);
 }
 function applyAdd(left, right) {
+  left = semanticLiteralValue(left);
+  right = semanticLiteralValue(right);
   if (isZero3(left))
     return right;
   if (isZero3(right))
     return left;
   if (left instanceof Integer && right instanceof Integer)
     return left.add(right);
+  if (left instanceof RationalInterval || right instanceof RationalInterval) {
+    return exactArithmeticValue(left).add(exactArithmeticValue(right));
+  }
   const leftFraction = asFraction(left);
   const rightFraction = asFraction(right);
   if (leftFraction && rightFraction && leftFraction.denominator === rightFraction.denominator) {
     return leftFraction.add(rightFraction);
+  }
+  if (leftFraction && rightFraction) {
+    const gcd = greatestCommonDivisor(leftFraction.denominator, rightFraction.denominator);
+    const denominator = leftFraction.denominator / gcd * rightFraction.denominator;
+    return new Fraction(leftFraction.numerator * (denominator / leftFraction.denominator) + rightFraction.numerator * (denominator / rightFraction.denominator), denominator);
   }
   if (leftFraction && right instanceof Integer) {
     return new Fraction(leftFraction.numerator + right.value * leftFraction.denominator, leftFraction.denominator);
@@ -14318,14 +14452,24 @@ function applyAdd(left, right) {
   return structuralForm("Sum", [left, right], "apply");
 }
 function applySubtract(left, right) {
+  left = semanticLiteralValue(left);
+  right = semanticLiteralValue(right);
   if (isZero3(right))
     return left;
   if (left instanceof Integer && right instanceof Integer)
     return left.subtract(right);
+  if (left instanceof RationalInterval || right instanceof RationalInterval) {
+    return exactArithmeticValue(left).subtract(exactArithmeticValue(right));
+  }
   const leftFraction = asFraction(left);
   const rightFraction = asFraction(right);
   if (leftFraction && rightFraction && leftFraction.denominator === rightFraction.denominator) {
     return leftFraction.subtract(rightFraction);
+  }
+  if (leftFraction && rightFraction) {
+    const gcd = greatestCommonDivisor(leftFraction.denominator, rightFraction.denominator);
+    const denominator = leftFraction.denominator / gcd * rightFraction.denominator;
+    return new Fraction(leftFraction.numerator * (denominator / leftFraction.denominator) - rightFraction.numerator * (denominator / rightFraction.denominator), denominator);
   }
   if (leftFraction && right instanceof Integer) {
     return new Fraction(leftFraction.numerator - right.value * leftFraction.denominator, leftFraction.denominator);
@@ -14336,6 +14480,8 @@ function applySubtract(left, right) {
   return structuralForm("Difference", [left, right], "apply");
 }
 function applyMultiply(left, right) {
+  left = semanticLiteralValue(left);
+  right = semanticLiteralValue(right);
   if (isZero3(left) || isZero3(right))
     return new Integer(0n);
   if (isOne3(left))
@@ -14344,6 +14490,9 @@ function applyMultiply(left, right) {
     return left;
   if (left instanceof Integer && right instanceof Integer)
     return left.multiply(right);
+  if (left instanceof RationalInterval || right instanceof RationalInterval) {
+    return exactArithmeticValue(left).multiply(exactArithmeticValue(right));
+  }
   const leftFraction = asFraction(left);
   const rightFraction = asFraction(right);
   if (leftFraction && rightFraction)
@@ -14351,10 +14500,15 @@ function applyMultiply(left, right) {
   return structuralForm("Product", [left, right], "apply");
 }
 function applyDivide(left, right) {
+  left = semanticLiteralValue(left);
+  right = semanticLiteralValue(right);
   if (isZero3(right))
     throw new Error("Structural division by zero");
   if (isOne3(right))
     return left;
+  if (left instanceof RationalInterval || right instanceof RationalInterval) {
+    return exactArithmeticValue(left).divide(exactArithmeticValue(right));
+  }
   const leftFraction = asFraction(left);
   const rightFraction = asFraction(right);
   if (leftFraction && rightFraction)
@@ -14362,6 +14516,8 @@ function applyDivide(left, right) {
   return structuralForm("Fraction", [left, right], "apply");
 }
 function applyPower(left, right) {
+  left = semanticLiteralValue(left);
+  right = semanticLiteralValue(right);
   const exponent = integerValue(right);
   if (exponent === 0n)
     return new Integer(1n);
@@ -14374,6 +14530,15 @@ function applyPower(left, right) {
   return structuralForm("Power", [left, right], "apply");
 }
 function applyStructuralBinary(operator, left, right) {
+  if (operator === ":") {
+    left = semanticLiteralValue(left);
+    right = semanticLiteralValue(right);
+    const leftRational = toRational(left);
+    const rightRational = toRational(right);
+    if (leftRational && rightRational)
+      return new RationalInterval(leftRational, rightRational);
+    return structuralForm("Interval", [left, right], "apply");
+  }
   if (operator === "+")
     return applyAdd(left, right);
   if (operator === "-")
@@ -14387,6 +14552,7 @@ function applyStructuralBinary(operator, left, right) {
   throw new Error(`Unknown structural binary operator '${operator}'`);
 }
 function applyStructuralPrefix(operator, operand) {
+  operand = semanticLiteralValue(operand);
   if (operator === "+")
     return operand;
   if (operator === "-") {
@@ -14399,12 +14565,34 @@ function applyStructuralPrefix(operator, operand) {
   throw new Error(`Unknown structural prefix operator '${operator}'`);
 }
 function applyStructuralPostfix(operator, operand) {
+  operand = semanticLiteralValue(operand);
   if (operator === "!") {
     if (operand instanceof Integer)
       return operand.factorial();
     return structuralForm("Factorial", [operand], "apply");
   }
   throw new Error(`Unknown structural postfix operator '${operator}'`);
+}
+function applyConfiguredBinary(operator, info, left, right) {
+  if (info.apply)
+    return info.apply(left, right);
+  if (DEFAULT_BINARY[operator])
+    return applyStructuralBinary(operator, left, right);
+  return structuralForm(info.head, [semanticLiteralValue(left), semanticLiteralValue(right)], "apply");
+}
+function applyConfiguredPrefix(operator, info, operand) {
+  if (info.apply)
+    return info.apply(operand);
+  if (DEFAULT_PREFIX[operator])
+    return applyStructuralPrefix(operator, operand);
+  return structuralForm(info.head, [semanticLiteralValue(operand)], "apply");
+}
+function applyConfiguredPostfix(operator, info, operand) {
+  if (info.apply)
+    return info.apply(operand);
+  if (DEFAULT_POSTFIX[operator])
+    return applyStructuralPostfix(operator, operand);
+  return structuralForm(info.head, [semanticLiteralValue(operand)], "apply");
 }
 function startsOperand(current) {
   return current.type === "number" || current.type === "identifier" || current.type === "rix_expression" || current.type === "at" || current.type === "lparen";
@@ -14415,7 +14603,11 @@ class StructuralParser {
     this.source = source;
     this.context = context;
     this.evaluateRiX = options.evaluateRiX || null;
-    this.tokens = tokenizeStructuralArithmetic(source);
+    this.operators = options.operators || DEFAULT_OPERATORS;
+    this.binary = this.operators.binary;
+    this.prefix = this.operators.prefix;
+    this.postfix = this.operators.postfix;
+    this.tokens = tokenizeStructuralArithmetic(source, { operators: this.operators });
     this.index = 0;
     this.groupedValues = new WeakSet;
     this.tightPrefixValues = new WeakSet;
@@ -14446,16 +14638,21 @@ class StructuralParser {
   parseExpression(minimumPrecedence) {
     let left = this.parsePrefix();
     while (true) {
-      if (this.current.type === "operator" && this.current.value === "!") {
-        if (POSTFIX_PRECEDENCE < minimumPrecedence)
+      if (this.current.type === "operator" && this.postfix[this.current.value]) {
+        const info = this.postfix[this.current.value];
+        if (info.precedence < minimumPrecedence)
           break;
         const operator = this.advance();
-        left = operator.gapBefore ? applyStructuralPostfix(operator.value, left) : constructPostfix(operator.value, left);
+        const span = {
+          start: structuralSourceSpan(left)?.start ?? operator.start,
+          end: operator.end
+        };
+        left = rememberSpan(operator.gapBefore ? applyConfiguredPostfix(operator.value, info, left) : constructPostfix(operator.value, left, span, info), span);
         continue;
       }
-      if (this.current.type === "operator" && BINARY[this.current.value]) {
+      if (this.current.type === "operator" && this.binary[this.current.value]) {
         const operator = this.current;
-        const info = BINARY[operator.value];
+        const info = this.binary[operator.value];
         if (info.precedence < minimumPrecedence)
           break;
         const gapAfter = this.next?.gapBefore === true;
@@ -14471,17 +14668,18 @@ class StructuralParser {
           rightMinimum = Math.max(rightMinimum, IMPLICIT_MULTIPLICATION_PRECEDENCE + 1);
         }
         const right = this.parseExpression(rightMinimum);
-        if (operator.value === "/" && !operator.gapBefore && isStructuralForm(right) && (right.head === "Power" || right.head === "Factorial") && !this.groupedValues.has(right)) {
+        if (operator.value === "/" && !operator.gapBefore && isStructuralForm(right) && (right.head === "Power" || Object.values(this.postfix).some((postfix) => postfix.head === right.head)) && !this.groupedValues.has(right)) {
           this.error(operator, "ambiguous tight fraction denominator; parenthesize the fraction or its denominator");
         }
-        left = operator.gapBefore ? applyStructuralBinary(operator.value, left, right) : constructBinary(operator.value, left, right);
+        const span = combinedSpan(left, right, { start: operator.start, end: operator.end });
+        left = rememberSpan(operator.gapBefore ? applyConfiguredBinary(operator.value, info, left, right) : constructBinary(operator.value, left, right, span, this.binary), span);
         continue;
       }
       if (startsOperand(this.current)) {
         if (IMPLICIT_MULTIPLICATION_PRECEDENCE < minimumPrecedence)
           break;
         const right = this.parseExpression(IMPLICIT_MULTIPLICATION_PRECEDENCE + 1);
-        left = structuralForm("Product", [left, right], "construct");
+        left = structuralForm("Product", [left, right], "construct", combinedSpan(left, right));
         continue;
       }
       break;
@@ -14492,18 +14690,24 @@ class StructuralParser {
     const current = this.current;
     if (current.type === "number") {
       this.advance();
-      return literalValue(current.value);
+      return literalValue(current.value, { evaluateRiX: this.evaluateRiX }, {
+        start: current.start,
+        end: current.end
+      });
     }
     if (current.type === "identifier") {
       this.advance();
-      return structuralSymbol(current.value);
+      return structuralSymbol(current.value, { start: current.start, end: current.end });
     }
     if (current.type === "rix_expression") {
       this.advance();
       if (!this.evaluateRiX) {
         this.error(current, "'@(expression)' requires an active RiX evaluator");
       }
-      return liftStructuralValue(this.evaluateRiX(current.value));
+      return rememberSpan(liftStructuralValue(this.evaluateRiX(current.value)), {
+        start: current.start,
+        end: current.end
+      });
     }
     if (current.type === "at") {
       this.advance();
@@ -14515,28 +14719,35 @@ class StructuralParser {
       if (value === undefined) {
         this.error(current, `undefined outer value '@${name}'`);
       }
-      return liftStructuralValue(value);
+      return rememberSpan(liftStructuralValue(value), { start: current.start, end: this.tokens[this.index - 1].end });
     }
     if (current.type === "lparen") {
-      this.advance();
+      const open = this.advance();
       const value = this.parseExpression(0);
       if (this.current.type !== "rparen") {
         this.error(this.current, "expected closing parenthesis");
       }
-      this.advance();
+      const close = this.advance();
       if (value !== null && typeof value === "object") {
         this.groupedValues.add(value);
+        rememberSpan(value, { start: open.start, end: close.end });
       }
       return value;
     }
-    if (current.type === "operator" && (current.value === "+" || current.value === "-")) {
+    if (current.type === "operator" && this.prefix[current.value]) {
       const operator = this.advance();
+      const info = this.prefix[operator.value];
       const separated = this.current.gapBefore === true;
-      const operand = this.parseExpression(separated ? PREFIX_PRECEDENCE : BINARY["^"].precedence + 1);
-      if (!separated && isStructuralForm(operand) && operand.head === "Factorial" && !this.groupedValues.has(operand)) {
+      const operand = this.parseExpression(separated ? this.prefix[operator.value]?.precedence ?? PREFIX_PRECEDENCE : (this.binary["^"]?.precedence ?? 100) + 1);
+      if (!separated && isStructuralForm(operand) && Object.values(this.postfix).some((postfix) => postfix.head === operand.head) && !this.groupedValues.has(operand)) {
         this.error(operator, "ambiguous tight prefix and postfix; parenthesize the prefix or its operand");
       }
-      const result = separated ? applyStructuralPrefix(operator.value, operand) : constructPrefix(operator.value, operand);
+      const span = {
+        start: operator.start,
+        end: structuralSourceSpan(operand)?.end ?? operator.end
+      };
+      const result = separated ? applyConfiguredPrefix(operator.value, info, operand) : constructPrefix(operator.value, operand, span, info);
+      rememberSpan(result, span);
       if (!separated && result !== null && typeof result === "object") {
         this.tightPrefixValues.add(result);
       }
@@ -14570,16 +14781,18 @@ function resolveStructuralValue(value, context) {
     }
     return liftStructuralValue(resolved);
   }
+  if (isStructuralLiteral(value))
+    return value;
   if (!isStructuralForm(value))
     return value;
   const args = value.args.map((argument) => resolveStructuralValue(argument, context));
   if (value.mode === "construct") {
     if (value.head === "Sum")
-      return constructBinary("+", args[0], args[1]);
+      return structuralForm("Sum", args, "construct");
     if (value.head === "Difference")
       return constructBinary("-", args[0], args[1]);
     if (value.head === "Product")
-      return constructBinary("*", args[0], args[1]);
+      return structuralForm("Product", args, "construct");
     if (value.head === "Fraction")
       return constructBinary("/", args[0], args[1]);
     if (value.head === "Power")
@@ -14590,14 +14803,16 @@ function resolveStructuralValue(value, context) {
       return constructPrefix("-", args[0]);
     if (value.head === "Factorial")
       return constructPostfix("!", args[0]);
+    if (value.head === "Interval")
+      return constructBinary(":", args[0], args[1]);
     return structuralForm(value.head, args, "construct");
   }
   if (value.head === "Sum")
-    return applyStructuralBinary("+", args[0], args[1]);
+    return args.slice(1).reduce((result, argument) => applyStructuralBinary("+", result, argument), args[0]);
   if (value.head === "Difference")
     return applyStructuralBinary("-", args[0], args[1]);
   if (value.head === "Product")
-    return applyStructuralBinary("*", args[0], args[1]);
+    return args.slice(1).reduce((result, argument) => applyStructuralBinary("*", result, argument), args[0]);
   if (value.head === "Fraction")
     return applyStructuralBinary("/", args[0], args[1]);
   if (value.head === "Power")
@@ -14608,10 +14823,12 @@ function resolveStructuralValue(value, context) {
     return applyStructuralPrefix("-", args[0]);
   if (value.head === "Factorial")
     return applyStructuralPostfix("!", args[0]);
+  if (value.head === "Interval")
+    return applyStructuralBinary(":", args[0], args[1]);
   return structuralForm(value.head, args, "apply");
 }
-function createStructuralFunction(value, context, name = null) {
-  const symbols2 = sortedStructuralFreeSymbols(value);
+function createStructuralFunction(value, context, name = null, explicitSymbols = null) {
+  const symbols2 = explicitSymbols || sortedStructuralFreeSymbols(value);
   return {
     type: "lambda",
     ...name ? { name } : {},
@@ -14628,6 +14845,8 @@ function createStructuralFunction(value, context, name = null) {
   };
 }
 function structuralValueToIr(value) {
+  if (isStructuralLiteral(value))
+    return structuralValueToIr(value.value);
   if (isStructuralSymbol(value))
     return { fn: "RETRIEVE", args: [value.name] };
   if (value instanceof Integer)
@@ -14653,6 +14872,12 @@ function structuralValueToIr(value) {
       ]
     };
   }
+  if (value instanceof RationalInterval) {
+    return {
+      fn: "INTERVAL",
+      args: [structuralValueToIr(value.start), structuralValueToIr(value.end)]
+    };
+  }
   if (value?.type === "structural_value") {
     return structuralValueToIr(value.value);
   }
@@ -14668,22 +14893,170 @@ function structuralValueToIr(value) {
     Power: "POW",
     Negative: "NEG",
     Positive: null,
-    Factorial: "FACTORIAL"
+    Factorial: "FACTORIAL",
+    Interval: "INTERVAL"
   };
   if (!Object.prototype.hasOwnProperty.call(heads, value.head)) {
     throw new Error(`Structural form '${value.head}' cannot be represented by the exact symbolic IR`);
   }
   const fn = heads[value.head];
-  return fn ? { fn, args } : args[0];
+  if (!fn)
+    return args[0];
+  if ((fn === "ADD" || fn === "MUL") && args.length > 2) {
+    return args.slice(1).reduce((left, right) => ({ fn, args: [left, right] }), args[0]);
+  }
+  return { fn, args };
 }
 function formatStructuralValue(value, formatChild = String) {
   if (isStructuralSymbol(value))
     return value.name;
+  if (isStructuralLiteral(value))
+    return value.notation;
   if (value?.type === "structural_value")
     return `Value(${formatChild(value.value)})`;
   if (!isStructuralForm(value))
     return formatChild(value);
   return `${value.head}(${value.args.map((argument) => formatStructuralValue(argument, formatChild)).join(", ")})`;
+}
+function greatestCommonDivisor(left, right) {
+  let a = left < 0n ? -left : left;
+  let b = right < 0n ? -right : right;
+  while (b !== 0n)
+    [a, b] = [b, a % b];
+  return a;
+}
+function semanticLiteralValue(value) {
+  return isStructuralLiteral(value) ? value.value : value;
+}
+function toRational(value) {
+  if (value instanceof Integer)
+    return value.toRational();
+  if (value instanceof Rational)
+    return value;
+  if (value instanceof Fraction)
+    return new Rational(value.numerator, value.denominator);
+  return null;
+}
+function exactArithmeticValue(value) {
+  return value instanceof Fraction ? new Rational(value.numerator, value.denominator) : value;
+}
+function collapseStructuralValue(value, context = null) {
+  if (isStructuralLiteral(value))
+    return collapseStructuralValue(value.value, context);
+  if (value?.type === "structural_value")
+    return collapseStructuralValue(value.value, context);
+  if (isStructuralSymbol(value)) {
+    const resolved = context?.get?.(value.name);
+    return resolved === undefined ? value : collapseStructuralValue(liftStructuralValue(resolved), context);
+  }
+  if (!isStructuralForm(value)) {
+    return value instanceof Fraction ? new Rational(value.numerator, value.denominator) : value;
+  }
+  const args = value.args.map((argument) => collapseStructuralValue(argument, context));
+  if (value.head === "Sum")
+    return args.slice(1).reduce((result, argument) => applyStructuralBinary("+", result, argument), args[0]);
+  if (value.head === "Difference")
+    return applyStructuralBinary("-", args[0], args[1]);
+  if (value.head === "Product")
+    return args.slice(1).reduce((result, argument) => applyStructuralBinary("*", result, argument), args[0]);
+  if (value.head === "Fraction")
+    return applyStructuralBinary("/", args[0], args[1]);
+  if (value.head === "Power")
+    return applyStructuralBinary("^", args[0], args[1]);
+  if (value.head === "Positive")
+    return applyStructuralPrefix("+", args[0]);
+  if (value.head === "Negative")
+    return applyStructuralPrefix("-", args[0]);
+  if (value.head === "Factorial")
+    return applyStructuralPostfix("!", args[0]);
+  if (value.head === "Interval")
+    return applyStructuralBinary(":", args[0], args[1]);
+  return structuralForm(value.head, args, "apply");
+}
+function inspectStructuralValue(value) {
+  if (isStructuralSymbol(value)) {
+    return { type: "map", entries: new Map([
+      ["kind", { type: "string", value: "symbol" }],
+      ["name", { type: "string", value: value.name }],
+      ["span", spanValue(structuralSourceSpan(value))]
+    ]) };
+  }
+  if (isStructuralLiteral(value)) {
+    return { type: "map", entries: new Map([
+      ["kind", { type: "string", value: "literal" }],
+      ["head", { type: "string", value: value.kind }],
+      ["notation", { type: "string", value: value.notation }],
+      ["value", value.value],
+      ["span", spanValue(structuralSourceSpan(value))]
+    ]) };
+  }
+  if (isStructuralForm(value)) {
+    return { type: "map", entries: new Map([
+      ["kind", { type: "string", value: "form" }],
+      ["head", { type: "string", value: value.head }],
+      ["mode", { type: "string", value: value.mode }],
+      ["arguments", { type: "sequence", values: [...value.args] }],
+      ["span", spanValue(structuralSourceSpan(value))]
+    ]) };
+  }
+  return { type: "map", entries: new Map([
+    ["kind", { type: "string", value: "value" }],
+    ["value", value],
+    ["span", spanValue(structuralSourceSpan(value))]
+  ]) };
+}
+function spanValue(span) {
+  if (!span)
+    return null;
+  return { type: "map", entries: new Map([
+    ["start", new Integer(BigInt(span.start + 1))],
+    ["end", new Integer(BigInt(span.end + 1))]
+  ]) };
+}
+function structurallyEqual(left, right) {
+  if (left === right)
+    return true;
+  if (isStructuralSymbol(left) && isStructuralSymbol(right))
+    return left.name === right.name;
+  if (isStructuralLiteral(left) && isStructuralLiteral(right))
+    return left.notation === right.notation;
+  if (left instanceof Integer && right instanceof Integer)
+    return left.value === right.value;
+  if (left instanceof Fraction && right instanceof Fraction) {
+    return left.numerator === right.numerator && left.denominator === right.denominator;
+  }
+  if (!isStructuralForm(left) || !isStructuralForm(right))
+    return false;
+  return left.head === right.head && left.mode === right.mode && left.args.length === right.args.length && left.args.every((argument, index) => structurallyEqual(argument, right.args[index]));
+}
+function provablyNonzero(value, assumptions) {
+  const semantic = semanticLiteralValue(value);
+  if (semantic instanceof Integer)
+    return semantic.value !== 0n;
+  if (semantic instanceof Fraction || semantic instanceof Rational)
+    return semantic.numerator !== 0n;
+  if (isStructuralSymbol(value))
+    return assumptions.has(value.name);
+  return false;
+}
+function simplifyStructuralValue(value, options = {}) {
+  const assumptions = new Set(options.nonzero || []);
+  if (!isStructuralForm(value))
+    return value;
+  const args = value.args.map((argument) => simplifyStructuralValue(argument, options));
+  if (value.head === "Fraction" && args.length === 2) {
+    const numeratorFactors = isStructuralForm(args[0]) && args[0].head === "Product" ? [...args[0].args] : [args[0]];
+    const index = numeratorFactors.findIndex((factor) => structurallyEqual(factor, args[1]) && provablyNonzero(factor, assumptions));
+    if (index !== -1) {
+      numeratorFactors.splice(index, 1);
+      if (numeratorFactors.length === 0)
+        return new Integer(1n);
+      if (numeratorFactors.length === 1)
+        return numeratorFactors[0];
+      return structuralForm("Product", numeratorFactors, value.mode);
+    }
+  }
+  return structuralForm(value.head, args, value.mode, structuralSourceSpan(value));
 }
 
 // ../rix/src/eval/format.js
@@ -14917,7 +15290,7 @@ function formatValue(val, options = {}) {
       return formatOutputText(val, formatChild);
     if (isSymbolicSpec(val))
       return formatSymbolicSpec(val);
-    if (isStructuralForm(val) || isStructuralSymbol(val) || val.type === "structural_value") {
+    if (isStructuralForm(val) || isStructuralLiteral(val) || isStructuralSymbol(val) || val.type === "structural_value") {
       return formatStructuralValue(val, formatChild);
     }
     if (isLazySequence(val)) {
@@ -18943,7 +19316,45 @@ var commonMethods = {
   CHECKTRAITS: method("CHECKTRAITS", ([target], context) => checkTraits(target, context, { warnOnly: true })),
   CheckTraits: method("CheckTraits", ([target], context) => checkTraits(target, context, { warnOnly: true }))
 };
+function assumptionName(value) {
+  if (value?.type === "string")
+    return value.value;
+  if (value?.type === "structural_symbol")
+    return value.name;
+  throw new Error("Structural nonzero assumptions must be names or structural symbols");
+}
+var structuralMethods = {
+  INSPECT: method("Inspect", ([target]) => inspectStructuralValue(target)),
+  RENDER: method("Render", ([target]) => stringObj3(formatStructuralValue(target, valueKey2))),
+  COLLAPSE: method("Collapse", ([target], context) => collapseStructuralValue(target, context)),
+  SIMPLIFY: method("Simplify", ([target, ...nonzero]) => simplifyStructuralValue(target, { nonzero: nonzero.map(assumptionName) })),
+  HEAD: method("Head", ([target]) => stringObj3(target.type === "structural_form" ? target.head : target.type === "structural_literal" ? target.kind : target.type === "structural_symbol" ? "Symbol" : "Value")),
+  ARGUMENTS: method("Arguments", ([target]) => ({
+    type: "sequence",
+    values: target.type === "structural_form" ? [...target.args] : [],
+    _ext: mutableExt2()
+  })),
+  SOURCESPAN: method("SourceSpan", ([target]) => {
+    const span = structuralSourceSpan(target);
+    if (!span)
+      return null;
+    return {
+      type: "tuple",
+      values: [int6(span.start + 1), int6(span.end + 1)],
+      _ext: mutableExt2()
+    };
+  }),
+  MAPARGUMENTS: method("MapArguments", ([target, mapper], context, evaluate, invoke) => {
+    if (target.type !== "structural_form")
+      return target;
+    return structuralForm(target.head, target.args.map((argument) => invoke(mapper, [argument], context, evaluate)), target.mode, structuralSourceSpan(target));
+  })
+};
 var PROTOS = new Map([
+  ["structural_symbol", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(structuralMethods)])],
+  ["structural_literal", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(structuralMethods)])],
+  ["structural_form", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(structuralMethods)])],
+  ["structural_value", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(structuralMethods)])],
   ["sequence", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iterableMethods), ...Object.entries(arrayMethods)])],
   ["lazy_sequence", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iterableMethods), ...Object.entries(lazySequenceMethods)])],
   ["map", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iterableMethods), ...Object.entries(mapMethods)])],
@@ -18997,6 +19408,8 @@ function checkTraitsMethod(name) {
   return method(name, ([target], context) => checkTraits(target, context, { warnOnly: true }));
 }
 function builtinProtoFor(target) {
+  if (target instanceof Fraction)
+    return PROTOS.get("structural_value");
   if (isTensor(target))
     return PROTOS.get("tensor");
   if (target && typeof target === "object" && target.fn === "DEFER")
@@ -23958,7 +24371,7 @@ function toInteger2(val, name) {
     throw new Error(`${name} must be a safe integer`);
   return number;
 }
-function toRational(val, name = "value") {
+function toRational2(val, name = "value") {
   if (val instanceof Rational)
     return val;
   if (val instanceof Integer)
@@ -23974,7 +24387,7 @@ function intervalBounds(interval) {
   if (interval instanceof RationalInterval)
     return [interval.low, interval.high];
   if (interval?.type === "interval")
-    return [toRational(interval.lo, "interval lower bound"), toRational(interval.hi, "interval upper bound")];
+    return [toRational2(interval.lo, "interval lower bound"), toRational2(interval.hi, "interval upper bound")];
   throw new Error("Interval operation requires a rational interval");
 }
 function eagerSequence(values) {
@@ -24154,7 +24567,7 @@ var advancedFunctions = {
   STEP: {
     impl(args, context) {
       const [lo, hi] = intervalBounds(args[0]);
-      const step = toRational(args[1], "Interval step");
+      const step = toRational2(args[1], "Interval step");
       const direction = step.compareTo(Rational.zero);
       if (direction === 0)
         throw new Error("Interval step cannot be zero");
@@ -24271,8 +24684,8 @@ var advancedFunctions = {
   },
   INFSEQ: {
     impl(args, context) {
-      const start = toRational(args[0], "Infinite sequence start");
-      const step = args[1] === null ? Rational.one : toRational(args[1], "Infinite sequence step");
+      const start = toRational2(args[0], "Infinite sequence start");
+      const step = args[1] === null ? Rational.one : toRational2(args[1], "Infinite sequence step");
       return attachBuiltinProto(createLazySequence({
         createState: () => ({ current: start, started: false }),
         cloneState: (state) => ({ ...state }),
@@ -25471,6 +25884,21 @@ function modifierNames(value) {
     throw new Error("Embedded parser modifiers must be a sequence");
   return value.values.map((item) => stringFromValue(item, "Embedded parser modifier"));
 }
+function parseFunctionModifier(modifiers) {
+  const matches = modifiers.filter((modifier) => /^FUN(?:\((.*)\))?$/iu.test(modifier));
+  if (matches.length === 0)
+    return null;
+  if (matches.length > 1)
+    throw new Error(".SArith accepts only one Fun modifier");
+  const match = matches[0].match(/^FUN(?:\((.*)\))?$/iu);
+  if (match[1] === undefined)
+    return [];
+  const names = match[1].split(",").map((name) => name.trim()).filter(Boolean);
+  if (new Set(names).size !== names.length) {
+    throw new Error(".SArith.Fun parameter names must be unique");
+  }
+  return names;
+}
 function parseInfoValue(meta = {}) {
   const entries = new Map;
   entries.set("function", meta.expectedFunction ? new Integer(1n) : null);
@@ -25481,7 +25909,7 @@ function parseInfoValue(meta = {}) {
 function infoEntry(info, name) {
   if (info?.type !== "map" || !(info.entries instanceof Map))
     return null;
-  return info.entries.get(name);
+  return info.entries.get(name) ?? null;
 }
 function evaluateRiXExpression(source, context, evaluate) {
   const runtime = context.getEnv("__script_runtime__", null);
@@ -25499,31 +25927,77 @@ function sarithParse(args, context, evaluate) {
   const body = stringFromValue(args[1], ".SArith.Parse body");
   const modifiers = modifierNames(args[2]);
   const info = args[3];
-  const unsupported = modifiers.filter((modifier) => modifier.toUpperCase() !== "FUN");
+  const unsupported = modifiers.filter((modifier) => !/^FUN(?:\(.*\))?$/iu.test(modifier));
   if (unsupported.length > 0) {
     throw new Error(`Unknown .SArith modifier${unsupported.length === 1 ? "" : "s"}: ${unsupported.join(", ")}`);
   }
   const value = parseStructuralArithmetic(body, context, {
-    evaluateRiX: (source) => evaluateRiXExpression(source, context, evaluate)
+    evaluateRiX: (source) => evaluateRiXExpression(source, context, evaluate),
+    operators: args[0]?.operators
   });
-  const explicitFunction = modifiers.some((modifier) => modifier.toUpperCase() === "FUN");
+  const explicitParameters = parseFunctionModifier(modifiers);
+  const explicitFunction = explicitParameters !== null;
   const inferredFunction = infoEntry(info, "function") !== null;
   if (!explicitFunction && !inferredFunction)
     return value;
   const inferredNameValue = infoEntry(info, "name");
   const inferredName = inferredNameValue?.type === "string" ? inferredNameValue.value : null;
-  return createStructuralFunction(value, context, inferredName);
+  if (explicitParameters && explicitParameters.length > 0) {
+    const free = sortedStructuralFreeSymbols(value);
+    const missing = free.filter((name) => !explicitParameters.includes(name));
+    if (missing.length > 0) {
+      throw new Error(`.SArith.Fun parameter list is missing free symbol${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}`);
+    }
+  }
+  return createStructuralFunction(value, context, inferredName, explicitParameters && explicitParameters.length > 0 ? explicitParameters : null);
 }
-function createSArithSystemValue() {
+function mapField(map2, name) {
+  if (map2?.type !== "map" || !(map2.entries instanceof Map)) {
+    throw new Error(".SArith.Configure declarations must be maps");
+  }
+  return map2.entries.get(name);
+}
+function operatorDeclaration(value, context, evaluate, invoke) {
+  const text = (name, fallback = null) => {
+    const field = mapField(value, name);
+    return field === undefined ? fallback : stringFromValue(field, `.SArith.Configure ${name}`);
+  };
+  const precedence2 = mapField(value, "precedence");
+  const apply = mapField(value, "apply");
+  return {
+    symbol: text("symbol"),
+    head: text("head"),
+    fixity: text("fixity", "infix"),
+    associativity: text("associativity", "left"),
+    precedence: precedence2 instanceof Integer ? Number(precedence2.value) : undefined,
+    apply: apply ? (...args) => invoke(apply, args, context, evaluate) : null
+  };
+}
+function configureSArith(args, context, evaluate, invoke) {
+  const values = args.slice(1).flatMap((value) => value?.type === "sequence" ? value.values : [value]);
+  const operators = createStructuralOperatorTable(values.map((value) => operatorDeclaration(value, context, evaluate, invoke)));
+  return createSArithSystemValue(operators);
+}
+function createSArithSystemValue(operators = null) {
+  const parseMethod = {
+    type: "method_builtin",
+    name: "Parse",
+    impl: sarithParse
+  };
+  const configureMethod = {
+    type: "method_builtin",
+    name: "Configure",
+    impl: configureSArith
+  };
   return {
     type: "structural_parser",
     name: "SArith",
+    ...operators ? { operators } : {},
     _ext: new Map([
-      ["Parse", {
-        type: "method_builtin",
-        name: "Parse",
-        impl: sarithParse
-      }]
+      ["Parse", parseMethod],
+      ["PARSE", parseMethod],
+      ["Configure", configureMethod],
+      ["CONFIGURE", configureMethod]
     ])
   };
 }
@@ -25546,15 +26020,17 @@ function polyParse(args, context, evaluate) {
   return polyFromSpec(spec2);
 }
 function createPolySystemValue() {
+  const parseMethod = {
+    type: "method_builtin",
+    name: "Parse",
+    impl: polyParse
+  };
   return {
     type: "symbolic_parser",
     name: "Poly",
     _ext: new Map([
-      ["Parse", {
-        type: "method_builtin",
-        name: "Parse",
-        impl: polyParse
-      }]
+      ["Parse", parseMethod],
+      ["PARSE", parseMethod]
     ])
   };
 }
@@ -25577,7 +26053,10 @@ function callRegisteredParser(parserName, body, modifiers, meta, context, evalua
   }
   const callArgs = [
     stringValue4(body),
-    { type: "sequence", values: modifiers.map(stringValue4) },
+    {
+      type: "sequence",
+      values: modifiers.map((modifier) => stringValue4(typeof modifier === "string" ? modifier : `${modifier.name}(${(modifier.args || []).join(",")})`))
+    },
     parseInfoValue(meta)
   ];
   if (parseMethod?.type === "method_builtin") {
@@ -25585,6 +26064,29 @@ function callRegisteredParser(parserName, body, modifiers, meta, context, evalua
   }
   return callWithConcreteArgs(parseMethod, [parserObject, ...callArgs], context, evaluate);
 }
+function notationParserCapability(args) {
+  const parseFunction = args[0];
+  if (!parseFunction)
+    throw new Error(".NotationParser requires a parse function");
+  const parseMethod = {
+    type: "method_builtin",
+    name: "Parse",
+    impl(methodArgs, context, evaluate) {
+      return callWithConcreteArgs(parseFunction, methodArgs.slice(1), context, evaluate);
+    }
+  };
+  return {
+    type: "notation_parser",
+    _ext: new Map([
+      ["Parse", parseMethod],
+      ["PARSE", parseMethod]
+    ])
+  };
+}
+var notationParserFunction = {
+  impl: notationParserCapability,
+  doc: "Wrap a RiX callable as a registered backtick parser object"
+};
 var embeddedFunctions = {
   EMBEDDED: {
     impl(args, context, evaluate, systemContext) {
@@ -25681,7 +26183,7 @@ function install({ systemContext }) {
 
 // ../rix/plugins/exact-algebras/exact-algebras.plugin.rix.js
 var ZERO = new Rational(0n, 1n);
-function toRational2(value, label2 = "component") {
+function toRational3(value, label2 = "component") {
   if (value instanceof Rational)
     return value;
   if (value instanceof Integer)
@@ -25704,7 +26206,7 @@ class ExactCayleyDickson {
     }
     this.type = components.length === 4 ? "exact_quaternion" : "exact_octonion";
     this.dimension = components.length;
-    this.components = Object.freeze(components.map((value, index) => toRational2(value, `component ${index}`)));
+    this.components = Object.freeze(components.map((value, index) => toRational3(value, `component ${index}`)));
     Object.freeze(this);
   }
   toString() {
@@ -25753,7 +26255,7 @@ function promote(value, dimension) {
     }
     return value;
   }
-  const scalar = toRational2(value, "scalar operand");
+  const scalar = toRational3(value, "scalar operand");
   return new ExactCayleyDickson([
     scalar,
     ...Array.from({ length: dimension - 1 }, () => ZERO)
@@ -25801,7 +26303,7 @@ function divide(left, right) {
   const dimension = commonDimension(left, right);
   if (dimension === null)
     return null;
-  const divisor = toRational2(right, "divisor");
+  const divisor = toRational3(right, "divisor");
   if (divisor.numerator === 0n)
     throw new Error("Division by zero");
   const value = promote(left, dimension);
@@ -26381,6 +26883,10 @@ function createDefaultSystemContext(options = {}) {
   ctx.registerCallableValue("SArith", sArith.value, sArith.definition, {
     doc: sArith.definition.doc,
     groups: ["Notation", "Symbolic"]
+  });
+  ctx.register("NotationParser", {
+    ...notationParserFunction,
+    groups: ["Notation"]
   });
   ctx.register("EVAL", coreFunctions.EVAL);
   ctx.register("TypeExport", coreFunctions.TYPE_EXPORT);
@@ -27514,5 +28020,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { findHelp, createRixRepl };
 
-//# debugId=79DF8D5561F547EB64756E2164756E21
-//# sourceMappingURL=chunk-34qxbec6.js.map
+//# debugId=F2BD78989FA7141064756E2164756E21
+//# sourceMappingURL=chunk-k546bz1q.js.map

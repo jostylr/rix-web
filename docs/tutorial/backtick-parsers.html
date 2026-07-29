@@ -9,6 +9,10 @@ text ;</textarea><div class="tutorial-output" data-tutorial-output></div></secti
 <p><code>.Fun</code> collects free structural symbols as parameters. Parameter order is alphabetical, not first appearance.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">F := `.SArith.Fun:z + a * 10`;
 F(2, 3) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Give <code>Fun</code> an argument list when order or unused parameters are intentional:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">Ordered := `.SArith.Fun(y,x,unused):y - x`;
+Ordered(5, 2, 99) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>All free symbols must be listed, but additional unused names are allowed.</p>
 <p><code>F</code> receives parameters <code>(a, z)</code>, so this returns <code>23</code>. A structural backtick assigned directly to an uppercase identifier infers the same conversion:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">G := `z + a * 10`;
 G(2, 3) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
@@ -25,6 +29,10 @@ Constant() ;</textarea><div class="tutorial-output" data-tutorial-output></div><
 P(2) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Unsupported polynomial forms fail explicitly rather than switching to an approximate calculation.</p>
 <p>Host applications and plugins can register camelCase parser objects exposing <code>.Parse(body, modifiers, parseInfo)</code>. The parse-info map tells the parser when an uppercase assignment requested a function and supplies the inferred name.</p>
+<p>RiX code can construct that protocol object without host JavaScript:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">parser := .NotationParser((body, modifiers, info) -&gt; body);
+parser.Parse(&quot;kept as text&quot;, [], {= }) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>A trusted package can register the returned object as a system or plugin capability. <code>.SArith.Configure(...)</code> similarly creates structural parsers with custom infix, prefix, or postfix glyphs, precedence, associativity, heads, and optional operational callables.</p>
 <aside class="challenge"><p class="eyebrow">Challenge</p><h3>Build from free symbols</h3><p>Create a structural function whose source mentions <code>z</code>, <code>a</code>, and a captured RiX expression. Predict the alphabetical argument order, then call it.</p><section class="tutorial-cell"><header><span>Your RiX answer</span><button type="button" data-tutorial-run>Run answer</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false" placeholder="# Write your RiX solution here">shift := 5;
 H := `.SArith.Fun:z + a * 10 + @(shift)`;
 H(2, 3);</textarea><div class="tutorial-output" data-tutorial-output></div></section></aside>

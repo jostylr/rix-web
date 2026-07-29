@@ -36,6 +36,15 @@ F := `.SArith.Fun:z + a * 10`;
 F(2, 3) ;
 ```
 
+Give `Fun` an argument list when order or unused parameters are intentional:
+
+```rix edu
+Ordered := `.SArith.Fun(y,x,unused):y - x`;
+Ordered(5, 2, 99) ;
+```
+
+All free symbols must be listed, but additional unused names are allowed.
+
 `F` receives parameters `(a, z)`, so this returns `23`. A structural backtick
 assigned directly to an uppercase identifier infers the same conversion:
 
@@ -77,6 +86,18 @@ approximate calculation.
 Host applications and plugins can register camelCase parser objects exposing
 `.Parse(body, modifiers, parseInfo)`. The parse-info map tells the parser when
 an uppercase assignment requested a function and supplies the inferred name.
+
+RiX code can construct that protocol object without host JavaScript:
+
+```rix edu
+parser := .NotationParser((body, modifiers, info) -> body);
+parser.Parse("kept as text", [], {= }) ;
+```
+
+A trusted package can register the returned object as a system or plugin
+capability. `.SArith.Configure(...)` similarly creates structural parsers with
+custom infix, prefix, or postfix glyphs, precedence, associativity, heads, and
+optional operational callables.
 
 :::challenge Build from free symbols
 Create a structural function whose source mentions `z`, `a`, and a captured
