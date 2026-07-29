@@ -90,6 +90,65 @@ Line comments use `##`; block comments use `/* ... */`. Since comments
 separate tokens, they cannot be inserted into a tight operator without
 changing its attachment.
 
+## Choose an algebra scope
+
+Tight subtraction already records a `Difference`. Named profiles can also
+reserve local basis units and collect their coefficients:
+
+```rix edu
+{:
+  `1-x`,
+  `.SArith.Complex:3+4i`,
+  `.SArith.Quaternion:1+2i+3j+4k`,
+  `.SArith.Algebra(u,v):3+4u+x v`
+} ;
+```
+
+These unit names are local to the selected parser. Outside `.Complex`, for
+example, `i` remains an ordinary structural symbol.
+
+Spacing still selects construction versus application. A tight product keeps
+the written product; a spaced product uses the scoped multiplication law:
+
+```rix edu
+{:
+  `.SArith.Complex:i*i`,
+  `.SArith.Complex:i * i`,
+  `.SArith.Quaternion:i * j`,
+  `.SArith.Quaternion:j * i`
+} ;
+```
+
+Quaternion multiplication is noncommutative. Octonions also preserve explicit
+grouping because their multiplication is nonassociative:
+
+```rix edu
+{:
+  `.SArith.Octonion:(e1 * e2) * e4`,
+  `.SArith.Octonion:e1 * (e2 * e4)`
+} ;
+```
+
+Use `Scope` when several parses should share one profile:
+
+```rix edu
+quaternions := .SArith.Scope(:Quaternion);
+quaternions.Parse("i * j", [], {= });
+```
+
+The general `Algebra(u,v,...)` profile collects linear coefficients without
+assuming how its basis units multiply. `ToExact()` can resolve those units
+from surrounding RiX bindings:
+
+```rix edu
+u := .Exact[:i];
+(`.SArith.Algebra(u):3+4u`).ToExact();
+```
+
+Complex presentations similarly convert through the built-in exact Complex
+capability. Quaternion and octonion conversion is available after explicitly
+loading the optional `exact-algebras` plugin.
+
 ## Inspect and transform a form
 
 Structural values have a small method surface:

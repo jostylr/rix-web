@@ -24,6 +24,34 @@
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">{: `1:3`, `1 : 3` } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The tight colon records <code>Interval(1, 3)</code>. The spaced colon applies interval construction and returns the exact interval <code>1:3</code>.</p>
 <p>Line comments use <code>##</code>; block comments use <code>/* ... */</code>. Since comments separate tokens, they cannot be inserted into a tight operator without changing its attachment.</p>
+<h2>Choose an algebra scope</h2>
+<p>Tight subtraction already records a <code>Difference</code>. Named profiles can also reserve local basis units and collect their coefficients:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">{:
+  `1-x`,
+  `.SArith.Complex:3+4i`,
+  `.SArith.Quaternion:1+2i+3j+4k`,
+  `.SArith.Algebra(u,v):3+4u+x v`
+} ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>These unit names are local to the selected parser. Outside <code>.Complex</code>, for example, <code>i</code> remains an ordinary structural symbol.</p>
+<p>Spacing still selects construction versus application. A tight product keeps the written product; a spaced product uses the scoped multiplication law:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">{:
+  `.SArith.Complex:i*i`,
+  `.SArith.Complex:i * i`,
+  `.SArith.Quaternion:i * j`,
+  `.SArith.Quaternion:j * i`
+} ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Quaternion multiplication is noncommutative. Octonions also preserve explicit grouping because their multiplication is nonassociative:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">{:
+  `.SArith.Octonion:(e1 * e2) * e4`,
+  `.SArith.Octonion:e1 * (e2 * e4)`
+} ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Use <code>Scope</code> when several parses should share one profile:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">quaternions := .SArith.Scope(:Quaternion);
+quaternions.Parse(&quot;i * j&quot;, [], {= });</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The general <code>Algebra(u,v,...)</code> profile collects linear coefficients without assuming how its basis units multiply. <code>ToExact()</code> can resolve those units from surrounding RiX bindings:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">u := .Exact[:i];
+(`.SArith.Algebra(u):3+4u`).ToExact();</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Complex presentations similarly convert through the built-in exact Complex capability. Quaternion and octonion conversion is available after explicitly loading the optional <code>exact-algebras</code> plugin.</p>
 <h2>Inspect and transform a form</h2>
 <p>Structural values have a small method surface:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="8" spellcheck="false">form := `x*2/x`;
