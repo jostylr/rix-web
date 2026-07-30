@@ -136,7 +136,7 @@ dependency graph:
 model := .FormulaSheet({:2x2:
     @{1}, @{ grid[1,1] + 1 };
     @{ grid[1,2] * 2 }, @{ grid[2,1] + 1 }
-});
+}, {= id="tutorial-model" });
 formulaView := .Sheet(model, {= title="Formula results" });
 formulaView ;
 ```
@@ -147,17 +147,20 @@ Select a formula cell and press Enter to edit its RiX body. The editor shows
 `grid[1,1] + 1`, without the surrounding deferred wrapper. Committing it starts
 a new atomic evaluation epoch and refreshes every dependent result.
 
-The same update is available programmatically:
+The same source-backed update is available programmatically:
 
 ```rix edu
-$model[1,1] := @{10};
+model.SetSource(1, 1, "10", ":=");
 .Sheet(model, {= title="Recalculated results" }) ;
 ```
 
-The lower-right result is now `23`. A self-reference such as
+The sheet recompiles the stored source into its own deferred formula; the
+browser does not own that compiler step. `model.Slot(1,1)` retains the stable
+ID `tutorial-model:slot:1:1`, authoritative source `"10"`, and assignment mode
+`":="`. The lower-right result is now `23`. A self-reference such as
 `@{ grid[1,1] + 1 }` reports a cycle instead of reading the previously
-committed value. Persistent `.rixcel` documents and assignment modes are the
-next storage layer.
+committed value. The versioned `.rixcel` container and assignment-mode
+semantics are still to come.
 
 ## Define reactive bindings
 

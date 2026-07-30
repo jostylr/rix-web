@@ -62,14 +62,14 @@ editableGrid ;</textarea><div class="tutorial-output" data-tutorial-output></div
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">model := .FormulaSheet({:2x2:
     @{1}, @{ grid[1,1] + 1 };
     @{ grid[1,2] * 2 }, @{ grid[2,1] + 1 }
-});
+}, {= id=&quot;tutorial-model&quot; });
 formulaView := .Sheet(model, {= title=&quot;Formula results&quot; });
 formulaView ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The lower-right result is <code>5</code>. The FormulaSheet context is isolated from unrelated tutorial variables and also provides <code>row</code>, <code>col</code>, and <code>index</code>. Select a formula cell and press Enter to edit its RiX body. The editor shows <code>grid[1,1] + 1</code>, without the surrounding deferred wrapper. Committing it starts a new atomic evaluation epoch and refreshes every dependent result.</p>
-<p>The same update is available programmatically:</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">$model[1,1] := @{10};
+<p>The same source-backed update is available programmatically:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">model.SetSource(1, 1, &quot;10&quot;, &quot;:=&quot;);
 .Sheet(model, {= title=&quot;Recalculated results&quot; }) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>The lower-right result is now <code>23</code>. A self-reference such as <code>@{ grid[1,1] + 1 }</code> reports a cycle instead of reading the previously committed value. Persistent <code>.rixcel</code> documents and assignment modes are the next storage layer.</p>
+<p>The sheet recompiles the stored source into its own deferred formula; the browser does not own that compiler step. <code>model.Slot(1,1)</code> retains the stable ID <code>tutorial-model:slot:1:1</code>, authoritative source <code>&quot;10&quot;</code>, and assignment mode <code>&quot;:=&quot;</code>. The lower-right result is now <code>23</code>. A self-reference such as <code>@{ grid[1,1] + 1 }</code> reports a cycle instead of reading the previously committed value. The versioned <code>.rixcel</code> container and assignment-mode semantics are still to come.</p>
 <h2>Define reactive bindings</h2>
 <p><code>.ReactiveGraph</code>, <code>Source</code>, and <code>Derive</code> remain the foundational API. Ordinary RiX uses adjacent dollar signs as its concise interface: <code>$$name := ...</code> declares a reactive cell, <code>$name</code> records a dependency, and plain <code>name</code> reads the current value without recording one. <code>${ ... }</code> installs the declarations as one atomic transaction:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="8" spellcheck="false">${

@@ -66,7 +66,7 @@ test("structured output has focused table, document, graphic, drawing, and sheet
     expect(sheets).toContain("slice = [_, _, 2]");
     expect(sheets).toContain(".Sheet(.Bind(grid)");
     expect(sheets).toContain(".FormulaSheet");
-    expect(sheets).toContain("$model[1,1] := @{10}");
+    expect(sheets).toContain('model.SetSource(1, 1, "10", ":=")');
     expect(sheets).toContain("$values[1,1]");
     expect(sheets).toContain("$$Scale");
     expect(sheets).toContain("$$frag := .Fragment");

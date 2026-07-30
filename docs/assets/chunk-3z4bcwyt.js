@@ -14784,6 +14784,27 @@ function createBinding(cell, options = {}) {
 }
 
 // ../rix/src/runtime/formula-sheet.js
+var nextFormulaSheetId = 1;
+var ASSIGNMENT_MODES = new Set(["=", ":=", "~=", "::=", "~~="]);
+function text2(value, label) {
+  const result = value?.type === "string" ? value.value : typeof value === "string" ? value : null;
+  if (result === null)
+    throw new Error(`${label} must be a string`);
+  return result;
+}
+function assignmentMode(value = ":=") {
+  const mode = text2(value, "FormulaSheet assignment mode");
+  if (!ASSIGNMENT_MODES.has(mode)) {
+    throw new Error(`Unsupported FormulaSheet assignment mode: ${mode}`);
+  }
+  return mode;
+}
+function formulaSheetId(value) {
+  const id = text2(value, "FormulaSheet id");
+  if (id.trim().length === 0)
+    throw new Error("FormulaSheet id must not be empty");
+  return id;
+}
 function exactIndex(value, label = "Formula sheet index") {
   if (value instanceof Integer)
     return Number(value.value);
@@ -14852,6 +14873,12 @@ function keyFromNodeName(name) {
 function addressFor(index) {
   return `grid[${index.join(",")}]`;
 }
+function slotKey(index) {
+  return index.join(",");
+}
+function slotIdFor(sheetId, index) {
+  return `${sheetId}:slot:${index.join(":")}`;
+}
 function normalizeIndex2(index, shape) {
   const values = Array.isArray(index) ? index : index?.type === "tuple" || index?.type === "sequence" ? index.values : [index];
   if (values.length !== shape.length) {
@@ -14877,17 +14904,31 @@ function formulaSheetMethods() {
       const formula = args.at(-1);
       return target.setFormula(args.slice(0, -1), formula);
     })],
+    ["GETSOURCE", method3("GetSource", ([target, ...index]) => target.getFormulaSource(index))],
+    ["SETSOURCE", method3("SetSource", ([target, ...args]) => {
+      const rank = target.rank;
+      if (args.length !== rank + 1 && args.length !== rank + 2) {
+        throw new Error(`FormulaSheet.SetSource expects ${rank} indices, source, and optional assignment mode`);
+      }
+      const index = args.slice(0, rank);
+      const source = args[rank];
+      const mode = args[rank + 1] ?? ":=";
+      return target.setFormulaSource(index, source, mode);
+    })],
+    ["GETASSIGNMENTMODE", method3("GetAssignmentMode", ([target, ...index]) => target.slot(index).assignmentMode)],
     ["RECALCULATE", method3("Recalculate", ([target]) => target.recalculate())],
     ["SLOT", method3("Slot", ([target, ...index]) => target.slot(index))],
     ["GRAPH", method3("Graph", ([target]) => target.graph)],
     ["_mutable", new Integer(1n)]
   ]);
 }
-function publicSlot(slot, index) {
+function publicSlot(slot, index, metadata) {
   return Object.freeze({
-    id: slot.id,
+    id: metadata.id,
+    reactiveId: slot.id,
     index: Object.freeze([...index]),
-    source: slot.source,
+    source: metadata.source,
+    assignmentMode: metadata.assignmentMode,
     formula: slot.formula,
     value: slot.value,
     lastGoodValue: slot.lastGoodValue,
@@ -14906,9 +14947,19 @@ function createFormulaSheet(formulasValue, options = {}) {
     throw new Error("FormulaSheet requires a deferred formula evaluator");
   }
   const shape = Object.freeze([...formulas.shape]);
+  const id = options.id === null || options.id === undefined ? `formula-sheet-${nextFormulaSheetId++}` : formulaSheetId(options.id);
+  const defaultAssignmentMode = assignmentMode(options.assignmentMode ?? ":=");
+  const slotMetadata = new Map(formulas.entries.map(({ index, formula }) => {
+    const source = options.formulaSource?.(formula) ?? null;
+    return [slotKey(index), {
+      id: slotIdFor(id, index),
+      source,
+      assignmentMode: defaultAssignmentMode
+    }];
+  }));
   const channel = new Set;
   const graph = createReactiveGraph({
-    id: options.id ? `${options.id}:graph` : undefined,
+    id: `${id}:graph`,
     preserveIdentifierCase: true,
     formulaSource: options.formulaSource,
     evaluateFormula(formula) {
@@ -14925,7 +14976,7 @@ function createFormulaSheet(formulasValue, options = {}) {
   });
   const sheet = {
     type: "formula_sheet",
-    id: options.id || "formula-sheet",
+    id,
     shape,
     rank: shape.length,
     graph,
@@ -14946,6 +14997,10 @@ function createFormulaSheet(formulasValue, options = {}) {
     getFormula(index) {
       return graph.node(nodeNameFor(normalizeIndex2(index, shape))).formula;
     },
+    getFormulaSource(index) {
+      const normalized = normalizeIndex2(index, shape);
+      return slotMetadata.get(slotKey(normalized)).source;
+    },
     reactiveNode(index) {
       return graph.node(nodeNameFor(normalizeIndex2(index, shape)));
     },
@@ -14954,20 +15009,51 @@ function createFormulaSheet(formulasValue, options = {}) {
         throw new Error("FormulaSheet.SetFormula requires deferred syntax @{ ... }");
       }
       const normalized = normalizeIndex2(index, shape);
-      graph.setFormula(nodeNameFor(normalized), formula, {
-        ...metadata,
-        source: metadata?.source ?? options.formulaSource?.(formula) ?? null,
-        sheetCause: {
-          type: "formula:set",
-          index: Object.freeze(normalized),
-          formula
+      const record = slotMetadata.get(slotKey(normalized));
+      const previousSource = record.source;
+      const previousMode = record.assignmentMode;
+      const nextSource = metadata?.source ?? options.formulaSource?.(formula) ?? null;
+      const nextMode = assignmentMode(metadata?.assignmentMode ?? record.assignmentMode);
+      record.source = nextSource;
+      record.assignmentMode = nextMode;
+      try {
+        graph.setFormula(nodeNameFor(normalized), formula, {
+          ...metadata,
+          source: nextSource,
+          assignmentMode: nextMode,
+          sheetCause: {
+            type: "formula:set",
+            index: Object.freeze(normalized),
+            formula,
+            assignmentMode: nextMode
+          }
+        });
+      } catch (error) {
+        if (graph.node(nodeNameFor(normalized)).formula !== formula) {
+          record.source = previousSource;
+          record.assignmentMode = previousMode;
         }
-      });
+        throw error;
+      }
       return sheet;
+    },
+    setFormulaSource(index, source, mode = ":=") {
+      if (typeof options.compileFormula !== "function") {
+        throw new Error("FormulaSheet source editing requires a formula compiler");
+      }
+      const normalized = normalizeIndex2(index, shape);
+      const authoritativeSource = text2(source, "FormulaSheet formula source");
+      const normalizedMode = assignmentMode(mode);
+      const formula = options.compileFormula(authoritativeSource);
+      return sheet.setFormula(normalized, formula, {
+        source: authoritativeSource,
+        assignmentMode: normalizedMode,
+        sourceKind: "formula-source"
+      });
     },
     slot(index) {
       const normalized = normalizeIndex2(index, shape);
-      return publicSlot(graph.node(nodeNameFor(normalized)), normalized);
+      return publicSlot(graph.node(nodeNameFor(normalized)), normalized, slotMetadata.get(slotKey(normalized)));
     },
     recalculate(cause = null) {
       graph.recalculate(cause || { type: "formula:recalculate" });
@@ -15185,7 +15271,11 @@ function sheetData(value) {
       formulaSheet: value,
       shape: [...value.shape],
       at: (index) => value.get(index),
-      formulaSourceAt: (index) => value.slot(index).source
+      formulaSourceAt: (index) => value.slot(index).source,
+      formulaMetadataAt: (index) => {
+        const slot = value.slot(index);
+        return { slotId: slot.id, assignmentMode: slot.assignmentMode };
+      }
     };
   }
   if (isTensor(value)) {
@@ -15351,9 +15441,12 @@ function createSheet(args) {
     index[rowAxis - 1] = rowIndex + 1;
     if (columnAxis !== null)
       index[columnAxis - 1] = columnIndex + 1;
+    const formulaMetadata = data.formulaMetadataAt?.(index) ?? null;
     return Object.freeze({
       value: data.at(index),
       formulaSource: data.formulaSourceAt?.(index) ?? null,
+      slotId: formulaMetadata?.slotId ?? null,
+      assignmentMode: formulaMetadata?.assignmentMode ?? null,
       index: Object.freeze(index),
       address: `${addressBase}[${index.join(",")}]`,
       displayAddress: sheetDisplayAddress(rowIndex + 1, columnIndex + 1, columnLabelMode)
@@ -15448,10 +15541,10 @@ function createTextMark(args) {
   const position = sequence(get(entry, "position"), "TextMark position");
   if (position.length !== 2)
     throw new Error("TextMark position must contain x and y coordinates");
-  const text2 = get(entry, "text");
-  if (text2 === null || text2 === undefined)
+  const text3 = get(entry, "text");
+  if (text3 === null || text3 === undefined)
     throw new Error("TextMark requires text");
-  return output("text_mark", { position, text: text2, style: optionalMap(get(entry, "style"), "TextMark style") });
+  return output("text_mark", { position, text: text3, style: optionalMap(get(entry, "style"), "TextMark style") });
 }
 function createRectangle(args) {
   const entry = spec(args, ["origin", "size", "style"], "Rectangle");
@@ -15857,28 +15950,28 @@ ${formatOutputText(slide, format)}`).join(`
   return `[Output: ${value.kind}]`;
 }
 function renderOutputHtml(value, format = (item) => String(item ?? "")) {
-  const text2 = (item) => escapeHtml(isOutputValue(item) ? formatOutputText(item, format) : cellText(item, format));
+  const text3 = (item) => escapeHtml(isOutputValue(item) ? formatOutputText(item, format) : cellText(item, format));
   if (!isOutputValue(value))
-    return `<pre>${text2(value)}</pre>`;
+    return `<pre>${text3(value)}</pre>`;
   if (value.kind === "live_view") {
     return `<section class="rix-output-live-view" data-rix-live-view="${escapeHtml(value.id)}" data-rix-live-revision="${value.revision}">${renderOutputHtml(value.current, format)}</section>`;
   }
   if (value.kind === "text")
-    return `<span class="rix-output-text">${text2(value.value)}</span>`;
+    return `<span class="rix-output-text">${text3(value.value)}</span>`;
   if (value.kind === "paragraph")
-    return `<p class="rix-output-paragraph">${value.children.map(text2).join("")}</p>`;
+    return `<p class="rix-output-paragraph">${value.children.map(text3).join("")}</p>`;
   if (value.kind === "heading")
-    return `<h${value.level} class="rix-output-heading">${text2(value.content)}</h${value.level}>`;
+    return `<h${value.level} class="rix-output-heading">${text3(value.content)}</h${value.level}>`;
   if (value.kind === "fragment")
     return `<section class="rix-output-fragment">${value.children.map((child) => renderOutputHtml(child, format)).join("")}</section>`;
   if (value.kind === "table")
-    return `<table class="rix-output-table">${value.caption ? `<caption>${escapeHtml(value.caption)}</caption>` : ""}<thead><tr>${value.columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}</tr></thead><tbody>${value.rows.map((row) => `<tr>${row.map((cell) => `<td>${text2(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+    return `<table class="rix-output-table">${value.caption ? `<caption>${escapeHtml(value.caption)}</caption>` : ""}<thead><tr>${value.columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}</tr></thead><tbody>${value.rows.map((row) => `<tr>${row.map((cell) => `<td>${text3(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
   if (value.kind === "grid")
-    return `<table class="rix-output-grid"><tbody>${value.rows.map((row, rowIndex) => `<tr${hasRule(value, "horizontal", rowIndex + 1) ? ' class="rix-grid-rule-top"' : ""}>${row.map((cell, column) => `<td${hasRule(value, "vertical", column + 1) ? ' class="rix-grid-rule-left"' : ""}>${text2(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+    return `<table class="rix-output-grid"><tbody>${value.rows.map((row, rowIndex) => `<tr${hasRule(value, "horizontal", rowIndex + 1) ? ' class="rix-grid-rule-top"' : ""}>${row.map((cell, column) => `<td${hasRule(value, "vertical", column + 1) ? ' class="rix-grid-rule-left"' : ""}>${text3(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
   if (value.kind === "sheet") {
     const summary = `${value.addressBase} · shape ${value.shape.join("×")}`;
     const controls = value.hiddenAxes.length === 0 ? "" : `<div class="rix-output-sheet-plane-controls" aria-label="Tensor plane">${value.hiddenAxes.map(({ axis, name, length, selected }) => `<label><span>${escapeHtml(name)} · axis ${axis}</span><select data-rix-sheet-axis="${axis}" aria-label="${escapeHtml(name)} axis ${axis}">${Array.from({ length }, (_item, index) => `<option value="${index + 1}"${selected === index + 1 ? " selected" : ""}>${index + 1}</option>`).join("")}</select></label>`).join("")}</div>`;
-    const bodies = value.planes.map((plane) => `<tbody data-rix-plane-key="${escapeHtml(plane.key)}" data-rix-slice="${plane.slice.map((item) => item ?? "").join(",")}"${plane.key === value.selectedPlaneKey ? "" : " hidden"}>${plane.cells.map((row, rowIndex) => `<tr><th scope="row" data-rix-row="${rowIndex + 1}">${escapeHtml(value.rowHeaders[rowIndex])}</th>${row.map((cell, columnIndex) => `<td data-rix-row="${rowIndex + 1}" data-rix-column="${columnIndex + 1}" data-rix-index="${cell.index.join(",")}" data-rix-address="${escapeHtml(cell.address)}" data-rix-display-address="${escapeHtml(cell.displayAddress)}"${cell.formulaSource === null ? "" : ` data-rix-formula-source="${escapeHtml(cell.formulaSource)}"`} title="${escapeHtml(cell.displayAddress)} · ${escapeHtml(cell.address)}">${text2(cell.value)}</td>`).join("")}</tr>`).join("")}</tbody>`).join("");
+    const bodies = value.planes.map((plane) => `<tbody data-rix-plane-key="${escapeHtml(plane.key)}" data-rix-slice="${plane.slice.map((item) => item ?? "").join(",")}"${plane.key === value.selectedPlaneKey ? "" : " hidden"}>${plane.cells.map((row, rowIndex) => `<tr><th scope="row" data-rix-row="${rowIndex + 1}">${escapeHtml(value.rowHeaders[rowIndex])}</th>${row.map((cell, columnIndex) => `<td data-rix-row="${rowIndex + 1}" data-rix-column="${columnIndex + 1}" data-rix-index="${cell.index.join(",")}" data-rix-address="${escapeHtml(cell.address)}" data-rix-display-address="${escapeHtml(cell.displayAddress)}"${cell.formulaSource === null ? "" : ` data-rix-formula-source="${escapeHtml(cell.formulaSource)}"`}${cell.slotId === null ? "" : ` data-rix-slot-id="${escapeHtml(cell.slotId)}"`}${cell.assignmentMode === null ? "" : ` data-rix-assignment-mode="${escapeHtml(cell.assignmentMode)}"`} title="${escapeHtml(cell.displayAddress)} · ${escapeHtml(cell.address)}">${text3(cell.value)}</td>`).join("")}</tr>`).join("")}</tbody>`).join("");
     const liveAttributes = value.editable ? ` data-rix-editable="true" data-rix-edit-mode="${value.editMode}"${value.bindingId ? ` data-rix-binding-id="${escapeHtml(value.bindingId)}"` : ""}` : "";
     const editor = value.editable ? `<form class="rix-output-sheet-editor" hidden><label><span data-rix-edit-label>Choose a cell to edit</span><input data-rix-edit-source aria-label="${value.editMode === "formula" ? "RiX formula" : "RiX value"}" autocomplete="off" spellcheck="false"></label><button type="submit">${value.editMode === "formula" ? "Set formula" : "Set"}</button><output data-rix-edit-status aria-live="polite"></output></form>` : "";
     const formulaAttributes = value.formulaBacked ? ` data-rix-formula-sheet="true" data-rix-formula-epoch="${value.formulaSheet.epoch}"` : "";
@@ -16006,10 +16099,10 @@ function formatTensor(tensor, formatValue2) {
   const levels = tensorDisplayLevels(tensor.shape);
   return `{:${shapeText}: ${formatTensorBody(tensor, formatValue2, levels)} }`;
 }
-function truncate(text2, limit = 40) {
-  if (text2.length <= limit)
-    return text2;
-  return `${text2.slice(0, Math.max(0, limit - 3))}...`;
+function truncate(text3, limit = 40) {
+  if (text3.length <= limit)
+    return text3;
+  return `${text3.slice(0, Math.max(0, limit - 3))}...`;
 }
 var BINARY_OPS = new Map([
   ["ADD", "+"],
@@ -21890,8 +21983,8 @@ class Parser {
     }
     this.position = endIndex + 1;
     this.advance();
-    const text2 = raw.trim();
-    if (!text2.length) {
+    const text3 = raw.trim();
+    if (!text3.length) {
       this.error("Import header cannot be empty");
     }
     const seenLocals = new Set;
@@ -23019,8 +23112,8 @@ var BASE_MODE_ALIASES = new Map([
 ]);
 var DEFAULT_BASE_DIGITS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz@&";
 var DEFAULT_BASE_EXPANSION_LIMIT = 20;
-function unescapeQuotedString(text2) {
-  return text2.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16))).replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+function unescapeQuotedString(text3) {
+  return text3.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16))).replace(/\\"/g, '"').replace(/\\\\/g, "\\");
 }
 function toRationalValue(value) {
   if (value instanceof Integer)
@@ -23121,10 +23214,10 @@ function groupDigits(intStr) {
   }
   return sign + out;
 }
-function stripGroupedDecimalDigits(text2, { allowSign = false } = {}) {
-  if (typeof text2 !== "string" || text2.length === 0)
-    return text2;
-  let s = text2;
+function stripGroupedDecimalDigits(text3, { allowSign = false } = {}) {
+  if (typeof text3 !== "string" || text3.length === 0)
+    return text3;
+  let s = text3;
   let sign = "";
   if (allowSign && (s.startsWith("-") || s.startsWith("+"))) {
     sign = s[0];
@@ -23146,9 +23239,9 @@ function stripGroupedDecimalDigits(text2, { allowSign = false } = {}) {
   }
   return sign + s.replace(/_/g, "");
 }
-function groupDigitRuns(text2, baseSystem) {
-  if (!text2)
-    return text2;
+function groupDigitRuns(text3, baseSystem) {
+  if (!text3)
+    return text3;
   let out = "";
   let run = "";
   const flush = () => {
@@ -23165,7 +23258,7 @@ function groupDigitRuns(text2, baseSystem) {
     }
     run = "";
   };
-  for (const ch of text2) {
+  for (const ch of text3) {
     if (baseSystem.charMap.has(ch)) {
       run += ch;
     } else {
@@ -24393,8 +24486,8 @@ var coreFunctions = {
         } catch {}
       }
       const baseSystem = resolveBaseSpecFromValue(baseSpecValue);
-      const text2 = toBaseString(value, baseSystem, modeSpec);
-      return { type: "string", value: text2 };
+      const text3 = toBaseString(value, baseSystem, modeSpec);
+      return { type: "string", value: text3 };
     },
     doc: "Format number to base string: expr _> baseSpec"
   },
@@ -24404,11 +24497,11 @@ var coreFunctions = {
       const strVal = evaluate(args[0]);
       const specNode = args[1];
       const baseSpecValue = specNode && specNode.fn === "LITERAL" && typeof specNode.args?.[0] === "string" && /^0([A-Za-z])$/.test(specNode.args[0]) ? specNode.args[0] : evaluate(specNode);
-      const text2 = strVal && strVal.type === "string" ? strVal.value : strVal;
-      if (typeof text2 !== "string")
+      const text3 = strVal && strVal.type === "string" ? strVal.value : strVal;
+      if (typeof text3 !== "string")
         throw new Error("FROMBASE expects a string left operand");
       const baseSystem = resolveBaseSpecFromValue(baseSpecValue);
-      return fromBaseString(text2, baseSystem);
+      return fromBaseString(text3, baseSystem);
     },
     doc: "Parse base string to number: str <_ baseSpec"
   },
@@ -24437,8 +24530,8 @@ var coreFunctions = {
         const groups = [];
         const spans = [];
         for (let i = 0;i < match.length; i++) {
-          const text2 = match[i];
-          groups.push(text2 === undefined ? null : { type: "string", value: text2 });
+          const text3 = match[i];
+          groups.push(text3 === undefined ? null : { type: "string", value: text3 });
           if (match.indices && match.indices[i]) {
             const [start, end] = match.indices[i];
             spans.push({
@@ -24455,8 +24548,8 @@ var coreFunctions = {
         const named = new Map;
         const namedSpans = new Map;
         if (match.groups) {
-          for (const [key, text2] of Object.entries(match.groups)) {
-            named.set(key, text2 === undefined ? null : { type: "string", value: text2 });
+          for (const [key, text3] of Object.entries(match.groups)) {
+            named.set(key, text3 === undefined ? null : { type: "string", value: text3 });
             if (match.indices && match.indices.groups && match.indices.groups[key]) {
               const [s, e] = match.indices.groups[key];
               namedSpans.set(key, {
@@ -26184,10 +26277,10 @@ var stdlibFunctions = {
     impl(args, context) {
       const io = context?.getEnv?.(RIX_IO_ENV, null);
       const formatter = typeof io?.format === "function" ? io.format : defaultPrettyFormat;
-      const printer = typeof io?.print === "function" ? io.print : (text2) => console.log(text2);
+      const printer = typeof io?.print === "function" ? io.print : (text3) => console.log(text3);
       for (const arg of args) {
-        const text2 = formatter(arg, { formatValue, prettyFormat: defaultPrettyFormat, context });
-        printer(text2, arg, { formatValue, prettyFormat: defaultPrettyFormat, context });
+        const text3 = formatter(arg, { formatValue, prettyFormat: defaultPrettyFormat, context });
+        printer(text3, arg, { formatValue, prettyFormat: defaultPrettyFormat, context });
       }
       return null;
     },
@@ -27057,8 +27150,8 @@ function standaloneInterpolation(body, context, evaluate) {
   const ranges = interpolationRanges(body.trim());
   return ranges.length === 1 && ranges[0].start === 0 && ranges[0].end === body.trim().length ? evaluateTemplateSource(ranges[0].source, context, evaluate) : null;
 }
-function textValue(text2) {
-  return { type: "string", value: text2 };
+function textValue(text3) {
+  return { type: "string", value: text3 };
 }
 function documentTemplate(body, context, evaluate) {
   const normalized = body.replace(/^\s*\n/, "").replace(/\n\s*$/, "");
@@ -27201,12 +27294,56 @@ function deferredSource(formula) {
   }
   return null;
 }
-function formulaSheetCapability(args, context, evaluate) {
-  if (args.length !== 1) {
-    throw new Error(".FormulaSheet expects one tensor or rectangular array of deferred formulas");
+function formulaSheetCapability(args, context, evaluate, systemContext) {
+  if (args.length < 1 || args.length > 2) {
+    throw new Error(".FormulaSheet expects deferred formulas and an optional options map");
   }
+  const optionEntries = args[1]?.type === "map" && args[1].entries instanceof Map ? args[1].entries : args[1] === undefined ? new Map : null;
+  if (!optionEntries)
+    throw new Error(".FormulaSheet options must be a map");
+  const option = (name, fallback = null) => optionEntries.get(name) ?? optionEntries.get(name.toLowerCase()) ?? fallback;
+  const stringOption = (name, fallback = null) => {
+    const value = option(name);
+    if (value === null)
+      return fallback;
+    const text3 = value?.type === "string" ? value.value : typeof value === "string" ? value : null;
+    if (text3 === null)
+      throw new Error(`FormulaSheet ${name} must be a string`);
+    return text3;
+  };
   return createFormulaSheet(args[0], {
+    id: stringOption("id"),
+    assignmentMode: stringOption("assignmentMode", ":="),
     formulaSource: deferredSource,
+    compileFormula(source) {
+      const wrapped = `@{ ${source}
+}`;
+      const nodes = lower(parse(wrapped, createSystemLookup(systemContext)));
+      if (nodes.length !== 1 || nodes[0]?.fn !== "DEFER") {
+        throw new Error("FormulaSheet source must compile to one deferred formula");
+      }
+      const attachSource = (node, seen = new Set) => {
+        if (!node || typeof node !== "object" || seen.has(node))
+          return;
+        seen.add(node);
+        if (Array.isArray(node)) {
+          for (const item of node)
+            attachSource(item, seen);
+          return;
+        }
+        if (node.fn) {
+          Object.defineProperty(node, "__source", {
+            value: wrapped,
+            enumerable: false,
+            configurable: true
+          });
+        }
+        for (const arg of node.args || [])
+          attachSource(arg, seen);
+      };
+      attachSource(nodes[0]);
+      return nodes[0];
+    },
     runFormula(formula, bindings, runOptions = {}) {
       if (containsOuterRead(formula.args[0])) {
         throw new Error("FormulaSheet formulas cannot access caller bindings with @; use explicit sheet imports");
@@ -27822,17 +27959,17 @@ function mapField(map2, name) {
   return map2.entries.get(name);
 }
 function operatorDeclaration(value, context, evaluate, invoke) {
-  const text2 = (name, fallback = null) => {
+  const text3 = (name, fallback = null) => {
     const field = mapField(value, name);
     return field === undefined ? fallback : stringFromValue(field, `.SArith.Configure ${name}`);
   };
   const precedence2 = mapField(value, "precedence");
   const apply = mapField(value, "apply");
   return {
-    symbol: text2("symbol"),
-    head: text2("head"),
-    fixity: text2("fixity", "infix"),
-    associativity: text2("associativity", "left"),
+    symbol: text3("symbol"),
+    head: text3("head"),
+    fixity: text3("fixity", "infix"),
+    associativity: text3("associativity", "left"),
     precedence: precedence2 instanceof Integer ? Number(precedence2.value) : undefined,
     apply: apply ? (...args) => invoke(apply, args, context, evaluate) : null
   };
@@ -28453,9 +28590,9 @@ function divideWithUnits(left, right) {
 function resolveTargetUnit(target, context, systemContext) {
   if (isUnitValue(target))
     return target;
-  const text2 = stringValue5(target, "ConvertUnit target");
+  const text3 = stringValue5(target, "ConvertUnit target");
   const collection = activeCollection(context, systemContext, "Units", ["UNITS", "Units"]);
-  return parseUnitExpression(text2, collection);
+  return parseUnitExpression(text3, collection);
 }
 var unitExactFunctions = {
   UNIT: {
@@ -29477,6 +29614,8 @@ function eventDetail(cell) {
   return {
     address: cell.dataset.rixAddress,
     displayAddress: cell.dataset.rixDisplayAddress,
+    slotId: cell.dataset.rixSlotId ?? null,
+    assignmentMode: cell.dataset.rixAssignmentMode ?? null,
     index,
     slice,
     row: Number(cell.dataset.rixRow),
@@ -29773,12 +29912,17 @@ class WidgetSession {
         index
       });
     } else if (this.editMode === "formula" && event.type === "sheet:formula") {
-      this.formulaSheet.setFormula(index, event.formula, {
-        source: event.source ?? null,
-        sourceKind: "widget",
-        widgetKind: "sheet",
-        index
-      });
+      if (typeof event.source === "string") {
+        this.formulaSheet.setFormulaSource(index, event.source, event.assignmentMode ?? this.formulaSheet.slot(index).assignmentMode);
+      } else {
+        this.formulaSheet.setFormula(index, event.formula, {
+          source: null,
+          assignmentMode: event.assignmentMode,
+          sourceKind: "widget",
+          widgetKind: "sheet",
+          index
+        });
+      }
     } else {
       throw new Error(`Unsupported widget event for ${this.editMode} editor: ${event.type || "missing type"}`);
     }
@@ -29791,7 +29935,9 @@ class WidgetSession {
     return this.widget.planes.flatMap((plane) => plane.cells.flatMap((row) => row.map((cell) => ({
       address: cell.address,
       text: format(cell.value),
-      formulaSource: cell.formulaSource
+      formulaSource: cell.formulaSource,
+      slotId: cell.slotId,
+      assignmentMode: cell.assignmentMode
     }))));
   }
   snapshot() {
@@ -29880,32 +30026,40 @@ function mountOutputWidgets(root, value, options = {}) {
         onActivate: options.onActivate,
         onSelection: options.onSelection,
         onPlaneChange: options.onPlaneChange,
-        onEdit: widgetSession && typeof options.evaluateEdit === "function" ? (detail) => {
+        onEdit: widgetSession && (widgetSession.editMode === "formula" || typeof options.evaluateEdit === "function") ? (detail) => {
           try {
-            const evaluated = options.evaluateEdit(detail.source, {
-              mode: widgetSession.editMode,
-              index: detail.index,
-              sheet: widgetSession.current()
-            });
-            if (evaluated?.type === "error")
-              return evaluated;
-            const valueResult = evaluated?.type === "result" ? evaluated.value : evaluated;
+            let valueResult = null;
+            if (widgetSession.editMode !== "formula") {
+              const evaluated = options.evaluateEdit(detail.source, {
+                mode: widgetSession.editMode,
+                index: detail.index,
+                sheet: widgetSession.current()
+              });
+              if (evaluated?.type === "error")
+                return evaluated;
+              valueResult = evaluated?.type === "result" ? evaluated.value : evaluated;
+            }
             const focusRequest = {
               sheetIndex: index,
               address: editedAddress(widgetSession.current(), detail.index)
             };
             pendingFocusRequest = focusRequest;
             try {
-              widgetSession.dispatch(widgetSession.editMode === "formula" ? {
-                type: "sheet:formula",
-                index: detail.index,
-                formula: valueResult,
-                source: detail.source
-              } : {
-                type: "sheet:set",
-                index: detail.index,
-                value: valueResult
-              });
+              if (widgetSession.editMode === "formula") {
+                widgetSession.dispatch({
+                  type: "sheet:formula",
+                  index: detail.index,
+                  source: detail.source,
+                  assignmentMode: detail.assignmentMode
+                });
+                valueResult = widgetSession.formulaSheet.getFormula(detail.index);
+              } else {
+                widgetSession.dispatch({
+                  type: "sheet:set",
+                  index: detail.index,
+                  value: valueResult
+                });
+              }
             } finally {
               if (pendingFocusRequest === focusRequest)
                 pendingFocusRequest = null;
@@ -30443,8 +30597,8 @@ function preview(value, formatValue2) {
   if (value === undefined)
     return "";
   try {
-    const text2 = formatValue2 ? formatValue2(value) : String(value);
-    return text2.length > 72 ? `${text2.slice(0, 69)}…` : text2;
+    const text3 = formatValue2 ? formatValue2(value) : String(value);
+    return text3.length > 72 ? `${text3.slice(0, 69)}…` : text3;
   } catch {
     return "";
   }
@@ -31075,5 +31229,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { formatValue, mountOutputWidgets, findHelp, createRixRepl };
 
-//# debugId=C55D35D80C07B2EC64756E2164756E21
-//# sourceMappingURL=chunk-gbhs2dd7.js.map
+//# debugId=6F2538F8B45A5F8864756E2164756E21
+//# sourceMappingURL=chunk-3z4bcwyt.js.map
