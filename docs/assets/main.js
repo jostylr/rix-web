@@ -3,7 +3,7 @@ import {
   createWidgetSession,
   enhanceSheetViews,
   findHelp
-} from "./chunk-et1ff5jc.js";
+} from "./chunk-3ze8tj32.js";
 
 // src/main.js
 var repl = createRixRepl();

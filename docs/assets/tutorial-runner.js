@@ -2,7 +2,7 @@ import {
   createRixRepl,
   createWidgetSession,
   enhanceSheetViews
-} from "./chunk-et1ff5jc.js";
+} from "./chunk-3ze8tj32.js";
 
 // src/generated/plugin-tutorial-index.js
 var pluginTutorialGroups = [

@@ -19,7 +19,7 @@ address copied from the view to evaluate directly:
 
 ```rix edu
 grid := {:2x3: 1, 2, 3; 4, 5, 6};
-gridView := .Sheet(grid, {=
+gridView := .Sheet(.Bind(grid), {=
     title = "Exact matrix",
     address = "grid",
     axes = ["row", "column"]
@@ -29,10 +29,10 @@ gridView ;
 
 Click a cell to select it. Arrow keys, Home, and End move the selection. The
 location indicator combines a familiar display label with executable RiX
-source—for example `C2 · grid[2,3]`. Enter or double-click inserts the RiX
-address into this lesson's source editor.
+source—for example `C2 · grid[2,3]`. Enter edits the selected value; Enter
+again commits it and returns focus to the grid.
 
-The inserted address indexes the original tensor, not the Sheet output:
+The canonical address indexes the original tensor, not the Sheet output:
 
 ```rix edu
 grid[2,3] ;
@@ -53,7 +53,7 @@ cube := {:2x3x2:
     1, 2, 3; 4, 5, 6 ;;
     7, 8, 9; 10, 11, 12
 };
-cubeView := .Sheet(cube, {=
+cubeView := .Sheet(.Bind(cube), {=
     title = "Two matrix planes",
     address = "cube",
     axes = ["row", "column", "depth"],
@@ -75,7 +75,7 @@ cube := {:2x3x2:
     1, 2, 3; 4, 5, 6 ;;
     7, 8, 9; 10, 11, 12
 };
-rowByDepth := .Sheet(cube, {=
+rowByDepth := .Sheet(.Bind(cube), {=
     title = "Column 2 across depths",
     address = "cube",
     axes = ["row", "column", "depth"],
@@ -125,3 +125,32 @@ canonical addresses use `prices[...]` by default.
     prices := {:2x2: 3 / 2, 2; 5 / 4, 7 / 3};
     .Sheet(.Bind(prices), {= title="Exact prices" })
 :::
+
+## Give every slot a formula
+
+A FormulaSheet is a different entity from a live Binding view. Each coordinate
+owns a deferred RiX formula, and `grid[...]` reads are evaluated together as a
+dependency graph:
+
+```rix edu
+model := .FormulaSheet([
+    [@{; 1 }, @{; grid[1,1] + 1 }],
+    [@{; grid[1,2] * 2 }, @{; grid[2,1] + 1 }]
+]);
+formulaView := .Sheet(model, {= title="Formula results" });
+formulaView ;
+```
+
+The lower-right result is `5`. The FormulaSheet context is isolated from
+unrelated tutorial variables and also provides `row`, `col`, and `index`.
+Changing a formula starts a new atomic evaluation epoch:
+
+```rix edu
+model.SetFormula(1, 1, @{; 10 });
+.Sheet(model, {= title="Recalculated results" }) ;
+```
+
+The lower-right result is now `23`. A self-reference such as
+`@{; grid[1,1] + 1 }` reports a cycle instead of reading the previously
+committed value. This first formula-backed view is read-only in the browser;
+formula-source editing and persistent `.rixcel` documents are the next layer.
