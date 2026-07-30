@@ -17,3 +17,24 @@ export function replayTutorialSources(sources, targetIndex, createSession) {
     }
     return null;
 }
+
+/**
+ * Return the tutorial cells in the target cell's h2 section, through target.
+ *
+ * Entries are deliberately host-neutral so section scoping can be tested
+ * without a browser DOM: { type: "heading" } resets the section and
+ * { type: "cell", value } contributes a replay value.
+ */
+export function tutorialSectionCells(entries, targetValue) {
+    let section = [];
+    for (const entry of entries) {
+        if (entry.type === "heading") {
+            section = [];
+            continue;
+        }
+        if (entry.type !== "cell") continue;
+        section.push(entry.value);
+        if (entry.value === targetValue) return section;
+    }
+    return [];
+}

@@ -7,7 +7,7 @@ import {
     parseAndEvaluate,
 } from "../../rix/src/index.js";
 import { normalizeReplSource } from "../src/repl-source.js";
-import { replayTutorialSources } from "../src/tutorial-replay.js";
+import { replayTutorialSources, tutorialSectionCells } from "../src/tutorial-replay.js";
 import { createRixRepl } from "../src/repl-runtime.js";
 import { tutorials } from "../src/tutorial-index.js";
 
@@ -36,6 +36,19 @@ test("tutorial replay preserves earlier dependencies without stale removed names
     const renamed = replayTutorialSources(["matrix := 3", "grid + 1"], 1, createRixRepl);
     expect(renamed.type).toBe("error");
     expect(renamed.text).toContain("grid");
+});
+
+test("tutorial replay state is scoped to the target h2 section", () => {
+    const entries = [
+        { type: "heading", value: "first heading" },
+        { type: "cell", value: "first setup" },
+        { type: "cell", value: "first result" },
+        { type: "heading", value: "second heading" },
+        { type: "cell", value: "second setup" },
+        { type: "cell", value: "second result" },
+    ];
+    expect(tutorialSectionCells(entries, "first result")).toEqual(["first setup", "first result"]);
+    expect(tutorialSectionCells(entries, "second result")).toEqual(["second setup", "second result"]);
 });
 
 test("the web REPL returns structured HTML for portable output values", () => {
@@ -206,17 +219,19 @@ test("every indexed tutorial has a Markdown source file", async () => {
     }
 });
 
-test("every published RiX tutorial cell executes", async () => {
+test("every published RiX tutorial h2 section executes in fresh state", async () => {
     for (const tutorial of tutorials) {
         if (tutorial.pluginGroup || tutorial.status === "proposed") continue;
         const source = tutorial.pluginTutorial
             ? await Bun.file(new URL(tutorial.sourcePath, new URL("../", import.meta.url))).text()
             : await Bun.file(new URL(`../tutorials/${tutorial.file.replace(/\.html$/, ".md")}`, import.meta.url)).text();
-        const cells = source.matchAll(/```rix(?:[ \t]+[^\n]*)?[ \t]*\n([\s\S]*?)\n```/g);
-        const repl = createRixRepl();
-        for (const [, code] of cells) {
-            const response = repl.run(code);
-            expect(response.type, `lesson ${tutorial.number}: ${response.text}`).toBe("result");
+        for (const [sectionIndex, section] of source.split(/^##\s+/m).entries()) {
+            const repl = createRixRepl();
+            const cells = section.matchAll(/```rix(?:[ \t]+[^\n]*)?[ \t]*\n([\s\S]*?)\n```/g);
+            for (const [, code] of cells) {
+                const response = repl.run(code);
+                expect(response.type, `lesson ${tutorial.number}, section ${sectionIndex}: ${response.text}`).toBe("result");
+            }
         }
     }
 });

@@ -71,6 +71,10 @@ its full tensor index, so the top-right cell on depth 2 is `cube[1,3,2]`.
 `slice`, while visible axes use `_`.
 
 ```rix edu
+cube := {:2x3x2:
+    1, 2, 3; 4, 5, 6 ;;
+    7, 8, 9; 10, 11, 12
+};
 rowByDepth := .Sheet(cube, {=
     title = "Column 2 across depths",
     address = "cube",
@@ -91,7 +95,9 @@ An ordinary Sheet records exact values and all selectable planes when it is
 created. Selecting cells or planes does not mutate `grid` or `cube`:
 
 ```rix edu
-.Sheet(grid) ;
+grid := {:2x3: 1, 2, 3; 4, 5, 6};
+snapshotGrid := .Sheet(grid);
+snapshotGrid ;
 ```
 
 Wrap a variable in `.Bind` to opt into a bidirectional widget:
@@ -104,10 +110,11 @@ editableGrid := .Sheet(.Bind(grid), {=
 editableGrid ;
 ```
 
-Select a cell in the live view, enter a RiX expression in its editor, and press
-Set. Values remain exact, so `5 / 7`, `2:3`, and quoted strings are stored as
-RiX values rather than browser text. Double-click or F2 moves directly to the
-selected cell's editor. The Binding captures the RiX cell behind `grid`; it
+Select a cell in the live view and press Enter to edit it. Press Enter again to
+commit and return keyboard focus to the same highlighted cell, so the arrow
+keys can continue from there. Double-click and F2 also begin editing. Values
+remain exact, so `5 / 7`, `2:3`, and quoted strings are stored as RiX values
+rather than browser text. The Binding captures the RiX cell behind `grid`; it
 does not expose a DOM node or make spreadsheet display labels part of RiX.
 
 :::challenge Make an address-aware sheet

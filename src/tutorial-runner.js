@@ -1,6 +1,6 @@
 import { createRixRepl } from "./repl-runtime.js";
 import { objectHelp } from "./tutorial-index.js";
-import { replayTutorialSources } from "./tutorial-replay.js";
+import { replayTutorialSources, tutorialSectionCells } from "./tutorial-replay.js";
 import { createWidgetSession, enhanceSheetViews } from "../../rix/src/index.js";
 
 function escapeHtml(value) {
@@ -28,10 +28,15 @@ function insertTutorialText(input, text) {
 }
 
 function replayThrough(cell) {
-    const cells = [...document.querySelectorAll(".tutorial-cell")];
+    const content = cell.closest(".lesson-content") || document;
+    const entries = [...content.querySelectorAll("h2, .tutorial-cell")].map((node) => ({
+        type: node.matches("h2") ? "heading" : "cell",
+        value: node,
+    }));
+    const cells = tutorialSectionCells(entries, cell);
     return replayTutorialSources(
         cells.map((candidate) => candidate.querySelector("[data-tutorial-source]")?.value),
-        cells.indexOf(cell),
+        cells.length - 1,
         createRixRepl,
     );
 }

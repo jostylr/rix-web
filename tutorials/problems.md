@@ -25,11 +25,10 @@ The comparisons are not intended to prove that one language is universally short
 
 ## A productive route
 
-Run the RiX cell on each page before editing it. Change one input, predict the result, and run it again. Then attempt the challenge without copying the supplied solution. A challenge box shares the tutorial session with cells you already ran on that page.
+Run the RiX cell on each page before editing it. Change one input, predict the result, and run it again. Then attempt the challenge without copying the supplied solution. A challenge box shares deterministic state with earlier cells in its current h2 topic.
 
 The final example is intentionally advanced. It demonstrates how a symbolic specification becomes both a callable polynomial and a derived callable—a glimpse of RiX as a host for mathematical objects, not only calculator syntax.
 
 :::challenge Warm-up
 Write a RiX function named Twice that doubles its input, then map it over [1, 2, 3, 4].
 :::
-

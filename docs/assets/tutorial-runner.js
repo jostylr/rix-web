@@ -2,7 +2,7 @@ import {
   createRixRepl,
   createWidgetSession,
   enhanceSheetViews
-} from "./chunk-ez95sqsm.js";
+} from "./chunk-et1ff5jc.js";
 
 // src/generated/plugin-tutorial-index.js
 var pluginTutorialGroups = [
@@ -215,6 +215,21 @@ function replayTutorialSources(sources, targetIndex, createSession) {
   }
   return null;
 }
+function tutorialSectionCells(entries, targetValue) {
+  let section = [];
+  for (const entry of entries) {
+    if (entry.type === "heading") {
+      section = [];
+      continue;
+    }
+    if (entry.type !== "cell")
+      continue;
+    section.push(entry.value);
+    if (entry.value === targetValue)
+      return section;
+  }
+  return [];
+}
 
 // src/tutorial-runner.js
 function escapeHtml(value) {
@@ -243,8 +258,13 @@ ${text}` : text;
   input.focus();
 }
 function replayThrough(cell) {
-  const cells = [...document.querySelectorAll(".tutorial-cell")];
-  return replayTutorialSources(cells.map((candidate) => candidate.querySelector("[data-tutorial-source]")?.value), cells.indexOf(cell), createRixRepl);
+  const content = cell.closest(".lesson-content") || document;
+  const entries = [...content.querySelectorAll("h2, .tutorial-cell")].map((node) => ({
+    type: node.matches("h2") ? "heading" : "cell",
+    value: node
+  }));
+  const cells = tutorialSectionCells(entries, cell);
+  return replayTutorialSources(cells.map((candidate) => candidate.querySelector("[data-tutorial-source]")?.value), cells.length - 1, createRixRepl);
 }
 function runCell(cell) {
   const sourceInput = cell.querySelector("[data-tutorial-source]");
@@ -356,5 +376,5 @@ function openObjectHelp(name, requestedFunction = null) {
   dialog.showModal();
 }
 
-//# debugId=C8522D3E59C1CEE864756E2164756E21
+//# debugId=9365135C3669B86964756E2164756E21
 //# sourceMappingURL=tutorial-runner.js.map
