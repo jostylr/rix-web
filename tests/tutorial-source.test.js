@@ -69,7 +69,9 @@ test("structured output has focused table, document, graphic, drawing, and sheet
     expect(sheets).toContain("$model[1,1] := @{10}");
     expect(sheets).toContain("$values[1,1]");
     expect(sheets).toContain("$$Scale");
-    expect(sheets).toContain(".LiveView");
+    expect(sheets).toContain("$$frag := .Fragment");
+    expect(sheets).toContain(".Sheet($values");
+    expect(sheets).toContain("$frag");
     expect(sheets).toContain("$$source1 := 2");
     expect(sheets).toContain("$source1 := 10");
     expect(sheets).toContain("${");

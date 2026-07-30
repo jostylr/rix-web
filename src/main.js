@@ -26,6 +26,7 @@ let historyIndex = -1;
 let transcript = [];
 let autoSeparateLines = true;
 let completionState = null;
+const outputDisposers = new Set();
 
 function escapeHtml(value) {
     return String(value).replace(/[&<>'"]/g, (character) => ({
@@ -123,13 +124,17 @@ function appendOutput(source, response) {
             outputLine.classList.add("rich-output");
             outputLine.innerHTML = response.html;
             outputLine.addEventListener("click", () => openInspection(source, response.text));
-            mountOutputWidgets(outputLine, response.value, {
+            const dispose = mountOutputWidgets(outputLine, response.value, {
                 format: formatValue,
+                observe: response.observe
+                    ? (listener) => response.observe((next) => listener(next.value))
+                    : null,
                 onActivate: ({ address }) => insertInputText(address),
                 evaluateEdit: (editSource, { mode }) => repl.run(mode === "formula"
                     ? `@{ ${editSource} }`
                     : editSource),
             });
+            outputDisposers.add(dispose);
         } else {
             outputLine.innerHTML = response.type === "error"
                 ? escapeHtml(preview)
@@ -185,6 +190,8 @@ function openInspection(source, value) {
 }
 
 function clearSession() {
+    for (const dispose of outputDisposers) dispose();
+    outputDisposers.clear();
     repl.reset();
     history = [];
     historyIndex = -1;

@@ -3,7 +3,7 @@ import {
   findHelp,
   formatValue,
   mountOutputWidgets
-} from "./chunk-svvcbm1d.js";
+} from "./chunk-gbhs2dd7.js";
 
 // src/main.js
 var repl = createRixRepl();
@@ -30,6 +30,7 @@ var historyIndex = -1;
 var transcript = [];
 var autoSeparateLines = true;
 var completionState = null;
+var outputDisposers = new Set;
 function escapeHtml(value) {
   return String(value).replace(/[&<>'"]/g, (character) => ({
     "&": "&amp;",
@@ -130,11 +131,13 @@ function appendOutput(source, response) {
       outputLine.classList.add("rich-output");
       outputLine.innerHTML = response.html;
       outputLine.addEventListener("click", () => openInspection(source, response.text));
-      mountOutputWidgets(outputLine, response.value, {
+      const dispose = mountOutputWidgets(outputLine, response.value, {
         format: formatValue,
+        observe: response.observe ? (listener) => response.observe((next) => listener(next.value)) : null,
         onActivate: ({ address }) => insertInputText(address),
         evaluateEdit: (editSource, { mode }) => repl.run(mode === "formula" ? `@{ ${editSource} }` : editSource)
       });
+      outputDisposers.add(dispose);
     } else {
       outputLine.innerHTML = response.type === "error" ? escapeHtml(preview) : `${escapeHtml(preview)}<span class="inject-icon" title="Use this value">→</span>`;
       if (inspectable)
@@ -180,6 +183,9 @@ function openInspection(source, value) {
   inspectDialog.showModal();
 }
 function clearSession() {
+  for (const dispose of outputDisposers)
+    dispose();
+  outputDisposers.clear();
   repl.reset();
   history = [];
   historyIndex = -1;
@@ -399,5 +405,5 @@ displayWelcome();
 setAutoSeparateLines(autoSeparateLines);
 input.focus();
 
-//# debugId=1DC7D090E073439664756E2164756E21
+//# debugId=D0ED7839E13BFE7464756E2164756E21
 //# sourceMappingURL=main.js.map

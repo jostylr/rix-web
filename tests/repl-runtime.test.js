@@ -105,45 +105,48 @@ test("formula sheets and their dependent LiveViews retain interactive metadata",
     expect(live.html).toContain("Reactive copy");
 });
 
-test("a FormulaSheet graph propagates named calculations through a LiveView document", () => {
+test("a named reactive Fragment is observable and redraws after FormulaSheet edits", () => {
     const repl = createRixRepl();
     const response = repl.run(`
         values := .FormulaSheet([[@{120}, @{40}, @{8}]]);
-        graph := values.Graph();
-        first = graph.Node("slot_1_1");
-        second = graph.Node("slot_1_2");
-        third = graph.Node("slot_1_3");
-        $$average := ($first + $second) / 2;
+        $$average := ($values[1,1] + $values[1,2]) / 2;
         $$functionvalue := {;
-            Scale(x) -> x * $third;
-            Scale($first)
+            Scale(x) -> x * $values[1,3];
+            Scale($values[1,1])
         };
-        .LiveView(values, @{
-            .Fragment([
-                .Sheet(source, {= title="Editable inputs" }),
-                .Table(
-                    ["quantity", "value"],
-                    [
-                        ["Average of first and second", average],
-                        ["Scale(first), where Scale(x) = x * third", functionvalue]
-                    ]
-                ),
-                .Graphics.Graphic([260,140], [
-                    .Graphics.Circle([source[1,1], source[1,2]], source[1,3])
-                ])
+        $$frag := .Fragment([
+            .Sheet($values, {= title="Editable inputs" }),
+            .Table(
+                ["quantity", "value"],
+                [
+                    ["Average of first and second", $average],
+                    ["Scale(first), where Scale(x) = x * third", $functionvalue]
+                ]
+            ),
+            .Graphics.Graphic([260,140], [
+                .Graphics.Circle(
+                    [$values[1,1], $values[1,2]],
+                    $values[1,3]
+                )
             ])
-        })
+        ]);
+        $frag
     `);
 
     expect(response.type).toBe("result");
-    expect(response.value.revision).toBe(0);
-    expect(formatValue(response.value.current)).toMatch(/Average of first and second\s+80/u);
-    expect(formatValue(response.value.current)).toMatch(/Scale\(first\), where Scale\(x\) = x \* third\s+960/u);
+    expect(response.observe).toBeFunction();
+    expect(formatValue(response.value)).toMatch(/Average of first and second\s+80/u);
+    expect(formatValue(response.value)).toMatch(/Scale\(first\), where Scale\(x\) = x \* third\s+960/u);
 
-    response.value.source.setFormula([1, 1], parseAndEvaluate("@{200}"), { source: "200" });
-    expect(response.value.revision).toBe(1);
-    expect(formatValue(response.value.current)).toMatch(/Average of first and second\s+120/u);
-    expect(formatValue(response.value.current)).toMatch(/Scale\(first\), where Scale\(x\) = x \* third\s+1600/u);
+    const updates = [];
+    const dispose = response.observe((next) => updates.push(next));
+    repl.run("$values[1,1] := @{200}");
+    expect(updates).toHaveLength(1);
+    expect(formatValue(updates[0].value)).toMatch(/Average of first and second\s+120/u);
+    expect(formatValue(updates[0].value)).toMatch(/Scale\(first\), where Scale\(x\) = x \* third\s+1600/u);
+    dispose();
+    repl.run("$values[1,1] := @{300}");
+    expect(updates).toHaveLength(1);
 });
 
 test("the web REPL returns interactive tensor-plane controls", () => {

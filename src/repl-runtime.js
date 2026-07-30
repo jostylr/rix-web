@@ -73,6 +73,12 @@ function inlineHelpRequest(source) {
     return match ? (match[1] ?? match[2] ?? match[3] ?? "").trim() : null;
 }
 
+function currentReactiveValue(source) {
+    if (source?.type === "reactive_node" && typeof source.peek === "function") return source.peek();
+    if (source?.type === "formula_sheet") return source;
+    return undefined;
+}
+
 export function createRixRepl({ autoSeparateLines = true } = {}) {
     const state = {
         context: new Context(),
@@ -87,18 +93,28 @@ export function createRixRepl({ autoSeparateLines = true } = {}) {
             const topic = inlineHelpRequest(source);
             if (topic !== null) return { type: "help", source, ...findHelp(topic) };
             try {
+                const reactiveReads = new Set();
                 const result = parseAndEvaluate(separateLines ? normalizeReplSource(source) : source, {
                     ...state,
                     file: "<ratcalc>",
+                    reactiveReads,
                 });
                 const format = (value) => formatValue(value, { context: state.context, evaluate: null });
-                return {
+                const observedSource = [...reactiveReads]
+                    .find((candidate) => currentReactiveValue(candidate) === result);
+                const makeResponse = (value) => ({
                     type: "result",
                     source,
-                    value: result,
-                    text: format(result),
-                    html: isOutputValue(result) ? renderOutputHtml(result, format) : null,
-                };
+                    value,
+                    text: format(value),
+                    html: isOutputValue(value) ? renderOutputHtml(value, format) : null,
+                    observe: observedSource
+                        ? (listener) => observedSource.subscribe(() => {
+                            listener(makeResponse(currentReactiveValue(observedSource)));
+                        })
+                        : null,
+                });
+                return makeResponse(result);
             } catch (error) {
                 return { type: "error", source, text: error.message || String(error) };
             }

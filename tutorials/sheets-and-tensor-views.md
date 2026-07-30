@@ -204,7 +204,7 @@ $$Scale := x -> x * $source1;
 `$Scale(3)` is a tracked call. `$Scale := x -> ...` replaces the reactive
 function definition while preserving its identity and downstream dependents.
 
-## Drive another live object
+## Observe a reactive document
 
 Every FormulaSheet has a reactive graph. `$values[1,2]` selects and tracks that
 exact cell, so named computations can depend on sheet coordinates without
@@ -214,7 +214,8 @@ dependents in one atomic epoch.
 
 This example uses three editable formulas. The first two determine a point and
 their average. The third is both the point radius and a coefficient captured by
-a locally defined `Scale` function:
+a locally defined `Scale` function. `$$frag` makes the complete Fragment a
+reactive value, and the final `$frag` tells RiX Web to observe and render it:
 
 ```rix edu
 values := .FormulaSheet({:1x3: @{120}, @{40}, @{8}});
@@ -225,37 +226,43 @@ $$functionvalue := {;
     Scale($values[1,1])
 };
 
-.LiveView(values, @{
-    .Fragment([
-        .Heading(2, "Reactive point report"),
-        .Sheet(source, {= title="Editable inputs", axes=["point", "value"] }),
-        .Table(
-            ["quantity", "value"],
-            [
-                ["Average of first and second", average],
-                ["Scale(first), where Scale(x) = x * third", functionvalue]
-            ]
+$$frag := .Fragment([
+    .Heading(2, "Reactive point report"),
+    .Sheet($values, {= title="Editable inputs", axes=["point", "value"] }),
+    .Table(
+        ["quantity", "value"],
+        [
+            ["Average of first and second", $average],
+            ["Scale(first), where Scale(x) = x * third", $functionvalue]
+        ]
+    ),
+    .Graphics.Graphic([260, 140], [
+        .Graphics.Path(
+            [[20, 120], [$values[1,1], $values[1,2]]],
+            {= stroke="#4f46e5", width=3 }
         ),
-        .Graphics.Graphic([260, 140], [
-            .Graphics.Path(
-                [[20, 120], [source[1,1], source[1,2]]],
-                {= stroke="#4f46e5", width=3 }
-            ),
-            .Graphics.Circle(
-                [source[1,1], source[1,2]],
-                source[1,3],
-                {= fill="#f97316" }
-            )
-        ])
+        .Graphics.Circle(
+            [$values[1,1], $values[1,2]],
+            $values[1,3],
+            {= fill="#f97316" }
+        )
     ])
-}) ;
+]);
+
+$frag ;
 ```
 
 Edit any formula in the embedded grid. The sheet commit propagates through the
-named graph nodes before LiveView redraws the whole document. Changing the
+named graph nodes before RiX Web redraws the observed Fragment. Changing the
 first value moves the point and refreshes both displayed calculations; changing
 the third changes the radius and the function result without recomputing the
 average.
+
+`values` is already a FormulaSheet entity. In `.Sheet($values, ...)`, the dollar
+does not convert it into a different object: it records a dependency on every
+slot so the enclosing `$$frag` is rebuilt after any sheet edit. Plain
+`.Sheet(values, ...)` uses the same current sheet but adds no whole-sheet edge.
+Use `$values[1,2]` when a dependent needs only one coordinate.
 
 This is also the intended foundation for direct manipulation: a future
 draggable point can publish a semantic position event into a Binding or graph

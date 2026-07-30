@@ -90,9 +90,9 @@ formulaView ;</textarea><div class="tutorial-output" data-tutorial-output></div>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">$$Scale := x -&gt; x * $source1;
 [Scale(3), $Scale(3)] ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p><code>Scale(3)</code> calls the current definition without tracking its identity; <code>$Scale(3)</code> is a tracked call. <code>$Scale := x -&gt; ...</code> replaces the reactive function definition while preserving its identity and downstream dependents.</p>
-<h2>Drive another live object</h2>
+<h2>Observe a reactive document</h2>
 <p>Every FormulaSheet has a reactive graph. <code>$values[1,2]</code> selects and tracks that exact cell, so named computations can depend on sheet coordinates without exposing internal graph-node names. Reads made while a deferred computation runs become graph edges; changing an input recomputes only its transitive dependents in one atomic epoch.</p>
-<p>This example uses three editable formulas. The first two determine a point and their average. The third is both the point radius and a coefficient captured by a locally defined <code>Scale</code> function:</p>
+<p>This example uses three editable formulas. The first two determine a point and their average. The third is both the point radius and a coefficient captured by a locally defined <code>Scale</code> function. <code>$$frag</code> makes the complete Fragment a reactive value, and the final <code>$frag</code> tells RiX Web to observe and render it:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="32" spellcheck="false">values := .FormulaSheet({:1x3: @{120}, @{40}, @{8}});
 
 $$average := ($values[1,1] + $values[1,2]) / 2;
@@ -101,29 +101,30 @@ $$functionvalue := {;
     Scale($values[1,1])
 };
 
-.LiveView(values, @{
-    .Fragment([
-        .Heading(2, &quot;Reactive point report&quot;),
-        .Sheet(source, {= title=&quot;Editable inputs&quot;, axes=[&quot;point&quot;, &quot;value&quot;] }),
-        .Table(
-            [&quot;quantity&quot;, &quot;value&quot;],
-            [
-                [&quot;Average of first and second&quot;, average],
-                [&quot;Scale(first), where Scale(x) = x * third&quot;, functionvalue]
-            ]
+$$frag := .Fragment([
+    .Heading(2, &quot;Reactive point report&quot;),
+    .Sheet($values, {= title=&quot;Editable inputs&quot;, axes=[&quot;point&quot;, &quot;value&quot;] }),
+    .Table(
+        [&quot;quantity&quot;, &quot;value&quot;],
+        [
+            [&quot;Average of first and second&quot;, $average],
+            [&quot;Scale(first), where Scale(x) = x * third&quot;, $functionvalue]
+        ]
+    ),
+    .Graphics.Graphic([260, 140], [
+        .Graphics.Path(
+            [[20, 120], [$values[1,1], $values[1,2]]],
+            {= stroke=&quot;#4f46e5&quot;, width=3 }
         ),
-        .Graphics.Graphic([260, 140], [
-            .Graphics.Path(
-                [[20, 120], [source[1,1], source[1,2]]],
-                {= stroke=&quot;#4f46e5&quot;, width=3 }
-            ),
-            .Graphics.Circle(
-                [source[1,1], source[1,2]],
-                source[1,3],
-                {= fill=&quot;#f97316&quot; }
-            )
-        ])
+        .Graphics.Circle(
+            [$values[1,1], $values[1,2]],
+            $values[1,3],
+            {= fill=&quot;#f97316&quot; }
+        )
     ])
-}) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>Edit any formula in the embedded grid. The sheet commit propagates through the named graph nodes before LiveView redraws the whole document. Changing the first value moves the point and refreshes both displayed calculations; changing the third changes the radius and the function result without recomputing the average.</p>
+]);
+
+$frag ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Edit any formula in the embedded grid. The sheet commit propagates through the named graph nodes before RiX Web redraws the observed Fragment. Changing the first value moves the point and refreshes both displayed calculations; changing the third changes the radius and the function result without recomputing the average.</p>
+<p><code>values</code> is already a FormulaSheet entity. In <code>.Sheet($values, ...)</code>, the dollar does not convert it into a different object: it records a dependency on every slot so the enclosing <code>$$frag</code> is rebuilt after any sheet edit. Plain <code>.Sheet(values, ...)</code> uses the same current sheet but adds no whole-sheet edge. Use <code>$values[1,2]</code> when a dependent needs only one coordinate.</p>
 <p>This is also the intended foundation for direct manipulation: a future draggable point can publish a semantic position event into a Binding or graph source and use the same propagation path.</p></div><section class="api-links"><h2>Reference</h2><ul><li><a href="https://docs.rix.ratmath.com/design/eval/output-model.html" data-doc-reference target="_blank" rel="noreferrer">Structured output model ↗</a></li><li><a href="https://docs.rix.ratmath.com/eval/sheet-guide.html" data-doc-reference target="_blank" rel="noreferrer">Sheet views ↗</a></li></ul></section><nav class="lesson-navigation" aria-label="Lesson navigation"><span class="previous-link"><a href="./drawing-with-draw.html">← 12d Drawing</a></span><span class="section-links"><a href="./structured-output.html#lesson-start">↑ 12 Structured</a><a href="./core-host-lowering.html">↓ 13 Core</a></span><span class="next-link"><a href="./core-host-lowering.html">13 Core →</a></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

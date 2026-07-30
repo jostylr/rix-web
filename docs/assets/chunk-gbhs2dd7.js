@@ -14937,6 +14937,12 @@ function createFormulaSheet(formulasValue, options = {}) {
       const normalized = normalizeIndex2(index, shape);
       return graph.get(nodeNameFor(normalized));
     },
+    track() {
+      for (const { index } of formulas.entries) {
+        graph.get(nodeNameFor(index));
+      }
+      return sheet;
+    },
     getFormula(index) {
       return graph.node(nodeNameFor(normalizeIndex2(index, shape))).formula;
     },
@@ -27285,6 +27291,7 @@ var reactiveGraphFunctions = {
 var REACTIVE_BINDING_GRAPH_ENV = "__reactive_binding_graph__";
 var REACTIVE_ACTIVE_GRAPH_ENV = "__reactive_active_graph__";
 var REACTIVE_TRANSACTION_ENV = "__reactive_transaction__";
+var REACTIVE_OUTPUT_READ_ENV = "__reactive_output_read__";
 function requireDeferred(value, label) {
   if (!value || value.fn !== "DEFER") {
     throw new Error(`${label} requires a deferred RiX definition`);
@@ -27321,6 +27328,13 @@ function requireSameActiveGraph(node, context, label) {
   if (activeGraph && node.graph !== activeGraph) {
     throw new Error(`${label} crosses ReactiveGraphs`);
   }
+}
+function observeOutputRead(source, value, context) {
+  if (context.getEnv(REACTIVE_ACTIVE_GRAPH_ENV, null))
+    return;
+  const observer = context.getEnv(REACTIVE_OUTPUT_READ_ENV, null);
+  if (typeof observer === "function")
+    observer(source, value);
 }
 function restoreEnv(context, key, snapshot) {
   if (snapshot.has)
@@ -27554,20 +27568,37 @@ function updateReactive(args, context, evaluate) {
 }
 function readReactive(args, context) {
   const name = args[0];
+  const value = context.get(name);
+  if (isFormulaSheet(value)) {
+    const activeGraph2 = context.getEnv(REACTIVE_ACTIVE_GRAPH_ENV, null);
+    if (activeGraph2 && value.graph !== activeGraph2) {
+      throw new Error(`Tracked reactive read '$${name}' crosses ReactiveGraphs; alias or import it into one graph first`);
+    }
+    value.track();
+    observeOutputRead(value, value, context);
+    return value;
+  }
   const node = rawReactiveNode(name, context, "Tracked reactive read");
   const activeGraph = context.getEnv(REACTIVE_ACTIVE_GRAPH_ENV, null);
   if (activeGraph && node.graph !== activeGraph) {
     throw new Error(`Tracked reactive read '$${name}' crosses ReactiveGraphs; alias or import it into one graph first`);
   }
-  return node.get();
+  const result = node.get();
+  observeOutputRead(node, result, context);
+  return result;
 }
 function retrieveReactiveNode(args, context) {
+  const value = context.get(args[0]);
+  if (isFormulaSheet(value))
+    return value;
   return rawReactiveNode(args[0], context, "Reactive cell reference");
 }
 function readReactiveIndex(args, context, evaluate) {
   const { node } = reactiveIndex(args, context, evaluate, "Tracked FormulaSheet read");
   requireSameActiveGraph(node, context, "Tracked FormulaSheet read");
-  return node.get();
+  const result = node.get();
+  observeOutputRead(node, result, context);
+  return result;
 }
 function retrieveReactiveIndexNode(args, context, evaluate) {
   return reactiveIndex(args, context, evaluate, "FormulaSheet cell reference").node;
@@ -29363,7 +29394,27 @@ function parseAndEvaluate(code, options = {}) {
   attachSourceInfo(irNodes, code, options.file || "<repl>");
   let result = null;
   for (const irNode of irNodes) {
-    result = evaluate(irNode, context, registry, systemContext);
+    if (!(options.reactiveReads instanceof Set)) {
+      result = evaluate(irNode, context, registry, systemContext);
+      continue;
+    }
+    const reads = new Set;
+    const previousObserver = {
+      has: context.env?.has(REACTIVE_OUTPUT_READ_ENV) === true,
+      value: context.getEnv(REACTIVE_OUTPUT_READ_ENV, undefined)
+    };
+    context.setEnv(REACTIVE_OUTPUT_READ_ENV, (source) => reads.add(source));
+    try {
+      result = evaluate(irNode, context, registry, systemContext);
+    } finally {
+      if (previousObserver.has)
+        context.setEnv(REACTIVE_OUTPUT_READ_ENV, previousObserver.value);
+      else
+        context.env?.delete(REACTIVE_OUTPUT_READ_ENV);
+    }
+    options.reactiveReads.clear();
+    for (const source of reads)
+      options.reactiveReads.add(source);
   }
   return result;
 }
@@ -29809,6 +29860,7 @@ function mountOutputWidgets(root, value, options = {}) {
   let sheetDisposers = [];
   let pendingFocusRequest = null;
   let disposed = false;
+  let currentValue = value;
   function disposeSheets() {
     for (const dispose of sheetDisposers.splice(0))
       dispose();
@@ -29894,6 +29946,20 @@ function mountOutputWidgets(root, value, options = {}) {
     }
   } else {
     mountSheets(root, value);
+  }
+  if (typeof options.observe === "function") {
+    const unsubscribe = options.observe((nextValue, event = null) => {
+      if (disposed)
+        return;
+      const focusRequest = pendingFocusRequest;
+      pendingFocusRequest = null;
+      currentValue = nextValue;
+      root.innerHTML = render(currentValue);
+      mountSheets(root, currentValue);
+      restoreSheetFocus(root, focusRequest);
+      options.onLiveChange?.(event, root);
+    });
+    disposers.push(unsubscribe);
   }
   return () => {
     if (disposed)
@@ -30471,13 +30537,13 @@ function complete(source, cursor, { context, systemContext, formatValue: formatV
   const prior = before.slice(0, cursor - token2.length);
   let candidates = [];
   if (reactivePrefix) {
-    candidates = context.getAllNames().map((name) => [name, context.get(name)]).filter(([, value]) => value?.type === "reactive_node" || reactivePrefix === "$" && value?.type === "formula_sheet").map(([name, value]) => {
+    candidates = context.getAllNames().map((name) => [name, context.get(name)]).filter(([, value]) => value?.type === "reactive_node" || value?.type === "formula_sheet").map(([name, value]) => {
       const current = value.type === "reactive_node" ? value.peek() : null;
       const callable = current && ["function", "lambda", "multifunction"].includes(current.type);
       return {
         insertText: name,
         kind: value.type === "formula_sheet" ? "reactive sheet" : callable ? "reactive function" : reactivePrefix === "$$" ? "reactive cell" : "reactive value",
-        detail: value.type === "formula_sheet" ? "append [index] for a tracked cell read" : callable ? reactivePrefix === "$$" ? "reactive function identity" : "tracked reactive function read or call" : reactivePrefix === "$$" ? "reactive cell identity" : "tracked reactive read",
+        detail: value.type === "formula_sheet" ? reactivePrefix === "$$" ? "FormulaSheet identity" : "tracked whole-sheet read; append [index] to track one cell" : callable ? reactivePrefix === "$$" ? "reactive function identity" : "tracked reactive function read or call" : reactivePrefix === "$$" ? "reactive cell identity" : "tracked reactive read",
         preview: value.type === "formula_sheet" ? preview(value, formatValue2) : preview(current, formatValue2)
       };
     });
@@ -30937,6 +31003,13 @@ function inlineHelpRequest(source) {
   const match = source.trim().match(/^\.Help\s*\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*))?\s*\)\s*;?$/);
   return match ? (match[1] ?? match[2] ?? match[3] ?? "").trim() : null;
 }
+function currentReactiveValue(source) {
+  if (source?.type === "reactive_node" && typeof source.peek === "function")
+    return source.peek();
+  if (source?.type === "formula_sheet")
+    return source;
+  return;
+}
 function createRixRepl({ autoSeparateLines = true } = {}) {
   const state = {
     context: new Context,
@@ -30951,18 +31024,25 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
       if (topic !== null)
         return { type: "help", source, ...findHelp(topic) };
       try {
+        const reactiveReads = new Set;
         const result = parseAndEvaluate(separateLines ? normalizeReplSource(source) : source, {
           ...state,
-          file: "<ratcalc>"
+          file: "<ratcalc>",
+          reactiveReads
         });
         const format = (value) => formatValue(value, { context: state.context, evaluate: null });
-        return {
+        const observedSource = [...reactiveReads].find((candidate) => currentReactiveValue(candidate) === result);
+        const makeResponse = (value) => ({
           type: "result",
           source,
-          value: result,
-          text: format(result),
-          html: isOutputValue(result) ? renderOutputHtml(result, format) : null
-        };
+          value,
+          text: format(value),
+          html: isOutputValue(value) ? renderOutputHtml(value, format) : null,
+          observe: observedSource ? (listener) => observedSource.subscribe(() => {
+            listener(makeResponse(currentReactiveValue(observedSource)));
+          }) : null
+        });
+        return makeResponse(result);
       } catch (error) {
         return { type: "error", source, text: error.message || String(error) };
       }
@@ -30995,5 +31075,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { formatValue, mountOutputWidgets, findHelp, createRixRepl };
 
-//# debugId=69763CD1ACC6122B64756E2164756E21
-//# sourceMappingURL=chunk-svvcbm1d.js.map
+//# debugId=C55D35D80C07B2EC64756E2164756E21
+//# sourceMappingURL=chunk-gbhs2dd7.js.map

@@ -3,6 +3,8 @@ import { objectHelp } from "./tutorial-index.js";
 import { replayTutorialSources, tutorialSectionCells } from "./tutorial-replay.js";
 import { formatValue, mountOutputWidgets } from "../../rix/src/index.js";
 
+const outputDisposers = new WeakMap();
+
 function escapeHtml(value) {
     return String(value).replace(/[&<>'"]/g, (character) => ({
         "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#039;", '"': "&quot;",
@@ -46,20 +48,29 @@ function runCell(cell) {
     const response = replayThrough(cell);
     if (!response) return;
     const output = cell.querySelector("[data-tutorial-output]");
+    outputDisposers.get(output)?.();
+    outputDisposers.delete(output);
     if (response.type === "help") {
         const lines = response.groups.flatMap((group) => group.items.map(([syntax, description]) => `${syntax} — ${description}`));
         output.innerHTML = `<div class="result">${escapeHtml(lines.join("\n"))}</div>`;
         return;
     }
     if (response.type !== "error" && response.html) {
-        output.innerHTML = `<div class="result rich-output">${response.html}</div>`;
-        mountOutputWidgets(output, response.value, {
+        const result = document.createElement("div");
+        result.className = "result rich-output";
+        result.innerHTML = response.html;
+        output.replaceChildren(result);
+        const dispose = mountOutputWidgets(result, response.value, {
             format: formatValue,
+            observe: response.observe
+                ? (listener) => response.observe((next) => listener(next.value))
+                : null,
             onActivate: ({ address }) => insertTutorialText(sourceInput, address),
             evaluateEdit: (editSource, { mode }) => response.repl.run(mode === "formula"
                 ? `@{ ${editSource} }`
                 : editSource),
         });
+        outputDisposers.set(output, dispose);
         return;
     }
     output.innerHTML = `<div class="${response.type === "error" ? "error" : "result"}">${escapeHtml(response.text)}</div>`;
