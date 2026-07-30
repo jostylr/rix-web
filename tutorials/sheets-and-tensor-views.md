@@ -159,39 +159,41 @@ The lower-right result is now `23`. A self-reference such as
 committed value. Persistent `.rixcel` documents and assignment modes are the
 next storage layer.
 
-## Define a reactive graph concisely
+## Define reactive bindings
 
-The `.ReactiveGraph`, `Source`, and `Derive` methods are the foundational API.
-The `.RG:` backtick notation builds the same nodes with less repeated naming.
-Prefix a declaration with `$` to make it an externally settable source;
-ordinary declarations are computed formulas:
-
-```rix edu
-graph := `.RG.Init.Set:
-    $source1 := 2
-    source source2 := 3
-    target1 := source1 + source2
-    target2 := target1 * 4
-`;
-[graph.Get("target1"), graph.Get("target2")] ;
-```
-
-`source source2` and `$source2` mean the same thing. `Init` creates the graph
-and `Set` makes it the default for later `.RG:` blocks in this tutorial
-section. Newlines or semicolons can separate declarations:
+`.ReactiveGraph`, `Source`, and `Derive` remain the foundational API. Ordinary
+RiX uses adjacent dollar signs as its concise interface: `$$name := ...`
+declares a reactive cell, `$name` records a dependency, and plain `name` reads
+the current value without recording one. `${ ... }` installs the declarations
+as one atomic transaction:
 
 ```rix edu
-`.RG:
-    target3 := target2 + source1
-`;
-graph.Node("source1").Set(10);
-[graph.Get("target1"), graph.Get("target2"), graph.Get("target3")] ;
+${
+    $$source1 := 2;
+    $$source2 := 3;
+    $$target1 := $source1 + $source2;
+    $$target2 := $target1 * 4;
+    $$target3 := $target2 + $source1
+};
+[target1, target2] ;
 ```
 
-The result is `[13, 52, 62]`. `.RG.Use(otherGraph): ...` applies one block to a
-named graph without changing the default, while `.RG.Set(otherGraph): ...`
-changes the default. Outside `.RG` notation, `$` keeps its ordinary RiX meaning
-of the current callable.
+`$name := ...` replaces that cell's deferred definition while preserving its
+identity. A transaction stages every change, recomputes the affected closure
+once, and rolls everything back if it finds a cycle:
+
+```rix edu
+${
+    $source1 := 10;
+    $source2 := 3
+};
+[target1, target2, target3] ;
+```
+
+The result is `[13, 52, 62]`. `$$alias := $$source1` would bind another name to
+the same reactive cell. Redeclaring an existing `$$name` is an error. Bare `$`
+and `$$` keep their callable-self meanings; adjacency to a lowercase name
+selects the reactive forms.
 
 ## Drive another live object
 
@@ -208,13 +210,15 @@ a locally defined `Scale` function:
 values := .FormulaSheet([[@{120}, @{40}, @{8}]]);
 graph := values.Graph();
 
-`.RG.Use(graph):
-    average := (grid[1,1] + grid[1,2]) / 2
-    functionvalue := {;
-        Scale(x) -> x * grid[1,3];
-        Scale(grid[1,1])
-    }
-`;
+first = graph.Node("slot_1_1");
+second = graph.Node("slot_1_2");
+third = graph.Node("slot_1_3");
+
+$$average := ($first + $second) / 2;
+$$functionvalue := {;
+    Scale(x) -> x * $third;
+    Scale($first)
+};
 
 .LiveView(values, @{
     .Fragment([

@@ -110,13 +110,14 @@ test("a FormulaSheet graph propagates named calculations through a LiveView docu
     const response = repl.run(`
         values := .FormulaSheet([[@{120}, @{40}, @{8}]]);
         graph := values.Graph();
-        \`.RG.Use(graph):
-            average := (grid[1,1] + grid[1,2]) / 2
-            functionvalue := {;
-                Scale(x) -> x * grid[1,3];
-                Scale(grid[1,1])
-            }
-        \`;
+        first = graph.Node("slot_1_1");
+        second = graph.Node("slot_1_2");
+        third = graph.Node("slot_1_3");
+        $$average := ($first + $second) / 2;
+        $$functionvalue := {;
+            Scale(x) -> x * $third;
+            Scale($first)
+        };
         .LiveView(values, @{
             .Fragment([
                 .Sheet(source, {= title="Editable inputs" }),

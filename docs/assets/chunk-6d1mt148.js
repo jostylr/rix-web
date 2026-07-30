@@ -5296,7 +5296,8 @@ var runtimeDefaults = Object.freeze({
     conversion: false,
     multifunctionConversion: false,
     multifunctionNoPrep: false,
-    implicitUnitConversion: false
+    implicitUnitConversion: false,
+    reactiveUntrackedRead: true
   }),
   scriptPermissionNames: Object.freeze(["IMPORTS", "NET", "FILES", "PLUGINS"]),
   defaultScriptCapabilityPolicy: Object.freeze({
@@ -5322,9 +5323,9 @@ var runtimeDefaults = Object.freeze({
     Units: Object.freeze(["UNITS", "Units", "CONVERTUNIT", "ConvertUnit", "DEFINEUNIT", "DefineUnit"]),
     Exact: Object.freeze(["EXACT", "Exact", "COMPLEX", "Complex", "DEFINEEXACTGENERATOR", "DefineExactGenerator", "exactalgebras"]),
     Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC", "SArith"]),
-    Notation: Object.freeze(["SArith", "Poly", "NotationParser", "RG"]),
+    Notation: Object.freeze(["SArith", "Poly", "NotationParser"]),
     Random: Object.freeze(["RANDOMSEED", "RandomSeed", "RAND_NAME"]),
-    RiXCel: Object.freeze(["FORMULASHEET", "REACTIVEGRAPH", "RG"])
+    RiXCel: Object.freeze(["FORMULASHEET", "REACTIVEGRAPH"])
   })
 });
 
@@ -14242,6 +14243,7 @@ function graphMethods() {
 function nodeMethods() {
   return new Map([
     ["GET", method2("Get", ([target]) => target.get())],
+    ["PEEK", method2("Peek", ([target]) => target.peek())],
     ["SET", method2("Set", ([target, value]) => target.set(value))],
     ["GETFORMULA", method2("GetFormula", ([target]) => target.formula)],
     ["SETFORMULA", method2("SetFormula", ([target, formula]) => target.setFormula(formula))],
@@ -14271,6 +14273,7 @@ function createReactiveGraph(options = {}) {
   }
   const id = options.id || `reactive-graph-${nextGraphId++}`;
   const nodes = new Map;
+  const aliases = new Map;
   const channel = new Set;
   const reservedNames = new Set((options.reservedNames || []).map((name) => nodeName(name)));
   let activeEpoch = null;
@@ -14279,11 +14282,15 @@ function createReactiveGraph(options = {}) {
     if (reservedNames.has(name)) {
       throw new Error(`${options.reservedNameLabel || "Reactive node name is reserved"}: ${name}`);
     }
-    if (nodes.has(name))
+    if (nodes.has(name) || aliases.has(name))
       throw new Error(`Reactive node already exists: ${name}`);
   }
+  function canonicalName(name) {
+    name = nodeName(name);
+    return aliases.get(name) ?? name;
+  }
   function requireNode(name) {
-    const node = nodes.get(name);
+    const node = nodes.get(canonicalName(name));
     if (!node)
       throw new Error(`Unknown reactive node: ${name}`);
     return node;
@@ -14332,6 +14339,9 @@ function createReactiveGraph(options = {}) {
       get() {
         return graph.get(name);
       },
+      peek() {
+        return graph.peek(name);
+      },
       set(value, metadata = null) {
         if (kind !== "source")
           throw new Error(`Reactive computed node ${name} cannot be set directly`);
@@ -14366,7 +14376,7 @@ function createReactiveGraph(options = {}) {
     if (activeEpoch) {
       throw new Error(options.nestedEpochError || "Reactive computations cannot start a nested graph epoch");
     }
-    const requested = evaluateAll ? new Set(nodes.keys()) : dirtyClosure(new Set([...dirty || [], ...sourceOverrides.keys()]));
+    const requested = evaluateAll ? new Set(nodes.keys()) : dirtyClosure(new Set([...dirty || [], ...sourceOverrides.keys()].map(canonicalName)));
     const previousEpoch = graph.epoch;
     const stagedValues = new Map([...nodes].map(([name, node]) => [name, node.value]));
     for (const [name, value] of sourceOverrides)
@@ -14383,6 +14393,7 @@ function createReactiveGraph(options = {}) {
     let currentName = null;
     const epoch = {
       read(name) {
+        name = canonicalName(name);
         const node = requireNode(name);
         if (currentName && currentName !== name)
           dependencies.get(currentName).add(name);
@@ -14407,6 +14418,16 @@ function createReactiveGraph(options = {}) {
         } finally {
           currentName = previousName;
           stack.pop();
+        }
+      },
+      peek(name) {
+        name = canonicalName(name);
+        const previousName = currentName;
+        currentName = null;
+        try {
+          return this.read(name);
+        } finally {
+          currentName = previousName;
         }
       }
     };
@@ -14509,11 +14530,30 @@ function createReactiveGraph(options = {}) {
       }
       return node.value;
     },
+    peek(name) {
+      name = nodeName(name);
+      if (activeEpoch)
+        return activeEpoch.peek(name);
+      return requireNode(name).value;
+    },
     node(name) {
       return requireNode(nodeName(name));
     },
     bindings() {
-      return new Map(nodes);
+      return new Map([
+        ...nodes,
+        ...[...aliases].map(([alias, canonical]) => [alias, nodes.get(canonical)])
+      ]);
+    },
+    addAlias(name, target) {
+      name = nodeName(name);
+      requireAvailableName(name);
+      const node = isReactiveNode(target) ? target : requireNode(target);
+      if (node.graph !== graph) {
+        throw new Error("Reactive aliases must refer to a node in the same ReactiveGraph");
+      }
+      aliases.set(name, node.name);
+      return node;
     },
     define(definitions, cause = null) {
       if (!Array.isArray(definitions) || definitions.length === 0)
@@ -14559,8 +14599,120 @@ function createReactiveGraph(options = {}) {
         throw error;
       }
     },
+    applyBatch(changes, cause = null) {
+      if (!Array.isArray(changes) || changes.length === 0)
+        return graph;
+      const declarations = [];
+      const aliasChanges = [];
+      const updates = new Map;
+      const pendingNames = new Set;
+      for (const change of changes) {
+        const name = nodeName(change?.name);
+        if (change.kind === "computed") {
+          requireAvailableName(name);
+          if (pendingNames.has(name)) {
+            throw new Error(`Reactive node already exists in transaction: ${name}`);
+          }
+          if (!change.formula || change.formula.fn !== "DEFER") {
+            throw new Error(`Reactive declaration ${name} requires a deferred definition`);
+          }
+          pendingNames.add(name);
+          declarations.push({ ...change, name });
+          continue;
+        }
+        if (change.kind === "alias") {
+          requireAvailableName(name);
+          if (pendingNames.has(name)) {
+            throw new Error(`Reactive node already exists in transaction: ${name}`);
+          }
+          pendingNames.add(name);
+          aliasChanges.push({ name, target: nodeName(change.target) });
+          continue;
+        }
+        if (change.kind === "update") {
+          const target = requireNode(name);
+          if (target.kind !== "computed") {
+            throw new Error(`Reactive node ${name} does not have a replaceable definition`);
+          }
+          if (!change.formula || change.formula.fn !== "DEFER") {
+            throw new Error(`Reactive update ${name} requires a deferred definition`);
+          }
+          updates.set(target.name, { ...change, name: target.name });
+          continue;
+        }
+        throw new Error(`Unknown reactive transaction change: ${change?.kind}`);
+      }
+      const futureNames = new Set([...nodes.keys(), ...declarations.map(({ name }) => name)]);
+      const futureAliases = new Map(aliases);
+      for (const { name, target } of aliasChanges) {
+        const canonical = futureAliases.get(target) ?? target;
+        if (!futureNames.has(canonical)) {
+          throw new Error(`Unknown reactive alias target: ${target}`);
+        }
+        futureAliases.set(name, canonical);
+      }
+      const addedNodes = [];
+      const addedAliases = [];
+      const previous = new Map;
+      try {
+        for (const definition of declarations) {
+          const node = makeNode(definition.name, "computed", {
+            formula: definition.formula,
+            source: definition.source ?? options.formulaSource?.(definition.formula) ?? null,
+            evaluator: definition.evaluator ?? null
+          });
+          nodes.set(definition.name, node);
+          addedNodes.push(definition.name);
+        }
+        for (const { name } of aliasChanges) {
+          aliases.set(name, futureAliases.get(name));
+          addedAliases.push(name);
+        }
+        for (const [name, update] of updates) {
+          const node = nodes.get(name);
+          previous.set(name, {
+            formula: node.formula,
+            source: node.source,
+            evaluator: node.evaluator,
+            state: node.state,
+            diagnostics: [...node.diagnostics],
+            dependencies: new Set(node.dependencies)
+          });
+          node.formula = update.formula;
+          node.source = update.source ?? options.formulaSource?.(update.formula) ?? null;
+          node.evaluator = update.evaluator ?? node.evaluator;
+        }
+        const dirty = new Set([...addedNodes, ...updates.keys()]);
+        if (dirty.size > 0) {
+          runEpoch({
+            dirty,
+            cause: cause || {
+              type: "reactive:batch",
+              names: Object.freeze([...pendingNames, ...updates.keys()])
+            }
+          });
+        }
+        return graph;
+      } catch (error) {
+        for (const name of addedAliases)
+          aliases.delete(name);
+        for (const name of addedNodes)
+          nodes.delete(name);
+        for (const [name, snapshot] of previous) {
+          const node = nodes.get(name);
+          node.formula = snapshot.formula;
+          node.source = snapshot.source;
+          node.evaluator = snapshot.evaluator;
+          node.state = snapshot.state;
+          node.diagnostics = snapshot.diagnostics;
+          node.dependencies = snapshot.dependencies;
+        }
+        rebuildDependents();
+        throw error;
+      }
+    },
     setSource(name, value, metadata = null) {
-      name = nodeName(name);
+      name = canonicalName(name);
       const node = requireNode(name);
       if (node.kind !== "source")
         throw new Error(`Reactive node ${name} is not a source`);
@@ -14572,7 +14724,7 @@ function createReactiveGraph(options = {}) {
       return value;
     },
     setFormula(name, formula, metadata = null) {
-      name = nodeName(name);
+      name = canonicalName(name);
       const node = requireNode(name);
       if (node.kind !== "computed")
         throw new Error(`Reactive node ${name} is not computed`);
@@ -14586,6 +14738,8 @@ function createReactiveGraph(options = {}) {
       const previousSource = node.source;
       node.formula = formula;
       node.source = metadata?.source ?? options.formulaSource?.(formula) ?? null;
+      if (metadata?.evaluator)
+        node.evaluator = metadata.evaluator;
       try {
         runEpoch({
           dirty: new Set([name]),
@@ -15874,6 +16028,10 @@ function previewIr(node, options = {}) {
       return "$";
     case "PARENT_SELF":
       return "$$";
+    case "REACTIVE_READ":
+      return `$${node.args[0]}`;
+    case "REACTIVE_NODE":
+      return `$$${node.args[0]}`;
     case "NEG":
       return truncate(`-${previewIr(node.args[0], { maxLen: maxLen - 1, depth: depth + 1 })}`, maxLen);
     case "CALL":
@@ -16005,8 +16163,6 @@ function formatValue(val, options = {}) {
     if (val.type === "formula_sheet")
       return val.toString();
     if (val.type === "reactive_graph" || val.type === "reactive_node")
-      return val.toString();
-    if (val.type === "reactive_graph_plan" || val.type === "reactive_graph_notation")
       return val.toString();
     if (val.type === "string")
       return val.value;
@@ -16256,6 +16412,15 @@ var LOWERERS = {
   },
   ParentSelfRef() {
     return ir2("PARENT_SELF");
+  },
+  ReactiveRef(node) {
+    return ir2("REACTIVE_READ", node.name);
+  },
+  ReactiveCellRef(node) {
+    return ir2("REACTIVE_NODE", node.name);
+  },
+  ReactiveTransaction(node) {
+    return ir2("REACTIVE_TRANSACTION", ...node.body.elements.map(lowerNode));
   },
   UserIdentifier(node) {
     return ir2("RETRIEVE", node.name);
@@ -16934,6 +17099,18 @@ function lowerAssignment(node, irFn) {
   }
   if (left.type === "SelfRef") {
     throw new Error("Cannot assign to '$'; it is read-only and only valid within a function body");
+  }
+  if (left.type === "ReactiveRef") {
+    if (irFn !== "ASSIGN_COPY") {
+      throw new Error("Reactive updates use '$name := expression'");
+    }
+    return ir2("REACTIVE_UPDATE", left.name, ir2("DEFER", lowerNode(node.right)));
+  }
+  if (left.type === "ReactiveCellRef") {
+    if (irFn !== "ASSIGN_COPY") {
+      throw new Error("Reactive declarations use '$$name := expression'");
+    }
+    return ir2("REACTIVE_DECLARE", left.name, ir2("DEFER", lowerNode(node.right)));
   }
   if (left.type === "SystemAccess") {
     return ir2("SYS_SET", left.property, lowerNode(node.right));
@@ -18245,6 +18422,9 @@ class Context {
     this.functions.clear();
     this.callStack = [];
     this.currentCallables = [];
+    this.env.delete("__reactive_binding_graph__");
+    this.env.delete("__reactive_active_graph__");
+    this.env.delete("__reactive_transaction__");
   }
   getAllNames() {
     const names = new Set([
@@ -19583,11 +19763,34 @@ class Parser {
           });
         } else if (token2.value === "$$") {
           this.advance();
+          if (this.current.type === "Identifier" && this.current.kind === "User" && token2.pos?.[2] === this.current.pos?.[1]) {
+            const identifier = this.current;
+            this.advance();
+            return this.createNode("ReactiveCellRef", {
+              name: identifier.value,
+              original: token2.original + identifier.original
+            });
+          }
           return this.createNode("ParentSelfRef", {
             original: token2.original
           });
         } else if (token2.value === "$") {
           this.advance();
+          if (this.current.value === "{" && token2.pos?.[2] === this.current.pos?.[1]) {
+            const body = this.parseBraceContainer();
+            return this.createNode("ReactiveTransaction", {
+              body,
+              original: token2.original + (body.original || "")
+            });
+          }
+          if (this.current.type === "Identifier" && this.current.kind === "User" && token2.pos?.[2] === this.current.pos?.[1]) {
+            const identifier = this.current;
+            this.advance();
+            return this.createNode("ReactiveRef", {
+              name: identifier.value,
+              original: token2.original + identifier.original
+            });
+          }
           return this.createNode("SelfRef", {
             original: token2.original
           });
@@ -20076,6 +20279,8 @@ class Parser {
           "PropertyAccess",
           "BracketIndex",
           "SelfRef",
+          "ReactiveRef",
+          "ReactiveCellRef",
           "Number"
         ]);
         if (!simpleLValueTypes.has(left?.type)) {
@@ -24355,7 +24560,9 @@ var coreFunctions = {
         throw new Error(`Undefined variable: ${name}`);
       }
       const reactiveRead = context.getEnv(REACTIVE_READ_ENV, null);
-      return typeof reactiveRead === "function" ? reactiveRead(value, name) : value;
+      if (typeof reactiveRead === "function")
+        return reactiveRead(value, name);
+      return isReactiveNode(value) ? value.peek() : value;
     },
     doc: "Look up a variable in the current scope chain"
   },
@@ -27024,367 +27231,329 @@ var reactiveGraphFunctions = {
   }
 };
 
-// ../rix/src/eval/functions/reactive-graph-notation.js
-var RG_DEFAULT_GRAPH_ENV = "__rg_default_graph__";
-var CONTAINER_OPENERS = new Set([
-  "(",
-  "[",
-  "{",
-  "{|",
-  "{=",
-  "{;",
-  "{@",
-  "{!",
-  "{:",
-  "{?",
-  "{#",
-  "{..",
-  "{>",
-  "{^",
-  "{$"
-]);
-var CONTAINER_CLOSERS = new Set([")", "]", "}", "|}", ";}", "@}", "!}", ":}"]);
-var STATEMENT_CLOSERS = new Set([")", "]", "}", "|}", ";}", "@}", "!}", ":}"]);
-function method4(name, impl) {
-  return { type: "method_builtin", name, impl };
+// ../rix/src/eval/functions/reactive-bindings.js
+var REACTIVE_BINDING_GRAPH_ENV = "__reactive_binding_graph__";
+var REACTIVE_ACTIVE_GRAPH_ENV = "__reactive_active_graph__";
+var REACTIVE_TRANSACTION_ENV = "__reactive_transaction__";
+function requireDeferred(value, label) {
+  if (!value || value.fn !== "DEFER") {
+    throw new Error(`${label} requires a deferred RiX definition`);
+  }
+  return value;
 }
-function stringFromValue(value, label) {
-  if (value?.type === "string")
-    return value.value;
-  if (typeof value === "string")
-    return value;
-  throw new Error(`${label} must be a string`);
+function rawReactiveNode(name, context, label) {
+  const value = context.get(name);
+  if (!isReactiveNode(value)) {
+    throw new Error(`${label} requires '${name}' to name a reactive cell`);
+  }
+  return value;
 }
-function isComment(token2) {
-  return token2?.type === "String" && token2.kind === "comment";
+function restoreEnv(context, key, snapshot) {
+  if (snapshot.has)
+    context.setEnv(key, snapshot.value);
+  else
+    context.env?.delete(key);
 }
-function canEndStatement(token2) {
-  if (!token2 || isComment(token2))
-    return false;
-  if (token2.type !== "Symbol")
-    return token2.type !== "End";
-  return STATEMENT_CLOSERS.has(token2.value) || token2.value === "^^" || token2.value === "_";
-}
-function canStartStatement(token2) {
-  if (!token2 || isComment(token2) || token2.type === "End")
-    return false;
-  if (token2.type !== "Symbol")
-    return true;
-  return ["(", "[", "{", "-", "+", "!", "_", "@", "@_", ".", "$"].includes(token2.value) || String(token2.value).startsWith("{");
-}
-function normalizeRgNewlines(source) {
-  const tokens = tokenize(source);
-  const insertions = [];
-  let depth = 0;
-  let previous = null;
-  for (const token2 of tokens) {
-    if (token2.type === "End")
-      break;
-    if (!isComment(token2) && previous) {
-      const whitespace = source.slice(previous.pos[2], token2.pos[1]);
-      if (depth === 0 && whitespace.includes(`
-`) && canEndStatement(previous) && canStartStatement(token2)) {
-        insertions.push(previous.pos[2]);
+function capturedFormulaEvaluator(context, evaluate, closureScopes) {
+  return (formula, graph) => {
+    let pushed = 0;
+    const previousRead = {
+      has: context.env?.has(REACTIVE_READ_ENV) === true,
+      value: context.getEnv(REACTIVE_READ_ENV, undefined)
+    };
+    const previousGraph = {
+      has: context.env?.has(REACTIVE_ACTIVE_GRAPH_ENV) === true,
+      value: context.getEnv(REACTIVE_ACTIVE_GRAPH_ENV, undefined)
+    };
+    for (const closureScope of closureScopes) {
+      context.push(closureScope.bindings, {
+        isolated: closureScope.isolated === true,
+        readThrough: closureScope.readThrough === true,
+        callableBoundary: closureScope.callableBoundary === true
+      });
+      pushed += 1;
+    }
+    context.push(graph.bindings());
+    pushed += 1;
+    context.setEnv(REACTIVE_ACTIVE_GRAPH_ENV, graph);
+    context.setEnv(REACTIVE_READ_ENV, (value, name) => {
+      if (isReactiveNode(value))
+        return value.peek();
+      return typeof previousRead.value === "function" ? previousRead.value(value, name) : value;
+    });
+    try {
+      return context.withSharedBody(formula.args[0], () => evaluate(formula.args[0]));
+    } finally {
+      restoreEnv(context, REACTIVE_READ_ENV, previousRead);
+      restoreEnv(context, REACTIVE_ACTIVE_GRAPH_ENV, previousGraph);
+      while (pushed > 0) {
+        context.pop();
+        pushed -= 1;
       }
     }
-    if (!isComment(token2)) {
-      if (CONTAINER_OPENERS.has(token2.value))
-        depth += 1;
-      if (CONTAINER_CLOSERS.has(token2.value))
-        depth = Math.max(0, depth - 1);
-      previous = token2;
-    }
-  }
-  return insertions.sort((left, right) => right - left).reduce((result, position) => `${result.slice(0, position)};${result.slice(position)}`, source);
-}
-function splitRgStatements(source) {
-  const normalized = normalizeRgNewlines(source);
-  const tokens = tokenize(normalized);
-  const statements = [];
-  let depth = 0;
-  let start = 0;
-  for (const token2 of tokens) {
-    if (token2.type === "End")
-      break;
-    if (CONTAINER_OPENERS.has(token2.value))
-      depth += 1;
-    if (CONTAINER_CLOSERS.has(token2.value))
-      depth = Math.max(0, depth - 1);
-    if (token2.value !== ";" || depth !== 0)
-      continue;
-    const statement = normalized.slice(start, token2.pos[1]).trim();
-    if (statement)
-      statements.push(statement);
-    start = token2.pos[2];
-  }
-  const tail = normalized.slice(start).trim();
-  if (tail)
-    statements.push(tail);
-  return statements;
-}
-function withoutLeadingRgComments(statement) {
-  let result = statement.trim();
-  while (result) {
-    const line = result.match(/^##[^\n]*(?:\n|$)/u);
-    if (line) {
-      result = result.slice(line[0].length).trimStart();
-      continue;
-    }
-    const block = result.match(/^\/\*+[\s\S]*?\*+\/\s*/u);
-    if (block) {
-      result = result.slice(block[0].length).trimStart();
-      continue;
-    }
-    break;
-  }
-  return result;
-}
-function expressionIr(source, context, label) {
-  const runtime = context.getEnv("__script_runtime__", null);
-  let nodes;
-  try {
-    nodes = lower(parse(source, runtime?.systemLookup));
-  } catch (error) {
-    throw new Error(`${label}: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  if (nodes.length !== 1)
-    throw new Error(`${label} must contain exactly one RiX expression`);
-  return nodes[0];
-}
-function deferredFormula(expression, source = null) {
-  return {
-    fn: "DEFER",
-    args: [expression],
-    ...expression?.pos ? { pos: expression.pos } : {},
-    ...typeof source === "string" ? { __rgSource: source } : {}
   };
 }
-function declaration(name, kind, expression, source = null) {
-  return Object.freeze({
-    name: String(name).toLowerCase(),
-    kind,
-    ...kind === "source" ? { expression } : { formula: deferredFormula(expression, source) },
-    source
-  });
-}
-function createReactiveGraphPlan(declarations, options = {}) {
-  return Object.freeze({
-    type: "reactive_graph_plan",
-    declarations: Object.freeze([...declarations]),
-    source: options.source ?? null,
-    toString() {
-      return `[RG Plan · ${declarations.length} declarations]`;
+function getBindingGraph(context) {
+  let graph = context.getEnv(REACTIVE_BINDING_GRAPH_ENV, null);
+  if (graph)
+    return graph;
+  graph = createReactiveGraph({
+    evaluateFormula() {
+      throw new Error("Reactive binding definitions require their captured evaluator");
     }
   });
+  context.setEnv(REACTIVE_BINDING_GRAPH_ENV, graph);
+  return graph;
 }
-function isReactiveGraphPlan(value) {
-  return Boolean(value && value.type === "reactive_graph_plan" && Array.isArray(value.declarations));
+function currentCollector(context) {
+  return context.getEnv(REACTIVE_TRANSACTION_ENV, null);
 }
-function parseReactiveGraphSource(body, context) {
-  const statements = splitRgStatements(body).map(withoutLeadingRgComments).filter(Boolean);
-  const declarations = statements.map((statement, index) => {
-    const match = statement.match(/^\s*(?:(\$\s*)|(source\s+))?([a-z_][a-z0-9_]*)\s*:=\s*([\s\S]+?)\s*$/iu);
-    if (!match) {
-      throw new Error(`.RG declaration ${index + 1} must be '$name := expression', ` + "'source name := expression', or 'name := expression'");
-    }
-    const [, dollarMarker, sourceMarker, name, rhs] = match;
-    const kind = dollarMarker || sourceMarker ? "source" : "computed";
-    return declaration(name, kind, expressionIr(rhs, context, `.RG declaration ${name}`), rhs.trim());
-  });
-  return createReactiveGraphPlan(declarations, { source: body });
-}
-function deferredStatements(deferred) {
-  if (!deferred || deferred.fn !== "DEFER") {
-    throw new Error(".RG.Analyze requires deferred syntax @{ ... }, an RG source string, or an RG plan");
+function useCollectorGraph(collector, graph) {
+  if (!collector)
+    return graph;
+  if (collector.graph && collector.graph !== graph) {
+    throw new Error("A reactive transaction cannot span different ReactiveGraphs");
   }
-  const body = deferred.args[0];
-  return body?.fn === "BLOCK" || body?.fn === "SEQ" ? body.args : [body];
+  collector.graph = graph;
+  return graph;
 }
-function sourceMarkerExpression(value) {
-  if (value?.fn !== "CALL_METHOD" || value.args?.[0]?.fn !== "SYS_GET" || String(value.args[0].args?.[0]).toUpperCase() !== "RG" || String(value.args?.[1]).toUpperCase() !== "SOURCE" || value.args.length !== 3) {
+function ensureNewBinding(name, context, collector = null) {
+  if (context.has(name) || collector?.pendingNames.has(name)) {
+    throw new Error(`Reactive declaration requires a new name: ${name}`);
+  }
+}
+function makeDefinition(name, formula, context, evaluate) {
+  return {
+    kind: "computed",
+    name,
+    formula: requireDeferred(formula, `Reactive declaration ${name}`),
+    evaluator: capturedFormulaEvaluator(context, evaluate, context.captureClosureScopes())
+  };
+}
+function makeUpdate(node, formula, context, evaluate) {
+  return {
+    kind: "update",
+    name: node.name,
+    formula: requireDeferred(formula, `Reactive update ${node.name}`),
+    evaluator: capturedFormulaEvaluator(context, evaluate, context.captureClosureScopes())
+  };
+}
+function aliasTarget(formula) {
+  const body = formula?.fn === "DEFER" ? formula.args[0] : null;
+  return body?.fn === "REACTIVE_NODE" && typeof body.args?.[0] === "string" ? body.args[0] : null;
+}
+function collectPlainReads(node, names = new Set) {
+  if (!node || typeof node !== "object")
+    return names;
+  if (Array.isArray(node)) {
+    for (const item of node)
+      collectPlainReads(item, names);
+    return names;
+  }
+  if (node.fn === "RETRIEVE" && typeof node.args?.[0] === "string") {
+    names.add(node.args[0]);
+    return names;
+  }
+  if (node.fn === "REACTIVE_READ" || node.fn === "REACTIVE_NODE")
+    return names;
+  for (const arg of node.args || [])
+    collectPlainReads(arg, names);
+  return names;
+}
+function collectReactiveNames(node, names = new Set) {
+  if (!node || typeof node !== "object")
+    return names;
+  if (Array.isArray(node)) {
+    for (const item of node)
+      collectReactiveNames(item, names);
+    return names;
+  }
+  if ((node.fn === "REACTIVE_READ" || node.fn === "REACTIVE_NODE") && typeof node.args?.[0] === "string") {
+    names.add(node.args[0]);
+    return names;
+  }
+  for (const arg of node.args || [])
+    collectReactiveNames(arg, names);
+  return names;
+}
+function graphForFormula(formula, context, fallback = null) {
+  const graphs = new Set;
+  for (const name of collectReactiveNames(formula?.args?.[0])) {
+    const value = context.get(name);
+    if (isReactiveNode(value))
+      graphs.add(value.graph);
+  }
+  if (graphs.size > 1) {
+    throw new Error("One reactive definition cannot currently track cells from different ReactiveGraphs");
+  }
+  return graphs.values().next().value ?? fallback ?? getBindingGraph(context);
+}
+function warnUntrackedReads(formula, context, graph, pendingNames = new Set) {
+  const warnings = context.getEnv("warnings", runtimeDefaults.warnings);
+  if (warnings?.reactiveUntrackedRead !== true)
+    return;
+  const graphNames = new Set(graph.bindings().keys());
+  for (const name of collectPlainReads(formula?.args?.[0])) {
+    if (!graphNames.has(name) && !pendingNames.has(name) && !isReactiveNode(context.get(name)))
+      continue;
+    getDiagnostics(context).addEvent(createEvent({
+      kind: "warning",
+      label: `Untracked reactive read '${name}' in reactive definition`,
+      file: getCurrentFilePath(context),
+      data: {
+        type: "map",
+        entries: new Map([
+          ["name", { type: "string", value: name }],
+          ["trackedForm", { type: "string", value: `$${name}` }]
+        ])
+      }
+    }));
+  }
+}
+function bindCommittedNames(collector, context) {
+  for (const binding of collector.bindings) {
+    const node = collector.graph.node(binding.target ?? binding.name);
+    context.setFresh(binding.name, node);
+  }
+}
+function declareReactive(args, context, evaluate) {
+  const [name, formula] = args;
+  const collector = currentCollector(context);
+  ensureNewBinding(name, context, collector);
+  const target = aliasTarget(formula);
+  if (target !== null) {
+    const targetValue = context.get(target);
+    const targetNode = isReactiveNode(targetValue) ? targetValue : null;
+    const graph2 = collector ? targetNode ? useCollectorGraph(collector, targetNode.graph) : collector.graph : rawReactiveNode(target, context, "Reactive alias declaration").graph;
+    if (collector) {
+      if (!graph2 && !collector.pendingNames.has(target)) {
+        throw new Error(`Reactive alias declaration requires '${target}' to name a reactive cell`);
+      }
+      collector.changes.push({ kind: "alias", name, target });
+      collector.bindings.push({ name, target });
+      collector.pendingNames.add(name);
+      collector.lastReactiveName = name;
+      return null;
+    }
+    const node2 = rawReactiveNode(target, context, "Reactive alias declaration");
+    graph2.addAlias(name, node2);
+    context.setFresh(name, node2);
+    return node2.peek();
+  }
+  const graph = graphForFormula(formula, context, collector?.graph);
+  useCollectorGraph(collector, graph);
+  const definition = makeDefinition(name, formula, context, evaluate);
+  if (collector) {
+    collector.changes.push(definition);
+    collector.bindings.push({ name });
+    collector.pendingNames.add(name);
+    collector.lastReactiveName = name;
     return null;
   }
-  return value.args[2];
+  warnUntrackedReads(formula, context, graph);
+  graph.applyBatch([definition], { type: "reactive:declare", name });
+  const node = graph.node(name);
+  context.setFresh(name, node);
+  return node.peek();
 }
-function analyzeReactiveGraphDeferred(deferred) {
-  const declarations = deferredStatements(deferred).map((statement, index) => {
-    if (statement?.fn !== "ASSIGN_COPY" || typeof statement.args?.[0] !== "string") {
-      throw new Error(`.RG.Analyze statement ${index + 1} must use 'name := expression'; ` + "wrap sources as 'name := .RG.Source(expression)'");
-    }
-    const [name, rhs] = statement.args;
-    const sourceExpression = sourceMarkerExpression(rhs);
-    return sourceExpression ? declaration(name, "source", sourceExpression, irToText(sourceExpression)) : declaration(name, "computed", rhs, irToText(rhs));
-  });
-  return createReactiveGraphPlan(declarations);
-}
-function planFromValue(value, context) {
-  if (isReactiveGraphPlan(value))
-    return value;
-  if (value?.fn === "DEFER")
-    return analyzeReactiveGraphDeferred(value);
-  if (value?.type === "string" || typeof value === "string") {
-    return parseReactiveGraphSource(stringFromValue(value, ".RG source"), context);
+function updateReactive(args, context, evaluate) {
+  const [name, formula] = args;
+  const node = rawReactiveNode(name, context, "Reactive update");
+  const collector = currentCollector(context);
+  const update = makeUpdate(node, formula, context, evaluate);
+  if (collector) {
+    useCollectorGraph(collector, node.graph);
+    collector.changes.push(update);
+    collector.lastReactiveName = name;
+    return node.peek();
   }
-  throw new Error("Expected an RG plan, deferred RG declarations, or RG source string");
+  warnUntrackedReads(formula, context, node.graph);
+  node.graph.applyBatch([update], { type: "reactive:update", name: node.name });
+  return node.peek();
 }
-function applyReactiveGraphPlan(graph, planValue, context, evaluate) {
-  if (!isReactiveGraph(graph))
-    throw new Error(".RG can only apply declarations to a ReactiveGraph");
-  const plan = planFromValue(planValue, context);
-  const definitions = plan.declarations.map((item) => item.kind === "source" ? {
-    kind: "source",
-    name: item.name,
-    value: evaluate(item.expression)
-  } : {
-    kind: "computed",
-    name: item.name,
-    formula: item.formula,
-    source: item.source
-  });
-  graph.define(definitions, {
-    type: "rg:apply",
-    source: plan.source,
-    names: Object.freeze(definitions.map(({ name }) => name))
-  });
-  return graph;
-}
-function graphFromContextName(name, context, label) {
-  const graph = context.get(String(name).toLowerCase()) ?? context.get(String(name));
-  if (!isReactiveGraph(graph))
-    throw new Error(`${label} requires '${name}' to name a ReactiveGraph`);
-  return graph;
-}
-function defaultGraph(context) {
-  const graph = context.getEnv(RG_DEFAULT_GRAPH_ENV, null);
-  if (!isReactiveGraph(graph)) {
-    throw new Error(".RG has no default graph; use .RG.Init.Set:, .RG.Set(graph), or .RG.Use(graph):");
+function readReactive(args, context) {
+  const name = args[0];
+  const node = rawReactiveNode(name, context, "Tracked reactive read");
+  const activeGraph = context.getEnv(REACTIVE_ACTIVE_GRAPH_ENV, null);
+  if (activeGraph && node.graph !== activeGraph) {
+    throw new Error(`Tracked reactive read '$${name}' crosses ReactiveGraphs; alias or import it into one graph first`);
   }
-  return graph;
+  return node.get();
 }
-function setDefaultGraph(graph, context) {
-  if (!isReactiveGraph(graph))
-    throw new Error(".RG.Set expects a ReactiveGraph");
-  context.setEnv(RG_DEFAULT_GRAPH_ENV, graph);
-  return graph;
+function retrieveReactiveNode(args, context) {
+  return rawReactiveNode(args[0], context, "Reactive cell reference");
 }
-function modifierSpecs(value) {
-  if (!value?.values)
-    return [];
-  return value.values.map((item) => {
-    const text2 = stringFromValue(item, ".RG modifier");
-    const match = text2.match(/^([a-z_][a-z0-9_]*)(?:\(([^()]*)\))?$/iu);
-    if (!match)
-      throw new Error(`Invalid .RG modifier: ${text2}`);
-    return {
-      name: match[1].toUpperCase(),
-      args: match[2] === undefined ? [] : match[2].split(",").map((argument) => argument.trim()).filter(Boolean)
-    };
-  });
-}
-function rgParse(args, context, evaluate) {
-  const body = stringFromValue(args[1], ".RG.Parse body");
-  const plan = parseReactiveGraphSource(body, context);
-  const modifiers = modifierSpecs(args[2]);
-  const supported = new Set(["INIT", "SET", "USE"]);
-  const unsupported = modifiers.filter(({ name }) => !supported.has(name));
-  if (unsupported.length > 0) {
-    throw new Error(`Unknown .RG modifier${unsupported.length === 1 ? "" : "s"}: ${unsupported.map(({ name }) => name).join(", ")}`);
+function reactiveTransaction(args, context, evaluate) {
+  const parent = currentCollector(context);
+  if (parent) {
+    let nestedResult = null;
+    for (const statement of args)
+      nestedResult = evaluate(statement);
+    return nestedResult;
   }
-  const init = modifiers.find(({ name }) => name === "INIT") || null;
-  const set = modifiers.find(({ name }) => name === "SET") || null;
-  const use = modifiers.find(({ name }) => name === "USE") || null;
-  if (modifiers.filter(({ name }) => name === "INIT").length > 1 || modifiers.filter(({ name }) => name === "SET").length > 1 || modifiers.filter(({ name }) => name === "USE").length > 1) {
-    throw new Error(".RG accepts each of Init, Set, and Use at most once");
-  }
-  if (use && (init || set))
-    throw new Error(".RG.Use(graph) cannot be combined with Init or Set");
-  if (init?.args.length > 1)
-    throw new Error(".RG.Init accepts at most one graph identifier");
-  if (set && set.args.length > 1 || use && use.args.length !== 1) {
-    throw new Error(".RG.Set accepts zero or one graph name; .RG.Use requires exactly one");
-  }
-  let graph;
-  if (use) {
-    graph = graphFromContextName(use.args[0], context, ".RG.Use");
-  } else if (init) {
-    graph = createEvaluatedReactiveGraph(context, evaluate, init.args[0] || null);
-    if (set?.args.length)
-      throw new Error(".RG.Init.Set cannot name a separate graph");
-  } else if (set?.args.length) {
-    graph = graphFromContextName(set.args[0], context, ".RG.Set");
-  } else {
-    graph = defaultGraph(context);
-    if (set)
-      throw new Error(".RG.Set without a graph name must be combined with .RG.Init");
-  }
-  applyReactiveGraphPlan(graph, plan, context, evaluate);
-  if (set)
-    setDefaultGraph(graph, context);
-  return graph;
-}
-function rgAnalyze(args, context) {
-  if (args.length !== 2)
-    throw new Error(".RG.Analyze expects one deferred block, RG source string, or RG plan");
-  return planFromValue(args[1], context);
-}
-function rgInit(args, context, evaluate) {
-  if (args.length > 3)
-    throw new Error(".RG.Init accepts an optional identifier string and plan");
-  let id = null;
-  let plan = null;
-  for (const value of args.slice(1)) {
-    if (value?.type === "string" || typeof value === "string") {
-      if (id !== null)
-        throw new Error(".RG.Init accepts only one identifier string");
-      id = stringFromValue(value, ".RG.Init identifier");
-    } else {
-      if (plan !== null)
-        throw new Error(".RG.Init accepts only one plan");
-      plan = value;
-    }
-  }
-  const graph = createEvaluatedReactiveGraph(context, evaluate, id);
-  if (plan !== null)
-    applyReactiveGraphPlan(graph, plan, context, evaluate);
-  return graph;
-}
-function rgApply(args, context, evaluate) {
-  if (args.length !== 3)
-    throw new Error(".RG.Apply and .RG.Use expect a graph and one plan");
-  return applyReactiveGraphPlan(args[1], args[2], context, evaluate);
-}
-function rgSource(args) {
-  if (args.length !== 2)
-    throw new Error(".RG.Source expects one initial-value expression");
-  return Object.freeze({ type: "rg_source_marker", value: args[1] });
-}
-function createReactiveGraphNotationValue() {
-  const parseMethod = method4("Parse", rgParse);
-  return {
-    type: "reactive_graph_notation",
-    name: "RG",
-    _ext: new Map([
-      ["Parse", parseMethod],
-      ["PARSE", parseMethod],
-      ["ANALYZE", method4("Analyze", rgAnalyze)],
-      ["INIT", method4("Init", rgInit)],
-      ["SET", method4("Set", ([, graph], context) => setDefaultGraph(graph, context))],
-      ["DEFAULT", method4("Default", ([,], context) => defaultGraph(context))],
-      ["APPLY", method4("Apply", rgApply)],
-      ["USE", method4("Use", rgApply)],
-      ["SOURCE", method4("Source", rgSource)]
-    ]),
-    toString() {
-      return "[RG notation]";
-    }
+  const collector = {
+    graph: null,
+    changes: [],
+    bindings: [],
+    pendingNames: new Set,
+    lastReactiveName: null
   };
+  const previous = {
+    has: context.env?.has(REACTIVE_TRANSACTION_ENV) === true,
+    value: context.getEnv(REACTIVE_TRANSACTION_ENV, undefined)
+  };
+  context.setEnv(REACTIVE_TRANSACTION_ENV, collector);
+  let result = null;
+  try {
+    for (const statement of args)
+      result = evaluate(statement);
+  } finally {
+    restoreEnv(context, REACTIVE_TRANSACTION_ENV, previous);
+  }
+  collector.graph ??= getBindingGraph(context);
+  for (const change of collector.changes) {
+    if (change.formula) {
+      warnUntrackedReads(change.formula, context, collector.graph, collector.pendingNames);
+    }
+  }
+  collector.graph.applyBatch(collector.changes, {
+    type: "reactive:transaction",
+    names: Object.freeze(collector.changes.map(({ name }) => name))
+  });
+  bindCommittedNames(collector, context);
+  return collector.lastReactiveName ? rawReactiveNode(collector.lastReactiveName, context, "Reactive transaction result").peek() : result;
 }
+var reactiveBindingFunctions = {
+  REACTIVE_READ: {
+    impl: readReactive,
+    doc: "Read a reactive cell value and record a dependency"
+  },
+  REACTIVE_NODE: {
+    impl: retrieveReactiveNode,
+    doc: "Retrieve a reactive cell identity without dereferencing it"
+  },
+  REACTIVE_DECLARE: {
+    lazy: true,
+    impl: declareReactive,
+    doc: "Declare a new reactive cell from a deferred definition"
+  },
+  REACTIVE_UPDATE: {
+    lazy: true,
+    impl: updateReactive,
+    doc: "Replace a reactive cell definition while preserving its identity"
+  },
+  REACTIVE_TRANSACTION: {
+    lazy: true,
+    impl: reactiveTransaction,
+    doc: "Stage reactive declarations and updates and commit one atomic graph epoch"
+  }
+};
 
 // ../rix/src/eval/functions/embedded.js
 function stringValue4(value) {
   return { type: "string", value: String(value) };
 }
-function stringFromValue2(value, label) {
+function stringFromValue(value, label) {
   if (value?.type === "string")
     return value.value;
   if (typeof value === "string")
@@ -27396,7 +27565,7 @@ function modifierNames(value) {
     return [];
   if (!Array.isArray(value.values))
     throw new Error("Embedded parser modifiers must be a sequence");
-  return value.values.map((item) => stringFromValue2(item, "Embedded parser modifier"));
+  return value.values.map((item) => stringFromValue(item, "Embedded parser modifier"));
 }
 function parseFunctionModifier(modifiers) {
   const matches = modifiers.filter((modifier) => /^FUN(?:\((.*)\))?$/iu.test(modifier));
@@ -27465,7 +27634,7 @@ function evaluateRiXExpression(source, context, evaluate) {
   return value;
 }
 function sarithParse(args, context, evaluate) {
-  const body = stringFromValue2(args[1], ".SArith.Parse body");
+  const body = stringFromValue(args[1], ".SArith.Parse body");
   const modifiers = modifierNames(args[2]);
   const info = args[3];
   const unsupported = modifiers.filter((modifier) => !/^FUN(?:\(.*\))?$/iu.test(modifier) && !/^(?:DIFFERENCE|COMPLEX|QUATERNIONS?|OCTONIONS?|ALGEBRA(?:\(.*\))?)$/iu.test(modifier));
@@ -27503,7 +27672,7 @@ function mapField(map2, name) {
 function operatorDeclaration(value, context, evaluate, invoke) {
   const text2 = (name, fallback = null) => {
     const field = mapField(value, name);
-    return field === undefined ? fallback : stringFromValue2(field, `.SArith.Configure ${name}`);
+    return field === undefined ? fallback : stringFromValue(field, `.SArith.Configure ${name}`);
   };
   const precedence2 = mapField(value, "precedence");
   const apply = mapField(value, "apply");
@@ -27522,8 +27691,8 @@ function configureSArith(args, context, evaluate, invoke) {
   return createSArithSystemValue(operators, args[0]?.algebraProfile || null);
 }
 function scopeSArith(args) {
-  const profileName = stringFromValue2(args[1], ".SArith.Scope profile");
-  const basis = args.slice(2).map((value) => stringFromValue2(value, ".SArith.Scope basis"));
+  const profileName = stringFromValue(args[1], ".SArith.Scope profile");
+  const basis = args.slice(2).map((value) => stringFromValue(value, ".SArith.Scope basis"));
   return createSArithSystemValue(args[0]?.operators || null, algebraProfileFromName(profileName, basis));
 }
 function createSArithSystemValue(operators = null, algebraProfile = null) {
@@ -27558,7 +27727,7 @@ function createSArithSystemValue(operators = null, algebraProfile = null) {
   };
 }
 function polyParse(args, context, evaluate) {
-  const body = stringFromValue2(args[1], ".Poly.Parse body");
+  const body = stringFromValue(args[1], ".Poly.Parse body");
   const modifiers = modifierNames(args[2]);
   const unsupported = modifiers.filter((modifier) => modifier.toUpperCase() !== "FUN");
   if (unsupported.length > 0) {
@@ -27889,7 +28058,7 @@ function components(args) {
     throw new Error("Components expects a quaternion or octonion");
   return { type: "sequence", values: [...value.components] };
 }
-function method5(name, impl) {
+function method4(name, impl) {
   return {
     type: "method_builtin",
     name,
@@ -27910,7 +28079,7 @@ function createExactAlgebrasCollection() {
   for (const [name, helper] of helpers) {
     entries.set(name, helper);
     entries.set(name.toUpperCase(), helper);
-    extension.set(name.toUpperCase(), method5(name, helper));
+    extension.set(name.toUpperCase(), method4(name, helper));
   }
   return { type: "map", entries, _ext: extension };
 }
@@ -28301,6 +28470,7 @@ function createDefaultRegistry(options = {}) {
   registry.registerAll(outputFunctions);
   registry.registerAll(formulaSheetFunctions);
   registry.registerAll(reactiveGraphFunctions);
+  registry.registerAll(reactiveBindingFunctions);
   registry.registerAll(embeddedFunctions);
   installRegisteredTypes(registry);
   installUnitExactVariants(registry);
@@ -28439,10 +28609,6 @@ function createDefaultSystemContext(options = {}) {
   ctx.registerAll(outputFunctions);
   ctx.registerAll(formulaSheetFunctions);
   ctx.registerAll(reactiveGraphFunctions);
-  ctx.registerValue("RG", createReactiveGraphNotationValue(), {
-    doc: "Define and apply ReactiveGraph plans through concise .RG backtick notation",
-    groups: ["Notation", "RiXCel"]
-  });
   const sArith = sArithCapability.create();
   ctx.registerCallableValue("SArith", sArith.value, sArith.definition, {
     doc: sArith.definition.doc,
@@ -30175,14 +30341,22 @@ function complete(source, cursor, { context, systemContext, formatValue: formatV
       candidates: filterAndSort(mapKeyCandidates(context.get(mapKeyMatch[1]), query2, formatValue2), query2)
     };
   }
-  let token2 = before.match(/[@.]?[A-Za-z_][A-Za-z0-9_]*$|[@.]?$/)?.[0] ?? "";
+  let token2 = before.match(/\$\$?[A-Za-z_][A-Za-z0-9_]*$|\$\$?$|[@.]?[A-Za-z_][A-Za-z0-9_]*$|[@.]?$/)?.[0] ?? "";
   if (token2 === "." && before.length > 1)
     token2 = "";
-  const from = cursor - token2.length;
-  const query = token2.replace(/^@_?/, "").replace(/^\./, "");
-  const prior = before.slice(0, from);
+  const reactivePrefix = token2.match(/^\$\$?/)?.[0] ?? "";
+  const from = cursor - token2.length + reactivePrefix.length;
+  const query = token2.replace(/^\$\$?/, "").replace(/^@_?/, "").replace(/^\./, "");
+  const prior = before.slice(0, cursor - token2.length);
   let candidates = [];
-  if (token2.startsWith("@_") || prior.endsWith("@_")) {
+  if (reactivePrefix) {
+    candidates = context.getAllNames().map((name) => [name, context.get(name)]).filter(([, value]) => value?.type === "reactive_node").map(([name, value]) => ({
+      insertText: name,
+      kind: reactivePrefix === "$$" ? "reactive cell" : "reactive value",
+      detail: reactivePrefix === "$$" ? "reactive cell identity" : "tracked reactive read",
+      preview: preview(value.peek(), formatValue2)
+    }));
+  } else if (token2.startsWith("@_") || prior.endsWith("@_")) {
     const prefix = token2.startsWith("@_") ? "@_" : "@_";
     candidates = systemCandidates(systemContext, prefix);
   } else if (prior.endsWith(".")) {
@@ -30210,18 +30384,18 @@ function complete(source, cursor, { context, systemContext, formatValue: formatV
 // src/repl-source.js
 var statementClosers = new Set([")", "]", "}", "|}", ";}", "@}", "!}", ":}"]);
 var containerOpeners = new Set(["(", "[", "{", "{|", "{=", "{;", "{@", "{!", "{:"]);
-function isComment2(token2) {
+function isComment(token2) {
   return token2?.type === "String" && token2.kind === "comment";
 }
-function canEndStatement2(token2) {
-  if (!token2 || isComment2(token2))
+function canEndStatement(token2) {
+  if (!token2 || isComment(token2))
     return false;
   if (token2.type !== "Symbol")
     return token2.type !== "End";
   return statementClosers.has(token2.value) || token2.value === "^^" || token2.value === "_";
 }
-function canStartStatement2(token2) {
-  if (!token2 || isComment2(token2) || token2.type === "End")
+function canStartStatement(token2) {
+  if (!token2 || isComment(token2) || token2.type === "End")
     return false;
   if (token2.type !== "Symbol")
     return true;
@@ -30240,14 +30414,14 @@ function normalizeReplSource(source) {
   for (const token2 of tokens) {
     if (token2.type === "End")
       break;
-    if (!isComment2(token2) && previous) {
+    if (!isComment(token2) && previous) {
       const whitespaceBetween = source.slice(previous.pos[2], token2.pos[1]);
       if (depth === 0 && whitespaceBetween.includes(`
-`) && canEndStatement2(previous) && canStartStatement2(token2)) {
+`) && canEndStatement(previous) && canStartStatement(token2)) {
         insertions.push(previous.pos[2]);
       }
     }
-    if (!isComment2(token2)) {
+    if (!isComment(token2)) {
       if (containerOpeners.has(token2.value))
         depth += 1;
       if (statementClosers.has(token2.value))
@@ -30509,7 +30683,7 @@ function registerFloatType() {
     installs
   });
 }
-function method6(name, impl) {
+function method5(name, impl) {
   return { type: "method_builtin", name, impl };
 }
 function installBrowserApproxMathPlugin({ systemContext, registry }) {
@@ -30519,7 +30693,7 @@ function installBrowserApproxMathPlugin({ systemContext, registry }) {
   const entries = new Map;
   const extension = new Map;
   const add = (name, impl) => {
-    const entry = method6(name, impl);
+    const entry = method5(name, impl);
     entries.set(name, entry);
     extension.set(name.toUpperCase(), entry);
   };
@@ -30696,5 +30870,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { formatValue, mountOutputWidgets, findHelp, createRixRepl };
 
-//# debugId=C82581D3CC81463B64756E2164756E21
-//# sourceMappingURL=chunk-9nzfgqmd.js.map
+//# debugId=80AE1D1888269C6F64756E2164756E21
+//# sourceMappingURL=chunk-6d1mt148.js.map

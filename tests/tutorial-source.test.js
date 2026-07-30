@@ -69,12 +69,12 @@ test("structured output has focused table, document, graphic, drawing, and sheet
     expect(sheets).toContain("model.SetFormula");
     expect(sheets).toContain(".LiveView");
     expect(sheets).toContain("values.Graph()");
-    expect(sheets).toContain("`.RG.Init.Set:");
-    expect(sheets).toContain("$source1 := 2");
-    expect(sheets).toContain("`.RG.Use(graph):");
-    expect(sheets).toContain("average := (grid[1,1] + grid[1,2]) / 2");
-    expect(sheets).toContain("functionvalue := {;");
-    expect(sheets).toContain("Scale(grid[1,1])");
+    expect(sheets).toContain("$$source1 := 2");
+    expect(sheets).toContain("$source1 := 10");
+    expect(sheets).toContain("${");
+    expect(sheets).toContain("$$average := ($first + $second) / 2");
+    expect(sheets).toContain("$$functionvalue := {;");
+    expect(sheets).toContain("Scale($first)");
     expect(sheets).toContain(".Graphics.Circle");
 });
 
