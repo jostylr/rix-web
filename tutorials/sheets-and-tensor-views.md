@@ -161,16 +161,39 @@ next storage layer.
 
 ## Drive another live object
 
-FormulaSheet and Binding values publish the same subscription protocol.
-`.LiveView(source, @{ ... })` reexecutes a deferred presentation whenever its
-explicit `source` commits. The result can be any structured output, including a
-Graphic:
+Every FormulaSheet has a reactive graph. `values.Graph()` exposes it so named
+computations can depend on sheet coordinates and on one another. Reads made
+while a deferred computation runs become graph edges; changing an input
+recomputes only its transitive dependents in one atomic epoch.
+
+This example uses three editable formulas. The first two determine a point and
+their average. The third is both the point radius and a coefficient captured by
+a locally defined `Scale` function:
 
 ```rix edu
-pointSheet := .FormulaSheet([[@{120}, @{40}]]);
-.LiveView(pointSheet, @{
+values := .FormulaSheet([[@{120}, @{40}, @{8}]]);
+graph := values.Graph();
+
+average := graph.Derive("average", @{
+    (grid[1,1] + grid[1,2]) / 2
+});
+
+functionvalue := graph.Derive("functionvalue", @{
+    Scale(x) -> x * grid[1,3];
+    Scale(grid[1,1])
+});
+
+.LiveView(values, @{
     .Fragment([
-        .Sheet(source, {= title="Point formulas", axes=["point", "coordinate"] }),
+        .Heading(2, "Reactive point report"),
+        .Sheet(source, {= title="Editable inputs", axes=["point", "value"] }),
+        .Table(
+            ["quantity", "value"],
+            [
+                ["Average of first and second", average],
+                ["Scale(first), where Scale(x) = x * third", functionvalue]
+            ]
+        ),
         .Graphics.Graphic([260, 140], [
             .Graphics.Path(
                 [[20, 120], [source[1,1], source[1,2]]],
@@ -178,7 +201,7 @@ pointSheet := .FormulaSheet([[@{120}, @{40}]]);
             ),
             .Graphics.Circle(
                 [source[1,1], source[1,2]],
-                8,
+                source[1,3],
                 {= fill="#f97316" }
             )
         ])
@@ -186,7 +209,12 @@ pointSheet := .FormulaSheet([[@{120}, @{40}]]);
 }) ;
 ```
 
-Edit either formula in the embedded grid. Both the line endpoint and orange
-point move after the sheet commits. This is also the intended foundation for
-direct manipulation: a future draggable point will publish a semantic position
-event into a Binding, and LiveView dependents will use the same refresh path.
+Edit any formula in the embedded grid. The sheet commit propagates through the
+named graph nodes before LiveView redraws the whole document. Changing the
+first value moves the point and refreshes both displayed calculations; changing
+the third changes the radius and the function result without recomputing the
+average.
+
+This is also the intended foundation for direct manipulation: a future
+draggable point can publish a semantic position event into a Binding or graph
+source and use the same propagation path.

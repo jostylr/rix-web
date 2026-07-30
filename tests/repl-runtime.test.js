@@ -105,6 +105,44 @@ test("formula sheets and their dependent LiveViews retain interactive metadata",
     expect(live.html).toContain("Reactive copy");
 });
 
+test("a FormulaSheet graph propagates named calculations through a LiveView document", () => {
+    const repl = createRixRepl();
+    const response = repl.run(`
+        values := .FormulaSheet([[@{120}, @{40}, @{8}]]);
+        graph := values.Graph();
+        average := graph.Derive("average", @{ (grid[1,1] + grid[1,2]) / 2 });
+        functionvalue := graph.Derive("functionvalue", @{
+            Scale(x) -> x * grid[1,3];
+            Scale(grid[1,1])
+        });
+        .LiveView(values, @{
+            .Fragment([
+                .Sheet(source, {= title="Editable inputs" }),
+                .Table(
+                    ["quantity", "value"],
+                    [
+                        ["Average of first and second", average],
+                        ["Scale(first), where Scale(x) = x * third", functionvalue]
+                    ]
+                ),
+                .Graphics.Graphic([260,140], [
+                    .Graphics.Circle([source[1,1], source[1,2]], source[1,3])
+                ])
+            ])
+        })
+    `);
+
+    expect(response.type).toBe("result");
+    expect(response.value.revision).toBe(0);
+    expect(formatValue(response.value.current)).toMatch(/Average of first and second\s+80/u);
+    expect(formatValue(response.value.current)).toMatch(/Scale\(first\), where Scale\(x\) = x \* third\s+960/u);
+
+    response.value.source.setFormula([1, 1], parseAndEvaluate("@{200}"), { source: "200" });
+    expect(response.value.revision).toBe(1);
+    expect(formatValue(response.value.current)).toMatch(/Average of first and second\s+120/u);
+    expect(formatValue(response.value.current)).toMatch(/Scale\(first\), where Scale\(x\) = x \* third\s+1600/u);
+});
+
 test("the web REPL returns interactive tensor-plane controls", () => {
     const repl = createRixRepl();
     const response = repl.run(`

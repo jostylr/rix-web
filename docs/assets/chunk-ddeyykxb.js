@@ -5324,7 +5324,7 @@ var runtimeDefaults = Object.freeze({
     Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC", "SArith"]),
     Notation: Object.freeze(["SArith", "Poly", "NotationParser"]),
     Random: Object.freeze(["RANDOMSEED", "RandomSeed", "RAND_NAME"]),
-    RiXCel: Object.freeze(["FORMULASHEET"])
+    RiXCel: Object.freeze(["FORMULASHEET", "REACTIVEGRAPH"])
   })
 });
 
@@ -14212,6 +14212,371 @@ function createBinding(cell, options = {}) {
   return Object.freeze(binding);
 }
 
+// ../rix/src/runtime/reactive-graph.js
+var nextGraphId = 1;
+var REACTIVE_READ_ENV = "__reactive_read__";
+function method2(name, impl) {
+  return { type: "method_builtin", name, impl };
+}
+function text(value) {
+  return value?.type === "string" ? value.value : typeof value === "string" ? value : null;
+}
+function nodeName(value, label = "Reactive node name") {
+  const requested = text(value);
+  const name = requested?.toLowerCase();
+  if (!name || !/^[a-z_][a-z0-9_]*$/u.test(name)) {
+    throw new Error(`${label} must be a RiX user-identifier string`);
+  }
+  return name;
+}
+function graphMethods() {
+  return new Map([
+    ["SOURCE", method2("Source", ([target, name, value]) => target.addSource(nodeName(name), value))],
+    ["DERIVE", method2("Derive", ([target, name, formula]) => target.addComputed(nodeName(name), formula))],
+    ["GET", method2("Get", ([target, name]) => target.get(nodeName(name)))],
+    ["NODE", method2("Node", ([target, name]) => target.node(nodeName(name)))],
+    ["RECALCULATE", method2("Recalculate", ([target]) => target.recalculate())],
+    ["_mutable", new Integer(1n)]
+  ]);
+}
+function nodeMethods() {
+  return new Map([
+    ["GET", method2("Get", ([target]) => target.get())],
+    ["SET", method2("Set", ([target, value]) => target.set(value))],
+    ["GETFORMULA", method2("GetFormula", ([target]) => target.formula)],
+    ["SETFORMULA", method2("SetFormula", ([target, formula]) => target.setFormula(formula))],
+    ["LIVE", method2("Live", ([target]) => target.live())],
+    ["_mutable", new Integer(1n)]
+  ]);
+}
+function publicLive(node) {
+  return Object.freeze({
+    kind: node.kind,
+    name: node.name,
+    state: node.state,
+    dependencies: Object.freeze([...node.dependencies]),
+    dependents: Object.freeze([...node.dependents]),
+    epoch: node.graph.epoch
+  });
+}
+function isReactiveGraph(value) {
+  return Boolean(value && value.type === "reactive_graph" && typeof value.get === "function");
+}
+function isReactiveNode(value) {
+  return Boolean(value && value.type === "reactive_node" && isReactiveGraph(value.graph));
+}
+function createReactiveGraph(options = {}) {
+  if (typeof options.evaluateFormula !== "function") {
+    throw new Error("ReactiveGraph requires a deferred formula evaluator");
+  }
+  const id = options.id || `reactive-graph-${nextGraphId++}`;
+  const nodes = new Map;
+  const channel = new Set;
+  const reservedNames = new Set((options.reservedNames || []).map((name) => nodeName(name)));
+  let activeEpoch = null;
+  let graph = null;
+  function requireAvailableName(name) {
+    if (reservedNames.has(name)) {
+      throw new Error(`${options.reservedNameLabel || "Reactive node name is reserved"}: ${name}`);
+    }
+    if (nodes.has(name))
+      throw new Error(`Reactive node already exists: ${name}`);
+  }
+  function requireNode(name) {
+    const node = nodes.get(name);
+    if (!node)
+      throw new Error(`Unknown reactive node: ${name}`);
+    return node;
+  }
+  function rebuildDependents() {
+    for (const node of nodes.values())
+      node.dependents = new Set;
+    for (const node of nodes.values()) {
+      for (const dependency of node.dependencies) {
+        nodes.get(dependency)?.dependents.add(node.name);
+      }
+    }
+  }
+  function dirtyClosure(startNames) {
+    const dirty = new Set(startNames);
+    const queue = [...startNames];
+    while (queue.length) {
+      const name = queue.shift();
+      for (const dependent of requireNode(name).dependents) {
+        if (dirty.has(dependent))
+          continue;
+        dirty.add(dependent);
+        queue.push(dependent);
+      }
+    }
+    return dirty;
+  }
+  function makeNode(name, kind, fields) {
+    const nodeChannel = new Set;
+    const node = {
+      type: "reactive_node",
+      graph,
+      graphId: id,
+      name,
+      id: `${id}:${name}`,
+      kind,
+      formula: fields.formula ?? null,
+      source: fields.source ?? null,
+      value: fields.value ?? null,
+      lastGoodValue: fields.value ?? null,
+      state: kind === "source" ? "clean" : "dirty",
+      dependencies: new Set,
+      dependents: new Set,
+      diagnostics: [],
+      evaluator: fields.evaluator ?? null,
+      get() {
+        return graph.get(name);
+      },
+      set(value, metadata = null) {
+        if (kind !== "source")
+          throw new Error(`Reactive computed node ${name} cannot be set directly`);
+        return graph.setSource(name, value, metadata);
+      },
+      setFormula(formula, metadata = null) {
+        if (kind !== "computed")
+          throw new Error(`Reactive source node ${name} has no formula`);
+        return graph.setFormula(name, formula, metadata);
+      },
+      live() {
+        return publicLive(node);
+      },
+      subscribe(listener) {
+        if (typeof listener !== "function")
+          throw new Error("Reactive node subscriber must be a function");
+        nodeChannel.add(listener);
+        return () => nodeChannel.delete(listener);
+      },
+      _publish(event) {
+        for (const listener of [...nodeChannel])
+          listener(event);
+      },
+      _ext: nodeMethods(),
+      toString() {
+        return `[Reactive ${kind} ${name}]`;
+      }
+    };
+    return node;
+  }
+  function runEpoch({ dirty, sourceOverrides = new Map, cause = null, evaluateAll = false } = {}) {
+    if (activeEpoch) {
+      throw new Error(options.nestedEpochError || "Reactive computations cannot start a nested graph epoch");
+    }
+    const requested = evaluateAll ? new Set(nodes.keys()) : dirtyClosure(new Set([...dirty || [], ...sourceOverrides.keys()]));
+    const previousEpoch = graph.epoch;
+    const stagedValues = new Map([...nodes].map(([name, node]) => [name, node.value]));
+    for (const [name, value] of sourceOverrides)
+      stagedValues.set(name, value);
+    const states = new Map([...nodes].map(([name, node]) => [
+      name,
+      requested.has(name) && node.kind === "computed" ? "dirty" : "clean"
+    ]));
+    const dependencies = new Map([...nodes].map(([name, node]) => [
+      name,
+      requested.has(name) && node.kind === "computed" ? new Set : new Set(node.dependencies)
+    ]));
+    const stack = [];
+    let currentName = null;
+    const epoch = {
+      read(name) {
+        const node = requireNode(name);
+        if (currentName && currentName !== name)
+          dependencies.get(currentName).add(name);
+        if (node.kind === "source")
+          return stagedValues.get(name);
+        if (states.get(name) === "clean")
+          return stagedValues.get(name);
+        if (states.get(name) === "evaluating") {
+          const cycleStart = stack.indexOf(name);
+          const cycle = [...stack.slice(cycleStart), name].map((item) => options.labelForNode?.(item) ?? item);
+          throw new Error(`${options.cycleLabel || "Reactive cycle"}: ${cycle.join(" -> ")}`);
+        }
+        states.set(name, "evaluating");
+        stack.push(name);
+        const previousName = currentName;
+        currentName = name;
+        try {
+          const value = node.evaluator ? node.evaluator(node.formula, graph) : options.evaluateFormula(node.formula, graph);
+          stagedValues.set(name, value);
+          states.set(name, "clean");
+          return value;
+        } finally {
+          currentName = previousName;
+          stack.pop();
+        }
+      }
+    };
+    activeEpoch = epoch;
+    try {
+      for (const name of requested)
+        epoch.read(name);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      for (const [name, state] of states) {
+        if (state !== "evaluating")
+          continue;
+        const node = nodes.get(name);
+        node.state = "error";
+        node.diagnostics = [message];
+      }
+      const event2 = Object.freeze({
+        type: "reactive:error",
+        graph,
+        epoch: graph.epoch,
+        cause,
+        error
+      });
+      for (const listener of [...channel])
+        listener(event2);
+      throw error;
+    } finally {
+      activeEpoch = null;
+    }
+    graph.epoch += 1;
+    const changed = [];
+    for (const name of requested) {
+      const node = nodes.get(name);
+      const previous = node.value;
+      node.value = stagedValues.get(name);
+      node.lastGoodValue = node.value;
+      node.state = "clean";
+      node.dependencies = node.kind === "computed" ? dependencies.get(name) : new Set;
+      node.diagnostics = [];
+      if (previous !== node.value)
+        changed.push(name);
+    }
+    rebuildDependents();
+    const event = Object.freeze({
+      type: "reactive:commit",
+      graph,
+      previousEpoch,
+      epoch: graph.epoch,
+      changed: Object.freeze(changed),
+      cause
+    });
+    for (const name of changed)
+      nodes.get(name)._publish(event);
+    for (const listener of [...channel])
+      listener(event);
+    return graph;
+  }
+  graph = {
+    type: "reactive_graph",
+    id,
+    epoch: 0,
+    _ext: graphMethods(),
+    addSource(name, value) {
+      name = nodeName(name);
+      requireAvailableName(name);
+      const node = makeNode(name, "source", { value });
+      nodes.set(name, node);
+      return node;
+    },
+    addComputed(name, formula, metadata = null) {
+      name = nodeName(name);
+      requireAvailableName(name);
+      if (!formula || formula.fn !== "DEFER") {
+        throw new Error("ReactiveGraph.Derive requires deferred syntax @{ ... }");
+      }
+      const node = makeNode(name, "computed", {
+        formula,
+        source: metadata?.source ?? options.formulaSource?.(formula) ?? null,
+        evaluator: metadata?.evaluator ?? null
+      });
+      nodes.set(name, node);
+      if (metadata?.initialize === false)
+        return node;
+      try {
+        runEpoch({ dirty: new Set([name]), cause: { type: "reactive:add", name } });
+      } catch (error) {
+        nodes.delete(name);
+        rebuildDependents();
+        throw error;
+      }
+      return node;
+    },
+    get(name) {
+      name = nodeName(name);
+      if (activeEpoch)
+        return activeEpoch.read(name);
+      const node = requireNode(name);
+      if (node.state === "error") {
+        throw new Error(node.diagnostics[0] || `Reactive node ${name} has an error`);
+      }
+      return node.value;
+    },
+    node(name) {
+      return requireNode(nodeName(name));
+    },
+    bindings() {
+      return new Map(nodes);
+    },
+    setSource(name, value, metadata = null) {
+      name = nodeName(name);
+      const node = requireNode(name);
+      if (node.kind !== "source")
+        throw new Error(`Reactive node ${name} is not a source`);
+      runEpoch({
+        dirty: new Set([name]),
+        sourceOverrides: new Map([[name, value]]),
+        cause: { type: "reactive:set", name, metadata }
+      });
+      return value;
+    },
+    setFormula(name, formula, metadata = null) {
+      name = nodeName(name);
+      const node = requireNode(name);
+      if (node.kind !== "computed")
+        throw new Error(`Reactive node ${name} is not computed`);
+      if (activeEpoch) {
+        throw new Error(options.formulaMutationError || "Reactive computations cannot change formulas during an epoch");
+      }
+      if (!formula || formula.fn !== "DEFER") {
+        throw new Error("Reactive computed formulas require deferred syntax @{ ... }");
+      }
+      const previousFormula = node.formula;
+      const previousSource = node.source;
+      node.formula = formula;
+      node.source = metadata?.source ?? options.formulaSource?.(formula) ?? null;
+      try {
+        runEpoch({
+          dirty: new Set([name]),
+          cause: {
+            type: "reactive:formula",
+            name,
+            formula,
+            source: node.source,
+            previousFormula,
+            previousSource,
+            metadata
+          }
+        });
+      } catch (error) {
+        node.state = "error";
+        throw error;
+      }
+      return node;
+    },
+    recalculate(cause = null) {
+      return runEpoch({ evaluateAll: true, cause: cause || { type: "reactive:recalculate" } });
+    },
+    subscribe(listener) {
+      if (typeof listener !== "function")
+        throw new Error("ReactiveGraph subscriber must be a function");
+      channel.add(listener);
+      return () => channel.delete(listener);
+    },
+    toString() {
+      return `[ReactiveGraph ${id} · ${nodes.size} nodes · epoch ${graph.epoch}]`;
+    }
+  };
+  return graph;
+}
+
 // ../rix/src/runtime/formula-sheet.js
 function exactIndex(value, label = "Formula sheet index") {
   if (value instanceof Integer)
@@ -14252,8 +14617,11 @@ function normalizeFormulaMatrix(value) {
   }
   return matrix;
 }
-function keyFor(index) {
-  return index.join(",");
+function nodeNameFor(index) {
+  return `slot_${index.join("_")}`;
+}
+function keyFromNodeName(name) {
+  return String(name).replace(/^slot_/, "").replaceAll("_", ",");
 }
 function addressFor(index) {
   return `grid[${index.join(",")}]`;
@@ -14271,35 +14639,36 @@ function normalizeIndex2(index, shape) {
     return integer2;
   });
 }
-function method2(name, impl) {
+function method3(name, impl) {
   return { type: "method_builtin", name, impl };
 }
 function formulaSheetMethods() {
   return new Map([
-    ["GETFORMULA", method2("GetFormula", ([target, ...index]) => target.getFormula(index))],
-    ["SETFORMULA", method2("SetFormula", ([target, ...args]) => {
+    ["GETFORMULA", method3("GetFormula", ([target, ...index]) => target.getFormula(index))],
+    ["SETFORMULA", method3("SetFormula", ([target, ...args]) => {
       if (args.length < 2)
         throw new Error("FormulaSheet.SetFormula requires indices and a deferred formula");
       const formula = args.at(-1);
       return target.setFormula(args.slice(0, -1), formula);
     })],
-    ["RECALCULATE", method2("Recalculate", ([target]) => target.recalculate())],
-    ["SLOT", method2("Slot", ([target, ...index]) => target.slot(index))],
+    ["RECALCULATE", method3("Recalculate", ([target]) => target.recalculate())],
+    ["SLOT", method3("Slot", ([target, ...index]) => target.slot(index))],
+    ["GRAPH", method3("Graph", ([target]) => target.graph)],
     ["_mutable", new Integer(1n)]
   ]);
 }
-function publicSlot(slot) {
+function publicSlot(slot, index) {
   return Object.freeze({
     id: slot.id,
-    index: Object.freeze([...slot.index]),
+    index: Object.freeze([...index]),
     source: slot.source,
     formula: slot.formula,
     value: slot.value,
     lastGoodValue: slot.lastGoodValue,
     state: slot.state,
-    dependencies: Object.freeze([...slot.dependencies]),
+    dependencies: Object.freeze([...slot.dependencies].map(keyFromNodeName)),
     diagnostics: Object.freeze([...slot.diagnostics]),
-    view: slot.view
+    view: Object.freeze({})
   });
 }
 function isFormulaSheet(value) {
@@ -14311,169 +14680,61 @@ function createFormulaSheet(formulasValue, options = {}) {
     throw new Error("FormulaSheet requires a deferred formula evaluator");
   }
   const shape = Object.freeze([formulas.length, formulas[0].length]);
-  const slots = new Map;
   const channel = new Set;
-  for (let row = 1;row <= shape[0]; row += 1) {
-    for (let column = 1;column <= shape[1]; column += 1) {
-      const index = Object.freeze([row, column]);
-      const key = keyFor(index);
-      slots.set(key, {
-        id: options.id ? `${options.id}:${key}` : `formula-slot:${key}`,
-        index,
-        source: options.formulaSource?.(formulas[row - 1][column - 1]) ?? null,
-        formula: formulas[row - 1][column - 1],
-        value: null,
-        lastGoodValue: null,
-        state: "dirty",
-        dependencies: new Set,
-        diagnostics: [],
-        view: Object.freeze({})
-      });
-    }
-  }
-  let activeEpoch = null;
+  const graph = createReactiveGraph({
+    id: options.id ? `${options.id}:graph` : undefined,
+    formulaSource: options.formulaSource,
+    evaluateFormula(formula) {
+      return options.runFormula(formula, Object.fromEntries([...graph.bindings(), ["grid", sheet]]), { reactiveGraph: graph });
+    },
+    cycleLabel: "Formula cycle",
+    reservedNames: ["grid", "row", "col", "index"],
+    reservedNameLabel: "FormulaSheet graph node name is reserved",
+    labelForNode(name) {
+      return addressFor(keyFromNodeName(name).split(","));
+    },
+    formulaMutationError: "FormulaSheet formulas cannot change formulas during evaluation",
+    nestedEpochError: "FormulaSheet formulas cannot start a nested recalculation"
+  });
   const sheet = {
     type: "formula_sheet",
     id: options.id || "formula-sheet",
     shape,
     rank: shape.length,
-    epoch: 0,
+    graph,
+    get epoch() {
+      return graph.epoch;
+    },
     _ext: formulaSheetMethods(),
     get(index) {
       const normalized = normalizeIndex2(index, shape);
-      const key = keyFor(normalized);
-      if (activeEpoch)
-        return activeEpoch.evaluate(key);
-      const slot = slots.get(key);
-      if (slot.state === "error") {
-        throw new Error(slot.diagnostics[0] || `Formula ${addressFor(normalized)} has an error`);
-      }
-      return slot.value;
+      return graph.get(nodeNameFor(normalized));
     },
     getFormula(index) {
-      return slots.get(keyFor(normalizeIndex2(index, shape))).formula;
+      return graph.node(nodeNameFor(normalizeIndex2(index, shape))).formula;
     },
     setFormula(index, formula, metadata = null) {
-      if (activeEpoch) {
-        throw new Error("FormulaSheet formulas cannot change formulas during evaluation");
-      }
       if (!formula || formula.fn !== "DEFER") {
         throw new Error("FormulaSheet.SetFormula requires deferred syntax @{ ... }");
       }
       const normalized = normalizeIndex2(index, shape);
-      const slot = slots.get(keyFor(normalized));
-      const previousFormula = slot.formula;
-      const previousSource = slot.source;
-      slot.formula = formula;
-      slot.source = metadata?.source ?? options.formulaSource?.(formula) ?? null;
-      slot.state = "dirty";
-      slot.diagnostics = [];
-      sheet.recalculate({
-        type: "formula:set",
-        index: Object.freeze(normalized),
-        previousFormula,
-        previousSource,
-        formula,
-        source: slot.source,
-        metadata
+      graph.setFormula(nodeNameFor(normalized), formula, {
+        ...metadata,
+        source: metadata?.source ?? options.formulaSource?.(formula) ?? null,
+        sheetCause: {
+          type: "formula:set",
+          index: Object.freeze(normalized),
+          formula
+        }
       });
       return sheet;
     },
     slot(index) {
-      return publicSlot(slots.get(keyFor(normalizeIndex2(index, shape))));
+      const normalized = normalizeIndex2(index, shape);
+      return publicSlot(graph.node(nodeNameFor(normalized)), normalized);
     },
     recalculate(cause = null) {
-      if (activeEpoch) {
-        throw new Error("FormulaSheet formulas cannot start a nested recalculation");
-      }
-      const previousEpoch = sheet.epoch;
-      const previousValues = new Map([...slots].map(([key, slot]) => [key, slot.value]));
-      const states = new Map([...slots].map(([key]) => [key, "dirty"]));
-      const values = new Map;
-      const dependencies = new Map([...slots].map(([key]) => [key, new Set]));
-      const stack = [];
-      let currentKey = null;
-      const epoch = {
-        evaluate(key) {
-          if (!slots.has(key))
-            throw new Error(`Unknown formula slot: ${key}`);
-          if (currentKey && currentKey !== key)
-            dependencies.get(currentKey).add(key);
-          if (states.get(key) === "clean")
-            return values.get(key);
-          if (states.get(key) === "evaluating") {
-            const cycleStart = stack.indexOf(key);
-            const cycle = [...stack.slice(cycleStart), key].map((cycleKey) => addressFor(slots.get(cycleKey).index));
-            throw new Error(`Formula cycle: ${cycle.join(" -> ")}`);
-          }
-          states.set(key, "evaluating");
-          stack.push(key);
-          const previousKey = currentKey;
-          currentKey = key;
-          const slot = slots.get(key);
-          try {
-            const [row, column] = slot.index;
-            const value = options.runFormula(slot.formula, {
-              grid: sheet,
-              row: new Integer(BigInt(row)),
-              col: new Integer(BigInt(column)),
-              index: {
-                type: "tuple",
-                values: [new Integer(BigInt(row)), new Integer(BigInt(column))]
-              }
-            });
-            values.set(key, value);
-            states.set(key, "clean");
-            return value;
-          } finally {
-            currentKey = previousKey;
-            stack.pop();
-          }
-        }
-      };
-      activeEpoch = epoch;
-      try {
-        for (const key of slots.keys())
-          epoch.evaluate(key);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        for (const [key, state] of states) {
-          const slot = slots.get(key);
-          slot.state = state === "evaluating" ? "error" : "dirty";
-          slot.diagnostics = state === "evaluating" ? [message] : [];
-        }
-        const event2 = Object.freeze({
-          type: "formula:error",
-          sheet,
-          epoch: sheet.epoch,
-          cause,
-          error
-        });
-        for (const listener of [...channel])
-          listener(event2);
-        throw error;
-      } finally {
-        activeEpoch = null;
-      }
-      sheet.epoch += 1;
-      for (const [key, slot] of slots) {
-        slot.value = values.get(key);
-        slot.lastGoodValue = values.get(key);
-        slot.state = "clean";
-        slot.dependencies = dependencies.get(key);
-        slot.diagnostics = [];
-      }
-      const changed = Object.freeze([...slots].filter(([key, slot]) => previousValues.get(key) !== slot.value).map(([, slot]) => Object.freeze([...slot.index])));
-      const event = Object.freeze({
-        type: "formula:commit",
-        sheet,
-        previousEpoch,
-        epoch: sheet.epoch,
-        changed,
-        cause
-      });
-      for (const listener of [...channel])
-        listener(event);
+      graph.recalculate(cause || { type: "formula:recalculate" });
       return sheet;
     },
     subscribe(listener) {
@@ -14486,7 +14747,60 @@ function createFormulaSheet(formulasValue, options = {}) {
       return `[FormulaSheet ${shape.join("×")} · epoch ${sheet.epoch}]`;
     }
   };
-  return sheet.recalculate();
+  for (let row = 1;row <= shape[0]; row += 1) {
+    for (let column = 1;column <= shape[1]; column += 1) {
+      const index = Object.freeze([row, column]);
+      const formula = formulas[row - 1][column - 1];
+      graph.addComputed(nodeNameFor(index), formula, {
+        source: options.formulaSource?.(formula) ?? null,
+        initialize: false,
+        evaluator(slotFormula) {
+          return options.runFormula(slotFormula, Object.fromEntries([
+            ...graph.bindings(),
+            ["grid", sheet],
+            ["row", new Integer(BigInt(row))],
+            ["col", new Integer(BigInt(column))],
+            ["index", {
+              type: "tuple",
+              values: [new Integer(BigInt(row)), new Integer(BigInt(column))]
+            }]
+          ]), {
+            reactiveGraph: graph
+          });
+        }
+      });
+    }
+  }
+  graph.subscribe((event) => {
+    const metadata = event.cause?.metadata;
+    const sheetCause = metadata?.sheetCause ? Object.freeze({ ...metadata.sheetCause, source: metadata.source, metadata }) : event.cause;
+    if (event.type === "reactive:error") {
+      const formulaEvent2 = Object.freeze({
+        type: "formula:error",
+        sheet,
+        epoch: sheet.epoch,
+        cause: sheetCause,
+        error: event.error
+      });
+      for (const listener of [...channel])
+        listener(formulaEvent2);
+      return;
+    }
+    const changed = Object.freeze(event.changed.filter((name) => name.startsWith("slot_")).map((name) => Object.freeze(keyFromNodeName(name).split(",").map(Number))));
+    const formulaEvent = Object.freeze({
+      type: "formula:commit",
+      sheet,
+      previousEpoch: event.previousEpoch,
+      epoch: event.epoch,
+      changed,
+      reactiveChanged: event.changed,
+      cause: sheetCause
+    });
+    for (const listener of [...channel])
+      listener(formulaEvent);
+  });
+  graph.recalculate({ type: "formula:initial" });
+  return sheet;
 }
 
 // ../rix/src/runtime/output.js
@@ -14897,10 +15211,10 @@ function createTextMark(args) {
   const position = sequence(get(entry, "position"), "TextMark position");
   if (position.length !== 2)
     throw new Error("TextMark position must contain x and y coordinates");
-  const text = get(entry, "text");
-  if (text === null || text === undefined)
+  const text2 = get(entry, "text");
+  if (text2 === null || text2 === undefined)
     throw new Error("TextMark requires text");
-  return output("text_mark", { position, text, style: optionalMap(get(entry, "style"), "TextMark style") });
+  return output("text_mark", { position, text: text2, style: optionalMap(get(entry, "style"), "TextMark style") });
 }
 function createRectangle(args) {
   const entry = spec(args, ["origin", "size", "style"], "Rectangle");
@@ -15306,28 +15620,28 @@ ${formatOutputText(slide, format)}`).join(`
   return `[Output: ${value.kind}]`;
 }
 function renderOutputHtml(value, format = (item) => String(item ?? "")) {
-  const text = (item) => escapeHtml(isOutputValue(item) ? formatOutputText(item, format) : cellText(item, format));
+  const text2 = (item) => escapeHtml(isOutputValue(item) ? formatOutputText(item, format) : cellText(item, format));
   if (!isOutputValue(value))
-    return `<pre>${text(value)}</pre>`;
+    return `<pre>${text2(value)}</pre>`;
   if (value.kind === "live_view") {
     return `<section class="rix-output-live-view" data-rix-live-view="${escapeHtml(value.id)}" data-rix-live-revision="${value.revision}">${renderOutputHtml(value.current, format)}</section>`;
   }
   if (value.kind === "text")
-    return `<span class="rix-output-text">${text(value.value)}</span>`;
+    return `<span class="rix-output-text">${text2(value.value)}</span>`;
   if (value.kind === "paragraph")
-    return `<p class="rix-output-paragraph">${value.children.map(text).join("")}</p>`;
+    return `<p class="rix-output-paragraph">${value.children.map(text2).join("")}</p>`;
   if (value.kind === "heading")
-    return `<h${value.level} class="rix-output-heading">${text(value.content)}</h${value.level}>`;
+    return `<h${value.level} class="rix-output-heading">${text2(value.content)}</h${value.level}>`;
   if (value.kind === "fragment")
     return `<section class="rix-output-fragment">${value.children.map((child) => renderOutputHtml(child, format)).join("")}</section>`;
   if (value.kind === "table")
-    return `<table class="rix-output-table">${value.caption ? `<caption>${escapeHtml(value.caption)}</caption>` : ""}<thead><tr>${value.columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}</tr></thead><tbody>${value.rows.map((row) => `<tr>${row.map((cell) => `<td>${text(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+    return `<table class="rix-output-table">${value.caption ? `<caption>${escapeHtml(value.caption)}</caption>` : ""}<thead><tr>${value.columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}</tr></thead><tbody>${value.rows.map((row) => `<tr>${row.map((cell) => `<td>${text2(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
   if (value.kind === "grid")
-    return `<table class="rix-output-grid"><tbody>${value.rows.map((row, rowIndex) => `<tr${hasRule(value, "horizontal", rowIndex + 1) ? ' class="rix-grid-rule-top"' : ""}>${row.map((cell, column) => `<td${hasRule(value, "vertical", column + 1) ? ' class="rix-grid-rule-left"' : ""}>${text(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+    return `<table class="rix-output-grid"><tbody>${value.rows.map((row, rowIndex) => `<tr${hasRule(value, "horizontal", rowIndex + 1) ? ' class="rix-grid-rule-top"' : ""}>${row.map((cell, column) => `<td${hasRule(value, "vertical", column + 1) ? ' class="rix-grid-rule-left"' : ""}>${text2(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
   if (value.kind === "sheet") {
     const summary = `${value.addressBase} · shape ${value.shape.join("×")}`;
     const controls = value.hiddenAxes.length === 0 ? "" : `<div class="rix-output-sheet-plane-controls" aria-label="Tensor plane">${value.hiddenAxes.map(({ axis, name, length, selected }) => `<label><span>${escapeHtml(name)} · axis ${axis}</span><select data-rix-sheet-axis="${axis}" aria-label="${escapeHtml(name)} axis ${axis}">${Array.from({ length }, (_item, index) => `<option value="${index + 1}"${selected === index + 1 ? " selected" : ""}>${index + 1}</option>`).join("")}</select></label>`).join("")}</div>`;
-    const bodies = value.planes.map((plane) => `<tbody data-rix-plane-key="${escapeHtml(plane.key)}" data-rix-slice="${plane.slice.map((item) => item ?? "").join(",")}"${plane.key === value.selectedPlaneKey ? "" : " hidden"}>${plane.cells.map((row, rowIndex) => `<tr><th scope="row" data-rix-row="${rowIndex + 1}">${escapeHtml(value.rowHeaders[rowIndex])}</th>${row.map((cell, columnIndex) => `<td data-rix-row="${rowIndex + 1}" data-rix-column="${columnIndex + 1}" data-rix-index="${cell.index.join(",")}" data-rix-address="${escapeHtml(cell.address)}" data-rix-display-address="${escapeHtml(cell.displayAddress)}"${cell.formulaSource === null ? "" : ` data-rix-formula-source="${escapeHtml(cell.formulaSource)}"`} title="${escapeHtml(cell.displayAddress)} · ${escapeHtml(cell.address)}">${text(cell.value)}</td>`).join("")}</tr>`).join("")}</tbody>`).join("");
+    const bodies = value.planes.map((plane) => `<tbody data-rix-plane-key="${escapeHtml(plane.key)}" data-rix-slice="${plane.slice.map((item) => item ?? "").join(",")}"${plane.key === value.selectedPlaneKey ? "" : " hidden"}>${plane.cells.map((row, rowIndex) => `<tr><th scope="row" data-rix-row="${rowIndex + 1}">${escapeHtml(value.rowHeaders[rowIndex])}</th>${row.map((cell, columnIndex) => `<td data-rix-row="${rowIndex + 1}" data-rix-column="${columnIndex + 1}" data-rix-index="${cell.index.join(",")}" data-rix-address="${escapeHtml(cell.address)}" data-rix-display-address="${escapeHtml(cell.displayAddress)}"${cell.formulaSource === null ? "" : ` data-rix-formula-source="${escapeHtml(cell.formulaSource)}"`} title="${escapeHtml(cell.displayAddress)} · ${escapeHtml(cell.address)}">${text2(cell.value)}</td>`).join("")}</tr>`).join("")}</tbody>`).join("");
     const liveAttributes = value.editable ? ` data-rix-editable="true" data-rix-edit-mode="${value.editMode}"${value.bindingId ? ` data-rix-binding-id="${escapeHtml(value.bindingId)}"` : ""}` : "";
     const editor = value.editable ? `<form class="rix-output-sheet-editor" hidden><label><span data-rix-edit-label>Choose a cell to edit</span><input data-rix-edit-source aria-label="${value.editMode === "formula" ? "RiX formula" : "RiX value"}" autocomplete="off" spellcheck="false"></label><button type="submit">${value.editMode === "formula" ? "Set formula" : "Set"}</button><output data-rix-edit-status aria-live="polite"></output></form>` : "";
     const formulaAttributes = value.formulaBacked ? ` data-rix-formula-sheet="true" data-rix-formula-epoch="${value.formulaSheet.epoch}"` : "";
@@ -15455,10 +15769,10 @@ function formatTensor(tensor, formatValue2) {
   const levels = tensorDisplayLevels(tensor.shape);
   return `{:${shapeText}: ${formatTensorBody(tensor, formatValue2, levels)} }`;
 }
-function truncate(text, limit = 40) {
-  if (text.length <= limit)
-    return text;
-  return `${text.slice(0, Math.max(0, limit - 3))}...`;
+function truncate(text2, limit = 40) {
+  if (text2.length <= limit)
+    return text2;
+  return `${text2.slice(0, Math.max(0, limit - 3))}...`;
 }
 var BINARY_OPS = new Map([
   ["ADD", "+"],
@@ -15645,6 +15959,8 @@ function formatValue(val, options = {}) {
     if (val.type === "binding")
       return val.toString();
     if (val.type === "formula_sheet")
+      return val.toString();
+    if (val.type === "reactive_graph" || val.type === "reactive_node")
       return val.toString();
     if (val.type === "string")
       return val.value;
@@ -17417,15 +17733,15 @@ function descriptorValue(metadata) {
   const extension = new Map;
   for (const name of metadata.exports) {
     const displayName = String(name);
-    const method3 = {
+    const method4 = {
       type: "method_builtin",
       name: displayName,
       impl() {
         throw new Error(`Plugin '${metadata.id}' is available but not loaded`);
       }
     };
-    entries.set(displayName, method3);
-    extension.set(displayName.toUpperCase(), method3);
+    entries.set(displayName, method4);
+    extension.set(displayName.toUpperCase(), method4);
   }
   return { type: "map", entries, _ext: extension };
 }
@@ -21268,8 +21584,8 @@ class Parser {
     }
     this.position = endIndex + 1;
     this.advance();
-    const text = raw.trim();
-    if (!text.length) {
+    const text2 = raw.trim();
+    if (!text2.length) {
       this.error("Import header cannot be empty");
     }
     const seenLocals = new Set;
@@ -22397,8 +22713,8 @@ var BASE_MODE_ALIASES = new Map([
 ]);
 var DEFAULT_BASE_DIGITS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz@&";
 var DEFAULT_BASE_EXPANSION_LIMIT = 20;
-function unescapeQuotedString(text) {
-  return text.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16))).replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+function unescapeQuotedString(text2) {
+  return text2.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16))).replace(/\\"/g, '"').replace(/\\\\/g, "\\");
 }
 function toRationalValue(value) {
   if (value instanceof Integer)
@@ -22499,10 +22815,10 @@ function groupDigits(intStr) {
   }
   return sign + out;
 }
-function stripGroupedDecimalDigits(text, { allowSign = false } = {}) {
-  if (typeof text !== "string" || text.length === 0)
-    return text;
-  let s = text;
+function stripGroupedDecimalDigits(text2, { allowSign = false } = {}) {
+  if (typeof text2 !== "string" || text2.length === 0)
+    return text2;
+  let s = text2;
   let sign = "";
   if (allowSign && (s.startsWith("-") || s.startsWith("+"))) {
     sign = s[0];
@@ -22524,9 +22840,9 @@ function stripGroupedDecimalDigits(text, { allowSign = false } = {}) {
   }
   return sign + s.replace(/_/g, "");
 }
-function groupDigitRuns(text, baseSystem) {
-  if (!text)
-    return text;
+function groupDigitRuns(text2, baseSystem) {
+  if (!text2)
+    return text2;
   let out = "";
   let run = "";
   const flush = () => {
@@ -22543,7 +22859,7 @@ function groupDigitRuns(text, baseSystem) {
     }
     run = "";
   };
-  for (const ch of text) {
+  for (const ch of text2) {
     if (baseSystem.charMap.has(ch)) {
       run += ch;
     } else {
@@ -23771,8 +24087,8 @@ var coreFunctions = {
         } catch {}
       }
       const baseSystem = resolveBaseSpecFromValue(baseSpecValue);
-      const text = toBaseString(value, baseSystem, modeSpec);
-      return { type: "string", value: text };
+      const text2 = toBaseString(value, baseSystem, modeSpec);
+      return { type: "string", value: text2 };
     },
     doc: "Format number to base string: expr _> baseSpec"
   },
@@ -23782,11 +24098,11 @@ var coreFunctions = {
       const strVal = evaluate(args[0]);
       const specNode = args[1];
       const baseSpecValue = specNode && specNode.fn === "LITERAL" && typeof specNode.args?.[0] === "string" && /^0([A-Za-z])$/.test(specNode.args[0]) ? specNode.args[0] : evaluate(specNode);
-      const text = strVal && strVal.type === "string" ? strVal.value : strVal;
-      if (typeof text !== "string")
+      const text2 = strVal && strVal.type === "string" ? strVal.value : strVal;
+      if (typeof text2 !== "string")
         throw new Error("FROMBASE expects a string left operand");
       const baseSystem = resolveBaseSpecFromValue(baseSpecValue);
-      return fromBaseString(text, baseSystem);
+      return fromBaseString(text2, baseSystem);
     },
     doc: "Parse base string to number: str <_ baseSpec"
   },
@@ -23815,8 +24131,8 @@ var coreFunctions = {
         const groups = [];
         const spans = [];
         for (let i = 0;i < match.length; i++) {
-          const text = match[i];
-          groups.push(text === undefined ? null : { type: "string", value: text });
+          const text2 = match[i];
+          groups.push(text2 === undefined ? null : { type: "string", value: text2 });
           if (match.indices && match.indices[i]) {
             const [start, end] = match.indices[i];
             spans.push({
@@ -23833,8 +24149,8 @@ var coreFunctions = {
         const named = new Map;
         const namedSpans = new Map;
         if (match.groups) {
-          for (const [key, text] of Object.entries(match.groups)) {
-            named.set(key, text === undefined ? null : { type: "string", value: text });
+          for (const [key, text2] of Object.entries(match.groups)) {
+            named.set(key, text2 === undefined ? null : { type: "string", value: text2 });
             if (match.indices && match.indices.groups && match.indices.groups[key]) {
               const [s, e] = match.indices.groups[key];
               namedSpans.set(key, {
@@ -23992,7 +24308,8 @@ var coreFunctions = {
       if (value === undefined) {
         throw new Error(`Undefined variable: ${name}`);
       }
-      return value;
+      const reactiveRead = context.getEnv(REACTIVE_READ_ENV, null);
+      return typeof reactiveRead === "function" ? reactiveRead(value, name) : value;
     },
     doc: "Look up a variable in the current scope chain"
   },
@@ -24023,7 +24340,8 @@ var coreFunctions = {
       if (value === undefined) {
         throw new Error(`Undefined outer variable: @${name}`);
       }
-      return value;
+      const reactiveRead = context.getEnv(REACTIVE_READ_ENV, null);
+      return typeof reactiveRead === "function" ? reactiveRead(value, name) : value;
     },
     doc: "Look up a variable strictly in the outer scope chains"
   },
@@ -25558,10 +25876,10 @@ var stdlibFunctions = {
     impl(args, context) {
       const io = context?.getEnv?.(RIX_IO_ENV, null);
       const formatter = typeof io?.format === "function" ? io.format : defaultPrettyFormat;
-      const printer = typeof io?.print === "function" ? io.print : (text) => console.log(text);
+      const printer = typeof io?.print === "function" ? io.print : (text2) => console.log(text2);
       for (const arg of args) {
-        const text = formatter(arg, { formatValue, prettyFormat: defaultPrettyFormat, context });
-        printer(text, arg, { formatValue, prettyFormat: defaultPrettyFormat, context });
+        const text2 = formatter(arg, { formatValue, prettyFormat: defaultPrettyFormat, context });
+        printer(text2, arg, { formatValue, prettyFormat: defaultPrettyFormat, context });
       }
       return null;
     },
@@ -26431,8 +26749,8 @@ function standaloneInterpolation(body, context, evaluate) {
   const ranges = interpolationRanges(body.trim());
   return ranges.length === 1 && ranges[0].start === 0 && ranges[0].end === body.trim().length ? evaluateTemplateSource(ranges[0].source, context, evaluate) : null;
 }
-function textValue(text) {
-  return { type: "string", value: text };
+function textValue(text2) {
+  return { type: "string", value: text2 };
 }
 function documentTemplate(body, context, evaluate) {
   const normalized = body.replace(/^\s*\n/, "").replace(/\n\s*$/, "");
@@ -26500,13 +26818,23 @@ var liveViewFunction = {
       throw new Error(".LiveView derivation must use deferred syntax @{ ... }");
     }
     const derive = () => {
-      context.push(new Map([["source", source]]), {
+      const sourceGraph = isReactiveNode(source) ? source.graph : source?.graph?.type === "reactive_graph" ? source.graph : source;
+      const bindings = typeof sourceGraph.bindings === "function" ? sourceGraph.bindings() : new Map;
+      bindings.set("source", source);
+      const previousRead = context.getEnv(REACTIVE_READ_ENV, undefined);
+      context.push(bindings, {
         isolated: true,
         callableBoundary: true
+      });
+      context.setEnv(REACTIVE_READ_ENV, (value) => {
+        if (isReactiveNode(value) && value.graph === sourceGraph)
+          return value.get();
+        return typeof previousRead === "function" ? previousRead(value) : value;
       });
       try {
         return context.withSharedBody(deferred.args[0], () => evaluate(deferred.args[0]));
       } finally {
+        context.setEnv(REACTIVE_READ_ENV, previousRead);
         context.pop();
       }
     };
@@ -26570,17 +26898,25 @@ function formulaSheetCapability(args, context, evaluate) {
     throw new Error(".FormulaSheet expects one rectangular array of deferred formulas");
   return createFormulaSheet(args[0], {
     formulaSource: deferredSource,
-    runFormula(formula, bindings) {
+    runFormula(formula, bindings, runOptions = {}) {
       if (containsOuterRead(formula.args[0])) {
         throw new Error("FormulaSheet formulas cannot access caller bindings with @; use explicit sheet imports");
       }
+      const reactiveGraph = runOptions.reactiveGraph || null;
+      const previousRead = context.getEnv(REACTIVE_READ_ENV, undefined);
       context.push(new Map(Object.entries(bindings)), {
         isolated: true,
         callableBoundary: true
       });
+      context.setEnv(REACTIVE_READ_ENV, (value) => {
+        if (reactiveGraph && isReactiveNode(value) && value.graph === reactiveGraph)
+          return value.get();
+        return typeof previousRead === "function" ? previousRead(value) : value;
+      });
       try {
         return context.withSharedBody(formula.args[0], () => evaluate(formula.args[0]));
       } finally {
+        context.setEnv(REACTIVE_READ_ENV, previousRead);
         context.pop();
       }
     }
@@ -26591,6 +26927,51 @@ var formulaSheetFunctions = {
     pure: false,
     impl: formulaSheetCapability,
     doc: "Create a formula-backed sheet from a rectangular array of deferred RiX formulas"
+  }
+};
+
+// ../rix/src/eval/functions/reactive-graph.js
+function reactiveGraphCapability(args, context, evaluate) {
+  if (args.length > 1)
+    throw new Error(".ReactiveGraph accepts at most one identifier string");
+  const requestedId = args[0]?.type === "string" ? args[0].value : args[0] ?? null;
+  if (requestedId !== null && typeof requestedId !== "string") {
+    throw new Error(".ReactiveGraph identifier must be a string");
+  }
+  let graph = null;
+  graph = createReactiveGraph({
+    id: requestedId || undefined,
+    formulaSource: deferredSource,
+    evaluateFormula(formula) {
+      if (containsOuterRead(formula.args[0])) {
+        throw new Error("Reactive formulas cannot access caller bindings with @; use graph nodes");
+      }
+      const bindings = graph.bindings();
+      const previousRead = context.getEnv(REACTIVE_READ_ENV, undefined);
+      context.push(bindings, {
+        isolated: true,
+        callableBoundary: true
+      });
+      context.setEnv(REACTIVE_READ_ENV, (value) => {
+        if (isReactiveNode(value) && value.graph === graph)
+          return value.get();
+        return typeof previousRead === "function" ? previousRead(value) : value;
+      });
+      try {
+        return context.withSharedBody(formula.args[0], () => evaluate(formula.args[0]));
+      } finally {
+        context.setEnv(REACTIVE_READ_ENV, previousRead);
+        context.pop();
+      }
+    }
+  });
+  return graph;
+}
+var reactiveGraphFunctions = {
+  REACTIVEGRAPH: {
+    pure: false,
+    impl: reactiveGraphCapability,
+    doc: "Create a transactional graph of reactive source and computed nodes"
   }
 };
 
@@ -26715,17 +27096,17 @@ function mapField(map2, name) {
   return map2.entries.get(name);
 }
 function operatorDeclaration(value, context, evaluate, invoke) {
-  const text = (name, fallback = null) => {
+  const text2 = (name, fallback = null) => {
     const field = mapField(value, name);
     return field === undefined ? fallback : stringFromValue(field, `.SArith.Configure ${name}`);
   };
   const precedence2 = mapField(value, "precedence");
   const apply = mapField(value, "apply");
   return {
-    symbol: text("symbol"),
-    head: text("head"),
-    fixity: text("fixity", "infix"),
-    associativity: text("associativity", "left"),
+    symbol: text2("symbol"),
+    head: text2("head"),
+    fixity: text2("fixity", "infix"),
+    associativity: text2("associativity", "left"),
     precedence: precedence2 instanceof Integer ? Number(precedence2.value) : undefined,
     apply: apply ? (...args) => invoke(apply, args, context, evaluate) : null
   };
@@ -27103,7 +27484,7 @@ function components(args) {
     throw new Error("Components expects a quaternion or octonion");
   return { type: "sequence", values: [...value.components] };
 }
-function method3(name, impl) {
+function method4(name, impl) {
   return {
     type: "method_builtin",
     name,
@@ -27124,7 +27505,7 @@ function createExactAlgebrasCollection() {
   for (const [name, helper] of helpers) {
     entries.set(name, helper);
     entries.set(name.toUpperCase(), helper);
-    extension.set(name.toUpperCase(), method3(name, helper));
+    extension.set(name.toUpperCase(), method4(name, helper));
   }
   return { type: "map", entries, _ext: extension };
 }
@@ -27346,9 +27727,9 @@ function divideWithUnits(left, right) {
 function resolveTargetUnit(target, context, systemContext) {
   if (isUnitValue(target))
     return target;
-  const text = stringValue5(target, "ConvertUnit target");
+  const text2 = stringValue5(target, "ConvertUnit target");
   const collection = activeCollection(context, systemContext, "Units", ["UNITS", "Units"]);
-  return parseUnitExpression(text, collection);
+  return parseUnitExpression(text2, collection);
 }
 var unitExactFunctions = {
   UNIT: {
@@ -27514,6 +27895,7 @@ function createDefaultRegistry(options = {}) {
   registry.registerAll(symbolicFunctions);
   registry.registerAll(outputFunctions);
   registry.registerAll(formulaSheetFunctions);
+  registry.registerAll(reactiveGraphFunctions);
   registry.registerAll(embeddedFunctions);
   installRegisteredTypes(registry);
   installUnitExactVariants(registry);
@@ -27651,6 +28033,7 @@ function createDefaultSystemContext(options = {}) {
   });
   ctx.registerAll(outputFunctions);
   ctx.registerAll(formulaSheetFunctions);
+  ctx.registerAll(reactiveGraphFunctions);
   const sArith = sArithCapability.create();
   ctx.registerCallableValue("SArith", sArith.value, sArith.definition, {
     doc: sArith.definition.doc,
@@ -28711,11 +29094,24 @@ function renderedSheetRoots(root) {
 function editedAddress(widget, index) {
   return `${widget.addressBase}[${index.join(",")}]`;
 }
+function restoreSheetFocus(root, request) {
+  if (!request)
+    return false;
+  const sheetRoot = renderedSheetRoots(root)[request.sheetIndex];
+  if (!sheetRoot)
+    return false;
+  const cell = [...sheetRoot.querySelectorAll("td[data-rix-address]")].find((candidate) => candidate.dataset.rixAddress === request.address);
+  if (!cell)
+    return false;
+  cell.focus();
+  return true;
+}
 function mountOutputWidgets(root, value, options = {}) {
   const format = options.format || ((item) => String(item ?? ""));
   const render = options.render || ((item) => renderOutputHtml(item, format));
   const disposers = [];
   let sheetDisposers = [];
+  let pendingFocusRequest = null;
   let disposed = false;
   function disposeSheets() {
     for (const dispose of sheetDisposers.splice(0))
@@ -28746,16 +29142,26 @@ function mountOutputWidgets(root, value, options = {}) {
             if (evaluated?.type === "error")
               return evaluated;
             const valueResult = evaluated?.type === "result" ? evaluated.value : evaluated;
-            widgetSession.dispatch(widgetSession.editMode === "formula" ? {
-              type: "sheet:formula",
-              index: detail.index,
-              formula: valueResult,
-              source: detail.source
-            } : {
-              type: "sheet:set",
-              index: detail.index,
-              value: valueResult
-            });
+            const focusRequest = {
+              sheetIndex: index,
+              address: editedAddress(widgetSession.current(), detail.index)
+            };
+            pendingFocusRequest = focusRequest;
+            try {
+              widgetSession.dispatch(widgetSession.editMode === "formula" ? {
+                type: "sheet:formula",
+                index: detail.index,
+                formula: valueResult,
+                source: detail.source
+              } : {
+                type: "sheet:set",
+                index: detail.index,
+                value: valueResult
+              });
+            } finally {
+              if (pendingFocusRequest === focusRequest)
+                pendingFocusRequest = null;
+            }
             const updates = widgetSession.cellUpdates(format);
             const edited = updates.find((update) => update.address === editedAddress(widgetSession.current(), detail.index));
             return {
@@ -28780,9 +29186,12 @@ function mountOutputWidgets(root, value, options = {}) {
       const unsubscribe = value.subscribe((event) => {
         if (disposed || event.type !== "live:commit")
           return;
+        const focusRequest = pendingFocusRequest;
+        pendingFocusRequest = null;
         liveRoot.innerHTML = render(value.current);
         liveRoot.dataset.rixLiveRevision = String(value.revision);
         mountSheets(liveRoot, value.current);
+        restoreSheetFocus(liveRoot, focusRequest);
         options.onLiveChange?.(event, liveRoot);
       });
       disposers.push(unsubscribe);
@@ -29272,8 +29681,8 @@ function preview(value, formatValue2) {
   if (value === undefined)
     return "";
   try {
-    const text = formatValue2 ? formatValue2(value) : String(value);
-    return text.length > 72 ? `${text.slice(0, 69)}…` : text;
+    const text2 = formatValue2 ? formatValue2(value) : String(value);
+    return text2.length > 72 ? `${text2.slice(0, 69)}…` : text2;
   } catch {
     return "";
   }
@@ -29691,7 +30100,7 @@ function registerFloatType() {
     installs
   });
 }
-function method4(name, impl) {
+function method5(name, impl) {
   return { type: "method_builtin", name, impl };
 }
 function installBrowserApproxMathPlugin({ systemContext, registry }) {
@@ -29701,7 +30110,7 @@ function installBrowserApproxMathPlugin({ systemContext, registry }) {
   const entries = new Map;
   const extension = new Map;
   const add = (name, impl) => {
-    const entry = method4(name, impl);
+    const entry = method5(name, impl);
     entries.set(name, entry);
     extension.set(name.toUpperCase(), entry);
   };
@@ -29878,5 +30287,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { formatValue, mountOutputWidgets, findHelp, createRixRepl };
 
-//# debugId=61919A6E216E91C964756E2164756E21
-//# sourceMappingURL=chunk-jq68m41d.js.map
+//# debugId=E3898F66D66B514064756E2164756E21
+//# sourceMappingURL=chunk-ddeyykxb.js.map

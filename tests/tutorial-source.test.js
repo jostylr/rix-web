@@ -68,6 +68,10 @@ test("structured output has focused table, document, graphic, drawing, and sheet
     expect(sheets).toContain(".FormulaSheet");
     expect(sheets).toContain("model.SetFormula");
     expect(sheets).toContain(".LiveView");
+    expect(sheets).toContain("values.Graph()");
+    expect(sheets).toContain('graph.Derive("average"');
+    expect(sheets).toContain('graph.Derive("functionvalue"');
+    expect(sheets).toContain("Scale(grid[1,1])");
     expect(sheets).toContain(".Graphics.Circle");
 });
 
