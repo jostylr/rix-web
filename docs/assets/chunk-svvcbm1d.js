@@ -7993,8 +7993,578 @@ var symbolicFunctions = {
   }
 };
 
+// ../rix/src/runtime/reactive-graph.js
+var nextGraphId = 1;
+var REACTIVE_READ_ENV = "__reactive_read__";
+function method(name, impl) {
+  return { type: "method_builtin", name, impl };
+}
+function text(value) {
+  return value?.type === "string" ? value.value : typeof value === "string" ? value : null;
+}
+function nodeName(value, label = "Reactive node name", preserveCase = false) {
+  const requested = text(value);
+  const name = preserveCase ? requested : requested?.toLowerCase();
+  const identifierPattern = preserveCase ? /^[A-Za-z_][A-Za-z0-9_]*$/u : /^[a-z_][a-z0-9_]*$/u;
+  if (!name || !identifierPattern.test(name)) {
+    throw new Error(`${label} must be a RiX identifier string`);
+  }
+  return name;
+}
+function graphMethods() {
+  return new Map([
+    ["SOURCE", method("Source", ([target, name, value]) => target.addSource(name, value))],
+    ["DERIVE", method("Derive", ([target, name, formula]) => target.addComputed(name, formula))],
+    ["GET", method("Get", ([target, name]) => target.get(name))],
+    ["NODE", method("Node", ([target, name]) => target.node(name))],
+    ["RECALCULATE", method("Recalculate", ([target]) => target.recalculate())],
+    ["_mutable", new Integer(1n)]
+  ]);
+}
+function nodeMethods() {
+  return new Map([
+    ["GET", method("Get", ([target]) => target.get())],
+    ["PEEK", method("Peek", ([target]) => target.peek())],
+    ["SET", method("Set", ([target, value]) => target.set(value))],
+    ["GETFORMULA", method("GetFormula", ([target]) => target.formula)],
+    ["SETFORMULA", method("SetFormula", ([target, formula]) => target.setFormula(formula))],
+    ["LIVE", method("Live", ([target]) => target.live())],
+    ["_mutable", new Integer(1n)]
+  ]);
+}
+function publicLive(node) {
+  return Object.freeze({
+    kind: node.kind,
+    name: node.name,
+    state: node.state,
+    dependencies: Object.freeze([...node.dependencies]),
+    dependents: Object.freeze([...node.dependents]),
+    epoch: node.graph.epoch
+  });
+}
+function isReactiveGraph(value) {
+  return Boolean(value && value.type === "reactive_graph" && typeof value.get === "function");
+}
+function isReactiveNode(value) {
+  return Boolean(value && value.type === "reactive_node" && isReactiveGraph(value.graph));
+}
+function createReactiveGraph(options = {}) {
+  if (typeof options.evaluateFormula !== "function") {
+    throw new Error("ReactiveGraph requires a deferred formula evaluator");
+  }
+  const id = options.id || `reactive-graph-${nextGraphId++}`;
+  const nodes = new Map;
+  const aliases = new Map;
+  const channel = new Set;
+  const normalizeName = (value, label) => nodeName(value, label, options.preserveIdentifierCase === true);
+  const reservedNames = new Set((options.reservedNames || []).map((name) => normalizeName(name)));
+  let activeEpoch = null;
+  let graph = null;
+  function requireAvailableName(name) {
+    if (reservedNames.has(name)) {
+      throw new Error(`${options.reservedNameLabel || "Reactive node name is reserved"}: ${name}`);
+    }
+    if (nodes.has(name) || aliases.has(name))
+      throw new Error(`Reactive node already exists: ${name}`);
+  }
+  function canonicalName(name) {
+    name = normalizeName(name);
+    return aliases.get(name) ?? name;
+  }
+  function requireNode(name) {
+    const node = nodes.get(canonicalName(name));
+    if (!node)
+      throw new Error(`Unknown reactive node: ${name}`);
+    return node;
+  }
+  function rebuildDependents() {
+    for (const node of nodes.values())
+      node.dependents = new Set;
+    for (const node of nodes.values()) {
+      for (const dependency of node.dependencies) {
+        nodes.get(dependency)?.dependents.add(node.name);
+      }
+    }
+  }
+  function dirtyClosure(startNames) {
+    const dirty = new Set(startNames);
+    const queue = [...startNames];
+    while (queue.length) {
+      const name = queue.shift();
+      for (const dependent of requireNode(name).dependents) {
+        if (dirty.has(dependent))
+          continue;
+        dirty.add(dependent);
+        queue.push(dependent);
+      }
+    }
+    return dirty;
+  }
+  function makeNode(name, kind, fields) {
+    const nodeChannel = new Set;
+    const node = {
+      type: "reactive_node",
+      graph,
+      graphId: id,
+      name,
+      id: `${id}:${name}`,
+      kind,
+      formula: fields.formula ?? null,
+      source: fields.source ?? null,
+      value: fields.value ?? null,
+      lastGoodValue: fields.value ?? null,
+      state: kind === "source" ? "clean" : "dirty",
+      dependencies: new Set,
+      dependents: new Set,
+      diagnostics: [],
+      evaluator: fields.evaluator ?? null,
+      get() {
+        return graph.get(name);
+      },
+      peek() {
+        return graph.peek(name);
+      },
+      set(value, metadata = null) {
+        if (kind !== "source")
+          throw new Error(`Reactive computed node ${name} cannot be set directly`);
+        return graph.setSource(name, value, metadata);
+      },
+      setFormula(formula, metadata = null) {
+        if (kind !== "computed")
+          throw new Error(`Reactive source node ${name} has no formula`);
+        return graph.setFormula(name, formula, metadata);
+      },
+      live() {
+        return publicLive(node);
+      },
+      subscribe(listener) {
+        if (typeof listener !== "function")
+          throw new Error("Reactive node subscriber must be a function");
+        nodeChannel.add(listener);
+        return () => nodeChannel.delete(listener);
+      },
+      _publish(event) {
+        for (const listener of [...nodeChannel])
+          listener(event);
+      },
+      _ext: nodeMethods(),
+      toString() {
+        if (node.value && ["function", "lambda", "multifunction"].includes(node.value.type)) {
+          return `[Reactive function ${name}]`;
+        }
+        return `[Reactive ${kind} ${name}]`;
+      }
+    };
+    return node;
+  }
+  function runEpoch({ dirty, sourceOverrides = new Map, cause = null, evaluateAll = false } = {}) {
+    if (activeEpoch) {
+      throw new Error(options.nestedEpochError || "Reactive computations cannot start a nested graph epoch");
+    }
+    const requested = evaluateAll ? new Set(nodes.keys()) : dirtyClosure(new Set([...dirty || [], ...sourceOverrides.keys()].map(canonicalName)));
+    const previousEpoch = graph.epoch;
+    const stagedValues = new Map([...nodes].map(([name, node]) => [name, node.value]));
+    for (const [name, value] of sourceOverrides)
+      stagedValues.set(name, value);
+    const states = new Map([...nodes].map(([name, node]) => [
+      name,
+      requested.has(name) && node.kind === "computed" ? "dirty" : "clean"
+    ]));
+    const dependencies = new Map([...nodes].map(([name, node]) => [
+      name,
+      requested.has(name) && node.kind === "computed" ? new Set : new Set(node.dependencies)
+    ]));
+    const stack = [];
+    let currentName = null;
+    const epoch = {
+      read(name) {
+        name = canonicalName(name);
+        const node = requireNode(name);
+        if (currentName && currentName !== name)
+          dependencies.get(currentName).add(name);
+        if (node.kind === "source")
+          return stagedValues.get(name);
+        if (states.get(name) === "clean")
+          return stagedValues.get(name);
+        if (states.get(name) === "evaluating") {
+          const cycleStart = stack.indexOf(name);
+          const cycle = [...stack.slice(cycleStart), name].map((item) => options.labelForNode?.(item) ?? item);
+          throw new Error(`${options.cycleLabel || "Reactive cycle"}: ${cycle.join(" -> ")}`);
+        }
+        states.set(name, "evaluating");
+        stack.push(name);
+        const previousName = currentName;
+        currentName = name;
+        try {
+          const value = node.evaluator ? node.evaluator(node.formula, graph) : options.evaluateFormula(node.formula, graph);
+          stagedValues.set(name, value);
+          states.set(name, "clean");
+          return value;
+        } finally {
+          currentName = previousName;
+          stack.pop();
+        }
+      },
+      peek(name) {
+        name = canonicalName(name);
+        const previousName = currentName;
+        currentName = null;
+        try {
+          return this.read(name);
+        } finally {
+          currentName = previousName;
+        }
+      }
+    };
+    activeEpoch = epoch;
+    try {
+      for (const name of requested)
+        epoch.read(name);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      for (const [name, state] of states) {
+        if (state !== "evaluating")
+          continue;
+        const node = nodes.get(name);
+        node.state = "error";
+        node.diagnostics = [message];
+      }
+      const event2 = Object.freeze({
+        type: "reactive:error",
+        graph,
+        epoch: graph.epoch,
+        cause,
+        error
+      });
+      for (const listener of [...channel])
+        listener(event2);
+      throw error;
+    } finally {
+      activeEpoch = null;
+    }
+    graph.epoch += 1;
+    const changed = [];
+    for (const name of requested) {
+      const node = nodes.get(name);
+      const previous = node.value;
+      node.value = stagedValues.get(name);
+      node.lastGoodValue = node.value;
+      node.state = "clean";
+      node.dependencies = node.kind === "computed" ? dependencies.get(name) : new Set;
+      node.diagnostics = [];
+      if (previous !== node.value)
+        changed.push(name);
+    }
+    rebuildDependents();
+    const event = Object.freeze({
+      type: "reactive:commit",
+      graph,
+      previousEpoch,
+      epoch: graph.epoch,
+      changed: Object.freeze(changed),
+      cause
+    });
+    for (const name of changed)
+      nodes.get(name)._publish(event);
+    for (const listener of [...channel])
+      listener(event);
+    return graph;
+  }
+  graph = {
+    type: "reactive_graph",
+    id,
+    epoch: 0,
+    _ext: graphMethods(),
+    addSource(name, value) {
+      name = normalizeName(name);
+      requireAvailableName(name);
+      const node = makeNode(name, "source", { value });
+      nodes.set(name, node);
+      return node;
+    },
+    addComputed(name, formula, metadata = null) {
+      name = normalizeName(name);
+      requireAvailableName(name);
+      if (!formula || formula.fn !== "DEFER") {
+        throw new Error("ReactiveGraph.Derive requires deferred syntax @{ ... }");
+      }
+      const node = makeNode(name, "computed", {
+        formula,
+        source: metadata?.source ?? options.formulaSource?.(formula) ?? null,
+        evaluator: metadata?.evaluator ?? null
+      });
+      nodes.set(name, node);
+      if (metadata?.initialize === false)
+        return node;
+      try {
+        runEpoch({ dirty: new Set([name]), cause: { type: "reactive:add", name } });
+      } catch (error) {
+        nodes.delete(name);
+        rebuildDependents();
+        throw error;
+      }
+      return node;
+    },
+    get(name) {
+      name = normalizeName(name);
+      if (activeEpoch)
+        return activeEpoch.read(name);
+      const node = requireNode(name);
+      if (node.state === "error") {
+        throw new Error(node.diagnostics[0] || `Reactive node ${name} has an error`);
+      }
+      return node.value;
+    },
+    peek(name) {
+      name = normalizeName(name);
+      if (activeEpoch)
+        return activeEpoch.peek(name);
+      return requireNode(name).value;
+    },
+    node(name) {
+      return requireNode(normalizeName(name));
+    },
+    bindings() {
+      return new Map([
+        ...nodes,
+        ...[...aliases].map(([alias, canonical]) => [alias, nodes.get(canonical)])
+      ]);
+    },
+    addAlias(name, target) {
+      name = normalizeName(name);
+      requireAvailableName(name);
+      const node = isReactiveNode(target) ? target : requireNode(target);
+      if (node.graph !== graph) {
+        throw new Error("Reactive aliases must refer to a node in the same ReactiveGraph");
+      }
+      aliases.set(name, node.name);
+      return node;
+    },
+    define(definitions, cause = null) {
+      if (!Array.isArray(definitions) || definitions.length === 0)
+        return graph;
+      const pendingNames = new Set;
+      for (const definition of definitions) {
+        const name = normalizeName(definition?.name);
+        requireAvailableName(name);
+        if (pendingNames.has(name))
+          throw new Error(`Reactive node already exists in definition batch: ${name}`);
+        if (definition.kind !== "source" && definition.kind !== "computed") {
+          throw new Error(`Reactive definition ${name} must be a source or computed node`);
+        }
+        if (definition.kind === "computed" && (!definition.formula || definition.formula.fn !== "DEFER")) {
+          throw new Error(`Reactive computed definition ${name} requires deferred syntax @{ ... }`);
+        }
+        pendingNames.add(name);
+      }
+      const added = [];
+      try {
+        for (const definition of definitions) {
+          const name = normalizeName(definition.name);
+          const node = makeNode(name, definition.kind, definition.kind === "source" ? { value: definition.value } : {
+            formula: definition.formula,
+            source: definition.source ?? options.formulaSource?.(definition.formula) ?? null,
+            evaluator: definition.evaluator ?? null
+          });
+          nodes.set(name, node);
+          added.push(name);
+        }
+        const computed = new Set(added.filter((name) => nodes.get(name).kind === "computed"));
+        if (computed.size > 0) {
+          runEpoch({
+            dirty: computed,
+            cause: cause || { type: "reactive:define", names: Object.freeze([...added]) }
+          });
+        }
+        return graph;
+      } catch (error) {
+        for (const name of added)
+          nodes.delete(name);
+        rebuildDependents();
+        throw error;
+      }
+    },
+    applyBatch(changes, cause = null) {
+      if (!Array.isArray(changes) || changes.length === 0)
+        return graph;
+      const declarations = [];
+      const aliasChanges = [];
+      const updates = new Map;
+      const pendingNames = new Set;
+      for (const change of changes) {
+        const name = normalizeName(change?.name);
+        if (change.kind === "computed") {
+          requireAvailableName(name);
+          if (pendingNames.has(name)) {
+            throw new Error(`Reactive node already exists in transaction: ${name}`);
+          }
+          if (!change.formula || change.formula.fn !== "DEFER") {
+            throw new Error(`Reactive declaration ${name} requires a deferred definition`);
+          }
+          pendingNames.add(name);
+          declarations.push({ ...change, name });
+          continue;
+        }
+        if (change.kind === "alias") {
+          requireAvailableName(name);
+          if (pendingNames.has(name)) {
+            throw new Error(`Reactive node already exists in transaction: ${name}`);
+          }
+          pendingNames.add(name);
+          aliasChanges.push({ name, target: normalizeName(change.target) });
+          continue;
+        }
+        if (change.kind === "update") {
+          const target = requireNode(name);
+          if (target.kind !== "computed") {
+            throw new Error(`Reactive node ${name} does not have a replaceable definition`);
+          }
+          if (!change.formula || change.formula.fn !== "DEFER") {
+            throw new Error(`Reactive update ${name} requires a deferred definition`);
+          }
+          updates.set(target.name, { ...change, name: target.name });
+          continue;
+        }
+        throw new Error(`Unknown reactive transaction change: ${change?.kind}`);
+      }
+      const futureNames = new Set([...nodes.keys(), ...declarations.map(({ name }) => name)]);
+      const futureAliases = new Map(aliases);
+      for (const { name, target } of aliasChanges) {
+        const canonical = futureAliases.get(target) ?? target;
+        if (!futureNames.has(canonical)) {
+          throw new Error(`Unknown reactive alias target: ${target}`);
+        }
+        futureAliases.set(name, canonical);
+      }
+      const addedNodes = [];
+      const addedAliases = [];
+      const previous = new Map;
+      try {
+        for (const definition of declarations) {
+          const node = makeNode(definition.name, "computed", {
+            formula: definition.formula,
+            source: definition.source ?? options.formulaSource?.(definition.formula) ?? null,
+            evaluator: definition.evaluator ?? null
+          });
+          nodes.set(definition.name, node);
+          addedNodes.push(definition.name);
+        }
+        for (const { name } of aliasChanges) {
+          aliases.set(name, futureAliases.get(name));
+          addedAliases.push(name);
+        }
+        for (const [name, update] of updates) {
+          const node = nodes.get(name);
+          previous.set(name, {
+            formula: node.formula,
+            source: node.source,
+            evaluator: node.evaluator,
+            state: node.state,
+            diagnostics: [...node.diagnostics],
+            dependencies: new Set(node.dependencies)
+          });
+          node.formula = update.formula;
+          node.source = update.source ?? options.formulaSource?.(update.formula) ?? null;
+          node.evaluator = update.evaluator ?? node.evaluator;
+        }
+        const dirty = new Set([...addedNodes, ...updates.keys()]);
+        if (dirty.size > 0) {
+          runEpoch({
+            dirty,
+            cause: cause || {
+              type: "reactive:batch",
+              names: Object.freeze([...pendingNames, ...updates.keys()])
+            }
+          });
+        }
+        return graph;
+      } catch (error) {
+        for (const name of addedAliases)
+          aliases.delete(name);
+        for (const name of addedNodes)
+          nodes.delete(name);
+        for (const [name, snapshot] of previous) {
+          const node = nodes.get(name);
+          node.formula = snapshot.formula;
+          node.source = snapshot.source;
+          node.evaluator = snapshot.evaluator;
+          node.state = snapshot.state;
+          node.diagnostics = snapshot.diagnostics;
+          node.dependencies = snapshot.dependencies;
+        }
+        rebuildDependents();
+        throw error;
+      }
+    },
+    setSource(name, value, metadata = null) {
+      name = canonicalName(name);
+      const node = requireNode(name);
+      if (node.kind !== "source")
+        throw new Error(`Reactive node ${name} is not a source`);
+      runEpoch({
+        dirty: new Set([name]),
+        sourceOverrides: new Map([[name, value]]),
+        cause: { type: "reactive:set", name, metadata }
+      });
+      return value;
+    },
+    setFormula(name, formula, metadata = null) {
+      name = canonicalName(name);
+      const node = requireNode(name);
+      if (node.kind !== "computed")
+        throw new Error(`Reactive node ${name} is not computed`);
+      if (activeEpoch) {
+        throw new Error(options.formulaMutationError || "Reactive computations cannot change formulas during an epoch");
+      }
+      if (!formula || formula.fn !== "DEFER") {
+        throw new Error("Reactive computed formulas require deferred syntax @{ ... }");
+      }
+      const previousFormula = node.formula;
+      const previousSource = node.source;
+      node.formula = formula;
+      node.source = metadata?.source ?? options.formulaSource?.(formula) ?? null;
+      if (metadata?.evaluator)
+        node.evaluator = metadata.evaluator;
+      try {
+        runEpoch({
+          dirty: new Set([name]),
+          cause: {
+            type: "reactive:formula",
+            name,
+            formula,
+            source: node.source,
+            previousFormula,
+            previousSource,
+            metadata
+          }
+        });
+      } catch (error) {
+        node.state = "error";
+        throw error;
+      }
+      return node;
+    },
+    recalculate(cause = null) {
+      return runEpoch({ evaluateAll: true, cause: cause || { type: "reactive:recalculate" } });
+    },
+    subscribe(listener) {
+      if (typeof listener !== "function")
+        throw new Error("ReactiveGraph subscriber must be a function");
+      channel.add(listener);
+      return () => channel.delete(listener);
+    },
+    toString() {
+      return `[ReactiveGraph ${id} · ${nodes.size} nodes · epoch ${graph.epoch}]`;
+    }
+  };
+  return graph;
+}
+
 // ../rix/src/eval/functions/functions.js
 var isTruthy = (val) => val !== null && val !== undefined;
+function callableValue(value) {
+  return isReactiveNode(value) ? value.peek() : value;
+}
 function evaluateArgs(argNodes, evaluate) {
   const evaluatedArgs = [];
   for (const arg of argNodes) {
@@ -8314,11 +8884,11 @@ var functionFunctions = {
       const argNodes = args.slice(1);
       if (argNodes.some(isPlaceholderNode)) {
         const template = evaluateArgs(argNodes, evaluate);
-        const funcDef2 = context.getCallable(name);
+        const funcDef2 = callableValue(context.getCallable(name));
         const fn = funcDef2 || { type: "sysref", name };
         return { type: "partial", fn, template };
       }
-      const funcDef = context.getCallable(name);
+      const funcDef = callableValue(context.getCallable(name));
       if (!funcDef) {
         throw new Error(`Undefined identifier: ${name}. System capabilities must be called via dot syntax: .${name}(args)`);
       }
@@ -9663,12 +10233,12 @@ function isStringObject(value) {
 function rationalFromString(value) {
   if (!isStringObject(value))
     return null;
-  const text = value.value.trim();
-  const ratio = text.match(/^(-?\d+)\/(\d+)$/);
+  const text2 = value.value.trim();
+  const ratio = text2.match(/^(-?\d+)\/(\d+)$/);
   if (ratio)
     return new Rational(BigInt(ratio[1]), BigInt(ratio[2]));
-  if (/^-?\d+$/.test(text))
-    return new Rational(BigInt(text), 1n);
+  if (/^-?\d+$/.test(text2))
+    return new Rational(BigInt(text2), 1n);
   return null;
 }
 function rationalParts2(value) {
@@ -11497,30 +12067,30 @@ function liftStructuralValue(value) {
   }
   return Object.freeze({ type: "structural_value", value });
 }
-function literalKind(text) {
-  if (text.includes(".."))
+function literalKind(text2) {
+  if (text2.includes(".."))
     return "MixedNumber";
-  if (text.includes(".~"))
+  if (text2.includes(".~"))
     return "ContinuedFraction";
-  if (/^~?(?:0z\[\d+\]|0[A-Za-z])/u.test(text))
+  if (/^~?(?:0z\[\d+\]|0[A-Za-z])/u.test(text2))
     return "BasedNumber";
-  if (text.includes("[") || text.includes("]"))
+  if (text2.includes("[") || text2.includes("]"))
     return "UncertaintyInterval";
   return null;
 }
-function literalValue(text, options = {}, span = null) {
+function literalValue(text2, options = {}, span = null) {
   let value;
   try {
-    value = parseNumber(text);
+    value = parseNumber(text2);
   } catch (coreError) {
     if (!options.evaluateRiX)
       throw coreError;
-    value = options.evaluateRiX(text);
+    value = options.evaluateRiX(text2);
   }
   const lifted = liftStructuralValue(value);
-  const kind = literalKind(text);
+  const kind = literalKind(text2);
   if (kind)
-    return structuralLiteral(kind, text, lifted, span);
+    return structuralLiteral(kind, text2, lifted, span);
   return rememberSpan(lifted, span);
 }
 function constructBinary(operator, left, right, span = null, table = DEFAULT_BINARY) {
@@ -12510,7 +13080,7 @@ function createBuiltinProto(entries) {
     _ext: createFrozenMeta()
   };
 }
-function method(name, impl) {
+function method2(name, impl) {
   return { type: "method_builtin", name, impl };
 }
 function mutableExt2() {
@@ -12933,36 +13503,36 @@ function arithmeticDiv(a, b) {
   return arithmeticFunctions.DIV.impl([a, b]);
 }
 var arrayMethods = {
-  LEN: method("LEN", ([target]) => {
+  LEN: method2("LEN", ([target]) => {
     ensureSequence(target, "Len");
     return int5(target.values.length);
   }),
-  ISEMPTY: method("ISEMPTY", ([target]) => {
+  ISEMPTY: method2("ISEMPTY", ([target]) => {
     ensureSequence(target, "IsEmpty");
     return bool(target.values.length === 0);
   }),
-  GET: method("GET", ([target, index]) => {
+  GET: method2("GET", ([target, index]) => {
     ensureSequence(target, "Get");
     return sequenceAt(target, index);
   }),
-  FIRST: method("FIRST", ([target]) => {
+  FIRST: method2("FIRST", ([target]) => {
     ensureSequence(target, "First");
     return target.values[0] ?? null;
   }),
-  LAST: method("LAST", ([target]) => {
+  LAST: method2("LAST", ([target]) => {
     ensureSequence(target, "Last");
     return target.values[target.values.length - 1] ?? null;
   }),
-  INCLUDES: method("INCLUDES", ([target, value]) => {
+  INCLUDES: method2("INCLUDES", ([target, value]) => {
     ensureSequence(target, "Includes");
     return bool(target.values.some((entry) => valueKey2(entry) === valueKey2(value)));
   }),
-  INDEXOF: method("INDEXOF", ([target, value]) => {
+  INDEXOF: method2("INDEXOF", ([target, value]) => {
     ensureSequence(target, "IndexOf");
     const idx = target.values.findIndex((entry) => valueKey2(entry) === valueKey2(value));
     return idx === -1 ? null : int5(idx + 1);
   }),
-  LASTINDEXOF: method("LASTINDEXOF", ([target, value]) => {
+  LASTINDEXOF: method2("LASTINDEXOF", ([target, value]) => {
     ensureSequence(target, "LastIndexOf");
     for (let i = target.values.length - 1;i >= 0; i--) {
       if (valueKey2(target.values[i]) === valueKey2(value))
@@ -12970,64 +13540,64 @@ var arrayMethods = {
     }
     return null;
   }),
-  HASAT: method("HASAT", ([target, index]) => {
+  HASAT: method2("HASAT", ([target, index]) => {
     ensureSequence(target, "HasAt");
     const found = sequenceAt(target, index);
     return bool(found !== null && !isHole(found));
   }),
-  SLICE: method("SLICE", ([target, start, end]) => {
+  SLICE: method2("SLICE", ([target, start, end]) => {
     ensureSequence(target, "Slice");
     return { type: "sequence", values: jsSlice(target.values, start, end), _ext: mutableExt2() };
   }),
-  JOIN: method("JOIN", ([target, separator]) => {
+  JOIN: method2("JOIN", ([target, separator]) => {
     ensureSequence(target, "Join");
     return stringObj3(target.values.map((value) => stringValue2(value)).join(stringValue2(separator ?? stringObj3(","))));
   }),
-  PUSH: method("PUSH", ([target, ...values]) => {
+  PUSH: method2("PUSH", ([target, ...values]) => {
     ensureSequence(target, "Push");
     const copy = shallowCopyValue(target);
     copy.values.push(...values);
     return copy;
   }),
-  "PUSH!": method("PUSH!", ([target, ...values]) => {
+  "PUSH!": method2("PUSH!", ([target, ...values]) => {
     ensureSequence(target, "Push!");
     target.values.push(...values);
     return target;
   }),
-  UNSHIFT: method("UNSHIFT", ([target, ...values]) => {
+  UNSHIFT: method2("UNSHIFT", ([target, ...values]) => {
     ensureSequence(target, "Unshift");
     const copy = shallowCopyValue(target);
     copy.values.unshift(...values);
     return copy;
   }),
-  "UNSHIFT!": method("UNSHIFT!", ([target, ...values]) => {
+  "UNSHIFT!": method2("UNSHIFT!", ([target, ...values]) => {
     ensureSequence(target, "Unshift!");
     target.values.unshift(...values);
     return target;
   }),
-  SET: method("SET", ([target, index, value]) => {
+  SET: method2("SET", ([target, index, value]) => {
     ensureSequence(target, "Set");
     return nonMutatingSetValue(target, index, value);
   }),
-  "SET!": method("SET!", ([target, index, value]) => {
+  "SET!": method2("SET!", ([target, index, value]) => {
     ensureSequence(target, "Set!");
     mutableSetValue(target, index, value);
     return target;
   }),
-  INSERT: method("INSERT", ([target, index, value]) => {
+  INSERT: method2("INSERT", ([target, index, value]) => {
     ensureSequence(target, "Insert");
     const copy = shallowCopyValue(target);
     const at = normalizeWritableIndex(index, copy.values.length, true);
     copy.values.splice(at - 1, 0, value);
     return copy;
   }),
-  "INSERT!": method("INSERT!", ([target, index, value]) => {
+  "INSERT!": method2("INSERT!", ([target, index, value]) => {
     ensureSequence(target, "Insert!");
     const at = normalizeWritableIndex(index, target.values.length, true);
     target.values.splice(at - 1, 0, value);
     return target;
   }),
-  REMOVEAT: method("REMOVEAT", ([target, index]) => {
+  REMOVEAT: method2("REMOVEAT", ([target, index]) => {
     ensureSequence(target, "RemoveAt");
     const copy = shallowCopyValue(target);
     const at = normalizeLookupIndex(index, copy.values.length);
@@ -13035,18 +13605,18 @@ var arrayMethods = {
       copy.values.splice(at - 1, 1);
     return copy;
   }),
-  "REMOVEAT!": method("REMOVEAT!", ([target, index]) => {
+  "REMOVEAT!": method2("REMOVEAT!", ([target, index]) => {
     ensureSequence(target, "RemoveAt!");
     const at = normalizeLookupIndex(index, target.values.length);
     if (at !== null)
       target.values[at - 1] = HOLE;
     return target;
   }),
-  CONCAT: method("CONCAT", ([target, ...others]) => {
+  CONCAT: method2("CONCAT", ([target, ...others]) => {
     ensureSequence(target, "Concat");
     return others.reduce((acc, other) => collectionFunctions.CONCAT.impl([acc, other]), target);
   }),
-  "CONCAT!": method("CONCAT!", ([target, ...others]) => {
+  "CONCAT!": method2("CONCAT!", ([target, ...others]) => {
     ensureSequence(target, "Concat!");
     for (const other of others) {
       const values = other?.values || [other];
@@ -13054,67 +13624,67 @@ var arrayMethods = {
     }
     return target;
   }),
-  REVERSE: method("REVERSE", ([target]) => {
+  REVERSE: method2("REVERSE", ([target]) => {
     ensureSequence(target, "Reverse");
     const copy = shallowCopyValue(target);
     copy.values.reverse();
     return copy;
   }),
-  "REVERSE!": method("REVERSE!", ([target]) => {
+  "REVERSE!": method2("REVERSE!", ([target]) => {
     ensureSequence(target, "Reverse!");
     target.values.reverse();
     return target;
   }),
-  SORT: method("SORT", ([target]) => {
+  SORT: method2("SORT", ([target]) => {
     ensureSequence(target, "Sort");
     const copy = shallowCopyValue(target);
     copy.values.sort(compareValues);
     return copy;
   }),
-  "SORT!": method("SORT!", ([target]) => {
+  "SORT!": method2("SORT!", ([target]) => {
     ensureSequence(target, "Sort!");
     target.values.sort(compareValues);
     return target;
   }),
-  DISTINCT: method("DISTINCT", ([target]) => {
+  DISTINCT: method2("DISTINCT", ([target]) => {
     ensureSequence(target, "Distinct");
     return { type: "sequence", values: removeDuplicates(target.values), _ext: mutableExt2() };
   }),
-  "DISTINCT!": method("DISTINCT!", ([target]) => {
+  "DISTINCT!": method2("DISTINCT!", ([target]) => {
     ensureSequence(target, "Distinct!");
     target.values = removeDuplicates(target.values);
     return target;
   }),
-  FLATTEN: method("FLATTEN", ([target, depth]) => {
+  FLATTEN: method2("FLATTEN", ([target, depth]) => {
     ensureSequence(target, "Flatten");
     const levels = depth === undefined ? 1 : numericIndex(depth, "Flatten depth");
     return { type: "sequence", values: flattenValues(target.values, levels), _ext: mutableExt2() };
   }),
-  "FLATTEN!": method("FLATTEN!", ([target, depth]) => {
+  "FLATTEN!": method2("FLATTEN!", ([target, depth]) => {
     ensureSequence(target, "Flatten!");
     const levels = depth === undefined ? 1 : numericIndex(depth, "Flatten depth");
     target.values = flattenValues(target.values, levels);
     return target;
   }),
-  DROPFIRST: method("DROPFIRST", ([target, count]) => {
+  DROPFIRST: method2("DROPFIRST", ([target, count]) => {
     ensureSequence(target, "DropFirst");
     const n = count === undefined ? 1 : Math.max(0, numericIndex(count));
     return { type: "sequence", values: target.values.slice(n), _ext: mutableExt2() };
   }),
-  DROPLAST: method("DROPLAST", ([target, count]) => {
+  DROPLAST: method2("DROPLAST", ([target, count]) => {
     ensureSequence(target, "DropLast");
     const n = count === undefined ? 1 : Math.max(0, numericIndex(count));
     return { type: "sequence", values: target.values.slice(0, Math.max(0, target.values.length - n)), _ext: mutableExt2() };
   }),
-  "POP!": method("POP!", ([target]) => {
+  "POP!": method2("POP!", ([target]) => {
     ensureSequence(target, "Pop!");
     return target.values.length === 0 ? HOLE : target.values.pop();
   }),
-  "SHIFT!": method("SHIFT!", ([target]) => {
+  "SHIFT!": method2("SHIFT!", ([target]) => {
     ensureSequence(target, "Shift!");
     return target.values.length === 0 ? HOLE : target.values.shift();
   }),
-  MAP: method("MAP", ([target, iterator], context, evaluate, invoke) => {
+  MAP: method2("MAP", ([target, iterator], context, evaluate, invoke) => {
     ensureSequence(target, "Map");
     return {
       type: "sequence",
@@ -13122,7 +13692,7 @@ var arrayMethods = {
       _ext: mutableExt2()
     };
   }),
-  FILTER: method("FILTER", ([target, iterator], context, evaluate, invoke) => {
+  FILTER: method2("FILTER", ([target, iterator], context, evaluate, invoke) => {
     ensureSequence(target, "Filter");
     return {
       type: "sequence",
@@ -13130,13 +13700,13 @@ var arrayMethods = {
       _ext: mutableExt2()
     };
   }),
-  ANY: method("ANY", ([target, iterator], context, evaluate, invoke) => anyEntries(target, iterator, context, evaluate, invoke)),
-  ALL: method("ALL", ([target, iterator], context, evaluate, invoke) => allEntries(target, iterator, context, evaluate, invoke)),
-  COUNT: method("COUNT", ([target, iterator], context, evaluate, invoke) => countEntries(target, iterator, context, evaluate, invoke)),
-  FIND: method("FIND", ([target, iterator], context, evaluate, invoke) => findEntry(target, iterator, context, evaluate, invoke, false)),
-  FINDINDEX: method("FINDINDEX", ([target, iterator], context, evaluate, invoke) => findEntry(target, iterator, context, evaluate, invoke, true)),
-  REDUCE: method("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke)),
-  "SWAP!": method("SWAP!", ([target, i, j]) => {
+  ANY: method2("ANY", ([target, iterator], context, evaluate, invoke) => anyEntries(target, iterator, context, evaluate, invoke)),
+  ALL: method2("ALL", ([target, iterator], context, evaluate, invoke) => allEntries(target, iterator, context, evaluate, invoke)),
+  COUNT: method2("COUNT", ([target, iterator], context, evaluate, invoke) => countEntries(target, iterator, context, evaluate, invoke)),
+  FIND: method2("FIND", ([target, iterator], context, evaluate, invoke) => findEntry(target, iterator, context, evaluate, invoke, false)),
+  FINDINDEX: method2("FINDINDEX", ([target, iterator], context, evaluate, invoke) => findEntry(target, iterator, context, evaluate, invoke, true)),
+  REDUCE: method2("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke)),
+  "SWAP!": method2("SWAP!", ([target, i, j]) => {
     ensureSequence(target, "Swap!");
     const len = target.values.length;
     const idxI = normalizeLookupIndex(i, len);
@@ -13148,13 +13718,13 @@ var arrayMethods = {
     target.values[idxJ - 1] = tmp;
     return target;
   }),
-  SWAP: method("SWAP", ([target, i, j]) => {
+  SWAP: method2("SWAP", ([target, i, j]) => {
     ensureSequence(target, "Swap");
     const copy = shallowCopyValue(target);
     copy.values = [...target.values];
     return arrayMethods["SWAP!"].impl([copy, i, j]);
   }),
-  "MOVE!": method("MOVE!", ([target, rangeOrIdx, targetIdx]) => {
+  "MOVE!": method2("MOVE!", ([target, rangeOrIdx, targetIdx]) => {
     ensureSequence(target, "Move!");
     const len = target.values.length;
     let s, e;
@@ -13186,7 +13756,7 @@ var arrayMethods = {
     target.values.splice(insertPos - 1, 0, ...movedItems);
     return target;
   }),
-  MOVE: method("MOVE", ([target, rangeOrIdx, targetIdx]) => {
+  MOVE: method2("MOVE", ([target, rangeOrIdx, targetIdx]) => {
     ensureSequence(target, "Move");
     const copy = shallowCopyValue(target);
     copy.values = [...target.values];
@@ -13194,17 +13764,17 @@ var arrayMethods = {
   })
 };
 var lazySequenceMethods = {
-  LEN: method("LEN", ([target]) => {
+  LEN: method2("LEN", ([target]) => {
     const length = lazyKnownLength(target);
     if (length === null)
       throw new Error("Length is unknown for this lazy sequence");
     return int5(length);
   }),
-  ISEMPTY: method("ISEMPTY", ([target]) => {
+  ISEMPTY: method2("ISEMPTY", ([target]) => {
     ensureLazyIndex(target, 1);
     return bool(target._lazy.done && target._lazy.cache.length === 0);
   }),
-  GET: method("GET", ([target, index]) => {
+  GET: method2("GET", ([target, index]) => {
     const raw = numericIndex(index);
     if (raw < 0)
       return sequenceAt(materializeLazySequence(target), index);
@@ -13212,18 +13782,18 @@ var lazySequenceMethods = {
       throw new Error("Sequence indexes are 1-based; zero is invalid");
     return ensureLazyIndex(target, raw);
   }),
-  FIRST: method("FIRST", ([target]) => ensureLazyIndex(target, 1)),
-  LAST: method("LAST", ([target]) => {
+  FIRST: method2("FIRST", ([target]) => ensureLazyIndex(target, 1)),
+  LAST: method2("LAST", ([target]) => {
     const sequence = materializeLazySequence(target);
     return sequence.values.at(-1) ?? null;
   }),
-  MATERIALIZE: method("MATERIALIZE", ([target]) => materializeLazySequence(target))
+  MATERIALIZE: method2("MATERIALIZE", ([target]) => materializeLazySequence(target))
 };
 var iterableMethods = {
-  ITERATOR: method("ITERATOR", ([target]) => createCollectionIterator(target))
+  ITERATOR: method2("ITERATOR", ([target]) => createCollectionIterator(target))
 };
 var iteratorMethods = {
-  NEXT: method("NEXT", ([target, step]) => {
+  NEXT: method2("NEXT", ([target, step]) => {
     if (target.cursor === null)
       return null;
     const amount = step === undefined ? 1 : iteratorStep(step, "Iterator step");
@@ -13238,15 +13808,15 @@ var iteratorMethods = {
     target.cursor = destination;
     return result.value;
   }),
-  PEEK: method("PEEK", ([target, offset]) => {
+  PEEK: method2("PEEK", ([target, offset]) => {
     if (target.cursor === null)
       return null;
     const amount = offset === undefined ? 0 : iteratorStep(offset, "Iterator peek offset");
     return iteratorLookup(target.source, target.cursor + amount).value;
   }),
-  DONE: method("DONE", ([target]) => bool(target.cursor === null)),
-  INDEX: method("INDEX", ([target]) => target.cursor === null ? null : int5(target.cursor)),
-  RESET: method("RESET", ([target, index]) => {
+  DONE: method2("DONE", ([target]) => bool(target.cursor === null)),
+  INDEX: method2("INDEX", ([target]) => target.cursor === null ? null : int5(target.cursor)),
+  RESET: method2("RESET", ([target, index]) => {
     if (index === undefined || !isIndexedIteratorSource(target.source)) {
       target.cursor = 0;
       return target;
@@ -13268,31 +13838,31 @@ var iteratorMethods = {
   })
 };
 var mapMethods = {
-  LEN: method("LEN", ([target]) => {
+  LEN: method2("LEN", ([target]) => {
     ensureMap(target, "Len");
     return int5(target.entries.size);
   }),
-  ISEMPTY: method("ISEMPTY", ([target]) => {
+  ISEMPTY: method2("ISEMPTY", ([target]) => {
     ensureMap(target, "IsEmpty");
     return bool(target.entries.size === 0);
   }),
-  HAS: method("HAS", ([target, key]) => {
+  HAS: method2("HAS", ([target, key]) => {
     ensureMap(target, "Has");
     return bool(target.entries.has(keyOf(key)));
   }),
-  GET: method("GET", ([target, key]) => {
+  GET: method2("GET", ([target, key]) => {
     ensureMap(target, "Get");
     return mapValue(target, key);
   }),
-  KEYS: method("KEYS", ([target]) => {
+  KEYS: method2("KEYS", ([target]) => {
     ensureMap(target, "Keys");
     return { type: "set", values: Array.from(target.entries.keys()) };
   }),
-  VALUES: method("VALUES", ([target]) => {
+  VALUES: method2("VALUES", ([target]) => {
     ensureMap(target, "Values");
     return { type: "set", values: Array.from(target.entries.values()) };
   }),
-  ENTRIES: method("ENTRIES", ([target]) => {
+  ENTRIES: method2("ENTRIES", ([target]) => {
     ensureMap(target, "Entries");
     return {
       type: "sequence",
@@ -13303,41 +13873,41 @@ var mapMethods = {
       _ext: mutableExt2()
     };
   }),
-  SET: method("SET", ([target, key, value]) => {
+  SET: method2("SET", ([target, key, value]) => {
     ensureMap(target, "Set");
     const copy = shallowCopyValue(target);
     copy.entries.set(keyOf(key), value);
     return copy;
   }),
-  "SET!": method("SET!", ([target, key, value]) => {
+  "SET!": method2("SET!", ([target, key, value]) => {
     ensureMap(target, "Set!");
     target.entries.set(keyOf(key), value);
     return target;
   }),
-  REMOVE: method("REMOVE", ([target, key]) => {
+  REMOVE: method2("REMOVE", ([target, key]) => {
     ensureMap(target, "Remove");
     const copy = shallowCopyValue(target);
     copy.entries.delete(keyOf(key));
     return copy;
   }),
-  "REMOVE!": method("REMOVE!", ([target, key]) => {
+  "REMOVE!": method2("REMOVE!", ([target, key]) => {
     ensureMap(target, "Remove!");
     target.entries.delete(keyOf(key));
     return target;
   }),
-  MERGE: method("MERGE", ([target, other]) => {
+  MERGE: method2("MERGE", ([target, other]) => {
     ensureMap(target, "Merge");
     ensureMap(other, "Merge");
     return { type: "map", entries: new Map([...target.entries, ...other.entries]), _ext: mutableExt2() };
   }),
-  "MERGE!": method("MERGE!", ([target, other]) => {
+  "MERGE!": method2("MERGE!", ([target, other]) => {
     ensureMap(target, "Merge!");
     ensureMap(other, "Merge!");
     for (const [key, value] of other.entries)
       target.entries.set(key, value);
     return target;
   }),
-  UPDATE: method("UPDATE", ([target, key, updater], context, evaluate, invoke) => {
+  UPDATE: method2("UPDATE", ([target, key, updater], context, evaluate, invoke) => {
     ensureMap(target, "Update");
     const canonical = keyOf(key);
     const current = target.entries.has(canonical) ? target.entries.get(canonical) : null;
@@ -13346,7 +13916,7 @@ var mapMethods = {
     copy.entries.set(canonical, next);
     return copy;
   }),
-  "UPDATE!": method("UPDATE!", ([target, key, updater], context, evaluate, invoke) => {
+  "UPDATE!": method2("UPDATE!", ([target, key, updater], context, evaluate, invoke) => {
     ensureMap(target, "Update!");
     const canonical = keyOf(key);
     const current = target.entries.has(canonical) ? target.entries.get(canonical) : null;
@@ -13354,7 +13924,7 @@ var mapMethods = {
     target.entries.set(canonical, next);
     return target;
   }),
-  DEFAULT: method("DEFAULT", ([target, key, value]) => {
+  DEFAULT: method2("DEFAULT", ([target, key, value]) => {
     ensureMap(target, "Default");
     const canonical = keyOf(key);
     if (target.entries.has(canonical))
@@ -13363,14 +13933,14 @@ var mapMethods = {
     copy.entries.set(canonical, value);
     return copy;
   }),
-  "DEFAULT!": method("DEFAULT!", ([target, key, value]) => {
+  "DEFAULT!": method2("DEFAULT!", ([target, key, value]) => {
     ensureMap(target, "Default!");
     const canonical = keyOf(key);
     if (!target.entries.has(canonical))
       target.entries.set(canonical, value);
     return target;
   }),
-  KEEP: method("KEEP", ([target, keys]) => {
+  KEEP: method2("KEEP", ([target, keys]) => {
     ensureMap(target, "Keep");
     const wanted = new Set(mapLikeKeys(keys));
     return {
@@ -13379,7 +13949,7 @@ var mapMethods = {
       _ext: mutableExt2()
     };
   }),
-  "KEEP!": method("KEEP!", ([target, keys]) => {
+  "KEEP!": method2("KEEP!", ([target, keys]) => {
     ensureMap(target, "Keep!");
     const wanted = new Set(mapLikeKeys(keys));
     for (const key of Array.from(target.entries.keys())) {
@@ -13388,7 +13958,7 @@ var mapMethods = {
     }
     return target;
   }),
-  OMIT: method("OMIT", ([target, keys]) => {
+  OMIT: method2("OMIT", ([target, keys]) => {
     ensureMap(target, "Omit");
     const blocked = new Set(mapLikeKeys(keys));
     return {
@@ -13397,14 +13967,14 @@ var mapMethods = {
       _ext: mutableExt2()
     };
   }),
-  "OMIT!": method("OMIT!", ([target, keys]) => {
+  "OMIT!": method2("OMIT!", ([target, keys]) => {
     ensureMap(target, "Omit!");
     const blocked = new Set(mapLikeKeys(keys));
     for (const key of blocked)
       target.entries.delete(key);
     return target;
   }),
-  MAPVALUES: method("MAPVALUES", ([target, iterator], context, evaluate, invoke) => {
+  MAPVALUES: method2("MAPVALUES", ([target, iterator], context, evaluate, invoke) => {
     ensureMap(target, "MapValues");
     const entries = new Map;
     for (const [key, value] of target.entries) {
@@ -13412,7 +13982,7 @@ var mapMethods = {
     }
     return { type: "map", entries, _ext: mutableExt2() };
   }),
-  REDUCEKEYS: method("REDUCEKEYS", ([target, iterator, initial], context, evaluate, invoke) => {
+  REDUCEKEYS: method2("REDUCEKEYS", ([target, iterator, initial], context, evaluate, invoke) => {
     ensureMap(target, "ReduceKeys");
     let acc = initial === undefined ? defaultAccumulator(target) : initial;
     for (const [key, value] of target.entries) {
@@ -13420,7 +13990,7 @@ var mapMethods = {
     }
     return acc;
   }),
-  FILTER: method("FILTER", ([target, iterator], context, evaluate, invoke) => {
+  FILTER: method2("FILTER", ([target, iterator], context, evaluate, invoke) => {
     ensureMap(target, "Filter");
     const entries = new Map;
     for (const [key, value] of target.entries) {
@@ -13430,29 +14000,29 @@ var mapMethods = {
     }
     return { type: "map", entries, _ext: mutableExt2() };
   }),
-  ANY: method("ANY", ([target, iterator], context, evaluate, invoke) => anyEntries(target, iterator, context, evaluate, invoke)),
-  ALL: method("ALL", ([target, iterator], context, evaluate, invoke) => allEntries(target, iterator, context, evaluate, invoke)),
-  COUNT: method("COUNT", ([target, iterator], context, evaluate, invoke) => countEntries(target, iterator, context, evaluate, invoke)),
-  REDUCE: method("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke))
+  ANY: method2("ANY", ([target, iterator], context, evaluate, invoke) => anyEntries(target, iterator, context, evaluate, invoke)),
+  ALL: method2("ALL", ([target, iterator], context, evaluate, invoke) => allEntries(target, iterator, context, evaluate, invoke)),
+  COUNT: method2("COUNT", ([target, iterator], context, evaluate, invoke) => countEntries(target, iterator, context, evaluate, invoke)),
+  REDUCE: method2("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke))
 };
 var setMethods = {
-  LEN: method("LEN", ([target]) => {
+  LEN: method2("LEN", ([target]) => {
     ensureSet(target, "Len");
     return int5(target.values.length);
   }),
-  ISEMPTY: method("ISEMPTY", ([target]) => {
+  ISEMPTY: method2("ISEMPTY", ([target]) => {
     ensureSet(target, "IsEmpty");
     return bool(target.values.length === 0);
   }),
-  HAS: method("HAS", ([target, value]) => {
+  HAS: method2("HAS", ([target, value]) => {
     ensureSet(target, "Has");
     return bool(setHas(target, value));
   }),
-  VALUES: method("VALUES", ([target]) => {
+  VALUES: method2("VALUES", ([target]) => {
     ensureSet(target, "Values");
     return { type: "sequence", values: [...target.values], _ext: mutableExt2() };
   }),
-  ADD: method("ADD", ([target, value]) => {
+  ADD: method2("ADD", ([target, value]) => {
     ensureSet(target, "Add");
     if (setHas(target, value))
       return shallowCopyValue(target);
@@ -13460,68 +14030,68 @@ var setMethods = {
     copy.values.push(value);
     return copy;
   }),
-  "ADD!": method("ADD!", ([target, value]) => {
+  "ADD!": method2("ADD!", ([target, value]) => {
     ensureSet(target, "Add!");
     if (!setHas(target, value))
       target.values.push(value);
     return target;
   }),
-  REMOVE: method("REMOVE", ([target, value]) => {
+  REMOVE: method2("REMOVE", ([target, value]) => {
     ensureSet(target, "Remove");
     const copy = shallowCopyValue(target);
     copy.values = copy.values.filter((entry) => valueKey2(entry) !== valueKey2(value));
     return copy;
   }),
-  "REMOVE!": method("REMOVE!", ([target, value]) => {
+  "REMOVE!": method2("REMOVE!", ([target, value]) => {
     ensureSet(target, "Remove!");
     target.values = target.values.filter((entry) => valueKey2(entry) !== valueKey2(value));
     return target;
   }),
-  UNION: method("UNION", ([target, other]) => collectionFunctions.UNION.impl([target, other])),
-  "UNION!": method("UNION!", ([target, other]) => {
+  UNION: method2("UNION", ([target, other]) => collectionFunctions.UNION.impl([target, other])),
+  "UNION!": method2("UNION!", ([target, other]) => {
     ensureSet(target, "Union!");
     ensureSet(other, "Union!");
     target.values = collectionFunctions.UNION.impl([target, other]).values;
     return target;
   }),
-  INTERSECT: method("INTERSECT", ([target, other]) => collectionFunctions.INTERSECT.impl([target, other])),
-  "INTERSECT!": method("INTERSECT!", ([target, other]) => {
+  INTERSECT: method2("INTERSECT", ([target, other]) => collectionFunctions.INTERSECT.impl([target, other])),
+  "INTERSECT!": method2("INTERSECT!", ([target, other]) => {
     ensureSet(target, "Intersect!");
     ensureSet(other, "Intersect!");
     const next = collectionFunctions.INTERSECT.impl([target, other]);
     target.values = next ? next.values : [];
     return target;
   }),
-  DIFF: method("DIFF", ([target, other]) => collectionFunctions.SET_DIFF.impl([target, other])),
-  "DIFF!": method("DIFF!", ([target, other]) => {
+  DIFF: method2("DIFF", ([target, other]) => collectionFunctions.SET_DIFF.impl([target, other])),
+  "DIFF!": method2("DIFF!", ([target, other]) => {
     ensureSet(target, "Diff!");
     const next = collectionFunctions.SET_DIFF.impl([target, other]);
     target.values = next.values;
     return target;
   }),
-  SYMDIFF: method("SYMDIFF", ([target, other]) => collectionFunctions.SET_SYMDIFF.impl([target, other])),
-  "SYMDIFF!": method("SYMDIFF!", ([target, other]) => {
+  SYMDIFF: method2("SYMDIFF", ([target, other]) => collectionFunctions.SET_SYMDIFF.impl([target, other])),
+  "SYMDIFF!": method2("SYMDIFF!", ([target, other]) => {
     ensureSet(target, "SymDiff!");
     const next = collectionFunctions.SET_SYMDIFF.impl([target, other]);
     target.values = next.values;
     return target;
   }),
-  SUBSETOF: method("SUBSETOF", ([target, other]) => {
+  SUBSETOF: method2("SUBSETOF", ([target, other]) => {
     ensureSet(target, "SubsetOf");
     ensureSet(other, "SubsetOf");
     return bool(target.values.every((value) => setHas(other, value)));
   }),
-  SUPERSETOF: method("SUPERSETOF", ([target, other]) => {
+  SUPERSETOF: method2("SUPERSETOF", ([target, other]) => {
     ensureSet(target, "SupersetOf");
     ensureSet(other, "SupersetOf");
     return bool(other.values.every((value) => setHas(target, value)));
   }),
-  DISJOINT: method("DISJOINT", ([target, other]) => {
+  DISJOINT: method2("DISJOINT", ([target, other]) => {
     ensureSet(target, "Disjoint");
     ensureSet(other, "Disjoint");
     return bool(target.values.every((value) => !setHas(other, value)));
   }),
-  FILTER: method("FILTER", ([target, iterator], context, evaluate, invoke) => {
+  FILTER: method2("FILTER", ([target, iterator], context, evaluate, invoke) => {
     ensureSet(target, "Filter");
     return {
       type: "set",
@@ -13529,133 +14099,133 @@ var setMethods = {
       _ext: mutableExt2()
     };
   }),
-  ANY: method("ANY", ([target, iterator], context, evaluate, invoke) => anyEntries(target, iterator, context, evaluate, invoke)),
-  ALL: method("ALL", ([target, iterator], context, evaluate, invoke) => allEntries(target, iterator, context, evaluate, invoke)),
-  COUNT: method("COUNT", ([target, iterator], context, evaluate, invoke) => countEntries(target, iterator, context, evaluate, invoke)),
-  REDUCE: method("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke))
+  ANY: method2("ANY", ([target, iterator], context, evaluate, invoke) => anyEntries(target, iterator, context, evaluate, invoke)),
+  ALL: method2("ALL", ([target, iterator], context, evaluate, invoke) => allEntries(target, iterator, context, evaluate, invoke)),
+  COUNT: method2("COUNT", ([target, iterator], context, evaluate, invoke) => countEntries(target, iterator, context, evaluate, invoke)),
+  REDUCE: method2("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke))
 };
 var stringMethods = {
-  LEN: method("LEN", ([target]) => {
+  LEN: method2("LEN", ([target]) => {
     ensureString(target, "Len");
     return int5(Array.from(target.value).length);
   }),
-  ISEMPTY: method("ISEMPTY", ([target]) => {
+  ISEMPTY: method2("ISEMPTY", ([target]) => {
     ensureString(target, "IsEmpty");
     return bool(target.value.length === 0);
   }),
-  GET: method("GET", ([target, index]) => {
+  GET: method2("GET", ([target, index]) => {
     ensureString(target, "Get");
     return stringAt(target, index);
   }),
-  FIRST: method("FIRST", ([target]) => {
+  FIRST: method2("FIRST", ([target]) => {
     ensureString(target, "First");
     return charsOf(target)[0] ?? null;
   }),
-  LAST: method("LAST", ([target]) => {
+  LAST: method2("LAST", ([target]) => {
     ensureString(target, "Last");
     const chars = charsOf(target);
     return chars[chars.length - 1] ?? null;
   }),
-  INCLUDES: method("INCLUDES", ([target, needle]) => {
+  INCLUDES: method2("INCLUDES", ([target, needle]) => {
     ensureString(target, "Includes");
     return bool(target.value.includes(stringValue2(needle)));
   }),
-  STARTSWITH: method("STARTSWITH", ([target, prefix]) => {
+  STARTSWITH: method2("STARTSWITH", ([target, prefix]) => {
     ensureString(target, "StartsWith");
     return bool(target.value.startsWith(stringValue2(prefix)));
   }),
-  ENDSWITH: method("ENDSWITH", ([target, suffix]) => {
+  ENDSWITH: method2("ENDSWITH", ([target, suffix]) => {
     ensureString(target, "EndsWith");
     return bool(target.value.endsWith(stringValue2(suffix)));
   }),
-  INDEXOF: method("INDEXOF", ([target, needle]) => {
+  INDEXOF: method2("INDEXOF", ([target, needle]) => {
     ensureString(target, "IndexOf");
     const idx = target.value.indexOf(stringValue2(needle));
     return idx === -1 ? null : int5(idx + 1);
   }),
-  LASTINDEXOF: method("LASTINDEXOF", ([target, needle]) => {
+  LASTINDEXOF: method2("LASTINDEXOF", ([target, needle]) => {
     ensureString(target, "LastIndexOf");
     const idx = target.value.lastIndexOf(stringValue2(needle));
     return idx === -1 ? null : int5(idx + 1);
   }),
-  SLICE: method("SLICE", ([target, start, end]) => {
+  SLICE: method2("SLICE", ([target, start, end]) => {
     ensureString(target, "Slice");
     return fromChars(jsSlice(charsOf(target), start, end));
   }),
-  CONCAT: method("CONCAT", ([target, ...parts]) => {
+  CONCAT: method2("CONCAT", ([target, ...parts]) => {
     ensureString(target, "Concat");
     return stringObj3([target, ...parts].map((part) => stringValue2(part)).join(""));
   }),
-  SPLIT: method("SPLIT", ([target, separator]) => {
+  SPLIT: method2("SPLIT", ([target, separator]) => {
     ensureString(target, "Split");
     const parts = separator === undefined ? Array.from(target.value) : target.value.split(stringValue2(separator));
     return { type: "sequence", values: parts.map((part) => stringObj3(part)), _ext: mutableExt2() };
   }),
-  TRIM: method("TRIM", ([target]) => {
+  TRIM: method2("TRIM", ([target]) => {
     ensureString(target, "Trim");
     return stringObj3(target.value.trim());
   }),
-  TRIMSTART: method("TRIMSTART", ([target]) => {
+  TRIMSTART: method2("TRIMSTART", ([target]) => {
     ensureString(target, "TrimStart");
     return stringObj3(target.value.trimStart());
   }),
-  TRIMEND: method("TRIMEND", ([target]) => {
+  TRIMEND: method2("TRIMEND", ([target]) => {
     ensureString(target, "TrimEnd");
     return stringObj3(target.value.trimEnd());
   }),
-  UPPER: method("UPPER", ([target]) => {
+  UPPER: method2("UPPER", ([target]) => {
     ensureString(target, "Upper");
     return stringObj3(target.value.toUpperCase());
   }),
-  LOWER: method("LOWER", ([target]) => {
+  LOWER: method2("LOWER", ([target]) => {
     ensureString(target, "Lower");
     return stringObj3(target.value.toLowerCase());
   }),
-  REPLACE: method("REPLACE", ([target, search, replacement]) => {
+  REPLACE: method2("REPLACE", ([target, search, replacement]) => {
     ensureString(target, "Replace");
     return stringObj3(target.value.replace(stringValue2(search), stringValue2(replacement)));
   }),
-  REPLACEALL: method("REPLACEALL", ([target, search, replacement]) => {
+  REPLACEALL: method2("REPLACEALL", ([target, search, replacement]) => {
     ensureString(target, "ReplaceAll");
     return stringObj3(target.value.split(stringValue2(search)).join(stringValue2(replacement)));
   }),
-  PADLEFT: method("PADLEFT", ([target, length, pad]) => {
+  PADLEFT: method2("PADLEFT", ([target, length, pad]) => {
     ensureString(target, "PadLeft");
     return stringObj3(target.value.padStart(numericIndex(length), stringValue2(pad ?? stringObj3(" "))));
   }),
-  PADRIGHT: method("PADRIGHT", ([target, length, pad]) => {
+  PADRIGHT: method2("PADRIGHT", ([target, length, pad]) => {
     ensureString(target, "PadRight");
     return stringObj3(target.value.padEnd(numericIndex(length), stringValue2(pad ?? stringObj3(" "))));
   }),
-  REPEAT: method("REPEAT", ([target, count]) => {
+  REPEAT: method2("REPEAT", ([target, count]) => {
     ensureString(target, "Repeat");
     return stringObj3(target.value.repeat(numericIndex(count)));
   }),
-  REDUCE: method("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke))
+  REDUCE: method2("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke))
 };
 var tupleMethods = {
-  LEN: method("LEN", ([target]) => {
+  LEN: method2("LEN", ([target]) => {
     ensureTuple(target, "Len");
     return int5(target.values.length);
   }),
-  GET: method("GET", ([target, index]) => {
+  GET: method2("GET", ([target, index]) => {
     ensureTuple(target, "Get");
     const at = normalizeLookupIndex(index, target.values.length);
     return at === null ? null : target.values[at - 1];
   }),
-  FIRST: method("FIRST", ([target]) => {
+  FIRST: method2("FIRST", ([target]) => {
     ensureTuple(target, "First");
     return target.values[0] ?? null;
   }),
-  LAST: method("LAST", ([target]) => {
+  LAST: method2("LAST", ([target]) => {
     ensureTuple(target, "Last");
     return target.values[target.values.length - 1] ?? null;
   }),
-  SLICE: method("SLICE", ([target, start, end]) => {
+  SLICE: method2("SLICE", ([target, start, end]) => {
     ensureTuple(target, "Slice");
     return { type: "tuple", values: jsSlice(target.values, start, end) };
   }),
-  SET: method("SET", ([target, index, value]) => {
+  SET: method2("SET", ([target, index, value]) => {
     ensureTuple(target, "Set");
     const copy = shallowCopyValue(target);
     const at = normalizeLookupIndex(index, copy.values.length);
@@ -13664,11 +14234,11 @@ var tupleMethods = {
     copy.values[at - 1] = value;
     return copy;
   }),
-  TOARRAY: method("TOARRAY", ([target]) => {
+  TOARRAY: method2("TOARRAY", ([target]) => {
     ensureTuple(target, "ToArray");
     return { type: "sequence", values: [...target.values], _ext: mutableExt2() };
   }),
-  REDUCE: method("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke))
+  REDUCE: method2("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke))
 };
 function tensorSelectorsFromArgs(args) {
   if (args.length === 1 && args[0]?.type === "tuple") {
@@ -13677,23 +14247,23 @@ function tensorSelectorsFromArgs(args) {
   return args.map((value) => ({ kind: "index", value }));
 }
 var tensorMethods = {
-  SHAPE: method("SHAPE", ([target]) => {
+  SHAPE: method2("SHAPE", ([target]) => {
     ensureTensor(target, "Shape");
     return { type: "tuple", values: tensorShape(target).map((dim) => int5(dim)) };
   }),
-  RANK: method("RANK", ([target]) => {
+  RANK: method2("RANK", ([target]) => {
     ensureTensor(target, "Rank");
     return int5(tensorRank(target));
   }),
-  SIZE: method("SIZE", ([target]) => {
+  SIZE: method2("SIZE", ([target]) => {
     ensureTensor(target, "Size");
     return int5(tensorSize(target));
   }),
-  GET: method("GET", ([target, ...selectors]) => {
+  GET: method2("GET", ([target, ...selectors]) => {
     ensureTensor(target, "Get");
     return tensorGetBySelectors(target, tensorSelectorsFromArgs(selectors));
   }),
-  SET: method("SET", ([target, ...selectorsAndValue]) => {
+  SET: method2("SET", ([target, ...selectorsAndValue]) => {
     ensureTensor(target, "Set");
     const value = selectorsAndValue[selectorsAndValue.length - 1];
     const selectors = selectorsAndValue.slice(0, -1);
@@ -13701,14 +14271,14 @@ var tensorMethods = {
     tensorAssignBySelectors(copy, tensorSelectorsFromArgs(selectors), value);
     return copy;
   }),
-  "SET!": method("SET!", ([target, ...selectorsAndValue]) => {
+  "SET!": method2("SET!", ([target, ...selectorsAndValue]) => {
     ensureTensor(target, "Set!");
     const value = selectorsAndValue[selectorsAndValue.length - 1];
     const selectors = selectorsAndValue.slice(0, -1);
     tensorAssignBySelectors(target, tensorSelectorsFromArgs(selectors), value);
     return target;
   }),
-  RESHAPE: method("RESHAPE", ([target, shape]) => {
+  RESHAPE: method2("RESHAPE", ([target, shape]) => {
     ensureTensor(target, "Reshape");
     const nextShape = shape?.type === "tuple" ? shape.values.map((value) => numericIndex(value)) : null;
     if (!nextShape)
@@ -13718,11 +14288,11 @@ var tensorMethods = {
       throw new Error("Reshape size mismatch");
     return createTensor(nextShape, target.data);
   }),
-  FLATTEN: method("FLATTEN", ([target]) => {
+  FLATTEN: method2("FLATTEN", ([target]) => {
     ensureTensor(target, "Flatten");
     return createTensor([tensorSize(target)], [...target.data]);
   }),
-  TRANSPOSE: method("TRANSPOSE", ([target]) => {
+  TRANSPOSE: method2("TRANSPOSE", ([target]) => {
     ensureTensor(target, "Transpose");
     if (tensorRank(target) !== 2)
       throw new Error("Transpose currently expects a rank-2 tensor");
@@ -13732,7 +14302,7 @@ var tensorMethods = {
       offset: target.offset
     });
   }),
-  PERMUTE: method("PERMUTE", ([target, order]) => {
+  PERMUTE: method2("PERMUTE", ([target, order]) => {
     ensureTensor(target, "Permute");
     if (order?.type !== "tuple")
       throw new Error("Permute expects a tuple of axis numbers");
@@ -13745,7 +14315,7 @@ var tensorMethods = {
       offset: target.offset
     });
   }),
-  MAP: method("MAP", ([target, iterator], context, evaluate, invoke) => {
+  MAP: method2("MAP", ([target, iterator], context, evaluate, invoke) => {
     ensureTensor(target, "Map");
     const data = [];
     forEachTensorCell(target, (value, tuple) => {
@@ -13753,14 +14323,14 @@ var tensorMethods = {
     });
     return createTensor(target.shape, data);
   }),
-  "FILL!": method("FILL!", ([target, value]) => {
+  "FILL!": method2("FILL!", ([target, value]) => {
     ensureTensor(target, "Fill!");
     forEachTensorCell(target, (_entry, _tuple, offset) => {
       target.data[offset] = value;
     });
     return target;
   }),
-  SUM: method("SUM", ([target]) => {
+  SUM: method2("SUM", ([target]) => {
     ensureTensor(target, "Sum");
     let acc = int5(0);
     forEachTensorCell(target, (value) => {
@@ -13769,14 +14339,14 @@ var tensorMethods = {
     });
     return acc;
   }),
-  MEAN: method("MEAN", ([target]) => {
+  MEAN: method2("MEAN", ([target]) => {
     ensureTensor(target, "Mean");
     const size = tensorSize(target);
     if (size === 0)
       return null;
     return arithmeticDiv(tensorMethods.SUM.impl([target]), int5(size));
   }),
-  DOT: method("DOT", ([target, other]) => {
+  DOT: method2("DOT", ([target, other]) => {
     ensureTensor(target, "Dot");
     ensureTensor(other, "Dot");
     if (tensorRank(target) !== 1 || tensorRank(other) !== 1 || tensorSize(target) !== tensorSize(other)) {
@@ -13788,7 +14358,7 @@ var tensorMethods = {
     }
     return acc;
   }),
-  MATMUL: method("MATMUL", ([target, other]) => {
+  MATMUL: method2("MATMUL", ([target, other]) => {
     ensureTensor(target, "MatMul");
     ensureTensor(other, "MatMul");
     if (tensorRank(target) !== 2 || tensorRank(other) !== 2) {
@@ -13812,11 +14382,11 @@ var tensorMethods = {
     }
     return createTensor([rows, cols], data);
   }),
-  REDUCE: method("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke))
+  REDUCE: method2("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke))
 };
 var commonMethods = {
-  CHECKTRAITS: method("CHECKTRAITS", ([target], context) => checkTraits(target, context, { warnOnly: true })),
-  CheckTraits: method("CheckTraits", ([target], context) => checkTraits(target, context, { warnOnly: true }))
+  CHECKTRAITS: method2("CHECKTRAITS", ([target], context) => checkTraits(target, context, { warnOnly: true })),
+  CheckTraits: method2("CheckTraits", ([target], context) => checkTraits(target, context, { warnOnly: true }))
 };
 function assumptionName(value) {
   if (value?.type === "string")
@@ -13826,10 +14396,10 @@ function assumptionName(value) {
   throw new Error("Structural nonzero assumptions must be names or structural symbols");
 }
 var structuralMethods = {
-  INSPECT: method("Inspect", ([target]) => inspectStructuralValue(target)),
-  RENDER: method("Render", ([target]) => stringObj3(formatStructuralValue(target, valueKey2))),
-  COLLAPSE: method("Collapse", ([target], context) => collapseStructuralValue(target, context)),
-  TOEXACT: method("ToExact", ([target], context, evaluate, invoke) => {
+  INSPECT: method2("Inspect", ([target]) => inspectStructuralValue(target)),
+  RENDER: method2("Render", ([target]) => stringObj3(formatStructuralValue(target, valueKey2))),
+  COLLAPSE: method2("Collapse", ([target], context) => collapseStructuralValue(target, context)),
+  TOEXACT: method2("ToExact", ([target], context, evaluate, invoke) => {
     if (target.type !== "structural_algebra")
       return collapseStructuralValue(target, context);
     const components = target.components.map((component) => collapseStructuralValue(component, context));
@@ -13861,14 +14431,14 @@ var structuralMethods = {
     }
     return invoke(constructor, [receiver, ...components], context, evaluate);
   }),
-  SIMPLIFY: method("Simplify", ([target, ...nonzero]) => simplifyStructuralValue(target, { nonzero: nonzero.map(assumptionName) })),
-  HEAD: method("Head", ([target]) => stringObj3(target.type === "structural_form" ? target.head : target.type === "structural_algebra" ? target.profile : target.type === "structural_literal" ? target.kind : target.type === "structural_symbol" ? "Symbol" : "Value")),
-  ARGUMENTS: method("Arguments", ([target]) => ({
+  SIMPLIFY: method2("Simplify", ([target, ...nonzero]) => simplifyStructuralValue(target, { nonzero: nonzero.map(assumptionName) })),
+  HEAD: method2("Head", ([target]) => stringObj3(target.type === "structural_form" ? target.head : target.type === "structural_algebra" ? target.profile : target.type === "structural_literal" ? target.kind : target.type === "structural_symbol" ? "Symbol" : "Value")),
+  ARGUMENTS: method2("Arguments", ([target]) => ({
     type: "sequence",
     values: target.type === "structural_form" ? [...target.args] : target.type === "structural_algebra" ? [...target.components] : [],
     _ext: mutableExt2()
   })),
-  SOURCESPAN: method("SourceSpan", ([target]) => {
+  SOURCESPAN: method2("SourceSpan", ([target]) => {
     const span = structuralSourceSpan(target);
     if (!span)
       return null;
@@ -13878,7 +14448,7 @@ var structuralMethods = {
       _ext: mutableExt2()
     };
   }),
-  MAPARGUMENTS: method("MapArguments", ([target, mapper], context, evaluate, invoke) => {
+  MAPARGUMENTS: method2("MapArguments", ([target, mapper], context, evaluate, invoke) => {
     if (target.type === "structural_algebra") {
       const profile = createStructuralAlgebraProfile(target.profile, target.basis, {
         cayleyDickson: ["Complex", "Quaternion", "Octonion"].includes(target.profile)
@@ -13907,31 +14477,31 @@ var PROTOS = new Map([
   ["deferred", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(deferredMethods)])],
   ["exact_generator", createBuiltinProto([
     ...Object.entries(commonMethods),
-    ["CONJUGATE", method("Conjugate", ([target]) => complexConjugate(target))],
-    ["RE", method("Re", ([target]) => complexParts(target).real)],
-    ["IM", method("Im", ([target]) => complexParts(target).imaginary)],
-    ["NORMSQUARED", method("NormSquared", ([target]) => complexNormSquared(target))],
-    ["CAYLEY", method("Cayley", ([target]) => cayleyFromCartesian(target))]
+    ["CONJUGATE", method2("Conjugate", ([target]) => complexConjugate(target))],
+    ["RE", method2("Re", ([target]) => complexParts(target).real)],
+    ["IM", method2("Im", ([target]) => complexParts(target).imaginary)],
+    ["NORMSQUARED", method2("NormSquared", ([target]) => complexNormSquared(target))],
+    ["CAYLEY", method2("Cayley", ([target]) => cayleyFromCartesian(target))]
   ])],
   ["exact_expression", createBuiltinProto([
     ...Object.entries(commonMethods),
-    ["CONJUGATE", method("Conjugate", ([target]) => complexConjugate(target))],
-    ["RE", method("Re", ([target]) => complexParts(target).real)],
-    ["IM", method("Im", ([target]) => complexParts(target).imaginary)],
-    ["NORMSQUARED", method("NormSquared", ([target]) => complexNormSquared(target))],
-    ["CAYLEY", method("Cayley", ([target]) => cayleyFromCartesian(target))]
+    ["CONJUGATE", method2("Conjugate", ([target]) => complexConjugate(target))],
+    ["RE", method2("Re", ([target]) => complexParts(target).real)],
+    ["IM", method2("Im", ([target]) => complexParts(target).imaginary)],
+    ["NORMSQUARED", method2("NormSquared", ([target]) => complexNormSquared(target))],
+    ["CAYLEY", method2("Cayley", ([target]) => cayleyFromCartesian(target))]
   ])],
   ["cayley", createBuiltinProto([
     ...Object.entries(commonMethods),
-    ["CARTESIAN", method("Cartesian", ([target]) => cayleyCartesian(target))],
-    ["CAYLEY", method("Cayley", ([target]) => target)],
-    ["CONJUGATE", method("Conjugate", ([target]) => conjugateCayley(target))],
-    ["RE", method("Re", ([target]) => cayleyReal(target))],
-    ["IM", method("Im", ([target]) => cayleyImaginary(target))],
-    ["NORMSQUARED", method("NormSquared", ([target]) => multiplyScalars(target.magnitude, target.magnitude))],
-    ["MAGNITUDE", method("Magnitude", ([target]) => target.magnitude)],
-    ["DIRECTION", method("Direction", ([target]) => target.direction)],
-    ["INVERSE", method("Inverse", ([target]) => inverseCayley(target))]
+    ["CARTESIAN", method2("Cartesian", ([target]) => cayleyCartesian(target))],
+    ["CAYLEY", method2("Cayley", ([target]) => target)],
+    ["CONJUGATE", method2("Conjugate", ([target]) => conjugateCayley(target))],
+    ["RE", method2("Re", ([target]) => cayleyReal(target))],
+    ["IM", method2("Im", ([target]) => cayleyImaginary(target))],
+    ["NORMSQUARED", method2("NormSquared", ([target]) => multiplyScalars(target.magnitude, target.magnitude))],
+    ["MAGNITUDE", method2("Magnitude", ([target]) => target.magnitude)],
+    ["DIRECTION", method2("Direction", ([target]) => target.direction)],
+    ["INVERSE", method2("Inverse", ([target]) => inverseCayley(target))]
   ])]
 ]);
 function isCallableValue(value) {
@@ -13946,7 +14516,7 @@ function ensureCallableMethod(value, name) {
 function checkTraitsMethod(name) {
   if (name !== "CHECKTRAITS" && name !== "CheckTraits")
     return null;
-  return method(name, ([target], context) => checkTraits(target, context, { warnOnly: true }));
+  return method2(name, ([target], context) => checkTraits(target, context, { warnOnly: true }));
 }
 function builtinProtoFor(target) {
   if (target instanceof Fraction)
@@ -14213,568 +14783,6 @@ function createBinding(cell, options = {}) {
   return Object.freeze(binding);
 }
 
-// ../rix/src/runtime/reactive-graph.js
-var nextGraphId = 1;
-var REACTIVE_READ_ENV = "__reactive_read__";
-function method2(name, impl) {
-  return { type: "method_builtin", name, impl };
-}
-function text(value) {
-  return value?.type === "string" ? value.value : typeof value === "string" ? value : null;
-}
-function nodeName(value, label = "Reactive node name") {
-  const requested = text(value);
-  const name = requested?.toLowerCase();
-  if (!name || !/^[a-z_][a-z0-9_]*$/u.test(name)) {
-    throw new Error(`${label} must be a RiX user-identifier string`);
-  }
-  return name;
-}
-function graphMethods() {
-  return new Map([
-    ["SOURCE", method2("Source", ([target, name, value]) => target.addSource(nodeName(name), value))],
-    ["DERIVE", method2("Derive", ([target, name, formula]) => target.addComputed(nodeName(name), formula))],
-    ["GET", method2("Get", ([target, name]) => target.get(nodeName(name)))],
-    ["NODE", method2("Node", ([target, name]) => target.node(nodeName(name)))],
-    ["RECALCULATE", method2("Recalculate", ([target]) => target.recalculate())],
-    ["_mutable", new Integer(1n)]
-  ]);
-}
-function nodeMethods() {
-  return new Map([
-    ["GET", method2("Get", ([target]) => target.get())],
-    ["PEEK", method2("Peek", ([target]) => target.peek())],
-    ["SET", method2("Set", ([target, value]) => target.set(value))],
-    ["GETFORMULA", method2("GetFormula", ([target]) => target.formula)],
-    ["SETFORMULA", method2("SetFormula", ([target, formula]) => target.setFormula(formula))],
-    ["LIVE", method2("Live", ([target]) => target.live())],
-    ["_mutable", new Integer(1n)]
-  ]);
-}
-function publicLive(node) {
-  return Object.freeze({
-    kind: node.kind,
-    name: node.name,
-    state: node.state,
-    dependencies: Object.freeze([...node.dependencies]),
-    dependents: Object.freeze([...node.dependents]),
-    epoch: node.graph.epoch
-  });
-}
-function isReactiveGraph(value) {
-  return Boolean(value && value.type === "reactive_graph" && typeof value.get === "function");
-}
-function isReactiveNode(value) {
-  return Boolean(value && value.type === "reactive_node" && isReactiveGraph(value.graph));
-}
-function createReactiveGraph(options = {}) {
-  if (typeof options.evaluateFormula !== "function") {
-    throw new Error("ReactiveGraph requires a deferred formula evaluator");
-  }
-  const id = options.id || `reactive-graph-${nextGraphId++}`;
-  const nodes = new Map;
-  const aliases = new Map;
-  const channel = new Set;
-  const reservedNames = new Set((options.reservedNames || []).map((name) => nodeName(name)));
-  let activeEpoch = null;
-  let graph = null;
-  function requireAvailableName(name) {
-    if (reservedNames.has(name)) {
-      throw new Error(`${options.reservedNameLabel || "Reactive node name is reserved"}: ${name}`);
-    }
-    if (nodes.has(name) || aliases.has(name))
-      throw new Error(`Reactive node already exists: ${name}`);
-  }
-  function canonicalName(name) {
-    name = nodeName(name);
-    return aliases.get(name) ?? name;
-  }
-  function requireNode(name) {
-    const node = nodes.get(canonicalName(name));
-    if (!node)
-      throw new Error(`Unknown reactive node: ${name}`);
-    return node;
-  }
-  function rebuildDependents() {
-    for (const node of nodes.values())
-      node.dependents = new Set;
-    for (const node of nodes.values()) {
-      for (const dependency of node.dependencies) {
-        nodes.get(dependency)?.dependents.add(node.name);
-      }
-    }
-  }
-  function dirtyClosure(startNames) {
-    const dirty = new Set(startNames);
-    const queue = [...startNames];
-    while (queue.length) {
-      const name = queue.shift();
-      for (const dependent of requireNode(name).dependents) {
-        if (dirty.has(dependent))
-          continue;
-        dirty.add(dependent);
-        queue.push(dependent);
-      }
-    }
-    return dirty;
-  }
-  function makeNode(name, kind, fields) {
-    const nodeChannel = new Set;
-    const node = {
-      type: "reactive_node",
-      graph,
-      graphId: id,
-      name,
-      id: `${id}:${name}`,
-      kind,
-      formula: fields.formula ?? null,
-      source: fields.source ?? null,
-      value: fields.value ?? null,
-      lastGoodValue: fields.value ?? null,
-      state: kind === "source" ? "clean" : "dirty",
-      dependencies: new Set,
-      dependents: new Set,
-      diagnostics: [],
-      evaluator: fields.evaluator ?? null,
-      get() {
-        return graph.get(name);
-      },
-      peek() {
-        return graph.peek(name);
-      },
-      set(value, metadata = null) {
-        if (kind !== "source")
-          throw new Error(`Reactive computed node ${name} cannot be set directly`);
-        return graph.setSource(name, value, metadata);
-      },
-      setFormula(formula, metadata = null) {
-        if (kind !== "computed")
-          throw new Error(`Reactive source node ${name} has no formula`);
-        return graph.setFormula(name, formula, metadata);
-      },
-      live() {
-        return publicLive(node);
-      },
-      subscribe(listener) {
-        if (typeof listener !== "function")
-          throw new Error("Reactive node subscriber must be a function");
-        nodeChannel.add(listener);
-        return () => nodeChannel.delete(listener);
-      },
-      _publish(event) {
-        for (const listener of [...nodeChannel])
-          listener(event);
-      },
-      _ext: nodeMethods(),
-      toString() {
-        return `[Reactive ${kind} ${name}]`;
-      }
-    };
-    return node;
-  }
-  function runEpoch({ dirty, sourceOverrides = new Map, cause = null, evaluateAll = false } = {}) {
-    if (activeEpoch) {
-      throw new Error(options.nestedEpochError || "Reactive computations cannot start a nested graph epoch");
-    }
-    const requested = evaluateAll ? new Set(nodes.keys()) : dirtyClosure(new Set([...dirty || [], ...sourceOverrides.keys()].map(canonicalName)));
-    const previousEpoch = graph.epoch;
-    const stagedValues = new Map([...nodes].map(([name, node]) => [name, node.value]));
-    for (const [name, value] of sourceOverrides)
-      stagedValues.set(name, value);
-    const states = new Map([...nodes].map(([name, node]) => [
-      name,
-      requested.has(name) && node.kind === "computed" ? "dirty" : "clean"
-    ]));
-    const dependencies = new Map([...nodes].map(([name, node]) => [
-      name,
-      requested.has(name) && node.kind === "computed" ? new Set : new Set(node.dependencies)
-    ]));
-    const stack = [];
-    let currentName = null;
-    const epoch = {
-      read(name) {
-        name = canonicalName(name);
-        const node = requireNode(name);
-        if (currentName && currentName !== name)
-          dependencies.get(currentName).add(name);
-        if (node.kind === "source")
-          return stagedValues.get(name);
-        if (states.get(name) === "clean")
-          return stagedValues.get(name);
-        if (states.get(name) === "evaluating") {
-          const cycleStart = stack.indexOf(name);
-          const cycle = [...stack.slice(cycleStart), name].map((item) => options.labelForNode?.(item) ?? item);
-          throw new Error(`${options.cycleLabel || "Reactive cycle"}: ${cycle.join(" -> ")}`);
-        }
-        states.set(name, "evaluating");
-        stack.push(name);
-        const previousName = currentName;
-        currentName = name;
-        try {
-          const value = node.evaluator ? node.evaluator(node.formula, graph) : options.evaluateFormula(node.formula, graph);
-          stagedValues.set(name, value);
-          states.set(name, "clean");
-          return value;
-        } finally {
-          currentName = previousName;
-          stack.pop();
-        }
-      },
-      peek(name) {
-        name = canonicalName(name);
-        const previousName = currentName;
-        currentName = null;
-        try {
-          return this.read(name);
-        } finally {
-          currentName = previousName;
-        }
-      }
-    };
-    activeEpoch = epoch;
-    try {
-      for (const name of requested)
-        epoch.read(name);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      for (const [name, state] of states) {
-        if (state !== "evaluating")
-          continue;
-        const node = nodes.get(name);
-        node.state = "error";
-        node.diagnostics = [message];
-      }
-      const event2 = Object.freeze({
-        type: "reactive:error",
-        graph,
-        epoch: graph.epoch,
-        cause,
-        error
-      });
-      for (const listener of [...channel])
-        listener(event2);
-      throw error;
-    } finally {
-      activeEpoch = null;
-    }
-    graph.epoch += 1;
-    const changed = [];
-    for (const name of requested) {
-      const node = nodes.get(name);
-      const previous = node.value;
-      node.value = stagedValues.get(name);
-      node.lastGoodValue = node.value;
-      node.state = "clean";
-      node.dependencies = node.kind === "computed" ? dependencies.get(name) : new Set;
-      node.diagnostics = [];
-      if (previous !== node.value)
-        changed.push(name);
-    }
-    rebuildDependents();
-    const event = Object.freeze({
-      type: "reactive:commit",
-      graph,
-      previousEpoch,
-      epoch: graph.epoch,
-      changed: Object.freeze(changed),
-      cause
-    });
-    for (const name of changed)
-      nodes.get(name)._publish(event);
-    for (const listener of [...channel])
-      listener(event);
-    return graph;
-  }
-  graph = {
-    type: "reactive_graph",
-    id,
-    epoch: 0,
-    _ext: graphMethods(),
-    addSource(name, value) {
-      name = nodeName(name);
-      requireAvailableName(name);
-      const node = makeNode(name, "source", { value });
-      nodes.set(name, node);
-      return node;
-    },
-    addComputed(name, formula, metadata = null) {
-      name = nodeName(name);
-      requireAvailableName(name);
-      if (!formula || formula.fn !== "DEFER") {
-        throw new Error("ReactiveGraph.Derive requires deferred syntax @{ ... }");
-      }
-      const node = makeNode(name, "computed", {
-        formula,
-        source: metadata?.source ?? options.formulaSource?.(formula) ?? null,
-        evaluator: metadata?.evaluator ?? null
-      });
-      nodes.set(name, node);
-      if (metadata?.initialize === false)
-        return node;
-      try {
-        runEpoch({ dirty: new Set([name]), cause: { type: "reactive:add", name } });
-      } catch (error) {
-        nodes.delete(name);
-        rebuildDependents();
-        throw error;
-      }
-      return node;
-    },
-    get(name) {
-      name = nodeName(name);
-      if (activeEpoch)
-        return activeEpoch.read(name);
-      const node = requireNode(name);
-      if (node.state === "error") {
-        throw new Error(node.diagnostics[0] || `Reactive node ${name} has an error`);
-      }
-      return node.value;
-    },
-    peek(name) {
-      name = nodeName(name);
-      if (activeEpoch)
-        return activeEpoch.peek(name);
-      return requireNode(name).value;
-    },
-    node(name) {
-      return requireNode(nodeName(name));
-    },
-    bindings() {
-      return new Map([
-        ...nodes,
-        ...[...aliases].map(([alias, canonical]) => [alias, nodes.get(canonical)])
-      ]);
-    },
-    addAlias(name, target) {
-      name = nodeName(name);
-      requireAvailableName(name);
-      const node = isReactiveNode(target) ? target : requireNode(target);
-      if (node.graph !== graph) {
-        throw new Error("Reactive aliases must refer to a node in the same ReactiveGraph");
-      }
-      aliases.set(name, node.name);
-      return node;
-    },
-    define(definitions, cause = null) {
-      if (!Array.isArray(definitions) || definitions.length === 0)
-        return graph;
-      const pendingNames = new Set;
-      for (const definition of definitions) {
-        const name = nodeName(definition?.name);
-        requireAvailableName(name);
-        if (pendingNames.has(name))
-          throw new Error(`Reactive node already exists in definition batch: ${name}`);
-        if (definition.kind !== "source" && definition.kind !== "computed") {
-          throw new Error(`Reactive definition ${name} must be a source or computed node`);
-        }
-        if (definition.kind === "computed" && (!definition.formula || definition.formula.fn !== "DEFER")) {
-          throw new Error(`Reactive computed definition ${name} requires deferred syntax @{ ... }`);
-        }
-        pendingNames.add(name);
-      }
-      const added = [];
-      try {
-        for (const definition of definitions) {
-          const name = nodeName(definition.name);
-          const node = makeNode(name, definition.kind, definition.kind === "source" ? { value: definition.value } : {
-            formula: definition.formula,
-            source: definition.source ?? options.formulaSource?.(definition.formula) ?? null,
-            evaluator: definition.evaluator ?? null
-          });
-          nodes.set(name, node);
-          added.push(name);
-        }
-        const computed = new Set(added.filter((name) => nodes.get(name).kind === "computed"));
-        if (computed.size > 0) {
-          runEpoch({
-            dirty: computed,
-            cause: cause || { type: "reactive:define", names: Object.freeze([...added]) }
-          });
-        }
-        return graph;
-      } catch (error) {
-        for (const name of added)
-          nodes.delete(name);
-        rebuildDependents();
-        throw error;
-      }
-    },
-    applyBatch(changes, cause = null) {
-      if (!Array.isArray(changes) || changes.length === 0)
-        return graph;
-      const declarations = [];
-      const aliasChanges = [];
-      const updates = new Map;
-      const pendingNames = new Set;
-      for (const change of changes) {
-        const name = nodeName(change?.name);
-        if (change.kind === "computed") {
-          requireAvailableName(name);
-          if (pendingNames.has(name)) {
-            throw new Error(`Reactive node already exists in transaction: ${name}`);
-          }
-          if (!change.formula || change.formula.fn !== "DEFER") {
-            throw new Error(`Reactive declaration ${name} requires a deferred definition`);
-          }
-          pendingNames.add(name);
-          declarations.push({ ...change, name });
-          continue;
-        }
-        if (change.kind === "alias") {
-          requireAvailableName(name);
-          if (pendingNames.has(name)) {
-            throw new Error(`Reactive node already exists in transaction: ${name}`);
-          }
-          pendingNames.add(name);
-          aliasChanges.push({ name, target: nodeName(change.target) });
-          continue;
-        }
-        if (change.kind === "update") {
-          const target = requireNode(name);
-          if (target.kind !== "computed") {
-            throw new Error(`Reactive node ${name} does not have a replaceable definition`);
-          }
-          if (!change.formula || change.formula.fn !== "DEFER") {
-            throw new Error(`Reactive update ${name} requires a deferred definition`);
-          }
-          updates.set(target.name, { ...change, name: target.name });
-          continue;
-        }
-        throw new Error(`Unknown reactive transaction change: ${change?.kind}`);
-      }
-      const futureNames = new Set([...nodes.keys(), ...declarations.map(({ name }) => name)]);
-      const futureAliases = new Map(aliases);
-      for (const { name, target } of aliasChanges) {
-        const canonical = futureAliases.get(target) ?? target;
-        if (!futureNames.has(canonical)) {
-          throw new Error(`Unknown reactive alias target: ${target}`);
-        }
-        futureAliases.set(name, canonical);
-      }
-      const addedNodes = [];
-      const addedAliases = [];
-      const previous = new Map;
-      try {
-        for (const definition of declarations) {
-          const node = makeNode(definition.name, "computed", {
-            formula: definition.formula,
-            source: definition.source ?? options.formulaSource?.(definition.formula) ?? null,
-            evaluator: definition.evaluator ?? null
-          });
-          nodes.set(definition.name, node);
-          addedNodes.push(definition.name);
-        }
-        for (const { name } of aliasChanges) {
-          aliases.set(name, futureAliases.get(name));
-          addedAliases.push(name);
-        }
-        for (const [name, update] of updates) {
-          const node = nodes.get(name);
-          previous.set(name, {
-            formula: node.formula,
-            source: node.source,
-            evaluator: node.evaluator,
-            state: node.state,
-            diagnostics: [...node.diagnostics],
-            dependencies: new Set(node.dependencies)
-          });
-          node.formula = update.formula;
-          node.source = update.source ?? options.formulaSource?.(update.formula) ?? null;
-          node.evaluator = update.evaluator ?? node.evaluator;
-        }
-        const dirty = new Set([...addedNodes, ...updates.keys()]);
-        if (dirty.size > 0) {
-          runEpoch({
-            dirty,
-            cause: cause || {
-              type: "reactive:batch",
-              names: Object.freeze([...pendingNames, ...updates.keys()])
-            }
-          });
-        }
-        return graph;
-      } catch (error) {
-        for (const name of addedAliases)
-          aliases.delete(name);
-        for (const name of addedNodes)
-          nodes.delete(name);
-        for (const [name, snapshot] of previous) {
-          const node = nodes.get(name);
-          node.formula = snapshot.formula;
-          node.source = snapshot.source;
-          node.evaluator = snapshot.evaluator;
-          node.state = snapshot.state;
-          node.diagnostics = snapshot.diagnostics;
-          node.dependencies = snapshot.dependencies;
-        }
-        rebuildDependents();
-        throw error;
-      }
-    },
-    setSource(name, value, metadata = null) {
-      name = canonicalName(name);
-      const node = requireNode(name);
-      if (node.kind !== "source")
-        throw new Error(`Reactive node ${name} is not a source`);
-      runEpoch({
-        dirty: new Set([name]),
-        sourceOverrides: new Map([[name, value]]),
-        cause: { type: "reactive:set", name, metadata }
-      });
-      return value;
-    },
-    setFormula(name, formula, metadata = null) {
-      name = canonicalName(name);
-      const node = requireNode(name);
-      if (node.kind !== "computed")
-        throw new Error(`Reactive node ${name} is not computed`);
-      if (activeEpoch) {
-        throw new Error(options.formulaMutationError || "Reactive computations cannot change formulas during an epoch");
-      }
-      if (!formula || formula.fn !== "DEFER") {
-        throw new Error("Reactive computed formulas require deferred syntax @{ ... }");
-      }
-      const previousFormula = node.formula;
-      const previousSource = node.source;
-      node.formula = formula;
-      node.source = metadata?.source ?? options.formulaSource?.(formula) ?? null;
-      if (metadata?.evaluator)
-        node.evaluator = metadata.evaluator;
-      try {
-        runEpoch({
-          dirty: new Set([name]),
-          cause: {
-            type: "reactive:formula",
-            name,
-            formula,
-            source: node.source,
-            previousFormula,
-            previousSource,
-            metadata
-          }
-        });
-      } catch (error) {
-        node.state = "error";
-        throw error;
-      }
-      return node;
-    },
-    recalculate(cause = null) {
-      return runEpoch({ evaluateAll: true, cause: cause || { type: "reactive:recalculate" } });
-    },
-    subscribe(listener) {
-      if (typeof listener !== "function")
-        throw new Error("ReactiveGraph subscriber must be a function");
-      channel.add(listener);
-      return () => channel.delete(listener);
-    },
-    toString() {
-      return `[ReactiveGraph ${id} · ${nodes.size} nodes · epoch ${graph.epoch}]`;
-    }
-  };
-  return graph;
-}
-
 // ../rix/src/runtime/formula-sheet.js
 function exactIndex(value, label = "Formula sheet index") {
   if (value instanceof Integer)
@@ -14795,7 +14803,27 @@ function valuesOf(value, label) {
   }
   throw new Error(`${label} must be an array, tuple, or sequence`);
 }
-function normalizeFormulaMatrix(value) {
+function requireFormula(formula, index) {
+  if (!formula || formula.fn !== "DEFER") {
+    throw new Error(`FormulaSheet formula [${index.join(",")}] must use deferred syntax @{ ... }`);
+  }
+  return formula;
+}
+function normalizeFormulaGrid(value) {
+  if (isTensor(value)) {
+    const shape = [...value.shape];
+    if (shape.length === 0 || shape.some((length) => length === 0)) {
+      throw new Error("FormulaSheet requires a non-empty tensor of rank 1 or greater");
+    }
+    const entries2 = [];
+    forEachTensorCell(value, (formula, index) => {
+      entries2.push({
+        index: Object.freeze([...index]),
+        formula: requireFormula(formula, index)
+      });
+    });
+    return { shape, entries: entries2 };
+  }
   const rows = valuesOf(value, "FormulaSheet formulas");
   if (rows.length === 0)
     throw new Error("FormulaSheet requires at least one row");
@@ -14806,14 +14834,14 @@ function normalizeFormulaMatrix(value) {
   if (!matrix.every((row) => row.length === columns)) {
     throw new Error("FormulaSheet rows must have equal lengths");
   }
+  const entries = [];
   for (const [rowIndex, row] of matrix.entries()) {
     for (const [columnIndex, formula] of row.entries()) {
-      if (!formula || formula.fn !== "DEFER") {
-        throw new Error(`FormulaSheet formula [${rowIndex + 1},${columnIndex + 1}] must use deferred syntax @{ ... }`);
-      }
+      const index = Object.freeze([rowIndex + 1, columnIndex + 1]);
+      entries.push({ index, formula: requireFormula(formula, index) });
     }
   }
-  return matrix;
+  return { shape: [matrix.length, columns], entries };
 }
 function nodeNameFor(index) {
   return `slot_${index.join("_")}`;
@@ -14873,14 +14901,15 @@ function isFormulaSheet(value) {
   return Boolean(value && value.type === "formula_sheet" && Array.isArray(value.shape));
 }
 function createFormulaSheet(formulasValue, options = {}) {
-  const formulas = normalizeFormulaMatrix(formulasValue);
+  const formulas = normalizeFormulaGrid(formulasValue);
   if (typeof options.runFormula !== "function") {
     throw new Error("FormulaSheet requires a deferred formula evaluator");
   }
-  const shape = Object.freeze([formulas.length, formulas[0].length]);
+  const shape = Object.freeze([...formulas.shape]);
   const channel = new Set;
   const graph = createReactiveGraph({
     id: options.id ? `${options.id}:graph` : undefined,
+    preserveIdentifierCase: true,
     formulaSource: options.formulaSource,
     evaluateFormula(formula) {
       return options.runFormula(formula, Object.fromEntries([...graph.bindings(), ["grid", sheet]]), { reactiveGraph: graph });
@@ -14910,6 +14939,9 @@ function createFormulaSheet(formulasValue, options = {}) {
     },
     getFormula(index) {
       return graph.node(nodeNameFor(normalizeIndex2(index, shape))).formula;
+    },
+    reactiveNode(index) {
+      return graph.node(nodeNameFor(normalizeIndex2(index, shape)));
     },
     setFormula(index, formula, metadata = null) {
       if (!formula || formula.fn !== "DEFER") {
@@ -14945,29 +14977,30 @@ function createFormulaSheet(formulasValue, options = {}) {
       return `[FormulaSheet ${shape.join("×")} · epoch ${sheet.epoch}]`;
     }
   };
-  for (let row = 1;row <= shape[0]; row += 1) {
-    for (let column = 1;column <= shape[1]; column += 1) {
-      const index = Object.freeze([row, column]);
-      const formula = formulas[row - 1][column - 1];
-      graph.addComputed(nodeNameFor(index), formula, {
-        source: options.formulaSource?.(formula) ?? null,
-        initialize: false,
-        evaluator(slotFormula) {
-          return options.runFormula(slotFormula, Object.fromEntries([
-            ...graph.bindings(),
-            ["grid", sheet],
-            ["row", new Integer(BigInt(row))],
-            ["col", new Integer(BigInt(column))],
-            ["index", {
-              type: "tuple",
-              values: [new Integer(BigInt(row)), new Integer(BigInt(column))]
-            }]
-          ]), {
-            reactiveGraph: graph
-          });
+  for (const { index, formula } of formulas.entries) {
+    graph.addComputed(nodeNameFor(index), formula, {
+      source: options.formulaSource?.(formula) ?? null,
+      initialize: false,
+      evaluator(slotFormula) {
+        const contextualBindings = [
+          ...graph.bindings(),
+          ["grid", sheet],
+          ["index", {
+            type: "tuple",
+            values: index.map((item) => new Integer(BigInt(item)))
+          }]
+        ];
+        if (index[0] !== undefined) {
+          contextualBindings.push(["row", new Integer(BigInt(index[0]))]);
         }
-      });
-    }
+        if (index[1] !== undefined) {
+          contextualBindings.push(["col", new Integer(BigInt(index[1]))]);
+        }
+        return options.runFormula(slotFormula, Object.fromEntries(contextualBindings), {
+          reactiveGraph: graph
+        });
+      }
+    });
   }
   graph.subscribe((event) => {
     const metadata = event.cause?.metadata;
@@ -16032,6 +16065,13 @@ function previewIr(node, options = {}) {
       return `$${node.args[0]}`;
     case "REACTIVE_NODE":
       return `$$${node.args[0]}`;
+    case "REACTIVE_INDEX_READ":
+    case "REACTIVE_INDEX_NODE": {
+      const sigil = node.fn === "REACTIVE_INDEX_READ" ? "$" : "$$";
+      const count = node.args[1];
+      const indices = node.args.slice(2, 2 + count).map((arg) => previewIr(arg, { maxLen: 12, depth: depth + 1 }));
+      return `${sigil}${node.args[0]}[${indices.join(", ")}]`;
+    }
     case "NEG":
       return truncate(`-${previewIr(node.args[0], { maxLen: maxLen - 1, depth: depth + 1 })}`, maxLen);
     case "CALL":
@@ -16876,6 +16916,9 @@ var LOWERERS = {
     return ir2("INDEX_GET", obj, lowerNode(node.property));
   },
   BracketIndex(node) {
+    if (node.object?.type === "ReactiveRef" || node.object?.type === "ReactiveCellRef") {
+      return ir2(node.object.type === "ReactiveRef" ? "REACTIVE_INDEX_READ" : "REACTIVE_INDEX_NODE", node.object.name, node.specs.length, ...node.specs.map(lowerBracketSpec));
+    }
     return ir2("BRACKET_GET", lowerNode(node.object), node.specs.length, ...node.specs.map(lowerBracketSpec));
   },
   ExternalAccess(node) {
@@ -17111,6 +17154,12 @@ function lowerAssignment(node, irFn) {
       throw new Error("Reactive declarations use '$$name := expression'");
     }
     return ir2("REACTIVE_DECLARE", left.name, ir2("DEFER", lowerNode(node.right)));
+  }
+  if (left.type === "BracketIndex" && left.object?.type === "ReactiveRef") {
+    if (irFn !== "ASSIGN_COPY") {
+      throw new Error("Reactive FormulaSheet updates use '$sheet[index] := @{ ... }'");
+    }
+    return ir2("REACTIVE_INDEX_UPDATE", left.object.name, left.specs.length, ...left.specs.map(lowerBracketSpec), lowerNode(node.right));
   }
   if (left.type === "SystemAccess") {
     return ir2("SYS_SET", left.property, lowerNode(node.right));
@@ -19763,7 +19812,7 @@ class Parser {
           });
         } else if (token2.value === "$$") {
           this.advance();
-          if (this.current.type === "Identifier" && this.current.kind === "User" && token2.pos?.[2] === this.current.pos?.[1]) {
+          if (this.current.type === "Identifier" && token2.pos?.[2] === this.current.pos?.[1]) {
             const identifier = this.current;
             this.advance();
             return this.createNode("ReactiveCellRef", {
@@ -19783,7 +19832,7 @@ class Parser {
               original: token2.original + (body.original || "")
             });
           }
-          if (this.current.type === "Identifier" && this.current.kind === "User" && token2.pos?.[2] === this.current.pos?.[1]) {
+          if (this.current.type === "Identifier" && token2.pos?.[2] === this.current.pos?.[1]) {
             const identifier = this.current;
             this.advance();
             return this.createNode("ReactiveRef", {
@@ -27147,8 +27196,9 @@ function deferredSource(formula) {
   return null;
 }
 function formulaSheetCapability(args, context, evaluate) {
-  if (args.length !== 1)
-    throw new Error(".FormulaSheet expects one rectangular array of deferred formulas");
+  if (args.length !== 1) {
+    throw new Error(".FormulaSheet expects one tensor or rectangular array of deferred formulas");
+  }
   return createFormulaSheet(args[0], {
     formulaSource: deferredSource,
     runFormula(formula, bindings, runOptions = {}) {
@@ -27179,7 +27229,7 @@ var formulaSheetFunctions = {
   FORMULASHEET: {
     pure: false,
     impl: formulaSheetCapability,
-    doc: "Create a formula-backed sheet from a rectangular array of deferred RiX formulas"
+    doc: "Create a formula-backed sheet from a tensor or rectangular array of deferred RiX formulas"
   }
 };
 
@@ -27248,6 +27298,30 @@ function rawReactiveNode(name, context, label) {
   }
   return value;
 }
+function rawFormulaSheet(name, context, label) {
+  const value = context.get(name);
+  if (!isFormulaSheet(value)) {
+    throw new Error(`${label} requires '${name}' to name a FormulaSheet`);
+  }
+  return value;
+}
+function reactiveIndex(args, context, evaluate, label) {
+  const [name, specCount, ...rest] = args;
+  const specNodes = rest.slice(0, specCount);
+  if (specNodes.some((spec2) => spec2?.fn === "FULL_SLICE" || spec2?.fn === "SLICE_SPEC")) {
+    throw new Error(`${label} requires one exact index on every FormulaSheet axis`);
+  }
+  const values = specNodes.map((spec2) => evaluate(spec2));
+  const index = values.length === 1 ? values[0] : values;
+  const sheet = rawFormulaSheet(name, context, label);
+  return { name, sheet, node: sheet.reactiveNode(index), index, rest: rest.slice(specCount) };
+}
+function requireSameActiveGraph(node, context, label) {
+  const activeGraph = context.getEnv(REACTIVE_ACTIVE_GRAPH_ENV, null);
+  if (activeGraph && node.graph !== activeGraph) {
+    throw new Error(`${label} crosses ReactiveGraphs`);
+  }
+}
 function restoreEnv(context, key, snapshot) {
   if (snapshot.has)
     context.setEnv(key, snapshot.value);
@@ -27298,6 +27372,7 @@ function getBindingGraph(context) {
   if (graph)
     return graph;
   graph = createReactiveGraph({
+    preserveIdentifierCase: true,
     evaluateFormula() {
       throw new Error("Reactive binding definitions require their captured evaluator");
     }
@@ -27354,6 +27429,9 @@ function collectPlainReads(node, names = new Set) {
     names.add(node.args[0]);
     return names;
   }
+  if (node.fn === "CALL" && typeof node.args?.[0] === "string") {
+    names.add(node.args[0]);
+  }
   if (node.fn === "REACTIVE_READ" || node.fn === "REACTIVE_NODE")
     return names;
   for (const arg of node.args || [])
@@ -27368,7 +27446,7 @@ function collectReactiveNames(node, names = new Set) {
       collectReactiveNames(item, names);
     return names;
   }
-  if ((node.fn === "REACTIVE_READ" || node.fn === "REACTIVE_NODE") && typeof node.args?.[0] === "string") {
+  if ((node.fn === "REACTIVE_READ" || node.fn === "REACTIVE_NODE" || node.fn === "REACTIVE_INDEX_READ" || node.fn === "REACTIVE_INDEX_NODE") && typeof node.args?.[0] === "string") {
     names.add(node.args[0]);
     return names;
   }
@@ -27382,6 +27460,8 @@ function graphForFormula(formula, context, fallback = null) {
     const value = context.get(name);
     if (isReactiveNode(value))
       graphs.add(value.graph);
+    else if (isFormulaSheet(value))
+      graphs.add(value.graph);
   }
   if (graphs.size > 1) {
     throw new Error("One reactive definition cannot currently track cells from different ReactiveGraphs");
@@ -27394,7 +27474,8 @@ function warnUntrackedReads(formula, context, graph, pendingNames = new Set) {
     return;
   const graphNames = new Set(graph.bindings().keys());
   for (const name of collectPlainReads(formula?.args?.[0])) {
-    if (!graphNames.has(name) && !pendingNames.has(name) && !isReactiveNode(context.get(name)))
+    const value = context.get(name);
+    if (!graphNames.has(name) && !pendingNames.has(name) && !isReactiveNode(value) && !isFormulaSheet(value))
       continue;
     getDiagnostics(context).addEvent(createEvent({
       kind: "warning",
@@ -27432,7 +27513,7 @@ function declareReactive(args, context, evaluate) {
       collector.changes.push({ kind: "alias", name, target });
       collector.bindings.push({ name, target });
       collector.pendingNames.add(name);
-      collector.lastReactiveName = name;
+      collector.lastNodeName = target;
       return null;
     }
     const node2 = rawReactiveNode(target, context, "Reactive alias declaration");
@@ -27447,7 +27528,7 @@ function declareReactive(args, context, evaluate) {
     collector.changes.push(definition);
     collector.bindings.push({ name });
     collector.pendingNames.add(name);
-    collector.lastReactiveName = name;
+    collector.lastNodeName = name;
     return null;
   }
   warnUntrackedReads(formula, context, graph);
@@ -27464,7 +27545,7 @@ function updateReactive(args, context, evaluate) {
   if (collector) {
     useCollectorGraph(collector, node.graph);
     collector.changes.push(update);
-    collector.lastReactiveName = name;
+    collector.lastNodeName = node.name;
     return node.peek();
   }
   warnUntrackedReads(formula, context, node.graph);
@@ -27483,6 +27564,31 @@ function readReactive(args, context) {
 function retrieveReactiveNode(args, context) {
   return rawReactiveNode(args[0], context, "Reactive cell reference");
 }
+function readReactiveIndex(args, context, evaluate) {
+  const { node } = reactiveIndex(args, context, evaluate, "Tracked FormulaSheet read");
+  requireSameActiveGraph(node, context, "Tracked FormulaSheet read");
+  return node.get();
+}
+function retrieveReactiveIndexNode(args, context, evaluate) {
+  return reactiveIndex(args, context, evaluate, "FormulaSheet cell reference").node;
+}
+function updateReactiveIndex(args, context, evaluate) {
+  const reference = reactiveIndex(args, context, evaluate, "Reactive FormulaSheet update");
+  const formula = requireDeferred(evaluate(reference.rest[0]), `Reactive FormulaSheet update ${reference.node.name}`);
+  const collector = currentCollector(context);
+  if (collector) {
+    useCollectorGraph(collector, reference.node.graph);
+    collector.changes.push({
+      kind: "update",
+      name: reference.node.name,
+      formula
+    });
+    collector.lastNodeName = reference.node.name;
+    return reference.node.peek();
+  }
+  reference.sheet.setFormula(reference.index, formula);
+  return reference.node.peek();
+}
 function reactiveTransaction(args, context, evaluate) {
   const parent = currentCollector(context);
   if (parent) {
@@ -27496,7 +27602,7 @@ function reactiveTransaction(args, context, evaluate) {
     changes: [],
     bindings: [],
     pendingNames: new Set,
-    lastReactiveName: null
+    lastNodeName: null
   };
   const previous = {
     has: context.env?.has(REACTIVE_TRANSACTION_ENV) === true,
@@ -27521,7 +27627,7 @@ function reactiveTransaction(args, context, evaluate) {
     names: Object.freeze(collector.changes.map(({ name }) => name))
   });
   bindCommittedNames(collector, context);
-  return collector.lastReactiveName ? rawReactiveNode(collector.lastReactiveName, context, "Reactive transaction result").peek() : result;
+  return collector.lastNodeName ? collector.graph.node(collector.lastNodeName).peek() : result;
 }
 var reactiveBindingFunctions = {
   REACTIVE_READ: {
@@ -27532,6 +27638,16 @@ var reactiveBindingFunctions = {
     impl: retrieveReactiveNode,
     doc: "Retrieve a reactive cell identity without dereferencing it"
   },
+  REACTIVE_INDEX_READ: {
+    lazy: true,
+    impl: readReactiveIndex,
+    doc: "Read a FormulaSheet cell and record a dependency"
+  },
+  REACTIVE_INDEX_NODE: {
+    lazy: true,
+    impl: retrieveReactiveIndexNode,
+    doc: "Retrieve a FormulaSheet cell identity without dereferencing it"
+  },
   REACTIVE_DECLARE: {
     lazy: true,
     impl: declareReactive,
@@ -27541,6 +27657,11 @@ var reactiveBindingFunctions = {
     lazy: true,
     impl: updateReactive,
     doc: "Replace a reactive cell definition while preserving its identity"
+  },
+  REACTIVE_INDEX_UPDATE: {
+    lazy: true,
+    impl: updateReactiveIndex,
+    doc: "Replace a FormulaSheet cell's deferred formula"
   },
   REACTIVE_TRANSACTION: {
     lazy: true,
@@ -30350,12 +30471,16 @@ function complete(source, cursor, { context, systemContext, formatValue: formatV
   const prior = before.slice(0, cursor - token2.length);
   let candidates = [];
   if (reactivePrefix) {
-    candidates = context.getAllNames().map((name) => [name, context.get(name)]).filter(([, value]) => value?.type === "reactive_node").map(([name, value]) => ({
-      insertText: name,
-      kind: reactivePrefix === "$$" ? "reactive cell" : "reactive value",
-      detail: reactivePrefix === "$$" ? "reactive cell identity" : "tracked reactive read",
-      preview: preview(value.peek(), formatValue2)
-    }));
+    candidates = context.getAllNames().map((name) => [name, context.get(name)]).filter(([, value]) => value?.type === "reactive_node" || reactivePrefix === "$" && value?.type === "formula_sheet").map(([name, value]) => {
+      const current = value.type === "reactive_node" ? value.peek() : null;
+      const callable = current && ["function", "lambda", "multifunction"].includes(current.type);
+      return {
+        insertText: name,
+        kind: value.type === "formula_sheet" ? "reactive sheet" : callable ? "reactive function" : reactivePrefix === "$$" ? "reactive cell" : "reactive value",
+        detail: value.type === "formula_sheet" ? "append [index] for a tracked cell read" : callable ? reactivePrefix === "$$" ? "reactive function identity" : "tracked reactive function read or call" : reactivePrefix === "$$" ? "reactive cell identity" : "tracked reactive read",
+        preview: value.type === "formula_sheet" ? preview(value, formatValue2) : preview(current, formatValue2)
+      };
+    });
   } else if (token2.startsWith("@_") || prior.endsWith("@_")) {
     const prefix = token2.startsWith("@_") ? "@_" : "@_";
     candidates = systemCandidates(systemContext, prefix);
@@ -30870,5 +30995,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { formatValue, mountOutputWidgets, findHelp, createRixRepl };
 
-//# debugId=80AE1D1888269C6F64756E2164756E21
-//# sourceMappingURL=chunk-6d1mt148.js.map
+//# debugId=69763CD1ACC6122B64756E2164756E21
+//# sourceMappingURL=chunk-svvcbm1d.js.map

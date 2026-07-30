@@ -133,10 +133,10 @@ owns a deferred RiX formula, and `grid[...]` reads are evaluated together as a
 dependency graph:
 
 ```rix edu
-model := .FormulaSheet([
-    [@{1}, @{ grid[1,1] + 1 }],
-    [@{ grid[1,2] * 2 }, @{ grid[2,1] + 1 }]
-]);
+model := .FormulaSheet({:2x2:
+    @{1}, @{ grid[1,1] + 1 };
+    @{ grid[1,2] * 2 }, @{ grid[2,1] + 1 }
+});
 formulaView := .Sheet(model, {= title="Formula results" });
 formulaView ;
 ```
@@ -150,7 +150,7 @@ a new atomic evaluation epoch and refreshes every dependent result.
 The same update is available programmatically:
 
 ```rix edu
-model.SetFormula(1, 1, @{10});
+$model[1,1] := @{10};
 .Sheet(model, {= title="Recalculated results" }) ;
 ```
 
@@ -192,32 +192,37 @@ ${
 
 The result is `[13, 52, 62]`. `$$alias := $$source1` would bind another name to
 the same reactive cell. Redeclaring an existing `$$name` is an error. Bare `$`
-and `$$` keep their callable-self meanings; adjacency to a lowercase name
-selects the reactive forms.
+and `$$` keep their callable-self meanings; adjacency to any identifier selects
+the reactive forms. An uppercase callable declaration is a reactive function:
+
+```rix edu
+$$Scale := x -> x * $source1;
+[Scale(3), $Scale(3)] ;
+```
+
+`Scale(3)` calls the current definition without tracking its identity;
+`$Scale(3)` is a tracked call. `$Scale := x -> ...` replaces the reactive
+function definition while preserving its identity and downstream dependents.
 
 ## Drive another live object
 
-Every FormulaSheet has a reactive graph. `values.Graph()` exposes it so named
-computations can depend on sheet coordinates and on one another. Reads made
-while a deferred computation runs become graph edges; changing an input
-recomputes only its transitive dependents in one atomic epoch.
+Every FormulaSheet has a reactive graph. `$values[1,2]` selects and tracks that
+exact cell, so named computations can depend on sheet coordinates without
+exposing internal graph-node names. Reads made while a deferred computation
+runs become graph edges; changing an input recomputes only its transitive
+dependents in one atomic epoch.
 
 This example uses three editable formulas. The first two determine a point and
 their average. The third is both the point radius and a coefficient captured by
 a locally defined `Scale` function:
 
 ```rix edu
-values := .FormulaSheet([[@{120}, @{40}, @{8}]]);
-graph := values.Graph();
+values := .FormulaSheet({:1x3: @{120}, @{40}, @{8}});
 
-first = graph.Node("slot_1_1");
-second = graph.Node("slot_1_2");
-third = graph.Node("slot_1_3");
-
-$$average := ($first + $second) / 2;
+$$average := ($values[1,1] + $values[1,2]) / 2;
 $$functionvalue := {;
-    Scale(x) -> x * $third;
-    Scale($first)
+    Scale(x) -> x * $values[1,3];
+    Scale($values[1,1])
 };
 
 .LiveView(values, @{
