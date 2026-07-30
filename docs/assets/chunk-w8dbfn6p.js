@@ -23,6 +23,9 @@ function moveSheetSelection(position, key, rowCount, columnCount) {
     column: Math.min(Math.max(current.column, 1), Math.max(columnCount, 1))
   };
 }
+function sheetPlaneKey(selections) {
+  return [...selections].sort((left, right) => Number(left.axis) - Number(right.axis)).map(({ axis, value }) => `${Number(axis)}:${Number(value)}`).join(",");
+}
 function sheetRoots(root) {
   if (!root)
     return [];
@@ -35,10 +38,12 @@ function sheetRoots(root) {
 }
 function eventDetail(cell) {
   const index = String(cell.dataset.rixIndex || "").split(",").filter(Boolean).map(Number);
+  const slice = String(cell.closest("tbody")?.dataset.rixSlice || "").split(",").map((item) => item === "" ? null : Number(item));
   return {
     address: cell.dataset.rixAddress,
     displayAddress: cell.dataset.rixDisplayAddress,
     index,
+    slice,
     row: Number(cell.dataset.rixRow),
     column: Number(cell.dataset.rixColumn)
   };
@@ -56,16 +61,13 @@ function enhanceSheet(sheet, options) {
   const table = sheet.querySelector("table");
   const location = sheet.querySelector(".rix-output-sheet-location");
   const cells = [...sheet.querySelectorAll("td[data-rix-address]")];
+  const planeBodies = [...sheet.querySelectorAll("tbody[data-rix-plane-key]")];
+  const planeSelectors = [...sheet.querySelectorAll("select[data-rix-sheet-axis]")];
   if (!table || !cells.length)
     return;
   table.setAttribute("role", "grid");
   table.setAttribute("aria-label", sheet.querySelector(".rix-output-sheet-title")?.textContent || "RiX sheet");
-  const rowCount = Math.max(...cells.map((cell) => Number(cell.dataset.rixRow)));
-  const columnCount = Math.max(...cells.map((cell) => Number(cell.dataset.rixColumn)));
-  const byPosition = new Map(cells.map((cell) => [
-    `${cell.dataset.rixRow},${cell.dataset.rixColumn}`,
-    cell
-  ]));
+  const activeCells = () => cells.filter((cell) => !cell.closest("tbody")?.hidden);
   function select(cell, { focus = false, notify = true } = {}) {
     for (const candidate of cells) {
       const selected = candidate === cell;
@@ -90,8 +92,35 @@ function enhanceSheet(sheet, options) {
     options.onActivate?.(detail, cell, sheet);
     dispatchSheetEvent(sheet, "rix-sheet-activate", detail);
   }
-  for (const [index, cell] of cells.entries()) {
-    cell.tabIndex = index === 0 ? 0 : -1;
+  function changePlane() {
+    const selections = planeSelectors.map((selector) => ({
+      axis: Number(selector.dataset.rixSheetAxis),
+      value: Number(selector.value)
+    }));
+    const key = sheetPlaneKey(selections);
+    for (const body2 of planeBodies)
+      body2.hidden = body2.dataset.rixPlaneKey !== key;
+    sheet.dataset.rixSelectedPlane = key;
+    const body = planeBodies.find((candidate) => !candidate.hidden);
+    if (!body)
+      return;
+    const detail = {
+      key,
+      slice: String(body.dataset.rixSlice || "").split(",").map((item) => item === "" ? null : Number(item)),
+      selections
+    };
+    const first = body.querySelector("td[data-rix-address]");
+    if (first)
+      select(first, { focus: true });
+    options.onPlaneChange?.(detail, sheet);
+    dispatchSheetEvent(sheet, "rix-sheet-plane-change", detail);
+  }
+  const initiallyActive = new Set(activeCells());
+  let firstActive = true;
+  for (const cell of cells) {
+    cell.tabIndex = initiallyActive.has(cell) && firstActive ? 0 : -1;
+    if (initiallyActive.has(cell))
+      firstActive = false;
     cell.setAttribute("aria-selected", "false");
     cell.addEventListener("focus", () => {
       if (sheet.dataset.rixSelectedAddress !== cell.dataset.rixAddress)
@@ -119,16 +148,21 @@ function enhanceSheet(sheet, options) {
         select(cell, { focus: true });
         return;
       }
+      const bodyCells = [...cell.closest("tbody").querySelectorAll("td[data-rix-address]")];
+      const rowCount = Math.max(...bodyCells.map((candidate) => Number(candidate.dataset.rixRow)));
+      const columnCount = Math.max(...bodyCells.map((candidate) => Number(candidate.dataset.rixColumn)));
       const next = moveSheetSelection(eventDetail(cell), event.key, rowCount, columnCount);
       if (!next)
         return;
       event.preventDefault();
       event.stopPropagation();
-      const target = byPosition.get(`${next.row},${next.column}`);
+      const target = bodyCells.find((candidate) => Number(candidate.dataset.rixRow) === next.row && Number(candidate.dataset.rixColumn) === next.column);
       if (target)
         select(target, { focus: true });
     });
   }
+  for (const selector of planeSelectors)
+    selector.addEventListener("change", changePlane);
 }
 function enhanceSheetViews(root, options = {}) {
   for (const sheet of sheetRoots(root))
@@ -13784,6 +13818,20 @@ function sheetColumnLabel(index, mode) {
 function sheetDisplayAddress(row, column, mode) {
   return mode === "numbers" ? `R${row}C${column}` : `${spreadsheetColumnLabel(column)}${row}`;
 }
+function sheetPlaneKey2(slice, hiddenAxes) {
+  return hiddenAxes.map(({ axis }) => `${axis}:${slice[axis - 1]}`).join(",");
+}
+function sheetPlaneSlices(shape, initialSlice, hiddenAxes) {
+  let slices = [initialSlice.map((item) => item)];
+  for (const { axis } of hiddenAxes) {
+    slices = slices.flatMap((slice) => Array.from({ length: shape[axis - 1] }, (_item, index) => {
+      const next = slice.map((item) => item);
+      next[axis - 1] = index + 1;
+      return next;
+    }));
+  }
+  return slices;
+}
 function sheetField(entry, options, name, fallback = null) {
   const optionValue = options ? get(options, name) : null;
   return optionValue ?? get(entry, name, fallback);
@@ -13846,8 +13894,14 @@ function createSheet(args) {
   const columnCount = columnAxis === null ? 1 : data.shape[columnAxis - 1];
   const rowHeaders = Array.from({ length: rowCount }, (_item, index) => String(index + 1));
   const columnHeaders = Array.from({ length: columnCount }, (_item, index) => sheetColumnLabel(index + 1, columnLabelMode));
-  const cells = Array.from({ length: rowCount }, (_row, rowIndex) => Array.from({ length: columnCount }, (_column, columnIndex) => {
-    const index = slice.map((item) => item);
+  const hiddenAxes = data.shape.map((length, index) => ({
+    axis: index + 1,
+    name: axes[index],
+    length,
+    selected: slice[index]
+  })).filter(({ axis }) => !visibleAxes.has(axis));
+  const cellsForSlice = (planeSlice) => Array.from({ length: rowCount }, (_row, rowIndex) => Array.from({ length: columnCount }, (_column, columnIndex) => {
+    const index = planeSlice.map((item) => item);
     index[rowAxis - 1] = rowIndex + 1;
     if (columnAxis !== null)
       index[columnAxis - 1] = columnIndex + 1;
@@ -13858,6 +13912,13 @@ function createSheet(args) {
       displayAddress: sheetDisplayAddress(rowIndex + 1, columnIndex + 1, columnLabelMode)
     });
   }));
+  const planes = sheetPlaneSlices(data.shape, slice, hiddenAxes).map((planeSlice) => Object.freeze({
+    key: sheetPlaneKey2(planeSlice, hiddenAxes),
+    slice: Object.freeze(planeSlice),
+    cells: Object.freeze(cellsForSlice(planeSlice).map((row) => Object.freeze(row)))
+  }));
+  const selectedPlaneKey = sheetPlaneKey2(slice, hiddenAxes);
+  const cells = planes.find((plane) => plane.key === selectedPlaneKey)?.cells ?? planes[0].cells;
   return output("sheet", {
     sourceKind: data.kind,
     rank,
@@ -13870,7 +13931,10 @@ function createSheet(args) {
     columnLabelMode,
     rowHeaders: Object.freeze(rowHeaders),
     columnHeaders: Object.freeze(columnHeaders),
-    cells: Object.freeze(cells.map((row) => Object.freeze(row))),
+    hiddenAxes: Object.freeze(hiddenAxes.map((axis) => Object.freeze(axis))),
+    selectedPlaneKey,
+    planes: Object.freeze(planes),
+    cells,
     options
   });
 }
@@ -14340,7 +14404,9 @@ function renderOutputHtml(value, format = (item) => String(item ?? "")) {
     return `<table class="rix-output-grid"><tbody>${value.rows.map((row, rowIndex) => `<tr${hasRule(value, "horizontal", rowIndex + 1) ? ' class="rix-grid-rule-top"' : ""}>${row.map((cell, column) => `<td${hasRule(value, "vertical", column + 1) ? ' class="rix-grid-rule-left"' : ""}>${text(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
   if (value.kind === "sheet") {
     const summary = `${value.addressBase} · shape ${value.shape.join("×")}`;
-    return `<section class="rix-output-sheet" data-rix-rank="${value.rank}">${value.title ? `<h3 class="rix-output-sheet-title">${escapeHtml(value.title)}</h3>` : ""}<div class="rix-output-sheet-location" aria-live="polite">${escapeHtml(summary)}</div><table><thead><tr><th class="rix-output-sheet-corner" scope="col">${escapeHtml(value.addressBase)}</th>${value.columnHeaders.map((header, column) => `<th scope="col" data-rix-column="${column + 1}">${escapeHtml(header)}</th>`).join("")}</tr></thead><tbody>${value.cells.map((row, rowIndex) => `<tr><th scope="row" data-rix-row="${rowIndex + 1}">${escapeHtml(value.rowHeaders[rowIndex])}</th>${row.map((cell, columnIndex) => `<td data-rix-row="${rowIndex + 1}" data-rix-column="${columnIndex + 1}" data-rix-index="${cell.index.join(",")}" data-rix-address="${escapeHtml(cell.address)}" data-rix-display-address="${escapeHtml(cell.displayAddress)}" title="${escapeHtml(cell.displayAddress)} · ${escapeHtml(cell.address)}">${text(cell.value)}</td>`).join("")}</tr>`).join("")}</tbody></table></section>`;
+    const controls = value.hiddenAxes.length === 0 ? "" : `<div class="rix-output-sheet-plane-controls" aria-label="Tensor plane">${value.hiddenAxes.map(({ axis, name, length, selected }) => `<label><span>${escapeHtml(name)} · axis ${axis}</span><select data-rix-sheet-axis="${axis}" aria-label="${escapeHtml(name)} axis ${axis}">${Array.from({ length }, (_item, index) => `<option value="${index + 1}"${selected === index + 1 ? " selected" : ""}>${index + 1}</option>`).join("")}</select></label>`).join("")}</div>`;
+    const bodies = value.planes.map((plane) => `<tbody data-rix-plane-key="${escapeHtml(plane.key)}" data-rix-slice="${plane.slice.map((item) => item ?? "").join(",")}"${plane.key === value.selectedPlaneKey ? "" : " hidden"}>${plane.cells.map((row, rowIndex) => `<tr><th scope="row" data-rix-row="${rowIndex + 1}">${escapeHtml(value.rowHeaders[rowIndex])}</th>${row.map((cell, columnIndex) => `<td data-rix-row="${rowIndex + 1}" data-rix-column="${columnIndex + 1}" data-rix-index="${cell.index.join(",")}" data-rix-address="${escapeHtml(cell.address)}" data-rix-display-address="${escapeHtml(cell.displayAddress)}" title="${escapeHtml(cell.displayAddress)} · ${escapeHtml(cell.address)}">${text(cell.value)}</td>`).join("")}</tr>`).join("")}</tbody>`).join("");
+    return `<section class="rix-output-sheet" data-rix-rank="${value.rank}" data-rix-selected-plane="${escapeHtml(value.selectedPlaneKey)}">${value.title ? `<h3 class="rix-output-sheet-title">${escapeHtml(value.title)}</h3>` : ""}<div class="rix-output-sheet-location" aria-live="polite" data-rix-summary="${escapeHtml(summary)}">${escapeHtml(summary)}</div>${controls}<table><thead><tr><th class="rix-output-sheet-corner" scope="col">${escapeHtml(value.addressBase)}</th>${value.columnHeaders.map((header, column) => `<th scope="col" data-rix-column="${column + 1}">${escapeHtml(header)}</th>`).join("")}</tr></thead>${bodies}</table></section>`;
   }
   if (value.kind === "figure")
     return `<figure class="rix-output-figure"${value.label ? ` id="${escapeHtml(value.label)}"` : ""}>${renderOutputHtml(value.content, format)}${value.caption ? `<figcaption>${escapeHtml(value.caption)}</figcaption>` : ""}</figure>`;
@@ -28737,5 +28803,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { enhanceSheetViews, findHelp, createRixRepl };
 
-//# debugId=4D7325B9E014E1FA64756E2164756E21
-//# sourceMappingURL=chunk-wfcdz9xp.js.map
+//# debugId=D742A617B55B313A64756E2164756E21
+//# sourceMappingURL=chunk-w8dbfn6p.js.map

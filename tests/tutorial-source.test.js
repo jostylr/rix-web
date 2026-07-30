@@ -49,16 +49,21 @@ test("tutorial code fields initially fit their supplied code", async () => {
     expect(generator).toContain('rows="${textareaRows(challengeCode)}"');
     expect(runner).toContain("function sizeTutorialSource(input)");
     expect(runner).toContain("input.style.height = `${input.scrollHeight}px`");
+    expect(runner).toContain("insertTutorialText(sourceInput, address)");
 });
 
-test("structured output has focused table, document, graphic, and drawing lessons", async () => {
+test("structured output has focused table, document, graphic, drawing, and sheet lessons", async () => {
     expect(tutorialByNumber("12a")?.file).toBe("tables-and-grids.html");
     expect(tutorialByNumber("12b")?.file).toBe("documents-and-slides.html");
     expect(tutorialByNumber("12c")?.file).toBe("plots-and-graphics.html");
     expect(tutorialByNumber("12d")?.file).toBe("drawing-with-draw.html");
+    expect(tutorialByNumber("12e")?.file).toBe("sheets-and-tensor-views.html");
     const drawing = await Bun.file(new URL("../tutorials/drawing-with-draw.md", import.meta.url)).text();
+    const sheets = await Bun.file(new URL("../tutorials/sheets-and-tensor-views.md", import.meta.url)).text();
     expect(drawing).toContain(".Graphics.Transform");
     expect(drawing).toContain(".Graphics.Clip");
+    expect(sheets).toContain("grid[2,3]");
+    expect(sheets).toContain("slice = [_, _, 2]");
 });
 
 test("structural arithmetic has focused notation and parser lessons", async () => {

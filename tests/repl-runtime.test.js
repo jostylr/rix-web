@@ -48,6 +48,20 @@ test("the web REPL returns address-aware Sheet HTML", () => {
     expect(response.text).toContain("shape 2×3");
 });
 
+test("the web REPL returns interactive tensor-plane controls", () => {
+    const repl = createRixRepl();
+    const response = repl.run(`
+        cube := {:2x3x2: 1, 2, 3; 4, 5, 6 ;; 7, 8, 9; 10, 11, 12};
+        .Sheet(cube, {= axes=["row", "column", "depth"], slice=[_, _, 2], address="cube" })
+    `);
+
+    expect(response.type).toBe("result");
+    expect(response.html).toContain('data-rix-sheet-axis="3"');
+    expect(response.html).toContain('data-rix-plane-key="3:1"');
+    expect(response.html).toContain('data-rix-plane-key="3:2"');
+    expect(response.html).toContain('data-rix-address="cube[1,3,2]"');
+});
+
 test("the web REPL catalogs bundled plugins and loads approved JavaScript on demand", () => {
     const repl = createRixRepl();
 

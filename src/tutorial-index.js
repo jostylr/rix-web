@@ -72,6 +72,7 @@ const coreTutorials = [
     { number: "12b", parent: "12", file: "documents-and-slides.html", title: "Documents and slides", description: "Compose report fragments, captions, and portable slide decks." },
     { number: "12c", parent: "12", file: "plots-and-graphics.html", title: "Plots and graphics", description: "Plot exact polynomials and understand portable SVG scenes." },
     { number: "12d", parent: "12", file: "drawing-with-draw.html", title: "Drawing with .Graphics", description: "Build portable scenes from paths, shapes, groups, transforms, and clips." },
+    { number: "12e", parent: "12", file: "sheets-and-tensor-views.html", title: "Sheets and tensor views", description: "Navigate exact grids, canonical RiX addresses, and higher-dimensional planes." },
     { number: "13", file: "core-host-lowering.html", title: "Core, host, and lowering", description: "See how RiX syntax reaches named operations and capability owners." },
     { number: "13a", parent: "13", file: "core-operations.html", title: "Core operations", description: "Use public PascalCase calls alongside expression syntax." },
     { number: "13b", parent: "13", file: "lazy-core-forms.html", title: "Lazy structural forms", description: "Build assignments, maps, and lambdas from explicit core forms." },

@@ -15,8 +15,22 @@ function sizeTutorialSource(input) {
     input.style.height = `${input.scrollHeight}px`;
 }
 
+function insertTutorialText(input, text) {
+    const untouchedStart = input.selectionStart === 0 && input.selectionEnd === 0 && document.activeElement !== input;
+    const start = untouchedStart ? input.value.length : input.selectionStart ?? input.value.length;
+    const end = untouchedStart ? start : input.selectionEnd ?? start;
+    const insertion = start === input.value.length && start === end && input.value && !input.value.endsWith("\n")
+        ? `\n${text}`
+        : text;
+    input.value = `${input.value.slice(0, start)}${insertion}${input.value.slice(end)}`;
+    input.selectionStart = input.selectionEnd = start + insertion.length;
+    sizeTutorialSource(input);
+    input.focus();
+}
+
 function runCell(cell) {
-    const source = cell.querySelector("[data-tutorial-source]").value.trim();
+    const sourceInput = cell.querySelector("[data-tutorial-source]");
+    const source = sourceInput.value.trim();
     if (!source) return;
     const response = repl.run(source);
     const output = cell.querySelector("[data-tutorial-output]");
@@ -27,7 +41,9 @@ function runCell(cell) {
     }
     if (response.type !== "error" && response.html) {
         output.innerHTML = `<div class="result rich-output">${response.html}</div>`;
-        enhanceSheetViews(output);
+        enhanceSheetViews(output, {
+            onActivate: ({ address }) => insertTutorialText(sourceInput, address),
+        });
         return;
     }
     output.innerHTML = `<div class="${response.type === "error" ? "error" : "result"}">${escapeHtml(response.text)}</div>`;

@@ -2,7 +2,7 @@ import {
   createRixRepl,
   enhanceSheetViews,
   findHelp
-} from "./chunk-wfcdz9xp.js";
+} from "./chunk-w8dbfn6p.js";
 
 // src/main.js
 var repl = createRixRepl();

@@ -1,7 +1,7 @@
 import {
   createRixRepl,
   enhanceSheetViews
-} from "./chunk-wfcdz9xp.js";
+} from "./chunk-w8dbfn6p.js";
 
 // src/generated/plugin-tutorial-index.js
 var pluginTutorialGroups = [
@@ -146,6 +146,7 @@ var coreTutorials = [
   { number: "12b", parent: "12", file: "documents-and-slides.html", title: "Documents and slides", description: "Compose report fragments, captions, and portable slide decks." },
   { number: "12c", parent: "12", file: "plots-and-graphics.html", title: "Plots and graphics", description: "Plot exact polynomials and understand portable SVG scenes." },
   { number: "12d", parent: "12", file: "drawing-with-draw.html", title: "Drawing with .Graphics", description: "Build portable scenes from paths, shapes, groups, transforms, and clips." },
+  { number: "12e", parent: "12", file: "sheets-and-tensor-views.html", title: "Sheets and tensor views", description: "Navigate exact grids, canonical RiX addresses, and higher-dimensional planes." },
   { number: "13", file: "core-host-lowering.html", title: "Core, host, and lowering", description: "See how RiX syntax reaches named operations and capability owners." },
   { number: "13a", parent: "13", file: "core-operations.html", title: "Core operations", description: "Use public PascalCase calls alongside expression syntax." },
   { number: "13b", parent: "13", file: "lazy-core-forms.html", title: "Lazy structural forms", description: "Build assignments, maps, and lambdas from explicit core forms." },
@@ -212,8 +213,21 @@ function sizeTutorialSource(input) {
   input.style.height = "auto";
   input.style.height = `${input.scrollHeight}px`;
 }
+function insertTutorialText(input, text) {
+  const untouchedStart = input.selectionStart === 0 && input.selectionEnd === 0 && document.activeElement !== input;
+  const start = untouchedStart ? input.value.length : input.selectionStart ?? input.value.length;
+  const end = untouchedStart ? start : input.selectionEnd ?? start;
+  const insertion = start === input.value.length && start === end && input.value && !input.value.endsWith(`
+`) ? `
+${text}` : text;
+  input.value = `${input.value.slice(0, start)}${insertion}${input.value.slice(end)}`;
+  input.selectionStart = input.selectionEnd = start + insertion.length;
+  sizeTutorialSource(input);
+  input.focus();
+}
 function runCell(cell) {
-  const source = cell.querySelector("[data-tutorial-source]").value.trim();
+  const sourceInput = cell.querySelector("[data-tutorial-source]");
+  const source = sourceInput.value.trim();
   if (!source)
     return;
   const response = repl.run(source);
@@ -226,7 +240,9 @@ function runCell(cell) {
   }
   if (response.type !== "error" && response.html) {
     output.innerHTML = `<div class="result rich-output">${response.html}</div>`;
-    enhanceSheetViews(output);
+    enhanceSheetViews(output, {
+      onActivate: ({ address }) => insertTutorialText(sourceInput, address)
+    });
     return;
   }
   output.innerHTML = `<div class="${response.type === "error" ? "error" : "result"}">${escapeHtml(response.text)}</div>`;
@@ -312,5 +328,5 @@ function openObjectHelp(name, requestedFunction = null) {
   dialog.showModal();
 }
 
-//# debugId=C90BF6EFD905DE7C64756E2164756E21
+//# debugId=5BD336E94071F4D764756E2164756E21
 //# sourceMappingURL=tutorial-runner.js.map
