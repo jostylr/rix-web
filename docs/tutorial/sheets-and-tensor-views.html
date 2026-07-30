@@ -70,20 +70,35 @@ formulaView ;</textarea><div class="tutorial-output" data-tutorial-output></div>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">model.SetFormula(1, 1, @{10});
 .Sheet(model, {= title=&quot;Recalculated results&quot; }) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The lower-right result is now <code>23</code>. A self-reference such as <code>@{ grid[1,1] + 1 }</code> reports a cycle instead of reading the previously committed value. Persistent <code>.rixcel</code> documents and assignment modes are the next storage layer.</p>
+<h2>Define a reactive graph concisely</h2>
+<p>The <code>.ReactiveGraph</code>, <code>Source</code>, and <code>Derive</code> methods are the foundational API. The <code>.RG:</code> backtick notation builds the same nodes with less repeated naming. Prefix a declaration with <code>$</code> to make it an externally settable source; ordinary declarations are computed formulas:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">graph := `.RG.Init.Set:
+    $source1 := 2
+    source source2 := 3
+    target1 := source1 + source2
+    target2 := target1 * 4
+`;
+[graph.Get(&quot;target1&quot;), graph.Get(&quot;target2&quot;)] ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p><code>source source2</code> and <code>$source2</code> mean the same thing. <code>Init</code> creates the graph and <code>Set</code> makes it the default for later <code>.RG:</code> blocks in this tutorial section. Newlines or semicolons can separate declarations:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">`.RG:
+    target3 := target2 + source1
+`;
+graph.Node(&quot;source1&quot;).Set(10);
+[graph.Get(&quot;target1&quot;), graph.Get(&quot;target2&quot;), graph.Get(&quot;target3&quot;)] ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The result is <code>[13, 52, 62]</code>. <code>.RG.Use(otherGraph): ...</code> applies one block to a named graph without changing the default, while <code>.RG.Set(otherGraph): ...</code> changes the default. Outside <code>.RG</code> notation, <code>$</code> keeps its ordinary RiX meaning of the current callable.</p>
 <h2>Drive another live object</h2>
 <p>Every FormulaSheet has a reactive graph. <code>values.Graph()</code> exposes it so named computations can depend on sheet coordinates and on one another. Reads made while a deferred computation runs become graph edges; changing an input recomputes only its transitive dependents in one atomic epoch.</p>
 <p>This example uses three editable formulas. The first two determine a point and their average. The third is both the point radius and a coefficient captured by a locally defined <code>Scale</code> function:</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="36" spellcheck="false">values := .FormulaSheet([[@{120}, @{40}, @{8}]]);
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="35" spellcheck="false">values := .FormulaSheet([[@{120}, @{40}, @{8}]]);
 graph := values.Graph();
 
-average := graph.Derive(&quot;average&quot;, @{
-    (grid[1,1] + grid[1,2]) / 2
-});
-
-functionvalue := graph.Derive(&quot;functionvalue&quot;, @{
-    Scale(x) -&gt; x * grid[1,3];
-    Scale(grid[1,1])
-});
+`.RG.Use(graph):
+    average := (grid[1,1] + grid[1,2]) / 2
+    functionvalue := {;
+        Scale(x) -&gt; x * grid[1,3];
+        Scale(grid[1,1])
+    }
+`;
 
 .LiveView(values, @{
     .Fragment([
