@@ -1,8 +1,8 @@
 import {
   createRixRepl,
-  createWidgetSession,
-  enhanceSheetViews
-} from "./chunk-3ze8tj32.js";
+  formatValue,
+  mountOutputWidgets
+} from "./chunk-jq68m41d.js";
 
 // src/generated/plugin-tutorial-index.js
 var pluginTutorialGroups = [
@@ -280,16 +280,10 @@ function runCell(cell) {
   }
   if (response.type !== "error" && response.html) {
     output.innerHTML = `<div class="result rich-output">${response.html}</div>`;
-    const widgetSession = response.value?.kind === "sheet" && response.value.editable ? createWidgetSession(response.value) : null;
-    enhanceSheetViews(output, {
+    mountOutputWidgets(output, response.value, {
+      format: formatValue,
       onActivate: ({ address }) => insertTutorialText(sourceInput, address),
-      onEdit: widgetSession ? ({ index, source: editSource }) => {
-        const parsed = response.repl.run(editSource);
-        if (parsed.type === "error")
-          return parsed;
-        widgetSession.dispatch({ type: "sheet:set", index, value: parsed.value });
-        return { ...parsed, revision: widgetSession.revision };
-      } : null
+      evaluateEdit: (editSource, { mode }) => response.repl.run(mode === "formula" ? `@{ ${editSource} }` : editSource)
     });
     return;
   }
@@ -376,5 +370,5 @@ function openObjectHelp(name, requestedFunction = null) {
   dialog.showModal();
 }
 
-//# debugId=9365135C3669B86964756E2164756E21
+//# debugId=D26C4321F3D34ECC64756E2164756E21
 //# sourceMappingURL=tutorial-runner.js.map

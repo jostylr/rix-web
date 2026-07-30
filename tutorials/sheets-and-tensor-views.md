@@ -134,8 +134,8 @@ dependency graph:
 
 ```rix edu
 model := .FormulaSheet([
-    [@{; 1 }, @{; grid[1,1] + 1 }],
-    [@{; grid[1,2] * 2 }, @{; grid[2,1] + 1 }]
+    [@{1}, @{ grid[1,1] + 1 }],
+    [@{ grid[1,2] * 2 }, @{ grid[2,1] + 1 }]
 ]);
 formulaView := .Sheet(model, {= title="Formula results" });
 formulaView ;
@@ -143,14 +143,50 @@ formulaView ;
 
 The lower-right result is `5`. The FormulaSheet context is isolated from
 unrelated tutorial variables and also provides `row`, `col`, and `index`.
-Changing a formula starts a new atomic evaluation epoch:
+Select a formula cell and press Enter to edit its RiX body. The editor shows
+`grid[1,1] + 1`, without the surrounding deferred wrapper. Committing it starts
+a new atomic evaluation epoch and refreshes every dependent result.
+
+The same update is available programmatically:
 
 ```rix edu
-model.SetFormula(1, 1, @{; 10 });
+model.SetFormula(1, 1, @{10});
 .Sheet(model, {= title="Recalculated results" }) ;
 ```
 
 The lower-right result is now `23`. A self-reference such as
-`@{; grid[1,1] + 1 }` reports a cycle instead of reading the previously
-committed value. This first formula-backed view is read-only in the browser;
-formula-source editing and persistent `.rixcel` documents are the next layer.
+`@{ grid[1,1] + 1 }` reports a cycle instead of reading the previously
+committed value. Persistent `.rixcel` documents and assignment modes are the
+next storage layer.
+
+## Drive another live object
+
+FormulaSheet and Binding values publish the same subscription protocol.
+`.LiveView(source, @{ ... })` reexecutes a deferred presentation whenever its
+explicit `source` commits. The result can be any structured output, including a
+Graphic:
+
+```rix edu
+pointSheet := .FormulaSheet([[@{120}, @{40}]]);
+.LiveView(pointSheet, @{
+    .Fragment([
+        .Sheet(source, {= title="Point formulas", axes=["point", "coordinate"] }),
+        .Graphics.Graphic([260, 140], [
+            .Graphics.Path(
+                [[20, 120], [source[1,1], source[1,2]]],
+                {= stroke="#4f46e5", width=3 }
+            ),
+            .Graphics.Circle(
+                [source[1,1], source[1,2]],
+                8,
+                {= fill="#f97316" }
+            )
+        ])
+    ])
+}) ;
+```
+
+Edit either formula in the embedded grid. Both the line endpoint and orange
+point move after the sheet commits. This is also the intended foundation for
+direct manipulation: a future draggable point will publish a semantic position
+event into a Binding, and LiveView dependents will use the same refresh path.

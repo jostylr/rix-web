@@ -1,9 +1,9 @@
 import {
   createRixRepl,
-  createWidgetSession,
-  enhanceSheetViews,
-  findHelp
-} from "./chunk-3ze8tj32.js";
+  findHelp,
+  formatValue,
+  mountOutputWidgets
+} from "./chunk-jq68m41d.js";
 
 // src/main.js
 var repl = createRixRepl();
@@ -130,16 +130,10 @@ function appendOutput(source, response) {
       outputLine.classList.add("rich-output");
       outputLine.innerHTML = response.html;
       outputLine.addEventListener("click", () => openInspection(source, response.text));
-      const widgetSession = response.value?.kind === "sheet" && response.value.editable ? createWidgetSession(response.value) : null;
-      enhanceSheetViews(outputLine, {
+      mountOutputWidgets(outputLine, response.value, {
+        format: formatValue,
         onActivate: ({ address }) => insertInputText(address),
-        onEdit: widgetSession ? ({ index, source: editSource }) => {
-          const parsed = repl.run(editSource);
-          if (parsed.type === "error")
-            return parsed;
-          widgetSession.dispatch({ type: "sheet:set", index, value: parsed.value });
-          return { ...parsed, revision: widgetSession.revision };
-        } : null
+        evaluateEdit: (editSource, { mode }) => repl.run(mode === "formula" ? `@{ ${editSource} }` : editSource)
       });
     } else {
       outputLine.innerHTML = response.type === "error" ? escapeHtml(preview) : `${escapeHtml(preview)}<span class="inject-icon" title="Use this value">→</span>`;
@@ -405,5 +399,5 @@ displayWelcome();
 setAutoSeparateLines(autoSeparateLines);
 input.focus();
 
-//# debugId=4B70C6F83BB2CCE464756E2164756E21
+//# debugId=1DC7D090E073439664756E2164756E21
 //# sourceMappingURL=main.js.map

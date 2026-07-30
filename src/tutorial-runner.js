@@ -1,7 +1,7 @@
 import { createRixRepl } from "./repl-runtime.js";
 import { objectHelp } from "./tutorial-index.js";
 import { replayTutorialSources, tutorialSectionCells } from "./tutorial-replay.js";
-import { createWidgetSession, enhanceSheetViews } from "../../rix/src/index.js";
+import { formatValue, mountOutputWidgets } from "../../rix/src/index.js";
 
 function escapeHtml(value) {
     return String(value).replace(/[&<>'"]/g, (character) => ({
@@ -53,17 +53,12 @@ function runCell(cell) {
     }
     if (response.type !== "error" && response.html) {
         output.innerHTML = `<div class="result rich-output">${response.html}</div>`;
-        const widgetSession = response.value?.kind === "sheet" && response.value.editable
-            ? createWidgetSession(response.value)
-            : null;
-        enhanceSheetViews(output, {
+        mountOutputWidgets(output, response.value, {
+            format: formatValue,
             onActivate: ({ address }) => insertTutorialText(sourceInput, address),
-            onEdit: widgetSession ? ({ index, source: editSource }) => {
-                const parsed = response.repl.run(editSource);
-                if (parsed.type === "error") return parsed;
-                widgetSession.dispatch({ type: "sheet:set", index, value: parsed.value });
-                return { ...parsed, revision: widgetSession.revision };
-            } : null,
+            evaluateEdit: (editSource, { mode }) => response.repl.run(mode === "formula"
+                ? `@{ ${editSource} }`
+                : editSource),
         });
         return;
     }

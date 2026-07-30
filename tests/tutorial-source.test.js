@@ -67,6 +67,8 @@ test("structured output has focused table, document, graphic, drawing, and sheet
     expect(sheets).toContain(".Sheet(.Bind(grid)");
     expect(sheets).toContain(".FormulaSheet");
     expect(sheets).toContain("model.SetFormula");
+    expect(sheets).toContain(".LiveView");
+    expect(sheets).toContain(".Graphics.Circle");
 });
 
 test("structural arithmetic has focused notation and parser lessons", async () => {

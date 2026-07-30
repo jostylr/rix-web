@@ -60,12 +60,33 @@ editableGrid ;</textarea><div class="tutorial-output" data-tutorial-output></div
 <h2>Give every slot a formula</h2>
 <p>A FormulaSheet is a different entity from a live Binding view. Each coordinate owns a deferred RiX formula, and <code>grid[...]</code> reads are evaluated together as a dependency graph:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">model := .FormulaSheet([
-    [@{; 1 }, @{; grid[1,1] + 1 }],
-    [@{; grid[1,2] * 2 }, @{; grid[2,1] + 1 }]
+    [@{1}, @{ grid[1,1] + 1 }],
+    [@{ grid[1,2] * 2 }, @{ grid[2,1] + 1 }]
 ]);
 formulaView := .Sheet(model, {= title=&quot;Formula results&quot; });
 formulaView ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>The lower-right result is <code>5</code>. The FormulaSheet context is isolated from unrelated tutorial variables and also provides <code>row</code>, <code>col</code>, and <code>index</code>. Changing a formula starts a new atomic evaluation epoch:</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">model.SetFormula(1, 1, @{; 10 });
+<p>The lower-right result is <code>5</code>. The FormulaSheet context is isolated from unrelated tutorial variables and also provides <code>row</code>, <code>col</code>, and <code>index</code>. Select a formula cell and press Enter to edit its RiX body. The editor shows <code>grid[1,1] + 1</code>, without the surrounding deferred wrapper. Committing it starts a new atomic evaluation epoch and refreshes every dependent result.</p>
+<p>The same update is available programmatically:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">model.SetFormula(1, 1, @{10});
 .Sheet(model, {= title=&quot;Recalculated results&quot; }) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>The lower-right result is now <code>23</code>. A self-reference such as <code>@{; grid[1,1] + 1 }</code> reports a cycle instead of reading the previously committed value. This first formula-backed view is read-only in the browser; formula-source editing and persistent <code>.rixcel</code> documents are the next layer.</p></div><section class="api-links"><h2>Reference</h2><ul><li><a href="https://docs.rix.ratmath.com/design/eval/output-model.html" data-doc-reference target="_blank" rel="noreferrer">Structured output model ↗</a></li><li><a href="https://docs.rix.ratmath.com/eval/sheet-guide.html" data-doc-reference target="_blank" rel="noreferrer">Sheet views ↗</a></li></ul></section><nav class="lesson-navigation" aria-label="Lesson navigation"><span class="previous-link"><a href="./drawing-with-draw.html">← 12d Drawing</a></span><span class="section-links"><a href="./structured-output.html#lesson-start">↑ 12 Structured</a><a href="./core-host-lowering.html">↓ 13 Core</a></span><span class="next-link"><a href="./core-host-lowering.html">13 Core →</a></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
+<p>The lower-right result is now <code>23</code>. A self-reference such as <code>@{ grid[1,1] + 1 }</code> reports a cycle instead of reading the previously committed value. Persistent <code>.rixcel</code> documents and assignment modes are the next storage layer.</p>
+<h2>Drive another live object</h2>
+<p>FormulaSheet and Binding values publish the same subscription protocol. <code>.LiveView(source, @{ ... })</code> reexecutes a deferred presentation whenever its explicit <code>source</code> commits. The result can be any structured output, including a Graphic:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="17" spellcheck="false">pointSheet := .FormulaSheet([[@{120}, @{40}]]);
+.LiveView(pointSheet, @{
+    .Fragment([
+        .Sheet(source, {= title=&quot;Point formulas&quot;, axes=[&quot;point&quot;, &quot;coordinate&quot;] }),
+        .Graphics.Graphic([260, 140], [
+            .Graphics.Path(
+                [[20, 120], [source[1,1], source[1,2]]],
+                {= stroke=&quot;#4f46e5&quot;, width=3 }
+            ),
+            .Graphics.Circle(
+                [source[1,1], source[1,2]],
+                8,
+                {= fill=&quot;#f97316&quot; }
+            )
+        ])
+    ])
+}) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Edit either formula in the embedded grid. Both the line endpoint and orange point move after the sheet commits. This is also the intended foundation for direct manipulation: a future draggable point will publish a semantic position event into a Binding, and LiveView dependents will use the same refresh path.</p></div><section class="api-links"><h2>Reference</h2><ul><li><a href="https://docs.rix.ratmath.com/design/eval/output-model.html" data-doc-reference target="_blank" rel="noreferrer">Structured output model ↗</a></li><li><a href="https://docs.rix.ratmath.com/eval/sheet-guide.html" data-doc-reference target="_blank" rel="noreferrer">Sheet views ↗</a></li></ul></section><nav class="lesson-navigation" aria-label="Lesson navigation"><span class="previous-link"><a href="./drawing-with-draw.html">← 12d Drawing</a></span><span class="section-links"><a href="./structured-output.html#lesson-start">↑ 12 Structured</a><a href="./core-host-lowering.html">↓ 13 Core</a></span><span class="next-link"><a href="./core-host-lowering.html">13 Core →</a></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

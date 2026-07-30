@@ -86,6 +86,25 @@ test("the web REPL retains live Binding values for host-owned Sheet widgets", ()
     expect(response.html).toContain("rix-output-sheet-editor");
 });
 
+test("formula sheets and their dependent LiveViews retain interactive metadata", () => {
+    const repl = createRixRepl();
+    const sheet = repl.run(`
+        model := .FormulaSheet([[@{1}, @{ grid[1,1] + 1 }]]);
+        .Sheet(model)
+    `);
+    expect(sheet.type).toBe("result");
+    expect(sheet.value.editMode).toBe("formula");
+    expect(sheet.html).toContain('data-rix-formula-source="grid[1,1] + 1"');
+    expect(sheet.html).toContain('aria-label="RiX formula"');
+
+    const live = repl.run(`
+        .LiveView(model, @{ .Sheet(source, {= title="Reactive copy" }) })
+    `);
+    expect(live.value.kind).toBe("live_view");
+    expect(live.html).toContain("rix-output-live-view");
+    expect(live.html).toContain("Reactive copy");
+});
+
 test("the web REPL returns interactive tensor-plane controls", () => {
     const repl = createRixRepl();
     const response = repl.run(`
