@@ -1,4 +1,5 @@
 import { createRixRepl, findHelp } from "./repl-runtime.js";
+import { enhanceSheetViews } from "../../rix/src/index.js";
 
 const repl = createRixRepl();
 const outputHistory = document.querySelector("#output-history");
@@ -42,6 +43,15 @@ function setInput(value) {
     input.style.height = "auto";
     input.style.height = `${Math.min(input.scrollHeight, 160)}px`;
     input.focus();
+}
+
+function insertInputText(text) {
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? start;
+    const value = `${input.value.slice(0, start)}${text}${input.value.slice(end)}`;
+    setInput(value);
+    const cursor = start + text.length;
+    input.selectionStart = input.selectionEnd = cursor;
 }
 
 function clearCompletion() {
@@ -113,6 +123,9 @@ function appendOutput(source, response) {
             outputLine.classList.add("rich-output");
             outputLine.innerHTML = response.html;
             outputLine.addEventListener("click", () => openInspection(source, response.text));
+            enhanceSheetViews(outputLine, {
+                onActivate: ({ address }) => insertInputText(address),
+            });
         } else {
             outputLine.innerHTML = response.type === "error"
                 ? escapeHtml(preview)

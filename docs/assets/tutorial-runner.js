@@ -1,6 +1,7 @@
 import {
-  createRixRepl
-} from "./chunk-jp78weph.js";
+  createRixRepl,
+  enhanceSheetViews
+} from "./chunk-wfcdz9xp.js";
 
 // src/generated/plugin-tutorial-index.js
 var pluginTutorialGroups = [
@@ -225,6 +226,7 @@ function runCell(cell) {
   }
   if (response.type !== "error" && response.html) {
     output.innerHTML = `<div class="result rich-output">${response.html}</div>`;
+    enhanceSheetViews(output);
     return;
   }
   output.innerHTML = `<div class="${response.type === "error" ? "error" : "result"}">${escapeHtml(response.text)}</div>`;
@@ -310,5 +312,5 @@ function openObjectHelp(name, requestedFunction = null) {
   dialog.showModal();
 }
 
-//# debugId=3FB6FAA691EBF4D264756E2164756E21
+//# debugId=C90BF6EFD905DE7C64756E2164756E21
 //# sourceMappingURL=tutorial-runner.js.map

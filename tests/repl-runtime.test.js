@@ -37,6 +37,17 @@ test("the web REPL returns structured HTML for portable output values", () => {
     expect(response.text).toContain("-3");
 });
 
+test("the web REPL returns address-aware Sheet HTML", () => {
+    const repl = createRixRepl();
+    const response = repl.run(".Sheet({:2x3: 1, 2, 3; 4, 5, 6})");
+
+    expect(response.type).toBe("result");
+    expect(response.html).toContain("rix-output-sheet");
+    expect(response.html).toContain('data-rix-display-address="C2"');
+    expect(response.html).toContain('data-rix-address="grid[2,3]"');
+    expect(response.text).toContain("shape 2×3");
+});
+
 test("the web REPL catalogs bundled plugins and loads approved JavaScript on demand", () => {
     const repl = createRixRepl();
 

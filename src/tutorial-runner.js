@@ -1,5 +1,6 @@
 import { createRixRepl } from "./repl-runtime.js";
 import { objectHelp } from "./tutorial-index.js";
+import { enhanceSheetViews } from "../../rix/src/index.js";
 
 const repl = createRixRepl();
 
@@ -26,6 +27,7 @@ function runCell(cell) {
     }
     if (response.type !== "error" && response.html) {
         output.innerHTML = `<div class="result rich-output">${response.html}</div>`;
+        enhanceSheetViews(output);
         return;
     }
     output.innerHTML = `<div class="${response.type === "error" ? "error" : "result"}">${escapeHtml(response.text)}</div>`;
