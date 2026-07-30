@@ -5325,7 +5325,7 @@ var runtimeDefaults = Object.freeze({
     Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC", "SArith"]),
     Notation: Object.freeze(["SArith", "Poly", "NotationParser"]),
     Random: Object.freeze(["RANDOMSEED", "RandomSeed", "RAND_NAME"]),
-    RiXCel: Object.freeze(["FORMULASHEET", "REACTIVEGRAPH"])
+    RiXCel: Object.freeze(["FORMULASHEET", "REACTIVEGRAPH", "RIXCELEXPORT", "RIXCELIMPORT"])
   })
 });
 
@@ -14935,7 +14935,7 @@ function publicSlot(slot, index, metadata) {
     state: slot.state,
     dependencies: Object.freeze([...slot.dependencies].map(keyFromNodeName)),
     diagnostics: Object.freeze([...slot.diagnostics]),
-    view: Object.freeze({})
+    view: metadata.view
   });
 }
 function isFormulaSheet(value) {
@@ -14949,12 +14949,19 @@ function createFormulaSheet(formulasValue, options = {}) {
   const shape = Object.freeze([...formulas.shape]);
   const id = options.id === null || options.id === undefined ? `formula-sheet-${nextFormulaSheetId++}` : formulaSheetId(options.id);
   const defaultAssignmentMode = assignmentMode(options.assignmentMode ?? ":=");
+  const providedSlotMetadata = options.slotMetadata instanceof Map ? options.slotMetadata : new Map;
   const slotMetadata = new Map(formulas.entries.map(({ index, formula }) => {
-    const source = options.formulaSource?.(formula) ?? null;
+    const provided = providedSlotMetadata.get(slotKey(index)) ?? {};
+    const source = provided.source ?? options.formulaSource?.(formula) ?? null;
+    const idForSlot = provided.id ?? slotIdFor(id, index);
+    if (idForSlot !== slotIdFor(id, index)) {
+      throw new Error(`FormulaSheet slot id must be ${slotIdFor(id, index)}`);
+    }
     return [slotKey(index), {
-      id: slotIdFor(id, index),
+      id: idForSlot,
       source,
-      assignmentMode: defaultAssignmentMode
+      assignmentMode: assignmentMode(provided.assignmentMode ?? defaultAssignmentMode),
+      view: Object.freeze({ ...provided.view ?? {} })
     }];
   }));
   const channel = new Set;
@@ -14979,6 +14986,7 @@ function createFormulaSheet(formulasValue, options = {}) {
     id,
     shape,
     rank: shape.length,
+    documentView: Object.freeze({ ...options.documentView ?? {} }),
     graph,
     get epoch() {
       return graph.epoch;
@@ -15070,8 +15078,9 @@ function createFormulaSheet(formulasValue, options = {}) {
     }
   };
   for (const { index, formula } of formulas.entries) {
+    const metadata = slotMetadata.get(slotKey(index));
     graph.addComputed(nodeNameFor(index), formula, {
-      source: options.formulaSource?.(formula) ?? null,
+      source: metadata.source,
       initialize: false,
       evaluator(slotFormula) {
         const contextualBindings = [
@@ -27259,6 +27268,282 @@ var outputFunctions = {
   DOCUMENT_TEMPLATE: documentTemplateFunction
 };
 
+// ../rix/src/runtime/rixcel-document.js
+var RIXCEL_FORMAT = "rixcel";
+var RIXCEL_VERSION = 1;
+var RIXCEL_ASSIGNMENT_MODES = Object.freeze(["=", ":=", "~=", "::=", "~~="]);
+var ASSIGNMENT_MODES2 = new Set(RIXCEL_ASSIGNMENT_MODES);
+function fail(path, message) {
+  throw new Error(`Invalid RiXCel document at ${path}: ${message}`);
+}
+function plainObject(value, path) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    fail(path, "must be an object");
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    fail(path, "must be a plain object");
+  }
+  return value;
+}
+function jsonClone(value, path, seen = new Set) {
+  if (value === null || typeof value === "string" || typeof value === "boolean")
+    return value;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value))
+      fail(path, "must not contain non-finite numbers");
+    return value;
+  }
+  if (typeof value !== "object") {
+    fail(path, `contains unsupported ${typeof value} value`);
+  }
+  if (seen.has(value))
+    fail(path, "must not contain cycles");
+  seen.add(value);
+  try {
+    if (Array.isArray(value)) {
+      return Array.from({ length: value.length }, (_unused, index) => {
+        if (!Object.hasOwn(value, index))
+          fail(`${path}[${index}]`, "must not be sparse");
+        return jsonClone(value[index], `${path}[${index}]`, seen);
+      });
+    }
+    plainObject(value, path);
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+      key,
+      jsonClone(item, `${path}.${key}`, seen)
+    ]));
+  } finally {
+    seen.delete(value);
+  }
+}
+function documentInput(value) {
+  const input = value?.type === "string" ? value.value : value;
+  if (typeof input !== "string")
+    return input;
+  try {
+    return JSON.parse(input);
+  } catch (error) {
+    throw new Error(`Invalid RiXCel JSON: ${error.message}`);
+  }
+}
+function documentId(value) {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    fail("$.id", "must be a non-empty string");
+  }
+  return value;
+}
+function documentShape(value) {
+  if (!Array.isArray(value) || value.length === 0) {
+    fail("$.shape", "must be a non-empty array");
+  }
+  let size = 1;
+  const shape = value.map((length, axis) => {
+    if (!Number.isSafeInteger(length) || length < 1) {
+      fail(`$.shape[${axis}]`, "must be a positive safe integer");
+    }
+    size *= length;
+    if (!Number.isSafeInteger(size))
+      fail("$.shape", "has too many logical slots");
+    return length;
+  });
+  return { shape, size };
+}
+function indexKey(index) {
+  return index.join(",");
+}
+function slotId(id, index) {
+  return `${id}:slot:${index.join(":")}`;
+}
+function linearOffset(index, shape) {
+  let offset = 0;
+  for (let axis = 0;axis < shape.length; axis += 1) {
+    offset = offset * shape[axis] + index[axis] - 1;
+  }
+  return offset;
+}
+function normalizeIndex3(value, shape, path) {
+  if (!Array.isArray(value) || value.length !== shape.length) {
+    fail(path, `must contain exactly ${shape.length} indices`);
+  }
+  return value.map((item, axis) => {
+    if (!Number.isSafeInteger(item) || item < 1 || item > shape[axis]) {
+      fail(`${path}[${axis}]`, `must be an integer from 1 through ${shape[axis]}`);
+    }
+    return item;
+  });
+}
+function normalizeView(value, path) {
+  if (value === undefined)
+    return {};
+  plainObject(value, path);
+  return jsonClone(value, path);
+}
+function migrateDraft(document2) {
+  const input = plainObject(document2, "$");
+  const declaredVersion = input.version;
+  const isDraft = declaredVersion === 0 || declaredVersion === undefined;
+  if (!isDraft)
+    return input;
+  const format = input.format ?? input.kind;
+  if (format !== RIXCEL_FORMAT) {
+    fail("$.format", `must equal "${RIXCEL_FORMAT}"`);
+  }
+  if (!Array.isArray(input.slots))
+    fail("$.slots", "must be an array");
+  const id = documentId(input.id);
+  return {
+    format: RIXCEL_FORMAT,
+    version: RIXCEL_VERSION,
+    id,
+    shape: input.shape,
+    view: input.view ?? {},
+    slots: input.slots.map((slot, offset) => {
+      plainObject(slot, `$.slots[${offset}]`);
+      const index = slot.index;
+      return {
+        id: slot.id ?? (Array.isArray(index) ? slotId(id, index) : undefined),
+        index,
+        source: slot.source ?? slot.code,
+        assignmentMode: slot.assignmentMode ?? slot.op ?? ":=",
+        view: slot.view ?? slot.style ?? {}
+      };
+    })
+  };
+}
+function parseRixCelDocument(value) {
+  const migrated = migrateDraft(documentInput(value));
+  const input = plainObject(migrated, "$");
+  if (input.format !== RIXCEL_FORMAT) {
+    fail("$.format", `must equal "${RIXCEL_FORMAT}"`);
+  }
+  if (!Number.isSafeInteger(input.version))
+    fail("$.version", "must be an integer");
+  if (input.version > RIXCEL_VERSION) {
+    throw new Error(`Unsupported RiXCel document version ${input.version}; this runtime supports through version ${RIXCEL_VERSION}`);
+  }
+  if (input.version !== RIXCEL_VERSION)
+    fail("$.version", `must equal ${RIXCEL_VERSION}`);
+  const id = documentId(input.id);
+  const { shape, size } = documentShape(input.shape);
+  if (!Array.isArray(input.slots))
+    fail("$.slots", "must be an array");
+  if (input.slots.length !== size) {
+    fail("$.slots", `must contain exactly ${size} dense slots`);
+  }
+  const occupied = new Set;
+  const ids = new Set;
+  const slots = input.slots.map((rawSlot, offset) => {
+    const path = `$.slots[${offset}]`;
+    const slot = plainObject(rawSlot, path);
+    const index = normalizeIndex3(slot.index, shape, `${path}.index`);
+    const key = indexKey(index);
+    if (occupied.has(key))
+      fail(`${path}.index`, `duplicates coordinate [${index.join(",")}]`);
+    occupied.add(key);
+    const expectedId = slotId(id, index);
+    if (slot.id !== expectedId) {
+      fail(`${path}.id`, `must equal "${expectedId}"`);
+    }
+    if (ids.has(slot.id))
+      fail(`${path}.id`, "must be unique");
+    ids.add(slot.id);
+    if (typeof slot.source !== "string")
+      fail(`${path}.source`, "must be a string");
+    if (!ASSIGNMENT_MODES2.has(slot.assignmentMode)) {
+      fail(`${path}.assignmentMode`, `is not supported: ${slot.assignmentMode}`);
+    }
+    return {
+      id: slot.id,
+      index,
+      source: slot.source,
+      assignmentMode: slot.assignmentMode,
+      view: normalizeView(slot.view, `${path}.view`)
+    };
+  });
+  slots.sort((left, right) => linearOffset(left.index, shape) - linearOffset(right.index, shape));
+  return {
+    format: RIXCEL_FORMAT,
+    version: RIXCEL_VERSION,
+    id,
+    shape,
+    view: normalizeView(input.view, "$.view"),
+    slots
+  };
+}
+function exportRixCelDocument(sheet) {
+  if (!isFormulaSheet(sheet))
+    throw new Error("RiXCel export requires a FormulaSheet");
+  const slots = [];
+  const visit = (axis, index) => {
+    if (axis === sheet.shape.length) {
+      const slot = sheet.slot(index);
+      if (typeof slot.source !== "string") {
+        throw new Error(`RiXCel export requires source for grid[${index.join(",")}]`);
+      }
+      slots.push({
+        id: slot.id,
+        index: [...index],
+        source: slot.source,
+        assignmentMode: slot.assignmentMode,
+        view: jsonClone(slot.view ?? {}, `grid[${index.join(",")}].view`)
+      });
+      return;
+    }
+    for (let value = 1;value <= sheet.shape[axis]; value += 1) {
+      visit(axis + 1, [...index, value]);
+    }
+  };
+  visit(0, []);
+  return parseRixCelDocument({
+    format: RIXCEL_FORMAT,
+    version: RIXCEL_VERSION,
+    id: sheet.id,
+    shape: [...sheet.shape],
+    view: jsonClone(sheet.documentView ?? {}, "$.view"),
+    slots
+  });
+}
+function stringifyRixCelDocument(value, options = {}) {
+  const document2 = isFormulaSheet(value) ? exportRixCelDocument(value) : parseRixCelDocument(value);
+  const space = options.space ?? 2;
+  if (!Number.isInteger(space) || space < 0 || space > 10) {
+    throw new Error("RiXCel JSON indentation must be an integer from 0 through 10");
+  }
+  return JSON.stringify(document2, null, space);
+}
+function importRixCelDocument(value, options = {}) {
+  const document2 = parseRixCelDocument(value);
+  if (typeof options.compileFormula !== "function") {
+    throw new Error("RiXCel import requires a formula compiler");
+  }
+  if (typeof options.runFormula !== "function") {
+    throw new Error("RiXCel import requires a deferred formula evaluator");
+  }
+  const formulas = document2.slots.map((slot) => {
+    try {
+      return options.compileFormula(slot.source);
+    } catch (error) {
+      throw new Error(`RiXCel source for grid[${slot.index.join(",")}] did not compile: ${error.message}`);
+    }
+  });
+  const slotMetadata = new Map(document2.slots.map((slot) => [
+    indexKey(slot.index),
+    {
+      id: slot.id,
+      source: slot.source,
+      assignmentMode: slot.assignmentMode,
+      view: slot.view
+    }
+  ]));
+  return createFormulaSheet(createTensor(document2.shape, formulas), {
+    ...options,
+    id: document2.id,
+    documentView: document2.view,
+    slotMetadata
+  });
+}
+
 // ../rix/src/eval/functions/formula-sheet.js
 function containsOuterRead(node) {
   if (!node || typeof node !== "object")
@@ -27294,26 +27579,8 @@ function deferredSource(formula) {
   }
   return null;
 }
-function formulaSheetCapability(args, context, evaluate, systemContext) {
-  if (args.length < 1 || args.length > 2) {
-    throw new Error(".FormulaSheet expects deferred formulas and an optional options map");
-  }
-  const optionEntries = args[1]?.type === "map" && args[1].entries instanceof Map ? args[1].entries : args[1] === undefined ? new Map : null;
-  if (!optionEntries)
-    throw new Error(".FormulaSheet options must be a map");
-  const option = (name, fallback = null) => optionEntries.get(name) ?? optionEntries.get(name.toLowerCase()) ?? fallback;
-  const stringOption = (name, fallback = null) => {
-    const value = option(name);
-    if (value === null)
-      return fallback;
-    const text3 = value?.type === "string" ? value.value : typeof value === "string" ? value : null;
-    if (text3 === null)
-      throw new Error(`FormulaSheet ${name} must be a string`);
-    return text3;
-  };
-  return createFormulaSheet(args[0], {
-    id: stringOption("id"),
-    assignmentMode: stringOption("assignmentMode", ":="),
+function createFormulaSheetRuntimeOptions(context, evaluate, systemContext) {
+  return {
     formulaSource: deferredSource,
     compileFormula(source) {
       const wrapped = `@{ ${source}
@@ -27366,13 +27633,59 @@ function formulaSheetCapability(args, context, evaluate, systemContext) {
         context.pop();
       }
     }
+  };
+}
+function formulaSheetCapability(args, context, evaluate, systemContext) {
+  if (args.length < 1 || args.length > 2) {
+    throw new Error(".FormulaSheet expects deferred formulas and an optional options map");
+  }
+  const optionEntries = args[1]?.type === "map" && args[1].entries instanceof Map ? args[1].entries : args[1] === undefined ? new Map : null;
+  if (!optionEntries)
+    throw new Error(".FormulaSheet options must be a map");
+  const option = (name, fallback = null) => optionEntries.get(name) ?? optionEntries.get(name.toLowerCase()) ?? fallback;
+  const stringOption = (name, fallback = null) => {
+    const value = option(name);
+    if (value === null)
+      return fallback;
+    const text3 = value?.type === "string" ? value.value : typeof value === "string" ? value : null;
+    if (text3 === null)
+      throw new Error(`FormulaSheet ${name} must be a string`);
+    return text3;
+  };
+  return createFormulaSheet(args[0], {
+    ...createFormulaSheetRuntimeOptions(context, evaluate, systemContext),
+    id: stringOption("id"),
+    assignmentMode: stringOption("assignmentMode", ":=")
   });
+}
+function rixCelExportCapability(args) {
+  if (args.length !== 1)
+    throw new Error(".RiXCelExport expects one FormulaSheet");
+  return {
+    type: "string",
+    value: stringifyRixCelDocument(args[0])
+  };
+}
+function rixCelImportCapability(args, context, evaluate, systemContext) {
+  if (args.length !== 1)
+    throw new Error(".RiXCelImport expects one JSON string");
+  return importRixCelDocument(args[0], createFormulaSheetRuntimeOptions(context, evaluate, systemContext));
 }
 var formulaSheetFunctions = {
   FORMULASHEET: {
     pure: false,
     impl: formulaSheetCapability,
     doc: "Create a formula-backed sheet from a tensor or rectangular array of deferred RiX formulas"
+  },
+  RIXCELEXPORT: {
+    pure: false,
+    impl: rixCelExportCapability,
+    doc: "Serialize a FormulaSheet to canonical versioned RiXCel JSON"
+  },
+  RIXCELIMPORT: {
+    pure: false,
+    impl: rixCelImportCapability,
+    doc: "Rebuild a FormulaSheet by compiling authoritative source from RiXCel JSON"
   }
 };
 
@@ -31229,5 +31542,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { formatValue, mountOutputWidgets, findHelp, createRixRepl };
 
-//# debugId=6F2538F8B45A5F8864756E2164756E21
-//# sourceMappingURL=chunk-3z4bcwyt.js.map
+//# debugId=0BB8281CB39B997D64756E2164756E21
+//# sourceMappingURL=chunk-8sss0ycw.js.map

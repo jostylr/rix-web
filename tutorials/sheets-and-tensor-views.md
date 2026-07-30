@@ -159,8 +159,33 @@ browser does not own that compiler step. `model.Slot(1,1)` retains the stable
 ID `tutorial-model:slot:1:1`, authoritative source `"10"`, and assignment mode
 `":="`. The lower-right result is now `23`. A self-reference such as
 `@{ grid[1,1] + 1 }` reports a cycle instead of reading the previously
-committed value. The versioned `.rixcel` container and assignment-mode
-semantics are still to come.
+committed value. Assignment-mode execution semantics remain a later milestone;
+the source and selected mode are already stored separately.
+
+## Save and rebuild a RiXCel document
+
+`.RiXCelExport` produces versioned JSON from authoritative formula source.
+`.RiXCelImport` validates that JSON, recompiles every formula in a fresh
+FormulaSheet context, and rebuilds values and dependencies through an initial
+epoch:
+
+```rix edu
+book := .FormulaSheet({:2x2:
+    @{10}, @{ grid[1,1] * 2 };
+    @{3}, @{ grid[1,2] + grid[2,1] }
+}, {= id="tutorial-budget" });
+
+saved := .RiXCelExport(book);
+loaded := .RiXCelImport(saved);
+
+.Sheet(loaded, {= title="Restored from RiXCel JSON" }) ;
+```
+
+The restored lower-right value is `23`. The file stores the dense rank-N
+shape, stable IDs, formula bodies, assignment modes, and JSON-safe view
+metadata. It does not trust or persist compiled IR, values, dependencies, or
+diagnostics. A standalone host can save the `saved` string with a `.rixcel`
+extension; browser file-open/save controls remain a later editor milestone.
 
 ## Define reactive bindings
 
