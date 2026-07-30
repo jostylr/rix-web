@@ -1,7 +1,8 @@
 import {
   createRixRepl,
+  createWidgetSession,
   enhanceSheetViews
-} from "./chunk-w8dbfn6p.js";
+} from "./chunk-ez95sqsm.js";
 
 // src/generated/plugin-tutorial-index.js
 var pluginTutorialGroups = [
@@ -198,8 +199,24 @@ var objectHelp = {
   }
 };
 
+// src/tutorial-replay.js
+function replayTutorialSources(sources, targetIndex, createSession) {
+  const repl = createSession();
+  for (let index = 0;index <= targetIndex && index < sources.length; index += 1) {
+    const source = String(sources[index] ?? "").trim();
+    if (!source) {
+      if (index === targetIndex)
+        return null;
+      continue;
+    }
+    const response = repl.run(source);
+    if (index === targetIndex || response.type === "error")
+      return { ...response, repl };
+  }
+  return null;
+}
+
 // src/tutorial-runner.js
-var repl = createRixRepl();
 function escapeHtml(value) {
   return String(value).replace(/[&<>'"]/g, (character) => ({
     "&": "&amp;",
@@ -225,12 +242,15 @@ ${text}` : text;
   sizeTutorialSource(input);
   input.focus();
 }
+function replayThrough(cell) {
+  const cells = [...document.querySelectorAll(".tutorial-cell")];
+  return replayTutorialSources(cells.map((candidate) => candidate.querySelector("[data-tutorial-source]")?.value), cells.indexOf(cell), createRixRepl);
+}
 function runCell(cell) {
   const sourceInput = cell.querySelector("[data-tutorial-source]");
-  const source = sourceInput.value.trim();
-  if (!source)
+  const response = replayThrough(cell);
+  if (!response)
     return;
-  const response = repl.run(source);
   const output = cell.querySelector("[data-tutorial-output]");
   if (response.type === "help") {
     const lines = response.groups.flatMap((group) => group.items.map(([syntax, description]) => `${syntax} — ${description}`));
@@ -240,8 +260,16 @@ function runCell(cell) {
   }
   if (response.type !== "error" && response.html) {
     output.innerHTML = `<div class="result rich-output">${response.html}</div>`;
+    const widgetSession = response.value?.kind === "sheet" && response.value.editable ? createWidgetSession(response.value) : null;
     enhanceSheetViews(output, {
-      onActivate: ({ address }) => insertTutorialText(sourceInput, address)
+      onActivate: ({ address }) => insertTutorialText(sourceInput, address),
+      onEdit: widgetSession ? ({ index, source: editSource }) => {
+        const parsed = response.repl.run(editSource);
+        if (parsed.type === "error")
+          return parsed;
+        widgetSession.dispatch({ type: "sheet:set", index, value: parsed.value });
+        return { ...parsed, revision: widgetSession.revision };
+      } : null
     });
     return;
   }
@@ -328,5 +356,5 @@ function openObjectHelp(name, requestedFunction = null) {
   dialog.showModal();
 }
 
-//# debugId=5BD336E94071F4D764756E2164756E21
+//# debugId=C8522D3E59C1CEE864756E2164756E21
 //# sourceMappingURL=tutorial-runner.js.map

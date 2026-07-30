@@ -7,6 +7,7 @@ import {
     parseAndEvaluate,
 } from "../../rix/src/index.js";
 import { normalizeReplSource } from "../src/repl-source.js";
+import { replayTutorialSources } from "../src/tutorial-replay.js";
 import { createRixRepl } from "../src/repl-runtime.js";
 import { tutorials } from "../src/tutorial-index.js";
 
@@ -25,6 +26,16 @@ area`), options);
     expect(formatValue(result)).toBe("154");
     expect(context.getAllNames()).toContain("radius");
     expect(context.getAllNames()).toContain("area");
+});
+
+test("tutorial replay preserves earlier dependencies without stale removed names", () => {
+    const dependent = replayTutorialSources(["x := 3", "x + 1"], 1, createRixRepl);
+    expect(dependent.type).toBe("result");
+    expect(dependent.text).toBe("4");
+
+    const renamed = replayTutorialSources(["matrix := 3", "grid + 1"], 1, createRixRepl);
+    expect(renamed.type).toBe("error");
+    expect(renamed.text).toContain("grid");
 });
 
 test("the web REPL returns structured HTML for portable output values", () => {
@@ -46,6 +57,20 @@ test("the web REPL returns address-aware Sheet HTML", () => {
     expect(response.html).toContain('data-rix-display-address="C2"');
     expect(response.html).toContain('data-rix-address="grid[2,3]"');
     expect(response.text).toContain("shape 2×3");
+});
+
+test("the web REPL retains live Binding values for host-owned Sheet widgets", () => {
+    const repl = createRixRepl();
+    const response = repl.run(`
+        matrix := {:1x2: 1, 2};
+        .Sheet(.Bind(matrix))
+    `);
+
+    expect(response.type).toBe("result");
+    expect(response.value.editable).toBe(true);
+    expect(response.value.addressBase).toBe("matrix");
+    expect(response.html).toContain('data-rix-editable="true"');
+    expect(response.html).toContain("rix-output-sheet-editor");
 });
 
 test("the web REPL returns interactive tensor-plane controls", () => {

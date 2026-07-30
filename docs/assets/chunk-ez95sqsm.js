@@ -63,6 +63,13 @@ function enhanceSheet(sheet, options) {
   const cells = [...sheet.querySelectorAll("td[data-rix-address]")];
   const planeBodies = [...sheet.querySelectorAll("tbody[data-rix-plane-key]")];
   const planeSelectors = [...sheet.querySelectorAll("select[data-rix-sheet-axis]")];
+  const editForm = sheet.querySelector(".rix-output-sheet-editor");
+  const editInput = editForm?.querySelector("[data-rix-edit-source]");
+  const editLabel = editForm?.querySelector("[data-rix-edit-label]");
+  const editStatus = editForm?.querySelector("[data-rix-edit-status]");
+  let selectedCell = null;
+  if (editForm && typeof options.onEdit === "function")
+    editForm.hidden = false;
   if (!table || !cells.length)
     return;
   table.setAttribute("role", "grid");
@@ -76,9 +83,16 @@ function enhanceSheet(sheet, options) {
       candidate.tabIndex = selected ? 0 : -1;
     }
     const detail = eventDetail(cell);
+    selectedCell = cell;
     sheet.dataset.rixSelectedAddress = detail.address;
     if (location)
       location.textContent = `${detail.displayAddress} · ${detail.address}`;
+    if (editInput)
+      editInput.value = cell.textContent.trim();
+    if (editLabel)
+      editLabel.textContent = `${detail.displayAddress} · ${detail.address}`;
+    if (editStatus)
+      editStatus.textContent = "";
     if (focus)
       cell.focus();
     if (notify) {
@@ -133,9 +147,23 @@ function enhanceSheet(sheet, options) {
     cell.addEventListener("dblclick", (event) => {
       event.preventDefault();
       event.stopPropagation();
+      if (editInput && typeof options.onEdit === "function") {
+        select(cell, { focus: false });
+        editInput.focus();
+        editInput.select();
+        return;
+      }
       activate(cell);
     });
     cell.addEventListener("keydown", (event) => {
+      if (event.key === "F2" && editInput && typeof options.onEdit === "function") {
+        event.preventDefault();
+        event.stopPropagation();
+        select(cell, { focus: false });
+        editInput.focus();
+        editInput.select();
+        return;
+      }
       if (event.key === "Enter") {
         event.preventDefault();
         event.stopPropagation();
@@ -163,11 +191,4396 @@ function enhanceSheet(sheet, options) {
   }
   for (const selector of planeSelectors)
     selector.addEventListener("change", changePlane);
+  if (editForm) {
+    editForm.addEventListener("click", (event) => event.stopPropagation());
+    editForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!selectedCell) {
+        if (editStatus)
+          editStatus.textContent = "Choose a cell first";
+        return;
+      }
+      if (typeof options.onEdit !== "function") {
+        if (editStatus)
+          editStatus.textContent = "This host opened the live view read-only";
+        return;
+      }
+      const detail = { ...eventDetail(selectedCell), source: editInput?.value ?? "" };
+      try {
+        const result = options.onEdit(detail, selectedCell, sheet);
+        if (result?.type === "error")
+          throw new Error(result.text);
+        if (result && typeof result.then === "function") {
+          throw new Error("Asynchronous Sheet edits are not supported by this host");
+        }
+        selectedCell.textContent = result?.text ?? detail.source;
+        if (editStatus)
+          editStatus.textContent = "Saved";
+        options.onEditCommitted?.(detail, result, selectedCell, sheet);
+        dispatchSheetEvent(sheet, "rix-sheet-edit", {
+          ...detail,
+          revision: result?.revision ?? null
+        });
+      } catch (error) {
+        if (editStatus)
+          editStatus.textContent = error.message || String(error);
+      }
+    });
+  }
 }
 function enhanceSheetViews(root, options = {}) {
   for (const sheet of sheetRoots(root))
     enhanceSheet(sheet, options);
   return root;
+}
+
+// ../packages/core/src/base-system.js
+class BaseSystem {
+  #base;
+  #characters;
+  #charMap;
+  #name;
+  static #prefixMap = new Map;
+  static RESERVED_SYMBOLS = new Set([
+    "+",
+    "-",
+    "*",
+    "/",
+    "^",
+    "!",
+    "(",
+    ")",
+    "[",
+    "]",
+    ":",
+    ".",
+    "#",
+    "~"
+  ]);
+  constructor(characters, name) {
+    if (typeof characters === "string") {
+      this.#characters = [...characters];
+    } else if (Array.isArray(characters)) {
+      this.#characters = [...characters];
+    } else {
+      throw new Error("Characters must be a string or array of strings");
+    }
+    if (this.#characters.length < 2) {
+      throw new Error("Base system must have at least 2 characters");
+    }
+    if (this.#characters.some((character) => typeof character !== "string" || [...character].length !== 1)) {
+      throw new Error("Each base system character must be a single Unicode character");
+    }
+    this.#base = this.#characters.length;
+    this.#charMap = this.#createCharacterMap();
+    this.#name = name || `Base ${this.#base}`;
+    this.#validateBase();
+    this.#checkForConflicts();
+  }
+  get base() {
+    return this.#base;
+  }
+  get characters() {
+    return [...this.#characters];
+  }
+  get charMap() {
+    return new Map(this.#charMap);
+  }
+  getChar(value) {
+    const i = Number(value);
+    if (!Number.isSafeInteger(i) || i < 0 || i >= this.#characters.length) {
+      throw new Error(`Value ${value} must be an in-range integer for base ${this.#base}`);
+    }
+    return this.#characters[i];
+  }
+  get name() {
+    return this.#name;
+  }
+  #createCharacterMap() {
+    const map = new Map;
+    for (let i = 0;i < this.#characters.length; i++) {
+      map.set(this.#characters[i], i);
+    }
+    return map;
+  }
+  #validateBase() {
+    if (this.#base < 2) {
+      throw new Error("Base must be at least 2");
+    }
+    if (this.#base !== this.#characters.length) {
+      throw new Error(`Base ${this.#base} does not match character set length ${this.#characters.length}`);
+    }
+    const uniqueChars = new Set(this.#characters);
+    if (uniqueChars.size !== this.#characters.length) {
+      throw new Error("Character set contains duplicate characters");
+    }
+    this.#validateCharacterOrdering();
+    if (this.#base > 1000) {
+      console.warn(`Very large base system (${this.#base}). This may impact performance.`);
+    }
+  }
+  #validateCharacterOrdering() {
+    if (this.#name === "Roman Numerals" || this.#characters.length < 10) {
+      return;
+    }
+    const ranges = [
+      { start: "0", end: "9", name: "digits" },
+      { start: "a", end: "z", name: "lowercase letters" },
+      { start: "A", end: "Z", name: "uppercase letters" }
+    ];
+    for (const range of ranges) {
+      const startCode = range.start.charCodeAt(0);
+      const endCode = range.end.charCodeAt(0);
+      let rangeChars = [];
+      for (let i = 0;i < this.#characters.length; i++) {
+        const char = this.#characters[i];
+        const code = char.charCodeAt(0);
+        if (code >= startCode && code <= endCode) {
+          rangeChars.push(char);
+        }
+      }
+      if (rangeChars.length >= 5 && rangeChars.length > (endCode - startCode) / 3) {
+        for (let i = 1;i < rangeChars.length; i++) {
+          const prevCode = rangeChars[i - 1].charCodeAt(0);
+          const currCode = rangeChars[i].charCodeAt(0);
+          if (currCode !== prevCode + 1) {
+            console.warn(`Non-contiguous ${range.name} range detected in base system`);
+            break;
+          }
+        }
+      }
+    }
+  }
+  #checkForConflicts() {
+    const conflicts = [];
+    for (const char of this.#characters) {
+      if (BaseSystem.RESERVED_SYMBOLS.has(char)) {
+        conflicts.push(char);
+      }
+    }
+    if (conflicts.length > 0) {
+      throw new Error(`Base system characters conflict with parser symbols: ${conflicts.join(", ")}. ` + `Reserved symbols are: ${Array.from(BaseSystem.RESERVED_SYMBOLS).join(", ")}`);
+    }
+  }
+  toDecimal(str) {
+    if (typeof str !== "string" || str.length === 0) {
+      throw new Error("Input must be a non-empty string");
+    }
+    let negative = false;
+    if (str.startsWith("-")) {
+      negative = true;
+      str = str.slice(1);
+    }
+    if (str.length === 0) {
+      throw new Error("A minus sign must be followed by at least one digit");
+    }
+    let result = 0n;
+    const baseBigInt = BigInt(this.#base);
+    for (const char of str) {
+      if (!this.#charMap.has(char)) {
+        throw new Error(`Invalid character '${char}' for ${this.#name} (base ${this.#base})`);
+      }
+      const digitValue = BigInt(this.#charMap.get(char));
+      result = result * baseBigInt + digitValue;
+    }
+    return negative ? -result : result;
+  }
+  fromDecimal(value) {
+    if (typeof value !== "bigint") {
+      throw new Error("Value must be a BigInt");
+    }
+    if (value === 0n) {
+      return this.#characters[0];
+    }
+    let negative = false;
+    if (value < 0n) {
+      negative = true;
+      value = -value;
+    }
+    const baseBigInt = BigInt(this.#base);
+    const digits = [];
+    while (value > 0n) {
+      const remainder = Number(value % baseBigInt);
+      digits.unshift(this.#characters[remainder]);
+      value = value / baseBigInt;
+    }
+    const result = digits.join("");
+    return negative ? "-" + result : result;
+  }
+  isValidString(str) {
+    if (typeof str !== "string") {
+      return false;
+    }
+    if (str.startsWith("-")) {
+      str = str.slice(1);
+    }
+    if (str.length === 0) {
+      return false;
+    }
+    for (const char of str) {
+      if (!this.#charMap.has(char)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  getMaxDigit() {
+    return this.#characters[this.#characters.length - 1];
+  }
+  getMinDigit() {
+    return this.#characters[0];
+  }
+  toString() {
+    const charPreview = this.#characters.length <= 20 ? this.#characters.join("") : this.#characters.slice(0, 10).join("") + "..." + this.#characters.slice(-10).join("");
+    return `${this.#name} (${charPreview})`;
+  }
+  equals(other) {
+    if (!(other instanceof BaseSystem)) {
+      return false;
+    }
+    if (this.#base !== other.#base) {
+      return false;
+    }
+    for (let i = 0;i < this.#characters.length; i++) {
+      if (this.#characters[i] !== other.#characters[i]) {
+        return false;
+      }
+    }
+    return true;
+  }
+  static fromBase(base, name) {
+    if (!Number.isInteger(base) || base < 2) {
+      throw new Error("Base must be an integer >= 2");
+    }
+    const characters = [];
+    if (base <= 62) {
+      for (let i = 0;i < Math.min(base, 10); i++) {
+        characters.push(String.fromCharCode(48 + i));
+      }
+      if (base > 10) {
+        for (let i = 0;i < Math.min(base - 10, 26); i++) {
+          characters.push(String.fromCharCode(97 + i));
+        }
+      }
+      if (base > 36) {
+        for (let i = 0;i < base - 36; i++) {
+          characters.push(String.fromCharCode(65 + i));
+        }
+      }
+    } else {
+      throw new Error("BaseSystem.fromBase() only supports bases up to 62. Use constructor with custom character sequence for larger bases.");
+    }
+    return new BaseSystem(characters, name || `Base ${base}`);
+  }
+  static createPattern(pattern, size, name) {
+    const characters = [];
+    switch (pattern.toLowerCase()) {
+      case "alphanumeric":
+        if (size > 62) {
+          throw new Error(`Alphanumeric pattern only supports up to base 62, got ${size}`);
+        }
+        return BaseSystem.fromBase(size, name);
+      case "digits-only":
+        if (size > 10) {
+          throw new Error(`Digits-only pattern only supports up to base 10, got ${size}`);
+        }
+        for (let i = 0;i < size; i++)
+          characters.push(String.fromCharCode(48 + i));
+        return new BaseSystem(characters, name || `Base ${size} (digits only)`);
+      case "letters-only":
+        if (size > 52) {
+          throw new Error(`Letters-only pattern only supports up to base 52, got ${size}`);
+        }
+        for (let i = 0;i < Math.min(size, 26); i++) {
+          characters.push(String.fromCharCode(97 + i));
+        }
+        if (size > 26) {
+          for (let i = 0;i < size - 26; i++) {
+            characters.push(String.fromCharCode(65 + i));
+          }
+        }
+        return new BaseSystem(characters, name || (size <= 26 ? `Base ${size} (lowercase letters)` : `Base ${size} (mixed case letters)`));
+      case "uppercase-only":
+        if (size > 26) {
+          throw new Error(`Uppercase-only pattern only supports up to base 26, got ${size}`);
+        }
+        for (let i = 0;i < size; i++) {
+          characters.push(String.fromCharCode(65 + i));
+        }
+        return new BaseSystem(characters, name || `Base ${size} (uppercase letters)`);
+      default:
+        throw new Error(`Unknown pattern: ${pattern}. Supported patterns: alphanumeric, digits-only, letters-only, uppercase-only`);
+    }
+  }
+  static registerPrefix(prefix, baseSystem) {
+    if (typeof prefix !== "string" || prefix.length !== 1) {
+      throw new Error("Prefix must be a single character");
+    }
+    if (!(baseSystem instanceof BaseSystem)) {
+      throw new Error("Must provide a valid BaseSystem");
+    }
+    if (!/^[a-zA-Z]$/.test(prefix)) {
+      throw new Error("Prefix must be a letter");
+    }
+    BaseSystem.#prefixMap.set(prefix, baseSystem);
+  }
+  static unregisterPrefix(prefix) {
+    BaseSystem.#prefixMap.delete(prefix);
+  }
+  static hasExactPrefix(prefix) {
+    return BaseSystem.#prefixMap.has(prefix);
+  }
+  static getSystemForPrefix(prefix) {
+    if (prefix === "D")
+      return null;
+    if (BaseSystem.#prefixMap.has(prefix)) {
+      return BaseSystem.#prefixMap.get(prefix);
+    }
+    const lower = prefix.toLowerCase();
+    if (BaseSystem.#prefixMap.has(lower)) {
+      if (lower === "d" && prefix !== "d")
+        return;
+      return BaseSystem.#prefixMap.get(lower);
+    }
+    return;
+  }
+  static getPrefixForSystem(baseSystem) {
+    for (const [prefix, system] of BaseSystem.#prefixMap.entries()) {
+      if (system.equals(baseSystem)) {
+        return prefix;
+      }
+    }
+    return;
+  }
+  withCaseSensitivity(caseSensitive) {
+    if (caseSensitive === true) {
+      return this;
+    }
+    if (caseSensitive === false) {
+      const lowerChars = this.#characters.map((char) => char.toLowerCase());
+      const uniqueLowerChars = [...new Set(lowerChars)];
+      if (uniqueLowerChars.length !== lowerChars.length) {
+        console.warn("Case-insensitive conversion resulted in duplicate characters");
+      }
+      return new BaseSystem(uniqueLowerChars.join(""), `${this.#name} (case-insensitive)`);
+    }
+    throw new Error("caseSensitive must be a boolean value");
+  }
+}
+BaseSystem.BINARY = new BaseSystem(["0", "1"], "Binary");
+BaseSystem.TERNARY = new BaseSystem(["0", "1", "2"], "Ternary");
+BaseSystem.QUATERNARY = new BaseSystem(["0", "1", "2", "3"], "Quaternary");
+BaseSystem.QUINARY = new BaseSystem(["0", "1", "2", "3", "4"], "Quinary (Base 5)");
+BaseSystem.SEPTENARY = new BaseSystem(["0", "1", "2", "3", "4", "5", "6"], "Septenary (Base 7)");
+BaseSystem.OCTAL = new BaseSystem(["0", "1", "2", "3", "4", "5", "6", "7"], "Octal");
+BaseSystem.DECIMAL = new BaseSystem(["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"], "Decimal");
+BaseSystem.DUODECIMAL = new BaseSystem(["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b"], "Duodecimal (Clock/Base 12)");
+BaseSystem.HEXADECIMAL = new BaseSystem(["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"], "Hexadecimal");
+BaseSystem.VIGESIMAL = new BaseSystem("0123456789abcdefghij".split(""), "Vigesimal (Base 20)");
+BaseSystem.BASE36 = new BaseSystem("0123456789abcdefghijklmnopqrstuvwxyz".split(""), "Base 36 (URL)");
+BaseSystem.BASE62 = new BaseSystem("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".split(""), "Base 62");
+BaseSystem.BASE64 = new BaseSystem("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ@&".split(""), "Base 64");
+BaseSystem.BASE60 = new BaseSystem("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWX".split(""), "Base 60 (Mesopotamia)");
+BaseSystem.ROMAN = new BaseSystem(["I", "V", "X", "L", "C", "D", "M"], "Roman Numerals");
+BaseSystem.registerPrefix("b", BaseSystem.BINARY);
+BaseSystem.registerPrefix("t", BaseSystem.TERNARY);
+BaseSystem.registerPrefix("q", BaseSystem.QUATERNARY);
+BaseSystem.registerPrefix("f", BaseSystem.QUINARY);
+BaseSystem.registerPrefix("s", BaseSystem.SEPTENARY);
+BaseSystem.registerPrefix("o", BaseSystem.OCTAL);
+BaseSystem.registerPrefix("d", BaseSystem.DUODECIMAL);
+BaseSystem.registerPrefix("x", BaseSystem.HEXADECIMAL);
+BaseSystem.registerPrefix("v", BaseSystem.VIGESIMAL);
+BaseSystem.registerPrefix("u", BaseSystem.BASE36);
+BaseSystem.registerPrefix("m", BaseSystem.BASE60);
+BaseSystem.registerPrefix("y", BaseSystem.BASE64);
+
+// ../packages/core/src/rational.js
+var bitLength = function(int) {
+  if (int === 0n)
+    return 0;
+  return int < 0n ? (-int).toString(2).length : int.toString(2).length;
+};
+
+class Rational {
+  #numerator;
+  #denominator;
+  #isNegative;
+  #wholePart;
+  #remainder;
+  #initialSegment;
+  #periodDigits;
+  #periodLength;
+  #isTerminating;
+  #factorsOf2;
+  #factorsOf5;
+  #leadingZerosInPeriod;
+  #initialSegmentLeadingZeros;
+  #initialSegmentRest;
+  #periodDigitsRest;
+  #maxPeriodDigitsComputed;
+  static DEFAULT_PERIOD_DIGITS = 20;
+  static MAX_PERIOD_DIGITS = 1000;
+  static MAX_PERIOD_CHECK = 1e7;
+  static POWERS_OF_5 = {
+    16: 5n ** 16n,
+    8: 5n ** 8n,
+    4: 5n ** 4n,
+    2: 5n ** 2n,
+    1: 5n
+  };
+  static zero = new Rational(0, 1);
+  static one = new Rational(1, 1);
+  constructor(numerator, denominator = 1n) {
+    if (numerator && typeof numerator === "object" && numerator.constructor.name === "Integer") {
+      this.#numerator = numerator.value;
+      if (denominator && typeof denominator === "object" && denominator.constructor.name === "Integer") {
+        this.#denominator = denominator.value;
+      } else if (denominator !== undefined) {
+        this.#denominator = BigInt(denominator);
+      } else {
+        this.#denominator = 1n;
+      }
+      if (this.#denominator === 0n) {
+        throw new Error("Denominator cannot be zero");
+      }
+      this.#normalize();
+      this.#isNegative = this.#numerator < 0n;
+      return;
+    }
+    if (typeof numerator === "string") {
+      if (numerator.includes("..")) {
+        const mixedParts = numerator.trim().split("..");
+        if (mixedParts.length !== 2) {
+          throw new Error("Invalid mixed number format. Use 'a..b/c'");
+        }
+        const wholePart = BigInt(mixedParts[0]);
+        const fractionParts = mixedParts[1].split("/");
+        if (fractionParts.length !== 2) {
+          throw new Error("Invalid fraction in mixed number. Use 'a..b/c'");
+        }
+        const fracNumerator = BigInt(fractionParts[0]);
+        const fracDenominator = BigInt(fractionParts[1]);
+        const isNegative = wholePart < 0n;
+        const absWhole = isNegative ? -wholePart : wholePart;
+        this.#numerator = isNegative ? -(absWhole * fracDenominator + fracNumerator) : wholePart * fracDenominator + fracNumerator;
+        this.#denominator = fracDenominator;
+      } else {
+        if (numerator.includes(".")) {
+          const expandedNumerator = Rational.#parseRepeatedDigits(numerator);
+          const decimalParts = expandedNumerator.trim().split(".");
+          if (decimalParts.length === 2) {
+            const integerPart = decimalParts[0] || "0";
+            const fractionalPart = decimalParts[1];
+            if (!/^-?\d*$/.test(integerPart) || !/^\d*$/.test(fractionalPart)) {
+              throw new Error("Invalid decimal format");
+            }
+            const wholePart = BigInt(integerPart);
+            const fractionalValue = BigInt(fractionalPart);
+            const denomValue = 10n ** BigInt(fractionalPart.length);
+            this.#numerator = wholePart * denomValue + (wholePart < 0n ? -fractionalValue : fractionalValue);
+            this.#denominator = denomValue;
+          } else {
+            throw new Error("Invalid decimal format - multiple decimal points");
+          }
+        } else {
+          const parts = numerator.trim().split("/");
+          if (parts.length === 1) {
+            this.#numerator = BigInt(parts[0]);
+            this.#denominator = BigInt(denominator);
+          } else if (parts.length === 2) {
+            this.#numerator = BigInt(parts[0]);
+            this.#denominator = BigInt(parts[1]);
+          } else {
+            throw new Error("Invalid rational format. Use 'a/b', 'a', or 'a..b/c'");
+          }
+        }
+      }
+    } else {
+      this.#numerator = BigInt(numerator);
+      this.#denominator = BigInt(denominator);
+    }
+    if (this.#denominator === 0n) {
+      throw new Error("Denominator cannot be zero");
+    }
+    this.#normalize();
+    this.#isNegative = this.#numerator < 0n;
+  }
+  #normalize() {
+    if (this.#denominator < 0n) {
+      this.#numerator = -this.#numerator;
+      this.#denominator = -this.#denominator;
+    }
+    if (this.#numerator === 0n) {
+      this.#denominator = 1n;
+      return;
+    }
+    const gcd = this.#gcd(this.#numerator < 0n ? -this.#numerator : this.#numerator, this.#denominator);
+    this.#numerator = this.#numerator / gcd;
+    this.#denominator = this.#denominator / gcd;
+  }
+  #gcd(a, b) {
+    while (b !== 0n) {
+      const temp = b;
+      b = a % b;
+      a = temp;
+    }
+    return a;
+  }
+  get numerator() {
+    return this.#numerator;
+  }
+  get denominator() {
+    return this.#denominator;
+  }
+  add(other) {
+    if (other.constructor.name === "Integer") {
+      const otherAsRational = new Rational(other.value, 1n);
+      return this.add(otherAsRational);
+    } else if (other instanceof Rational) {
+      const a = this.#numerator;
+      const b = this.#denominator;
+      const c = other.numerator;
+      const d = other.denominator;
+      const numerator = a * d + b * c;
+      const denominator = b * d;
+      return new Rational(numerator, denominator);
+    } else if (other.low && other.high && typeof other.low.equals === "function") {
+      const thisAsInterval = { low: this, high: this };
+      const IntervalClass = other.constructor;
+      const newThisAsInterval = new IntervalClass(this, this);
+      return newThisAsInterval.add(other);
+    } else {
+      throw new Error(`Cannot add ${other.constructor.name} to Rational`);
+    }
+  }
+  subtract(other) {
+    if (other.constructor.name === "Integer") {
+      const otherAsRational = new Rational(other.value, 1n);
+      return this.subtract(otherAsRational);
+    } else if (other instanceof Rational) {
+      const a = this.#numerator;
+      const b = this.#denominator;
+      const c = other.numerator;
+      const d = other.denominator;
+      const numerator = a * d - b * c;
+      const denominator = b * d;
+      return new Rational(numerator, denominator);
+    } else if (other.low && other.high && typeof other.low.equals === "function") {
+      const IntervalClass = other.constructor;
+      const newThisAsInterval = new IntervalClass(this, this);
+      return newThisAsInterval.subtract(other);
+    } else {
+      throw new Error(`Cannot subtract ${other.constructor.name} from Rational`);
+    }
+  }
+  multiply(other) {
+    if (other.constructor.name === "Integer") {
+      const otherAsRational = new Rational(other.value, 1n);
+      return this.multiply(otherAsRational);
+    } else if (other instanceof Rational) {
+      const a = this.#numerator;
+      const b = this.#denominator;
+      const c = other.numerator;
+      const d = other.denominator;
+      const numerator = a * c;
+      const denominator = b * d;
+      return new Rational(numerator, denominator);
+    } else if (other.low && other.high && typeof other.low.equals === "function") {
+      const IntervalClass = other.constructor;
+      const newThisAsInterval = new IntervalClass(this, this);
+      return newThisAsInterval.multiply(other);
+    } else {
+      throw new Error(`Cannot multiply Rational by ${other.constructor.name}`);
+    }
+  }
+  divide(other) {
+    if (other.constructor.name === "Integer") {
+      if (other.value === 0n) {
+        throw new Error("Division by zero");
+      }
+      const otherAsRational = new Rational(other.value, 1n);
+      return this.divide(otherAsRational);
+    } else if (other instanceof Rational) {
+      if (other.numerator === 0n) {
+        throw new Error("Division by zero");
+      }
+      const a = this.#numerator;
+      const b = this.#denominator;
+      const c = other.numerator;
+      const d = other.denominator;
+      const numerator = a * d;
+      const denominator = b * c;
+      return new Rational(numerator, denominator);
+    } else if (other.low && other.high && typeof other.low.equals === "function") {
+      const IntervalClass = other.constructor;
+      const newThisAsInterval = new IntervalClass(this, this);
+      return newThisAsInterval.divide(other);
+    } else {
+      throw new Error(`Cannot divide Rational by ${other.constructor.name}`);
+    }
+  }
+  negate() {
+    return new Rational(-this.#numerator, this.#denominator);
+  }
+  reciprocal() {
+    if (this.#numerator === 0n) {
+      throw new Error("Cannot take reciprocal of zero");
+    }
+    return new Rational(this.#denominator, this.#numerator);
+  }
+  pow(exponent) {
+    const n = BigInt(exponent);
+    if (n === 0n) {
+      if (this.#numerator === 0n) {
+        throw new Error("Zero cannot be raised to the power of zero");
+      }
+      return new Rational(1);
+    }
+    if (this.#numerator === 0n && n < 0n) {
+      throw new Error("Zero cannot be raised to a negative power");
+    }
+    if (n < 0n) {
+      const reciprocal = this.reciprocal();
+      return reciprocal.pow(-n);
+    }
+    let resultNum = 1n;
+    let resultDen = 1n;
+    let num = this.#numerator;
+    let den = this.#denominator;
+    for (let i = n < 0n ? -n : n;i > 0n; i >>= 1n) {
+      if (i & 1n) {
+        resultNum *= num;
+        resultDen *= den;
+      }
+      num *= num;
+      den *= den;
+    }
+    return new Rational(resultNum, resultDen);
+  }
+  equals(other) {
+    return this.#numerator === other.numerator && this.#denominator === other.denominator;
+  }
+  compareTo(other) {
+    const crossProduct1 = this.#numerator * other.denominator;
+    const crossProduct2 = this.#denominator * other.numerator;
+    if (crossProduct1 < crossProduct2)
+      return -1;
+    if (crossProduct1 > crossProduct2)
+      return 1;
+    return 0;
+  }
+  lessThan(other) {
+    return this.compareTo(other) < 0;
+  }
+  lessThanOrEqual(other) {
+    return this.compareTo(other) <= 0;
+  }
+  greaterThan(other) {
+    return this.compareTo(other) > 0;
+  }
+  greaterThanOrEqual(other) {
+    return this.compareTo(other) >= 0;
+  }
+  abs() {
+    return this.#numerator < 0n ? this.negate() : new Rational(this.#numerator, this.#denominator);
+  }
+  toString(base) {
+    if (base === undefined) {
+      if (this.#denominator === 1n) {
+        return this.#numerator.toString();
+      }
+      return `${this.#numerator}/${this.#denominator}`;
+    }
+    let baseSystem;
+    if (base instanceof BaseSystem) {
+      baseSystem = base;
+    } else if (typeof base === "number") {
+      baseSystem = BaseSystem.fromBase(base);
+    } else {
+      return this.toString();
+    }
+    return this.toRepeatingBase(baseSystem);
+  }
+  toRepeatingBase(baseSystem) {
+    return this.toRepeatingBaseWithPeriod(baseSystem).baseStr;
+  }
+  toRepeatingBaseWithPeriod(baseSystem, options = {}) {
+    if (!(baseSystem instanceof BaseSystem)) {
+      throw new Error("Argument must be a BaseSystem");
+    }
+    const { useRepeatNotation = true, limit = 1000 } = options;
+    if (this.#numerator < 0n) {
+      const result2 = this.negate().toRepeatingBaseWithPeriod(baseSystem, options);
+      return {
+        baseStr: "-" + result2.baseStr,
+        period: result2.period,
+        limitHit: result2.limitHit
+      };
+    }
+    const baseBigInt = BigInt(baseSystem.base);
+    let num = this.#numerator;
+    let den = this.#denominator;
+    const integerPart = num / den;
+    let remainder = num % den;
+    let result = baseSystem.fromDecimal(integerPart);
+    if (remainder === 0n) {
+      return { baseStr: result, period: 0, limitHit: false };
+    }
+    result += ".";
+    const remainders = new Map;
+    let fractionParts = [];
+    let cycleStartIndex = -1;
+    let limitHit = false;
+    while (remainder !== 0n) {
+      if (remainders.has(remainder)) {
+        cycleStartIndex = remainders.get(remainder);
+        break;
+      }
+      if (fractionParts.length >= limit) {
+        limitHit = true;
+        break;
+      }
+      remainders.set(remainder, fractionParts.length);
+      remainder *= baseBigInt;
+      const digit = remainder / den;
+      remainder = remainder % den;
+      fractionParts.push(baseSystem.getChar(digit));
+    }
+    let period = 0;
+    if (cycleStartIndex !== -1) {
+      const nonRepeating = fractionParts.slice(0, cycleStartIndex).join("");
+      const repeating = fractionParts.slice(cycleStartIndex).join("");
+      period = fractionParts.length - cycleStartIndex;
+      const formattedNonRepeating = useRepeatNotation ? Rational.#formatRepeatedDigits(nonRepeating) : nonRepeating;
+      const formattedRepeating = useRepeatNotation ? Rational.#formatRepeatedDigits(repeating) : repeating;
+      result += formattedNonRepeating + "#" + formattedRepeating;
+    } else if (remainder === 0n) {
+      const terminating = fractionParts.join("");
+      const formattedTerminating = useRepeatNotation ? Rational.#formatRepeatedDigits(terminating) : terminating;
+      result += formattedTerminating + "#0";
+    } else {
+      const partial = fractionParts.join("");
+      const formattedPartial = useRepeatNotation ? Rational.#formatRepeatedDigits(partial) : partial;
+      result += formattedPartial + "...";
+      period = -1;
+    }
+    return { baseStr: result, period, limitHit };
+  }
+  periodModulo(baseSystem, limit = 1e6) {
+    if (!(baseSystem instanceof BaseSystem)) {
+      throw new Error("Argument must be a BaseSystem");
+    }
+    let num = this.#numerator < 0n ? -this.#numerator : this.#numerator;
+    let den = this.#denominator;
+    const baseBigInt = BigInt(baseSystem.base);
+    if (den === 1n)
+      return 0;
+    let common = this.#gcd(den, baseBigInt);
+    while (common > 1n) {
+      den /= common;
+      common = this.#gcd(den, baseBigInt);
+    }
+    if (den === 1n)
+      return 0;
+    let k = 1;
+    let power = baseBigInt % den;
+    while (power !== 1n && k <= limit) {
+      power = power * baseBigInt % den;
+      k++;
+    }
+    if (k > limit) {
+      throw new Error(`Period calculation exceeded limit of ${limit} iterations. Period is likely > ${limit}.`);
+    }
+    return k;
+  }
+  toBase(baseSystem) {
+    if (!(baseSystem instanceof BaseSystem)) {
+      throw new Error("Argument must be a BaseSystem");
+    }
+    const numStr = baseSystem.fromDecimal(this.#numerator);
+    if (this.#denominator === 1n) {
+      return numStr;
+    }
+    const denStr = baseSystem.fromDecimal(this.#denominator);
+    return `${numStr}/${denStr}`;
+  }
+  toMixedString() {
+    if (this.#denominator === 1n || this.#numerator === 0n) {
+      return this.#numerator.toString();
+    }
+    this.#computeWholePart();
+    if (this.#remainder === 0n) {
+      return this.#isNegative ? `-${this.#wholePart}` : `${this.#wholePart}`;
+    }
+    if (this.#wholePart === 0n) {
+      return this.#isNegative ? `-${this.#remainder}/${this.#denominator}` : `${this.#remainder}/${this.#denominator}`;
+    } else {
+      return this.#isNegative ? `-${this.#wholePart}..${this.#remainder}/${this.#denominator}` : `${this.#wholePart}..${this.#remainder}/${this.#denominator}`;
+    }
+  }
+  toNumber() {
+    return Number(this.#numerator) / Number(this.#denominator);
+  }
+  toRepeatingDecimal() {
+    const result = this.toRepeatingDecimalWithPeriod();
+    return result.decimal;
+  }
+  toRepeatingDecimalWithPeriod(useRepeatNotation = true) {
+    if (this.#numerator === 0n) {
+      return { decimal: "0", period: 0 };
+    }
+    this.#computeWholePart();
+    const maxDigits = useRepeatNotation ? 100 : Rational.DEFAULT_PERIOD_DIGITS;
+    this.#computeDecimalMetadata(maxDigits);
+    let result = (this.#isNegative ? "-" : "") + this.#wholePart.toString();
+    if (this.#isTerminating) {
+      if (this.#initialSegment) {
+        const formattedInitial = useRepeatNotation ? Rational.#formatRepeatedDigits(this.#initialSegment, 7) : this.#initialSegment;
+        result += "." + formattedInitial + "#0";
+      } else {}
+      return { decimal: result, period: 0 };
+    } else {
+      let periodDigits = this.#periodDigits;
+      if (this.#periodLength > 0 && this.#periodLength <= Rational.MAX_PERIOD_DIGITS && this.#periodDigits.length < this.#periodLength) {
+        periodDigits = this.extractPeriodSegment(this.#initialSegment, this.#periodLength, this.#periodLength);
+      }
+      const formattedInitial = useRepeatNotation ? Rational.#formatRepeatedDigits(this.#initialSegment, 7) : this.#initialSegment;
+      let displayPeriod = periodDigits;
+      if (useRepeatNotation && this.#leadingZerosInPeriod < 1000) {
+        const significantDigits = this.#periodDigitsRest;
+        if (significantDigits && significantDigits.length > 0) {
+          const leadingZerosFormatted = this.#leadingZerosInPeriod > 6 ? `{0~${this.#leadingZerosInPeriod}}` : this.#leadingZerosInPeriod > 0 ? "0".repeat(this.#leadingZerosInPeriod) : "";
+          const maxSignificantDigits = Math.min(significantDigits.length, 20);
+          displayPeriod = leadingZerosFormatted + significantDigits.substring(0, maxSignificantDigits);
+        } else {
+          displayPeriod = useRepeatNotation ? Rational.#formatRepeatedDigits(periodDigits, 7) : periodDigits;
+        }
+      } else {
+        displayPeriod = useRepeatNotation ? Rational.#formatRepeatedDigits(periodDigits, 7) : periodDigits;
+      }
+      if (this.#initialSegment) {
+        result += "." + formattedInitial + "#" + displayPeriod;
+      } else {
+        result += ".#" + displayPeriod;
+      }
+      return {
+        decimal: result,
+        period: this.#periodLength
+      };
+    }
+  }
+  static #countFactorsOf2(n) {
+    if (n === 0n)
+      return 0;
+    let count = 0;
+    while ((n & 1n) === 0n) {
+      n >>= 1n;
+      count++;
+    }
+    return count;
+  }
+  static #countFactorsOf5(n) {
+    if (n === 0n)
+      return 0;
+    let count = 0;
+    const powers = [
+      { exp: 16, value: Rational.POWERS_OF_5["16"] },
+      { exp: 8, value: Rational.POWERS_OF_5["8"] },
+      { exp: 4, value: Rational.POWERS_OF_5["4"] },
+      { exp: 2, value: Rational.POWERS_OF_5["2"] },
+      { exp: 1, value: Rational.POWERS_OF_5["1"] }
+    ];
+    for (const { exp, value } of powers) {
+      while (n % value === 0n) {
+        n /= value;
+        count += exp;
+      }
+    }
+    return count;
+  }
+  #computeWholePart() {
+    if (this.#wholePart !== undefined)
+      return;
+    const absNumerator = this.#numerator < 0n ? -this.#numerator : this.#numerator;
+    this.#wholePart = absNumerator / this.#denominator;
+    this.#remainder = absNumerator % this.#denominator;
+  }
+  #computeLeadingZerosInPeriod(reducedDen, initialSegmentLength) {
+    let adjustedNumerator = this.#remainder * 10n ** BigInt(initialSegmentLength);
+    let leadingZeros = 0;
+    while (adjustedNumerator < reducedDen && leadingZeros < Rational.MAX_PERIOD_CHECK) {
+      adjustedNumerator *= 10n;
+      leadingZeros++;
+    }
+    return leadingZeros;
+  }
+  #computeDecimalMetadata(maxPeriodDigits = Rational.DEFAULT_PERIOD_DIGITS) {
+    if (this.#periodLength !== undefined && this.#maxPeriodDigitsComputed !== undefined && this.#maxPeriodDigitsComputed >= maxPeriodDigits)
+      return;
+    this.#computeWholePart();
+    if (this.#remainder === 0n) {
+      this.#initialSegment = "";
+      this.#periodDigits = "";
+      this.#periodLength = 0;
+      this.#isTerminating = true;
+      this.#factorsOf2 = 0;
+      this.#factorsOf5 = 0;
+      this.#leadingZerosInPeriod = 0;
+      this.#initialSegmentLeadingZeros = 0;
+      this.#initialSegmentRest = "";
+      this.#periodDigitsRest = "";
+      this.#maxPeriodDigitsComputed = maxPeriodDigits;
+      return;
+    }
+    this.#factorsOf2 = Rational.#countFactorsOf2(this.#denominator);
+    this.#factorsOf5 = Rational.#countFactorsOf5(this.#denominator);
+    const initialSegmentLength = Math.max(this.#factorsOf2, this.#factorsOf5);
+    let reducedDen = this.#denominator;
+    for (let i = 0;i < this.#factorsOf2; i++) {
+      reducedDen /= 2n;
+    }
+    for (let i = 0;i < this.#factorsOf5; i++) {
+      reducedDen /= 5n;
+    }
+    if (reducedDen === 1n) {
+      const digits = [];
+      let currentRemainder2 = this.#remainder;
+      for (let i = 0;i < initialSegmentLength && currentRemainder2 !== 0n; i++) {
+        currentRemainder2 *= 10n;
+        const digit = currentRemainder2 / this.#denominator;
+        digits.push(digit.toString());
+        currentRemainder2 = currentRemainder2 % this.#denominator;
+      }
+      this.#initialSegment = digits.join("");
+      this.#periodDigits = "";
+      this.#periodLength = 0;
+      this.#isTerminating = true;
+      this.#leadingZerosInPeriod = 0;
+      this.#computeDecimalPartBreakdown();
+      this.#maxPeriodDigitsComputed = maxPeriodDigits;
+      return;
+    }
+    let periodLength = 1;
+    let remainder = 10n % reducedDen;
+    while (remainder !== 1n && periodLength < Rational.MAX_PERIOD_CHECK) {
+      periodLength++;
+      remainder = remainder * 10n % reducedDen;
+    }
+    this.#periodLength = periodLength >= Rational.MAX_PERIOD_CHECK ? -1 : periodLength;
+    this.#isTerminating = false;
+    this.#leadingZerosInPeriod = this.#computeLeadingZerosInPeriod(reducedDen, initialSegmentLength);
+    const initialDigits = [];
+    let currentRemainder = this.#remainder;
+    for (let i = 0;i < initialSegmentLength && currentRemainder !== 0n; i++) {
+      currentRemainder *= 10n;
+      const digit = currentRemainder / this.#denominator;
+      initialDigits.push(digit.toString());
+      currentRemainder = currentRemainder % this.#denominator;
+    }
+    const periodDigitsToCompute = this.#periodLength === -1 ? maxPeriodDigits : this.#periodLength > maxPeriodDigits ? maxPeriodDigits : this.#periodLength;
+    const periodDigits = [];
+    if (currentRemainder !== 0n) {
+      for (let i = 0;i < periodDigitsToCompute; i++) {
+        currentRemainder *= 10n;
+        const digit = currentRemainder / this.#denominator;
+        periodDigits.push(digit.toString());
+        currentRemainder = currentRemainder % this.#denominator;
+      }
+    }
+    this.#initialSegment = initialDigits.join("");
+    this.#periodDigits = periodDigits.join("");
+    this.#computeDecimalPartBreakdown();
+    this.#maxPeriodDigitsComputed = maxPeriodDigits;
+  }
+  #computeDecimalPartBreakdown() {
+    let leadingZeros = 0;
+    const initialSegment = this.#initialSegment || "";
+    for (let i = 0;i < initialSegment.length; i++) {
+      if (initialSegment[i] === "0") {
+        leadingZeros++;
+      } else {
+        break;
+      }
+    }
+    this.#initialSegmentLeadingZeros = leadingZeros;
+    this.#initialSegmentRest = initialSegment.substring(leadingZeros);
+    const periodDigits = this.#periodDigits || "";
+    let periodLeadingZeros = 0;
+    for (let i = 0;i < periodDigits.length; i++) {
+      if (periodDigits[i] === "0") {
+        periodLeadingZeros++;
+      } else {
+        break;
+      }
+    }
+    this.#leadingZerosInPeriod = periodLeadingZeros;
+    this.#periodDigitsRest = periodDigits.substring(periodLeadingZeros);
+  }
+  computeDecimalMetadata(maxPeriodDigits = Rational.DEFAULT_PERIOD_DIGITS) {
+    if (this.#numerator === 0n) {
+      return {
+        initialSegment: "",
+        periodDigits: "",
+        periodLength: 0,
+        isTerminating: true
+      };
+    }
+    this.#computeDecimalMetadata(maxPeriodDigits);
+    return {
+      wholePart: this.#wholePart,
+      initialSegment: this.#initialSegment,
+      initialSegmentLeadingZeros: this.#initialSegmentLeadingZeros,
+      initialSegmentRest: this.#initialSegmentRest,
+      periodDigits: this.#periodDigits,
+      periodLength: this.#periodLength,
+      leadingZerosInPeriod: this.#leadingZerosInPeriod,
+      periodDigitsRest: this.#periodDigitsRest,
+      isTerminating: this.#isTerminating
+    };
+  }
+  static #formatRepeatedDigits(digits, threshold = 6) {
+    if (!digits || digits.length === 0)
+      return digits;
+    let result = "";
+    let i = 0;
+    while (i < digits.length) {
+      let currentChar = digits[i];
+      let count = 1;
+      while (i + count < digits.length && digits[i + count] === currentChar) {
+        count++;
+      }
+      if (count >= threshold) {
+        result += `{${currentChar}~${count}}`;
+      } else {
+        result += currentChar.repeat(count);
+      }
+      i += count;
+    }
+    return result;
+  }
+  static #parseRepeatedDigits(formattedDigits) {
+    if (!formattedDigits || !formattedDigits.includes("{")) {
+      return formattedDigits;
+    }
+    return formattedDigits.replace(/\{(.+?)~(\d+)\}/g, (match, digits, count) => {
+      return digits.repeat(parseInt(count));
+    });
+  }
+  extractPeriodSegment(initialSegment, periodLength, digitsRequested) {
+    if (periodLength === 0 || periodLength === -1) {
+      return "";
+    }
+    const digitsToReturn = Math.min(digitsRequested, periodLength);
+    const periodDigits = [];
+    let currentRemainder = this.#numerator % this.#denominator;
+    const isNegative = this.#numerator < 0n;
+    if (isNegative) {
+      currentRemainder = -currentRemainder;
+    }
+    for (let i = 0;i < initialSegment.length; i++) {
+      currentRemainder *= 10n;
+      currentRemainder = currentRemainder % this.#denominator;
+    }
+    for (let i = 0;i < digitsToReturn; i++) {
+      currentRemainder *= 10n;
+      const digit = currentRemainder / this.#denominator;
+      periodDigits.push(digit.toString());
+      currentRemainder = currentRemainder % this.#denominator;
+    }
+    return periodDigits.join("");
+  }
+  toDecimal() {
+    if (this.#numerator === 0n) {
+      return "0";
+    }
+    const isNegative = this.#numerator < 0n;
+    const num = isNegative ? -this.#numerator : this.#numerator;
+    const den = this.#denominator;
+    const integerPart = num / den;
+    let remainder = num % den;
+    if (remainder === 0n) {
+      return (isNegative ? "-" : "") + integerPart.toString();
+    }
+    const digits = [];
+    const maxDigits = 20;
+    for (let i = 0;i < maxDigits && remainder !== 0n; i++) {
+      remainder *= 10n;
+      const digit = remainder / den;
+      digits.push(digit.toString());
+      remainder = remainder % den;
+    }
+    let result = (isNegative ? "-" : "") + integerPart.toString();
+    if (digits.length > 0) {
+      result += "." + digits.join("");
+    }
+    return result;
+  }
+  E(exponent) {
+    const exp = BigInt(exponent);
+    let powerOf10;
+    if (exp >= 0n) {
+      powerOf10 = new Rational(10n ** exp, 1n);
+    } else {
+      powerOf10 = new Rational(1n, 10n ** -exp);
+    }
+    return this.multiply(powerOf10);
+  }
+  #generatePeriodInfo(showPeriodInfo) {
+    if (!showPeriodInfo || this.#isTerminating) {
+      return "";
+    }
+    const info = [];
+    if (this.#initialSegmentLeadingZeros > 0) {
+      info.push(`initial: ${this.#initialSegmentLeadingZeros} zeros`);
+    }
+    if (this.#leadingZerosInPeriod > 0) {
+      info.push(`period starts: +${this.#leadingZerosInPeriod} zeros`);
+    }
+    if (this.#periodLength === -1) {
+      info.push("period: >10^7");
+    } else if (this.#periodLength > 0) {
+      info.push(`period: ${this.#periodLength}`);
+    }
+    return info.length > 0 ? ` {${info.join(", ")}}` : "";
+  }
+  toScientificNotation(useRepeatNotation = true, precision = 11, showPeriodInfo = false) {
+    if (this.#numerator === 0n) {
+      return "0";
+    }
+    this.#computeWholePart();
+    this.#computeDecimalMetadata(100);
+    const isNegative = this.#isNegative;
+    const prefix = isNegative ? "-" : "";
+    if (this.#wholePart > 0n) {
+      const wholeStr = this.#wholePart.toString();
+      const firstDigit = wholeStr[0];
+      const exponent = wholeStr.length - 1;
+      let mantissa = firstDigit;
+      const hasMoreWholeDigits = wholeStr.length > 1;
+      const hasFractionalPart = this.#remainder > 0n;
+      if (hasFractionalPart || hasMoreWholeDigits) {
+        if (hasFractionalPart && !this.#isTerminating) {
+          mantissa += ".";
+          const remainingWholeDigits = hasMoreWholeDigits ? wholeStr.substring(1) : "";
+          const formattedInitial = useRepeatNotation ? Rational.#formatRepeatedDigits(this.#initialSegment, 7) : this.#initialSegment;
+          let periodDigits = this.#periodDigits;
+          if (this.#periodLength > 0 && this.#periodLength <= Rational.MAX_PERIOD_DIGITS && periodDigits.length < this.#periodLength) {
+            periodDigits = this.extractPeriodSegment(this.#initialSegment, this.#periodLength, Math.min(10, this.#periodLength));
+          }
+          if (remainingWholeDigits && periodDigits && remainingWholeDigits === periodDigits.substring(0, remainingWholeDigits.length)) {
+            mantissa += "#" + periodDigits;
+          } else {
+            if (hasMoreWholeDigits) {
+              mantissa += remainingWholeDigits;
+            }
+            mantissa += formattedInitial + "#";
+            const formattedPeriod = useRepeatNotation ? Rational.#formatRepeatedDigits(periodDigits, 7) : periodDigits.substring(0, Math.max(1, precision - mantissa.length + 1));
+            mantissa += formattedPeriod;
+          }
+        } else {
+          if (hasMoreWholeDigits || hasFractionalPart) {
+            mantissa += ".";
+            if (hasMoreWholeDigits) {
+              const remainingDigits = wholeStr.substring(1);
+              if (!hasFractionalPart) {
+                const trimmedDigits = remainingDigits.replace(/0+$/, "");
+                if (trimmedDigits === "") {
+                  mantissa = mantissa.slice(0, -1);
+                } else {
+                  mantissa += trimmedDigits;
+                }
+              } else {
+                mantissa += remainingDigits;
+              }
+            }
+            if (hasFractionalPart) {
+              const formattedInitial = useRepeatNotation ? Rational.#formatRepeatedDigits(this.#initialSegment, 7) : this.#initialSegment;
+              const trimmedInitial = formattedInitial.replace(/0+$/, "");
+              if (trimmedInitial) {
+                mantissa += trimmedInitial;
+              } else if (!hasMoreWholeDigits) {
+                mantissa = mantissa.slice(0, -1);
+              }
+            }
+          }
+        }
+      } else if (!hasFractionalPart && !hasMoreWholeDigits) {}
+      const result = `${prefix}${mantissa}E${exponent}`;
+      return result + this.#generatePeriodInfo(showPeriodInfo);
+    }
+    if (this.#isTerminating) {
+      const leadingZeros = this.#initialSegmentLeadingZeros;
+      const rest = this.#initialSegmentRest;
+      if (rest === "") {
+        return prefix + "0";
+      }
+      const firstDigit = rest[0];
+      const exponent = -(leadingZeros + 1);
+      let mantissa = firstDigit;
+      if (rest.length > 1) {
+        const remainingDigits = Math.max(0, precision - 1);
+        mantissa += "." + rest.substring(1, remainingDigits + 1);
+      }
+      return `${prefix}${mantissa}E${exponent}`;
+    } else {
+      const firstNonZeroInPeriod = this.#periodDigitsRest;
+      if (this.#initialSegmentRest !== "") {
+        const firstDigit = this.#initialSegmentRest[0];
+        const exponent = -(this.#initialSegmentLeadingZeros + 1);
+        let mantissa = firstDigit;
+        if (this.#initialSegmentRest.length > 1 || this.#periodDigits !== "") {
+          mantissa += ".";
+          if (this.#initialSegmentRest.length > 1) {
+            mantissa += this.#initialSegmentRest.substring(1);
+          }
+          mantissa += "#";
+          if (this.#leadingZerosInPeriod > 0 && useRepeatNotation && this.#leadingZerosInPeriod > 6) {
+            mantissa += `{0~${this.#leadingZerosInPeriod}}`;
+          } else if (this.#leadingZerosInPeriod > 0) {
+            mantissa += "0".repeat(Math.min(this.#leadingZerosInPeriod, 10));
+          }
+          if (firstNonZeroInPeriod !== "") {
+            const remainingLength = Math.max(1, precision - mantissa.length + 1);
+            mantissa += firstNonZeroInPeriod.substring(0, remainingLength);
+          }
+        }
+        const result = `${prefix}${mantissa}E${exponent}`;
+        return result + this.#generatePeriodInfo(showPeriodInfo);
+      } else if (firstNonZeroInPeriod !== "") {
+        const firstDigit = firstNonZeroInPeriod[0];
+        const totalLeadingZeros = this.#initialSegmentLeadingZeros + this.#leadingZerosInPeriod;
+        const exponent = -(totalLeadingZeros + 1);
+        let mantissa = firstDigit;
+        if (firstNonZeroInPeriod.length > 1) {
+          mantissa += ".#";
+          const remainingDigits = Math.max(0, precision - 3);
+          mantissa += firstNonZeroInPeriod.substring(1, remainingDigits + 1);
+        } else {
+          mantissa += ".#" + firstDigit;
+        }
+        const result = `${prefix}${mantissa}E${exponent}`;
+        return result + this.#generatePeriodInfo(showPeriodInfo);
+      } else {
+        return prefix + "0";
+      }
+    }
+  }
+  static from(value) {
+    if (value instanceof Rational) {
+      return new Rational(value.numerator, value.denominator);
+    }
+    return new Rational(value);
+  }
+  static DEFAULT_CF_LIMIT = 1000;
+  static fromContinuedFraction(cfArray) {
+    if (!Array.isArray(cfArray) || cfArray.length === 0) {
+      throw new Error("Continued fraction array cannot be empty");
+    }
+    const cf = cfArray.map((term) => {
+      if (typeof term === "number") {
+        return BigInt(term);
+      } else if (typeof term === "bigint") {
+        return term;
+      } else {
+        throw new Error(`Invalid continued fraction term: ${term}`);
+      }
+    });
+    for (let i = 1;i < cf.length; i++) {
+      if (cf[i] <= 0n) {
+        throw new Error(`Continued fraction terms must be positive: ${cf[i]}`);
+      }
+    }
+    if (cf.length === 1) {
+      return new Rational(cf[0], 1n);
+    }
+    let p_prev = 1n;
+    let p_curr = cf[0];
+    let q_prev = 0n;
+    let q_curr = 1n;
+    const convergents = [new Rational(p_curr, q_curr)];
+    for (let i = 1;i < cf.length; i++) {
+      const a = cf[i];
+      const p_next = a * p_curr + p_prev;
+      const q_next = a * q_curr + q_prev;
+      convergents.push(new Rational(p_next, q_next));
+      p_prev = p_curr;
+      p_curr = p_next;
+      q_prev = q_curr;
+      q_curr = q_next;
+    }
+    const result = convergents[convergents.length - 1];
+    result.cf = cf.slice(1);
+    result._convergents = convergents;
+    result.wholePart = cf[0];
+    return result;
+  }
+  toContinuedFraction(maxTerms = Rational.DEFAULT_CF_LIMIT) {
+    if (this.#denominator === 0n) {
+      throw new Error("Cannot convert infinite value to continued fraction");
+    }
+    if (this.#denominator === 1n) {
+      return [this.#numerator];
+    }
+    const cf = [];
+    let num = this.#numerator;
+    let den = this.#denominator;
+    const isNeg = num < 0n;
+    if (isNeg) {
+      num = -num;
+    }
+    let intPart = num / den;
+    if (isNeg) {
+      intPart = -intPart;
+      if (num % den !== 0n) {
+        intPart = intPart - 1n;
+        num = den - num % den;
+      } else {
+        num = num % den;
+      }
+    } else {
+      num = num % den;
+    }
+    cf.push(intPart);
+    let termCount = 1;
+    while (num !== 0n && termCount < maxTerms) {
+      const quotient = den / num;
+      cf.push(quotient);
+      const remainder = den % num;
+      den = num;
+      num = remainder;
+      termCount++;
+    }
+    if (cf.length > 1 && cf[cf.length - 1] === 1n) {
+      const secondLast = cf[cf.length - 2];
+      cf[cf.length - 2] = secondLast + 1n;
+      cf.pop();
+    }
+    this.cf = cf.slice(1);
+    if (!this.wholePart) {
+      this.wholePart = cf[0];
+    }
+    return cf;
+  }
+  toContinuedFractionString() {
+    const cf = this.toContinuedFraction();
+    if (cf.length === 1) {
+      return `${cf[0]}.~0`;
+    }
+    const intPart = cf[0];
+    const cfTerms = cf.slice(1);
+    return `${intPart}.~${cfTerms.join("~")}`;
+  }
+  static fromContinuedFractionString(cfString) {
+    const cfMatch = cfString.match(/^(-?\d+)\.~(.*)$/);
+    if (!cfMatch) {
+      throw new Error("Invalid continued fraction format");
+    }
+    const [, integerPart, cfTermsStr] = cfMatch;
+    const intPart = BigInt(integerPart);
+    if (cfTermsStr === "0") {
+      return new Rational(intPart, 1n);
+    }
+    if (cfTermsStr === "") {
+      throw new Error("Continued fraction must have at least one term after .~");
+    }
+    if (cfTermsStr.endsWith("~")) {
+      throw new Error("Continued fraction cannot end with ~");
+    }
+    if (cfTermsStr.includes("~~")) {
+      throw new Error("Invalid continued fraction format: double tilde");
+    }
+    const terms = cfTermsStr.split("~");
+    const cfTerms = [];
+    for (const term of terms) {
+      if (!/^\d+$/.test(term)) {
+        throw new Error(`Invalid continued fraction term: ${term}`);
+      }
+      const termValue = BigInt(term);
+      if (termValue <= 0n) {
+        throw new Error(`Continued fraction terms must be positive integers: ${term}`);
+      }
+      cfTerms.push(termValue);
+    }
+    const cfArray = [intPart, ...cfTerms];
+    return Rational.fromContinuedFraction(cfArray);
+  }
+  convergents(maxCount = Rational.DEFAULT_CF_LIMIT) {
+    if (!this._convergents) {
+      const cf = this.toContinuedFraction(maxCount);
+      if (cf.length === 1) {
+        this._convergents = [new Rational(cf[0], 1n)];
+      } else {
+        let p_prev = 1n;
+        let p_curr = cf[0];
+        let q_prev = 0n;
+        let q_curr = 1n;
+        const convergents = [new Rational(p_curr, q_curr)];
+        for (let i = 1;i < cf.length; i++) {
+          const a = cf[i];
+          const p_next = a * p_curr + p_prev;
+          const q_next = a * q_curr + q_prev;
+          convergents.push(new Rational(p_next, q_next));
+          p_prev = p_curr;
+          p_curr = p_next;
+          q_prev = q_curr;
+          q_curr = q_next;
+        }
+        this._convergents = convergents;
+      }
+    }
+    if (maxCount && this._convergents && this._convergents.length > maxCount) {
+      return this._convergents.slice(0, maxCount);
+    }
+    return this._convergents || [];
+  }
+  getConvergent(n) {
+    const convergents = this.convergents();
+    if (n < 0 || n >= convergents.length) {
+      throw new Error(`Convergent index ${n} out of range [0, ${convergents.length - 1}]`);
+    }
+    return convergents[n];
+  }
+  static convergentsFromCF(cfInput, maxCount = Rational.DEFAULT_CF_LIMIT) {
+    let cfArray;
+    if (typeof cfInput === "string") {
+      const rational2 = Rational.fromContinuedFractionString(cfInput);
+      return rational2.convergents(maxCount);
+    } else {
+      cfArray = cfInput;
+    }
+    const rational = Rational.fromContinuedFraction(cfArray);
+    return rational.convergents(maxCount);
+  }
+  approximationError(target) {
+    if (!(target instanceof Rational)) {
+      throw new Error("Target must be a Rational");
+    }
+    return this.subtract(target).abs();
+  }
+  bestApproximation(maxDenominator) {
+    if (typeof maxDenominator !== "bigint" || maxDenominator < 1n) {
+      throw new Error("Maximum denominator must be a positive bigint");
+    }
+    if (this.#denominator <= maxDenominator) {
+      return new Rational(this.#numerator, this.#denominator);
+    }
+    const negative = this.#numerator < 0n;
+    let numerator = negative ? -this.#numerator : this.#numerator;
+    let denominator = this.#denominator;
+    let previousNumerator = 0n;
+    let previousDenominator = 1n;
+    let currentNumerator = 1n;
+    let currentDenominator = 0n;
+    while (denominator !== 0n) {
+      const coefficient = numerator / denominator;
+      const nextDenominator = previousDenominator + coefficient * currentDenominator;
+      if (nextDenominator > maxDenominator) {
+        break;
+      }
+      [previousNumerator, currentNumerator] = [
+        currentNumerator,
+        previousNumerator + coefficient * currentNumerator
+      ];
+      [previousDenominator, currentDenominator] = [
+        currentDenominator,
+        nextDenominator
+      ];
+      [numerator, denominator] = [
+        denominator,
+        numerator - coefficient * denominator
+      ];
+    }
+    const multiplier = (maxDenominator - previousDenominator) / currentDenominator;
+    const semiconvergentNumerator = previousNumerator + multiplier * currentNumerator;
+    const semiconvergentDenominator = previousDenominator + multiplier * currentDenominator;
+    const targetNumerator = negative ? -this.#numerator : this.#numerator;
+    const semiconvergentError = targetNumerator * semiconvergentDenominator - semiconvergentNumerator * this.#denominator;
+    const convergentError = targetNumerator * currentDenominator - currentNumerator * this.#denominator;
+    const absoluteSemiconvergentError = semiconvergentError < 0n ? -semiconvergentError : semiconvergentError;
+    const absoluteConvergentError = convergentError < 0n ? -convergentError : convergentError;
+    const useConvergent = absoluteConvergentError * semiconvergentDenominator <= absoluteSemiconvergentError * currentDenominator;
+    const resultNumerator = useConvergent ? currentNumerator : semiconvergentNumerator;
+    const resultDenominator = useConvergent ? currentDenominator : semiconvergentDenominator;
+    return new Rational(negative ? -resultNumerator : resultNumerator, resultDenominator);
+  }
+  bestConvergent(maxDenominator) {
+    if (typeof maxDenominator !== "bigint" || maxDenominator < 1n) {
+      throw new Error("Maximum denominator must be a positive bigint");
+    }
+    const negative = this.#numerator < 0n;
+    let numerator = negative ? -this.#numerator : this.#numerator;
+    let denominator = this.#denominator;
+    let previousNumerator = 0n;
+    let previousDenominator = 1n;
+    let currentNumerator = 1n;
+    let currentDenominator = 0n;
+    while (denominator !== 0n) {
+      const coefficient = numerator / denominator;
+      const nextNumerator = previousNumerator + coefficient * currentNumerator;
+      const nextDenominator = previousDenominator + coefficient * currentDenominator;
+      if (nextDenominator > maxDenominator) {
+        break;
+      }
+      [previousNumerator, currentNumerator] = [
+        currentNumerator,
+        nextNumerator
+      ];
+      [previousDenominator, currentDenominator] = [
+        currentDenominator,
+        nextDenominator
+      ];
+      [numerator, denominator] = [
+        denominator,
+        numerator - coefficient * denominator
+      ];
+    }
+    return new Rational(negative ? -currentNumerator : currentNumerator, currentDenominator);
+  }
+  bitLength() {
+    return Math.max(bitLength(this.numerator), bitLength(this.denominator));
+  }
+}
+
+// ../packages/core/src/rational-interval.js
+class RationalInterval {
+  #start;
+  #end;
+  #low;
+  #high;
+  static zero = Object.freeze(new RationalInterval(Rational.zero, Rational.zero));
+  static one = Object.freeze(new RationalInterval(Rational.one, Rational.one));
+  static unitInterval = Object.freeze(new RationalInterval(Rational.zero, Rational.one));
+  constructor(a, b) {
+    const aRational = a instanceof Rational ? a : new Rational(a);
+    const bRational = b instanceof Rational ? b : new Rational(b);
+    this.#start = aRational;
+    this.#end = bRational;
+    if (aRational.lessThanOrEqual(bRational)) {
+      this.#low = aRational;
+      this.#high = bRational;
+    } else {
+      this.#low = bRational;
+      this.#high = aRational;
+    }
+  }
+  get start() {
+    return this.#start;
+  }
+  get end() {
+    return this.#end;
+  }
+  get isAscending() {
+    return this.#start.lessThanOrEqual(this.#end);
+  }
+  get low() {
+    return this.#low;
+  }
+  get high() {
+    return this.#high;
+  }
+  add(other) {
+    if (other.value !== undefined && typeof other.value === "bigint") {
+      const otherAsRational = new Rational(other.value, 1n);
+      const otherAsInterval = new RationalInterval(otherAsRational, otherAsRational);
+      return this.add(otherAsInterval);
+    } else if (other.numerator !== undefined && other.denominator !== undefined) {
+      const otherAsInterval = new RationalInterval(other, other);
+      return this.add(otherAsInterval);
+    } else if (other.low && other.high) {
+      const newLow = this.#low.add(other.low);
+      const newHigh = this.#high.add(other.high);
+      return new RationalInterval(newLow, newHigh);
+    } else {
+      throw new Error(`Cannot add ${other.constructor.name} to RationalInterval`);
+    }
+  }
+  subtract(other) {
+    if (other.value !== undefined && typeof other.value === "bigint") {
+      const otherAsRational = new Rational(other.value, 1n);
+      const otherAsInterval = new RationalInterval(otherAsRational, otherAsRational);
+      return this.subtract(otherAsInterval);
+    } else if (other.numerator !== undefined && other.denominator !== undefined) {
+      const otherAsInterval = new RationalInterval(other, other);
+      return this.subtract(otherAsInterval);
+    } else if (other.low && other.high) {
+      const newLow = this.#low.subtract(other.high);
+      const newHigh = this.#high.subtract(other.low);
+      return new RationalInterval(newLow, newHigh);
+    } else {
+      throw new Error(`Cannot subtract ${other.constructor.name} from RationalInterval`);
+    }
+  }
+  multiply(other) {
+    if (other.value !== undefined && typeof other.value === "bigint") {
+      const otherAsRational = new Rational(other.value, 1n);
+      const otherAsInterval = new RationalInterval(otherAsRational, otherAsRational);
+      return this.multiply(otherAsInterval);
+    } else if (other.numerator !== undefined && other.denominator !== undefined) {
+      const otherAsInterval = new RationalInterval(other, other);
+      return this.multiply(otherAsInterval);
+    } else if (other.low && other.high) {
+      const products = [
+        this.#low.multiply(other.low),
+        this.#low.multiply(other.high),
+        this.#high.multiply(other.low),
+        this.#high.multiply(other.high)
+      ];
+      let min = products[0];
+      let max = products[0];
+      for (let i = 1;i < products.length; i++) {
+        if (products[i].lessThan(min))
+          min = products[i];
+        if (products[i].greaterThan(max))
+          max = products[i];
+      }
+      return new RationalInterval(min, max);
+    } else {
+      throw new Error(`Cannot multiply RationalInterval by ${other.constructor.name}`);
+    }
+  }
+  divide(other) {
+    if (other.value !== undefined && typeof other.value === "bigint") {
+      if (other.value === 0n) {
+        throw new Error("Division by zero");
+      }
+      const otherAsRational = new Rational(other.value, 1n);
+      const otherAsInterval = new RationalInterval(otherAsRational, otherAsRational);
+      return this.divide(otherAsInterval);
+    } else if (other.numerator !== undefined && other.denominator !== undefined) {
+      if (other.numerator === 0n) {
+        throw new Error("Division by zero");
+      }
+      const otherAsInterval = new RationalInterval(other, other);
+      return this.divide(otherAsInterval);
+    } else if (other.low && other.high) {
+      const zero = Rational.zero;
+      if (other.low.equals(zero) && other.high.equals(zero)) {
+        throw new Error("Division by zero");
+      }
+      if (other.containsZero()) {
+        throw new Error("Cannot divide by an interval containing zero");
+      }
+      const quotients = [
+        this.#low.divide(other.low),
+        this.#low.divide(other.high),
+        this.#high.divide(other.low),
+        this.#high.divide(other.high)
+      ];
+      let min = quotients[0];
+      let max = quotients[0];
+      for (let i = 1;i < quotients.length; i++) {
+        if (quotients[i].lessThan(min))
+          min = quotients[i];
+        if (quotients[i].greaterThan(max))
+          max = quotients[i];
+      }
+      return new RationalInterval(min, max);
+    } else {
+      throw new Error(`Cannot divide RationalInterval by ${other.constructor.name}`);
+    }
+  }
+  reciprocate() {
+    if (this.containsZero()) {
+      throw new Error("Cannot reciprocate an interval containing zero");
+    }
+    return new RationalInterval(this.#high.reciprocal(), this.#low.reciprocal());
+  }
+  negate() {
+    return new RationalInterval(this.#high.negate(), this.#low.negate());
+  }
+  pow(exponent) {
+    const n = BigInt(exponent);
+    const zero = Rational.zero;
+    if (n === 0n) {
+      if (this.#low.equals(zero) && this.#high.equals(zero)) {
+        throw new Error("Zero cannot be raised to the power of zero");
+      }
+      if (this.containsZero()) {
+        throw new Error("Cannot raise an interval containing zero to the power of zero");
+      }
+      return new RationalInterval(Rational.one, Rational.one);
+    }
+    if (n < 0n) {
+      if (this.containsZero()) {
+        throw new Error("Cannot raise an interval containing zero to a negative power");
+      }
+      const positivePower = this.pow(-n);
+      const reciprocal = new RationalInterval(positivePower.high.reciprocal(), positivePower.low.reciprocal());
+      return reciprocal;
+    }
+    if (n === 1n) {
+      return new RationalInterval(this.#low, this.#high);
+    }
+    if (n % 2n === 0n) {
+      let minVal;
+      let maxVal;
+      if (this.#low.lessThanOrEqual(zero) && this.#high.greaterThanOrEqual(zero)) {
+        minVal = new Rational(0);
+        const lowPow = this.#low.abs().pow(n);
+        const highPow = this.#high.abs().pow(n);
+        maxVal = lowPow.greaterThan(highPow) ? lowPow : highPow;
+      } else if (this.#high.lessThan(zero)) {
+        minVal = this.#high.pow(n);
+        maxVal = this.#low.pow(n);
+      } else {
+        minVal = this.#low.pow(n);
+        maxVal = this.#high.pow(n);
+      }
+      return new RationalInterval(minVal, maxVal);
+    } else {
+      return new RationalInterval(this.#low.pow(n), this.#high.pow(n));
+    }
+  }
+  mpow(exponent) {
+    let n;
+    if (typeof exponent === "bigint") {
+      n = exponent;
+    } else if (typeof exponent === "number") {
+      n = BigInt(exponent);
+    } else if (typeof exponent === "string") {
+      n = BigInt(exponent);
+    } else {
+      n = BigInt(exponent);
+    }
+    const zero = Rational.zero;
+    if (n === 0n) {
+      throw new Error("Multiplicative exponentiation requires at least one factor");
+    }
+    if (n < 0n) {
+      const recipInterval = this.reciprocate();
+      return recipInterval.mpow(-n);
+    }
+    if (n === 1n) {
+      return new RationalInterval(this.#low, this.#high);
+    }
+    if (n === 1n) {
+      return new RationalInterval(this.#low, this.#high);
+    }
+    let result = new RationalInterval(this.#low, this.#high);
+    for (let i = 1n;i < n; i++) {
+      result = result.multiply(this);
+    }
+    return result;
+  }
+  overlaps(other) {
+    return !(this.#high.lessThan(other.low) || other.high.lessThan(this.#low));
+  }
+  contains(other) {
+    return this.#low.lessThanOrEqual(other.low) && this.#high.greaterThanOrEqual(other.high);
+  }
+  containsValue(value) {
+    const r = value instanceof Rational ? value : new Rational(value);
+    return this.#low.lessThanOrEqual(r) && this.#high.greaterThanOrEqual(r);
+  }
+  containsZero() {
+    const zero = Rational.zero;
+    return this.#low.lessThanOrEqual(zero) && this.#high.greaterThanOrEqual(zero);
+  }
+  equals(other) {
+    return this.#low.equals(other.low) && this.#high.equals(other.high);
+  }
+  intersection(other) {
+    if (!this.overlaps(other)) {
+      return null;
+    }
+    const newLow = this.#low.greaterThan(other.low) ? this.#low : other.low;
+    const newHigh = this.#high.lessThan(other.high) ? this.#high : other.high;
+    return new RationalInterval(newLow, newHigh);
+  }
+  union(other) {
+    const adjacentRight = this.#high.equals(other.low);
+    const adjacentLeft = other.high.equals(this.#low);
+    if (!this.overlaps(other) && !adjacentRight && !adjacentLeft) {
+      return null;
+    }
+    const newLow = this.#low.lessThan(other.low) ? this.#low : other.low;
+    const newHigh = this.#high.greaterThan(other.high) ? this.#high : other.high;
+    return new RationalInterval(newLow, newHigh);
+  }
+  toString() {
+    return `${this.#start.toString()}:${this.#end.toString()}`;
+  }
+  toMixedString() {
+    return `${this.#start.toMixedString()}:${this.#end.toMixedString()}`;
+  }
+  static point(value) {
+    let r;
+    if (value instanceof Rational) {
+      r = value;
+    } else if (value && typeof value === "object" && typeof value.value === "bigint") {
+      r = new Rational(value.value);
+    } else if (typeof value === "number") {
+      r = new Rational(String(value));
+    } else if (typeof value === "string" || typeof value === "bigint") {
+      r = new Rational(value);
+    } else {
+      throw new Error("Point value must be an Integer or Rational input");
+    }
+    return new RationalInterval(r, r);
+  }
+  static fromString(str) {
+    const parts = str.split(":");
+    if (parts.length !== 2) {
+      throw new Error("Invalid interval format. Use 'a:b'");
+    }
+    return new RationalInterval(parts[0], parts[1]);
+  }
+  toRepeatingDecimal(useRepeatNotation = true) {
+    const startDecimal = this.#start.toRepeatingDecimalWithPeriod(useRepeatNotation).decimal;
+    const endDecimal = this.#end.toRepeatingDecimalWithPeriod(useRepeatNotation).decimal;
+    return `${startDecimal}:${endDecimal}`;
+  }
+  compactedDecimalInterval() {
+    const startStr = this.#start.toDecimal();
+    const endStr = this.#end.toDecimal();
+    let commonPrefix = "";
+    const minLength = Math.min(startStr.length, endStr.length);
+    for (let i = 0;i < minLength; i++) {
+      if (startStr[i] === endStr[i]) {
+        commonPrefix += startStr[i];
+      } else {
+        break;
+      }
+    }
+    if (commonPrefix.length <= 1 || commonPrefix.startsWith("-") && commonPrefix.length <= 2) {
+      return `${startStr}:${endStr}`;
+    }
+    const startSuffix = startStr.substring(commonPrefix.length);
+    const endSuffix = endStr.substring(commonPrefix.length);
+    if (!startSuffix || !endSuffix || startSuffix.length !== endSuffix.length) {
+      return `${startStr}:${endStr}`;
+    }
+    if (!/^\d+$/.test(startSuffix) || !/^\d+$/.test(endSuffix)) {
+      return `${startStr}:${endStr}`;
+    }
+    return `${commonPrefix}[${startSuffix}:${endSuffix}]`;
+  }
+  relativeMidDecimalInterval() {
+    const midpoint = this.#low.add(this.#high).divide(new Rational(2));
+    const offsetEnd = this.#end.subtract(midpoint);
+    const offsetStart = this.#start.subtract(midpoint);
+    const midpointStr = midpoint.toDecimal();
+    const decimalPlaces = midpointStr.includes(".") ? midpointStr.split(".")[1].length : 0;
+    const scaleFactor = decimalPlaces === 0 ? Rational.one : new Rational(10).pow(decimalPlaces);
+    const scaledOffsetStart = offsetStart.multiply(scaleFactor);
+    const scaledOffsetEnd = offsetEnd.multiply(scaleFactor);
+    if (offsetStart.equals(offsetEnd.negate())) {
+      const offsetStr = scaledOffsetEnd.abs().toDecimal();
+      return `${midpointStr}[+-${offsetStr}]`;
+    }
+    const offStartStr = scaledOffsetStart.toDecimal();
+    const offEndStr = scaledOffsetEnd.toDecimal();
+    const startSign = scaledOffsetStart.compareTo(Rational.zero) > 0 ? "+" : "";
+    const endSign = scaledOffsetEnd.compareTo(Rational.zero) > 0 ? "+" : "";
+    return `${midpointStr}[${startSign}${offStartStr}:${endSign}${offEndStr}]`;
+  }
+  relativeDecimalInterval() {
+    const shortestDecimal = this.#findShortestPreciseDecimal();
+    const offsetStart = this.#start.subtract(shortestDecimal);
+    const offsetEnd = this.#end.subtract(shortestDecimal);
+    const decimalStr = shortestDecimal.toDecimal();
+    const decimalPlaces = decimalStr.includes(".") ? decimalStr.split(".")[1].length : 0;
+    let scaledOffsetStart, scaledOffsetEnd;
+    if (decimalPlaces === 0) {
+      scaledOffsetStart = offsetStart;
+      scaledOffsetEnd = offsetEnd;
+    } else {
+      const scaleFactor = new Rational(10).pow(decimalPlaces);
+      scaledOffsetStart = offsetStart.multiply(scaleFactor);
+      scaledOffsetEnd = offsetEnd.multiply(scaleFactor);
+    }
+    const offsetStartStr = scaledOffsetStart.toDecimal();
+    const offsetEndStr = scaledOffsetEnd.toDecimal();
+    if (offsetStart.add(offsetEnd).abs().compareTo(new Rational(1, 1e6)) < 0) {
+      const avgOffset = scaledOffsetStart.abs().add(scaledOffsetEnd.abs()).divide(new Rational(2));
+      return `${decimalStr}[+-${avgOffset.toDecimal()}]`;
+    } else {
+      const off1 = { v: scaledOffsetStart, s: offsetStartStr };
+      const off2 = { v: scaledOffsetEnd, s: offsetEndStr };
+      const sorted = [off1, off2].sort((a, b) => b.v.compareTo(a.v));
+      const s1 = "+" + sorted[0].v.abs().toDecimal();
+      const s2 = "-" + sorted[1].v.abs().toDecimal();
+      return `${decimalStr}[${s1}:${s2}]`;
+    }
+  }
+  #findShortestPreciseDecimal() {
+    const midpoint = this.#low.add(this.#high).divide(new Rational(2));
+    for (let precision = 0;precision <= 20; precision++) {
+      const scale = new Rational(10).pow(precision);
+      const lowScaled = this.#low.multiply(scale);
+      const highScaled = this.#high.multiply(scale);
+      const minInt = this.#ceilRational(lowScaled);
+      const maxInt = this.#floorRational(highScaled);
+      if (minInt.compareTo(maxInt) <= 0) {
+        const candidates = [];
+        let current = minInt;
+        while (current.compareTo(maxInt) <= 0) {
+          candidates.push(current.divide(scale));
+          current = current.add(new Rational(1));
+        }
+        if (candidates.length > 0) {
+          let best = candidates[0];
+          let bestDistance = best.subtract(midpoint).abs();
+          for (let i = 1;i < candidates.length; i++) {
+            const distance = candidates[i].subtract(midpoint).abs();
+            const comparison = distance.compareTo(bestDistance);
+            if (comparison < 0 || comparison === 0 && candidates[i].compareTo(best) < 0) {
+              best = candidates[i];
+              bestDistance = distance;
+            }
+          }
+          return best;
+        }
+      }
+    }
+    return midpoint;
+  }
+  #ceilRational(rational) {
+    if (rational.denominator === 1n) {
+      return rational;
+    }
+    const quotient = rational.numerator / rational.denominator;
+    if (rational.numerator >= 0n) {
+      return new Rational(quotient + 1n, 1n);
+    } else {
+      return new Rational(quotient, 1n);
+    }
+  }
+  #floorRational(rational) {
+    if (rational.denominator === 1n) {
+      return rational;
+    }
+    const quotient = rational.numerator / rational.denominator;
+    if (rational.numerator >= 0n) {
+      return new Rational(quotient, 1n);
+    } else {
+      return new Rational(quotient - 1n, 1n);
+    }
+  }
+  mediant() {
+    return new Rational(this.#low.numerator + this.#high.numerator, this.#low.denominator + this.#high.denominator);
+  }
+  midpoint() {
+    return this.#low.add(this.#high).divide(new Rational(2));
+  }
+  shortestDecimal(base = 10) {
+    const baseBigInt = BigInt(base);
+    if (baseBigInt <= 1n) {
+      throw new Error("Base must be greater than 1");
+    }
+    if (this.#low.equals(this.#high)) {
+      const value = this.#low;
+      let k2 = 0;
+      let denominator2 = 1n;
+      while (k2 <= 50) {
+        const numeratorCandidate = value.multiply(new Rational(denominator2));
+        if (numeratorCandidate.denominator === 1n) {
+          return new Rational(numeratorCandidate.numerator, denominator2);
+        }
+        k2++;
+        denominator2 *= baseBigInt;
+      }
+      return null;
+    }
+    const intervalLength = this.#high.subtract(this.#low);
+    const lengthAsNumber = Number(intervalLength.numerator) / Number(intervalLength.denominator);
+    const baseAsNumber = Number(baseBigInt);
+    let maxK = Math.ceil(Math.log(1 / lengthAsNumber) / Math.log(baseAsNumber));
+    maxK = Math.max(0, maxK + 2);
+    let k = 0;
+    let denominator = 1n;
+    while (k <= maxK) {
+      const minNumerator = this.#ceilRational(this.#low.multiply(new Rational(denominator)));
+      const maxNumerator = this.#floorRational(this.#high.multiply(new Rational(denominator)));
+      if (minNumerator.lessThanOrEqual(maxNumerator)) {
+        return new Rational(minNumerator.numerator, denominator);
+      }
+      k++;
+      denominator *= baseBigInt;
+    }
+    throw new Error("Failed to find shortest decimal representation (exceeded theoretical bound)");
+  }
+  randomRational(maxDenominator = 1000) {
+    const maxDenom = BigInt(maxDenominator);
+    if (maxDenom <= 0n) {
+      throw new Error("maxDenominator must be positive");
+    }
+    const validRationals = [];
+    for (let denom = 1n;denom <= maxDenom; denom++) {
+      const minNum = this.#ceilRational(this.#low.multiply(new Rational(denom)));
+      const maxNum = this.#floorRational(this.#high.multiply(new Rational(denom)));
+      for (let num = minNum.numerator;num <= maxNum.numerator; num++) {
+        const candidate = new Rational(num, denom);
+        if (candidate.numerator === num && candidate.denominator === denom) {
+          validRationals.push(candidate);
+        }
+      }
+    }
+    if (validRationals.length === 0) {
+      return this.midpoint();
+    }
+    const randomIndex = Math.floor(Math.random() * validRationals.length);
+    return validRationals[randomIndex];
+  }
+  #gcd(a, b) {
+    a = a < 0n ? -a : a;
+    b = b < 0n ? -b : b;
+    while (b !== 0n) {
+      const temp = b;
+      b = a % b;
+      a = temp;
+    }
+    return a;
+  }
+  E(exponent) {
+    const exp = BigInt(exponent);
+    let powerOf10;
+    if (exp >= 0n) {
+      powerOf10 = new Rational(10n ** exp, 1n);
+    } else {
+      powerOf10 = new Rational(1n, 10n ** -exp);
+    }
+    const newLow = this.#low.multiply(powerOf10);
+    const newHigh = this.#high.multiply(powerOf10);
+    return new RationalInterval(newLow, newHigh);
+  }
+  bitLength() {
+    const lowBits = this.#low.bitLength();
+    const highBits = this.#high.bitLength();
+    return Math.max(lowBits, highBits);
+  }
+}
+
+// ../packages/core/src/fraction.js
+class Fraction {
+  #numerator;
+  #denominator;
+  constructor(numerator, denominator = 1n, options = {}) {
+    if (typeof numerator === "string") {
+      const parts = numerator.trim().split("/");
+      if (parts.length === 1) {
+        this.#numerator = BigInt(parts[0]);
+        this.#denominator = BigInt(denominator);
+      } else if (parts.length === 2) {
+        this.#numerator = BigInt(parts[0]);
+        this.#denominator = BigInt(parts[1]);
+      } else {
+        throw new Error("Invalid fraction format. Use 'a/b' or 'a'");
+      }
+    } else {
+      this.#numerator = BigInt(numerator);
+      this.#denominator = BigInt(denominator);
+    }
+    if (this.#denominator === 0n) {
+      if (this.#numerator === 0n) {
+        throw new Error("The indeterminate fraction 0/0 is not allowed");
+      }
+      if (options.allowInfinite) {
+        this._isInfinite = true;
+      } else {
+        throw new Error("Denominator cannot be zero unless allowInfinite is true");
+      }
+    } else {
+      this._isInfinite = false;
+    }
+  }
+  get numerator() {
+    return this.#numerator;
+  }
+  get denominator() {
+    return this.#denominator;
+  }
+  get isInfinite() {
+    return this._isInfinite || false;
+  }
+  static #fromComponents(numerator, denominator) {
+    return new Fraction(numerator, denominator, {
+      allowInfinite: denominator === 0n
+    });
+  }
+  add(other) {
+    if (this.#denominator !== other.denominator) {
+      throw new Error("Addition only supported for equal denominators");
+    }
+    return Fraction.#fromComponents(this.#numerator + other.numerator, this.#denominator);
+  }
+  subtract(other) {
+    if (this.#denominator !== other.denominator) {
+      throw new Error("Subtraction only supported for equal denominators");
+    }
+    return Fraction.#fromComponents(this.#numerator - other.numerator, this.#denominator);
+  }
+  multiply(other) {
+    return Fraction.#fromComponents(this.#numerator * other.numerator, this.#denominator * other.denominator);
+  }
+  divide(other) {
+    if (other.numerator === 0n) {
+      throw new Error("Division by zero");
+    }
+    return Fraction.#fromComponents(this.#numerator * other.denominator, this.#denominator * other.numerator);
+  }
+  pow(exponent) {
+    const n = BigInt(exponent);
+    if (n === 0n) {
+      if (this.#numerator === 0n) {
+        throw new Error("Zero cannot be raised to the power of zero");
+      }
+      return new Fraction(1, 1);
+    }
+    if (this.#numerator === 0n && n < 0n) {
+      throw new Error("Zero cannot be raised to a negative power");
+    }
+    if (n < 0n) {
+      return Fraction.#fromComponents(this.#denominator ** -n, this.#numerator ** -n);
+    }
+    return Fraction.#fromComponents(this.#numerator ** n, this.#denominator ** n);
+  }
+  scale(factor) {
+    const scaleFactor = BigInt(factor);
+    return Fraction.#fromComponents(this.#numerator * scaleFactor, this.#denominator * scaleFactor);
+  }
+  static #gcd(a, b) {
+    a = a < 0n ? -a : a;
+    b = b < 0n ? -b : b;
+    while (b !== 0n) {
+      const temp = b;
+      b = a % b;
+      a = temp;
+    }
+    return a;
+  }
+  static #compareValues(left, right) {
+    if (left.isInfinite && right.isInfinite) {
+      const leftSign = left.numerator < 0n ? -1 : 1;
+      const rightSign = right.numerator < 0n ? -1 : 1;
+      return leftSign < rightSign ? -1 : leftSign > rightSign ? 1 : 0;
+    }
+    if (left.isInfinite) {
+      return left.numerator < 0n ? -1 : 1;
+    }
+    if (right.isInfinite) {
+      return right.numerator < 0n ? 1 : -1;
+    }
+    let leftNumerator = left.numerator;
+    let leftDenominator = left.denominator;
+    let rightNumerator = right.numerator;
+    let rightDenominator = right.denominator;
+    if (leftDenominator < 0n) {
+      leftNumerator = -leftNumerator;
+      leftDenominator = -leftDenominator;
+    }
+    if (rightDenominator < 0n) {
+      rightNumerator = -rightNumerator;
+      rightDenominator = -rightDenominator;
+    }
+    const leftProduct = leftNumerator * rightDenominator;
+    const rightProduct = rightNumerator * leftDenominator;
+    return leftProduct < rightProduct ? -1 : leftProduct > rightProduct ? 1 : 0;
+  }
+  static #modInverse(value, modulus) {
+    let oldR = (value % modulus + modulus) % modulus;
+    let r = modulus;
+    let oldS = 1n;
+    let s = 0n;
+    while (r !== 0n) {
+      const quotient = oldR / r;
+      [oldR, r] = [r, oldR - quotient * r];
+      [oldS, s] = [s, oldS - quotient * s];
+    }
+    if (oldR !== 1n) {
+      throw new Error("A modular inverse does not exist");
+    }
+    return (oldS % modulus + modulus) % modulus;
+  }
+  reduce() {
+    if (this.isInfinite) {
+      return new Fraction(this.#numerator < 0n ? -1n : 1n, 0n, {
+        allowInfinite: true
+      });
+    }
+    if (this.#numerator === 0n) {
+      return new Fraction(0, 1);
+    }
+    const gcd = Fraction.#gcd(this.#numerator, this.#denominator);
+    const reducedNum = this.#numerator / gcd;
+    const reducedDen = this.#denominator / gcd;
+    if (reducedDen < 0n) {
+      return new Fraction(-reducedNum, -reducedDen);
+    }
+    return Fraction.#fromComponents(reducedNum, reducedDen);
+  }
+  static mediant(a, b) {
+    return a.mediant(b);
+  }
+  toRational() {
+    if (this.isInfinite) {
+      throw new Error("Cannot convert an infinite Fraction to Rational");
+    }
+    return new Rational(this.#numerator, this.#denominator);
+  }
+  static fromRational(rational) {
+    return new Fraction(rational.numerator, rational.denominator);
+  }
+  toString() {
+    if (this.#denominator === 1n) {
+      return this.#numerator.toString();
+    }
+    return `${this.#numerator}/${this.#denominator}`;
+  }
+  equals(other) {
+    return this.#numerator === other.numerator && this.#denominator === other.denominator;
+  }
+  lessThan(other) {
+    return Fraction.#compareValues(this, other) < 0;
+  }
+  lessThanOrEqual(other) {
+    return Fraction.#compareValues(this, other) <= 0;
+  }
+  greaterThan(other) {
+    return Fraction.#compareValues(this, other) > 0;
+  }
+  greaterThanOrEqual(other) {
+    return Fraction.#compareValues(this, other) >= 0;
+  }
+  E(exponent) {
+    const exp = BigInt(exponent);
+    if (exp >= 0n) {
+      const newNumerator = this.#numerator * 10n ** exp;
+      return Fraction.#fromComponents(newNumerator, this.#denominator);
+    } else {
+      const newDenominator = this.#denominator * 10n ** -exp;
+      return Fraction.#fromComponents(this.#numerator, newDenominator);
+    }
+  }
+  mediant(other) {
+    if (this.isInfinite && other.isInfinite) {
+      if (this.#numerator === -1n && other.numerator === 1n) {
+        return new Fraction(0n, 1n);
+      } else if (this.#numerator === 1n && other.numerator === -1n) {
+        return new Fraction(0n, 1n);
+      }
+      throw new Error("Cannot compute mediant of two infinite fractions");
+    }
+    if (this.isInfinite || other.isInfinite) {
+      const newNum2 = this.#numerator + other.numerator;
+      const newDen2 = this.#denominator + other.denominator;
+      if (newNum2 === 0n && newDen2 === 0n) {
+        throw new Error("Mediant would result in 0/0");
+      }
+      return Fraction.#fromComponents(newNum2, newDen2);
+    }
+    const newNum = this.#numerator + other.numerator;
+    const newDen = this.#denominator + other.denominator;
+    return Fraction.#fromComponents(newNum, newDen);
+  }
+  fareyParents() {
+    if (this.isInfinite) {
+      throw new Error("Cannot find Farey parents of infinite fraction");
+    }
+    const normalizedNumerator = this.#denominator < 0n ? -this.#numerator : this.#numerator;
+    const normalizedDenominator = this.#denominator < 0n ? -this.#denominator : this.#denominator;
+    const scale = Fraction.#gcd(normalizedNumerator, normalizedDenominator);
+    const reducedNumerator = normalizedNumerator / scale;
+    const reducedDenominator = normalizedDenominator / scale;
+    if (reducedNumerator === 0n) {
+      if (scale === 1n) {
+        return {
+          left: new Fraction(-1n, 0n, { allowInfinite: true }),
+          right: new Fraction(1n, 0n, { allowInfinite: true })
+        };
+      }
+      const leftDenominator2 = scale / 2n;
+      return {
+        left: new Fraction(-1n, leftDenominator2),
+        right: new Fraction(1n, scale - leftDenominator2)
+      };
+    }
+    let leftNumerator;
+    let leftDenominator;
+    let rightNumerator;
+    let rightDenominator;
+    if (reducedDenominator === 1n) {
+      if (reducedNumerator > 0n) {
+        leftNumerator = reducedNumerator - 1n;
+        leftDenominator = 1n;
+        rightNumerator = 1n;
+        rightDenominator = 0n;
+      } else {
+        leftNumerator = -1n;
+        leftDenominator = 0n;
+        rightNumerator = reducedNumerator + 1n;
+        rightDenominator = 1n;
+      }
+    } else {
+      leftDenominator = Fraction.#modInverse(reducedNumerator, reducedDenominator);
+      leftNumerator = (reducedNumerator * leftDenominator - 1n) / reducedDenominator;
+      rightNumerator = reducedNumerator - leftNumerator;
+      rightDenominator = reducedDenominator - leftDenominator;
+    }
+    let leftCopies = (scale * reducedDenominator - 2n * leftDenominator + reducedDenominator) / (2n * reducedDenominator);
+    if (leftCopies < 0n) {
+      leftCopies = 0n;
+    } else if (leftCopies > scale - 1n) {
+      leftCopies = scale - 1n;
+    }
+    const rightCopies = scale - 1n - leftCopies;
+    return {
+      left: Fraction.#fromComponents(leftNumerator + leftCopies * reducedNumerator, leftDenominator + leftCopies * reducedDenominator),
+      right: Fraction.#fromComponents(rightNumerator + rightCopies * reducedNumerator, rightDenominator + rightCopies * reducedDenominator)
+    };
+  }
+  static mediantPartner(endpoint, mediant) {
+    return Fraction.#fromComponents(mediant.numerator - endpoint.numerator, mediant.denominator - endpoint.denominator);
+  }
+  static isMediantTriple(left, mediant, right) {
+    if (mediant.isInfinite) {
+      return false;
+    }
+    try {
+      const computedMediant = left.mediant(right);
+      return mediant.equals(computedMediant);
+    } catch (error) {
+      return false;
+    }
+  }
+  static isFareyTriple(left, mediant, right) {
+    if (!Fraction.isMediantTriple(left, mediant, right)) {
+      return false;
+    }
+    if (mediant.numerator === 0n && mediant.denominator === 1n && left.denominator === 0n && right.denominator === 0n) {
+      return left.numerator === -1n && right.numerator === 1n || left.numerator === 1n && right.numerator === -1n;
+    }
+    const determinant = left.numerator * right.denominator - left.denominator * right.numerator;
+    const magnitude = determinant < 0n ? -determinant : determinant;
+    return magnitude === Fraction.#gcd(mediant.numerator, mediant.denominator);
+  }
+  sternBrocotParent() {
+    if (this.isInfinite) {
+      throw new Error("Infinite fractions don't have parents in Stern-Brocot tree");
+    }
+    if (this.numerator === 0n && this.denominator === 1n) {
+      return null;
+    }
+    const path = this.sternBrocotPath();
+    if (path.length === 0) {
+      return null;
+    }
+    const parentPath = path.slice(0, -1);
+    return Fraction.fromSternBrocotPath(parentPath);
+  }
+  sternBrocotChildren() {
+    if (this.isInfinite) {
+      throw new Error("Infinite fractions don't have children in Stern-Brocot tree");
+    }
+    const currentPath = this.sternBrocotPath();
+    const leftPath = [...currentPath, "L"];
+    const rightPath = [...currentPath, "R"];
+    return {
+      left: Fraction.fromSternBrocotPath(leftPath),
+      right: Fraction.fromSternBrocotPath(rightPath)
+    };
+  }
+  sternBrocotPath() {
+    if (this.isInfinite) {
+      throw new Error("Infinite fractions don't have tree paths");
+    }
+    const reduced = this.reduce();
+    if (reduced.numerator === 0n && reduced.denominator === 1n) {
+      return [];
+    }
+    let left = new Fraction(-1, 0, { allowInfinite: true });
+    let right = new Fraction(1, 0, { allowInfinite: true });
+    let current = new Fraction(0, 1);
+    const path = [];
+    while (!current.equals(reduced)) {
+      if (reduced.lessThan(current)) {
+        path.push("L");
+        right = current;
+        current = left.mediant(current);
+      } else {
+        path.push("R");
+        left = current;
+        current = current.mediant(right);
+      }
+      if (path.length > 500) {
+        throw new Error("Stern-Brocot path too long - this may indicate a bug in the algorithm");
+      }
+    }
+    return path;
+  }
+  static fromSternBrocotPath(path) {
+    let left = new Fraction(-1, 0, { allowInfinite: true });
+    let right = new Fraction(1, 0, { allowInfinite: true });
+    let current = new Fraction(0, 1);
+    for (const direction of path) {
+      if (direction === "L") {
+        right = current;
+        current = left.mediant(current);
+      } else if (direction === "R") {
+        left = current;
+        current = current.mediant(right);
+      } else {
+        throw new Error(`Invalid direction in path: ${direction}`);
+      }
+    }
+    return current;
+  }
+  isSternBrocotValid() {
+    if (this.isInfinite) {
+      return this.numerator === 1n || this.numerator === -1n;
+    }
+    try {
+      const path = this.sternBrocotPath();
+      const reconstructed = Fraction.fromSternBrocotPath(path);
+      return this.equals(reconstructed);
+    } catch (error) {
+      return false;
+    }
+  }
+  sternBrocotDepth() {
+    if (this.isInfinite) {
+      return Infinity;
+    }
+    if (this.numerator === 0n && this.denominator === 1n) {
+      return 0;
+    }
+    return this.sternBrocotPath().length;
+  }
+  sternBrocotAncestors() {
+    if (this.isInfinite) {
+      return [];
+    }
+    const ancestors = [];
+    const path = this.sternBrocotPath();
+    for (let i = 0;i < path.length; i++) {
+      const partialPath = path.slice(0, i);
+      ancestors.push(Fraction.fromSternBrocotPath(partialPath));
+    }
+    ancestors.reverse();
+    return ancestors;
+  }
+}
+
+// ../packages/core/src/integer.js
+class Integer {
+  #value;
+  static zero = new Integer(0);
+  static one = new Integer(1);
+  constructor(value) {
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (!/^-?\d+$/.test(trimmed)) {
+        throw new Error("Invalid integer format. Must be a whole number");
+      }
+      this.#value = BigInt(trimmed);
+    } else {
+      this.#value = BigInt(value);
+    }
+  }
+  get value() {
+    return this.#value;
+  }
+  add(other) {
+    if (other instanceof Integer) {
+      return new Integer(this.#value + other.value);
+    } else if (other instanceof Rational) {
+      const thisAsRational = new Rational(this.#value, 1n);
+      return thisAsRational.add(other);
+    } else if (other.low && other.high && typeof other.low.equals === "function") {
+      const thisAsRational = new Rational(this.#value, 1n);
+      const IntervalClass = other.constructor;
+      const thisAsInterval = new IntervalClass(thisAsRational, thisAsRational);
+      return thisAsInterval.add(other);
+    } else {
+      throw new Error(`Cannot add ${other.constructor.name} to Integer`);
+    }
+  }
+  subtract(other) {
+    if (other instanceof Integer) {
+      return new Integer(this.#value - other.value);
+    } else if (other instanceof Rational) {
+      const thisAsRational = new Rational(this.#value, 1n);
+      return thisAsRational.subtract(other);
+    } else if (other.low && other.high && typeof other.low.equals === "function") {
+      const thisAsRational = new Rational(this.#value, 1n);
+      const IntervalClass = other.constructor;
+      const thisAsInterval = new IntervalClass(thisAsRational, thisAsRational);
+      return thisAsInterval.subtract(other);
+    } else {
+      throw new Error(`Cannot subtract ${other.constructor.name} from Integer`);
+    }
+  }
+  multiply(other) {
+    if (other instanceof Integer) {
+      return new Integer(this.#value * other.value);
+    } else if (other instanceof Rational) {
+      const thisAsRational = new Rational(this.#value, 1n);
+      return thisAsRational.multiply(other);
+    } else if (other.low && other.high && typeof other.low.equals === "function") {
+      const thisAsRational = new Rational(this.#value, 1n);
+      const IntervalClass = other.constructor;
+      const thisAsInterval = new IntervalClass(thisAsRational, thisAsRational);
+      return thisAsInterval.multiply(other);
+    } else {
+      throw new Error(`Cannot multiply Integer by ${other.constructor.name}`);
+    }
+  }
+  divide(other) {
+    if (other instanceof Integer) {
+      if (other.value === 0n) {
+        throw new Error("Division by zero");
+      }
+      if (this.#value % other.value === 0n) {
+        return new Integer(this.#value / other.value);
+      } else {
+        return new Rational(this.#value, other.value);
+      }
+    } else if (other instanceof Rational) {
+      const thisAsRational = new Rational(this.#value, 1n);
+      return thisAsRational.divide(other);
+    } else if (other.low && other.high && typeof other.low.equals === "function") {
+      const thisAsRational = new Rational(this.#value, 1n);
+      const IntervalClass = other.constructor;
+      const thisAsInterval = new IntervalClass(thisAsRational, thisAsRational);
+      return thisAsInterval.divide(other);
+    } else {
+      throw new Error(`Cannot divide Integer by ${other.constructor.name}`);
+    }
+  }
+  modulo(other) {
+    if (other.value === 0n) {
+      throw new Error("Modulo by zero");
+    }
+    return new Integer(this.#value % other.value);
+  }
+  negate() {
+    return new Integer(-this.#value);
+  }
+  pow(exponent) {
+    const exp = exponent instanceof Integer ? exponent.value : BigInt(exponent);
+    if (exp === 0n) {
+      if (this.#value === 0n) {
+        throw new Error("Zero cannot be raised to the power of zero");
+      }
+      return new Integer(1);
+    }
+    if (exp < 0n) {
+      if (this.#value === 0n) {
+        throw new Error("Zero cannot be raised to a negative power");
+      }
+      const positiveExp = -exp;
+      const positiveResult = this.pow(positiveExp);
+      return new Rational(1, positiveResult.value);
+    }
+    let result = 1n;
+    let base = this.#value;
+    let n = exp;
+    while (n > 0n) {
+      if (n & 1n) {
+        result *= base;
+      }
+      base *= base;
+      n >>= 1n;
+    }
+    return new Integer(result);
+  }
+  equals(other) {
+    return this.#value === other.value;
+  }
+  compareTo(other) {
+    if (this.#value < other.value)
+      return -1;
+    if (this.#value > other.value)
+      return 1;
+    return 0;
+  }
+  lessThan(other) {
+    return this.#value < other.value;
+  }
+  lessThanOrEqual(other) {
+    return this.#value <= other.value;
+  }
+  greaterThan(other) {
+    return this.#value > other.value;
+  }
+  greaterThanOrEqual(other) {
+    return this.#value >= other.value;
+  }
+  abs() {
+    return this.#value < 0n ? this.negate() : new Integer(this.#value);
+  }
+  sign() {
+    if (this.#value < 0n)
+      return new Integer(-1);
+    if (this.#value > 0n)
+      return new Integer(1);
+    return new Integer(0);
+  }
+  isEven() {
+    return this.#value % 2n === 0n;
+  }
+  isOdd() {
+    return this.#value % 2n !== 0n;
+  }
+  isZero() {
+    return this.#value === 0n;
+  }
+  isPositive() {
+    return this.#value > 0n;
+  }
+  isNegative() {
+    return this.#value < 0n;
+  }
+  gcd(other) {
+    let a = this.#value < 0n ? -this.#value : this.#value;
+    let b = other.value < 0n ? -other.value : other.value;
+    while (b !== 0n) {
+      const temp = b;
+      b = a % b;
+      a = temp;
+    }
+    return new Integer(a);
+  }
+  lcm(other) {
+    if (this.#value === 0n || other.value === 0n) {
+      return new Integer(0);
+    }
+    const gcd = this.gcd(other);
+    const product = this.multiply(other).abs();
+    return product.divide(gcd);
+  }
+  toString(base) {
+    if (base === undefined) {
+      return this.#value.toString();
+    }
+    if (base instanceof BaseSystem) {
+      return base.fromDecimal(this.#value);
+    }
+    if (typeof base === "number") {
+      if (base === 10) {
+        return this.#value.toString();
+      }
+      return BaseSystem.fromBase(base).fromDecimal(this.#value);
+    }
+    return this.#value.toString();
+  }
+  toBase(baseSystem) {
+    if (!(baseSystem instanceof BaseSystem)) {
+      throw new Error("Argument must be a BaseSystem");
+    }
+    return baseSystem.fromDecimal(this.#value);
+  }
+  toNumber() {
+    return Number(this.#value);
+  }
+  toRational() {
+    return new Rational(this.#value, 1n);
+  }
+  static from(value) {
+    if (value instanceof Integer) {
+      return new Integer(value.value);
+    }
+    return new Integer(value);
+  }
+  static fromRational(rational) {
+    if (rational.denominator !== 1n) {
+      throw new Error("Rational is not a whole number");
+    }
+    return new Integer(rational.numerator);
+  }
+  E(exponent) {
+    const exp = BigInt(exponent);
+    if (exp >= 0n) {
+      const newValue = this.#value * 10n ** exp;
+      return new Integer(newValue);
+    } else {
+      const powerOf10 = new Rational(1n, 10n ** -exp);
+      const thisAsRational = new Rational(this.#value, 1n);
+      return thisAsRational.multiply(powerOf10);
+    }
+  }
+  factorial() {
+    if (this.#value < 0n) {
+      throw new Error("Factorial is not defined for negative integers");
+    }
+    if (this.#value === 0n || this.#value === 1n) {
+      return new Integer(1);
+    }
+    let result = 1n;
+    for (let i = 2n;i <= this.#value; i++) {
+      result *= i;
+    }
+    return new Integer(result);
+  }
+  doubleFactorial() {
+    if (this.#value < 0n) {
+      throw new Error("Double factorial is not defined for negative integers");
+    }
+    if (this.#value === 0n || this.#value === 1n) {
+      return new Integer(1);
+    }
+    let result = 1n;
+    for (let i = this.#value;i > 0n; i -= 2n) {
+      result *= i;
+    }
+    return new Integer(result);
+  }
+  bitLength() {
+    if (this.#value === 0n)
+      return 0;
+    return this.#value < 0n ? (-this.#value).toString(2).length : this.#value.toString(2).length;
+  }
+}
+
+// ../packages/core/src/number-parser.js
+var DIGITS = String.raw`\d(?:_?\d)*`;
+var MAX_EXPANDED_DIGITS = 1e5;
+function inputString(input, label = "number") {
+  if (typeof input !== "string") {
+    throw new TypeError(`${label} must be a string`);
+  }
+  const value = input.trim();
+  if (value.length === 0) {
+    throw new Error(`${label} cannot be empty`);
+  }
+  return value;
+}
+function cleanDigits(value, { signed = false } = {}) {
+  const pattern = signed ? new RegExp(`^[+-]?${DIGITS}$`) : new RegExp(`^${DIGITS}$`);
+  if (!pattern.test(value)) {
+    throw new Error(`Invalid decimal digits: ${value}`);
+  }
+  return value.replaceAll("_", "");
+}
+function validateUnderscores(value) {
+  for (let index = 0;index < value.length; index++) {
+    if (value[index] !== "_")
+      continue;
+    if (!/\d/.test(value[index - 1] ?? "") || !/\d/.test(value[index + 1] ?? "")) {
+      throw new Error("Underscore separators must be between decimal digits");
+    }
+  }
+}
+function expandDigitRuns(value) {
+  let expandedLength = 0;
+  const expanded = value.replace(/\{(\d+)~(\d+)\}/g, (_match, digits, countText) => {
+    const count = Number(countText);
+    if (!Number.isSafeInteger(count) || count < 0) {
+      throw new Error(`Invalid repeated-digit count: ${countText}`);
+    }
+    expandedLength += digits.length * count;
+    if (expandedLength > MAX_EXPANDED_DIGITS) {
+      throw new Error(`Expanded decimal exceeds ${MAX_EXPANDED_DIGITS} digits`);
+    }
+    return digits.repeat(count);
+  });
+  if (/[{}]/.test(expanded)) {
+    throw new Error(`Invalid repeated-digit notation: ${value}`);
+  }
+  if (expanded.length > MAX_EXPANDED_DIGITS) {
+    throw new Error(`Decimal exceeds ${MAX_EXPANDED_DIGITS} digits`);
+  }
+  return expanded;
+}
+function parseDecimalValue(input) {
+  let value = inputString(input, "decimal");
+  validateUnderscores(value);
+  let sign = 1n;
+  if (value.startsWith("+") || value.startsWith("-")) {
+    sign = value[0] === "-" ? -1n : 1n;
+    value = value.slice(1);
+  }
+  const hashParts = value.split("#");
+  if (hashParts.length > 2) {
+    throw new Error("A repeating decimal can contain only one '#'");
+  }
+  let prefix = expandDigitRuns(hashParts[0].replaceAll("_", ""));
+  const repeating = hashParts.length === 2 ? expandDigitRuns(hashParts[1].replaceAll("_", "")) : null;
+  if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(prefix)) {
+    throw new Error(`Invalid decimal format: ${input}`);
+  }
+  const dot = prefix.indexOf(".");
+  const integerDigits = dot === -1 ? prefix : prefix.slice(0, dot) || "0";
+  const fractionalDigits = dot === -1 ? "" : prefix.slice(dot + 1);
+  const integer = BigInt(integerDigits);
+  const fractional = fractionalDigits.length === 0 ? 0n : BigInt(fractionalDigits);
+  const fractionalScale = 10n ** BigInt(fractionalDigits.length);
+  let result = new Rational(integer * fractionalScale + fractional, fractionalScale);
+  if (repeating !== null) {
+    if (!/^\d+$/.test(repeating)) {
+      throw new Error("The repeating part must contain one or more digits");
+    }
+    if (!/^0+$/.test(repeating)) {
+      const repeatScale = 10n ** BigInt(repeating.length) - 1n;
+      result = result.add(new Rational(BigInt(repeating), fractionalScale * repeatScale));
+    }
+  }
+  return sign < 0n ? result.negate() : result;
+}
+function parseRationalLiteral(input) {
+  let value = inputString(input, "rational");
+  if (value.startsWith("~")) {
+    value = value.slice(1);
+  }
+  const continued = value.match(new RegExp(`^([+-]?${DIGITS})\\.~(${DIGITS}(?:~${DIGITS})*)$`));
+  if (continued) {
+    const first = BigInt(cleanDigits(continued[1], { signed: true }));
+    const tail = continued[2].split("~").map((term) => BigInt(cleanDigits(term)));
+    if (tail.length === 1 && tail[0] === 0n) {
+      return new Rational(first);
+    }
+    return Rational.fromContinuedFraction([first, ...tail]);
+  }
+  const mixed = value.match(new RegExp(`^([+-]?)(${DIGITS})\\.\\.(${DIGITS})\\/(${DIGITS})$`));
+  if (mixed) {
+    const sign = mixed[1] === "-" ? -1n : 1n;
+    const whole = BigInt(cleanDigits(mixed[2]));
+    const numerator = BigInt(cleanDigits(mixed[3]));
+    const denominator = BigInt(cleanDigits(mixed[4]));
+    if (denominator === 0n) {
+      throw new Error("Denominator cannot be zero");
+    }
+    return new Rational(sign * (whole * denominator + numerator), denominator);
+  }
+  const fraction = value.match(new RegExp(`^([+-]?${DIGITS})\\/(${DIGITS})$`));
+  if (fraction) {
+    return new Rational(BigInt(cleanDigits(fraction[1], { signed: true })), BigInt(cleanDigits(fraction[2])));
+  }
+  if (value.includes("#") || value.includes(".")) {
+    return parseDecimalValue(value);
+  }
+  if (new RegExp(`^[+-]?${DIGITS}$`).test(value)) {
+    return new Rational(BigInt(cleanDigits(value, { signed: true })));
+  }
+  throw new Error(`Invalid rational number: ${input}`);
+}
+function decimalShape(input) {
+  const match = input.match(new RegExp(`^([+-]?)(?:(${DIGITS})(?:\\.(${DIGITS})?)?|\\.(${DIGITS}))$`));
+  if (!match) {
+    throw new Error("Decimal interval notation requires an integer or finite decimal base");
+  }
+  const sign = match[1] === "-" ? "-" : "";
+  const integer = match[2] ? cleanDigits(match[2]) : "0";
+  const fractional = match[3] ? cleanDigits(match[3]) : match[4] ? cleanDigits(match[4]) : "";
+  const hasPoint = input.includes(".");
+  return {
+    sign,
+    integer,
+    fractional,
+    hasPoint,
+    normalized: `${sign}${integer}${hasPoint ? `.${fractional}` : ""}`
+  };
+}
+function parseOffset(value) {
+  const normalized = value.startsWith("#") ? `0.${value}` : value;
+  return parseRationalLiteral(normalized);
+}
+function scaledOffset(value, decimalPlaces, hasPoint) {
+  const offset = parseOffset(value);
+  if (!hasPoint)
+    return offset;
+  return offset.divide(new Rational(10n ** BigInt(decimalPlaces)));
+}
+function parseUncertainty(input) {
+  const match = input.match(/^(.+)\[([^\[\]]+)\]$/);
+  if (!match) {
+    throw new Error(`Invalid decimal interval notation: ${input}`);
+  }
+  const shape = decimalShape(match[1]);
+  const body = match[2].trim();
+  const base = parseDecimalValue(shape.normalized);
+  if (body.includes(",")) {
+    throw new Error("Decimal interval notation requires ':' between bracketed values");
+  }
+  if (body.startsWith("+-") || body.startsWith("-+")) {
+    const offsetText = body.slice(2).trim();
+    if (offsetText.length === 0) {
+      throw new Error("Symmetric notation must have a valid number after '+-' or '-+'");
+    }
+    const offset = scaledOffset(offsetText, shape.fractional.length, shape.hasPoint);
+    return new RationalInterval(base.subtract(offset), base.add(offset));
+  }
+  const parts = body.split(/\s*:\s*/);
+  if (parts.length > 2 || parts.length === 0 || parts.some((part) => part.length === 0)) {
+    throw new Error("Decimal interval brackets require one or two comma- or colon-separated values");
+  }
+  const hasSignedPart = parts.some((part) => part.startsWith("+") || part.startsWith("-"));
+  if (hasSignedPart) {
+    let positive = null;
+    let negative = null;
+    for (const part of parts) {
+      if (part.startsWith("+") && positive === null) {
+        positive = part.slice(1);
+      } else if (part.startsWith("-") && negative === null) {
+        negative = part.slice(1);
+      } else {
+        throw new Error("Relative interval notation allows one '+' and one '-' offset");
+      }
+    }
+    const positiveOffset = positive === null ? Rational.zero : scaledOffset(positive, shape.fractional.length, shape.hasPoint);
+    const negativeOffset = negative === null ? Rational.zero : scaledOffset(negative, shape.fractional.length, shape.hasPoint);
+    return new RationalInterval(base.subtract(negativeOffset), base.add(positiveOffset));
+  }
+  if (parts.length !== 2) {
+    throw new Error("Compact interval notation requires exactly two endpoints");
+  }
+  const endpoint = (suffix) => {
+    if (shape.hasPoint && shape.fractional.length === 0) {
+      if (suffix.startsWith("#")) {
+        return parseDecimalValue(`${shape.sign}${shape.integer}.${suffix}`);
+      }
+      const cleanSuffix2 = cleanDigits(suffix);
+      if (!/^\d+$/.test(cleanSuffix2)) {
+        throw new Error(`Invalid decimal interval endpoint: ${suffix}`);
+      }
+      return parseDecimalValue(`${shape.sign}${shape.integer}.${cleanSuffix2}`);
+    }
+    const cleanSuffix = cleanDigits(suffix);
+    if (!/^\d+$/.test(cleanSuffix)) {
+      throw new Error(`Invalid compact interval endpoint: ${suffix}`);
+    }
+    const point = shape.hasPoint ? "." : "";
+    return parseDecimalValue(`${shape.sign}${shape.integer}${point}${shape.fractional}${cleanSuffix}`);
+  };
+  return new RationalInterval(endpoint(parts[0]), endpoint(parts[1]));
+}
+function parseNumber(input) {
+  const value = inputString(input);
+  if (value.includes("[") || value.includes("]")) {
+    return parseUncertainty(value);
+  }
+  const intervalParts = value.split(":");
+  if (intervalParts.length === 2) {
+    return new RationalInterval(parseRationalLiteral(intervalParts[0]), parseRationalLiteral(intervalParts[1]));
+  }
+  if (intervalParts.length > 2) {
+    throw new Error("An interval must contain exactly two endpoints");
+  }
+  if (new RegExp(`^[+-]?${DIGITS}$`).test(value)) {
+    return new Integer(BigInt(cleanDigits(value, { signed: true })));
+  }
+  return parseRationalLiteral(value);
+}
+
+// ../rix/src/runtime/hole.js
+var HOLE = Object.freeze({ __rix_hole__: true });
+var isHole = (v) => v === HOLE;
+
+// ../rix/src/runtime/tensor.js
+function exactInteger(value, label = "Index") {
+  if (value instanceof Integer) {
+    return Number(value.value);
+  }
+  if (value instanceof Rational) {
+    if (value.denominator !== 1n) {
+      throw new Error(`${label} must be an integer`);
+    }
+    return Number(value.numerator);
+  }
+  if (typeof value === "bigint") {
+    return Number(value);
+  }
+  if (typeof value === "number") {
+    if (!Number.isInteger(value)) {
+      throw new Error(`${label} must be an integer`);
+    }
+    return value;
+  }
+  if (value && typeof value === "object") {
+    if (typeof value.value === "bigint") {
+      return Number(value.value);
+    }
+    if (typeof value.numerator === "bigint" && typeof value.denominator === "bigint") {
+      if (value.denominator !== 1n) {
+        throw new Error(`${label} must be an integer`);
+      }
+      return Number(value.numerator);
+    }
+  }
+  throw new Error(`${label} must be an integer`);
+}
+function normalizeIndex(rawIndex, dimLength, axis) {
+  const index = exactInteger(rawIndex, `Index for axis ${axis + 1}`);
+  if (index === 0) {
+    throw new Error(`Tensor index 0 is invalid on axis ${axis + 1}`);
+  }
+  const normalized = index < 0 ? dimLength + 1 + index : index;
+  if (normalized < 1 || normalized > dimLength) {
+    throw new Error(`Tensor index ${index} is out of range for axis ${axis + 1} with length ${dimLength}`);
+  }
+  return normalized;
+}
+function intervalEndpoints(value) {
+  if (value instanceof RationalInterval) {
+    return [value.start, value.end];
+  }
+  if (value && value.type === "interval") {
+    return [value.lo, value.hi];
+  }
+  return null;
+}
+function valueToSelectorSpec(value) {
+  const endpoints = intervalEndpoints(value);
+  if (endpoints) {
+    return {
+      kind: "slice",
+      start: endpoints[0],
+      end: endpoints[1]
+    };
+  }
+  return {
+    kind: "index",
+    value
+  };
+}
+function isTensor(value) {
+  return !!value && value.type === "tensor" && Array.isArray(value.data) && Array.isArray(value.shape) && Array.isArray(value.strides);
+}
+function tensorRank(tensor) {
+  return tensor.shape.length;
+}
+function tensorShape(tensor) {
+  return [...tensor.shape];
+}
+function tensorSize(tensor) {
+  return tensor.shape.reduce((product, dim) => product * dim, 1);
+}
+function computeDefaultStrides(shape) {
+  const strides = new Array(shape.length);
+  let stride = 1;
+  for (let i = shape.length - 1;i >= 0; i--) {
+    strides[i] = stride;
+    stride *= shape[i];
+  }
+  return strides;
+}
+function createTensor(shape, data = null, options = {}) {
+  if (!Array.isArray(shape)) {
+    throw new Error("Tensor shape must be an array");
+  }
+  const normalizedShape = shape.map((dim, axis) => {
+    const n = exactInteger(dim, `Tensor shape axis ${axis + 1}`);
+    if (n < 0) {
+      throw new Error(`Tensor shape axis ${axis + 1} must be nonnegative`);
+    }
+    return n;
+  });
+  const size = normalizedShape.reduce((product, dim) => product * dim, 1);
+  const actualData = data ? [...data] : new Array(size).fill(HOLE);
+  if (actualData.length !== size) {
+    throw new Error(`Tensor literal element count mismatch (expected ${size}, got ${actualData.length})`);
+  }
+  return {
+    type: "tensor",
+    data: actualData,
+    shape: normalizedShape,
+    strides: options.strides ? [...options.strides] : computeDefaultStrides(normalizedShape),
+    offset: options.offset ?? 0,
+    _ext: options.ext ?? new Map([["_mutable", new Integer(1n)]])
+  };
+}
+function createTensorView(tensor, view) {
+  if (!isTensor(tensor)) {
+    throw new Error("Cannot create a tensor view from a non-tensor value");
+  }
+  return {
+    type: "tensor",
+    data: tensor.data,
+    shape: [...view.shape],
+    strides: [...view.strides],
+    offset: view.offset,
+    _ext: tensor._ext
+  };
+}
+function tensorIndexTuple(indices) {
+  return {
+    type: "tuple",
+    values: indices.map((index) => new Integer(BigInt(index)))
+  };
+}
+function linearIndexToTuple(linearIndex, shape) {
+  if (shape.length === 0) {
+    return [];
+  }
+  const defaultStrides = computeDefaultStrides(shape);
+  const tuple = new Array(shape.length);
+  let remaining = linearIndex;
+  for (let axis = 0;axis < shape.length; axis++) {
+    const stride = defaultStrides[axis];
+    const dim = shape[axis];
+    if (dim === 0) {
+      return [];
+    }
+    tuple[axis] = Math.floor(remaining / stride) + 1;
+    remaining %= stride;
+  }
+  return tuple;
+}
+function tensorOffsetForTuple(tensor, tuple) {
+  let offset = tensor.offset;
+  for (let axis = 0;axis < tensor.shape.length; axis++) {
+    offset += (tuple[axis] - 1) * tensor.strides[axis];
+  }
+  return offset;
+}
+function forEachTensorCell(tensor, callback) {
+  const size = tensorSize(tensor);
+  if (tensor.shape.length === 0) {
+    callback(tensor.data[tensor.offset], [], tensor.offset);
+    return;
+  }
+  for (let linear = 0;linear < size; linear++) {
+    const tuple = linearIndexToTuple(linear, tensor.shape);
+    const offset = tensorOffsetForTuple(tensor, tuple);
+    callback(tensor.data[offset], tuple, offset);
+  }
+}
+function normalizeTensorSelectors(tensor, selectorSpecs) {
+  let specs = selectorSpecs;
+  if (specs.length === 1 && specs[0]?.kind === "index" && specs[0].value && specs[0].value.type === "tuple") {
+    specs = specs[0].value.values.map((value) => valueToSelectorSpec(value));
+  }
+  if (specs.length !== tensor.shape.length) {
+    throw new Error(`Tensor rank mismatch: expected ${tensor.shape.length} indices, got ${specs.length}`);
+  }
+  return specs.map((spec, axis) => {
+    if (spec.kind === "index") {
+      const normalizedSpec = valueToSelectorSpec(spec.value);
+      if (normalizedSpec.kind === "slice") {
+        spec = normalizedSpec;
+      }
+    }
+    if (spec.kind === "full") {
+      const start = normalizeIndex(1, tensor.shape[axis], axis);
+      const end = normalizeIndex(-1, tensor.shape[axis], axis);
+      const direction = start <= end ? 1 : -1;
+      return {
+        kind: "slice",
+        start,
+        end,
+        direction,
+        length: Math.abs(end - start) + 1
+      };
+    }
+    if (spec.kind === "slice") {
+      const start = normalizeIndex(spec.start, tensor.shape[axis], axis);
+      const end = normalizeIndex(spec.end, tensor.shape[axis], axis);
+      const direction = start <= end ? 1 : -1;
+      return {
+        kind: "slice",
+        start,
+        end,
+        direction,
+        length: Math.abs(end - start) + 1
+      };
+    }
+    return {
+      kind: "index",
+      index: normalizeIndex(spec.value, tensor.shape[axis], axis)
+    };
+  });
+}
+function tensorGetBySelectors(tensor, selectorSpecs) {
+  const selectors = normalizeTensorSelectors(tensor, selectorSpecs);
+  let offset = tensor.offset;
+  const shape = [];
+  const strides = [];
+  for (let axis = 0;axis < selectors.length; axis++) {
+    const selector = selectors[axis];
+    const stride = tensor.strides[axis];
+    if (selector.kind === "index") {
+      offset += (selector.index - 1) * stride;
+      continue;
+    }
+    offset += (selector.start - 1) * stride;
+    shape.push(selector.length);
+    strides.push(stride * selector.direction);
+  }
+  if (shape.length === 0) {
+    const value = tensor.data[offset];
+    return isHole(value) ? null : value;
+  }
+  return createTensorView(tensor, { shape, strides, offset });
+}
+function tensorAssignBySelectors(tensor, selectorSpecs, value) {
+  const selectors = normalizeTensorSelectors(tensor, selectorSpecs);
+  let offset = tensor.offset;
+  const shape = [];
+  const strides = [];
+  for (let axis = 0;axis < selectors.length; axis++) {
+    const selector = selectors[axis];
+    const stride = tensor.strides[axis];
+    if (selector.kind === "index") {
+      offset += (selector.index - 1) * stride;
+      continue;
+    }
+    offset += (selector.start - 1) * stride;
+    shape.push(selector.length);
+    strides.push(stride * selector.direction);
+  }
+  if (shape.length === 0) {
+    tensor.data[offset] = value;
+    return value;
+  }
+  const view = createTensorView(tensor, { shape, strides, offset });
+  forEachTensorCell(view, (_cellValue, _tuple, cellOffset) => {
+    tensor.data[cellOffset] = value;
+  });
+  return value;
+}
+function coerceShapeValue(shapeValue) {
+  if (isTensor(shapeValue)) {
+    return tensorShape(shapeValue);
+  }
+  if (shapeValue && shapeValue.type === "tuple") {
+    return shapeValue.values.map((value, axis) => exactInteger(value, `Tensor shape axis ${axis + 1}`));
+  }
+  throw new Error("TGEN expects a tensor or tuple shape");
+}
+
+// ../rix/src/runtime/binding.js
+var cellIds = new WeakMap;
+var nextCellId = 1;
+function cellId(cell) {
+  if (!cellIds.has(cell))
+    cellIds.set(cell, `binding-${nextCellId++}`);
+  return cellIds.get(cell);
+}
+function integer(value, label = "Binding index") {
+  if (value instanceof Integer)
+    return Number(value.value);
+  if (value instanceof Rational && value.denominator === 1n)
+    return Number(value.numerator);
+  if (typeof value === "number" && Number.isInteger(value))
+    return value;
+  if (typeof value === "bigint")
+    return Number(value);
+  throw new Error(`${label} must be an integer`);
+}
+function interval(value) {
+  if (value instanceof RationalInterval)
+    return { start: value.start, end: value.end };
+  if (value?.type === "interval")
+    return { start: value.lo ?? value.start, end: value.hi ?? value.end };
+  return null;
+}
+function selector(value) {
+  const range = interval(value);
+  return range ? { kind: "slice", start: range.start, end: range.end } : { kind: "index", value };
+}
+function selectorLabel(item) {
+  if (item.kind === "full")
+    return "_";
+  if (item.kind === "slice")
+    return `${item.start}:${item.end}`;
+  return String(integer(item.value));
+}
+function indexInto(value, selectors) {
+  if (selectors.length === 0)
+    return value;
+  if (isTensor(value))
+    return tensorGetBySelectors(value, selectors);
+  let current = value;
+  for (const item of selectors) {
+    if (item.kind !== "index") {
+      throw new Error("Slice bindings currently require tensor data");
+    }
+    const index = integer(item.value);
+    if (current?.type === "matrix" && Array.isArray(current.rows)) {
+      current = current.rows[index - 1];
+    } else if (current && ["sequence", "tuple", "array"].includes(current.type)) {
+      current = (current.values || current.elements)[index - 1];
+    } else if (Array.isArray(current)) {
+      current = current[index - 1];
+    } else {
+      throw new Error(`Cannot index a Binding through "${current?.type || typeof current}"`);
+    }
+  }
+  return current;
+}
+function setInto(root, selectors, value) {
+  if (selectors.length === 0)
+    return value;
+  if (isTensor(root)) {
+    tensorAssignBySelectors(root, selectors, value);
+    return root;
+  }
+  const parent = indexInto(root, selectors.slice(0, -1));
+  const final = selectors.at(-1);
+  if (final.kind !== "index")
+    throw new Error("Slice assignment currently requires tensor data");
+  const index = integer(final.value);
+  if (parent?.type === "matrix" && Array.isArray(parent.rows)) {
+    parent.rows[index - 1] = value;
+  } else if (parent && ["sequence", "tuple", "array"].includes(parent.type)) {
+    (parent.values || parent.elements)[index - 1] = value;
+  } else if (Array.isArray(parent)) {
+    parent[index - 1] = value;
+  } else {
+    throw new Error(`Cannot set a Binding index on "${parent?.type || typeof parent}"`);
+  }
+  return root;
+}
+function bindingMethods() {
+  return new Map([
+    ["GET", {
+      type: "method_builtin",
+      name: "Get",
+      impl: ([target]) => target.get()
+    }],
+    ["SET", {
+      type: "method_builtin",
+      name: "Set",
+      impl: ([target, value]) => target.set(value)
+    }],
+    ["AT", {
+      type: "method_builtin",
+      name: "At",
+      impl: ([target, ...indices]) => target.at(...indices)
+    }],
+    ["SLICE", {
+      type: "method_builtin",
+      name: "Slice",
+      impl: ([target, ...ranges]) => target.slice(...ranges)
+    }],
+    ["immutable", new Integer(1n)]
+  ]);
+}
+function isBinding(value) {
+  return Boolean(value && value.type === "binding" && value.cell && typeof value.get === "function");
+}
+function createBinding(cell, options = {}) {
+  if (!cell || typeof cell !== "object" || !Object.prototype.hasOwnProperty.call(cell, "value")) {
+    throw new Error("Binding requires a RiX Cell");
+  }
+  const path = Object.freeze([...options.path || []]);
+  const channel = options.channel || new Set;
+  const rootId = options.rootId || cellId(cell);
+  const name = options.name || null;
+  const id = path.length ? `${rootId}[${path.map(selectorLabel).join(",")}]` : rootId;
+  const binding = {
+    type: "binding",
+    id,
+    rootId,
+    name,
+    cell,
+    path,
+    get() {
+      return indexInto(cell.value, path);
+    },
+    set(value, metadata = null) {
+      const previous = binding.get();
+      if (path.length === 0)
+        cell.value = value;
+      else
+        setInto(cell.value, path, value);
+      const event = Object.freeze({
+        type: "binding:set",
+        binding,
+        path,
+        previous,
+        value,
+        metadata
+      });
+      for (const listener of [...channel])
+        listener(event);
+      return value;
+    },
+    at(...indices) {
+      if (indices.length === 0)
+        throw new Error("Binding.At requires at least one index");
+      return createBinding(cell, {
+        channel,
+        rootId,
+        name,
+        path: [...path, ...indices.map(selector)]
+      });
+    },
+    slice(...ranges) {
+      if (ranges.length === 0)
+        throw new Error("Binding.Slice requires at least one selector");
+      return createBinding(cell, {
+        channel,
+        rootId,
+        name,
+        path: [...path, ...ranges.map(selector)]
+      });
+    },
+    subscribe(listener) {
+      if (typeof listener !== "function")
+        throw new Error("Binding subscriber must be a function");
+      channel.add(listener);
+      return () => channel.delete(listener);
+    },
+    _ext: bindingMethods(),
+    toString() {
+      const suffix = path.length ? `[${path.map(selectorLabel).join(",")}]` : "";
+      return `[Binding ${name || rootId}${suffix}]`;
+    }
+  };
+  return Object.freeze(binding);
+}
+
+// ../rix/src/runtime/output.js
+var int = (value) => new Integer(BigInt(value));
+var isSequence = (value) => value && ["sequence", "tuple", "set", "array"].includes(value.type);
+var asString = (value) => value?.type === "string" ? value.value : typeof value === "string" ? value : null;
+function sequence(value, label) {
+  if (Array.isArray(value))
+    return value;
+  if (isSequence(value))
+    return value.values || value.elements || [];
+  throw new Error(`${label} must be an array, tuple, or sequence`);
+}
+function map(value, label) {
+  if (value?.type !== "map" || !(value.entries instanceof Map))
+    throw new Error(`${label} must be a map`);
+  return value.entries;
+}
+function get(entries, name, fallback = null) {
+  if (entries.has(name))
+    return entries.get(name);
+  const canonical = String(name).toLowerCase();
+  return entries.has(canonical) ? entries.get(canonical) : fallback;
+}
+function optionalMap(value, label) {
+  return value === null || value === undefined ? null : map(value, label);
+}
+function spec(args, positional, name) {
+  if (args.length === 1 && args[0]?.type === "map")
+    return map(args[0], `${name} specification`);
+  if (args.length > positional.length)
+    throw new Error(`${name} received too many arguments`);
+  return new Map(positional.slice(0, args.length).map((key, index) => [key, args[index]]));
+}
+function output(kind, fields) {
+  return Object.freeze({
+    type: "output",
+    kind,
+    ...fields,
+    _ext: new Map([
+      ["_type", { type: "string", value: "output" }],
+      ["kind", { type: "string", value: kind }],
+      ["immutable", int(1)]
+    ])
+  });
+}
+function exactInteger2(value, label) {
+  if (value instanceof Integer)
+    return Number(value.value);
+  if (value instanceof Rational && value.denominator === 1n)
+    return Number(value.numerator);
+  if (typeof value === "number" && Number.isInteger(value))
+    return value;
+  throw new Error(`${label} must be an integer`);
+}
+function exactNumber(value, label) {
+  if (value instanceof Integer || value instanceof Rational)
+    return value;
+  throw new Error(`${label} must be an exact integer or rational`);
+}
+function numericValue(value, label) {
+  if (value instanceof Integer)
+    return Number(value.value);
+  if (value instanceof Rational)
+    return Number(value.numerator) / Number(value.denominator);
+  if (typeof value === "number" && Number.isFinite(value))
+    return value;
+  throw new Error(`${label} must be a finite number`);
+}
+function normalizeColumns(value) {
+  return sequence(value, "Table columns").map((column, index) => {
+    const label = asString(column);
+    if (label !== null)
+      return { id: `column${index + 1}`, label, align: null, format: null };
+    const entry = map(column, `Table column ${index + 1}`);
+    const id = asString(get(entry, "id")) || `column${index + 1}`;
+    return { id, label: asString(get(entry, "label")) || id, align: asString(get(entry, "align")), format: get(entry, "format") };
+  });
+}
+function isOutputValue(value) {
+  return Boolean(value && value.type === "output" && typeof value.kind === "string");
+}
+function createText(args) {
+  const entry = spec(args, ["value", "style"], "Text");
+  const value = get(entry, "value");
+  if (value === null)
+    throw new Error("Text requires a value");
+  return output("text", { value, style: optionalMap(get(entry, "style"), "Text style") });
+}
+function createParagraph(args) {
+  const entry = spec(args, ["children", "style"], "Paragraph");
+  const childrenValue = get(entry, "children");
+  const children = isSequence(childrenValue) || Array.isArray(childrenValue) ? sequence(childrenValue, "Paragraph children") : [childrenValue];
+  return output("paragraph", { children, style: optionalMap(get(entry, "style"), "Paragraph style") });
+}
+function createHeading(args) {
+  const entry = spec(args, ["level", "content", "id", "style"], "Heading");
+  const level = exactInteger2(get(entry, "level"), "Heading level");
+  if (level < 1 || level > 6)
+    throw new Error("Heading level must be between 1 and 6");
+  const content = get(entry, "content");
+  if (content === null)
+    throw new Error("Heading requires content");
+  return output("heading", { level, content, id: asString(get(entry, "id")), style: optionalMap(get(entry, "style"), "Heading style") });
+}
+function createFragment(args) {
+  const entry = spec(args, ["children", "metadata"], "Fragment");
+  return output("fragment", { children: sequence(get(entry, "children"), "Fragment children"), metadata: optionalMap(get(entry, "metadata"), "Fragment metadata") });
+}
+function createTable(args) {
+  const entry = spec(args, ["columns", "rows", "options"], "Table");
+  const columns = normalizeColumns(get(entry, "columns"));
+  const rows = sequence(get(entry, "rows"), "Table rows").map((row, index) => {
+    const cells = sequence(row, `Table row ${index + 1}`);
+    if (cells.length !== columns.length)
+      throw new Error(`Table row ${index + 1} has ${cells.length} cells; expected ${columns.length}`);
+    return [...cells];
+  });
+  return output("table", { columns, rows, caption: asString(get(entry, "caption")), options: optionalMap(get(entry, "options"), "Table options") });
+}
+function createGrid(args) {
+  const entry = spec(args, ["columns", "rows", "rules", "style"], "Grid");
+  const columns = sequence(get(entry, "columns"), "Grid columns");
+  const rows = sequence(get(entry, "rows"), "Grid rows").map((row, index) => {
+    const cells = sequence(row, `Grid row ${index + 1}`);
+    if (cells.length !== columns.length)
+      throw new Error(`Grid row ${index + 1} has ${cells.length} cells; expected ${columns.length}`);
+    return [...cells];
+  });
+  return output("grid", {
+    columns,
+    rows,
+    rules: sequence(get(entry, "rules", { type: "sequence", values: [] }), "Grid rules"),
+    style: optionalMap(get(entry, "style"), "Grid style")
+  });
+}
+function sheetData(value) {
+  const binding = isBinding(value) ? value : null;
+  if (binding)
+    value = binding.get();
+  if (isTensor(value)) {
+    if (value.shape.length === 0)
+      throw new Error("Sheet data must have rank 1 or greater");
+    return {
+      kind: "tensor",
+      binding,
+      shape: [...value.shape],
+      at: (index) => tensorGetBySelectors(value, index.map((item) => ({ kind: "index", value: item })))
+    };
+  }
+  if (value?.type === "matrix" && Array.isArray(value.rows)) {
+    const rows = value.rows.map((row, index) => sequence(row, `Sheet matrix row ${index + 1}`));
+    const columns = rows[0]?.length ?? 0;
+    if (!rows.every((row) => row.length === columns))
+      throw new Error("Sheet matrix rows must have equal lengths");
+    return {
+      kind: "matrix",
+      binding,
+      shape: [rows.length, columns],
+      at: ([row, column]) => rows[row - 1][column - 1]
+    };
+  }
+  if (Array.isArray(value) || isSequence(value)) {
+    const values = sequence(value, "Sheet data");
+    const nested = values.length > 0 && values.every((item) => Array.isArray(item) || isSequence(item));
+    if (nested) {
+      const rows = values.map((row, index) => sequence(row, `Sheet row ${index + 1}`));
+      const columns = rows[0]?.length ?? 0;
+      if (!rows.every((row) => row.length === columns))
+        throw new Error("Sheet rows must have equal lengths");
+      return {
+        kind: "sequence",
+        binding,
+        shape: [rows.length, columns],
+        at: ([row, column]) => rows[row - 1][column - 1]
+      };
+    }
+    return {
+      kind: "sequence",
+      binding,
+      shape: [values.length],
+      at: ([row]) => values[row - 1]
+    };
+  }
+  throw new Error("Sheet data must be a tensor, matrix, array, tuple, or sequence");
+}
+function normalizedSheetIndex(value, length, label) {
+  const index = exactInteger2(value, label);
+  const normalized = index < 0 ? length + index + 1 : index;
+  if (normalized < 1 || normalized > length) {
+    throw new Error(`${label} ${index} is out of range for length ${length}`);
+  }
+  return normalized;
+}
+function spreadsheetColumnLabel(index) {
+  let label = "";
+  let current = index;
+  while (current > 0) {
+    current -= 1;
+    label = String.fromCharCode(65 + current % 26) + label;
+    current = Math.floor(current / 26);
+  }
+  return label;
+}
+function sheetColumnLabel(index, mode) {
+  if (mode === "letters")
+    return spreadsheetColumnLabel(index);
+  if (mode === "numbers")
+    return String(index);
+  return `${spreadsheetColumnLabel(index)} · ${index}`;
+}
+function sheetDisplayAddress(row, column, mode) {
+  return mode === "numbers" ? `R${row}C${column}` : `${spreadsheetColumnLabel(column)}${row}`;
+}
+function sheetPlaneKey2(slice, hiddenAxes) {
+  return hiddenAxes.map(({ axis }) => `${axis}:${slice[axis - 1]}`).join(",");
+}
+function sheetPlaneSlices(shape, initialSlice, hiddenAxes) {
+  let slices = [initialSlice.map((item) => item)];
+  for (const { axis } of hiddenAxes) {
+    slices = slices.flatMap((slice) => Array.from({ length: shape[axis - 1] }, (_item, index) => {
+      const next = slice.map((item) => item);
+      next[axis - 1] = index + 1;
+      return next;
+    }));
+  }
+  return slices;
+}
+function sheetField(entry, options, name, fallback = null) {
+  const optionValue = options ? get(options, name) : null;
+  return optionValue ?? get(entry, name, fallback);
+}
+function createSheet(args) {
+  const entry = spec(args, ["data", "options"], "Sheet");
+  const data = sheetData(get(entry, "data"));
+  const optionsValue = get(entry, "options");
+  const options = optionsValue === null || optionsValue === undefined ? null : map(optionsValue, "Sheet options");
+  const rank = data.shape.length;
+  const viewAxesValue = sheetField(entry, options, "viewAxes");
+  const defaultViewAxes = rank === 1 ? [1] : [1, 2];
+  const viewAxes = viewAxesValue === null ? defaultViewAxes : sequence(viewAxesValue, "Sheet viewAxes").map((axis, index) => normalizedSheetIndex(axis, rank, `Sheet view axis ${index + 1}`));
+  const expectedViewAxisCount = rank === 1 ? 1 : 2;
+  if (viewAxes.length !== expectedViewAxisCount) {
+    throw new Error(`Sheet viewAxes must contain ${expectedViewAxisCount} ${expectedViewAxisCount === 1 ? "axis" : "axes"}`);
+  }
+  if (new Set(viewAxes).size !== viewAxes.length)
+    throw new Error("Sheet viewAxes must be distinct");
+  const visibleAxes = new Set(viewAxes);
+  const sliceValue = sheetField(entry, options, "slice");
+  const requestedSlice = sliceValue === null ? null : sequence(sliceValue, "Sheet slice");
+  if (requestedSlice !== null && requestedSlice.length !== rank) {
+    throw new Error(`Sheet slice must contain ${rank} entries`);
+  }
+  const slice = requestedSlice === null ? data.shape.map((_length, index) => visibleAxes.has(index + 1) ? null : 1) : requestedSlice.map((item, index) => {
+    const axis = index + 1;
+    if (visibleAxes.has(axis)) {
+      if (item !== null)
+        throw new Error(`Sheet slice axis ${axis} must be _ because it is visible`);
+      return null;
+    }
+    if (data.shape[index] === 0)
+      throw new Error(`Sheet cannot select empty hidden axis ${axis}`);
+    return normalizedSheetIndex(item, data.shape[index], `Sheet slice axis ${axis}`);
+  });
+  const axesValue = sheetField(entry, options, "axes");
+  const axes = axesValue === null ? data.shape.map((_length, index) => `axis${index + 1}`) : sequence(axesValue, "Sheet axes").map((axis, index) => {
+    const name = asString(axis);
+    if (name === null || name.length === 0)
+      throw new Error(`Sheet axis ${index + 1} must have a nonempty string name`);
+    return name;
+  });
+  if (axes.length !== rank)
+    throw new Error(`Sheet axes must contain ${rank} names`);
+  const defaultAddress = data.binding?.name || "grid";
+  const addressBase = asString(sheetField(entry, options, "address", { type: "string", value: defaultAddress }));
+  if (addressBase === null || addressBase.length === 0)
+    throw new Error("Sheet address must be a nonempty string");
+  const columnLabelMode = asString(sheetField(entry, options, "columnLabels", { type: "string", value: "dual" }));
+  if (!["dual", "letters", "numbers"].includes(columnLabelMode)) {
+    throw new Error("Sheet columnLabels must be :dual, :letters, or :numbers");
+  }
+  const titleValue = sheetField(entry, options, "title");
+  const title = titleValue === null ? null : asString(titleValue);
+  if (titleValue !== null && title === null)
+    throw new Error("Sheet title must be a string");
+  const rowAxis = viewAxes[0];
+  const columnAxis = viewAxes[1] ?? null;
+  const rowCount = data.shape[rowAxis - 1];
+  const columnCount = columnAxis === null ? 1 : data.shape[columnAxis - 1];
+  const rowHeaders = Array.from({ length: rowCount }, (_item, index) => String(index + 1));
+  const columnHeaders = Array.from({ length: columnCount }, (_item, index) => sheetColumnLabel(index + 1, columnLabelMode));
+  const hiddenAxes = data.shape.map((length, index) => ({
+    axis: index + 1,
+    name: axes[index],
+    length,
+    selected: slice[index]
+  })).filter(({ axis }) => !visibleAxes.has(axis));
+  const cellsForSlice = (planeSlice) => Array.from({ length: rowCount }, (_row, rowIndex) => Array.from({ length: columnCount }, (_column, columnIndex) => {
+    const index = planeSlice.map((item) => item);
+    index[rowAxis - 1] = rowIndex + 1;
+    if (columnAxis !== null)
+      index[columnAxis - 1] = columnIndex + 1;
+    return Object.freeze({
+      value: data.at(index),
+      index: Object.freeze(index),
+      address: `${addressBase}[${index.join(",")}]`,
+      displayAddress: sheetDisplayAddress(rowIndex + 1, columnIndex + 1, columnLabelMode)
+    });
+  }));
+  const planes = sheetPlaneSlices(data.shape, slice, hiddenAxes).map((planeSlice) => Object.freeze({
+    key: sheetPlaneKey2(planeSlice, hiddenAxes),
+    slice: Object.freeze(planeSlice),
+    cells: Object.freeze(cellsForSlice(planeSlice).map((row) => Object.freeze(row)))
+  }));
+  const selectedPlaneKey = sheetPlaneKey2(slice, hiddenAxes);
+  const cells = planes.find((plane) => plane.key === selectedPlaneKey)?.cells ?? planes[0].cells;
+  return output("sheet", {
+    sourceKind: data.kind,
+    binding: data.binding,
+    bindingId: data.binding?.id ?? null,
+    editable: Boolean(data.binding),
+    rank,
+    shape: Object.freeze([...data.shape]),
+    axes: Object.freeze(axes),
+    viewAxes: Object.freeze(viewAxes),
+    slice: Object.freeze(slice),
+    addressBase,
+    title,
+    columnLabelMode,
+    rowHeaders: Object.freeze(rowHeaders),
+    columnHeaders: Object.freeze(columnHeaders),
+    hiddenAxes: Object.freeze(hiddenAxes.map((axis) => Object.freeze(axis))),
+    selectedPlaneKey,
+    planes: Object.freeze(planes),
+    cells,
+    options
+  });
+}
+function createSheetSnapshot(sheet) {
+  if (!isOutputValue(sheet) || sheet.kind !== "sheet")
+    throw new Error("Expected a Sheet output value");
+  if (!sheet.editable)
+    return sheet;
+  return output("sheet", {
+    ...sheet,
+    binding: null,
+    bindingId: null,
+    editable: false
+  });
+}
+function createPath(args) {
+  const entry = spec(args, ["points", "style"], "Path");
+  const commands = get(entry, "commands");
+  const points = get(entry, "points");
+  if (commands !== null && commands !== undefined) {
+    return output("path", {
+      commands: sequence(commands, "Path commands"),
+      points: null,
+      style: optionalMap(get(entry, "style"), "Path style")
+    });
+  }
+  return output("path", {
+    commands: null,
+    points: sequence(points, "Path points"),
+    style: optionalMap(get(entry, "style"), "Path style")
+  });
+}
+function createGroup(args) {
+  const entry = spec(args, ["children", "style", "metadata"], "Group");
+  return output("group", {
+    children: sequence(get(entry, "children"), "Group children"),
+    style: optionalMap(get(entry, "style"), "Group style"),
+    metadata: optionalMap(get(entry, "metadata"), "Group metadata")
+  });
+}
+function createTransform(args) {
+  const entry = spec(args, ["children", "transform", "style"], "Transform");
+  const transform = optionalMap(get(entry, "transform"), "Transform specification") || entry;
+  return output("transform", {
+    children: sequence(get(entry, "children"), "Transform children"),
+    translate: get(transform, "translate"),
+    scale: get(transform, "scale"),
+    rotate: get(transform, "rotate"),
+    origin: get(transform, "origin"),
+    style: optionalMap(get(entry, "style"), "Transform style")
+  });
+}
+function createTextMark(args) {
+  const entry = spec(args, ["position", "text", "style"], "TextMark");
+  const position = sequence(get(entry, "position"), "TextMark position");
+  if (position.length !== 2)
+    throw new Error("TextMark position must contain x and y coordinates");
+  const text = get(entry, "text");
+  if (text === null || text === undefined)
+    throw new Error("TextMark requires text");
+  return output("text_mark", { position, text, style: optionalMap(get(entry, "style"), "TextMark style") });
+}
+function createRectangle(args) {
+  const entry = spec(args, ["origin", "size", "style"], "Rectangle");
+  const origin = sequence(get(entry, "origin"), "Rectangle origin");
+  const size = sequence(get(entry, "size"), "Rectangle size");
+  if (origin.length !== 2 || size.length !== 2)
+    throw new Error("Rectangle origin and size must each contain x and y coordinates");
+  return output("rectangle", { origin, size, style: optionalMap(get(entry, "style"), "Rectangle style") });
+}
+function createCircle(args) {
+  const entry = spec(args, ["center", "radius", "style"], "Circle");
+  const center = sequence(get(entry, "center"), "Circle center");
+  if (center.length !== 2)
+    throw new Error("Circle center must contain x and y coordinates");
+  const radius = get(entry, "radius");
+  if (radius === null || radius === undefined)
+    throw new Error("Circle requires a radius");
+  return output("circle", { center, radius, style: optionalMap(get(entry, "style"), "Circle style") });
+}
+function createClip(args) {
+  const entry = spec(args, ["children", "bounds", "style"], "Clip");
+  const bounds = sequence(get(entry, "bounds"), "Clip bounds");
+  if (bounds.length !== 4)
+    throw new Error("Clip bounds must contain x, y, width, and height");
+  return output("clip", { children: sequence(get(entry, "children"), "Clip children"), bounds, style: optionalMap(get(entry, "style"), "Clip style") });
+}
+function createGraphic(args) {
+  const entry = spec(args, ["size", "children", "metadata"], "Graphic");
+  const size = sequence(get(entry, "size"), "Graphic size");
+  if (size.length !== 2)
+    throw new Error("Graphic size must contain width and height");
+  return output("graphic", { size, children: sequence(get(entry, "children"), "Graphic children"), metadata: optionalMap(get(entry, "metadata"), "Graphic metadata") });
+}
+function createFigure(args) {
+  const entry = spec(args, ["content", "caption", "label", "alt"], "Figure");
+  const content = get(entry, "content");
+  if (content === null)
+    throw new Error("Figure requires content");
+  return output("figure", { content, caption: asString(get(entry, "caption")), label: asString(get(entry, "label")), alt: asString(get(entry, "alt")) });
+}
+function createSlide(args) {
+  const entry = spec(args, ["content", "title", "id", "notes", "metadata"], "Slide");
+  const content = get(entry, "content");
+  if (content === null)
+    throw new Error("Slide requires content");
+  return output("slide", { content, title: asString(get(entry, "title")), id: asString(get(entry, "id")), notes: asString(get(entry, "notes")), metadata: optionalMap(get(entry, "metadata"), "Slide metadata") });
+}
+function createSlides(args) {
+  const entry = spec(args, ["slides", "title", "theme", "metadata"], "Slides");
+  const slides = sequence(get(entry, "slides"), "Slides entries");
+  if (!slides.every((slide) => isOutputValue(slide) && slide.kind === "slide"))
+    throw new Error("Slides requires an array of Slide values");
+  return output("slides", { slides, title: asString(get(entry, "title")), theme: asString(get(entry, "theme")), metadata: optionalMap(get(entry, "metadata"), "Slides metadata") });
+}
+function createSyntheticDivision(root, coefficients) {
+  root = exactNumber(root, "SyntheticDivision root");
+  const values = sequence(coefficients, "SyntheticDivision coefficients").map((value, index) => exactNumber(value, `SyntheticDivision coefficient ${index + 1}`));
+  if (values.length < 2)
+    throw new Error("SyntheticDivision requires at least two coefficients");
+  const products = Array(values.length).fill(null);
+  const bottom = Array(values.length).fill(null);
+  bottom[0] = values[0];
+  for (let index = 1;index < values.length; index += 1) {
+    products[index] = root.multiply(bottom[index - 1]);
+    bottom[index] = values[index].add(products[index]);
+  }
+  return output("grid", {
+    columns: Array.from({ length: values.length + 1 }, () => null),
+    rows: [[root, ...values], [null, null, ...products.slice(1)], [null, ...bottom]],
+    rules: [{ kind: "vertical", afterColumn: 1 }, { kind: "horizontal", aboveRow: 3 }],
+    style: new Map([["align", { type: "string", value: "right" }]]),
+    semantic: { type: "synthetic_division", root, coefficients: values, products, bottom }
+  });
+}
+function createPolynomialPlot(coefficients, domain, options = null) {
+  const values = sequence(coefficients, "Polynomial coefficients").map((value, index) => exactNumber(value, `Polynomial coefficient ${index + 1}`));
+  if (values.length < 2)
+    throw new Error("Plot.Polynomial requires at least two coefficients");
+  const bounds = sequence(domain, "Polynomial plot domain");
+  if (bounds.length !== 2)
+    throw new Error("Polynomial plot domain must have a lower and upper bound");
+  const xMin = numericValue(bounds[0], "Polynomial plot lower bound");
+  const xMax = numericValue(bounds[1], "Polynomial plot upper bound");
+  if (!(xMin < xMax))
+    throw new Error("Polynomial plot domain must increase");
+  const optionEntries = options === null || options === undefined ? new Map : map(options, "Polynomial plot options");
+  const requestedSize = get(optionEntries, "size", null);
+  const size = requestedSize === null ? [640, 360] : sequence(requestedSize, "Polynomial plot size").map((value, index) => numericValue(value, `Polynomial plot size ${index + 1}`));
+  if (size.length !== 2 || size.some((value) => value <= 0))
+    throw new Error("Polynomial plot size must contain positive width and height");
+  const samplesValue = get(optionEntries, "samples", null);
+  const samples = samplesValue === null ? 161 : exactInteger2(samplesValue, "Polynomial plot samples");
+  if (samples < 2 || samples > 1e4)
+    throw new Error("Polynomial plot samples must be between 2 and 10000");
+  const marginValue = get(optionEntries, "margin", null);
+  const margin = marginValue === null ? 36 : numericValue(marginValue, "Polynomial plot margin");
+  if (margin < 0 || margin * 2 >= Math.min(...size))
+    throw new Error("Polynomial plot margin is too large for its size");
+  const coefficientNumbers = values.map((value) => numericValue(value, "Polynomial coefficient"));
+  const evaluatePolynomial = (x) => coefficientNumbers.reduce((total, coefficient) => total * x + coefficient, 0);
+  const samplesData = Array.from({ length: samples }, (_, index) => {
+    const x = xMin + (xMax - xMin) * index / (samples - 1);
+    return [x, evaluatePolynomial(x)];
+  });
+  let yMin = Math.min(0, ...samplesData.map(([, y]) => y));
+  let yMax = Math.max(0, ...samplesData.map(([, y]) => y));
+  if (yMin === yMax) {
+    yMin -= 1;
+    yMax += 1;
+  }
+  const yPadding = (yMax - yMin) * 0.08;
+  yMin -= yPadding;
+  yMax += yPadding;
+  const [width, height] = size;
+  const toPoint = ([x, y]) => [
+    margin + (x - xMin) / (xMax - xMin) * (width - margin * 2),
+    height - margin - (y - yMin) / (yMax - yMin) * (height - margin * 2)
+  ];
+  const curveStyle = new Map([
+    ["stroke", get(optionEntries, "stroke", { type: "string", value: "#2563eb" })],
+    ["width", get(optionEntries, "width", int(2))],
+    ["fill", { type: "string", value: "none" }]
+  ]);
+  const axisStyle = new Map([
+    ["stroke", { type: "string", value: "#64748b" }],
+    ["width", int(1)],
+    ["dash", { type: "string", value: "3 3" }],
+    ["fill", { type: "string", value: "none" }]
+  ]);
+  const children = [];
+  if (yMin <= 0 && yMax >= 0)
+    children.push(output("path", { points: [toPoint([xMin, 0]), toPoint([xMax, 0])], style: axisStyle }));
+  if (xMin <= 0 && xMax >= 0)
+    children.push(output("path", { points: [toPoint([0, yMin]), toPoint([0, yMax])], style: axisStyle }));
+  children.push(output("path", { points: samplesData.map(toPoint), style: curveStyle }));
+  return output("graphic", {
+    size: [int(Math.round(width)), int(Math.round(height))],
+    children,
+    metadata: new Map([["kind", { type: "string", value: "polynomial_plot" }]])
+  });
+}
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
+}
+function cellText(value, format) {
+  return value === null || value === undefined ? "" : format(value);
+}
+function ruleField(rule, name) {
+  if (rule?.type === "map" && rule.entries instanceof Map)
+    return get(rule.entries, name);
+  return rule?.[name] ?? null;
+}
+function hasRule(grid, kind, value) {
+  const field = kind === "vertical" ? "afterColumn" : "aboveRow";
+  return grid.rules.some((rule) => {
+    const ruleKind = asString(ruleField(rule, "kind")) ?? ruleField(rule, "kind");
+    const ruleValue = ruleField(rule, field);
+    return ruleKind === kind && (ruleValue === value || numericValue(ruleValue, `Grid ${field}`) === value);
+  });
+}
+function styleEntry(style, name) {
+  if (!(style instanceof Map))
+    return null;
+  if (style.has(name))
+    return style.get(name);
+  return style.get(String(name).toLowerCase()) ?? null;
+}
+function svgNumber(value, label) {
+  const number = numericValue(value, label);
+  if (!Number.isFinite(number))
+    throw new Error(`${label} must be finite`);
+  return Number(number.toFixed(6)).toString();
+}
+function svgPoint(value, index) {
+  const point = sequence(value, `Path point ${index + 1}`);
+  if (point.length !== 2)
+    throw new Error(`Path point ${index + 1} must contain x and y coordinates`);
+  return [svgNumber(point[0], `Path point ${index + 1} x`), svgNumber(point[1], `Path point ${index + 1} y`)];
+}
+function svgPair(value, label) {
+  const pair = sequence(value, label);
+  if (pair.length !== 2)
+    throw new Error(`${label} must contain two coordinates`);
+  return [svgNumber(pair[0], `${label} x`), svgNumber(pair[1], `${label} y`)];
+}
+function sceneField(value, name) {
+  if (value?.type === "map" && value.entries instanceof Map)
+    return get(value.entries, name);
+  return value?.[name] ?? null;
+}
+function svgFlag(value, label) {
+  if (value === true)
+    return "1";
+  if (value === false || value === null || value === undefined)
+    return "0";
+  return numericValue(value, label) === 0 ? "0" : "1";
+}
+function svgPathData(path) {
+  if (!path.commands) {
+    if (path.points.length === 0)
+      return "";
+    const points = path.points.map(svgPoint);
+    const closed = styleEntry(path.style, "closed")?.value === 1n || styleEntry(path.style, "closed") === true;
+    return points.map(([x, y], index) => `${index === 0 ? "M" : "L"}${x} ${y}`).join(" ") + (closed ? " Z" : "");
+  }
+  return path.commands.map((command, index) => {
+    const op = (asString(sceneField(command, "op")) ?? sceneField(command, "op") ?? "").toLowerCase();
+    const destination = () => svgPair(sceneField(command, "to"), `Path command ${index + 1} destination`);
+    if (op === "move" || op === "m") {
+      const [x, y] = destination();
+      return `M${x} ${y}`;
+    }
+    if (op === "line" || op === "l") {
+      const [x, y] = destination();
+      return `L${x} ${y}`;
+    }
+    if (op === "quadratic" || op === "quad" || op === "q") {
+      const [cx, cy] = svgPair(sceneField(command, "control"), `Path command ${index + 1} control`);
+      const [x, y] = destination();
+      return `Q${cx} ${cy} ${x} ${y}`;
+    }
+    if (op === "cubic" || op === "curve" || op === "c") {
+      const [c1x, c1y] = svgPair(sceneField(command, "control1"), `Path command ${index + 1} control1`);
+      const [c2x, c2y] = svgPair(sceneField(command, "control2"), `Path command ${index + 1} control2`);
+      const [x, y] = destination();
+      return `C${c1x} ${c1y} ${c2x} ${c2y} ${x} ${y}`;
+    }
+    if (op === "arc" || op === "a") {
+      const [rx, ry] = svgPair(sceneField(command, "radius"), `Path command ${index + 1} radius`);
+      const rotation = svgNumber(sceneField(command, "rotation") ?? int(0), `Path command ${index + 1} rotation`);
+      const large = svgFlag(sceneField(command, "large"), `Path command ${index + 1} large flag`);
+      const sweep = svgFlag(sceneField(command, "sweep"), `Path command ${index + 1} sweep flag`);
+      const [x, y] = destination();
+      return `A${rx} ${ry} ${rotation} ${large} ${sweep} ${x} ${y}`;
+    }
+    if (op === "close" || op === "z")
+      return "Z";
+    throw new Error(`Unsupported Path command '${op || "(missing op)"}'`);
+  }).join(" ");
+}
+function svgStyle(style, defaultFill = null) {
+  const attrs = [];
+  const stroke = asString(styleEntry(style, "stroke"));
+  const fill = asString(styleEntry(style, "fill"));
+  const dash = asString(styleEntry(style, "dash"));
+  const opacity = styleEntry(style, "opacity");
+  const width = styleEntry(style, "width") ?? styleEntry(style, "strokeWidth");
+  if (fill || defaultFill !== null)
+    attrs.push(`fill="${escapeHtml(fill || defaultFill)}"`);
+  if (stroke)
+    attrs.push(`stroke="${escapeHtml(stroke)}"`);
+  if (width !== null && width !== undefined)
+    attrs.push(`stroke-width="${svgNumber(width, "Path stroke width")}"`);
+  if (dash)
+    attrs.push(`stroke-dasharray="${escapeHtml(dash)}"`);
+  if (opacity !== null && opacity !== undefined)
+    attrs.push(`opacity="${svgNumber(opacity, "Path opacity")}"`);
+  return attrs.join(" ");
+}
+function svgTransform(node) {
+  const transforms = [];
+  if (node.translate !== null && node.translate !== undefined) {
+    const [x, y] = svgPair(node.translate, "Transform translate");
+    transforms.push(`translate(${x} ${y})`);
+  }
+  if (node.rotate !== null && node.rotate !== undefined) {
+    const angle = svgNumber(node.rotate, "Transform rotate");
+    const origin = node.origin === null || node.origin === undefined ? null : svgPair(node.origin, "Transform origin");
+    transforms.push(origin ? `rotate(${angle} ${origin[0]} ${origin[1]})` : `rotate(${angle})`);
+  }
+  if (node.scale !== null && node.scale !== undefined) {
+    const scale = isSequence(node.scale) || Array.isArray(node.scale) ? svgPair(node.scale, "Transform scale") : [svgNumber(node.scale, "Transform scale"), svgNumber(node.scale, "Transform scale")];
+    transforms.push(`scale(${scale[0]} ${scale[1]})`);
+  }
+  return transforms.join(" ");
+}
+function renderSvgText(node, format) {
+  const [x, y] = svgPair(node.position, "TextMark position");
+  const anchor = asString(styleEntry(node.style, "anchor"));
+  const size = styleEntry(node.style, "size") ?? styleEntry(node.style, "fontSize");
+  const font = asString(styleEntry(node.style, "font"));
+  const weight = asString(styleEntry(node.style, "weight"));
+  const attrs = [svgStyle(node.style, "currentColor")];
+  if (anchor)
+    attrs.push(`text-anchor="${escapeHtml(anchor)}"`);
+  if (size !== null && size !== undefined)
+    attrs.push(`font-size="${svgNumber(size, "TextMark size")}"`);
+  if (font)
+    attrs.push(`font-family="${escapeHtml(font)}"`);
+  if (weight)
+    attrs.push(`font-weight="${escapeHtml(weight)}"`);
+  return `<text x="${x}" y="${y}" ${attrs.filter(Boolean).join(" ")}>${escapeHtml(cellText(node.text, format))}</text>`;
+}
+function renderSvgNode(node, format, defs) {
+  if (!isOutputValue(node))
+    return "";
+  if (node.kind === "path") {
+    const d = svgPathData(node);
+    if (!d)
+      return "";
+    return `<path d="${d}" ${svgStyle(node.style, "none")}/>`;
+  }
+  if (node.kind === "rectangle") {
+    const [x, y] = svgPair(node.origin, "Rectangle origin");
+    const [width, height] = svgPair(node.size, "Rectangle size");
+    return `<rect x="${x}" y="${y}" width="${width}" height="${height}" ${svgStyle(node.style, "none")}/>`;
+  }
+  if (node.kind === "circle") {
+    const [cx, cy] = svgPair(node.center, "Circle center");
+    return `<circle cx="${cx}" cy="${cy}" r="${svgNumber(node.radius, "Circle radius")}" ${svgStyle(node.style, "none")}/>`;
+  }
+  if (node.kind === "text_mark")
+    return renderSvgText(node, format);
+  if (node.kind === "group")
+    return `<g ${svgStyle(node.style)}>${node.children.map((child) => renderSvgNode(child, format, defs)).join("")}</g>`;
+  if (node.kind === "transform") {
+    const transform = svgTransform(node);
+    return `<g${transform ? ` transform="${transform}"` : ""}${svgStyle(node.style) ? ` ${svgStyle(node.style)}` : ""}>${node.children.map((child) => renderSvgNode(child, format, defs)).join("")}</g>`;
+  }
+  if (node.kind === "clip") {
+    const [x, y, width, height] = node.bounds.map((value, index) => svgNumber(value, `Clip bounds ${index + 1}`));
+    const id = `rix-clip-${defs.length + 1}`;
+    defs.push(`<clipPath id="${id}"><rect x="${x}" y="${y}" width="${width}" height="${height}"/></clipPath>`);
+    return `<g clip-path="url(#${id})"${svgStyle(node.style) ? ` ${svgStyle(node.style)}` : ""}>${node.children.map((child) => renderSvgNode(child, format, defs)).join("")}</g>`;
+  }
+  return "";
+}
+function renderGraphicSvg(graphic, format = (item) => String(item ?? "")) {
+  if (!isOutputValue(graphic) || graphic.kind !== "graphic")
+    throw new Error("Expected a Graphic output value");
+  const size = graphic.size.map((value, index) => svgNumber(value, `Graphic size ${index + 1}`));
+  const defs = [];
+  const children = graphic.children.map((child) => renderSvgNode(child, format, defs)).join("");
+  return `<svg class="rix-output-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size[0]} ${size[1]}" width="${size[0]}" height="${size[1]}" role="img">${defs.length ? `<defs>${defs.join("")}</defs>` : ""}${children}</svg>`;
+}
+function formatSheetText(sheet, format) {
+  const strings = sheet.cells.map((row) => row.map((cell) => cellText(cell.value, format)));
+  const rowHeaderWidth = Math.max(1, ...sheet.rowHeaders.map((header2) => header2.length));
+  const columnWidths = sheet.columnHeaders.map((header2, column) => Math.max(header2.length, 1, ...strings.map((row) => row[column]?.length ?? 0)));
+  const heading = [
+    sheet.title ? `Sheet: ${sheet.title}` : "Sheet",
+    sheet.addressBase,
+    `shape ${sheet.shape.join("×")}`,
+    `view axes ${sheet.viewAxes.join(",")}`
+  ].join(" · ");
+  const header = `${"".padStart(rowHeaderWidth)}  ${sheet.columnHeaders.map((label, column) => label.padStart(columnWidths[column])).join("  ")}`;
+  const rows = strings.map((row, rowIndex) => `${sheet.rowHeaders[rowIndex].padStart(rowHeaderWidth)}  ${row.map((cell, column) => cell.padStart(columnWidths[column])).join("  ")}`);
+  return [heading, header, ...rows].join(`
+`);
+}
+function formatOutputText(value, format) {
+  if (!isOutputValue(value))
+    return format(value);
+  if (value.kind === "text")
+    return cellText(value.value, format);
+  if (value.kind === "paragraph")
+    return value.children.map((child) => cellText(child, format)).join("");
+  if (value.kind === "heading")
+    return `${"#".repeat(value.level)} ${cellText(value.content, format)}`;
+  if (value.kind === "fragment")
+    return value.children.map((child) => formatOutputText(child, format)).join(`
+
+`);
+  if (value.kind === "table") {
+    const strings = value.rows.map((row) => row.map((cell) => cellText(cell, format)));
+    const widths = value.columns.map((column, index) => Math.max(column.label.length, ...strings.map((row) => row[index].length)));
+    const line = (row) => row.map((cell, index) => String(cell).padStart(widths[index])).join("  ");
+    return [value.caption, line(value.columns.map((column) => column.label)), widths.map((width) => "-".repeat(width)).join("  "), ...strings.map(line)].filter(Boolean).join(`
+`);
+  }
+  if (value.kind === "grid") {
+    const strings = value.rows.map((row) => row.map((cell) => cellText(cell, format)));
+    const widths = value.columns.map((_, index) => Math.max(1, ...strings.map((row) => row[index].length)));
+    const lines = [];
+    for (let index = 0;index < strings.length; index += 1) {
+      if (hasRule(value, "horizontal", index + 1))
+        lines.push(`  ${widths.slice(1).map((width) => "-".repeat(width + 2)).join("")}`);
+      const parts = strings[index].map((cell, column) => cell.padStart(widths[column]));
+      lines.push(hasRule(value, "vertical", 1) ? `${parts[0]} │ ${parts.slice(1).join("  ")}` : parts.join("  "));
+    }
+    return lines.join(`
+`);
+  }
+  if (value.kind === "sheet")
+    return formatSheetText(value, format);
+  if (value.kind === "figure")
+    return [formatOutputText(value.content, format), value.caption].filter(Boolean).join(`
+`);
+  if (value.kind === "graphic")
+    return `[Graphic: ${cellText(value.size[0], format)} × ${cellText(value.size[1], format)}, ${value.children.length} scene nodes]`;
+  if (value.kind === "path")
+    return value.commands ? `[Path: ${value.commands.length} commands]` : `[Path: ${value.points.length} points]`;
+  if (value.kind === "slide")
+    return [value.title, formatOutputText(value.content, format)].filter(Boolean).join(`
+`);
+  if (value.kind === "slides")
+    return value.slides.map((slide, index) => `Slide ${index + 1}:
+${formatOutputText(slide, format)}`).join(`
+
+`);
+  return `[Output: ${value.kind}]`;
+}
+function renderOutputHtml(value, format = (item) => String(item ?? "")) {
+  const text = (item) => escapeHtml(isOutputValue(item) ? formatOutputText(item, format) : cellText(item, format));
+  if (!isOutputValue(value))
+    return `<pre>${text(value)}</pre>`;
+  if (value.kind === "text")
+    return `<span class="rix-output-text">${text(value.value)}</span>`;
+  if (value.kind === "paragraph")
+    return `<p class="rix-output-paragraph">${value.children.map(text).join("")}</p>`;
+  if (value.kind === "heading")
+    return `<h${value.level} class="rix-output-heading">${text(value.content)}</h${value.level}>`;
+  if (value.kind === "fragment")
+    return `<section class="rix-output-fragment">${value.children.map((child) => renderOutputHtml(child, format)).join("")}</section>`;
+  if (value.kind === "table")
+    return `<table class="rix-output-table">${value.caption ? `<caption>${escapeHtml(value.caption)}</caption>` : ""}<thead><tr>${value.columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}</tr></thead><tbody>${value.rows.map((row) => `<tr>${row.map((cell) => `<td>${text(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+  if (value.kind === "grid")
+    return `<table class="rix-output-grid"><tbody>${value.rows.map((row, rowIndex) => `<tr${hasRule(value, "horizontal", rowIndex + 1) ? ' class="rix-grid-rule-top"' : ""}>${row.map((cell, column) => `<td${hasRule(value, "vertical", column + 1) ? ' class="rix-grid-rule-left"' : ""}>${text(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+  if (value.kind === "sheet") {
+    const summary = `${value.addressBase} · shape ${value.shape.join("×")}`;
+    const controls = value.hiddenAxes.length === 0 ? "" : `<div class="rix-output-sheet-plane-controls" aria-label="Tensor plane">${value.hiddenAxes.map(({ axis, name, length, selected }) => `<label><span>${escapeHtml(name)} · axis ${axis}</span><select data-rix-sheet-axis="${axis}" aria-label="${escapeHtml(name)} axis ${axis}">${Array.from({ length }, (_item, index) => `<option value="${index + 1}"${selected === index + 1 ? " selected" : ""}>${index + 1}</option>`).join("")}</select></label>`).join("")}</div>`;
+    const bodies = value.planes.map((plane) => `<tbody data-rix-plane-key="${escapeHtml(plane.key)}" data-rix-slice="${plane.slice.map((item) => item ?? "").join(",")}"${plane.key === value.selectedPlaneKey ? "" : " hidden"}>${plane.cells.map((row, rowIndex) => `<tr><th scope="row" data-rix-row="${rowIndex + 1}">${escapeHtml(value.rowHeaders[rowIndex])}</th>${row.map((cell, columnIndex) => `<td data-rix-row="${rowIndex + 1}" data-rix-column="${columnIndex + 1}" data-rix-index="${cell.index.join(",")}" data-rix-address="${escapeHtml(cell.address)}" data-rix-display-address="${escapeHtml(cell.displayAddress)}" title="${escapeHtml(cell.displayAddress)} · ${escapeHtml(cell.address)}">${text(cell.value)}</td>`).join("")}</tr>`).join("")}</tbody>`).join("");
+    const liveAttributes = value.editable ? ` data-rix-editable="true" data-rix-binding-id="${escapeHtml(value.bindingId)}"` : "";
+    const editor = value.editable ? `<form class="rix-output-sheet-editor" hidden><label><span data-rix-edit-label>Choose a cell to edit</span><input data-rix-edit-source aria-label="RiX value" autocomplete="off" spellcheck="false"></label><button type="submit">Set</button><output data-rix-edit-status aria-live="polite"></output></form>` : "";
+    return `<section class="rix-output-sheet" data-rix-rank="${value.rank}" data-rix-selected-plane="${escapeHtml(value.selectedPlaneKey)}"${liveAttributes}>${value.title ? `<h3 class="rix-output-sheet-title">${escapeHtml(value.title)}</h3>` : ""}<div class="rix-output-sheet-location" aria-live="polite" data-rix-summary="${escapeHtml(summary)}">${escapeHtml(summary)}</div>${controls}${editor}<table><thead><tr><th class="rix-output-sheet-corner" scope="col">${escapeHtml(value.addressBase)}</th>${value.columnHeaders.map((header, column) => `<th scope="col" data-rix-column="${column + 1}">${escapeHtml(header)}</th>`).join("")}</tr></thead>${bodies}</table></section>`;
+  }
+  if (value.kind === "figure")
+    return `<figure class="rix-output-figure"${value.label ? ` id="${escapeHtml(value.label)}"` : ""}>${renderOutputHtml(value.content, format)}${value.caption ? `<figcaption>${escapeHtml(value.caption)}</figcaption>` : ""}</figure>`;
+  if (value.kind === "graphic")
+    return `<div class="rix-output-graphic">${renderGraphicSvg(value, format)}</div>`;
+  if (value.kind === "slide")
+    return `<section class="rix-output-slide">${value.title ? `<h2>${escapeHtml(value.title)}</h2>` : ""}${renderOutputHtml(value.content, format)}</section>`;
+  if (value.kind === "slides")
+    return `<section class="rix-output-slides">${value.slides.map((slide) => renderOutputHtml(slide, format)).join("")}</section>`;
+  return `<pre>${escapeHtml(formatOutputText(value, format))}</pre>`;
+}
+function createAlgebraOutputCollection() {
+  const syntheticDivision = (root, coefficients) => createSyntheticDivision(root, coefficients);
+  return {
+    type: "map",
+    entries: new Map([["SyntheticDivision", syntheticDivision], ["SYNTHETICDIVISION", syntheticDivision]]),
+    _ext: new Map([
+      ["SYNTHETICDIVISION", {
+        type: "method_builtin",
+        name: "SyntheticDivision",
+        impl: (args) => syntheticDivision(...args.slice(1))
+      }],
+      ["immutable", int(1)]
+    ])
+  };
+}
+function createGraphicsOutputCollection() {
+  const methods = new Map([
+    ["Graphic", createGraphic],
+    ["Path", createPath],
+    ["Group", createGroup],
+    ["Transform", createTransform],
+    ["Text", createTextMark],
+    ["Rectangle", createRectangle],
+    ["Circle", createCircle],
+    ["Clip", createClip]
+  ]);
+  const entries = new Map;
+  const extension = new Map([["immutable", int(1)]]);
+  for (const [name, constructor] of methods) {
+    entries.set(name, constructor);
+    entries.set(name.toUpperCase(), constructor);
+    extension.set(name.toUpperCase(), {
+      type: "method_builtin",
+      name,
+      impl: (args) => constructor(args.slice(1))
+    });
+  }
+  return { type: "map", entries, _ext: extension };
+}
+function createPlotOutputCollection() {
+  const polynomial = (coefficients, domain, options = null) => createPolynomialPlot(coefficients, domain, options);
+  return {
+    type: "map",
+    entries: new Map([["Polynomial", polynomial], ["POLYNOMIAL", polynomial]]),
+    _ext: new Map([
+      ["POLYNOMIAL", {
+        type: "method_builtin",
+        name: "Polynomial",
+        impl: (args) => polynomial(...args.slice(1))
+      }],
+      ["immutable", int(1)]
+    ])
+  };
+}
+
+// ../rix/src/tools/widget-session.js
+function sheetBinding(widget) {
+  if (!isOutputValue(widget) || widget.kind !== "sheet") {
+    throw new Error("WidgetSession currently requires a Sheet output value");
+  }
+  if (!isBinding(widget.binding)) {
+    throw new Error("A Sheet WidgetSession requires .Sheet(.Bind(value))");
+  }
+  return widget.binding;
+}
+function normalizedIndex(index, shape) {
+  if (!Array.isArray(index) || index.length !== shape.length) {
+    throw new Error(`Sheet edit index must contain ${shape.length} entries`);
+  }
+  return index.map((value, axis) => {
+    const integer2 = Number(value);
+    if (!Number.isInteger(integer2) || integer2 < 1 || integer2 > shape[axis]) {
+      throw new Error(`Sheet edit index ${value} is out of range on axis ${axis + 1}`);
+    }
+    return integer2;
+  });
+}
+
+class WidgetSession {
+  constructor(widget, options = {}) {
+    this.binding = sheetBinding(widget);
+    this.options = widget.options;
+    this.widget = widget;
+    this.revision = 0;
+    this.onChange = typeof options.onChange === "function" ? options.onChange : null;
+    this.disposed = false;
+    this._unsubscribe = this.binding.subscribe((bindingEvent) => {
+      if (this.disposed)
+        return;
+      this.revision += 1;
+      this.widget = createSheet(this.options ? [this.binding, { type: "map", entries: this.options }] : [this.binding]);
+      this.onChange?.({
+        session: this,
+        widget: this.widget,
+        revision: this.revision,
+        bindingEvent
+      });
+    });
+  }
+  dispatch(event) {
+    if (this.disposed)
+      throw new Error("Cannot dispatch to a disposed WidgetSession");
+    if (!event || event.type !== "sheet:set") {
+      throw new Error(`Unsupported widget event: ${event?.type || "missing type"}`);
+    }
+    const index = normalizedIndex(event.index, this.widget.shape);
+    this.binding.at(...index).set(event.value, {
+      source: "widget",
+      widgetKind: "sheet",
+      index
+    });
+    return this.widget;
+  }
+  current() {
+    return this.widget;
+  }
+  snapshot() {
+    return createSheetSnapshot(this.widget);
+  }
+  dispose() {
+    if (this.disposed)
+      return;
+    this.disposed = true;
+    this._unsubscribe?.();
+  }
+}
+function createWidgetSession(widget, options = {}) {
+  return new WidgetSession(widget, options);
 }
 
 // ../rix/src/parser/tokenizer.js
@@ -756,15 +5169,15 @@ function tryMatchSemicolonSequence(input, position) {
   const remaining = input.slice(position);
   const match = remaining.match(/^;+/);
   if (match) {
-    const sequence = match[0];
-    const count = sequence.length;
+    const sequence2 = match[0];
+    const count = sequence2.length;
     if (count > 1) {
       return {
         type: "SemicolonSequence",
-        original: sequence,
-        value: sequence,
+        original: sequence2,
+        value: sequence2,
         count,
-        pos: [position, position, position + sequence.length]
+        pos: [position, position, position + sequence2.length]
       };
     }
   }
@@ -3798,9 +8211,9 @@ class Parser {
       }
     }
     if (header.outputsDeclared) {
-      for (const output of header.outputs) {
-        if (!assigned.has(output)) {
-          this.error(`System spec declared output '${output}' is never assigned`);
+      for (const output2 of header.outputs) {
+        if (!assigned.has(output2)) {
+          this.error(`System spec declared output '${output2}' is never assigned`);
         }
       }
     }
@@ -4091,11 +8504,11 @@ class Parser {
     const imports = [];
     const pieces = raw.split(",");
     for (const piece of pieces) {
-      const spec = piece.trim();
-      if (!spec.length) {
+      const spec2 = piece.trim();
+      if (!spec2.length) {
         this.error("Trailing comma is not allowed in import header");
       }
-      const match = spec.match(/^([\p{L}_][\p{L}\p{N}_]*)(?:\s*([~=])\s*([\p{L}_][\p{L}\p{N}_]*)?)?$/u);
+      const match = spec2.match(/^([\p{L}_][\p{L}\p{N}_]*)(?:\s*([~=])\s*([\p{L}_][\p{L}\p{N}_]*)?)?$/u);
       if (!match) {
         this.error("Malformed import header");
       }
@@ -4207,12 +8620,12 @@ class Parser {
     const seenTargets = new Set;
     const specs = [];
     while (this.current.type !== "End" && this.current.value !== ">" && this.current.value !== ";") {
-      const spec = this.parseScriptBindingSpec({ allowOuterSource });
-      if (seenTargets.has(spec.target)) {
-        this.error(`Duplicate binding target '${spec.target}'`);
+      const spec2 = this.parseScriptBindingSpec({ allowOuterSource });
+      if (seenTargets.has(spec2.target)) {
+        this.error(`Duplicate binding target '${spec2.target}'`);
       }
-      seenTargets.add(spec.target);
-      specs.push(spec);
+      seenTargets.add(spec2.target);
+      specs.push(spec2);
       if (this.current.value === ",") {
         this.advance();
         if (this.current.value === ">" || this.current.value === ";") {
@@ -6067,2939 +10480,6 @@ class SystemContext {
   }
 }
 
-// ../packages/core/src/base-system.js
-class BaseSystem {
-  #base;
-  #characters;
-  #charMap;
-  #name;
-  static #prefixMap = new Map;
-  static RESERVED_SYMBOLS = new Set([
-    "+",
-    "-",
-    "*",
-    "/",
-    "^",
-    "!",
-    "(",
-    ")",
-    "[",
-    "]",
-    ":",
-    ".",
-    "#",
-    "~"
-  ]);
-  constructor(characters, name) {
-    if (typeof characters === "string") {
-      this.#characters = [...characters];
-    } else if (Array.isArray(characters)) {
-      this.#characters = [...characters];
-    } else {
-      throw new Error("Characters must be a string or array of strings");
-    }
-    if (this.#characters.length < 2) {
-      throw new Error("Base system must have at least 2 characters");
-    }
-    if (this.#characters.some((character) => typeof character !== "string" || [...character].length !== 1)) {
-      throw new Error("Each base system character must be a single Unicode character");
-    }
-    this.#base = this.#characters.length;
-    this.#charMap = this.#createCharacterMap();
-    this.#name = name || `Base ${this.#base}`;
-    this.#validateBase();
-    this.#checkForConflicts();
-  }
-  get base() {
-    return this.#base;
-  }
-  get characters() {
-    return [...this.#characters];
-  }
-  get charMap() {
-    return new Map(this.#charMap);
-  }
-  getChar(value) {
-    const i = Number(value);
-    if (!Number.isSafeInteger(i) || i < 0 || i >= this.#characters.length) {
-      throw new Error(`Value ${value} must be an in-range integer for base ${this.#base}`);
-    }
-    return this.#characters[i];
-  }
-  get name() {
-    return this.#name;
-  }
-  #createCharacterMap() {
-    const map = new Map;
-    for (let i = 0;i < this.#characters.length; i++) {
-      map.set(this.#characters[i], i);
-    }
-    return map;
-  }
-  #validateBase() {
-    if (this.#base < 2) {
-      throw new Error("Base must be at least 2");
-    }
-    if (this.#base !== this.#characters.length) {
-      throw new Error(`Base ${this.#base} does not match character set length ${this.#characters.length}`);
-    }
-    const uniqueChars = new Set(this.#characters);
-    if (uniqueChars.size !== this.#characters.length) {
-      throw new Error("Character set contains duplicate characters");
-    }
-    this.#validateCharacterOrdering();
-    if (this.#base > 1000) {
-      console.warn(`Very large base system (${this.#base}). This may impact performance.`);
-    }
-  }
-  #validateCharacterOrdering() {
-    if (this.#name === "Roman Numerals" || this.#characters.length < 10) {
-      return;
-    }
-    const ranges = [
-      { start: "0", end: "9", name: "digits" },
-      { start: "a", end: "z", name: "lowercase letters" },
-      { start: "A", end: "Z", name: "uppercase letters" }
-    ];
-    for (const range of ranges) {
-      const startCode = range.start.charCodeAt(0);
-      const endCode = range.end.charCodeAt(0);
-      let rangeChars = [];
-      for (let i = 0;i < this.#characters.length; i++) {
-        const char = this.#characters[i];
-        const code = char.charCodeAt(0);
-        if (code >= startCode && code <= endCode) {
-          rangeChars.push(char);
-        }
-      }
-      if (rangeChars.length >= 5 && rangeChars.length > (endCode - startCode) / 3) {
-        for (let i = 1;i < rangeChars.length; i++) {
-          const prevCode = rangeChars[i - 1].charCodeAt(0);
-          const currCode = rangeChars[i].charCodeAt(0);
-          if (currCode !== prevCode + 1) {
-            console.warn(`Non-contiguous ${range.name} range detected in base system`);
-            break;
-          }
-        }
-      }
-    }
-  }
-  #checkForConflicts() {
-    const conflicts = [];
-    for (const char of this.#characters) {
-      if (BaseSystem.RESERVED_SYMBOLS.has(char)) {
-        conflicts.push(char);
-      }
-    }
-    if (conflicts.length > 0) {
-      throw new Error(`Base system characters conflict with parser symbols: ${conflicts.join(", ")}. ` + `Reserved symbols are: ${Array.from(BaseSystem.RESERVED_SYMBOLS).join(", ")}`);
-    }
-  }
-  toDecimal(str) {
-    if (typeof str !== "string" || str.length === 0) {
-      throw new Error("Input must be a non-empty string");
-    }
-    let negative = false;
-    if (str.startsWith("-")) {
-      negative = true;
-      str = str.slice(1);
-    }
-    if (str.length === 0) {
-      throw new Error("A minus sign must be followed by at least one digit");
-    }
-    let result = 0n;
-    const baseBigInt = BigInt(this.#base);
-    for (const char of str) {
-      if (!this.#charMap.has(char)) {
-        throw new Error(`Invalid character '${char}' for ${this.#name} (base ${this.#base})`);
-      }
-      const digitValue = BigInt(this.#charMap.get(char));
-      result = result * baseBigInt + digitValue;
-    }
-    return negative ? -result : result;
-  }
-  fromDecimal(value) {
-    if (typeof value !== "bigint") {
-      throw new Error("Value must be a BigInt");
-    }
-    if (value === 0n) {
-      return this.#characters[0];
-    }
-    let negative = false;
-    if (value < 0n) {
-      negative = true;
-      value = -value;
-    }
-    const baseBigInt = BigInt(this.#base);
-    const digits = [];
-    while (value > 0n) {
-      const remainder = Number(value % baseBigInt);
-      digits.unshift(this.#characters[remainder]);
-      value = value / baseBigInt;
-    }
-    const result = digits.join("");
-    return negative ? "-" + result : result;
-  }
-  isValidString(str) {
-    if (typeof str !== "string") {
-      return false;
-    }
-    if (str.startsWith("-")) {
-      str = str.slice(1);
-    }
-    if (str.length === 0) {
-      return false;
-    }
-    for (const char of str) {
-      if (!this.#charMap.has(char)) {
-        return false;
-      }
-    }
-    return true;
-  }
-  getMaxDigit() {
-    return this.#characters[this.#characters.length - 1];
-  }
-  getMinDigit() {
-    return this.#characters[0];
-  }
-  toString() {
-    const charPreview = this.#characters.length <= 20 ? this.#characters.join("") : this.#characters.slice(0, 10).join("") + "..." + this.#characters.slice(-10).join("");
-    return `${this.#name} (${charPreview})`;
-  }
-  equals(other) {
-    if (!(other instanceof BaseSystem)) {
-      return false;
-    }
-    if (this.#base !== other.#base) {
-      return false;
-    }
-    for (let i = 0;i < this.#characters.length; i++) {
-      if (this.#characters[i] !== other.#characters[i]) {
-        return false;
-      }
-    }
-    return true;
-  }
-  static fromBase(base, name) {
-    if (!Number.isInteger(base) || base < 2) {
-      throw new Error("Base must be an integer >= 2");
-    }
-    const characters = [];
-    if (base <= 62) {
-      for (let i = 0;i < Math.min(base, 10); i++) {
-        characters.push(String.fromCharCode(48 + i));
-      }
-      if (base > 10) {
-        for (let i = 0;i < Math.min(base - 10, 26); i++) {
-          characters.push(String.fromCharCode(97 + i));
-        }
-      }
-      if (base > 36) {
-        for (let i = 0;i < base - 36; i++) {
-          characters.push(String.fromCharCode(65 + i));
-        }
-      }
-    } else {
-      throw new Error("BaseSystem.fromBase() only supports bases up to 62. Use constructor with custom character sequence for larger bases.");
-    }
-    return new BaseSystem(characters, name || `Base ${base}`);
-  }
-  static createPattern(pattern, size, name) {
-    const characters = [];
-    switch (pattern.toLowerCase()) {
-      case "alphanumeric":
-        if (size > 62) {
-          throw new Error(`Alphanumeric pattern only supports up to base 62, got ${size}`);
-        }
-        return BaseSystem.fromBase(size, name);
-      case "digits-only":
-        if (size > 10) {
-          throw new Error(`Digits-only pattern only supports up to base 10, got ${size}`);
-        }
-        for (let i = 0;i < size; i++)
-          characters.push(String.fromCharCode(48 + i));
-        return new BaseSystem(characters, name || `Base ${size} (digits only)`);
-      case "letters-only":
-        if (size > 52) {
-          throw new Error(`Letters-only pattern only supports up to base 52, got ${size}`);
-        }
-        for (let i = 0;i < Math.min(size, 26); i++) {
-          characters.push(String.fromCharCode(97 + i));
-        }
-        if (size > 26) {
-          for (let i = 0;i < size - 26; i++) {
-            characters.push(String.fromCharCode(65 + i));
-          }
-        }
-        return new BaseSystem(characters, name || (size <= 26 ? `Base ${size} (lowercase letters)` : `Base ${size} (mixed case letters)`));
-      case "uppercase-only":
-        if (size > 26) {
-          throw new Error(`Uppercase-only pattern only supports up to base 26, got ${size}`);
-        }
-        for (let i = 0;i < size; i++) {
-          characters.push(String.fromCharCode(65 + i));
-        }
-        return new BaseSystem(characters, name || `Base ${size} (uppercase letters)`);
-      default:
-        throw new Error(`Unknown pattern: ${pattern}. Supported patterns: alphanumeric, digits-only, letters-only, uppercase-only`);
-    }
-  }
-  static registerPrefix(prefix, baseSystem) {
-    if (typeof prefix !== "string" || prefix.length !== 1) {
-      throw new Error("Prefix must be a single character");
-    }
-    if (!(baseSystem instanceof BaseSystem)) {
-      throw new Error("Must provide a valid BaseSystem");
-    }
-    if (!/^[a-zA-Z]$/.test(prefix)) {
-      throw new Error("Prefix must be a letter");
-    }
-    BaseSystem.#prefixMap.set(prefix, baseSystem);
-  }
-  static unregisterPrefix(prefix) {
-    BaseSystem.#prefixMap.delete(prefix);
-  }
-  static hasExactPrefix(prefix) {
-    return BaseSystem.#prefixMap.has(prefix);
-  }
-  static getSystemForPrefix(prefix) {
-    if (prefix === "D")
-      return null;
-    if (BaseSystem.#prefixMap.has(prefix)) {
-      return BaseSystem.#prefixMap.get(prefix);
-    }
-    const lower = prefix.toLowerCase();
-    if (BaseSystem.#prefixMap.has(lower)) {
-      if (lower === "d" && prefix !== "d")
-        return;
-      return BaseSystem.#prefixMap.get(lower);
-    }
-    return;
-  }
-  static getPrefixForSystem(baseSystem) {
-    for (const [prefix, system] of BaseSystem.#prefixMap.entries()) {
-      if (system.equals(baseSystem)) {
-        return prefix;
-      }
-    }
-    return;
-  }
-  withCaseSensitivity(caseSensitive) {
-    if (caseSensitive === true) {
-      return this;
-    }
-    if (caseSensitive === false) {
-      const lowerChars = this.#characters.map((char) => char.toLowerCase());
-      const uniqueLowerChars = [...new Set(lowerChars)];
-      if (uniqueLowerChars.length !== lowerChars.length) {
-        console.warn("Case-insensitive conversion resulted in duplicate characters");
-      }
-      return new BaseSystem(uniqueLowerChars.join(""), `${this.#name} (case-insensitive)`);
-    }
-    throw new Error("caseSensitive must be a boolean value");
-  }
-}
-BaseSystem.BINARY = new BaseSystem(["0", "1"], "Binary");
-BaseSystem.TERNARY = new BaseSystem(["0", "1", "2"], "Ternary");
-BaseSystem.QUATERNARY = new BaseSystem(["0", "1", "2", "3"], "Quaternary");
-BaseSystem.QUINARY = new BaseSystem(["0", "1", "2", "3", "4"], "Quinary (Base 5)");
-BaseSystem.SEPTENARY = new BaseSystem(["0", "1", "2", "3", "4", "5", "6"], "Septenary (Base 7)");
-BaseSystem.OCTAL = new BaseSystem(["0", "1", "2", "3", "4", "5", "6", "7"], "Octal");
-BaseSystem.DECIMAL = new BaseSystem(["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"], "Decimal");
-BaseSystem.DUODECIMAL = new BaseSystem(["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b"], "Duodecimal (Clock/Base 12)");
-BaseSystem.HEXADECIMAL = new BaseSystem(["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"], "Hexadecimal");
-BaseSystem.VIGESIMAL = new BaseSystem("0123456789abcdefghij".split(""), "Vigesimal (Base 20)");
-BaseSystem.BASE36 = new BaseSystem("0123456789abcdefghijklmnopqrstuvwxyz".split(""), "Base 36 (URL)");
-BaseSystem.BASE62 = new BaseSystem("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".split(""), "Base 62");
-BaseSystem.BASE64 = new BaseSystem("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ@&".split(""), "Base 64");
-BaseSystem.BASE60 = new BaseSystem("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWX".split(""), "Base 60 (Mesopotamia)");
-BaseSystem.ROMAN = new BaseSystem(["I", "V", "X", "L", "C", "D", "M"], "Roman Numerals");
-BaseSystem.registerPrefix("b", BaseSystem.BINARY);
-BaseSystem.registerPrefix("t", BaseSystem.TERNARY);
-BaseSystem.registerPrefix("q", BaseSystem.QUATERNARY);
-BaseSystem.registerPrefix("f", BaseSystem.QUINARY);
-BaseSystem.registerPrefix("s", BaseSystem.SEPTENARY);
-BaseSystem.registerPrefix("o", BaseSystem.OCTAL);
-BaseSystem.registerPrefix("d", BaseSystem.DUODECIMAL);
-BaseSystem.registerPrefix("x", BaseSystem.HEXADECIMAL);
-BaseSystem.registerPrefix("v", BaseSystem.VIGESIMAL);
-BaseSystem.registerPrefix("u", BaseSystem.BASE36);
-BaseSystem.registerPrefix("m", BaseSystem.BASE60);
-BaseSystem.registerPrefix("y", BaseSystem.BASE64);
-
-// ../packages/core/src/rational.js
-var bitLength = function(int) {
-  if (int === 0n)
-    return 0;
-  return int < 0n ? (-int).toString(2).length : int.toString(2).length;
-};
-
-class Rational {
-  #numerator;
-  #denominator;
-  #isNegative;
-  #wholePart;
-  #remainder;
-  #initialSegment;
-  #periodDigits;
-  #periodLength;
-  #isTerminating;
-  #factorsOf2;
-  #factorsOf5;
-  #leadingZerosInPeriod;
-  #initialSegmentLeadingZeros;
-  #initialSegmentRest;
-  #periodDigitsRest;
-  #maxPeriodDigitsComputed;
-  static DEFAULT_PERIOD_DIGITS = 20;
-  static MAX_PERIOD_DIGITS = 1000;
-  static MAX_PERIOD_CHECK = 1e7;
-  static POWERS_OF_5 = {
-    16: 5n ** 16n,
-    8: 5n ** 8n,
-    4: 5n ** 4n,
-    2: 5n ** 2n,
-    1: 5n
-  };
-  static zero = new Rational(0, 1);
-  static one = new Rational(1, 1);
-  constructor(numerator, denominator = 1n) {
-    if (numerator && typeof numerator === "object" && numerator.constructor.name === "Integer") {
-      this.#numerator = numerator.value;
-      if (denominator && typeof denominator === "object" && denominator.constructor.name === "Integer") {
-        this.#denominator = denominator.value;
-      } else if (denominator !== undefined) {
-        this.#denominator = BigInt(denominator);
-      } else {
-        this.#denominator = 1n;
-      }
-      if (this.#denominator === 0n) {
-        throw new Error("Denominator cannot be zero");
-      }
-      this.#normalize();
-      this.#isNegative = this.#numerator < 0n;
-      return;
-    }
-    if (typeof numerator === "string") {
-      if (numerator.includes("..")) {
-        const mixedParts = numerator.trim().split("..");
-        if (mixedParts.length !== 2) {
-          throw new Error("Invalid mixed number format. Use 'a..b/c'");
-        }
-        const wholePart = BigInt(mixedParts[0]);
-        const fractionParts = mixedParts[1].split("/");
-        if (fractionParts.length !== 2) {
-          throw new Error("Invalid fraction in mixed number. Use 'a..b/c'");
-        }
-        const fracNumerator = BigInt(fractionParts[0]);
-        const fracDenominator = BigInt(fractionParts[1]);
-        const isNegative = wholePart < 0n;
-        const absWhole = isNegative ? -wholePart : wholePart;
-        this.#numerator = isNegative ? -(absWhole * fracDenominator + fracNumerator) : wholePart * fracDenominator + fracNumerator;
-        this.#denominator = fracDenominator;
-      } else {
-        if (numerator.includes(".")) {
-          const expandedNumerator = Rational.#parseRepeatedDigits(numerator);
-          const decimalParts = expandedNumerator.trim().split(".");
-          if (decimalParts.length === 2) {
-            const integerPart = decimalParts[0] || "0";
-            const fractionalPart = decimalParts[1];
-            if (!/^-?\d*$/.test(integerPart) || !/^\d*$/.test(fractionalPart)) {
-              throw new Error("Invalid decimal format");
-            }
-            const wholePart = BigInt(integerPart);
-            const fractionalValue = BigInt(fractionalPart);
-            const denomValue = 10n ** BigInt(fractionalPart.length);
-            this.#numerator = wholePart * denomValue + (wholePart < 0n ? -fractionalValue : fractionalValue);
-            this.#denominator = denomValue;
-          } else {
-            throw new Error("Invalid decimal format - multiple decimal points");
-          }
-        } else {
-          const parts = numerator.trim().split("/");
-          if (parts.length === 1) {
-            this.#numerator = BigInt(parts[0]);
-            this.#denominator = BigInt(denominator);
-          } else if (parts.length === 2) {
-            this.#numerator = BigInt(parts[0]);
-            this.#denominator = BigInt(parts[1]);
-          } else {
-            throw new Error("Invalid rational format. Use 'a/b', 'a', or 'a..b/c'");
-          }
-        }
-      }
-    } else {
-      this.#numerator = BigInt(numerator);
-      this.#denominator = BigInt(denominator);
-    }
-    if (this.#denominator === 0n) {
-      throw new Error("Denominator cannot be zero");
-    }
-    this.#normalize();
-    this.#isNegative = this.#numerator < 0n;
-  }
-  #normalize() {
-    if (this.#denominator < 0n) {
-      this.#numerator = -this.#numerator;
-      this.#denominator = -this.#denominator;
-    }
-    if (this.#numerator === 0n) {
-      this.#denominator = 1n;
-      return;
-    }
-    const gcd = this.#gcd(this.#numerator < 0n ? -this.#numerator : this.#numerator, this.#denominator);
-    this.#numerator = this.#numerator / gcd;
-    this.#denominator = this.#denominator / gcd;
-  }
-  #gcd(a, b) {
-    while (b !== 0n) {
-      const temp = b;
-      b = a % b;
-      a = temp;
-    }
-    return a;
-  }
-  get numerator() {
-    return this.#numerator;
-  }
-  get denominator() {
-    return this.#denominator;
-  }
-  add(other) {
-    if (other.constructor.name === "Integer") {
-      const otherAsRational = new Rational(other.value, 1n);
-      return this.add(otherAsRational);
-    } else if (other instanceof Rational) {
-      const a = this.#numerator;
-      const b = this.#denominator;
-      const c = other.numerator;
-      const d = other.denominator;
-      const numerator = a * d + b * c;
-      const denominator = b * d;
-      return new Rational(numerator, denominator);
-    } else if (other.low && other.high && typeof other.low.equals === "function") {
-      const thisAsInterval = { low: this, high: this };
-      const IntervalClass = other.constructor;
-      const newThisAsInterval = new IntervalClass(this, this);
-      return newThisAsInterval.add(other);
-    } else {
-      throw new Error(`Cannot add ${other.constructor.name} to Rational`);
-    }
-  }
-  subtract(other) {
-    if (other.constructor.name === "Integer") {
-      const otherAsRational = new Rational(other.value, 1n);
-      return this.subtract(otherAsRational);
-    } else if (other instanceof Rational) {
-      const a = this.#numerator;
-      const b = this.#denominator;
-      const c = other.numerator;
-      const d = other.denominator;
-      const numerator = a * d - b * c;
-      const denominator = b * d;
-      return new Rational(numerator, denominator);
-    } else if (other.low && other.high && typeof other.low.equals === "function") {
-      const IntervalClass = other.constructor;
-      const newThisAsInterval = new IntervalClass(this, this);
-      return newThisAsInterval.subtract(other);
-    } else {
-      throw new Error(`Cannot subtract ${other.constructor.name} from Rational`);
-    }
-  }
-  multiply(other) {
-    if (other.constructor.name === "Integer") {
-      const otherAsRational = new Rational(other.value, 1n);
-      return this.multiply(otherAsRational);
-    } else if (other instanceof Rational) {
-      const a = this.#numerator;
-      const b = this.#denominator;
-      const c = other.numerator;
-      const d = other.denominator;
-      const numerator = a * c;
-      const denominator = b * d;
-      return new Rational(numerator, denominator);
-    } else if (other.low && other.high && typeof other.low.equals === "function") {
-      const IntervalClass = other.constructor;
-      const newThisAsInterval = new IntervalClass(this, this);
-      return newThisAsInterval.multiply(other);
-    } else {
-      throw new Error(`Cannot multiply Rational by ${other.constructor.name}`);
-    }
-  }
-  divide(other) {
-    if (other.constructor.name === "Integer") {
-      if (other.value === 0n) {
-        throw new Error("Division by zero");
-      }
-      const otherAsRational = new Rational(other.value, 1n);
-      return this.divide(otherAsRational);
-    } else if (other instanceof Rational) {
-      if (other.numerator === 0n) {
-        throw new Error("Division by zero");
-      }
-      const a = this.#numerator;
-      const b = this.#denominator;
-      const c = other.numerator;
-      const d = other.denominator;
-      const numerator = a * d;
-      const denominator = b * c;
-      return new Rational(numerator, denominator);
-    } else if (other.low && other.high && typeof other.low.equals === "function") {
-      const IntervalClass = other.constructor;
-      const newThisAsInterval = new IntervalClass(this, this);
-      return newThisAsInterval.divide(other);
-    } else {
-      throw new Error(`Cannot divide Rational by ${other.constructor.name}`);
-    }
-  }
-  negate() {
-    return new Rational(-this.#numerator, this.#denominator);
-  }
-  reciprocal() {
-    if (this.#numerator === 0n) {
-      throw new Error("Cannot take reciprocal of zero");
-    }
-    return new Rational(this.#denominator, this.#numerator);
-  }
-  pow(exponent) {
-    const n = BigInt(exponent);
-    if (n === 0n) {
-      if (this.#numerator === 0n) {
-        throw new Error("Zero cannot be raised to the power of zero");
-      }
-      return new Rational(1);
-    }
-    if (this.#numerator === 0n && n < 0n) {
-      throw new Error("Zero cannot be raised to a negative power");
-    }
-    if (n < 0n) {
-      const reciprocal = this.reciprocal();
-      return reciprocal.pow(-n);
-    }
-    let resultNum = 1n;
-    let resultDen = 1n;
-    let num = this.#numerator;
-    let den = this.#denominator;
-    for (let i = n < 0n ? -n : n;i > 0n; i >>= 1n) {
-      if (i & 1n) {
-        resultNum *= num;
-        resultDen *= den;
-      }
-      num *= num;
-      den *= den;
-    }
-    return new Rational(resultNum, resultDen);
-  }
-  equals(other) {
-    return this.#numerator === other.numerator && this.#denominator === other.denominator;
-  }
-  compareTo(other) {
-    const crossProduct1 = this.#numerator * other.denominator;
-    const crossProduct2 = this.#denominator * other.numerator;
-    if (crossProduct1 < crossProduct2)
-      return -1;
-    if (crossProduct1 > crossProduct2)
-      return 1;
-    return 0;
-  }
-  lessThan(other) {
-    return this.compareTo(other) < 0;
-  }
-  lessThanOrEqual(other) {
-    return this.compareTo(other) <= 0;
-  }
-  greaterThan(other) {
-    return this.compareTo(other) > 0;
-  }
-  greaterThanOrEqual(other) {
-    return this.compareTo(other) >= 0;
-  }
-  abs() {
-    return this.#numerator < 0n ? this.negate() : new Rational(this.#numerator, this.#denominator);
-  }
-  toString(base) {
-    if (base === undefined) {
-      if (this.#denominator === 1n) {
-        return this.#numerator.toString();
-      }
-      return `${this.#numerator}/${this.#denominator}`;
-    }
-    let baseSystem;
-    if (base instanceof BaseSystem) {
-      baseSystem = base;
-    } else if (typeof base === "number") {
-      baseSystem = BaseSystem.fromBase(base);
-    } else {
-      return this.toString();
-    }
-    return this.toRepeatingBase(baseSystem);
-  }
-  toRepeatingBase(baseSystem) {
-    return this.toRepeatingBaseWithPeriod(baseSystem).baseStr;
-  }
-  toRepeatingBaseWithPeriod(baseSystem, options = {}) {
-    if (!(baseSystem instanceof BaseSystem)) {
-      throw new Error("Argument must be a BaseSystem");
-    }
-    const { useRepeatNotation = true, limit = 1000 } = options;
-    if (this.#numerator < 0n) {
-      const result2 = this.negate().toRepeatingBaseWithPeriod(baseSystem, options);
-      return {
-        baseStr: "-" + result2.baseStr,
-        period: result2.period,
-        limitHit: result2.limitHit
-      };
-    }
-    const baseBigInt = BigInt(baseSystem.base);
-    let num = this.#numerator;
-    let den = this.#denominator;
-    const integerPart = num / den;
-    let remainder = num % den;
-    let result = baseSystem.fromDecimal(integerPart);
-    if (remainder === 0n) {
-      return { baseStr: result, period: 0, limitHit: false };
-    }
-    result += ".";
-    const remainders = new Map;
-    let fractionParts = [];
-    let cycleStartIndex = -1;
-    let limitHit = false;
-    while (remainder !== 0n) {
-      if (remainders.has(remainder)) {
-        cycleStartIndex = remainders.get(remainder);
-        break;
-      }
-      if (fractionParts.length >= limit) {
-        limitHit = true;
-        break;
-      }
-      remainders.set(remainder, fractionParts.length);
-      remainder *= baseBigInt;
-      const digit = remainder / den;
-      remainder = remainder % den;
-      fractionParts.push(baseSystem.getChar(digit));
-    }
-    let period = 0;
-    if (cycleStartIndex !== -1) {
-      const nonRepeating = fractionParts.slice(0, cycleStartIndex).join("");
-      const repeating = fractionParts.slice(cycleStartIndex).join("");
-      period = fractionParts.length - cycleStartIndex;
-      const formattedNonRepeating = useRepeatNotation ? Rational.#formatRepeatedDigits(nonRepeating) : nonRepeating;
-      const formattedRepeating = useRepeatNotation ? Rational.#formatRepeatedDigits(repeating) : repeating;
-      result += formattedNonRepeating + "#" + formattedRepeating;
-    } else if (remainder === 0n) {
-      const terminating = fractionParts.join("");
-      const formattedTerminating = useRepeatNotation ? Rational.#formatRepeatedDigits(terminating) : terminating;
-      result += formattedTerminating + "#0";
-    } else {
-      const partial = fractionParts.join("");
-      const formattedPartial = useRepeatNotation ? Rational.#formatRepeatedDigits(partial) : partial;
-      result += formattedPartial + "...";
-      period = -1;
-    }
-    return { baseStr: result, period, limitHit };
-  }
-  periodModulo(baseSystem, limit = 1e6) {
-    if (!(baseSystem instanceof BaseSystem)) {
-      throw new Error("Argument must be a BaseSystem");
-    }
-    let num = this.#numerator < 0n ? -this.#numerator : this.#numerator;
-    let den = this.#denominator;
-    const baseBigInt = BigInt(baseSystem.base);
-    if (den === 1n)
-      return 0;
-    let common = this.#gcd(den, baseBigInt);
-    while (common > 1n) {
-      den /= common;
-      common = this.#gcd(den, baseBigInt);
-    }
-    if (den === 1n)
-      return 0;
-    let k = 1;
-    let power = baseBigInt % den;
-    while (power !== 1n && k <= limit) {
-      power = power * baseBigInt % den;
-      k++;
-    }
-    if (k > limit) {
-      throw new Error(`Period calculation exceeded limit of ${limit} iterations. Period is likely > ${limit}.`);
-    }
-    return k;
-  }
-  toBase(baseSystem) {
-    if (!(baseSystem instanceof BaseSystem)) {
-      throw new Error("Argument must be a BaseSystem");
-    }
-    const numStr = baseSystem.fromDecimal(this.#numerator);
-    if (this.#denominator === 1n) {
-      return numStr;
-    }
-    const denStr = baseSystem.fromDecimal(this.#denominator);
-    return `${numStr}/${denStr}`;
-  }
-  toMixedString() {
-    if (this.#denominator === 1n || this.#numerator === 0n) {
-      return this.#numerator.toString();
-    }
-    this.#computeWholePart();
-    if (this.#remainder === 0n) {
-      return this.#isNegative ? `-${this.#wholePart}` : `${this.#wholePart}`;
-    }
-    if (this.#wholePart === 0n) {
-      return this.#isNegative ? `-${this.#remainder}/${this.#denominator}` : `${this.#remainder}/${this.#denominator}`;
-    } else {
-      return this.#isNegative ? `-${this.#wholePart}..${this.#remainder}/${this.#denominator}` : `${this.#wholePart}..${this.#remainder}/${this.#denominator}`;
-    }
-  }
-  toNumber() {
-    return Number(this.#numerator) / Number(this.#denominator);
-  }
-  toRepeatingDecimal() {
-    const result = this.toRepeatingDecimalWithPeriod();
-    return result.decimal;
-  }
-  toRepeatingDecimalWithPeriod(useRepeatNotation = true) {
-    if (this.#numerator === 0n) {
-      return { decimal: "0", period: 0 };
-    }
-    this.#computeWholePart();
-    const maxDigits = useRepeatNotation ? 100 : Rational.DEFAULT_PERIOD_DIGITS;
-    this.#computeDecimalMetadata(maxDigits);
-    let result = (this.#isNegative ? "-" : "") + this.#wholePart.toString();
-    if (this.#isTerminating) {
-      if (this.#initialSegment) {
-        const formattedInitial = useRepeatNotation ? Rational.#formatRepeatedDigits(this.#initialSegment, 7) : this.#initialSegment;
-        result += "." + formattedInitial + "#0";
-      } else {}
-      return { decimal: result, period: 0 };
-    } else {
-      let periodDigits = this.#periodDigits;
-      if (this.#periodLength > 0 && this.#periodLength <= Rational.MAX_PERIOD_DIGITS && this.#periodDigits.length < this.#periodLength) {
-        periodDigits = this.extractPeriodSegment(this.#initialSegment, this.#periodLength, this.#periodLength);
-      }
-      const formattedInitial = useRepeatNotation ? Rational.#formatRepeatedDigits(this.#initialSegment, 7) : this.#initialSegment;
-      let displayPeriod = periodDigits;
-      if (useRepeatNotation && this.#leadingZerosInPeriod < 1000) {
-        const significantDigits = this.#periodDigitsRest;
-        if (significantDigits && significantDigits.length > 0) {
-          const leadingZerosFormatted = this.#leadingZerosInPeriod > 6 ? `{0~${this.#leadingZerosInPeriod}}` : this.#leadingZerosInPeriod > 0 ? "0".repeat(this.#leadingZerosInPeriod) : "";
-          const maxSignificantDigits = Math.min(significantDigits.length, 20);
-          displayPeriod = leadingZerosFormatted + significantDigits.substring(0, maxSignificantDigits);
-        } else {
-          displayPeriod = useRepeatNotation ? Rational.#formatRepeatedDigits(periodDigits, 7) : periodDigits;
-        }
-      } else {
-        displayPeriod = useRepeatNotation ? Rational.#formatRepeatedDigits(periodDigits, 7) : periodDigits;
-      }
-      if (this.#initialSegment) {
-        result += "." + formattedInitial + "#" + displayPeriod;
-      } else {
-        result += ".#" + displayPeriod;
-      }
-      return {
-        decimal: result,
-        period: this.#periodLength
-      };
-    }
-  }
-  static #countFactorsOf2(n) {
-    if (n === 0n)
-      return 0;
-    let count = 0;
-    while ((n & 1n) === 0n) {
-      n >>= 1n;
-      count++;
-    }
-    return count;
-  }
-  static #countFactorsOf5(n) {
-    if (n === 0n)
-      return 0;
-    let count = 0;
-    const powers = [
-      { exp: 16, value: Rational.POWERS_OF_5["16"] },
-      { exp: 8, value: Rational.POWERS_OF_5["8"] },
-      { exp: 4, value: Rational.POWERS_OF_5["4"] },
-      { exp: 2, value: Rational.POWERS_OF_5["2"] },
-      { exp: 1, value: Rational.POWERS_OF_5["1"] }
-    ];
-    for (const { exp, value } of powers) {
-      while (n % value === 0n) {
-        n /= value;
-        count += exp;
-      }
-    }
-    return count;
-  }
-  #computeWholePart() {
-    if (this.#wholePart !== undefined)
-      return;
-    const absNumerator = this.#numerator < 0n ? -this.#numerator : this.#numerator;
-    this.#wholePart = absNumerator / this.#denominator;
-    this.#remainder = absNumerator % this.#denominator;
-  }
-  #computeLeadingZerosInPeriod(reducedDen, initialSegmentLength) {
-    let adjustedNumerator = this.#remainder * 10n ** BigInt(initialSegmentLength);
-    let leadingZeros = 0;
-    while (adjustedNumerator < reducedDen && leadingZeros < Rational.MAX_PERIOD_CHECK) {
-      adjustedNumerator *= 10n;
-      leadingZeros++;
-    }
-    return leadingZeros;
-  }
-  #computeDecimalMetadata(maxPeriodDigits = Rational.DEFAULT_PERIOD_DIGITS) {
-    if (this.#periodLength !== undefined && this.#maxPeriodDigitsComputed !== undefined && this.#maxPeriodDigitsComputed >= maxPeriodDigits)
-      return;
-    this.#computeWholePart();
-    if (this.#remainder === 0n) {
-      this.#initialSegment = "";
-      this.#periodDigits = "";
-      this.#periodLength = 0;
-      this.#isTerminating = true;
-      this.#factorsOf2 = 0;
-      this.#factorsOf5 = 0;
-      this.#leadingZerosInPeriod = 0;
-      this.#initialSegmentLeadingZeros = 0;
-      this.#initialSegmentRest = "";
-      this.#periodDigitsRest = "";
-      this.#maxPeriodDigitsComputed = maxPeriodDigits;
-      return;
-    }
-    this.#factorsOf2 = Rational.#countFactorsOf2(this.#denominator);
-    this.#factorsOf5 = Rational.#countFactorsOf5(this.#denominator);
-    const initialSegmentLength = Math.max(this.#factorsOf2, this.#factorsOf5);
-    let reducedDen = this.#denominator;
-    for (let i = 0;i < this.#factorsOf2; i++) {
-      reducedDen /= 2n;
-    }
-    for (let i = 0;i < this.#factorsOf5; i++) {
-      reducedDen /= 5n;
-    }
-    if (reducedDen === 1n) {
-      const digits = [];
-      let currentRemainder2 = this.#remainder;
-      for (let i = 0;i < initialSegmentLength && currentRemainder2 !== 0n; i++) {
-        currentRemainder2 *= 10n;
-        const digit = currentRemainder2 / this.#denominator;
-        digits.push(digit.toString());
-        currentRemainder2 = currentRemainder2 % this.#denominator;
-      }
-      this.#initialSegment = digits.join("");
-      this.#periodDigits = "";
-      this.#periodLength = 0;
-      this.#isTerminating = true;
-      this.#leadingZerosInPeriod = 0;
-      this.#computeDecimalPartBreakdown();
-      this.#maxPeriodDigitsComputed = maxPeriodDigits;
-      return;
-    }
-    let periodLength = 1;
-    let remainder = 10n % reducedDen;
-    while (remainder !== 1n && periodLength < Rational.MAX_PERIOD_CHECK) {
-      periodLength++;
-      remainder = remainder * 10n % reducedDen;
-    }
-    this.#periodLength = periodLength >= Rational.MAX_PERIOD_CHECK ? -1 : periodLength;
-    this.#isTerminating = false;
-    this.#leadingZerosInPeriod = this.#computeLeadingZerosInPeriod(reducedDen, initialSegmentLength);
-    const initialDigits = [];
-    let currentRemainder = this.#remainder;
-    for (let i = 0;i < initialSegmentLength && currentRemainder !== 0n; i++) {
-      currentRemainder *= 10n;
-      const digit = currentRemainder / this.#denominator;
-      initialDigits.push(digit.toString());
-      currentRemainder = currentRemainder % this.#denominator;
-    }
-    const periodDigitsToCompute = this.#periodLength === -1 ? maxPeriodDigits : this.#periodLength > maxPeriodDigits ? maxPeriodDigits : this.#periodLength;
-    const periodDigits = [];
-    if (currentRemainder !== 0n) {
-      for (let i = 0;i < periodDigitsToCompute; i++) {
-        currentRemainder *= 10n;
-        const digit = currentRemainder / this.#denominator;
-        periodDigits.push(digit.toString());
-        currentRemainder = currentRemainder % this.#denominator;
-      }
-    }
-    this.#initialSegment = initialDigits.join("");
-    this.#periodDigits = periodDigits.join("");
-    this.#computeDecimalPartBreakdown();
-    this.#maxPeriodDigitsComputed = maxPeriodDigits;
-  }
-  #computeDecimalPartBreakdown() {
-    let leadingZeros = 0;
-    const initialSegment = this.#initialSegment || "";
-    for (let i = 0;i < initialSegment.length; i++) {
-      if (initialSegment[i] === "0") {
-        leadingZeros++;
-      } else {
-        break;
-      }
-    }
-    this.#initialSegmentLeadingZeros = leadingZeros;
-    this.#initialSegmentRest = initialSegment.substring(leadingZeros);
-    const periodDigits = this.#periodDigits || "";
-    let periodLeadingZeros = 0;
-    for (let i = 0;i < periodDigits.length; i++) {
-      if (periodDigits[i] === "0") {
-        periodLeadingZeros++;
-      } else {
-        break;
-      }
-    }
-    this.#leadingZerosInPeriod = periodLeadingZeros;
-    this.#periodDigitsRest = periodDigits.substring(periodLeadingZeros);
-  }
-  computeDecimalMetadata(maxPeriodDigits = Rational.DEFAULT_PERIOD_DIGITS) {
-    if (this.#numerator === 0n) {
-      return {
-        initialSegment: "",
-        periodDigits: "",
-        periodLength: 0,
-        isTerminating: true
-      };
-    }
-    this.#computeDecimalMetadata(maxPeriodDigits);
-    return {
-      wholePart: this.#wholePart,
-      initialSegment: this.#initialSegment,
-      initialSegmentLeadingZeros: this.#initialSegmentLeadingZeros,
-      initialSegmentRest: this.#initialSegmentRest,
-      periodDigits: this.#periodDigits,
-      periodLength: this.#periodLength,
-      leadingZerosInPeriod: this.#leadingZerosInPeriod,
-      periodDigitsRest: this.#periodDigitsRest,
-      isTerminating: this.#isTerminating
-    };
-  }
-  static #formatRepeatedDigits(digits, threshold = 6) {
-    if (!digits || digits.length === 0)
-      return digits;
-    let result = "";
-    let i = 0;
-    while (i < digits.length) {
-      let currentChar = digits[i];
-      let count = 1;
-      while (i + count < digits.length && digits[i + count] === currentChar) {
-        count++;
-      }
-      if (count >= threshold) {
-        result += `{${currentChar}~${count}}`;
-      } else {
-        result += currentChar.repeat(count);
-      }
-      i += count;
-    }
-    return result;
-  }
-  static #parseRepeatedDigits(formattedDigits) {
-    if (!formattedDigits || !formattedDigits.includes("{")) {
-      return formattedDigits;
-    }
-    return formattedDigits.replace(/\{(.+?)~(\d+)\}/g, (match, digits, count) => {
-      return digits.repeat(parseInt(count));
-    });
-  }
-  extractPeriodSegment(initialSegment, periodLength, digitsRequested) {
-    if (periodLength === 0 || periodLength === -1) {
-      return "";
-    }
-    const digitsToReturn = Math.min(digitsRequested, periodLength);
-    const periodDigits = [];
-    let currentRemainder = this.#numerator % this.#denominator;
-    const isNegative = this.#numerator < 0n;
-    if (isNegative) {
-      currentRemainder = -currentRemainder;
-    }
-    for (let i = 0;i < initialSegment.length; i++) {
-      currentRemainder *= 10n;
-      currentRemainder = currentRemainder % this.#denominator;
-    }
-    for (let i = 0;i < digitsToReturn; i++) {
-      currentRemainder *= 10n;
-      const digit = currentRemainder / this.#denominator;
-      periodDigits.push(digit.toString());
-      currentRemainder = currentRemainder % this.#denominator;
-    }
-    return periodDigits.join("");
-  }
-  toDecimal() {
-    if (this.#numerator === 0n) {
-      return "0";
-    }
-    const isNegative = this.#numerator < 0n;
-    const num = isNegative ? -this.#numerator : this.#numerator;
-    const den = this.#denominator;
-    const integerPart = num / den;
-    let remainder = num % den;
-    if (remainder === 0n) {
-      return (isNegative ? "-" : "") + integerPart.toString();
-    }
-    const digits = [];
-    const maxDigits = 20;
-    for (let i = 0;i < maxDigits && remainder !== 0n; i++) {
-      remainder *= 10n;
-      const digit = remainder / den;
-      digits.push(digit.toString());
-      remainder = remainder % den;
-    }
-    let result = (isNegative ? "-" : "") + integerPart.toString();
-    if (digits.length > 0) {
-      result += "." + digits.join("");
-    }
-    return result;
-  }
-  E(exponent) {
-    const exp = BigInt(exponent);
-    let powerOf10;
-    if (exp >= 0n) {
-      powerOf10 = new Rational(10n ** exp, 1n);
-    } else {
-      powerOf10 = new Rational(1n, 10n ** -exp);
-    }
-    return this.multiply(powerOf10);
-  }
-  #generatePeriodInfo(showPeriodInfo) {
-    if (!showPeriodInfo || this.#isTerminating) {
-      return "";
-    }
-    const info = [];
-    if (this.#initialSegmentLeadingZeros > 0) {
-      info.push(`initial: ${this.#initialSegmentLeadingZeros} zeros`);
-    }
-    if (this.#leadingZerosInPeriod > 0) {
-      info.push(`period starts: +${this.#leadingZerosInPeriod} zeros`);
-    }
-    if (this.#periodLength === -1) {
-      info.push("period: >10^7");
-    } else if (this.#periodLength > 0) {
-      info.push(`period: ${this.#periodLength}`);
-    }
-    return info.length > 0 ? ` {${info.join(", ")}}` : "";
-  }
-  toScientificNotation(useRepeatNotation = true, precision = 11, showPeriodInfo = false) {
-    if (this.#numerator === 0n) {
-      return "0";
-    }
-    this.#computeWholePart();
-    this.#computeDecimalMetadata(100);
-    const isNegative = this.#isNegative;
-    const prefix = isNegative ? "-" : "";
-    if (this.#wholePart > 0n) {
-      const wholeStr = this.#wholePart.toString();
-      const firstDigit = wholeStr[0];
-      const exponent = wholeStr.length - 1;
-      let mantissa = firstDigit;
-      const hasMoreWholeDigits = wholeStr.length > 1;
-      const hasFractionalPart = this.#remainder > 0n;
-      if (hasFractionalPart || hasMoreWholeDigits) {
-        if (hasFractionalPart && !this.#isTerminating) {
-          mantissa += ".";
-          const remainingWholeDigits = hasMoreWholeDigits ? wholeStr.substring(1) : "";
-          const formattedInitial = useRepeatNotation ? Rational.#formatRepeatedDigits(this.#initialSegment, 7) : this.#initialSegment;
-          let periodDigits = this.#periodDigits;
-          if (this.#periodLength > 0 && this.#periodLength <= Rational.MAX_PERIOD_DIGITS && periodDigits.length < this.#periodLength) {
-            periodDigits = this.extractPeriodSegment(this.#initialSegment, this.#periodLength, Math.min(10, this.#periodLength));
-          }
-          if (remainingWholeDigits && periodDigits && remainingWholeDigits === periodDigits.substring(0, remainingWholeDigits.length)) {
-            mantissa += "#" + periodDigits;
-          } else {
-            if (hasMoreWholeDigits) {
-              mantissa += remainingWholeDigits;
-            }
-            mantissa += formattedInitial + "#";
-            const formattedPeriod = useRepeatNotation ? Rational.#formatRepeatedDigits(periodDigits, 7) : periodDigits.substring(0, Math.max(1, precision - mantissa.length + 1));
-            mantissa += formattedPeriod;
-          }
-        } else {
-          if (hasMoreWholeDigits || hasFractionalPart) {
-            mantissa += ".";
-            if (hasMoreWholeDigits) {
-              const remainingDigits = wholeStr.substring(1);
-              if (!hasFractionalPart) {
-                const trimmedDigits = remainingDigits.replace(/0+$/, "");
-                if (trimmedDigits === "") {
-                  mantissa = mantissa.slice(0, -1);
-                } else {
-                  mantissa += trimmedDigits;
-                }
-              } else {
-                mantissa += remainingDigits;
-              }
-            }
-            if (hasFractionalPart) {
-              const formattedInitial = useRepeatNotation ? Rational.#formatRepeatedDigits(this.#initialSegment, 7) : this.#initialSegment;
-              const trimmedInitial = formattedInitial.replace(/0+$/, "");
-              if (trimmedInitial) {
-                mantissa += trimmedInitial;
-              } else if (!hasMoreWholeDigits) {
-                mantissa = mantissa.slice(0, -1);
-              }
-            }
-          }
-        }
-      } else if (!hasFractionalPart && !hasMoreWholeDigits) {}
-      const result = `${prefix}${mantissa}E${exponent}`;
-      return result + this.#generatePeriodInfo(showPeriodInfo);
-    }
-    if (this.#isTerminating) {
-      const leadingZeros = this.#initialSegmentLeadingZeros;
-      const rest = this.#initialSegmentRest;
-      if (rest === "") {
-        return prefix + "0";
-      }
-      const firstDigit = rest[0];
-      const exponent = -(leadingZeros + 1);
-      let mantissa = firstDigit;
-      if (rest.length > 1) {
-        const remainingDigits = Math.max(0, precision - 1);
-        mantissa += "." + rest.substring(1, remainingDigits + 1);
-      }
-      return `${prefix}${mantissa}E${exponent}`;
-    } else {
-      const firstNonZeroInPeriod = this.#periodDigitsRest;
-      if (this.#initialSegmentRest !== "") {
-        const firstDigit = this.#initialSegmentRest[0];
-        const exponent = -(this.#initialSegmentLeadingZeros + 1);
-        let mantissa = firstDigit;
-        if (this.#initialSegmentRest.length > 1 || this.#periodDigits !== "") {
-          mantissa += ".";
-          if (this.#initialSegmentRest.length > 1) {
-            mantissa += this.#initialSegmentRest.substring(1);
-          }
-          mantissa += "#";
-          if (this.#leadingZerosInPeriod > 0 && useRepeatNotation && this.#leadingZerosInPeriod > 6) {
-            mantissa += `{0~${this.#leadingZerosInPeriod}}`;
-          } else if (this.#leadingZerosInPeriod > 0) {
-            mantissa += "0".repeat(Math.min(this.#leadingZerosInPeriod, 10));
-          }
-          if (firstNonZeroInPeriod !== "") {
-            const remainingLength = Math.max(1, precision - mantissa.length + 1);
-            mantissa += firstNonZeroInPeriod.substring(0, remainingLength);
-          }
-        }
-        const result = `${prefix}${mantissa}E${exponent}`;
-        return result + this.#generatePeriodInfo(showPeriodInfo);
-      } else if (firstNonZeroInPeriod !== "") {
-        const firstDigit = firstNonZeroInPeriod[0];
-        const totalLeadingZeros = this.#initialSegmentLeadingZeros + this.#leadingZerosInPeriod;
-        const exponent = -(totalLeadingZeros + 1);
-        let mantissa = firstDigit;
-        if (firstNonZeroInPeriod.length > 1) {
-          mantissa += ".#";
-          const remainingDigits = Math.max(0, precision - 3);
-          mantissa += firstNonZeroInPeriod.substring(1, remainingDigits + 1);
-        } else {
-          mantissa += ".#" + firstDigit;
-        }
-        const result = `${prefix}${mantissa}E${exponent}`;
-        return result + this.#generatePeriodInfo(showPeriodInfo);
-      } else {
-        return prefix + "0";
-      }
-    }
-  }
-  static from(value) {
-    if (value instanceof Rational) {
-      return new Rational(value.numerator, value.denominator);
-    }
-    return new Rational(value);
-  }
-  static DEFAULT_CF_LIMIT = 1000;
-  static fromContinuedFraction(cfArray) {
-    if (!Array.isArray(cfArray) || cfArray.length === 0) {
-      throw new Error("Continued fraction array cannot be empty");
-    }
-    const cf = cfArray.map((term) => {
-      if (typeof term === "number") {
-        return BigInt(term);
-      } else if (typeof term === "bigint") {
-        return term;
-      } else {
-        throw new Error(`Invalid continued fraction term: ${term}`);
-      }
-    });
-    for (let i = 1;i < cf.length; i++) {
-      if (cf[i] <= 0n) {
-        throw new Error(`Continued fraction terms must be positive: ${cf[i]}`);
-      }
-    }
-    if (cf.length === 1) {
-      return new Rational(cf[0], 1n);
-    }
-    let p_prev = 1n;
-    let p_curr = cf[0];
-    let q_prev = 0n;
-    let q_curr = 1n;
-    const convergents = [new Rational(p_curr, q_curr)];
-    for (let i = 1;i < cf.length; i++) {
-      const a = cf[i];
-      const p_next = a * p_curr + p_prev;
-      const q_next = a * q_curr + q_prev;
-      convergents.push(new Rational(p_next, q_next));
-      p_prev = p_curr;
-      p_curr = p_next;
-      q_prev = q_curr;
-      q_curr = q_next;
-    }
-    const result = convergents[convergents.length - 1];
-    result.cf = cf.slice(1);
-    result._convergents = convergents;
-    result.wholePart = cf[0];
-    return result;
-  }
-  toContinuedFraction(maxTerms = Rational.DEFAULT_CF_LIMIT) {
-    if (this.#denominator === 0n) {
-      throw new Error("Cannot convert infinite value to continued fraction");
-    }
-    if (this.#denominator === 1n) {
-      return [this.#numerator];
-    }
-    const cf = [];
-    let num = this.#numerator;
-    let den = this.#denominator;
-    const isNeg = num < 0n;
-    if (isNeg) {
-      num = -num;
-    }
-    let intPart = num / den;
-    if (isNeg) {
-      intPart = -intPart;
-      if (num % den !== 0n) {
-        intPart = intPart - 1n;
-        num = den - num % den;
-      } else {
-        num = num % den;
-      }
-    } else {
-      num = num % den;
-    }
-    cf.push(intPart);
-    let termCount = 1;
-    while (num !== 0n && termCount < maxTerms) {
-      const quotient = den / num;
-      cf.push(quotient);
-      const remainder = den % num;
-      den = num;
-      num = remainder;
-      termCount++;
-    }
-    if (cf.length > 1 && cf[cf.length - 1] === 1n) {
-      const secondLast = cf[cf.length - 2];
-      cf[cf.length - 2] = secondLast + 1n;
-      cf.pop();
-    }
-    this.cf = cf.slice(1);
-    if (!this.wholePart) {
-      this.wholePart = cf[0];
-    }
-    return cf;
-  }
-  toContinuedFractionString() {
-    const cf = this.toContinuedFraction();
-    if (cf.length === 1) {
-      return `${cf[0]}.~0`;
-    }
-    const intPart = cf[0];
-    const cfTerms = cf.slice(1);
-    return `${intPart}.~${cfTerms.join("~")}`;
-  }
-  static fromContinuedFractionString(cfString) {
-    const cfMatch = cfString.match(/^(-?\d+)\.~(.*)$/);
-    if (!cfMatch) {
-      throw new Error("Invalid continued fraction format");
-    }
-    const [, integerPart, cfTermsStr] = cfMatch;
-    const intPart = BigInt(integerPart);
-    if (cfTermsStr === "0") {
-      return new Rational(intPart, 1n);
-    }
-    if (cfTermsStr === "") {
-      throw new Error("Continued fraction must have at least one term after .~");
-    }
-    if (cfTermsStr.endsWith("~")) {
-      throw new Error("Continued fraction cannot end with ~");
-    }
-    if (cfTermsStr.includes("~~")) {
-      throw new Error("Invalid continued fraction format: double tilde");
-    }
-    const terms = cfTermsStr.split("~");
-    const cfTerms = [];
-    for (const term of terms) {
-      if (!/^\d+$/.test(term)) {
-        throw new Error(`Invalid continued fraction term: ${term}`);
-      }
-      const termValue = BigInt(term);
-      if (termValue <= 0n) {
-        throw new Error(`Continued fraction terms must be positive integers: ${term}`);
-      }
-      cfTerms.push(termValue);
-    }
-    const cfArray = [intPart, ...cfTerms];
-    return Rational.fromContinuedFraction(cfArray);
-  }
-  convergents(maxCount = Rational.DEFAULT_CF_LIMIT) {
-    if (!this._convergents) {
-      const cf = this.toContinuedFraction(maxCount);
-      if (cf.length === 1) {
-        this._convergents = [new Rational(cf[0], 1n)];
-      } else {
-        let p_prev = 1n;
-        let p_curr = cf[0];
-        let q_prev = 0n;
-        let q_curr = 1n;
-        const convergents = [new Rational(p_curr, q_curr)];
-        for (let i = 1;i < cf.length; i++) {
-          const a = cf[i];
-          const p_next = a * p_curr + p_prev;
-          const q_next = a * q_curr + q_prev;
-          convergents.push(new Rational(p_next, q_next));
-          p_prev = p_curr;
-          p_curr = p_next;
-          q_prev = q_curr;
-          q_curr = q_next;
-        }
-        this._convergents = convergents;
-      }
-    }
-    if (maxCount && this._convergents && this._convergents.length > maxCount) {
-      return this._convergents.slice(0, maxCount);
-    }
-    return this._convergents || [];
-  }
-  getConvergent(n) {
-    const convergents = this.convergents();
-    if (n < 0 || n >= convergents.length) {
-      throw new Error(`Convergent index ${n} out of range [0, ${convergents.length - 1}]`);
-    }
-    return convergents[n];
-  }
-  static convergentsFromCF(cfInput, maxCount = Rational.DEFAULT_CF_LIMIT) {
-    let cfArray;
-    if (typeof cfInput === "string") {
-      const rational2 = Rational.fromContinuedFractionString(cfInput);
-      return rational2.convergents(maxCount);
-    } else {
-      cfArray = cfInput;
-    }
-    const rational = Rational.fromContinuedFraction(cfArray);
-    return rational.convergents(maxCount);
-  }
-  approximationError(target) {
-    if (!(target instanceof Rational)) {
-      throw new Error("Target must be a Rational");
-    }
-    return this.subtract(target).abs();
-  }
-  bestApproximation(maxDenominator) {
-    if (typeof maxDenominator !== "bigint" || maxDenominator < 1n) {
-      throw new Error("Maximum denominator must be a positive bigint");
-    }
-    if (this.#denominator <= maxDenominator) {
-      return new Rational(this.#numerator, this.#denominator);
-    }
-    const negative = this.#numerator < 0n;
-    let numerator = negative ? -this.#numerator : this.#numerator;
-    let denominator = this.#denominator;
-    let previousNumerator = 0n;
-    let previousDenominator = 1n;
-    let currentNumerator = 1n;
-    let currentDenominator = 0n;
-    while (denominator !== 0n) {
-      const coefficient = numerator / denominator;
-      const nextDenominator = previousDenominator + coefficient * currentDenominator;
-      if (nextDenominator > maxDenominator) {
-        break;
-      }
-      [previousNumerator, currentNumerator] = [
-        currentNumerator,
-        previousNumerator + coefficient * currentNumerator
-      ];
-      [previousDenominator, currentDenominator] = [
-        currentDenominator,
-        nextDenominator
-      ];
-      [numerator, denominator] = [
-        denominator,
-        numerator - coefficient * denominator
-      ];
-    }
-    const multiplier = (maxDenominator - previousDenominator) / currentDenominator;
-    const semiconvergentNumerator = previousNumerator + multiplier * currentNumerator;
-    const semiconvergentDenominator = previousDenominator + multiplier * currentDenominator;
-    const targetNumerator = negative ? -this.#numerator : this.#numerator;
-    const semiconvergentError = targetNumerator * semiconvergentDenominator - semiconvergentNumerator * this.#denominator;
-    const convergentError = targetNumerator * currentDenominator - currentNumerator * this.#denominator;
-    const absoluteSemiconvergentError = semiconvergentError < 0n ? -semiconvergentError : semiconvergentError;
-    const absoluteConvergentError = convergentError < 0n ? -convergentError : convergentError;
-    const useConvergent = absoluteConvergentError * semiconvergentDenominator <= absoluteSemiconvergentError * currentDenominator;
-    const resultNumerator = useConvergent ? currentNumerator : semiconvergentNumerator;
-    const resultDenominator = useConvergent ? currentDenominator : semiconvergentDenominator;
-    return new Rational(negative ? -resultNumerator : resultNumerator, resultDenominator);
-  }
-  bestConvergent(maxDenominator) {
-    if (typeof maxDenominator !== "bigint" || maxDenominator < 1n) {
-      throw new Error("Maximum denominator must be a positive bigint");
-    }
-    const negative = this.#numerator < 0n;
-    let numerator = negative ? -this.#numerator : this.#numerator;
-    let denominator = this.#denominator;
-    let previousNumerator = 0n;
-    let previousDenominator = 1n;
-    let currentNumerator = 1n;
-    let currentDenominator = 0n;
-    while (denominator !== 0n) {
-      const coefficient = numerator / denominator;
-      const nextNumerator = previousNumerator + coefficient * currentNumerator;
-      const nextDenominator = previousDenominator + coefficient * currentDenominator;
-      if (nextDenominator > maxDenominator) {
-        break;
-      }
-      [previousNumerator, currentNumerator] = [
-        currentNumerator,
-        nextNumerator
-      ];
-      [previousDenominator, currentDenominator] = [
-        currentDenominator,
-        nextDenominator
-      ];
-      [numerator, denominator] = [
-        denominator,
-        numerator - coefficient * denominator
-      ];
-    }
-    return new Rational(negative ? -currentNumerator : currentNumerator, currentDenominator);
-  }
-  bitLength() {
-    return Math.max(bitLength(this.numerator), bitLength(this.denominator));
-  }
-}
-
-// ../packages/core/src/rational-interval.js
-class RationalInterval {
-  #start;
-  #end;
-  #low;
-  #high;
-  static zero = Object.freeze(new RationalInterval(Rational.zero, Rational.zero));
-  static one = Object.freeze(new RationalInterval(Rational.one, Rational.one));
-  static unitInterval = Object.freeze(new RationalInterval(Rational.zero, Rational.one));
-  constructor(a, b) {
-    const aRational = a instanceof Rational ? a : new Rational(a);
-    const bRational = b instanceof Rational ? b : new Rational(b);
-    this.#start = aRational;
-    this.#end = bRational;
-    if (aRational.lessThanOrEqual(bRational)) {
-      this.#low = aRational;
-      this.#high = bRational;
-    } else {
-      this.#low = bRational;
-      this.#high = aRational;
-    }
-  }
-  get start() {
-    return this.#start;
-  }
-  get end() {
-    return this.#end;
-  }
-  get isAscending() {
-    return this.#start.lessThanOrEqual(this.#end);
-  }
-  get low() {
-    return this.#low;
-  }
-  get high() {
-    return this.#high;
-  }
-  add(other) {
-    if (other.value !== undefined && typeof other.value === "bigint") {
-      const otherAsRational = new Rational(other.value, 1n);
-      const otherAsInterval = new RationalInterval(otherAsRational, otherAsRational);
-      return this.add(otherAsInterval);
-    } else if (other.numerator !== undefined && other.denominator !== undefined) {
-      const otherAsInterval = new RationalInterval(other, other);
-      return this.add(otherAsInterval);
-    } else if (other.low && other.high) {
-      const newLow = this.#low.add(other.low);
-      const newHigh = this.#high.add(other.high);
-      return new RationalInterval(newLow, newHigh);
-    } else {
-      throw new Error(`Cannot add ${other.constructor.name} to RationalInterval`);
-    }
-  }
-  subtract(other) {
-    if (other.value !== undefined && typeof other.value === "bigint") {
-      const otherAsRational = new Rational(other.value, 1n);
-      const otherAsInterval = new RationalInterval(otherAsRational, otherAsRational);
-      return this.subtract(otherAsInterval);
-    } else if (other.numerator !== undefined && other.denominator !== undefined) {
-      const otherAsInterval = new RationalInterval(other, other);
-      return this.subtract(otherAsInterval);
-    } else if (other.low && other.high) {
-      const newLow = this.#low.subtract(other.high);
-      const newHigh = this.#high.subtract(other.low);
-      return new RationalInterval(newLow, newHigh);
-    } else {
-      throw new Error(`Cannot subtract ${other.constructor.name} from RationalInterval`);
-    }
-  }
-  multiply(other) {
-    if (other.value !== undefined && typeof other.value === "bigint") {
-      const otherAsRational = new Rational(other.value, 1n);
-      const otherAsInterval = new RationalInterval(otherAsRational, otherAsRational);
-      return this.multiply(otherAsInterval);
-    } else if (other.numerator !== undefined && other.denominator !== undefined) {
-      const otherAsInterval = new RationalInterval(other, other);
-      return this.multiply(otherAsInterval);
-    } else if (other.low && other.high) {
-      const products = [
-        this.#low.multiply(other.low),
-        this.#low.multiply(other.high),
-        this.#high.multiply(other.low),
-        this.#high.multiply(other.high)
-      ];
-      let min = products[0];
-      let max = products[0];
-      for (let i = 1;i < products.length; i++) {
-        if (products[i].lessThan(min))
-          min = products[i];
-        if (products[i].greaterThan(max))
-          max = products[i];
-      }
-      return new RationalInterval(min, max);
-    } else {
-      throw new Error(`Cannot multiply RationalInterval by ${other.constructor.name}`);
-    }
-  }
-  divide(other) {
-    if (other.value !== undefined && typeof other.value === "bigint") {
-      if (other.value === 0n) {
-        throw new Error("Division by zero");
-      }
-      const otherAsRational = new Rational(other.value, 1n);
-      const otherAsInterval = new RationalInterval(otherAsRational, otherAsRational);
-      return this.divide(otherAsInterval);
-    } else if (other.numerator !== undefined && other.denominator !== undefined) {
-      if (other.numerator === 0n) {
-        throw new Error("Division by zero");
-      }
-      const otherAsInterval = new RationalInterval(other, other);
-      return this.divide(otherAsInterval);
-    } else if (other.low && other.high) {
-      const zero = Rational.zero;
-      if (other.low.equals(zero) && other.high.equals(zero)) {
-        throw new Error("Division by zero");
-      }
-      if (other.containsZero()) {
-        throw new Error("Cannot divide by an interval containing zero");
-      }
-      const quotients = [
-        this.#low.divide(other.low),
-        this.#low.divide(other.high),
-        this.#high.divide(other.low),
-        this.#high.divide(other.high)
-      ];
-      let min = quotients[0];
-      let max = quotients[0];
-      for (let i = 1;i < quotients.length; i++) {
-        if (quotients[i].lessThan(min))
-          min = quotients[i];
-        if (quotients[i].greaterThan(max))
-          max = quotients[i];
-      }
-      return new RationalInterval(min, max);
-    } else {
-      throw new Error(`Cannot divide RationalInterval by ${other.constructor.name}`);
-    }
-  }
-  reciprocate() {
-    if (this.containsZero()) {
-      throw new Error("Cannot reciprocate an interval containing zero");
-    }
-    return new RationalInterval(this.#high.reciprocal(), this.#low.reciprocal());
-  }
-  negate() {
-    return new RationalInterval(this.#high.negate(), this.#low.negate());
-  }
-  pow(exponent) {
-    const n = BigInt(exponent);
-    const zero = Rational.zero;
-    if (n === 0n) {
-      if (this.#low.equals(zero) && this.#high.equals(zero)) {
-        throw new Error("Zero cannot be raised to the power of zero");
-      }
-      if (this.containsZero()) {
-        throw new Error("Cannot raise an interval containing zero to the power of zero");
-      }
-      return new RationalInterval(Rational.one, Rational.one);
-    }
-    if (n < 0n) {
-      if (this.containsZero()) {
-        throw new Error("Cannot raise an interval containing zero to a negative power");
-      }
-      const positivePower = this.pow(-n);
-      const reciprocal = new RationalInterval(positivePower.high.reciprocal(), positivePower.low.reciprocal());
-      return reciprocal;
-    }
-    if (n === 1n) {
-      return new RationalInterval(this.#low, this.#high);
-    }
-    if (n % 2n === 0n) {
-      let minVal;
-      let maxVal;
-      if (this.#low.lessThanOrEqual(zero) && this.#high.greaterThanOrEqual(zero)) {
-        minVal = new Rational(0);
-        const lowPow = this.#low.abs().pow(n);
-        const highPow = this.#high.abs().pow(n);
-        maxVal = lowPow.greaterThan(highPow) ? lowPow : highPow;
-      } else if (this.#high.lessThan(zero)) {
-        minVal = this.#high.pow(n);
-        maxVal = this.#low.pow(n);
-      } else {
-        minVal = this.#low.pow(n);
-        maxVal = this.#high.pow(n);
-      }
-      return new RationalInterval(minVal, maxVal);
-    } else {
-      return new RationalInterval(this.#low.pow(n), this.#high.pow(n));
-    }
-  }
-  mpow(exponent) {
-    let n;
-    if (typeof exponent === "bigint") {
-      n = exponent;
-    } else if (typeof exponent === "number") {
-      n = BigInt(exponent);
-    } else if (typeof exponent === "string") {
-      n = BigInt(exponent);
-    } else {
-      n = BigInt(exponent);
-    }
-    const zero = Rational.zero;
-    if (n === 0n) {
-      throw new Error("Multiplicative exponentiation requires at least one factor");
-    }
-    if (n < 0n) {
-      const recipInterval = this.reciprocate();
-      return recipInterval.mpow(-n);
-    }
-    if (n === 1n) {
-      return new RationalInterval(this.#low, this.#high);
-    }
-    if (n === 1n) {
-      return new RationalInterval(this.#low, this.#high);
-    }
-    let result = new RationalInterval(this.#low, this.#high);
-    for (let i = 1n;i < n; i++) {
-      result = result.multiply(this);
-    }
-    return result;
-  }
-  overlaps(other) {
-    return !(this.#high.lessThan(other.low) || other.high.lessThan(this.#low));
-  }
-  contains(other) {
-    return this.#low.lessThanOrEqual(other.low) && this.#high.greaterThanOrEqual(other.high);
-  }
-  containsValue(value) {
-    const r = value instanceof Rational ? value : new Rational(value);
-    return this.#low.lessThanOrEqual(r) && this.#high.greaterThanOrEqual(r);
-  }
-  containsZero() {
-    const zero = Rational.zero;
-    return this.#low.lessThanOrEqual(zero) && this.#high.greaterThanOrEqual(zero);
-  }
-  equals(other) {
-    return this.#low.equals(other.low) && this.#high.equals(other.high);
-  }
-  intersection(other) {
-    if (!this.overlaps(other)) {
-      return null;
-    }
-    const newLow = this.#low.greaterThan(other.low) ? this.#low : other.low;
-    const newHigh = this.#high.lessThan(other.high) ? this.#high : other.high;
-    return new RationalInterval(newLow, newHigh);
-  }
-  union(other) {
-    const adjacentRight = this.#high.equals(other.low);
-    const adjacentLeft = other.high.equals(this.#low);
-    if (!this.overlaps(other) && !adjacentRight && !adjacentLeft) {
-      return null;
-    }
-    const newLow = this.#low.lessThan(other.low) ? this.#low : other.low;
-    const newHigh = this.#high.greaterThan(other.high) ? this.#high : other.high;
-    return new RationalInterval(newLow, newHigh);
-  }
-  toString() {
-    return `${this.#start.toString()}:${this.#end.toString()}`;
-  }
-  toMixedString() {
-    return `${this.#start.toMixedString()}:${this.#end.toMixedString()}`;
-  }
-  static point(value) {
-    let r;
-    if (value instanceof Rational) {
-      r = value;
-    } else if (value && typeof value === "object" && typeof value.value === "bigint") {
-      r = new Rational(value.value);
-    } else if (typeof value === "number") {
-      r = new Rational(String(value));
-    } else if (typeof value === "string" || typeof value === "bigint") {
-      r = new Rational(value);
-    } else {
-      throw new Error("Point value must be an Integer or Rational input");
-    }
-    return new RationalInterval(r, r);
-  }
-  static fromString(str) {
-    const parts = str.split(":");
-    if (parts.length !== 2) {
-      throw new Error("Invalid interval format. Use 'a:b'");
-    }
-    return new RationalInterval(parts[0], parts[1]);
-  }
-  toRepeatingDecimal(useRepeatNotation = true) {
-    const startDecimal = this.#start.toRepeatingDecimalWithPeriod(useRepeatNotation).decimal;
-    const endDecimal = this.#end.toRepeatingDecimalWithPeriod(useRepeatNotation).decimal;
-    return `${startDecimal}:${endDecimal}`;
-  }
-  compactedDecimalInterval() {
-    const startStr = this.#start.toDecimal();
-    const endStr = this.#end.toDecimal();
-    let commonPrefix = "";
-    const minLength = Math.min(startStr.length, endStr.length);
-    for (let i = 0;i < minLength; i++) {
-      if (startStr[i] === endStr[i]) {
-        commonPrefix += startStr[i];
-      } else {
-        break;
-      }
-    }
-    if (commonPrefix.length <= 1 || commonPrefix.startsWith("-") && commonPrefix.length <= 2) {
-      return `${startStr}:${endStr}`;
-    }
-    const startSuffix = startStr.substring(commonPrefix.length);
-    const endSuffix = endStr.substring(commonPrefix.length);
-    if (!startSuffix || !endSuffix || startSuffix.length !== endSuffix.length) {
-      return `${startStr}:${endStr}`;
-    }
-    if (!/^\d+$/.test(startSuffix) || !/^\d+$/.test(endSuffix)) {
-      return `${startStr}:${endStr}`;
-    }
-    return `${commonPrefix}[${startSuffix}:${endSuffix}]`;
-  }
-  relativeMidDecimalInterval() {
-    const midpoint = this.#low.add(this.#high).divide(new Rational(2));
-    const offsetEnd = this.#end.subtract(midpoint);
-    const offsetStart = this.#start.subtract(midpoint);
-    const midpointStr = midpoint.toDecimal();
-    const decimalPlaces = midpointStr.includes(".") ? midpointStr.split(".")[1].length : 0;
-    const scaleFactor = decimalPlaces === 0 ? Rational.one : new Rational(10).pow(decimalPlaces);
-    const scaledOffsetStart = offsetStart.multiply(scaleFactor);
-    const scaledOffsetEnd = offsetEnd.multiply(scaleFactor);
-    if (offsetStart.equals(offsetEnd.negate())) {
-      const offsetStr = scaledOffsetEnd.abs().toDecimal();
-      return `${midpointStr}[+-${offsetStr}]`;
-    }
-    const offStartStr = scaledOffsetStart.toDecimal();
-    const offEndStr = scaledOffsetEnd.toDecimal();
-    const startSign = scaledOffsetStart.compareTo(Rational.zero) > 0 ? "+" : "";
-    const endSign = scaledOffsetEnd.compareTo(Rational.zero) > 0 ? "+" : "";
-    return `${midpointStr}[${startSign}${offStartStr}:${endSign}${offEndStr}]`;
-  }
-  relativeDecimalInterval() {
-    const shortestDecimal = this.#findShortestPreciseDecimal();
-    const offsetStart = this.#start.subtract(shortestDecimal);
-    const offsetEnd = this.#end.subtract(shortestDecimal);
-    const decimalStr = shortestDecimal.toDecimal();
-    const decimalPlaces = decimalStr.includes(".") ? decimalStr.split(".")[1].length : 0;
-    let scaledOffsetStart, scaledOffsetEnd;
-    if (decimalPlaces === 0) {
-      scaledOffsetStart = offsetStart;
-      scaledOffsetEnd = offsetEnd;
-    } else {
-      const scaleFactor = new Rational(10).pow(decimalPlaces);
-      scaledOffsetStart = offsetStart.multiply(scaleFactor);
-      scaledOffsetEnd = offsetEnd.multiply(scaleFactor);
-    }
-    const offsetStartStr = scaledOffsetStart.toDecimal();
-    const offsetEndStr = scaledOffsetEnd.toDecimal();
-    if (offsetStart.add(offsetEnd).abs().compareTo(new Rational(1, 1e6)) < 0) {
-      const avgOffset = scaledOffsetStart.abs().add(scaledOffsetEnd.abs()).divide(new Rational(2));
-      return `${decimalStr}[+-${avgOffset.toDecimal()}]`;
-    } else {
-      const off1 = { v: scaledOffsetStart, s: offsetStartStr };
-      const off2 = { v: scaledOffsetEnd, s: offsetEndStr };
-      const sorted = [off1, off2].sort((a, b) => b.v.compareTo(a.v));
-      const s1 = "+" + sorted[0].v.abs().toDecimal();
-      const s2 = "-" + sorted[1].v.abs().toDecimal();
-      return `${decimalStr}[${s1}:${s2}]`;
-    }
-  }
-  #findShortestPreciseDecimal() {
-    const midpoint = this.#low.add(this.#high).divide(new Rational(2));
-    for (let precision = 0;precision <= 20; precision++) {
-      const scale = new Rational(10).pow(precision);
-      const lowScaled = this.#low.multiply(scale);
-      const highScaled = this.#high.multiply(scale);
-      const minInt = this.#ceilRational(lowScaled);
-      const maxInt = this.#floorRational(highScaled);
-      if (minInt.compareTo(maxInt) <= 0) {
-        const candidates = [];
-        let current = minInt;
-        while (current.compareTo(maxInt) <= 0) {
-          candidates.push(current.divide(scale));
-          current = current.add(new Rational(1));
-        }
-        if (candidates.length > 0) {
-          let best = candidates[0];
-          let bestDistance = best.subtract(midpoint).abs();
-          for (let i = 1;i < candidates.length; i++) {
-            const distance = candidates[i].subtract(midpoint).abs();
-            const comparison = distance.compareTo(bestDistance);
-            if (comparison < 0 || comparison === 0 && candidates[i].compareTo(best) < 0) {
-              best = candidates[i];
-              bestDistance = distance;
-            }
-          }
-          return best;
-        }
-      }
-    }
-    return midpoint;
-  }
-  #ceilRational(rational) {
-    if (rational.denominator === 1n) {
-      return rational;
-    }
-    const quotient = rational.numerator / rational.denominator;
-    if (rational.numerator >= 0n) {
-      return new Rational(quotient + 1n, 1n);
-    } else {
-      return new Rational(quotient, 1n);
-    }
-  }
-  #floorRational(rational) {
-    if (rational.denominator === 1n) {
-      return rational;
-    }
-    const quotient = rational.numerator / rational.denominator;
-    if (rational.numerator >= 0n) {
-      return new Rational(quotient, 1n);
-    } else {
-      return new Rational(quotient - 1n, 1n);
-    }
-  }
-  mediant() {
-    return new Rational(this.#low.numerator + this.#high.numerator, this.#low.denominator + this.#high.denominator);
-  }
-  midpoint() {
-    return this.#low.add(this.#high).divide(new Rational(2));
-  }
-  shortestDecimal(base = 10) {
-    const baseBigInt = BigInt(base);
-    if (baseBigInt <= 1n) {
-      throw new Error("Base must be greater than 1");
-    }
-    if (this.#low.equals(this.#high)) {
-      const value = this.#low;
-      let k2 = 0;
-      let denominator2 = 1n;
-      while (k2 <= 50) {
-        const numeratorCandidate = value.multiply(new Rational(denominator2));
-        if (numeratorCandidate.denominator === 1n) {
-          return new Rational(numeratorCandidate.numerator, denominator2);
-        }
-        k2++;
-        denominator2 *= baseBigInt;
-      }
-      return null;
-    }
-    const intervalLength = this.#high.subtract(this.#low);
-    const lengthAsNumber = Number(intervalLength.numerator) / Number(intervalLength.denominator);
-    const baseAsNumber = Number(baseBigInt);
-    let maxK = Math.ceil(Math.log(1 / lengthAsNumber) / Math.log(baseAsNumber));
-    maxK = Math.max(0, maxK + 2);
-    let k = 0;
-    let denominator = 1n;
-    while (k <= maxK) {
-      const minNumerator = this.#ceilRational(this.#low.multiply(new Rational(denominator)));
-      const maxNumerator = this.#floorRational(this.#high.multiply(new Rational(denominator)));
-      if (minNumerator.lessThanOrEqual(maxNumerator)) {
-        return new Rational(minNumerator.numerator, denominator);
-      }
-      k++;
-      denominator *= baseBigInt;
-    }
-    throw new Error("Failed to find shortest decimal representation (exceeded theoretical bound)");
-  }
-  randomRational(maxDenominator = 1000) {
-    const maxDenom = BigInt(maxDenominator);
-    if (maxDenom <= 0n) {
-      throw new Error("maxDenominator must be positive");
-    }
-    const validRationals = [];
-    for (let denom = 1n;denom <= maxDenom; denom++) {
-      const minNum = this.#ceilRational(this.#low.multiply(new Rational(denom)));
-      const maxNum = this.#floorRational(this.#high.multiply(new Rational(denom)));
-      for (let num = minNum.numerator;num <= maxNum.numerator; num++) {
-        const candidate = new Rational(num, denom);
-        if (candidate.numerator === num && candidate.denominator === denom) {
-          validRationals.push(candidate);
-        }
-      }
-    }
-    if (validRationals.length === 0) {
-      return this.midpoint();
-    }
-    const randomIndex = Math.floor(Math.random() * validRationals.length);
-    return validRationals[randomIndex];
-  }
-  #gcd(a, b) {
-    a = a < 0n ? -a : a;
-    b = b < 0n ? -b : b;
-    while (b !== 0n) {
-      const temp = b;
-      b = a % b;
-      a = temp;
-    }
-    return a;
-  }
-  E(exponent) {
-    const exp = BigInt(exponent);
-    let powerOf10;
-    if (exp >= 0n) {
-      powerOf10 = new Rational(10n ** exp, 1n);
-    } else {
-      powerOf10 = new Rational(1n, 10n ** -exp);
-    }
-    const newLow = this.#low.multiply(powerOf10);
-    const newHigh = this.#high.multiply(powerOf10);
-    return new RationalInterval(newLow, newHigh);
-  }
-  bitLength() {
-    const lowBits = this.#low.bitLength();
-    const highBits = this.#high.bitLength();
-    return Math.max(lowBits, highBits);
-  }
-}
-
-// ../packages/core/src/fraction.js
-class Fraction {
-  #numerator;
-  #denominator;
-  constructor(numerator, denominator = 1n, options = {}) {
-    if (typeof numerator === "string") {
-      const parts = numerator.trim().split("/");
-      if (parts.length === 1) {
-        this.#numerator = BigInt(parts[0]);
-        this.#denominator = BigInt(denominator);
-      } else if (parts.length === 2) {
-        this.#numerator = BigInt(parts[0]);
-        this.#denominator = BigInt(parts[1]);
-      } else {
-        throw new Error("Invalid fraction format. Use 'a/b' or 'a'");
-      }
-    } else {
-      this.#numerator = BigInt(numerator);
-      this.#denominator = BigInt(denominator);
-    }
-    if (this.#denominator === 0n) {
-      if (this.#numerator === 0n) {
-        throw new Error("The indeterminate fraction 0/0 is not allowed");
-      }
-      if (options.allowInfinite) {
-        this._isInfinite = true;
-      } else {
-        throw new Error("Denominator cannot be zero unless allowInfinite is true");
-      }
-    } else {
-      this._isInfinite = false;
-    }
-  }
-  get numerator() {
-    return this.#numerator;
-  }
-  get denominator() {
-    return this.#denominator;
-  }
-  get isInfinite() {
-    return this._isInfinite || false;
-  }
-  static #fromComponents(numerator, denominator) {
-    return new Fraction(numerator, denominator, {
-      allowInfinite: denominator === 0n
-    });
-  }
-  add(other) {
-    if (this.#denominator !== other.denominator) {
-      throw new Error("Addition only supported for equal denominators");
-    }
-    return Fraction.#fromComponents(this.#numerator + other.numerator, this.#denominator);
-  }
-  subtract(other) {
-    if (this.#denominator !== other.denominator) {
-      throw new Error("Subtraction only supported for equal denominators");
-    }
-    return Fraction.#fromComponents(this.#numerator - other.numerator, this.#denominator);
-  }
-  multiply(other) {
-    return Fraction.#fromComponents(this.#numerator * other.numerator, this.#denominator * other.denominator);
-  }
-  divide(other) {
-    if (other.numerator === 0n) {
-      throw new Error("Division by zero");
-    }
-    return Fraction.#fromComponents(this.#numerator * other.denominator, this.#denominator * other.numerator);
-  }
-  pow(exponent) {
-    const n = BigInt(exponent);
-    if (n === 0n) {
-      if (this.#numerator === 0n) {
-        throw new Error("Zero cannot be raised to the power of zero");
-      }
-      return new Fraction(1, 1);
-    }
-    if (this.#numerator === 0n && n < 0n) {
-      throw new Error("Zero cannot be raised to a negative power");
-    }
-    if (n < 0n) {
-      return Fraction.#fromComponents(this.#denominator ** -n, this.#numerator ** -n);
-    }
-    return Fraction.#fromComponents(this.#numerator ** n, this.#denominator ** n);
-  }
-  scale(factor) {
-    const scaleFactor = BigInt(factor);
-    return Fraction.#fromComponents(this.#numerator * scaleFactor, this.#denominator * scaleFactor);
-  }
-  static #gcd(a, b) {
-    a = a < 0n ? -a : a;
-    b = b < 0n ? -b : b;
-    while (b !== 0n) {
-      const temp = b;
-      b = a % b;
-      a = temp;
-    }
-    return a;
-  }
-  static #compareValues(left, right) {
-    if (left.isInfinite && right.isInfinite) {
-      const leftSign = left.numerator < 0n ? -1 : 1;
-      const rightSign = right.numerator < 0n ? -1 : 1;
-      return leftSign < rightSign ? -1 : leftSign > rightSign ? 1 : 0;
-    }
-    if (left.isInfinite) {
-      return left.numerator < 0n ? -1 : 1;
-    }
-    if (right.isInfinite) {
-      return right.numerator < 0n ? 1 : -1;
-    }
-    let leftNumerator = left.numerator;
-    let leftDenominator = left.denominator;
-    let rightNumerator = right.numerator;
-    let rightDenominator = right.denominator;
-    if (leftDenominator < 0n) {
-      leftNumerator = -leftNumerator;
-      leftDenominator = -leftDenominator;
-    }
-    if (rightDenominator < 0n) {
-      rightNumerator = -rightNumerator;
-      rightDenominator = -rightDenominator;
-    }
-    const leftProduct = leftNumerator * rightDenominator;
-    const rightProduct = rightNumerator * leftDenominator;
-    return leftProduct < rightProduct ? -1 : leftProduct > rightProduct ? 1 : 0;
-  }
-  static #modInverse(value, modulus) {
-    let oldR = (value % modulus + modulus) % modulus;
-    let r = modulus;
-    let oldS = 1n;
-    let s = 0n;
-    while (r !== 0n) {
-      const quotient = oldR / r;
-      [oldR, r] = [r, oldR - quotient * r];
-      [oldS, s] = [s, oldS - quotient * s];
-    }
-    if (oldR !== 1n) {
-      throw new Error("A modular inverse does not exist");
-    }
-    return (oldS % modulus + modulus) % modulus;
-  }
-  reduce() {
-    if (this.isInfinite) {
-      return new Fraction(this.#numerator < 0n ? -1n : 1n, 0n, {
-        allowInfinite: true
-      });
-    }
-    if (this.#numerator === 0n) {
-      return new Fraction(0, 1);
-    }
-    const gcd = Fraction.#gcd(this.#numerator, this.#denominator);
-    const reducedNum = this.#numerator / gcd;
-    const reducedDen = this.#denominator / gcd;
-    if (reducedDen < 0n) {
-      return new Fraction(-reducedNum, -reducedDen);
-    }
-    return Fraction.#fromComponents(reducedNum, reducedDen);
-  }
-  static mediant(a, b) {
-    return a.mediant(b);
-  }
-  toRational() {
-    if (this.isInfinite) {
-      throw new Error("Cannot convert an infinite Fraction to Rational");
-    }
-    return new Rational(this.#numerator, this.#denominator);
-  }
-  static fromRational(rational) {
-    return new Fraction(rational.numerator, rational.denominator);
-  }
-  toString() {
-    if (this.#denominator === 1n) {
-      return this.#numerator.toString();
-    }
-    return `${this.#numerator}/${this.#denominator}`;
-  }
-  equals(other) {
-    return this.#numerator === other.numerator && this.#denominator === other.denominator;
-  }
-  lessThan(other) {
-    return Fraction.#compareValues(this, other) < 0;
-  }
-  lessThanOrEqual(other) {
-    return Fraction.#compareValues(this, other) <= 0;
-  }
-  greaterThan(other) {
-    return Fraction.#compareValues(this, other) > 0;
-  }
-  greaterThanOrEqual(other) {
-    return Fraction.#compareValues(this, other) >= 0;
-  }
-  E(exponent) {
-    const exp = BigInt(exponent);
-    if (exp >= 0n) {
-      const newNumerator = this.#numerator * 10n ** exp;
-      return Fraction.#fromComponents(newNumerator, this.#denominator);
-    } else {
-      const newDenominator = this.#denominator * 10n ** -exp;
-      return Fraction.#fromComponents(this.#numerator, newDenominator);
-    }
-  }
-  mediant(other) {
-    if (this.isInfinite && other.isInfinite) {
-      if (this.#numerator === -1n && other.numerator === 1n) {
-        return new Fraction(0n, 1n);
-      } else if (this.#numerator === 1n && other.numerator === -1n) {
-        return new Fraction(0n, 1n);
-      }
-      throw new Error("Cannot compute mediant of two infinite fractions");
-    }
-    if (this.isInfinite || other.isInfinite) {
-      const newNum2 = this.#numerator + other.numerator;
-      const newDen2 = this.#denominator + other.denominator;
-      if (newNum2 === 0n && newDen2 === 0n) {
-        throw new Error("Mediant would result in 0/0");
-      }
-      return Fraction.#fromComponents(newNum2, newDen2);
-    }
-    const newNum = this.#numerator + other.numerator;
-    const newDen = this.#denominator + other.denominator;
-    return Fraction.#fromComponents(newNum, newDen);
-  }
-  fareyParents() {
-    if (this.isInfinite) {
-      throw new Error("Cannot find Farey parents of infinite fraction");
-    }
-    const normalizedNumerator = this.#denominator < 0n ? -this.#numerator : this.#numerator;
-    const normalizedDenominator = this.#denominator < 0n ? -this.#denominator : this.#denominator;
-    const scale = Fraction.#gcd(normalizedNumerator, normalizedDenominator);
-    const reducedNumerator = normalizedNumerator / scale;
-    const reducedDenominator = normalizedDenominator / scale;
-    if (reducedNumerator === 0n) {
-      if (scale === 1n) {
-        return {
-          left: new Fraction(-1n, 0n, { allowInfinite: true }),
-          right: new Fraction(1n, 0n, { allowInfinite: true })
-        };
-      }
-      const leftDenominator2 = scale / 2n;
-      return {
-        left: new Fraction(-1n, leftDenominator2),
-        right: new Fraction(1n, scale - leftDenominator2)
-      };
-    }
-    let leftNumerator;
-    let leftDenominator;
-    let rightNumerator;
-    let rightDenominator;
-    if (reducedDenominator === 1n) {
-      if (reducedNumerator > 0n) {
-        leftNumerator = reducedNumerator - 1n;
-        leftDenominator = 1n;
-        rightNumerator = 1n;
-        rightDenominator = 0n;
-      } else {
-        leftNumerator = -1n;
-        leftDenominator = 0n;
-        rightNumerator = reducedNumerator + 1n;
-        rightDenominator = 1n;
-      }
-    } else {
-      leftDenominator = Fraction.#modInverse(reducedNumerator, reducedDenominator);
-      leftNumerator = (reducedNumerator * leftDenominator - 1n) / reducedDenominator;
-      rightNumerator = reducedNumerator - leftNumerator;
-      rightDenominator = reducedDenominator - leftDenominator;
-    }
-    let leftCopies = (scale * reducedDenominator - 2n * leftDenominator + reducedDenominator) / (2n * reducedDenominator);
-    if (leftCopies < 0n) {
-      leftCopies = 0n;
-    } else if (leftCopies > scale - 1n) {
-      leftCopies = scale - 1n;
-    }
-    const rightCopies = scale - 1n - leftCopies;
-    return {
-      left: Fraction.#fromComponents(leftNumerator + leftCopies * reducedNumerator, leftDenominator + leftCopies * reducedDenominator),
-      right: Fraction.#fromComponents(rightNumerator + rightCopies * reducedNumerator, rightDenominator + rightCopies * reducedDenominator)
-    };
-  }
-  static mediantPartner(endpoint, mediant) {
-    return Fraction.#fromComponents(mediant.numerator - endpoint.numerator, mediant.denominator - endpoint.denominator);
-  }
-  static isMediantTriple(left, mediant, right) {
-    if (mediant.isInfinite) {
-      return false;
-    }
-    try {
-      const computedMediant = left.mediant(right);
-      return mediant.equals(computedMediant);
-    } catch (error) {
-      return false;
-    }
-  }
-  static isFareyTriple(left, mediant, right) {
-    if (!Fraction.isMediantTriple(left, mediant, right)) {
-      return false;
-    }
-    if (mediant.numerator === 0n && mediant.denominator === 1n && left.denominator === 0n && right.denominator === 0n) {
-      return left.numerator === -1n && right.numerator === 1n || left.numerator === 1n && right.numerator === -1n;
-    }
-    const determinant = left.numerator * right.denominator - left.denominator * right.numerator;
-    const magnitude = determinant < 0n ? -determinant : determinant;
-    return magnitude === Fraction.#gcd(mediant.numerator, mediant.denominator);
-  }
-  sternBrocotParent() {
-    if (this.isInfinite) {
-      throw new Error("Infinite fractions don't have parents in Stern-Brocot tree");
-    }
-    if (this.numerator === 0n && this.denominator === 1n) {
-      return null;
-    }
-    const path = this.sternBrocotPath();
-    if (path.length === 0) {
-      return null;
-    }
-    const parentPath = path.slice(0, -1);
-    return Fraction.fromSternBrocotPath(parentPath);
-  }
-  sternBrocotChildren() {
-    if (this.isInfinite) {
-      throw new Error("Infinite fractions don't have children in Stern-Brocot tree");
-    }
-    const currentPath = this.sternBrocotPath();
-    const leftPath = [...currentPath, "L"];
-    const rightPath = [...currentPath, "R"];
-    return {
-      left: Fraction.fromSternBrocotPath(leftPath),
-      right: Fraction.fromSternBrocotPath(rightPath)
-    };
-  }
-  sternBrocotPath() {
-    if (this.isInfinite) {
-      throw new Error("Infinite fractions don't have tree paths");
-    }
-    const reduced = this.reduce();
-    if (reduced.numerator === 0n && reduced.denominator === 1n) {
-      return [];
-    }
-    let left = new Fraction(-1, 0, { allowInfinite: true });
-    let right = new Fraction(1, 0, { allowInfinite: true });
-    let current = new Fraction(0, 1);
-    const path = [];
-    while (!current.equals(reduced)) {
-      if (reduced.lessThan(current)) {
-        path.push("L");
-        right = current;
-        current = left.mediant(current);
-      } else {
-        path.push("R");
-        left = current;
-        current = current.mediant(right);
-      }
-      if (path.length > 500) {
-        throw new Error("Stern-Brocot path too long - this may indicate a bug in the algorithm");
-      }
-    }
-    return path;
-  }
-  static fromSternBrocotPath(path) {
-    let left = new Fraction(-1, 0, { allowInfinite: true });
-    let right = new Fraction(1, 0, { allowInfinite: true });
-    let current = new Fraction(0, 1);
-    for (const direction of path) {
-      if (direction === "L") {
-        right = current;
-        current = left.mediant(current);
-      } else if (direction === "R") {
-        left = current;
-        current = current.mediant(right);
-      } else {
-        throw new Error(`Invalid direction in path: ${direction}`);
-      }
-    }
-    return current;
-  }
-  isSternBrocotValid() {
-    if (this.isInfinite) {
-      return this.numerator === 1n || this.numerator === -1n;
-    }
-    try {
-      const path = this.sternBrocotPath();
-      const reconstructed = Fraction.fromSternBrocotPath(path);
-      return this.equals(reconstructed);
-    } catch (error) {
-      return false;
-    }
-  }
-  sternBrocotDepth() {
-    if (this.isInfinite) {
-      return Infinity;
-    }
-    if (this.numerator === 0n && this.denominator === 1n) {
-      return 0;
-    }
-    return this.sternBrocotPath().length;
-  }
-  sternBrocotAncestors() {
-    if (this.isInfinite) {
-      return [];
-    }
-    const ancestors = [];
-    const path = this.sternBrocotPath();
-    for (let i = 0;i < path.length; i++) {
-      const partialPath = path.slice(0, i);
-      ancestors.push(Fraction.fromSternBrocotPath(partialPath));
-    }
-    ancestors.reverse();
-    return ancestors;
-  }
-}
-
-// ../packages/core/src/integer.js
-class Integer {
-  #value;
-  static zero = new Integer(0);
-  static one = new Integer(1);
-  constructor(value) {
-    if (typeof value === "string") {
-      const trimmed = value.trim();
-      if (!/^-?\d+$/.test(trimmed)) {
-        throw new Error("Invalid integer format. Must be a whole number");
-      }
-      this.#value = BigInt(trimmed);
-    } else {
-      this.#value = BigInt(value);
-    }
-  }
-  get value() {
-    return this.#value;
-  }
-  add(other) {
-    if (other instanceof Integer) {
-      return new Integer(this.#value + other.value);
-    } else if (other instanceof Rational) {
-      const thisAsRational = new Rational(this.#value, 1n);
-      return thisAsRational.add(other);
-    } else if (other.low && other.high && typeof other.low.equals === "function") {
-      const thisAsRational = new Rational(this.#value, 1n);
-      const IntervalClass = other.constructor;
-      const thisAsInterval = new IntervalClass(thisAsRational, thisAsRational);
-      return thisAsInterval.add(other);
-    } else {
-      throw new Error(`Cannot add ${other.constructor.name} to Integer`);
-    }
-  }
-  subtract(other) {
-    if (other instanceof Integer) {
-      return new Integer(this.#value - other.value);
-    } else if (other instanceof Rational) {
-      const thisAsRational = new Rational(this.#value, 1n);
-      return thisAsRational.subtract(other);
-    } else if (other.low && other.high && typeof other.low.equals === "function") {
-      const thisAsRational = new Rational(this.#value, 1n);
-      const IntervalClass = other.constructor;
-      const thisAsInterval = new IntervalClass(thisAsRational, thisAsRational);
-      return thisAsInterval.subtract(other);
-    } else {
-      throw new Error(`Cannot subtract ${other.constructor.name} from Integer`);
-    }
-  }
-  multiply(other) {
-    if (other instanceof Integer) {
-      return new Integer(this.#value * other.value);
-    } else if (other instanceof Rational) {
-      const thisAsRational = new Rational(this.#value, 1n);
-      return thisAsRational.multiply(other);
-    } else if (other.low && other.high && typeof other.low.equals === "function") {
-      const thisAsRational = new Rational(this.#value, 1n);
-      const IntervalClass = other.constructor;
-      const thisAsInterval = new IntervalClass(thisAsRational, thisAsRational);
-      return thisAsInterval.multiply(other);
-    } else {
-      throw new Error(`Cannot multiply Integer by ${other.constructor.name}`);
-    }
-  }
-  divide(other) {
-    if (other instanceof Integer) {
-      if (other.value === 0n) {
-        throw new Error("Division by zero");
-      }
-      if (this.#value % other.value === 0n) {
-        return new Integer(this.#value / other.value);
-      } else {
-        return new Rational(this.#value, other.value);
-      }
-    } else if (other instanceof Rational) {
-      const thisAsRational = new Rational(this.#value, 1n);
-      return thisAsRational.divide(other);
-    } else if (other.low && other.high && typeof other.low.equals === "function") {
-      const thisAsRational = new Rational(this.#value, 1n);
-      const IntervalClass = other.constructor;
-      const thisAsInterval = new IntervalClass(thisAsRational, thisAsRational);
-      return thisAsInterval.divide(other);
-    } else {
-      throw new Error(`Cannot divide Integer by ${other.constructor.name}`);
-    }
-  }
-  modulo(other) {
-    if (other.value === 0n) {
-      throw new Error("Modulo by zero");
-    }
-    return new Integer(this.#value % other.value);
-  }
-  negate() {
-    return new Integer(-this.#value);
-  }
-  pow(exponent) {
-    const exp = exponent instanceof Integer ? exponent.value : BigInt(exponent);
-    if (exp === 0n) {
-      if (this.#value === 0n) {
-        throw new Error("Zero cannot be raised to the power of zero");
-      }
-      return new Integer(1);
-    }
-    if (exp < 0n) {
-      if (this.#value === 0n) {
-        throw new Error("Zero cannot be raised to a negative power");
-      }
-      const positiveExp = -exp;
-      const positiveResult = this.pow(positiveExp);
-      return new Rational(1, positiveResult.value);
-    }
-    let result = 1n;
-    let base = this.#value;
-    let n = exp;
-    while (n > 0n) {
-      if (n & 1n) {
-        result *= base;
-      }
-      base *= base;
-      n >>= 1n;
-    }
-    return new Integer(result);
-  }
-  equals(other) {
-    return this.#value === other.value;
-  }
-  compareTo(other) {
-    if (this.#value < other.value)
-      return -1;
-    if (this.#value > other.value)
-      return 1;
-    return 0;
-  }
-  lessThan(other) {
-    return this.#value < other.value;
-  }
-  lessThanOrEqual(other) {
-    return this.#value <= other.value;
-  }
-  greaterThan(other) {
-    return this.#value > other.value;
-  }
-  greaterThanOrEqual(other) {
-    return this.#value >= other.value;
-  }
-  abs() {
-    return this.#value < 0n ? this.negate() : new Integer(this.#value);
-  }
-  sign() {
-    if (this.#value < 0n)
-      return new Integer(-1);
-    if (this.#value > 0n)
-      return new Integer(1);
-    return new Integer(0);
-  }
-  isEven() {
-    return this.#value % 2n === 0n;
-  }
-  isOdd() {
-    return this.#value % 2n !== 0n;
-  }
-  isZero() {
-    return this.#value === 0n;
-  }
-  isPositive() {
-    return this.#value > 0n;
-  }
-  isNegative() {
-    return this.#value < 0n;
-  }
-  gcd(other) {
-    let a = this.#value < 0n ? -this.#value : this.#value;
-    let b = other.value < 0n ? -other.value : other.value;
-    while (b !== 0n) {
-      const temp = b;
-      b = a % b;
-      a = temp;
-    }
-    return new Integer(a);
-  }
-  lcm(other) {
-    if (this.#value === 0n || other.value === 0n) {
-      return new Integer(0);
-    }
-    const gcd = this.gcd(other);
-    const product = this.multiply(other).abs();
-    return product.divide(gcd);
-  }
-  toString(base) {
-    if (base === undefined) {
-      return this.#value.toString();
-    }
-    if (base instanceof BaseSystem) {
-      return base.fromDecimal(this.#value);
-    }
-    if (typeof base === "number") {
-      if (base === 10) {
-        return this.#value.toString();
-      }
-      return BaseSystem.fromBase(base).fromDecimal(this.#value);
-    }
-    return this.#value.toString();
-  }
-  toBase(baseSystem) {
-    if (!(baseSystem instanceof BaseSystem)) {
-      throw new Error("Argument must be a BaseSystem");
-    }
-    return baseSystem.fromDecimal(this.#value);
-  }
-  toNumber() {
-    return Number(this.#value);
-  }
-  toRational() {
-    return new Rational(this.#value, 1n);
-  }
-  static from(value) {
-    if (value instanceof Integer) {
-      return new Integer(value.value);
-    }
-    return new Integer(value);
-  }
-  static fromRational(rational) {
-    if (rational.denominator !== 1n) {
-      throw new Error("Rational is not a whole number");
-    }
-    return new Integer(rational.numerator);
-  }
-  E(exponent) {
-    const exp = BigInt(exponent);
-    if (exp >= 0n) {
-      const newValue = this.#value * 10n ** exp;
-      return new Integer(newValue);
-    } else {
-      const powerOf10 = new Rational(1n, 10n ** -exp);
-      const thisAsRational = new Rational(this.#value, 1n);
-      return thisAsRational.multiply(powerOf10);
-    }
-  }
-  factorial() {
-    if (this.#value < 0n) {
-      throw new Error("Factorial is not defined for negative integers");
-    }
-    if (this.#value === 0n || this.#value === 1n) {
-      return new Integer(1);
-    }
-    let result = 1n;
-    for (let i = 2n;i <= this.#value; i++) {
-      result *= i;
-    }
-    return new Integer(result);
-  }
-  doubleFactorial() {
-    if (this.#value < 0n) {
-      throw new Error("Double factorial is not defined for negative integers");
-    }
-    if (this.#value === 0n || this.#value === 1n) {
-      return new Integer(1);
-    }
-    let result = 1n;
-    for (let i = this.#value;i > 0n; i -= 2n) {
-      result *= i;
-    }
-    return new Integer(result);
-  }
-  bitLength() {
-    if (this.#value === 0n)
-      return 0;
-    return this.#value < 0n ? (-this.#value).toString(2).length : this.#value.toString(2).length;
-  }
-}
-
-// ../packages/core/src/number-parser.js
-var DIGITS = String.raw`\d(?:_?\d)*`;
-var MAX_EXPANDED_DIGITS = 1e5;
-function inputString(input, label = "number") {
-  if (typeof input !== "string") {
-    throw new TypeError(`${label} must be a string`);
-  }
-  const value = input.trim();
-  if (value.length === 0) {
-    throw new Error(`${label} cannot be empty`);
-  }
-  return value;
-}
-function cleanDigits(value, { signed = false } = {}) {
-  const pattern = signed ? new RegExp(`^[+-]?${DIGITS}$`) : new RegExp(`^${DIGITS}$`);
-  if (!pattern.test(value)) {
-    throw new Error(`Invalid decimal digits: ${value}`);
-  }
-  return value.replaceAll("_", "");
-}
-function validateUnderscores(value) {
-  for (let index = 0;index < value.length; index++) {
-    if (value[index] !== "_")
-      continue;
-    if (!/\d/.test(value[index - 1] ?? "") || !/\d/.test(value[index + 1] ?? "")) {
-      throw new Error("Underscore separators must be between decimal digits");
-    }
-  }
-}
-function expandDigitRuns(value) {
-  let expandedLength = 0;
-  const expanded = value.replace(/\{(\d+)~(\d+)\}/g, (_match, digits, countText) => {
-    const count = Number(countText);
-    if (!Number.isSafeInteger(count) || count < 0) {
-      throw new Error(`Invalid repeated-digit count: ${countText}`);
-    }
-    expandedLength += digits.length * count;
-    if (expandedLength > MAX_EXPANDED_DIGITS) {
-      throw new Error(`Expanded decimal exceeds ${MAX_EXPANDED_DIGITS} digits`);
-    }
-    return digits.repeat(count);
-  });
-  if (/[{}]/.test(expanded)) {
-    throw new Error(`Invalid repeated-digit notation: ${value}`);
-  }
-  if (expanded.length > MAX_EXPANDED_DIGITS) {
-    throw new Error(`Decimal exceeds ${MAX_EXPANDED_DIGITS} digits`);
-  }
-  return expanded;
-}
-function parseDecimalValue(input) {
-  let value = inputString(input, "decimal");
-  validateUnderscores(value);
-  let sign = 1n;
-  if (value.startsWith("+") || value.startsWith("-")) {
-    sign = value[0] === "-" ? -1n : 1n;
-    value = value.slice(1);
-  }
-  const hashParts = value.split("#");
-  if (hashParts.length > 2) {
-    throw new Error("A repeating decimal can contain only one '#'");
-  }
-  let prefix = expandDigitRuns(hashParts[0].replaceAll("_", ""));
-  const repeating = hashParts.length === 2 ? expandDigitRuns(hashParts[1].replaceAll("_", "")) : null;
-  if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(prefix)) {
-    throw new Error(`Invalid decimal format: ${input}`);
-  }
-  const dot = prefix.indexOf(".");
-  const integerDigits = dot === -1 ? prefix : prefix.slice(0, dot) || "0";
-  const fractionalDigits = dot === -1 ? "" : prefix.slice(dot + 1);
-  const integer = BigInt(integerDigits);
-  const fractional = fractionalDigits.length === 0 ? 0n : BigInt(fractionalDigits);
-  const fractionalScale = 10n ** BigInt(fractionalDigits.length);
-  let result = new Rational(integer * fractionalScale + fractional, fractionalScale);
-  if (repeating !== null) {
-    if (!/^\d+$/.test(repeating)) {
-      throw new Error("The repeating part must contain one or more digits");
-    }
-    if (!/^0+$/.test(repeating)) {
-      const repeatScale = 10n ** BigInt(repeating.length) - 1n;
-      result = result.add(new Rational(BigInt(repeating), fractionalScale * repeatScale));
-    }
-  }
-  return sign < 0n ? result.negate() : result;
-}
-function parseRationalLiteral(input) {
-  let value = inputString(input, "rational");
-  if (value.startsWith("~")) {
-    value = value.slice(1);
-  }
-  const continued = value.match(new RegExp(`^([+-]?${DIGITS})\\.~(${DIGITS}(?:~${DIGITS})*)$`));
-  if (continued) {
-    const first = BigInt(cleanDigits(continued[1], { signed: true }));
-    const tail = continued[2].split("~").map((term) => BigInt(cleanDigits(term)));
-    if (tail.length === 1 && tail[0] === 0n) {
-      return new Rational(first);
-    }
-    return Rational.fromContinuedFraction([first, ...tail]);
-  }
-  const mixed = value.match(new RegExp(`^([+-]?)(${DIGITS})\\.\\.(${DIGITS})\\/(${DIGITS})$`));
-  if (mixed) {
-    const sign = mixed[1] === "-" ? -1n : 1n;
-    const whole = BigInt(cleanDigits(mixed[2]));
-    const numerator = BigInt(cleanDigits(mixed[3]));
-    const denominator = BigInt(cleanDigits(mixed[4]));
-    if (denominator === 0n) {
-      throw new Error("Denominator cannot be zero");
-    }
-    return new Rational(sign * (whole * denominator + numerator), denominator);
-  }
-  const fraction = value.match(new RegExp(`^([+-]?${DIGITS})\\/(${DIGITS})$`));
-  if (fraction) {
-    return new Rational(BigInt(cleanDigits(fraction[1], { signed: true })), BigInt(cleanDigits(fraction[2])));
-  }
-  if (value.includes("#") || value.includes(".")) {
-    return parseDecimalValue(value);
-  }
-  if (new RegExp(`^[+-]?${DIGITS}$`).test(value)) {
-    return new Rational(BigInt(cleanDigits(value, { signed: true })));
-  }
-  throw new Error(`Invalid rational number: ${input}`);
-}
-function decimalShape(input) {
-  const match = input.match(new RegExp(`^([+-]?)(?:(${DIGITS})(?:\\.(${DIGITS})?)?|\\.(${DIGITS}))$`));
-  if (!match) {
-    throw new Error("Decimal interval notation requires an integer or finite decimal base");
-  }
-  const sign = match[1] === "-" ? "-" : "";
-  const integer = match[2] ? cleanDigits(match[2]) : "0";
-  const fractional = match[3] ? cleanDigits(match[3]) : match[4] ? cleanDigits(match[4]) : "";
-  const hasPoint = input.includes(".");
-  return {
-    sign,
-    integer,
-    fractional,
-    hasPoint,
-    normalized: `${sign}${integer}${hasPoint ? `.${fractional}` : ""}`
-  };
-}
-function parseOffset(value) {
-  const normalized = value.startsWith("#") ? `0.${value}` : value;
-  return parseRationalLiteral(normalized);
-}
-function scaledOffset(value, decimalPlaces, hasPoint) {
-  const offset = parseOffset(value);
-  if (!hasPoint)
-    return offset;
-  return offset.divide(new Rational(10n ** BigInt(decimalPlaces)));
-}
-function parseUncertainty(input) {
-  const match = input.match(/^(.+)\[([^\[\]]+)\]$/);
-  if (!match) {
-    throw new Error(`Invalid decimal interval notation: ${input}`);
-  }
-  const shape = decimalShape(match[1]);
-  const body = match[2].trim();
-  const base = parseDecimalValue(shape.normalized);
-  if (body.includes(",")) {
-    throw new Error("Decimal interval notation requires ':' between bracketed values");
-  }
-  if (body.startsWith("+-") || body.startsWith("-+")) {
-    const offsetText = body.slice(2).trim();
-    if (offsetText.length === 0) {
-      throw new Error("Symmetric notation must have a valid number after '+-' or '-+'");
-    }
-    const offset = scaledOffset(offsetText, shape.fractional.length, shape.hasPoint);
-    return new RationalInterval(base.subtract(offset), base.add(offset));
-  }
-  const parts = body.split(/\s*:\s*/);
-  if (parts.length > 2 || parts.length === 0 || parts.some((part) => part.length === 0)) {
-    throw new Error("Decimal interval brackets require one or two comma- or colon-separated values");
-  }
-  const hasSignedPart = parts.some((part) => part.startsWith("+") || part.startsWith("-"));
-  if (hasSignedPart) {
-    let positive = null;
-    let negative = null;
-    for (const part of parts) {
-      if (part.startsWith("+") && positive === null) {
-        positive = part.slice(1);
-      } else if (part.startsWith("-") && negative === null) {
-        negative = part.slice(1);
-      } else {
-        throw new Error("Relative interval notation allows one '+' and one '-' offset");
-      }
-    }
-    const positiveOffset = positive === null ? Rational.zero : scaledOffset(positive, shape.fractional.length, shape.hasPoint);
-    const negativeOffset = negative === null ? Rational.zero : scaledOffset(negative, shape.fractional.length, shape.hasPoint);
-    return new RationalInterval(base.subtract(negativeOffset), base.add(positiveOffset));
-  }
-  if (parts.length !== 2) {
-    throw new Error("Compact interval notation requires exactly two endpoints");
-  }
-  const endpoint = (suffix) => {
-    if (shape.hasPoint && shape.fractional.length === 0) {
-      if (suffix.startsWith("#")) {
-        return parseDecimalValue(`${shape.sign}${shape.integer}.${suffix}`);
-      }
-      const cleanSuffix2 = cleanDigits(suffix);
-      if (!/^\d+$/.test(cleanSuffix2)) {
-        throw new Error(`Invalid decimal interval endpoint: ${suffix}`);
-      }
-      return parseDecimalValue(`${shape.sign}${shape.integer}.${cleanSuffix2}`);
-    }
-    const cleanSuffix = cleanDigits(suffix);
-    if (!/^\d+$/.test(cleanSuffix)) {
-      throw new Error(`Invalid compact interval endpoint: ${suffix}`);
-    }
-    const point = shape.hasPoint ? "." : "";
-    return parseDecimalValue(`${shape.sign}${shape.integer}${point}${shape.fractional}${cleanSuffix}`);
-  };
-  return new RationalInterval(endpoint(parts[0]), endpoint(parts[1]));
-}
-function parseNumber(input) {
-  const value = inputString(input);
-  if (value.includes("[") || value.includes("]")) {
-    return parseUncertainty(value);
-  }
-  const intervalParts = value.split(":");
-  if (intervalParts.length === 2) {
-    return new RationalInterval(parseRationalLiteral(intervalParts[0]), parseRationalLiteral(intervalParts[1]));
-  }
-  if (intervalParts.length > 2) {
-    throw new Error("An interval must contain exactly two endpoints");
-  }
-  if (new RegExp(`^[+-]?${DIGITS}$`).test(value)) {
-    return new Integer(BigInt(cleanDigits(value, { signed: true })));
-  }
-  return parseRationalLiteral(value);
-}
-
-// ../rix/src/runtime/hole.js
-var HOLE = Object.freeze({ __rix_hole__: true });
-var isHole = (v) => v === HOLE;
-
 // ../rix/src/eval/functions/keyof.js
 function normalizeKeyPrimitive(value) {
   if (typeof value === "string")
@@ -9033,278 +10513,6 @@ function canonicalizeMetaKey(value) {
     throw new Error("Invalid .key type; must be string or integer");
   }
   return normalized;
-}
-
-// ../rix/src/runtime/tensor.js
-function exactInteger(value, label = "Index") {
-  if (value instanceof Integer) {
-    return Number(value.value);
-  }
-  if (value instanceof Rational) {
-    if (value.denominator !== 1n) {
-      throw new Error(`${label} must be an integer`);
-    }
-    return Number(value.numerator);
-  }
-  if (typeof value === "bigint") {
-    return Number(value);
-  }
-  if (typeof value === "number") {
-    if (!Number.isInteger(value)) {
-      throw new Error(`${label} must be an integer`);
-    }
-    return value;
-  }
-  if (value && typeof value === "object") {
-    if (typeof value.value === "bigint") {
-      return Number(value.value);
-    }
-    if (typeof value.numerator === "bigint" && typeof value.denominator === "bigint") {
-      if (value.denominator !== 1n) {
-        throw new Error(`${label} must be an integer`);
-      }
-      return Number(value.numerator);
-    }
-  }
-  throw new Error(`${label} must be an integer`);
-}
-function normalizeIndex(rawIndex, dimLength, axis) {
-  const index = exactInteger(rawIndex, `Index for axis ${axis + 1}`);
-  if (index === 0) {
-    throw new Error(`Tensor index 0 is invalid on axis ${axis + 1}`);
-  }
-  const normalized = index < 0 ? dimLength + 1 + index : index;
-  if (normalized < 1 || normalized > dimLength) {
-    throw new Error(`Tensor index ${index} is out of range for axis ${axis + 1} with length ${dimLength}`);
-  }
-  return normalized;
-}
-function intervalEndpoints(value) {
-  if (value instanceof RationalInterval) {
-    return [value.start, value.end];
-  }
-  if (value && value.type === "interval") {
-    return [value.lo, value.hi];
-  }
-  return null;
-}
-function valueToSelectorSpec(value) {
-  const endpoints = intervalEndpoints(value);
-  if (endpoints) {
-    return {
-      kind: "slice",
-      start: endpoints[0],
-      end: endpoints[1]
-    };
-  }
-  return {
-    kind: "index",
-    value
-  };
-}
-function isTensor(value) {
-  return !!value && value.type === "tensor" && Array.isArray(value.data) && Array.isArray(value.shape) && Array.isArray(value.strides);
-}
-function tensorRank(tensor) {
-  return tensor.shape.length;
-}
-function tensorShape(tensor) {
-  return [...tensor.shape];
-}
-function tensorSize(tensor) {
-  return tensor.shape.reduce((product, dim) => product * dim, 1);
-}
-function computeDefaultStrides(shape) {
-  const strides = new Array(shape.length);
-  let stride = 1;
-  for (let i = shape.length - 1;i >= 0; i--) {
-    strides[i] = stride;
-    stride *= shape[i];
-  }
-  return strides;
-}
-function createTensor(shape, data = null, options = {}) {
-  if (!Array.isArray(shape)) {
-    throw new Error("Tensor shape must be an array");
-  }
-  const normalizedShape = shape.map((dim, axis) => {
-    const n = exactInteger(dim, `Tensor shape axis ${axis + 1}`);
-    if (n < 0) {
-      throw new Error(`Tensor shape axis ${axis + 1} must be nonnegative`);
-    }
-    return n;
-  });
-  const size = normalizedShape.reduce((product, dim) => product * dim, 1);
-  const actualData = data ? [...data] : new Array(size).fill(HOLE);
-  if (actualData.length !== size) {
-    throw new Error(`Tensor literal element count mismatch (expected ${size}, got ${actualData.length})`);
-  }
-  return {
-    type: "tensor",
-    data: actualData,
-    shape: normalizedShape,
-    strides: options.strides ? [...options.strides] : computeDefaultStrides(normalizedShape),
-    offset: options.offset ?? 0,
-    _ext: options.ext ?? new Map([["_mutable", new Integer(1n)]])
-  };
-}
-function createTensorView(tensor, view) {
-  if (!isTensor(tensor)) {
-    throw new Error("Cannot create a tensor view from a non-tensor value");
-  }
-  return {
-    type: "tensor",
-    data: tensor.data,
-    shape: [...view.shape],
-    strides: [...view.strides],
-    offset: view.offset,
-    _ext: tensor._ext
-  };
-}
-function tensorIndexTuple(indices) {
-  return {
-    type: "tuple",
-    values: indices.map((index) => new Integer(BigInt(index)))
-  };
-}
-function linearIndexToTuple(linearIndex, shape) {
-  if (shape.length === 0) {
-    return [];
-  }
-  const defaultStrides = computeDefaultStrides(shape);
-  const tuple = new Array(shape.length);
-  let remaining = linearIndex;
-  for (let axis = 0;axis < shape.length; axis++) {
-    const stride = defaultStrides[axis];
-    const dim = shape[axis];
-    if (dim === 0) {
-      return [];
-    }
-    tuple[axis] = Math.floor(remaining / stride) + 1;
-    remaining %= stride;
-  }
-  return tuple;
-}
-function tensorOffsetForTuple(tensor, tuple) {
-  let offset = tensor.offset;
-  for (let axis = 0;axis < tensor.shape.length; axis++) {
-    offset += (tuple[axis] - 1) * tensor.strides[axis];
-  }
-  return offset;
-}
-function forEachTensorCell(tensor, callback) {
-  const size = tensorSize(tensor);
-  if (tensor.shape.length === 0) {
-    callback(tensor.data[tensor.offset], [], tensor.offset);
-    return;
-  }
-  for (let linear = 0;linear < size; linear++) {
-    const tuple = linearIndexToTuple(linear, tensor.shape);
-    const offset = tensorOffsetForTuple(tensor, tuple);
-    callback(tensor.data[offset], tuple, offset);
-  }
-}
-function normalizeTensorSelectors(tensor, selectorSpecs) {
-  let specs = selectorSpecs;
-  if (specs.length === 1 && specs[0]?.kind === "index" && specs[0].value && specs[0].value.type === "tuple") {
-    specs = specs[0].value.values.map((value) => valueToSelectorSpec(value));
-  }
-  if (specs.length !== tensor.shape.length) {
-    throw new Error(`Tensor rank mismatch: expected ${tensor.shape.length} indices, got ${specs.length}`);
-  }
-  return specs.map((spec, axis) => {
-    if (spec.kind === "index") {
-      const normalizedSpec = valueToSelectorSpec(spec.value);
-      if (normalizedSpec.kind === "slice") {
-        spec = normalizedSpec;
-      }
-    }
-    if (spec.kind === "full") {
-      const start = normalizeIndex(1, tensor.shape[axis], axis);
-      const end = normalizeIndex(-1, tensor.shape[axis], axis);
-      const direction = start <= end ? 1 : -1;
-      return {
-        kind: "slice",
-        start,
-        end,
-        direction,
-        length: Math.abs(end - start) + 1
-      };
-    }
-    if (spec.kind === "slice") {
-      const start = normalizeIndex(spec.start, tensor.shape[axis], axis);
-      const end = normalizeIndex(spec.end, tensor.shape[axis], axis);
-      const direction = start <= end ? 1 : -1;
-      return {
-        kind: "slice",
-        start,
-        end,
-        direction,
-        length: Math.abs(end - start) + 1
-      };
-    }
-    return {
-      kind: "index",
-      index: normalizeIndex(spec.value, tensor.shape[axis], axis)
-    };
-  });
-}
-function tensorGetBySelectors(tensor, selectorSpecs) {
-  const selectors = normalizeTensorSelectors(tensor, selectorSpecs);
-  let offset = tensor.offset;
-  const shape = [];
-  const strides = [];
-  for (let axis = 0;axis < selectors.length; axis++) {
-    const selector = selectors[axis];
-    const stride = tensor.strides[axis];
-    if (selector.kind === "index") {
-      offset += (selector.index - 1) * stride;
-      continue;
-    }
-    offset += (selector.start - 1) * stride;
-    shape.push(selector.length);
-    strides.push(stride * selector.direction);
-  }
-  if (shape.length === 0) {
-    const value = tensor.data[offset];
-    return isHole(value) ? null : value;
-  }
-  return createTensorView(tensor, { shape, strides, offset });
-}
-function tensorAssignBySelectors(tensor, selectorSpecs, value) {
-  const selectors = normalizeTensorSelectors(tensor, selectorSpecs);
-  let offset = tensor.offset;
-  const shape = [];
-  const strides = [];
-  for (let axis = 0;axis < selectors.length; axis++) {
-    const selector = selectors[axis];
-    const stride = tensor.strides[axis];
-    if (selector.kind === "index") {
-      offset += (selector.index - 1) * stride;
-      continue;
-    }
-    offset += (selector.start - 1) * stride;
-    shape.push(selector.length);
-    strides.push(stride * selector.direction);
-  }
-  if (shape.length === 0) {
-    tensor.data[offset] = value;
-    return value;
-  }
-  const view = createTensorView(tensor, { shape, strides, offset });
-  forEachTensorCell(view, (_cellValue, _tuple, cellOffset) => {
-    tensor.data[cellOffset] = value;
-  });
-  return value;
-}
-function coerceShapeValue(shapeValue) {
-  if (isTensor(shapeValue)) {
-    return tensorShape(shapeValue);
-  }
-  if (shapeValue && shapeValue.type === "tuple") {
-    return shapeValue.values.map((value, axis) => exactInteger(value, `Tensor shape axis ${axis + 1}`));
-  }
-  throw new Error("TGEN expects a tensor or tuple shape");
 }
 
 // ../rix/src/eval/ir-to-text.js
@@ -9361,7 +10569,7 @@ function serializeObject(obj, options) {
 // ../rix/src/runtime/exact-values.js
 var nextGeneratorId = 1;
 var squareRootGenerators = new Map;
-function int(value) {
+function int2(value) {
   return new Integer(BigInt(value));
 }
 function isRationalScalar(value) {
@@ -9396,7 +10604,7 @@ function isNegative(value) {
   return parts ? parts[0] < 0n : false;
 }
 function negateRational(value) {
-  return int(0).subtract(value);
+  return int2(0).subtract(value);
 }
 function absRational(value) {
   return isNegative(value) ? negateRational(value) : value;
@@ -9422,7 +10630,7 @@ function createExactGenerator(name, options = {}) {
     minimalPolynomial: normalizePolynomial(options.minimalPolynomial || null),
     real: options.real ?? false,
     positiveRoot: options.positiveRoot ?? false,
-    _ext: new Map([["key", { type: "string", value: name }], ["immutable", int(1)]])
+    _ext: new Map([["key", { type: "string", value: name }], ["immutable", int2(1)]])
   };
   return Object.freeze(generator);
 }
@@ -9437,7 +10645,7 @@ function isCayleyInfinity(value) {
 }
 var CAYLEY_INFINITY = Object.freeze({
   type: "cayley_infinity",
-  _ext: new Map([["immutable", int(1)]])
+  _ext: new Map([["immutable", int2(1)]])
 });
 function clonePowers(powers) {
   return new Map(powers || []);
@@ -9502,7 +10710,7 @@ function reduceTerms(rawTerms) {
 function expressionFromTerms(terms) {
   const reduced = reduceTerms(terms);
   if (reduced.size === 0)
-    return int(0);
+    return int2(0);
   if (reduced.size === 1 && reduced.has(""))
     return reduced.get("").coefficient;
   return { type: "exact_expression", terms: reduced };
@@ -9515,7 +10723,7 @@ function trimPolynomial(polynomial) {
 }
 function polynomialAdd(left, right) {
   const length = Math.max(left.length, right.length);
-  const result = Array.from({ length }, (_, index) => (left[index] || int(0)).add(right[index] || int(0)));
+  const result = Array.from({ length }, (_, index) => (left[index] || int2(0)).add(right[index] || int2(0)));
   return trimPolynomial(result);
 }
 function polynomialNegate(polynomial) {
@@ -9527,7 +10735,7 @@ function polynomialSubtract(left, right) {
 function polynomialMultiply(left, right) {
   if (left.length === 0 || right.length === 0)
     return [];
-  const result = Array.from({ length: left.length + right.length - 1 }, () => int(0));
+  const result = Array.from({ length: left.length + right.length - 1 }, () => int2(0));
   for (let i = 0;i < left.length; i++) {
     for (let j = 0;j < right.length; j++) {
       result[i + j] = result[i + j].add(left[i].multiply(right[j]));
@@ -9540,19 +10748,19 @@ function polynomialDivmod(dividend, divisor) {
   if (denominator.length === 0)
     throw new Error("Polynomial division by zero");
   let remainder = trimPolynomial(dividend);
-  const quotient = Array.from({ length: Math.max(0, remainder.length - denominator.length + 1) }, () => int(0));
+  const quotient = Array.from({ length: Math.max(0, remainder.length - denominator.length + 1) }, () => int2(0));
   while (remainder.length >= denominator.length && remainder.length > 0) {
     const degree = remainder.length - denominator.length;
     const factor = remainder[remainder.length - 1].divide(denominator[denominator.length - 1]);
     quotient[degree] = quotient[degree].add(factor);
-    const shifted = Array.from({ length: degree }, () => int(0)).concat(denominator.map((value) => value.multiply(factor)));
+    const shifted = Array.from({ length: degree }, () => int2(0)).concat(denominator.map((value) => value.multiply(factor)));
     remainder = polynomialSubtract(remainder, shifted);
   }
   return [trimPolynomial(quotient), remainder];
 }
 function polynomialExtendedGcd(left, right) {
   if (trimPolynomial(right).length === 0)
-    return [trimPolynomial(left), [int(1)], []];
+    return [trimPolynomial(left), [int2(1)], []];
   const [quotient, remainder] = polynomialDivmod(left, right);
   const [gcd, x1, y1] = polynomialExtendedGcd(right, remainder);
   return [gcd, y1, polynomialSubtract(x1, polynomialMultiply(quotient, y1))];
@@ -9573,7 +10781,7 @@ function algebraicPolynomial(value) {
   }
   if (!generator)
     return null;
-  const polynomial = Array.from({ length: maxExponent + 1 }, () => int(0));
+  const polynomial = Array.from({ length: maxExponent + 1 }, () => int2(0));
   for (const term of terms.values()) {
     const exponent = term.powers.get(generator) || 0;
     if (term.powers.size > (exponent === 0 ? 0 : 1))
@@ -9607,7 +10815,7 @@ function toTerms(value) {
     return value.terms;
   const terms = new Map;
   if (value?.type === "exact_generator") {
-    addRawTerm(terms, new Map([[value, 1]]), int(1));
+    addRawTerm(terms, new Map([[value, 1]]), int2(1));
     return terms;
   }
   addRawTerm(terms, new Map, rationalFrom(value));
@@ -9688,7 +10896,7 @@ function imaginaryGeneratorFrom(value, preferred = null) {
 function complexParts(value, preferredI = null) {
   const imaginary = imaginaryGeneratorFrom(value, preferredI);
   if (!imaginary)
-    return { real: value, imaginary: int(0) };
+    return { real: value, imaginary: int2(0) };
   const realTerms = new Map;
   const imaginaryTerms = new Map;
   for (const term of toTerms(value).values()) {
@@ -9763,7 +10971,7 @@ function exactSquareRoot(value) {
   const generator = createExactGenerator(name, {
     id: denominator === 1n ? `exact:${name}` : `exact:sqrt:${key}`,
     category: "algebraic",
-    minimalPolynomial: [new Rational(-numerator, denominator), int(0), int(1)],
+    minimalPolynomial: [new Rational(-numerator, denominator), int2(0), int2(1)],
     real: true,
     positiveRoot: true
   });
@@ -9785,7 +10993,7 @@ function scalarSign(value) {
   return null;
 }
 function scalarZero(value) {
-  return equalScalars(value, int(0));
+  return equalScalars(value, int2(0));
 }
 function requireScalar(value, label) {
   if (!isRationalScalar(value) && !isExactValue(value)) {
@@ -9805,10 +11013,10 @@ function negateCayleyDirection(direction) {
 }
 function oppositeCayleyDirection(direction) {
   if (isCayleyInfinity(direction))
-    return int(0);
+    return int2(0);
   if (scalarZero(direction))
     return CAYLEY_INFINITY;
-  return negateScalar(divideScalars(int(1), direction));
+  return negateScalar(divideScalars(int2(1), direction));
 }
 function createCayley(magnitude, direction, iGenerator = null) {
   let r = requireRealScalar(magnitude, "Cayley magnitude", iGenerator);
@@ -9821,7 +11029,7 @@ function createCayley(magnitude, direction, iGenerator = null) {
     t = oppositeCayleyDirection(t);
   }
   if (scalarZero(r))
-    t = int(0);
+    t = int2(0);
   return { type: "cayley", magnitude: r, direction: t, iGenerator };
 }
 function cayleyFromCartesian(value, preferredI = null) {
@@ -9832,7 +11040,7 @@ function cayleyFromCartesian(value, preferredI = null) {
   const { real: x, imaginary: y } = complexParts(value, iGenerator);
   const q = addScalars(multiplyScalars(x, x), multiplyScalars(y, y));
   if (scalarZero(q))
-    return createCayley(int(0), int(0), iGenerator);
+    return createCayley(int2(0), int2(0), iGenerator);
   const r = exactSquareRoot(q);
   if (!scalarZero(y)) {
     return createCayley(r, divideScalars(subtractScalars(r, x), y), iGenerator);
@@ -9840,7 +11048,7 @@ function cayleyFromCartesian(value, preferredI = null) {
   const sign = scalarSign(x);
   if (sign === null)
     throw new Error("Cayley conversion cannot determine the real-axis direction exactly");
-  return createCayley(r, sign < 0 ? CAYLEY_INFINITY : int(0), iGenerator);
+  return createCayley(r, sign < 0 ? CAYLEY_INFINITY : int2(0), iGenerator);
 }
 function cayleyCartesian(value, preferredI = null) {
   if (!isCayleyValue(value))
@@ -9850,9 +11058,9 @@ function cayleyCartesian(value, preferredI = null) {
   if (isCayleyInfinity(t))
     return negateScalar(r);
   const tSquared = multiplyScalars(t, t);
-  const denominator = addScalars(int(1), tSquared);
-  const x = multiplyScalars(r, divideScalars(subtractScalars(int(1), tSquared), denominator));
-  const y = multiplyScalars(r, divideScalars(multiplyScalars(int(2), t), denominator));
+  const denominator = addScalars(int2(1), tSquared);
+  const x = multiplyScalars(r, divideScalars(subtractScalars(int2(1), tSquared), denominator));
+  const y = multiplyScalars(r, divideScalars(multiplyScalars(int2(2), t), denominator));
   if (scalarZero(y))
     return x;
   const iGenerator = value.iGenerator || preferredI;
@@ -9867,12 +11075,12 @@ function composeCayleyDirections(left, right) {
   const leftInfinity = isCayleyInfinity(left);
   const rightInfinity = isCayleyInfinity(right);
   if (leftInfinity && rightInfinity)
-    return int(0);
+    return int2(0);
   if (leftInfinity || rightInfinity) {
     const finite = leftInfinity ? right : left;
-    return scalarZero(finite) ? CAYLEY_INFINITY : negateScalar(divideScalars(int(1), finite));
+    return scalarZero(finite) ? CAYLEY_INFINITY : negateScalar(divideScalars(int2(1), finite));
   }
-  const denominator = subtractScalars(int(1), multiplyScalars(left, right));
+  const denominator = subtractScalars(int2(1), multiplyScalars(left, right));
   if (scalarZero(denominator))
     return CAYLEY_INFINITY;
   return divideScalars(addScalars(left, right), denominator);
@@ -9902,7 +11110,7 @@ function conjugateCayley(value) {
 function inverseCayley(value) {
   if (scalarZero(value.magnitude))
     throw new Error("Cannot invert zero in Cayley form");
-  return createCayley(divideScalars(int(1), value.magnitude), negateCayleyDirection(value.direction), value.iGenerator);
+  return createCayley(divideScalars(int2(1), value.magnitude), negateCayleyDirection(value.direction), value.iGenerator);
 }
 function divideCayley(left, right) {
   const a = asCayley(left, right);
@@ -9925,10 +11133,10 @@ function subtractCayley(left, right) {
 function powCayley(value, exponentValue) {
   const exponent = integerExponent(exponentValue);
   if (exponent === 0)
-    return createCayley(int(1), int(0), value.iGenerator);
+    return createCayley(int2(1), int2(0), value.iGenerator);
   if (exponent < 0)
-    return powCayley(inverseCayley(value), int(-exponent));
-  let result = createCayley(int(1), int(0), value.iGenerator);
+    return powCayley(inverseCayley(value), int2(-exponent));
+  let result = createCayley(int2(1), int2(0), value.iGenerator);
   let factor = value;
   let n = exponent;
   while (n > 0) {
@@ -9984,7 +11192,7 @@ function createDefaultComplexCollection(exactCollection) {
     cartesian: (value) => cayleyCartesian(value, requireI()),
     magnitude: (value) => isCayleyValue(value) ? value.magnitude : cayleyFromCartesian(value, requireI()).magnitude,
     direction: (value) => isCayleyValue(value) ? value.direction : cayleyFromCartesian(value, requireI()).direction,
-    inverse: (value) => isCayleyValue(value) ? inverseCayley(value) : divideScalars(int(1), value)
+    inverse: (value) => isCayleyValue(value) ? inverseCayley(value) : divideScalars(int2(1), value)
   };
   const entries = new Map([
     ["i", iGenerator],
@@ -10026,7 +11234,7 @@ function createDefaultComplexCollection(exactCollection) {
       ["MAGNITUDE", complexMethod("Magnitude", operations.magnitude)],
       ["DIRECTION", complexMethod("Direction", operations.direction)],
       ["INVERSE", complexMethod("Inverse", operations.inverse)],
-      ["immutable", int(1)]
+      ["immutable", int2(1)]
     ])
   };
 }
@@ -10042,10 +11250,10 @@ function integerExponent(value) {
 function powScalar(value, exponentValue) {
   const exponent = integerExponent(exponentValue);
   if (exponent === 0)
-    return int(1);
+    return int2(1);
   if (exponent < 0)
-    return divideScalars(int(1), powScalar(value, -exponent));
-  let result = int(1);
+    return divideScalars(int2(1), powScalar(value, -exponent));
+  let result = int2(1);
   let factor = value;
   let n = exponent;
   while (n > 0) {
@@ -10117,13 +11325,13 @@ function createDefaultExactCollection() {
   const i = createExactGenerator("i", {
     id: "exact:i",
     category: "algebraic",
-    minimalPolynomial: [int(1), int(0), int(1)]
+    minimalPolynomial: [int2(1), int2(0), int2(1)]
   });
-  const sqrt2 = exactSquareRoot(int(2));
+  const sqrt2 = exactSquareRoot(int2(2));
   return {
     type: "map",
     entries: new Map([["pi", pi], ["e", e], ["i", i], ["sqrt2", sqrt2]]),
-    _ext: new Map([["immutable", int(1)]])
+    _ext: new Map([["immutable", int2(1)]])
   };
 }
 function exactGeneratorFromPolynomial(name, coefficients) {
@@ -10134,7 +11342,7 @@ function exactGeneratorFromPolynomial(name, coefficients) {
 }
 
 // ../rix/src/runtime/quantities.js
-function int2(value) {
+function int3(value) {
   return new Integer(BigInt(value));
 }
 function rat(numerator, denominator = 1n) {
@@ -10177,7 +11385,7 @@ function describeDimensions(dimensions) {
   return entries.length ? entries.map(([name, exponent]) => exponent === 1 ? name : `${name}^${exponent}`).join("*") : "Dimensionless";
 }
 function unitExt(name) {
-  return new Map([["key", { type: "string", value: name }], ["immutable", int2(1)]]);
+  return new Map([["key", { type: "string", value: name }], ["immutable", int3(1)]]);
 }
 function createUnit(name, options = {}) {
   const symbol = options.symbol || name;
@@ -10186,8 +11394,8 @@ function createUnit(name, options = {}) {
     name,
     symbol,
     dimensions: cloneDimensions(options.dimensions),
-    scale: options.scale || int2(1),
-    offset: options.offset || int2(0),
+    scale: options.scale || int3(1),
+    offset: options.offset || int3(0),
     affine: options.affine === true,
     difference: options.difference === true,
     differenceUnit: options.differenceUnit || null,
@@ -10210,7 +11418,7 @@ function createUnitExpr(dimensions, scale, factors) {
     type: "unit_expr",
     dimensions: cloneDimensions(dimensions),
     scale,
-    offset: int2(0),
+    offset: int3(0),
     affine: false,
     factors: new Map([...factors.entries()].filter(([, exponent]) => exponent !== 0))
   };
@@ -10248,7 +11456,7 @@ function divideUnits(left, right) {
 function invertUnit(unit) {
   ensureLinearUnit(unit);
   const factors = new Map([...factorsFromUnit(unit)].map(([factor, exponent]) => [factor, -exponent]));
-  return createUnitExpr(scaleDimensions(unit.dimensions, -1), divideScalars(int2(1), unit.scale), factors);
+  return createUnitExpr(scaleDimensions(unit.dimensions, -1), divideScalars(int3(1), unit.scale), factors);
 }
 function integerExponent2(value) {
   if (value instanceof Integer)
@@ -10261,7 +11469,7 @@ function powUnit(unit, exponentValue) {
   ensureLinearUnit(unit);
   const exponent = integerExponent2(exponentValue);
   const factors = new Map([...factorsFromUnit(unit)].map(([factor, power]) => [factor, power * exponent]));
-  return createUnitExpr(scaleDimensions(unit.dimensions, exponent), powScalar(unit.scale, int2(exponent)), factors);
+  return createUnitExpr(scaleDimensions(unit.dimensions, exponent), powScalar(unit.scale, int3(exponent)), factors);
 }
 function constructQuantity(magnitude, unit) {
   if (!isScalar(magnitude))
@@ -10406,14 +11614,14 @@ function powQuantity(quantity, exponentValue) {
     throw new Error("Affine quantity points cannot be exponentiated");
   const exponent = integerExponent2(exponentValue);
   const dimensions = scaleDimensions(quantity.dimensions, exponent);
-  const magnitude = powScalar(quantity.baseMagnitude, int2(exponent));
+  const magnitude = powScalar(quantity.baseMagnitude, int3(exponent));
   if (Object.keys(dimensions).length === 0)
     return magnitude;
   return {
     type: "quantity",
     baseMagnitude: magnitude,
     dimensions,
-    displayUnit: powUnit(quantity.displayUnit, int2(exponent)),
+    displayUnit: powUnit(quantity.displayUnit, int3(exponent)),
     affinePoint: false
   };
 }
@@ -10424,7 +11632,7 @@ function quantitiesEqual(left, right) {
   return dimensionsEqual(left.dimensions, right.dimensions) && equalScalars(left.baseMagnitude, right.baseMagnitude);
 }
 function unitsEquivalent(left, right) {
-  return dimensionsEqual(left.dimensions, right.dimensions) && left.affine === right.affine && equalScalars(left.scale, right.scale) && equalScalars(left.offset || int2(0), right.offset || int2(0));
+  return dimensionsEqual(left.dimensions, right.dimensions) && left.affine === right.affine && equalScalars(left.scale, right.scale) && equalScalars(left.offset || int3(0), right.offset || int3(0));
 }
 function compareQuantities(left, right) {
   if (!dimensionsEqual(left.dimensions, right.dimensions)) {
@@ -10493,7 +11701,7 @@ function parseUnitExpression(source, collection) {
       if (!match)
         throw new Error(`Expected integer exponent in unit expression '${source}'`);
       index += match[0].length;
-      value = powUnit(value, int2(match[0]));
+      value = powUnit(value, int3(match[0]));
     }
     return value;
   }
@@ -10556,10 +11764,10 @@ function createDefaultUnitCollection() {
   add("mol", { dimensions: { Amount: 1 } }, ["mole"]);
   add("cd", { dimensions: { Luminosity: 1 } }, ["candela"]);
   add("rad", { dimensions: { Angle: 1 } }, ["radian"]);
-  add("min", { dimensions: s.dimensions, scale: int2(60), symbol: "min" }, ["minute"]);
-  add("h", { dimensions: s.dimensions, scale: int2(3600), symbol: "h" }, ["hour"]);
-  add("day", { dimensions: s.dimensions, scale: int2(86400), symbol: "day" });
-  add("km", { dimensions: m.dimensions, scale: int2(1000), symbol: "km" }, ["kilometer", "kilometre"]);
+  add("min", { dimensions: s.dimensions, scale: int3(60), symbol: "min" }, ["minute"]);
+  add("h", { dimensions: s.dimensions, scale: int3(3600), symbol: "h" }, ["hour"]);
+  add("day", { dimensions: s.dimensions, scale: int3(86400), symbol: "day" });
+  add("km", { dimensions: m.dimensions, scale: int3(1000), symbol: "km" }, ["kilometer", "kilometre"]);
   add("cm", { dimensions: m.dimensions, scale: rat(1n, 100n), symbol: "cm" });
   add("mm", { dimensions: m.dimensions, scale: rat(1n, 1000n), symbol: "mm" });
   add("in", { dimensions: m.dimensions, scale: rat(127n, 5000n), symbol: "in" }, ["inch"]);
@@ -10582,7 +11790,7 @@ function createDefaultUnitCollection() {
     dimensions: { Temperature: 1 },
     symbol: "degC",
     affine: true,
-    scale: int2(1),
+    scale: int3(1),
     offset: rat(27315n, 100n),
     differenceUnit: deltaDegC
   }, ["celsius"]);
@@ -10597,7 +11805,7 @@ function createDefaultUnitCollection() {
   return {
     type: "map",
     entries,
-    _ext: new Map([["immutable", int2(1)]])
+    _ext: new Map([["immutable", int3(1)]])
   };
 }
 function unitName(value) {
@@ -10768,7 +11976,7 @@ var runtimeDefaults = Object.freeze({
     permissions: Object.freeze(["IMPORTS"])
   }),
   capabilityGroups: Object.freeze({
-    Output: Object.freeze(["TEXT", "PARAGRAPH", "HEADING", "FRAGMENT", "TABLE", "GRID", "SHEET", "FIGURE", "SLIDE", "SLIDES", "Algebra"]),
+    Output: Object.freeze(["BIND", "TEXT", "PARAGRAPH", "HEADING", "FRAGMENT", "TABLE", "GRID", "SHEET", "FIGURE", "SLIDE", "SLIDES", "Algebra"]),
     Graphics: Object.freeze(["Graphics"]),
     Draw: Object.freeze(["draw"]),
     Plot: Object.freeze(["plot"]),
@@ -10941,7 +12149,7 @@ function isLazySequence(value) {
   return Boolean(value && value.type === "lazy_sequence" && value._lazy);
 }
 function createLazySequence(options) {
-  const sequence = {
+  const sequence2 = {
     type: "lazy_sequence",
     _lazy: {
       state: options.createState(),
@@ -10956,19 +12164,19 @@ function createLazySequence(options) {
     },
     _ext: options.ext ? new Map(options.ext) : new Map
   };
-  return sequence;
+  return sequence2;
 }
-function lazyKnownLength(sequence) {
-  if (!isLazySequence(sequence))
+function lazyKnownLength(sequence2) {
+  if (!isLazySequence(sequence2))
     return null;
-  if (sequence._lazy.done)
-    return sequence._lazy.cache.length;
-  return sequence._lazy.knownLength;
+  if (sequence2._lazy.done)
+    return sequence2._lazy.cache.length;
+  return sequence2._lazy.knownLength;
 }
-function pullLazyValue(sequence, iterationBudget = null) {
-  if (!isLazySequence(sequence))
+function pullLazyValue(sequence2, iterationBudget = null) {
+  if (!isLazySequence(sequence2))
     throw new Error("Expected a lazy sequence");
-  const lazy = sequence._lazy;
+  const lazy = sequence2._lazy;
   if (lazy.done)
     return { done: true, attempts: 0 };
   if (lazy.knownLength !== null && lazy.cache.length >= lazy.knownLength) {
@@ -10976,7 +12184,7 @@ function pullLazyValue(sequence, iterationBudget = null) {
     return { done: true, attempts: 0 };
   }
   const budget = iterationBudget ?? lazy.maxIterations;
-  const result = lazy.pull(lazy.state, sequence, budget) || { done: true };
+  const result = lazy.pull(lazy.state, sequence2, budget) || { done: true };
   const attempts = result.attempts ?? (result.done ? 0 : 1);
   if (attempts > budget) {
     throw new Error(`${lazy.label} exceeded the iteration limit of ${budget} while producing one value`);
@@ -10989,26 +12197,26 @@ function pullLazyValue(sequence, iterationBudget = null) {
   lazy.cache.push(result.value);
   return { done: false, value: result.value, attempts };
 }
-function ensureLazyIndex(sequence, oneBasedIndex) {
+function ensureLazyIndex(sequence2, oneBasedIndex) {
   if (!Number.isInteger(oneBasedIndex) || oneBasedIndex < 1) {
     throw new Error("Lazy sequence index must be a positive integer");
   }
-  while (sequence._lazy.cache.length < oneBasedIndex && !sequence._lazy.done) {
-    pullLazyValue(sequence);
+  while (sequence2._lazy.cache.length < oneBasedIndex && !sequence2._lazy.done) {
+    pullLazyValue(sequence2);
   }
-  return sequence._lazy.cache[oneBasedIndex - 1] ?? null;
+  return sequence2._lazy.cache[oneBasedIndex - 1] ?? null;
 }
-function materializeLazySequence(sequence, options = {}) {
-  if (!isLazySequence(sequence))
-    return sequence;
-  const lazy = sequence._lazy;
+function materializeLazySequence(sequence2, options = {}) {
+  if (!isLazySequence(sequence2))
+    return sequence2;
+  const lazy = sequence2._lazy;
   if (lazy.knownLength === null && options.allowUnknown !== true && !lazy.done) {
     throw new Error(`Cannot materialize unbounded or predicate-bounded ${lazy.label} without an explicit bound`);
   }
   const limit = options.maxIterations ?? lazy.maxIterations;
   let attempts = 0;
   while (!lazy.done) {
-    const result = pullLazyValue(sequence, Math.max(0, limit - attempts));
+    const result = pullLazyValue(sequence2, Math.max(0, limit - attempts));
     attempts += result.attempts || 0;
     if (attempts > limit) {
       throw new Error(`${lazy.label} exceeded the iteration limit of ${limit} while materializing`);
@@ -11016,10 +12224,10 @@ function materializeLazySequence(sequence, options = {}) {
   }
   return { type: "sequence", values: [...lazy.cache], _ext: new Map([["_mutable", 1]]) };
 }
-function cloneLazySequence(sequence, options = {}) {
-  if (!isLazySequence(sequence))
-    return sequence;
-  const source = sequence._lazy;
+function cloneLazySequence(sequence2, options = {}) {
+  if (!isLazySequence(sequence2))
+    return sequence2;
+  const source = sequence2._lazy;
   const restart = options.restart === true;
   const cloneValue = options.cloneValue || ((value) => value);
   const clone = {
@@ -11035,7 +12243,7 @@ function cloneLazySequence(sequence, options = {}) {
       maxIterations: source.maxIterations,
       label: source.label
     },
-    _ext: sequence._ext ? new Map(sequence._ext) : new Map
+    _ext: sequence2._ext ? new Map(sequence2._ext) : new Map
   };
   return clone;
 }
@@ -11135,27 +12343,27 @@ function getAttachedSpec(value) {
     return value;
   return value?._spec || value?._ext?.get?.("_spec") || null;
 }
-function attachSpec(value, spec, kind = null) {
-  value._spec = spec;
+function attachSpec(value, spec2, kind = null) {
+  value._spec = spec2;
   if (!(value._ext instanceof Map))
     value._ext = new Map;
-  value._ext.set("_spec", spec);
+  value._ext.set("_spec", spec2);
   if (kind)
     value._ext.set("_symbolicKind", rixString2(kind));
   return value;
 }
-function expressionOf(spec) {
-  if (!isSymbolicSpec(spec))
+function expressionOf(spec2) {
+  if (!isSymbolicSpec(spec2))
     throw new Error("Expected a symbolic specification");
-  if (spec.expression)
-    return spec.expression;
-  if (spec.outputs.length !== 1 || spec.statements.length !== 1) {
+  if (spec2.expression)
+    return spec2.expression;
+  if (spec2.outputs.length !== 1 || spec2.statements.length !== 1) {
     throw new Error("Symbolic operations currently require a single explicitly solved output");
   }
-  return spec.statements[0].expr;
+  return spec2.statements[0].expr;
 }
-function outputModeOf(spec) {
-  return spec.outputMode || (spec.expression ? "expression" : "named");
+function outputModeOf(spec2) {
+  return spec2.outputMode || (spec2.expression ? "expression" : "named");
 }
 function createSymbolicSpec(meta, context = null) {
   const outputMode = meta.outputMode || (meta.expression ? "expression" : "named");
@@ -11264,21 +12472,21 @@ function renderSymbolicIr(node, parentPrecedence = 0, side = null) {
   }
   throw new Error(`Cannot render unsupported symbolic IR '${node.fn}'`);
 }
-function formatSymbolicSpec(spec) {
-  const inputs = spec.inputs.join(",");
-  if (spec.outputMode === "identity" && spec.inputs.length === 1)
-    return `{#${spec.inputs[0]}}`;
-  const imports = spec.imports?.length ? `<${spec.imports.map((item) => {
+function formatSymbolicSpec(spec2) {
+  const inputs = spec2.inputs.join(",");
+  if (spec2.outputMode === "identity" && spec2.inputs.length === 1)
+    return `{#${spec2.inputs[0]}}`;
+  const imports = spec2.imports?.length ? `<${spec2.imports.map((item) => {
     if (item.mode === "copy" && item.local === item.source)
       return item.local;
     return `${item.local}${item.mode === "alias" ? "=" : "~"}${item.source}`;
   }).join(",")}> ` : "";
-  if (outputModeOf(spec) === "named") {
-    const header2 = spec.outputsDeclared ? `${inputs}:${spec.outputs.join(",")}# ` : inputs ? `${inputs}# ` : " ";
-    return `{#${header2}${imports}${spec.statements.map((s) => `${s.target} = ${renderSymbolicIr(s.expr)}`).join("; ")} }`;
+  if (outputModeOf(spec2) === "named") {
+    const header2 = spec2.outputsDeclared ? `${inputs}:${spec2.outputs.join(",")}# ` : inputs ? `${inputs}# ` : " ";
+    return `{#${header2}${imports}${spec2.statements.map((s) => `${s.target} = ${renderSymbolicIr(s.expr)}`).join("; ")} }`;
   }
   const header = inputs ? `${inputs}# ` : " ";
-  return `{#${header}${imports}${renderSymbolicIr(expressionOf(spec))} }`;
+  return `{#${header}${imports}${renderSymbolicIr(expressionOf(spec2))} }`;
 }
 function serializeIr(node) {
   if (!node?.fn)
@@ -11296,16 +12504,16 @@ function serializeIr(node) {
     return rixMap([["kind", rixString2("binary")], ["op", rixString2(op)], ["left", serializeIr(node.args[0])], ["right", serializeIr(node.args[1])]]);
   return rixMap([["kind", rixString2("ir")], ["fn", rixString2(node.fn)], ["args", rixTuple(node.args.map(serializeIr))]]);
 }
-function inspectSymbolicSpec(spec) {
-  const inspectExpression = spec.expression ? serializeIr(spec.expression) : spec.statements.length === 1 ? serializeIr(spec.statements[0].expr) : null;
+function inspectSymbolicSpec(spec2) {
+  const inspectExpression = spec2.expression ? serializeIr(spec2.expression) : spec2.statements.length === 1 ? serializeIr(spec2.statements[0].expr) : null;
   return rixMap([
     ["kind", rixString2("systemSpec")],
     ["syntax", rixString2("#")],
-    ["form", rixString2(outputModeOf(spec))],
-    ["source", rixString2(formatSymbolicSpec(spec))],
-    ["inputs", rixTuple(spec.inputs.map(rixString2))],
-    ["outputs", rixTuple(spec.outputs.map(rixString2))],
-    ["statements", rixTuple(spec.statements.map((statement) => rixMap([
+    ["form", rixString2(outputModeOf(spec2))],
+    ["source", rixString2(formatSymbolicSpec(spec2))],
+    ["inputs", rixTuple(spec2.inputs.map(rixString2))],
+    ["outputs", rixTuple(spec2.outputs.map(rixString2))],
+    ["statements", rixTuple(spec2.statements.map((statement) => rixMap([
       ["kind", rixString2("assign")],
       ["target", rixString2(statement.target)],
       ["expr", serializeIr(statement.expr)]
@@ -11362,15 +12570,15 @@ function attachAutoSpec(value, context) {
     attachSpec(value, analysis.spec);
   return value;
 }
-function polyFromSpec(spec) {
-  const expression = expressionOf(spec);
+function polyFromSpec(spec2) {
+  const expression = expressionOf(spec2);
   if (!supportedExpression(expression)) {
     throw new Error(`Poly cannot compile unsupported or effectful symbolic IR '${expression?.fn || "value"}'`);
   }
   return attachSpec({
     type: "lambda",
     params: {
-      positional: spec.inputs.map((name) => ({ name, holeDefault: null })),
+      positional: spec2.inputs.map((name) => ({ name, holeDefault: null })),
       keyword: [],
       conditionals: [],
       prep: [],
@@ -11378,9 +12586,9 @@ function polyFromSpec(spec) {
       metadata: {}
     },
     body: cloneIr(expression),
-    __closureScopes: spec.__closureScopes || [],
+    __closureScopes: spec2.__closureScopes || [],
     __name: "Poly"
-  }, spec, "Poly");
+  }, spec2, "Poly");
 }
 function isExactScalar(value) {
   return value instanceof Integer || value instanceof Rational || typeof value === "bigint" || Number.isInteger(value);
@@ -11566,19 +12774,19 @@ function integrate(node, variable) {
     return binary("MUL", cloneIr(node), retrieve(variable));
   throw new Error(`Integrate cannot integrate '${renderSymbolicIr(node)}' in its current form; simplify or rewrite it first`);
 }
-function variableName(value, spec, operation) {
+function variableName(value, spec2, operation) {
   if (value === null || value === undefined) {
-    if (spec.inputs.length === 1)
-      return spec.inputs[0];
+    if (spec2.inputs.length === 1)
+      return spec2.inputs[0];
     throw new Error(`${operation} needs an explicit variable for a multi-input spec`);
   }
   if (typeof value === "string")
     return value;
   if (value?.type === "string")
     return value.value;
-  const selector = getAttachedSpec(value);
-  if (selector && selector.inputs.length === 1 && renderSymbolicIr(expressionOf(selector)) === selector.inputs[0])
-    return selector.inputs[0];
+  const selector2 = getAttachedSpec(value);
+  if (selector2 && selector2.inputs.length === 1 && renderSymbolicIr(expressionOf(selector2)) === selector2.inputs[0])
+    return selector2.inputs[0];
   throw new Error(`${operation} variable must be an identity spec such as {#x} or a string`);
 }
 function calculus(value, variableValue, operation) {
@@ -11587,8 +12795,8 @@ function calculus(value, variableValue, operation) {
     throw new Error(`${operation} expects a symbolic spec or a function with an attached spec`);
   const variable = variableName(variableValue, source, operation);
   const transformed = operation === "Deriv" ? derivative(expressionOf(source), variable) : integrate(expressionOf(source), variable);
-  const spec = specWithExpression(source, transformed, { transform: { operation, variable } });
-  return isSymbolicSpec(value) ? spec : polyFromSpec(spec);
+  const spec2 = specWithExpression(source, transformed, { transform: { operation, variable } });
+  return isSymbolicSpec(value) ? spec2 : polyFromSpec(spec2);
 }
 function substituteIr(node, substitutions) {
   if (node.fn === "RETRIEVE" && substitutions.has(node.args[0]))
@@ -11641,39 +12849,39 @@ function unionScopes(groups, referencedNames = null) {
   }
   return result;
 }
-function applySymbolicSpec(spec, args) {
-  if (args.length > spec.inputs.length)
-    throw new Error(`Symbolic spec expected at most ${spec.inputs.length} argument(s), received ${args.length}`);
+function applySymbolicSpec(spec2, args) {
+  if (args.length > spec2.inputs.length)
+    throw new Error(`Symbolic spec expected at most ${spec2.inputs.length} argument(s), received ${args.length}`);
   const substitutions = new Map;
   const argumentSpecs = [];
   for (let index = 0;index < args.length; index++) {
     const argSpec = getAttachedSpec(args[index]);
     if (argSpec) {
-      substitutions.set(spec.inputs[index], expressionOf(argSpec));
+      substitutions.set(spec2.inputs[index], expressionOf(argSpec));
       argumentSpecs.push(argSpec);
     } else if (isExactScalar(args[index])) {
-      substitutions.set(spec.inputs[index], exactToIr(args[index]));
+      substitutions.set(spec2.inputs[index], exactToIr(args[index]));
     } else {
       throw new Error("Symbolic substitution arguments must be specs, spec-backed functions, or exact scalars");
     }
   }
-  const remaining = spec.inputs.slice(args.length);
-  const expression = substituteIr(expressionOf(spec), substitutions);
+  const remaining = spec2.inputs.slice(args.length);
+  const expression = substituteIr(expressionOf(spec2), substitutions);
   const inputs = unionNames([...argumentSpecs.map((item) => item.inputs), remaining]);
   const capturedNames = retrieveNames(expression);
   for (const input of inputs)
     capturedNames.delete(input);
-  return specWithExpression(spec, expression, {
+  return specWithExpression(spec2, expression, {
     inputs,
-    __closureScopes: unionScopes([spec.__closureScopes, ...argumentSpecs.map((item) => item.__closureScopes)], capturedNames),
-    outputMode: outputModeOf(spec) === "named" ? "named" : "expression",
+    __closureScopes: unionScopes([spec2.__closureScopes, ...argumentSpecs.map((item) => item.__closureScopes)], capturedNames),
+    outputMode: outputModeOf(spec2) === "named" ? "named" : "expression",
     transform: { operation: "substitute" }
   });
 }
 function symbolicOperand(value) {
-  const spec = getAttachedSpec(value);
-  if (spec)
-    return { spec, expression: expressionOf(spec), callable: !isSymbolicSpec(value) };
+  const spec2 = getAttachedSpec(value);
+  if (spec2)
+    return { spec: spec2, expression: expressionOf(spec2), callable: !isSymbolicSpec(value) };
   if (isExactScalar(value))
     return { spec: null, expression: exactToIr(value), callable: false };
   return null;
@@ -11689,13 +12897,13 @@ function combineSymbolic(operator, leftValue, rightValue = null) {
   const capturedNames = retrieveNames(expression);
   for (const input of inputs)
     capturedNames.delete(input);
-  const spec = specWithExpression(template, expression, {
+  const spec2 = specWithExpression(template, expression, {
     inputs,
     __closureScopes: unionScopes([left.spec?.__closureScopes, right?.spec?.__closureScopes], capturedNames),
     outputMode: outputModeOf(template) === "named" ? "named" : "expression",
     transform: { operation: BINARY_TEXT.get(operator) || operator }
   });
-  return left.callable || right?.callable ? polyFromSpec(spec) : spec;
+  return left.callable || right?.callable ? polyFromSpec(spec2) : spec2;
 }
 function simplifyIr(node, directions) {
   if (!node?.fn || ["LITERAL", "RETRIEVE", "OUTER_RETRIEVE"].includes(node.fn))
@@ -11908,20 +13116,20 @@ function decompositionOperand(value, variable) {
       closureScopes: []
     };
   }
-  const spec = getAttachedSpec(value);
-  if (!spec)
+  const spec2 = getAttachedSpec(value);
+  if (!spec2)
     throw new Error("Polynomial decomposition operands must be exact roots, symbolic specs, or spec-backed functions");
-  if (spec.inputs.length !== 1)
+  if (spec2.inputs.length !== 1)
     throw new Error("Polynomial decomposition specs must have exactly one symbolic input");
-  const sourceExpression = expressionOf(spec);
-  if (spec.inputs[0] !== variable && retrieveNames(sourceExpression).has(variable)) {
-    throw new Error(`Polynomial decomposition cannot rename '${spec.inputs[0]}' to '${variable}' because the operand already uses '${variable}' as a coefficient`);
+  const sourceExpression = expressionOf(spec2);
+  if (spec2.inputs[0] !== variable && retrieveNames(sourceExpression).has(variable)) {
+    throw new Error(`Polynomial decomposition cannot rename '${spec2.inputs[0]}' to '${variable}' because the operand already uses '${variable}' as a coefficient`);
   }
-  const expression = substituteIr(sourceExpression, new Map([[spec.inputs[0], retrieve(variable)]]));
+  const expression = substituteIr(sourceExpression, new Map([[spec2.inputs[0], retrieve(variable)]]));
   return {
     expression,
     polynomial: polynomialFromIr(expression, variable, new Map([[1n, literal(1)]])),
-    closureScopes: spec.__closureScopes || []
+    closureScopes: spec2.__closureScopes || []
   };
 }
 function decomposeIr(node, variable, factors) {
@@ -12081,11 +13289,11 @@ function transformValue(args) {
   const referencedNames = retrieveNames(expression);
   for (const input of source.inputs)
     referencedNames.delete(input);
-  const spec = specWithExpression(source, expression, {
+  const spec2 = specWithExpression(source, expression, {
     __closureScopes: unionScopes([source.__closureScopes, ...addedScopeGroups], referencedNames),
     transform: { operation: "Transform", plan: plan.map(({ direction }) => direction) }
   });
-  return isSymbolicSpec(value) ? spec : polyFromSpec(spec);
+  return isSymbolicSpec(value) ? spec2 : polyFromSpec(spec2);
 }
 function speccabilityValue(value) {
   const attached = getAttachedSpec(value);
@@ -12712,12 +13920,12 @@ var functionFunctions = {
         return null;
       if (isLazySequence(coll))
         coll = materializeLazySequence(coll);
-      const interval = evaluate(intervalNode);
+      const interval2 = evaluate(intervalNode);
       let i_val, j_val;
-      if (interval && interval.constructor && interval.constructor.name === "RationalInterval") {
-        i_val = Number(interval.start.numerator) / Number(interval.start.denominator);
-        j_val = Number(interval.end.numerator) / Number(interval.end.denominator);
-      } else if (interval && interval.type === "interval") {
+      if (interval2 && interval2.constructor && interval2.constructor.name === "RationalInterval") {
+        i_val = Number(interval2.start.numerator) / Number(interval2.start.denominator);
+        j_val = Number(interval2.end.numerator) / Number(interval2.end.denominator);
+      } else if (interval2 && interval2.type === "interval") {
         const getNum = (x) => {
           if (x && x.numerator !== undefined)
             return Number(x.numerator) / Number(x.denominator);
@@ -12725,8 +13933,8 @@ var functionFunctions = {
             return Number(x.value);
           return Number(x);
         };
-        i_val = getNum(interval.lo);
-        j_val = getNum(interval.hi);
+        i_val = getNum(interval2.lo);
+        j_val = getNum(interval2.hi);
       } else {
         return null;
       }
@@ -12820,14 +14028,14 @@ var functionFunctions = {
       } else {
         return emptyOutput;
       }
-      const interval = evaluate(intervalNode);
-      if (!interval)
+      const interval2 = evaluate(intervalNode);
+      if (!interval2)
         throw new Error("Invalid interval for clamping");
       let i_val, j_val;
-      if (interval && interval.constructor && interval.constructor.name === "RationalInterval") {
-        i_val = Number(interval.start.numerator) / Number(interval.start.denominator);
-        j_val = Number(interval.end.numerator) / Number(interval.end.denominator);
-      } else if (interval && interval.type === "interval") {
+      if (interval2 && interval2.constructor && interval2.constructor.name === "RationalInterval") {
+        i_val = Number(interval2.start.numerator) / Number(interval2.start.denominator);
+        j_val = Number(interval2.end.numerator) / Number(interval2.end.denominator);
+      } else if (interval2 && interval2.type === "interval") {
         const getNum = (x) => {
           if (x && x.numerator !== undefined)
             return Number(x.numerator) / Number(x.denominator);
@@ -12835,8 +14043,8 @@ var functionFunctions = {
             return Number(x.value);
           return Number(x);
         };
-        i_val = getNum(interval.lo);
-        j_val = getNum(interval.hi);
+        i_val = getNum(interval2.lo);
+        j_val = getNum(interval2.hi);
       } else {
         throw new Error("Invalid interval representation");
       }
@@ -13613,866 +14821,6 @@ var functionFunctions = {
   }
 };
 
-// ../rix/src/runtime/output.js
-var int3 = (value) => new Integer(BigInt(value));
-var isSequence = (value) => value && ["sequence", "tuple", "set", "array"].includes(value.type);
-var asString = (value) => value?.type === "string" ? value.value : typeof value === "string" ? value : null;
-function sequence(value, label) {
-  if (Array.isArray(value))
-    return value;
-  if (isSequence(value))
-    return value.values || value.elements || [];
-  throw new Error(`${label} must be an array, tuple, or sequence`);
-}
-function map(value, label) {
-  if (value?.type !== "map" || !(value.entries instanceof Map))
-    throw new Error(`${label} must be a map`);
-  return value.entries;
-}
-function get(entries, name, fallback = null) {
-  if (entries.has(name))
-    return entries.get(name);
-  const canonical = String(name).toLowerCase();
-  return entries.has(canonical) ? entries.get(canonical) : fallback;
-}
-function optionalMap(value, label) {
-  return value === null || value === undefined ? null : map(value, label);
-}
-function spec(args, positional, name) {
-  if (args.length === 1 && args[0]?.type === "map")
-    return map(args[0], `${name} specification`);
-  if (args.length > positional.length)
-    throw new Error(`${name} received too many arguments`);
-  return new Map(positional.slice(0, args.length).map((key, index) => [key, args[index]]));
-}
-function output(kind, fields) {
-  return Object.freeze({
-    type: "output",
-    kind,
-    ...fields,
-    _ext: new Map([
-      ["_type", { type: "string", value: "output" }],
-      ["kind", { type: "string", value: kind }],
-      ["immutable", int3(1)]
-    ])
-  });
-}
-function exactInteger2(value, label) {
-  if (value instanceof Integer)
-    return Number(value.value);
-  if (value instanceof Rational && value.denominator === 1n)
-    return Number(value.numerator);
-  if (typeof value === "number" && Number.isInteger(value))
-    return value;
-  throw new Error(`${label} must be an integer`);
-}
-function exactNumber(value, label) {
-  if (value instanceof Integer || value instanceof Rational)
-    return value;
-  throw new Error(`${label} must be an exact integer or rational`);
-}
-function numericValue(value, label) {
-  if (value instanceof Integer)
-    return Number(value.value);
-  if (value instanceof Rational)
-    return Number(value.numerator) / Number(value.denominator);
-  if (typeof value === "number" && Number.isFinite(value))
-    return value;
-  throw new Error(`${label} must be a finite number`);
-}
-function normalizeColumns(value) {
-  return sequence(value, "Table columns").map((column, index) => {
-    const label = asString(column);
-    if (label !== null)
-      return { id: `column${index + 1}`, label, align: null, format: null };
-    const entry = map(column, `Table column ${index + 1}`);
-    const id = asString(get(entry, "id")) || `column${index + 1}`;
-    return { id, label: asString(get(entry, "label")) || id, align: asString(get(entry, "align")), format: get(entry, "format") };
-  });
-}
-function isOutputValue(value) {
-  return Boolean(value && value.type === "output" && typeof value.kind === "string");
-}
-function createText(args) {
-  const entry = spec(args, ["value", "style"], "Text");
-  const value = get(entry, "value");
-  if (value === null)
-    throw new Error("Text requires a value");
-  return output("text", { value, style: optionalMap(get(entry, "style"), "Text style") });
-}
-function createParagraph(args) {
-  const entry = spec(args, ["children", "style"], "Paragraph");
-  const childrenValue = get(entry, "children");
-  const children = isSequence(childrenValue) || Array.isArray(childrenValue) ? sequence(childrenValue, "Paragraph children") : [childrenValue];
-  return output("paragraph", { children, style: optionalMap(get(entry, "style"), "Paragraph style") });
-}
-function createHeading(args) {
-  const entry = spec(args, ["level", "content", "id", "style"], "Heading");
-  const level = exactInteger2(get(entry, "level"), "Heading level");
-  if (level < 1 || level > 6)
-    throw new Error("Heading level must be between 1 and 6");
-  const content = get(entry, "content");
-  if (content === null)
-    throw new Error("Heading requires content");
-  return output("heading", { level, content, id: asString(get(entry, "id")), style: optionalMap(get(entry, "style"), "Heading style") });
-}
-function createFragment(args) {
-  const entry = spec(args, ["children", "metadata"], "Fragment");
-  return output("fragment", { children: sequence(get(entry, "children"), "Fragment children"), metadata: optionalMap(get(entry, "metadata"), "Fragment metadata") });
-}
-function createTable(args) {
-  const entry = spec(args, ["columns", "rows", "options"], "Table");
-  const columns = normalizeColumns(get(entry, "columns"));
-  const rows = sequence(get(entry, "rows"), "Table rows").map((row, index) => {
-    const cells = sequence(row, `Table row ${index + 1}`);
-    if (cells.length !== columns.length)
-      throw new Error(`Table row ${index + 1} has ${cells.length} cells; expected ${columns.length}`);
-    return [...cells];
-  });
-  return output("table", { columns, rows, caption: asString(get(entry, "caption")), options: optionalMap(get(entry, "options"), "Table options") });
-}
-function createGrid(args) {
-  const entry = spec(args, ["columns", "rows", "rules", "style"], "Grid");
-  const columns = sequence(get(entry, "columns"), "Grid columns");
-  const rows = sequence(get(entry, "rows"), "Grid rows").map((row, index) => {
-    const cells = sequence(row, `Grid row ${index + 1}`);
-    if (cells.length !== columns.length)
-      throw new Error(`Grid row ${index + 1} has ${cells.length} cells; expected ${columns.length}`);
-    return [...cells];
-  });
-  return output("grid", {
-    columns,
-    rows,
-    rules: sequence(get(entry, "rules", { type: "sequence", values: [] }), "Grid rules"),
-    style: optionalMap(get(entry, "style"), "Grid style")
-  });
-}
-function sheetData(value) {
-  if (isTensor(value)) {
-    if (value.shape.length === 0)
-      throw new Error("Sheet data must have rank 1 or greater");
-    return {
-      kind: "tensor",
-      shape: [...value.shape],
-      at: (index) => tensorGetBySelectors(value, index.map((item) => ({ kind: "index", value: item })))
-    };
-  }
-  if (value?.type === "matrix" && Array.isArray(value.rows)) {
-    const rows = value.rows.map((row, index) => sequence(row, `Sheet matrix row ${index + 1}`));
-    const columns = rows[0]?.length ?? 0;
-    if (!rows.every((row) => row.length === columns))
-      throw new Error("Sheet matrix rows must have equal lengths");
-    return {
-      kind: "matrix",
-      shape: [rows.length, columns],
-      at: ([row, column]) => rows[row - 1][column - 1]
-    };
-  }
-  if (Array.isArray(value) || isSequence(value)) {
-    const values = sequence(value, "Sheet data");
-    const nested = values.length > 0 && values.every((item) => Array.isArray(item) || isSequence(item));
-    if (nested) {
-      const rows = values.map((row, index) => sequence(row, `Sheet row ${index + 1}`));
-      const columns = rows[0]?.length ?? 0;
-      if (!rows.every((row) => row.length === columns))
-        throw new Error("Sheet rows must have equal lengths");
-      return {
-        kind: "sequence",
-        shape: [rows.length, columns],
-        at: ([row, column]) => rows[row - 1][column - 1]
-      };
-    }
-    return {
-      kind: "sequence",
-      shape: [values.length],
-      at: ([row]) => values[row - 1]
-    };
-  }
-  throw new Error("Sheet data must be a tensor, matrix, array, tuple, or sequence");
-}
-function normalizedSheetIndex(value, length, label) {
-  const index = exactInteger2(value, label);
-  const normalized = index < 0 ? length + index + 1 : index;
-  if (normalized < 1 || normalized > length) {
-    throw new Error(`${label} ${index} is out of range for length ${length}`);
-  }
-  return normalized;
-}
-function spreadsheetColumnLabel(index) {
-  let label = "";
-  let current = index;
-  while (current > 0) {
-    current -= 1;
-    label = String.fromCharCode(65 + current % 26) + label;
-    current = Math.floor(current / 26);
-  }
-  return label;
-}
-function sheetColumnLabel(index, mode) {
-  if (mode === "letters")
-    return spreadsheetColumnLabel(index);
-  if (mode === "numbers")
-    return String(index);
-  return `${spreadsheetColumnLabel(index)} · ${index}`;
-}
-function sheetDisplayAddress(row, column, mode) {
-  return mode === "numbers" ? `R${row}C${column}` : `${spreadsheetColumnLabel(column)}${row}`;
-}
-function sheetPlaneKey2(slice, hiddenAxes) {
-  return hiddenAxes.map(({ axis }) => `${axis}:${slice[axis - 1]}`).join(",");
-}
-function sheetPlaneSlices(shape, initialSlice, hiddenAxes) {
-  let slices = [initialSlice.map((item) => item)];
-  for (const { axis } of hiddenAxes) {
-    slices = slices.flatMap((slice) => Array.from({ length: shape[axis - 1] }, (_item, index) => {
-      const next = slice.map((item) => item);
-      next[axis - 1] = index + 1;
-      return next;
-    }));
-  }
-  return slices;
-}
-function sheetField(entry, options, name, fallback = null) {
-  const optionValue = options ? get(options, name) : null;
-  return optionValue ?? get(entry, name, fallback);
-}
-function createSheet(args) {
-  const entry = spec(args, ["data", "options"], "Sheet");
-  const data = sheetData(get(entry, "data"));
-  const optionsValue = get(entry, "options");
-  const options = optionsValue === null || optionsValue === undefined ? null : map(optionsValue, "Sheet options");
-  const rank = data.shape.length;
-  const viewAxesValue = sheetField(entry, options, "viewAxes");
-  const defaultViewAxes = rank === 1 ? [1] : [1, 2];
-  const viewAxes = viewAxesValue === null ? defaultViewAxes : sequence(viewAxesValue, "Sheet viewAxes").map((axis, index) => normalizedSheetIndex(axis, rank, `Sheet view axis ${index + 1}`));
-  const expectedViewAxisCount = rank === 1 ? 1 : 2;
-  if (viewAxes.length !== expectedViewAxisCount) {
-    throw new Error(`Sheet viewAxes must contain ${expectedViewAxisCount} ${expectedViewAxisCount === 1 ? "axis" : "axes"}`);
-  }
-  if (new Set(viewAxes).size !== viewAxes.length)
-    throw new Error("Sheet viewAxes must be distinct");
-  const visibleAxes = new Set(viewAxes);
-  const sliceValue = sheetField(entry, options, "slice");
-  const requestedSlice = sliceValue === null ? null : sequence(sliceValue, "Sheet slice");
-  if (requestedSlice !== null && requestedSlice.length !== rank) {
-    throw new Error(`Sheet slice must contain ${rank} entries`);
-  }
-  const slice = requestedSlice === null ? data.shape.map((_length, index) => visibleAxes.has(index + 1) ? null : 1) : requestedSlice.map((item, index) => {
-    const axis = index + 1;
-    if (visibleAxes.has(axis)) {
-      if (item !== null)
-        throw new Error(`Sheet slice axis ${axis} must be _ because it is visible`);
-      return null;
-    }
-    if (data.shape[index] === 0)
-      throw new Error(`Sheet cannot select empty hidden axis ${axis}`);
-    return normalizedSheetIndex(item, data.shape[index], `Sheet slice axis ${axis}`);
-  });
-  const axesValue = sheetField(entry, options, "axes");
-  const axes = axesValue === null ? data.shape.map((_length, index) => `axis${index + 1}`) : sequence(axesValue, "Sheet axes").map((axis, index) => {
-    const name = asString(axis);
-    if (name === null || name.length === 0)
-      throw new Error(`Sheet axis ${index + 1} must have a nonempty string name`);
-    return name;
-  });
-  if (axes.length !== rank)
-    throw new Error(`Sheet axes must contain ${rank} names`);
-  const addressBase = asString(sheetField(entry, options, "address", { type: "string", value: "grid" }));
-  if (addressBase === null || addressBase.length === 0)
-    throw new Error("Sheet address must be a nonempty string");
-  const columnLabelMode = asString(sheetField(entry, options, "columnLabels", { type: "string", value: "dual" }));
-  if (!["dual", "letters", "numbers"].includes(columnLabelMode)) {
-    throw new Error("Sheet columnLabels must be :dual, :letters, or :numbers");
-  }
-  const titleValue = sheetField(entry, options, "title");
-  const title = titleValue === null ? null : asString(titleValue);
-  if (titleValue !== null && title === null)
-    throw new Error("Sheet title must be a string");
-  const rowAxis = viewAxes[0];
-  const columnAxis = viewAxes[1] ?? null;
-  const rowCount = data.shape[rowAxis - 1];
-  const columnCount = columnAxis === null ? 1 : data.shape[columnAxis - 1];
-  const rowHeaders = Array.from({ length: rowCount }, (_item, index) => String(index + 1));
-  const columnHeaders = Array.from({ length: columnCount }, (_item, index) => sheetColumnLabel(index + 1, columnLabelMode));
-  const hiddenAxes = data.shape.map((length, index) => ({
-    axis: index + 1,
-    name: axes[index],
-    length,
-    selected: slice[index]
-  })).filter(({ axis }) => !visibleAxes.has(axis));
-  const cellsForSlice = (planeSlice) => Array.from({ length: rowCount }, (_row, rowIndex) => Array.from({ length: columnCount }, (_column, columnIndex) => {
-    const index = planeSlice.map((item) => item);
-    index[rowAxis - 1] = rowIndex + 1;
-    if (columnAxis !== null)
-      index[columnAxis - 1] = columnIndex + 1;
-    return Object.freeze({
-      value: data.at(index),
-      index: Object.freeze(index),
-      address: `${addressBase}[${index.join(",")}]`,
-      displayAddress: sheetDisplayAddress(rowIndex + 1, columnIndex + 1, columnLabelMode)
-    });
-  }));
-  const planes = sheetPlaneSlices(data.shape, slice, hiddenAxes).map((planeSlice) => Object.freeze({
-    key: sheetPlaneKey2(planeSlice, hiddenAxes),
-    slice: Object.freeze(planeSlice),
-    cells: Object.freeze(cellsForSlice(planeSlice).map((row) => Object.freeze(row)))
-  }));
-  const selectedPlaneKey = sheetPlaneKey2(slice, hiddenAxes);
-  const cells = planes.find((plane) => plane.key === selectedPlaneKey)?.cells ?? planes[0].cells;
-  return output("sheet", {
-    sourceKind: data.kind,
-    rank,
-    shape: Object.freeze([...data.shape]),
-    axes: Object.freeze(axes),
-    viewAxes: Object.freeze(viewAxes),
-    slice: Object.freeze(slice),
-    addressBase,
-    title,
-    columnLabelMode,
-    rowHeaders: Object.freeze(rowHeaders),
-    columnHeaders: Object.freeze(columnHeaders),
-    hiddenAxes: Object.freeze(hiddenAxes.map((axis) => Object.freeze(axis))),
-    selectedPlaneKey,
-    planes: Object.freeze(planes),
-    cells,
-    options
-  });
-}
-function createPath(args) {
-  const entry = spec(args, ["points", "style"], "Path");
-  const commands = get(entry, "commands");
-  const points = get(entry, "points");
-  if (commands !== null && commands !== undefined) {
-    return output("path", {
-      commands: sequence(commands, "Path commands"),
-      points: null,
-      style: optionalMap(get(entry, "style"), "Path style")
-    });
-  }
-  return output("path", {
-    commands: null,
-    points: sequence(points, "Path points"),
-    style: optionalMap(get(entry, "style"), "Path style")
-  });
-}
-function createGroup(args) {
-  const entry = spec(args, ["children", "style", "metadata"], "Group");
-  return output("group", {
-    children: sequence(get(entry, "children"), "Group children"),
-    style: optionalMap(get(entry, "style"), "Group style"),
-    metadata: optionalMap(get(entry, "metadata"), "Group metadata")
-  });
-}
-function createTransform(args) {
-  const entry = spec(args, ["children", "transform", "style"], "Transform");
-  const transform = optionalMap(get(entry, "transform"), "Transform specification") || entry;
-  return output("transform", {
-    children: sequence(get(entry, "children"), "Transform children"),
-    translate: get(transform, "translate"),
-    scale: get(transform, "scale"),
-    rotate: get(transform, "rotate"),
-    origin: get(transform, "origin"),
-    style: optionalMap(get(entry, "style"), "Transform style")
-  });
-}
-function createTextMark(args) {
-  const entry = spec(args, ["position", "text", "style"], "TextMark");
-  const position = sequence(get(entry, "position"), "TextMark position");
-  if (position.length !== 2)
-    throw new Error("TextMark position must contain x and y coordinates");
-  const text = get(entry, "text");
-  if (text === null || text === undefined)
-    throw new Error("TextMark requires text");
-  return output("text_mark", { position, text, style: optionalMap(get(entry, "style"), "TextMark style") });
-}
-function createRectangle(args) {
-  const entry = spec(args, ["origin", "size", "style"], "Rectangle");
-  const origin = sequence(get(entry, "origin"), "Rectangle origin");
-  const size = sequence(get(entry, "size"), "Rectangle size");
-  if (origin.length !== 2 || size.length !== 2)
-    throw new Error("Rectangle origin and size must each contain x and y coordinates");
-  return output("rectangle", { origin, size, style: optionalMap(get(entry, "style"), "Rectangle style") });
-}
-function createCircle(args) {
-  const entry = spec(args, ["center", "radius", "style"], "Circle");
-  const center = sequence(get(entry, "center"), "Circle center");
-  if (center.length !== 2)
-    throw new Error("Circle center must contain x and y coordinates");
-  const radius = get(entry, "radius");
-  if (radius === null || radius === undefined)
-    throw new Error("Circle requires a radius");
-  return output("circle", { center, radius, style: optionalMap(get(entry, "style"), "Circle style") });
-}
-function createClip(args) {
-  const entry = spec(args, ["children", "bounds", "style"], "Clip");
-  const bounds = sequence(get(entry, "bounds"), "Clip bounds");
-  if (bounds.length !== 4)
-    throw new Error("Clip bounds must contain x, y, width, and height");
-  return output("clip", { children: sequence(get(entry, "children"), "Clip children"), bounds, style: optionalMap(get(entry, "style"), "Clip style") });
-}
-function createGraphic(args) {
-  const entry = spec(args, ["size", "children", "metadata"], "Graphic");
-  const size = sequence(get(entry, "size"), "Graphic size");
-  if (size.length !== 2)
-    throw new Error("Graphic size must contain width and height");
-  return output("graphic", { size, children: sequence(get(entry, "children"), "Graphic children"), metadata: optionalMap(get(entry, "metadata"), "Graphic metadata") });
-}
-function createFigure(args) {
-  const entry = spec(args, ["content", "caption", "label", "alt"], "Figure");
-  const content = get(entry, "content");
-  if (content === null)
-    throw new Error("Figure requires content");
-  return output("figure", { content, caption: asString(get(entry, "caption")), label: asString(get(entry, "label")), alt: asString(get(entry, "alt")) });
-}
-function createSlide(args) {
-  const entry = spec(args, ["content", "title", "id", "notes", "metadata"], "Slide");
-  const content = get(entry, "content");
-  if (content === null)
-    throw new Error("Slide requires content");
-  return output("slide", { content, title: asString(get(entry, "title")), id: asString(get(entry, "id")), notes: asString(get(entry, "notes")), metadata: optionalMap(get(entry, "metadata"), "Slide metadata") });
-}
-function createSlides(args) {
-  const entry = spec(args, ["slides", "title", "theme", "metadata"], "Slides");
-  const slides = sequence(get(entry, "slides"), "Slides entries");
-  if (!slides.every((slide) => isOutputValue(slide) && slide.kind === "slide"))
-    throw new Error("Slides requires an array of Slide values");
-  return output("slides", { slides, title: asString(get(entry, "title")), theme: asString(get(entry, "theme")), metadata: optionalMap(get(entry, "metadata"), "Slides metadata") });
-}
-function createSyntheticDivision(root, coefficients) {
-  root = exactNumber(root, "SyntheticDivision root");
-  const values = sequence(coefficients, "SyntheticDivision coefficients").map((value, index) => exactNumber(value, `SyntheticDivision coefficient ${index + 1}`));
-  if (values.length < 2)
-    throw new Error("SyntheticDivision requires at least two coefficients");
-  const products = Array(values.length).fill(null);
-  const bottom = Array(values.length).fill(null);
-  bottom[0] = values[0];
-  for (let index = 1;index < values.length; index += 1) {
-    products[index] = root.multiply(bottom[index - 1]);
-    bottom[index] = values[index].add(products[index]);
-  }
-  return output("grid", {
-    columns: Array.from({ length: values.length + 1 }, () => null),
-    rows: [[root, ...values], [null, null, ...products.slice(1)], [null, ...bottom]],
-    rules: [{ kind: "vertical", afterColumn: 1 }, { kind: "horizontal", aboveRow: 3 }],
-    style: new Map([["align", { type: "string", value: "right" }]]),
-    semantic: { type: "synthetic_division", root, coefficients: values, products, bottom }
-  });
-}
-function createPolynomialPlot(coefficients, domain, options = null) {
-  const values = sequence(coefficients, "Polynomial coefficients").map((value, index) => exactNumber(value, `Polynomial coefficient ${index + 1}`));
-  if (values.length < 2)
-    throw new Error("Plot.Polynomial requires at least two coefficients");
-  const bounds = sequence(domain, "Polynomial plot domain");
-  if (bounds.length !== 2)
-    throw new Error("Polynomial plot domain must have a lower and upper bound");
-  const xMin = numericValue(bounds[0], "Polynomial plot lower bound");
-  const xMax = numericValue(bounds[1], "Polynomial plot upper bound");
-  if (!(xMin < xMax))
-    throw new Error("Polynomial plot domain must increase");
-  const optionEntries = options === null || options === undefined ? new Map : map(options, "Polynomial plot options");
-  const requestedSize = get(optionEntries, "size", null);
-  const size = requestedSize === null ? [640, 360] : sequence(requestedSize, "Polynomial plot size").map((value, index) => numericValue(value, `Polynomial plot size ${index + 1}`));
-  if (size.length !== 2 || size.some((value) => value <= 0))
-    throw new Error("Polynomial plot size must contain positive width and height");
-  const samplesValue = get(optionEntries, "samples", null);
-  const samples = samplesValue === null ? 161 : exactInteger2(samplesValue, "Polynomial plot samples");
-  if (samples < 2 || samples > 1e4)
-    throw new Error("Polynomial plot samples must be between 2 and 10000");
-  const marginValue = get(optionEntries, "margin", null);
-  const margin = marginValue === null ? 36 : numericValue(marginValue, "Polynomial plot margin");
-  if (margin < 0 || margin * 2 >= Math.min(...size))
-    throw new Error("Polynomial plot margin is too large for its size");
-  const coefficientNumbers = values.map((value) => numericValue(value, "Polynomial coefficient"));
-  const evaluatePolynomial = (x) => coefficientNumbers.reduce((total, coefficient) => total * x + coefficient, 0);
-  const samplesData = Array.from({ length: samples }, (_, index) => {
-    const x = xMin + (xMax - xMin) * index / (samples - 1);
-    return [x, evaluatePolynomial(x)];
-  });
-  let yMin = Math.min(0, ...samplesData.map(([, y]) => y));
-  let yMax = Math.max(0, ...samplesData.map(([, y]) => y));
-  if (yMin === yMax) {
-    yMin -= 1;
-    yMax += 1;
-  }
-  const yPadding = (yMax - yMin) * 0.08;
-  yMin -= yPadding;
-  yMax += yPadding;
-  const [width, height] = size;
-  const toPoint = ([x, y]) => [
-    margin + (x - xMin) / (xMax - xMin) * (width - margin * 2),
-    height - margin - (y - yMin) / (yMax - yMin) * (height - margin * 2)
-  ];
-  const curveStyle = new Map([
-    ["stroke", get(optionEntries, "stroke", { type: "string", value: "#2563eb" })],
-    ["width", get(optionEntries, "width", int3(2))],
-    ["fill", { type: "string", value: "none" }]
-  ]);
-  const axisStyle = new Map([
-    ["stroke", { type: "string", value: "#64748b" }],
-    ["width", int3(1)],
-    ["dash", { type: "string", value: "3 3" }],
-    ["fill", { type: "string", value: "none" }]
-  ]);
-  const children = [];
-  if (yMin <= 0 && yMax >= 0)
-    children.push(output("path", { points: [toPoint([xMin, 0]), toPoint([xMax, 0])], style: axisStyle }));
-  if (xMin <= 0 && xMax >= 0)
-    children.push(output("path", { points: [toPoint([0, yMin]), toPoint([0, yMax])], style: axisStyle }));
-  children.push(output("path", { points: samplesData.map(toPoint), style: curveStyle }));
-  return output("graphic", {
-    size: [int3(Math.round(width)), int3(Math.round(height))],
-    children,
-    metadata: new Map([["kind", { type: "string", value: "polynomial_plot" }]])
-  });
-}
-function escapeHtml(value) {
-  return String(value).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
-}
-function cellText(value, format) {
-  return value === null || value === undefined ? "" : format(value);
-}
-function ruleField(rule, name) {
-  if (rule?.type === "map" && rule.entries instanceof Map)
-    return get(rule.entries, name);
-  return rule?.[name] ?? null;
-}
-function hasRule(grid, kind, value) {
-  const field = kind === "vertical" ? "afterColumn" : "aboveRow";
-  return grid.rules.some((rule) => {
-    const ruleKind = asString(ruleField(rule, "kind")) ?? ruleField(rule, "kind");
-    const ruleValue = ruleField(rule, field);
-    return ruleKind === kind && (ruleValue === value || numericValue(ruleValue, `Grid ${field}`) === value);
-  });
-}
-function styleEntry(style, name) {
-  if (!(style instanceof Map))
-    return null;
-  if (style.has(name))
-    return style.get(name);
-  return style.get(String(name).toLowerCase()) ?? null;
-}
-function svgNumber(value, label) {
-  const number = numericValue(value, label);
-  if (!Number.isFinite(number))
-    throw new Error(`${label} must be finite`);
-  return Number(number.toFixed(6)).toString();
-}
-function svgPoint(value, index) {
-  const point = sequence(value, `Path point ${index + 1}`);
-  if (point.length !== 2)
-    throw new Error(`Path point ${index + 1} must contain x and y coordinates`);
-  return [svgNumber(point[0], `Path point ${index + 1} x`), svgNumber(point[1], `Path point ${index + 1} y`)];
-}
-function svgPair(value, label) {
-  const pair = sequence(value, label);
-  if (pair.length !== 2)
-    throw new Error(`${label} must contain two coordinates`);
-  return [svgNumber(pair[0], `${label} x`), svgNumber(pair[1], `${label} y`)];
-}
-function sceneField(value, name) {
-  if (value?.type === "map" && value.entries instanceof Map)
-    return get(value.entries, name);
-  return value?.[name] ?? null;
-}
-function svgFlag(value, label) {
-  if (value === true)
-    return "1";
-  if (value === false || value === null || value === undefined)
-    return "0";
-  return numericValue(value, label) === 0 ? "0" : "1";
-}
-function svgPathData(path) {
-  if (!path.commands) {
-    if (path.points.length === 0)
-      return "";
-    const points = path.points.map(svgPoint);
-    const closed = styleEntry(path.style, "closed")?.value === 1n || styleEntry(path.style, "closed") === true;
-    return points.map(([x, y], index) => `${index === 0 ? "M" : "L"}${x} ${y}`).join(" ") + (closed ? " Z" : "");
-  }
-  return path.commands.map((command, index) => {
-    const op = (asString(sceneField(command, "op")) ?? sceneField(command, "op") ?? "").toLowerCase();
-    const destination = () => svgPair(sceneField(command, "to"), `Path command ${index + 1} destination`);
-    if (op === "move" || op === "m") {
-      const [x, y] = destination();
-      return `M${x} ${y}`;
-    }
-    if (op === "line" || op === "l") {
-      const [x, y] = destination();
-      return `L${x} ${y}`;
-    }
-    if (op === "quadratic" || op === "quad" || op === "q") {
-      const [cx, cy] = svgPair(sceneField(command, "control"), `Path command ${index + 1} control`);
-      const [x, y] = destination();
-      return `Q${cx} ${cy} ${x} ${y}`;
-    }
-    if (op === "cubic" || op === "curve" || op === "c") {
-      const [c1x, c1y] = svgPair(sceneField(command, "control1"), `Path command ${index + 1} control1`);
-      const [c2x, c2y] = svgPair(sceneField(command, "control2"), `Path command ${index + 1} control2`);
-      const [x, y] = destination();
-      return `C${c1x} ${c1y} ${c2x} ${c2y} ${x} ${y}`;
-    }
-    if (op === "arc" || op === "a") {
-      const [rx, ry] = svgPair(sceneField(command, "radius"), `Path command ${index + 1} radius`);
-      const rotation = svgNumber(sceneField(command, "rotation") ?? int3(0), `Path command ${index + 1} rotation`);
-      const large = svgFlag(sceneField(command, "large"), `Path command ${index + 1} large flag`);
-      const sweep = svgFlag(sceneField(command, "sweep"), `Path command ${index + 1} sweep flag`);
-      const [x, y] = destination();
-      return `A${rx} ${ry} ${rotation} ${large} ${sweep} ${x} ${y}`;
-    }
-    if (op === "close" || op === "z")
-      return "Z";
-    throw new Error(`Unsupported Path command '${op || "(missing op)"}'`);
-  }).join(" ");
-}
-function svgStyle(style, defaultFill = null) {
-  const attrs = [];
-  const stroke = asString(styleEntry(style, "stroke"));
-  const fill = asString(styleEntry(style, "fill"));
-  const dash = asString(styleEntry(style, "dash"));
-  const opacity = styleEntry(style, "opacity");
-  const width = styleEntry(style, "width") ?? styleEntry(style, "strokeWidth");
-  if (fill || defaultFill !== null)
-    attrs.push(`fill="${escapeHtml(fill || defaultFill)}"`);
-  if (stroke)
-    attrs.push(`stroke="${escapeHtml(stroke)}"`);
-  if (width !== null && width !== undefined)
-    attrs.push(`stroke-width="${svgNumber(width, "Path stroke width")}"`);
-  if (dash)
-    attrs.push(`stroke-dasharray="${escapeHtml(dash)}"`);
-  if (opacity !== null && opacity !== undefined)
-    attrs.push(`opacity="${svgNumber(opacity, "Path opacity")}"`);
-  return attrs.join(" ");
-}
-function svgTransform(node) {
-  const transforms = [];
-  if (node.translate !== null && node.translate !== undefined) {
-    const [x, y] = svgPair(node.translate, "Transform translate");
-    transforms.push(`translate(${x} ${y})`);
-  }
-  if (node.rotate !== null && node.rotate !== undefined) {
-    const angle = svgNumber(node.rotate, "Transform rotate");
-    const origin = node.origin === null || node.origin === undefined ? null : svgPair(node.origin, "Transform origin");
-    transforms.push(origin ? `rotate(${angle} ${origin[0]} ${origin[1]})` : `rotate(${angle})`);
-  }
-  if (node.scale !== null && node.scale !== undefined) {
-    const scale = isSequence(node.scale) || Array.isArray(node.scale) ? svgPair(node.scale, "Transform scale") : [svgNumber(node.scale, "Transform scale"), svgNumber(node.scale, "Transform scale")];
-    transforms.push(`scale(${scale[0]} ${scale[1]})`);
-  }
-  return transforms.join(" ");
-}
-function renderSvgText(node, format) {
-  const [x, y] = svgPair(node.position, "TextMark position");
-  const anchor = asString(styleEntry(node.style, "anchor"));
-  const size = styleEntry(node.style, "size") ?? styleEntry(node.style, "fontSize");
-  const font = asString(styleEntry(node.style, "font"));
-  const weight = asString(styleEntry(node.style, "weight"));
-  const attrs = [svgStyle(node.style, "currentColor")];
-  if (anchor)
-    attrs.push(`text-anchor="${escapeHtml(anchor)}"`);
-  if (size !== null && size !== undefined)
-    attrs.push(`font-size="${svgNumber(size, "TextMark size")}"`);
-  if (font)
-    attrs.push(`font-family="${escapeHtml(font)}"`);
-  if (weight)
-    attrs.push(`font-weight="${escapeHtml(weight)}"`);
-  return `<text x="${x}" y="${y}" ${attrs.filter(Boolean).join(" ")}>${escapeHtml(cellText(node.text, format))}</text>`;
-}
-function renderSvgNode(node, format, defs) {
-  if (!isOutputValue(node))
-    return "";
-  if (node.kind === "path") {
-    const d = svgPathData(node);
-    if (!d)
-      return "";
-    return `<path d="${d}" ${svgStyle(node.style, "none")}/>`;
-  }
-  if (node.kind === "rectangle") {
-    const [x, y] = svgPair(node.origin, "Rectangle origin");
-    const [width, height] = svgPair(node.size, "Rectangle size");
-    return `<rect x="${x}" y="${y}" width="${width}" height="${height}" ${svgStyle(node.style, "none")}/>`;
-  }
-  if (node.kind === "circle") {
-    const [cx, cy] = svgPair(node.center, "Circle center");
-    return `<circle cx="${cx}" cy="${cy}" r="${svgNumber(node.radius, "Circle radius")}" ${svgStyle(node.style, "none")}/>`;
-  }
-  if (node.kind === "text_mark")
-    return renderSvgText(node, format);
-  if (node.kind === "group")
-    return `<g ${svgStyle(node.style)}>${node.children.map((child) => renderSvgNode(child, format, defs)).join("")}</g>`;
-  if (node.kind === "transform") {
-    const transform = svgTransform(node);
-    return `<g${transform ? ` transform="${transform}"` : ""}${svgStyle(node.style) ? ` ${svgStyle(node.style)}` : ""}>${node.children.map((child) => renderSvgNode(child, format, defs)).join("")}</g>`;
-  }
-  if (node.kind === "clip") {
-    const [x, y, width, height] = node.bounds.map((value, index) => svgNumber(value, `Clip bounds ${index + 1}`));
-    const id = `rix-clip-${defs.length + 1}`;
-    defs.push(`<clipPath id="${id}"><rect x="${x}" y="${y}" width="${width}" height="${height}"/></clipPath>`);
-    return `<g clip-path="url(#${id})"${svgStyle(node.style) ? ` ${svgStyle(node.style)}` : ""}>${node.children.map((child) => renderSvgNode(child, format, defs)).join("")}</g>`;
-  }
-  return "";
-}
-function renderGraphicSvg(graphic, format = (item) => String(item ?? "")) {
-  if (!isOutputValue(graphic) || graphic.kind !== "graphic")
-    throw new Error("Expected a Graphic output value");
-  const size = graphic.size.map((value, index) => svgNumber(value, `Graphic size ${index + 1}`));
-  const defs = [];
-  const children = graphic.children.map((child) => renderSvgNode(child, format, defs)).join("");
-  return `<svg class="rix-output-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size[0]} ${size[1]}" width="${size[0]}" height="${size[1]}" role="img">${defs.length ? `<defs>${defs.join("")}</defs>` : ""}${children}</svg>`;
-}
-function formatSheetText(sheet, format) {
-  const strings = sheet.cells.map((row) => row.map((cell) => cellText(cell.value, format)));
-  const rowHeaderWidth = Math.max(1, ...sheet.rowHeaders.map((header2) => header2.length));
-  const columnWidths = sheet.columnHeaders.map((header2, column) => Math.max(header2.length, 1, ...strings.map((row) => row[column]?.length ?? 0)));
-  const heading = [
-    sheet.title ? `Sheet: ${sheet.title}` : "Sheet",
-    sheet.addressBase,
-    `shape ${sheet.shape.join("×")}`,
-    `view axes ${sheet.viewAxes.join(",")}`
-  ].join(" · ");
-  const header = `${"".padStart(rowHeaderWidth)}  ${sheet.columnHeaders.map((label, column) => label.padStart(columnWidths[column])).join("  ")}`;
-  const rows = strings.map((row, rowIndex) => `${sheet.rowHeaders[rowIndex].padStart(rowHeaderWidth)}  ${row.map((cell, column) => cell.padStart(columnWidths[column])).join("  ")}`);
-  return [heading, header, ...rows].join(`
-`);
-}
-function formatOutputText(value, format) {
-  if (!isOutputValue(value))
-    return format(value);
-  if (value.kind === "text")
-    return cellText(value.value, format);
-  if (value.kind === "paragraph")
-    return value.children.map((child) => cellText(child, format)).join("");
-  if (value.kind === "heading")
-    return `${"#".repeat(value.level)} ${cellText(value.content, format)}`;
-  if (value.kind === "fragment")
-    return value.children.map((child) => formatOutputText(child, format)).join(`
-
-`);
-  if (value.kind === "table") {
-    const strings = value.rows.map((row) => row.map((cell) => cellText(cell, format)));
-    const widths = value.columns.map((column, index) => Math.max(column.label.length, ...strings.map((row) => row[index].length)));
-    const line = (row) => row.map((cell, index) => String(cell).padStart(widths[index])).join("  ");
-    return [value.caption, line(value.columns.map((column) => column.label)), widths.map((width) => "-".repeat(width)).join("  "), ...strings.map(line)].filter(Boolean).join(`
-`);
-  }
-  if (value.kind === "grid") {
-    const strings = value.rows.map((row) => row.map((cell) => cellText(cell, format)));
-    const widths = value.columns.map((_, index) => Math.max(1, ...strings.map((row) => row[index].length)));
-    const lines = [];
-    for (let index = 0;index < strings.length; index += 1) {
-      if (hasRule(value, "horizontal", index + 1))
-        lines.push(`  ${widths.slice(1).map((width) => "-".repeat(width + 2)).join("")}`);
-      const parts = strings[index].map((cell, column) => cell.padStart(widths[column]));
-      lines.push(hasRule(value, "vertical", 1) ? `${parts[0]} │ ${parts.slice(1).join("  ")}` : parts.join("  "));
-    }
-    return lines.join(`
-`);
-  }
-  if (value.kind === "sheet")
-    return formatSheetText(value, format);
-  if (value.kind === "figure")
-    return [formatOutputText(value.content, format), value.caption].filter(Boolean).join(`
-`);
-  if (value.kind === "graphic")
-    return `[Graphic: ${cellText(value.size[0], format)} × ${cellText(value.size[1], format)}, ${value.children.length} scene nodes]`;
-  if (value.kind === "path")
-    return value.commands ? `[Path: ${value.commands.length} commands]` : `[Path: ${value.points.length} points]`;
-  if (value.kind === "slide")
-    return [value.title, formatOutputText(value.content, format)].filter(Boolean).join(`
-`);
-  if (value.kind === "slides")
-    return value.slides.map((slide, index) => `Slide ${index + 1}:
-${formatOutputText(slide, format)}`).join(`
-
-`);
-  return `[Output: ${value.kind}]`;
-}
-function renderOutputHtml(value, format = (item) => String(item ?? "")) {
-  const text = (item) => escapeHtml(isOutputValue(item) ? formatOutputText(item, format) : cellText(item, format));
-  if (!isOutputValue(value))
-    return `<pre>${text(value)}</pre>`;
-  if (value.kind === "text")
-    return `<span class="rix-output-text">${text(value.value)}</span>`;
-  if (value.kind === "paragraph")
-    return `<p class="rix-output-paragraph">${value.children.map(text).join("")}</p>`;
-  if (value.kind === "heading")
-    return `<h${value.level} class="rix-output-heading">${text(value.content)}</h${value.level}>`;
-  if (value.kind === "fragment")
-    return `<section class="rix-output-fragment">${value.children.map((child) => renderOutputHtml(child, format)).join("")}</section>`;
-  if (value.kind === "table")
-    return `<table class="rix-output-table">${value.caption ? `<caption>${escapeHtml(value.caption)}</caption>` : ""}<thead><tr>${value.columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}</tr></thead><tbody>${value.rows.map((row) => `<tr>${row.map((cell) => `<td>${text(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
-  if (value.kind === "grid")
-    return `<table class="rix-output-grid"><tbody>${value.rows.map((row, rowIndex) => `<tr${hasRule(value, "horizontal", rowIndex + 1) ? ' class="rix-grid-rule-top"' : ""}>${row.map((cell, column) => `<td${hasRule(value, "vertical", column + 1) ? ' class="rix-grid-rule-left"' : ""}>${text(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
-  if (value.kind === "sheet") {
-    const summary = `${value.addressBase} · shape ${value.shape.join("×")}`;
-    const controls = value.hiddenAxes.length === 0 ? "" : `<div class="rix-output-sheet-plane-controls" aria-label="Tensor plane">${value.hiddenAxes.map(({ axis, name, length, selected }) => `<label><span>${escapeHtml(name)} · axis ${axis}</span><select data-rix-sheet-axis="${axis}" aria-label="${escapeHtml(name)} axis ${axis}">${Array.from({ length }, (_item, index) => `<option value="${index + 1}"${selected === index + 1 ? " selected" : ""}>${index + 1}</option>`).join("")}</select></label>`).join("")}</div>`;
-    const bodies = value.planes.map((plane) => `<tbody data-rix-plane-key="${escapeHtml(plane.key)}" data-rix-slice="${plane.slice.map((item) => item ?? "").join(",")}"${plane.key === value.selectedPlaneKey ? "" : " hidden"}>${plane.cells.map((row, rowIndex) => `<tr><th scope="row" data-rix-row="${rowIndex + 1}">${escapeHtml(value.rowHeaders[rowIndex])}</th>${row.map((cell, columnIndex) => `<td data-rix-row="${rowIndex + 1}" data-rix-column="${columnIndex + 1}" data-rix-index="${cell.index.join(",")}" data-rix-address="${escapeHtml(cell.address)}" data-rix-display-address="${escapeHtml(cell.displayAddress)}" title="${escapeHtml(cell.displayAddress)} · ${escapeHtml(cell.address)}">${text(cell.value)}</td>`).join("")}</tr>`).join("")}</tbody>`).join("");
-    return `<section class="rix-output-sheet" data-rix-rank="${value.rank}" data-rix-selected-plane="${escapeHtml(value.selectedPlaneKey)}">${value.title ? `<h3 class="rix-output-sheet-title">${escapeHtml(value.title)}</h3>` : ""}<div class="rix-output-sheet-location" aria-live="polite" data-rix-summary="${escapeHtml(summary)}">${escapeHtml(summary)}</div>${controls}<table><thead><tr><th class="rix-output-sheet-corner" scope="col">${escapeHtml(value.addressBase)}</th>${value.columnHeaders.map((header, column) => `<th scope="col" data-rix-column="${column + 1}">${escapeHtml(header)}</th>`).join("")}</tr></thead>${bodies}</table></section>`;
-  }
-  if (value.kind === "figure")
-    return `<figure class="rix-output-figure"${value.label ? ` id="${escapeHtml(value.label)}"` : ""}>${renderOutputHtml(value.content, format)}${value.caption ? `<figcaption>${escapeHtml(value.caption)}</figcaption>` : ""}</figure>`;
-  if (value.kind === "graphic")
-    return `<div class="rix-output-graphic">${renderGraphicSvg(value, format)}</div>`;
-  if (value.kind === "slide")
-    return `<section class="rix-output-slide">${value.title ? `<h2>${escapeHtml(value.title)}</h2>` : ""}${renderOutputHtml(value.content, format)}</section>`;
-  if (value.kind === "slides")
-    return `<section class="rix-output-slides">${value.slides.map((slide) => renderOutputHtml(slide, format)).join("")}</section>`;
-  return `<pre>${escapeHtml(formatOutputText(value, format))}</pre>`;
-}
-function createAlgebraOutputCollection() {
-  const syntheticDivision = (root, coefficients) => createSyntheticDivision(root, coefficients);
-  return {
-    type: "map",
-    entries: new Map([["SyntheticDivision", syntheticDivision], ["SYNTHETICDIVISION", syntheticDivision]]),
-    _ext: new Map([
-      ["SYNTHETICDIVISION", {
-        type: "method_builtin",
-        name: "SyntheticDivision",
-        impl: (args) => syntheticDivision(...args.slice(1))
-      }],
-      ["immutable", int3(1)]
-    ])
-  };
-}
-function createGraphicsOutputCollection() {
-  const methods = new Map([
-    ["Graphic", createGraphic],
-    ["Path", createPath],
-    ["Group", createGroup],
-    ["Transform", createTransform],
-    ["Text", createTextMark],
-    ["Rectangle", createRectangle],
-    ["Circle", createCircle],
-    ["Clip", createClip]
-  ]);
-  const entries = new Map;
-  const extension = new Map([["immutable", int3(1)]]);
-  for (const [name, constructor] of methods) {
-    entries.set(name, constructor);
-    entries.set(name.toUpperCase(), constructor);
-    extension.set(name.toUpperCase(), {
-      type: "method_builtin",
-      name,
-      impl: (args) => constructor(args.slice(1))
-    });
-  }
-  return { type: "map", entries, _ext: extension };
-}
-function createPlotOutputCollection() {
-  const polynomial = (coefficients, domain, options = null) => createPolynomialPlot(coefficients, domain, options);
-  return {
-    type: "map",
-    entries: new Map([["Polynomial", polynomial], ["POLYNOMIAL", polynomial]]),
-    _ext: new Map([
-      ["POLYNOMIAL", {
-        type: "method_builtin",
-        name: "Polynomial",
-        impl: (args) => polynomial(...args.slice(1))
-      }],
-      ["immutable", int3(1)]
-    ])
-  };
-}
-
 // ../rix/src/runtime/structural-arithmetic.js
 var DEFAULT_BINARY = {
   ":": { precedence: 70, associativity: "left", head: "Interval" },
@@ -14748,8 +15096,8 @@ function asFraction(value) {
   value = semanticLiteralValue(value);
   if (value instanceof Fraction)
     return value;
-  const integer = integerValue(value);
-  return integer === null ? null : new Fraction(integer, 1n);
+  const integer2 = integerValue(value);
+  return integer2 === null ? null : new Fraction(integer2, 1n);
 }
 function isZero3(value) {
   value = semanticLiteralValue(value);
@@ -15163,8 +15511,8 @@ class StructuralParser {
   }
 }
 function integerComponent(value) {
-  const integer = integerValue(value);
-  return integer === null ? null : integer;
+  const integer2 = integerValue(value);
+  return integer2 === null ? null : integer2;
 }
 function componentAdd(left, right, mode) {
   if (isZero3(left))
@@ -16004,6 +16352,8 @@ function formatValue(val, options = {}) {
     if (val.type === "iterator") {
       return val.cursor === null ? "[Iterator: done]" : `[Iterator: index ${val.cursor}]`;
     }
+    if (val.type === "binding")
+      return val.toString();
     if (val.type === "string")
       return val.value;
     if (isCayleyInfinity(val))
@@ -23087,12 +23437,12 @@ function toBaseString(value, baseSystem, modeSpec = { mode: 1 }) {
     const hash = body.indexOf("#");
     const dot = body.indexOf(".");
     const cut = dot === -1 ? hash === -1 ? body.length : hash : dot;
-    const integer = body.slice(0, cut);
-    const integerDigits = Array.from(integer).filter((ch) => baseSystem.charMap.has(ch)).length;
-    if (integer.length <= 1)
+    const integer2 = body.slice(0, cut);
+    const integerDigits = Array.from(integer2).filter((ch) => baseSystem.charMap.has(ch)).length;
+    if (integer2.length <= 1)
       return `${groupRadixExpansion(sign2 + body, baseSystem)}_^0`;
     const tail = dot === -1 ? hash === -1 ? "" : body.slice(hash) : body.slice(dot + 1);
-    const shifted = `${integer[0]}.${integer.slice(1)}${tail}`;
+    const shifted = `${integer2[0]}.${integer2.slice(1)}${tail}`;
     return `${groupRadixExpansion(sign2 + shifted, baseSystem)}_^${integerDigits - 1}`;
   }
   if (mode === 6) {
@@ -25123,11 +25473,11 @@ function toRational2(val, name = "value") {
   }
   throw new Error(`${name} must be an exact rational value`);
 }
-function intervalBounds(interval) {
-  if (interval instanceof RationalInterval)
-    return [interval.low, interval.high];
-  if (interval?.type === "interval")
-    return [toRational2(interval.lo, "interval lower bound"), toRational2(interval.hi, "interval upper bound")];
+function intervalBounds(interval2) {
+  if (interval2 instanceof RationalInterval)
+    return [interval2.low, interval2.high];
+  if (interval2?.type === "interval")
+    return [toRational2(interval2.lo, "interval lower bound"), toRational2(interval2.hi, "interval upper bound")];
   throw new Error("Interval operation requires a rational interval");
 }
 function eagerSequence(values) {
@@ -26592,7 +26942,26 @@ var documentTemplateFunction = {
   doc: 'Create a Fragment from an @""" document template',
   impl: (args, context, evaluate) => documentTemplate(args[0], context, evaluate)
 };
+var bindFunction = {
+  lazy: true,
+  pure: false,
+  doc: "Capture a live Binding to a RiX variable",
+  impl(args, context) {
+    if (args.length !== 1)
+      throw new Error(".Bind expects exactly one variable");
+    const target = args[0];
+    if (!target || target.fn !== "RETRIEVE") {
+      throw new Error(".Bind currently requires a variable name; use .Bind(value).At(...) for indexed lenses");
+    }
+    const name = target.args[0];
+    const cell = context.getCell(name);
+    if (!cell)
+      throw new Error(`Cannot bind undefined variable: ${name}`);
+    return createBinding(cell, { name });
+  }
+};
 var outputFunctions = {
+  BIND: bindFunction,
   TEXT: capability(createText, "Create a portable text output node"),
   PARAGRAPH: capability(createParagraph, "Create a portable paragraph output node"),
   HEADING: capability(createHeading, "Create a portable document heading"),
@@ -28801,7 +29170,7 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
   };
 }
 
-export { enhanceSheetViews, findHelp, createRixRepl };
+export { enhanceSheetViews, createWidgetSession, findHelp, createRixRepl };
 
-//# debugId=D742A617B55B313A64756E2164756E21
-//# sourceMappingURL=chunk-w8dbfn6p.js.map
+//# debugId=E260A3DCFA5EC0A664756E2164756E21
+//# sourceMappingURL=chunk-ez95sqsm.js.map

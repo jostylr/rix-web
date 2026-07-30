@@ -85,16 +85,36 @@ rowByDepth ;
 Numeric column labels use `R2C2` as their unambiguous display address, while
 the RiX address still contains the full tensor location.
 
-## Snapshot, not a live editor
+## Choose snapshot or live editing
 
-The current Sheet records exact values and all selectable planes when it is
-created. Selecting cells or planes does not mutate `grid` or `cube`. A future
-binding form will make editing bidirectional; today `.Sheet` is a safe
-read-only view.
+An ordinary Sheet records exact values and all selectable planes when it is
+created. Selecting cells or planes does not mutate `grid` or `cube`:
+
+```rix edu
+.Sheet(grid) ;
+```
+
+Wrap a variable in `.Bind` to opt into a bidirectional widget:
+
+```rix edu
+editableGrid := .Sheet(.Bind(grid), {=
+    title = "Editable exact matrix",
+    axes = ["row", "column"]
+});
+editableGrid ;
+```
+
+Select a cell in the live view, enter a RiX expression in its editor, and press
+Set. Values remain exact, so `5 / 7`, `2:3`, and quoted strings are stored as
+RiX values rather than browser text. Double-click or F2 moves directly to the
+selected cell's editor. The Binding captures the RiX cell behind `grid`; it
+does not expose a DOM node or make spreadsheet display labels part of RiX.
 
 :::challenge Make an address-aware sheet
-Create a 2 by 2 tensor named `prices`, then display it with the title
-`Exact prices` and an address base that makes pasted references evaluate.
+Create a 2 by 2 tensor named `prices`, then display it as an editable Sheet with
+the title `Exact prices`. Because `.Bind(prices)` knows the source name, its
+canonical addresses use `prices[...]` by default.
 
     prices := {:2x2: 3 / 2, 2; 5 / 4, 7 / 3};
+    .Sheet(.Bind(prices), {= title="Exact prices" })
 :::

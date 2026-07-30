@@ -1,8 +1,7 @@
 import { createRixRepl } from "./repl-runtime.js";
 import { objectHelp } from "./tutorial-index.js";
-import { enhanceSheetViews } from "../../rix/src/index.js";
-
-const repl = createRixRepl();
+import { replayTutorialSources } from "./tutorial-replay.js";
+import { createWidgetSession, enhanceSheetViews } from "../../rix/src/index.js";
 
 function escapeHtml(value) {
     return String(value).replace(/[&<>'"]/g, (character) => ({
@@ -28,11 +27,19 @@ function insertTutorialText(input, text) {
     input.focus();
 }
 
+function replayThrough(cell) {
+    const cells = [...document.querySelectorAll(".tutorial-cell")];
+    return replayTutorialSources(
+        cells.map((candidate) => candidate.querySelector("[data-tutorial-source]")?.value),
+        cells.indexOf(cell),
+        createRixRepl,
+    );
+}
+
 function runCell(cell) {
     const sourceInput = cell.querySelector("[data-tutorial-source]");
-    const source = sourceInput.value.trim();
-    if (!source) return;
-    const response = repl.run(source);
+    const response = replayThrough(cell);
+    if (!response) return;
     const output = cell.querySelector("[data-tutorial-output]");
     if (response.type === "help") {
         const lines = response.groups.flatMap((group) => group.items.map(([syntax, description]) => `${syntax} — ${description}`));
@@ -41,8 +48,17 @@ function runCell(cell) {
     }
     if (response.type !== "error" && response.html) {
         output.innerHTML = `<div class="result rich-output">${response.html}</div>`;
+        const widgetSession = response.value?.kind === "sheet" && response.value.editable
+            ? createWidgetSession(response.value)
+            : null;
         enhanceSheetViews(output, {
             onActivate: ({ address }) => insertTutorialText(sourceInput, address),
+            onEdit: widgetSession ? ({ index, source: editSource }) => {
+                const parsed = response.repl.run(editSource);
+                if (parsed.type === "error") return parsed;
+                widgetSession.dispatch({ type: "sheet:set", index, value: parsed.value });
+                return { ...parsed, revision: widgetSession.revision };
+            } : null,
         });
         return;
     }

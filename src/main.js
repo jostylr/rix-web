@@ -1,5 +1,5 @@
 import { createRixRepl, findHelp } from "./repl-runtime.js";
-import { enhanceSheetViews } from "../../rix/src/index.js";
+import { createWidgetSession, enhanceSheetViews } from "../../rix/src/index.js";
 
 const repl = createRixRepl();
 const outputHistory = document.querySelector("#output-history");
@@ -123,8 +123,17 @@ function appendOutput(source, response) {
             outputLine.classList.add("rich-output");
             outputLine.innerHTML = response.html;
             outputLine.addEventListener("click", () => openInspection(source, response.text));
+            const widgetSession = response.value?.kind === "sheet" && response.value.editable
+                ? createWidgetSession(response.value)
+                : null;
             enhanceSheetViews(outputLine, {
                 onActivate: ({ address }) => insertInputText(address),
+                onEdit: widgetSession ? ({ index, source: editSource }) => {
+                    const parsed = repl.run(editSource);
+                    if (parsed.type === "error") return parsed;
+                    widgetSession.dispatch({ type: "sheet:set", index, value: parsed.value });
+                    return { ...parsed, revision: widgetSession.revision };
+                } : null,
             });
         } else {
             outputLine.innerHTML = response.type === "error"

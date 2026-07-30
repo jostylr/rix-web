@@ -1,8 +1,9 @@
 import {
   createRixRepl,
+  createWidgetSession,
   enhanceSheetViews,
   findHelp
-} from "./chunk-w8dbfn6p.js";
+} from "./chunk-ez95sqsm.js";
 
 // src/main.js
 var repl = createRixRepl();
@@ -129,8 +130,16 @@ function appendOutput(source, response) {
       outputLine.classList.add("rich-output");
       outputLine.innerHTML = response.html;
       outputLine.addEventListener("click", () => openInspection(source, response.text));
+      const widgetSession = response.value?.kind === "sheet" && response.value.editable ? createWidgetSession(response.value) : null;
       enhanceSheetViews(outputLine, {
-        onActivate: ({ address }) => insertInputText(address)
+        onActivate: ({ address }) => insertInputText(address),
+        onEdit: widgetSession ? ({ index, source: editSource }) => {
+          const parsed = repl.run(editSource);
+          if (parsed.type === "error")
+            return parsed;
+          widgetSession.dispatch({ type: "sheet:set", index, value: parsed.value });
+          return { ...parsed, revision: widgetSession.revision };
+        } : null
       });
     } else {
       outputLine.innerHTML = response.type === "error" ? escapeHtml(preview) : `${escapeHtml(preview)}<span class="inject-icon" title="Use this value">→</span>`;
@@ -396,5 +405,5 @@ displayWelcome();
 setAutoSeparateLines(autoSeparateLines);
 input.focus();
 
-//# debugId=57961851A58C45AE64756E2164756E21
+//# debugId=4B70C6F83BB2CCE464756E2164756E21
 //# sourceMappingURL=main.js.map
