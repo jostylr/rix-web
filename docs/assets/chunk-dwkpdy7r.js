@@ -15049,6 +15049,9 @@ function formulaSheetMethods() {
   ]);
 }
 function publicSlot(slot, index, metadata) {
+  const editDiagnostics = metadata.editDiagnostics ?? [];
+  const diagnostics = editDiagnostics.length > 0 ? editDiagnostics : slot.diagnostics;
+  const diagnosticKind = editDiagnostics.length > 0 ? metadata.diagnosticKind ?? "parse" : diagnostics.length > 0 ? diagnostics.some((message) => message.startsWith("Formula cycle:")) ? "cycle" : "runtime" : null;
   return Object.freeze({
     id: metadata.id,
     reactiveId: slot.id,
@@ -15058,9 +15061,11 @@ function publicSlot(slot, index, metadata) {
     formula: slot.formula,
     value: slot.value,
     lastGoodValue: slot.lastGoodValue,
-    state: slot.state,
+    state: diagnostics.length > 0 ? "error" : slot.state,
     dependencies: Object.freeze([...slot.dependencies].map(keyFromNodeName)),
-    diagnostics: Object.freeze([...slot.diagnostics]),
+    diagnostics: Object.freeze([...diagnostics]),
+    diagnosticKind,
+    diagnosticSource: metadata.diagnosticSource ?? null,
     view: metadata.view
   });
 }
@@ -15087,7 +15092,10 @@ function createFormulaSheet(formulasValue, options = {}) {
       id: idForSlot,
       source,
       assignmentMode: assignmentMode(provided.assignmentMode ?? defaultAssignmentMode),
-      view: Object.freeze({ ...provided.view ?? {} })
+      view: Object.freeze({ ...provided.view ?? {} }),
+      editDiagnostics: Object.freeze([]),
+      diagnosticKind: null,
+      diagnosticSource: null
     }];
   }));
   const channel = new Set;
@@ -15177,10 +15185,16 @@ function createFormulaSheet(formulasValue, options = {}) {
       const nextSource = metadata?.source ?? options.formulaSource?.(formula) ?? null;
       const nextMode = assignmentMode(metadata?.assignmentMode ?? record.assignmentMode);
       const previousView = record.view;
+      const previousEditDiagnostics = record.editDiagnostics;
+      const previousDiagnosticKind = record.diagnosticKind;
+      const previousDiagnosticSource = record.diagnosticSource;
       const nextView = record.view?.blank === true ? Object.freeze(Object.fromEntries(Object.entries(record.view).filter(([key]) => key !== "blank"))) : record.view;
       record.source = nextSource;
       record.assignmentMode = nextMode;
       record.view = nextView;
+      record.editDiagnostics = Object.freeze([]);
+      record.diagnosticKind = null;
+      record.diagnosticSource = null;
       try {
         graph.setFormula(nodeNameFor(normalized), formula, {
           ...metadata,
@@ -15198,6 +15212,9 @@ function createFormulaSheet(formulasValue, options = {}) {
           record.source = previousSource;
           record.assignmentMode = previousMode;
           record.view = previousView;
+          record.editDiagnostics = previousEditDiagnostics;
+          record.diagnosticKind = previousDiagnosticKind;
+          record.diagnosticSource = previousDiagnosticSource;
         }
         throw error;
       }
@@ -15208,8 +15225,34 @@ function createFormulaSheet(formulasValue, options = {}) {
         throw new Error("FormulaSheet source editing requires a formula compiler");
       }
       const normalized = normalizeIndex2(index, shape);
-      const parts = formulaSourceParts(source, mode);
-      const formula = options.compileFormula(parts.source);
+      let parts = null;
+      let formula;
+      try {
+        parts = formulaSourceParts(source, mode);
+        formula = options.compileFormula(parts.source);
+      } catch (error) {
+        const record = slotMetadata.get(slotKey(normalized));
+        const message = error instanceof Error ? error.message : String(error);
+        const attemptedSource = parts?.source ?? (source?.type === "string" ? source.value : String(source ?? ""));
+        record.editDiagnostics = Object.freeze([message]);
+        record.diagnosticKind = "parse";
+        record.diagnosticSource = attemptedSource;
+        const formulaEvent = Object.freeze({
+          type: "formula:error",
+          sheet,
+          epoch: sheet.epoch,
+          cause: Object.freeze({
+            type: "formula:parse",
+            index: Object.freeze(normalized),
+            source: attemptedSource,
+            assignmentMode: parts?.assignmentMode ?? null
+          }),
+          error
+        });
+        for (const listener of [...channel])
+          listener(formulaEvent);
+        throw error;
+      }
       return sheet.setFormula(normalized, formula, {
         source: parts.source,
         assignmentMode: parts.assignmentMode,
@@ -15500,14 +15543,19 @@ function sheetData(value) {
       binding: null,
       formulaSheet: value,
       shape: [...value.shape],
-      at: (index) => value.get(index),
+      at: (index) => value.slot(index).value,
       formulaSourceAt: (index) => value.slot(index).source,
       formulaMetadataAt: (index) => {
         const slot = value.slot(index);
         return {
           slotId: slot.id,
           assignmentMode: slot.assignmentMode,
-          blank: slot.view?.blank === true
+          blank: slot.view?.blank === true,
+          state: slot.state,
+          dependencies: slot.dependencies,
+          diagnostics: slot.diagnostics,
+          diagnosticKind: slot.diagnosticKind,
+          diagnosticSource: slot.diagnosticSource
         };
       }
     };
@@ -15729,6 +15777,11 @@ function createSheet(args) {
       slotId: formulaMetadata?.slotId ?? null,
       assignmentMode: formulaMetadata?.assignmentMode ?? null,
       blank: formulaMetadata?.blank === true,
+      state: formulaMetadata?.state ?? "clean",
+      dependencies: Object.freeze([...formulaMetadata?.dependencies ?? []]),
+      diagnostics: Object.freeze([...formulaMetadata?.diagnostics ?? []]),
+      diagnosticKind: formulaMetadata?.diagnosticKind ?? null,
+      diagnosticSource: formulaMetadata?.diagnosticSource ?? null,
       index: Object.freeze(index),
       coordinateLabels: Object.freeze(coordinateLabels),
       coordinateLabel: coordinateLabels.filter((label) => label !== null).join(" / ") || null,
@@ -16263,7 +16316,20 @@ function renderOutputHtml(value, format = (item) => String(item ?? "")) {
     const axisSummary = value.columnAxis ? `Rows: ${value.rowAxis.name} · Columns: ${value.columnAxis.name}` : `Rows: ${value.rowAxis.name}`;
     const controls = value.hiddenAxes.length === 0 ? "" : `<div class="rix-output-sheet-plane-controls" aria-label="Tensor plane">${value.hiddenAxes.map(({ axis, name, length, selected, labels }) => `<label><span>${escapeHtml(name)} · axis ${axis}</span><select data-rix-sheet-axis="${axis}" aria-label="${escapeHtml(name)} axis ${axis}">${Array.from({ length }, (_item, index) => `<option value="${index + 1}"${selected === index + 1 ? " selected" : ""}>${escapeHtml(labels?.[index] ?? String(index + 1))}</option>`).join("")}</select></label>`).join("")}</div>`;
     const headerAttributes = (axis, coordinate, fallback) => value.formulaBacked ? ` class="rix-sheet-header-editable" tabindex="0" data-rix-header-axis="${axis}" data-rix-header-coordinate="${coordinate}" data-rix-header-label="${escapeHtml(value.axisLabels[axis - 1]?.[coordinate - 1] ?? "")}" data-rix-header-fallback="${escapeHtml(fallback)}"` : "";
-    const bodies = value.planes.map((plane) => `<tbody data-rix-plane-key="${escapeHtml(plane.key)}" data-rix-slice="${plane.slice.map((item) => item ?? "").join(",")}"${plane.key === value.selectedPlaneKey ? "" : " hidden"}>${plane.cells.map((row, rowIndex) => `<tr><th scope="row" data-rix-row="${rowIndex + 1}"${headerAttributes(value.rowAxis.axis, rowIndex + 1, String(rowIndex + 1))}${value.axisLabels[value.rowAxis.axis - 1] ? ` title="${escapeHtml(value.rowAxis.name)} ${rowIndex + 1}"` : ""}>${escapeHtml(value.rowHeaders[rowIndex])}</th>${row.map((cell, columnIndex) => `<td data-rix-row="${rowIndex + 1}" data-rix-column="${columnIndex + 1}" data-rix-index="${cell.index.join(",")}" data-rix-address="${escapeHtml(cell.address)}" data-rix-display-address="${escapeHtml(cell.displayAddress)}"${cell.blank ? ' data-rix-blank="true"' : ""}${cell.coordinateLabel === null ? "" : ` data-rix-coordinate-labels="${escapeHtml(JSON.stringify(cell.coordinateLabels))}" data-rix-coordinate-label="${escapeHtml(cell.coordinateLabel)}"`}${cell.formulaSource === null ? "" : ` data-rix-formula-source="${escapeHtml(cell.formulaSource)}"`}${cell.slotId === null ? "" : ` data-rix-slot-id="${escapeHtml(cell.slotId)}"`}${cell.assignmentMode === null ? "" : ` data-rix-assignment-mode="${escapeHtml(cell.assignmentMode)}"`} title="${cell.coordinateLabel === null ? "" : `${escapeHtml(cell.coordinateLabel)} · `}${escapeHtml(cell.displayAddress)} · ${escapeHtml(cell.address)}">${cell.blank ? "" : cell.value === null ? "_" : text4(cell.value)}</td>`).join("")}</tr>`).join("")}</tbody>`).join("");
+    const renderSheetCell = (cell, rowIndex, columnIndex) => {
+      const diagnostic = cell.diagnostics[0] ?? null;
+      const cellValue = cell.blank ? "" : cell.value === null ? "_" : text4(cell.value);
+      const title = [
+        cell.coordinateLabel,
+        cell.displayAddress,
+        cell.address,
+        cell.dependencies.length > 0 ? `depends on ${cell.dependencies.map((dependency) => `${value.addressBase}[${dependency}]`).join(", ")}` : null,
+        diagnostic ? `${cell.diagnosticKind ?? "runtime"} error: ${diagnostic}` : null
+      ].filter(Boolean).join(" · ");
+      const diagnosticAttributes = diagnostic === null ? "" : ` data-rix-state="error" data-rix-diagnostic-kind="${escapeHtml(cell.diagnosticKind ?? "runtime")}" data-rix-diagnostics="${escapeHtml(JSON.stringify(cell.diagnostics))}"${cell.diagnosticSource === null ? "" : ` data-rix-diagnostic-source="${escapeHtml(cell.diagnosticSource)}"`} aria-invalid="true"`;
+      return `<td data-rix-row="${rowIndex + 1}" data-rix-column="${columnIndex + 1}" data-rix-index="${cell.index.join(",")}" data-rix-address="${escapeHtml(cell.address)}" data-rix-display-address="${escapeHtml(cell.displayAddress)}"${cell.blank ? ' data-rix-blank="true"' : ""}${cell.coordinateLabel === null ? "" : ` data-rix-coordinate-labels="${escapeHtml(JSON.stringify(cell.coordinateLabels))}" data-rix-coordinate-label="${escapeHtml(cell.coordinateLabel)}"`}${cell.formulaSource === null ? "" : ` data-rix-formula-source="${escapeHtml(cell.formulaSource)}"`}${cell.slotId === null ? "" : ` data-rix-slot-id="${escapeHtml(cell.slotId)}"`}${cell.assignmentMode === null ? "" : ` data-rix-assignment-mode="${escapeHtml(cell.assignmentMode)}"`}${cell.dependencies.length === 0 ? "" : ` data-rix-dependencies="${escapeHtml(JSON.stringify(cell.dependencies))}"`}${diagnosticAttributes} title="${escapeHtml(title)}">${cellValue}</td>`;
+    };
+    const bodies = value.planes.map((plane) => `<tbody data-rix-plane-key="${escapeHtml(plane.key)}" data-rix-slice="${plane.slice.map((item) => item ?? "").join(",")}"${plane.key === value.selectedPlaneKey ? "" : " hidden"}>${plane.cells.map((row, rowIndex) => `<tr><th scope="row" data-rix-row="${rowIndex + 1}"${headerAttributes(value.rowAxis.axis, rowIndex + 1, String(rowIndex + 1))}${value.axisLabels[value.rowAxis.axis - 1] ? ` title="${escapeHtml(value.rowAxis.name)} ${rowIndex + 1}"` : ""}>${escapeHtml(value.rowHeaders[rowIndex])}</th>${row.map((cell, columnIndex) => renderSheetCell(cell, rowIndex, columnIndex)).join("")}</tr>`).join("")}</tbody>`).join("");
     const liveAttributes = value.editable ? ` data-rix-editable="true" data-rix-edit-mode="${value.editMode}"${value.bindingId ? ` data-rix-binding-id="${escapeHtml(value.bindingId)}"` : ""}` : "";
     const assignmentControl = value.editMode === "formula" ? `<label class="rix-output-sheet-assignment"><span>Assignment</span><select data-rix-edit-assignment-mode aria-label="Formula assignment mode">${FORMULA_SHEET_ASSIGNMENT_MODES.map((mode) => `<option value="${escapeHtml(mode)}"${mode === ":=" ? " selected" : ""}>${escapeHtml(mode)}</option>`).join("")}</select></label>` : "";
     const editor = value.editable ? `<form class="rix-output-sheet-editor" hidden><label class="rix-output-sheet-formula"><span data-rix-edit-label>Choose a cell to edit</span><input data-rix-edit-source aria-label="${value.editMode === "formula" ? "RiX formula" : "RiX value"}" autocomplete="off" spellcheck="false"></label>${assignmentControl}<button type="submit">${value.editMode === "formula" ? "Set formula" : "Set"}</button><output data-rix-edit-value aria-live="polite"></output><output data-rix-edit-status aria-live="polite"></output></form>` : "";
@@ -30505,6 +30571,46 @@ function parseSheetFormulaClipboard(text4, fallbackAssignmentMode = ":=") {
     assignmentMode: match?.[1] ?? fallbackAssignmentMode
   });
 }
+function sheetCellDiagnostics(dataset = {}) {
+  let diagnostics = [];
+  if (dataset.rixDiagnostics) {
+    try {
+      const parsed = JSON.parse(dataset.rixDiagnostics);
+      if (Array.isArray(parsed))
+        diagnostics = parsed.map(String);
+    } catch {
+      diagnostics = [String(dataset.rixDiagnostics)];
+    }
+  }
+  return Object.freeze({
+    state: dataset.rixState ?? null,
+    diagnostics: Object.freeze(diagnostics),
+    kind: dataset.rixDiagnosticKind ?? null,
+    source: dataset.rixDiagnosticSource ?? null
+  });
+}
+function sheetCellDependencies(dataset = {}) {
+  if (!dataset.rixDependencies)
+    return Object.freeze([]);
+  try {
+    const parsed = JSON.parse(dataset.rixDependencies);
+    return Object.freeze(Array.isArray(parsed) ? parsed.map(String) : []);
+  } catch {
+    return Object.freeze([]);
+  }
+}
+function diagnosticStatus(diagnostic) {
+  if (!diagnostic.diagnostics.length)
+    return "";
+  const kind = diagnostic.kind ? `${diagnostic.kind[0].toUpperCase()}${diagnostic.kind.slice(1)} error: ` : "Error: ";
+  return `${kind}${diagnostic.diagnostics.join("; ")}`;
+}
+function dependencyStatus(dependencies, address = "grid") {
+  if (!dependencies.length)
+    return "";
+  const addressBase = String(address).replace(/\[[^\]]*\]$/u, "") || "grid";
+  return `Depends on: ${dependencies.map((dependency) => `${addressBase}[${dependency}]`).join(", ")}`;
+}
 function sheetRoots(root) {
   if (!root)
     return [];
@@ -30518,6 +30624,8 @@ function sheetRoots(root) {
 function eventDetail(cell) {
   const index = String(cell.dataset.rixIndex || "").split(",").filter(Boolean).map(Number);
   const slice = String(cell.closest("tbody")?.dataset.rixSlice || "").split(",").map((item) => item === "" ? null : Number(item));
+  const diagnostic = sheetCellDiagnostics(cell.dataset);
+  const dependencies = sheetCellDependencies(cell.dataset);
   return {
     address: cell.dataset.rixAddress,
     displayAddress: cell.dataset.rixDisplayAddress,
@@ -30528,7 +30636,12 @@ function eventDetail(cell) {
     index,
     slice,
     row: Number(cell.dataset.rixRow),
-    column: Number(cell.dataset.rixColumn)
+    column: Number(cell.dataset.rixColumn),
+    state: diagnostic.state,
+    diagnostics: diagnostic.diagnostics,
+    diagnosticKind: diagnostic.kind,
+    diagnosticSource: diagnostic.source,
+    dependencies
   };
 }
 function dispatchSheetEvent(sheet, name, detail) {
@@ -30561,6 +30674,58 @@ function enhanceSheet(sheet, options) {
   table.setAttribute("role", "grid");
   table.setAttribute("aria-label", sheet.querySelector(".rix-output-sheet-title")?.textContent || "RiX sheet");
   const activeCells = () => cells.filter((cell) => !cell.closest("tbody")?.hidden);
+  function updateCellTitle(cell) {
+    const detail = eventDetail(cell);
+    const base = [detail.coordinateLabel, detail.displayAddress, detail.address].filter(Boolean).join(" · ");
+    const dependencies = dependencyStatus(detail.dependencies, detail.address);
+    const status = diagnosticStatus(sheetCellDiagnostics(cell.dataset));
+    cell.title = [base, dependencies, status].filter(Boolean).join(" · ");
+  }
+  function applyCellUpdates(updates) {
+    for (const update of updates) {
+      const candidate = cells.find((cell) => cell.dataset.rixAddress === update.address);
+      if (!candidate)
+        continue;
+      candidate.textContent = update.text;
+      if (update.blank)
+        candidate.dataset.rixBlank = "true";
+      else
+        delete candidate.dataset.rixBlank;
+      if (typeof update.formulaSource === "string") {
+        candidate.dataset.rixFormulaSource = update.formulaSource;
+      }
+      if (typeof update.assignmentMode === "string") {
+        candidate.dataset.rixAssignmentMode = update.assignmentMode;
+      }
+      if (update.dependencies?.length) {
+        candidate.dataset.rixDependencies = JSON.stringify(update.dependencies);
+      } else {
+        delete candidate.dataset.rixDependencies;
+      }
+      if (update.state === "error" || update.diagnostics?.length) {
+        candidate.dataset.rixState = "error";
+        candidate.dataset.rixDiagnostics = JSON.stringify(update.diagnostics || []);
+        if (update.diagnosticKind) {
+          candidate.dataset.rixDiagnosticKind = update.diagnosticKind;
+        } else {
+          delete candidate.dataset.rixDiagnosticKind;
+        }
+        if (typeof update.diagnosticSource === "string") {
+          candidate.dataset.rixDiagnosticSource = update.diagnosticSource;
+        } else {
+          delete candidate.dataset.rixDiagnosticSource;
+        }
+        candidate.setAttribute("aria-invalid", "true");
+      } else {
+        delete candidate.dataset.rixState;
+        delete candidate.dataset.rixDiagnostics;
+        delete candidate.dataset.rixDiagnosticKind;
+        delete candidate.dataset.rixDiagnosticSource;
+        candidate.removeAttribute("aria-invalid");
+      }
+      updateCellTitle(candidate);
+    }
+  }
   function select(cell, { focus = false, notify = true } = {}) {
     for (const candidate of cells) {
       const selected = candidate === cell;
@@ -30578,8 +30743,10 @@ function enhanceSheet(sheet, options) {
         detail.address
       ].filter(Boolean).join(" · ");
     }
-    if (editInput)
-      editInput.value = cell.dataset.rixFormulaSource ?? cell.textContent.trim();
+    const diagnostic = sheetCellDiagnostics(cell.dataset);
+    if (editInput) {
+      editInput.value = diagnostic.source ?? cell.dataset.rixFormulaSource ?? cell.textContent.trim();
+    }
     if (editAssignmentMode) {
       editAssignmentMode.value = cell.dataset.rixAssignmentMode || ":=";
     }
@@ -30590,10 +30757,12 @@ function enhanceSheet(sheet, options) {
         detail.address
       ].filter(Boolean).join(" · ");
     }
-    if (editValue)
-      editValue.textContent = `Exact value: ${cell.textContent.trim()}`;
-    if (editStatus)
-      editStatus.textContent = "";
+    if (editValue) {
+      editValue.textContent = diagnostic.state === "error" ? `Last good value: ${cell.textContent.trim()}` : `Exact value: ${cell.textContent.trim()}`;
+    }
+    if (editStatus) {
+      editStatus.textContent = diagnosticStatus(diagnostic) || dependencyStatus(detail.dependencies, detail.address);
+    }
     if (focus)
       cell.focus();
     if (notify) {
@@ -30846,31 +31015,16 @@ function enhanceSheet(sheet, options) {
       };
       try {
         const result = options.onEdit(detail, selectedCell, sheet);
-        if (result?.type === "error")
-          throw new Error(result.text);
         if (result && typeof result.then === "function") {
           throw new Error("Asynchronous Sheet edits are not supported by this host");
         }
         if (Array.isArray(result?.updates)) {
-          for (const update of result.updates) {
-            const candidate = cells.find((cell) => cell.dataset.rixAddress === update.address);
-            if (!candidate)
-              continue;
-            candidate.textContent = update.text;
-            if (update.blank)
-              candidate.dataset.rixBlank = "true";
-            else
-              delete candidate.dataset.rixBlank;
-            if (typeof update.formulaSource === "string") {
-              candidate.dataset.rixFormulaSource = update.formulaSource;
-            }
-            if (typeof update.assignmentMode === "string") {
-              candidate.dataset.rixAssignmentMode = update.assignmentMode;
-            }
-          }
+          applyCellUpdates(result.updates);
         } else {
           selectedCell.textContent = result?.text ?? detail.source;
         }
+        if (result?.type === "error")
+          throw new Error(result.text);
         const exact = selectedCell.textContent.trim();
         if (editValue)
           editValue.textContent = `Exact value: ${exact}`;
@@ -30883,8 +31037,13 @@ function enhanceSheet(sheet, options) {
         });
         selectedCell.focus();
       } catch (error) {
-        if (editStatus)
-          editStatus.textContent = error.message || String(error);
+        const diagnostic = sheetCellDiagnostics(selectedCell.dataset);
+        if (editValue && diagnostic.state === "error") {
+          editValue.textContent = `Last good value: ${selectedCell.textContent.trim()}`;
+        }
+        if (editStatus) {
+          editStatus.textContent = diagnosticStatus(diagnostic) || error.message || String(error);
+        }
       }
     });
   }
@@ -30934,17 +31093,6 @@ class WidgetSession {
     this._unsubscribe = this.source.subscribe((sourceEvent) => {
       if (this.disposed)
         return;
-      if (sourceEvent?.type === "formula:error") {
-        this.onChange?.({
-          session: this,
-          widget: this.widget,
-          revision: this.revision,
-          sourceEvent,
-          bindingEvent: null,
-          formulaEvent: sourceEvent
-        });
-        return;
-      }
       this.revision += 1;
       this.widget = createSheet(this.options ? [this.source, { type: "map", entries: this.options }] : [this.source]);
       this.onChange?.({
@@ -31000,7 +31148,12 @@ class WidgetSession {
       blank: cell.blank === true,
       formulaSource: cell.formulaSource,
       slotId: cell.slotId,
-      assignmentMode: cell.assignmentMode
+      assignmentMode: cell.assignmentMode,
+      state: cell.state,
+      dependencies: cell.dependencies,
+      diagnostics: cell.diagnostics,
+      diagnosticKind: cell.diagnosticKind,
+      diagnosticSource: cell.diagnosticSource
     }))));
   }
   snapshot() {
@@ -31148,7 +31301,12 @@ function mountOutputWidgets(root, value, options = {}) {
               revision: widgetSession.revision
             };
           } catch (error) {
-            return { type: "error", text: error instanceof Error ? error.message : String(error) };
+            return {
+              type: "error",
+              text: error instanceof Error ? error.message : String(error),
+              updates: widgetSession.editMode === "formula" ? widgetSession.cellUpdates(format) : undefined,
+              revision: widgetSession.revision
+            };
           }
         } : null
       });
@@ -32303,5 +32461,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { formatValue, mountOutputWidgets, findHelp, createRixRepl };
 
-//# debugId=AF6340C590FBA88064756E2164756E21
-//# sourceMappingURL=chunk-sd89mww5.js.map
+//# debugId=DF960D81B0E3297E64756E2164756E21
+//# sourceMappingURL=chunk-dwkpdy7r.js.map

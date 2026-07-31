@@ -2,7 +2,7 @@ import {
   createRixRepl,
   formatValue,
   mountOutputWidgets
-} from "./chunk-sd89mww5.js";
+} from "./chunk-dwkpdy7r.js";
 
 // src/generated/plugin-tutorial-index.js
 var pluginTutorialGroups = [

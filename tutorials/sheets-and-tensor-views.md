@@ -215,6 +215,16 @@ source. Paste does no A1-style inference: `grid[1,1]` stays absolute, while
 `near[0,-1]` naturally becomes relative to the destination cell. This keeps
 reference movement explicit in the formula itself.
 
+Select a dependent cell to see the addresses it actually read during the most
+recent evaluation epoch. This reports dynamic graph edges rather than merely
+scanning the source for address-shaped text.
+
+Try entering `grid[1,1] + 1` in the first cell. RiXCel marks the cycle while
+continuing to display that cell's last committed value. Parse and runtime
+failures behave the same way: the formula bar reports the error, a failed parse
+keeps the attempted text for correction, and a later valid edit clears the
+diagnostic and refreshes all dependent cells.
+
 The same source-backed update is available programmatically:
 
 ```rix edu
@@ -270,7 +280,8 @@ cosmetic headers from the document-owned view. The file stores the dense
 rank-N shape, stable IDs, formula bodies, assignment modes, and JSON-safe view
 metadata. It does not trust or persist compiled IR, values, dependencies, or
 diagnostics. A standalone host can save the `saved` string with a `.rixcel`
-extension; browser file-open/save controls remain a later editor milestone.
+extension. The standalone RiXCel editor supplies browser open/save controls;
+this tutorial page intentionally keeps document storage outside its session.
 
 ## Exchange CSV and TSV values safely
 
