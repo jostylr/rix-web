@@ -69,6 +69,9 @@ test("structured output has focused table, document, graphic, drawing, and sheet
     expect(sheets).toContain('model.SetSource(1, 1, "::= 10")');
     expect(sheets).toContain("namedView.At");
     expect(sheets).toContain("near[0,-1]");
+    expect(sheets).toContain("model.Near");
+    expect(sheets).toContain("Copying a selected formula cell");
+    expect(sheets).toContain("Double-click a row or column header");
     expect(sheets).toContain("$values[1,1]");
     expect(sheets).toContain("$$Scale");
     expect(sheets).toContain("$$frag := .Fragment");

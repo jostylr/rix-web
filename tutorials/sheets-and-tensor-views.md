@@ -89,7 +89,8 @@ namedView := .Sheet(.Bind(cube), {=
 namedView ;
 ```
 
-The headers and scenario menu now use meaningful names. Select the
+The headers and scenario menu now use meaningful names while keeping their
+numeric identity visible, such as `South · 2` and `Forecast · 2`. Select the
 South/Cost/Forecast entry and the location indicator includes those cosmetic
 labels, but its executable address remains `cube[2,2,2]`. Labels never become
 variable names or replace the full numeric tensor coordinate.
@@ -205,12 +206,26 @@ Select a formula cell and press Enter to edit its RiX body. The editor shows
 the body without the surrounding deferred wrapper. Its assignment selector
 defaults to `:=`, and the bar shows the cell's exact computed value. Committing
 starts a new atomic evaluation epoch and refreshes every dependent result.
+Double-click a row or column header (or focus it and press Enter) to edit its
+cosmetic label. The rendered header remains `label · coordinate`; clearing the
+label restores the ordinary numeric or letter/number header.
+
+Copying a selected formula cell preserves its assignment mode and literal RiX
+source. Paste does no A1-style inference: `grid[1,1]` stays absolute, while
+`near[0,-1]` naturally becomes relative to the destination cell. This keeps
+reference movement explicit in the formula itself.
 
 The same source-backed update is available programmatically:
 
 ```rix edu
 model.SetSource(1, 1, "::= 10");
 .Sheet(model, {= title="Recalculated results" }) ;
+```
+
+The same relative lookup is available explicitly outside formula evaluation:
+
+```rix edu
+model.Near({: 2,2}, {: 0,-1}) ;
 ```
 
 The sheet recompiles the stored source into its own deferred formula; the
@@ -260,7 +275,8 @@ extension; browser file-open/save controls remain a later editor milestone.
 ## Exchange CSV and TSV values safely
 
 Delimited import makes literal FormulaSheet cells. `header=1` turns the first
-record into cosmetic column labels:
+record into cosmetic column labels. Empty imported fields render blank, while
+a RiX formula that intentionally evaluates to `_` still shows `_`:
 
 ```rix edu
 imported := .RiXCelImportCsv("""name,value,note

@@ -172,7 +172,7 @@ test("the web REPL returns interactive tensor-plane controls", () => {
     expect(response.html).toContain('data-rix-plane-key="3:1"');
     expect(response.html).toContain('data-rix-plane-key="3:2"');
     expect(response.html).toContain('data-rix-address="cube[1,3,2]"');
-    expect(response.html).toContain('<option value="2" selected>Forecast</option>');
+    expect(response.html).toContain('<option value="2" selected>Forecast · 2</option>');
     expect(response.html).toContain('data-rix-coordinate-label="North / Margin / Forecast"');
 });
 
