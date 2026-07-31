@@ -15568,6 +15568,54 @@ function controlValuesEqual(left, right) {
     return leftString === rightString;
   return false;
 }
+function invokeControlCallable(callable, args, runtime, label) {
+  if (runtime?.invoke)
+    return runtime.invoke(callable, args, runtime.context, runtime.evaluate);
+  if (typeof callable === "function")
+    return callable(...args);
+  throw new Error(`${label} must be a RiX callable`);
+}
+function controlDisplay(entry, fields, name, runtime, allowed = Object.keys(fields)) {
+  const formatValue2 = get(entry, "format");
+  if (formatValue2 === null)
+    return Object.freeze({ ...fields });
+  const formatters = map(formatValue2, `${name} format`);
+  const display = { ...fields };
+  for (const [rawKey, formatter] of formatters) {
+    const key = String(rawKey).toLowerCase();
+    if (!allowed.includes(key)) {
+      throw new Error(`${name} format key '${rawKey}' is not one of ${allowed.join(", ")}`);
+    }
+    if (!Object.hasOwn(fields, key))
+      continue;
+    if (formatter !== null) {
+      display[key] = invokeControlCallable(formatter, [fields[key]], runtime, `${name} formatter '${rawKey}'`);
+    }
+  }
+  return Object.freeze(display);
+}
+function controlBehavior(entry, fields, name, runtime, allowed = Object.keys(fields)) {
+  const formatValue2 = get(entry, "format");
+  const formatKeys = formatValue2 === null ? [] : [...map(formatValue2, `${name} format`).keys()].map((key) => String(key).toLowerCase());
+  const validate = get(entry, "validate");
+  const validateCandidate = validate === null ? null : (candidate) => {
+    const result = invokeControlCallable(validate, [candidate], runtime, `${name} validator`);
+    if (result === null || result === undefined)
+      return null;
+    const message = asString(result);
+    if (message === null)
+      throw new Error(`${name} validator must return _ or an error string`);
+    return message;
+  };
+  return {
+    display: controlDisplay(entry, fields, name, runtime, allowed),
+    formatKeys: Object.freeze(formatKeys),
+    disabled: has(entry, "disabled") && get(entry, "disabled") !== null,
+    readOnly: has(entry, "readOnly") && get(entry, "readOnly") !== null,
+    validation: validateCandidate?.(fields.value) ?? null,
+    validateCandidate
+  };
+}
 function numericValue(value, label) {
   if (value instanceof Integer)
     return Number(value.value);
@@ -15644,7 +15692,7 @@ function createGrid(args) {
     style: optionalMap(get(entry, "style"), "Grid style")
   });
 }
-function createSliderControl(args) {
+function createSliderControl(args, runtime = null) {
   const entry = spec(args, ["target", "interval", "step", "label"], "Controls.Slider");
   const target = reactiveTarget(entry, "Controls.Slider");
   const interval2 = get(entry, "interval");
@@ -15660,12 +15708,14 @@ function createSliderControl(args) {
     value,
     ...scale,
     index,
+    ...controlBehavior(entry, { value, low: scale.low, high: scale.high, step: scale.step }, "Controls.Slider", runtime),
     replacesDependencies: Object.freeze([...target.dependencies])
   });
 }
-function createInputControl(args) {
+function createInputControl(args, runtime = null) {
   const entry = spec(args, ["target", "label", "help", "placeholder"], "Controls.Input");
   const target = reactiveTarget(entry, "Controls.Input");
+  const value = target.get();
   return output("control_input", {
     id: asString(get(entry, "id")) || `${target.id}:input`,
     label: asString(get(entry, "label")) || target.name,
@@ -15673,7 +15723,8 @@ function createInputControl(args) {
     placeholder: asString(get(entry, "placeholder")) || "RiX expression",
     target,
     targetId: target.id,
-    value: target.get(),
+    value,
+    ...controlBehavior(entry, { value }, "Controls.Input", runtime),
     replacesDependencies: Object.freeze([...target.dependencies])
   });
 }
@@ -15688,7 +15739,7 @@ function normalizeChoiceOptions(value) {
     return Object.freeze({ value: optionValue, label: asString(get(entries2, "label")) });
   });
 }
-function createChoiceControl(args) {
+function createChoiceControl(args, runtime = null) {
   const entry = spec(args, ["target", "options", "label"], "Controls.Choice");
   const target = reactiveTarget(entry, "Controls.Choice");
   const options = normalizeChoiceOptions(get(entry, "options"));
@@ -15698,6 +15749,7 @@ function createChoiceControl(args) {
   const index = options.findIndex((option) => controlValuesEqual(option.value, value));
   if (index === -1)
     throw new Error("Controls.Choice target value must match one of its options");
+  const displayOptions = options.map((option) => option.label === null ? controlDisplay(entry, { option: option.value }, "Controls.Choice", runtime, ["value", "option"]).option : option.label);
   return output("control_choice", {
     id: asString(get(entry, "id")) || `${target.id}:choice`,
     label: asString(get(entry, "label")) || target.name,
@@ -15706,11 +15758,13 @@ function createChoiceControl(args) {
     targetId: target.id,
     value,
     options: Object.freeze(options),
+    displayOptions: Object.freeze(displayOptions),
     index,
+    ...controlBehavior(entry, { value }, "Controls.Choice", runtime, ["value", "option"]),
     replacesDependencies: Object.freeze([...target.dependencies])
   });
 }
-function createToggleControl(args) {
+function createToggleControl(args, runtime = null) {
   const entry = spec(args, ["target", "off", "on", "label"], "Controls.Toggle");
   const target = reactiveTarget(entry, "Controls.Toggle");
   const off = get(entry, "off");
@@ -15730,10 +15784,11 @@ function createToggleControl(args) {
     value,
     values: Object.freeze([off, on]),
     index,
+    ...controlBehavior(entry, { value, off, on }, "Controls.Toggle", runtime),
     replacesDependencies: Object.freeze([...target.dependencies])
   });
 }
-function createRangeControl(args) {
+function createRangeControl(args, runtime = null) {
   const entry = spec(args, ["target", "interval", "step", "label"], "Controls.Range");
   const target = reactiveTarget(entry, "Controls.Range");
   const scale = exactScale(get(entry, "interval"), get(entry, "step"), get(entry, "steps"), "Controls.Range");
@@ -15753,23 +15808,33 @@ function createRangeControl(args) {
     value,
     ...scale,
     indices,
+    ...controlBehavior(entry, {
+      value,
+      start: value.start,
+      end: value.end,
+      low: scale.low,
+      high: scale.high,
+      step: scale.step
+    }, "Controls.Range", runtime),
     replacesDependencies: Object.freeze([...target.dependencies])
   });
 }
-function createResetControl(args) {
+function createResetControl(args, runtime = null) {
   const entry = spec(args, ["target", "initial", "label"], "Controls.Reset");
   const target = reactiveTarget(entry, "Controls.Reset");
   const initial = get(entry, "initial");
   if (!has(entry, "initial"))
     throw new Error("Controls.Reset requires an explicit initial value snapshot");
+  const value = target.get();
   return output("control_reset", {
     id: asString(get(entry, "id")) || `${target.id}:reset`,
     label: asString(get(entry, "label")) || `Reset ${target.name}`,
     help: asString(get(entry, "help")),
     target,
     targetId: target.id,
-    value: target.get(),
+    value,
     initial,
+    ...controlBehavior(entry, { value, initial }, "Controls.Reset", runtime),
     replacesDependencies: Object.freeze([...target.dependencies])
   });
 }
@@ -15779,11 +15844,53 @@ function createControlPanel(args) {
   if (!controls.every((control) => isOutputValue(control) && control.kind.startsWith("control_"))) {
     throw new Error("ControlPanel entries must be values created by .Controls");
   }
+  const mode = (asString(get(entry, "mode")) || "immediate").toLowerCase();
+  if (!["immediate", "staged"].includes(mode)) {
+    throw new Error("ControlPanel mode must be :immediate or :staged");
+  }
+  if (mode === "staged") {
+    const graphs = new Set(controls.map(({ target }) => target?.graph).filter(Boolean));
+    if (graphs.size > 1)
+      throw new Error("A staged ControlPanel cannot span ReactiveGraphs");
+  }
   return output("control_panel", {
     controls: Object.freeze([...controls]),
     title: asString(get(entry, "title")),
     description: asString(get(entry, "description")),
+    mode,
+    submitLabel: asString(get(entry, "submitLabel")) || "Apply changes",
+    discardLabel: asString(get(entry, "discardLabel")) || "Discard",
+    interactive: true,
     metadata: optionalMap(get(entry, "metadata"), "ControlPanel metadata")
+  }, [["SNAPSHOT", method4("Snapshot", ([target]) => createControlPanelSnapshot(target))]]);
+}
+function controlSnapshot(control) {
+  const {
+    target: _target,
+    validateCandidate: _validateCandidate,
+    _ext: _extensions,
+    ...fields
+  } = control;
+  return output(control.kind, {
+    ...fields,
+    target: null,
+    disabled: true,
+    readOnly: true
+  });
+}
+function createControlPanelSnapshot(panel) {
+  if (!isOutputValue(panel) || panel.kind !== "control_panel") {
+    throw new Error("Expected a ControlPanel output value");
+  }
+  return output("control_panel", {
+    controls: Object.freeze(panel.controls.map(controlSnapshot)),
+    title: panel.title,
+    description: panel.description,
+    mode: "immediate",
+    submitLabel: panel.submitLabel,
+    discardLabel: panel.discardLabel,
+    interactive: false,
+    metadata: panel.metadata
   });
 }
 function sheetData(value) {
@@ -16306,6 +16413,22 @@ function escapeHtml(value) {
 function cellText(value, format) {
   return value === null || value === undefined ? "" : format(value);
 }
+function controlField(control, name) {
+  return control.display && Object.hasOwn(control.display, name) ? control.display[name] : control[name];
+}
+function controlStateAttributes(control) {
+  return `${control.disabled ? ' data-rix-control-disabled="true"' : ""}${control.readOnly ? ' data-rix-control-read-only="true"' : ""}`;
+}
+function controlInputAttributes(control, { text: text4 = false } = {}) {
+  if (control.disabled)
+    return " disabled";
+  if (control.readOnly)
+    return text4 ? ' readonly aria-readonly="true"' : ' aria-readonly="true"';
+  return "";
+}
+function controlMessages(control) {
+  return `${control.validation ? `<small class="rix-output-control-validation" role="alert">${escapeHtml(control.validation)}</small>` : ""}${control.help ? `<small>${escapeHtml(control.help)}</small>` : ""}`;
+}
 function ruleField(rule, name) {
   if (rule?.type === "map" && rule.entries instanceof Map)
     return get(rule.entries, name);
@@ -16542,18 +16665,22 @@ function formatOutputText(value, format) {
 
 `);
   if (value.kind === "control_slider") {
-    return `${value.label}: ${cellText(value.value, format)} (${cellText(value.low, format)} … ${cellText(value.high, format)})`;
+    return `${value.label}: ${cellText(controlField(value, "value"), format)} (${cellText(controlField(value, "low"), format)} … ${cellText(controlField(value, "high"), format)}; step ${cellText(controlField(value, "step"), format)})`;
   }
   if (value.kind === "control_input")
-    return `${value.label}: ${cellText(value.value, format)}`;
-  if (value.kind === "control_choice" || value.kind === "control_toggle") {
-    return `${value.label}: ${cellText(value.value, format)}`;
+    return `${value.label}: ${cellText(controlField(value, "value"), format)}`;
+  if (value.kind === "control_choice") {
+    return `${value.label}: ${cellText(controlField(value, "value"), format)}`;
+  }
+  if (value.kind === "control_toggle") {
+    return `${value.label}: ${cellText(controlField(value, "value"), format)} (${cellText(controlField(value, "off"), format)} ↔ ${cellText(controlField(value, "on"), format)})`;
   }
   if (value.kind === "control_range") {
-    return `${value.label}: ${cellText(value.value, format)} within ${cellText(value.low, format)} … ${cellText(value.high, format)}`;
+    const current = value.formatKeys.includes("value") ? cellText(controlField(value, "value"), format) : `${cellText(controlField(value, "start"), format)} … ${cellText(controlField(value, "end"), format)}`;
+    return `${value.label}: ${current} within ${cellText(controlField(value, "low"), format)} … ${cellText(controlField(value, "high"), format)}; step ${cellText(controlField(value, "step"), format)}`;
   }
   if (value.kind === "control_reset") {
-    return `${value.label}: ${cellText(value.value, format)} → ${cellText(value.initial, format)}`;
+    return `${value.label}: ${cellText(controlField(value, "value"), format)} → ${cellText(controlField(value, "initial"), format)}`;
   }
   if (value.kind === "control_panel") {
     return [value.title, value.description, ...value.controls.map((control) => formatOutputText(control, format))].filter(Boolean).join(`
@@ -16615,31 +16742,33 @@ function renderOutputHtml(value, format = (item) => String(item ?? "")) {
     return `<section class="rix-output-fragment">${value.children.map((child) => renderOutputHtml(child, format)).join("")}</section>`;
   if (value.kind === "control_slider") {
     const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml(value.replacesDependencies.join(","))}"` : "";
-    return `<label class="rix-output-control rix-output-control-slider" data-rix-control-kind="slider" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><input type="range" min="0" max="${value.steps}" step="1" value="${value.index}" data-rix-control-input aria-label="${escapeHtml(value.label)}"><output data-rix-control-value>${text4(value.value)}</output>${value.help ? `<small>${escapeHtml(value.help)}</small>` : ""}</label>`;
+    return `<label class="rix-output-control rix-output-control-slider" data-rix-control-kind="slider" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><input type="range" min="0" max="${value.steps}" step="1" value="${value.index}" data-rix-control-input aria-label="${escapeHtml(value.label)}"${controlInputAttributes(value)}><output data-rix-control-value>${text4(controlField(value, "value"))}</output><small class="rix-output-control-scale">${text4(controlField(value, "low"))} … ${text4(controlField(value, "high"))} · step ${text4(controlField(value, "step"))}</small>${controlMessages(value)}</label>`;
   }
   if (value.kind === "control_input") {
     const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml(value.replacesDependencies.join(","))}"` : "";
-    return `<label class="rix-output-control rix-output-control-input" data-rix-control-kind="input" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><span class="rix-output-control-input-row"><input type="text" value="${text4(value.value)}" placeholder="${escapeHtml(value.placeholder)}" data-rix-control-input aria-label="${escapeHtml(value.label)}"><button type="button" data-rix-control-commit>Set</button></span><output data-rix-control-value>${text4(value.value)}</output>${value.help ? `<small>${escapeHtml(value.help)}</small>` : ""}</label>`;
+    return `<label class="rix-output-control rix-output-control-input" data-rix-control-kind="input" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><span class="rix-output-control-input-row"><input type="text" value="${text4(controlField(value, "value"))}" placeholder="${escapeHtml(value.placeholder)}" data-rix-control-input aria-label="${escapeHtml(value.label)}"${controlInputAttributes(value, { text: true })}><button type="button" data-rix-control-commit${controlInputAttributes(value)}>Set</button></span><output data-rix-control-value>${text4(controlField(value, "value"))}</output>${controlMessages(value)}</label>`;
   }
   if (value.kind === "control_choice") {
     const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml(value.replacesDependencies.join(","))}"` : "";
-    const options = value.options.map((option, index) => `<option value="${index}"${index === value.index ? " selected" : ""}>${escapeHtml(option.label ?? cellText(option.value, format))}</option>`).join("");
-    return `<label class="rix-output-control rix-output-control-choice" data-rix-control-kind="choice" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><select data-rix-control-input aria-label="${escapeHtml(value.label)}">${options}</select><output data-rix-control-value>${text4(value.value)}</output>${value.help ? `<small>${escapeHtml(value.help)}</small>` : ""}</label>`;
+    const options = value.options.map((option, index) => `<option value="${index}"${index === value.index ? " selected" : ""}>${escapeHtml(cellText(value.displayOptions[index], format))}</option>`).join("");
+    return `<label class="rix-output-control rix-output-control-choice" data-rix-control-kind="choice" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><select data-rix-control-input aria-label="${escapeHtml(value.label)}"${controlInputAttributes(value)}>${options}</select><output data-rix-control-value>${text4(controlField(value, "value"))}</output>${controlMessages(value)}</label>`;
   }
   if (value.kind === "control_toggle") {
     const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml(value.replacesDependencies.join(","))}"` : "";
-    return `<label class="rix-output-control rix-output-control-toggle" data-rix-control-kind="toggle" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><input type="checkbox"${value.index === 1 ? " checked" : ""} data-rix-control-input aria-label="${escapeHtml(value.label)}"><output data-rix-control-value>${text4(value.value)}</output>${value.help ? `<small>${escapeHtml(value.help)}</small>` : ""}</label>`;
+    return `<label class="rix-output-control rix-output-control-toggle" data-rix-control-kind="toggle" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><input type="checkbox"${value.index === 1 ? " checked" : ""} data-rix-control-input aria-label="${escapeHtml(value.label)}"${controlInputAttributes(value)}><output data-rix-control-value>${text4(controlField(value, "value"))}</output><small class="rix-output-control-scale">${text4(controlField(value, "off"))} ↔ ${text4(controlField(value, "on"))}</small>${controlMessages(value)}</label>`;
   }
   if (value.kind === "control_range") {
     const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml(value.replacesDependencies.join(","))}"` : "";
-    return `<fieldset class="rix-output-control rix-output-control-range" data-rix-control-kind="range" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${dependencies}><legend class="rix-output-control-label">${escapeHtml(value.label)}</legend><span class="rix-output-control-range-inputs"><input type="range" min="0" max="${value.steps}" step="1" value="${value.indices[0]}" data-rix-control-input data-rix-control-endpoint="low" aria-label="${escapeHtml(value.label)} lower endpoint"><input type="range" min="0" max="${value.steps}" step="1" value="${value.indices[1]}" data-rix-control-input data-rix-control-endpoint="high" aria-label="${escapeHtml(value.label)} upper endpoint"></span><output data-rix-control-value>${text4(value.value)}</output>${value.help ? `<small>${escapeHtml(value.help)}</small>` : ""}</fieldset>`;
+    const current = value.formatKeys.includes("value") ? text4(controlField(value, "value")) : `${text4(controlField(value, "start"))} … ${text4(controlField(value, "end"))}`;
+    return `<fieldset class="rix-output-control rix-output-control-range" data-rix-control-kind="range" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${controlStateAttributes(value)}${dependencies}><legend class="rix-output-control-label">${escapeHtml(value.label)}</legend><span class="rix-output-control-range-inputs"><input type="range" min="0" max="${value.steps}" step="1" value="${value.indices[0]}" data-rix-control-input data-rix-control-endpoint="low" aria-label="${escapeHtml(value.label)} lower endpoint"${controlInputAttributes(value)}><input type="range" min="0" max="${value.steps}" step="1" value="${value.indices[1]}" data-rix-control-input data-rix-control-endpoint="high" aria-label="${escapeHtml(value.label)} upper endpoint"${controlInputAttributes(value)}></span><output data-rix-control-value>${current}</output><small class="rix-output-control-scale">${text4(controlField(value, "low"))} … ${text4(controlField(value, "high"))} · step ${text4(controlField(value, "step"))}</small>${controlMessages(value)}</fieldset>`;
   }
   if (value.kind === "control_reset") {
     const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml(value.replacesDependencies.join(","))}"` : "";
-    return `<div class="rix-output-control rix-output-control-reset" data-rix-control-kind="reset" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><button type="button" data-rix-control-input aria-label="${escapeHtml(value.label)}">Reset</button><output data-rix-control-value>${text4(value.value)}</output>${value.help ? `<small>${escapeHtml(value.help)}</small>` : ""}</div>`;
+    return `<div class="rix-output-control rix-output-control-reset" data-rix-control-kind="reset" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><button type="button" data-rix-control-input aria-label="${escapeHtml(value.label)}"${controlInputAttributes(value)}>Reset to ${text4(controlField(value, "initial"))}</button><output data-rix-control-value>${text4(controlField(value, "value"))}</output>${controlMessages(value)}</div>`;
   }
   if (value.kind === "control_panel") {
-    return `<section class="rix-output-control-panel" data-rix-interactive="true">${value.title ? `<h3>${escapeHtml(value.title)}</h3>` : ""}${value.description ? `<p>${escapeHtml(value.description)}</p>` : ""}<div class="rix-output-control-list">${value.controls.map((control) => renderOutputHtml(control, format)).join("")}</div><output class="rix-output-control-status" aria-live="polite"></output></section>`;
+    const actions = value.mode === "staged" ? `<div class="rix-output-control-actions"><button type="button" data-rix-control-submit disabled>${escapeHtml(value.submitLabel)}</button><button type="button" data-rix-control-discard disabled>${escapeHtml(value.discardLabel)}</button></div>` : "";
+    return `<section class="rix-output-control-panel" data-rix-interactive="${value.interactive === false ? "false" : "true"}" data-rix-control-mode="${escapeHtml(value.mode || "immediate")}">${value.title ? `<h3>${escapeHtml(value.title)}</h3>` : ""}${value.description ? `<p>${escapeHtml(value.description)}</p>` : ""}<div class="rix-output-control-list">${value.controls.map((control) => renderOutputHtml(control, format)).join("")}</div>${actions}<output class="rix-output-control-status" aria-live="polite"></output></section>`;
   }
   if (value.kind === "table")
     return `<table class="rix-output-table">${value.caption ? `<caption>${escapeHtml(value.caption)}</caption>` : ""}<thead><tr>${value.columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}</tr></thead><tbody>${value.rows.map((row) => `<tr>${row.map((cell) => `<td>${text4(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
@@ -16743,7 +16872,11 @@ function createControlsOutputCollection() {
     extension.set(name.toUpperCase(), {
       type: "method_builtin",
       name,
-      impl: (args) => constructor(args.slice(1))
+      impl: (args, context, evaluate, invoke) => constructor(args.slice(1), {
+        context,
+        evaluate,
+        invoke
+      })
     });
   }
   return { type: "map", entries: entries2, _ext: extension };
@@ -31596,6 +31729,12 @@ function dispatchControlEvent(panel, detail) {
     return;
   panel.dispatchEvent(new EventConstructor("rix-control-set", { bubbles: true, detail }));
 }
+function dispatchPanelEvent(panel, name, detail) {
+  const EventConstructor = panel.ownerDocument?.defaultView?.CustomEvent;
+  if (typeof EventConstructor !== "function")
+    return;
+  panel.dispatchEvent(new EventConstructor(name, { bubbles: true, detail }));
+}
 function enhancePanel(panel, options) {
   if (panel.dataset.rixControlPanelEnhanced === "true")
     return;
@@ -31604,6 +31743,19 @@ function enhancePanel(panel, options) {
   const controls = [...panel.querySelectorAll("[data-rix-control-target]")];
   if (controls.length === 0 || typeof options.onSet !== "function")
     return;
+  const stagedMode = panel.dataset.rixControlMode === "staged";
+  const submit = panel.querySelector("[data-rix-control-submit]");
+  const discard = panel.querySelector("[data-rix-control-discard]");
+  const stagedTargets = new Set;
+  const restoreControls = [];
+  const acceptControls = [];
+  const updateActions = () => {
+    const disabled = stagedTargets.size === 0;
+    if (submit)
+      submit.disabled = disabled;
+    if (discard)
+      discard.disabled = disabled;
+  };
   for (const control of controls) {
     const inputs = [...control.querySelectorAll?.("[data-rix-control-input]") || []];
     const input = inputs[0] || control.querySelector("[data-rix-control-input]");
@@ -31612,6 +31764,13 @@ function enhancePanel(panel, options) {
       continue;
     const kind = control.dataset.rixControlKind || "slider";
     const label2 = input.getAttribute("aria-label") || "Control";
+    if (control.dataset.rixControlDisabled === "true" || control.dataset.rixControlReadOnly === "true") {
+      for (const blocked of inputs.length > 0 ? inputs : [input]) {
+        blocked.addEventListener("click", (event) => event.preventDefault?.());
+        blocked.addEventListener("keydown", (event) => event.preventDefault?.());
+      }
+      continue;
+    }
     const identity = () => ({
       type: "control:set",
       ...control.dataset.rixControlId ? { controlId: control.dataset.rixControlId } : {},
@@ -31619,19 +31778,48 @@ function enhancePanel(panel, options) {
     });
     let committed = inputs.length > 1 ? inputs.map((item) => item.value) : input.value;
     let committedChecked = Boolean(input.checked);
+    let committedText = value?.textContent ?? "";
+    acceptControls.push(() => {
+      committed = inputs.length > 1 ? inputs.map((item) => item.value) : input.value;
+      committedChecked = Boolean(input.checked);
+      committedText = value?.textContent ?? "";
+    });
+    restoreControls.push(() => {
+      if (inputs.length > 1)
+        inputs.forEach((item, index) => {
+          item.value = committed[index];
+        });
+      else
+        input.value = committed;
+      input.checked = committedChecked;
+      if (value)
+        value.textContent = committedText;
+    });
     const commit = (detail, sourceInput = input) => {
       try {
         const result = options.onSet(Object.freeze(detail), sourceInput, panel);
         if (result?.type === "error")
           throw new Error(result.text);
-        committed = inputs.length > 1 ? inputs.map((item) => item.value) : input.value;
-        committedChecked = Boolean(input.checked);
+        if (!result?.staged) {
+          committed = inputs.length > 1 ? inputs.map((item) => item.value) : input.value;
+          committedChecked = Boolean(input.checked);
+          if (result?.text !== undefined)
+            committedText = String(result.text);
+        } else {
+          stagedTargets.add(detail.targetId);
+          updateActions();
+        }
         if (value && result?.text !== undefined)
           value.textContent = result.text;
         if (status)
-          status.textContent = `${label2} set to ${result?.text ?? input.value}`;
-        dispatchControlEvent(panel, { ...detail, revision: result?.revision ?? null });
-        options.onSetCommitted?.(detail, result, sourceInput, panel);
+          status.textContent = result?.staged ? `${label2} staged as ${result?.text ?? input.value}` : `${label2} set to ${result?.text ?? input.value}`;
+        if (result?.staged) {
+          dispatchPanelEvent(panel, "rix-control-stage", { ...detail, revision: result?.revision ?? null });
+          options.onStaged?.(detail, result, sourceInput, panel);
+        } else {
+          dispatchControlEvent(panel, { ...detail, revision: result?.revision ?? null });
+          options.onSetCommitted?.(detail, result, sourceInput, panel);
+        }
       } catch (error) {
         if (inputs.length > 1)
           inputs.forEach((item, index) => {
@@ -31640,22 +31828,24 @@ function enhancePanel(panel, options) {
         else
           input.value = committed;
         input.checked = committedChecked;
+        if (value)
+          value.textContent = committedText;
         if (status)
           status.textContent = error instanceof Error ? error.message : String(error);
       }
     };
     if (kind === "input") {
-      const submit = () => commit({
+      const submit2 = () => commit({
         ...identity(),
         sourceText: input.value,
         source: "text"
       });
-      control.querySelector("[data-rix-control-commit]")?.addEventListener("click", submit);
+      control.querySelector("[data-rix-control-commit]")?.addEventListener("click", submit2);
       input.addEventListener("keydown", (event) => {
         if (event.key !== "Enter")
           return;
         event.preventDefault?.();
-        submit();
+        submit2();
       });
       continue;
     }
@@ -31692,6 +31882,7 @@ function enhancePanel(panel, options) {
         endpoint.addEventListener("change", () => commit({
           ...identity(),
           indices: inputs.map((item) => Number(item.value)),
+          endpoint: endpoint.dataset?.rixControlEndpoint ?? null,
           source: "range"
         }, endpoint));
       }
@@ -31706,6 +31897,50 @@ function enhancePanel(panel, options) {
       index: Number(input.value),
       source: "range"
     }));
+  }
+  if (stagedMode && submit && typeof options.onSubmit === "function") {
+    submit.addEventListener("click", () => {
+      try {
+        const result = options.onSubmit(panel);
+        if (result?.type === "error")
+          throw new Error(result.text);
+        const count = stagedTargets.size;
+        for (const accept of acceptControls)
+          accept();
+        stagedTargets.clear();
+        updateActions();
+        if (status)
+          status.textContent = `${count} staged ${count === 1 ? "change" : "changes"} applied atomically`;
+        dispatchPanelEvent(panel, "rix-control-commit", {
+          count,
+          revision: result?.revision ?? null
+        });
+        options.onSubmitted?.(result, panel);
+      } catch (error) {
+        if (status)
+          status.textContent = error instanceof Error ? error.message : String(error);
+      }
+    });
+  }
+  if (stagedMode && discard && typeof options.onDiscard === "function") {
+    discard.addEventListener("click", () => {
+      try {
+        const result = options.onDiscard(panel);
+        if (result?.type === "error")
+          throw new Error(result.text);
+        for (const restore of restoreControls)
+          restore();
+        stagedTargets.clear();
+        updateActions();
+        if (status)
+          status.textContent = "Staged changes discarded";
+        dispatchPanelEvent(panel, "rix-control-discard", {});
+        options.onDiscarded?.(result, panel);
+      } catch (error) {
+        if (status)
+          status.textContent = error instanceof Error ? error.message : String(error);
+      }
+    });
   }
 }
 function enhanceControlPanelViews(root, options = {}) {
@@ -31974,6 +32209,58 @@ function controlValue(control, event) {
   }
   throw new Error(`Unsupported ControlPanel control: ${control.kind}`);
 }
+function resolveControlEdit(controls, event) {
+  const control = controls.get(String(event?.controlId || event?.targetId || ""));
+  if (!control)
+    throw new Error(`Unknown ControlPanel target: ${event?.targetId || "missing target"}`);
+  if (event.controlId && event.targetId && String(event.targetId) !== control.targetId) {
+    throw new Error("ControlPanel control and target IDs do not match");
+  }
+  if (control.disabled)
+    throw new Error(`${control.label} is disabled`);
+  if (control.readOnly)
+    throw new Error(`${control.label} is read-only`);
+  const value = controlValue(control, event);
+  const validation = control.validateCandidate?.(value) ?? null;
+  if (validation)
+    throw new Error(validation);
+  return Object.freeze({
+    control,
+    event,
+    value,
+    replacedDependencies: Object.freeze([...control.target.dependencies])
+  });
+}
+function literalFormula(value) {
+  return Object.freeze({ fn: "DEFER", args: Object.freeze([value]) });
+}
+function commitControlEdits(edits) {
+  if (edits.length === 0)
+    return Object.freeze([]);
+  const graph = edits[0].control.target.graph;
+  if (!edits.every(({ control }) => control.target.graph === graph)) {
+    throw new Error("An atomic ControlPanel commit cannot span ReactiveGraphs");
+  }
+  const targets = new Set;
+  for (const { control } of edits) {
+    if (targets.has(control.targetId)) {
+      throw new Error(`An atomic ControlPanel commit contains target ${control.targetId} more than once`);
+    }
+    targets.add(control.targetId);
+  }
+  graph.applyBatch(edits.map(({ control, value }) => ({
+    kind: "update",
+    name: control.target.name,
+    formula: literalFormula(value)
+  })), {
+    type: "control:batch",
+    widgetKind: "control_panel",
+    targets: Object.freeze(edits.map(({ control }) => control.targetId)),
+    controls: Object.freeze(edits.map(({ control }) => control.id)),
+    replacedDependencies: Object.freeze(edits.map(({ replacedDependencies }) => replacedDependencies))
+  });
+  return Object.freeze(edits.map(({ value }) => value));
+}
 
 class ControlPanelWidgetSession {
   constructor(widget, options = {}) {
@@ -31981,6 +32268,7 @@ class ControlPanelWidgetSession {
     this.editMode = "control";
     this.controls = panelControls(widget);
     this.revision = 0;
+    this.staged = new Map;
     this.onChange = typeof options.onChange === "function" ? options.onChange : null;
     this.disposed = false;
     this._unsubscribes = [...new Set([...this.controls.values()].map(({ target }) => target))].map((target) => target.subscribe((sourceEvent) => {
@@ -31999,17 +32287,20 @@ class ControlPanelWidgetSession {
   dispatch(event) {
     if (this.disposed)
       throw new Error("Cannot dispatch to a disposed ControlPanelWidgetSession");
+    if (event?.type === "control:batch") {
+      if (!Array.isArray(event.changes))
+        throw new Error("ControlPanel batch requires a changes array");
+      const edits = event.changes.map((change) => resolveControlEdit(this.controls, {
+        ...change,
+        type: "control:set"
+      }));
+      return commitControlEdits(edits);
+    }
     if (event?.type !== "control:set") {
       throw new Error(`Unsupported ControlPanel widget event: ${event?.type || "missing type"}`);
     }
-    const control = this.controls.get(String(event.controlId || event.targetId || ""));
-    if (!control)
-      throw new Error(`Unknown ControlPanel target: ${event.targetId || "missing target"}`);
-    if (event.controlId && event.targetId && String(event.targetId) !== control.targetId) {
-      throw new Error("ControlPanel control and target IDs do not match");
-    }
-    const value = controlValue(control, event);
-    const replacedDependencies = Object.freeze([...control.target.dependencies]);
+    const edit = resolveControlEdit(this.controls, event);
+    const { control, value, replacedDependencies } = edit;
     control.target.replaceValue(value, {
       source: "widget",
       widgetKind: "control_panel",
@@ -32021,6 +32312,39 @@ class ControlPanelWidgetSession {
     });
     return value;
   }
+  stage(event) {
+    if (this.disposed)
+      throw new Error("Cannot stage in a disposed ControlPanelWidgetSession");
+    if (event?.type !== "control:set") {
+      throw new Error(`Unsupported staged ControlPanel event: ${event?.type || "missing type"}`);
+    }
+    const edit = resolveControlEdit(this.controls, event);
+    this.staged.set(edit.control.targetId, edit);
+    return edit.value;
+  }
+  commit() {
+    if (this.disposed)
+      throw new Error("Cannot commit a disposed ControlPanelWidgetSession");
+    const edits = [...this.staged.values()].map(({ event }) => resolveControlEdit(this.controls, event));
+    const values = commitControlEdits(edits);
+    this.staged.clear();
+    return values;
+  }
+  clearStage() {
+    if (this.disposed)
+      throw new Error("Cannot clear a disposed ControlPanelWidgetSession");
+    const count = this.staged.size;
+    this.staged.clear();
+    return count;
+  }
+  stagedChanges() {
+    return Object.freeze([...this.staged.values()].map(({ control, event, value }) => Object.freeze({
+      controlId: control.id,
+      targetId: control.targetId,
+      event,
+      value
+    })));
+  }
   current() {
     return this.widget;
   }
@@ -32028,6 +32352,7 @@ class ControlPanelWidgetSession {
     if (this.disposed)
       return;
     this.disposed = true;
+    this.staged.clear();
     for (const unsubscribe of this._unsubscribes.splice(0))
       unsubscribe?.();
   }
@@ -32141,8 +32466,20 @@ function restoreControlPanelFocus(root, request) {
   const panelRoot = renderedControlPanelRoots(root)[request.panelIndex];
   if (!panelRoot)
     return false;
+  if (request.status) {
+    const status = panelRoot.querySelector?.(".rix-output-control-status");
+    if (status)
+      status.textContent = request.status;
+  }
+  if (request.action) {
+    const action = panelRoot.querySelector?.(`[data-rix-control-${request.action}]`);
+    if (!action)
+      return false;
+    action.focus();
+    return true;
+  }
   const control = [...panelRoot.querySelectorAll("[data-rix-control-target]")].find((candidate) => candidate.dataset.rixControlTarget === request.targetId);
-  const input = control?.querySelector?.("[data-rix-control-input]");
+  const input = request.endpoint ? [...control?.querySelectorAll?.("[data-rix-control-endpoint]") || []].find((candidate) => candidate.dataset.rixControlEndpoint === request.endpoint) : control?.querySelector?.("[data-rix-control-input]");
   if (!input)
     return false;
   input.focus();
@@ -32312,7 +32649,8 @@ function mountOutputWidgets(root, value, options = {}) {
           const focusRequest = {
             kind: "control_panel",
             panelIndex: index,
-            targetId: detail.targetId
+            targetId: detail.targetId,
+            endpoint: detail.endpoint ?? null
           };
           pendingFocusRequest = focusRequest;
           try {
@@ -32332,12 +32670,18 @@ function mountOutputWidgets(root, value, options = {}) {
               const inputValue = evaluated?.type === "result" ? evaluated.value : evaluated;
               event = { ...detail, value: inputValue };
             }
-            const valueResult = widgetSession.dispatch(event);
+            const staged = panel.mode === "staged";
+            const valueResult = staged ? widgetSession.stage(event) : widgetSession.dispatch(event);
+            if (!staged) {
+              focusRequest.status = `Control value set to ${format(valueResult)}`;
+              restoreControlPanelFocus(container, focusRequest);
+            }
             return {
               type: "result",
               value: valueResult,
               text: format(valueResult),
-              revision: widgetSession.revision
+              revision: widgetSession.revision,
+              staged
             };
           } catch (error) {
             return {
@@ -32350,7 +32694,41 @@ function mountOutputWidgets(root, value, options = {}) {
               pendingFocusRequest = null;
           }
         },
-        onSetCommitted: options.onControlSet
+        onSubmit: panel.mode === "staged" ? () => {
+          const count = widgetSession.stagedChanges().length;
+          const focusRequest = {
+            kind: "control_panel",
+            panelIndex: index,
+            action: "submit",
+            status: `${count} staged ${count === 1 ? "change" : "changes"} applied atomically`
+          };
+          pendingFocusRequest = focusRequest;
+          try {
+            const values = widgetSession.commit();
+            return {
+              type: "result",
+              values,
+              revision: widgetSession.revision
+            };
+          } catch (error) {
+            return {
+              type: "error",
+              text: error instanceof Error ? error.message : String(error),
+              revision: widgetSession.revision
+            };
+          } finally {
+            if (pendingFocusRequest === focusRequest)
+              pendingFocusRequest = null;
+          }
+        } : null,
+        onDiscard: panel.mode === "staged" ? () => ({
+          type: "result",
+          count: widgetSession.clearStage(),
+          revision: widgetSession.revision
+        }) : null,
+        onSetCommitted: options.onControlSet,
+        onSubmitted: options.onControlSubmit,
+        onDiscarded: options.onControlDiscard
       });
     }
   }
@@ -33503,5 +33881,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { formatValue, mountOutputWidgets, findHelp, createRixRepl };
 
-//# debugId=8CB3B34B39BBB99C64756E2164756E21
-//# sourceMappingURL=chunk-3sa48367.js.map
+//# debugId=68F9C6A9C3E7786C64756E2164756E21
+//# sourceMappingURL=chunk-ypj3brqb.js.map

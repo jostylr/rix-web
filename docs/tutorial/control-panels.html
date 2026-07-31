@@ -171,6 +171,74 @@ $$view := .Fragment([
 
 $view ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The choice and toggle intentionally target the same identity here. A reactive rerender keeps both controls synchronized with the newly committed value.</p>
+<h2>Apply several edits atomically</h2>
+<p>Use <code>mode=:staged</code> when an expensive view should update only after a group of edits is ready. The controls preview their candidates locally; Apply changes replaces every affected <code>$</code> definition in one reactive transaction. Discard restores the last committed values without running the graph.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="18" spellcheck="false">$$width := 3;
+$$height := 2;
+
+$$view := .Fragment([
+    .ControlPanel({=
+        title=&quot;Rectangle&quot;,
+        description=&quot;Move both sliders, then apply once&quot;,
+        mode=:staged,
+        submitLabel=&quot;Resize&quot;,
+        controls=[
+            .Controls.Slider($$width, 1:10, 1, &quot;width&quot;),
+            .Controls.Slider($$height, 1:10, 1, &quot;height&quot;)
+        ]
+    }),
+    .Text(@&quot;area = @{$width * $height}&quot;)
+]);
+
+$view ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>This uses the same transaction semantics as <code>${ ... }</code>; it does not introduce a form-owned copy of reactive state. Validation happens before the transaction, so one invalid candidate prevents every staged target from changing.</p>
+<h2>Static and portable snapshots</h2>
+<p>Interactive panels can be detached from their runtime identities for saved HTML and document export. <code>panel.Snapshot()</code> retains each target ID, exact current value, labels, formatting snapshots, and help text, while removing the reactive target and validator handles. The resulting native controls are disabled and require no JavaScript.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="12" spellcheck="false">$$rate := 3/4;
+panel := .ControlPanel([
+    .Controls.Slider({=
+        target=$$rate,
+        interval=0:2,
+        step=1/4,
+        label=&quot;saved rate&quot;,
+        format={= value=(x -&gt; x _&gt; &quot;..&quot;) }
+    })
+], &quot;Exported parameters&quot;);
+
+panel.Snapshot() ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Hosts can also serialize the snapshot with the versioned <code>rix.control-panel</code> JSON schema. The Markdown renderer emits the same exact value summary for plain Markdown, Quarto HTML, and Quarto PDF pipelines.</p>
+<h2>Controls, a table, and a draggable graphic</h2>
+<p>This final example exercises both interaction protocols in one reactive Fragment. The panel changes an exact scale; the draggable point changes an exact tuple. Both rebuild the table and graphic through ordinary <code>$</code> reads.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="30" spellcheck="false">$$scale := 1;
+$$point := {: 90,70};
+
+$$view := {;
+    p := $point;
+    .Fragment([
+        .ControlPanel([
+            .Controls.Slider($$scale, 1/2:2, 1/4, &quot;scale&quot;)
+        ], &quot;Model controls&quot;),
+        .Table(
+            [&quot;quantity&quot;, &quot;exact value&quot;],
+            [
+                [&quot;x&quot;, p[1]],
+                [&quot;y&quot;, p[2]],
+                [&quot;scaled x&quot;, $scale * p[1]]
+            ],
+            {= caption=&quot;Reactive values&quot; }
+        ),
+        .Graphics.Graphic([360,220], [
+            .Graphics.Rectangle([0,0], [360,220],
+                {= fill=&quot;#f8fafc&quot;, stroke=&quot;#cbd5e1&quot; }),
+            .Graphics.Circle(p, 18 * $scale,
+                {= fill=&quot;#bfdbfe&quot;, stroke=&quot;#2563eb&quot;, width=2 }),
+            .Graphics.DragPoint($$point, 9,
+                {= fill=&quot;#7c3aed&quot; }, &quot;Move the reactive point&quot;)
+        ])
+    ])
+};
+
+$view ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <aside class="challenge"><p class="eyebrow">Challenge</p><h3>Build a small exact control panel</h3><p>Declare an exact reactive rate and interval, then make a panel with an input for the rate and a range for the interval. Add reactive text that uses both.</p><section class="tutorial-cell"><header><span>Your RiX answer</span><button type="button" data-tutorial-run>Run answer</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false" placeholder="# Write your RiX solution here">$$rate := 3/4;
 $$window := 2:6;
 $$view := .Fragment([

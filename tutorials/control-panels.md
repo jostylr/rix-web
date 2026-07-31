@@ -265,6 +265,104 @@ $view ;
 The choice and toggle intentionally target the same identity here. A reactive
 rerender keeps both controls synchronized with the newly committed value.
 
+## Apply several edits atomically
+
+Use `mode=:staged` when an expensive view should update only after a group of
+edits is ready. The controls preview their candidates locally; Apply changes
+replaces every affected `$` definition in one reactive transaction. Discard
+restores the last committed values without running the graph.
+
+```rix edu
+$$width := 3;
+$$height := 2;
+
+$$view := .Fragment([
+    .ControlPanel({=
+        title="Rectangle",
+        description="Move both sliders, then apply once",
+        mode=:staged,
+        submitLabel="Resize",
+        controls=[
+            .Controls.Slider($$width, 1:10, 1, "width"),
+            .Controls.Slider($$height, 1:10, 1, "height")
+        ]
+    }),
+    .Text(@"area = @{$width * $height}")
+]);
+
+$view ;
+```
+
+This uses the same transaction semantics as `${ ... }`; it does not introduce
+a form-owned copy of reactive state. Validation happens before the transaction,
+so one invalid candidate prevents every staged target from changing.
+
+## Static and portable snapshots
+
+Interactive panels can be detached from their runtime identities for saved
+HTML and document export. `panel.Snapshot()` retains each target ID, exact
+current value, labels, formatting snapshots, and help text, while removing the
+reactive target and validator handles. The resulting native controls are
+disabled and require no JavaScript.
+
+```rix edu
+$$rate := 3/4;
+panel := .ControlPanel([
+    .Controls.Slider({=
+        target=$$rate,
+        interval=0:2,
+        step=1/4,
+        label="saved rate",
+        format={= value=(x -> x _> "..") }
+    })
+], "Exported parameters");
+
+panel.Snapshot() ;
+```
+
+Hosts can also serialize the snapshot with the versioned
+`rix.control-panel` JSON schema. The Markdown renderer emits the same exact
+value summary for plain Markdown, Quarto HTML, and Quarto PDF pipelines.
+
+## Controls, a table, and a draggable graphic
+
+This final example exercises both interaction protocols in one reactive
+Fragment. The panel changes an exact scale; the draggable point changes an
+exact tuple. Both rebuild the table and graphic through ordinary `$` reads.
+
+```rix edu
+$$scale := 1;
+$$point := {: 90,70};
+
+$$view := {;
+    p := $point;
+    .Fragment([
+        .ControlPanel([
+            .Controls.Slider($$scale, 1/2:2, 1/4, "scale")
+        ], "Model controls"),
+        .Table(
+            ["quantity", "exact value"],
+            [
+                ["x", p[1]],
+                ["y", p[2]],
+                ["scaled x", $scale * p[1]]
+            ],
+            {= caption="Reactive values" }
+        ),
+        .Graphics.Graphic([360,220], [
+            .Graphics.Rectangle([0,0], [360,220],
+                {= fill="#f8fafc", stroke="#cbd5e1" }),
+            .Graphics.Circle(p, 18 * $scale,
+                {= fill="#bfdbfe", stroke="#2563eb", width=2 }),
+            .Graphics.DragPoint($$point, 9,
+                {= fill="#7c3aed" }, "Move the reactive point")
+        ])
+    ])
+};
+
+$view ;
+```
+
 :::challenge Build a small exact control panel
 Declare an exact reactive rate and interval, then make a panel with an input
 for the rate and a range for the interval. Add reactive text that uses both.
