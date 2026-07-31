@@ -3,6 +3,7 @@ import {
     Context,
     createDefaultRegistry,
     createDefaultSystemContext,
+    createWidgetSession,
     formatValue,
     parseAndEvaluate,
 } from "../../rix/src/index.js";
@@ -149,6 +150,42 @@ test("a named reactive Fragment is observable and redraws after FormulaSheet edi
     dispose();
     repl.run("$values[1,1] := @{300}");
     expect(updates).toHaveLength(1);
+});
+
+test("a semantic Graphic position event redraws a reactive Fragment", () => {
+    const repl = createRixRepl();
+    const response = repl.run(`
+        $$point := {: 20,30};
+        $$total := {; p := $point; p[1] + p[2] };
+        $$view := {;
+            p := $point;
+            .Fragment([
+                .Table(["quantity", "value"], [["total", $total]]),
+                .Graphics.Graphic([200,120], [
+                    .Graphics.Path([[0,120], p], {= stroke="#2563eb" }),
+                    .Graphics.DragPoint($$point, 8, {= fill="#7c3aed" })
+                ])
+            ])
+        };
+        $view
+    `);
+
+    expect(response.type).toBe("result");
+    expect(response.observe).toBeFunction();
+    const graphic = response.value.children.find((child) => child.kind === "graphic");
+    const targetId = graphic.children.find((child) => child.kind === "drag_point").targetId;
+    const updates = [];
+    const stop = response.observe((next) => updates.push(next));
+    const widget = createWidgetSession(graphic);
+    widget.dispatch({ type: "graphic:position", targetId, position: [70, 40] });
+
+    expect(updates).toHaveLength(1);
+    expect(formatValue(updates[0].value)).toMatch(/total\s+110/u);
+    const nextGraphic = updates[0].value.children.find((child) => child.kind === "graphic");
+    expect(nextGraphic.children.find((child) => child.kind === "drag_point").center.map(formatValue))
+        .toEqual(["70", "40"]);
+    widget.dispose();
+    stop();
 });
 
 test("the web REPL returns interactive tensor-plane controls", () => {

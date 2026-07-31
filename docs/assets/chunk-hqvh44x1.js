@@ -8026,6 +8026,7 @@ function nodeMethods() {
     ["GET", method("Get", ([target]) => target.get())],
     ["PEEK", method("Peek", ([target]) => target.peek())],
     ["SET", method("Set", ([target, value]) => target.set(value))],
+    ["REPLACEVALUE", method("ReplaceValue", ([target, value]) => target.replaceValue(value))],
     ["GETFORMULA", method("GetFormula", ([target]) => target.formula)],
     ["SETFORMULA", method("SetFormula", ([target, formula]) => target.setFormula(formula))],
     ["LIVE", method("Live", ([target]) => target.live())],
@@ -8128,6 +8129,9 @@ function createReactiveGraph(options = {}) {
         if (kind !== "source")
           throw new Error(`Reactive computed node ${name} cannot be set directly`);
         return graph.setSource(name, value, metadata);
+      },
+      replaceValue(value, metadata = null) {
+        return graph.replaceValue(name, value, metadata);
       },
       setFormula(formula, metadata = null) {
         if (kind !== "computed")
@@ -8505,6 +8509,24 @@ function createReactiveGraph(options = {}) {
         dirty: new Set([name]),
         sourceOverrides: new Map([[name, value]]),
         cause: { type: "reactive:set", name, metadata }
+      });
+      return value;
+    },
+    replaceValue(name, value, metadata = null) {
+      name = canonicalName(name);
+      const node = requireNode(name);
+      if (node.kind === "source")
+        return graph.setSource(name, value, metadata);
+      if (activeEpoch) {
+        throw new Error(options.formulaMutationError || "Reactive computations cannot change formulas during an epoch");
+      }
+      const formula = Object.freeze({
+        fn: "DEFER",
+        args: Object.freeze([value])
+      });
+      graph.setFormula(name, formula, {
+        ...metadata,
+        source: metadata?.source ?? null
       });
       return value;
     },
@@ -15905,6 +15927,26 @@ function createCircle(args) {
     throw new Error("Circle requires a radius");
   return output("circle", { center, radius, style: optionalMap(get(entry, "style"), "Circle style") });
 }
+function createDragPoint(args) {
+  const entry = spec(args, ["target", "radius", "style", "label"], "DragPoint");
+  const target = get(entry, "target");
+  if (!isReactiveNode(target)) {
+    throw new Error("DragPoint target must be a ReactiveGraph node");
+  }
+  const center = sequence(target.get(), "DragPoint target value");
+  if (center.length !== 2) {
+    throw new Error("DragPoint target value must contain x and y coordinates");
+  }
+  return output("drag_point", {
+    center: Object.freeze([...center]),
+    radius: get(entry, "radius", int6(7)),
+    style: optionalMap(get(entry, "style"), "DragPoint style"),
+    label: asString(get(entry, "label")) || "Draggable point",
+    target,
+    targetId: target.id,
+    replacesDependencies: Object.freeze([...target.dependencies])
+  });
+}
 function createClip(args) {
   const entry = spec(args, ["children", "bounds", "style"], "Clip");
   const bounds = sequence(get(entry, "bounds"), "Clip bounds");
@@ -16197,6 +16239,11 @@ function renderSvgNode(node, format, defs) {
     const [cx, cy] = svgPair(node.center, "Circle center");
     return `<circle cx="${cx}" cy="${cy}" r="${svgNumber(node.radius, "Circle radius")}" ${svgStyle(node.style, "none")}/>`;
   }
+  if (node.kind === "drag_point") {
+    const [cx, cy] = svgPair(node.center, "DragPoint center");
+    const replaced = node.replacesDependencies?.length ? ` data-rix-replaces-dependencies="${escapeHtml(node.replacesDependencies.join(","))}"` : "";
+    return `<circle class="rix-output-drag-point" cx="${cx}" cy="${cy}" r="${svgNumber(node.radius, "DragPoint radius")}" ${svgStyle(node.style, "#7c3aed")} tabindex="0" role="button" aria-label="${escapeHtml(node.label)}" data-rix-drag-target="${escapeHtml(node.targetId)}" data-rix-position="${cx},${cy}"${replaced}/>`;
+  }
   if (node.kind === "text_mark")
     return renderSvgText(node, format);
   if (node.kind === "group")
@@ -16220,6 +16267,16 @@ function renderGraphicSvg(graphic, format = (item) => String(item ?? "")) {
   const defs = [];
   const children = graphic.children.map((child) => renderSvgNode(child, format, defs)).join("");
   return `<svg class="rix-output-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size[0]} ${size[1]}" width="${size[0]}" height="${size[1]}" role="img">${defs.length ? `<defs>${defs.join("")}</defs>` : ""}${children}</svg>`;
+}
+function graphicIsInteractive(graphic) {
+  const visit = (node) => {
+    if (!isOutputValue(node))
+      return false;
+    if (node.kind === "drag_point")
+      return true;
+    return Array.isArray(node.children) && node.children.some(visit);
+  };
+  return graphic.children.some(visit);
 }
 function formatSheetText(sheet, format) {
   const strings = sheet.cells.map((row) => row.map((cell) => cell.blank ? "" : cell.value === null ? "_" : cellText(cell.value, format)));
@@ -16338,8 +16395,14 @@ function renderOutputHtml(value, format = (item) => String(item ?? "")) {
   }
   if (value.kind === "figure")
     return `<figure class="rix-output-figure"${value.label ? ` id="${escapeHtml(value.label)}"` : ""}>${renderOutputHtml(value.content, format)}${value.caption ? `<figcaption>${escapeHtml(value.caption)}</figcaption>` : ""}</figure>`;
-  if (value.kind === "graphic")
-    return `<div class="rix-output-graphic">${renderGraphicSvg(value, format)}</div>`;
+  if (value.kind === "graphic") {
+    const interactive = graphicIsInteractive(value);
+    const replacesDependencies = interactive && value.children.some(function hasReplacement(node) {
+      return isOutputValue(node) && (node.kind === "drag_point" && node.replacesDependencies?.length > 0 || (node.children || []).some(hasReplacement));
+    });
+    const interactionStatus = replacesDependencies ? "Dragging will replace this point’s current reactive dependencies." : "Drag the highlighted point or use its arrow keys.";
+    return `<div class="rix-output-graphic"${interactive ? ' data-rix-interactive="true"' : ""}>${renderGraphicSvg(value, format)}${interactive ? `<output class="rix-output-graphic-status" aria-live="polite">${interactionStatus}</output>` : ""}</div>`;
+  }
   if (value.kind === "slide")
     return `<section class="rix-output-slide">${value.title ? `<h2>${escapeHtml(value.title)}</h2>` : ""}${renderOutputHtml(value.content, format)}</section>`;
   if (value.kind === "slides")
@@ -16370,6 +16433,7 @@ function createGraphicsOutputCollection() {
     ["Text", createTextMark],
     ["Rectangle", createRectangle],
     ["Circle", createCircle],
+    ["DragPoint", createDragPoint],
     ["Clip", createClip]
   ]);
   const entries2 = new Map;
@@ -31054,6 +31118,165 @@ function enhanceSheetViews(root, options = {}) {
   return root;
 }
 
+// ../rix/src/tools/graphic-view.js
+function graphicPointFromClient(rect, viewBox, client) {
+  const width = Number(rect?.width);
+  const height = Number(rect?.height);
+  const boxWidth = Number(viewBox?.width);
+  const boxHeight = Number(viewBox?.height);
+  if (!(width > 0) || !(height > 0) || !(boxWidth > 0) || !(boxHeight > 0)) {
+    throw new Error("Graphic drag coordinates require non-empty bounds");
+  }
+  const x = Number(viewBox.x || 0) + (Number(client.x) - Number(rect.left || 0)) / width * boxWidth;
+  const y = Number(viewBox.y || 0) + (Number(client.y) - Number(rect.top || 0)) / height * boxHeight;
+  return Object.freeze([
+    Math.min(Math.max(x, Number(viewBox.x || 0)), Number(viewBox.x || 0) + boxWidth),
+    Math.min(Math.max(y, Number(viewBox.y || 0)), Number(viewBox.y || 0) + boxHeight)
+  ]);
+}
+function graphicRoots(root) {
+  if (!root)
+    return [];
+  const roots = [];
+  if (root.matches?.(".rix-output-graphic"))
+    roots.push(root);
+  if (root.querySelectorAll)
+    roots.push(...root.querySelectorAll(".rix-output-graphic"));
+  return roots;
+}
+function dispatchGraphicEvent(graphic, name, detail) {
+  const EventConstructor = graphic.ownerDocument?.defaultView?.CustomEvent;
+  if (typeof EventConstructor !== "function")
+    return;
+  graphic.dispatchEvent(new EventConstructor(name, { bubbles: true, detail }));
+}
+function pointDetail(handle, position, source) {
+  return Object.freeze({
+    type: "graphic:position",
+    targetId: handle.dataset.rixDragTarget,
+    position: Object.freeze(position.map(Number)),
+    source
+  });
+}
+function enhanceGraphic(graphic, options) {
+  if (graphic.dataset.rixGraphicEnhanced === "true")
+    return;
+  graphic.dataset.rixGraphicEnhanced = "true";
+  const svg = graphic.querySelector("svg.rix-output-svg");
+  const status = graphic.querySelector(".rix-output-graphic-status");
+  const handles = [...graphic.querySelectorAll("[data-rix-drag-target]")];
+  if (!svg || handles.length === 0 || typeof options.onPosition !== "function")
+    return;
+  const setPreview = (handle, position) => {
+    handle.setAttribute("cx", String(position[0]));
+    handle.setAttribute("cy", String(position[1]));
+    handle.dataset.rixPosition = position.join(",");
+    if (status)
+      status.textContent = `${handle.getAttribute("aria-label") || "Point"}: ${position.map((value) => Number(value.toFixed(2))).join(", ")}`;
+  };
+  const commit = (handle, position, source, previous) => {
+    const detail = pointDetail(handle, position, source);
+    try {
+      const result = options.onPosition(detail, handle, graphic);
+      if (result?.type === "error")
+        throw new Error(result.text);
+      dispatchGraphicEvent(graphic, "rix-graphic-position", {
+        ...detail,
+        revision: result?.revision ?? null
+      });
+      options.onPositionCommitted?.(detail, result, handle, graphic);
+      return true;
+    } catch (error) {
+      setPreview(handle, previous);
+      if (status)
+        status.textContent = error instanceof Error ? error.message : String(error);
+      return false;
+    }
+  };
+  for (const handle of handles) {
+    let pointerId = null;
+    let previous = null;
+    const current = () => String(handle.dataset.rixPosition || "0,0").split(",").map(Number);
+    const fromPointer = (event) => graphicPointFromClient(svg.getBoundingClientRect(), svg.viewBox?.baseVal || {
+      x: 0,
+      y: 0,
+      width: Number(svg.getAttribute("width")),
+      height: Number(svg.getAttribute("height"))
+    }, { x: event.clientX, y: event.clientY });
+    handle.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      pointerId = event.pointerId;
+      previous = current();
+      handle.setPointerCapture?.(pointerId);
+      handle.classList.add("rix-output-drag-point-active");
+      handle.focus();
+    });
+    handle.addEventListener("pointermove", (event) => {
+      if (event.pointerId !== pointerId)
+        return;
+      event.preventDefault();
+      event.stopPropagation();
+      setPreview(handle, fromPointer(event));
+    });
+    const finish = (event) => {
+      if (event.pointerId !== pointerId)
+        return;
+      event.preventDefault();
+      event.stopPropagation();
+      const position = fromPointer(event);
+      const initial = previous || current();
+      if (handle.hasPointerCapture?.(pointerId))
+        handle.releasePointerCapture(pointerId);
+      pointerId = null;
+      previous = null;
+      handle.classList.remove("rix-output-drag-point-active");
+      setPreview(handle, position);
+      commit(handle, position, "pointer", initial);
+    };
+    handle.addEventListener("pointerup", finish);
+    handle.addEventListener("pointercancel", (event) => {
+      if (event.pointerId !== pointerId)
+        return;
+      const initial = previous || current();
+      pointerId = null;
+      previous = null;
+      handle.classList.remove("rix-output-drag-point-active");
+      setPreview(handle, initial);
+    });
+    handle.addEventListener("click", (event) => event.stopPropagation());
+    handle.addEventListener("keydown", (event) => {
+      const delta = event.shiftKey ? 10 : 1;
+      const position = current();
+      if (event.key === "ArrowLeft")
+        position[0] -= delta;
+      else if (event.key === "ArrowRight")
+        position[0] += delta;
+      else if (event.key === "ArrowUp")
+        position[1] -= delta;
+      else if (event.key === "ArrowDown")
+        position[1] += delta;
+      else
+        return;
+      event.preventDefault();
+      event.stopPropagation();
+      const box2 = svg.viewBox?.baseVal || { x: 0, y: 0, width: Number(svg.getAttribute("width")), height: Number(svg.getAttribute("height")) };
+      const next = [
+        Math.min(Math.max(position[0], box2.x), box2.x + box2.width),
+        Math.min(Math.max(position[1], box2.y), box2.y + box2.height)
+      ];
+      const initial = current();
+      setPreview(handle, next);
+      commit(handle, next, "keyboard", initial);
+    });
+  }
+}
+function enhanceGraphicViews(root, options = {}) {
+  for (const graphic of graphicRoots(root))
+    enhanceGraphic(graphic, options);
+  return root;
+}
+
 // ../rix/src/tools/widget-session.js
 function sheetSource(widget) {
   if (!isOutputValue(widget) || widget.kind !== "sheet") {
@@ -31166,7 +31389,97 @@ class WidgetSession {
     this._unsubscribe?.();
   }
 }
+function graphicTargets(node, targets = new Map) {
+  if (!isOutputValue(node))
+    return targets;
+  if (node.kind === "drag_point" && isReactiveNode(node.target)) {
+    targets.set(node.targetId, node.target);
+  }
+  for (const child of node.children || [])
+    graphicTargets(child, targets);
+  return targets;
+}
+function exactGraphicCoordinate(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number))
+    throw new Error("Graphic position coordinates must be finite numbers");
+  const scale = 1000n;
+  const numerator = BigInt(Math.round(number * Number(scale)));
+  return numerator % scale === 0n ? new Integer(numerator / scale) : new Rational(numerator, scale);
+}
+function graphicPoint(position) {
+  if (!Array.isArray(position) || position.length !== 2) {
+    throw new Error("Graphic position must contain x and y coordinates");
+  }
+  return Object.freeze({
+    type: "tuple",
+    values: Object.freeze(position.map(exactGraphicCoordinate))
+  });
+}
+
+class GraphicWidgetSession {
+  constructor(widget, options = {}) {
+    if (!isOutputValue(widget) || widget.kind !== "graphic") {
+      throw new Error("GraphicWidgetSession requires a Graphic output value");
+    }
+    this.widget = widget;
+    this.editMode = "position";
+    this.targets = graphicTargets(widget);
+    if (this.targets.size === 0) {
+      throw new Error("A Graphic WidgetSession requires at least one DragPoint");
+    }
+    this.revision = 0;
+    this.onChange = typeof options.onChange === "function" ? options.onChange : null;
+    this.disposed = false;
+    this._unsubscribes = [...new Set(this.targets.values())].map((target) => target.subscribe((sourceEvent) => {
+      if (this.disposed)
+        return;
+      this.revision += 1;
+      this.onChange?.({
+        session: this,
+        widget: this.widget,
+        revision: this.revision,
+        sourceEvent,
+        graphicEvent: sourceEvent
+      });
+    }));
+  }
+  dispatch(event) {
+    if (this.disposed)
+      throw new Error("Cannot dispatch to a disposed GraphicWidgetSession");
+    if (event?.type !== "graphic:position") {
+      throw new Error(`Unsupported Graphic widget event: ${event?.type || "missing type"}`);
+    }
+    const target = this.targets.get(String(event.targetId || ""));
+    if (!target)
+      throw new Error(`Unknown Graphic drag target: ${event.targetId || "missing target"}`);
+    const value = graphicPoint(event.position);
+    const replacedDependencies = Object.freeze([...target.dependencies]);
+    target.replaceValue(value, {
+      source: "widget",
+      widgetKind: "graphic",
+      eventType: "graphic:position",
+      targetId: event.targetId,
+      inputSource: event.source ?? null,
+      replacedDependencies
+    });
+    return value;
+  }
+  current() {
+    return this.widget;
+  }
+  dispose() {
+    if (this.disposed)
+      return;
+    this.disposed = true;
+    for (const unsubscribe of this._unsubscribes.splice(0))
+      unsubscribe?.();
+  }
+}
 function createWidgetSession(widget, options = {}) {
+  if (isOutputValue(widget) && widget.kind === "graphic") {
+    return new GraphicWidgetSession(widget, options);
+  }
   return new WidgetSession(widget, options);
 }
 
@@ -31192,12 +31505,30 @@ function collectSheets(value, sheets = []) {
       collectSheets(child, sheets);
   return sheets;
 }
+function collectGraphics(value, graphics = []) {
+  if (!isOutputValue(value))
+    return graphics;
+  if (value.kind === "graphic")
+    graphics.push(value);
+  else
+    for (const child of childOutputs(value))
+      collectGraphics(child, graphics);
+  return graphics;
+}
 function renderedSheetRoots(root) {
   const roots = [];
   if (root?.matches?.(".rix-output-sheet"))
     roots.push(root);
   if (root?.querySelectorAll)
     roots.push(...root.querySelectorAll(".rix-output-sheet"));
+  return roots;
+}
+function renderedGraphicRoots(root) {
+  const roots = [];
+  if (root?.matches?.(".rix-output-graphic"))
+    roots.push(root);
+  if (root?.querySelectorAll)
+    roots.push(...root.querySelectorAll(".rix-output-graphic"));
   return roots;
 }
 function editedAddress(widget, index) {
@@ -31219,16 +31550,16 @@ function mountOutputWidgets(root, value, options = {}) {
   const format = options.format || ((item) => String(item ?? ""));
   const render = options.render || ((item) => renderOutputHtml(item, format));
   const disposers = [];
-  let sheetDisposers = [];
+  let widgetDisposers = [];
   let pendingFocusRequest = null;
   let disposed = false;
   let currentValue = value;
-  function disposeSheets() {
-    for (const dispose of sheetDisposers.splice(0))
+  function disposeWidgets() {
+    for (const dispose of widgetDisposers.splice(0))
       dispose();
   }
-  function mountSheets(container, outputValue) {
-    disposeSheets();
+  function mountWidgets(container, outputValue) {
+    disposeWidgets();
     const sheetValues = collectSheets(outputValue);
     const roots = renderedSheetRoots(container);
     for (const [index, sheet] of sheetValues.entries()) {
@@ -31237,7 +31568,7 @@ function mountOutputWidgets(root, value, options = {}) {
         continue;
       const widgetSession = sheet.editable ? createWidgetSession(sheet) : null;
       if (widgetSession)
-        sheetDisposers.push(() => widgetSession.dispose());
+        widgetDisposers.push(() => widgetSession.dispose());
       enhanceSheetViews(sheetRoot, {
         onActivate: options.onActivate,
         onSelection: options.onSelection,
@@ -31311,12 +31642,45 @@ function mountOutputWidgets(root, value, options = {}) {
         } : null
       });
     }
+    const graphicValues = collectGraphics(outputValue);
+    const graphicRoots2 = renderedGraphicRoots(container);
+    for (const [index, graphic] of graphicValues.entries()) {
+      const graphicRoot = graphicRoots2[index];
+      if (!graphicRoot || graphicRoot.dataset.rixInteractive !== "true")
+        continue;
+      let widgetSession;
+      try {
+        widgetSession = createWidgetSession(graphic);
+      } catch {
+        continue;
+      }
+      widgetDisposers.push(() => widgetSession.dispose());
+      enhanceGraphicViews(graphicRoot, {
+        onPosition(detail) {
+          try {
+            const valueResult = widgetSession.dispatch(detail);
+            return {
+              type: "result",
+              value: valueResult,
+              revision: widgetSession.revision
+            };
+          } catch (error) {
+            return {
+              type: "error",
+              text: error instanceof Error ? error.message : String(error),
+              revision: widgetSession.revision
+            };
+          }
+        },
+        onPositionCommitted: options.onGraphicPosition
+      });
+    }
   }
   if (value?.kind === "live_view") {
     const selector2 = `[data-rix-live-view="${String(value.id).replaceAll('"', "\\\"")}"]`;
     const liveRoot = root?.matches?.(".rix-output-live-view") ? root : root?.querySelector?.(selector2);
     if (liveRoot) {
-      mountSheets(liveRoot, value.current);
+      mountWidgets(liveRoot, value.current);
       const unsubscribe = value.subscribe((event) => {
         if (disposed || event.type !== "live:commit")
           return;
@@ -31324,14 +31688,14 @@ function mountOutputWidgets(root, value, options = {}) {
         pendingFocusRequest = null;
         liveRoot.innerHTML = render(value.current);
         liveRoot.dataset.rixLiveRevision = String(value.revision);
-        mountSheets(liveRoot, value.current);
+        mountWidgets(liveRoot, value.current);
         restoreSheetFocus(liveRoot, focusRequest);
         options.onLiveChange?.(event, liveRoot);
       });
       disposers.push(unsubscribe);
     }
   } else {
-    mountSheets(root, value);
+    mountWidgets(root, value);
   }
   if (typeof options.observe === "function") {
     const unsubscribe = options.observe((nextValue, event = null) => {
@@ -31341,7 +31705,7 @@ function mountOutputWidgets(root, value, options = {}) {
       pendingFocusRequest = null;
       currentValue = nextValue;
       root.innerHTML = render(currentValue);
-      mountSheets(root, currentValue);
+      mountWidgets(root, currentValue);
       restoreSheetFocus(root, focusRequest);
       options.onLiveChange?.(event, root);
     });
@@ -31351,7 +31715,7 @@ function mountOutputWidgets(root, value, options = {}) {
     if (disposed)
       return;
     disposed = true;
-    disposeSheets();
+    disposeWidgets();
     for (const dispose of disposers.splice(0))
       dispose?.();
   };
@@ -32461,5 +32825,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { formatValue, mountOutputWidgets, findHelp, createRixRepl };
 
-//# debugId=DF960D81B0E3297E64756E2164756E21
-//# sourceMappingURL=chunk-dwkpdy7r.js.map
+//# debugId=88FF49FF74F3FC1964756E2164756E21
+//# sourceMappingURL=chunk-hqvh44x1.js.map

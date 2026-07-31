@@ -415,6 +415,6 @@ slot so the enclosing `$$frag` is rebuilt after any sheet edit. Plain
 `.Sheet(values, ...)` uses the same current sheet but adds no whole-sheet edge.
 Use `$values[1,2]` when a dependent needs only one coordinate.
 
-This is also the intended foundation for direct manipulation: a future
-draggable point can publish a semantic position event into a Binding or graph
-source and use the same propagation path.
+The same foundation now supports direct manipulation. The **Interactive
+graphics** tutorial uses `.Graphics.DragPoint` to publish a semantic position
+event into a graph source and follows this same propagation path.
