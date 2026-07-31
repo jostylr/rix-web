@@ -153,7 +153,16 @@ test("the web REPL returns interactive tensor-plane controls", () => {
     const repl = createRixRepl();
     const response = repl.run(`
         cube := {:2x3x2: 1, 2, 3; 4, 5, 6 ;; 7, 8, 9; 10, 11, 12};
-        .Sheet(cube, {= axes=["row", "column", "depth"], slice=[_, _, 2], address="cube" })
+        .Sheet(cube, {=
+            axes=["region", "measure", "scenario"],
+            axisLabels=[
+                ["North", "South"],
+                ["Revenue", "Cost", "Margin"],
+                ["Actual", "Forecast"]
+            ],
+            slice=[_, _, 2],
+            address="cube"
+        })
     `);
 
     expect(response.type).toBe("result");
@@ -161,6 +170,8 @@ test("the web REPL returns interactive tensor-plane controls", () => {
     expect(response.html).toContain('data-rix-plane-key="3:1"');
     expect(response.html).toContain('data-rix-plane-key="3:2"');
     expect(response.html).toContain('data-rix-address="cube[1,3,2]"');
+    expect(response.html).toContain('<option value="2" selected>Forecast</option>');
+    expect(response.html).toContain('data-rix-coordinate-label="North / Margin / Forecast"');
 });
 
 test("the web REPL catalogs bundled plugins and loads approved JavaScript on demand", () => {

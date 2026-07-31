@@ -65,6 +65,35 @@ cubeView ;
 Plane selection changes only the rendered snapshot. Every cell still carries
 its full tensor index, so the top-right cell on depth 2 is `cube[1,3,2]`.
 
+## Give axes and slices cosmetic names
+
+`axes` names dimensions. `axisLabels` optionally names each coordinate along
+those dimensions, including the choices on hidden axes:
+
+```rix edu
+cube := {:2x3x2:
+    1, 2, 3; 4, 5, 6 ;;
+    7, 8, 9; 10, 11, 12
+};
+namedView := .Sheet(.Bind(cube), {=
+    title = "Forecast by region and measure",
+    address = "cube",
+    axes = ["region", "measure", "scenario"],
+    axisLabels = [
+        ["North", "South"],
+        ["Revenue", "Cost", "Margin"],
+        ["Actual", "Forecast"]
+    ],
+    slice = [_, _, 2]
+});
+namedView ;
+```
+
+The headers and scenario menu now use meaningful names. Select the
+South/Cost/Forecast entry and the location indicator includes those cosmetic
+labels, but its executable address remains `cube[2,2,2]`. Labels never become
+variable names or replace the full numeric tensor coordinate.
+
 ## Put different axes on the grid
 
 `viewAxes` chooses the two visible axes. Hidden axes must have a fixed entry in
@@ -173,16 +202,27 @@ epoch:
 book := .FormulaSheet({:2x2:
     @{10}, @{ grid[1,1] * 2 };
     @{3}, @{ grid[1,2] + grid[2,1] }
-}, {= id="tutorial-budget" });
+}, {=
+    id="tutorial-budget",
+    view={=
+        title="Restored budget",
+        axes=["region", "measure"],
+        axisLabels=[
+            ["North", "South"],
+            ["Revenue", "Cost"]
+        ]
+    }
+});
 
 saved := .RiXCelExport(book);
 loaded := .RiXCelImport(saved);
 
-.Sheet(loaded, {= title="Restored from RiXCel JSON" }) ;
+.Sheet(loaded) ;
 ```
 
-The restored lower-right value is `23`. The file stores the dense rank-N
-shape, stable IDs, formula bodies, assignment modes, and JSON-safe view
+The restored lower-right value is `23`, and `.Sheet(loaded)` obtains its
+cosmetic headers from the document-owned view. The file stores the dense
+rank-N shape, stable IDs, formula bodies, assignment modes, and JSON-safe view
 metadata. It does not trust or persist compiled IR, values, dependencies, or
 diagnostics. A standalone host can save the `saved` string with a `.rixcel`
 extension; browser file-open/save controls remain a later editor milestone.

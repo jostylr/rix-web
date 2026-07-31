@@ -27,6 +27,25 @@ cubeView := .Sheet(.Bind(cube), {=
 });
 cubeView ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Plane selection changes only the rendered snapshot. Every cell still carries its full tensor index, so the top-right cell on depth 2 is <code>cube[1,3,2]</code>.</p>
+<h2>Give axes and slices cosmetic names</h2>
+<p><code>axes</code> names dimensions. <code>axisLabels</code> optionally names each coordinate along those dimensions, including the choices on hidden axes:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="16" spellcheck="false">cube := {:2x3x2:
+    1, 2, 3; 4, 5, 6 ;;
+    7, 8, 9; 10, 11, 12
+};
+namedView := .Sheet(.Bind(cube), {=
+    title = &quot;Forecast by region and measure&quot;,
+    address = &quot;cube&quot;,
+    axes = [&quot;region&quot;, &quot;measure&quot;, &quot;scenario&quot;],
+    axisLabels = [
+        [&quot;North&quot;, &quot;South&quot;],
+        [&quot;Revenue&quot;, &quot;Cost&quot;, &quot;Margin&quot;],
+        [&quot;Actual&quot;, &quot;Forecast&quot;]
+    ],
+    slice = [_, _, 2]
+});
+namedView ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The headers and scenario menu now use meaningful names. Select the South/Cost/Forecast entry and the location indicator includes those cosmetic labels, but its executable address remains <code>cube[2,2,2]</code>. Labels never become variable names or replace the full numeric tensor coordinate.</p>
 <h2>Put different axes on the grid</h2>
 <p><code>viewAxes</code> chooses the two visible axes. Hidden axes must have a fixed entry in <code>slice</code>, while visible axes use <code>_</code>.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="13" spellcheck="false">cube := {:2x3x2:
@@ -72,16 +91,26 @@ formulaView ;</textarea><div class="tutorial-output" data-tutorial-output></div>
 <p>The sheet recompiles the stored source into its own deferred formula; the browser does not own that compiler step. <code>model.Slot(1,1)</code> retains the stable ID <code>tutorial-model:slot:1:1</code>, authoritative source <code>&quot;10&quot;</code>, and assignment mode <code>&quot;:=&quot;</code>. The lower-right result is now <code>23</code>. A self-reference such as <code>@{ grid[1,1] + 1 }</code> reports a cycle instead of reading the previously committed value. Assignment-mode execution semantics remain a later milestone; the source and selected mode are already stored separately.</p>
 <h2>Save and rebuild a RiXCel document</h2>
 <p><code>.RiXCelExport</code> produces versioned JSON from authoritative formula source. <code>.RiXCelImport</code> validates that JSON, recompiles every formula in a fresh FormulaSheet context, and rebuilds values and dependencies through an initial epoch:</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="9" spellcheck="false">book := .FormulaSheet({:2x2:
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="19" spellcheck="false">book := .FormulaSheet({:2x2:
     @{10}, @{ grid[1,1] * 2 };
     @{3}, @{ grid[1,2] + grid[2,1] }
-}, {= id=&quot;tutorial-budget&quot; });
+}, {=
+    id=&quot;tutorial-budget&quot;,
+    view={=
+        title=&quot;Restored budget&quot;,
+        axes=[&quot;region&quot;, &quot;measure&quot;],
+        axisLabels=[
+            [&quot;North&quot;, &quot;South&quot;],
+            [&quot;Revenue&quot;, &quot;Cost&quot;]
+        ]
+    }
+});
 
 saved := .RiXCelExport(book);
 loaded := .RiXCelImport(saved);
 
-.Sheet(loaded, {= title=&quot;Restored from RiXCel JSON&quot; }) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>The restored lower-right value is <code>23</code>. The file stores the dense rank-N shape, stable IDs, formula bodies, assignment modes, and JSON-safe view metadata. It does not trust or persist compiled IR, values, dependencies, or diagnostics. A standalone host can save the <code>saved</code> string with a <code>.rixcel</code> extension; browser file-open/save controls remain a later editor milestone.</p>
+.Sheet(loaded) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The restored lower-right value is <code>23</code>, and <code>.Sheet(loaded)</code> obtains its cosmetic headers from the document-owned view. The file stores the dense rank-N shape, stable IDs, formula bodies, assignment modes, and JSON-safe view metadata. It does not trust or persist compiled IR, values, dependencies, or diagnostics. A standalone host can save the <code>saved</code> string with a <code>.rixcel</code> extension; browser file-open/save controls remain a later editor milestone.</p>
 <h2>Define reactive bindings</h2>
 <p><code>.ReactiveGraph</code>, <code>Source</code>, and <code>Derive</code> remain the foundational API. Ordinary RiX uses adjacent dollar signs as its concise interface: <code>$$name := ...</code> declares a reactive cell, <code>$name</code> records a dependency, and plain <code>name</code> reads the current value without recording one. <code>${ ... }</code> installs the declarations as one atomic transaction:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="8" spellcheck="false">${
