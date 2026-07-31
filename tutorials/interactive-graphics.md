@@ -17,7 +17,8 @@ Sheets.
 The point below is an ordinary `$$point` reactive value. Drag the purple handle
 and release it. The path, reflected circle, and table are rebuilt from the newly
 committed point in one reactive epoch. Focus the handle and use the arrow keys
-for exact one-unit moves; hold Shift for ten units.
+for repeated exact one-unit moves; hold Shift for ten units. Focus stays on the
+replacement handle after each reactive redraw.
 
 ```rix edu
 $$point := {: 90, 70};
