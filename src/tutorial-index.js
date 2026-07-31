@@ -74,6 +74,7 @@ const coreTutorials = [
     { number: "12d", parent: "12", file: "drawing-with-draw.html", title: "Drawing with .Graphics", description: "Build portable scenes from paths, shapes, groups, transforms, and clips." },
     { number: "12e", parent: "12", file: "sheets-and-tensor-views.html", title: "Sheets and tensor views", description: "Navigate exact grids, canonical RiX addresses, and higher-dimensional planes." },
     { number: "12f", parent: "12", file: "interactive-graphics.html", title: "Interactive graphics", description: "Drag a point through the shared widget protocol and watch reactive output change." },
+    { number: "12g", parent: "12", file: "control-panels.html", title: "Reactive control panels", description: "Build exact interactive controls on ordinary dollar-reactive RiX values." },
     { number: "13", file: "core-host-lowering.html", title: "Core, host, and lowering", description: "See how RiX syntax reaches named operations and capability owners." },
     { number: "13a", parent: "13", file: "core-operations.html", title: "Core operations", description: "Use public PascalCase calls alongside expression syntax." },
     { number: "13b", parent: "13", file: "lazy-core-forms.html", title: "Lazy structural forms", description: "Build assignments, maps, and lambdas from explicit core forms." },

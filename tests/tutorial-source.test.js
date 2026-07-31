@@ -52,16 +52,18 @@ test("tutorial code fields initially fit their supplied code", async () => {
     expect(runner).toContain("insertTutorialText(sourceInput, address)");
 });
 
-test("structured output has focused table, document, graphic, drawing, sheet, and interaction lessons", async () => {
+test("structured output has focused table, document, graphic, drawing, sheet, interaction, and control lessons", async () => {
     expect(tutorialByNumber("12a")?.file).toBe("tables-and-grids.html");
     expect(tutorialByNumber("12b")?.file).toBe("documents-and-slides.html");
     expect(tutorialByNumber("12c")?.file).toBe("plots-and-graphics.html");
     expect(tutorialByNumber("12d")?.file).toBe("drawing-with-draw.html");
     expect(tutorialByNumber("12e")?.file).toBe("sheets-and-tensor-views.html");
     expect(tutorialByNumber("12f")?.file).toBe("interactive-graphics.html");
+    expect(tutorialByNumber("12g")?.file).toBe("control-panels.html");
     const drawing = await Bun.file(new URL("../tutorials/drawing-with-draw.md", import.meta.url)).text();
     const sheets = await Bun.file(new URL("../tutorials/sheets-and-tensor-views.md", import.meta.url)).text();
     const interactive = await Bun.file(new URL("../tutorials/interactive-graphics.md", import.meta.url)).text();
+    const controls = await Bun.file(new URL("../tutorials/control-panels.md", import.meta.url)).text();
     expect(drawing).toContain(".Graphics.Transform");
     expect(drawing).toContain(".Graphics.Clip");
     expect(sheets).toContain("grid[2,3]");
@@ -87,6 +89,11 @@ test("structured output has focused table, document, graphic, drawing, sheet, an
     expect(sheets).toContain("Scale($values[1,1])");
     expect(sheets).toContain(".Graphics.Circle");
     expect(interactive).toContain(".Graphics.DragPoint");
+    expect(controls).toContain(".Controls.Input");
+    expect(controls).toContain(".Controls.Choice");
+    expect(controls).toContain(".Controls.Toggle");
+    expect(controls).toContain(".Controls.Range");
+    expect(controls).toContain(".Controls.Reset");
     expect(interactive).toContain("graphic:position");
     expect(interactive).toContain("$$point := {: 90, 70}");
 });
