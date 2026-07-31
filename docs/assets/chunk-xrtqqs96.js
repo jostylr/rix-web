@@ -5325,7 +5325,7 @@ var runtimeDefaults = Object.freeze({
     Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC", "SArith"]),
     Notation: Object.freeze(["SArith", "Poly", "NotationParser"]),
     Random: Object.freeze(["RANDOMSEED", "RandomSeed", "RAND_NAME"]),
-    RiXCel: Object.freeze(["FORMULASHEET", "REACTIVEGRAPH", "RIXCELEXPORT", "RIXCELIMPORT"])
+    RiXCel: Object.freeze(["FORMULASHEET", "REACTIVEGRAPH", "RIXCELEXPORT", "RIXCELIMPORT", "RIXCELIMPORTCSV", "RIXCELIMPORTTSV", "RIXCELEXPORTCSV", "RIXCELEXPORTTSV"])
   })
 });
 
@@ -14783,25 +14783,145 @@ function createBinding(cell, options = {}) {
   return Object.freeze(binding);
 }
 
+// ../rix/src/runtime/sheet-labels.js
+function text2(value) {
+  return value?.type === "string" ? value.value : typeof value === "string" ? value : null;
+}
+function exactInteger2(value) {
+  if (value instanceof Integer)
+    return Number(value.value);
+  if (value instanceof Rational && value.denominator === 1n)
+    return Number(value.numerator);
+  if (typeof value === "number" && Number.isInteger(value))
+    return value;
+  if (typeof value === "bigint")
+    return Number(value);
+  return null;
+}
+function entries(value, label) {
+  if (value?.type === "map" && value.entries instanceof Map)
+    return [...value.entries];
+  if (value instanceof Map)
+    return [...value];
+  if (value && typeof value === "object" && !Array.isArray(value))
+    return Object.entries(value);
+  throw new Error(`${label} must be a map keyed by axis name`);
+}
+function axisIndexForKey(key, axes, label) {
+  const requested = text2(key) ?? (typeof key === "string" ? key : null);
+  if (requested === null)
+    throw new Error(`${label} axis keys must be strings`);
+  const exact = axes.map((name, index) => name === requested ? index : -1).filter((index) => index >= 0);
+  if (exact.length === 1)
+    return exact[0];
+  if (exact.length > 1)
+    throw new Error(`${label} axis name is ambiguous: ${requested}`);
+  const folded = requested.toLocaleLowerCase();
+  const insensitive = axes.map((name, index) => name.toLocaleLowerCase() === folded ? index : -1).filter((index) => index >= 0);
+  if (insensitive.length === 1)
+    return insensitive[0];
+  if (insensitive.length > 1)
+    throw new Error(`${label} axis name is ambiguous: ${requested}`);
+  throw new Error(`${label} has no axis named ${requested}`);
+}
+function coordinateForValue(value, axis, shape, axes, axisLabels, label) {
+  const numeric = exactInteger2(value);
+  if (numeric !== null) {
+    if (numeric < 1 || numeric > shape[axis]) {
+      throw new Error(`${label} coordinate ${numeric} is out of range for ${axes[axis]} (1..${shape[axis]})`);
+    }
+    return numeric;
+  }
+  const requested = text2(value);
+  if (requested === null) {
+    throw new Error(`${label} coordinate for ${axes[axis]} must be an integer or label string`);
+  }
+  const labels = axisLabels[axis];
+  if (!labels)
+    throw new Error(`${label} axis ${axes[axis]} has no coordinate labels`);
+  const exact = labels.map((name, index) => name === requested ? index + 1 : -1).filter((index) => index >= 1);
+  if (exact.length === 1)
+    return exact[0];
+  if (exact.length > 1) {
+    throw new Error(`${label} coordinate label is ambiguous on ${axes[axis]}: ${requested}`);
+  }
+  const folded = requested.toLocaleLowerCase();
+  const insensitive = labels.map((name, index) => name.toLocaleLowerCase() === folded ? index + 1 : -1).filter((index) => index >= 1);
+  if (insensitive.length === 1)
+    return insensitive[0];
+  if (insensitive.length > 1) {
+    throw new Error(`${label} coordinate label is ambiguous on ${axes[axis]}: ${requested}`);
+  }
+  throw new Error(`${label} axis ${axes[axis]} has no coordinate labeled ${requested}`);
+}
+function labelSchema(shape, view = {}) {
+  const field = (name) => {
+    if (Object.hasOwn(view, name))
+      return view[name];
+    const canonical = name.toLocaleLowerCase();
+    const match = Object.entries(view).find(([key]) => key.toLocaleLowerCase() === canonical);
+    return match?.[1];
+  };
+  const requestedAxes = field("axes");
+  const requestedLabels = field("axisLabels");
+  const axes = Array.isArray(requestedAxes) && requestedAxes.length === shape.length ? [...requestedAxes] : shape.map((_length, index) => `axis${index + 1}`);
+  const axisLabels = Array.isArray(requestedLabels) && requestedLabels.length === shape.length ? requestedLabels.map((labels) => labels === null ? null : [...labels]) : shape.map(() => null);
+  return { axes, axisLabels };
+}
+function resolveLabeledCoordinate(shape, view, selector2, label = "Sheet lookup") {
+  const { axes, axisLabels } = labelSchema(shape, view);
+  const coordinate = Array(shape.length).fill(null);
+  for (const [key, value] of entries(selector2, label)) {
+    const axis = axisIndexForKey(key, axes, label);
+    if (coordinate[axis] !== null) {
+      throw new Error(`${label} repeats axis ${axes[axis]}`);
+    }
+    coordinate[axis] = coordinateForValue(value, axis, shape, axes, axisLabels, label);
+  }
+  const missing = coordinate.map((value, axis) => value === null ? axes[axis] : null).filter(Boolean);
+  if (missing.length)
+    throw new Error(`${label} is missing ${missing.join(", ")}`);
+  return Object.freeze(coordinate);
+}
+function coordinateTuple(index) {
+  return {
+    type: "tuple",
+    values: index.map((item) => new Integer(BigInt(item)))
+  };
+}
+
 // ../rix/src/runtime/formula-sheet.js
 var nextFormulaSheetId = 1;
 var FORMULA_SHEET_ASSIGNMENT_MODES = Object.freeze(["=", ":=", "~=", "::=", "~~="]);
 var ASSIGNMENT_MODES = new Set(FORMULA_SHEET_ASSIGNMENT_MODES);
-function text2(value, label) {
+function text3(value, label) {
   const result = value?.type === "string" ? value.value : typeof value === "string" ? value : null;
   if (result === null)
     throw new Error(`${label} must be a string`);
   return result;
 }
 function assignmentMode(value = ":=") {
-  const mode = text2(value, "FormulaSheet assignment mode");
+  const mode = text3(value, "FormulaSheet assignment mode");
   if (!ASSIGNMENT_MODES.has(mode)) {
     throw new Error(`Unsupported FormulaSheet assignment mode: ${mode}`);
   }
   return mode;
 }
+function formulaSourceParts(value, requestedMode = null) {
+  const source = text3(value, "FormulaSheet formula source");
+  const match = source.match(/^\s*(::=|~~=|:=|~=|=)\s*([\s\S]+)$/u);
+  const explicitMode = match?.[1] ?? null;
+  const body = match ? match[2] : source;
+  if (body.trim().length === 0)
+    throw new Error("FormulaSheet formula source must not be empty");
+  const selectedMode = requestedMode === null || requestedMode === undefined ? explicitMode ?? ":=" : assignmentMode(requestedMode);
+  if (explicitMode !== null && explicitMode !== selectedMode) {
+    throw new Error(`FormulaSheet source begins with ${explicitMode}, but assignment mode is ${selectedMode}`);
+  }
+  return { source: body, assignmentMode: selectedMode };
+}
 function formulaSheetId(value) {
-  const id = text2(value, "FormulaSheet id");
+  const id = text3(value, "FormulaSheet id");
   if (id.trim().length === 0)
     throw new Error("FormulaSheet id must not be empty");
   return id;
@@ -14837,14 +14957,14 @@ function normalizeFormulaGrid(value) {
     if (shape.length === 0 || shape.some((length) => length === 0)) {
       throw new Error("FormulaSheet requires a non-empty tensor of rank 1 or greater");
     }
-    const entries2 = [];
+    const entries3 = [];
     forEachTensorCell(value, (formula, index) => {
-      entries2.push({
+      entries3.push({
         index: Object.freeze([...index]),
         formula: requireFormula(formula, index)
       });
     });
-    return { shape, entries: entries2 };
+    return { shape, entries: entries3 };
   }
   const rows = valuesOf(value, "FormulaSheet formulas");
   if (rows.length === 0)
@@ -14856,14 +14976,14 @@ function normalizeFormulaGrid(value) {
   if (!matrix.every((row) => row.length === columns)) {
     throw new Error("FormulaSheet rows must have equal lengths");
   }
-  const entries = [];
+  const entries2 = [];
   for (const [rowIndex, row] of matrix.entries()) {
     for (const [columnIndex, formula] of row.entries()) {
       const index = Object.freeze([rowIndex + 1, columnIndex + 1]);
-      entries.push({ index, formula: requireFormula(formula, index) });
+      entries2.push({ index, formula: requireFormula(formula, index) });
     }
   }
-  return { shape: [matrix.length, columns], entries };
+  return { shape: [matrix.length, columns], entries: entries2 };
 }
 function nodeNameFor(index) {
   return `slot_${index.join("_")}`;
@@ -14913,10 +15033,13 @@ function formulaSheetMethods() {
       }
       const index = args.slice(0, rank);
       const source = args[rank];
-      const mode = args[rank + 1] ?? ":=";
+      const mode = args[rank + 1] ?? null;
       return target.setFormulaSource(index, source, mode);
     })],
     ["GETASSIGNMENTMODE", method3("GetAssignmentMode", ([target, ...index]) => target.slot(index).assignmentMode)],
+    ["INDEX", method3("Index", ([target, selector2]) => target.index(selector2))],
+    ["AT", method3("At", ([target, selector2]) => target.at(selector2))],
+    ["SLOTAT", method3("SlotAt", ([target, selector2]) => target.slotAt(selector2))],
     ["RECALCULATE", method3("Recalculate", ([target]) => target.recalculate())],
     ["SLOT", method3("Slot", ([target, ...index]) => target.slot(index))],
     ["GRAPH", method3("Graph", ([target]) => target.graph)],
@@ -14974,7 +15097,7 @@ function createFormulaSheet(formulasValue, options = {}) {
       return options.runFormula(formula, Object.fromEntries([...graph.bindings(), ["grid", sheet]]), { reactiveGraph: graph });
     },
     cycleLabel: "Formula cycle",
-    reservedNames: ["grid", "row", "col", "index"],
+    reservedNames: ["grid", "row", "col", "index", "near"],
     reservedNameLabel: "FormulaSheet graph node name is reserved",
     labelForNode(name) {
       return addressFor(keyFromNodeName(name).split(","));
@@ -14996,6 +15119,15 @@ function createFormulaSheet(formulasValue, options = {}) {
     get(index) {
       const normalized = normalizeIndex2(index, shape);
       return graph.get(nodeNameFor(normalized));
+    },
+    index(selector2) {
+      return coordinateTuple(resolveLabeledCoordinate(shape, sheet.documentView, selector2, "FormulaSheet.Index"));
+    },
+    at(selector2) {
+      return sheet.get(resolveLabeledCoordinate(shape, sheet.documentView, selector2, "FormulaSheet.At"));
+    },
+    slotAt(selector2) {
+      return sheet.slot(resolveLabeledCoordinate(shape, sheet.documentView, selector2, "FormulaSheet.SlotAt"));
     },
     track() {
       for (const { index } of formulas.entries) {
@@ -15046,17 +15178,16 @@ function createFormulaSheet(formulasValue, options = {}) {
       }
       return sheet;
     },
-    setFormulaSource(index, source, mode = ":=") {
+    setFormulaSource(index, source, mode = null) {
       if (typeof options.compileFormula !== "function") {
         throw new Error("FormulaSheet source editing requires a formula compiler");
       }
       const normalized = normalizeIndex2(index, shape);
-      const authoritativeSource = text2(source, "FormulaSheet formula source");
-      const normalizedMode = assignmentMode(mode);
-      const formula = options.compileFormula(authoritativeSource);
+      const parts = formulaSourceParts(source, mode);
+      const formula = options.compileFormula(parts.source);
       return sheet.setFormula(normalized, formula, {
-        source: authoritativeSource,
-        assignmentMode: normalizedMode,
+        source: parts.source,
+        assignmentMode: parts.assignmentMode,
         sourceKind: "formula-source"
       });
     },
@@ -15084,9 +15215,29 @@ function createFormulaSheet(formulasValue, options = {}) {
       source: metadata.source,
       initialize: false,
       evaluator(slotFormula) {
+        const near = Object.freeze({
+          type: "formula_near",
+          rank: shape.length,
+          index,
+          get(offsets) {
+            if (offsets.length !== shape.length) {
+              throw new Error(`near expects ${shape.length} offsets, got ${offsets.length}`);
+            }
+            const target = offsets.map((offset, axis) => {
+              const delta = exactIndex(offset, `near axis ${axis + 1} offset`);
+              const coordinate = index[axis] + delta;
+              if (coordinate < 1 || coordinate > shape[axis]) {
+                throw new Error(`near[${offsets.join(",")}] from ${addressFor(index)} is out of range on axis ${axis + 1}`);
+              }
+              return coordinate;
+            });
+            return sheet.get(target);
+          }
+        });
         const contextualBindings = [
           ...graph.bindings(),
           ["grid", sheet],
+          ["near", near],
           ["index", {
             type: "tuple",
             values: index.map((item) => new Integer(BigInt(item)))
@@ -15152,11 +15303,11 @@ function map(value, label) {
     throw new Error(`${label} must be a map`);
   return value.entries;
 }
-function get(entries, name, fallback = null) {
-  if (entries.has(name))
-    return entries.get(name);
+function get(entries2, name, fallback = null) {
+  if (entries2.has(name))
+    return entries2.get(name);
   const canonical = String(name).toLowerCase();
-  return entries.has(canonical) ? entries.get(canonical) : fallback;
+  return entries2.has(canonical) ? entries2.get(canonical) : fallback;
 }
 function optionalMap(value, label) {
   return value === null || value === undefined ? null : map(value, label);
@@ -15168,7 +15319,7 @@ function spec(args, positional, name) {
     throw new Error(`${name} received too many arguments`);
   return new Map(positional.slice(0, args.length).map((key, index) => [key, args[index]]));
 }
-function output(kind, fields) {
+function output(kind, fields, methods = []) {
   return Object.freeze({
     type: "output",
     kind,
@@ -15176,11 +15327,32 @@ function output(kind, fields) {
     _ext: new Map([
       ["_type", { type: "string", value: "output" }],
       ["kind", { type: "string", value: kind }],
-      ["immutable", int6(1)]
+      ["immutable", int6(1)],
+      ...methods
     ])
   });
 }
-function exactInteger2(value, label) {
+function method4(name, impl) {
+  return { type: "method_builtin", name, impl };
+}
+function sheetMethods() {
+  const index = (target, selector2, label) => resolveLabeledCoordinate(target.shape, { axes: target.axes, axisLabels: target.axisLabels }, selector2, label);
+  const cellAt = (target, coordinate) => {
+    for (const plane of target.planes) {
+      for (const row of plane.cells) {
+        const cell = row.find((candidate) => candidate.index.every((item, axis) => item === coordinate[axis]));
+        if (cell)
+          return cell;
+      }
+    }
+    throw new Error(`Sheet coordinate is unavailable: [${coordinate.join(",")}]`);
+  };
+  return [
+    ["INDEX", method4("Index", ([target, selector2]) => coordinateTuple(index(target, selector2, "Sheet.Index")))],
+    ["AT", method4("At", ([target, selector2]) => cellAt(target, index(target, selector2, "Sheet.At")).value)]
+  ];
+}
+function exactInteger3(value, label) {
   if (value instanceof Integer)
     return Number(value.value);
   if (value instanceof Rational && value.denominator === 1n)
@@ -15231,7 +15403,7 @@ function createParagraph(args) {
 }
 function createHeading(args) {
   const entry = spec(args, ["level", "content", "id", "style"], "Heading");
-  const level = exactInteger2(get(entry, "level"), "Heading level");
+  const level = exactInteger3(get(entry, "level"), "Heading level");
   if (level < 1 || level > 6)
     throw new Error("Heading level must be between 1 and 6");
   const content = get(entry, "content");
@@ -15335,7 +15507,7 @@ function sheetData(value) {
   throw new Error("Sheet data must be a tensor, matrix, array, tuple, or sequence");
 }
 function normalizedSheetIndex(value, length, label) {
-  const index = exactInteger2(value, label);
+  const index = exactInteger3(value, label);
   const normalized = index < 0 ? length + index + 1 : index;
   if (normalized < 1 || normalized > length) {
     throw new Error(`${label} ${index} is out of range for length ${length}`);
@@ -15536,7 +15708,7 @@ function createSheet(args) {
     planes: Object.freeze(planes),
     cells,
     options: refreshOptions.size > 0 ? refreshOptions : null
-  });
+  }, sheetMethods());
 }
 function createSheetSnapshot(sheet) {
   if (!isOutputValue(sheet) || sheet.kind !== "sheet")
@@ -15595,10 +15767,10 @@ function createTextMark(args) {
   const position = sequence(get(entry, "position"), "TextMark position");
   if (position.length !== 2)
     throw new Error("TextMark position must contain x and y coordinates");
-  const text3 = get(entry, "text");
-  if (text3 === null || text3 === undefined)
+  const text4 = get(entry, "text");
+  if (text4 === null || text4 === undefined)
     throw new Error("TextMark requires text");
-  return output("text_mark", { position, text: text3, style: optionalMap(get(entry, "style"), "TextMark style") });
+  return output("text_mark", { position, text: text4, style: optionalMap(get(entry, "style"), "TextMark style") });
 }
 function createRectangle(args) {
   const entry = spec(args, ["origin", "size", "style"], "Rectangle");
@@ -15690,7 +15862,7 @@ function createPolynomialPlot(coefficients, domain, options = null) {
   if (size.length !== 2 || size.some((value) => value <= 0))
     throw new Error("Polynomial plot size must contain positive width and height");
   const samplesValue = get(optionEntries, "samples", null);
-  const samples = samplesValue === null ? 161 : exactInteger2(samplesValue, "Polynomial plot samples");
+  const samples = samplesValue === null ? 161 : exactInteger3(samplesValue, "Polynomial plot samples");
   if (samples < 2 || samples > 1e4)
     throw new Error("Polynomial plot samples must be between 2 and 10000");
   const marginValue = get(optionEntries, "margin", null);
@@ -16006,31 +16178,32 @@ ${formatOutputText(slide, format)}`).join(`
   return `[Output: ${value.kind}]`;
 }
 function renderOutputHtml(value, format = (item) => String(item ?? "")) {
-  const text3 = (item) => escapeHtml(isOutputValue(item) ? formatOutputText(item, format) : cellText(item, format));
+  const text4 = (item) => escapeHtml(isOutputValue(item) ? formatOutputText(item, format) : cellText(item, format));
   if (!isOutputValue(value))
-    return `<pre>${text3(value)}</pre>`;
+    return `<pre>${text4(value)}</pre>`;
   if (value.kind === "live_view") {
     return `<section class="rix-output-live-view" data-rix-live-view="${escapeHtml(value.id)}" data-rix-live-revision="${value.revision}">${renderOutputHtml(value.current, format)}</section>`;
   }
   if (value.kind === "text")
-    return `<span class="rix-output-text">${text3(value.value)}</span>`;
+    return `<span class="rix-output-text">${text4(value.value)}</span>`;
   if (value.kind === "paragraph")
-    return `<p class="rix-output-paragraph">${value.children.map(text3).join("")}</p>`;
+    return `<p class="rix-output-paragraph">${value.children.map(text4).join("")}</p>`;
   if (value.kind === "heading")
-    return `<h${value.level} class="rix-output-heading">${text3(value.content)}</h${value.level}>`;
+    return `<h${value.level} class="rix-output-heading">${text4(value.content)}</h${value.level}>`;
   if (value.kind === "fragment")
     return `<section class="rix-output-fragment">${value.children.map((child) => renderOutputHtml(child, format)).join("")}</section>`;
   if (value.kind === "table")
-    return `<table class="rix-output-table">${value.caption ? `<caption>${escapeHtml(value.caption)}</caption>` : ""}<thead><tr>${value.columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}</tr></thead><tbody>${value.rows.map((row) => `<tr>${row.map((cell) => `<td>${text3(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+    return `<table class="rix-output-table">${value.caption ? `<caption>${escapeHtml(value.caption)}</caption>` : ""}<thead><tr>${value.columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}</tr></thead><tbody>${value.rows.map((row) => `<tr>${row.map((cell) => `<td>${text4(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
   if (value.kind === "grid")
-    return `<table class="rix-output-grid"><tbody>${value.rows.map((row, rowIndex) => `<tr${hasRule(value, "horizontal", rowIndex + 1) ? ' class="rix-grid-rule-top"' : ""}>${row.map((cell, column) => `<td${hasRule(value, "vertical", column + 1) ? ' class="rix-grid-rule-left"' : ""}>${text3(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+    return `<table class="rix-output-grid"><tbody>${value.rows.map((row, rowIndex) => `<tr${hasRule(value, "horizontal", rowIndex + 1) ? ' class="rix-grid-rule-top"' : ""}>${row.map((cell, column) => `<td${hasRule(value, "vertical", column + 1) ? ' class="rix-grid-rule-left"' : ""}>${text4(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
   if (value.kind === "sheet") {
     const summary = `${value.addressBase} · shape ${value.shape.join("×")}`;
     const axisSummary = value.columnAxis ? `Rows: ${value.rowAxis.name} · Columns: ${value.columnAxis.name}` : `Rows: ${value.rowAxis.name}`;
     const controls = value.hiddenAxes.length === 0 ? "" : `<div class="rix-output-sheet-plane-controls" aria-label="Tensor plane">${value.hiddenAxes.map(({ axis, name, length, selected, labels }) => `<label><span>${escapeHtml(name)} · axis ${axis}</span><select data-rix-sheet-axis="${axis}" aria-label="${escapeHtml(name)} axis ${axis}">${Array.from({ length }, (_item, index) => `<option value="${index + 1}"${selected === index + 1 ? " selected" : ""}>${escapeHtml(labels?.[index] ?? String(index + 1))}</option>`).join("")}</select></label>`).join("")}</div>`;
-    const bodies = value.planes.map((plane) => `<tbody data-rix-plane-key="${escapeHtml(plane.key)}" data-rix-slice="${plane.slice.map((item) => item ?? "").join(",")}"${plane.key === value.selectedPlaneKey ? "" : " hidden"}>${plane.cells.map((row, rowIndex) => `<tr><th scope="row" data-rix-row="${rowIndex + 1}"${value.axisLabels[value.rowAxis.axis - 1] ? ` title="${escapeHtml(value.rowAxis.name)} ${rowIndex + 1}"` : ""}>${escapeHtml(value.rowHeaders[rowIndex])}</th>${row.map((cell, columnIndex) => `<td data-rix-row="${rowIndex + 1}" data-rix-column="${columnIndex + 1}" data-rix-index="${cell.index.join(",")}" data-rix-address="${escapeHtml(cell.address)}" data-rix-display-address="${escapeHtml(cell.displayAddress)}"${cell.coordinateLabel === null ? "" : ` data-rix-coordinate-labels="${escapeHtml(JSON.stringify(cell.coordinateLabels))}" data-rix-coordinate-label="${escapeHtml(cell.coordinateLabel)}"`}${cell.formulaSource === null ? "" : ` data-rix-formula-source="${escapeHtml(cell.formulaSource)}"`}${cell.slotId === null ? "" : ` data-rix-slot-id="${escapeHtml(cell.slotId)}"`}${cell.assignmentMode === null ? "" : ` data-rix-assignment-mode="${escapeHtml(cell.assignmentMode)}"`} title="${cell.coordinateLabel === null ? "" : `${escapeHtml(cell.coordinateLabel)} · `}${escapeHtml(cell.displayAddress)} · ${escapeHtml(cell.address)}">${text3(cell.value)}</td>`).join("")}</tr>`).join("")}</tbody>`).join("");
+    const bodies = value.planes.map((plane) => `<tbody data-rix-plane-key="${escapeHtml(plane.key)}" data-rix-slice="${plane.slice.map((item) => item ?? "").join(",")}"${plane.key === value.selectedPlaneKey ? "" : " hidden"}>${plane.cells.map((row, rowIndex) => `<tr><th scope="row" data-rix-row="${rowIndex + 1}"${value.axisLabels[value.rowAxis.axis - 1] ? ` title="${escapeHtml(value.rowAxis.name)} ${rowIndex + 1}"` : ""}>${escapeHtml(value.rowHeaders[rowIndex])}</th>${row.map((cell, columnIndex) => `<td data-rix-row="${rowIndex + 1}" data-rix-column="${columnIndex + 1}" data-rix-index="${cell.index.join(",")}" data-rix-address="${escapeHtml(cell.address)}" data-rix-display-address="${escapeHtml(cell.displayAddress)}"${cell.coordinateLabel === null ? "" : ` data-rix-coordinate-labels="${escapeHtml(JSON.stringify(cell.coordinateLabels))}" data-rix-coordinate-label="${escapeHtml(cell.coordinateLabel)}"`}${cell.formulaSource === null ? "" : ` data-rix-formula-source="${escapeHtml(cell.formulaSource)}"`}${cell.slotId === null ? "" : ` data-rix-slot-id="${escapeHtml(cell.slotId)}"`}${cell.assignmentMode === null ? "" : ` data-rix-assignment-mode="${escapeHtml(cell.assignmentMode)}"`} title="${cell.coordinateLabel === null ? "" : `${escapeHtml(cell.coordinateLabel)} · `}${escapeHtml(cell.displayAddress)} · ${escapeHtml(cell.address)}">${text4(cell.value)}</td>`).join("")}</tr>`).join("")}</tbody>`).join("");
     const liveAttributes = value.editable ? ` data-rix-editable="true" data-rix-edit-mode="${value.editMode}"${value.bindingId ? ` data-rix-binding-id="${escapeHtml(value.bindingId)}"` : ""}` : "";
-    const editor = value.editable ? `<form class="rix-output-sheet-editor" hidden><label><span data-rix-edit-label>Choose a cell to edit</span><input data-rix-edit-source aria-label="${value.editMode === "formula" ? "RiX formula" : "RiX value"}" autocomplete="off" spellcheck="false"></label><button type="submit">${value.editMode === "formula" ? "Set formula" : "Set"}</button><output data-rix-edit-status aria-live="polite"></output></form>` : "";
+    const assignmentControl = value.editMode === "formula" ? `<label class="rix-output-sheet-assignment"><span>Assignment</span><select data-rix-edit-assignment-mode aria-label="Formula assignment mode">${FORMULA_SHEET_ASSIGNMENT_MODES.map((mode) => `<option value="${escapeHtml(mode)}"${mode === ":=" ? " selected" : ""}>${escapeHtml(mode)}</option>`).join("")}</select></label>` : "";
+    const editor = value.editable ? `<form class="rix-output-sheet-editor" hidden><label class="rix-output-sheet-formula"><span data-rix-edit-label>Choose a cell to edit</span><input data-rix-edit-source aria-label="${value.editMode === "formula" ? "RiX formula" : "RiX value"}" autocomplete="off" spellcheck="false"></label>${assignmentControl}<button type="submit">${value.editMode === "formula" ? "Set formula" : "Set"}</button><output data-rix-edit-value aria-live="polite"></output><output data-rix-edit-status aria-live="polite"></output></form>` : "";
     const formulaAttributes = value.formulaBacked ? ` data-rix-formula-sheet="true" data-rix-formula-epoch="${value.formulaSheet.epoch}"` : "";
     return `<section class="rix-output-sheet" data-rix-rank="${value.rank}" data-rix-selected-plane="${escapeHtml(value.selectedPlaneKey)}"${liveAttributes}${formulaAttributes}>${value.title ? `<h3 class="rix-output-sheet-title">${escapeHtml(value.title)}</h3>` : ""}<div class="rix-output-sheet-location" aria-live="polite" data-rix-summary="${escapeHtml(summary)}">${escapeHtml(summary)}</div>${value.showAxisSummary ? `<div class="rix-output-sheet-axis-summary">${escapeHtml(axisSummary)}</div>` : ""}${controls}${editor}<table><thead><tr><th class="rix-output-sheet-corner" scope="col">${escapeHtml(value.addressBase)}</th>${value.columnHeaders.map((header, column) => `<th scope="col" data-rix-column="${column + 1}"${value.columnAxis && value.axisLabels[value.columnAxis.axis - 1] ? ` title="${escapeHtml(value.columnAxis.name)} ${column + 1}"` : ""}>${escapeHtml(header)}</th>`).join("")}</tr></thead>${bodies}</table></section>`;
   }
@@ -16070,18 +16243,18 @@ function createGraphicsOutputCollection() {
     ["Circle", createCircle],
     ["Clip", createClip]
   ]);
-  const entries = new Map;
+  const entries2 = new Map;
   const extension = new Map([["immutable", int6(1)]]);
   for (const [name, constructor] of methods) {
-    entries.set(name, constructor);
-    entries.set(name.toUpperCase(), constructor);
+    entries2.set(name, constructor);
+    entries2.set(name.toUpperCase(), constructor);
     extension.set(name.toUpperCase(), {
       type: "method_builtin",
       name,
       impl: (args) => constructor(args.slice(1))
     });
   }
-  return { type: "map", entries, _ext: extension };
+  return { type: "map", entries: entries2, _ext: extension };
 }
 function createPlotOutputCollection() {
   const polynomial = (coefficients, domain, options = null) => createPolynomialPlot(coefficients, domain, options);
@@ -16156,10 +16329,10 @@ function formatTensor(tensor, formatValue2) {
   const levels = tensorDisplayLevels(tensor.shape);
   return `{:${shapeText}: ${formatTensorBody(tensor, formatValue2, levels)} }`;
 }
-function truncate(text3, limit = 40) {
-  if (text3.length <= limit)
-    return text3;
-  return `${text3.slice(0, Math.max(0, limit - 3))}...`;
+function truncate(text4, limit = 40) {
+  if (text4.length <= limit)
+    return text4;
+  return `${text4.slice(0, Math.max(0, limit - 3))}...`;
 }
 var BINARY_OPS = new Map([
   ["ADD", "+"],
@@ -16391,20 +16564,20 @@ function formatValue(val, options = {}) {
       return open + val.values.map(formatChild).join(", ") + close;
     }
     if (val.type === "map") {
-      const entries = [];
+      const entries2 = [];
       const mapObj = val.entries || val.elements || new Map;
       mapObj.forEach((entryValue, key) => {
-        entries.push(`${key}=${formatChild(entryValue)}`);
+        entries2.push(`${key}=${formatChild(entryValue)}`);
       });
-      return `{= ${entries.join(", ")} }`;
+      return `{= ${entries2.join(", ")} }`;
     }
     if (val.type === "export_bundle") {
-      const entries = [];
+      const entries2 = [];
       const mapObj = val.entries || new Map;
       mapObj.forEach((cell, key) => {
-        entries.push(`${key}=${formatChild(cell?.value)}`);
+        entries2.push(`${key}=${formatChild(cell?.value)}`);
       });
-      return `{= ${entries.join(", ")} }`;
+      return `{= ${entries2.join(", ")} }`;
     }
     if (val.type === "function" || val.type === "lambda") {
       return formatCallablePreview(val, val.type === "lambda" ? "Lambda" : "Function");
@@ -18157,21 +18330,21 @@ function rixString3(value) {
   return { type: "string", value: String(value) };
 }
 function descriptorValue(metadata) {
-  const entries = new Map;
+  const entries2 = new Map;
   const extension = new Map;
   for (const name of metadata.exports) {
     const displayName = String(name);
-    const method4 = {
+    const method5 = {
       type: "method_builtin",
       name: displayName,
       impl() {
         throw new Error(`Plugin '${metadata.id}' is available but not loaded`);
       }
     };
-    entries.set(displayName, method4);
-    extension.set(displayName.toUpperCase(), method4);
+    entries2.set(displayName, method5);
+    extension.set(displayName.toUpperCase(), method5);
   }
-  return { type: "map", entries, _ext: extension };
+  return { type: "map", entries: entries2, _ext: extension };
 }
 function optionMap(value) {
   if (!value || value.type !== "map" || !(value.entries instanceof Map))
@@ -18881,6 +19054,12 @@ function indexGetResolved(obj, key) {
   throw new Error(`Type "${obj?.type || typeof obj}" is not indexable`);
 }
 function bracketGetResolved(obj, specs) {
+  if (obj?.type === "formula_near" && typeof obj.get === "function") {
+    if (!specs.every((spec2) => spec2.kind === "index")) {
+      throw new Error("near only accepts exact relative offsets");
+    }
+    return obj.get(specs.map((spec2) => spec2.value));
+  }
   if (isFormulaSheet(obj)) {
     if (!specs.every((spec2) => spec2.kind === "index")) {
       throw new Error("FormulaSheet slicing is not implemented yet");
@@ -21064,7 +21243,7 @@ class Parser {
     }
     if (current?.type === "Array" || current?.type === "ArrayContainer") {
       const elements = current.elements || [];
-      const entries = [];
+      const entries2 = [];
       let rest = null;
       for (let i = 0;i < elements.length; i++) {
         const entry = this.convertExpressionToDestructureTarget(elements[i]);
@@ -21075,16 +21254,16 @@ class Parser {
             this.error("Rest capture must be in final position");
           rest = entry;
         } else {
-          entries.push(entry);
+          entries2.push(entry);
         }
       }
       target = this.createDestructureTargetNode("DestructureArrayPattern", {
-        entries,
+        entries: entries2,
         rest
       }, current);
     } else if (current?.type === "Tuple" || current?.type === "TupleContainer") {
       const elements = current.elements || [];
-      const entries = [];
+      const entries2 = [];
       let rest = null;
       for (let i = 0;i < elements.length; i++) {
         const entry = this.convertExpressionToDestructureTarget(elements[i]);
@@ -21095,15 +21274,15 @@ class Parser {
             this.error("Rest capture must be in final position");
           rest = entry;
         } else {
-          entries.push(entry);
+          entries2.push(entry);
         }
       }
       target = this.createDestructureTargetNode("DestructureTuplePattern", {
-        entries,
+        entries: entries2,
         rest
       }, current);
     } else if (current?.type === "MapContainer") {
-      const entries = [];
+      const entries2 = [];
       let rest = null;
       for (let i = 0;i < current.elements.length; i++) {
         const entry = this.convertMapDestructureEntry(current.elements[i]);
@@ -21114,11 +21293,11 @@ class Parser {
             this.error("Rest capture must be in final position");
           rest = entry;
         } else {
-          entries.push(entry);
+          entries2.push(entry);
         }
       }
       target = this.createDestructureTargetNode("DestructureMapPattern", {
-        entries,
+        entries: entries2,
         rest
       }, current);
     } else if (current?.type === "TensorLiteral") {
@@ -22040,8 +22219,8 @@ class Parser {
     }
     this.position = endIndex + 1;
     this.advance();
-    const text3 = raw.trim();
-    if (!text3.length) {
+    const text4 = raw.trim();
+    if (!text4.length) {
       this.error("Import header cannot be empty");
     }
     const seenLocals = new Set;
@@ -23169,8 +23348,8 @@ var BASE_MODE_ALIASES = new Map([
 ]);
 var DEFAULT_BASE_DIGITS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz@&";
 var DEFAULT_BASE_EXPANSION_LIMIT = 20;
-function unescapeQuotedString(text3) {
-  return text3.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16))).replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+function unescapeQuotedString(text4) {
+  return text4.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16))).replace(/\\"/g, '"').replace(/\\\\/g, "\\");
 }
 function toRationalValue(value) {
   if (value instanceof Integer)
@@ -23271,10 +23450,10 @@ function groupDigits(intStr) {
   }
   return sign + out;
 }
-function stripGroupedDecimalDigits(text3, { allowSign = false } = {}) {
-  if (typeof text3 !== "string" || text3.length === 0)
-    return text3;
-  let s = text3;
+function stripGroupedDecimalDigits(text4, { allowSign = false } = {}) {
+  if (typeof text4 !== "string" || text4.length === 0)
+    return text4;
+  let s = text4;
   let sign = "";
   if (allowSign && (s.startsWith("-") || s.startsWith("+"))) {
     sign = s[0];
@@ -23296,9 +23475,9 @@ function stripGroupedDecimalDigits(text3, { allowSign = false } = {}) {
   }
   return sign + s.replace(/_/g, "");
 }
-function groupDigitRuns(text3, baseSystem) {
-  if (!text3)
-    return text3;
+function groupDigitRuns(text4, baseSystem) {
+  if (!text4)
+    return text4;
   let out = "";
   let run = "";
   const flush = () => {
@@ -23315,7 +23494,7 @@ function groupDigitRuns(text3, baseSystem) {
     }
     run = "";
   };
-  for (const ch of text3) {
+  for (const ch of text4) {
     if (baseSystem.charMap.has(ch)) {
       run += ch;
     } else {
@@ -24002,10 +24181,10 @@ function createMutableSequence(values) {
     _ext: new Map([["_mutable", new Integer(1n)]])
   });
 }
-function createMutableMap(entries) {
+function createMutableMap(entries2) {
   return attachBuiltinProto({
     type: "map",
-    entries: new Map(entries),
+    entries: new Map(entries2),
     _ext: new Map([["_mutable", new Integer(1n)]])
   });
 }
@@ -24543,8 +24722,8 @@ var coreFunctions = {
         } catch {}
       }
       const baseSystem = resolveBaseSpecFromValue(baseSpecValue);
-      const text3 = toBaseString(value, baseSystem, modeSpec);
-      return { type: "string", value: text3 };
+      const text4 = toBaseString(value, baseSystem, modeSpec);
+      return { type: "string", value: text4 };
     },
     doc: "Format number to base string: expr _> baseSpec"
   },
@@ -24554,11 +24733,11 @@ var coreFunctions = {
       const strVal = evaluate(args[0]);
       const specNode = args[1];
       const baseSpecValue = specNode && specNode.fn === "LITERAL" && typeof specNode.args?.[0] === "string" && /^0([A-Za-z])$/.test(specNode.args[0]) ? specNode.args[0] : evaluate(specNode);
-      const text3 = strVal && strVal.type === "string" ? strVal.value : strVal;
-      if (typeof text3 !== "string")
+      const text4 = strVal && strVal.type === "string" ? strVal.value : strVal;
+      if (typeof text4 !== "string")
         throw new Error("FROMBASE expects a string left operand");
       const baseSystem = resolveBaseSpecFromValue(baseSpecValue);
-      return fromBaseString(text3, baseSystem);
+      return fromBaseString(text4, baseSystem);
     },
     doc: "Parse base string to number: str <_ baseSpec"
   },
@@ -24587,8 +24766,8 @@ var coreFunctions = {
         const groups = [];
         const spans = [];
         for (let i = 0;i < match.length; i++) {
-          const text3 = match[i];
-          groups.push(text3 === undefined ? null : { type: "string", value: text3 });
+          const text4 = match[i];
+          groups.push(text4 === undefined ? null : { type: "string", value: text4 });
           if (match.indices && match.indices[i]) {
             const [start, end] = match.indices[i];
             spans.push({
@@ -24605,8 +24784,8 @@ var coreFunctions = {
         const named = new Map;
         const namedSpans = new Map;
         if (match.groups) {
-          for (const [key, text3] of Object.entries(match.groups)) {
-            named.set(key, text3 === undefined ? null : { type: "string", value: text3 });
+          for (const [key, text4] of Object.entries(match.groups)) {
+            named.set(key, text4 === undefined ? null : { type: "string", value: text4 });
             if (match.indices && match.indices.groups && match.indices.groups[key]) {
               const [s, e] = match.indices.groups[key];
               namedSpans.set(key, {
@@ -24621,15 +24800,15 @@ var coreFunctions = {
             }
           }
         }
-        const entries = new Map;
-        entries.set("text", { type: "string", value: match[0] });
-        entries.set("span", spans[0]);
-        entries.set("groups", { type: "sequence", values: groups });
-        entries.set("spans", { type: "sequence", values: spans });
-        entries.set("named", { type: "map", entries: named });
-        entries.set("named spans", { type: "map", entries: namedSpans });
-        entries.set("input", { type: "string", value: match.input });
-        return { type: "map", entries };
+        const entries2 = new Map;
+        entries2.set("text", { type: "string", value: match[0] });
+        entries2.set("span", spans[0]);
+        entries2.set("groups", { type: "sequence", values: groups });
+        entries2.set("spans", { type: "sequence", values: spans });
+        entries2.set("named", { type: "map", entries: named });
+        entries2.set("named spans", { type: "map", entries: namedSpans });
+        entries2.set("input", { type: "string", value: match.input });
+        return { type: "map", entries: entries2 };
       };
       const regexFunc = (inputVal) => {
         const str = inputVal && inputVal.type === "string" ? inputVal.value : inputVal;
@@ -26334,10 +26513,10 @@ var stdlibFunctions = {
     impl(args, context) {
       const io = context?.getEnv?.(RIX_IO_ENV, null);
       const formatter = typeof io?.format === "function" ? io.format : defaultPrettyFormat;
-      const printer = typeof io?.print === "function" ? io.print : (text3) => console.log(text3);
+      const printer = typeof io?.print === "function" ? io.print : (text4) => console.log(text4);
       for (const arg of args) {
-        const text3 = formatter(arg, { formatValue, prettyFormat: defaultPrettyFormat, context });
-        printer(text3, arg, { formatValue, prettyFormat: defaultPrettyFormat, context });
+        const text4 = formatter(arg, { formatValue, prettyFormat: defaultPrettyFormat, context });
+        printer(text4, arg, { formatValue, prettyFormat: defaultPrettyFormat, context });
       }
       return null;
     },
@@ -26712,24 +26891,24 @@ function buildIsolatedResult(label, filePath, passedAll, resultMap, total, passe
   return resultObj;
 }
 function makeTestEntry(index, passed, value, error, skipped) {
-  const entries = new Map;
-  entries.set("index", toRixInt(index));
-  entries.set("passed", passed === true ? toRixInt(1) : null);
+  const entries2 = new Map;
+  entries2.set("index", toRixInt(index));
+  entries2.set("passed", passed === true ? toRixInt(1) : null);
   if (value !== null && value !== undefined)
-    entries.set("value", value);
+    entries2.set("value", value);
   if (error !== null && error !== undefined)
-    entries.set("error", toRixString(error));
-  entries.set("skipped", skipped ? toRixInt(1) : null);
-  return { type: "map", entries };
+    entries2.set("error", toRixString(error));
+  entries2.set("skipped", skipped ? toRixInt(1) : null);
+  return { type: "map", entries: entries2 };
 }
 function makeIsolatedEntry(passed, value, error) {
-  const entries = new Map;
-  entries.set("passed", passed ? toRixInt(1) : null);
+  const entries2 = new Map;
+  entries2.set("passed", passed ? toRixInt(1) : null);
   if (value !== null && value !== undefined)
-    entries.set("value", value);
+    entries2.set("value", value);
   if (error !== null && error !== undefined)
-    entries.set("error", toRixString(error));
-  return { type: "map", entries };
+    entries2.set("error", toRixString(error));
+  return { type: "map", entries: entries2 };
 }
 var DEBUG = {
   lazy: true,
@@ -27207,8 +27386,8 @@ function standaloneInterpolation(body, context, evaluate) {
   const ranges = interpolationRanges(body.trim());
   return ranges.length === 1 && ranges[0].start === 0 && ranges[0].end === body.trim().length ? evaluateTemplateSource(ranges[0].source, context, evaluate) : null;
 }
-function textValue(text3) {
-  return { type: "string", value: text3 };
+function textValue(text4) {
+  return { type: "string", value: text4 };
 }
 function documentTemplate(body, context, evaluate) {
   const normalized = body.replace(/^\s*\n/, "").replace(/\n\s*$/, "");
@@ -27438,9 +27617,9 @@ function normalizeView(value, path) {
 }
 function normalizeDocumentView(value, path, shape) {
   const view = normalizeView(value, path);
-  const entries = Object.entries(view);
+  const entries2 = Object.entries(view);
   for (const canonical of DOCUMENT_VIEW_KEYS) {
-    const matches = entries.filter(([key]) => key.toLowerCase() === canonical.toLowerCase());
+    const matches = entries2.filter(([key]) => key.toLowerCase() === canonical.toLowerCase());
     if (matches.length > 1) {
       fail(path, `contains duplicate case variants for ${canonical}`);
     }
@@ -27824,10 +28003,10 @@ function formulaSheetCapability(args, context, evaluate, systemContext) {
     const value = option(name);
     if (value === null)
       return fallback;
-    const text3 = value?.type === "string" ? value.value : typeof value === "string" ? value : null;
-    if (text3 === null)
+    const text4 = value?.type === "string" ? value.value : typeof value === "string" ? value : null;
+    if (text4 === null)
       throw new Error(`FormulaSheet ${name} must be a string`);
-    return text3;
+    return text4;
   };
   const viewOption = option("view");
   if (viewOption !== null && (viewOption?.type !== "map" || !(viewOption.entries instanceof Map))) {
@@ -27853,6 +28032,143 @@ function rixCelImportCapability(args, context, evaluate, systemContext) {
     throw new Error(".RiXCelImport expects one JSON string");
   return importRixCelDocument(args[0], createFormulaSheetRuntimeOptions(context, evaluate, systemContext));
 }
+function delimitedText(value, label) {
+  const text4 = value?.type === "string" ? value.value : typeof value === "string" ? value : null;
+  if (text4 === null)
+    throw new Error(`${label} expects a text string`);
+  return text4;
+}
+function parseDelimitedRows(source, delimiter) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let quoted = false;
+  for (let index = 0;index < source.length; index += 1) {
+    const char = source[index];
+    if (quoted) {
+      if (char === '"' && source[index + 1] === '"') {
+        field += '"';
+        index += 1;
+      } else if (char === '"') {
+        quoted = false;
+      } else {
+        field += char;
+      }
+      continue;
+    }
+    if (char === '"' && field.length === 0)
+      quoted = true;
+    else if (char === delimiter) {
+      row.push(field);
+      field = "";
+    } else if (char === `
+`) {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+    } else if (char === "\r" && source[index + 1] === `
+`) {
+      continue;
+    } else {
+      field += char;
+    }
+  }
+  if (quoted)
+    throw new Error("Delimited import has an unterminated quoted field");
+  if (field.length > 0 || row.length > 0 || source.length === 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  if (rows.length > 1 && rows.at(-1).length === 1 && rows.at(-1)[0] === "")
+    rows.pop();
+  const width = rows[0]?.length ?? 0;
+  if (width === 0 || rows.length === 0)
+    throw new Error("Delimited import requires at least one cell");
+  if (!rows.every((candidate) => candidate.length === width)) {
+    throw new Error("Delimited import rows must have equal lengths");
+  }
+  return rows;
+}
+function delimitedOptions(value, label) {
+  if (value === undefined)
+    return { header: false, id: null };
+  if (value?.type !== "map" || !(value.entries instanceof Map)) {
+    throw new Error(`${label} options must be a map`);
+  }
+  const option = (name) => value.entries.get(name) ?? value.entries.get(name.toLowerCase());
+  const headerValue = option("header");
+  const header = headerValue instanceof Integer ? headerValue.value !== 0n : headerValue === null || headerValue === undefined ? false : Boolean(headerValue);
+  const idValue = option("id");
+  const id = idValue === undefined ? null : delimitedText(idValue, `${label} id`);
+  return { header, id };
+}
+function importedFieldSource(value) {
+  if (value === "")
+    return "_";
+  if (/^[+-]?(?:\d+|\d+\.\d+)$/u.test(value.trim()))
+    return value.trim();
+  return JSON.stringify(value);
+}
+function importDelimitedCapability(args, context, evaluate, systemContext, delimiter, label) {
+  if (args.length < 1 || args.length > 2) {
+    throw new Error(`${label} expects text and an optional options map`);
+  }
+  const rows = parseDelimitedRows(delimitedText(args[0], label), delimiter);
+  const imported = delimitedOptions(args[1], label);
+  const headers = imported.header ? rows.shift() : null;
+  if (rows.length === 0)
+    throw new Error(`${label} header must be followed by at least one data row`);
+  const runtime = createFormulaSheetRuntimeOptions(context, evaluate, systemContext);
+  const shape = [rows.length, rows[0].length];
+  const formulas = [];
+  const slotMetadata = new Map;
+  for (const [rowIndex, row] of rows.entries()) {
+    for (const [columnIndex, field] of row.entries()) {
+      const source = importedFieldSource(field);
+      formulas.push(runtime.compileFormula(source));
+      slotMetadata.set(`${rowIndex + 1},${columnIndex + 1}`, {
+        source,
+        assignmentMode: ":=",
+        view: field.startsWith("=") ? { foreignFormula: field, executable: false, format: delimiter === "," ? "csv" : "tsv" } : {}
+      });
+    }
+  }
+  return createFormulaSheet(createTensor(shape, formulas), {
+    ...runtime,
+    id: imported.id,
+    slotMetadata,
+    documentView: {
+      axes: ["row", "column"],
+      ...headers ? { axisLabels: [null, headers] } : {}
+    }
+  });
+}
+function csvField(value) {
+  const source = value === null ? "" : value?.type === "string" ? value.value : formatValue(value);
+  return /[",\r\n\t]/u.test(source) ? `"${source.replaceAll('"', '""')}"` : source;
+}
+function exportDelimitedCapability(args, delimiter, label) {
+  if (args.length !== 1 || !args[0] || args[0].type !== "formula_sheet") {
+    throw new Error(`${label} expects one FormulaSheet`);
+  }
+  const sheet = args[0];
+  if (sheet.rank !== 2)
+    throw new Error(`${label} requires a rank-2 FormulaSheet`);
+  const lines = [];
+  const labels = sheet.documentView.axisLabels ?? sheet.documentView.axislabels;
+  if (Array.isArray(labels?.[1]))
+    lines.push(labels[1].map(csvField).join(delimiter));
+  for (let row = 1;row <= sheet.shape[0]; row += 1) {
+    const fields = [];
+    for (let column = 1;column <= sheet.shape[1]; column += 1) {
+      fields.push(csvField(sheet.get([row, column])));
+    }
+    lines.push(fields.join(delimiter));
+  }
+  return { type: "string", value: lines.join(`
+`) };
+}
 var formulaSheetFunctions = {
   FORMULASHEET: {
     pure: false,
@@ -27868,6 +28184,26 @@ var formulaSheetFunctions = {
     pure: false,
     impl: rixCelImportCapability,
     doc: "Rebuild a FormulaSheet by compiling authoritative source from RiXCel JSON"
+  },
+  RIXCELIMPORTCSV: {
+    pure: false,
+    impl: (args, context, evaluate, systemContext) => importDelimitedCapability(args, context, evaluate, systemContext, ",", ".RiXCelImportCsv"),
+    doc: "Import CSV values into a rank-2 FormulaSheet; optional header=1 uses the first row as labels"
+  },
+  RIXCELIMPORTTSV: {
+    pure: false,
+    impl: (args, context, evaluate, systemContext) => importDelimitedCapability(args, context, evaluate, systemContext, "\t", ".RiXCelImportTsv"),
+    doc: "Import TSV values into a rank-2 FormulaSheet; optional header=1 uses the first row as labels"
+  },
+  RIXCELEXPORTCSV: {
+    pure: false,
+    impl: (args) => exportDelimitedCapability(args, ",", ".RiXCelExportCsv"),
+    doc: "Export the computed values of a rank-2 FormulaSheet as CSV"
+  },
+  RIXCELEXPORTTSV: {
+    pure: false,
+    impl: (args) => exportDelimitedCapability(args, "\t", ".RiXCelExportTsv"),
+    doc: "Export the computed values of a rank-2 FormulaSheet as TSV"
   }
 };
 
@@ -28394,11 +28730,11 @@ function parseAlgebraModifier(modifiers) {
   return algebraProfileFromName(match[1], basis);
 }
 function parseInfoValue(meta = {}) {
-  const entries = new Map;
-  entries.set("function", meta.expectedFunction ? new Integer(1n) : null);
-  entries.set("name", meta.inferredName ? stringValue4(meta.inferredName) : null);
-  entries.set("explicit", meta.explicitParser ? new Integer(1n) : null);
-  return { type: "map", entries };
+  const entries2 = new Map;
+  entries2.set("function", meta.expectedFunction ? new Integer(1n) : null);
+  entries2.set("name", meta.inferredName ? stringValue4(meta.inferredName) : null);
+  entries2.set("explicit", meta.explicitParser ? new Integer(1n) : null);
+  return { type: "map", entries: entries2 };
 }
 function infoEntry(info, name) {
   if (info?.type !== "map" || !(info.entries instanceof Map))
@@ -28454,17 +28790,17 @@ function mapField(map2, name) {
   return map2.entries.get(name);
 }
 function operatorDeclaration(value, context, evaluate, invoke) {
-  const text3 = (name, fallback = null) => {
+  const text4 = (name, fallback = null) => {
     const field = mapField(value, name);
     return field === undefined ? fallback : stringFromValue(field, `.SArith.Configure ${name}`);
   };
   const precedence2 = mapField(value, "precedence");
   const apply = mapField(value, "apply");
   return {
-    symbol: text3("symbol"),
-    head: text3("head"),
-    fixity: text3("fixity", "infix"),
-    associativity: text3("associativity", "left"),
+    symbol: text4("symbol"),
+    head: text4("head"),
+    fixity: text4("fixity", "infix"),
+    associativity: text4("associativity", "left"),
     precedence: precedence2 instanceof Integer ? Number(precedence2.value) : undefined,
     apply: apply ? (...args) => invoke(apply, args, context, evaluate) : null
   };
@@ -28642,47 +28978,47 @@ function entriesFor(args, positional, name) {
     throw new Error(`${name} received too many arguments`);
   return new Map(positional.slice(0, args.length).map((key, index) => [key, args[index]]));
 }
-function get2(entries, name, fallback = null) {
-  return entries.has(name) ? entries.get(name) : entries.get(name.toLowerCase()) ?? fallback;
+function get2(entries2, name, fallback = null) {
+  return entries2.has(name) ? entries2.get(name) : entries2.get(name.toLowerCase()) ?? fallback;
 }
 function mergedStyle(style, additions) {
-  const entries = style?.type === "map" && style.entries instanceof Map ? style.entries : new Map;
-  return { type: "map", entries: new Map([...entries, ...additions]) };
+  const entries2 = style?.type === "map" && style.entries instanceof Map ? style.entries : new Map;
+  return { type: "map", entries: new Map([...entries2, ...additions]) };
 }
 function line(args) {
-  const entries = entriesFor(args, ["from", "to", "style"], "draw.Line");
-  return createPath([[get2(entries, "from"), get2(entries, "to")], get2(entries, "style")]);
+  const entries2 = entriesFor(args, ["from", "to", "style"], "draw.Line");
+  return createPath([[get2(entries2, "from"), get2(entries2, "to")], get2(entries2, "style")]);
 }
 function polygon(args) {
-  const entries = entriesFor(args, ["points", "style"], "draw.Polygon");
-  return createPath([get2(entries, "points"), mergedStyle(get2(entries, "style"), [["closed", true]])]);
+  const entries2 = entriesFor(args, ["points", "style"], "draw.Polygon");
+  return createPath([get2(entries2, "points"), mergedStyle(get2(entries2, "style"), [["closed", true]])]);
 }
 function label(args) {
-  const entries = entriesFor(args, ["position", "text", "style"], "draw.Label");
-  return createTextMark([get2(entries, "position"), get2(entries, "text"), get2(entries, "style")]);
+  const entries2 = entriesFor(args, ["position", "text", "style"], "draw.Label");
+  return createTextMark([get2(entries2, "position"), get2(entries2, "text"), get2(entries2, "style")]);
 }
 function box(args) {
-  const entries = entriesFor(args, ["origin", "size", "style"], "draw.Box");
-  return createRectangle([get2(entries, "origin"), get2(entries, "size"), get2(entries, "style")]);
+  const entries2 = entriesFor(args, ["origin", "size", "style"], "draw.Box");
+  return createRectangle([get2(entries2, "origin"), get2(entries2, "size"), get2(entries2, "style")]);
 }
 function circle(args) {
-  const entries = entriesFor(args, ["center", "radius", "style"], "draw.Circle");
-  return createCircle([get2(entries, "center"), get2(entries, "radius"), get2(entries, "style")]);
+  const entries2 = entriesFor(args, ["center", "radius", "style"], "draw.Circle");
+  return createCircle([get2(entries2, "center"), get2(entries2, "radius"), get2(entries2, "style")]);
 }
 function createDrawPluginCollection() {
   const methods2 = new Map([["Line", line], ["Polygon", polygon], ["Label", label], ["Box", box], ["Circle", circle]]);
-  const entries = new Map;
+  const entries2 = new Map;
   const extension = new Map([["immutable", new Integer(1n)]]);
   for (const [name, helper] of methods2) {
-    entries.set(name, helper);
-    entries.set(name.toUpperCase(), helper);
+    entries2.set(name, helper);
+    entries2.set(name.toUpperCase(), helper);
     extension.set(name.toUpperCase(), {
       type: "method_builtin",
       name,
       impl: (args) => helper(args.slice(1))
     });
   }
-  return { type: "map", entries, _ext: extension };
+  return { type: "map", entries: entries2, _ext: extension };
 }
 function install({ systemContext }) {
   const draw = createDrawPluginCollection();
@@ -28842,7 +29178,7 @@ function components(args) {
     throw new Error("Components expects a quaternion or octonion");
   return { type: "sequence", values: [...value.components] };
 }
-function method4(name, impl) {
+function method5(name, impl) {
   return {
     type: "method_builtin",
     name,
@@ -28858,14 +29194,14 @@ function createExactAlgebrasCollection() {
     ["NormSquared", (args) => normSquared(args[0])],
     ["Inverse", (args) => inverse(args[0])]
   ]);
-  const entries = new Map;
+  const entries2 = new Map;
   const extension = new Map([["immutable", new Integer(1n)]]);
   for (const [name, helper] of helpers) {
-    entries.set(name, helper);
-    entries.set(name.toUpperCase(), helper);
-    extension.set(name.toUpperCase(), method4(name, helper));
+    entries2.set(name, helper);
+    entries2.set(name.toUpperCase(), helper);
+    extension.set(name.toUpperCase(), method5(name, helper));
   }
-  return { type: "map", entries, _ext: extension };
+  return { type: "map", entries: entries2, _ext: extension };
 }
 function installArithmeticVariants(registry) {
   if (!registry)
@@ -29085,9 +29421,9 @@ function divideWithUnits(left, right) {
 function resolveTargetUnit(target, context, systemContext) {
   if (isUnitValue(target))
     return target;
-  const text3 = stringValue5(target, "ConvertUnit target");
+  const text4 = stringValue5(target, "ConvertUnit target");
   const collection = activeCollection(context, systemContext, "Units", ["UNITS", "Units"]);
-  return parseUnitExpression(text3, collection);
+  return parseUnitExpression(text4, collection);
 }
 var unitExactFunctions = {
   UNIT: {
@@ -29787,17 +30123,17 @@ function bindScriptInputs(scriptContext, parentContext, inputSpecs, inputContrac
   }
 }
 function buildExportBundle(scriptContext, exportBindings) {
-  const entries = new Map;
+  const entries2 = new Map;
   for (const spec2 of exportBindings || []) {
     const sourceCell = scriptContext.getCell(spec2.source);
     if (!sourceCell) {
       throw new Error(`Cannot export undefined script binding: ${spec2.source}`);
     }
-    entries.set(spec2.target, buildBoundCell(sourceCell, spec2.mode));
+    entries2.set(spec2.target, buildBoundCell(sourceCell, spec2.mode));
   }
   return {
     type: "export_bundle",
-    entries
+    entries: entries2
   };
 }
 function getExportBundleCell(bundle, name) {
@@ -30136,7 +30472,9 @@ function enhanceSheet(sheet, options) {
   const planeSelectors = [...sheet.querySelectorAll("select[data-rix-sheet-axis]")];
   const editForm = sheet.querySelector(".rix-output-sheet-editor");
   const editInput = editForm?.querySelector("[data-rix-edit-source]");
+  const editAssignmentMode = editForm?.querySelector("[data-rix-edit-assignment-mode]");
   const editLabel = editForm?.querySelector("[data-rix-edit-label]");
+  const editValue = editForm?.querySelector("[data-rix-edit-value]");
   const editStatus = editForm?.querySelector("[data-rix-edit-status]");
   let selectedCell = null;
   if (editForm && typeof options.onEdit === "function")
@@ -30165,6 +30503,9 @@ function enhanceSheet(sheet, options) {
     }
     if (editInput)
       editInput.value = cell.dataset.rixFormulaSource ?? cell.textContent.trim();
+    if (editAssignmentMode) {
+      editAssignmentMode.value = cell.dataset.rixAssignmentMode || ":=";
+    }
     if (editLabel) {
       editLabel.textContent = [
         detail.coordinateLabel,
@@ -30172,6 +30513,8 @@ function enhanceSheet(sheet, options) {
         detail.address
       ].filter(Boolean).join(" · ");
     }
+    if (editValue)
+      editValue.textContent = `Exact value: ${cell.textContent.trim()}`;
     if (editStatus)
       editStatus.textContent = "";
     if (focus)
@@ -30303,7 +30646,11 @@ function enhanceSheet(sheet, options) {
           editStatus.textContent = "This host opened the live view read-only";
         return;
       }
-      const detail = { ...eventDetail(selectedCell), source: editInput?.value ?? "" };
+      const detail = {
+        ...eventDetail(selectedCell),
+        source: editInput?.value ?? "",
+        ...editAssignmentMode ? { assignmentMode: editAssignmentMode.value } : {}
+      };
       try {
         const result = options.onEdit(detail, selectedCell, sheet);
         if (result?.type === "error")
@@ -30320,10 +30667,16 @@ function enhanceSheet(sheet, options) {
             if (typeof update.formulaSource === "string") {
               candidate.dataset.rixFormulaSource = update.formulaSource;
             }
+            if (typeof update.assignmentMode === "string") {
+              candidate.dataset.rixAssignmentMode = update.assignmentMode;
+            }
           }
         } else {
           selectedCell.textContent = result?.text ?? detail.source;
         }
+        const exact = selectedCell.textContent.trim();
+        if (editValue)
+          editValue.textContent = `Exact value: ${exact}`;
         if (editStatus)
           editStatus.textContent = "Saved";
         options.onEditCommitted?.(detail, result, selectedCell, sheet);
@@ -30421,7 +30774,7 @@ class WidgetSession {
       });
     } else if (this.editMode === "formula" && event.type === "sheet:formula") {
       if (typeof event.source === "string") {
-        this.formulaSheet.setFormulaSource(index, event.source, event.assignmentMode ?? this.formulaSheet.slot(index).assignmentMode);
+        this.formulaSheet.setFormulaSource(index, event.source, event.assignmentMode ?? null);
       } else {
         this.formulaSheet.setFormula(index, event.formula, {
           source: null,
@@ -31105,8 +31458,8 @@ function preview(value, formatValue2) {
   if (value === undefined)
     return "";
   try {
-    const text3 = formatValue2 ? formatValue2(value) : String(value);
-    return text3.length > 72 ? `${text3.slice(0, 69)}…` : text3;
+    const text4 = formatValue2 ? formatValue2(value) : String(value);
+    return text4.length > 72 ? `${text4.slice(0, 69)}…` : text4;
   } catch {
     return "";
   }
@@ -31133,24 +31486,24 @@ function resolveReceiver(path, context) {
 function propertyCandidates(receiver, query, formatValue2) {
   if (!receiver || typeof receiver !== "object")
     return [];
-  const entries = new Map;
+  const entries2 = new Map;
   if (receiver._ext instanceof Map) {
     for (const [name, value] of receiver._ext) {
-      entries.set(name, { kind: "property", value, detail: "metadata property" });
+      entries2.set(name, { kind: "property", value, detail: "metadata property" });
     }
   }
   const proto = getBuiltinProto(receiver);
   if (proto?.entries instanceof Map) {
     for (const [name, value] of proto.entries) {
-      if (!entries.has(name)) {
+      if (!entries2.has(name)) {
         const [signature, meaning] = METHOD_HELP[name] ?? [`.${name}(...)`, `built-in ${receiver.type ?? "value"} operation`];
-        entries.set(name, { kind: "method", value, detail: `${signature} — ${meaning}` });
+        entries2.set(name, { kind: "method", value, detail: `${signature} — ${meaning}` });
       }
     }
   }
-  if (!entries.has("_proto"))
-    entries.set("_proto", { kind: "property", value: proto, detail: "method prototype" });
-  return [...entries].map(([insertText, entry]) => ({
+  if (!entries2.has("_proto"))
+    entries2.set("_proto", { kind: "property", value: proto, detail: "method prototype" });
+  return [...entries2].map(([insertText, entry]) => ({
     insertText,
     kind: entry.kind,
     detail: entry.detail,
@@ -31310,17 +31663,17 @@ function reverse(value) {
   return { type: "sequence", values: [...valuesFrom(value)].reverse() };
 }
 function collection() {
-  const entries = new Map;
+  const entries2 = new Map;
   const extension = new Map([["immutable", new Integer(1n)]]);
   for (const [name, helper] of [["Sum", sum], ["Describe", describe], ["Reverse", reverse]]) {
-    entries.set(name, helper);
+    entries2.set(name, helper);
     extension.set(name.toUpperCase(), {
       type: "method_builtin",
       name,
       impl: (args) => helper(args[1])
     });
   }
-  return { type: "map", entries, _ext: extension };
+  return { type: "map", entries: entries2, _ext: extension };
 }
 function install4({ systemContext }) {
   const value = collection();
@@ -31536,18 +31889,18 @@ function registerFloatType() {
     installs
   });
 }
-function method5(name, impl) {
+function method6(name, impl) {
   return { type: "method_builtin", name, impl };
 }
 function installBrowserApproxMathPlugin({ systemContext, registry }) {
   registerFloatType();
   registry.registerAll(mathFunctions);
   installRegisteredTypes(registry, [TYPE_NAME], { skipMissing: true, skipExisting: true });
-  const entries = new Map;
+  const entries2 = new Map;
   const extension = new Map;
   const add = (name, impl) => {
-    const entry = method5(name, impl);
-    entries.set(name, entry);
+    const entry = method6(name, impl);
+    entries2.set(name, entry);
     extension.set(name.toUpperCase(), entry);
   };
   add("Float", (args, _context, evaluate2) => requireFloat(args[1], evaluate2));
@@ -31563,7 +31916,7 @@ function installBrowserApproxMathPlugin({ systemContext, registry }) {
     add(name, (args, _context, evaluate2) => evaluate2({ fn: name.toUpperCase(), args: [requireFloat(args[1], evaluate2)] }));
   }
   add("Atan2", (args, _context, evaluate2) => evaluate2({ fn: "ATAN2", args: [requireFloat(args[1], evaluate2), requireFloat(args[2], evaluate2)] }));
-  const value = { type: "map", entries, _ext: extension };
+  const value = { type: "map", entries: entries2, _ext: extension };
   systemContext.registerHostCallableValue("float", value, {
     impl(args, _context, evaluate2) {
       return requireFloat(args[0], evaluate2);
@@ -31737,5 +32090,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { formatValue, mountOutputWidgets, findHelp, createRixRepl };
 
-//# debugId=CF6E21CFD6DD2A6664756E2164756E21
-//# sourceMappingURL=chunk-8c5ep9s3.js.map
+//# debugId=9240E14EA25C7F8F64756E2164756E21
+//# sourceMappingURL=chunk-xrtqqs96.js.map

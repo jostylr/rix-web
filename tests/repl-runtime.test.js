@@ -96,6 +96,8 @@ test("formula sheets and their dependent LiveViews retain interactive metadata",
     expect(sheet.value.editMode).toBe("formula");
     expect(sheet.html).toContain('data-rix-formula-source="grid[1,1] + 1"');
     expect(sheet.html).toContain('aria-label="RiX formula"');
+    expect(sheet.html).toContain('aria-label="Formula assignment mode"');
+    expect(sheet.html).toContain('data-rix-edit-value');
 
     const live = repl.run(`
         .LiveView(model, @{ .Sheet(source, {= title="Reactive copy" }) })

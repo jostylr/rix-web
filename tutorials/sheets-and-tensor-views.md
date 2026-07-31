@@ -94,6 +94,27 @@ South/Cost/Forecast entry and the location indicator includes those cosmetic
 labels, but its executable address remains `cube[2,2,2]`. Labels never become
 variable names or replace the full numeric tensor coordinate.
 
+Use a complete axis map when the names are more readable than positional
+indices. `At` returns the value; `Index` reveals the unchanged numeric tuple:
+
+```rix edu
+[
+    namedView.At({=
+        region="South",
+        measure="Cost",
+        scenario="Forecast"
+    }),
+    namedView.Index({=
+        region="South",
+        measure="Cost",
+        scenario="Forecast"
+    })
+] ;
+```
+
+The result is `[11, ( 2, 2, 2 )]`. Duplicate labels are fine cosmetically, but
+a lookup that would match more than one coordinate reports an ambiguity.
+
 ## Put different axes on the grid
 
 `viewAxes` chooses the two visible axes. Hidden axes must have a fixed entry in
@@ -163,33 +184,42 @@ dependency graph:
 
 ```rix edu
 model := .FormulaSheet({:2x2:
-    @{1}, @{ grid[1,1] + 1 };
-    @{ grid[1,2] * 2 }, @{ grid[2,1] + 1 }
-}, {= id="tutorial-model" });
+    @{1}, @{ near[0,-1] + 1 };
+    @{ near[-1,1] * 2 }, @{ near[0,-1] + 1 }
+}, {=
+    id="tutorial-model",
+    view={=
+        axes=["region", "measure"],
+        axisLabels=[["North", "South"], ["Revenue", "Cost"]]
+    }
+});
 formulaView := .Sheet(model, {= title="Formula results" });
 formulaView ;
 ```
 
 The lower-right result is `5`. The FormulaSheet context is isolated from
-unrelated tutorial variables and also provides `row`, `col`, and `index`.
+unrelated tutorial variables and also provides `row`, `col`, `index`, and
+relative `near[...]` reads. `near[0,-1]` means the coordinate immediately to
+the left and records the same dependency as its canonical `grid[...]` address.
 Select a formula cell and press Enter to edit its RiX body. The editor shows
-`grid[1,1] + 1`, without the surrounding deferred wrapper. Committing it starts
-a new atomic evaluation epoch and refreshes every dependent result.
+the body without the surrounding deferred wrapper. Its assignment selector
+defaults to `:=`, and the bar shows the cell's exact computed value. Committing
+starts a new atomic evaluation epoch and refreshes every dependent result.
 
 The same source-backed update is available programmatically:
 
 ```rix edu
-model.SetSource(1, 1, "10", ":=");
+model.SetSource(1, 1, "::= 10");
 .Sheet(model, {= title="Recalculated results" }) ;
 ```
 
 The sheet recompiles the stored source into its own deferred formula; the
 browser does not own that compiler step. `model.Slot(1,1)` retains the stable
 ID `tutorial-model:slot:1:1`, authoritative source `"10"`, and assignment mode
-`":="`. The lower-right result is now `23`. A self-reference such as
+`"::="`. A source with no leading mode uses implied `:=`. The lower-right
+result is now `23`. A self-reference such as
 `@{ grid[1,1] + 1 }` reports a cycle instead of reading the previously
-committed value. Assignment-mode execution semantics remain a later milestone;
-the source and selected mode are already stored separately.
+committed value.
 
 ## Save and rebuild a RiXCel document
 
@@ -226,6 +256,32 @@ rank-N shape, stable IDs, formula bodies, assignment modes, and JSON-safe view
 metadata. It does not trust or persist compiled IR, values, dependencies, or
 diagnostics. A standalone host can save the `saved` string with a `.rixcel`
 extension; browser file-open/save controls remain a later editor milestone.
+
+## Exchange CSV and TSV values safely
+
+Delimited import makes literal FormulaSheet cells. `header=1` turns the first
+record into cosmetic column labels:
+
+```rix edu
+imported := .RiXCelImportCsv("""name,value,note
+alpha,3,"exact integer"
+beta,4.5,=SUM(A1:A2)""", {= header=1, id="csv-tutorial" });
+.Sheet(imported, {= title="Imported CSV values" }) ;
+```
+
+The numeric fields are exact RiX values. The `=SUM(A1:A2)` field is displayed
+as text and retained as non-executable foreign-formula metadata; CSV content
+never becomes RiX code accidentally.
+
+Export current computed values independently from the native `.rixcel`
+document:
+
+```rix edu
+.RiXCelExportTsv(imported) ;
+```
+
+CSV/TSV preserve tabular values and optional headers. Use `.RiXCelExport` when
+formula source, modes, stable IDs, and dependencies must be reconstructible.
 
 ## Define reactive bindings
 
