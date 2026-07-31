@@ -94,6 +94,9 @@ test("structured output has focused table, document, graphic, drawing, sheet, in
     expect(controls).toContain(".Controls.Toggle");
     expect(controls).toContain(".Controls.Range");
     expect(controls).toContain(".Controls.Reset");
+    expect(controls).toContain("format={=");
+    expect(controls).toContain('x _> ".~"');
+    expect(controls).toContain("validate=Positive");
     expect(interactive).toContain("graphic:position");
     expect(interactive).toContain("$$point := {: 90, 70}");
 });

@@ -33,6 +33,47 @@ $view ;
 The control receives `$$x`, the stable reactive identity. The text reads `$x`
 through its interpolation, so it is rebuilt after each committed move.
 
+## Choose how exact numbers are displayed
+
+Formatting is separate from stored value. Supply a `format` map whose keys name
+displayed fields and whose values are ordinary RiX functions. The slider below
+shows its current value as a mixed number, its bounds as decimals, and its step
+as a continued fraction. Moving it still stores an exact rational.
+
+```rix edu
+Mixed(x) -> x _> "..";
+Continued(x) -> x _> ".~";
+Decimal(x) -> x _> ".12";
+
+$$x := 3/2;
+
+$$view := .Fragment([
+    .ControlPanel([
+        .Controls.Slider({=
+            target=$$x,
+            interval=0:3,
+            step=1/2,
+            label="formatted x",
+            format={=
+                value=Mixed,
+                low=Decimal,
+                high=Decimal,
+                step=Continued
+            }
+        })
+    ], "Display notation"),
+    .Text(@"The stored exact value still computes: 2x = @{2 * $x}")
+]);
+
+$view ;
+```
+
+The available names follow the control’s visible values: sliders accept
+`value`, `low`, `high`, and `step`; ranges additionally accept `start` and
+`end`; choices accept `value` and `option`; toggles accept `value`, `off`, and
+`on`; resets accept `value` and `initial`. An explicit choice-option label wins
+over the `option` formatter.
+
 ## Evaluate an exact RiX expression
 
 `.Controls.Input` accepts source text such as `7/9`, `2..1/3`, or an expression
@@ -62,6 +103,43 @@ $view ;
 Source evaluation remains a host responsibility. The portable control stores
 the target identity and current value, not a browser parser or floating-point
 copy.
+
+## Validate or lock a control
+
+A validator returns `_` for an accepted value or a string explaining why a
+candidate is invalid. `disabled=1` removes a control from interaction, while
+`readOnly=1` keeps its value inspectable without allowing commits.
+
+```rix edu
+Positive(x) -> x > 0 ?? _ ?: "amount must be positive";
+$$amount := 3/4;
+$$fixed := 2;
+
+$$view := .Fragment([
+    .ControlPanel([
+        .Controls.Input({=
+            target=$$amount,
+            label="positive amount",
+            help="Try -1, then 7/9",
+            validate=Positive,
+            format={= value=(x -> x _> "..") }
+        }),
+        .Controls.Slider({=
+            target=$$fixed,
+            interval=0:5,
+            step=1,
+            label="read-only reference",
+            readOnly=1
+        })
+    ], "Policies"),
+    .Text(@"amount = @{$amount}")
+]);
+
+$view ;
+```
+
+Rejected input leaves the reactive identity unchanged and reports the
+validator’s message in the panel’s live status area.
 
 ## Choose among RiX values
 
