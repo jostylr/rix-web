@@ -35,9 +35,9 @@ the figure in place. Keep labels stable when you expect a document to grow.
 ## Write a compact document template
 
 For text-heavy reports, `@"""..."""` makes a `Fragment` directly. Blank lines
-separate document blocks. Prefix a block with `h1:` through `h6:` for a heading
-or `fig:` / `table:` for a captioned standalone value. `@{...}` evaluates now
-and inserts the resulting value.
+separate document blocks. Prefix a block with `h1:` through `h6:` to start a
+section, or use `fig:` / `table:` for a captioned standalone value. `@{...}`
+evaluates now and inserts the resulting value.
 
 ```rix edu
 values := .Table(
@@ -58,6 +58,46 @@ table: Selected values #tbl:squares
 Interpolation here is different from a deferred block such as `@{; ...}`.
 The template evaluates the interpolation immediately and stores the resulting
 text or output value in the document.
+
+## Use the template’s document syntax
+
+The template has a compact, strict Markdown-like inline vocabulary:
+`*emphasis*`, `**strong**`, `***both***`, `` `code` ``, `$math$`, and
+`[label](link: primary {attributes})`. It intentionally does not use
+underscore delimiters, so ordinary RiX-style names such as `exact_value` stay
+ordinary text. `@@{` writes a literal `@{`, even inside code or math.
+
+```rix edu
+count := 5;
+diagram := "assets/exact-proof.svg";
+
+@"""
+h1: ***Exact*** report #exact-report
+
+p: The **answer** is @{count}. Its source is `answer := @{count}` and its math is $x_@{count} = 25$.
+
+callout: tip — Keep the proof
+    Use exact values until the final display.
+
+code: rix
+    next := @{count}; @@{
+
+math:
+    x_@{count} = 25
+
+ol:
+    - Start with the certified value.
+        ul:
+            - Preserve the endpoint proof.
+
+image: @{diagram} {mime=image/svg+xml, alt="A proof diagram", width=320}
+""" ;
+```
+
+The `h1:` creates the outer `Section`; a later `h2:` would become its child,
+while another `h1:` starts a sibling. The parser rejects skipped heading levels
+and runs of four or more asterisks, so ambiguous markup is caught where it is
+authored.
 
 ## Keep inline meaning and document blocks
 

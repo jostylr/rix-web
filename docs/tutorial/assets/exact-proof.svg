@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="220" viewBox="0 0 640 220" role="img" aria-labelledby="title description">
+  <title id="title">Exact interval proof diagram</title>
+  <desc id="description">A number line shows a certified interval around the value five, with exact endpoints nine halves and eleven halves.</desc>
+  <rect width="640" height="220" rx="18" fill="#f8fafc"/>
+  <text x="42" y="48" fill="#4c1d95" font-family="ui-sans-serif, system-ui, sans-serif" font-size="24" font-weight="700">Certified exact value</text>
+  <text x="42" y="76" fill="#64748b" font-family="ui-sans-serif, system-ui, sans-serif" font-size="15">The value stays inside the interval until display time.</text>
+  <line x1="72" y1="145" x2="568" y2="145" stroke="#334155" stroke-width="4" stroke-linecap="round"/>
+  <line x1="196" y1="145" x2="444" y2="145" stroke="#7c3aed" stroke-width="16" stroke-linecap="round"/>
+  <circle cx="196" cy="145" r="10" fill="#fff" stroke="#6d28d9" stroke-width="4"/>
+  <circle cx="320" cy="145" r="11" fill="#059669" stroke="#047857" stroke-width="4"/>
+  <circle cx="444" cy="145" r="10" fill="#fff" stroke="#6d28d9" stroke-width="4"/>
+  <text x="176" y="184" fill="#334155" font-family="ui-monospace, monospace" font-size="18">9/2</text>
+  <text x="313" y="184" fill="#047857" font-family="ui-monospace, monospace" font-size="18">5</text>
+  <text x="422" y="184" fill="#334155" font-family="ui-monospace, monospace" font-size="18">11/2</text>
+  <text x="285" y="121" fill="#6d28d9" font-family="ui-sans-serif, system-ui, sans-serif" font-size="15" font-weight="600">proved interval</text>
+</svg>

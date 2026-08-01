@@ -14,7 +14,7 @@
 ]) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The label is useful to a renderer or exporter even though RiX Web simply shows the figure in place. Keep labels stable when you expect a document to grow.</p>
 <h2>Write a compact document template</h2>
-<p>For text-heavy reports, <code>@&quot;&quot;&quot;...&quot;&quot;&quot;</code> makes a <code>Fragment</code> directly. Blank lines separate document blocks. Prefix a block with <code>h1:</code> through <code>h6:</code> for a heading or <code>fig:</code> / <code>table:</code> for a captioned standalone value. <code>@{...}</code> evaluates now and inserts the resulting value.</p>
+<p>For text-heavy reports, <code>@&quot;&quot;&quot;...&quot;&quot;&quot;</code> makes a <code>Fragment</code> directly. Blank lines separate document blocks. Prefix a block with <code>h1:</code> through <code>h6:</code> to start a section, or use <code>fig:</code> / <code>table:</code> for a captioned standalone value. <code>@{...}</code> evaluates now and inserts the resulting value.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="13" spellcheck="false">values := .Table(
     [&quot;x&quot;, &quot;x squared&quot;],
     [[1, 1], [2, 4], [3, 9]]
@@ -29,6 +29,33 @@ table: Selected values #tbl:squares
     @{values}
 &quot;&quot;&quot; ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Interpolation here is different from a deferred block such as <code>@{; ...}</code>. The template evaluates the interpolation immediately and stores the resulting text or output value in the document.</p>
+<h2>Use the template’s document syntax</h2>
+<p>The template has a compact, strict Markdown-like inline vocabulary: <code>*emphasis*</code>, <code><strong>strong</strong></code>, <code>*<strong>both</strong>*</code>, `<code> </code>code<code> </code><code>, </code>$math$<code>, and </code>[label](link: primary {attributes})<code>. It intentionally does not use underscore delimiters, so ordinary RiX-style names such as </code>exact_value<code> stay ordinary text. </code>@@{<code> writes a literal </code>@{`, even inside code or math.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="24" spellcheck="false">count := 5;
+diagram := &quot;assets/exact-proof.svg&quot;;
+
+@&quot;&quot;&quot;
+h1: ***Exact*** report #exact-report
+
+p: The **answer** is @{count}. Its source is `answer := @{count}` and its math is $x_@{count} = 25$.
+
+callout: tip — Keep the proof
+    Use exact values until the final display.
+
+code: rix
+    next := @{count}; @@{
+
+math:
+    x_@{count} = 25
+
+ol:
+    - Start with the certified value.
+        ul:
+            - Preserve the endpoint proof.
+
+image: @{diagram} {mime=image/svg+xml, alt=&quot;A proof diagram&quot;, width=320}
+&quot;&quot;&quot; ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The <code>h1:</code> creates the outer <code>Section</code>; a later <code>h2:</code> would become its child, while another <code>h1:</code> starts a sibling. The parser rejects skipped heading levels and runs of four or more asterisks, so ambiguous markup is caught where it is authored.</p>
 <h2>Keep inline meaning and document blocks</h2>
 <p>Paragraph children can now be semantic inline values rather than values that a renderer flattens to text. Sections, quotations, callouts, code blocks, display math, and nested lists are all portable records. The browser chooses HTML elements; a terminal keeps an honest text fallback.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="30" spellcheck="false">.Section({=

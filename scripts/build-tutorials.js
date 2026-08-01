@@ -7,13 +7,17 @@ const { childrenOf, objectHelp, rootTutorials, tutorialByNumber, tutorials } = a
 const root = path.resolve(import.meta.dir, "..");
 const tutorialsDir = path.join(root, "tutorials");
 const outDir = path.join(root, "docs", "tutorial");
+const tutorialAssetsDir = path.join(tutorialsDir, "assets");
+const outTutorialAssetsDir = path.join(outDir, "assets");
 const legacyOutDir = path.join(root, "docs", "learn");
 const assetsDir = path.join(root, "docs", "assets");
 await rm(legacyOutDir, { recursive: true, force: true });
 await mkdir(outDir, { recursive: true });
+await mkdir(outTutorialAssetsDir, { recursive: true });
 await mkdir(assetsDir, { recursive: true });
 await Bun.write(path.join(assetsDir, "tutorial.css"), await readFile(path.join(root, "src", "tutorial.css")));
 await Bun.write(path.join(assetsDir, "tutorial-extra.css"), await readFile(path.join(root, "src", "tutorial-extra.css")));
+await Bun.write(path.join(outTutorialAssetsDir, "exact-proof.svg"), await readFile(path.join(tutorialAssetsDir, "exact-proof.svg")));
 
 function escapeHtml(text) {
     return String(text).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#039;", '"': "&quot;" })[character]);
