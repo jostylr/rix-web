@@ -29,6 +29,39 @@ table: Selected values #tbl:squares
     @{values}
 &quot;&quot;&quot; ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Interpolation here is different from a deferred block such as <code>@{; ...}</code>. The template evaluates the interpolation immediately and stores the resulting text or output value in the document.</p>
+<h2>Keep inline meaning and document blocks</h2>
+<p>Paragraph children can now be semantic inline values rather than values that a renderer flattens to text. Sections, quotations, callouts, code blocks, display math, and nested lists are all portable records. The browser chooses HTML elements; a terminal keeps an honest text fallback.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="30" spellcheck="false">.Section({=
+    level=1,
+    id=&quot;exactness&quot;,
+    title=[.Text(&quot;Exact &quot;), .Math({= source=&quot;x^2 = 2&quot; })],
+    children=[
+        .Paragraph([
+            .Text(&quot;Use &quot;), .Emphasis(&quot;exact&quot;), .Text(&quot; values and &quot;),
+            .Strong(&quot;keep the proof&quot;), .Text(&quot; in &quot;), .Code(&quot;.Math&quot;),
+            .Text(&quot;.&quot;), .LineBreak(), .Text(&quot;The source remains portable.&quot;)
+        ]),
+        .Callout({=
+            variant=:note,
+            title=&quot;Renderer policy&quot;,
+            children=[.Paragraph(&quot;The record chooses meaning; the host chooses presentation.&quot;)]
+        }),
+        .Quote({=
+            children=[.Paragraph(&quot;Truth is ever to be found in simplicity.&quot;)],
+            attribution=&quot;Isaac Newton&quot;
+        }),
+        .CodeBlock({= language=&quot;rix&quot;, code=&quot;next := (x + 2 / x) / 2;&quot; }),
+        .MathBlock({= source=&quot;x_{n+1} = (x_n + 2/x_n) / 2&quot;, alt=&quot;Newton update&quot; }),
+        .List({=
+            ordered=1,
+            items=[
+                .ListItem(.Paragraph(&quot;Start with a certified interval.&quot;)),
+                .ListItem(.Paragraph(&quot;Record the exact refinement.&quot;))
+            ]
+        })
+    ]
+}) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p><code>Image</code>, <code>Audio</code>, and <code>Video</code> wrap an <code>.Asset</code> reference rather than pretending that a vector <code>.Graphic</code> is a photograph or media file. Image alternative text is required; audio and video retain an optional transcript that export hosts can require. Asset resolution stays with the host, so a RiX record never opens a file or fetches a URL by itself.</p>
 <h2>Wrap a graphic as a figure</h2>
 <p>Figures are not limited to tables. This creates a small plot, then gives it a caption and a stable label that a future document renderer can use for cross references.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Plugin.Load(&quot;plot&quot;);

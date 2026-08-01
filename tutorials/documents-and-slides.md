@@ -59,6 +59,52 @@ Interpolation here is different from a deferred block such as `@{; ...}`.
 The template evaluates the interpolation immediately and stores the resulting
 text or output value in the document.
 
+## Keep inline meaning and document blocks
+
+Paragraph children can now be semantic inline values rather than values that a
+renderer flattens to text. Sections, quotations, callouts, code blocks, display
+math, and nested lists are all portable records. The browser chooses HTML
+elements; a terminal keeps an honest text fallback.
+
+```rix edu
+.Section({=
+    level=1,
+    id="exactness",
+    title=[.Text("Exact "), .Math({= source="x^2 = 2" })],
+    children=[
+        .Paragraph([
+            .Text("Use "), .Emphasis("exact"), .Text(" values and "),
+            .Strong("keep the proof"), .Text(" in "), .Code(".Math"),
+            .Text("."), .LineBreak(), .Text("The source remains portable.")
+        ]),
+        .Callout({=
+            variant=:note,
+            title="Renderer policy",
+            children=[.Paragraph("The record chooses meaning; the host chooses presentation.")]
+        }),
+        .Quote({=
+            children=[.Paragraph("Truth is ever to be found in simplicity.")],
+            attribution="Isaac Newton"
+        }),
+        .CodeBlock({= language="rix", code="next := (x + 2 / x) / 2;" }),
+        .MathBlock({= source="x_{n+1} = (x_n + 2/x_n) / 2", alt="Newton update" }),
+        .List({=
+            ordered=1,
+            items=[
+                .ListItem(.Paragraph("Start with a certified interval.")),
+                .ListItem(.Paragraph("Record the exact refinement."))
+            ]
+        })
+    ]
+}) ;
+```
+
+`Image`, `Audio`, and `Video` wrap an `.Asset` reference rather than pretending
+that a vector `.Graphic` is a photograph or media file. Image alternative text
+is required; audio and video retain an optional transcript that export hosts
+can require. Asset resolution stays with the host, so a RiX record never opens
+a file or fetches a URL by itself.
+
 ## Wrap a graphic as a figure
 
 Figures are not limited to tables. This creates a small plot, then gives it a
