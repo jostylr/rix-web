@@ -166,6 +166,7 @@ export without changing the RiX source.
 
 ```rix edu
 .Plugin.Load("plot");
+count := 5;
 deck := .Slides(
     [
         .Slide(
@@ -174,6 +175,17 @@ deck := .Slides(
                 .Paragraph("A table remains structured data.")
             ]),
             "Data"
+        ),
+        .Slide(
+            @"""
+            h1: ***Exact*** snapshot
+
+            p: The certified result is @{count}.
+
+            callout: tip — Preserve the proof
+                Keep the exact value until the final display.
+            """,
+            "Template report"
         ),
         .Slide(
             .Fragment([

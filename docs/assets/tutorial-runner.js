@@ -233,6 +233,81 @@ function tutorialSectionCells(entries, targetValue) {
   return [];
 }
 
+// src/tutorial-editor.js
+var INDENT = "    ";
+function lineStart(value, offset) {
+  return value.lastIndexOf(`
+`, Math.max(0, offset - 1)) + 1;
+}
+function lineIndent(value, start) {
+  return (value.slice(start).match(/^[ \t]*/) || [""])[0];
+}
+function newlineIndent(value, cursor) {
+  const currentStart = lineStart(value, cursor);
+  const current = lineIndent(value, currentStart);
+  if (current || value.slice(currentStart, cursor).trim())
+    return current;
+  const previousEnd = Math.max(0, currentStart - 1);
+  return lineIndent(value, lineStart(value, previousEnd));
+}
+function selectedLineRange(value, start, end) {
+  const first = lineStart(value, start);
+  const effectiveEnd = end > start && value[end - 1] === `
+` ? end - 1 : end;
+  const lastBreak = value.indexOf(`
+`, effectiveEnd);
+  return { first, last: lastBreak === -1 ? value.length : lastBreak };
+}
+function insertTutorialNewline(value, start, end = start) {
+  const insertion = `
+${newlineIndent(value, start)}`;
+  const cursor = start + insertion.length;
+  return {
+    value: `${value.slice(0, start)}${insertion}${value.slice(end)}`,
+    start: cursor,
+    end: cursor
+  };
+}
+function indentTutorialSelection(value, start, end = start) {
+  if (start === end) {
+    const cursor = start + INDENT.length;
+    return { value: `${value.slice(0, start)}${INDENT}${value.slice(end)}`, start: cursor, end: cursor };
+  }
+  const range = selectedLineRange(value, start, end);
+  const selected = value.slice(range.first, range.last);
+  const count = selected.split(`
+`).length;
+  return {
+    value: `${value.slice(0, range.first)}${INDENT}${selected.replace(/\n/g, `
+${INDENT}`)}${value.slice(range.last)}`,
+    start: start + INDENT.length,
+    end: end + count * INDENT.length
+  };
+}
+function deindentTutorialSelection(value, start, end = start) {
+  const range = selectedLineRange(value, start, end);
+  const selected = value.slice(range.first, range.last);
+  const lines = selected.split(`
+`);
+  const removed = lines.map((line) => (line.match(/^(?: {1,4}|\t)/) || [""])[0].length);
+  const next = lines.map((line, index) => line.slice(removed[index])).join(`
+`);
+  const beforeStart = removed[0];
+  const beforeEnd = removed.reduce((sum, amount) => sum + amount, 0);
+  return {
+    value: `${value.slice(0, range.first)}${next}${value.slice(range.last)}`,
+    start: Math.max(range.first, start - beforeStart),
+    end: Math.max(range.first, end - beforeEnd)
+  };
+}
+function applyTutorialEditorKey(value, start, end, { key, shiftKey = false } = {}) {
+  if (key === "Enter")
+    return insertTutorialNewline(value, start, end);
+  if (key === "Tab")
+    return shiftKey ? deindentTutorialSelection(value, start, end) : indentTutorialSelection(value, start, end);
+  return null;
+}
+
 // src/tutorial-runner.js
 var outputDisposers = new WeakMap;
 function escapeHtml(value) {
@@ -247,6 +322,9 @@ function escapeHtml(value) {
 function sizeTutorialSource(input) {
   input.style.height = "auto";
   input.style.height = `${input.scrollHeight}px`;
+}
+function revealTutorialOutput(output) {
+  requestAnimationFrame(() => output.scrollIntoView({ behavior: "smooth", block: "nearest" }));
 }
 function insertTutorialText(input, text) {
   const untouchedStart = input.selectionStart === 0 && input.selectionEnd === 0 && document.activeElement !== input;
@@ -281,6 +359,7 @@ function runCell(cell) {
     const lines = response.groups.flatMap((group) => group.items.map(([syntax, description]) => `${syntax} — ${description}`));
     output.innerHTML = `<div class="result">${escapeHtml(lines.join(`
 `))}</div>`;
+    revealTutorialOutput(output);
     return;
   }
   if (response.type !== "error" && response.html) {
@@ -295,9 +374,11 @@ function runCell(cell) {
       evaluateEdit: (editSource, { mode }) => response.repl.run(mode === "formula" ? `@{ ${editSource} }` : editSource)
     });
     outputDisposers.set(output, dispose);
+    revealTutorialOutput(output);
     return;
   }
   output.innerHTML = `<div class="${response.type === "error" ? "error" : "result"}">${escapeHtml(response.text)}</div>`;
+  revealTutorialOutput(output);
 }
 function openDocumentation(link) {
   const panel = document.querySelector("#tutorial-docs-panel");
@@ -355,6 +436,15 @@ tutorialSources.forEach((input) => {
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
       event.preventDefault();
       runCell(input.closest(".tutorial-cell"));
+      return;
+    }
+    const edit = applyTutorialEditorKey(input.value, input.selectionStart ?? 0, input.selectionEnd ?? 0, event);
+    if (edit) {
+      event.preventDefault();
+      input.value = edit.value;
+      input.selectionStart = edit.start;
+      input.selectionEnd = edit.end;
+      sizeTutorialSource(input);
     }
   });
 });
@@ -380,5 +470,5 @@ function openObjectHelp(name, requestedFunction = null) {
   dialog.showModal();
 }
 
-//# debugId=43DE7ADA9F6F2DD164756E2164756E21
+//# debugId=FA5802A67457EA1F64756E2164756E21
 //# sourceMappingURL=tutorial-runner.js.map

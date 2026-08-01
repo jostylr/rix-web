@@ -1,6 +1,7 @@
 import { createRixRepl } from "./repl-runtime.js";
 import { objectHelp } from "./tutorial-index.js";
 import { replayTutorialSources, tutorialSectionCells } from "./tutorial-replay.js";
+import { applyTutorialEditorKey } from "./tutorial-editor.js";
 import { formatValue, mountOutputWidgets } from "../../rix/src/index.js";
 
 const outputDisposers = new WeakMap();
@@ -14,6 +15,10 @@ function escapeHtml(value) {
 function sizeTutorialSource(input) {
     input.style.height = "auto";
     input.style.height = `${input.scrollHeight}px`;
+}
+
+function revealTutorialOutput(output) {
+    requestAnimationFrame(() => output.scrollIntoView({ behavior: "smooth", block: "nearest" }));
 }
 
 function insertTutorialText(input, text) {
@@ -53,6 +58,7 @@ function runCell(cell) {
     if (response.type === "help") {
         const lines = response.groups.flatMap((group) => group.items.map(([syntax, description]) => `${syntax} — ${description}`));
         output.innerHTML = `<div class="result">${escapeHtml(lines.join("\n"))}</div>`;
+        revealTutorialOutput(output);
         return;
     }
     if (response.type !== "error" && response.html) {
@@ -71,9 +77,11 @@ function runCell(cell) {
                 : editSource),
         });
         outputDisposers.set(output, dispose);
+        revealTutorialOutput(output);
         return;
     }
     output.innerHTML = `<div class="${response.type === "error" ? "error" : "result"}">${escapeHtml(response.text)}</div>`;
+    revealTutorialOutput(output);
 }
 
 function openDocumentation(link) {
@@ -125,6 +133,15 @@ tutorialSources.forEach((input) => {
         if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
             event.preventDefault();
             runCell(input.closest(".tutorial-cell"));
+            return;
+        }
+        const edit = applyTutorialEditorKey(input.value, input.selectionStart ?? 0, input.selectionEnd ?? 0, event);
+        if (edit) {
+            event.preventDefault();
+            input.value = edit.value;
+            input.selectionStart = edit.start;
+            input.selectionEnd = edit.end;
+            sizeTutorialSource(input);
         }
     });
 });

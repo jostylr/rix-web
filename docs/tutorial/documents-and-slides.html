@@ -96,7 +96,8 @@ curve := .plot.Polynomial([1, -2, -1], [-1, 4]);
 .Figure(curve, &quot;Graph of x squared minus 2x minus 1&quot;, &quot;fig:curve&quot;) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>Build a deck one slide at a time</h2>
 <p><code>.Slide</code> attaches a title and optional metadata to one output value. <code>.Slides</code> preserves the order of those slides. RiX Web renders the current deck as a series of clearly separated slide sections; other hosts can add navigation or export without changing the RiX source.</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="21" spellcheck="false">.Plugin.Load(&quot;plot&quot;);
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="33" spellcheck="false">.Plugin.Load(&quot;plot&quot;);
+count := 5;
 deck := .Slides(
     [
         .Slide(
@@ -105,6 +106,17 @@ deck := .Slides(
                 .Paragraph(&quot;A table remains structured data.&quot;)
             ]),
             &quot;Data&quot;
+        ),
+        .Slide(
+            @&quot;&quot;&quot;
+            h1: ***Exact*** snapshot
+
+            p: The certified result is @{count}.
+
+            callout: tip — Preserve the proof
+                Keep the exact value until the final display.
+            &quot;&quot;&quot;,
+            &quot;Template report&quot;
         ),
         .Slide(
             .Fragment([
