@@ -31,7 +31,11 @@ await Bun.write(path.join(output, "index.html"), await readFile(path.join(source
 await Bun.write(path.join(output, ".nojekyll"), "");
 await Bun.write(path.join(output, "assets", "app.css"), await readFile(path.join(source, "app.css")));
 const result = await Bun.build({
-    entrypoints: [path.join(source, "main.js"), path.join(source, "tutorial-runner.js")],
+    entrypoints: [
+        path.join(source, "main.js"),
+        path.join(source, "tutorial-runner.js"),
+        path.join(source, "tutorial-navigation-client.js"),
+    ],
     outdir: assets,
     target: "browser",
     format: "esm",

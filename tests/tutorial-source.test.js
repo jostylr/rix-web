@@ -141,17 +141,21 @@ test("tutorial generator writes a tutorial index and removes the legacy learn pa
     expect(source).toContain("await rm(legacyOutDir");
 });
 
-test("tutorial navigation links to the walkthrough, section, and labeled destinations", async () => {
-    const source = await Bun.file(new URL("../scripts/build-tutorials.js", import.meta.url)).text();
-    expect(source).toContain('href="./index.html">RiX walkthrough</a>');
-    expect(source).toContain('id="lesson-start"');
-    expect(source).toContain('`./${section.file}#lesson-start`');
-    expect(source).toContain('↑ ${escapeHtml(label(section))}');
-    expect(source).toContain('↓ ${escapeHtml(label(down))}');
-    expect(source).toContain('rootTutorials[rootTutorials.findIndex');
-    expect(source).toContain('replace(/[^\\p{L}\\p{N}]+$/u, "")');
-    expect(source).toContain('tutorials.findIndex((item) => item.number === current.number)');
-    expect(source).toContain('class="next-link"');
+test("tutorial navigation is loaded from one runtime manifest", async () => {
+    const generator = await Bun.file(new URL("../scripts/build-tutorials.js", import.meta.url)).text();
+    const navigation = await Bun.file(new URL("../src/tutorial-navigation.js", import.meta.url)).text();
+    const runner = await Bun.file(new URL("../src/tutorial-runner.js", import.meta.url)).text();
+    expect(generator).toContain('href="./index.html">RiX walkthrough</a>');
+    expect(generator).toContain('id="lesson-start"');
+    expect(generator).toContain('data-tutorial-sidebar');
+    expect(generator).toContain('data-tutorial-page-navigation');
+    expect(generator).toContain('path.join(outDir, "navigation.json")');
+    expect(navigation).toContain('new URL("./navigation.json", document.baseURI)');
+    expect(navigation).toContain('renderTutorialSidebar(document, container, tutorials, currentFile)');
+    expect(navigation).toContain('renderTutorialPageNavigation(document, container, tutorials, currentFile)');
+    expect(navigation).toContain('renderTutorialIndex(document, container, tutorials, false)');
+    expect(navigation).toContain('replace(/[^\\p{L}\\p{N}]+$/u, "")');
+    expect(runner).toContain("mountTutorialNavigation()");
 });
 
 test("tutorial references use the published RiX documentation", async () => {

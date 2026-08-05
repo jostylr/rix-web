@@ -23,6 +23,12 @@ frontmatter `theme`. Lessons marked `status: implemented` are checked and
 runnable against the browser's approved plugin catalog; `status: proposed`
 publishes acceptance documentation without misleading Run buttons.
 
+Tutorial ordering and grouping live in `src/tutorial-index.js`. The build writes
+that catalog once to `docs/tutorial/navigation.json`; the tutorial landing page,
+sidebars, and previous/next links load it in the browser. Adding or removing a
+lesson therefore changes the manifest and that lesson's output instead of
+embedding a changed table of contents in every generated tutorial page.
+
 The calculator accepts `.rix` files directly. Selecting a `.js` module shows an
 intentional notice: browser module execution is held behind an explicit trust
 boundary until RiX module permissions are designed.

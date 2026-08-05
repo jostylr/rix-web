@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "sources": ["../../src/tutorial-navigation-client.js"],
+  "sourcesContent": [
+    "import { mountTutorialNavigation } from \"./tutorial-navigation.js\";\n\nmountTutorialNavigation();\n"
+  ],
+  "mappings": ";;;;;AAEA,wBAAwB;",
+  "debugId": "E339D7582E19FB6E64756E2164756E21",
+  "names": []
+}

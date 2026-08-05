@@ -1,10 +1,13 @@
 import { createRixRepl } from "./repl-runtime.js";
-import { objectHelp } from "./tutorial-index.js";
+import { objectHelp } from "./tutorial-object-help.js";
 import { replayTutorialSources, tutorialSectionCells } from "./tutorial-replay.js";
 import { applyTutorialEditorKey } from "./tutorial-editor.js";
+import { mountTutorialNavigation } from "./tutorial-navigation.js";
 import { formatValue, mountOutputWidgets } from "../../rix/src/index.js";
 
 const outputDisposers = new WeakMap();
+
+mountTutorialNavigation();
 
 function escapeHtml(value) {
     return String(value).replace(/[&<>'"]/g, (character) => ({
