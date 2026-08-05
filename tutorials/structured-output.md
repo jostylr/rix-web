@@ -4,8 +4,6 @@ title: Structured output
 description: Keep tables, documents, slides, and graphics meaningful across RiX hosts.
 ---
 
-# Structured output
-
 Most expressions return a number, string, array, or map. An output value carries
 an additional promise about how it should be presented. A table remains a table,
 a plotted curve remains a graphic, and a report remains a sequence of document

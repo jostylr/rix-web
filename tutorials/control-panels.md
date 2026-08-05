@@ -4,8 +4,6 @@ title: Reactive control panels
 description: Build exact interactive controls on ordinary dollar-reactive RiX values.
 ---
 
-# Reactive control panels
-
 A control panel is a portable output value that lets a host edit ordinary
 reactive RiX state. There is no separate form model: declare a value with
 `$$name := ...`, pass its identity as `$$name`, and read it everywhere else as

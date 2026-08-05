@@ -3,6 +3,23 @@ import { parse, tokenize } from "../../rix/src/index.js";
 import { tutorialByNumber, tutorials } from "../src/tutorial-index.js";
 import { normalizeReplSource } from "../src/repl-source.js";
 
+function tutorialBody(source) {
+    return source.replace(/^---\n[\s\S]*?\n---\n?/, "");
+}
+
+test("tutorial bodies leave the page-level heading to the page template", async () => {
+    const tutorialsDir = new URL("../tutorials/", import.meta.url).pathname;
+    for await (const file of new Bun.Glob("*.md").scan({ cwd: tutorialsDir })) {
+        const source = await Bun.file(new URL(`../tutorials/${file}`, import.meta.url)).text();
+        expect(tutorialBody(source), file).not.toMatch(/^# /m);
+    }
+
+    for (const tutorial of tutorials.filter(({ pluginTutorial }) => pluginTutorial)) {
+        const source = await Bun.file(new URL(tutorial.sourcePath, new URL("../", import.meta.url))).text();
+        expect(tutorialBody(source), tutorial.pluginId).not.toMatch(/^# /m);
+    }
+});
+
 test("tutorial sources use runnable RiX blocks and a challenge", async () => {
     const source = await Bun.file(new URL("../tutorials/getting-started.md", import.meta.url)).text();
     expect(source).toContain("```rix edu");

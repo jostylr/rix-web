@@ -4,8 +4,6 @@ title: Sheets and tensor views
 description: Navigate exact grids, canonical RiX addresses, and higher-dimensional planes.
 ---
 
-# Sheets and tensor views
-
 `.Sheet` stages an exact RiX value for spreadsheet-like display. It is a
 portable output object, like a table or graphic, rather than a new expression
 language. The familiar `C2` label belongs to the display; the corresponding RiX

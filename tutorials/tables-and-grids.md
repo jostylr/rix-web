@@ -4,8 +4,6 @@ title: Tables and mathematical grids
 description: Present labeled data and textbook-style ruled layouts.
 ---
 
-# Tables and mathematical grids
-
 Tables and grids both arrange values in rows and columns, but they communicate
 different things. A table describes labeled data. A grid describes a piece of
 mathematical notation where blank cells and dividing rules matter.

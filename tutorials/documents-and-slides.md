@@ -4,11 +4,9 @@ title: Documents and slides
 description: Compose report fragments, captions, and portable slide decks.
 ---
 
-# Documents and slides
-
-Document output lets a calculation return a report-like structure instead of a
-single final value. The same building blocks can form a notebook result, a
-generated handout, or the content of a presentation slide.
+Document output lets a calculation return a report-like structure whose
+building blocks can form a notebook result, generated handout, or presentation
+slide.
 
 ## Compose a fragment explicitly
 

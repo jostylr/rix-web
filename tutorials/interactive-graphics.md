@@ -4,8 +4,6 @@ title: Interactive graphics
 description: Drag a point through the shared widget protocol and watch reactive output change.
 ---
 
-# Interactive graphics
-
 A Graphic can contain a small host-neutral interaction target without owning
 browser state. `.Graphics.DragPoint` names a reactive node; the renderer
 turns it into a draggable SVG handle, and the host publishes a semantic

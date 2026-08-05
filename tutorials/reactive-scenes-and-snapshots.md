@@ -4,12 +4,8 @@ title: Reactive scenes and snapshots
 description: Use actions, explicit collection publication, snapshots, and timelines in reusable output.
 ---
 
-# Reactive scenes and snapshots
-
-The previous lessons introduced portable output values, graphics, and controls.
-This lesson connects them: a reactive Fragment is a live view, an Action makes
-one intentional update, and scenes can be materialized as a comparison grid or
-a timeline.
+Portable output, graphics, and controls can form a live reactive view. The same
+scene can also be materialized as a comparison grid or timeline.
 
 ## Build one live output value
 

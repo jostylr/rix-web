@@ -4,8 +4,6 @@ title: Drawing with .Graphics
 description: Build intrinsic portable scenes from paths, shapes, groups, transforms, and clips.
 ---
 
-# Drawing with .Graphics
-
 `.Graphics` is RiX's intrinsic, renderer-facing vocabulary for two-dimensional
 scene nodes. It keeps common global names such as `Path`, `Group`, and `Circle`
 available to other math domains while giving graphics a stable namespace:
