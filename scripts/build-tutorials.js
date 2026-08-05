@@ -5,6 +5,12 @@ await import("./generate-plugin-tutorial-index.js");
 const { childrenOf, rootTutorials, tutorialByNumber, tutorials } = await import("../src/tutorial-index.js");
 const { objectHelp } = await import("../src/tutorial-object-help.js");
 
+const navigationOption = process.argv.find((argument) => argument.startsWith("--navigation="));
+const navigationMode = navigationOption?.slice("--navigation=".length) || "dynamic";
+if (!new Set(["dynamic", "static"]).has(navigationMode)) {
+    throw new Error(`Unknown tutorial navigation mode: ${navigationMode}`);
+}
+
 const root = path.resolve(import.meta.dir, "..");
 const tutorialsDir = path.join(root, "tutorials");
 const outDir = path.join(root, "docs", "tutorial");
@@ -112,6 +118,36 @@ function navigationPlaceholder() {
     return `<nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav>`;
 }
 
+function staticSidebar(current) {
+    const activeRoot = current.parent || current.number;
+    return `<aside id="lesson-sidebar" class="lesson-sidebar"><p>Contents</p>${rootTutorials.map((root) => {
+        const children = childrenOf(root.number);
+        if (!children.length) return `<a class="${current.number === root.number ? "current" : ""}" href="./${root.file}">${escapeHtml(root.number)} · ${escapeHtml(root.title)}</a>`;
+        return `<details ${activeRoot === root.number ? "open" : ""}><summary>${escapeHtml(root.number)} · ${escapeHtml(root.title)}</summary><a class="overview ${current.number === root.number ? "current" : ""}" href="./${root.file}">Overview</a>${children.map((child) => `<a class="${current.number === child.number ? "current" : ""}" href="./${child.file}">${escapeHtml(child.number)} · ${escapeHtml(child.title)}</a>`).join("")}</details>`;
+    }).join("")}</aside>`;
+}
+
+function staticNavigation(current) {
+    const position = tutorials.findIndex((item) => item.number === current.number);
+    const previous = tutorials[position - 1];
+    const next = tutorials[position + 1];
+    const section = current.parent ? tutorialByNumber(current.parent) : current;
+    const sectionHref = current.parent ? `./${section.file}#lesson-start` : "#lesson-start";
+    const down = rootTutorials[rootTutorials.findIndex((item) => item.number === section.number) + 1];
+    const label = (tutorial) => `${tutorial.number} ${tutorial.title.split(/\s+/)[0].replace(/[^\p{L}\p{N}]+$/u, "")}`;
+    const sectionLink = `<a href="${sectionHref}">↑ ${escapeHtml(label(section))}</a>`;
+    const downLink = down ? `<a href="./${down.file}">↓ ${escapeHtml(label(down))}</a>` : "";
+    return `<nav class="lesson-navigation" aria-label="Lesson navigation"><span class="previous-link">${previous ? `<a href="./${previous.file}">← ${escapeHtml(label(previous))}</a>` : ""}</span><span class="section-links">${sectionLink}${downLink}</span><span class="next-link">${next ? `<a href="./${next.file}">${escapeHtml(label(next))} →</a>` : ""}</span></nav>`;
+}
+
+function sidebar(current) {
+    return navigationMode === "static" ? staticSidebar(current) : sidebarPlaceholder();
+}
+
+function pageNavigation(current) {
+    return navigationMode === "static" ? staticNavigation(current) : navigationPlaceholder();
+}
+
 function relatedFunctions(current) {
     if (!current.object) return "";
     const methods = objectHelp[current.object]?.functions || [];
@@ -141,7 +177,16 @@ function referenceLinks(current) {
 }
 
 function tutorialIndexTemplate() {
+    const renderContents = (roots) => roots.map((tutorial) => {
+        const children = childrenOf(tutorial.number);
+        return `<section class="tutorial-index-section"><a href="./${tutorial.file}"><b>${escapeHtml(tutorial.number)} · ${escapeHtml(tutorial.title)}</b><span>${escapeHtml(tutorial.description)}</span></a>${children.length ? `<div class="tutorial-index-children">${children.map((child) => `<a href="./${child.file}">${escapeHtml(child.number)} · ${escapeHtml(child.title)}</a>`).join("")}</div>` : ""}</section>`;
+    }).join("");
+    const coreRoots = rootTutorials.filter((tutorial) => !tutorial.pluginGroup);
     const pluginRoots = rootTutorials.filter((tutorial) => tutorial.pluginGroup);
+    if (navigationMode === "static") {
+        const pluginSection = pluginRoots.length ? `<h2>Plugin tutorials</h2><p class="tutorial-index-intro">Plugin lessons follow the core language. The recommended implementation path begins with Oracle Phase 1, Numerics Phase 1, SVG and Canvas, then proceeds through geometry, data/documents, additional real backends, and publication renderers. Implemented lessons are runnable; proposed lessons show their planned API without a Run button.</p><nav class="tutorial-index tutorial-plugin-index" aria-label="Plugin tutorial table of contents">${renderContents(pluginRoots)}</nav>` : "";
+        return `<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="An interactive introduction to the RiX language and RatCalc." /><title>RiX tutorials — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><a href="../">Open calculator</a></header><article class="lesson-card tutorial-index-card"><p class="lesson-kicker">RiX walkthroughs</p><h1>Learn RiX by running it.</h1><p class="deck">These tutorials introduce RiX one concept at a time. Cells within one h2 topic share deterministic state; each new h2 starts fresh, so examples can be grouped without leaking names across topics.</p><p class="tutorial-index-intro">Start with exact numbers, then follow the topics that match what you want to build. Capstone lessons combine the material into a small practical exercise.</p><nav class="tutorial-index" aria-label="Tutorial table of contents">${renderContents(coreRoots)}</nav>${pluginSection}<footer class="lesson-footer">Want to try an expression first? <a href="../">Open RatCalc →</a></footer></article></div></main></body></html>`;
+    }
     const pluginSection = pluginRoots.length ? `<section data-tutorial-index-section hidden><h2>Plugin tutorials</h2><p class="tutorial-index-intro">Plugin lessons follow the core language. The recommended implementation path begins with Oracle Phase 1, Numerics Phase 1, SVG and Canvas, then proceeds through geometry, data/documents, additional real backends, and publication renderers. Implemented lessons are runnable; proposed lessons show their planned API without a Run button.</p><nav class="tutorial-index tutorial-plugin-index" aria-label="Plugin tutorial table of contents" data-tutorial-index="plugins"></nav></section>` : "";
     return `<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="An interactive introduction to the RiX language and RatCalc." /><title>RiX tutorials — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><a href="../">Open calculator</a></header><article class="lesson-card tutorial-index-card"><p class="lesson-kicker">RiX walkthroughs</p><h1>Learn RiX by running it.</h1><p class="deck">These tutorials introduce RiX one concept at a time. Cells within one h2 topic share deterministic state; each new h2 starts fresh, so examples can be grouped without leaking names across topics.</p><p class="tutorial-index-intro">Start with exact numbers, then follow the topics that match what you want to build. Capstone lessons combine the material into a small practical exercise.</p><nav class="tutorial-index" aria-label="Tutorial table of contents" data-tutorial-index="core"><a href="./getting-started.html">Start the tutorial</a></nav>${pluginSection}<footer class="lesson-footer">Want to try an expression first? <a href="../">Open RatCalc →</a></footer></article></div></main><script type="module" src="../assets/tutorial-navigation-client.js"></script></body></html>`;
 }
@@ -156,7 +201,7 @@ function pageTemplate(meta, body) {
     const statusNotice = proposed ? `<aside class="challenge"><p class="eyebrow">Proposed plugin</p><p>This acceptance tutorial documents planned behavior. Its RiX examples are displayed as code until the plugin is implemented and tested.</p></aside>` : "";
     const notebookNotice = meta.pluginId ? `<aside class="challenge"><p class="eyebrow">Develop in RiX Notebook</p><p>Open <code>rix/plugins/${escapeHtml(meta.pluginId)}/tutorial.md</code> in the macOS app to edit this lesson with live preview and plugin-aware code results. Use Reload plugins after changing project-local plugin source.</p></aside>` : "";
     const footer = proposed ? `This is a design tutorial; its examples become runnable when Phase 1 is implemented.` : `Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh.`;
-    return `<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="${escapeHtml(meta.description || "A runnable RiX lesson")}" /><title>${escapeHtml(meta.title || "RiX tutorial")} — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout">${sidebarPlaceholder()}<article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="${sectionHref}" title="${escapeHtml(section.title)}">${escapeHtml(section.number)}</a>${suffixLabel}</p><h1>${escapeHtml(meta.title || "RiX tutorial")}</h1><p class="deck">${escapeHtml(meta.description || "Read, run, then change the next line.")}</p>${statusNotice}${notebookNotice}<div class="lesson-content">${body}</div>${relatedFunctions(current)}${referenceLinks(current)}${navigationPlaceholder()}<footer class="lesson-footer">${footer} <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>`;
+    return `<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="${escapeHtml(meta.description || "A runnable RiX lesson")}" /><title>${escapeHtml(meta.title || "RiX tutorial")} — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout">${sidebar(current)}<article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="${sectionHref}" title="${escapeHtml(section.title)}">${escapeHtml(section.number)}</a>${suffixLabel}</p><h1>${escapeHtml(meta.title || "RiX tutorial")}</h1><p class="deck">${escapeHtml(meta.description || "Read, run, then change the next line.")}</p>${statusNotice}${notebookNotice}<div class="lesson-content">${body}</div>${relatedFunctions(current)}${referenceLinks(current)}${pageNavigation(current)}<footer class="lesson-footer">${footer} <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>`;
 }
 
 const markdownFiles = [];
@@ -191,3 +236,4 @@ await Bun.write(path.join(outDir, "navigation.json"), `${JSON.stringify({
         number, parent, file, title, description, pluginGroup = false, status = "implemented",
     }) => ({ number, parent, file, title, description, pluginGroup, status })),
 }, null, 2)}\n`);
+console.log(`Built tutorial navigation in ${navigationMode} mode`);

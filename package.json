@@ -5,8 +5,11 @@
   "type": "module",
   "scripts": {
     "build": "bun run build:app && bun run build:tutorials",
+    "build:dynamic": "bun run build",
+    "build:static": "bun run build:app && bun run build:tutorials:static",
     "build:app": "bun scripts/build-app.js",
     "build:tutorials": "bun scripts/build-tutorials.js",
+    "build:tutorials:static": "bun scripts/build-tutorials.js --navigation=static",
     "test": "bun test",
     "serve": "python3 -m http.server 3000 --directory docs"
   }

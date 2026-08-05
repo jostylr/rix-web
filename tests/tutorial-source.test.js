@@ -158,6 +158,17 @@ test("tutorial navigation is loaded from one runtime manifest", async () => {
     expect(runner).toContain("mountTutorialNavigation()");
 });
 
+test("tutorial navigation can be built dynamically or pre-rendered", async () => {
+    const generator = await Bun.file(new URL("../scripts/build-tutorials.js", import.meta.url)).text();
+    const packageJson = await Bun.file(new URL("../package.json", import.meta.url)).json();
+    expect(generator).toContain('argument.startsWith("--navigation=")');
+    expect(generator).toContain('new Set(["dynamic", "static"])');
+    expect(generator).toContain('navigationMode === "static" ? staticSidebar(current) : sidebarPlaceholder()');
+    expect(generator).toContain('navigationMode === "static" ? staticNavigation(current) : navigationPlaceholder()');
+    expect(packageJson.scripts["build:dynamic"]).toBe("bun run build");
+    expect(packageJson.scripts["build:static"]).toContain("build:tutorials:static");
+});
+
 test("tutorial references use the published RiX documentation", async () => {
     const source = await Bun.file(new URL("../scripts/build-tutorials.js", import.meta.url)).text();
     expect(source).toContain("https://docs.rix.ratmath.com/eval/syntax-guide.html#assignment-definition");
