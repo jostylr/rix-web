@@ -37,22 +37,21 @@ $$elements.Touch();
 
 {: before, after=$count } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The result is <code>{:= 1, after=2}</code>. <code>Touch()</code> neither copies nor validates the collection; it is an explicit publication boundary, not a substitute for normal value replacement.</p>
-<h2>Reuse a scene for a static comparison</h2>
-<p>A scene is an ordinary callable from one exact state to block output. <code>.Snapshots</code> takes entries of the form <code>{: scene, states}</code> and materializes them into a row-major comparison grid. Each entry may use a different scene.</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">CenterCard(center) -&gt; .Fragment([
-    .Heading(3, @&quot;center = @{center}&quot;),
+<h2>Reuse a scene for an ordered comparison</h2>
+<p>A scene is an ordinary callable from one exact state to block output. <code>.Snapshots</code> takes entries of the form <code>{: scene, states}</code> and materializes them into an ordered list. Each entry may use a different scene. The optional second argument is immutable provenance: <code>entry</code> is the input entry position, <code>state</code> is that entry&#039;s state position, and <code>ordinal</code> is the position in the complete list. All three are one-based.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="9" spellcheck="false">CenterCard(center, origin) -&gt; .Fragment([
+    .Heading(3, @&quot;snapshot @{origin[:ordinal]}; center = @{center}&quot;),
     .Paragraph(@&quot;For x² - 3x, the tangent slope is @{2 * center - 3}.&quot;)
 ]);
 
 .Snapshots({=
     title=&quot;Three centers&quot;,
-    columns=3,
     entries=[{: CenterCard, [-2, 0, 2]}]
 }) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>Snapshots are ordinary structured output. Put one in a Fragment, Figure, Slide, or report without teaching each host about a special-purpose comic format.</p>
+<p>Snapshots are ordinary structured output. Put one in a Fragment, Figure, Slide, or report without teaching each host about a special-purpose comic format. A later grid or print renderer can group the linear list by <code>origin[&quot;entry&quot;]</code> and <code>origin[&quot;state&quot;]</code>.</p>
 <h2>Sequence the same scene states</h2>
 <p><code>.Timeline.Sequence</code> accepts the same scene-entry shape and retains the exact, already materialized frames. <code>.Timeline.Render</code> selects a one-based frame for a static renderer; a future animation or video host can use the same sequence without changing the RiX program.</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="9" spellcheck="false">CenterCard(center) -&gt; .Paragraph(@&quot;center = @{center}&quot;);
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="9" spellcheck="false">CenterCard(center, origin) -&gt; .Paragraph(@&quot;frame @{origin[:ordinal]}; center = @{center}&quot;);
 
 motion := .Timeline.Sequence({=
     title=&quot;Move the center&quot;,

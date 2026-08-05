@@ -71,28 +71,31 @@ The result is `{:= 1, after=2}`. `Touch()` neither copies nor validates the
 collection; it is an explicit publication boundary, not a substitute for normal
 value replacement.
 
-## Reuse a scene for a static comparison
+## Reuse a scene for an ordered comparison
 
 A scene is an ordinary callable from one exact state to block output.
 `.Snapshots` takes entries of the form `{: scene, states}` and materializes
-them into a row-major comparison grid. Each entry may use a different scene.
+them into an ordered list. Each entry may use a different scene. The optional
+second argument is immutable provenance: `entry` is the input entry position,
+`state` is that entry's state position, and `ordinal` is the position in the
+complete list. All three are one-based.
 
 ```rix edu
-CenterCard(center) -> .Fragment([
-    .Heading(3, @"center = @{center}"),
+CenterCard(center, origin) -> .Fragment([
+    .Heading(3, @"snapshot @{origin[:ordinal]}; center = @{center}"),
     .Paragraph(@"For x² - 3x, the tangent slope is @{2 * center - 3}.")
 ]);
 
 .Snapshots({=
     title="Three centers",
-    columns=3,
     entries=[{: CenterCard, [-2, 0, 2]}]
 }) ;
 ```
 
 Snapshots are ordinary structured output. Put one in a Fragment, Figure,
 Slide, or report without teaching each host about a special-purpose comic
-format.
+format. A later grid or print renderer can group the linear list by
+`origin["entry"]` and `origin["state"]`.
 
 ## Sequence the same scene states
 
@@ -102,7 +105,7 @@ static renderer; a future animation or video host can use the same sequence
 without changing the RiX program.
 
 ```rix edu
-CenterCard(center) -> .Paragraph(@"center = @{center}");
+CenterCard(center, origin) -> .Paragraph(@"frame @{origin[:ordinal]}; center = @{center}");
 
 motion := .Timeline.Sequence({=
     title="Move the center",
