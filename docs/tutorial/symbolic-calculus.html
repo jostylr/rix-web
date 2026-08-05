@@ -3,6 +3,19 @@
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">{: {#x}, {#t# t^2 - 4 }, {#x:p# p = 2*x } } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p><code>{#x}</code> is the identity symbol. <code>{#t# t^2 - 4 }</code> has an implied output, while the longer form explicitly names output <code>p</code>. RiX normally displays the compact source-like form. Use <code>.InspectSpec</code> when you want its structural fields.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.InspectSpec({#x:p# p = x^2 + 1 }) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Systems are inert symbolic data</h2>
+<p>The same braces can retain definitions and constraints without selecting a solver. <code>name = expression</code> is a symbolic definition inside the spec, not a runtime assignment. Comparisons are stored as constraints.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">System := {#mass,acceleration:force#
+    scale = 1000;
+    force == scale*mass*acceleration;
+    mass &gt; 0
+};
+{: System, .InspectSpec(System), .SpecRoles(System) } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The header says which symbols the author regards as inputs and outputs. <code>.SpecRoles</code> also returns the complete <code>symbols</code> list and any <code>unassigned</code> auxiliaries. A consumer that ignores direction uses all symbols. A directional plugin may override roles for one operation; if it receives no override, it should use the attached header:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">System := {#x:y# scale=2; y == scale*x; y &gt;= 0 };
+{: .SpecRoles(System),
+   .SpecRoles(System, {= inputs=[:scale,:x], outputs=[:y] }) } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>RiX has not solved either system. A solver, optimizer, geometry package, or other plugin chooses direction, algorithms, precision, branch policy, and evidence. This keeps the notation reusable across consumers with different tradeoffs.</p>
 <h2>Substitute and compose</h2>
 <p>Calling a spec performs positional symbolic substitution and returns another spec. It does not numerically evaluate the expression.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">G := {#t# t^2 - 4 };

@@ -21,6 +21,38 @@ source-like form. Use `.InspectSpec` when you want its structural fields.
 .InspectSpec({#x:p# p = x^2 + 1 }) ;
 ```
 
+## Systems are inert symbolic data
+
+The same braces can retain definitions and constraints without selecting a
+solver. `name = expression` is a symbolic definition inside the spec, not a
+runtime assignment. Comparisons are stored as constraints.
+
+```rix edu
+System := {#mass,acceleration:force#
+    scale = 1000;
+    force == scale*mass*acceleration;
+    mass > 0
+};
+{: System, .InspectSpec(System), .SpecRoles(System) } ;
+```
+
+The header says which symbols the author regards as inputs and outputs.
+`.SpecRoles` also returns the complete `symbols` list and any `unassigned`
+auxiliaries. A consumer that ignores direction uses all symbols. A directional
+plugin may override roles for one operation; if it receives no override, it
+should use the attached header:
+
+```rix edu
+System := {#x:y# scale=2; y == scale*x; y >= 0 };
+{: .SpecRoles(System),
+   .SpecRoles(System, {= inputs=[:scale,:x], outputs=[:y] }) } ;
+```
+
+RiX has not solved either system. A solver, optimizer, geometry package, or
+other plugin chooses direction, algorithms, precision, branch policy, and
+evidence. This keeps the notation reusable across consumers with different
+tradeoffs.
+
 ## Substitute and compose
 
 Calling a spec performs positional symbolic substitution and returns another

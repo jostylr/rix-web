@@ -6,9 +6,9 @@ description: Constraints and symbolic construction.
 
 ## Orientation
 
-Assertions state conditions that must hold; symbolic specs preserve expression
-structure for later composition and exact calculus. Keep assertions small and
-diagnostic, and keep symbolic construction separate from numerical evaluation.
+Assertions state conditions that must hold now; symbolic specs preserve
+definitions and constraints for a later consumer. Keep runtime assertions
+small and diagnostic, and use `{#}` when a plugin should interpret a system.
 
 Read this chapter with RatCalc open. Predict the result before running an
 example, then change a single part and run it again. That small loop of
@@ -39,8 +39,19 @@ Assertion operators such as `:<:` abort when their relation does not hold:
 
 `{#x}` is the identity symbol used for explicit substitution and variable
 selection. `{#x# expression }` implies a single output. The named form keeps
-`p` as an explicit solved output. These are first-class symbolic values; their
+`p` as an explicit defined output. These are first-class symbolic values; their
 bodies do not assign runtime variables.
+
+A system may use relations instead of a solved output:
+
+```rix edu
+S := {#x:y# y^2 == x; y >= 0 };
+{: S, .InspectSpec(S), .SpecRoles(S) } ;
+```
+
+The constraints are not tested or solved when `S` is created. A plugin may use
+all symbols, or use attached/overridden input and output roles when direction
+matters.
 
 Calling a spec substitutes positionally and still returns a spec:
 
@@ -54,9 +65,10 @@ Continue to **Exact symbolic calculus** for arithmetic, `.Poly`, `.Deriv`,
 
 ## Read the result
 
-Solver-style assertions and symbolic construction are separate ideas. A spec
-records a definite expression transformation; it does not ask RiX to solve an
-equation.
+Runtime assertions and symbolic construction are separate ideas. A spec records
+a reusable symbolic description; solving it is explicit plugin functionality.
+The former `:=:` solve operator has been removed because it could not express
+algorithm, precision, branch, or certification tradeoffs.
 
 Try a second value of your own. When an advanced feature depends on files,
 JavaScript, or extension registration, RatCalc explains the concept but does

@@ -5337,7 +5337,7 @@ var runtimeDefaults = Object.freeze({
     Files: Object.freeze(["FILES"]),
     Units: Object.freeze(["UNITS", "Units", "CONVERTUNIT", "ConvertUnit", "DEFINEUNIT", "DefineUnit"]),
     Exact: Object.freeze(["EXACT", "Exact", "COMPLEX", "Complex", "DEFINEEXACTGENERATOR", "DefineExactGenerator", "exactalgebras"]),
-    Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC", "SArith"]),
+    Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC", "SPECROLES", "SArith"]),
     Notation: Object.freeze(["SArith", "Poly", "NotationParser"]),
     Random: Object.freeze(["RANDOMSEED", "RandomSeed", "RAND_NAME"]),
     RiXCel: Object.freeze(["FORMULASHEET", "REACTIVEGRAPH", "RIXCELEXPORT", "RIXCELIMPORT", "RIXCELIMPORTCSV", "RIXCELIMPORTTSV", "RIXCELEXPORTCSV", "RIXCELEXPORTTSV"])
@@ -6944,6 +6944,21 @@ var BINARY_TEXT = new Map([
   ["INTDIV", "//"],
   ["MOD", "%"]
 ]);
+var DISPLAY_BINARY_TEXT = new Map([
+  ...BINARY_TEXT,
+  ["EQ", "=="],
+  ["NEQ", "!="],
+  ["SAME_CELL", "==="],
+  ["LT", "<"],
+  ["GT", ">"],
+  ["LTE", "<="],
+  ["GTE", ">="],
+  ["AND", "AND"],
+  ["OR", "OR"],
+  ["MEMBER", "?"],
+  ["NOT_MEMBER", "!?"],
+  ["INTERSECTS", "?&"]
+]);
 var TEXT_BINARY = new Map(Array.from(BINARY_TEXT, ([name, text]) => [text, name]));
 var ir = (fn, ...args) => ({ fn, args });
 var literal = (value) => ir("LITERAL", String(value));
@@ -6986,7 +7001,7 @@ function expressionOf(spec) {
     throw new Error("Expected a symbolic specification");
   if (spec.expression)
     return spec.expression;
-  if (spec.outputs.length !== 1 || spec.statements.length !== 1) {
+  if (spec.outputs.length !== 1 || spec.statements.length !== 1 || spec.statements[0].kind !== "define") {
     throw new Error("Symbolic operations currently require a single explicitly solved output");
   }
   return spec.statements[0].expr;
@@ -7000,8 +7015,8 @@ function createSymbolicSpec(meta, context = null) {
   let outputs = [...meta.outputs || []];
   let expression = meta.expression ? cloneIr(meta.expression) : null;
   let statements = (meta.statements || []).map((statement) => ({
-    kind: "assign",
-    target: statement.target,
+    kind: statement.kind === "constraint" ? "constraint" : "define",
+    ...statement.target ? { target: statement.target } : {},
     expr: cloneIr(statement.expr)
   }));
   if (outputMode === "identity") {
@@ -7051,11 +7066,17 @@ function specWithExpression(source, expression, options = {}) {
 function precedence(node) {
   if (!node?.fn)
     return 100;
+  if (node.fn === "OR")
+    return 2;
+  if (node.fn === "AND")
+    return 3;
+  if (["EQ", "NEQ", "SAME_CELL", "LT", "GT", "LTE", "GTE", "MEMBER", "NOT_MEMBER", "INTERSECTS"].includes(node.fn))
+    return 5;
   if (node.fn === "ADD" || node.fn === "SUB")
     return 10;
   if (node.fn === "MUL" || node.fn === "DIV" || node.fn === "INTDIV" || node.fn === "MOD")
     return 20;
-  if (node.fn === "NEG")
+  if (node.fn === "NEG" || node.fn === "NOT")
     return 30;
   if (node.fn === "POW")
     return 40;
@@ -7080,6 +7101,10 @@ function renderSymbolicIr(node, parentPrecedence = 0, side = null) {
     const text = `-${renderSymbolicIr(node.args[0], precedence(node))}`;
     return precedence(node) < parentPrecedence ? `(${text})` : text;
   }
+  if (node.fn === "NOT") {
+    const text = `NOT ${renderSymbolicIr(node.args[0], precedence(node))}`;
+    return precedence(node) < parentPrecedence ? `(${text})` : text;
+  }
   if (node.fn === "CALL") {
     return `${node.args[0]}(${node.args.slice(1).map((arg) => renderSymbolicIr(arg)).join(", ")})`;
   }
@@ -7089,7 +7114,24 @@ function renderSymbolicIr(node, parentPrecedence = 0, side = null) {
   if (node.fn === "SYS_CALL") {
     return `.${node.args[0]}(${node.args.slice(1).map((arg) => renderSymbolicIr(arg)).join(", ")})`;
   }
-  const op = BINARY_TEXT.get(node.fn);
+  if (node.fn === "ABS")
+    return `|${renderSymbolicIr(node.args[0])}|`;
+  if (node.fn === "INTERVAL")
+    return node.args.map((arg) => renderSymbolicIr(arg)).join(":");
+  if (node.fn === "ARRAY")
+    return `[${node.args.map((arg) => renderSymbolicIr(arg)).join(", ")}]`;
+  if (node.fn === "TUPLE")
+    return `{: ${node.args.map((arg) => renderSymbolicIr(arg)).join(", ")} }`;
+  if (node.fn === "SET")
+    return `{| ${node.args.map((arg) => renderSymbolicIr(arg)).join(", ")} |}`;
+  if (node.fn === "META_GET")
+    return `${renderSymbolicIr(node.args[0], 100)}.${node.args[1]}`;
+  if (node.fn === "INDEX_GET") {
+    const target = renderSymbolicIr(node.args[0], 100);
+    const index = typeof node.args[1] === "string" ? node.args[1] : renderSymbolicIr(node.args[1]);
+    return `${target}[${index}]`;
+  }
+  const op = DISPLAY_BINARY_TEXT.get(node.fn);
   if (op) {
     const own = precedence(node);
     const left = renderSymbolicIr(node.args[0], own, "left");
@@ -7099,7 +7141,8 @@ function renderSymbolicIr(node, parentPrecedence = 0, side = null) {
     const parens = own < parentPrecedence || side === "left" && node.fn === "POW" && own === parentPrecedence;
     return parens ? `(${text})` : text;
   }
-  throw new Error(`Cannot render unsupported symbolic IR '${node.fn}'`);
+  const genericArgs = (node.args || []).map((arg) => arg?.fn ? renderSymbolicIr(arg) : typeof arg === "string" ? JSON.stringify(arg) : JSON.stringify(arg)).join(", ");
+  return `@_${node.fn}(${genericArgs})`;
 }
 function formatSymbolicSpec(spec) {
   const inputs = spec.inputs.join(",");
@@ -7110,9 +7153,10 @@ function formatSymbolicSpec(spec) {
       return item.local;
     return `${item.local}${item.mode === "alias" ? "=" : "~"}${item.source}`;
   }).join(",")}> ` : "";
-  if (outputModeOf(spec) === "named") {
+  if (outputModeOf(spec) === "named" || outputModeOf(spec) === "system") {
     const header2 = spec.outputsDeclared ? `${inputs}:${spec.outputs.join(",")}# ` : inputs ? `${inputs}# ` : " ";
-    return `{#${header2}${imports}${spec.statements.map((s) => `${s.target} = ${renderSymbolicIr(s.expr)}`).join("; ")} }`;
+    const body = spec.statements.map((statement) => statement.kind === "constraint" ? renderSymbolicIr(statement.expr) : `${statement.target} = ${renderSymbolicIr(statement.expr)}`).join("; ");
+    return `{#${header2}${imports}${body}${body ? " " : ""}}`;
   }
   const header = inputs ? `${inputs}# ` : " ";
   return `{#${header}${imports}${renderSymbolicIr(expressionOf(spec))} }`;
@@ -7128,13 +7172,18 @@ function serializeIr(node) {
     return rixMap([["kind", rixString("outer")], ["name", rixString(node.args[0])]]);
   if (node.fn === "NEG")
     return rixMap([["kind", rixString("unary")], ["op", rixString("-")], ["expr", serializeIr(node.args[0])]]);
-  const op = BINARY_TEXT.get(node.fn);
+  if (node.fn === "NOT")
+    return rixMap([["kind", rixString("unary")], ["op", rixString("NOT")], ["expr", serializeIr(node.args[0])]]);
+  const op = DISPLAY_BINARY_TEXT.get(node.fn);
   if (op)
     return rixMap([["kind", rixString("binary")], ["op", rixString(op)], ["left", serializeIr(node.args[0])], ["right", serializeIr(node.args[1])]]);
   return rixMap([["kind", rixString("ir")], ["fn", rixString(node.fn)], ["args", rixTuple(node.args.map(serializeIr))]]);
 }
 function inspectSymbolicSpec(spec) {
-  const inspectExpression = spec.expression ? serializeIr(spec.expression) : spec.statements.length === 1 ? serializeIr(spec.statements[0].expr) : null;
+  const inspectExpression = spec.expression ? serializeIr(spec.expression) : spec.statements.length === 1 && spec.statements[0].kind === "define" ? serializeIr(spec.statements[0].expr) : null;
+  const symbols2 = symbolicNames(spec);
+  const definitions = spec.statements.filter((statement) => statement.kind === "define");
+  const constraints = spec.statements.filter((statement) => statement.kind === "constraint");
   return rixMap([
     ["kind", rixString("systemSpec")],
     ["syntax", rixString("#")],
@@ -7142,9 +7191,15 @@ function inspectSymbolicSpec(spec) {
     ["source", rixString(formatSymbolicSpec(spec))],
     ["inputs", rixTuple(spec.inputs.map(rixString))],
     ["outputs", rixTuple(spec.outputs.map(rixString))],
-    ["statements", rixTuple(spec.statements.map((statement) => rixMap([
-      ["kind", rixString("assign")],
+    ["symbols", rixTuple(symbols2.map(rixString))],
+    ["definitions", rixTuple(definitions.map((statement) => rixMap([
       ["target", rixString(statement.target)],
+      ["expr", serializeIr(statement.expr)]
+    ])))],
+    ["constraints", rixTuple(constraints.map((statement) => serializeIr(statement.expr)))],
+    ["statements", rixTuple(spec.statements.map((statement) => rixMap([
+      ["kind", rixString(statement.kind)],
+      ...statement.target ? [["target", rixString(statement.target)]] : [],
       ["expr", serializeIr(statement.expr)]
     ])))],
     ["expression", inspectExpression]
@@ -7448,6 +7503,82 @@ function retrieveNames(node, names = new Set) {
       retrieveNames(arg, names);
   return names;
 }
+function symbolicNames(value) {
+  const spec = getAttachedSpec(value);
+  if (!isSymbolicSpec(spec))
+    throw new Error("Expected a symbolic specification");
+  const names = unionNames([spec.inputs, spec.outputs]);
+  const add = (name) => {
+    if (!names.includes(name))
+      names.push(name);
+  };
+  for (const statement of spec.statements || []) {
+    if (statement.kind === "define" && statement.target)
+      add(statement.target);
+    for (const name of retrieveNames(statement.expr))
+      add(name);
+  }
+  if (spec.expression)
+    for (const name of retrieveNames(spec.expression))
+      add(name);
+  return names;
+}
+function roleEntries(overrides) {
+  if (overrides === null || overrides === undefined)
+    return null;
+  if (overrides?.type === "map" && overrides.entries instanceof Map)
+    return overrides.entries;
+  if (overrides instanceof Map)
+    return overrides;
+  if (typeof overrides === "object" && !Array.isArray(overrides))
+    return new Map(Object.entries(overrides));
+  throw new Error("Symbolic role overrides must be a map with inputs and/or outputs");
+}
+function roleName(value) {
+  const name = value?.value ?? value;
+  if (typeof name !== "string" || !name.length)
+    throw new Error("Symbolic role names must be strings or colon-strings");
+  return name;
+}
+function roleList(value, label) {
+  if (value === null || value === undefined)
+    return [];
+  const values = Array.isArray(value) ? value : ["tuple", "array", "sequence"].includes(value?.type) ? value.values : [value];
+  const result = values.map(roleName);
+  if (new Set(result).size !== result.length)
+    throw new Error(`Duplicate symbolic ${label} role`);
+  return result;
+}
+function resolveSymbolicRoles(value, overrides = null) {
+  const spec = getAttachedSpec(value);
+  if (!isSymbolicSpec(spec))
+    throw new Error("Expected a symbolic specification or spec-backed value");
+  const symbols2 = symbolicNames(spec);
+  const entries = roleEntries(overrides);
+  const inputs = entries?.has("inputs") ? roleList(entries.get("inputs"), "input") : [...spec.inputs];
+  const outputs = entries?.has("outputs") ? roleList(entries.get("outputs"), "output") : [...spec.outputs];
+  const known = new Set(symbols2);
+  for (const name of [...inputs, ...outputs]) {
+    if (!known.has(name))
+      throw new Error(`Symbolic role '${name}' is not present in the specification`);
+  }
+  const inputSet = new Set(inputs);
+  for (const name of outputs) {
+    if (inputSet.has(name))
+      throw new Error(`Symbolic role '${name}' cannot be both an input and an output`);
+  }
+  const assigned = new Set([...inputs, ...outputs]);
+  return { symbols: symbols2, inputs, outputs, unassigned: symbols2.filter((name) => !assigned.has(name)) };
+}
+function symbolicRolesValue(value, overrides = null) {
+  const roles = resolveSymbolicRoles(value, overrides);
+  return rixMap([
+    ["symbols", rixTuple(roles.symbols.map(rixString))],
+    ["inputs", rixTuple(roles.inputs.map(rixString))],
+    ["outputs", rixTuple(roles.outputs.map(rixString))],
+    ["unassigned", rixTuple(roles.unassigned.map(rixString))]
+  ]);
+}
 function unionScopes(groups, referencedNames = null) {
   const result = [];
   const seen = new Set;
@@ -7495,8 +7626,30 @@ function applySymbolicSpec(spec, args) {
     }
   }
   const remaining = spec.inputs.slice(args.length);
-  const expression = substituteIr(expressionOf(spec), substitutions);
   const inputs = unionNames([...argumentSpecs.map((item) => item.inputs), remaining]);
+  if (outputModeOf(spec) === "system") {
+    const statements = spec.statements.map((statement) => ({
+      ...statement,
+      expr: substituteIr(statement.expr, substitutions)
+    }));
+    const capturedNames2 = new Set;
+    for (const statement of statements)
+      retrieveNames(statement.expr, capturedNames2);
+    for (const input of inputs)
+      capturedNames2.delete(input);
+    return createSymbolicSpec({
+      inputs,
+      outputs: spec.outputs,
+      outputsDeclared: spec.outputsDeclared,
+      outputMode: "system",
+      statements,
+      imports: spec.imports,
+      __closureScopes: unionScopes([spec.__closureScopes, ...argumentSpecs.map((item) => item.__closureScopes)], capturedNames2),
+      origin: spec.origin,
+      transform: { operation: "substitute" }
+    });
+  }
+  const expression = substituteIr(expressionOf(spec), substitutions);
   const capturedNames = retrieveNames(expression);
   for (const input of inputs)
     capturedNames.delete(input);
@@ -7973,7 +8126,8 @@ var symbolicCapabilities = {
   SIMPLIFY: { impl: (args) => transformValue(args), pure: true, doc: "Compatibility alias for Transform" },
   SPEC: { impl: ([value]) => explicitSpec(value), doc: "Analyze a pure function and attach/return its symbolic spec" },
   SPECCABILITY: { impl: ([value]) => speccabilityValue(value), pure: true, doc: "Report whether a pure function can be represented by the exact symbolic subset" },
-  INSPECTSPEC: { impl: ([value]) => inspectSymbolicSpec(getAttachedSpec(value) || value), pure: true, doc: "Return the structural inspection map for a symbolic spec" }
+  INSPECTSPEC: { impl: ([value]) => inspectSymbolicSpec(getAttachedSpec(value) || value), pure: true, doc: "Return the structural inspection map for a symbolic spec" },
+  SPECROLES: { impl: ([value, overrides = null]) => symbolicRolesValue(value, overrides), pure: true, doc: "Resolve all symbols and input/output roles, with optional role overrides" }
 };
 var symbolicFunctions = {
   SYSTEM_SPEC: {
@@ -18246,13 +18400,6 @@ var LOWERERS = {
       };
       return lowerAssignment(assignAstNode, "ASSIGN_UPDATE");
     }
-    if (op === ":=:") {
-      const left = node.left;
-      if (left.type === "UserIdentifier" || left.type === "SystemIdentifier") {
-        return ir2("SOLVE", left.name, lowerNode(node.right));
-      }
-      return ir2("SOLVE", lowerNode(left), lowerNode(node.right));
-    }
     if (op === ":<:") {
       return ir2("ASSERT_LT", lowerNode(node.left), lowerNode(node.right));
     }
@@ -18595,8 +18742,8 @@ var LOWERERS = {
       outputMode: node.outputMode || "named",
       ...node.expression ? { expression: lowerNode(node.expression) } : {},
       statements: (node.statements || []).map((statement) => ({
-        kind: "assign",
-        target: statement.target,
+        kind: statement.type === "SpecConstraint" ? "constraint" : "define",
+        ...statement.target ? { target: statement.target } : {},
         expr: lowerNode(statement.expr)
       }))
     };
@@ -18605,12 +18752,15 @@ var LOWERERS = {
     }
     return ir2("SYSTEM_SPEC", meta);
   },
-  SpecAssign(node) {
+  SpecDefinition(node) {
     return {
-      kind: "assign",
+      kind: "define",
       target: node.target,
       expr: lowerNode(node.expr)
     };
+  },
+  SpecConstraint(node) {
+    return { kind: "constraint", expr: lowerNode(node.expr) };
   },
   BreakBlock(node) {
     const meta = {};
@@ -20754,11 +20904,6 @@ var SYMBOL_TABLE = {
     associativity: "right",
     type: "infix"
   },
-  ":=:": {
-    precedence: PRECEDENCE.ASSIGNMENT,
-    associativity: "right",
-    type: "infix"
-  },
   ":<:": {
     precedence: PRECEDENCE.ASSIGNMENT,
     associativity: "right",
@@ -21207,6 +21352,9 @@ class Parser {
       if (token2.value === "|^:") {
         this.error("The legacy '|^:' generator operator was removed; use '|^' for lazy generation");
       }
+      if (token2.value === ":=:") {
+        this.error("The ':=:' solve operator was removed; express symbolic constraints with {# ... } and solve them with a plugin");
+      }
       return SYMBOL_TABLE[token2.value] || { precedence: 0, type: "unknown" };
     } else if (token2.type === "SemicolonSequence") {
       return { precedence: 0, type: "separator" };
@@ -21409,6 +21557,9 @@ class Parser {
         } else if (token2.value === "{") {
           return this.parseBraceContainer();
         } else if (token2.value === "{=" || token2.value === "{?" || token2.value === "{;" || token2.value === "{|" || token2.value === "{:" || token2.value === "{@" || token2.value === "{#" || token2.value === "{.." || token2.value === "{>" || token2.value === "{^" || token2.value === "{$") {
+          if (token2.value === "{$") {
+            this.error("The '{$ ... }' sigil is reserved for future async/concurrency syntax");
+          }
           if (token2.value === "{#") {
             return this.parseSystemSpecLiteral();
           }
@@ -21450,6 +21601,8 @@ class Parser {
             let inner;
             if (nextVal === "{") {
               inner = this.parseBraceContainer();
+            } else if (nextVal === "{$") {
+              this.error("The '{$ ... }' sigil is reserved for future async/concurrency syntax");
             } else if (nextVal === "{#") {
               inner = this.parseSystemSpecLiteral();
             } else if (nextVal === "{^") {
@@ -23190,6 +23343,9 @@ class Parser {
   }
   parseBraceSigil(sigil, containerName = null, options = {}) {
     const startToken = this.current;
+    if (sigil === "{$") {
+      this.error("The '{$ ... }' sigil is reserved for future async/concurrency syntax");
+    }
     this.advance();
     const isTensorShapeSigil = sigil === "{:" && containerName && /^\d+(?:x\d+)*$/.test(containerName);
     if (isTensorShapeSigil && !options.destructureAlias) {
@@ -23204,12 +23360,11 @@ class Parser {
       "{|": "SetContainer",
       "{:": "TupleContainer",
       "{@": "LoopContainer",
-      "{$": "BlockContainer",
       "{^": "ValueOutfit",
       "{>": "MultifunctionContainer"
     };
     const nodeType = sigilTypeMap[effectiveSigil];
-    const temporalSigils = new Set(["{?", "{;", "{@", "{$"]);
+    const temporalSigils = new Set(["{?", "{;", "{@"]);
     const isTemporal = temporalSigils.has(effectiveSigil);
     const closerMap = {
       "{|": ["|}", "}"]
@@ -23235,7 +23390,7 @@ class Parser {
       elements.push(this.createNode("Hole", { original: "" }));
     };
     const header = effectiveSigil === "{=" || effectiveSigil === "{|" || effectiveSigil === "{:" || effectiveSigil === "{.." ? this.parseSemanticHeader() : null;
-    const imports = (effectiveSigil === "{;" || effectiveSigil === "{@" || effectiveSigil === "{$") && this.startsImportHeader() ? this.parseImportHeader() : [];
+    const imports = (effectiveSigil === "{;" || effectiveSigil === "{@") && this.startsImportHeader() ? this.parseImportHeader() : [];
     const elements = [];
     const parseElement = effectiveSigil === "{=" ? () => this.parseMapConstructorEntry() : effectiveSigil === "{|" || effectiveSigil === "{:" || effectiveSigil === "{.." ? () => this.parseCapturedConstructorElement() : isTemporal ? () => this.parseCommaSequenceExpression(0) : () => this.parseExpression(0);
     if (!isCloser(this.current.value)) {
@@ -23339,8 +23494,7 @@ class Parser {
       });
     }
     const imports = this.startsImportHeader() ? this.parseImportHeader() : [];
-    const statements = [];
-    let expressionBody = null;
+    const bodyItems = [];
     if (this.current.value !== "}") {
       do {
         if (this.current.value === ";") {
@@ -23348,17 +23502,7 @@ class Parser {
           continue;
         }
         const expression = this.parseExpression(0);
-        if (expression?.type === "BinaryOperation" && expression.operator === "=") {
-          if (expressionBody) {
-            this.error("A symbolic expression body cannot be mixed with assignments");
-          }
-          statements.push(this.parseSystemSpecStatement(expression));
-        } else {
-          if (statements.length > 0 || expressionBody) {
-            this.error("A symbolic expression spec must contain exactly one expression");
-          }
-          expressionBody = expression;
-        }
+        bodyItems.push(expression?.type === "BinaryOperation" && expression.operator === "=" ? this.parseSystemSpecDefinition(expression) : expression);
         if (this.current.value === ";") {
           this.advance();
           if (this.current.value === "}")
@@ -23380,6 +23524,13 @@ class Parser {
       this.error("Expected closing } for system spec literal");
     }
     this.advance();
+    const soleItem = bodyItems.length === 1 ? bodyItems[0] : null;
+    const expressionBody = soleItem && soleItem.type !== "SpecDefinition" && !this.isSystemConstraintExpression(soleItem) ? soleItem : null;
+    const statements = expressionBody ? [] : bodyItems.map((item) => item.type === "SpecDefinition" ? item : this.createNode("SpecConstraint", {
+      expr: item,
+      pos: item.pos,
+      original: item.original
+    }));
     if (expressionBody && header.outputsDeclared) {
       this.error("An anonymous symbolic expression cannot declare named outputs");
     }
@@ -23390,7 +23541,7 @@ class Parser {
       inputs: header.inputs,
       outputs: finalized.outputs,
       outputsDeclared: header.outputsDeclared,
-      outputMode: expressionBody ? "expression" : "named",
+      outputMode: expressionBody ? "expression" : finalized.statements.some((statement) => statement.type === "SpecConstraint") ? "system" : "named",
       ...expressionBody ? { expression: expressionBody } : {},
       statements: finalized.statements,
       pos: startToken.pos,
@@ -23416,15 +23567,22 @@ class Parser {
       }
     }
   }
-  parseSystemSpecStatement(expression) {
+  isSystemConstraintExpression(expression) {
+    const unwrapped = expression?.type === "Grouping" && expression.expression ? expression.expression : expression;
+    if (unwrapped?.type === "BinaryOperation") {
+      return new Set(["==", "!=", "<", ">", "<=", ">=", "===", "?", "!?", "?&", "AND", "&&", "OR", "||"]).has(unwrapped.operator);
+    }
+    return unwrapped?.type === "UnaryOperation" && ["NOT", "!"].includes(unwrapped.operator);
+  }
+  parseSystemSpecDefinition(expression) {
     if (!expression || expression.type !== "BinaryOperation" || expression.operator !== "=") {
-      this.error("System spec bodies only support symbolic assignments of the form name = expr");
+      this.error("System spec definitions must have the form name = expr");
     }
     const target = expression.left;
     if (target.type !== "UserIdentifier" && target.type !== "SystemIdentifier") {
-      this.error("System spec assignment targets must be bare identifiers");
+      this.error("System spec definition targets must be bare identifiers");
     }
-    return this.createNode("SpecAssign", {
+    return this.createNode("SpecDefinition", {
       target: target.name,
       expr: expression.right,
       pos: expression.pos ?? target.pos,
@@ -23432,27 +23590,18 @@ class Parser {
     });
   }
   finalizeSystemSpecStatements(header, statements) {
-    const assigned = new Set;
+    const defined = new Set;
     const inferredOutputs = [];
-    const declaredOutputs = new Set(header.outputs);
     for (const statement of statements) {
+      if (statement.type !== "SpecDefinition")
+        continue;
       const target = statement.target;
-      if (assigned.has(target)) {
-        this.error(`System spec output '${target}' is assigned more than once`);
+      if (defined.has(target)) {
+        this.error(`System spec symbol '${target}' is defined more than once`);
       }
-      if (header.outputsDeclared && !declaredOutputs.has(target)) {
-        this.error(`System spec assignment target '${target}' is not a declared output`);
-      }
-      assigned.add(target);
+      defined.add(target);
       if (!header.outputsDeclared) {
         inferredOutputs.push(target);
-      }
-    }
-    if (header.outputsDeclared) {
-      for (const output2 of header.outputs) {
-        if (!assigned.has(output2)) {
-          this.error(`System spec declared output '${output2}' is never assigned`);
-        }
       }
     }
     return {
@@ -27471,19 +27620,6 @@ function mediantLevels(lo, hi, levels) {
   return { levels: result, boundaries };
 }
 var advancedFunctions = {
-  SOLVE: {
-    lazy: true,
-    impl(args, context, evaluate) {
-      let name = typeof args[0] === "object" && args[0] !== null && args[0].fn ? evaluate(args[0]) : args[0];
-      if (name && typeof name === "object" && name.type === "string") {
-        name = name.value;
-      }
-      const value = evaluate(args[1]);
-      context.set(name, value);
-      return { type: "constraint", name, value, satisfied: true };
-    },
-    doc: "Solve/constrain: x :=: expr"
-  },
   ASSERT_LT: {
     impl(args) {
       const a = toNumber(args[0]);
@@ -35397,5 +35533,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { formatValue, mountOutputWidgets, findHelp, createRixRepl };
 
-//# debugId=355BC9C38A9B3AD264756E2164756E21
-//# sourceMappingURL=chunk-a6senwj3.js.map
+//# debugId=85EB3EC7536F0D2964756E2164756E21
+//# sourceMappingURL=chunk-d0ba2zwz.js.map
