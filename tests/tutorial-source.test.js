@@ -60,6 +60,7 @@ test("structured output has focused table, document, graphic, drawing, sheet, in
     expect(tutorialByNumber("12e")?.file).toBe("sheets-and-tensor-views.html");
     expect(tutorialByNumber("12f")?.file).toBe("interactive-graphics.html");
     expect(tutorialByNumber("12g")?.file).toBe("control-panels.html");
+    expect(tutorialByNumber("12h")?.file).toBe("reactive-scenes-and-snapshots.html");
     const drawing = await Bun.file(new URL("../tutorials/drawing-with-draw.md", import.meta.url)).text();
     const sheets = await Bun.file(new URL("../tutorials/sheets-and-tensor-views.md", import.meta.url)).text();
     const interactive = await Bun.file(new URL("../tutorials/interactive-graphics.md", import.meta.url)).text();

@@ -3370,7 +3370,10 @@ function tokenize(input) {
       break;
     }
     let token = null;
-    token = tryMatchComment(input, position);
+    token = tryMatchPostfixCheck(input, position);
+    if (!token) {
+      token = tryMatchComment(input, position);
+    }
     if (!token) {
       token = tryMatchNumber(input, position);
     }
@@ -3423,6 +3426,17 @@ function tokenize(input) {
     });
   }
   return tokens;
+}
+function tryMatchPostfixCheck(input, position) {
+  const marker = input.slice(position, position + 3);
+  if (marker !== "##@" && marker !== "##:" && marker !== "##!")
+    return null;
+  return {
+    type: "Symbol",
+    original: marker,
+    value: marker,
+    pos: [position, position, position + marker.length]
+  };
 }
 function tryMatchComment(input, position) {
   const remaining = input.slice(position);
@@ -5305,7 +5319,7 @@ var runtimeDefaults = Object.freeze({
     permissions: Object.freeze(["IMPORTS"])
   }),
   capabilityGroups: Object.freeze({
-    Output: Object.freeze(["BIND", "LIVEVIEW", "TEXT", "PARAGRAPH", "HEADING", "FRAGMENT", "TABLE", "GRID", "SHEET", "CONTROLPANEL", "FIGURE", "SLIDE", "SLIDES", "Algebra"]),
+    Output: Object.freeze(["OUT", "BIND", "LIVEVIEW", "TEXT", "PARAGRAPH", "HEADING", "FRAGMENT", "SNAPSHOTS", "TABLE", "GRID", "SHEET", "CONTROLPANEL", "FIGURE", "SLIDE", "SLIDES", "Algebra", "Timeline"]),
     Controls: Object.freeze(["CONTROLPANEL", "Controls"]),
     Graphics: Object.freeze(["Graphics"]),
     Draw: Object.freeze(["draw"]),
@@ -8018,6 +8032,7 @@ function graphMethods() {
     ["DERIVE", method("Derive", ([target, name, formula]) => target.addComputed(name, formula))],
     ["GET", method("Get", ([target, name]) => target.get(name))],
     ["NODE", method("Node", ([target, name]) => target.node(name))],
+    ["TOUCH", method("Touch", ([target, name]) => target.touch(name))],
     ["RECALCULATE", method("Recalculate", ([target]) => target.recalculate())],
     ["_mutable", new Integer(1n)]
   ]);
@@ -8028,6 +8043,7 @@ function nodeMethods() {
     ["PEEK", method("Peek", ([target]) => target.peek())],
     ["SET", method("Set", ([target, value]) => target.set(value))],
     ["REPLACEVALUE", method("ReplaceValue", ([target, value]) => target.replaceValue(value))],
+    ["TOUCH", method("Touch", ([target]) => target.touch())],
     ["GETFORMULA", method("GetFormula", ([target]) => target.formula)],
     ["SETFORMULA", method("SetFormula", ([target, formula]) => target.setFormula(formula))],
     ["LIVE", method("Live", ([target]) => target.live())],
@@ -8134,6 +8150,9 @@ function createReactiveGraph(options = {}) {
       replaceValue(value, metadata = null) {
         return graph.replaceValue(name, value, metadata);
       },
+      touch(metadata = null) {
+        return graph.touch(name, metadata);
+      },
       setFormula(formula, metadata = null) {
         if (kind !== "computed")
           throw new Error(`Reactive source node ${name} has no formula`);
@@ -8162,7 +8181,7 @@ function createReactiveGraph(options = {}) {
     };
     return node;
   }
-  function runEpoch({ dirty, sourceOverrides = new Map, cause = null, evaluateAll = false } = {}) {
+  function runEpoch({ dirty, sourceOverrides = new Map, cause = null, evaluateAll = false, forcePublish = new Set, preserveValues = new Set } = {}) {
     if (activeEpoch) {
       throw new Error(options.nestedEpochError || "Reactive computations cannot start a nested graph epoch");
     }
@@ -8173,11 +8192,11 @@ function createReactiveGraph(options = {}) {
       stagedValues.set(name, value);
     const states = new Map([...nodes].map(([name, node]) => [
       name,
-      requested.has(name) && node.kind === "computed" ? "dirty" : "clean"
+      requested.has(name) && node.kind === "computed" && !preserveValues.has(name) ? "dirty" : "clean"
     ]));
     const dependencies = new Map([...nodes].map(([name, node]) => [
       name,
-      requested.has(name) && node.kind === "computed" ? new Set : new Set(node.dependencies)
+      requested.has(name) && node.kind === "computed" && !preserveValues.has(name) ? new Set : new Set(node.dependencies)
     ]));
     const stack = [];
     let currentName = null;
@@ -8267,9 +8286,10 @@ function createReactiveGraph(options = {}) {
       previousEpoch,
       epoch: graph.epoch,
       changed: Object.freeze(changed),
+      touched: Object.freeze([...forcePublish]),
       cause
     });
-    for (const name of changed)
+    for (const name of new Set([...changed, ...forcePublish]))
       nodes.get(name)._publish(event);
     for (const listener of [...channel])
       listener(event);
@@ -8530,6 +8550,17 @@ function createReactiveGraph(options = {}) {
         source: metadata?.source ?? null
       });
       return value;
+    },
+    touch(name, metadata = null) {
+      name = canonicalName(name);
+      const node = requireNode(name);
+      runEpoch({
+        dirty: new Set([name]),
+        forcePublish: new Set([node.name]),
+        preserveValues: new Set([node.name]),
+        cause: { type: "reactive:touch", name: node.name, metadata }
+      });
+      return node.value;
     },
     setFormula(name, formula, metadata = null) {
       name = canonicalName(name);
@@ -15610,6 +15641,8 @@ function controlBehavior(entry, fields, name, runtime, allowed = Object.keys(fie
   return {
     display: controlDisplay(entry, fields, name, runtime, allowed),
     formatKeys: Object.freeze(formatKeys),
+    style: optionalMap(get(entry, "style"), `${name} style`),
+    metadata: optionalMap(get(entry, "metadata"), `${name} metadata`),
     disabled: has(entry, "disabled") && get(entry, "disabled") !== null,
     readOnly: has(entry, "readOnly") && get(entry, "readOnly") !== null,
     validation: validateCandidate?.(fields.value) ?? null,
@@ -15693,6 +15726,93 @@ function enabled(value) {
   if (value instanceof Rational)
     return value.numerator !== 0n;
   return Boolean(value);
+}
+function exactPositiveIndex(value, label) {
+  const index = exactInteger3(value, label);
+  if (!Number.isSafeInteger(index) || index < 1)
+    throw new Error(`${label} must be a positive safe integer`);
+  return index;
+}
+function sceneEntries(value, runtime, name) {
+  return sequence(value, `${name} entries`).flatMap((entry, group) => {
+    let scene;
+    let states;
+    let label = null;
+    if (entry?.type === "map") {
+      const fields = map(entry, `${name} entry ${group + 1}`);
+      if (!has(fields, "scene") || !has(fields, "states")) {
+        throw new Error(`${name} entry ${group + 1} requires scene and states`);
+      }
+      scene = get(fields, "scene");
+      states = get(fields, "states");
+      label = asString(get(fields, "label"));
+    } else {
+      const pair = sequence(entry, `${name} entry ${group + 1}`);
+      if (pair.length !== 2)
+        throw new Error(`${name} entry ${group + 1} must be a [scene, states] tuple`);
+      [scene, states] = pair;
+    }
+    return sequence(states, `${name} entry ${group + 1} states`).map((state, index) => {
+      const content = invokeControlCallable(scene, [state], runtime, `${name} entry ${group + 1} scene`);
+      if (!isBlockOutput(content)) {
+        const actual = isOutputValue(content) ? content.kind : typeof content;
+        throw new Error(`${name} scene ${group + 1}.${index + 1} must return block output; received ${actual}`);
+      }
+      return Object.freeze({
+        group,
+        index,
+        state,
+        label,
+        content
+      });
+    });
+  });
+}
+function createSnapshots(args, runtime = null) {
+  const entry = spec(args, ["entries", "columns", "title"], "Snapshots");
+  const items = Object.freeze(sceneEntries(get(entry, "entries"), runtime, "Snapshots"));
+  if (items.length === 0)
+    throw new Error("Snapshots requires at least one rendered scene");
+  const columnsValue = get(entry, "columns");
+  const columns = columnsValue === null || columnsValue === undefined ? null : exactPositiveIndex(columnsValue, "Snapshots columns");
+  return output("snapshots", {
+    items,
+    columns,
+    title: asString(get(entry, "title")),
+    caption: asString(get(entry, "caption")),
+    style: optionalMap(get(entry, "style"), "Snapshots style")
+  });
+}
+function createTimelineSequence(args, runtime = null) {
+  const entry = spec(args, ["entries", "duration"], "Timeline.Sequence");
+  const frames = Object.freeze(sceneEntries(get(entry, "entries"), runtime, "Timeline.Sequence"));
+  if (frames.length === 0)
+    throw new Error("Timeline.Sequence requires at least one rendered frame");
+  const duration = get(entry, "duration");
+  return output("timeline", {
+    frames,
+    duration: duration === null || duration === undefined ? null : exactNumber(duration, "Timeline.Sequence duration"),
+    easing: asString(get(entry, "easing")) || "linear",
+    title: asString(get(entry, "title"))
+  });
+}
+function createTimelineRender(args) {
+  const entry = spec(args, ["timeline", "frame"], "Timeline.Render");
+  const timeline = get(entry, "timeline");
+  if (!isOutputValue(timeline) || timeline.kind !== "timeline") {
+    throw new Error("Timeline.Render requires a Timeline.Sequence value");
+  }
+  const frame = get(entry, "frame");
+  const index = frame === null || frame === undefined ? 1 : exactPositiveIndex(frame, "Timeline.Render frame");
+  if (index > timeline.frames.length) {
+    throw new Error(`Timeline.Render frame ${index} is outside 1…${timeline.frames.length}`);
+  }
+  return output("timeline_render", {
+    timeline,
+    frame: index,
+    content: timeline.frames[index - 1].content,
+    title: asString(get(entry, "title")) || timeline.title
+  });
 }
 function createText(args) {
   const entry = spec(args, ["value", "style"], "Text");
@@ -16080,6 +16200,26 @@ function createResetControl(args, runtime = null) {
     replacesDependencies: Object.freeze([...target.dependencies])
   });
 }
+function createActionControl(args, runtime = null) {
+  const entry = spec(args, ["target", "action", "label"], "Controls.Action");
+  const target = reactiveTarget(entry, "Controls.Action");
+  const action = get(entry, "action");
+  if (action === null || action === undefined)
+    throw new Error("Controls.Action requires an action callable");
+  const value = target.get();
+  return output("control_action", {
+    id: asString(get(entry, "id")) || `${target.id}:action`,
+    label: asString(get(entry, "label")) || "Run action",
+    help: asString(get(entry, "help")),
+    target,
+    targetId: target.id,
+    value,
+    action,
+    run: () => invokeControlCallable(action, [target.get()], runtime, "Controls.Action action"),
+    ...controlBehavior(entry, { value }, "Controls.Action", runtime),
+    replacesDependencies: Object.freeze([...target.dependencies])
+  });
+}
 function createControlPanel(args) {
   const entry = spec(args, ["controls", "title", "description"], "ControlPanel");
   const controls = sequence(get(entry, "controls"), "ControlPanel controls");
@@ -16103,6 +16243,7 @@ function createControlPanel(args) {
     submitLabel: asString(get(entry, "submitLabel")) || "Apply changes",
     discardLabel: asString(get(entry, "discardLabel")) || "Discard",
     interactive: true,
+    style: optionalMap(get(entry, "style"), "ControlPanel style"),
     metadata: optionalMap(get(entry, "metadata"), "ControlPanel metadata")
   }, [["SNAPSHOT", method4("Snapshot", ([target]) => createControlPanelSnapshot(target))]]);
 }
@@ -16110,6 +16251,8 @@ function controlSnapshot(control) {
   const {
     target: _target,
     validateCandidate: _validateCandidate,
+    action: _action,
+    run: _run,
     _ext: _extensions,
     ...fields
   } = control;
@@ -16119,6 +16262,49 @@ function controlSnapshot(control) {
     disabled: true,
     readOnly: true
   });
+}
+function styleMap(value) {
+  return value instanceof Map ? value : value?.type === "map" && value.entries instanceof Map ? value.entries : null;
+}
+function styleValue(style, key) {
+  const entries2 = styleMap(style);
+  return entries2 ? get(entries2, key) : null;
+}
+function mergeStyleMaps(...styles) {
+  const result = new Map;
+  for (const style of styles) {
+    const entries2 = styleMap(style);
+    if (!entries2)
+      continue;
+    for (const [key, value] of entries2)
+      result.set(key, value);
+  }
+  return result.size > 0 ? result : null;
+}
+function resolvedControlStyle(panelStyle, control) {
+  if (!styleMap(panelStyle))
+    return control.style;
+  const kinds = styleValue(panelStyle, "kinds");
+  const ids = styleValue(panelStyle, "ids");
+  const kind = control.kind.replace(/^control_/, "");
+  return mergeStyleMaps(styleValue(panelStyle, "all"), styleValue(kinds, kind), styleValue(ids, control.id), control.style);
+}
+function controlStyleAttributes(control) {
+  const style = control.style;
+  const variant = asString(styleValue(style, "variant"));
+  const density = asString(styleValue(style, "density"));
+  const width = asString(styleValue(style, "width"));
+  const attributes = [];
+  if (variant && ["primary", "danger", "quiet"].includes(variant)) {
+    attributes.push(` data-rix-control-variant="${escapeHtml(variant)}"`);
+  }
+  if (density && ["compact", "comfortable"].includes(density)) {
+    attributes.push(` data-rix-control-density="${escapeHtml(density)}"`);
+  }
+  if (width && ["auto", "compact", "full"].includes(width)) {
+    attributes.push(` data-rix-control-width="${escapeHtml(width)}"`);
+  }
+  return attributes.join("");
 }
 function createControlPanelSnapshot(panel) {
   if (!isOutputValue(panel) || panel.kind !== "control_panel") {
@@ -16577,7 +16763,7 @@ function createSyntheticDivision(root, coefficients) {
   return output("grid", {
     columns: Array.from({ length: values.length + 1 }, () => null),
     rows: [[root, ...values], [null, null, ...products.slice(1)], [null, ...bottom]],
-    rules: [{ kind: "vertical", afterColumn: 1 }, { kind: "horizontal", aboveRow: 3 }],
+    rules: [{ kind: "vertical", afterColumn: 2 }, { kind: "horizontal", aboveRow: 3 }],
     style: new Map([["align", { type: "string", value: "right" }]]),
     semantic: { type: "synthetic_division", root, coefficients: values, products, bottom }
   });
@@ -16606,31 +16792,90 @@ function createPolynomialPlot(coefficients, domain, options = null) {
   const margin = marginValue === null ? 36 : numericValue(marginValue, "Polynomial plot margin");
   if (margin < 0 || margin * 2 >= Math.min(...size))
     throw new Error("Polynomial plot margin is too large for its size");
-  const coefficientNumbers = values.map((value) => numericValue(value, "Polynomial coefficient"));
-  const evaluatePolynomial = (x) => coefficientNumbers.reduce((total, coefficient) => total * x + coefficient, 0);
-  const samplesData = Array.from({ length: samples }, (_, index) => {
-    const x = xMin + (xMax - xMin) * index / (samples - 1);
-    return [x, evaluatePolynomial(x)];
-  });
-  let yMin = Math.min(0, ...samplesData.map(([, y]) => y));
-  let yMax = Math.max(0, ...samplesData.map(([, y]) => y));
-  if (yMin === yMax) {
-    yMin -= 1;
-    yMax += 1;
+  const plotStyle = (entries2, fallbackStroke, fallbackWidth) => {
+    const supplied = optionalMap(get(entries2, "style", null), "Polynomial plot style") || new Map;
+    return new Map([
+      ...supplied,
+      ["stroke", get(entries2, "stroke", get(supplied, "stroke", fallbackStroke))],
+      ["width", get(entries2, "width", get(supplied, "width", fallbackWidth))],
+      ["fill", get(supplied, "fill", { type: "string", value: "none" })]
+    ]);
+  };
+  const readSeries = (entry, index, primary = false) => {
+    const entries2 = primary ? optionEntries : map(entry, `Polynomial plot series ${index + 1}`);
+    const coefficients2 = primary ? values : sequence(get(entries2, "coefficients"), `Polynomial plot series ${index + 1} coefficients`).map((value, coefficientIndex) => exactNumber(value, `Polynomial plot series ${index + 1} coefficient ${coefficientIndex + 1}`));
+    if (coefficients2.length < 2)
+      throw new Error(`Polynomial plot series ${index + 1} requires at least two coefficients`);
+    const numbers = coefficients2.map((value, coefficientIndex) => numericValue(value, `Polynomial plot series ${index + 1} coefficient ${coefficientIndex + 1}`));
+    const data = Array.from({ length: samples }, (_, sampleIndex) => {
+      const x = xMin + (xMax - xMin) * sampleIndex / (samples - 1);
+      return [x, numbers.reduce((total, coefficient) => total * x + coefficient, 0)];
+    });
+    return {
+      data,
+      style: plotStyle(entries2, primary ? { type: "string", value: "#2563eb" } : { type: "string", value: "#b45309" }, primary ? int6(3) : int6(2)),
+      label: get(entries2, "label", null)
+    };
+  };
+  const extraSeries = get(optionEntries, "series", null);
+  const series = [readSeries(null, 0, true), ...extraSeries === null ? [] : sequence(extraSeries, "Polynomial plot series").map((entry, index) => readSeries(entry, index + 1))];
+  const readMark = (entry, index) => {
+    const entries2 = map(entry, `Polynomial plot mark ${index + 1}`);
+    const point = sequence(get(entries2, "point"), `Polynomial plot mark ${index + 1} point`);
+    if (point.length !== 2)
+      throw new Error(`Polynomial plot mark ${index + 1} point must contain x and y coordinates`);
+    return {
+      point: point.map((value, coordinate) => numericValue(value, `Polynomial plot mark ${index + 1} ${coordinate === 0 ? "x" : "y"}`)),
+      label: get(entries2, "label", null),
+      style: optionalMap(get(entries2, "style", null), `Polynomial plot mark ${index + 1} style`) || new Map([
+        ["fill", { type: "string", value: "#be123c" }],
+        ["stroke", { type: "string", value: "#fff" }],
+        ["width", int6(2)]
+      ]),
+      labelStyle: optionalMap(get(entries2, "labelStyle", null), `Polynomial plot mark ${index + 1} label style`) || new Map([["size", int6(13)]]),
+      radius: get(entries2, "radius", int6(5))
+    };
+  };
+  const marksValue = get(optionEntries, "marks", null);
+  const marks = marksValue === null ? [] : sequence(marksValue, "Polynomial plot marks").map(readMark);
+  const readTick = (entry, index) => {
+    const entries2 = map(entry, `Polynomial plot tick ${index + 1}`);
+    return {
+      x: numericValue(get(entries2, "x"), `Polynomial plot tick ${index + 1} x`),
+      label: get(entries2, "label", null),
+      style: optionalMap(get(entries2, "style", null), `Polynomial plot tick ${index + 1} style`) || new Map([["stroke", { type: "string", value: "#334155" }], ["width", int6(2)]]),
+      labelStyle: optionalMap(get(entries2, "labelStyle", null), `Polynomial plot tick ${index + 1} label style`) || new Map([["size", int6(13)], ["anchor", { type: "string", value: "middle" }]])
+    };
+  };
+  const ticksValue = get(optionEntries, "ticks", null);
+  const ticks = ticksValue === null ? [] : sequence(ticksValue, "Polynomial plot ticks").map(readTick);
+  const yDomainValue = get(optionEntries, "yDomain", null);
+  let yMin;
+  let yMax;
+  if (yDomainValue !== null) {
+    const yBounds = sequence(yDomainValue, "Polynomial plot yDomain");
+    if (yBounds.length !== 2)
+      throw new Error("Polynomial plot yDomain must have a lower and upper bound");
+    yMin = numericValue(yBounds[0], "Polynomial plot yDomain lower bound");
+    yMax = numericValue(yBounds[1], "Polynomial plot yDomain upper bound");
+    if (!(yMin < yMax))
+      throw new Error("Polynomial plot yDomain must increase");
+  } else {
+    yMin = Math.min(0, ...series.flatMap(({ data }) => data.map(([, y]) => y)), ...marks.map(({ point }) => point[1]));
+    yMax = Math.max(0, ...series.flatMap(({ data }) => data.map(([, y]) => y)), ...marks.map(({ point }) => point[1]));
+    if (yMin === yMax) {
+      yMin -= 1;
+      yMax += 1;
+    }
+    const yPadding = (yMax - yMin) * 0.08;
+    yMin -= yPadding;
+    yMax += yPadding;
   }
-  const yPadding = (yMax - yMin) * 0.08;
-  yMin -= yPadding;
-  yMax += yPadding;
   const [width, height] = size;
   const toPoint = ([x, y]) => [
     margin + (x - xMin) / (xMax - xMin) * (width - margin * 2),
     height - margin - (y - yMin) / (yMax - yMin) * (height - margin * 2)
   ];
-  const curveStyle = new Map([
-    ["stroke", get(optionEntries, "stroke", { type: "string", value: "#2563eb" })],
-    ["width", get(optionEntries, "width", int6(2))],
-    ["fill", { type: "string", value: "none" }]
-  ]);
   const axisStyle = new Map([
     ["stroke", { type: "string", value: "#64748b" }],
     ["width", int6(1)],
@@ -16642,7 +16887,28 @@ function createPolynomialPlot(coefficients, domain, options = null) {
     children.push(output("path", { points: [toPoint([xMin, 0]), toPoint([xMax, 0])], style: axisStyle }));
   if (xMin <= 0 && xMax >= 0)
     children.push(output("path", { points: [toPoint([0, yMin]), toPoint([0, yMax])], style: axisStyle }));
-  children.push(output("path", { points: samplesData.map(toPoint), style: curveStyle }));
+  for (const seriesEntry of series)
+    children.push(output("path", { points: seriesEntry.data.map(toPoint), style: seriesEntry.style }));
+  for (const tick of ticks) {
+    const [tickX, tickY] = toPoint([tick.x, 0]);
+    children.push(output("path", { points: [[tickX, tickY - 5], [tickX, tickY + 5]], style: tick.style }));
+    if (tick.label !== null && tick.label !== undefined) {
+      children.push(output("text_mark", { position: [tickX, tickY + 20], text: tick.label, style: tick.labelStyle }));
+    }
+  }
+  for (const mark of marks) {
+    const [markX, markY] = toPoint(mark.point);
+    children.push(output("circle", { center: [markX, markY], radius: mark.radius, style: mark.style }));
+    if (mark.label !== null && mark.label !== undefined) {
+      children.push(output("text_mark", { position: [markX + 9, markY - 9], text: mark.label, style: mark.labelStyle }));
+    }
+  }
+  const labeledSeries = series.filter(({ label }) => label !== null && label !== undefined);
+  for (const [index, seriesEntry] of labeledSeries.entries()) {
+    const y = margin + 16 + index * 18;
+    children.push(output("path", { points: [[margin + 2, y - 5], [margin + 18, y - 5]], style: seriesEntry.style }));
+    children.push(output("text_mark", { position: [margin + 24, y], text: seriesEntry.label, style: new Map([["size", int6(13)]]) }));
+  }
   return output("graphic", {
     size: [int6(Math.round(width)), int6(Math.round(height))],
     children,
@@ -16983,6 +17249,17 @@ ${value.transcript.map((child) => formatInlineText(child, format)).join("")}` : 
     return value.children.map((child) => formatOutputText(child, format)).join(`
 
 `);
+  if (value.kind === "snapshots") {
+    return [value.title, ...value.items.map((item, index) => `Snapshot ${index + 1}: ${formatOutputText(item.content, format)}`)].filter(Boolean).join(`
+
+`);
+  }
+  if (value.kind === "timeline")
+    return `[Timeline: ${value.frames.length} frames]`;
+  if (value.kind === "timeline_render")
+    return [value.title, formatOutputText(value.content, format)].filter(Boolean).join(`
+
+`);
   if (value.kind === "control_slider") {
     return `${value.label}: ${cellText(controlField(value, "value"), format)} (${cellText(controlField(value, "low"), format)} … ${cellText(controlField(value, "high"), format)}; step ${cellText(controlField(value, "step"), format)})`;
   }
@@ -17001,6 +17278,8 @@ ${value.transcript.map((child) => formatInlineText(child, format)).join("")}` : 
   if (value.kind === "control_reset") {
     return `${value.label}: ${cellText(controlField(value, "value"), format)} → ${cellText(controlField(value, "initial"), format)}`;
   }
+  if (value.kind === "control_action")
+    return `[Action: ${value.label}]`;
   if (value.kind === "control_panel") {
     return [value.title, value.description, ...value.controls.map((control) => formatOutputText(control, format))].filter(Boolean).join(`
 `);
@@ -17020,7 +17299,12 @@ ${value.transcript.map((child) => formatInlineText(child, format)).join("")}` : 
       if (hasRule(value, "horizontal", index + 1))
         lines.push(`  ${widths.slice(1).map((width) => "-".repeat(width + 2)).join("")}`);
       const parts = strings[index].map((cell, column) => cell.padStart(widths[column]));
-      lines.push(hasRule(value, "vertical", 1) ? `${parts[0]} │ ${parts.slice(1).join("  ")}` : parts.join("  "));
+      let line = parts[0] || "";
+      for (let column = 1;column < parts.length; column += 1) {
+        line += hasRule(value, "vertical", column + 1) ? " │ " : "  ";
+        line += parts[column];
+      }
+      lines.push(line);
     }
     return lines.join(`
 `);
@@ -17142,35 +17426,47 @@ function renderOutputHtml(value, format = (item) => String(item ?? "")) {
   }
   if (value.kind === "fragment")
     return `<section class="rix-output-fragment">${value.children.map((child) => renderOutputHtml(child, format)).join("")}</section>`;
+  if (value.kind === "snapshots") {
+    const columns = value.columns || Math.min(3, value.items.length);
+    return `<section class="rix-output-snapshots" style="--rix-snapshot-columns:${columns}">${value.title ? `<h2>${escapeHtml(value.title)}</h2>` : ""}<div class="rix-output-snapshot-grid">${value.items.map((item, index) => `<article class="rix-output-snapshot" data-rix-snapshot-group="${item.group}" data-rix-snapshot-index="${item.index}">${renderOutputHtml(item.content, format)}<p class="rix-output-snapshot-label">${escapeHtml(item.label || `Snapshot ${index + 1}`)}</p></article>`).join("")}</div>${value.caption ? `<p class="rix-output-snapshots-caption">${escapeHtml(value.caption)}</p>` : ""}</section>`;
+  }
+  if (value.kind === "timeline")
+    return `<section class="rix-output-timeline"><p>${escapeHtml(value.title || "Timeline")} · ${value.frames.length} frames</p></section>`;
+  if (value.kind === "timeline_render")
+    return `<section class="rix-output-timeline-render" data-rix-timeline-frame="${value.frame}" data-rix-timeline-length="${value.timeline.frames.length}">${value.title ? `<h2>${escapeHtml(value.title)}</h2>` : ""}${renderOutputHtml(value.content, format)}<p class="rix-output-timeline-caption">Frame ${value.frame} of ${value.timeline.frames.length}</p></section>`;
   if (value.kind === "control_slider") {
     const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml(value.replacesDependencies.join(","))}"` : "";
-    return `<label class="rix-output-control rix-output-control-slider" data-rix-control-kind="slider" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><input type="range" min="0" max="${value.steps}" step="1" value="${value.index}" data-rix-control-input aria-label="${escapeHtml(value.label)}"${controlInputAttributes(value)}><output data-rix-control-value>${text4(controlField(value, "value"))}</output><small class="rix-output-control-scale">${text4(controlField(value, "low"))} … ${text4(controlField(value, "high"))} · step ${text4(controlField(value, "step"))}</small>${controlMessages(value)}</label>`;
+    return `<label class="rix-output-control rix-output-control-slider" data-rix-control-kind="slider" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><input type="range" min="0" max="${value.steps}" step="1" value="${value.index}" data-rix-control-input aria-label="${escapeHtml(value.label)}"${controlInputAttributes(value)}><output data-rix-control-value>${text4(controlField(value, "value"))}</output><small class="rix-output-control-scale">${text4(controlField(value, "low"))} … ${text4(controlField(value, "high"))} · step ${text4(controlField(value, "step"))}</small>${controlMessages(value)}</label>`;
   }
   if (value.kind === "control_input") {
     const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml(value.replacesDependencies.join(","))}"` : "";
-    return `<label class="rix-output-control rix-output-control-input" data-rix-control-kind="input" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><span class="rix-output-control-input-row"><input type="text" value="${text4(controlField(value, "value"))}" placeholder="${escapeHtml(value.placeholder)}" data-rix-control-input aria-label="${escapeHtml(value.label)}"${controlInputAttributes(value, { text: true })}><button type="button" data-rix-control-commit${controlInputAttributes(value)}>Set</button></span><output data-rix-control-value>${text4(controlField(value, "value"))}</output>${controlMessages(value)}</label>`;
+    return `<label class="rix-output-control rix-output-control-input" data-rix-control-kind="input" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><span class="rix-output-control-input-row"><input type="text" value="${text4(controlField(value, "value"))}" placeholder="${escapeHtml(value.placeholder)}" data-rix-control-input aria-label="${escapeHtml(value.label)}"${controlInputAttributes(value, { text: true })}><button type="button" data-rix-control-commit${controlInputAttributes(value)}>Set</button></span><output data-rix-control-value>${text4(controlField(value, "value"))}</output>${controlMessages(value)}</label>`;
   }
   if (value.kind === "control_choice") {
     const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml(value.replacesDependencies.join(","))}"` : "";
     const options = value.options.map((option, index) => `<option value="${index}"${index === value.index ? " selected" : ""}>${escapeHtml(cellText(value.displayOptions[index], format))}</option>`).join("");
-    return `<label class="rix-output-control rix-output-control-choice" data-rix-control-kind="choice" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><select data-rix-control-input aria-label="${escapeHtml(value.label)}"${controlInputAttributes(value)}>${options}</select><output data-rix-control-value>${text4(controlField(value, "value"))}</output>${controlMessages(value)}</label>`;
+    return `<label class="rix-output-control rix-output-control-choice" data-rix-control-kind="choice" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><select data-rix-control-input aria-label="${escapeHtml(value.label)}"${controlInputAttributes(value)}>${options}</select><output data-rix-control-value>${text4(controlField(value, "value"))}</output>${controlMessages(value)}</label>`;
   }
   if (value.kind === "control_toggle") {
     const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml(value.replacesDependencies.join(","))}"` : "";
-    return `<label class="rix-output-control rix-output-control-toggle" data-rix-control-kind="toggle" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><input type="checkbox"${value.index === 1 ? " checked" : ""} data-rix-control-input aria-label="${escapeHtml(value.label)}"${controlInputAttributes(value)}><output data-rix-control-value>${text4(controlField(value, "value"))}</output><small class="rix-output-control-scale">${text4(controlField(value, "off"))} ↔ ${text4(controlField(value, "on"))}</small>${controlMessages(value)}</label>`;
+    return `<label class="rix-output-control rix-output-control-toggle" data-rix-control-kind="toggle" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><input type="checkbox"${value.index === 1 ? " checked" : ""} data-rix-control-input aria-label="${escapeHtml(value.label)}"${controlInputAttributes(value)}><output data-rix-control-value>${text4(controlField(value, "value"))}</output><small class="rix-output-control-scale">${text4(controlField(value, "off"))} ↔ ${text4(controlField(value, "on"))}</small>${controlMessages(value)}</label>`;
   }
   if (value.kind === "control_range") {
     const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml(value.replacesDependencies.join(","))}"` : "";
     const current = value.formatKeys.includes("value") ? text4(controlField(value, "value")) : `${text4(controlField(value, "start"))} … ${text4(controlField(value, "end"))}`;
-    return `<fieldset class="rix-output-control rix-output-control-range" data-rix-control-kind="range" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${controlStateAttributes(value)}${dependencies}><legend class="rix-output-control-label">${escapeHtml(value.label)}</legend><span class="rix-output-control-range-inputs"><input type="range" min="0" max="${value.steps}" step="1" value="${value.indices[0]}" data-rix-control-input data-rix-control-endpoint="low" aria-label="${escapeHtml(value.label)} lower endpoint"${controlInputAttributes(value)}><input type="range" min="0" max="${value.steps}" step="1" value="${value.indices[1]}" data-rix-control-input data-rix-control-endpoint="high" aria-label="${escapeHtml(value.label)} upper endpoint"${controlInputAttributes(value)}></span><output data-rix-control-value>${current}</output><small class="rix-output-control-scale">${text4(controlField(value, "low"))} … ${text4(controlField(value, "high"))} · step ${text4(controlField(value, "step"))}</small>${controlMessages(value)}</fieldset>`;
+    return `<fieldset class="rix-output-control rix-output-control-range" data-rix-control-kind="range" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><legend class="rix-output-control-label">${escapeHtml(value.label)}</legend><span class="rix-output-control-range-inputs"><input type="range" min="0" max="${value.steps}" step="1" value="${value.indices[0]}" data-rix-control-input data-rix-control-endpoint="low" aria-label="${escapeHtml(value.label)} lower endpoint"${controlInputAttributes(value)}><input type="range" min="0" max="${value.steps}" step="1" value="${value.indices[1]}" data-rix-control-input data-rix-control-endpoint="high" aria-label="${escapeHtml(value.label)} upper endpoint"${controlInputAttributes(value)}></span><output data-rix-control-value>${current}</output><small class="rix-output-control-scale">${text4(controlField(value, "low"))} … ${text4(controlField(value, "high"))} · step ${text4(controlField(value, "step"))}</small>${controlMessages(value)}</fieldset>`;
   }
   if (value.kind === "control_reset") {
     const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml(value.replacesDependencies.join(","))}"` : "";
-    return `<div class="rix-output-control rix-output-control-reset" data-rix-control-kind="reset" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><button type="button" data-rix-control-input aria-label="${escapeHtml(value.label)}"${controlInputAttributes(value)}>Reset to ${text4(controlField(value, "initial"))}</button><output data-rix-control-value>${text4(controlField(value, "value"))}</output>${controlMessages(value)}</div>`;
+    return `<div class="rix-output-control rix-output-control-reset" data-rix-control-kind="reset" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><button type="button" data-rix-control-input aria-label="${escapeHtml(value.label)}"${controlInputAttributes(value)}>Reset to ${text4(controlField(value, "initial"))}</button><output data-rix-control-value>${text4(controlField(value, "value"))}</output>${controlMessages(value)}</div>`;
+  }
+  if (value.kind === "control_action") {
+    const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml(value.replacesDependencies.join(","))}"` : "";
+    return `<div class="rix-output-control rix-output-control-action" data-rix-control-kind="action" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><button type="button" data-rix-control-input aria-label="${escapeHtml(value.label)}"${controlInputAttributes(value)}>${escapeHtml(value.label)}</button>${controlMessages(value)}</div>`;
   }
   if (value.kind === "control_panel") {
     const actions = value.mode === "staged" ? `<div class="rix-output-control-actions"><button type="button" data-rix-control-submit disabled>${escapeHtml(value.submitLabel)}</button><button type="button" data-rix-control-discard disabled>${escapeHtml(value.discardLabel)}</button></div>` : "";
-    return `<section class="rix-output-control-panel" data-rix-interactive="${value.interactive === false ? "false" : "true"}" data-rix-control-mode="${escapeHtml(value.mode || "immediate")}">${value.title ? `<h3>${escapeHtml(value.title)}</h3>` : ""}${value.description ? `<p>${escapeHtml(value.description)}</p>` : ""}<div class="rix-output-control-list">${value.controls.map((control) => renderOutputHtml(control, format)).join("")}</div>${actions}<output class="rix-output-control-status" aria-live="polite"></output></section>`;
+    return `<section class="rix-output-control-panel" data-rix-interactive="${value.interactive === false ? "false" : "true"}" data-rix-control-mode="${escapeHtml(value.mode || "immediate")}">${value.title ? `<h3>${escapeHtml(value.title)}</h3>` : ""}${value.description ? `<p>${escapeHtml(value.description)}</p>` : ""}<div class="rix-output-control-list">${value.controls.map((control) => renderOutputHtml({ ...control, style: resolvedControlStyle(value.style, control) }, format)).join("")}</div>${actions}<output class="rix-output-control-status" aria-live="polite"></output></section>`;
   }
   if (value.kind === "table")
     return `<table class="rix-output-table">${value.caption ? `<caption>${escapeHtml(value.caption)}</caption>` : ""}<thead><tr>${value.columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}</tr></thead><tbody>${value.rows.map((row) => `<tr>${row.map((cell) => `<td>${text4(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
@@ -17242,7 +17538,8 @@ function createGraphicsOutputCollection() {
     ["Rectangle", createRectangle],
     ["Circle", createCircle],
     ["DragPoint", createDragPoint],
-    ["Clip", createClip]
+    ["Clip", createClip],
+    ["Snapshots", createSnapshots]
   ]);
   const entries2 = new Map;
   const extension = new Map([["immutable", int6(1)]]);
@@ -17252,7 +17549,33 @@ function createGraphicsOutputCollection() {
     extension.set(name.toUpperCase(), {
       type: "method_builtin",
       name,
-      impl: (args) => constructor(args.slice(1))
+      impl: (args, context, evaluate, invoke) => constructor(args.slice(1), {
+        context,
+        evaluate,
+        invoke
+      })
+    });
+  }
+  return { type: "map", entries: entries2, _ext: extension };
+}
+function createTimelineOutputCollection() {
+  const methods = new Map([
+    ["Sequence", createTimelineSequence],
+    ["Render", createTimelineRender]
+  ]);
+  const entries2 = new Map;
+  const extension = new Map([["immutable", int6(1)]]);
+  for (const [name, constructor] of methods) {
+    entries2.set(name, constructor);
+    entries2.set(name.toUpperCase(), constructor);
+    extension.set(name.toUpperCase(), {
+      type: "method_builtin",
+      name,
+      impl: (args, context, evaluate, invoke) => constructor(args.slice(1), {
+        context,
+        evaluate,
+        invoke
+      })
     });
   }
   return { type: "map", entries: entries2, _ext: extension };
@@ -17264,7 +17587,8 @@ function createControlsOutputCollection() {
     ["Choice", createChoiceControl],
     ["Toggle", createToggleControl],
     ["Range", createRangeControl],
-    ["Reset", createResetControl]
+    ["Reset", createResetControl],
+    ["Action", createActionControl]
   ]);
   const entries2 = new Map;
   const extension = new Map([["immutable", int6(1)]]);
@@ -17844,6 +18168,29 @@ var LOWERERS = {
   },
   Comment() {
     return ir2("NOP");
+  },
+  PostfixCheckValue() {
+    return ir2("POSTFIX_CHECK_VALUE");
+  },
+  PostfixPredicateCheck(node) {
+    return ir2("POSTFIX_PREDICATE_CHECK", lowerNode(node.expression), lowerNode(node.predicate));
+  },
+  PostfixTypeCheck(node) {
+    return ir2("POSTFIX_TYPE_CHECK", lowerNode(node.expression), node.spec);
+  },
+  PostfixDiagnosticTap(node) {
+    const args = lowerCallArgs(node.arguments);
+    const expression = lowerNode(node.expression);
+    const action = node.action.toLowerCase();
+    if (action === "debug")
+      return ir2("SYS_CALL", "Debug", ...args, expression);
+    if (action === "trace")
+      return ir2("SYS_CALL", "Trace", ...args, expression);
+    if (action === "info")
+      return ir2("SYS_CALL", "InfoValue", ...args, expression);
+    if (action === "dump" || action === "log")
+      return ir2("SYS_CALL", "Dump", ...args, expression);
+    throw new Error(`Unknown postfix diagnostic action: ${node.action}`);
   },
   BinaryOperation(node) {
     const op = node.operator;
@@ -20380,6 +20727,7 @@ var PRECEDENCE = {
   EXPONENTIATION: 100,
   UNARY: 99,
   CALCULUS: 115,
+  CHECK: 9,
   POSTFIX: 120,
   PROPERTY: 130
 };
@@ -20787,6 +21135,8 @@ class Parser {
     this.position = 0;
     this.current = null;
     this.skippedComments = [];
+    this.stopExpressionAtOffset = null;
+    this.disablePostfixCheckParsing = false;
     this.advance();
   }
   advance() {
@@ -21851,8 +22201,25 @@ class Parser {
   }
   parseExpressionRec(left, minPrec, stopAtGenerators = false) {
     while (this.current.type !== "End") {
+      if (this.stopExpressionAtOffset !== null && this.current.pos?.[0] >= this.stopExpressionAtOffset) {
+        break;
+      }
       if (this.current.value === ";" || this.current.value === "," || this.current.value === ")" || this.current.value === "]" || this.current.value === "}" || this.current.type === "SemicolonSequence") {
         break;
+      }
+      if (!this.disablePostfixCheckParsing && (this.current.value === "##@" || this.current.value === "##:" || this.current.value === "##!")) {
+        if (PRECEDENCE.CHECK < minPrec)
+          break;
+        if (this.current.value === "##@") {
+          left = this.parsePostfixPredicateCheck(left);
+        } else if (this.current.value === "##:") {
+          left = this.parsePostfixTypeCheck(left);
+        } else {
+          left = this.parsePostfixDiagnosticTap(left);
+        }
+        if (left.endsLineAt !== null && this.current.pos?.[0] >= left.endsLineAt)
+          break;
+        continue;
       }
       if (this.current.value === "(") {
         this.validateKnownSystemCallable(left);
@@ -21947,6 +22314,112 @@ class Parser {
       left = this.parseInfix(left, symbolInfo);
     }
     return left;
+  }
+  parsePostfixPredicateCheck(expression) {
+    const marker = this.current;
+    const lineEndAt = this.source.indexOf(`
+`, marker.pos[2]);
+    const previousStop = this.stopExpressionAtOffset;
+    const previousDisable = this.disablePostfixCheckParsing;
+    this.stopExpressionAtOffset = lineEndAt === -1 ? previousStop : lineEndAt;
+    this.disablePostfixCheckParsing = true;
+    this.advance();
+    const operator = this.current;
+    const symbolInfo = this.getSymbolInfo(operator);
+    if (!symbolInfo || symbolInfo.type !== "infix" || symbolInfo.precedence <= PRECEDENCE.ASSIGNMENT) {
+      this.stopExpressionAtOffset = previousStop;
+      this.disablePostfixCheckParsing = previousDisable;
+      this.error("Expected an infix predicate operator after ##@ (for example ==, >, or |>)");
+    }
+    const checkValue = this.createNode("PostfixCheckValue", {
+      pos: marker.pos,
+      original: "<checked value>"
+    });
+    try {
+      const predicate = this.parseInfix(checkValue, symbolInfo);
+      return this.createNode("PostfixPredicateCheck", {
+        expression,
+        predicate,
+        endsLineAt: lineEndAt === -1 ? null : lineEndAt,
+        pos: [expression.pos[0], expression.pos[1], predicate.pos[2]],
+        original: expression.original + marker.original + operator.original + (predicate.right?.original || "")
+      });
+    } finally {
+      this.stopExpressionAtOffset = previousStop;
+      this.disablePostfixCheckParsing = previousDisable;
+    }
+  }
+  parsePostfixTypeCheck(expression) {
+    const marker = this.current;
+    const lineEndAt = this.source.indexOf(`
+`, marker.pos[2]);
+    this.advance();
+    let name = null;
+    let semantic = false;
+    if (this.current.value === ":") {
+      semantic = true;
+      this.advance();
+    }
+    if (this.current.type !== "Identifier") {
+      this.error("Expected a kind or semantic name after ##:");
+    }
+    name = this.current.value;
+    const nameOriginal = this.current.original;
+    this.advance();
+    let shape = null;
+    if (this.current.value === "[") {
+      this.advance();
+      let source = "";
+      while (this.current.value !== "]" && this.current.type !== "End") {
+        source += this.current.original;
+        this.advance();
+      }
+      if (this.current.value !== "]")
+        this.error("Expected closing ] in ##: shape check");
+      this.advance();
+      if (!/^\d+(?:x\d+)*$/i.test(source)) {
+        this.error("Shape checks use positive dimensions such as [3] or [2x2]");
+      }
+      shape = source.toLowerCase().split("x").map((part) => Number(part));
+    }
+    return this.createNode("PostfixTypeCheck", {
+      expression,
+      spec: { name, semantic, shape },
+      endsLineAt: lineEndAt === -1 ? null : lineEndAt,
+      pos: [expression.pos[0], expression.pos[1], this.current.pos[0]],
+      original: expression.original + marker.original + (semantic ? ":" : "") + nameOriginal
+    });
+  }
+  parsePostfixDiagnosticTap(expression) {
+    const marker = this.current;
+    const lineEndAt = this.source.indexOf(`
+`, marker.pos[2]);
+    this.advance();
+    if (this.current.type !== "Identifier") {
+      this.error("Expected Debug, Trace, Info, Dump, or Log after ##!");
+    }
+    const action = this.current.value;
+    const actionOriginal = this.current.original;
+    if (!new Set(["debug", "trace", "info", "dump", "log"]).has(action.toLowerCase())) {
+      this.error("##! supports Debug, Trace, Info, Dump, or Log");
+    }
+    this.advance();
+    if (this.current.value !== "(")
+      this.error("Expected ( after ##! diagnostic action");
+    this.advance();
+    const arguments_ = this.parseFunctionCallArgs();
+    if (this.current.value !== ")")
+      this.error("Expected closing ) in ##! diagnostic tap");
+    const end = this.current.pos[2];
+    this.advance();
+    return this.createNode("PostfixDiagnosticTap", {
+      expression,
+      action,
+      arguments: arguments_,
+      endsLineAt: lineEndAt === -1 ? null : lineEndAt,
+      pos: [expression.pos[0], expression.pos[1], end],
+      original: expression.original + marker.original + actionOriginal + "(...)"
+    });
   }
   isGeneratorOperator(value) {
     return ["|+", "|*", "|:", "|?", "|^", "|;", "|>"].includes(value);
@@ -24354,7 +24827,7 @@ function parse(input, systemLookup) {
 
 // ../rix/src/eval/functions/core.js
 var BASE_RESERVED_CHARS = new Set([".", "/", "#", "~", "_", "^", "+", "-"]);
-var requireFromHere = createRequire(import.meta.url);
+var requireFromHere = createRequire("/rix-runtime/core.js");
 var BASE_MODE_ALIASES = new Map([
   ["mixed", 1],
   ["..", 1],
@@ -27571,6 +28044,24 @@ function toRixString(s) {
 function isTruthy5(val) {
   return val !== null && val !== undefined;
 }
+function inspectValue(value, depth) {
+  if (value === null || value === undefined)
+    return "null";
+  if (depth <= 0 && typeof value === "object")
+    return "…";
+  if (value?.type === "sequence" || value?.type === "tuple" || value?.type === "set") {
+    const open = value.type === "set" ? "{| " : value.type === "tuple" ? "{: " : "[";
+    const close = value.type === "set" ? " |}" : value.type === "tuple" ? " }" : "]";
+    return open + (value.values || []).map((entry) => inspectValue(entry, depth - 1)).join(", ") + close;
+  }
+  if (value?.type === "map") {
+    const entries2 = Array.from(value.entries || []).map(([key, entry]) => `${key} = ${inspectValue(entry, depth - 1)}`);
+    return `{= ${entries2.join(", ")} }`;
+  }
+  if (value?.type === "tensor")
+    return `tensor[${(value.shape || []).join("x")}] ${formatValue(value)}`;
+  return formatValue(value);
+}
 function requireString(val, paramName) {
   const s = rixStringValue(val);
   if (s === null) {
@@ -27637,6 +28128,58 @@ var INFO = {
     return event;
   },
   doc: "Emit an info event: .Info(label, level ?= 1, dataMap ?= {=})"
+};
+var INFO_VALUE = {
+  lazy: true,
+  impl(args, context, evaluate) {
+    if (args.length !== 2 && args.length !== 3) {
+      throw new Error(".InfoValue expects label, optional depth, and an expression");
+    }
+    const label = requireString(evaluate(args[0]), ".InfoValue label");
+    const hasDepth = args.length === 3;
+    const depthValue = hasDepth ? evaluate(args[1]) : new Integer(1n);
+    const depth = rixIntValue(depthValue);
+    if (depth === null || depth < 0 || !Number.isInteger(depth)) {
+      throw new Error(".InfoValue depth must be a non-negative integer");
+    }
+    const expression = args[hasDepth ? 2 : 1];
+    const finalValue = evaluate(expression);
+    const data = { type: "map", entries: new Map([
+      ["depth", toRixInt(depth)],
+      ["final", finalValue],
+      ["display", toRixString(inspectValue(finalValue, depth))]
+    ]) };
+    getDiagnostics(context).addEvent(createEvent({
+      kind: "info",
+      label,
+      level: depth,
+      file: getCurrentFilePath(context),
+      data
+    }));
+    return finalValue;
+  },
+  doc: "Inspect expression value: .InfoValue(label, depth ?= 1, expr) — returns expr value"
+};
+var DUMP = {
+  lazy: true,
+  impl(args, context, evaluate) {
+    if (args.length !== 2)
+      throw new Error(".Dump expects a label and an expression");
+    const label = requireString(evaluate(args[0]), ".Dump label");
+    const finalValue = evaluate(args[1]);
+    const data = { type: "map", entries: new Map([
+      ["final", finalValue],
+      ["display", toRixString(formatValue(finalValue))]
+    ]) };
+    getDiagnostics(context).addEvent(createEvent({
+      kind: "log",
+      label,
+      file: getCurrentFilePath(context),
+      data
+    }));
+    return finalValue;
+  },
+  doc: "Dump expression value: .Dump(label, expr) — returns expr value"
 };
 var ERROR = {
   impl(args, context) {
@@ -28230,6 +28773,8 @@ var TEST_STOP = {
 var diagnosticFunctions = {
   WARN,
   INFO,
+  INFOVALUE: INFO_VALUE,
+  DUMP,
   ERROR,
   STOP,
   TEST,
@@ -28925,13 +29470,39 @@ var liveViewFunction = {
     return createLiveView(source, derive);
   }
 };
+var outFunction = {
+  pure: false,
+  doc: "Declare an output artifact for the active host output sink",
+  impl(args, context) {
+    if (args.length !== 2)
+      throw new Error(".Out expects a relative output path and a value");
+    const [target, value] = args;
+    if (!target || target.type !== "string" || !target.value.trim()) {
+      throw new Error(".Out output path must be a non-empty string");
+    }
+    const sink = context.getEnv("__output_sink__", null);
+    if (typeof sink !== "function") {
+      throw new Error(".Out requires a host output sink (use rix --out=DIR)");
+    }
+    sink({ path: target.value, value });
+    return value;
+  }
+};
 var outputFunctions = {
+  OUT: outFunction,
   BIND: bindFunction,
   LIVEVIEW: liveViewFunction,
   TEXT: capability(createText, "Create a portable text output node"),
   PARAGRAPH: capability(createParagraph, "Create a portable paragraph output node"),
   HEADING: capability(createHeading, "Create a portable document heading"),
   FRAGMENT: capability(createFragment, "Compose portable output values"),
+  SNAPSHOTS: {
+    pure: true,
+    doc: "Materialize [scene, states] tuples into a portable static snapshot grid",
+    impl(args, context, evaluate) {
+      return createSnapshots(args, { context, evaluate, invoke: callWithConcreteArgs });
+    }
+  },
   EMPHASIS: capability(createEmphasis, "Create semantic inline emphasis"),
   STRONG: capability(createStrong, "Create semantic inline strong content"),
   CODE: capability(createCode, "Create literal inline code"),
@@ -31041,6 +31612,65 @@ function installUnitExactVariants(registry) {
 }
 
 // ../rix/src/eval/evaluator.js
+var POSTFIX_CHECK_VALUE_ENV = "__postfix_check_value__";
+function formatCheckValue(value) {
+  try {
+    return formatValue(value);
+  } catch (_error) {
+    return String(value);
+  }
+}
+function withPostfixCheckValue(context, value, callback) {
+  const hadPrevious = context.env?.has(POSTFIX_CHECK_VALUE_ENV) === true;
+  const previous = context.getEnv(POSTFIX_CHECK_VALUE_ENV, undefined);
+  context.setEnv(POSTFIX_CHECK_VALUE_ENV, value);
+  try {
+    return callback();
+  } finally {
+    if (hadPrevious)
+      context.setEnv(POSTFIX_CHECK_VALUE_ENV, previous);
+    else
+      context.env?.delete(POSTFIX_CHECK_VALUE_ENV);
+  }
+}
+function checkPostfixType(value, spec2, context, registry, evaluateValue) {
+  const name = String(spec2?.name || "").toLowerCase();
+  const structuralKinds = { array: "sequence", set: "set", map: "map", tuple: "tuple", tensor: "tensor" };
+  const expectedType = spec2?.semantic ? null : structuralKinds[name];
+  if (!expectedType) {
+    if (!spec2?.semantic && name === "number") {
+      const constructor2 = value?.constructor?.name;
+      if (typeof value === "number" || ["Integer", "Rational", "RationalInterval"].includes(constructor2))
+        return;
+    }
+    const semantic = registry.get("SEMANTIC_HAS");
+    const passed = semantic?.impl([value, name], context, evaluateValue);
+    if (passed === null || passed === undefined) {
+      throw new Error(`##: check failed: expected semantic membership :${name}, received ${formatCheckValue(value)}`);
+    }
+    return;
+  }
+  if (value === null || value === undefined || value.type !== expectedType) {
+    throw new Error(`##: check failed: expected ${name}, received ${formatCheckValue(value)}`);
+  }
+  const shape = spec2?.shape;
+  if (!shape)
+    return;
+  if (name === "tensor") {
+    const actual = Array.from(value.shape || []);
+    if (actual.length !== shape.length || actual.some((dimension, index) => dimension !== shape[index])) {
+      throw new Error(`##: check failed: expected tensor[${shape.join("x")}], received tensor[${actual.join("x")}]`);
+    }
+    return;
+  }
+  if (shape.length !== 1) {
+    throw new Error(`##: check failed: ${name} accepts one size, not [${shape.join("x")}]`);
+  }
+  const count = name === "map" ? value.entries?.size : value.values?.length;
+  if (count !== shape[0]) {
+    throw new Error(`##: check failed: expected ${name}[${shape[0]}], received ${name}[${count ?? "?"}]`);
+  }
+}
 function createDefaultRegistry(options = {}) {
   registerBuiltinSemanticTypes();
   const registry = new Registry;
@@ -31191,6 +31821,8 @@ function createDefaultSystemContext(options = {}) {
   ctx.registerValue("Graphics", graphics, { doc: "Intrinsic portable 2D scene language" });
   const controls = createControlsOutputCollection();
   ctx.registerValue("Controls", controls, { doc: "Reactive control constructors" });
+  const timeline = createTimelineOutputCollection();
+  ctx.registerValue("Timeline", timeline, { doc: "Portable exact timeline constructors" });
   ctx.registerAll(stdlibFunctions);
   ctx.registerAll(symbolicCapabilities);
   ctx.registerCallableValue("Poly", createPolySystemValue(), symbolicCapabilities.POLY, {
@@ -31694,6 +32326,22 @@ function evaluate(irNode, context, registry, systemContext) {
       return evaluateScriptImport(args[0] || {}, context, registry, systemContext);
     }
     const evalFn = (node) => evaluate(node, context, registry, systemContext);
+    if (fn === "POSTFIX_CHECK_VALUE") {
+      return context.getEnv(POSTFIX_CHECK_VALUE_ENV, null);
+    }
+    if (fn === "POSTFIX_PREDICATE_CHECK") {
+      const value = evalFn(args[0]);
+      const passed = withPostfixCheckValue(context, value, () => evalFn(args[1]));
+      if (passed === null || passed === undefined) {
+        throw new Error(`##@ check failed for ${formatCheckValue(value)}`);
+      }
+      return value;
+    }
+    if (fn === "POSTFIX_TYPE_CHECK") {
+      const value = evalFn(args[0]);
+      checkPostfixType(value, args[1], context, registry, evalFn);
+      return value;
+    }
     if (fn === "SYS_OBJ") {
       if (!systemContext)
         throw new Error("No system context available");
@@ -32695,6 +33343,14 @@ function enhancePanel(panel, options) {
       }));
       continue;
     }
+    if (kind === "action") {
+      input.addEventListener("click", () => commit({
+        ...identity(),
+        type: "control:action",
+        source: "action"
+      }));
+      continue;
+    }
     if (kind === "choice") {
       input.addEventListener("change", () => commit({
         ...identity(),
@@ -33041,6 +33697,8 @@ function controlValue(control, event) {
     return rangeValue(control, event.indices);
   if (control.kind === "control_reset")
     return control.initial;
+  if (control.kind === "control_action")
+    return control.run();
   if (control.kind === "control_input") {
     if (!("value" in event))
       throw new Error("Control input requires an evaluated RiX value");
@@ -33135,10 +33793,10 @@ class ControlPanelWidgetSession {
       }));
       return commitControlEdits(edits);
     }
-    if (event?.type !== "control:set") {
+    if (event?.type !== "control:set" && event?.type !== "control:action") {
       throw new Error(`Unsupported ControlPanel widget event: ${event?.type || "missing type"}`);
     }
-    const edit = resolveControlEdit(this.controls, event);
+    const edit = resolveControlEdit(this.controls, { ...event, type: "control:set" });
     const { control, value, replacedDependencies } = edit;
     control.target.replaceValue(value, {
       source: "widget",
@@ -33212,6 +33870,10 @@ function childOutputs(value) {
     return [];
   if (value.kind === "fragment")
     return value.children;
+  if (value.kind === "snapshots")
+    return value.items.map((item) => item.content);
+  if (value.kind === "timeline_render")
+    return [value.content];
   if (value.kind === "figure" || value.kind === "slide")
     return [value.content];
   if (value.kind === "slides")
@@ -34318,7 +34980,7 @@ function install4({ systemContext }) {
   return value;
 }
 
-// ../rix/src/eval/functions/math.js
+// ../rix/plugins/float/math-functions.js
 function numberFrom(value) {
   if (value instanceof Integer)
     return Number(value.value);
@@ -34343,17 +35005,17 @@ function binary2(fn) {
   return (args) => fn(finiteNumberFrom(args[0]), finiteNumberFrom(args[1]));
 }
 var mathFunctions = {
-  SIN: { impl: unary(Math.sin), pure: true, doc: "Sine" },
-  COS: { impl: unary(Math.cos), pure: true, doc: "Cosine" },
-  TAN: { impl: unary(Math.tan), pure: true, doc: "Tangent" },
-  ASIN: { impl: unary(Math.asin), pure: true, doc: "Arcsine" },
-  ACOS: { impl: unary(Math.acos), pure: true, doc: "Arccosine" },
-  ATAN: { impl: unary(Math.atan), pure: true, doc: "Arctangent" },
-  ATAN2: { impl: binary2(Math.atan2), pure: true, doc: "Two-argument arctangent" },
-  LOG: { impl: unary(Math.log), pure: true, doc: "Natural logarithm" },
-  LN: { impl: unary(Math.log), pure: true, doc: "Natural logarithm" },
-  LOG10: { impl: unary(Math.log10), pure: true, doc: "Base-10 logarithm" },
-  EXP: { impl: unary(Math.exp), pure: true, doc: "Exponential" }
+  SIN: { impl: unary(Math.sin), pure: true, doc: "Float sine" },
+  COS: { impl: unary(Math.cos), pure: true, doc: "Float cosine" },
+  TAN: { impl: unary(Math.tan), pure: true, doc: "Float tangent" },
+  ASIN: { impl: unary(Math.asin), pure: true, doc: "Float arcsine" },
+  ACOS: { impl: unary(Math.acos), pure: true, doc: "Float arccosine" },
+  ATAN: { impl: unary(Math.atan), pure: true, doc: "Float arctangent" },
+  ATAN2: { impl: binary2(Math.atan2), pure: true, doc: "Float two-argument arctangent" },
+  LOG: { impl: unary(Math.log), pure: true, doc: "Float natural logarithm" },
+  LN: { impl: unary(Math.log), pure: true, doc: "Float natural logarithm" },
+  LOG10: { impl: unary(Math.log10), pure: true, doc: "Float base-10 logarithm" },
+  EXP: { impl: unary(Math.exp), pure: true, doc: "Float exponential" }
 };
 
 // ../rix/plugins/float/browser-installer.js
@@ -34720,5 +35382,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { formatValue, mountOutputWidgets, findHelp, createRixRepl };
 
-//# debugId=1D2EA97B7213F6A564756E2164756E21
-//# sourceMappingURL=chunk-yfvncqkt.js.map
+//# debugId=92882E2FF289B02D64756E2164756E21
+//# sourceMappingURL=chunk-kanc5aqe.js.map
