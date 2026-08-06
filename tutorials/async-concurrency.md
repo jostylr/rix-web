@@ -63,6 +63,28 @@ passing item in traversal order, not the first one to finish.
 {$:3$ [7, 4, 10, 2] |>|| ((x) -> x % 2 == 0) } ;
 ```
 
+## Cross ordered barriers
+
+Reduce, sort, reverse, slice, split, and chunk need ordered input, so they end
+the current concurrent region. Upstream work still overlaps. Reducer calls and
+predicate-based structural barriers are awaited in traversal order; a map or
+filter after the barrier starts a new concurrent region.
+
+```rix edu
+{$:3$
+    [4, 1, 3, 2]
+        |>> ((x) -> x^2)
+        |<> ((a, b) -> a - b)
+        |>/ 2:4
+        |>> ((x) -> x + 1)
+        |:> 0 >: ((sum, x) -> sum + x)
+} ;
+```
+
+Sort uses a stable promise-aware comparator. Ordered reduce never invokes two
+accumulator calls at once, even when the source and earlier elementwise stages
+were concurrent.
+
 ## Nest collections without spending parent permits
 
 Nested collection containers share the scheduler. Structural parents do not
@@ -79,6 +101,34 @@ occupy a slot while their children are waiting.
 
 Admission follows written depth-first order: the two entries under `left`
 come before `right`.
+
+If a called RiX function constructs another collection, the calling item
+temporarily yields its slot while those child items run. This keeps a nested
+function fan-out from deadlocking even when the effective limit is one.
+
+Nested async scopes share the ancestor scheduler while applying the stricter
+limit. Here the inner scope can use at most two of the outer scope's four
+slots:
+
+```rix edu
+{$outer:4$
+    {$inner:2$ [1^5, 2^5, 3^5, 4^5] }
+} ;
+```
+
+A break or failure cancels queued descendants of its owning group. A handled
+break in `inner` does not cancel an independent sibling already admitted by
+`outer`.
+
+Tensor cells are finite source items too, and tensor map callbacks receive
+index tuples while preserving the original shape.
+
+```rix edu
+{$:2$
+    {:2x2: 1, 2; 3, 4}
+        |>> ((x, index) -> x + index[1] + index[2])
+} ;
+```
 
 ## Completion races and background work
 

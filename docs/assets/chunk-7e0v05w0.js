@@ -32247,12 +32247,56 @@ class AsyncScheduler {
     this.cancelled = false;
     this.cancelReason = null;
     this.idleWaiters = [];
+    this.defaultGroup = this.createGroup(limit);
   }
-  run(task) {
-    if (this.cancelled)
-      return Promise.reject(this.cancelReason);
+  createGroup(limit = this.limit, parent = null) {
+    if (!Number.isSafeInteger(limit) || limit < 1) {
+      throw new Error("Async concurrency limit must be a positive safe integer");
+    }
+    const group = {
+      limit: Math.min(limit, parent?.limit ?? this.limit),
+      parent,
+      children: new Set,
+      inFlight: 0,
+      cancelled: false,
+      cancelReason: null
+    };
+    parent?.children.add(group);
+    return group;
+  }
+  run(task, group = this.defaultGroup) {
+    const cancellation = this.#cancellationFor(group);
+    if (cancellation)
+      return Promise.reject(cancellation);
     return new Promise((resolve, reject) => {
-      this.queue.push({ task, resolve, reject });
+      this.queue.push({ kind: "task", task, resolve, reject, group });
+      this.#admit();
+    });
+  }
+  suspend(ticket) {
+    if (!ticket?.active)
+      return false;
+    ticket.active = false;
+    this.active--;
+    this.#adjustInFlight(ticket.group, -1);
+    this.#admit();
+    this.#notifyIdle();
+    return true;
+  }
+  resume(ticket) {
+    if (!ticket || ticket.active)
+      return Promise.resolve();
+    const cancellation = this.#cancellationFor(ticket.group);
+    if (cancellation)
+      return Promise.reject(cancellation);
+    return new Promise((resolve, reject) => {
+      this.queue.push({
+        kind: "resume",
+        ticket,
+        group: ticket.group,
+        resolve,
+        reject
+      });
       this.#admit();
     });
   }
@@ -32266,31 +32310,116 @@ class AsyncScheduler {
       entry.reject(reason);
     this.#notifyIdle();
   }
-  waitForIdle() {
-    if (this.active === 0 && this.queue.length === 0)
+  cancelGroup(group, reason = new Error("Async scope cancelled")) {
+    if (!group || group.cancelled)
+      return;
+    const cancelledGroups = new Set;
+    const markCancelled = (current) => {
+      if (current.cancelled)
+        return;
+      current.cancelled = true;
+      current.cancelReason = reason;
+      cancelledGroups.add(current);
+      for (const child of current.children)
+        markCancelled(child);
+    };
+    markCancelled(group);
+    const retained = [];
+    for (const entry of this.queue) {
+      if (cancelledGroups.has(entry.group))
+        entry.reject(reason);
+      else
+        retained.push(entry);
+    }
+    this.queue = retained;
+    this.#admit();
+    this.#notifyIdle();
+  }
+  waitForIdle(group = null) {
+    if (this.#isIdle(group))
       return Promise.resolve();
-    return new Promise((resolve) => this.idleWaiters.push(resolve));
+    return new Promise((resolve) => this.idleWaiters.push({ group, resolve }));
+  }
+  closeGroup(group) {
+    if (!group || !this.#isIdle(group))
+      return false;
+    group.parent?.children.delete(group);
+    return true;
   }
   #admit() {
     while (!this.cancelled && this.active < this.limit && this.queue.length > 0) {
-      const entry = this.queue.shift();
+      const index = this.queue.findIndex((entry2) => this.#canAdmit(entry2.group));
+      if (index < 0)
+        break;
+      const [entry] = this.queue.splice(index, 1);
       this.active++;
-      Promise.resolve().then(entry.task).then(entry.resolve, (error) => {
-        this.cancel(error);
+      this.#adjustInFlight(entry.group, 1);
+      if (entry.kind === "resume") {
+        entry.ticket.active = true;
+        entry.resolve();
+        continue;
+      }
+      const ticket = { group: entry.group, active: true };
+      Promise.resolve().then(() => entry.task(ticket)).then(entry.resolve, (error) => {
+        this.cancelGroup(entry.group, error);
         entry.reject(error);
       }).finally(() => {
-        this.active--;
+        if (ticket.active) {
+          ticket.active = false;
+          this.active--;
+          this.#adjustInFlight(entry.group, -1);
+        }
         this.#admit();
         this.#notifyIdle();
       });
     }
   }
+  #canAdmit(group) {
+    if (this.cancelled)
+      return false;
+    for (let current = group;current; current = current.parent) {
+      if (current.cancelled || current.inFlight >= current.limit)
+        return false;
+    }
+    return true;
+  }
+  #adjustInFlight(group, delta) {
+    for (let current = group;current; current = current.parent) {
+      current.inFlight += delta;
+    }
+  }
+  #cancellationFor(group) {
+    if (this.cancelled)
+      return this.cancelReason;
+    for (let current = group;current; current = current.parent) {
+      if (current.cancelled)
+        return current.cancelReason;
+    }
+    return null;
+  }
+  #isDescendant(group, ancestor) {
+    for (let current = group;current; current = current.parent) {
+      if (current === ancestor)
+        return true;
+    }
+    return false;
+  }
+  #isIdle(group) {
+    if (!group)
+      return this.active === 0 && this.queue.length === 0;
+    if (group.inFlight !== 0)
+      return false;
+    return !this.queue.some((entry) => this.#isDescendant(entry.group, group));
+  }
   #notifyIdle() {
-    if (this.active !== 0 || this.queue.length !== 0)
-      return;
-    const waiters = this.idleWaiters.splice(0);
-    for (const resolve of waiters)
-      resolve();
+    const pending = [];
+    for (const waiter of this.idleWaiters) {
+      if (this.#isIdle(waiter.group))
+        waiter.resolve();
+      else
+        pending.push(waiter);
+    }
+    this.idleWaiters = pending;
   }
 }
 var BACKGROUND_TASKS_ENV = "__async_background_tasks__";
@@ -33147,8 +33276,18 @@ function evaluate(irNode, context, registry, systemContext) {
     throw annotateEvaluationError(error, irNode, context);
   }
 }
-var ASYNC_COLLECTION_FNS = new Set(["ARRAY", "ARRAY_CAPTURE", "TUPLE", "SET", "MAP_OBJ"]);
+var ASYNC_COLLECTION_FNS = new Set([
+  "ARRAY",
+  "ARRAY_CAPTURE",
+  "TUPLE",
+  "SET",
+  "MAP_OBJ",
+  "MATRIX",
+  "TENSOR",
+  "TENSOR_LITERAL"
+]);
 var ASYNC_PIPE_FNS = new Set(["PMAP", "PFILTER", "PANY", "PALL"]);
+var ASYNC_RESOLVED_BARRIER_FNS = new Set(["PSLICE_STRICT", "PSLICE_CLAMP"]);
 function splitAsyncBlockArgs(args) {
   const first = args[0];
   if (first && !first.fn && (Array.isArray(first.imports) || first.name !== undefined || first.concurrencyLimit !== undefined)) {
@@ -33261,11 +33400,11 @@ async function invokeCallableAsync(fn, callArgs, context, registry, systemContex
   return await callWithConcreteArgs(fn, callArgs, context, (node) => evaluate(node, context, registry, systemContext));
 }
 function asyncCollectionEntry(node, context, registry, systemContext, state) {
-  if (node?.fn && (ASYNC_COLLECTION_FNS.has(node.fn) || node.fn === "ASYNC_SCOPE")) {
+  if (containsNestedAsyncCollection(node)) {
     return evaluateAsyncInternal(node, context, registry, systemContext, state);
   }
   const itemContext = context.concurrentChild();
-  return state.scheduler.run(() => evaluateAsyncInternal(node, itemContext, registry, systemContext, state));
+  return state.scheduler.run((admission) => evaluateAsyncInternal(node, itemContext, registry, systemContext, { ...state, admission }), state.group);
 }
 async function resolveAsyncCollectionArg(arg, context, registry, systemContext, state) {
   if (arg?.fn === "HOLE")
@@ -33282,7 +33421,17 @@ async function resolveAsyncCollectionArg(arg, context, registry, systemContext, 
   }
   return asyncCollectionEntry(arg, context, registry, systemContext, state);
 }
-async function evaluateAsyncCollection(irNode, context, registry, systemContext, state) {
+async function withReleasedAsyncAdmission(state, callback) {
+  const admission = state?.admission;
+  const released = admission ? state.scheduler.suspend(admission) : false;
+  try {
+    return await callback();
+  } finally {
+    if (released)
+      await state.scheduler.resume(admission);
+  }
+}
+async function evaluateAsyncCollectionBody(irNode, context, registry, systemContext, state) {
   const definition = registry.get(irNode.fn);
   if (!definition)
     throw new Error(`Unknown collection constructor: ${irNode.fn}`);
@@ -33298,29 +33447,50 @@ async function evaluateAsyncCollection(irNode, context, registry, systemContext,
       if (entry?.fn === "MAP_PAIR") {
         const [kind, key, value, mode] = entry.args;
         const itemContext = context.concurrentChild();
-        const resolveEntry = async () => ({
-          ...entry,
-          args: [
-            kind,
-            kind === "identifier" ? key : await evaluateAsyncInternal(key, itemContext, registry, systemContext, state),
-            await evaluateAsyncInternal(value, itemContext, registry, systemContext, state),
-            mode
-          ]
-        });
-        return value?.fn && ASYNC_COLLECTION_FNS.has(value.fn) ? resolveEntry() : state.scheduler.run(resolveEntry);
+        const resolveEntry = async (admission = null) => {
+          const itemState = admission ? { ...state, admission } : state;
+          return {
+            ...entry,
+            args: [
+              kind,
+              kind === "identifier" ? key : await evaluateAsyncInternal(key, itemContext, registry, systemContext, itemState),
+              await evaluateAsyncInternal(value, itemContext, registry, systemContext, itemState),
+              mode
+            ]
+          };
+        };
+        return containsNestedAsyncCollection(value) ? resolveEntry() : state.scheduler.run(resolveEntry, state.group);
       }
       return resolveAsyncCollectionArg(entry, context, registry, systemContext, state);
     });
     resolved.push(...await Promise.all(entryPromises));
+  } else if (irNode.fn === "TENSOR_LITERAL") {
+    const shapeIndex = hasHeader ? 1 : 0;
+    resolved.push(args[shapeIndex]);
+    resolved.push(...await Promise.all(args.slice(shapeIndex + 1).map((arg) => resolveAsyncCollectionArg(arg, context, registry, systemContext, state))));
   } else {
     resolved.push(...await Promise.all(args.slice(start).map((arg) => resolveAsyncCollectionArg(arg, context, registry, systemContext, state))));
   }
   const resolvedEvaluate = (node) => node?.fn ? evaluate(node, context, registry, systemContext) : node;
   return await definition.impl(resolved, context, resolvedEvaluate, systemContext);
 }
+async function evaluateAsyncCollection(irNode, context, registry, systemContext, state) {
+  return withReleasedAsyncAdmission(state, () => evaluateAsyncCollectionBody(irNode, context, registry, systemContext, state));
+}
 function collectionItems(collection) {
+  if (isTensor(collection)) {
+    const items = [];
+    forEachTensorCell(collection, (value, tuple) => {
+      items.push({ value, locator: tensorIndexTuple(tuple) });
+    });
+    return items;
+  }
   if (collection?.type === "map" && collection.entries instanceof Map) {
-    return [...collection.entries].map(([key, value]) => ({ key, value }));
+    return [...collection.entries].map(([key, value]) => ({
+      key,
+      value,
+      locator: { type: "string", value: key }
+    }));
   }
   const isStringObject2 = collection?.type === "string";
   if (typeof collection === "string" || isStringObject2) {
@@ -33332,7 +33502,20 @@ function collectionItems(collection) {
   }
   throw new Error("Async pipe requires a finite collection");
 }
-function assembleAsyncPipeResult(collection, items, records) {
+function assembleAsyncPipeResult(collection, items, records, stages = []) {
+  if (isTensor(collection)) {
+    const kept = records.filter((record) => record.keep);
+    if (stages.some((stage) => stage.fn === "PFILTER")) {
+      return {
+        type: "sequence",
+        values: kept.map((record) => ({
+          type: "tuple",
+          values: [record.value, items[record.index].locator]
+        }))
+      };
+    }
+    return createTensor(collection.shape, kept.map((record) => record.value));
+  }
   if (collection?.type === "map") {
     return { type: "map", entries: new Map(records.filter((r) => r.keep).map((r) => [items[r.index].key, r.value])) };
   }
@@ -33348,7 +33531,7 @@ function containsNestedAsyncCollection(node) {
     return false;
   if (Array.isArray(node))
     return node.some(containsNestedAsyncCollection);
-  if (node.fn && ASYNC_COLLECTION_FNS.has(node.fn))
+  if (node.fn && (ASYNC_COLLECTION_FNS.has(node.fn) || node.fn === "ASYNC_SCOPE"))
     return true;
   return node.fn && Array.isArray(node.args) ? node.args.some(containsNestedAsyncCollection) : false;
 }
@@ -33370,12 +33553,12 @@ function captureFusedSourceValue(source, entry, value, context, registry, system
   const collection = definition.impl(args, context, (node) => node?.fn ? evaluate(node, context, registry, systemContext) : node, systemContext);
   return collection.values[0];
 }
-async function runAsyncPipeStages(value, index, key, collection, stages, callables, context, registry, systemContext, state) {
+async function runAsyncPipeStages(value, index, key, collection, stages, callables, context, registry, systemContext, state, explicitLocator = null) {
   let current = value;
   let keep = true;
   let dropped = false;
   let terminalPassed = null;
-  const locator = key !== undefined ? { type: "string", value: key } : new Integer(BigInt(index + 1));
+  const locator = explicitLocator ?? (key !== undefined ? { type: "string", value: key } : new Integer(BigInt(index + 1)));
   for (let stageIndex = 0;stageIndex < stages.length; stageIndex++) {
     const stage = stages[stageIndex];
     const result = await invokeCallableAsync(callables[stageIndex], [current, locator, collection], context, registry, systemContext, state);
@@ -33420,17 +33603,18 @@ async function evaluateAsyncPipe(irNode, context, registry, systemContext, state
   if (fusedSource) {
     const records2 = await Promise.all(fusedSource.entries.map((entry, index) => {
       const itemContext = context.concurrentChild();
-      return state.scheduler.run(async () => {
+      return state.scheduler.run(async (admission) => {
+        const itemState = { ...state, admission };
         const rawNode = entry?.expression || entry;
-        const resolved = await evaluateAsyncInternal(rawNode, itemContext, registry, systemContext, state);
+        const resolved = await evaluateAsyncInternal(rawNode, itemContext, registry, systemContext, itemState);
         const captured = captureFusedSourceValue(fusedSource, entry, resolved, itemContext, registry, systemContext);
-        return runAsyncPipeStages(captured, index, undefined, fusedSource.shell, stages, callables, itemContext, registry, systemContext, state);
-      });
+        return runAsyncPipeStages(captured, index, undefined, fusedSource.shell, stages, callables, itemContext, registry, systemContext, itemState);
+      }, state.group);
     }));
     const terminal2 = stages.at(-1)?.fn;
     if (terminal2 === "PANY" || terminal2 === "PALL")
       return asyncTerminalResult(terminal2, records2);
-    return assembleAsyncPipeResult(fusedSource.shell, fusedSource.entries.map((value) => ({ value })), records2);
+    return assembleAsyncPipeResult(fusedSource.shell, fusedSource.entries.map((value) => ({ value })), records2, stages);
   }
   const collection = await evaluateAsyncInternal(sourceNode, context, registry, systemContext, state);
   if (collection === null || collection === undefined)
@@ -33438,19 +33622,259 @@ async function evaluateAsyncPipe(irNode, context, registry, systemContext, state
   const items = collectionItems(collection);
   const records = await Promise.all(items.map((item, index) => {
     const itemContext = context.concurrentChild();
-    return state.scheduler.run(() => runAsyncPipeStages(item.value, index, item.key, collection, stages, callables, itemContext, registry, systemContext, state));
+    return state.scheduler.run((admission) => runAsyncPipeStages(item.value, index, item.key, collection, stages, callables, itemContext, registry, systemContext, { ...state, admission }, item.locator), state.group);
   }));
   const terminal = stages.at(-1)?.fn;
   if (terminal === "PANY" || terminal === "PALL")
     return asyncTerminalResult(terminal, records);
-  return assembleAsyncPipeResult(collection, items, records);
+  return assembleAsyncPipeResult(collection, items, records, stages);
 }
-async function evaluateAsyncScope(args, context, registry, systemContext, parentState) {
+function asyncReductionItems(collection) {
+  if (isTensor(collection)) {
+    const items = [];
+    forEachTensorCell(collection, (value, tuple) => {
+      items.push({ value, locator: tensorIndexTuple(tuple) });
+    });
+    return items;
+  }
+  if (collection?.type === "map") {
+    if (!(collection.entries instanceof Map))
+      throw new Error("PREDUCE: invalid map");
+    return [...collection.entries].map(([key, value]) => ({
+      value,
+      locator: { type: "string", value: key }
+    }));
+  }
+  const isStringObject2 = collection?.type === "string";
+  if (typeof collection === "string" || isStringObject2) {
+    const raw = isStringObject2 ? collection.value : collection;
+    return Array.from(raw).map((value, index) => ({
+      value: isStringObject2 ? { type: "string", value } : value,
+      locator: new Integer(BigInt(index + 1))
+    }));
+  }
+  if (collection && Array.isArray(collection.values)) {
+    return collection.values.map((value, index) => ({
+      value,
+      locator: new Integer(BigInt(index + 1))
+    }));
+  }
+  throw new Error("PREDUCE requires a collection");
+}
+async function evaluateAsyncReduce(args, context, registry, systemContext, state) {
+  let collection = await evaluateAsyncInternal(args[0], context, registry, systemContext, state);
+  if (collection === null || collection === undefined)
+    return null;
+  if (isLazySequence(collection))
+    collection = materializeLazySequence(collection);
+  const initProvided = args.length > 2;
+  const explicitInit = initProvided ? await evaluateAsyncInternal(args[2], context, registry, systemContext, state) : null;
+  const callable = await evaluateAsyncInternal(args[1], context, registry, systemContext, state);
+  const items = asyncReductionItems(collection);
+  if (items.length === 0)
+    return initProvided ? explicitInit : null;
+  let accumulator = initProvided ? explicitInit : items[0].value;
+  const start = initProvided ? 0 : 1;
+  for (let index = start;index < items.length; index++) {
+    const item = items[index];
+    accumulator = await invokeCallableAsync(callable, [accumulator, item.value, item.locator, collection], context, registry, systemContext, state);
+  }
+  return accumulator;
+}
+async function stableAsyncMergeSort(items, compare3) {
+  if (items.length < 2)
+    return [...items];
+  const middle = Math.floor(items.length / 2);
+  const left = await stableAsyncMergeSort(items.slice(0, middle), compare3);
+  const right = await stableAsyncMergeSort(items.slice(middle), compare3);
+  const merged = [];
+  let leftIndex = 0;
+  let rightIndex = 0;
+  while (leftIndex < left.length && rightIndex < right.length) {
+    if (await compare3(left[leftIndex], right[rightIndex]) <= 0) {
+      merged.push(left[leftIndex++]);
+    } else {
+      merged.push(right[rightIndex++]);
+    }
+  }
+  merged.push(...left.slice(leftIndex), ...right.slice(rightIndex));
+  return merged;
+}
+async function evaluateAsyncSort(args, context, registry, systemContext, state) {
+  let collection = await evaluateAsyncInternal(args[0], context, registry, systemContext, state);
+  if (collection === null || collection === undefined)
+    return null;
+  if (isLazySequence(collection))
+    collection = materializeLazySequence(collection);
+  if (collection?.type === "map") {
+    throw new Error("PSORT does not support maps — maps have no defined order");
+  }
+  const isStringObject2 = collection?.type === "string";
+  const isString = typeof collection === "string" || isStringObject2;
+  let items;
+  if (isString) {
+    const raw = isStringObject2 ? collection.value : collection;
+    items = Array.from(raw).map((value) => isStringObject2 ? { type: "string", value } : value);
+  } else if (collection && Array.isArray(collection.values)) {
+    items = collection.values;
+  } else {
+    throw new Error("PSORT requires a collection");
+  }
+  const callable = args[1] === undefined ? null : await evaluateAsyncInternal(args[1], context, registry, systemContext, state);
+  const compare3 = async (left, right) => {
+    if (callable && !isHole(callable)) {
+      const result = await invokeCallableAsync(callable, [left, right], context, registry, systemContext, state);
+      if (result?.constructor?.name === "Integer")
+        return Number(result.value);
+      if (typeof result === "number")
+        return result;
+      return 0;
+    }
+    if (isString) {
+      const leftValue = left?.type === "string" ? left.value : left;
+      const rightValue = right?.type === "string" ? right.value : right;
+      return leftValue < rightValue ? -1 : leftValue > rightValue ? 1 : 0;
+    }
+    const leftNumber = left?.constructor?.name === "Integer" ? Number(left.value) : Number(left);
+    const rightNumber = right?.constructor?.name === "Integer" ? Number(right.value) : Number(right);
+    return leftNumber - rightNumber;
+  };
+  const sorted = await stableAsyncMergeSort(items, compare3);
+  if (isString) {
+    const joined = sorted.map((value) => value?.type === "string" ? value.value : value).join("");
+    return isStringObject2 ? { type: "string", value: joined } : joined;
+  }
+  return { type: collection.type || "sequence", values: sorted };
+}
+async function evaluateAsyncResolvedBarrier(irNode, context, registry, systemContext, state) {
+  const definition = registry.get(irNode.fn);
+  const resolved = [];
+  for (const arg of irNode.args) {
+    resolved.push(await evaluateAsyncInternal(arg, context, registry, systemContext, state));
+  }
+  return await definition.impl(resolved, context, (value) => value, systemContext);
+}
+function isAsyncCallableValue(value) {
+  return typeof value === "function" || [
+    "function",
+    "lambda",
+    "partial",
+    "sysref",
+    "arityCap",
+    "multifunction"
+  ].includes(value?.type);
+}
+function asyncBarrierLinearItems(collection, operation) {
+  if (collection?.type === "map") {
+    throw new Error(`${operation} does not support maps — maps have no defined order`);
+  }
+  const isStringObject2 = collection?.type === "string";
+  const isString = typeof collection === "string" || isStringObject2;
+  if (isString) {
+    const raw = isStringObject2 ? collection.value : collection;
+    return {
+      isString,
+      isStringObject: isStringObject2,
+      items: Array.from(raw).map((value) => isStringObject2 ? { type: "string", value } : value)
+    };
+  }
+  if (collection && Array.isArray(collection.values)) {
+    return { isString, isStringObject: isStringObject2, items: collection.values };
+  }
+  return { isString, isStringObject: isStringObject2, items: null };
+}
+function assembleAsyncPieces(collection, pieces, isString, isStringObject2) {
+  if (isString) {
+    return {
+      type: "sequence",
+      values: pieces.map((piece) => {
+        const joined = piece.map((value) => value?.type === "string" ? value.value : value).join("");
+        return isStringObject2 ? { type: "string", value: joined } : joined;
+      })
+    };
+  }
+  return {
+    type: "sequence",
+    values: pieces.map((piece) => ({
+      type: collection.type === "tuple" ? "tuple" : collection.type || "sequence",
+      values: piece
+    }))
+  };
+}
+async function evaluateAsyncSplit(args, context, registry, systemContext, state) {
+  let collection = await evaluateAsyncInternal(args[0], context, registry, systemContext, state);
+  if (collection === null || collection === undefined)
+    return null;
+  if (isLazySequence(collection))
+    collection = materializeLazySequence(collection);
+  const separator = await evaluateAsyncInternal(args[1], context, registry, systemContext, state);
+  const isRegex = typeof separator === "function" && separator.toString?.().startsWith("[Regex");
+  if (!isAsyncCallableValue(separator) || isRegex) {
+    const definition = registry.get("PSPLIT");
+    return definition.impl([collection, separator], context, (value) => value, systemContext);
+  }
+  const { items, isString, isStringObject: isStringObject2 } = asyncBarrierLinearItems(collection, "PSPLIT");
+  if (!items)
+    return null;
+  const pieces = [];
+  let currentPiece = [];
+  let inSeparator = false;
+  for (let index = 0;index < items.length; index++) {
+    const locator = new Integer(BigInt(index + 1));
+    const separates = isTruthyAsync(await invokeCallableAsync(separator, [items[index], locator, collection], context, registry, systemContext, state));
+    if (separates) {
+      if (!inSeparator) {
+        pieces.push(currentPiece);
+        currentPiece = [];
+        inSeparator = true;
+      }
+    } else {
+      inSeparator = false;
+      currentPiece.push(items[index]);
+    }
+  }
+  pieces.push(currentPiece);
+  return assembleAsyncPieces(collection, pieces, isString, isStringObject2);
+}
+async function evaluateAsyncChunk(args, context, registry, systemContext, state) {
+  let collection = await evaluateAsyncInternal(args[0], context, registry, systemContext, state);
+  if (collection === null || collection === undefined)
+    return null;
+  if (isLazySequence(collection))
+    collection = materializeLazySequence(collection);
+  const boundary = await evaluateAsyncInternal(args[1], context, registry, systemContext, state);
+  if (!isAsyncCallableValue(boundary)) {
+    const definition = registry.get("PCHUNK");
+    return definition.impl([collection, boundary], context, (value) => value, systemContext);
+  }
+  const { items, isString, isStringObject: isStringObject2 } = asyncBarrierLinearItems(collection, "PCHUNK");
+  if (!items)
+    return null;
+  const pieces = [];
+  let currentPiece = [];
+  for (let index = 0;index < items.length; index++) {
+    const item = items[index];
+    const locator = new Integer(BigInt(index + 1));
+    const endsChunk = isTruthyAsync(await invokeCallableAsync(boundary, [item, locator, collection], context, registry, systemContext, state));
+    currentPiece.push(item);
+    if (endsChunk) {
+      pieces.push(currentPiece);
+      currentPiece = [];
+    }
+  }
+  if (currentPiece.length > 0)
+    pieces.push(currentPiece);
+  return assembleAsyncPieces(collection, pieces, isString, isStringObject2);
+}
+async function evaluateAsyncScopeBody(args, context, registry, systemContext, parentState) {
   const { meta, body } = splitAsyncBlockArgs(args);
   const configured = meta.concurrencyLimit ?? context.getEnv("defaultAsyncConcurrency", runtimeDefaults.defaultAsyncConcurrency);
   const effectiveLimit = parentState ? Math.min(configured, parentState.limit) : configured;
+  const scheduler = parentState?.scheduler || new AsyncScheduler(effectiveLimit);
+  const group = parentState ? scheduler.createGroup(effectiveLimit, parentState.group) : scheduler.defaultGroup;
   const state = {
-    scheduler: parentState?.scheduler || new AsyncScheduler(effectiveLimit),
+    scheduler,
+    group,
     limit: effectiveLimit,
     name: meta.name ?? null
   };
@@ -33462,21 +33886,25 @@ async function evaluateAsyncScope(args, context, registry, systemContext, parent
       for (const statement of body) {
         result = await evaluateAsyncInternal(statement, context, registry, systemContext, state);
       }
-      await state.scheduler.waitForIdle();
+      await state.scheduler.waitForIdle(state.group);
       return result;
     } catch (error) {
       if (!matchesAsyncBreak(error, state.name)) {
-        state.scheduler.cancel(error);
-        await state.scheduler.waitForIdle();
+        state.scheduler.cancelGroup(state.group, error);
+        await state.scheduler.waitForIdle(state.group);
         throw error;
       }
-      state.scheduler.cancel(error);
-      await state.scheduler.waitForIdle();
+      state.scheduler.cancelGroup(state.group, error);
+      await state.scheduler.waitForIdle(state.group);
       return error.value;
     }
   } finally {
+    state.scheduler.closeGroup(state.group);
     context.pop();
   }
+}
+async function evaluateAsyncScope(args, context, registry, systemContext, parentState) {
+  return withReleasedAsyncAdmission(parentState, () => evaluateAsyncScopeBody(args, context, registry, systemContext, parentState));
 }
 function startDetachedBlock(args, context, registry, systemContext, parentState) {
   const { meta, body } = splitAsyncBlockArgs(args);
@@ -33520,6 +33948,21 @@ async function evaluateAsyncInternal(irNode, context, registry, systemContext, s
     }
     if (state && ASYNC_PIPE_FNS.has(fn)) {
       return await evaluateAsyncPipe(irNode, context, registry, systemContext, state);
+    }
+    if (state && fn === "PREDUCE") {
+      return await evaluateAsyncReduce(args, context, registry, systemContext, state);
+    }
+    if (state && fn === "PSORT") {
+      return await evaluateAsyncSort(args, context, registry, systemContext, state);
+    }
+    if (state && ASYNC_RESOLVED_BARRIER_FNS.has(fn)) {
+      return await evaluateAsyncResolvedBarrier(irNode, context, registry, systemContext, state);
+    }
+    if (state && fn === "PSPLIT") {
+      return await evaluateAsyncSplit(args, context, registry, systemContext, state);
+    }
+    if (state && fn === "PCHUNK") {
+      return await evaluateAsyncChunk(args, context, registry, systemContext, state);
     }
     const evalAsync = (node) => evaluateAsyncInternal(node, context, registry, systemContext, state);
     if (fn === "SYS_CALL") {
@@ -36247,5 +36690,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { formatValue, mountOutputWidgets, findHelp, createRixRepl };
 
-//# debugId=6D9603E328B7E49264756E2164756E21
-//# sourceMappingURL=chunk-afngaf22.js.map
+//# debugId=806D995B84D9D88364756E2164756E21
+//# sourceMappingURL=chunk-7e0v05w0.js.map

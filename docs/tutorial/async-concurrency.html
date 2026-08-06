@@ -22,6 +22,17 @@
 } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p><code>|&gt;||</code> is ordered Find: predicates may overlap, but the result is the first passing item in traversal order, not the first one to finish.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">{$:3$ [7, 4, 10, 2] |&gt;|| ((x) -&gt; x % 2 == 0) } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Cross ordered barriers</h2>
+<p>Reduce, sort, reverse, slice, split, and chunk need ordered input, so they end the current concurrent region. Upstream work still overlaps. Reducer calls and predicate-based structural barriers are awaited in traversal order; a map or filter after the barrier starts a new concurrent region.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="8" spellcheck="false">{$:3$
+    [4, 1, 3, 2]
+        |&gt;&gt; ((x) -&gt; x^2)
+        |&lt;&gt; ((a, b) -&gt; a - b)
+        |&gt;/ 2:4
+        |&gt;&gt; ((x) -&gt; x + 1)
+        |:&gt; 0 &gt;: ((sum, x) -&gt; sum + x)
+} ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Sort uses a stable promise-aware comparator. Ordered reduce never invokes two accumulator calls at once, even when the source and earlier elementwise stages were concurrent.</p>
 <h2>Nest collections without spending parent permits</h2>
 <p>Nested collection containers share the scheduler. Structural parents do not occupy a slot while their children are waiting.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">{$:2$
@@ -31,6 +42,17 @@
     }
 } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Admission follows written depth-first order: the two entries under <code>left</code> come before <code>right</code>.</p>
+<p>If a called RiX function constructs another collection, the calling item temporarily yields its slot while those child items run. This keeps a nested function fan-out from deadlocking even when the effective limit is one.</p>
+<p>Nested async scopes share the ancestor scheduler while applying the stricter limit. Here the inner scope can use at most two of the outer scope&#039;s four slots:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">{$outer:4$
+    {$inner:2$ [1^5, 2^5, 3^5, 4^5] }
+} ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>A break or failure cancels queued descendants of its owning group. A handled break in <code>inner</code> does not cancel an independent sibling already admitted by <code>outer</code>.</p>
+<p>Tensor cells are finite source items too, and tensor map callbacks receive index tuples while preserving the original shape.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">{$:2$
+    {:2x2: 1, 2; 3, 4}
+        |&gt;&gt; ((x, index) -&gt; x + index[1] + index[2])
+} ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>Completion races and background work</h2>
 <p>A named async break, <code>{!$name! value }</code>, races by completion. The first task to reach it supplies the scope result and prevents queued siblings from starting. Already-running host effects receive cooperative cancellation only when their capability supports it.</p>
 <p><code>{$$ ... }</code> is a different tool: it starts one supervised background code block, immediately returns <code>null</code>, and discards the block&#039;s final value. Its statements are sequential, though it may contain <code>{$ ... }</code> for bounded fan-out.</p>
