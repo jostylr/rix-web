@@ -67,6 +67,27 @@ test("the web REPL awaits stream terminals and disposes retained streams on rese
     expect(retained.value._stream.root.closeCount).toBe(1);
 });
 
+test("the web REPL runs async drain, expected-value recovery, and Retry", async () => {
+    const repl = createRixRepl();
+    const drained = await repl.runAsync(".Stream([1,2,3]) |>_ ((value) -> value^2)");
+    expect(drained.type).toBe("result");
+    expect(drained.value).toBeNull();
+
+    const recovered = await repl.runAsync(
+        "[1, {: :error, :missing, 2}, {: :error, :drop, 9}] "
+        + "|>! ((kind, fallback) -> kind == :missing ?? fallback ?: _)",
+    );
+    expect(recovered.type).toBe("result");
+    expect(recovered.text).toBe("[1, 2]");
+
+    const retried = await repl.runAsync(
+        ".Retry(2, @{ {: :error, :timeout, :offline } }) "
+        + "|>! ((kind, status) -> status)",
+    );
+    expect(retried.type).toBe("result");
+    expect(retried.value.value).toBe("offline");
+});
+
 test("tutorial replay state is scoped to the target h2 section", () => {
     const entries = [
         { type: "heading", value: "first heading" },

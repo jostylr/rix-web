@@ -8,7 +8,7 @@ description: Build lazy pull pipelines, consume them explicitly, and project eve
 
 An `async_stream` is a linear handle over a source, not a promise or a cached
 collection. Creating, transforming, or displaying a stream does not pull it.
-The `|>>` and `|>?` pipes add lazy Map and Filter stages.
+The `|>>`, `|>?`, and expected-value `|>!` pipes add lazy stages.
 
 ```rix edu
 stream := .Stream([1, 2, 3, 4], :numbers)
@@ -26,6 +26,17 @@ an explicit terminal such as `Collect`, `ForEach`, `Reduce`, `First`, or
     |>> ((x) -> x^2)
     |>? ((x) -> x > 4)
 ).Collect();
+```
+
+`|>_` is the consuming ForEach pipe. Unlike Map it does not build a result
+collection: it drains with backpressure, awaits callbacks, discards their
+return values, and returns null.
+
+```rix edu
+$$latestSquare := _;
+(.Stream([1, 2, 3, 4], :numbers) |>> ((x) -> x^2))
+    |>_ ((value) -> ($latestSquare := value));
+$latestSquare;
 ```
 
 ## Process file or HTTP-style chunks
@@ -73,8 +84,8 @@ recomputation never silently reopens an external stream.
 ```rix edu
 $$latest := :waiting;
 {$$ <latest=latest>
-    (.Stream([:connecting, :ready, :complete], :connection_events)
-        .ForEach((event) -> ($latest := event)))
+    .Stream([:connecting, :ready, :complete], :connection_events)
+        |>_ ((event) -> ($latest := event))
 };
 $latest;
 ```

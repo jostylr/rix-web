@@ -71,6 +71,36 @@ passing item in traversal order, not the first one to finish.
 {$:3$ [7, 4, 10, 2] |>|| ((x) -> x % 2 == 0) } ;
 ```
 
+## Drain for effects and recover expected values
+
+`|>_` is terminal ForEach syntax. It calls the callback with each value,
+locator, and source, ignores the callback's return value, and returns null only
+after the source is exhausted. Inside a limited scope the callbacks overlap up
+to that limit without constructing an output collection.
+
+```rix edu
+$$latest := _;
+{$:2$ <latest=latest>
+    [2, 3, 4] |>_ ((value, locator) -> ($latest := {: value, locator }))
+};
+$latest;
+```
+
+Expected failures can instead be ordinary tuple values shaped
+`{: :error, ...args }`. `|>!` calls its handler with the tail entries. Returning
+null skips that collection item and prevents later stages from seeing it;
+ordinary values pass through unchanged.
+
+```rix edu
+[1, {: :error, :missing, 2}, {: :error, :ignore, 9}, 4]
+    |>! ((kind, fallback) -> kind == :missing ?? fallback ?: _)
+    |>> ((value) -> value * 10);
+```
+
+This is deliberately not a thrown-error catch. Language failures,
+cancellation, breaks, and typed operational faults still use their normal
+control-flow and `##!>` rules.
+
 ## Cross ordered barriers
 
 Reduce, sort, reverse, slice, split, and chunk need ordered input, so they end
@@ -200,6 +230,22 @@ permit is released. A body error remains primary if cleanup also fails.
 `##!>` handles only typed operational faults. It leaves successful values
 unchanged and invokes its handler for recoverable host failures or timeouts.
 Language errors, `.Error`, breaks, and cancellation continue to propagate.
+
+Use `.Retry` when deferred work reports an expected error tuple and trying it
+again is meaningful. Attempts counts the first evaluation, and exhaustion
+returns the final tuple so `|>!` can recover it.
+
+```rix edu
+.Retry(
+    {= attempts=3, delay=0, backoff=2, kinds=[:timeout] },
+    @{ {: :error, :timeout, :offline } }
+) |>! ((kind, status) -> status);
+```
+
+Kinds outside the allow-list and thrown errors are not retried. Delay is in
+seconds, uses cancellable backoff, and inherits the containing scope timeout.
+All attempts for one collection item retain one concurrency permit, and each
+attempt drains its own `##_` cleanup before the next begins.
 
 ## Remember that suspension is not atomic
 

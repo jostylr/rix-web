@@ -129,7 +129,8 @@ export function createRixRepl({ autoSeparateLines = true } = {}) {
             // identical while the async evaluator coverage expands.
             const tokens = tokenize(source);
             const usesAsyncEvaluation = tokens.some((token) => token.value === "{$" || token.value === "{$$")
-                || /\.(?:ForEach|Reduce|Collect|First|Find|Count|Close)\s*\(/i.test(source);
+                || tokens.some((token) => token.value === "|>_" || token.value === "|>!")
+                || /\.(?:ForEach|Reduce|Collect|First|Find|Count|Close|Retry)\s*\(/i.test(source);
             if (!usesAsyncEvaluation) return this.run(source);
             const topic = inlineHelpRequest(source);
             if (topic !== null) return { type: "help", source, ...findHelp(topic) };

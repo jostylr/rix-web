@@ -24,6 +24,18 @@
 } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p><code>|&gt;||</code> is ordered Find: predicates may overlap, but the result is the first passing item in traversal order, not the first one to finish.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">{$:3$ [7, 4, 10, 2] |&gt;|| ((x) -&gt; x % 2 == 0) } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Drain for effects and recover expected values</h2>
+<p><code>|&gt;_</code> is terminal ForEach syntax. It calls the callback with each value, locator, and source, ignores the callback&#039;s return value, and returns null only after the source is exhausted. Inside a limited scope the callbacks overlap up to that limit without constructing an output collection.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">$$latest := _;
+{$:2$ &lt;latest=latest&gt;
+    [2, 3, 4] |&gt;_ ((value, locator) -&gt; ($latest := {: value, locator }))
+};
+$latest;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Expected failures can instead be ordinary tuple values shaped <code>{: :error, ...args }</code>. <code>|&gt;!</code> calls its handler with the tail entries. Returning null skips that collection item and prevents later stages from seeing it; ordinary values pass through unchanged.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">[1, {: :error, :missing, 2}, {: :error, :ignore, 9}, 4]
+    |&gt;! ((kind, fallback) -&gt; kind == :missing ?? fallback ?: _)
+    |&gt;&gt; ((value) -&gt; value * 10);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>This is deliberately not a thrown-error catch. Language failures, cancellation, breaks, and typed operational faults still use their normal control-flow and <code>##!&gt;</code> rules.</p>
 <h2>Cross ordered barriers</h2>
 <p>Reduce, sort, reverse, slice, split, and chunk need ordered input, so they end the current concurrent region. Upstream work still overlaps. Reducer calls and predicate-based structural barriers are awaited in traversal order; a map or filter after the barrier starts a new concurrent region.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="8" spellcheck="false">{$:3$
@@ -78,6 +90,12 @@ $status;</textarea><div class="tutorial-output" data-tutorial-output></div></sec
 result;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Async cleanup is awaited, and an item&#039;s cleanup completes before its concurrency permit is released. A body error remains primary if cleanup also fails.</p>
 <p><code>##!&gt;</code> handles only typed operational faults. It leaves successful values unchanged and invokes its handler for recoverable host failures or timeouts. Language errors, <code>.Error</code>, breaks, and cancellation continue to propagate.</p>
+<p>Use <code>.Retry</code> when deferred work reports an expected error tuple and trying it again is meaningful. Attempts counts the first evaluation, and exhaustion returns the final tuple so <code>|&gt;!</code> can recover it.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Retry(
+    {= attempts=3, delay=0, backoff=2, kinds=[:timeout] },
+    @{ {: :error, :timeout, :offline } }
+) |&gt;! ((kind, status) -&gt; status);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Kinds outside the allow-list and thrown errors are not retried. Delay is in seconds, uses cancellable backoff, and inherits the containing scope timeout. All attempts for one collection item retain one concurrency permit, and each attempt drains its own <code>##_</code> cleanup before the next begins.</p>
 <h2>Remember that suspension is not atomic</h2>
 <p>Ordinary concurrent captures are snapshots, while reactive reads observe a point in time. The owner runtime serializes reactive writes, but multiple background writers are timing-dependent. Network requests, file writes, plugin effects, and output that already occurred are not rolled back, and their visible order may follow completion timing. Cancellation is cooperative, so synchronous or non-cancellable host work may continue until it next yields.</p>
 <aside class="challenge"><p class="eyebrow">Challenge</p><h3>Bound a transformation</h3><p>Use a concurrency limit of two to square <code>[1, 2, 3, 4, 5]</code>, keep values greater than 5, and return the ordered result.</p><section class="tutorial-cell"><header><span>Your RiX answer</span><button type="button" data-tutorial-run>Run answer</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false" placeholder="# Write your RiX solution here">{$:2$
