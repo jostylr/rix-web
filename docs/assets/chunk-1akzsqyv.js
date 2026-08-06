@@ -30258,8 +30258,8 @@ function normalizeDocumentView(value, path, shape) {
   }
   return view;
 }
-function migrateDraft(document2) {
-  const input = plainObject(document2, "$");
+function migrateDraft(document) {
+  const input = plainObject(document, "$");
   const declaredVersion = input.version;
   const isDraft = declaredVersion === 0 || declaredVersion === undefined;
   if (!isDraft)
@@ -30384,29 +30384,29 @@ function exportRixCelDocument(sheet) {
   });
 }
 function stringifyRixCelDocument(value, options = {}) {
-  const document2 = isFormulaSheet(value) ? exportRixCelDocument(value) : parseRixCelDocument(value);
+  const document = isFormulaSheet(value) ? exportRixCelDocument(value) : parseRixCelDocument(value);
   const space = options.space ?? 2;
   if (!Number.isInteger(space) || space < 0 || space > 10) {
     throw new Error("RiXCel JSON indentation must be an integer from 0 through 10");
   }
-  return JSON.stringify(document2, null, space);
+  return JSON.stringify(document, null, space);
 }
 function importRixCelDocument(value, options = {}) {
-  const document2 = parseRixCelDocument(value);
+  const document = parseRixCelDocument(value);
   if (typeof options.compileFormula !== "function") {
     throw new Error("RiXCel import requires a formula compiler");
   }
   if (typeof options.runFormula !== "function") {
     throw new Error("RiXCel import requires a deferred formula evaluator");
   }
-  const formulas = document2.slots.map((slot) => {
+  const formulas = document.slots.map((slot) => {
     try {
       return options.compileFormula(slot.source);
     } catch (error) {
       throw new Error(`RiXCel source for grid[${slot.index.join(",")}] did not compile: ${error.message}`);
     }
   });
-  const slotMetadata = new Map(document2.slots.map((slot) => [
+  const slotMetadata = new Map(document.slots.map((slot) => [
     indexKey(slot.index),
     {
       id: slot.id,
@@ -30415,10 +30415,10 @@ function importRixCelDocument(value, options = {}) {
       view: slot.view
     }
   ]));
-  return createFormulaSheet(createTensor(document2.shape, formulas), {
+  return createFormulaSheet(createTensor(document.shape, formulas), {
     ...options,
-    id: document2.id,
-    documentView: document2.view,
+    id: document.id,
+    documentView: document.view,
     slotMetadata
   });
 }
@@ -31838,7 +31838,7 @@ var BUNDLED_PLUGINS = [
       kind: "host",
       mount: "draw",
       exports: ["Line", "Polygon", "Label", "Box", "Circle"],
-      groups: ["Draw"],
+      groups: ["Draw", "Renderers"],
       permissions: [],
       defaultEnabled: false
     },
@@ -31851,7 +31851,7 @@ var BUNDLED_PLUGINS = [
       kind: "host",
       mount: "plot",
       exports: ["Polynomial"],
-      groups: ["Plot"],
+      groups: ["Plot", "Renderers"],
       permissions: [],
       defaultEnabled: false
     },
@@ -34824,425 +34824,6 @@ function mountOutputWidgets(root, value, options = {}) {
       dispose?.();
   };
 }
-// ../rix/src/parser/system-loader.js
-var DEFAULT_SYSTEM_REGISTRY = {
-  LIST: { type: "constructor", category: "collection" },
-  SET: { type: "constructor", category: "collection" },
-  MAP: { type: "constructor", category: "collection" },
-  TUPLE: { type: "constructor", category: "collection" },
-  TYPE: { type: "function", arity: 1, precedence: 120, category: "meta" },
-  HELP: { type: "function", arity: -1, precedence: 120, category: "meta" },
-  INFO: { type: "function", arity: 1, precedence: 120, category: "meta" }
-};
-var isBrowser = typeof window !== "undefined" && typeof document !== "undefined";
-
-class SystemLoader {
-  constructor(options = {}) {
-    this.coreRegistry = new Map(Object.entries(DEFAULT_SYSTEM_REGISTRY));
-    this.systemRegistry = new Map;
-    this.operatorRegistry = new Map;
-    this.keywordRegistry = new Map;
-    this.hooks = new Map;
-    this.contexts = new Map;
-    this.config = {
-      allowUserOverrides: options.allowUserOverrides ?? false,
-      strictMode: options.strictMode ?? false,
-      browserIntegration: options.browserIntegration ?? isBrowser,
-      moduleLoader: options.moduleLoader ?? null,
-      ...options
-    };
-    this.initializeDefaultKeywords();
-    if (this.config.browserIntegration) {
-      this.setupBrowserIntegration();
-    }
-  }
-  initializeDefaultKeywords() {
-    this.registerKeyword("AND", {
-      type: "operator",
-      precedence: 40,
-      associativity: "left",
-      operatorType: "infix",
-      category: "logical"
-    });
-    this.registerKeyword("OR", {
-      type: "operator",
-      precedence: 30,
-      associativity: "left",
-      operatorType: "infix",
-      category: "logical"
-    });
-    this.registerKeyword("NOT", {
-      type: "operator",
-      precedence: 110,
-      operatorType: "prefix",
-      category: "logical"
-    });
-    this.registerKeyword("IF", {
-      type: "control",
-      structure: "conditional",
-      precedence: 5,
-      category: "control"
-    });
-    this.registerKeyword("ELSE", {
-      type: "control",
-      structure: "conditional",
-      precedence: 5,
-      category: "control"
-    });
-    this.registerKeyword("WHILE", {
-      type: "control",
-      structure: "loop",
-      precedence: 5,
-      category: "control"
-    });
-    this.registerKeyword("FOR", {
-      type: "control",
-      structure: "loop",
-      precedence: 5,
-      category: "control"
-    });
-    this.registerKeyword("IN", {
-      type: "operator",
-      precedence: 60,
-      associativity: "left",
-      operatorType: "infix",
-      category: "set"
-    });
-    this.registerKeyword("UNION", {
-      type: "operator",
-      precedence: 50,
-      associativity: "left",
-      operatorType: "infix",
-      category: "set"
-    });
-    this.registerKeyword("INTERSECT", {
-      type: "operator",
-      precedence: 50,
-      associativity: "left",
-      operatorType: "infix",
-      category: "set"
-    });
-  }
-  registerSystem(name, definition) {
-    if (!name || typeof name !== "string") {
-      throw new Error("System symbol name must be a non-empty string");
-    }
-    const normalizedName = name.toUpperCase();
-    const validatedDef = this.validateDefinition(definition);
-    if (this.config.strictMode && this.coreRegistry.has(normalizedName)) {
-      throw new Error(`Cannot override core system symbol: ${normalizedName}`);
-    }
-    this.systemRegistry.set(normalizedName, {
-      ...validatedDef,
-      source: "system",
-      registered: Date.now()
-    });
-    this.triggerHook("system-registered", {
-      name: normalizedName,
-      definition: validatedDef
-    });
-    return this;
-  }
-  registerKeyword(name, definition) {
-    const normalizedName = name.toUpperCase();
-    const validatedDef = this.validateDefinition(definition);
-    this.keywordRegistry.set(normalizedName, {
-      ...validatedDef,
-      source: "keyword",
-      registered: Date.now()
-    });
-    this.triggerHook("keyword-registered", {
-      name: normalizedName,
-      definition: validatedDef
-    });
-    return this;
-  }
-  registerOperator(symbol, definition) {
-    if (!symbol || typeof symbol !== "string") {
-      throw new Error("Operator symbol must be a non-empty string");
-    }
-    const validatedDef = this.validateOperatorDefinition(definition);
-    this.operatorRegistry.set(symbol, {
-      ...validatedDef,
-      source: "operator",
-      registered: Date.now()
-    });
-    this.triggerHook("operator-registered", {
-      symbol,
-      definition: validatedDef
-    });
-    return this;
-  }
-  lookup(name) {
-    const normalizedName = name.toUpperCase();
-    if (this.keywordRegistry.has(normalizedName)) {
-      const def = this.keywordRegistry.get(normalizedName);
-      if (def.type === "control") {
-        return this.enrichDefinition({
-          ...def,
-          functionalForm: true,
-          type: "function",
-          controlType: def.type,
-          arity: this.getControlArity(normalizedName, def)
-        }, normalizedName);
-      }
-      return this.enrichDefinition(def, normalizedName);
-    }
-    if (this.systemRegistry.has(normalizedName)) {
-      const def = this.systemRegistry.get(normalizedName);
-      return this.enrichDefinition(def, normalizedName);
-    }
-    if (this.coreRegistry.has(normalizedName)) {
-      const def = this.coreRegistry.get(normalizedName);
-      return this.enrichDefinition(def, normalizedName);
-    }
-    return { type: "identifier", name: normalizedName, source: "unknown" };
-  }
-  validateDefinition(definition) {
-    if (!definition || typeof definition !== "object") {
-      throw new Error("Definition must be an object");
-    }
-    const { type } = definition;
-    if (!type || typeof type !== "string") {
-      throw new Error("Definition must have a type property");
-    }
-    switch (type) {
-      case "operator":
-        if (!definition.precedence || typeof definition.precedence !== "number") {
-          throw new Error("Operator definition must have numeric precedence");
-        }
-        break;
-      case "function":
-        if (definition.arity !== undefined && typeof definition.arity !== "number") {
-          throw new Error("Function arity must be a number or undefined");
-        }
-        break;
-      case "control":
-        if (!definition.structure || typeof definition.structure !== "string") {
-          throw new Error("Control definition must have a structure property");
-        }
-        break;
-    }
-    return { ...definition };
-  }
-  validateOperatorDefinition(definition) {
-    const validated = this.validateDefinition(definition);
-    if (validated.type !== "operator") {
-      validated.type = "operator";
-    }
-    if (!validated.precedence) {
-      validated.precedence = 50;
-    }
-    if (!validated.associativity) {
-      validated.associativity = "left";
-    }
-    if (!validated.operatorType) {
-      validated.operatorType = "infix";
-    }
-    return validated;
-  }
-  enrichDefinition(definition, name) {
-    return {
-      ...definition,
-      name,
-      resolvedAt: Date.now()
-    };
-  }
-  registerHook(eventName, callback) {
-    if (!this.hooks.has(eventName)) {
-      this.hooks.set(eventName, []);
-    }
-    this.hooks.get(eventName).push(callback);
-    return this;
-  }
-  triggerHook(eventName, data) {
-    if (this.hooks.has(eventName)) {
-      this.hooks.get(eventName).forEach((callback) => {
-        try {
-          callback(data);
-        } catch (error) {
-          console.warn(`Hook ${eventName} failed:`, error);
-        }
-      });
-    }
-  }
-  setupBrowserIntegration() {
-    if (!isBrowser)
-      return;
-    if (typeof window.RiX === "undefined") {
-      window.RiX = {};
-    }
-    window.RiX.SystemLoader = this;
-    window.RiX.registerSystem = (name, def) => this.registerSystem(name, def);
-    window.RiX.registerKeyword = (name, def) => this.registerKeyword(name, def);
-    window.RiX.registerOperator = (symbol, def) => this.registerOperator(symbol, def);
-    if (!this.config.moduleLoader) {
-      this.config.moduleLoader = this.createBrowserModuleLoader();
-    }
-    document.addEventListener("rix-system-define", (event) => {
-      const { name, definition } = event.detail;
-      this.registerSystem(name, definition);
-    });
-    document.addEventListener("rix-keyword-define", (event) => {
-      const { name, definition } = event.detail;
-      this.registerKeyword(name, definition);
-    });
-  }
-  createBrowserModuleLoader() {
-    return {
-      async load(moduleSpec) {
-        if (moduleSpec.startsWith("http://") || moduleSpec.startsWith("https://")) {
-          const response = await fetch(moduleSpec);
-          const code = await response.text();
-          return this.evaluateModule(code);
-        } else if (moduleSpec.startsWith("data:")) {
-          const code = decodeURIComponent(moduleSpec.split(",")[1]);
-          return this.evaluateModule(code);
-        } else {
-          const scriptTag = document.getElementById(moduleSpec);
-          if (scriptTag && scriptTag.type === "text/rix-system") {
-            return this.evaluateModule(scriptTag.textContent);
-          }
-        }
-        throw new Error(`Cannot load module: ${moduleSpec}`);
-      },
-      evaluateModule(code) {
-        try {
-          const moduleFunction = new Function("SystemLoader", "registerSystem", "registerKeyword", "registerOperator", code);
-          return moduleFunction(this, (name, def) => this.registerSystem(name, def), (name, def) => this.registerKeyword(name, def), (symbol, def) => this.registerOperator(symbol, def));
-        } catch (error) {
-          throw new Error(`Module evaluation failed: ${error.message}`);
-        }
-      }
-    };
-  }
-  async loadModule(moduleSpec) {
-    if (!this.config.moduleLoader) {
-      throw new Error("No module loader configured");
-    }
-    try {
-      const result = await this.config.moduleLoader.load(moduleSpec);
-      this.triggerHook("module-loaded", { moduleSpec, result });
-      return result;
-    } catch (error) {
-      this.triggerHook("module-load-error", { moduleSpec, error });
-      throw error;
-    }
-  }
-  createContext(name, parentContext = null) {
-    const context = {
-      name,
-      parent: parentContext,
-      created: Date.now(),
-      symbols: new Map,
-      operators: new Map
-    };
-    this.contexts.set(name, context);
-    return context;
-  }
-  getControlArity(name, definition) {
-    switch (definition.structure) {
-      case "conditional":
-        return name === "IF" ? -1 : 1;
-      case "loop":
-        return name === "FOR" ? 4 : 2;
-      case "loop_body":
-      case "loop_terminator":
-      case "block_end":
-        return 1;
-      default:
-        return -1;
-    }
-  }
-  transformFunctionalForm(name, args, definition) {
-    switch (name) {
-      case "WHILE":
-        if (args.length >= 2) {
-          return {
-            type: "ControlStructure",
-            keyword: "WHILE",
-            condition: args[0],
-            body: args[1],
-            structure: "while_loop",
-            functionalOrigin: true
-          };
-        }
-        break;
-      case "IF":
-        if (args.length >= 2) {
-          const result = {
-            type: "ControlStructure",
-            keyword: "IF",
-            condition: args[0],
-            thenBranch: args[1],
-            structure: "conditional",
-            functionalOrigin: true
-          };
-          if (args.length >= 3) {
-            result.elseBranch = args[2];
-          }
-          return result;
-        }
-        break;
-      case "FOR":
-        if (args.length >= 4) {
-          return {
-            type: "ControlStructure",
-            keyword: "FOR",
-            init: args[0],
-            condition: args[1],
-            increment: args[2],
-            body: args[3],
-            structure: "for_loop",
-            functionalOrigin: true
-          };
-        }
-        break;
-    }
-    return {
-      type: "FunctionCall",
-      function: { type: "SystemIdentifier", name, systemInfo: definition },
-      arguments: args,
-      functionalForm: true
-    };
-  }
-  getSymbolsByCategory(category) {
-    const result = [];
-    [this.coreRegistry, this.systemRegistry, this.keywordRegistry].forEach((registry) => {
-      for (const [name, definition] of registry) {
-        if (definition.category === category) {
-          result.push({ name, ...definition });
-        }
-      }
-    });
-    return result;
-  }
-  createParserLookup() {
-    return (name) => this.lookup(name);
-  }
-  exportConfig() {
-    return {
-      core: Array.from(this.coreRegistry.entries()),
-      system: Array.from(this.systemRegistry.entries()),
-      keywords: Array.from(this.keywordRegistry.entries()),
-      operators: Array.from(this.operatorRegistry.entries()),
-      config: { ...this.config }
-    };
-  }
-  importConfig(config) {
-    if (config.system) {
-      config.system.forEach(([name, def]) => this.systemRegistry.set(name, def));
-    }
-    if (config.keywords) {
-      config.keywords.forEach(([name, def]) => this.keywordRegistry.set(name, def));
-    }
-    if (config.operators) {
-      config.operators.forEach(([symbol, def]) => this.operatorRegistry.set(symbol, def));
-    }
-    this.triggerHook("config-imported", config);
-  }
-}
-var defaultSystemLoader = new SystemLoader;
 // ../rix/src/repl/completion.js
 var REPL_COMMANDS = ["help", "exit", "load", "vars", "fns", "reset", "ast", "tokens"];
 function systemCandidates(systemContext, prefix = "") {
@@ -35771,7 +35352,7 @@ var install5 = installBrowserApproxMathPlugin;
 // src/generated/bundled-plugin-catalog.js
 function createBundledPluginCatalog() {
   const catalog = new PluginCatalog;
-  catalog.addMetadata({ id: "draw", description: "Convenient 2D drawing helpers that produce core Graphics nodes.", kind: "host", mount: "draw", exports: ["Line", "Polygon", "Label", "Box", "Circle"], groups: ["Draw"], permissions: [], defaultEnabled: false, operatorDefinitions: [], operatorFiles: [], ignore: false, sourcePath: "bundled:draw" }, { sourcePath: "bundled:draw", kind: "host" });
+  catalog.addMetadata({ id: "draw", description: "Convenient 2D drawing helpers that produce core Graphics nodes.", kind: "host", mount: "draw", exports: ["Line", "Polygon", "Label", "Box", "Circle"], groups: ["Draw", "Renderers"], permissions: [], defaultEnabled: false, operatorDefinitions: [], operatorFiles: [], ignore: false, sourcePath: "bundled:draw" }, { sourcePath: "bundled:draw", kind: "host" });
   catalog.registerInstaller("draw", install);
   catalog.addMetadata({ id: "example-array-js", description: "Teaching JavaScript plugin demonstrating array sum, summary text, and reversal.", kind: "host", mount: "arrayJs", exports: ["Sum", "Describe", "Reverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, operatorDefinitions: [], operatorFiles: [], ignore: false, sourcePath: "bundled:example-array-js" }, { sourcePath: "bundled:example-array-js", kind: "host" });
   catalog.registerInstaller("example-array-js", install4);
@@ -35792,7 +35373,7 @@ defaultEnabled: false
 `, sourcePath: "bundled:example-array-rix", kind: "rix" });
   catalog.addMetadata({ id: "float", description: "JavaScript IEEE-754 Float conversion and optional approximate math.", kind: "host", mount: "float", exports: ["Float", "Interval", "Round", "Floor", "Ceiling", "Abs", "Sqrt", "Sin", "Cos", "Tan", "Log", "Exp"], groups: ["ApproximateMath", "Float"], permissions: [], defaultEnabled: false, operatorDefinitions: [], operatorFiles: [], ignore: false, sourcePath: "bundled:float" }, { sourcePath: "bundled:float", kind: "host" });
   catalog.registerInstaller("float", install5);
-  catalog.addMetadata({ id: "plot", description: "Portable plotting helpers that produce core Graphics scenes.", kind: "host", mount: "plot", exports: ["Polynomial"], groups: ["Plot"], permissions: [], defaultEnabled: false, operatorDefinitions: [], operatorFiles: [], ignore: false, sourcePath: "bundled:plot" }, { sourcePath: "bundled:plot", kind: "host" });
+  catalog.addMetadata({ id: "plot", description: "Portable plotting helpers that produce core Graphics scenes.", kind: "host", mount: "plot", exports: ["Polynomial"], groups: ["Plot", "Renderers"], permissions: [], defaultEnabled: false, operatorDefinitions: [], operatorFiles: [], ignore: false, sourcePath: "bundled:plot" }, { sourcePath: "bundled:plot", kind: "host" });
   catalog.registerInstaller("plot", install3);
   return catalog;
 }
@@ -35929,5 +35510,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { formatValue, mountOutputWidgets, findHelp, createRixRepl };
 
-//# debugId=12E96A954EDED40864756E2164756E21
-//# sourceMappingURL=chunk-zenf6hn3.js.map
+//# debugId=48C27E66100F21A664756E2164756E21
+//# sourceMappingURL=chunk-1akzsqyv.js.map

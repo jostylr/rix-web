@@ -1,15 +1,14 @@
 ---
 number: 10c
 title: Language extensions
-description: What the SystemLoader configures today, and the current boundary for custom syntax.
+description: Extend RiX with plugins, capabilities, and delimited custom infix operators.
 ---
 
 ## Orientation
 
-The legacy `SystemLoader` supplies parser metadata for uppercase identifiers.
-It can make a registered keyword parse with operator precedence, but this is
-only the parser half of an extension. Pure RiX users receive only the surface a
-trusted host configures.
+RiX extensions use the runtime plugin catalog and capability context. Parser
+syntax remains static except for explicitly declared, delimited custom infix
+operators.
 
 Read this chapter with RatCalc open. Predict the result before running an
 example, then change a single part and run it again. That small loop of
@@ -37,24 +36,26 @@ An `##OPS##` header can declare a custom infix operator before executable code.
 Fields are unordered and the callable can be an ordinary RiX function or a
 method on a preloaded plugin object:
 
-```rix
+```rix edu
 ##OPS##
 :<o+>: Mediant :infix :additive :none
 ##OPS##
 
-Mediant(a, b) -> a + b
-1 :<o+>: 2
+Mediant(a, b) -> a + b;
+1 :<o+>: 2;
 ```
 
 Plugin manifests can name `operator-files`, while a script YAML header can
-preload `plugins` and project-local `operator-files`. Prefix and postfix custom
-operators remain future work.
+preload `plugins` and project-local `operator-files`. There are no current
+plans for custom prefix, postfix, or n-ary notation: functions cover most unary
+uses, the custom delimiter weakens postfix notation, and n-ary notation needs a
+full mixfix grammar rather than an operator token.
 
 ## Read the result
 
 Prefer ordinary plugin methods when punctuation does not materially improve the
-notation. Study the custom-operator and three-tier system documentation when a
-domain benefits from dedicated infix syntax.
+notation. Study the custom-operator documentation when a domain benefits from
+dedicated infix syntax.
 
 Try a second value of your own. When an advanced feature depends on files,
 JavaScript, or extension registration, RatCalc explains the concept but does

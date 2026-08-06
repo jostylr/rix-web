@@ -152,8 +152,8 @@ RiX source.
 - **10b JavaScript modules** — `.ImportJS` / `.JSCall` concepts, package
   boundaries, and RatCalc's explicit browser trust policy. Keep this marked as
   a host-dependent feature until browser module loading is implemented.
-- **10c Extend the language** — parser/system-loader architecture, keywords,
-  custom operators, system functions, three-tier roles, and sandboxing. This
+- **10c Extend the language** — plugin capabilities, custom infix operators,
+  system functions, runtime groups, and sandboxing. This
   is an advanced maintainer/tutorial track, not a prerequisite for using RiX.
 
 ### 13. Core, host, and lowering
