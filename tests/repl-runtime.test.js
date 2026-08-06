@@ -54,6 +54,19 @@ test("the web REPL and tutorial replay await async RiX scopes", async () => {
     expect(replayed.text).toBe("[3, 4]");
 });
 
+test("the web REPL awaits stream terminals and disposes retained streams on reset", async () => {
+    const repl = createRixRepl();
+    const collected = await repl.runAsync(".Stream([1,2,3]).Collect()");
+    expect(collected.type).toBe("result");
+    expect(collected.text).toBe("[1, 2, 3]");
+
+    const retained = await repl.runAsync("stream := .Stream([4,5])");
+    expect(retained.value._stream.root.status).toBe("open");
+    await repl.reset();
+    expect(retained.value._stream.root.status).toBe("closed");
+    expect(retained.value._stream.root.closeCount).toBe(1);
+});
+
 test("tutorial replay state is scoped to the target h2 section", () => {
     const entries = [
         { type: "heading", value: "first heading" },

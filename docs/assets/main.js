@@ -3,7 +3,7 @@ import {
   findHelp,
   formatValue,
   mountOutputWidgets
-} from "./chunk-azwj3h79.js";
+} from "./chunk-q4vbxwk7.js";
 
 // src/main.js
 var repl = createRixRepl();
@@ -182,11 +182,11 @@ function openInspection(source, value) {
   inspectValue.textContent = value;
   inspectDialog.showModal();
 }
-function clearSession() {
+async function clearSession() {
   for (const dispose of outputDisposers)
     dispose();
   outputDisposers.clear();
-  repl.reset();
+  await repl.reset();
   history = [];
   historyIndex = -1;
   transcript = [];
@@ -217,7 +217,7 @@ async function execute(source = input.value) {
     return;
   }
   if (/^\.clear$/i.test(command)) {
-    clearSession();
+    await clearSession();
     return;
   }
   if (/^\.vars$/i.test(command)) {
@@ -404,6 +404,9 @@ fileInput.addEventListener("change", async () => {
 displayWelcome();
 setAutoSeparateLines(autoSeparateLines);
 input.focus();
+window.addEventListener("pagehide", () => {
+  repl.dispose();
+});
 
-//# debugId=EC7C8BE0C6F7569F64756E2164756E21
+//# debugId=0C9CF9932A4D4A7564756E2164756E21
 //# sourceMappingURL=main.js.map

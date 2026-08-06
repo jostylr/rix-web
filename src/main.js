@@ -189,10 +189,10 @@ function openInspection(source, value) {
     inspectDialog.showModal();
 }
 
-function clearSession() {
+async function clearSession() {
     for (const dispose of outputDisposers) dispose();
     outputDisposers.clear();
-    repl.reset();
+    await repl.reset();
     history = [];
     historyIndex = -1;
     transcript = [];
@@ -224,7 +224,7 @@ async function execute(source = input.value) {
         setInput("");
         return;
     }
-    if (/^\.clear$/i.test(command)) { clearSession(); return; }
+    if (/^\.clear$/i.test(command)) { await clearSession(); return; }
     if (/^\.vars$/i.test(command)) { showVariables(source); setInput(""); return; }
 
     if (history.at(-1) !== source) history.push(source);
@@ -292,7 +292,7 @@ document.addEventListener("click", (event) => {
     case "docs": setDocsOpen(docsPanel.hidden); break;
     case "close-docs": setDocsOpen(false); input.focus(); break;
     case "close-inspect": inspectDialog.close(); input.focus(); break;
-    case "clear": clearSession(); break;
+    case "clear": void clearSession(); break;
     case "script": setScriptMode(!scriptMode); break;
     case "line-separators": setAutoSeparateLines(!autoSeparateLines); break;
     case "copy": navigator.clipboard?.writeText(transcript.map((entry) => `> ${entry.source}\n${entry.text}`).join("\n\n")); break;
@@ -343,3 +343,4 @@ fileInput.addEventListener("change", async () => { const [file] = fileInput.file
 displayWelcome();
 setAutoSeparateLines(autoSeparateLines);
 input.focus();
+window.addEventListener("pagehide", () => { void repl.dispose(); });

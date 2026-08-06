@@ -107,9 +107,9 @@ occupy a slot while their children are waiting.
 } ;
 ```
 
-Nested branches share the limit and preserve their final written shape. The
-runtime is moving to hierarchical round-robin admission so a large early
-subtree cannot monopolize every available slot.
+Nested branches share the limit, preserve their final written shape, and use
+hierarchical round-robin admission so a large early subtree cannot monopolize
+every available slot.
 
 Function fan-out is lexical. A function defined outside `{$ ... }` keeps its
 ordinary sequential collection behavior when called inside. A function created

@@ -2,6 +2,7 @@ import {
     Context,
     createDefaultRegistry,
     createDefaultSystemContext,
+    disposeAsyncResources,
     complete,
     formatValue,
     isOutputValue,
@@ -126,9 +127,10 @@ export function createRixRepl({ autoSeparateLines = true } = {}) {
             // select the promise-aware path only when async block syntax is
             // present. This also keeps existing plugin/lazy-form behavior
             // identical while the async evaluator coverage expands.
-            const usesAsyncBlocks = tokenize(source)
-                .some((token) => token.value === "{$" || token.value === "{$$");
-            if (!usesAsyncBlocks) return this.run(source);
+            const tokens = tokenize(source);
+            const usesAsyncEvaluation = tokens.some((token) => token.value === "{$" || token.value === "{$$")
+                || /\.(?:ForEach|Reduce|Collect|First|Find|Count|Close)\s*\(/i.test(source);
+            if (!usesAsyncEvaluation) return this.run(source);
             const topic = inlineHelpRequest(source);
             if (topic !== null) return { type: "help", source, ...findHelp(topic) };
             try {
@@ -171,9 +173,13 @@ export function createRixRepl({ autoSeparateLines = true } = {}) {
                 formatValue: (value) => formatValue(value, { context: state.context, evaluate: null }),
             });
         },
-        reset() {
+        async reset() {
+            await disposeAsyncResources(state.context, { kind: "session reset" });
             state.context.clear();
             initialNames = new Set(state.context.getAllNames());
+        },
+        async dispose() {
+            await disposeAsyncResources(state.context, { kind: "session shutdown" });
         },
         setAutoSeparateLines(enabled) {
             separateLines = Boolean(enabled);

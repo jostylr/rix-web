@@ -43,7 +43,7 @@
         right=3^5
     }
 } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>Nested branches share the limit and preserve their final written shape. The runtime is moving to hierarchical round-robin admission so a large early subtree cannot monopolize every available slot.</p>
+<p>Nested branches share the limit, preserve their final written shape, and use hierarchical round-robin admission so a large early subtree cannot monopolize every available slot.</p>
 <p>Function fan-out is lexical. A function defined outside <code>{$ ... }</code> keeps its ordinary sequential collection behavior when called inside. A function created inside the scope retains parallel collection behavior if it escapes, while an outside function can opt in with an explicit inner <code>{$ ... }</code>.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">Sequential() -&gt; [1^5, 2^5];
 {$:2$ &lt;Sequential&gt; [Sequential()] } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>

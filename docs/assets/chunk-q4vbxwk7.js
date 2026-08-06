@@ -5486,7 +5486,8 @@ var runtimeDefaults = Object.freeze({
     Core: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "IF", "LOOP", "MULTI", "RAND_NAME", "PRINT", "TGEN", "KEYOF", "KEYS", "VALUES"]),
     Arith: Object.freeze(["ADD", "SUB", "MUL", "DIV", "INTDIV", "DIVMOD", "MOD", "POW", "FACTORIAL", "DOUBLEFACTORIAL"]),
     Logic: Object.freeze(["EQ", "NEQ", "LT", "GT", "LTE", "GTE", "AND", "OR", "NOT"]),
-    Collections: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "MAP", "FILTER", "REDUCE", "TGEN"]),
+    Collections: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "MAP", "FILTER", "REDUCE", "TGEN", "Stream"]),
+    Async: Object.freeze(["Stream"]),
     Maps: Object.freeze(["MAP", "KEYOF", "KEYS", "VALUES"]),
     Arrays: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "MAP", "FILTER", "REDUCE", "TGEN"]),
     Strings: Object.freeze(["UPPER", "SUBSTR", "PRINT"]),
@@ -8927,6 +8928,867 @@ function createReactiveGraph(options = {}) {
   return graph;
 }
 
+// ../rix/src/runtime/operational-fault.js
+class OperationalFault extends Error {
+  constructor(message, options = {}) {
+    super(message, options.cause ? { cause: options.cause } : undefined);
+    this.name = "OperationalFault";
+    this.kind = "fault";
+    this.code = options.code || "OPERATIONAL_FAULT";
+    this.data = options.data ?? null;
+  }
+}
+
+class TimeoutFault extends OperationalFault {
+  constructor(timeoutSeconds, options = {}) {
+    super(`Async scope timed out after ${timeoutSeconds} seconds`, {
+      ...options,
+      code: "ASYNC_TIMEOUT",
+      data: options.data ?? { timeoutSeconds }
+    });
+    this.name = "TimeoutFault";
+    this.timeoutSeconds = timeoutSeconds;
+  }
+}
+
+class CleanupGraceFault extends OperationalFault {
+  constructor(graceMs, options = {}) {
+    super(`Async cleanup exceeded its ${graceMs}ms grace period`, {
+      ...options,
+      code: "ASYNC_CLEANUP_GRACE_EXCEEDED",
+      data: options.data ?? { graceMs }
+    });
+    this.name = "CleanupGraceFault";
+    this.graceMs = graceMs;
+  }
+}
+function isOperationalFault(error) {
+  return error instanceof OperationalFault || error?.kind === "fault";
+}
+function dataToRixValue(value, seen = new WeakSet) {
+  if (value === null || value === undefined)
+    return null;
+  if (value instanceof Integer || value?.type)
+    return value;
+  if (typeof value === "string")
+    return { type: "string", value };
+  if (typeof value === "boolean")
+    return new Integer(value ? 1n : 0n);
+  if (typeof value === "bigint")
+    return new Integer(value);
+  if (typeof value === "number" && Number.isSafeInteger(value)) {
+    return new Integer(BigInt(value));
+  }
+  if (Array.isArray(value)) {
+    if (seen.has(value))
+      return { type: "string", value: "[circular]" };
+    seen.add(value);
+    return { type: "sequence", values: value.map((entry) => dataToRixValue(entry, seen)) };
+  }
+  if (typeof value === "object") {
+    if (seen.has(value))
+      return { type: "string", value: "[circular]" };
+    seen.add(value);
+    return {
+      type: "map",
+      entries: new Map(Object.entries(value).map(([key, entry]) => [
+        key,
+        dataToRixValue(entry, seen)
+      ]))
+    };
+  }
+  return { type: "string", value: String(value) };
+}
+function faultToRixValue(error) {
+  const entries = new Map([
+    ["code", { type: "string", value: error?.code || "OPERATIONAL_FAULT" }],
+    ["message", { type: "string", value: error?.message || "Operational fault" }]
+  ]);
+  if (error instanceof TimeoutFault || Number.isFinite(error?.timeoutSeconds)) {
+    entries.set("timeout", new Integer(BigInt(Math.trunc(error.timeoutSeconds))));
+  }
+  if (error?.data !== null && error?.data !== undefined) {
+    entries.set("data", dataToRixValue(error.data));
+  }
+  return { type: "map", entries };
+}
+
+// ../rix/src/runtime/async-runtime.js
+class AsyncScheduler {
+  constructor(limit) {
+    if (!Number.isSafeInteger(limit) || limit < 1) {
+      throw new Error("Async concurrency limit must be a positive safe integer");
+    }
+    this.limit = limit;
+    this.active = 0;
+    this.queue = [];
+    this.cancelled = false;
+    this.cancelReason = null;
+    this.idleWaiters = [];
+    this.nextTaskId = 1;
+    this.nextObservationOrder = 1;
+    this.admitScheduled = false;
+    this.defaultGroup = this.createGroup(limit);
+  }
+  createGroup(limit = this.limit, parent = null) {
+    if (!Number.isSafeInteger(limit) || limit < 1) {
+      throw new Error("Async concurrency limit must be a positive safe integer");
+    }
+    const group = {
+      limit: Math.min(limit, parent?.limit ?? this.limit),
+      parent,
+      children: new Set,
+      inFlight: 0,
+      cancelled: false,
+      cancelReason: null,
+      primaryError: null,
+      suppressedErrors: [],
+      branchAdmissions: new Map,
+      controller: new AbortController
+    };
+    group.signal = group.controller.signal;
+    parent?.children.add(group);
+    return group;
+  }
+  run(task, group = this.defaultGroup, options = {}) {
+    const cancellation = this.#cancellationFor(group);
+    if (cancellation)
+      return Promise.reject(cancellation);
+    return new Promise((resolve, reject) => {
+      const id = this.nextTaskId++;
+      this.queue.push({
+        kind: "task",
+        task,
+        resolve,
+        reject,
+        group,
+        path: options.path || `task ${id}`,
+        branchPath: Array.isArray(options.branchPath) ? [...options.branchPath] : null
+      });
+      this.#scheduleAdmit();
+    });
+  }
+  suspend(ticket) {
+    if (!ticket?.active)
+      return false;
+    ticket.active = false;
+    this.active--;
+    this.#adjustInFlight(ticket.group, -1);
+    this.#scheduleAdmit();
+    this.#notifyIdle();
+    return true;
+  }
+  resume(ticket) {
+    if (!ticket || ticket.active)
+      return Promise.resolve();
+    const cancellation = this.#cancellationFor(ticket.group);
+    if (cancellation)
+      return Promise.reject(cancellation);
+    return new Promise((resolve, reject) => {
+      this.queue.push({
+        kind: "resume",
+        ticket,
+        group: ticket.group,
+        branchPath: null,
+        resolve,
+        reject
+      });
+      this.#scheduleAdmit();
+    });
+  }
+  cancel(reason = new Error("Async scope cancelled")) {
+    if (this.cancelled)
+      return;
+    this.cancelled = true;
+    this.cancelReason = reason;
+    this.#abortGroupTree(this.defaultGroup, reason);
+    const queued = this.queue.splice(0);
+    for (const entry of queued)
+      entry.reject(reason);
+    this.#notifyIdle();
+  }
+  cancelGroup(group, reason = new Error("Async scope cancelled")) {
+    if (!group || group.cancelled)
+      return;
+    const cancelledGroups = new Set;
+    const markCancelled = (current) => {
+      if (current.cancelled)
+        return;
+      current.cancelled = true;
+      current.cancelReason = reason;
+      current.controller.abort(reason);
+      cancelledGroups.add(current);
+      for (const child of current.children)
+        markCancelled(child);
+    };
+    markCancelled(group);
+    const retained = [];
+    for (const entry of this.queue) {
+      if (cancelledGroups.has(entry.group))
+        entry.reject(reason);
+      else
+        retained.push(entry);
+    }
+    this.queue = retained;
+    this.#scheduleAdmit();
+    this.#notifyIdle();
+  }
+  waitForIdle(group = null) {
+    if (this.#isIdle(group))
+      return Promise.resolve();
+    return new Promise((resolve) => this.idleWaiters.push({ group, resolve }));
+  }
+  closeGroup(group) {
+    if (!group || !this.#isIdle(group))
+      return false;
+    group.parent?.children.delete(group);
+    return true;
+  }
+  #admit() {
+    while (!this.cancelled && this.active < this.limit && this.queue.length > 0) {
+      const index = this.#nextAdmissionIndex();
+      if (index < 0)
+        break;
+      const [entry] = this.queue.splice(index, 1);
+      this.#recordBranchAdmission(entry);
+      this.active++;
+      this.#adjustInFlight(entry.group, 1);
+      if (entry.kind === "resume") {
+        entry.ticket.active = true;
+        entry.resolve();
+        continue;
+      }
+      const ticket = { group: entry.group, active: true };
+      Promise.resolve().then(() => entry.task(ticket)).then(entry.resolve, (error) => {
+        this.#observeFailure(entry.group, error, entry.path);
+        entry.reject(error);
+      }).finally(() => {
+        if (ticket.active) {
+          ticket.active = false;
+          this.active--;
+          this.#adjustInFlight(entry.group, -1);
+        }
+        this.#scheduleAdmit();
+        this.#notifyIdle();
+      });
+    }
+  }
+  #scheduleAdmit() {
+    if (this.admitScheduled)
+      return;
+    this.admitScheduled = true;
+    queueMicrotask(() => {
+      this.admitScheduled = false;
+      this.#admit();
+    });
+  }
+  #nextAdmissionIndex() {
+    let bestIndex = -1;
+    let bestScore = null;
+    for (let index = 0;index < this.queue.length; index++) {
+      const entry = this.queue[index];
+      if (!this.#canAdmit(entry.group))
+        continue;
+      if (!entry.branchPath || entry.branchPath.length === 0) {
+        if (bestIndex < 0)
+          return index;
+        continue;
+      }
+      const score = this.#branchScore(entry);
+      if (bestIndex < 0 || this.#compareBranchScores(score, bestScore) < 0) {
+        bestIndex = index;
+        bestScore = score;
+      }
+    }
+    return bestIndex;
+  }
+  #branchScore(entry) {
+    const score = [];
+    const prefix = [];
+    for (const segment of entry.branchPath) {
+      prefix.push(segment);
+      score.push(entry.group.branchAdmissions.get(prefix.join("/")) || 0);
+    }
+    return score;
+  }
+  #compareBranchScores(left, right) {
+    const length = Math.max(left.length, right.length);
+    for (let index = 0;index < length; index++) {
+      const a = left[index] ?? 0;
+      const b = right[index] ?? 0;
+      if (a !== b)
+        return a - b;
+    }
+    return 0;
+  }
+  #recordBranchAdmission(entry) {
+    if (!entry.branchPath || entry.branchPath.length === 0)
+      return;
+    const prefix = [];
+    for (const segment of entry.branchPath) {
+      prefix.push(segment);
+      const key = prefix.join("/");
+      entry.group.branchAdmissions.set(key, (entry.group.branchAdmissions.get(key) || 0) + 1);
+    }
+  }
+  #canAdmit(group) {
+    if (this.cancelled)
+      return false;
+    for (let current = group;current; current = current.parent) {
+      if (current.cancelled || current.inFlight >= current.limit)
+        return false;
+    }
+    return true;
+  }
+  #observeFailure(group, error, path) {
+    if (!error || typeof error !== "object")
+      error = new Error(String(error));
+    error.asyncTaskPath ??= path;
+    error.asyncObservationOrder ??= this.nextObservationOrder++;
+    error.asyncObservedAt ??= performance.now();
+    if (!group.primaryError) {
+      group.primaryError = error;
+      this.cancelGroup(group, error);
+      return;
+    }
+    if (error === group.primaryError || error === group.cancelReason)
+      return;
+    group.suppressedErrors.push(error);
+    const existing = Array.isArray(group.primaryError.suppressed) ? group.primaryError.suppressed : [];
+    group.primaryError.suppressed = [...existing, error];
+  }
+  #adjustInFlight(group, delta) {
+    for (let current = group;current; current = current.parent) {
+      current.inFlight += delta;
+    }
+  }
+  #cancellationFor(group) {
+    if (this.cancelled)
+      return this.cancelReason;
+    for (let current = group;current; current = current.parent) {
+      if (current.cancelled)
+        return current.cancelReason;
+    }
+    return null;
+  }
+  #abortGroupTree(group, reason) {
+    if (!group)
+      return;
+    group.cancelled = true;
+    group.cancelReason = reason;
+    group.controller.abort(reason);
+    for (const child of group.children)
+      this.#abortGroupTree(child, reason);
+  }
+  #isDescendant(group, ancestor) {
+    for (let current = group;current; current = current.parent) {
+      if (current === ancestor)
+        return true;
+    }
+    return false;
+  }
+  #isIdle(group) {
+    if (!group)
+      return this.active === 0 && this.queue.length === 0;
+    if (group.inFlight !== 0)
+      return false;
+    return !this.queue.some((entry) => this.#isDescendant(entry.group, group));
+  }
+  #notifyIdle() {
+    const pending = [];
+    for (const waiter of this.idleWaiters) {
+      if (this.#isIdle(waiter.group))
+        waiter.resolve();
+      else
+        pending.push(waiter);
+    }
+    this.idleWaiters = pending;
+  }
+}
+var BACKGROUND_TASKS_ENV = "__async_background_tasks__";
+var BACKGROUND_ERRORS_ENV = "__async_background_errors__";
+var asyncResources = new WeakMap;
+function registerAsyncResource(context, resource, close) {
+  if (!context || !resource || typeof close !== "function")
+    return resource;
+  let resources = asyncResources.get(context);
+  if (!resources) {
+    resources = new Map;
+    asyncResources.set(context, resources);
+  }
+  resources.set(resource, close);
+  return resource;
+}
+function unregisterAsyncResource(context, resource) {
+  const resources = asyncResources.get(context);
+  if (!resources)
+    return false;
+  const removed = resources.delete(resource);
+  if (resources.size === 0)
+    asyncResources.delete(context);
+  return removed;
+}
+async function disposeAsyncResources(context, reason = { kind: "session shutdown" }) {
+  const resources = asyncResources.get(context);
+  if (!resources || resources.size === 0)
+    return [];
+  asyncResources.delete(context);
+  const failures = [];
+  for (const [resource, close] of [...resources].reverse()) {
+    try {
+      await close(resource, reason);
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  return failures;
+}
+function registerBackgroundTask(context, task) {
+  const tasks = context.getEnv(BACKGROUND_TASKS_ENV, new Set);
+  context.setEnv(BACKGROUND_TASKS_ENV, tasks);
+  tasks.add(task);
+  task.then(() => tasks.delete(task), () => tasks.delete(task));
+  return task;
+}
+
+// ../rix/src/runtime/async-stream.js
+var nextStreamId = 1;
+function abortError(signal) {
+  return signal?.reason || Object.assign(new Error("Async stream operation cancelled"), { kind: "cancellation" });
+}
+function positiveInteger(value, label, { allowZero = false } = {}) {
+  let number;
+  if (value instanceof Integer)
+    number = Number(value.value);
+  else if (typeof value === "bigint")
+    number = Number(value);
+  else
+    number = Number(value);
+  const minimum = allowZero ? 0 : 1;
+  if (!Number.isSafeInteger(number) || number < minimum) {
+    throw new Error(`${label} must be a ${allowZero ? "non-negative" : "positive"} safe integer`);
+  }
+  return number;
+}
+function rixSequence(values) {
+  return { type: "sequence", values, _ext: new Map([["_mutable", new Integer(1n)]]) };
+}
+function createRoot(options) {
+  const root = {
+    id: nextStreamId++,
+    label: options.label || "stream",
+    finite: options.finite === true,
+    status: "open",
+    pulled: 0,
+    closeCount: 0,
+    terminalOwner: null,
+    pullTail: Promise.resolve(),
+    nextImpl: options.next,
+    closeImpl: options.close || (() => {
+      return;
+    }),
+    inspect: options.inspect || null,
+    closePromise: null
+  };
+  if (typeof root.nextImpl !== "function")
+    throw new Error("Async stream requires a Next implementation");
+  return root;
+}
+function isAsyncStream(value) {
+  return Boolean(value && value.type === "async_stream" && value._stream?.root);
+}
+function createAsyncStream(options) {
+  return {
+    type: "async_stream",
+    _stream: {
+      id: nextStreamId++,
+      root: createRoot(options),
+      stages: [],
+      finite: options.finite === true,
+      label: options.label || "stream"
+    },
+    _ext: options.ext ? new Map(options.ext) : new Map
+  };
+}
+function derive(source, stage, options = {}) {
+  if (!isAsyncStream(source))
+    throw new Error("Expected an async stream");
+  return {
+    type: "async_stream",
+    _stream: {
+      id: nextStreamId++,
+      root: source._stream.root,
+      stages: [...source._stream.stages, stage],
+      finite: options.finite ?? source._stream.finite,
+      label: options.label || `${source._stream.label}.${stage.kind}`
+    },
+    _ext: new Map
+  };
+}
+function mapAsyncStream(source, mapper) {
+  return derive(source, { kind: "map", callable: mapper });
+}
+function filterAsyncStream(source, predicate) {
+  return derive(source, { kind: "filter", callable: predicate });
+}
+function takeAsyncStream(source, countValue) {
+  const count = positiveInteger(countValue, "Stream Take count", { allowZero: true });
+  return derive(source, { kind: "take", count, seen: 0 }, { finite: true });
+}
+function dropAsyncStream(source, countValue) {
+  const count = positiveInteger(countValue, "Stream Drop count", { allowZero: true });
+  return derive(source, { kind: "drop", count, seen: 0 });
+}
+function chunkAsyncStream(source, sizeValue) {
+  const size = positiveInteger(sizeValue, "Stream Chunk size");
+  return derive(source, { kind: "chunk", size, buffer: [] });
+}
+function windowAsyncStream(source, sizeValue, stepValue = new Integer(1n)) {
+  const size = positiveInteger(sizeValue, "Stream Window size");
+  const step = positiveInteger(stepValue, "Stream Window step");
+  return derive(source, { kind: "window", size, step, buffer: [], sinceEmit: 0 });
+}
+function asyncStreamSupportsConcurrentItems(stream) {
+  return isAsyncStream(stream) && stream._stream.stages.every((stage) => stage.kind === "map" || stage.kind === "filter");
+}
+function asyncStreamCanCompleteWithoutPull(stream) {
+  return isAsyncStream(stream) && stream._stream.stages.some((stage) => stage.kind === "take" && stage.seen >= stage.count);
+}
+function claimAsyncStream(stream) {
+  if (!isAsyncStream(stream))
+    throw new Error("Expected an async stream");
+  const root = stream._stream.root;
+  if (root.terminalOwner !== null && root.terminalOwner !== stream._stream.id) {
+    throw new Error("Async streams are linear and cannot be consumed by two derived handles");
+  }
+  root.terminalOwner = stream._stream.id;
+}
+async function closeAsyncStream(stream, reason = null) {
+  if (!isAsyncStream(stream))
+    throw new Error("Expected an async stream");
+  const root = stream._stream.root;
+  if (root.closePromise)
+    return root.closePromise;
+  const terminalStatus = root.status === "done" || root.status === "faulted" ? root.status : null;
+  root.status = terminalStatus || "closing";
+  root.closeCount++;
+  root.closePromise = Promise.resolve().then(() => root.closeImpl(reason)).then(() => {
+    root.status = terminalStatus || "closed";
+    return null;
+  }, (error) => {
+    root.status = "faulted";
+    throw error;
+  });
+  return root.closePromise;
+}
+function asyncStreamStatus(stream) {
+  if (!isAsyncStream(stream))
+    throw new Error("Expected an async stream");
+  const root = stream._stream.root;
+  const entries = new Map([
+    ["label", { type: "string", value: stream._stream.label }],
+    ["status", { type: "string", value: root.status }],
+    ["pulled", new Integer(BigInt(root.pulled))],
+    ["finite", root.finite || stream._stream.finite ? new Integer(1n) : null]
+  ]);
+  if (typeof root.inspect === "function") {
+    const extra = root.inspect();
+    for (const [key, value] of Object.entries(extra || {})) {
+      entries.set(key, typeof value === "number" ? new Integer(BigInt(value)) : value);
+    }
+  }
+  return { type: "map", entries };
+}
+function asyncStreamDone(stream) {
+  const status = stream?._stream?.root?.status;
+  return status === "done" || status === "closed" || status === "faulted";
+}
+async function pullRawAsyncStream(stream, signal = null) {
+  if (!isAsyncStream(stream))
+    throw new Error("Expected an async stream");
+  const root = stream._stream.root;
+  if (signal?.aborted)
+    throw abortError(signal);
+  if (root.status === "done" || root.status === "closed")
+    return { done: true };
+  if (root.status === "faulted")
+    throw new Error(`Async stream '${root.label}' is faulted`);
+  const operation = root.pullTail.then(async () => {
+    if (signal?.aborted)
+      throw abortError(signal);
+    if (root.status !== "open")
+      return { done: true };
+    let result;
+    try {
+      result = await root.nextImpl(signal);
+    } catch (error) {
+      if (signal?.aborted)
+        throw abortError(signal);
+      root.status = "faulted";
+      throw error;
+    }
+    if (!result || result.done === true) {
+      root.status = "done";
+      await closeAsyncStream(stream, { kind: "complete" });
+      return { done: true };
+    }
+    root.pulled++;
+    return { done: false, value: result.value, sourceIndex: root.pulled };
+  });
+  root.pullTail = operation.catch(() => {});
+  return operation;
+}
+async function applyStage(stage, values, stream, execution) {
+  if (stage.kind === "map") {
+    const mapped = [];
+    for (const entry of values) {
+      mapped.push(await execution.invoke(stage.callable, [entry, new Integer(BigInt(execution.sourceIndex)), stream]));
+    }
+    return { values: mapped, stop: false };
+  }
+  if (stage.kind === "filter") {
+    const kept = [];
+    for (const entry of values) {
+      const result = await execution.invoke(stage.callable, [entry, new Integer(BigInt(execution.sourceIndex)), stream]);
+      if (result !== null && result !== undefined)
+        kept.push(entry);
+    }
+    return { values: kept, stop: false };
+  }
+  if (stage.kind === "drop") {
+    const kept = [];
+    for (const entry of values) {
+      stage.seen++;
+      if (stage.seen > stage.count)
+        kept.push(entry);
+    }
+    return { values: kept, stop: false };
+  }
+  if (stage.kind === "take") {
+    const kept = [];
+    let stop = false;
+    for (const entry of values) {
+      if (stage.seen >= stage.count) {
+        stop = true;
+        break;
+      }
+      stage.seen++;
+      kept.push(entry);
+      if (stage.seen >= stage.count)
+        stop = true;
+    }
+    return { values: kept, stop };
+  }
+  if (stage.kind === "chunk") {
+    const emitted = [];
+    for (const entry of values) {
+      stage.buffer.push(entry);
+      if (stage.buffer.length === stage.size) {
+        emitted.push(rixSequence(stage.buffer));
+        stage.buffer = [];
+      }
+    }
+    return { values: emitted, stop: false };
+  }
+  if (stage.kind === "window") {
+    const emitted = [];
+    for (const entry of values) {
+      stage.buffer.push(entry);
+      if (stage.buffer.length > stage.size)
+        stage.buffer.shift();
+      stage.sinceEmit++;
+      if (stage.buffer.length === stage.size && stage.sinceEmit >= stage.step) {
+        emitted.push(rixSequence([...stage.buffer]));
+        stage.sinceEmit = 0;
+      }
+    }
+    return { values: emitted, stop: false };
+  }
+  throw new Error(`Unknown async stream stage '${stage.kind}'`);
+}
+async function processAsyncStreamItem(stream, raw, execution) {
+  let values = [raw.value];
+  let stop = false;
+  const stageExecution = { ...execution, sourceIndex: raw.sourceIndex };
+  for (const stage of stream._stream.stages) {
+    const result = await applyStage(stage, values, stream, stageExecution);
+    values = result.values;
+    stop ||= result.stop;
+    if (values.length === 0 && !stop)
+      break;
+  }
+  return { values, stop, sourceIndex: raw.sourceIndex };
+}
+async function flushAsyncStreamStages(stream, execution) {
+  const stages = stream._stream.stages;
+  const values = [];
+  for (let index = 0;index < stages.length; index++) {
+    const stage = stages[index];
+    if (stage.kind !== "chunk" || stage.buffer.length === 0)
+      continue;
+    let pending = [rixSequence(stage.buffer)];
+    stage.buffer = [];
+    for (let tail = index + 1;tail < stages.length; tail++) {
+      const result = await applyStage(stages[tail], pending, stream, { ...execution, sourceIndex: execution.sourceIndex || 0 });
+      pending = result.values;
+    }
+    values.push(...pending);
+  }
+  return values;
+}
+async function consumeAsyncStreamSequential(stream, terminal, execution) {
+  let result = terminal.kind === "collect" ? [] : terminal.initial;
+  let count = 0;
+  let reason = { kind: "complete" };
+  let primary = null;
+  let claimed = false;
+  try {
+    claimAsyncStream(stream);
+    claimed = true;
+    if (terminal.kind === "count" && !stream._stream.finite && terminal.bound === null) {
+      throw new Error("Count requires a finite or explicitly bounded async stream");
+    }
+    if (terminal.bound === 0 || asyncStreamCanCompleteWithoutPull(stream)) {
+      if (terminal.kind === "collect")
+        return rixSequence([]);
+      if (terminal.kind === "count")
+        return new Integer(0n);
+      if (terminal.kind === "forEach" || terminal.kind === "first" || terminal.kind === "find")
+        return null;
+      return result;
+    }
+    while (true) {
+      const raw = await pullRawAsyncStream(stream, execution.signal);
+      if (raw.done)
+        break;
+      const processed = await processAsyncStreamItem(stream, raw, execution);
+      for (const value of processed.values) {
+        count++;
+        if (terminal.kind === "collect")
+          result.push(value);
+        else if (terminal.kind === "forEach")
+          await execution.invoke(terminal.callable, [value, new Integer(BigInt(count)), stream]);
+        else if (terminal.kind === "reduce")
+          result = await execution.invoke(terminal.callable, [result, value, new Integer(BigInt(count)), stream]);
+        else if (terminal.kind === "first")
+          return value;
+        else if (terminal.kind === "find") {
+          const match = await execution.invoke(terminal.callable, [value, new Integer(BigInt(count)), stream]);
+          if (match !== null && match !== undefined)
+            return value;
+        }
+        if (terminal.bound !== null && count >= terminal.bound) {
+          if (terminal.kind === "collect")
+            return rixSequence(result);
+          if (terminal.kind === "count")
+            return new Integer(BigInt(count));
+          return result;
+        }
+      }
+      if (processed.stop)
+        break;
+    }
+    const flushed = await flushAsyncStreamStages(stream, execution);
+    for (const value of flushed) {
+      count++;
+      if (terminal.kind === "collect")
+        result.push(value);
+      else if (terminal.kind === "forEach")
+        await execution.invoke(terminal.callable, [value, new Integer(BigInt(count)), stream]);
+      else if (terminal.kind === "reduce")
+        result = await execution.invoke(terminal.callable, [result, value, new Integer(BigInt(count)), stream]);
+      else if (terminal.kind === "first")
+        return value;
+    }
+    if (terminal.kind === "collect")
+      return rixSequence(result);
+    if (terminal.kind === "count")
+      return new Integer(BigInt(count));
+    if (terminal.kind === "forEach")
+      return null;
+    if (terminal.kind === "first" || terminal.kind === "find")
+      return null;
+    return result;
+  } catch (error) {
+    reason = error;
+    primary = error;
+    throw error;
+  } finally {
+    if (claimed) {
+      try {
+        await closeAsyncStream(stream, reason);
+      } catch (cleanupError) {
+        if (!primary)
+          throw cleanupError;
+        const existing = Array.isArray(primary.suppressed) ? primary.suppressed : [];
+        primary.suppressed = [...existing, cleanupError];
+      }
+    }
+  }
+}
+function iterableValues(value) {
+  if (value?.type === "map" && value.entries instanceof Map)
+    return [...value.entries.values()];
+  if (value?.type === "string")
+    return Array.from(value.value).map((entry) => ({ type: "string", value: entry }));
+  if (value && Array.isArray(value.values))
+    return [...value.values];
+  if (Array.isArray(value))
+    return [...value];
+  if (value && typeof value[Symbol.iterator] === "function")
+    return [...value];
+  throw new Error(".Stream expects a finite iterable collection or a host async iterable");
+}
+function asyncStreamFromIterable(source, options = {}) {
+  if (source && typeof source[Symbol.asyncIterator] === "function") {
+    const iterator = source[Symbol.asyncIterator]();
+    return createAsyncStream({
+      label: options.label || "async iterable",
+      finite: options.finite === true,
+      next: (signal) => iterator.next(signal),
+      close: (reason) => iterator.return?.(reason)
+    });
+  }
+  const values = iterableValues(source);
+  let index = 0;
+  return createAsyncStream({
+    label: options.label || "iterable",
+    finite: true,
+    async next(signal) {
+      if (signal?.aborted)
+        throw abortError(signal);
+      if (index >= values.length)
+        return { done: true };
+      return { done: false, value: values[index++] };
+    }
+  });
+}
+var asyncStreamCapabilities = {
+  STREAM: {
+    impl(args, context) {
+      const stream = asyncStreamFromIterable(args[0], {
+        label: args[1]?.type === "string" ? args[1].value : "collection stream"
+      });
+      registerAsyncResource(context, stream._stream.root, (_root, reason) => closeAsyncStream(stream, reason));
+      return stream;
+    },
+    doc: "Create a cold, pull-based async stream from a finite collection",
+    groups: ["Collections", "Async"]
+  }
+};
+var asyncStreamMethodHelpers = {
+  positiveInteger,
+  mapAsyncStream,
+  filterAsyncStream,
+  takeAsyncStream,
+  dropAsyncStream,
+  chunkAsyncStream,
+  windowAsyncStream,
+  closeAsyncStream,
+  asyncStreamStatus,
+  asyncStreamDone
+};
+
 // ../rix/src/eval/functions/functions.js
 var isTruthy = (val) => val !== null && val !== undefined;
 function callableValue(value) {
@@ -9190,6 +10052,9 @@ function callWithConcreteArgs(fn, callArgs, context, evaluate) {
     const { fn: innerFn, args } = resolvePartial(fn, callArgs);
     return callWithConcreteArgs(innerFn, args, context, evaluate);
   }
+  if (fn.type === "method_lift") {
+    return fn.invokeSync(callArgs, context, evaluate);
+  }
   if (isSymbolicSpec(fn)) {
     return applySymbolicSpec(fn, callArgs);
   }
@@ -9224,6 +10089,9 @@ function invokeTraversalCallback(func, callArgs, context, evaluate) {
   if (func && func.type === "partial") {
     const maxIdx = func.template.reduce((max, t) => t && t.type === "placeholder" ? Math.max(max, t.index) : max, 0);
     return callWithConcreteArgs(func, callArgs.slice(0, maxIdx), context, evaluate);
+  }
+  if (func && func.type === "method_lift") {
+    return callWithConcreteArgs(func, [callArgs[0]], context, evaluate);
   }
   if (func && func.type === "sysref") {
     return evaluate({ fn: func.name, args: callArgs });
@@ -9926,6 +10794,9 @@ var functionFunctions = {
       if (collection === null || collection === undefined)
         return null;
       const func = evaluate(funcNode);
+      if (isAsyncStream(collection)) {
+        return mapAsyncStream(collection, func);
+      }
       if (isLazySequence(collection)) {
         return mapLazySequence(collection, (item, index, source) => invokeTraversalCallback(func, [item, new Integer(BigInt(index)), source], context, evaluate));
       }
@@ -9992,6 +10863,9 @@ var functionFunctions = {
       if (collection === null || collection === undefined)
         return null;
       const func = evaluate(funcNode);
+      if (isAsyncStream(collection)) {
+        return filterAsyncStream(collection, func);
+      }
       if (isLazySequence(collection)) {
         return filterLazySequence(collection, (item, index, source) => isTruthy(invokeTraversalCallback(func, [item, new Integer(BigInt(index)), source], context, evaluate)));
       }
@@ -10718,6 +11592,7 @@ function registerBuiltinSemanticTypes() {
     ["Map", "map", ["maplike"], (value) => value?.type === "map" ? value : null],
     ["Set", "set", ["collection"], (value) => value?.type === "set" ? value : null],
     ["Iterator", "iterator", [], (value) => value?.type === "iterator" ? value : null],
+    ["AsyncStream", "async_stream", [], (value) => value?.type === "async_stream" ? value : null],
     ["Function", "function", [], (value) => value?.type === "function" || value?.type === "lambda" ? value : null],
     ["Multifunction", "multifunction", [], (value) => value?._ext?.get("_type")?.value === "multifunction" ? value : null],
     ["Null", "null", [], (value) => value === null ? value : null],
@@ -14156,6 +15031,64 @@ var lazySequenceMethods = {
   }),
   MATERIALIZE: method2("MATERIALIZE", ([target]) => materializeLazySequence(target))
 };
+function requireAsyncStreamExecution(execution, methodName) {
+  if (!execution?.consume) {
+    throw new Error(`Async stream ${methodName} requires promise-aware RiX evaluation`);
+  }
+  return execution;
+}
+function optionalBound(value, label) {
+  if (value === undefined || value === null)
+    return null;
+  return asyncStreamMethodHelpers.positiveInteger(value, label, { allowZero: true });
+}
+var asyncStreamMethods = {
+  MAP: method2("MAP", ([target, mapper]) => asyncStreamMethodHelpers.mapAsyncStream(target, mapper)),
+  FILTER: method2("FILTER", ([target, predicate]) => asyncStreamMethodHelpers.filterAsyncStream(target, predicate)),
+  TAKE: method2("TAKE", ([target, count]) => asyncStreamMethodHelpers.takeAsyncStream(target, count)),
+  DROP: method2("DROP", ([target, count]) => asyncStreamMethodHelpers.dropAsyncStream(target, count)),
+  CHUNK: method2("CHUNK", ([target, size]) => asyncStreamMethodHelpers.chunkAsyncStream(target, size)),
+  WINDOW: method2("WINDOW", ([target, size, step]) => asyncStreamMethodHelpers.windowAsyncStream(target, size, step)),
+  FOREACH: method2("FOREACH", ([target, callable], _context, _evaluate, _invoke, execution) => requireAsyncStreamExecution(execution, "ForEach").consume(target, {
+    kind: "forEach",
+    callable,
+    initial: null,
+    bound: null
+  })),
+  REDUCE: method2("REDUCE", ([target, initial, callable], _context, _evaluate, _invoke, execution) => requireAsyncStreamExecution(execution, "Reduce").consume(target, {
+    kind: "reduce",
+    callable,
+    initial,
+    bound: null
+  })),
+  COLLECT: method2("COLLECT", ([target, bound], _context, _evaluate, _invoke, execution) => requireAsyncStreamExecution(execution, "Collect").consume(target, {
+    kind: "collect",
+    callable: null,
+    initial: null,
+    bound: optionalBound(bound, "Collect bound")
+  })),
+  FIRST: method2("FIRST", ([target], _context, _evaluate, _invoke, execution) => requireAsyncStreamExecution(execution, "First").consume(target, {
+    kind: "first",
+    callable: null,
+    initial: null,
+    bound: 1
+  })),
+  FIND: method2("FIND", ([target, callable], _context, _evaluate, _invoke, execution) => requireAsyncStreamExecution(execution, "Find").consume(target, {
+    kind: "find",
+    callable,
+    initial: null,
+    bound: null
+  })),
+  COUNT: method2("COUNT", ([target, bound], _context, _evaluate, _invoke, execution) => requireAsyncStreamExecution(execution, "Count").consume(target, {
+    kind: "count",
+    callable: null,
+    initial: null,
+    bound: optionalBound(bound, "Count bound")
+  })),
+  CLOSE: method2("CLOSE", ([target, reason]) => asyncStreamMethodHelpers.closeAsyncStream(target, reason)),
+  DONE: method2("DONE", ([target]) => bool(asyncStreamMethodHelpers.asyncStreamDone(target))),
+  STATUS: method2("STATUS", ([target]) => asyncStreamMethodHelpers.asyncStreamStatus(target))
+};
 var iterableMethods = {
   ITERATOR: method2("ITERATOR", ([target]) => createCollectionIterator(target))
 };
@@ -14835,6 +15768,7 @@ var PROTOS = new Map([
   ["structural_value", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(structuralMethods)])],
   ["sequence", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iterableMethods), ...Object.entries(arrayMethods)])],
   ["lazy_sequence", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iterableMethods), ...Object.entries(lazySequenceMethods)])],
+  ["async_stream", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(asyncStreamMethods)])],
   ["map", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iterableMethods), ...Object.entries(mapMethods)])],
   ["set", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iterableMethods), ...Object.entries(setMethods)])],
   ["string", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iterableMethods), ...Object.entries(stringMethods)])],
@@ -14872,7 +15806,7 @@ var PROTOS = new Map([
   ])]
 ]);
 function isCallableValue(value) {
-  return typeof value === "function" || value && (value.type === "function" || value.type === "lambda" || value.type === "sysref" || value.type === "partial" || value.type === "arityCap" || value.type === "method_builtin") || isUnitValue(value) || isExactValue(value);
+  return typeof value === "function" || value && (value.type === "function" || value.type === "lambda" || value.type === "sysref" || value.type === "partial" || value.type === "arityCap" || value.type === "method_lift" || value.type === "method_builtin") || isUnitValue(value) || isExactValue(value);
 }
 function ensureCallableMethod(value, name) {
   if (!isCallableValue(value)) {
@@ -18203,6 +19137,10 @@ function formatValue(val, options = {}) {
       const suffix = length === null ? "" : `; length ${length}`;
       return `[LazySequence${suffix}: ${cached}${more}]`;
     }
+    if (isAsyncStream(val)) {
+      const root = val._stream.root;
+      return `[AsyncStream ${val._stream.label}; ${root.status}; pulled ${root.pulled}]`;
+    }
     if (val.type === "iterator") {
       return val.cursor === null ? "[Iterator: done]" : `[Iterator: index ${val.cursor}]`;
     }
@@ -18272,6 +19210,9 @@ function formatValue(val, options = {}) {
     if (val.type === "partial") {
       const arity = (val.template || []).reduce((max, templateValue) => templateValue && templateValue.type === "placeholder" ? Math.max(max, templateValue.index) : max, 0);
       return `[Partial: ${arity}]`;
+    }
+    if (val.type === "method_lift") {
+      return `[..${val.methodName}]`;
     }
     if (val.type === "interval") {
       return `${val.start || val.lo}:${val.end || val.hi}`;
@@ -18730,6 +19671,10 @@ var LOWERERS = {
   MethodCall(node) {
     const args = lowerCallArgs(node.arguments);
     return ir2("CALL_METHOD", lowerNode(node.object), node.method, ...args);
+  },
+  MethodLift(node) {
+    const args = lowerCallArgs(node.arguments);
+    return ir2("METHOD_LIFT", node.method, ...args);
   },
   PreparedTrial(node) {
     const gates = (node.gates || []).map((gate) => ({
@@ -20896,91 +21841,6 @@ class Context {
   }
 }
 
-// ../rix/src/runtime/operational-fault.js
-class OperationalFault extends Error {
-  constructor(message, options = {}) {
-    super(message, options.cause ? { cause: options.cause } : undefined);
-    this.name = "OperationalFault";
-    this.kind = "fault";
-    this.code = options.code || "OPERATIONAL_FAULT";
-    this.data = options.data ?? null;
-  }
-}
-
-class TimeoutFault extends OperationalFault {
-  constructor(timeoutSeconds, options = {}) {
-    super(`Async scope timed out after ${timeoutSeconds} seconds`, {
-      ...options,
-      code: "ASYNC_TIMEOUT",
-      data: options.data ?? { timeoutSeconds }
-    });
-    this.name = "TimeoutFault";
-    this.timeoutSeconds = timeoutSeconds;
-  }
-}
-
-class CleanupGraceFault extends OperationalFault {
-  constructor(graceMs, options = {}) {
-    super(`Async cleanup exceeded its ${graceMs}ms grace period`, {
-      ...options,
-      code: "ASYNC_CLEANUP_GRACE_EXCEEDED",
-      data: options.data ?? { graceMs }
-    });
-    this.name = "CleanupGraceFault";
-    this.graceMs = graceMs;
-  }
-}
-function isOperationalFault(error) {
-  return error instanceof OperationalFault || error?.kind === "fault";
-}
-function dataToRixValue(value, seen = new WeakSet) {
-  if (value === null || value === undefined)
-    return null;
-  if (value instanceof Integer || value?.type)
-    return value;
-  if (typeof value === "string")
-    return { type: "string", value };
-  if (typeof value === "boolean")
-    return new Integer(value ? 1n : 0n);
-  if (typeof value === "bigint")
-    return new Integer(value);
-  if (typeof value === "number" && Number.isSafeInteger(value)) {
-    return new Integer(BigInt(value));
-  }
-  if (Array.isArray(value)) {
-    if (seen.has(value))
-      return { type: "string", value: "[circular]" };
-    seen.add(value);
-    return { type: "sequence", values: value.map((entry) => dataToRixValue(entry, seen)) };
-  }
-  if (typeof value === "object") {
-    if (seen.has(value))
-      return { type: "string", value: "[circular]" };
-    seen.add(value);
-    return {
-      type: "map",
-      entries: new Map(Object.entries(value).map(([key, entry]) => [
-        key,
-        dataToRixValue(entry, seen)
-      ]))
-    };
-  }
-  return { type: "string", value: String(value) };
-}
-function faultToRixValue(error) {
-  const entries2 = new Map([
-    ["code", { type: "string", value: error?.code || "OPERATIONAL_FAULT" }],
-    ["message", { type: "string", value: error?.message || "Operational fault" }]
-  ]);
-  if (error instanceof TimeoutFault || Number.isFinite(error?.timeoutSeconds)) {
-    entries2.set("timeout", new Integer(BigInt(Math.trunc(error.timeoutSeconds))));
-  }
-  if (error?.data !== null && error?.data !== undefined) {
-    entries2.set("data", dataToRixValue(error.data));
-  }
-  return { type: "map", entries: entries2 };
-}
-
 // ../rix/src/runtime/finalization.js
 function attachSuppressed(primary, errors) {
   if (!primary || errors.length === 0)
@@ -22114,6 +22974,8 @@ class Parser {
       return true;
     if (node.type === "FunctionLambda")
       return true;
+    if (node.type === "MethodLift")
+      return true;
     if (node.type === "ImplicitApplication")
       return true;
     if (node.type === "FunctionCall")
@@ -22401,6 +23263,28 @@ class Parser {
           return this.parseUnaryOperator();
         } else if (token2.value === "'") {
           return this.parseIntegral();
+        } else if (token2.value === "..") {
+          this.advance();
+          if (this.current.type !== "Identifier") {
+            this.error("Expected a method name after prefix '..'");
+          }
+          const method5 = this.parseMethodName();
+          let arguments_ = { positional: [], keyword: {} };
+          let end = this.current.pos?.[0] ?? token2.pos?.[2];
+          if (this.current.value === "(") {
+            this.advance();
+            arguments_ = this.parseFunctionCallArgs();
+            if (this.current.value !== ")")
+              this.error("Expected closing parenthesis in method lift");
+            end = this.current.pos[2];
+            this.advance();
+          }
+          return this.createNode("MethodLift", {
+            method: method5.name,
+            arguments: arguments_,
+            pos: [token2.pos[0], token2.pos[1], end],
+            original: this.source.slice(token2.pos[0], end)
+          });
         } else if (token2.value === ".") {
           this.advance();
           if (this.current.type === "Identifier") {
@@ -28199,6 +29083,9 @@ function evaluateArgs2(argNodes, evaluate) {
   }
   return evaluatedArgs;
 }
+function isPromiseLike2(value) {
+  return value && typeof value.then === "function";
+}
 var methodFunctions = {
   CUSTOM_OPERATOR: {
     impl(args, context, evaluate, systemContext) {
@@ -28243,12 +29130,37 @@ var methodFunctions = {
         ensureMutableReceiver(target);
       }
       const fn = resolveMethod(target, methodName);
-      if (fn?.type === "method_builtin") {
-        return fn.impl([target, ...callArgs], context, evaluate, callWithConcreteArgs);
+      const result = fn?.type === "method_builtin" ? fn.impl([target, ...callArgs], context, evaluate, callWithConcreteArgs) : callWithConcreteArgs(fn, [target, ...callArgs], context, evaluate);
+      if (isPromiseLike2(result)) {
+        result.catch(() => {});
+        throw new Error(`Method ${methodName} requires promise-aware RiX evaluation`);
       }
-      return callWithConcreteArgs(fn, [target, ...callArgs], context, evaluate);
+      return result;
     },
     doc: "Resolve and invoke a receiver-first method call"
+  },
+  METHOD_LIFT: {
+    impl(args) {
+      const [methodName, ...capturedArgs] = args;
+      return {
+        type: "method_lift",
+        methodName,
+        capturedArgs,
+        invokeSync(callArgs, context, evaluate) {
+          if (callArgs.length < 1)
+            throw new Error(`..${methodName} requires a receiver`);
+          const target = callArgs[0];
+          const fn = resolveMethod(target, methodName);
+          const result = fn?.type === "method_builtin" ? fn.impl([target, ...capturedArgs], context, evaluate, callWithConcreteArgs) : callWithConcreteArgs(fn, [target, ...capturedArgs], context, evaluate);
+          if (isPromiseLike2(result)) {
+            result.catch(() => {});
+            throw new Error(`..${methodName} requires promise-aware RiX evaluation`);
+          }
+          return result;
+        }
+      };
+    },
+    doc: "Create a receiver-first callable from prefix ..Method syntax"
   }
 };
 
@@ -29782,13 +30694,13 @@ function methods() {
 function isReactiveSource(value) {
   return Boolean(value && typeof value.subscribe === "function");
 }
-function createLiveView(source, derive, options = {}) {
+function createLiveView(source, derive2, options = {}) {
   if (!isReactiveSource(source)) {
     throw new Error("LiveView source must support subscriptions, such as a FormulaSheet or Binding");
   }
-  if (typeof derive !== "function")
+  if (typeof derive2 !== "function")
     throw new Error("LiveView requires a derivation function");
-  let current = derive(source);
+  let current = derive2(source);
   let revision = 0;
   let error = null;
   let disposed = false;
@@ -29813,7 +30725,7 @@ function createLiveView(source, derive, options = {}) {
     }
     const previous = current;
     try {
-      current = derive(source);
+      current = derive2(source);
       revision += 1;
       error = null;
       const event = Object.freeze({
@@ -30424,7 +31336,7 @@ var liveViewFunction = {
     if (!deferred || deferred.fn !== "DEFER") {
       throw new Error(".LiveView derivation must use deferred syntax @{ ... }");
     }
-    const derive = () => {
+    const derive2 = () => {
       const sourceGraph = isReactiveNode(source) ? source.graph : source?.graph?.type === "reactive_graph" ? source.graph : source;
       const bindings = typeof sourceGraph.bindings === "function" ? sourceGraph.bindings() : new Map;
       bindings.set("source", source);
@@ -30445,7 +31357,7 @@ var liveViewFunction = {
         context.pop();
       }
     };
-    return createLiveView(source, derive);
+    return createLiveView(source, derive2);
   }
 };
 var outFunction = {
@@ -32589,245 +33501,6 @@ function installUnitExactVariants(registry) {
   });
 }
 
-// ../rix/src/runtime/async-runtime.js
-class AsyncScheduler {
-  constructor(limit) {
-    if (!Number.isSafeInteger(limit) || limit < 1) {
-      throw new Error("Async concurrency limit must be a positive safe integer");
-    }
-    this.limit = limit;
-    this.active = 0;
-    this.queue = [];
-    this.cancelled = false;
-    this.cancelReason = null;
-    this.idleWaiters = [];
-    this.nextTaskId = 1;
-    this.nextObservationOrder = 1;
-    this.defaultGroup = this.createGroup(limit);
-  }
-  createGroup(limit = this.limit, parent = null) {
-    if (!Number.isSafeInteger(limit) || limit < 1) {
-      throw new Error("Async concurrency limit must be a positive safe integer");
-    }
-    const group = {
-      limit: Math.min(limit, parent?.limit ?? this.limit),
-      parent,
-      children: new Set,
-      inFlight: 0,
-      cancelled: false,
-      cancelReason: null,
-      primaryError: null,
-      suppressedErrors: [],
-      controller: new AbortController
-    };
-    group.signal = group.controller.signal;
-    parent?.children.add(group);
-    return group;
-  }
-  run(task, group = this.defaultGroup, options = {}) {
-    const cancellation = this.#cancellationFor(group);
-    if (cancellation)
-      return Promise.reject(cancellation);
-    return new Promise((resolve, reject) => {
-      const id = this.nextTaskId++;
-      this.queue.push({
-        kind: "task",
-        task,
-        resolve,
-        reject,
-        group,
-        path: options.path || `task ${id}`
-      });
-      this.#admit();
-    });
-  }
-  suspend(ticket) {
-    if (!ticket?.active)
-      return false;
-    ticket.active = false;
-    this.active--;
-    this.#adjustInFlight(ticket.group, -1);
-    this.#admit();
-    this.#notifyIdle();
-    return true;
-  }
-  resume(ticket) {
-    if (!ticket || ticket.active)
-      return Promise.resolve();
-    const cancellation = this.#cancellationFor(ticket.group);
-    if (cancellation)
-      return Promise.reject(cancellation);
-    return new Promise((resolve, reject) => {
-      this.queue.push({
-        kind: "resume",
-        ticket,
-        group: ticket.group,
-        resolve,
-        reject
-      });
-      this.#admit();
-    });
-  }
-  cancel(reason = new Error("Async scope cancelled")) {
-    if (this.cancelled)
-      return;
-    this.cancelled = true;
-    this.cancelReason = reason;
-    this.#abortGroupTree(this.defaultGroup, reason);
-    const queued = this.queue.splice(0);
-    for (const entry of queued)
-      entry.reject(reason);
-    this.#notifyIdle();
-  }
-  cancelGroup(group, reason = new Error("Async scope cancelled")) {
-    if (!group || group.cancelled)
-      return;
-    const cancelledGroups = new Set;
-    const markCancelled = (current) => {
-      if (current.cancelled)
-        return;
-      current.cancelled = true;
-      current.cancelReason = reason;
-      current.controller.abort(reason);
-      cancelledGroups.add(current);
-      for (const child of current.children)
-        markCancelled(child);
-    };
-    markCancelled(group);
-    const retained = [];
-    for (const entry of this.queue) {
-      if (cancelledGroups.has(entry.group))
-        entry.reject(reason);
-      else
-        retained.push(entry);
-    }
-    this.queue = retained;
-    this.#admit();
-    this.#notifyIdle();
-  }
-  waitForIdle(group = null) {
-    if (this.#isIdle(group))
-      return Promise.resolve();
-    return new Promise((resolve) => this.idleWaiters.push({ group, resolve }));
-  }
-  closeGroup(group) {
-    if (!group || !this.#isIdle(group))
-      return false;
-    group.parent?.children.delete(group);
-    return true;
-  }
-  #admit() {
-    while (!this.cancelled && this.active < this.limit && this.queue.length > 0) {
-      const index = this.queue.findIndex((entry2) => this.#canAdmit(entry2.group));
-      if (index < 0)
-        break;
-      const [entry] = this.queue.splice(index, 1);
-      this.active++;
-      this.#adjustInFlight(entry.group, 1);
-      if (entry.kind === "resume") {
-        entry.ticket.active = true;
-        entry.resolve();
-        continue;
-      }
-      const ticket = { group: entry.group, active: true };
-      Promise.resolve().then(() => entry.task(ticket)).then(entry.resolve, (error) => {
-        this.#observeFailure(entry.group, error, entry.path);
-        entry.reject(error);
-      }).finally(() => {
-        if (ticket.active) {
-          ticket.active = false;
-          this.active--;
-          this.#adjustInFlight(entry.group, -1);
-        }
-        this.#admit();
-        this.#notifyIdle();
-      });
-    }
-  }
-  #canAdmit(group) {
-    if (this.cancelled)
-      return false;
-    for (let current = group;current; current = current.parent) {
-      if (current.cancelled || current.inFlight >= current.limit)
-        return false;
-    }
-    return true;
-  }
-  #observeFailure(group, error, path) {
-    if (!error || typeof error !== "object")
-      error = new Error(String(error));
-    error.asyncTaskPath ??= path;
-    error.asyncObservationOrder ??= this.nextObservationOrder++;
-    error.asyncObservedAt ??= performance.now();
-    if (!group.primaryError) {
-      group.primaryError = error;
-      this.cancelGroup(group, error);
-      return;
-    }
-    if (error === group.primaryError || error === group.cancelReason)
-      return;
-    group.suppressedErrors.push(error);
-    const existing = Array.isArray(group.primaryError.suppressed) ? group.primaryError.suppressed : [];
-    group.primaryError.suppressed = [...existing, error];
-  }
-  #adjustInFlight(group, delta) {
-    for (let current = group;current; current = current.parent) {
-      current.inFlight += delta;
-    }
-  }
-  #cancellationFor(group) {
-    if (this.cancelled)
-      return this.cancelReason;
-    for (let current = group;current; current = current.parent) {
-      if (current.cancelled)
-        return current.cancelReason;
-    }
-    return null;
-  }
-  #abortGroupTree(group, reason) {
-    if (!group)
-      return;
-    group.cancelled = true;
-    group.cancelReason = reason;
-    group.controller.abort(reason);
-    for (const child of group.children)
-      this.#abortGroupTree(child, reason);
-  }
-  #isDescendant(group, ancestor) {
-    for (let current = group;current; current = current.parent) {
-      if (current === ancestor)
-        return true;
-    }
-    return false;
-  }
-  #isIdle(group) {
-    if (!group)
-      return this.active === 0 && this.queue.length === 0;
-    if (group.inFlight !== 0)
-      return false;
-    return !this.queue.some((entry) => this.#isDescendant(entry.group, group));
-  }
-  #notifyIdle() {
-    const pending = [];
-    for (const waiter of this.idleWaiters) {
-      if (this.#isIdle(waiter.group))
-        waiter.resolve();
-      else
-        pending.push(waiter);
-    }
-    this.idleWaiters = pending;
-  }
-}
-var BACKGROUND_TASKS_ENV = "__async_background_tasks__";
-var BACKGROUND_ERRORS_ENV = "__async_background_errors__";
-function registerBackgroundTask(context, task) {
-  const tasks = context.getEnv(BACKGROUND_TASKS_ENV, new Set);
-  context.setEnv(BACKGROUND_TASKS_ENV, tasks);
-  tasks.add(task);
-  task.then(() => tasks.delete(task), () => tasks.delete(task));
-  return task;
-}
-
 // ../rix/src/eval/evaluator.js
 var POSTFIX_CHECK_VALUE_ENV = "__postfix_check_value__";
 function formatCheckValue(value) {
@@ -33059,6 +33732,7 @@ function createDefaultSystemContext(options = {}) {
   ctx.registerAll(outputFunctions);
   ctx.registerAll(formulaSheetFunctions);
   ctx.registerAll(reactiveGraphFunctions);
+  ctx.register("Stream", asyncStreamCapabilities.STREAM);
   const sArith = sArithCapability.create();
   ctx.registerCallableValue("SArith", sArith.value, sArith.definition, {
     doc: sArith.definition.doc,
@@ -33732,6 +34406,9 @@ function deepCopyDetachedValue(value, seen = new WeakMap) {
   if (isReactiveNode(value)) {
     throw new Error("Reactive cells must use alias imports in detached blocks");
   }
+  if (isAsyncStream(value)) {
+    throw new Error("Async streams cannot be copied into detached blocks; create the stream inside the block");
+  }
   if (value.type === "function" || value.type === "lambda") {
     const clone = { ...value };
     seen.set(value, clone);
@@ -33916,6 +34593,11 @@ async function invokeCallableAsync(fn, callArgs, context, registry, systemContex
     const resolved = resolvePartialAsync(fn, callArgs);
     return invokeCallableAsync(resolved.fn, resolved.args, context, registry, systemContext, state);
   }
+  if (fn.type === "method_lift") {
+    if (callArgs.length < 1)
+      throw new Error(`..${fn.methodName} requires a receiver`);
+    return invokeMethodAsync(callArgs[0], fn.methodName, fn.capturedArgs, context, registry, systemContext, state);
+  }
   if (fn.type === "function" || fn.type === "lambda") {
     return invokeUserCallableAsync(fn, callArgs, context, registry, systemContext, state);
   }
@@ -33936,6 +34618,14 @@ function withAsyncItemFinalizers(context, callback) {
   return withFinalizerActivationAsync(context, callback, {
     graceMs: context.getEnv("asyncCleanupGraceMs", runtimeDefaults.asyncCleanupGraceMs)
   });
+}
+function childBranchState(state, index) {
+  return { ...state, branchPath: [...state.branchPath || [], index] };
+}
+function asyncTaskPath(state, fallback = "item") {
+  const scope = state.name ? `scope ${state.name}` : "async scope";
+  const branch = (state.branchPath || []).map((index) => `branch ${index + 1}`).join(" / ");
+  return branch ? `${scope} / ${branch}` : `${scope} / ${fallback}`;
 }
 async function orderedAsyncMap(items, state, worker) {
   if (items.length === 0)
@@ -33963,6 +34653,177 @@ async function orderedAsyncMap(items, state, worker) {
   }
   return results;
 }
+function streamEarlyStop(reason = "terminal result") {
+  return Object.assign(new Error(`Async stream stopped after ${reason}`), {
+    kind: "cancellation",
+    streamEarlyStop: true
+  });
+}
+async function consumeAsyncStreamStructured(stream, terminal, context, registry, systemContext, state) {
+  const scheduler = state.scheduler;
+  const group = scheduler.createGroup(state.limit, state.group);
+  const window = Math.max(1, state.limit * 2);
+  const promises = [];
+  let nextToStart = 0;
+  let nextToPublish = 0;
+  let outputIndex = 0;
+  let accumulator = terminal.initial;
+  const collected = [];
+  let finalResult;
+  let stopped = false;
+  let stopReason = { kind: "complete" };
+  let primary = null;
+  let claimed = false;
+  const start = (index) => {
+    const itemContext = context.concurrentChild();
+    const promise = scheduler.run((admission) => withAsyncItemFinalizers(itemContext, async () => {
+      const itemState = { ...state, group, signal: group.signal, admission };
+      const raw = await pullRawAsyncStream(stream, group.signal);
+      if (raw.done)
+        return { done: true, index };
+      const processed = await processAsyncStreamItem(stream, raw, {
+        signal: group.signal,
+        invoke: (callable, args) => invokeCallableAsync(callable, args, itemContext, registry, systemContext, itemState)
+      });
+      const records = [];
+      for (const value of processed.values) {
+        let terminalValue = null;
+        if (terminal.kind === "forEach") {
+          terminalValue = await invokeCallableAsync(terminal.callable, [value, new Integer(BigInt(raw.sourceIndex)), stream], itemContext, registry, systemContext, itemState);
+        } else if (terminal.kind === "find") {
+          terminalValue = await invokeCallableAsync(terminal.callable, [value, new Integer(BigInt(raw.sourceIndex)), stream], itemContext, registry, systemContext, itemState);
+        }
+        records.push({ value, terminalValue });
+      }
+      return { done: false, index, records, stop: processed.stop };
+    }), group, {
+      path: `stream ${stream._stream.label} / item ${index + 1}`,
+      branchPath: [...state.branchPath || [], index]
+    });
+    promise.catch(() => {});
+    promises[index] = promise;
+  };
+  const cancelPending = (reason) => {
+    if (!group.cancelled)
+      scheduler.cancelGroup(group, reason);
+  };
+  try {
+    claimAsyncStream(stream);
+    claimed = true;
+    if (terminal.kind === "count" && !stream._stream.finite && terminal.bound === null) {
+      throw new Error("Count requires a finite or explicitly bounded async stream");
+    }
+    if (terminal.bound === 0 || asyncStreamCanCompleteWithoutPull(stream)) {
+      if (terminal.kind === "collect")
+        return { type: "sequence", values: [] };
+      if (terminal.kind === "count")
+        return new Integer(0n);
+      if (terminal.kind === "forEach" || terminal.kind === "first" || terminal.kind === "find")
+        return null;
+      return accumulator;
+    }
+    while (nextToStart < window)
+      start(nextToStart++);
+    while (!stopped) {
+      const record = await promises[nextToPublish++];
+      if (record.done) {
+        stopReason = { kind: "complete" };
+        cancelPending(streamEarlyStop("source completion"));
+        break;
+      }
+      for (const entry of record.records) {
+        outputIndex++;
+        if (terminal.kind === "collect")
+          collected.push(entry.value);
+        else if (terminal.kind === "reduce") {
+          accumulator = await invokeCallableAsync(terminal.callable, [accumulator, entry.value, new Integer(BigInt(outputIndex)), stream], context, registry, systemContext, state);
+        } else if (terminal.kind === "first") {
+          finalResult = entry.value;
+          stopped = true;
+        } else if (terminal.kind === "find" && isTruthyAsync(entry.terminalValue)) {
+          finalResult = entry.value;
+          stopped = true;
+        }
+        if (terminal.bound !== null && outputIndex >= terminal.bound)
+          stopped = true;
+        if (stopped)
+          break;
+      }
+      if (record.stop)
+        stopped = true;
+      if (stopped) {
+        stopReason = { kind: "early terminal" };
+        cancelPending(streamEarlyStop());
+        break;
+      }
+      start(nextToStart++);
+    }
+    await scheduler.waitForIdle(group);
+    if (terminal.kind === "collect")
+      finalResult = { type: "sequence", values: collected };
+    else if (terminal.kind === "count")
+      finalResult = new Integer(BigInt(outputIndex));
+    else if (terminal.kind === "forEach")
+      finalResult = null;
+    else if (terminal.kind === "reduce")
+      finalResult = accumulator;
+    else if (finalResult === undefined)
+      finalResult = null;
+    return finalResult;
+  } catch (error) {
+    stopReason = error;
+    primary = error;
+    cancelPending(error);
+    await scheduler.waitForIdle(group);
+    throw error;
+  } finally {
+    scheduler.closeGroup(group);
+    if (claimed) {
+      try {
+        await closeAsyncStream(stream, stopReason);
+      } catch (cleanupError) {
+        if (!primary)
+          throw cleanupError;
+        const existing = Array.isArray(primary.suppressed) ? primary.suppressed : [];
+        primary.suppressed = [...existing, cleanupError];
+      }
+    }
+  }
+}
+function createAsyncMethodExecution(context, registry, systemContext, state) {
+  return {
+    signal: state?.signal ?? null,
+    invoke: (callable, args) => invokeCallableAsync(callable, args, context, registry, systemContext, state),
+    consume: (stream, terminal) => withReleasedAsyncAdmission(state, async () => {
+      try {
+        if (state?.scheduler && state.parallelCollections !== false && asyncStreamSupportsConcurrentItems(stream)) {
+          return await consumeAsyncStreamStructured(stream, terminal, context, registry, systemContext, state);
+        }
+        return await consumeAsyncStreamSequential(stream, terminal, {
+          signal: state?.signal ?? null,
+          invoke: (callable, args) => invokeCallableAsync(callable, args, context, registry, systemContext, state)
+        });
+      } finally {
+        unregisterAsyncResource(context, stream?._stream?.root);
+      }
+    })
+  };
+}
+async function invokeMethodAsync(target, methodName, callArgs, context, registry, systemContext, state) {
+  if (methodName.endsWith("!"))
+    ensureMutableReceiver(target);
+  const fn = resolveMethod(target, methodName);
+  if (fn?.type === "method_builtin") {
+    try {
+      return await fn.impl([target, ...callArgs], context, (node) => evaluateAsyncInternal(node, context, registry, systemContext, state), (callable, args) => invokeCallableAsync(callable, args, context, registry, systemContext, state), createAsyncMethodExecution(context, registry, systemContext, state));
+    } finally {
+      if (isAsyncStream(target) && methodName === "CLOSE") {
+        unregisterAsyncResource(context, target._stream.root);
+      }
+    }
+  }
+  return invokeCallableAsync(fn, [target, ...callArgs], context, registry, systemContext, state);
+}
 function asyncCollectionEntry(node, context, registry, systemContext, state) {
   if (state.parallelCollections === false) {
     return evaluateAsyncInternal(node, context, registry, systemContext, state);
@@ -33971,7 +34832,10 @@ function asyncCollectionEntry(node, context, registry, systemContext, state) {
     return evaluateAsyncInternal(node, context, registry, systemContext, state);
   }
   const itemContext = context.concurrentChild();
-  return state.scheduler.run((admission) => withAsyncItemFinalizers(itemContext, () => evaluateAsyncInternal(node, itemContext, registry, systemContext, { ...state, admission })), state.group);
+  return state.scheduler.run((admission) => withAsyncItemFinalizers(itemContext, () => evaluateAsyncInternal(node, itemContext, registry, systemContext, { ...state, admission })), state.group, {
+    branchPath: state.branchPath,
+    path: asyncTaskPath(state)
+  });
 }
 async function resolveAsyncCollectionArg(arg, context, registry, systemContext, state) {
   if (arg?.fn === "HOLE")
@@ -34009,15 +34873,16 @@ async function evaluateAsyncCollectionBody(irNode, context, registry, systemCont
   const start = hasHeader ? 1 : 0;
   const resolved = hasHeader ? [args[0]] : [];
   if (irNode.fn === "MAP_OBJ") {
-    const resolveMapEntry = async (entry) => {
+    const resolveMapEntry = async (entry, entryIndex) => {
+      const entryState = childBranchState(state, entryIndex);
       if (entry?.fn === "ASSIGN") {
-        return { ...entry, args: [entry.args[0], await asyncCollectionEntry(entry.args[1], context, registry, systemContext, state)] };
+        return { ...entry, args: [entry.args[0], await asyncCollectionEntry(entry.args[1], context, registry, systemContext, entryState)] };
       }
       if (entry?.fn === "MAP_PAIR") {
         const [kind, key, value, mode] = entry.args;
         const itemContext = context.concurrentChild();
         const resolveEntry = async (admission = null) => {
-          const itemState = admission ? { ...state, admission } : state;
+          const itemState = admission ? { ...entryState, admission } : entryState;
           return {
             ...entry,
             args: [
@@ -34028,13 +34893,17 @@ async function evaluateAsyncCollectionBody(irNode, context, registry, systemCont
             ]
           };
         };
-        return containsNestedAsyncCollection(value) ? resolveEntry() : state.scheduler.run((admission) => withAsyncItemFinalizers(itemContext, () => resolveEntry(admission)), state.group);
+        return containsNestedAsyncCollection(value) ? resolveEntry() : state.scheduler.run((admission) => withAsyncItemFinalizers(itemContext, () => resolveEntry(admission)), state.group, {
+          branchPath: entryState.branchPath,
+          path: asyncTaskPath(entryState, "map entry")
+        });
       }
-      return resolveAsyncCollectionArg(entry, context, registry, systemContext, state);
+      return resolveAsyncCollectionArg(entry, context, registry, systemContext, entryState);
     };
     if (state.parallelCollections === false) {
-      for (const entry of args.slice(start))
-        resolved.push(await resolveMapEntry(entry));
+      for (let index = 0;index < args.slice(start).length; index++) {
+        resolved.push(await resolveMapEntry(args.slice(start)[index], index));
+      }
     } else {
       resolved.push(...await orderedAsyncMap(args.slice(start), state, resolveMapEntry));
     }
@@ -34043,18 +34912,20 @@ async function evaluateAsyncCollectionBody(irNode, context, registry, systemCont
     resolved.push(args[shapeIndex]);
     const entries2 = args.slice(shapeIndex + 1);
     if (state.parallelCollections === false) {
-      for (const arg of entries2)
-        resolved.push(await resolveAsyncCollectionArg(arg, context, registry, systemContext, state));
+      for (let index = 0;index < entries2.length; index++) {
+        resolved.push(await resolveAsyncCollectionArg(entries2[index], context, registry, systemContext, childBranchState(state, index)));
+      }
     } else {
-      resolved.push(...await orderedAsyncMap(entries2, state, (arg) => resolveAsyncCollectionArg(arg, context, registry, systemContext, state)));
+      resolved.push(...await orderedAsyncMap(entries2, state, (arg, index) => resolveAsyncCollectionArg(arg, context, registry, systemContext, childBranchState(state, index))));
     }
   } else {
     const entries2 = args.slice(start);
     if (state.parallelCollections === false) {
-      for (const arg of entries2)
-        resolved.push(await resolveAsyncCollectionArg(arg, context, registry, systemContext, state));
+      for (let index = 0;index < entries2.length; index++) {
+        resolved.push(await resolveAsyncCollectionArg(entries2[index], context, registry, systemContext, childBranchState(state, index)));
+      }
     } else {
-      resolved.push(...await orderedAsyncMap(entries2, state, (arg) => resolveAsyncCollectionArg(arg, context, registry, systemContext, state)));
+      resolved.push(...await orderedAsyncMap(entries2, state, (arg, index) => resolveAsyncCollectionArg(arg, context, registry, systemContext, childBranchState(state, index))));
     }
   }
   const resolvedEvaluate = (node) => node?.fn ? evaluate(node, context, registry, systemContext) : node;
@@ -34174,6 +35045,18 @@ function asyncTerminalResult(terminal, records) {
   }
   return;
 }
+function deriveAsyncStreamPipe(stream, stages, callables) {
+  let derived = stream;
+  for (let index = 0;index < stages.length; index++) {
+    if (stages[index].fn === "PMAP")
+      derived = mapAsyncStream(derived, callables[index]);
+    else if (stages[index].fn === "PFILTER")
+      derived = filterAsyncStream(derived, callables[index]);
+    else
+      throw new Error("Async stream pipes support lazy |>> and |>? stages; use an explicit stream terminal to consume");
+  }
+  return derived;
+}
 async function evaluateSequentialAsyncPipe(irNode, context, registry, systemContext, state) {
   const stages = [];
   let sourceNode = irNode;
@@ -34188,6 +35071,8 @@ async function evaluateSequentialAsyncPipe(irNode, context, registry, systemCont
   const collection = await evaluateAsyncInternal(sourceNode, context, registry, systemContext, state);
   if (collection === null || collection === undefined)
     return null;
+  if (isAsyncStream(collection))
+    return deriveAsyncStreamPipe(collection, stages, callables);
   const items = collectionItems(collection);
   const records = [];
   for (let index = 0;index < items.length; index++) {
@@ -34217,13 +35102,17 @@ async function evaluateAsyncPipe(irNode, context, registry, systemContext, state
   if (fusedSource) {
     const records2 = await orderedAsyncMap(fusedSource.entries, state, (entry, index) => {
       const itemContext = context.concurrentChild();
+      const branchState = childBranchState(state, index);
       return state.scheduler.run((admission) => withAsyncItemFinalizers(itemContext, async () => {
-        const itemState = { ...state, admission };
+        const itemState = { ...branchState, admission };
         const rawNode = entry?.expression || entry;
         const resolved = await evaluateAsyncInternal(rawNode, itemContext, registry, systemContext, itemState);
         const captured = captureFusedSourceValue(fusedSource, entry, resolved, itemContext, registry, systemContext);
         return runAsyncPipeStages(captured, index, undefined, fusedSource.shell, stages, callables, itemContext, registry, systemContext, itemState);
-      }), state.group);
+      }), state.group, {
+        branchPath: branchState.branchPath,
+        path: `${asyncTaskPath(branchState)} / fused pipe`
+      });
     });
     const terminal2 = stages.at(-1)?.fn;
     if (terminal2 === "PANY" || terminal2 === "PALL")
@@ -34233,10 +35122,16 @@ async function evaluateAsyncPipe(irNode, context, registry, systemContext, state
   const collection = await evaluateAsyncInternal(sourceNode, context, registry, systemContext, state);
   if (collection === null || collection === undefined)
     return null;
+  if (isAsyncStream(collection))
+    return deriveAsyncStreamPipe(collection, stages, callables);
   const items = collectionItems(collection);
   const records = await orderedAsyncMap(items, state, (item, index) => {
     const itemContext = context.concurrentChild();
-    return state.scheduler.run((admission) => withAsyncItemFinalizers(itemContext, () => runAsyncPipeStages(item.value, index, item.key, collection, stages, callables, itemContext, registry, systemContext, { ...state, admission }, item.locator)), state.group);
+    const branchState = childBranchState(state, index);
+    return state.scheduler.run((admission) => withAsyncItemFinalizers(itemContext, () => runAsyncPipeStages(item.value, index, item.key, collection, stages, callables, itemContext, registry, systemContext, { ...branchState, admission }, item.locator)), state.group, {
+      branchPath: branchState.branchPath,
+      path: `${asyncTaskPath(branchState)} / pipe`
+    });
   });
   const terminal = stages.at(-1)?.fn;
   if (terminal === "PANY" || terminal === "PALL")
@@ -34502,9 +35397,20 @@ async function evaluateAsyncScopeBody(args, context, registry, systemContext, pa
     name: meta.name ?? null,
     parallelCollections: true,
     deadlineMs,
-    deadlineFault
+    deadlineFault,
+    branchPath: []
   };
   let timeoutId = null;
+  let removeParentAbort = null;
+  if (parentState?.signal) {
+    const abortFromParent = () => scheduler.cancelGroup(group, parentState.signal.reason);
+    if (parentState.signal.aborted)
+      abortFromParent();
+    else {
+      parentState.signal.addEventListener("abort", abortFromParent, { once: true });
+      removeParentAbort = () => parentState.signal.removeEventListener("abort", abortFromParent);
+    }
+  }
   if (Number.isFinite(deadlineMs)) {
     timeoutId = setTimeout(() => {
       scheduler.cancelGroup(group, deadlineFault);
@@ -34537,6 +35443,7 @@ async function evaluateAsyncScopeBody(args, context, registry, systemContext, pa
       } finally {
         if (timeoutId !== null)
           clearTimeout(timeoutId);
+        removeParentAbort?.();
       }
     }, {
       graceMs: context.getEnv("asyncCleanupGraceMs", runtimeDefaults.asyncCleanupGraceMs)
@@ -34544,6 +35451,7 @@ async function evaluateAsyncScopeBody(args, context, registry, systemContext, pa
   } finally {
     if (timeoutId !== null)
       clearTimeout(timeoutId);
+    removeParentAbort?.();
     state.scheduler.closeGroup(state.group);
     context.pop();
   }
@@ -34556,12 +35464,23 @@ function startDetachedBlock(args, context, registry, systemContext, parentState)
   const { meta, body } = splitAsyncBlockArgs(args);
   const importedBindings = captureDetachedImports(meta.imports, context);
   const taskContext = context.concurrentChild();
+  const controller = new AbortController;
+  const detachedState = {
+    signal: controller.signal,
+    parallelCollections: false,
+    deadlineMs: parentState?.deadlineMs ?? Infinity,
+    deadlineFault: parentState?.deadlineFault ?? null
+  };
   const task = Promise.resolve().then(async () => {
     taskContext.push(importedBindings, { isolated: true, callableBoundary: true });
     try {
       await withFinalizerActivationAsync(taskContext, async () => {
+        taskContext.registerFinalizer(() => disposeAsyncResources(taskContext, { kind: "background shutdown" }).then((failures) => {
+          if (failures.length > 0)
+            throw failures[0];
+        }));
         for (const statement of body) {
-          await evaluateAsyncInternal(statement, taskContext, registry, systemContext, null);
+          await evaluateAsyncInternal(statement, taskContext, registry, systemContext, detachedState);
         }
       }, {
         graceMs: taskContext.getEnv("asyncCleanupGraceMs", runtimeDefaults.asyncCleanupGraceMs)
@@ -34570,6 +35489,8 @@ function startDetachedBlock(args, context, registry, systemContext, parentState)
       taskContext.pop();
     }
   }).catch((error) => {
+    if (controller.signal.aborted && error === controller.signal.reason)
+      return;
     const handler = context.getEnv("backgroundTaskError", null);
     if (typeof handler === "function")
       handler(error);
@@ -34578,6 +35499,26 @@ function startDetachedBlock(args, context, registry, systemContext, parentState)
     context.setEnv(BACKGROUND_ERRORS_ENV, errors);
   });
   registerBackgroundTask(context, task);
+  registerAsyncResource(context, task, async (_resource, reason) => {
+    if (!controller.signal.aborted)
+      controller.abort(reason);
+    const shutdown = Promise.resolve().then(async () => {
+      const failures = await disposeAsyncResources(taskContext, reason);
+      await task;
+      if (failures.length > 0)
+        throw failures[0];
+    });
+    shutdown.catch(() => {});
+    const graceMs = context.getEnv("asyncCleanupGraceMs", runtimeDefaults.asyncCleanupGraceMs);
+    let timer;
+    await Promise.race([
+      shutdown,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new CleanupGraceFault(graceMs)), graceMs);
+      })
+    ]).finally(() => clearTimeout(timer));
+  });
+  task.finally(() => unregisterAsyncResource(context, task));
   return null;
 }
 async function evaluateAsyncInternal(irNode, context, registry, systemContext, state = null) {
@@ -34613,6 +35554,22 @@ async function evaluateAsyncInternal(irNode, context, registry, systemContext, s
         const handler = await evaluateAsyncInternal(args[1], context, registry, systemContext, state);
         return invokeCallableAsync(handler, [faultToRixValue(error)], context, registry, systemContext, state);
       }
+    }
+    if (fn === "CALL_METHOD") {
+      const target = await evaluateAsyncInternal(args[0], context, registry, systemContext, state);
+      const methodName = args[1];
+      const callArgs = [];
+      for (const arg of args.slice(2)) {
+        if (arg?.fn === "SPREAD") {
+          const spread = await evaluateAsyncInternal(arg.args[0], context, registry, systemContext, state);
+          if (!Array.isArray(spread?.values))
+            throw new Error("Method spread requires a finite collection");
+          callArgs.push(...spread.values);
+        } else {
+          callArgs.push(await evaluateAsyncInternal(arg, context, registry, systemContext, state));
+        }
+      }
+      return invokeMethodAsync(target, methodName, callArgs, context, registry, systemContext, state);
     }
     if (fn === "ASYNC_SCOPE")
       return await evaluateAsyncScope(args, context, registry, systemContext, state);
@@ -37322,8 +38279,9 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
       }
     },
     async runAsync(source) {
-      const usesAsyncBlocks = tokenize(source).some((token2) => token2.value === "{$" || token2.value === "{$$");
-      if (!usesAsyncBlocks)
+      const tokens = tokenize(source);
+      const usesAsyncEvaluation = tokens.some((token2) => token2.value === "{$" || token2.value === "{$$") || /\.(?:ForEach|Reduce|Collect|First|Find|Count|Close)\s*\(/i.test(source);
+      if (!usesAsyncEvaluation)
         return this.run(source);
       const topic = inlineHelpRequest(source);
       if (topic !== null)
@@ -37365,9 +38323,13 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
         formatValue: (value) => formatValue(value, { context: state.context, evaluate: null })
       });
     },
-    reset() {
+    async reset() {
+      await disposeAsyncResources(state.context, { kind: "session reset" });
       state.context.clear();
       initialNames = new Set(state.context.getAllNames());
+    },
+    async dispose() {
+      await disposeAsyncResources(state.context, { kind: "session shutdown" });
     },
     setAutoSeparateLines(enabled2) {
       separateLines = Boolean(enabled2);
@@ -37380,5 +38342,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { formatValue, mountOutputWidgets, findHelp, createRixRepl };
 
-//# debugId=54799EC526B1A41E64756E2164756E21
-//# sourceMappingURL=chunk-azwj3h79.js.map
+//# debugId=C2E4AA75BAC4BDCA64756E2164756E21
+//# sourceMappingURL=chunk-q4vbxwk7.js.map
