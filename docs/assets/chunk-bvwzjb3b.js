@@ -32259,8 +32259,10 @@ class AsyncScheduler {
       children: new Set,
       inFlight: 0,
       cancelled: false,
-      cancelReason: null
+      cancelReason: null,
+      controller: new AbortController
     };
+    group.signal = group.controller.signal;
     parent?.children.add(group);
     return group;
   }
@@ -32305,6 +32307,7 @@ class AsyncScheduler {
       return;
     this.cancelled = true;
     this.cancelReason = reason;
+    this.#abortGroupTree(this.defaultGroup, reason);
     const queued = this.queue.splice(0);
     for (const entry of queued)
       entry.reject(reason);
@@ -32319,6 +32322,7 @@ class AsyncScheduler {
         return;
       current.cancelled = true;
       current.cancelReason = reason;
+      current.controller.abort(reason);
       cancelledGroups.add(current);
       for (const child of current.children)
         markCancelled(child);
@@ -32396,6 +32400,15 @@ class AsyncScheduler {
         return current.cancelReason;
     }
     return null;
+  }
+  #abortGroupTree(group, reason) {
+    if (!group)
+      return;
+    group.cancelled = true;
+    group.cancelReason = reason;
+    group.controller.abort(reason);
+    for (const child of group.children)
+      this.#abortGroupTree(child, reason);
   }
   #isDescendant(group, ancestor) {
     for (let current = group;current; current = current.parent) {
@@ -33306,6 +33319,17 @@ function applyAsyncImports(imports, context) {
 function isTruthyAsync(value) {
   return value !== null && value !== undefined;
 }
+function markLexicalAsyncCallable(value, state) {
+  const enabled2 = !!state?.scheduler && state.parallelCollections !== false;
+  if (value && (value.type === "function" || value.type === "lambda")) {
+    value.__parallelCollections = enabled2;
+  }
+  if (value?.type === "multifunction" && Array.isArray(value.values)) {
+    for (const variant of value.values)
+      variant.__parallelCollections = enabled2;
+  }
+  return value;
+}
 function matchesAsyncBreak(error, name) {
   if (!error || error.kind !== "break")
     return false;
@@ -33339,7 +33363,36 @@ async function bindAsyncCallScope(params, callArgs, context, registry, systemCon
   }
   return scope;
 }
+function createCallableAsyncState(fn, callerState, context) {
+  if (fn.__parallelCollections !== true) {
+    return {
+      state: callerState ? { ...callerState, parallelCollections: false } : { parallelCollections: false },
+      ownsScheduler: false
+    };
+  }
+  if (callerState?.scheduler) {
+    return {
+      state: { ...callerState, parallelCollections: true },
+      ownsScheduler: false
+    };
+  }
+  const limit = context.getEnv("defaultAsyncConcurrency", runtimeDefaults.defaultAsyncConcurrency);
+  const scheduler = new AsyncScheduler(limit);
+  return {
+    state: {
+      scheduler,
+      group: scheduler.defaultGroup,
+      signal: scheduler.defaultGroup.signal,
+      limit,
+      name: null,
+      parallelCollections: true
+    },
+    ownsScheduler: true
+  };
+}
 async function invokeUserCallableAsync(fn, callArgs, context, registry, systemContext, state) {
+  const callableAsync = createCallableAsyncState(fn, state, context);
+  const callableState = callableAsync.state;
   const closureScopes = Array.isArray(fn.__closureScopes) ? fn.__closureScopes : [];
   let pushed = 0;
   for (const closure of closureScopes) {
@@ -33350,7 +33403,7 @@ async function invokeUserCallableAsync(fn, callArgs, context, registry, systemCo
     });
     pushed++;
   }
-  context.push(await bindAsyncCallScope(fn.params, callArgs, context, registry, systemContext, state));
+  context.push(await bindAsyncCallScope(fn.params, callArgs, context, registry, systemContext, callableState));
   if (fn.name)
     context.pushCall(fn.name);
   context.pushCurrentCallable(fn, fn.__parentMultifunction ?? null);
@@ -33360,7 +33413,7 @@ async function invokeUserCallableAsync(fn, callArgs, context, registry, systemCo
       ...fn.params?.prep || []
     ]) {
       try {
-        const passed = await evaluateAsyncInternal(prep, context, registry, systemContext, state);
+        const passed = await evaluateAsyncInternal(prep, context, registry, systemContext, callableState);
         if (!isTruthyAsync(passed))
           return null;
       } catch (error) {
@@ -33369,8 +33422,17 @@ async function invokeUserCallableAsync(fn, callArgs, context, registry, systemCo
         return null;
       }
     }
-    return await evaluateAsyncInternal(fn.body, context, registry, systemContext, state);
+    return await evaluateAsyncInternal(fn.body, context, registry, systemContext, callableState);
+  } catch (error) {
+    if (callableAsync.ownsScheduler) {
+      callableState.scheduler.cancelGroup(callableState.group, error);
+    }
+    throw error;
   } finally {
+    if (callableAsync.ownsScheduler) {
+      await callableState.scheduler.waitForIdle(callableState.group);
+      callableState.scheduler.closeGroup(callableState.group);
+    }
     context.popCurrentCallable();
     if (fn.name)
       context.popCall();
@@ -33400,6 +33462,9 @@ async function invokeCallableAsync(fn, callArgs, context, registry, systemContex
   return await callWithConcreteArgs(fn, callArgs, context, (node) => evaluate(node, context, registry, systemContext));
 }
 function asyncCollectionEntry(node, context, registry, systemContext, state) {
+  if (state.parallelCollections === false) {
+    return evaluateAsyncInternal(node, context, registry, systemContext, state);
+  }
   if (containsNestedAsyncCollection(node)) {
     return evaluateAsyncInternal(node, context, registry, systemContext, state);
   }
@@ -33422,6 +33487,8 @@ async function resolveAsyncCollectionArg(arg, context, registry, systemContext, 
   return asyncCollectionEntry(arg, context, registry, systemContext, state);
 }
 async function withReleasedAsyncAdmission(state, callback) {
+  if (state?.parallelCollections === false)
+    return callback();
   const admission = state?.admission;
   const released = admission ? state.scheduler.suspend(admission) : false;
   try {
@@ -33440,7 +33507,7 @@ async function evaluateAsyncCollectionBody(irNode, context, registry, systemCont
   const start = hasHeader ? 1 : 0;
   const resolved = hasHeader ? [args[0]] : [];
   if (irNode.fn === "MAP_OBJ") {
-    const entryPromises = args.slice(start).map(async (entry) => {
+    const resolveMapEntry = async (entry) => {
       if (entry?.fn === "ASSIGN") {
         return { ...entry, args: [entry.args[0], await asyncCollectionEntry(entry.args[1], context, registry, systemContext, state)] };
       }
@@ -33462,14 +33529,31 @@ async function evaluateAsyncCollectionBody(irNode, context, registry, systemCont
         return containsNestedAsyncCollection(value) ? resolveEntry() : state.scheduler.run(resolveEntry, state.group);
       }
       return resolveAsyncCollectionArg(entry, context, registry, systemContext, state);
-    });
-    resolved.push(...await Promise.all(entryPromises));
+    };
+    if (state.parallelCollections === false) {
+      for (const entry of args.slice(start))
+        resolved.push(await resolveMapEntry(entry));
+    } else {
+      resolved.push(...await Promise.all(args.slice(start).map(resolveMapEntry)));
+    }
   } else if (irNode.fn === "TENSOR_LITERAL") {
     const shapeIndex = hasHeader ? 1 : 0;
     resolved.push(args[shapeIndex]);
-    resolved.push(...await Promise.all(args.slice(shapeIndex + 1).map((arg) => resolveAsyncCollectionArg(arg, context, registry, systemContext, state))));
+    const entries2 = args.slice(shapeIndex + 1);
+    if (state.parallelCollections === false) {
+      for (const arg of entries2)
+        resolved.push(await resolveAsyncCollectionArg(arg, context, registry, systemContext, state));
+    } else {
+      resolved.push(...await Promise.all(entries2.map((arg) => resolveAsyncCollectionArg(arg, context, registry, systemContext, state))));
+    }
   } else {
-    resolved.push(...await Promise.all(args.slice(start).map((arg) => resolveAsyncCollectionArg(arg, context, registry, systemContext, state))));
+    const entries2 = args.slice(start);
+    if (state.parallelCollections === false) {
+      for (const arg of entries2)
+        resolved.push(await resolveAsyncCollectionArg(arg, context, registry, systemContext, state));
+    } else {
+      resolved.push(...await Promise.all(entries2.map((arg) => resolveAsyncCollectionArg(arg, context, registry, systemContext, state))));
+    }
   }
   const resolvedEvaluate = (node) => node?.fn ? evaluate(node, context, registry, systemContext) : node;
   return await definition.impl(resolved, context, resolvedEvaluate, systemContext);
@@ -33588,7 +33672,35 @@ function asyncTerminalResult(terminal, records) {
   }
   return;
 }
+async function evaluateSequentialAsyncPipe(irNode, context, registry, systemContext, state) {
+  const stages = [];
+  let sourceNode = irNode;
+  while (sourceNode?.fn && ASYNC_PIPE_FNS.has(sourceNode.fn)) {
+    stages.unshift({ fn: sourceNode.fn, callableNode: sourceNode.args[1] });
+    sourceNode = sourceNode.args[0];
+  }
+  const callables = [];
+  for (const stage of stages) {
+    callables.push(await evaluateAsyncInternal(stage.callableNode, context, registry, systemContext, state));
+  }
+  const collection = await evaluateAsyncInternal(sourceNode, context, registry, systemContext, state);
+  if (collection === null || collection === undefined)
+    return null;
+  const items = collectionItems(collection);
+  const records = [];
+  for (let index = 0;index < items.length; index++) {
+    const item = items[index];
+    records.push(await runAsyncPipeStages(item.value, index, item.key, collection, stages, callables, context, registry, systemContext, state, item.locator));
+  }
+  const terminal = stages.at(-1)?.fn;
+  if (terminal === "PANY" || terminal === "PALL")
+    return asyncTerminalResult(terminal, records);
+  return assembleAsyncPipeResult(collection, items, records, stages);
+}
 async function evaluateAsyncPipe(irNode, context, registry, systemContext, state) {
+  if (state.parallelCollections === false) {
+    return evaluateSequentialAsyncPipe(irNode, context, registry, systemContext, state);
+  }
   const stages = [];
   let sourceNode = irNode;
   while (sourceNode?.fn && ASYNC_PIPE_FNS.has(sourceNode.fn)) {
@@ -33869,14 +33981,17 @@ async function evaluateAsyncChunk(args, context, registry, systemContext, state)
 async function evaluateAsyncScopeBody(args, context, registry, systemContext, parentState) {
   const { meta, body } = splitAsyncBlockArgs(args);
   const configured = meta.concurrencyLimit ?? context.getEnv("defaultAsyncConcurrency", runtimeDefaults.defaultAsyncConcurrency);
-  const effectiveLimit = parentState ? Math.min(configured, parentState.limit) : configured;
-  const scheduler = parentState?.scheduler || new AsyncScheduler(effectiveLimit);
-  const group = parentState ? scheduler.createGroup(effectiveLimit, parentState.group) : scheduler.defaultGroup;
+  const hasParentScheduler = !!parentState?.scheduler;
+  const effectiveLimit = hasParentScheduler ? Math.min(configured, parentState.limit) : configured;
+  const scheduler = hasParentScheduler ? parentState.scheduler : new AsyncScheduler(effectiveLimit);
+  const group = hasParentScheduler ? scheduler.createGroup(effectiveLimit, parentState.group) : scheduler.defaultGroup;
   const state = {
     scheduler,
     group,
+    signal: group.signal,
     limit: effectiveLimit,
-    name: meta.name ?? null
+    name: meta.name ?? null,
+    parallelCollections: true
   };
   context.push(undefined, { isolated: true });
   try {
@@ -33904,7 +34019,8 @@ async function evaluateAsyncScopeBody(args, context, registry, systemContext, pa
   }
 }
 async function evaluateAsyncScope(args, context, registry, systemContext, parentState) {
-  return withReleasedAsyncAdmission(parentState, () => evaluateAsyncScopeBody(args, context, registry, systemContext, parentState));
+  const releaseState = parentState ? { ...parentState, parallelCollections: true } : parentState;
+  return withReleasedAsyncAdmission(releaseState, () => evaluateAsyncScopeBody(args, context, registry, systemContext, parentState));
 }
 function startDetachedBlock(args, context, registry, systemContext, parentState) {
   const { meta, body } = splitAsyncBlockArgs(args);
@@ -34028,7 +34144,10 @@ async function evaluateAsyncInternal(irNode, context, registry, systemContext, s
       const value = await evalAsync(args[1]);
       return definition2.impl([args[0], value, ...args.slice(2)], context, (node) => node);
     }
-    if (fn === "LAMBDA" || fn === "FUNCDEF" || fn === "SYSREF") {
+    if (fn === "LAMBDA" || fn === "FUNCDEF" || fn === "MULTIFUNCDEF") {
+      return markLexicalAsyncCallable(evaluate(irNode, context, registry, systemContext), state);
+    }
+    if (fn === "SYSREF") {
       return evaluate(irNode, context, registry, systemContext);
     }
     if (fn === "CALL" || fn === "CALL_EXPR") {
@@ -36690,5 +36809,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { formatValue, mountOutputWidgets, findHelp, createRixRepl };
 
-//# debugId=806D995B84D9D88364756E2164756E21
-//# sourceMappingURL=chunk-7e0v05w0.js.map
+//# debugId=668C30CDFD018FCA64756E2164756E21
+//# sourceMappingURL=chunk-bvwzjb3b.js.map

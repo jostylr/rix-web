@@ -99,12 +99,22 @@ occupy a slot while their children are waiting.
 } ;
 ```
 
-Admission follows written depth-first order: the two entries under `left`
-come before `right`.
+Nested branches share the limit and preserve their final written shape. The
+runtime is moving to hierarchical round-robin admission so a large early
+subtree cannot monopolize every available slot.
 
-If a called RiX function constructs another collection, the calling item
-temporarily yields its slot while those child items run. This keeps a nested
-function fan-out from deadlocking even when the effective limit is one.
+Function fan-out is lexical. A function defined outside `{$ ... }` keeps its
+ordinary sequential collection behavior when called inside. A function created
+inside the scope retains parallel collection behavior if it escapes, while an
+outside function can opt in with an explicit inner `{$ ... }`.
+
+```rix edu
+Sequential() -> [1^5, 2^5];
+{$:2$ <Sequential> [Sequential()] } ;
+```
+
+This boundary prevents an ordinary function from changing scheduling semantics
+just because one caller happens to be concurrent.
 
 Nested async scopes share the ancestor scheduler while applying the stricter
 limit. Here the inner scope can use at most two of the outer scope's four

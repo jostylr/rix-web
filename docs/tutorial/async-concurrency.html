@@ -41,8 +41,11 @@
         right=3^5
     }
 } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>Admission follows written depth-first order: the two entries under <code>left</code> come before <code>right</code>.</p>
-<p>If a called RiX function constructs another collection, the calling item temporarily yields its slot while those child items run. This keeps a nested function fan-out from deadlocking even when the effective limit is one.</p>
+<p>Nested branches share the limit and preserve their final written shape. The runtime is moving to hierarchical round-robin admission so a large early subtree cannot monopolize every available slot.</p>
+<p>Function fan-out is lexical. A function defined outside <code>{$ ... }</code> keeps its ordinary sequential collection behavior when called inside. A function created inside the scope retains parallel collection behavior if it escapes, while an outside function can opt in with an explicit inner <code>{$ ... }</code>.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">Sequential() -&gt; [1^5, 2^5];
+{$:2$ &lt;Sequential&gt; [Sequential()] } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>This boundary prevents an ordinary function from changing scheduling semantics just because one caller happens to be concurrent.</p>
 <p>Nested async scopes share the ancestor scheduler while applying the stricter limit. Here the inner scope can use at most two of the outer scope&#039;s four slots:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">{$outer:4$
     {$inner:2$ [1^5, 2^5, 3^5, 4^5] }
