@@ -3,7 +3,7 @@ import {
   findHelp,
   formatValue,
   mountOutputWidgets
-} from "./chunk-1akzsqyv.js";
+} from "./chunk-afngaf22.js";
 
 // src/main.js
 var repl = createRixRepl();
@@ -207,7 +207,7 @@ ${variables.map(({ name, value }) => `  ${name} = ${value}`).join(`
 `)}` : "No variables or functions defined.";
   appendOutput(source, { type: "result", text });
 }
-function execute(source = input.value) {
+async function execute(source = input.value) {
   const command = source.trim();
   if (!command)
     return;
@@ -228,7 +228,7 @@ function execute(source = input.value) {
   if (history.at(-1) !== source)
     history.push(source);
   historyIndex = -1;
-  const response = repl.run(source);
+  const response = await repl.runAsync(source);
   appendOutput(source, response);
   setInput("");
 }
@@ -405,5 +405,5 @@ displayWelcome();
 setAutoSeparateLines(autoSeparateLines);
 input.focus();
 
-//# debugId=D0ED7839E13BFE7464756E2164756E21
+//# debugId=EC7C8BE0C6F7569F64756E2164756E21
 //# sourceMappingURL=main.js.map

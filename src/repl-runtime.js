@@ -6,7 +6,9 @@ import {
     formatValue,
     isOutputValue,
     parseAndEvaluate,
+    parseAndEvaluateAsync,
     renderOutputHtml,
+    tokenize,
 } from "../../rix/src/index.js";
 import { normalizeReplSource } from "./repl-source.js";
 import { createBundledPluginCatalog } from "./generated/bundled-plugin-catalog.js";
@@ -95,6 +97,43 @@ export function createRixRepl({ autoSeparateLines = true } = {}) {
             try {
                 const reactiveReads = new Set();
                 const result = parseAndEvaluate(separateLines ? normalizeReplSource(source) : source, {
+                    ...state,
+                    file: "<ratcalc>",
+                    reactiveReads,
+                });
+                const format = (value) => formatValue(value, { context: state.context, evaluate: null });
+                const observedSource = [...reactiveReads]
+                    .find((candidate) => currentReactiveValue(candidate) === result);
+                const makeResponse = (value) => ({
+                    type: "result",
+                    source,
+                    value,
+                    text: format(value),
+                    html: isOutputValue(value) ? renderOutputHtml(value, format) : null,
+                    observe: observedSource
+                        ? (listener) => observedSource.subscribe(() => {
+                            listener(makeResponse(currentReactiveValue(observedSource)));
+                        })
+                        : null,
+                });
+                return makeResponse(result);
+            } catch (error) {
+                return { type: "error", source, text: error.message || String(error) };
+            }
+        },
+        async runAsync(source) {
+            // Preserve the mature synchronous evaluator for ordinary cells;
+            // select the promise-aware path only when async block syntax is
+            // present. This also keeps existing plugin/lazy-form behavior
+            // identical while the async evaluator coverage expands.
+            const usesAsyncBlocks = tokenize(source)
+                .some((token) => token.value === "{$" || token.value === "{$$");
+            if (!usesAsyncBlocks) return this.run(source);
+            const topic = inlineHelpRequest(source);
+            if (topic !== null) return { type: "help", source, ...findHelp(topic) };
+            try {
+                const reactiveReads = new Set();
+                const result = await parseAndEvaluateAsync(separateLines ? normalizeReplSource(source) : source, {
                     ...state,
                     file: "<ratcalc>",
                     reactiveReads,

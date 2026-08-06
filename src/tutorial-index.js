@@ -39,6 +39,7 @@ const coreTutorials = [
     { number: "7c", parent: "7", file: "lazy-generators.html", title: "Lazy generators", description: "Contrast eager arrays with cached on-demand sequences." },
     { number: "7d", parent: "7", file: "regex-and-strings.html", title: "Regexes and strings", description: "Pattern literals and text transformation." },
     { number: "7e", parent: "7", file: "capstone-report.html", title: "Capstone: transform a report", description: "Turn a small collection into a derived result." },
+    { number: "7f", parent: "7", file: "async-concurrency.html", title: "Async and concurrency", description: "Await bounded collection work, stream pipe stages, and start supervised background effects." },
     { number: "8", file: "semantics.html", title: "Semantics, types, and units", description: "Conversions, traits, headers, and dimensions." },
     { number: "8a", parent: "8", file: "conversions.html", title: "Conversions", description: "Ask and convert semantic types." },
     { number: "8b", parent: "8", file: "headers-and-traits.html", title: "Headers and traits", description: "Sticky semantics and protocol bundles." },

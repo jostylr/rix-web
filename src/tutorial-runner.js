@@ -1,6 +1,6 @@
 import { createRixRepl } from "./repl-runtime.js";
 import { objectHelp } from "./tutorial-object-help.js";
-import { replayTutorialSources, tutorialSectionCells } from "./tutorial-replay.js";
+import { replayTutorialSourcesAsync, tutorialSectionCells } from "./tutorial-replay.js";
 import { applyTutorialEditorKey } from "./tutorial-editor.js";
 import { mountTutorialNavigation } from "./tutorial-navigation.js";
 import { formatValue, mountOutputWidgets } from "../../rix/src/index.js";
@@ -37,23 +37,23 @@ function insertTutorialText(input, text) {
     input.focus();
 }
 
-function replayThrough(cell) {
+async function replayThrough(cell) {
     const content = cell.closest(".lesson-content") || document;
     const entries = [...content.querySelectorAll("h2, .tutorial-cell")].map((node) => ({
         type: node.matches("h2") ? "heading" : "cell",
         value: node,
     }));
     const cells = tutorialSectionCells(entries, cell);
-    return replayTutorialSources(
+    return replayTutorialSourcesAsync(
         cells.map((candidate) => candidate.querySelector("[data-tutorial-source]")?.value),
         cells.length - 1,
         createRixRepl,
     );
 }
 
-function runCell(cell) {
+async function runCell(cell) {
     const sourceInput = cell.querySelector("[data-tutorial-source]");
-    const response = replayThrough(cell);
+    const response = await replayThrough(cell);
     if (!response) return;
     const output = cell.querySelector("[data-tutorial-output]");
     outputDisposers.get(output)?.();

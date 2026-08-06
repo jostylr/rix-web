@@ -8,7 +8,7 @@ import {
     parseAndEvaluate,
 } from "../../rix/src/index.js";
 import { normalizeReplSource } from "../src/repl-source.js";
-import { replayTutorialSources, tutorialSectionCells } from "../src/tutorial-replay.js";
+import { replayTutorialSources, replayTutorialSourcesAsync, tutorialSectionCells } from "../src/tutorial-replay.js";
 import { createRixRepl } from "../src/repl-runtime.js";
 import { tutorials } from "../src/tutorial-index.js";
 
@@ -37,6 +37,21 @@ test("tutorial replay preserves earlier dependencies without stale removed names
     const renamed = replayTutorialSources(["matrix := 3", "grid + 1"], 1, createRixRepl);
     expect(renamed.type).toBe("error");
     expect(renamed.text).toContain("grid");
+});
+
+test("the web REPL and tutorial replay await async RiX scopes", async () => {
+    const repl = createRixRepl();
+    const response = await repl.runAsync("{$:2$ [1 + 1, 2 + 2] };");
+    expect(response.type).toBe("result");
+    expect(response.text).toBe("[2, 4]");
+
+    const replayed = await replayTutorialSourcesAsync(
+        ["x := 3", "{$ <x> [x, x + 1] };"],
+        1,
+        createRixRepl,
+    );
+    expect(replayed.type).toBe("result");
+    expect(replayed.text).toBe("[3, 4]");
 });
 
 test("tutorial replay state is scoped to the target h2 section", () => {
@@ -342,7 +357,7 @@ test("every published RiX tutorial h2 section executes in fresh state", async ()
             const repl = createRixRepl();
             const cells = section.matchAll(/```rix(?:[ \t]+[^\n]*)?[ \t]*\n([\s\S]*?)\n```/g);
             for (const [, code] of cells) {
-                const response = repl.run(code);
+                const response = await repl.runAsync(code);
                 expect(response.type, `lesson ${tutorial.number}, section ${sectionIndex}: ${response.text}`).toBe("result");
             }
         }

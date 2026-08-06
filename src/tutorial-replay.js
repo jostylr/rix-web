@@ -18,6 +18,21 @@ export function replayTutorialSources(sources, targetIndex, createSession) {
     return null;
 }
 
+/** Async counterpart used by tutorials that exercise {$ ... } and {$$ ... }. */
+export async function replayTutorialSourcesAsync(sources, targetIndex, createSession) {
+    const repl = createSession();
+    for (let index = 0; index <= targetIndex && index < sources.length; index += 1) {
+        const source = String(sources[index] ?? "").trim();
+        if (!source) {
+            if (index === targetIndex) return null;
+            continue;
+        }
+        const response = await repl.runAsync(source);
+        if (index === targetIndex || response.type === "error") return { ...response, repl };
+    }
+    return null;
+}
+
 /**
  * Return the tutorial cells in the target cell's h2 section, through target.
  *

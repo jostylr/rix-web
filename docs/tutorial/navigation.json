@@ -337,6 +337,15 @@
       "status": "implemented"
     },
     {
+      "number": "7f",
+      "parent": "7",
+      "file": "async-concurrency.html",
+      "title": "Async and concurrency",
+      "description": "Await bounded collection work, stream pipe stages, and start supervised background effects.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
       "number": "8",
       "file": "semantics.html",
       "title": "Semantics, types, and units",

@@ -2,7 +2,7 @@ import {
   createRixRepl,
   formatValue,
   mountOutputWidgets
-} from "./chunk-1akzsqyv.js";
+} from "./chunk-afngaf22.js";
 import {
   mountTutorialNavigation
 } from "./chunk-g5p2fpmt.js";
@@ -51,7 +51,7 @@ var objectHelp = {
 };
 
 // src/tutorial-replay.js
-function replayTutorialSources(sources, targetIndex, createSession) {
+async function replayTutorialSourcesAsync(sources, targetIndex, createSession) {
   const repl = createSession();
   for (let index = 0;index <= targetIndex && index < sources.length; index += 1) {
     const source = String(sources[index] ?? "").trim();
@@ -60,7 +60,7 @@ function replayTutorialSources(sources, targetIndex, createSession) {
         return null;
       continue;
     }
-    const response = repl.run(source);
+    const response = await repl.runAsync(source);
     if (index === targetIndex || response.type === "error")
       return { ...response, repl };
   }
@@ -188,18 +188,18 @@ ${text}` : text;
   sizeTutorialSource(input);
   input.focus();
 }
-function replayThrough(cell) {
+async function replayThrough(cell) {
   const content = cell.closest(".lesson-content") || document;
   const entries = [...content.querySelectorAll("h2, .tutorial-cell")].map((node) => ({
     type: node.matches("h2") ? "heading" : "cell",
     value: node
   }));
   const cells = tutorialSectionCells(entries, cell);
-  return replayTutorialSources(cells.map((candidate) => candidate.querySelector("[data-tutorial-source]")?.value), cells.length - 1, createRixRepl);
+  return replayTutorialSourcesAsync(cells.map((candidate) => candidate.querySelector("[data-tutorial-source]")?.value), cells.length - 1, createRixRepl);
 }
-function runCell(cell) {
+async function runCell(cell) {
   const sourceInput = cell.querySelector("[data-tutorial-source]");
-  const response = replayThrough(cell);
+  const response = await replayThrough(cell);
   if (!response)
     return;
   const output = cell.querySelector("[data-tutorial-output]");
@@ -320,5 +320,5 @@ function openObjectHelp(name, requestedFunction = null) {
   dialog.showModal();
 }
 
-//# debugId=E0EBAAD1A60FD94C64756E2164756E21
+//# debugId=8E9917F64A723E7D64756E2164756E21
 //# sourceMappingURL=tutorial-runner.js.map

@@ -216,7 +216,7 @@ function showVariables(source) {
     appendOutput(source, { type: "result", text });
 }
 
-function execute(source = input.value) {
+async function execute(source = input.value) {
     const command = source.trim();
     if (!command) return;
     if (/^\.help(?:\s+.*)?$/i.test(command)) {
@@ -229,7 +229,7 @@ function execute(source = input.value) {
 
     if (history.at(-1) !== source) history.push(source);
     historyIndex = -1;
-    const response = repl.run(source);
+    const response = await repl.runAsync(source);
     appendOutput(source, response);
     setInput("");
 }
