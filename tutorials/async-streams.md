@@ -39,6 +39,18 @@ $$latestSquare := _;
 $latestSquare;
 ```
 
+Ordered Find and All are consuming stream terminals too. They keep bounded
+lookahead inside a concurrency scope and close an unbounded source as soon as
+the source-ordered result is fixed.
+
+```rix edu
+{$:2$
+    .Stream([3, 5, 8, 10], :search)
+        |>> ((x) -> x^2)
+        |>|| ((x) -> x % 2 == 0)
+};
+```
+
 ## Process file or HTTP-style chunks
 
 Hosts can adapt an HTTP response body, file reader, database cursor, or async

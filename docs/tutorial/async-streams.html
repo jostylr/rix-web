@@ -14,6 +14,12 @@ stream;</textarea><div class="tutorial-output" data-tutorial-output></div></sect
 (.Stream([1, 2, 3, 4], :numbers) |&gt;&gt; ((x) -&gt; x^2))
     |&gt;_ ((value) -&gt; ($latestSquare := value));
 $latestSquare;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Ordered Find and All are consuming stream terminals too. They keep bounded lookahead inside a concurrency scope and close an unbounded source as soon as the source-ordered result is fixed.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">{$:2$
+    .Stream([3, 5, 8, 10], :search)
+        |&gt;&gt; ((x) -&gt; x^2)
+        |&gt;|| ((x) -&gt; x % 2 == 0)
+};</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>Process file or HTTP-style chunks</h2>
 <p>Hosts can adapt an HTTP response body, file reader, database cursor, or async iterable to the same pull protocol. This finite example stands in for chunks supplied by a file or response capability. Each pull provides backpressure.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">chunks := .Stream([&quot;header\n&quot;, &quot;body one\n&quot;, &quot;body two\n&quot;], :file_chunks);

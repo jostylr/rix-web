@@ -71,6 +71,23 @@ passing item in traversal order, not the first one to finish.
 {$:3$ [7, 4, 10, 2] |>|| ((x) -> x % 2 == 0) } ;
 ```
 
+`|>&&` is the ordered All terminal. It returns the final source item when every
+predicate passes, or null as soon as a source-ordered failure fixes the answer.
+Both terminals cancel later queued work and cooperatively stop active siblings.
+
+```rix edu
+{$:2$ [2, 4, 6, 7, 8] |>&& ((x) -> x % 2 == 0) } ;
+```
+
+After `.RANDOMSEED`, each concurrent source branch receives a reproducible
+child random stream. Completion timing therefore does not change seeded
+results.
+
+```rix edu
+.RANDOMSEED(731);
+{$:3$ [1, 2, 3] |>> ((x) -> .RAND_NAME(6)) } ;
+```
+
 ## Drain for effects and recover expected values
 
 `|>_` is terminal ForEach syntax. It calls the callback with each value,

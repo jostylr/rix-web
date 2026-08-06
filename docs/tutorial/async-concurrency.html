@@ -24,6 +24,11 @@
 } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p><code>|&gt;||</code> is ordered Find: predicates may overlap, but the result is the first passing item in traversal order, not the first one to finish.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">{$:3$ [7, 4, 10, 2] |&gt;|| ((x) -&gt; x % 2 == 0) } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p><code>|&gt;&amp;&amp;</code> is the ordered All terminal. It returns the final source item when every predicate passes, or null as soon as a source-ordered failure fixes the answer. Both terminals cancel later queued work and cooperatively stop active siblings.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">{$:2$ [2, 4, 6, 7, 8] |&gt;&amp;&amp; ((x) -&gt; x % 2 == 0) } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>After <code>.RANDOMSEED</code>, each concurrent source branch receives a reproducible child random stream. Completion timing therefore does not change seeded results.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.RANDOMSEED(731);
+{$:3$ [1, 2, 3] |&gt;&gt; ((x) -&gt; .RAND_NAME(6)) } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>Drain for effects and recover expected values</h2>
 <p><code>|&gt;_</code> is terminal ForEach syntax. It calls the callback with each value, locator, and source, ignores the callback&#039;s return value, and returns null only after the source is exhausted. Inside a limited scope the callbacks overlap up to that limit without constructing an output collection.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">$$latest := _;
