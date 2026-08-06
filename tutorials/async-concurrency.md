@@ -23,7 +23,15 @@ different order. A limit in the header bounds the number of items in flight.
 ```
 
 The default limit is 10. `{$jobs:4$ ... }` gives the scope a name and sets its
-limit to four.
+limit to four. Headers can also set a timeout in positive integer seconds:
+
+```rix edu
+{$jobs:limit=2,timeout=5$ [1^5, 2^5, 3^5] } ;
+```
+
+The shorter `{$jobs:2,5$ ... }` is equivalent. A timeout stops admission,
+requests cooperative cancellation, drains admitted work, and then runs
+guaranteed cleanup.
 
 ## Use imports like any other code block
 
@@ -163,9 +171,44 @@ $status;
 The alias import makes the publication channel explicit. A background task
 cannot use a hidden ordinary outer binding as shared mutable state.
 
+Ordinary detached imports use `~` and are deep-copied when the task is spawned.
+An ordinary `=` alias import is rejected; `=` is reserved here for explicitly
+imported reactive graph identities. Unlisted values, reactive names, and user
+functions are invisible inside the detached block.
+
 Use detached work for host effects or literal reactive publication. It does
 not return a promise or task handle, and ordinary unsynchronised outer-cell
 writes are intentionally not a communication mechanism.
+
+## Guarantee cleanup and recover operational faults
+
+`##_` preserves an acquired value and registers cleanup with the nearest code
+block. Cleanup runs in reverse registration order on success, errors, breaks,
+timeouts, cancellation, and supervised background completion.
+
+```rix edu
+result := {;
+    resource := 4 ##_ ((value) -> value);
+    resource + 1
+};
+result;
+```
+
+Async cleanup is awaited, and an item's cleanup completes before its concurrency
+permit is released. A body error remains primary if cleanup also fails.
+
+`##!>` handles only typed operational faults. It leaves successful values
+unchanged and invokes its handler for recoverable host failures or timeouts.
+Language errors, `.Error`, breaks, and cancellation continue to propagate.
+
+## Remember that suspension is not atomic
+
+Ordinary concurrent captures are snapshots, while reactive reads observe a
+point in time. The owner runtime serializes reactive writes, but multiple
+background writers are timing-dependent. Network requests, file writes,
+plugin effects, and output that already occurred are not rolled back, and their
+visible order may follow completion timing. Cancellation is cooperative, so
+synchronous or non-cancellable host work may continue until it next yields.
 
 :::challenge Bound a transformation
 Use a concurrency limit of two to square `[1, 2, 3, 4, 5]`, keep values greater

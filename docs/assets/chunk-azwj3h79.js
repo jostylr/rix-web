@@ -3462,8 +3462,17 @@ function tryMatchCustomOperator(input, position) {
   };
 }
 function tryMatchPostfixCheck(input, position) {
+  const longMarker = input.slice(position, position + 4);
+  if (longMarker === "##!>") {
+    return {
+      type: "Symbol",
+      original: longMarker,
+      value: longMarker,
+      pos: [position, position, position + longMarker.length]
+    };
+  }
   const marker = input.slice(position, position + 3);
-  if (marker !== "##@" && marker !== "##:" && marker !== "##!")
+  if (marker !== "##@" && marker !== "##:" && marker !== "##!" && marker !== "##_")
     return null;
   return {
     type: "Symbol",
@@ -3897,27 +3906,85 @@ function tryMatchBrace(input, position) {
     }
     if (input[cursor] !== ":") {
       const { line: line2, col: col2 } = posToLineCol(input, position);
-      throw new Error(`Async scope '{$' must be followed by a space, '$', 'name$', ':limit$', or 'name:limit$' at line ${line2}:${col2}`);
+      throw new Error(`Async scope '{$' must be followed by a space, '$', 'name$', or a ':' option header ending in '$' at line ${line2}:${col2}`);
     }
     cursor++;
-    const digitsStart = cursor;
-    while (cursor < input.length && /[0-9]/.test(input[cursor]))
+    const optionsStart = cursor;
+    while (cursor < input.length && input[cursor] !== "$")
       cursor++;
-    if (digitsStart === cursor || input[cursor] !== "$") {
+    if (input[cursor] !== "$") {
       const { line: line2, col: col2 } = posToLineCol(input, position);
-      throw new Error(`Async concurrency limit must be a positive integer ending in '$' at line ${line2}:${col2}`);
+      throw new Error(`Async scope option header must end in '$' at line ${line2}:${col2}`);
     }
-    const rawLimit = input.slice(digitsStart, cursor);
-    const asyncLimit = Number(rawLimit);
-    if (!Number.isSafeInteger(asyncLimit) || asyncLimit < 1) {
+    const rawOptions = input.slice(optionsStart, cursor);
+    const parsePositive = (raw, label) => {
+      if (!/^\d+$/.test(raw)) {
+        const { line: line2, col: col2 } = posToLineCol(input, position);
+        throw new Error(`Async ${label} must be a positive integer at line ${line2}:${col2}`);
+      }
+      const value = Number(raw);
+      if (!Number.isSafeInteger(value) || value < 1) {
+        const { line: line2, col: col2 } = posToLineCol(input, position);
+        throw new Error(`Invalid async ${label} '${raw}' at line ${line2}:${col2}`);
+      }
+      return value;
+    };
+    let asyncLimit;
+    let asyncTimeout;
+    const pieces = rawOptions.split(",").map((piece) => piece.trim());
+    const keyed = pieces.some((piece) => piece.includes("="));
+    if (keyed) {
+      if (pieces.some((piece) => !piece.includes("="))) {
+        const { line: line2, col: col2 } = posToLineCol(input, position);
+        throw new Error(`Async scope options cannot mix keyed and positional fields at line ${line2}:${col2}`);
+      }
+      const seen = new Set;
+      for (const piece of pieces) {
+        const match = piece.match(/^(limit|timeout)\s*=\s*(\d+)$/i);
+        if (!match) {
+          const { line: line2, col: col2 } = posToLineCol(input, position);
+          throw new Error(`Malformed async scope option '${piece}' at line ${line2}:${col2}`);
+        }
+        const key = match[1].toLowerCase();
+        if (seen.has(key)) {
+          const { line: line2, col: col2 } = posToLineCol(input, position);
+          throw new Error(`Duplicate async scope option '${key}' at line ${line2}:${col2}`);
+        }
+        seen.add(key);
+        if (key === "limit")
+          asyncLimit = parsePositive(match[2], "concurrency limit");
+        else
+          asyncTimeout = parsePositive(match[2], "timeout");
+      }
+    } else {
+      if (pieces.length > 2 || pieces.length === 0 || pieces.length === 1 && pieces[0] === "") {
+        const { line: line2, col: col2 } = posToLineCol(input, position);
+        throw new Error(`Async positional header expects limit and optional timeout at line ${line2}:${col2}`);
+      }
+      if (pieces[0] !== "")
+        asyncLimit = parsePositive(pieces[0], "concurrency limit");
+      if (pieces.length > 1) {
+        if (pieces[1] === "") {
+          const { line: line2, col: col2 } = posToLineCol(input, position);
+          throw new Error(`Async timeout cannot be omitted after ',' at line ${line2}:${col2}`);
+        }
+        asyncTimeout = parsePositive(pieces[1], "timeout");
+      }
+      if (asyncLimit === undefined && asyncTimeout === undefined) {
+        const { line: line2, col: col2 } = posToLineCol(input, position);
+        throw new Error(`Async scope header must specify a limit or timeout at line ${line2}:${col2}`);
+      }
+    }
+    if (asyncLimit === undefined && asyncTimeout === undefined) {
       const { line: line2, col: col2 } = posToLineCol(input, position);
-      throw new Error(`Invalid async concurrency limit '${rawLimit}' at line ${line2}:${col2}`);
+      throw new Error(`Async scope header must specify a limit or timeout at line ${line2}:${col2}`);
     }
     const end = cursor + 1;
     requireBoundary(end, "Async scope header");
     return makeAdvancedConstructorToken("{$", position, end, {
       containerName,
-      asyncLimit
+      ...asyncLimit !== undefined ? { asyncLimit } : {},
+      ...asyncTimeout !== undefined ? { asyncTimeout } : {}
     });
   }
   if (input.slice(position + 1).startsWith("=..")) {
@@ -5395,6 +5462,7 @@ var arithmeticFunctions = {
 var runtimeDefaults = Object.freeze({
   defaultLoopMax: 1e4,
   defaultAsyncConcurrency: 10,
+  asyncCleanupGraceMs: 5000,
   defaultConstructorCaptureMode: "deep_copy",
   symbolicAutoSpec: "safe",
   warnings: Object.freeze({
@@ -18454,6 +18522,12 @@ var LOWERERS = {
       return ir2("SYS_CALL", "Dump", ...args, expression);
     throw new Error(`Unknown postfix diagnostic action: ${node.action}`);
   },
+  PostfixFinalizer(node) {
+    return ir2("POSTFIX_FINALIZER", lowerNode(node.expression), lowerNode(node.handler));
+  },
+  PostfixFaultRecovery(node) {
+    return ir2("POSTFIX_FAULT_RECOVERY", lowerNode(node.expression), lowerNode(node.handler));
+  },
   BinaryOperation(node) {
     const op = node.operator;
     if (op === "=" || op === ":=" || op === "~=" || op === "::=" || op === "~~=") {
@@ -18830,6 +18904,8 @@ var LOWERERS = {
       meta.name = node.name;
     if (node.concurrencyLimit !== undefined)
       meta.concurrencyLimit = node.concurrencyLimit;
+    if (node.timeoutSeconds !== undefined)
+      meta.timeoutSeconds = node.timeoutSeconds;
     const hasMeta = Object.keys(meta).length > 0;
     return hasMeta ? ir2("ASYNC_SCOPE", meta, ...node.elements.map(lowerNode)) : ir2("ASYNC_SCOPE", ...node.elements.map(lowerNode));
   },
@@ -20464,24 +20540,50 @@ class Context {
     this.callStack = [];
     this.currentCallables = [];
     this.sharedBodyOverrides = [];
+    this.finalizerActivations = [];
+    this.readOnlyCells = new WeakSet;
+    this.globalReadOnly = false;
   }
   push(initial, options = {}) {
     const rawMap = initial instanceof Map ? initial : new Map(initial ? Object.entries(initial) : []);
     const bindings = new Map;
     for (const [k, v] of rawMap) {
-      bindings.set(k, v instanceof Cell ? v : new Cell(v));
+      const sourceCell = v instanceof Cell ? v : new Cell(v);
+      const cell = options.snapshot === true ? new Cell(deepCopyValue(sourceCell.value)) : sourceCell;
+      bindings.set(k, cell);
+      if (options.readOnly === true)
+        this.readOnlyCells.add(cell);
     }
     const scope = {
       bindings,
       isolated: options.isolated === true,
       readThrough: options.readThrough === true,
-      callableBoundary: options.callableBoundary === true
+      callableBoundary: options.callableBoundary === true,
+      readOnly: options.readOnly === true
     };
     this.localScopes.push(scope);
     return bindings;
   }
   pop() {
     return this.localScopes.pop();
+  }
+  pushFinalizerActivation() {
+    const activation = [];
+    this.finalizerActivations.push(activation);
+    return activation;
+  }
+  registerFinalizer(finalizer) {
+    const activation = this.finalizerActivations.at(-1);
+    if (!activation) {
+      throw new Error("##_ cleanup registration requires an active code block");
+    }
+    activation.push(finalizer);
+  }
+  popFinalizerActivation() {
+    const activation = this.finalizerActivations.pop();
+    if (!activation)
+      throw new Error("No active cleanup scope");
+    return activation;
   }
   captureClosureScopes() {
     return this.localScopes.map((scope) => ({
@@ -20500,6 +20602,7 @@ class Context {
       const scope = this.localScopes[this.localScopes.length - 1];
       const cell = scope.bindings.get(name);
       if (cell) {
+        this.assertCellWritable(cell, name);
         cell.value = value;
         return;
       }
@@ -20507,6 +20610,7 @@ class Context {
     } else {
       const cell = this.globalScope.get(name);
       if (cell) {
+        this.assertCellWritable(cell, name);
         cell.value = value;
         return;
       }
@@ -20516,15 +20620,33 @@ class Context {
   setFresh(name, value) {
     const newCell = new Cell(value);
     if (this.localScopes.length > 0) {
-      this.localScopes[this.localScopes.length - 1].bindings.set(name, newCell);
+      const scope = this.localScopes[this.localScopes.length - 1];
+      const existing = scope.bindings.get(name);
+      if (existing)
+        this.assertCellWritable(existing, name);
+      scope.bindings.set(name, newCell);
     } else {
+      const existing = this.globalScope.get(name);
+      if (existing)
+        this.assertCellWritable(existing, name);
+      if (this.globalReadOnly)
+        throw new Error(`Concurrent work cannot create global binding '${name}'`);
       this.globalScope.set(name, newCell);
     }
   }
   setCell(name, cell) {
     if (this.localScopes.length > 0) {
-      this.localScopes[this.localScopes.length - 1].bindings.set(name, cell);
+      const scope = this.localScopes[this.localScopes.length - 1];
+      const existing = scope.bindings.get(name);
+      if (existing)
+        this.assertCellWritable(existing, name);
+      scope.bindings.set(name, cell);
     } else {
+      const existing = this.globalScope.get(name);
+      if (existing)
+        this.assertCellWritable(existing, name);
+      if (this.globalReadOnly)
+        throw new Error(`Concurrent work cannot create global binding '${name}'`);
       this.globalScope.set(name, cell);
     }
   }
@@ -20547,6 +20669,8 @@ class Context {
     return this._findCell(name, { skipInnermost: true, respectIsolation: false });
   }
   setGlobal(name, value) {
+    if (this.globalReadOnly)
+      throw new Error(`Concurrent work cannot write global binding '${name}'`);
     const cell = this.globalScope.get(name);
     if (cell) {
       cell.value = value;
@@ -20561,10 +20685,16 @@ class Context {
   setOuter(name, value) {
     const cell = this._findCell(name, { skipInnermost: true, respectIsolation: false });
     if (cell) {
+      this.assertCellWritable(cell, name);
       cell.value = value;
       return;
     }
     throw new Error(`Cannot assign to outer variable '@${name}' because it does not exist in any outer scope.`);
+  }
+  assertCellWritable(cell, name = "binding") {
+    if (cell && this.readOnlyCells.has(cell)) {
+      throw new Error(`Concurrent work cannot write captured ordinary binding '${name}'`);
+    }
   }
   has(name) {
     return Boolean(this._findCell(name));
@@ -20693,22 +20823,34 @@ class Context {
     child.callStack = [...this.callStack];
     child.currentCallables = [...this.currentCallables];
     child.sharedBodyOverrides = [...this.sharedBodyOverrides];
+    child.finalizerActivations = [];
     return child;
   }
   concurrentChild() {
     const child = new Context;
-    child.globalScope = this.globalScope;
+    child.globalScope = new Map([...this.globalScope].map(([name, cell]) => {
+      const snapshot = new Cell(deepCopyValue(cell.value));
+      child.readOnlyCells.add(snapshot);
+      return [name, snapshot];
+    }));
+    child.globalReadOnly = true;
     child.localScopes = this.localScopes.map((scope) => ({
-      bindings: scope.bindings,
+      bindings: new Map([...scope.bindings].map(([name, cell]) => {
+        const snapshot = new Cell(deepCopyValue(cell.value));
+        child.readOnlyCells.add(snapshot);
+        return [name, snapshot];
+      })),
       isolated: scope.isolated === true,
       readThrough: scope.readThrough === true,
-      callableBoundary: scope.callableBoundary === true
+      callableBoundary: scope.callableBoundary === true,
+      readOnly: true
     }));
     child.functions = this.functions;
     child.env = this.env;
     child.callStack = [...this.callStack];
     child.currentCallables = [...this.currentCallables];
     child.sharedBodyOverrides = [];
+    child.finalizerActivations = [];
     return child;
   }
   withSharedBody(bodyNode, callback) {
@@ -20752,6 +20894,181 @@ class Context {
     ]);
     return Array.from(names).sort();
   }
+}
+
+// ../rix/src/runtime/operational-fault.js
+class OperationalFault extends Error {
+  constructor(message, options = {}) {
+    super(message, options.cause ? { cause: options.cause } : undefined);
+    this.name = "OperationalFault";
+    this.kind = "fault";
+    this.code = options.code || "OPERATIONAL_FAULT";
+    this.data = options.data ?? null;
+  }
+}
+
+class TimeoutFault extends OperationalFault {
+  constructor(timeoutSeconds, options = {}) {
+    super(`Async scope timed out after ${timeoutSeconds} seconds`, {
+      ...options,
+      code: "ASYNC_TIMEOUT",
+      data: options.data ?? { timeoutSeconds }
+    });
+    this.name = "TimeoutFault";
+    this.timeoutSeconds = timeoutSeconds;
+  }
+}
+
+class CleanupGraceFault extends OperationalFault {
+  constructor(graceMs, options = {}) {
+    super(`Async cleanup exceeded its ${graceMs}ms grace period`, {
+      ...options,
+      code: "ASYNC_CLEANUP_GRACE_EXCEEDED",
+      data: options.data ?? { graceMs }
+    });
+    this.name = "CleanupGraceFault";
+    this.graceMs = graceMs;
+  }
+}
+function isOperationalFault(error) {
+  return error instanceof OperationalFault || error?.kind === "fault";
+}
+function dataToRixValue(value, seen = new WeakSet) {
+  if (value === null || value === undefined)
+    return null;
+  if (value instanceof Integer || value?.type)
+    return value;
+  if (typeof value === "string")
+    return { type: "string", value };
+  if (typeof value === "boolean")
+    return new Integer(value ? 1n : 0n);
+  if (typeof value === "bigint")
+    return new Integer(value);
+  if (typeof value === "number" && Number.isSafeInteger(value)) {
+    return new Integer(BigInt(value));
+  }
+  if (Array.isArray(value)) {
+    if (seen.has(value))
+      return { type: "string", value: "[circular]" };
+    seen.add(value);
+    return { type: "sequence", values: value.map((entry) => dataToRixValue(entry, seen)) };
+  }
+  if (typeof value === "object") {
+    if (seen.has(value))
+      return { type: "string", value: "[circular]" };
+    seen.add(value);
+    return {
+      type: "map",
+      entries: new Map(Object.entries(value).map(([key, entry]) => [
+        key,
+        dataToRixValue(entry, seen)
+      ]))
+    };
+  }
+  return { type: "string", value: String(value) };
+}
+function faultToRixValue(error) {
+  const entries2 = new Map([
+    ["code", { type: "string", value: error?.code || "OPERATIONAL_FAULT" }],
+    ["message", { type: "string", value: error?.message || "Operational fault" }]
+  ]);
+  if (error instanceof TimeoutFault || Number.isFinite(error?.timeoutSeconds)) {
+    entries2.set("timeout", new Integer(BigInt(Math.trunc(error.timeoutSeconds))));
+  }
+  if (error?.data !== null && error?.data !== undefined) {
+    entries2.set("data", dataToRixValue(error.data));
+  }
+  return { type: "map", entries: entries2 };
+}
+
+// ../rix/src/runtime/finalization.js
+function attachSuppressed(primary, errors) {
+  if (!primary || errors.length === 0)
+    return primary;
+  const existing = Array.isArray(primary.suppressed) ? primary.suppressed : [];
+  primary.suppressed = [...existing, ...errors];
+  return primary;
+}
+function finalOutcome(primary, cleanupErrors) {
+  if (primary)
+    return attachSuppressed(primary, cleanupErrors);
+  if (cleanupErrors.length === 0)
+    return null;
+  return attachSuppressed(cleanupErrors[0], cleanupErrors.slice(1));
+}
+function isPromiseLike(value) {
+  return value && typeof value.then === "function";
+}
+function withFinalizerActivationSync(context, callback) {
+  context.pushFinalizerActivation();
+  let result;
+  let primary = null;
+  try {
+    result = callback();
+  } catch (error) {
+    primary = error;
+  }
+  const finalizers = context.popFinalizerActivation();
+  const cleanupErrors = [];
+  for (let index = finalizers.length - 1;index >= 0; index--) {
+    try {
+      const cleanup = finalizers[index]();
+      if (isPromiseLike(cleanup)) {
+        throw new Error("Async cleanup requires promise-aware RiX evaluation");
+      }
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+  }
+  const failure = finalOutcome(primary, cleanupErrors);
+  if (failure)
+    throw failure;
+  return result;
+}
+async function withFinalizerActivationAsync(context, callback, options = {}) {
+  context.pushFinalizerActivation();
+  let result;
+  let primary = null;
+  try {
+    result = await callback();
+  } catch (error) {
+    primary = error;
+  }
+  const finalizers = context.popFinalizerActivation();
+  const cleanupErrors = [];
+  const graceMs = options.graceMs;
+  const controller = new AbortController;
+  const deadline = Number.isFinite(graceMs) ? performance.now() + graceMs : Infinity;
+  for (let index = finalizers.length - 1;index >= 0; index--) {
+    try {
+      const cleanup = Promise.resolve(finalizers[index](controller.signal));
+      cleanup.catch(() => {});
+      if (!Number.isFinite(deadline)) {
+        await cleanup;
+        continue;
+      }
+      const remaining = Math.max(0, deadline - performance.now());
+      let timer;
+      await Promise.race([
+        cleanup,
+        new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            const fault = new CleanupGraceFault(graceMs);
+            controller.abort(fault);
+            reject(fault);
+          }, remaining);
+        })
+      ]).finally(() => clearTimeout(timer));
+    } catch (error) {
+      cleanupErrors.push(error);
+      if (error instanceof CleanupGraceFault)
+        break;
+    }
+  }
+  const failure = finalOutcome(primary, cleanupErrors);
+  if (failure)
+    throw failure;
+  return result;
 }
 
 // rix-web-shim:module
@@ -21981,6 +22298,7 @@ class Parser {
             loopMax: token2.loopMax,
             loopUnlimited: token2.loopUnlimited === true,
             asyncLimit: token2.asyncLimit,
+            asyncTimeout: token2.asyncTimeout,
             destructureAlias: token2.destructureAlias === true
           });
         } else if (token2.value === "{+" || token2.value === "{*" || token2.value === "{&&" || token2.value === "{||" || token2.value === "{\\/" || token2.value === "{/\\" || token2.value === "{++" || token2.value === "{<<" || token2.value === "{>>") {
@@ -22022,6 +22340,7 @@ class Parser {
                 loopMax: this.current.loopMax,
                 loopUnlimited: this.current.loopUnlimited === true,
                 asyncLimit: this.current.asyncLimit,
+                asyncTimeout: this.current.asyncTimeout,
                 destructureAlias: this.current.destructureAlias === true
               });
             }
@@ -22802,15 +23121,19 @@ class Parser {
       if (this.current.value === ";" || this.current.value === "," || this.current.value === ")" || this.current.value === "]" || this.current.value === "}" || this.current.type === "SemicolonSequence") {
         break;
       }
-      if (!this.disablePostfixCheckParsing && (this.current.value === "##@" || this.current.value === "##:" || this.current.value === "##!")) {
+      if (!this.disablePostfixCheckParsing && (this.current.value === "##@" || this.current.value === "##:" || this.current.value === "##!" || this.current.value === "##_" || this.current.value === "##!>")) {
         if (PRECEDENCE.CHECK < minPrec)
           break;
         if (this.current.value === "##@") {
           left = this.parsePostfixPredicateCheck(left);
         } else if (this.current.value === "##:") {
           left = this.parsePostfixTypeCheck(left);
-        } else {
+        } else if (this.current.value === "##!") {
           left = this.parsePostfixDiagnosticTap(left);
+        } else if (this.current.value === "##_") {
+          left = this.parsePostfixHandler(left, "PostfixFinalizer", "cleanup callable");
+        } else {
+          left = this.parsePostfixHandler(left, "PostfixFaultRecovery", "fault handler");
         }
         if (left.endsLineAt !== null && this.current.pos?.[0] >= left.endsLineAt)
           break;
@@ -23018,6 +23341,32 @@ class Parser {
       pos: [expression.pos[0], expression.pos[1], end],
       original: expression.original + marker.original + actionOriginal + "(...)"
     });
+  }
+  parsePostfixHandler(expression, nodeType, label) {
+    const marker = this.current;
+    const lineEndAt = this.source.indexOf(`
+`, marker.pos[2]);
+    const previousStop = this.stopExpressionAtOffset;
+    const previousDisable = this.disablePostfixCheckParsing;
+    this.stopExpressionAtOffset = lineEndAt === -1 ? previousStop : lineEndAt;
+    this.disablePostfixCheckParsing = true;
+    this.advance();
+    try {
+      if (this.current.type === "End" || this.current.value === ";" || this.current.value === "}") {
+        this.error(`Expected ${label} after ${marker.value}`);
+      }
+      const handler = this.parseExpression(PRECEDENCE.CHECK + 1);
+      return this.createNode(nodeType, {
+        expression,
+        handler,
+        endsLineAt: lineEndAt === -1 ? null : lineEndAt,
+        pos: [expression.pos[0], expression.pos[1], handler.pos[2]],
+        original: expression.original + marker.original + handler.original
+      });
+    } finally {
+      this.stopExpressionAtOffset = previousStop;
+      this.disablePostfixCheckParsing = previousDisable;
+    }
   }
   isGeneratorOperator(value) {
     return ["|+", "|*", "|:", "|?", "|^", "|;", "|>"].includes(value);
@@ -23885,6 +24234,7 @@ class Parser {
       ...effectiveSigil === "{@" && options.loopMax !== undefined ? { maxIterations: options.loopMax } : {},
       ...effectiveSigil === "{@" && options.loopUnlimited ? { unlimited: true } : {},
       ...effectiveSigil === "{$" && options.asyncLimit !== undefined ? { concurrencyLimit: options.asyncLimit } : {},
+      ...effectiveSigil === "{$" && options.asyncTimeout !== undefined ? { timeoutSeconds: options.asyncTimeout } : {},
       ...header ? { header } : {},
       ...imports.length > 0 ? { imports } : {},
       elements,
@@ -26227,6 +26577,7 @@ function performUpdate(name, rhsValue, context, depth, evaluate = null) {
   const copyFn = depth === "deep" ? deepCopyValue : shallowCopyValue;
   const cell = context.getCell(name);
   if (cell) {
+    context.assertCellWritable(cell, name);
     const oldValue = cell.value;
     checkLocked(oldValue);
     checkFrozenImmutable(oldValue);
@@ -26251,6 +26602,7 @@ function performOuterUpdate(name, rhsValue, context, depth, evaluate = null) {
   const copyFn = depth === "deep" ? deepCopyValue : shallowCopyValue;
   const cell = context.getOuterCell(name);
   if (cell) {
+    context.assertCellWritable(cell, name);
     const oldValue = cell.value;
     checkLocked(oldValue);
     checkFrozenImmutable(oldValue);
@@ -27669,19 +28021,21 @@ var controlFunctions = {
       if (!shareCurrentScope)
         context.push(undefined, { isolated: true });
       try {
-        applyImports(imports, context);
-        let result = null;
-        try {
-          for (const stmt of bodyArgs) {
-            result = evaluate(stmt);
+        return withFinalizerActivationSync(context, () => {
+          applyImports(imports, context);
+          let result = null;
+          try {
+            for (const stmt of bodyArgs) {
+              result = evaluate(stmt);
+            }
+          } catch (error) {
+            if (matchesBreakTarget(error, "block", containerName)) {
+              return error.value;
+            }
+            throw error;
           }
-        } catch (error) {
-          if (matchesBreakTarget(error, "block", containerName)) {
-            return error.value;
-          }
-          throw error;
-        }
-        return result;
+          return result;
+        });
       } finally {
         if (!shareCurrentScope)
           context.pop();
@@ -32247,6 +32601,8 @@ class AsyncScheduler {
     this.cancelled = false;
     this.cancelReason = null;
     this.idleWaiters = [];
+    this.nextTaskId = 1;
+    this.nextObservationOrder = 1;
     this.defaultGroup = this.createGroup(limit);
   }
   createGroup(limit = this.limit, parent = null) {
@@ -32260,18 +32616,28 @@ class AsyncScheduler {
       inFlight: 0,
       cancelled: false,
       cancelReason: null,
+      primaryError: null,
+      suppressedErrors: [],
       controller: new AbortController
     };
     group.signal = group.controller.signal;
     parent?.children.add(group);
     return group;
   }
-  run(task, group = this.defaultGroup) {
+  run(task, group = this.defaultGroup, options = {}) {
     const cancellation = this.#cancellationFor(group);
     if (cancellation)
       return Promise.reject(cancellation);
     return new Promise((resolve, reject) => {
-      this.queue.push({ kind: "task", task, resolve, reject, group });
+      const id = this.nextTaskId++;
+      this.queue.push({
+        kind: "task",
+        task,
+        resolve,
+        reject,
+        group,
+        path: options.path || `task ${id}`
+      });
       this.#admit();
     });
   }
@@ -32365,7 +32731,7 @@ class AsyncScheduler {
       }
       const ticket = { group: entry.group, active: true };
       Promise.resolve().then(() => entry.task(ticket)).then(entry.resolve, (error) => {
-        this.cancelGroup(entry.group, error);
+        this.#observeFailure(entry.group, error, entry.path);
         entry.reject(error);
       }).finally(() => {
         if (ticket.active) {
@@ -32386,6 +32752,23 @@ class AsyncScheduler {
         return false;
     }
     return true;
+  }
+  #observeFailure(group, error, path) {
+    if (!error || typeof error !== "object")
+      error = new Error(String(error));
+    error.asyncTaskPath ??= path;
+    error.asyncObservationOrder ??= this.nextObservationOrder++;
+    error.asyncObservedAt ??= performance.now();
+    if (!group.primaryError) {
+      group.primaryError = error;
+      this.cancelGroup(group, error);
+      return;
+    }
+    if (error === group.primaryError || error === group.cancelReason)
+      return;
+    group.suppressedErrors.push(error);
+    const existing = Array.isArray(group.primaryError.suppressed) ? group.primaryError.suppressed : [];
+    group.primaryError.suppressed = [...existing, error];
   }
   #adjustInFlight(group, delta) {
     for (let current = group;current; current = current.parent) {
@@ -32504,6 +32887,15 @@ function checkPostfixType(value, spec2, context, registry, evaluateValue) {
   if (count !== shape[0]) {
     throw new Error(`##: check failed: expected ${name}[${shape[0]}], received ${name}[${count ?? "?"}]`);
   }
+}
+function invokeResolvedCallableSync(fn, args, context, evaluateValue, systemContext) {
+  if (fn?.type === "sysref" && systemContext?.has(fn.name)) {
+    const capability2 = systemContext.get(fn.name);
+    if (capability2.kind !== "function")
+      throw new Error(`System ${capability2.kind} .${capability2.displayName} is not callable`);
+    return capability2.impl(args, context, evaluateValue, { signal: null });
+  }
+  return callWithConcreteArgs(fn, args, context, evaluateValue);
 }
 function createDefaultRegistry(options = {}) {
   registerBuiltinSemanticTypes();
@@ -33182,6 +33574,22 @@ function evaluate(irNode, context, registry, systemContext) {
       checkPostfixType(value, args[1], context, registry, evalFn);
       return value;
     }
+    if (fn === "POSTFIX_FINALIZER") {
+      const value = evalFn(args[0]);
+      const cleanup = evalFn(args[1]);
+      context.registerFinalizer(() => invokeResolvedCallableSync(cleanup, [value], context, evalFn, systemContext));
+      return value;
+    }
+    if (fn === "POSTFIX_FAULT_RECOVERY") {
+      try {
+        return evalFn(args[0]);
+      } catch (error) {
+        if (!isOperationalFault(error))
+          throw error;
+        const handler = evalFn(args[1]);
+        return invokeResolvedCallableSync(handler, [faultToRixValue(error)], context, evalFn, systemContext);
+      }
+    }
     if (fn === "SYS_OBJ") {
       if (!systemContext)
         throw new Error("No system context available");
@@ -33303,7 +33711,7 @@ var ASYNC_PIPE_FNS = new Set(["PMAP", "PFILTER", "PANY", "PALL"]);
 var ASYNC_RESOLVED_BARRIER_FNS = new Set(["PSLICE_STRICT", "PSLICE_CLAMP"]);
 function splitAsyncBlockArgs(args) {
   const first = args[0];
-  if (first && !first.fn && (Array.isArray(first.imports) || first.name !== undefined || first.concurrencyLimit !== undefined)) {
+  if (first && !first.fn && (Array.isArray(first.imports) || first.name !== undefined || first.concurrencyLimit !== undefined || first.timeoutSeconds !== undefined)) {
     return { meta: first, body: args.slice(1) };
   }
   return { meta: {}, body: args };
@@ -33315,6 +33723,61 @@ function applyAsyncImports(imports, context) {
     else
       context.importCopy(spec2.local, spec2.source);
   }
+}
+function deepCopyDetachedValue(value, seen = new WeakMap) {
+  if (!value || typeof value !== "object")
+    return value;
+  if (seen.has(value))
+    return seen.get(value);
+  if (isReactiveNode(value)) {
+    throw new Error("Reactive cells must use alias imports in detached blocks");
+  }
+  if (value.type === "function" || value.type === "lambda") {
+    const clone = { ...value };
+    seen.set(value, clone);
+    clone.__closureScopes = (value.__closureScopes || []).map((scope) => ({
+      ...scope,
+      bindings: new Map([...scope.bindings].map(([name, cell]) => [
+        name,
+        new Cell(deepCopyDetachedValue(cell.value, seen))
+      ]))
+    }));
+    return clone;
+  }
+  if (value.type === "multifunction" && Array.isArray(value.values)) {
+    const clone = { ...value, values: [] };
+    seen.set(value, clone);
+    clone.values = value.values.map((variant) => deepCopyDetachedValue(variant, seen));
+    return clone;
+  }
+  if (value.type === "partial") {
+    const clone = { ...value, template: [] };
+    seen.set(value, clone);
+    clone.fn = deepCopyDetachedValue(value.fn, seen);
+    clone.template = value.template.map((entry) => deepCopyDetachedValue(entry, seen));
+    return clone;
+  }
+  const copy = deepCopyValue(value);
+  seen.set(value, copy);
+  return copy;
+}
+function captureDetachedImports(imports, context) {
+  const bindings = new Map;
+  for (const spec2 of imports || []) {
+    const cell = context.getCell(spec2.source);
+    if (!cell)
+      throw new Error(`Undefined outer variable for detached import: ${spec2.source}`);
+    if (spec2.mode === "alias") {
+      if (!isReactiveNode(cell.value)) {
+        throw new Error(`Detached alias import '${spec2.local}=${spec2.source}' requires a reactive cell`);
+      }
+      bindings.set(spec2.local, cell);
+      continue;
+    }
+    const snapshot = isReactiveNode(cell.value) ? cell.value.peek() : cell.value;
+    bindings.set(spec2.local, new Cell(deepCopyDetachedValue(snapshot)));
+  }
+  return bindings;
 }
 function isTruthyAsync(value) {
   return value !== null && value !== undefined;
@@ -33399,7 +33862,9 @@ async function invokeUserCallableAsync(fn, callArgs, context, registry, systemCo
     context.push(closure instanceof Map ? closure : closure.bindings, {
       isolated: closure.isolated === true,
       readThrough: closure.readThrough === true,
-      callableBoundary: closure.callableBoundary === true
+      callableBoundary: closure.callableBoundary === true,
+      snapshot: !!state?.admission,
+      readOnly: !!state?.admission
     });
     pushed++;
   }
@@ -33455,11 +33920,48 @@ async function invokeCallableAsync(fn, callArgs, context, registry, systemContex
     return invokeUserCallableAsync(fn, callArgs, context, registry, systemContext, state);
   }
   if (fn.type === "sysref") {
+    if (systemContext?.has(fn.name)) {
+      const capability2 = systemContext.get(fn.name);
+      if (capability2.kind !== "function")
+        throw new Error(`System ${capability2.kind} .${capability2.displayName} is not callable`);
+      return await capability2.impl(callArgs, context, (node) => evaluateAsyncInternal(node, context, registry, systemContext, state), { signal: state?.signal ?? null });
+    }
     return evaluateAsyncInternal({ fn: fn.name, args: callArgs }, context, registry, systemContext, state);
   }
   if (typeof fn === "function")
     return await fn(...callArgs);
   return await callWithConcreteArgs(fn, callArgs, context, (node) => evaluate(node, context, registry, systemContext));
+}
+function withAsyncItemFinalizers(context, callback) {
+  return withFinalizerActivationAsync(context, callback, {
+    graceMs: context.getEnv("asyncCleanupGraceMs", runtimeDefaults.asyncCleanupGraceMs)
+  });
+}
+async function orderedAsyncMap(items, state, worker) {
+  if (items.length === 0)
+    return [];
+  const window = Math.max(1, state.limit * 2);
+  const promises = new Array(items.length);
+  const results = new Array(items.length);
+  let nextToStart = 0;
+  const start = (index) => {
+    let promise;
+    try {
+      promise = Promise.resolve(worker(items[index], index));
+    } catch (error) {
+      promise = Promise.reject(error);
+    }
+    promise.catch(() => {});
+    promises[index] = promise;
+  };
+  while (nextToStart < items.length && nextToStart < window)
+    start(nextToStart++);
+  for (let published = 0;published < items.length; published++) {
+    results[published] = await promises[published];
+    if (nextToStart < items.length)
+      start(nextToStart++);
+  }
+  return results;
 }
 function asyncCollectionEntry(node, context, registry, systemContext, state) {
   if (state.parallelCollections === false) {
@@ -33469,7 +33971,7 @@ function asyncCollectionEntry(node, context, registry, systemContext, state) {
     return evaluateAsyncInternal(node, context, registry, systemContext, state);
   }
   const itemContext = context.concurrentChild();
-  return state.scheduler.run((admission) => evaluateAsyncInternal(node, itemContext, registry, systemContext, { ...state, admission }), state.group);
+  return state.scheduler.run((admission) => withAsyncItemFinalizers(itemContext, () => evaluateAsyncInternal(node, itemContext, registry, systemContext, { ...state, admission })), state.group);
 }
 async function resolveAsyncCollectionArg(arg, context, registry, systemContext, state) {
   if (arg?.fn === "HOLE")
@@ -33526,7 +34028,7 @@ async function evaluateAsyncCollectionBody(irNode, context, registry, systemCont
             ]
           };
         };
-        return containsNestedAsyncCollection(value) ? resolveEntry() : state.scheduler.run(resolveEntry, state.group);
+        return containsNestedAsyncCollection(value) ? resolveEntry() : state.scheduler.run((admission) => withAsyncItemFinalizers(itemContext, () => resolveEntry(admission)), state.group);
       }
       return resolveAsyncCollectionArg(entry, context, registry, systemContext, state);
     };
@@ -33534,7 +34036,7 @@ async function evaluateAsyncCollectionBody(irNode, context, registry, systemCont
       for (const entry of args.slice(start))
         resolved.push(await resolveMapEntry(entry));
     } else {
-      resolved.push(...await Promise.all(args.slice(start).map(resolveMapEntry)));
+      resolved.push(...await orderedAsyncMap(args.slice(start), state, resolveMapEntry));
     }
   } else if (irNode.fn === "TENSOR_LITERAL") {
     const shapeIndex = hasHeader ? 1 : 0;
@@ -33544,7 +34046,7 @@ async function evaluateAsyncCollectionBody(irNode, context, registry, systemCont
       for (const arg of entries2)
         resolved.push(await resolveAsyncCollectionArg(arg, context, registry, systemContext, state));
     } else {
-      resolved.push(...await Promise.all(entries2.map((arg) => resolveAsyncCollectionArg(arg, context, registry, systemContext, state))));
+      resolved.push(...await orderedAsyncMap(entries2, state, (arg) => resolveAsyncCollectionArg(arg, context, registry, systemContext, state)));
     }
   } else {
     const entries2 = args.slice(start);
@@ -33552,7 +34054,7 @@ async function evaluateAsyncCollectionBody(irNode, context, registry, systemCont
       for (const arg of entries2)
         resolved.push(await resolveAsyncCollectionArg(arg, context, registry, systemContext, state));
     } else {
-      resolved.push(...await Promise.all(entries2.map((arg) => resolveAsyncCollectionArg(arg, context, registry, systemContext, state))));
+      resolved.push(...await orderedAsyncMap(entries2, state, (arg) => resolveAsyncCollectionArg(arg, context, registry, systemContext, state)));
     }
   }
   const resolvedEvaluate = (node) => node?.fn ? evaluate(node, context, registry, systemContext) : node;
@@ -33713,16 +34215,16 @@ async function evaluateAsyncPipe(irNode, context, registry, systemContext, state
   }
   const fusedSource = rawFusedSource(sourceNode);
   if (fusedSource) {
-    const records2 = await Promise.all(fusedSource.entries.map((entry, index) => {
+    const records2 = await orderedAsyncMap(fusedSource.entries, state, (entry, index) => {
       const itemContext = context.concurrentChild();
-      return state.scheduler.run(async (admission) => {
+      return state.scheduler.run((admission) => withAsyncItemFinalizers(itemContext, async () => {
         const itemState = { ...state, admission };
         const rawNode = entry?.expression || entry;
         const resolved = await evaluateAsyncInternal(rawNode, itemContext, registry, systemContext, itemState);
         const captured = captureFusedSourceValue(fusedSource, entry, resolved, itemContext, registry, systemContext);
         return runAsyncPipeStages(captured, index, undefined, fusedSource.shell, stages, callables, itemContext, registry, systemContext, itemState);
-      }, state.group);
-    }));
+      }), state.group);
+    });
     const terminal2 = stages.at(-1)?.fn;
     if (terminal2 === "PANY" || terminal2 === "PALL")
       return asyncTerminalResult(terminal2, records2);
@@ -33732,10 +34234,10 @@ async function evaluateAsyncPipe(irNode, context, registry, systemContext, state
   if (collection === null || collection === undefined)
     return null;
   const items = collectionItems(collection);
-  const records = await Promise.all(items.map((item, index) => {
+  const records = await orderedAsyncMap(items, state, (item, index) => {
     const itemContext = context.concurrentChild();
-    return state.scheduler.run((admission) => runAsyncPipeStages(item.value, index, item.key, collection, stages, callables, itemContext, registry, systemContext, { ...state, admission }, item.locator), state.group);
-  }));
+    return state.scheduler.run((admission) => withAsyncItemFinalizers(itemContext, () => runAsyncPipeStages(item.value, index, item.key, collection, stages, callables, itemContext, registry, systemContext, { ...state, admission }, item.locator)), state.group);
+  });
   const terminal = stages.at(-1)?.fn;
   if (terminal === "PANY" || terminal === "PALL")
     return asyncTerminalResult(terminal, records);
@@ -33980,40 +34482,68 @@ async function evaluateAsyncChunk(args, context, registry, systemContext, state)
 }
 async function evaluateAsyncScopeBody(args, context, registry, systemContext, parentState) {
   const { meta, body } = splitAsyncBlockArgs(args);
+  const enteredAt = performance.now();
   const configured = meta.concurrencyLimit ?? context.getEnv("defaultAsyncConcurrency", runtimeDefaults.defaultAsyncConcurrency);
   const hasParentScheduler = !!parentState?.scheduler;
   const effectiveLimit = hasParentScheduler ? Math.min(configured, parentState.limit) : configured;
   const scheduler = hasParentScheduler ? parentState.scheduler : new AsyncScheduler(effectiveLimit);
   const group = hasParentScheduler ? scheduler.createGroup(effectiveLimit, parentState.group) : scheduler.defaultGroup;
+  const ownDeadline = meta.timeoutSeconds !== undefined ? enteredAt + meta.timeoutSeconds * 1000 : Infinity;
+  const inheritedDeadline = parentState?.deadlineMs ?? Infinity;
+  const deadlineMs = Math.min(ownDeadline, inheritedDeadline);
+  const deadlineFault = inheritedDeadline <= ownDeadline ? parentState?.deadlineFault : new TimeoutFault(meta.timeoutSeconds, {
+    data: { timeoutSeconds: meta.timeoutSeconds, scope: meta.name ?? null }
+  });
   const state = {
     scheduler,
     group,
     signal: group.signal,
     limit: effectiveLimit,
     name: meta.name ?? null,
-    parallelCollections: true
+    parallelCollections: true,
+    deadlineMs,
+    deadlineFault
   };
+  let timeoutId = null;
+  if (Number.isFinite(deadlineMs)) {
+    timeoutId = setTimeout(() => {
+      scheduler.cancelGroup(group, deadlineFault);
+    }, Math.max(0, deadlineMs - performance.now()));
+  }
   context.push(undefined, { isolated: true });
   try {
-    applyAsyncImports(meta.imports, context);
-    let result = null;
-    try {
-      for (const statement of body) {
-        result = await evaluateAsyncInternal(statement, context, registry, systemContext, state);
+    return await withFinalizerActivationAsync(context, async () => {
+      try {
+        applyAsyncImports(meta.imports, context);
+        let result = null;
+        try {
+          for (const statement of body) {
+            result = await evaluateAsyncInternal(statement, context, registry, systemContext, state);
+          }
+          await state.scheduler.waitForIdle(state.group);
+          if (state.signal.aborted)
+            throw state.signal.reason;
+          return result;
+        } catch (error) {
+          if (!matchesAsyncBreak(error, state.name)) {
+            state.scheduler.cancelGroup(state.group, error);
+            await state.scheduler.waitForIdle(state.group);
+            throw error;
+          }
+          state.scheduler.cancelGroup(state.group, error);
+          await state.scheduler.waitForIdle(state.group);
+          return error.value;
+        }
+      } finally {
+        if (timeoutId !== null)
+          clearTimeout(timeoutId);
       }
-      await state.scheduler.waitForIdle(state.group);
-      return result;
-    } catch (error) {
-      if (!matchesAsyncBreak(error, state.name)) {
-        state.scheduler.cancelGroup(state.group, error);
-        await state.scheduler.waitForIdle(state.group);
-        throw error;
-      }
-      state.scheduler.cancelGroup(state.group, error);
-      await state.scheduler.waitForIdle(state.group);
-      return error.value;
-    }
+    }, {
+      graceMs: context.getEnv("asyncCleanupGraceMs", runtimeDefaults.asyncCleanupGraceMs)
+    });
   } finally {
+    if (timeoutId !== null)
+      clearTimeout(timeoutId);
     state.scheduler.closeGroup(state.group);
     context.pop();
   }
@@ -34024,14 +34554,18 @@ async function evaluateAsyncScope(args, context, registry, systemContext, parent
 }
 function startDetachedBlock(args, context, registry, systemContext, parentState) {
   const { meta, body } = splitAsyncBlockArgs(args);
+  const importedBindings = captureDetachedImports(meta.imports, context);
   const taskContext = context.concurrentChild();
   const task = Promise.resolve().then(async () => {
-    taskContext.push(undefined, { isolated: true });
+    taskContext.push(importedBindings, { isolated: true, callableBoundary: true });
     try {
-      applyAsyncImports(meta.imports, taskContext);
-      for (const statement of body) {
-        await evaluateAsyncInternal(statement, taskContext, registry, systemContext, parentState);
-      }
+      await withFinalizerActivationAsync(taskContext, async () => {
+        for (const statement of body) {
+          await evaluateAsyncInternal(statement, taskContext, registry, systemContext, null);
+        }
+      }, {
+        graceMs: taskContext.getEnv("asyncCleanupGraceMs", runtimeDefaults.asyncCleanupGraceMs)
+      });
     } finally {
       taskContext.pop();
     }
@@ -34055,6 +34589,31 @@ async function evaluateAsyncInternal(irNode, context, registry, systemContext, s
   if (fn === "DEFER")
     return irNode;
   try {
+    if (state?.signal?.aborted)
+      throw state.signal.reason;
+    if (fn === "POSTFIX_FINALIZER") {
+      const value = await evaluateAsyncInternal(args[0], context, registry, systemContext, state);
+      const cleanup = await evaluateAsyncInternal(args[1], context, registry, systemContext, state);
+      context.registerFinalizer((cleanupSignal) => invokeCallableAsync(cleanup, [value], context, registry, systemContext, state ? {
+        ...state,
+        signal: cleanupSignal,
+        scheduler: null,
+        group: null,
+        admission: null,
+        parallelCollections: false
+      } : null));
+      return value;
+    }
+    if (fn === "POSTFIX_FAULT_RECOVERY") {
+      try {
+        return await evaluateAsyncInternal(args[0], context, registry, systemContext, state);
+      } catch (error) {
+        if (!isOperationalFault(error))
+          throw error;
+        const handler = await evaluateAsyncInternal(args[1], context, registry, systemContext, state);
+        return invokeCallableAsync(handler, [faultToRixValue(error)], context, registry, systemContext, state);
+      }
+    }
     if (fn === "ASYNC_SCOPE")
       return await evaluateAsyncScope(args, context, registry, systemContext, state);
     if (fn === "DETACH")
@@ -34089,11 +34648,13 @@ async function evaluateAsyncInternal(irNode, context, registry, systemContext, s
       if (capability2.kind !== "function")
         throw new Error(`System ${capability2.kind} .${capability2.displayName} is not callable`);
       if (capability2.lazy)
-        return await capability2.impl(args.slice(1), context, evalAsync);
+        return await capability2.impl(args.slice(1), context, evalAsync, { signal: state?.signal ?? null });
       const values = [];
       for (const arg of args.slice(1))
         values.push(await evalAsync(arg));
-      return await capability2.impl(values, context, evalAsync);
+      if (state?.signal?.aborted)
+        throw state.signal.reason;
+      return await capability2.impl(values, context, evalAsync, { signal: state?.signal ?? null });
     }
     if (["SYS_GET", "SYS_OBJ"].includes(fn))
       return evaluate(irNode, context, registry, systemContext);
@@ -34107,11 +34668,15 @@ async function evaluateAsyncInternal(irNode, context, registry, systemContext, s
       const { meta, body } = splitAsyncBlockArgs(args);
       context.push(undefined, { isolated: true });
       try {
-        applyAsyncImports(meta.imports, context);
-        let result = null;
-        for (const arg of body)
-          result = await evalAsync(arg);
-        return result;
+        return await withFinalizerActivationAsync(context, async () => {
+          applyAsyncImports(meta.imports, context);
+          let result = null;
+          for (const arg of body)
+            result = await evalAsync(arg);
+          return result;
+        }, {
+          graceMs: context.getEnv("asyncCleanupGraceMs", runtimeDefaults.asyncCleanupGraceMs)
+        });
       } finally {
         context.pop();
       }
@@ -34237,31 +34802,33 @@ function parseAndEvaluate(code, options = {}) {
   });
   const irNodes = lower(ast);
   attachSourceInfo(irNodes, code, options.file || "<repl>");
-  let result = null;
-  for (const irNode of irNodes) {
-    if (!(options.reactiveReads instanceof Set)) {
-      result = evaluate(irNode, context, registry, systemContext);
-      continue;
+  return withFinalizerActivationSync(context, () => {
+    let result = null;
+    for (const irNode of irNodes) {
+      if (!(options.reactiveReads instanceof Set)) {
+        result = evaluate(irNode, context, registry, systemContext);
+        continue;
+      }
+      const reads = new Set;
+      const previousObserver = {
+        has: context.env?.has(REACTIVE_OUTPUT_READ_ENV) === true,
+        value: context.getEnv(REACTIVE_OUTPUT_READ_ENV, undefined)
+      };
+      context.setEnv(REACTIVE_OUTPUT_READ_ENV, (source) => reads.add(source));
+      try {
+        result = evaluate(irNode, context, registry, systemContext);
+      } finally {
+        if (previousObserver.has)
+          context.setEnv(REACTIVE_OUTPUT_READ_ENV, previousObserver.value);
+        else
+          context.env?.delete(REACTIVE_OUTPUT_READ_ENV);
+      }
+      options.reactiveReads.clear();
+      for (const source of reads)
+        options.reactiveReads.add(source);
     }
-    const reads = new Set;
-    const previousObserver = {
-      has: context.env?.has(REACTIVE_OUTPUT_READ_ENV) === true,
-      value: context.getEnv(REACTIVE_OUTPUT_READ_ENV, undefined)
-    };
-    context.setEnv(REACTIVE_OUTPUT_READ_ENV, (source) => reads.add(source));
-    try {
-      result = evaluate(irNode, context, registry, systemContext);
-    } finally {
-      if (previousObserver.has)
-        context.setEnv(REACTIVE_OUTPUT_READ_ENV, previousObserver.value);
-      else
-        context.env?.delete(REACTIVE_OUTPUT_READ_ENV);
-    }
-    options.reactiveReads.clear();
-    for (const source of reads)
-      options.reactiveReads.add(source);
-  }
-  return result;
+    return result;
+  });
 }
 async function parseAndEvaluateAsync(code, options = {}) {
   const context = options.context || new Context;
@@ -34294,31 +34861,35 @@ async function parseAndEvaluateAsync(code, options = {}) {
   });
   const irNodes = lower(ast);
   attachSourceInfo(irNodes, code, options.file || "<repl>");
-  let result = null;
-  for (const irNode of irNodes) {
-    if (!(options.reactiveReads instanceof Set)) {
-      result = await evaluateAsync(irNode, context, registry, systemContext);
-      continue;
+  return withFinalizerActivationAsync(context, async () => {
+    let result = null;
+    for (const irNode of irNodes) {
+      if (!(options.reactiveReads instanceof Set)) {
+        result = await evaluateAsync(irNode, context, registry, systemContext);
+        continue;
+      }
+      const reads = new Set;
+      const previousObserver = {
+        has: context.env?.has(REACTIVE_OUTPUT_READ_ENV) === true,
+        value: context.getEnv(REACTIVE_OUTPUT_READ_ENV, undefined)
+      };
+      context.setEnv(REACTIVE_OUTPUT_READ_ENV, (source) => reads.add(source));
+      try {
+        result = await evaluateAsync(irNode, context, registry, systemContext);
+      } finally {
+        if (previousObserver.has)
+          context.setEnv(REACTIVE_OUTPUT_READ_ENV, previousObserver.value);
+        else
+          context.env?.delete(REACTIVE_OUTPUT_READ_ENV);
+      }
+      options.reactiveReads.clear();
+      for (const source of reads)
+        options.reactiveReads.add(source);
     }
-    const reads = new Set;
-    const previousObserver = {
-      has: context.env?.has(REACTIVE_OUTPUT_READ_ENV) === true,
-      value: context.getEnv(REACTIVE_OUTPUT_READ_ENV, undefined)
-    };
-    context.setEnv(REACTIVE_OUTPUT_READ_ENV, (source) => reads.add(source));
-    try {
-      result = await evaluateAsync(irNode, context, registry, systemContext);
-    } finally {
-      if (previousObserver.has)
-        context.setEnv(REACTIVE_OUTPUT_READ_ENV, previousObserver.value);
-      else
-        context.env?.delete(REACTIVE_OUTPUT_READ_ENV);
-    }
-    options.reactiveReads.clear();
-    for (const source of reads)
-      options.reactiveReads.add(source);
-  }
-  return result;
+    return result;
+  }, {
+    graceMs: context.getEnv("asyncCleanupGraceMs", runtimeDefaults.asyncCleanupGraceMs)
+  });
 }
 function defaultSystemLookup(name) {
   const builtins = {
@@ -36809,5 +37380,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { formatValue, mountOutputWidgets, findHelp, createRixRepl };
 
-//# debugId=668C30CDFD018FCA64756E2164756E21
-//# sourceMappingURL=chunk-bvwzjb3b.js.map
+//# debugId=54799EC526B1A41E64756E2164756E21
+//# sourceMappingURL=chunk-azwj3h79.js.map

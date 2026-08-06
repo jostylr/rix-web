@@ -4,7 +4,9 @@
 {$ &lt;Square&gt; [Square(2), Square(3), Square(4)] } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The result remains in source order even if host capabilities finish in a different order. A limit in the header bounds the number of items in flight.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">{$:2$ [1 + 1, 2 + 2, 3 + 3, 4 + 4] } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>The default limit is 10. <code>{$jobs:4$ ... }</code> gives the scope a name and sets its limit to four.</p>
+<p>The default limit is 10. <code>{$jobs:4$ ... }</code> gives the scope a name and sets its limit to four. Headers can also set a timeout in positive integer seconds:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">{$jobs:limit=2,timeout=5$ [1^5, 2^5, 3^5] } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The shorter <code>{$jobs:2,5$ ... }</code> is equivalent. A timeout stops admission, requests cooperative cancellation, drains admitted work, and then runs guaranteed cleanup.</p>
 <h2>Use imports like any other code block</h2>
 <p>Async and detached blocks accept the same import header as ordinary code blocks. Statements still run in order; concurrency occurs only at explicit fan-out points.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">offset := 10;
@@ -65,7 +67,19 @@
 };
 $status;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The alias import makes the publication channel explicit. A background task cannot use a hidden ordinary outer binding as shared mutable state.</p>
+<p>Ordinary detached imports use <code>~</code> and are deep-copied when the task is spawned. An ordinary <code>=</code> alias import is rejected; <code>=</code> is reserved here for explicitly imported reactive graph identities. Unlisted values, reactive names, and user functions are invisible inside the detached block.</p>
 <p>Use detached work for host effects or literal reactive publication. It does not return a promise or task handle, and ordinary unsynchronised outer-cell writes are intentionally not a communication mechanism.</p>
+<h2>Guarantee cleanup and recover operational faults</h2>
+<p><code>##_</code> preserves an acquired value and registers cleanup with the nearest code block. Cleanup runs in reverse registration order on success, errors, breaks, timeouts, cancellation, and supervised background completion.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">result := {;
+    resource := 4 ##_ ((value) -&gt; value);
+    resource + 1
+};
+result;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Async cleanup is awaited, and an item&#039;s cleanup completes before its concurrency permit is released. A body error remains primary if cleanup also fails.</p>
+<p><code>##!&gt;</code> handles only typed operational faults. It leaves successful values unchanged and invokes its handler for recoverable host failures or timeouts. Language errors, <code>.Error</code>, breaks, and cancellation continue to propagate.</p>
+<h2>Remember that suspension is not atomic</h2>
+<p>Ordinary concurrent captures are snapshots, while reactive reads observe a point in time. The owner runtime serializes reactive writes, but multiple background writers are timing-dependent. Network requests, file writes, plugin effects, and output that already occurred are not rolled back, and their visible order may follow completion timing. Cancellation is cooperative, so synchronous or non-cancellable host work may continue until it next yields.</p>
 <aside class="challenge"><p class="eyebrow">Challenge</p><h3>Bound a transformation</h3><p>Use a concurrency limit of two to square <code>[1, 2, 3, 4, 5]</code>, keep values greater than 5, and return the ordered result.</p><section class="tutorial-cell"><header><span>Your RiX answer</span><button type="button" data-tutorial-run>Run answer</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false" placeholder="# Write your RiX solution here">{$:2$
     [1, 2, 3, 4, 5]
         |&gt;&gt; ((x) -&gt; x^2)
