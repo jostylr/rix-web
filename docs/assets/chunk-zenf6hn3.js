@@ -3393,6 +3393,9 @@ function tokenize(input) {
       token = tryMatchIdentifier(input, position);
     }
     if (!token) {
+      token = tryMatchCustomOperator(input, position);
+    }
+    if (!token) {
       token = tryMatchRegexLiteral(input, position);
     }
     if (!token) {
@@ -3426,6 +3429,37 @@ function tokenize(input) {
     });
   }
   return tokens;
+}
+function tryMatchCustomOperator(input, position) {
+  if (!input.startsWith(":<", position))
+    return null;
+  let end = -1;
+  for (let cursor = position + 2;cursor < input.length; cursor += 1) {
+    if (input.startsWith(">:", cursor)) {
+      end = cursor;
+      break;
+    }
+    if (input[cursor] === ":")
+      return null;
+    if (/\s/u.test(input[cursor]))
+      break;
+  }
+  if (end < 0) {
+    const { line, col } = posToLineCol(input, position);
+    throw new Error(`Unclosed custom operator delimiter at line ${line}:${col}`);
+  }
+  const value = input.slice(position + 2, end);
+  if (!value || /[<>:\s]/u.test(value)) {
+    const { line, col } = posToLineCol(input, position);
+    throw new Error(`Invalid custom operator delimiter at line ${line}:${col}`);
+  }
+  const original = input.slice(position, end + 2);
+  return {
+    type: "CustomOperator",
+    original,
+    value,
+    pos: [position, position, end + 2]
+  };
 }
 function tryMatchPostfixCheck(input, position) {
   const marker = input.slice(position, position + 3);
@@ -18471,6 +18505,13 @@ var LOWERERS = {
     }
     return ir2("BINOP", op, lowerNode(node.left), lowerNode(node.right));
   },
+  CustomOperator(node) {
+    return ir2("CUSTOM_OPERATOR", {
+      symbol: node.operator,
+      spelling: node.spelling,
+      target: node.definition.target
+    }, lowerNode(node.left), lowerNode(node.right));
+  },
   UnaryOperation(node) {
     if (node.operator === "-") {
       return ir2("NEG", lowerNode(node.operand));
@@ -19829,7 +19870,238 @@ class SystemContext {
   }
 }
 
+// ../rix/src/parser/custom-operators.js
+var BUILTIN_PRECEDENCE_BANDS = Object.freeze({
+  assignment: 10,
+  pipe: 20,
+  arrow: 25,
+  logical_or: 30,
+  logical_and: 40,
+  condition: 45,
+  equality: 50,
+  comparison: 60,
+  interval: 70,
+  conversion: 75,
+  additive: 80,
+  multiplicative: 90,
+  power: 100,
+  calculus: 115,
+  postfix: 120,
+  property: 130
+});
+var BAND_ALIASES = Object.freeze({
+  addition: "additive",
+  multiplication: "multiplicative",
+  exponentiation: "power",
+  exponential: "power",
+  logicalor: "logical_or",
+  logicaland: "logical_and"
+});
+var FIXITIES = new Set(["infix", "prefix", "postfix"]);
+var ASSOCIATIVITIES = new Set(["left", "right", "none"]);
+var RELATIONS = new Set(["above", "below"]);
+var OPERATOR_TOKEN = /^:<([^<>:\s]+)>:$/u;
+var WORD_TOKEN = /^:([\p{L}_][\p{L}\p{N}_-]*)$/u;
+var TARGET_TOKEN = /^(?:[\p{L}_][\p{L}\p{N}_]*|\.[\p{L}_][\p{L}\p{N}_]*\.[\p{L}_][\p{L}\p{N}_]*)$/u;
+function normalizedBand(name) {
+  const normalized = String(name).toLowerCase().replace(/-/g, "_");
+  return BAND_ALIASES[normalized] || normalized;
+}
+function relativePrecedence(band, relation) {
+  const value = BUILTIN_PRECEDENCE_BANDS[band];
+  if (value === undefined)
+    throw new Error(`Unknown precedence band ':${band}'`);
+  const boundaries = Array.from(new Set([
+    ...Object.values(BUILTIN_PRECEDENCE_BANDS),
+    95,
+    97,
+    99
+  ])).sort((left, right) => left - right);
+  const index = boundaries.indexOf(value);
+  if (relation === "above") {
+    const next = boundaries[index + 1];
+    if (next === undefined)
+      throw new Error(`Cannot place an operator above ':${band}'`);
+    return (value + next) / 2;
+  }
+  const previous = boundaries[index - 1];
+  if (previous === undefined)
+    throw new Error(`Cannot place an operator below ':${band}'`);
+  return (previous + value) / 2;
+}
+function declarationError(label, line, message) {
+  throw new Error(`${label}:${line}: ${message}`);
+}
+function normalizedIdentifier(name) {
+  const firstLetter = Array.from(String(name)).find((character) => /\p{L}/u.test(character));
+  if (!firstLetter)
+    return name;
+  return firstLetter === firstLetter.toUpperCase() ? String(name).toUpperCase() : String(name).toLowerCase();
+}
+function parseTarget(rawTarget, owner, label, line) {
+  if (!TARGET_TOKEN.test(rawTarget)) {
+    declarationError(label, line, `Invalid operator target '${rawTarget}'`);
+  }
+  if (rawTarget.startsWith(".")) {
+    const [, mount, method5] = rawTarget.split(".");
+    return {
+      kind: "system-method",
+      mount: normalizedIdentifier(mount),
+      method: normalizedIdentifier(method5)
+    };
+  }
+  if (owner?.pluginId) {
+    return {
+      kind: "plugin-method",
+      pluginId: owner.pluginId,
+      mount: owner.mount || null,
+      method: normalizedIdentifier(rawTarget)
+    };
+  }
+  return { kind: "function", name: normalizedIdentifier(rawTarget) };
+}
+function parseOperatorDeclarationLine(source, options = {}) {
+  const label = options.label || "OPS";
+  const line = options.line || 1;
+  const fields = String(source).trim().split(/\s+/).filter(Boolean);
+  let symbol = null;
+  let target = null;
+  let fixity = null;
+  let associativity = null;
+  let relation = null;
+  let band = null;
+  for (const field of fields) {
+    const operatorMatch = field.match(OPERATOR_TOKEN);
+    if (operatorMatch) {
+      if (symbol !== null)
+        declarationError(label, line, "Operator declaration has more than one :<...>: symbol");
+      symbol = operatorMatch[1];
+      continue;
+    }
+    const wordMatch = field.match(WORD_TOKEN);
+    if (wordMatch) {
+      const word = wordMatch[1].toLowerCase();
+      if (FIXITIES.has(word)) {
+        if (fixity !== null)
+          declarationError(label, line, "Operator declaration has more than one fixity");
+        fixity = word;
+      } else if (ASSOCIATIVITIES.has(word)) {
+        if (associativity !== null)
+          declarationError(label, line, "Operator declaration has more than one associativity");
+        associativity = word;
+      } else if (RELATIONS.has(word)) {
+        if (relation !== null)
+          declarationError(label, line, "Operator declaration has more than one precedence relation");
+        relation = word;
+      } else {
+        const candidate = normalizedBand(word);
+        if (!Object.hasOwn(BUILTIN_PRECEDENCE_BANDS, candidate)) {
+          declarationError(label, line, `Unknown operator modifier '${field}'`);
+        }
+        if (band !== null)
+          declarationError(label, line, "Operator declaration has more than one precedence band");
+        band = candidate;
+      }
+      continue;
+    }
+    if (target !== null)
+      declarationError(label, line, `Unexpected operator declaration field '${field}'`);
+    target = field;
+  }
+  if (symbol === null)
+    declarationError(label, line, "Operator declaration requires one :<...>: symbol");
+  if (target === null)
+    declarationError(label, line, "Operator declaration requires one function or method target");
+  if (fixity === null)
+    declarationError(label, line, "Operator declaration requires a fixity such as :infix");
+  if (fixity !== "infix")
+    declarationError(label, line, `Custom ${fixity} operators are not implemented yet`);
+  if (band === null)
+    declarationError(label, line, "Operator declaration requires a named precedence band");
+  if (associativity === null)
+    declarationError(label, line, "Operator declaration requires :left, :right, or :none");
+  const precedence2 = relation ? relativePrecedence(band, relation) : BUILTIN_PRECEDENCE_BANDS[band];
+  return Object.freeze({
+    symbol,
+    spelling: `:<${symbol}>:`,
+    target: Object.freeze(parseTarget(target, options.owner, label, line)),
+    fixity,
+    associativity,
+    precedence: precedence2,
+    precedenceBand: band,
+    precedenceRelation: relation,
+    source: label,
+    line
+  });
+}
+function isOpsComment(token2) {
+  return token2?.type === "String" && token2.kind === "comment" && /^\s*##ops##/i.test(token2.original || "");
+}
+function extractOperatorDeclarations(tokens, options = {}) {
+  const definitions = new Map;
+  let reachedCode = false;
+  for (const token2 of tokens || []) {
+    if (token2.type === "End")
+      break;
+    if (token2.type !== "String" || token2.kind !== "comment") {
+      reachedCode = true;
+      continue;
+    }
+    if (!isOpsComment(token2))
+      continue;
+    if (reachedCode) {
+      throw new Error(`${options.label || "source"}: ##OPS## blocks must appear before executable code`);
+    }
+    const bodyStart = token2.pos?.[1] || 0;
+    const firstLine = options.source ? options.source.slice(0, bodyStart).split(`
+`).length : 1;
+    const lines = String(token2.value || "").replace(/\r/g, "").split(`
+`);
+    for (let index = 0;index < lines.length; index += 1) {
+      const text4 = lines[index].trim();
+      if (!text4)
+        continue;
+      const definition = parseOperatorDeclarationLine(text4, {
+        owner: options.owner,
+        label: options.label || "OPS",
+        line: firstLine + index
+      });
+      if (definitions.has(definition.symbol)) {
+        declarationError(options.label || "OPS", firstLine + index, `Duplicate operator '${definition.spelling}'`);
+      }
+      definitions.set(definition.symbol, definition);
+    }
+  }
+  return definitions;
+}
+function extractOperatorDeclarationsFromSource(source, options = {}) {
+  return extractOperatorDeclarations(tokenize(source), {
+    ...options,
+    source
+  });
+}
+function mergeOperatorDefinitions(...collections) {
+  const merged = new Map;
+  for (const collection of collections) {
+    if (!collection)
+      continue;
+    const entries2 = collection instanceof Map ? collection : collection.map ? collection.map((definition) => [definition.symbol, definition]) : Object.entries(collection);
+    for (const [symbol, definition] of entries2) {
+      if (merged.has(symbol)) {
+        const previous = merged.get(symbol);
+        if (JSON.stringify(previous) !== JSON.stringify(definition)) {
+          throw new Error(`Conflicting definitions for custom operator ':<${symbol}>:'`);
+        }
+        continue;
+      }
+      merged.set(symbol, definition);
+    }
+  }
+  return merged;
+}
+
 // ../rix/src/runtime/plugin-catalog.js
+var CUSTOM_OPERATOR_ENV_KEY = "__custom_operator_definitions__";
 function validateMetadata(metadata, sourcePath, kind) {
   if (metadata.ignore !== undefined && typeof metadata.ignore !== "boolean") {
     throw new Error(`${sourcePath}: ignore must be true or false`);
@@ -19846,7 +20118,7 @@ function validateMetadata(metadata, sourcePath, kind) {
   if (metadata.mount !== undefined && (typeof metadata.mount !== "string" || !/^[a-z][A-Za-z0-9_]*$/.test(metadata.mount))) {
     throw new Error(`${sourcePath}: mount must be a camelCase host capability name`);
   }
-  for (const key of ["exports", "groups", "permissions"]) {
+  for (const key of ["exports", "groups", "permissions", "operator-files"]) {
     if (metadata[key] !== undefined && !Array.isArray(metadata[key])) {
       throw new Error(`${sourcePath}: ${key} must be an inline YAML array or a YAML list`);
     }
@@ -19860,10 +20132,33 @@ function validateMetadata(metadata, sourcePath, kind) {
     exports: metadata.exports || [],
     groups: metadata.groups || [],
     permissions: metadata.permissions || [],
+    operatorFiles: metadata["operator-files"] || metadata.operatorFiles || [],
+    operatorDefinitions: metadata.operatorDefinitions || [],
     defaultEnabled: metadata.defaultEnabled === true,
     ignore: metadata.ignore === true,
     sourcePath
   };
+}
+function mountedOperatorDefinitions(definitions, metadata, mount) {
+  return (definitions || []).map((definition) => {
+    if (definition.target?.kind !== "plugin-method" || definition.target.pluginId !== metadata.id) {
+      return definition;
+    }
+    return {
+      ...definition,
+      target: { ...definition.target, mount }
+    };
+  });
+}
+function installOperatorDefinitions(context, definitions, metadata, mount) {
+  if (!context?.getEnv || !context?.setEnv || !definitions?.length)
+    return;
+  const mountedDefinitions = mountedOperatorDefinitions(definitions, metadata, mount);
+  const merged = mergeOperatorDefinitions(context.getEnv(CUSTOM_OPERATOR_ENV_KEY, new Map), mountedDefinitions);
+  context.setEnv(CUSTOM_OPERATOR_ENV_KEY, merged);
+  const runtime = context.getEnv("__script_runtime__", null);
+  if (runtime)
+    runtime.operatorDefinitions = merged;
 }
 function rixString3(value) {
   return { type: "string", value: String(value) };
@@ -19914,7 +20209,15 @@ class PluginCatalog {
     if (validatedKind !== "rix" && validatedKind !== "host") {
       throw new Error(`${sourcePath}: plugin kind must be 'rix' or 'host'`);
     }
-    const entry = validateMetadata(metadata, sourcePath, validatedKind);
+    let enrichedMetadata = metadata;
+    if (validatedKind === "rix" && typeof source === "string" && !metadata.operatorDefinitions) {
+      const operatorDefinitions = Array.from(extractOperatorDeclarationsFromSource(source, {
+        label: sourcePath,
+        owner: { pluginId: metadata.id, mount: metadata.mount || null }
+      }).values());
+      enrichedMetadata = { ...metadata, operatorDefinitions };
+    }
+    const entry = validateMetadata(enrichedMetadata, sourcePath, validatedKind);
     if (entry.kind === "rix" && typeof source !== "string") {
       throw new Error(`${sourcePath}: RiX plugin metadata requires source supplied by its host scanner`);
     }
@@ -19967,6 +20270,7 @@ class PluginCatalog {
         ["exports", { type: "sequence", values: metadata.exports.map(rixString3) }],
         ["groups", { type: "sequence", values: metadata.groups.map(rixString3) }],
         ["permissions", { type: "sequence", values: metadata.permissions.map(rixString3) }],
+        ["operators", { type: "sequence", values: metadata.operatorDefinitions.map((definition) => rixString3(definition.spelling)) }],
         ["loaded", loaded ? { type: "integer", value: 1n } : null]
       ])
     };
@@ -19992,7 +20296,11 @@ class PluginCatalog {
     if (metadata.kind === "rix") {
       if (typeof runtime.loadRix !== "function")
         throw new Error(`No RiX plugin loader is available for '${metadata.id}'`);
-      runtime.loadRix({ ...api, source: metadata.source });
+      runtime.loadRix({
+        ...api,
+        source: metadata.source,
+        operatorDefinitions: mountedOperatorDefinitions(metadata.operatorDefinitions, metadata, mount)
+      });
     } else {
       const installer = this.installers.get(metadata.id);
       if (!installer) {
@@ -20008,6 +20316,7 @@ class PluginCatalog {
     if (mount && runtime.visibleSystemContext && runtime.visibleSystemContext !== runtime.systemContext) {
       runtime.visibleSystemContext.adoptHostCapability(runtime.systemContext, mount);
     }
+    installOperatorDefinitions(runtime.context, metadata.operatorDefinitions, metadata, mount);
     this.loaded.set(metadata.id, { metadata, mount });
     return this.infoValue(metadata);
   }
@@ -21288,10 +21597,11 @@ var SYMBOL_TABLE = {
 };
 
 class Parser {
-  constructor(tokens, systemLookup, source = "") {
+  constructor(tokens, systemLookup, source = "", customOperators = new Map) {
     this.tokens = tokens;
     this.systemLookup = systemLookup || (() => ({ type: "identifier" }));
     this.source = source;
+    this.customOperators = customOperators;
     this.position = 0;
     this.current = null;
     this.skippedComments = [];
@@ -21348,7 +21658,18 @@ class Parser {
     throw new Error(`Parse error at position ${pos[0]}: ${message}`);
   }
   getSymbolInfo(token2) {
-    if (token2.type === "Symbol") {
+    if (token2.type === "CustomOperator") {
+      const definition = this.customOperators.get(token2.value);
+      if (!definition) {
+        this.error(`Custom operator ':<${token2.value}>:' is not declared in an ##OPS## header`);
+      }
+      return {
+        precedence: definition.precedence,
+        associativity: definition.associativity,
+        type: definition.fixity,
+        custom: definition
+      };
+    } else if (token2.type === "Symbol") {
       if (token2.value === "|^:") {
         this.error("The legacy '|^:' generator operator was removed; use '|^' for lazy generation");
       }
@@ -21740,6 +22061,9 @@ class Parser {
           this.error(`Unexpected token in prefix position: ${token2.value}`);
         }
         break;
+      case "CustomOperator":
+        this.error(`Custom infix operator ':<${token2.value}>:' cannot appear in prefix position`);
+        break;
       default:
         this.error(`Unexpected token: ${token2.type}`);
     }
@@ -21853,11 +22177,24 @@ class Parser {
     }
     this.advance();
     let rightPrec = symbolInfo.precedence;
-    if (symbolInfo.associativity === "left") {
+    if (symbolInfo.associativity === "left" || symbolInfo.associativity === "none") {
       rightPrec += 1;
     }
     let right;
-    if (operator.value === "[" && symbolInfo.type === "postfix") {
+    if (operator.type === "CustomOperator") {
+      right = this.parseExpression(rightPrec);
+      return this.createNode("CustomOperator", {
+        operator: operator.value,
+        spelling: `:<${operator.value}>:`,
+        definition: symbolInfo.custom,
+        precedence: symbolInfo.precedence,
+        associativity: symbolInfo.associativity,
+        left,
+        right,
+        pos: left.pos,
+        original: left.original + operator.original
+      });
+    } else if (operator.value === "[" && symbolInfo.type === "postfix") {
       if (this.current.value === ":" && ["Identifier", "Number", "String"].includes(this.peek().type)) {
         this.advance();
         const keyName = this.current.value;
@@ -22472,6 +22809,9 @@ class Parser {
       }
       if (!symbolInfo || symbolInfo.precedence < minPrec) {
         break;
+      }
+      if (symbolInfo.custom && left?.type === "CustomOperator" && left.precedence === symbolInfo.precedence && (left.associativity === "none" || symbolInfo.associativity === "none")) {
+        this.error(`Non-associative custom operator chain requires parentheses around ':<${left.operator}>:' or ':<${this.current.value}>:'`);
       }
       if (symbolInfo.type === "statement" || symbolInfo.type === "separator") {
         break;
@@ -24976,7 +25316,7 @@ class Parser {
     });
   }
 }
-function parse(input, systemLookup) {
+function parse(input, systemLookup, options = {}) {
   let tokens;
   let source = "";
   if (typeof input === "string") {
@@ -24984,8 +25324,15 @@ function parse(input, systemLookup) {
     tokens = tokenize(input);
   } else {
     tokens = input;
+    source = options.source || "";
   }
-  const parser = new Parser(tokens, systemLookup, source);
+  const localOperators = extractOperatorDeclarations(tokens, {
+    source,
+    owner: options.operatorOwner || null,
+    label: options.file || "source"
+  });
+  const customOperators = mergeOperatorDefinitions(options.operatorDefinitions, localOperators);
+  const parser = new Parser(tokens, systemLookup, source, customOperators);
   return parser.parse();
 }
 
@@ -27406,6 +27753,39 @@ function evaluateArgs2(argNodes, evaluate) {
   return evaluatedArgs;
 }
 var methodFunctions = {
+  CUSTOM_OPERATOR: {
+    impl(args, context, evaluate, systemContext) {
+      const [definition, left, right] = args;
+      const target = definition?.target;
+      if (!target)
+        throw new Error("Custom operator is missing its dispatch target");
+      if (target.kind === "function") {
+        const fn = context.getCallable(target.name);
+        if (!fn) {
+          throw new Error(`Custom operator ${definition.spelling} target '${target.name}' is not defined`);
+        }
+        return callWithConcreteArgs(fn, [left, right], context, evaluate);
+      }
+      if (target.kind === "plugin-method" || target.kind === "system-method") {
+        const mount = target.mount;
+        if (!mount) {
+          throw new Error(`Custom operator ${definition.spelling} plugin '${target.pluginId}' has no active mount`);
+        }
+        const entry = systemContext?.get?.(mount);
+        const receiver = entry && Object.hasOwn(entry, "value") ? entry.value : entry;
+        if (!receiver) {
+          throw new Error(`Custom operator ${definition.spelling} requires plugin/system object '.${mount}'`);
+        }
+        const fn = resolveMethod(receiver, target.method);
+        if (fn?.type === "method_builtin") {
+          return fn.impl([receiver, left, right], context, evaluate, callWithConcreteArgs);
+        }
+        return callWithConcreteArgs(fn, [receiver, left, right], context, evaluate);
+      }
+      throw new Error(`Unsupported custom operator target kind '${target.kind}'`);
+    },
+    doc: "Dispatch a statically declared custom operator to a function or plugin method"
+  },
   CALL_METHOD: {
     lazy: true,
     impl(args, context, evaluate) {
@@ -31956,6 +32336,7 @@ function defineCapability(args, _context, evaluate) {
 }
 var SCRIPT_RUNTIME_ENV_KEY = "__script_runtime__";
 var SOURCE_ENV_KEY = "__source__";
+var CUSTOM_OPERATOR_ENV_KEY2 = "__custom_operator_definitions__";
 var CURRENT_FILE_ENV_KEY = "__current_file__";
 function createDefaultSystemContext(options = {}) {
   const frozen = options.frozen !== false;
@@ -32056,7 +32437,8 @@ function getScriptRuntime(context, options = {}) {
       systemLookup: options.systemLookup || defaultSystemLookup,
       preparedScripts: new Map,
       activeImports: [],
-      frameStack: []
+      frameStack: [],
+      operatorDefinitions: context.getEnv(CUSTOM_OPERATOR_ENV_KEY2, new Map)
     };
     context.setEnv(SCRIPT_RUNTIME_ENV_KEY, runtime);
     return runtime;
@@ -32064,6 +32446,7 @@ function getScriptRuntime(context, options = {}) {
   if (!runtime.systemLookup) {
     runtime.systemLookup = options.systemLookup || defaultSystemLookup;
   }
+  runtime.operatorDefinitions = context.getEnv(CUSTOM_OPERATOR_ENV_KEY2, runtime.operatorDefinitions || new Map);
   return runtime;
 }
 function getScriptCapabilityConfig(context, systemContext = null) {
@@ -32177,7 +32560,10 @@ function prepareScript(resolvedPath, runtime) {
   } catch (error) {
     throw new Error(`Unable to load script '${resolvedPath}': ${error.message}`);
   }
-  const ast = parse(source, runtime.systemLookup || defaultSystemLookup);
+  const ast = parse(source, runtime.systemLookup || defaultSystemLookup, {
+    operatorDefinitions: runtime.operatorDefinitions,
+    file: resolvedPath
+  });
   const { inputContract, exportBindings, body } = extractScriptInterface(ast, resolvedPath);
   const bodyIr = lower(body);
   attachSourceInfo(bodyIr, source, resolvedPath);
@@ -32606,9 +32992,10 @@ function parseAndEvaluate(code, options = {}) {
   const systemContext = options.systemContext || createDefaultSystemContext();
   context.setEnv("__system_context__", systemContext);
   const systemLookup = createSystemLookup(systemContext, options.systemLookup || defaultSystemLookup);
-  getScriptRuntime(context, { systemLookup });
+  const runtime = getScriptRuntime(context, { systemLookup });
+  runtime.operatorDefinitions = mergeOperatorDefinitions(context.getEnv(CUSTOM_OPERATOR_ENV_KEY2, new Map), options.operatorDefinitions);
   context.setEnv("__registry__", registry);
-  context.setEnv("__plugin_load_rix__", ({ source, sourcePath, context: pluginContext = context, registry: pluginRegistry = registry, systemContext: pluginSystemContext = systemContext }) => {
+  context.setEnv("__plugin_load_rix__", ({ source, sourcePath, metadata, options: pluginOptions, operatorDefinitions, context: pluginContext = context, registry: pluginRegistry = registry, systemContext: pluginSystemContext = systemContext }) => {
     const previousSource = pluginContext.getEnv(SOURCE_ENV_KEY, undefined);
     const previousFile = pluginContext.getEnv(CURRENT_FILE_ENV_KEY, undefined);
     try {
@@ -32616,7 +33003,12 @@ function parseAndEvaluate(code, options = {}) {
         context: pluginContext,
         registry: pluginRegistry,
         systemContext: pluginSystemContext,
-        file: sourcePath
+        file: sourcePath,
+        operatorDefinitions,
+        operatorOwner: metadata?.id ? {
+          pluginId: metadata.id,
+          mount: pluginOptions?.as || metadata.mount || null
+        } : null
       });
     } finally {
       pluginContext.setEnv(SOURCE_ENV_KEY, previousSource);
@@ -32627,7 +33019,11 @@ function parseAndEvaluate(code, options = {}) {
     context.setEnv("randomFunction", options.rng);
   context.setEnv(SOURCE_ENV_KEY, code);
   context.setEnv(CURRENT_FILE_ENV_KEY, options.file || "<repl>");
-  const ast = parse(code, systemLookup);
+  const ast = parse(code, systemLookup, {
+    operatorDefinitions: runtime.operatorDefinitions,
+    operatorOwner: options.operatorOwner || null,
+    file: options.file || "<repl>"
+  });
   const irNodes = lower(ast);
   attachSourceInfo(irNodes, code, options.file || "<repl>");
   let result = null;
@@ -35375,11 +35771,11 @@ var install5 = installBrowserApproxMathPlugin;
 // src/generated/bundled-plugin-catalog.js
 function createBundledPluginCatalog() {
   const catalog = new PluginCatalog;
-  catalog.addMetadata({ id: "draw", description: "Convenient 2D drawing helpers that produce core Graphics nodes.", kind: "host", mount: "draw", exports: ["Line", "Polygon", "Label", "Box", "Circle"], groups: ["Draw"], permissions: [], defaultEnabled: false, ignore: false, sourcePath: "bundled:draw" }, { sourcePath: "bundled:draw", kind: "host" });
+  catalog.addMetadata({ id: "draw", description: "Convenient 2D drawing helpers that produce core Graphics nodes.", kind: "host", mount: "draw", exports: ["Line", "Polygon", "Label", "Box", "Circle"], groups: ["Draw"], permissions: [], defaultEnabled: false, operatorDefinitions: [], operatorFiles: [], ignore: false, sourcePath: "bundled:draw" }, { sourcePath: "bundled:draw", kind: "host" });
   catalog.registerInstaller("draw", install);
-  catalog.addMetadata({ id: "example-array-js", description: "Teaching JavaScript plugin demonstrating array sum, summary text, and reversal.", kind: "host", mount: "arrayJs", exports: ["Sum", "Describe", "Reverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, ignore: false, sourcePath: "bundled:example-array-js" }, { sourcePath: "bundled:example-array-js", kind: "host" });
+  catalog.addMetadata({ id: "example-array-js", description: "Teaching JavaScript plugin demonstrating array sum, summary text, and reversal.", kind: "host", mount: "arrayJs", exports: ["Sum", "Describe", "Reverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, operatorDefinitions: [], operatorFiles: [], ignore: false, sourcePath: "bundled:example-array-js" }, { sourcePath: "bundled:example-array-js", kind: "host" });
   catalog.registerInstaller("example-array-js", install4);
-  catalog.addMetadata({ id: "example-array-rix", description: "Teaching RiX plugin demonstrating array sum, summary text, and reversal.", kind: "rix", mount: "arrayRix", exports: ["arrayRixSum", "arrayRixDescribe", "arrayRixReverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, ignore: false, sourcePath: "bundled:example-array-rix" }, { source: `/**
+  catalog.addMetadata({ id: "example-array-rix", description: "Teaching RiX plugin demonstrating array sum, summary text, and reversal.", kind: "rix", mount: "arrayRix", exports: ["arrayRixSum", "arrayRixDescribe", "arrayRixReverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, operatorDefinitions: [], operatorFiles: [], ignore: false, sourcePath: "bundled:example-array-rix" }, { source: `/**
 id: example-array-rix
 description: Teaching RiX plugin demonstrating array sum, summary text, and reversal.
 kind: rix
@@ -35394,9 +35790,9 @@ defaultEnabled: false
 .Host.Register("arrayRixDescribe", (values) -> @"count @{values.Len()}; sum @{values.Reduce((total, value) -> total + value, 0)}", "Summarize an array of Integers", ["Examples"]);
 .Host.Register("arrayRixReverse", (values) -> values.Reverse(), "Reverse an array", ["Examples"]);
 `, sourcePath: "bundled:example-array-rix", kind: "rix" });
-  catalog.addMetadata({ id: "float", description: "JavaScript IEEE-754 Float conversion and optional approximate math.", kind: "host", mount: "float", exports: ["Float", "Interval", "Round", "Floor", "Ceiling", "Abs", "Sqrt", "Sin", "Cos", "Tan", "Log", "Exp"], groups: ["ApproximateMath", "Float"], permissions: [], defaultEnabled: false, ignore: false, sourcePath: "bundled:float" }, { sourcePath: "bundled:float", kind: "host" });
+  catalog.addMetadata({ id: "float", description: "JavaScript IEEE-754 Float conversion and optional approximate math.", kind: "host", mount: "float", exports: ["Float", "Interval", "Round", "Floor", "Ceiling", "Abs", "Sqrt", "Sin", "Cos", "Tan", "Log", "Exp"], groups: ["ApproximateMath", "Float"], permissions: [], defaultEnabled: false, operatorDefinitions: [], operatorFiles: [], ignore: false, sourcePath: "bundled:float" }, { sourcePath: "bundled:float", kind: "host" });
   catalog.registerInstaller("float", install5);
-  catalog.addMetadata({ id: "plot", description: "Portable plotting helpers that produce core Graphics scenes.", kind: "host", mount: "plot", exports: ["Polynomial"], groups: ["Plot"], permissions: [], defaultEnabled: false, ignore: false, sourcePath: "bundled:plot" }, { sourcePath: "bundled:plot", kind: "host" });
+  catalog.addMetadata({ id: "plot", description: "Portable plotting helpers that produce core Graphics scenes.", kind: "host", mount: "plot", exports: ["Polynomial"], groups: ["Plot"], permissions: [], defaultEnabled: false, operatorDefinitions: [], operatorFiles: [], ignore: false, sourcePath: "bundled:plot" }, { sourcePath: "bundled:plot", kind: "host" });
   catalog.registerInstaller("plot", install3);
   return catalog;
 }
@@ -35533,5 +35929,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { formatValue, mountOutputWidgets, findHelp, createRixRepl };
 
-//# debugId=85EB3EC7536F0D2964756E2164756E21
-//# sourceMappingURL=chunk-d0ba2zwz.js.map
+//# debugId=12E96A954EDED40864756E2164756E21
+//# sourceMappingURL=chunk-zenf6hn3.js.map

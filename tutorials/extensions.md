@@ -31,25 +31,30 @@ Plugins can already add system capabilities, callable values, method/operator
 variants for existing operations, and backtick parser objects. Those routes
 connect to runtime dispatch and are the recommended extension points.
 
-## What is not end-to-end yet
+## Delimited custom operators
 
-`SystemLoader.registerOperator(symbol, metadata)` currently records and exports
-operator metadata, but the tokenizer and Pratt parser do not consume that
-registry for new symbolic glyphs. A registered uppercase operator keyword can
-affect parsing, but lowering produces a generic operation unless core knows its
-mapping, and evaluation then reports an unrecognized operator. Thus custom
-operator execution is not currently implemented for users or plugins.
+An `##OPS##` header can declare a custom infix operator before executable code.
+Fields are unordered and the callable can be an ordinary RiX function or a
+method on a preloaded plugin object:
 
-An end-to-end operator facility still needs a coordinated contract for token
-recognition, fixity/precedence, AST lowering, runtime capability dispatch,
-conflict detection, sandbox groups, and unload behavior. Adding only a parser
-entry would create syntax that cannot execute.
+```rix
+##OPS##
+:<o+>: Mediant :infix :additive :none
+##OPS##
+
+Mediant(a, b) -> a + b
+1 :<o+>: 2
+```
+
+Plugin manifests can name `operator-files`, while a script YAML header can
+preload `plugins` and project-local `operator-files`. Prefix and postfix custom
+operators remain future work.
 
 ## Read the result
 
-Use ordinary plugin capabilities unless a future operator contract explicitly
-connects every stage. Study the parser and three-tier system documentation when
-working on that language-level facility.
+Prefer ordinary plugin methods when punctuation does not materially improve the
+notation. Study the custom-operator and three-tier system documentation when a
+domain benefits from dedicated infix syntax.
 
 Try a second value of your own. When an advanced feature depends on files,
 JavaScript, or extension registration, RatCalc explains the concept but does
