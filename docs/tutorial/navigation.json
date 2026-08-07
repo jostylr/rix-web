@@ -762,11 +762,20 @@
     {
       "number": "14b",
       "parent": "14",
+      "file": "plugin-numerics.html",
+      "title": "Neutral numerical refinement",
+      "description": "Use one bounded protocol with certified Oracle and approximate Float providers.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "14c",
+      "parent": "14",
       "file": "plugin-oracle.html",
       "title": "Rational betweenness oracles",
       "description": "Query and refine a real number through exact rational intervals.",
       "pluginGroup": false,
-      "status": "proposed"
+      "status": "implemented"
     },
     {
       "number": "15a",

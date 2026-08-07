@@ -1,0 +1,41 @@
+<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Use one bounded protocol with certified Oracle and approximate Float providers." /><title>Neutral numerical refinement — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./plugins-numbers-and-numerics.html#lesson-start" title="Plugins: Numbers and numerics">14</a> <span aria-hidden="true">·</span> <span>b</span></p><h1>Neutral numerical refinement</h1><p class="deck">Use one bounded protocol with certified Oracle and approximate Float providers.</p><aside class="challenge"><p class="eyebrow">Develop in RiX Notebook</p><p>Open <code>rix/plugins/numerics/tutorial.md</code> in the macOS app to edit this lesson with live preview and plugin-aware code results. Use Reload plugins after changing project-local plugin source.</p></aside><div class="lesson-content"><p>Load Numerics and a certified real backend. Numerics only calls methods on the value; it does not know which plugin constructed it:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="17" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
+.Plugin.Load(&quot;oracle&quot;);
+
+real := .oracle.Rational(3 / 7, {= procedure = :bisection });
+certified := .numerics.Refine(real, {=
+  absoluteWidth = 1 / 1000,
+  maxWork = 20,
+  trace = 1
+});
+
+.Table({=
+  columns = [&quot;status&quot;, &quot;certified&quot;, &quot;goal met&quot;, &quot;interval&quot;, &quot;width&quot;, &quot;calls&quot;],
+  rows = [[
+    certified[:status], certified[:certified], certified[:goalMet],
+    certified[:interval], certified[:achievedWidth], certified[:work][:calls]
+  ]]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The same request shape works with the Float provider:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="15" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
+.Plugin.Load(&quot;float&quot;);
+
+sample := .numerics.Sample(
+  .float.Sin(.float(1 / 3)),
+  {= absoluteWidth = 1 / 1000, maxWork = 20 }
+);
+
+.Table({=
+  columns = [&quot;status&quot;, &quot;certified&quot;, &quot;interval&quot;, &quot;evidence&quot;, &quot;diagnostics&quot;],
+  rows = [[
+    sample[:status], sample[:certified], sample[:interval],
+    sample[:evidenceLevel], sample[:diagnostics]
+  ]]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The Float interval is the exact dyadic value stored by IEEE-754. It is not a certified enclosure of the ideal sine, so the result remains <code>:approximate</code> and carries <code>:noErrorBoundForIntendedReal</code> instead of claiming convergence.</p>
+<p>Provider capabilities are data and can be inspected without backend-specific branches:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
+.Plugin.Load(&quot;oracle&quot;);
+
+real := .oracle.Rational(5 / 8);
+.numerics.Capabilities(real);</textarea><div class="tutorial-output" data-tutorial-output></div></section></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

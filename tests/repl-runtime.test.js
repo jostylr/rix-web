@@ -326,6 +326,8 @@ test("the web REPL catalogs bundled plugins and loads approved JavaScript on dem
 
     const available = repl.run('.Plugin.List()').text;
     expect(available).toContain("float");
+    expect(available).toContain("numerics");
+    expect(available).toContain("oracle");
     expect(available).toContain("draw");
     expect(available).toContain("plot");
     expect(repl.run(".float(1 / 3)").type).toBe("error");
@@ -336,6 +338,12 @@ test("the web REPL catalogs bundled plugins and loads approved JavaScript on dem
     expect(repl.run(".Min(.float(1 / 2), 2)").text).toBe("0.5");
     expect(repl.run(".Max(.float(1 / 2), 2)").text).toBe("2");
     expect(repl.run(".float.Round(.float(1 / 3), 2)").text).toBe("33/100");
+    expect(repl.run('.Plugin.Load("numerics")').type).toBe("result");
+    expect(repl.run('.Plugin.Load("oracle")').type).toBe("result");
+    expect(repl.run('.numerics.Refine(.oracle.Rational(3 / 7), {= absoluteWidth=1/1000, maxWork=20 })[:status]').text)
+        .toBe("enclosed");
+    expect(repl.run('.numerics.Sample(.float(1 / 3), {= maxWork=20 })[:status]').text)
+        .toBe("approximate");
 
     expect(repl.run(".draw.Circle([10, 10], 4)").type).toBe("error");
     expect(repl.run('.Plugin.Load("draw")').type).toBe("result");

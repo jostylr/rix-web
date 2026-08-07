@@ -40,6 +40,19 @@ export const pluginTutorials = [
     "pluginTutorial": true
   },
   {
+    "pluginId": "numerics",
+    "pluginDirectory": "numerics",
+    "title": "Neutral numerical refinement",
+    "description": "Use one bounded protocol with certified Oracle and approximate Float providers.",
+    "status": "implemented",
+    "theme": "Numbers and numerics",
+    "sourcePath": "../rix/plugins/numerics/tutorial.md",
+    "number": "14b",
+    "parent": "14",
+    "file": "plugin-numerics.html",
+    "pluginTutorial": true
+  },
+  {
     "pluginId": "oracle",
     "pluginDirectory": "oracle",
     "title": "Rational betweenness oracles",
@@ -47,7 +60,7 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Numbers and numerics",
     "sourcePath": "../rix/plugins/oracle/tutorial.md",
-    "number": "14b",
+    "number": "14c",
     "parent": "14",
     "file": "plugin-oracle.html",
     "pluginTutorial": true
