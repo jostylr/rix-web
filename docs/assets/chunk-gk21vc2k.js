@@ -34608,6 +34608,8 @@ function createPolyline(args) {
 function createPointCloud(args) {
   const entries2 = entriesFor2(args, ["points", "options"], "scene3d.PointCloud");
   const points = Object.freeze(sequence2(field(entries2, "points"), "scene3d.PointCloud points").map((point, index) => exactVector(point, 3, `scene3d.PointCloud point ${index + 1}`)));
+  if (points.length === 0)
+    throw new Error("scene3d.PointCloud requires at least one point");
   return sceneValue("point_cloud", {
     points,
     radius: field(entries2, "radius", int7(3)),
@@ -34832,8 +34834,7 @@ function snapshotScene3D(args) {
     if (primitive.kind === "lines" || primitive.kind === "mesh")
       for (const [aIndex, bIndex] of primitive.segments) {
         let endpoints = [primitive.points[aIndex], primitive.points[bIndex]];
-        if (cameraValue.projection === "perspective")
-          endpoints = clipDepth(endpoints[0], endpoints[1], near, far);
+        endpoints = clipDepth(endpoints[0], endpoints[1], near, far);
         if (!endpoints)
           continue;
         children.push(createPath([[project(endpoints[0]), project(endpoints[1])], styleMap2(primitive.style)]));
@@ -34842,7 +34843,7 @@ function snapshotScene3D(args) {
     else {
       const radius = numeric(primitive.radius, "PointCloud radius");
       for (const point of primitive.points) {
-        if (cameraValue.projection === "perspective" && (point[2] < near || point[2] > far))
+        if (point[2] < near || point[2] > far)
           continue;
         children.push(createCircle([project(point), radius, styleMap2(primitive.style, true)]));
         pointCount += 1;
@@ -42319,5 +42320,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { formatValue, mountOutputWidgets, findHelp, createRixRepl };
 
-//# debugId=8A013BD2A4EE1CAB64756E2164756E21
-//# sourceMappingURL=chunk-qwyxr5a0.js.map
+//# debugId=334457D92F13747364756E2164756E21
+//# sourceMappingURL=chunk-gk21vc2k.js.map
