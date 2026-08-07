@@ -8,6 +8,8 @@ const pluginRoots = [
     path.resolve(root, "..", "rix", "plugins", "float"),
     path.resolve(root, "..", "rix", "plugins", "draw"),
     path.resolve(root, "..", "rix", "plugins", "plot"),
+    path.resolve(root, "..", "rix", "plugins", "scene3d"),
+    path.resolve(root, "..", "rix", "plugins", "nd"),
     path.resolve(root, "..", "rix", "plugins", "render-svg"),
     path.resolve(root, "..", "rix", "plugins", "render-canvas"),
     path.resolve(root, "..", "rix", "plugins", "render-tikz"),
@@ -17,6 +19,7 @@ const pluginRoots = [
     path.resolve(root, "..", "rix", "plugins", "render-quarto"),
     path.resolve(root, "..", "rix", "plugins", "render-latex"),
     path.resolve(root, "..", "rix", "plugins", "render-pdf"),
+    path.resolve(root, "..", "rix", "plugins", "render-gltf"),
     path.resolve(root, "..", "rix", "examples", "plugins", "example-array-js"),
     path.resolve(root, "..", "rix", "examples", "plugins", "example-array-rix"),
 ];

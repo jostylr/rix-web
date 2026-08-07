@@ -66,6 +66,19 @@ export const pluginTutorials = [
     "pluginTutorial": true
   },
   {
+    "pluginId": "nd",
+    "pluginDirectory": "nd",
+    "title": "Project a tesseract exactly",
+    "description": "Rotate 4D geometry with a rational Cayley parameter and explicitly project it to a 3D scene.",
+    "status": "implemented",
+    "theme": "Graphics and geometry",
+    "sourcePath": "../rix/plugins/nd/tutorial.md",
+    "number": "15b",
+    "parent": "15",
+    "file": "plugin-nd.html",
+    "pluginTutorial": true
+  },
+  {
     "pluginId": "plot",
     "pluginDirectory": "plot",
     "title": "Plotting a polynomial",
@@ -73,9 +86,22 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Graphics and geometry",
     "sourcePath": "../rix/plugins/plot/tutorial.md",
-    "number": "15b",
+    "number": "15c",
     "parent": "15",
     "file": "plugin-plot.html",
+    "pluginTutorial": true
+  },
+  {
+    "pluginId": "scene3d",
+    "pluginDirectory": "scene3d",
+    "title": "Retained 3D scenes and snapshots",
+    "description": "Build exact 3D geometry and lower one camera view to portable Graphics.",
+    "status": "implemented",
+    "theme": "Graphics and geometry",
+    "sourcePath": "../rix/plugins/scene3d/tutorial.md",
+    "number": "15d",
+    "parent": "15",
+    "file": "plugin-scene3d.html",
     "pluginTutorial": true
   },
   {
@@ -92,6 +118,19 @@ export const pluginTutorials = [
     "pluginTutorial": true
   },
   {
+    "pluginId": "gltf",
+    "pluginDirectory": "render-gltf",
+    "title": "Export Scene3D as glTF",
+    "description": "Produce browser-safe glTF 2.0 JSON with an embedded geometry buffer.",
+    "status": "implemented",
+    "theme": "Renderers and exporters",
+    "sourcePath": "../rix/plugins/render-gltf/tutorial.md",
+    "number": "16b",
+    "parent": "16",
+    "file": "plugin-gltf.html",
+    "pluginTutorial": true
+  },
+  {
     "pluginId": "html",
     "pluginDirectory": "render-html",
     "title": "Build a standalone HTML report",
@@ -99,7 +138,7 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-html/tutorial.md",
-    "number": "16b",
+    "number": "16c",
     "parent": "16",
     "file": "plugin-html.html",
     "pluginTutorial": true
@@ -112,7 +151,7 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-latex/tutorial.md",
-    "number": "16c",
+    "number": "16d",
     "parent": "16",
     "file": "plugin-latex.html",
     "pluginTutorial": true
@@ -125,7 +164,7 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-markdown/tutorial.md",
-    "number": "16d",
+    "number": "16e",
     "parent": "16",
     "file": "plugin-markdown.html",
     "pluginTutorial": true
@@ -138,7 +177,7 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-pdf/tutorial.md",
-    "number": "16e",
+    "number": "16f",
     "parent": "16",
     "file": "plugin-pdf.html",
     "pluginTutorial": true
@@ -151,7 +190,7 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-png/tutorial.md",
-    "number": "16f",
+    "number": "16g",
     "parent": "16",
     "file": "plugin-png.html",
     "pluginTutorial": true
@@ -164,7 +203,7 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-quarto/tutorial.md",
-    "number": "16g",
+    "number": "16h",
     "parent": "16",
     "file": "plugin-quarto.html",
     "pluginTutorial": true
@@ -177,7 +216,7 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-svg/tutorial.md",
-    "number": "16h",
+    "number": "16i",
     "parent": "16",
     "file": "plugin-svg.html",
     "pluginTutorial": true
@@ -190,7 +229,7 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-tikz/tutorial.md",
-    "number": "16i",
+    "number": "16j",
     "parent": "16",
     "file": "plugin-tikz.html",
     "pluginTutorial": true

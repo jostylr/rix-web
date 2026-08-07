@@ -137,10 +137,12 @@ test("plugin tutorials are generated after core lessons and grouped by theme", a
     expect(tutorialByNumber("14b")?.status).toBe("proposed");
     expect(tutorialByNumber("15")?.title).toBe("Plugins: Graphics and geometry");
     expect(tutorialByNumber("15a")?.pluginId).toBe("draw");
-    expect(tutorialByNumber("15b")?.pluginId).toBe("plot");
+    expect(tutorialByNumber("15b")?.pluginId).toBe("nd");
+    expect(tutorialByNumber("15c")?.pluginId).toBe("plot");
+    expect(tutorialByNumber("15d")?.pluginId).toBe("scene3d");
     expect(tutorialByNumber("16")?.title).toBe("Plugins: Renderers and exporters");
     expect(tutorials.filter(({ parent }) => parent === "16").map(({ pluginId }) => pluginId)).toEqual([
-        "canvas", "html", "latex", "markdown", "pdf", "png", "quarto", "svg", "tikz",
+        "canvas", "gltf", "html", "latex", "markdown", "pdf", "png", "quarto", "svg", "tikz",
     ]);
     const generator = await Bun.file(new URL("../scripts/generate-plugin-tutorial-index.js", import.meta.url)).text();
     expect(generator).toContain('path.join(pluginsRoot, entry.name, "tutorial.md")');
@@ -157,7 +159,7 @@ test("every implemented plugin tutorial has a browser catalog contract", () => {
 });
 
 test("built renderer tutorial pages are present", async () => {
-    for (const id of ["canvas", "html", "latex", "markdown", "pdf", "png", "quarto", "svg", "tikz"]) {
+    for (const id of ["canvas", "gltf", "html", "latex", "markdown", "pdf", "png", "quarto", "svg", "tikz"]) {
         const page = Bun.file(new URL(`../docs/tutorial/plugin-${id}.html`, import.meta.url));
         expect(await page.exists(), id).toBe(true);
         const source = await page.text();

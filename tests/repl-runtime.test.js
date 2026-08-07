@@ -153,6 +153,23 @@ test("PNG and PDF expose browser contracts without pretending to have host tools
     expect(pdf.text).toContain("pdf-toolchain-unavailable");
 });
 
+test("the browser projects exact 4D geometry to Scene3D, Graphics, and glTF", () => {
+    const response = createRixRepl().run(`
+        .Plugin.Load("nd"); .Plugin.Load("scene3d"); .Plugin.Load("gltf");
+        cube := .nd.Hypercube(4, 2);
+        rotation := .nd.CayleyRotation(4, 1, 4, 1/3);
+        projection := .nd.Compose(.nd.CoordinateProjection(4, [1,2,3]), rotation);
+        scene := .nd.ToScene3D(.nd.Project(cube, projection));
+        snapshot := .scene3d.Snapshot(scene, {= size=[320,240] });
+        [snapshot["value"], .gltf.Render(scene).Get("content")];
+    `);
+    expect(response.type).toBe("result");
+    expect(response.value.values[0]).toMatchObject({ type: "output", kind: "graphic" });
+    const gltf = JSON.parse(response.value.values[1].value);
+    expect(gltf.asset.version).toBe("2.0");
+    expect(gltf.extras.rix.sourceCoordinates).toBe("right-handed Z-up");
+});
+
 test("the web REPL returns address-aware Sheet HTML", () => {
     const repl = createRixRepl();
     const response = repl.run(".Sheet({:2x3: 1, 2, 3; 4, 5, 6})");

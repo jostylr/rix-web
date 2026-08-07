@@ -330,6 +330,13 @@ class BaseSystem {
     }
     throw new Error("caseSensitive must be a boolean value");
   }
+  toJSON() {
+    return {
+      $ratmath: "BaseSystem",
+      characters: this.#characters,
+      name: this.#name
+    };
+  }
 }
 BaseSystem.BINARY = new BaseSystem(["0", "1"], "Binary");
 BaseSystem.TERNARY = new BaseSystem(["0", "1", "2"], "Ternary");
@@ -382,6 +389,24 @@ var bitLength = function(int) {
     return 0;
   return int < 0n ? (-int).toString(2).length : int.toString(2).length;
 };
+var roundedQuotient = function(numerator, denominator, mode) {
+  const quotient = numerator / denominator;
+  const remainder = numerator % denominator;
+  if (remainder === 0n || mode === "toward-zero")
+    return quotient;
+  if (mode === "floor")
+    return numerator < 0n ? quotient - 1n : quotient;
+  if (mode === "ceil")
+    return numerator > 0n ? quotient + 1n : quotient;
+  const twiceRemainder = (remainder < 0n ? -remainder : remainder) * 2n;
+  if (twiceRemainder < denominator)
+    return quotient;
+  const direction = numerator < 0n ? -1n : 1n;
+  if (twiceRemainder > denominator || mode === "half-up") {
+    return quotient + direction;
+  }
+  return quotient % 2n === 0n ? quotient : quotient + direction;
+};
 
 class Rational {
   #numerator;
@@ -400,7 +425,7 @@ class Rational {
   #initialSegmentRest;
   #periodDigitsRest;
   #maxPeriodDigitsComputed;
-  static DEFAULT_PERIOD_DIGITS = 20;
+  static DEFAULT_PERIOD_DIGITS = 30;
   static MAX_PERIOD_DIGITS = 1000;
   static MAX_PERIOD_CHECK = 1e7;
   static POWERS_OF_5 = {
@@ -441,14 +466,15 @@ class Rational {
         if (mixedParts.length !== 2) {
           throw new Error("Invalid mixed number format. Use 'a..b/c'");
         }
-        const wholePart = BigInt(mixedParts[0]);
+        const wholeText = mixedParts[0].trim();
+        const isNegative = wholeText.startsWith("-");
+        const wholePart = BigInt(wholeText);
         const fractionParts = mixedParts[1].split("/");
         if (fractionParts.length !== 2) {
           throw new Error("Invalid fraction in mixed number. Use 'a..b/c'");
         }
         const fracNumerator = BigInt(fractionParts[0]);
         const fracDenominator = BigInt(fractionParts[1]);
-        const isNegative = wholePart < 0n;
         const absWhole = isNegative ? -wholePart : wholePart;
         this.#numerator = isNegative ? -(absWhole * fracDenominator + fracNumerator) : wholePart * fracDenominator + fracNumerator;
         this.#denominator = fracDenominator;
@@ -462,10 +488,11 @@ class Rational {
             if (!/^-?\d*$/.test(integerPart) || !/^\d*$/.test(fractionalPart)) {
               throw new Error("Invalid decimal format");
             }
+            const isNegative = integerPart.startsWith("-");
             const wholePart = BigInt(integerPart);
             const fractionalValue = BigInt(fractionalPart);
             const denomValue = 10n ** BigInt(fractionalPart.length);
-            this.#numerator = wholePart * denomValue + (wholePart < 0n ? -fractionalValue : fractionalValue);
+            this.#numerator = wholePart * denomValue + (isNegative ? -fractionalValue : fractionalValue);
             this.#denominator = denomValue;
           } else {
             throw new Error("Invalid decimal format - multiple decimal points");
@@ -672,6 +699,41 @@ class Rational {
   abs() {
     return this.#numerator < 0n ? this.negate() : new Rational(this.#numerator, this.#denominator);
   }
+  floor() {
+    return roundedQuotient(this.#numerator, this.#denominator, "floor");
+  }
+  ceil() {
+    return roundedQuotient(this.#numerator, this.#denominator, "ceil");
+  }
+  trunc() {
+    return roundedQuotient(this.#numerator, this.#denominator, "toward-zero");
+  }
+  round(mode = "half-even") {
+    if (!new Set(["half-even", "half-up", "toward-zero", "floor", "ceil"]).has(mode)) {
+      throw new TypeError("Unknown rounding mode");
+    }
+    return roundedQuotient(this.#numerator, this.#denominator, mode);
+  }
+  roundTo(places, mode = "half-even") {
+    if (!Number.isSafeInteger(places)) {
+      throw new RangeError("Decimal places must be a safe integer");
+    }
+    if (!new Set(["half-even", "half-up", "toward-zero", "floor", "ceil"]).has(mode)) {
+      throw new TypeError("Unknown rounding mode");
+    }
+    const scale = 10n ** BigInt(Math.abs(places));
+    if (places >= 0) {
+      return new Rational(roundedQuotient(this.#numerator * scale, this.#denominator, mode), scale);
+    }
+    return new Rational(roundedQuotient(this.#numerator, this.#denominator * scale, mode) * scale);
+  }
+  toJSON() {
+    return {
+      $ratmath: "Rational",
+      numerator: this.#numerator.toString(),
+      denominator: this.#denominator.toString()
+    };
+  }
   toString(base) {
     if (base === undefined) {
       if (this.#denominator === 1n) {
@@ -808,43 +870,57 @@ class Rational {
   toNumber() {
     return Number(this.#numerator) / Number(this.#denominator);
   }
-  toRepeatingDecimal() {
-    const result = this.toRepeatingDecimalWithPeriod();
+  toRepeatingDecimal(limit = Rational.DEFAULT_PERIOD_DIGITS, onLimit = "error") {
+    const result = this.toRepeatingDecimalWithPeriod({ limit, onLimit });
     return result.decimal;
   }
-  toRepeatingDecimalWithPeriod(useRepeatNotation = true) {
+  toRepeatingDecimalWithPeriod(options = true, legacyLimit, legacyOnLimit) {
+    const normalized = typeof options === "boolean" ? {
+      useRepeatNotation: options,
+      limit: legacyLimit ?? Rational.DEFAULT_PERIOD_DIGITS,
+      onLimit: legacyOnLimit ?? "error"
+    } : {
+      useRepeatNotation: options?.useRepeatNotation ?? true,
+      limit: options?.limit ?? Rational.DEFAULT_PERIOD_DIGITS,
+      onLimit: options?.onLimit ?? "error"
+    };
+    const { useRepeatNotation, limit, onLimit } = normalized;
+    if (!Number.isSafeInteger(limit) || limit < 1) {
+      throw new RangeError("Repeating-decimal limit must be a positive safe integer");
+    }
+    if (!new Set(["trunc", "null", "error"]).has(onLimit)) {
+      throw new TypeError('onLimit must be "trunc", "null", or "error"');
+    }
     if (this.#numerator === 0n) {
-      return { decimal: "0", period: 0 };
+      return { decimal: "0", period: 0, truncated: false };
     }
     this.#computeWholePart();
-    const maxDigits = useRepeatNotation ? 100 : Rational.DEFAULT_PERIOD_DIGITS;
-    this.#computeDecimalMetadata(maxDigits);
+    this.#computeDecimalMetadata(limit);
     let result = (this.#isNegative ? "-" : "") + this.#wholePart.toString();
     if (this.#isTerminating) {
       if (this.#initialSegment) {
         const formattedInitial = useRepeatNotation ? Rational.#formatRepeatedDigits(this.#initialSegment, 7) : this.#initialSegment;
         result += "." + formattedInitial + "#0";
       } else {}
-      return { decimal: result, period: 0 };
+      return { decimal: result, period: 0, truncated: false };
     } else {
-      let periodDigits = this.#periodDigits;
-      if (this.#periodLength > 0 && this.#periodLength <= Rational.MAX_PERIOD_DIGITS && this.#periodDigits.length < this.#periodLength) {
-        periodDigits = this.extractPeriodSegment(this.#initialSegment, this.#periodLength, this.#periodLength);
-      }
-      const formattedInitial = useRepeatNotation ? Rational.#formatRepeatedDigits(this.#initialSegment, 7) : this.#initialSegment;
-      let displayPeriod = periodDigits;
-      if (useRepeatNotation && this.#leadingZerosInPeriod < 1000) {
-        const significantDigits = this.#periodDigitsRest;
-        if (significantDigits && significantDigits.length > 0) {
-          const leadingZerosFormatted = this.#leadingZerosInPeriod > 6 ? `{0~${this.#leadingZerosInPeriod}}` : this.#leadingZerosInPeriod > 0 ? "0".repeat(this.#leadingZerosInPeriod) : "";
-          const maxSignificantDigits = Math.min(significantDigits.length, 20);
-          displayPeriod = leadingZerosFormatted + significantDigits.substring(0, maxSignificantDigits);
-        } else {
-          displayPeriod = useRepeatNotation ? Rational.#formatRepeatedDigits(periodDigits, 7) : periodDigits;
+      const overLimit = this.#periodLength === -1 || this.#periodLength > limit;
+      if (overLimit) {
+        if (onLimit === "null") {
+          return { decimal: null, period: this.#periodLength, truncated: true };
         }
-      } else {
-        displayPeriod = useRepeatNotation ? Rational.#formatRepeatedDigits(periodDigits, 7) : periodDigits;
+        if (onLimit === "error") {
+          const period = this.#periodLength === -1 ? `more than ${Rational.MAX_PERIOD_CHECK.toLocaleString()}` : this.#periodLength.toString();
+          throw new RangeError(`Repeating decimal period is ${period} digits, exceeding limit ${limit}`);
+        }
+        const initial = useRepeatNotation ? Rational.#formatRepeatedDigits(this.#initialSegment, 7) : this.#initialSegment;
+        const periodPrefix = this.#periodDigits.slice(0, limit);
+        const decimal = `${result}.${initial}#${periodPrefix}...`;
+        return { decimal, period: this.#periodLength, truncated: true };
       }
+      const periodDigits = this.#periodDigits;
+      const formattedInitial = useRepeatNotation ? Rational.#formatRepeatedDigits(this.#initialSegment, 7) : this.#initialSegment;
+      const displayPeriod = useRepeatNotation ? Rational.#formatRepeatedDigits(periodDigits, 7) : periodDigits;
       if (this.#initialSegment) {
         result += "." + formattedInitial + "#" + displayPeriod;
       } else {
@@ -852,7 +928,8 @@ class Rational {
       }
       return {
         decimal: result,
-        period: this.#periodLength
+        period: this.#periodLength,
+        truncated: false
       };
     }
   }
@@ -1134,123 +1211,72 @@ class Rational {
     if (this.#numerator === 0n) {
       return "0";
     }
+    if (!Number.isSafeInteger(precision) || precision < 1) {
+      throw new RangeError("Scientific-notation precision must be a positive safe integer");
+    }
     this.#computeWholePart();
-    this.#computeDecimalMetadata(100);
-    const isNegative = this.#isNegative;
-    const prefix = isNegative ? "-" : "";
+    this.#computeDecimalMetadata(precision);
+    const prefix = this.#isNegative ? "-" : "";
+    const format = (digits) => useRepeatNotation ? Rational.#formatRepeatedDigits(digits, 7) : digits;
+    if (!this.#isTerminating && (this.#periodLength === -1 || this.#periodLength > precision)) {
+      let numerator = this.#numerator < 0n ? -this.#numerator : this.#numerator;
+      let denominator = this.#denominator;
+      let exponent2 = 0;
+      while (numerator >= denominator * 10n) {
+        denominator *= 10n;
+        exponent2 += 1;
+      }
+      while (numerator < denominator) {
+        numerator *= 10n;
+        exponent2 -= 1;
+      }
+      const digits = [];
+      for (let i = 0;i < precision; i += 1) {
+        digits.push((numerator / denominator).toString());
+        numerator = numerator % denominator * 10n;
+      }
+      const mantissa2 = digits[0] + (digits.length > 1 ? `.${digits.slice(1).join("")}` : "") + "...";
+      const result2 = `${prefix}${mantissa2}E${exponent2}`;
+      return result2 + this.#generatePeriodInfo(showPeriodInfo);
+    }
+    const whole = this.#wholePart.toString();
+    const period = this.#periodDigits;
+    let firstDigit;
+    let exponent;
+    let nonRepeatingTail = "";
+    let scientificPeriod = period;
     if (this.#wholePart > 0n) {
-      const wholeStr = this.#wholePart.toString();
-      const firstDigit = wholeStr[0];
-      const exponent = wholeStr.length - 1;
-      let mantissa = firstDigit;
-      const hasMoreWholeDigits = wholeStr.length > 1;
-      const hasFractionalPart = this.#remainder > 0n;
-      if (hasFractionalPart || hasMoreWholeDigits) {
-        if (hasFractionalPart && !this.#isTerminating) {
-          mantissa += ".";
-          const remainingWholeDigits = hasMoreWholeDigits ? wholeStr.substring(1) : "";
-          const formattedInitial = useRepeatNotation ? Rational.#formatRepeatedDigits(this.#initialSegment, 7) : this.#initialSegment;
-          let periodDigits = this.#periodDigits;
-          if (this.#periodLength > 0 && this.#periodLength <= Rational.MAX_PERIOD_DIGITS && periodDigits.length < this.#periodLength) {
-            periodDigits = this.extractPeriodSegment(this.#initialSegment, this.#periodLength, Math.min(10, this.#periodLength));
-          }
-          if (remainingWholeDigits && periodDigits && remainingWholeDigits === periodDigits.substring(0, remainingWholeDigits.length)) {
-            mantissa += "#" + periodDigits;
-          } else {
-            if (hasMoreWholeDigits) {
-              mantissa += remainingWholeDigits;
-            }
-            mantissa += formattedInitial + "#";
-            const formattedPeriod = useRepeatNotation ? Rational.#formatRepeatedDigits(periodDigits, 7) : periodDigits.substring(0, Math.max(1, precision - mantissa.length + 1));
-            mantissa += formattedPeriod;
-          }
-        } else {
-          if (hasMoreWholeDigits || hasFractionalPart) {
-            mantissa += ".";
-            if (hasMoreWholeDigits) {
-              const remainingDigits = wholeStr.substring(1);
-              if (!hasFractionalPart) {
-                const trimmedDigits = remainingDigits.replace(/0+$/, "");
-                if (trimmedDigits === "") {
-                  mantissa = mantissa.slice(0, -1);
-                } else {
-                  mantissa += trimmedDigits;
-                }
-              } else {
-                mantissa += remainingDigits;
-              }
-            }
-            if (hasFractionalPart) {
-              const formattedInitial = useRepeatNotation ? Rational.#formatRepeatedDigits(this.#initialSegment, 7) : this.#initialSegment;
-              const trimmedInitial = formattedInitial.replace(/0+$/, "");
-              if (trimmedInitial) {
-                mantissa += trimmedInitial;
-              } else if (!hasMoreWholeDigits) {
-                mantissa = mantissa.slice(0, -1);
-              }
-            }
-          }
-        }
-      } else if (!hasFractionalPart && !hasMoreWholeDigits) {}
-      const result = `${prefix}${mantissa}E${exponent}`;
-      return result + this.#generatePeriodInfo(showPeriodInfo);
+      firstDigit = whole[0];
+      exponent = whole.length - 1;
+      const wholeTail = whole.slice(1);
+      if (!this.#isTerminating && this.#initialSegment.length === 0) {
+        const stream = wholeTail + period.repeat(Math.ceil((period.length + wholeTail.length) / period.length) + 1);
+        scientificPeriod = stream.slice(0, period.length);
+      } else {
+        nonRepeatingTail = wholeTail + this.#initialSegment;
+      }
+    } else if (this.#initialSegmentRest !== "") {
+      const index = this.#initialSegmentLeadingZeros;
+      firstDigit = this.#initialSegment[index];
+      exponent = -(index + 1);
+      nonRepeatingTail = this.#initialSegment.slice(index + 1);
+    } else {
+      const index = period.search(/[1-9]/);
+      firstDigit = period[index];
+      exponent = -(this.#initialSegment.length + index + 1);
+      scientificPeriod = period.slice(index + 1) + period.slice(0, index + 1);
     }
     if (this.#isTerminating) {
-      const leadingZeros = this.#initialSegmentLeadingZeros;
-      const rest = this.#initialSegmentRest;
-      if (rest === "") {
-        return prefix + "0";
-      }
-      const firstDigit = rest[0];
-      const exponent = -(leadingZeros + 1);
-      let mantissa = firstDigit;
-      if (rest.length > 1) {
-        const remainingDigits = Math.max(0, precision - 1);
-        mantissa += "." + rest.substring(1, remainingDigits + 1);
-      }
-      return `${prefix}${mantissa}E${exponent}`;
-    } else {
-      const firstNonZeroInPeriod = this.#periodDigitsRest;
-      if (this.#initialSegmentRest !== "") {
-        const firstDigit = this.#initialSegmentRest[0];
-        const exponent = -(this.#initialSegmentLeadingZeros + 1);
-        let mantissa = firstDigit;
-        if (this.#initialSegmentRest.length > 1 || this.#periodDigits !== "") {
-          mantissa += ".";
-          if (this.#initialSegmentRest.length > 1) {
-            mantissa += this.#initialSegmentRest.substring(1);
-          }
-          mantissa += "#";
-          if (this.#leadingZerosInPeriod > 0 && useRepeatNotation && this.#leadingZerosInPeriod > 6) {
-            mantissa += `{0~${this.#leadingZerosInPeriod}}`;
-          } else if (this.#leadingZerosInPeriod > 0) {
-            mantissa += "0".repeat(Math.min(this.#leadingZerosInPeriod, 10));
-          }
-          if (firstNonZeroInPeriod !== "") {
-            const remainingLength = Math.max(1, precision - mantissa.length + 1);
-            mantissa += firstNonZeroInPeriod.substring(0, remainingLength);
-          }
-        }
-        const result = `${prefix}${mantissa}E${exponent}`;
-        return result + this.#generatePeriodInfo(showPeriodInfo);
-      } else if (firstNonZeroInPeriod !== "") {
-        const firstDigit = firstNonZeroInPeriod[0];
-        const totalLeadingZeros = this.#initialSegmentLeadingZeros + this.#leadingZerosInPeriod;
-        const exponent = -(totalLeadingZeros + 1);
-        let mantissa = firstDigit;
-        if (firstNonZeroInPeriod.length > 1) {
-          mantissa += ".#";
-          const remainingDigits = Math.max(0, precision - 3);
-          mantissa += firstNonZeroInPeriod.substring(1, remainingDigits + 1);
-        } else {
-          mantissa += ".#" + firstDigit;
-        }
-        const result = `${prefix}${mantissa}E${exponent}`;
-        return result + this.#generatePeriodInfo(showPeriodInfo);
-      } else {
-        return prefix + "0";
-      }
+      const tail = nonRepeatingTail.replace(/0+$/, "");
+      const shown = tail.slice(0, Math.max(0, precision - 1));
+      const ellipsis = tail.length > shown.length ? "..." : "";
+      return `${prefix}${firstDigit}${shown ? `.${shown}` : ""}${ellipsis}E${exponent}`;
     }
+    const initial = format(nonRepeatingTail);
+    const repeated = format(scientificPeriod);
+    const mantissa = `${firstDigit}.${initial}#${repeated}`;
+    const result = `${prefix}${mantissa}E${exponent}`;
+    return result + this.#generatePeriodInfo(showPeriodInfo);
   }
   static from(value) {
     if (value instanceof Rational) {
@@ -1265,7 +1291,7 @@ class Rational {
     }
     const cf = cfArray.map((term) => {
       if (typeof term === "number") {
-        return BigInt(term);
+        return toExactBigInt(term, "Continued fraction term");
       } else if (typeof term === "bigint") {
         return term;
       } else {
@@ -1569,6 +1595,38 @@ function exactTerminatingDecimal(value) {
 function exactOffsetString(value) {
   return exactTerminatingDecimal(value) ?? value.toString();
 }
+function gcd(a, b) {
+  while (b !== 0n)
+    [a, b] = [b, a % b];
+  return a < 0n ? -a : a;
+}
+function lcm(a, b) {
+  return a / gcd(a, b) * b;
+}
+function randomBigIntBelow(limit, random) {
+  const draw = () => {
+    const value = random();
+    if (!Number.isFinite(value) || value < 0 || value >= 1) {
+      throw new RangeError("Random source must return a finite number in [0, 1)");
+    }
+    return value;
+  };
+  if (limit <= 9007199254740992n) {
+    return BigInt(Math.floor(draw() * Number(limit)));
+  }
+  const bitCount = limit.toString(2).length;
+  const chunks = Math.ceil(bitCount / 53);
+  const mask = (1n << BigInt(bitCount)) - 1n;
+  while (true) {
+    let candidate = 0n;
+    for (let i = 0;i < chunks; i += 1) {
+      candidate = candidate << 53n | BigInt(Math.floor(draw() * 9007199254740992));
+    }
+    candidate &= mask;
+    if (candidate < limit)
+      return candidate;
+  }
+}
 
 class RationalInterval {
   #start;
@@ -1853,9 +1911,11 @@ class RationalInterval {
     }
     return new RationalInterval(parts[0], parts[1]);
   }
-  toRepeatingDecimal(useRepeatNotation = true) {
-    const startDecimal = this.#start.toRepeatingDecimalWithPeriod(useRepeatNotation).decimal;
-    const endDecimal = this.#end.toRepeatingDecimalWithPeriod(useRepeatNotation).decimal;
+  toRepeatingDecimal(options = true) {
+    const startDecimal = this.#start.toRepeatingDecimalWithPeriod(options).decimal;
+    const endDecimal = this.#end.toRepeatingDecimalWithPeriod(options).decimal;
+    if (startDecimal === null || endDecimal === null)
+      return null;
     return `${startDecimal}:${endDecimal}`;
   }
   compactedDecimalInterval() {
@@ -2015,27 +2075,39 @@ class RationalInterval {
       denominator *= baseBigInt;
     }
   }
-  randomRational(maxDenominator = 1000) {
-    const maxDenom = BigInt(maxDenominator);
-    if (maxDenom <= 0n) {
-      throw new Error("maxDenominator must be positive");
+  denominatorInterval(denominator, onEmpty = "error") {
+    const gridDenominator = denominator === undefined ? lcm(this.#low.denominator, this.#high.denominator) : toExactBigInt(denominator, "Grid denominator");
+    if (gridDenominator <= 0n) {
+      throw new RangeError("Grid denominator must be positive");
     }
-    const validRationals = [];
-    for (let denom = 1n;denom <= maxDenom; denom++) {
-      const minNum = this.#ceilRational(this.#low.multiply(new Rational(denom)));
-      const maxNum = this.#floorRational(this.#high.multiply(new Rational(denom)));
-      for (let num = minNum.numerator;num <= maxNum.numerator; num++) {
-        const candidate = new Rational(num, denom);
-        if (candidate.numerator === num && candidate.denominator === denom) {
-          validRationals.push(candidate);
-        }
-      }
+    if (!new Set(["mid", "null", "error"]).has(onEmpty)) {
+      throw new TypeError('onEmpty must be "mid", "null", or "error"');
     }
-    if (validRationals.length === 0) {
-      return this.midpoint();
+    const first = this.#ceilRational(this.#low.multiply(new Rational(gridDenominator))).numerator;
+    const last = this.#floorRational(this.#high.multiply(new Rational(gridDenominator))).numerator;
+    if (first <= last) {
+      return new RationalInterval(new Rational(first, gridDenominator), new Rational(last, gridDenominator));
     }
-    const randomIndex = Math.floor(Math.random() * validRationals.length);
-    return validRationals[randomIndex];
+    if (onEmpty === "null")
+      return null;
+    if (onEmpty === "mid")
+      return RationalInterval.point(this.midpoint());
+    throw new RangeError(`No rational with grid denominator ${gridDenominator} lies in this interval`);
+  }
+  randomRational(denominator, onEmpty = "error", random = Math.random) {
+    if (typeof random !== "function") {
+      throw new TypeError("Random source must be a function");
+    }
+    const gridDenominator = denominator === undefined ? lcm(this.#low.denominator, this.#high.denominator) : toExactBigInt(denominator, "Grid denominator");
+    const grid = this.denominatorInterval(gridDenominator, onEmpty);
+    if (grid === null)
+      return null;
+    const first = this.#ceilRational(this.#low.multiply(new Rational(gridDenominator))).numerator;
+    const last = this.#floorRational(this.#high.multiply(new Rational(gridDenominator))).numerator;
+    if (first > last)
+      return grid.start;
+    const numerator = first + randomBigIntBelow(last - first + 1n, random);
+    return new Rational(numerator, gridDenominator);
   }
   #gcd(a, b) {
     a = a < 0n ? -a : a;
@@ -2063,6 +2135,9 @@ class RationalInterval {
     const lowBits = this.#low.bitLength();
     const highBits = this.#high.bitLength();
     return Math.max(lowBits, highBits);
+  }
+  toJSON() {
+    return { $ratmath: "RationalInterval", start: this.#start, end: this.#end };
   }
 }
 
@@ -2151,7 +2226,7 @@ class Fraction {
     return Fraction.#fromComponents(this.#numerator ** n, this.#denominator ** n);
   }
   scale(factor) {
-    const scaleFactor = BigInt(factor);
+    const scaleFactor = toExactBigInt(factor, "Fraction scale factor");
     return Fraction.#fromComponents(this.#numerator * scaleFactor, this.#denominator * scaleFactor);
   }
   static #gcd(a, b) {
@@ -2216,9 +2291,9 @@ class Fraction {
     if (this.#numerator === 0n) {
       return new Fraction(0, 1);
     }
-    const gcd = Fraction.#gcd(this.#numerator, this.#denominator);
-    const reducedNum = this.#numerator / gcd;
-    const reducedDen = this.#denominator / gcd;
+    const gcd2 = Fraction.#gcd(this.#numerator, this.#denominator);
+    const reducedNum = this.#numerator / gcd2;
+    const reducedDen = this.#denominator / gcd2;
     if (reducedDen < 0n) {
       return new Fraction(-reducedNum, -reducedDen);
     }
@@ -2266,6 +2341,13 @@ class Fraction {
       const newDenominator = this.#denominator * 10n ** -exp;
       return Fraction.#fromComponents(this.#numerator, newDenominator);
     }
+  }
+  toJSON() {
+    return {
+      $ratmath: "Fraction",
+      numerator: this.#numerator.toString(),
+      denominator: this.#denominator.toString()
+    };
   }
   mediant(other) {
     if (this.isInfinite && other.isInfinite) {
@@ -2662,9 +2744,9 @@ class Integer {
     if (this.#value === 0n || other.value === 0n) {
       return new Integer(0);
     }
-    const gcd = this.gcd(other);
+    const gcd2 = this.gcd(other);
     const product = this.multiply(other).abs();
-    return product.divide(gcd);
+    return product.divide(gcd2);
   }
   toString(base) {
     if (base === undefined) {
@@ -2746,6 +2828,9 @@ class Integer {
     if (this.#value === 0n)
       return 0;
     return this.#value < 0n ? (-this.#value).toString(2).length : this.#value.toString(2).length;
+  }
+  toJSON() {
+    return { $ratmath: "Integer", value: this.#value.toString() };
   }
 }
 
@@ -5975,8 +6060,8 @@ function polynomialExtendedGcd(left, right) {
   if (trimPolynomial(right).length === 0)
     return [trimPolynomial(left), [int(1)], []];
   const [quotient, remainder] = polynomialDivmod(left, right);
-  const [gcd, x1, y1] = polynomialExtendedGcd(right, remainder);
-  return [gcd, y1, polynomialSubtract(x1, polynomialMultiply(quotient, y1))];
+  const [gcd2, x1, y1] = polynomialExtendedGcd(right, remainder);
+  return [gcd2, y1, polynomialSubtract(x1, polynomialMultiply(quotient, y1))];
 }
 function algebraicPolynomial(value) {
   const terms = toTerms(value);
@@ -6016,10 +6101,10 @@ function invertSingleAlgebraicExpression(value) {
   const parsed = algebraicPolynomial(value);
   if (!parsed || parsed.polynomial.length === 0)
     return null;
-  const [gcd, coefficient] = polynomialExtendedGcd(parsed.polynomial, parsed.generator.minimalPolynomial);
-  if (gcd.length !== 1 || isZero(gcd[0]))
+  const [gcd2, coefficient] = polynomialExtendedGcd(parsed.polynomial, parsed.generator.minimalPolynomial);
+  if (gcd2.length !== 1 || isZero(gcd2[0]))
     return null;
-  const normalized = coefficient.map((entry) => entry.divide(gcd[0]));
+  const normalized = coefficient.map((entry) => entry.divide(gcd2[0]));
   const [, reduced] = polynomialDivmod(normalized, parsed.generator.minimalPolynomial);
   return expressionFromPolynomial(parsed.generator, reduced);
 }
@@ -13645,8 +13730,8 @@ function applyAdd(left, right) {
     return leftFraction.add(rightFraction);
   }
   if (leftFraction && rightFraction) {
-    const gcd = greatestCommonDivisor(leftFraction.denominator, rightFraction.denominator);
-    const denominator = leftFraction.denominator / gcd * rightFraction.denominator;
+    const gcd2 = greatestCommonDivisor(leftFraction.denominator, rightFraction.denominator);
+    const denominator = leftFraction.denominator / gcd2 * rightFraction.denominator;
     return new Fraction(leftFraction.numerator * (denominator / leftFraction.denominator) + rightFraction.numerator * (denominator / rightFraction.denominator), denominator);
   }
   if (leftFraction && right instanceof Integer) {
@@ -13673,8 +13758,8 @@ function applySubtract(left, right) {
     return leftFraction.subtract(rightFraction);
   }
   if (leftFraction && rightFraction) {
-    const gcd = greatestCommonDivisor(leftFraction.denominator, rightFraction.denominator);
-    const denominator = leftFraction.denominator / gcd * rightFraction.denominator;
+    const gcd2 = greatestCommonDivisor(leftFraction.denominator, rightFraction.denominator);
+    const denominator = leftFraction.denominator / gcd2 * rightFraction.denominator;
     return new Fraction(leftFraction.numerator * (denominator / leftFraction.denominator) - rightFraction.numerator * (denominator / rightFraction.denominator), denominator);
   }
   if (leftFraction && right instanceof Integer) {
@@ -16693,7 +16778,7 @@ function createFormulaSheet(formulasValue, options = {}) {
   const defaultSlotMetadata = options.defaultSlotMetadata ?? {};
   const defaultSlotDefinition = Object.freeze({
     source: defaultSlotMetadata.source ?? (formulas.defaultFormula ? options.formulaSource?.(formulas.defaultFormula) : null) ?? "_",
-    assignmentMode: assignmentMode(defaultSlotMetadata.assignmentMode ?? defaultAssignmentMode),
+    assignmentMode: assignmentMode(defaultSlotMetadata.assignmentMode ?? ":="),
     view: Object.freeze({ ...defaultSlotMetadata.view ?? {} })
   });
   const slotMetadata = new Map(formulas.entries.map(({ index, formula }) => {
@@ -16881,6 +16966,58 @@ function createFormulaSheet(formulasValue, options = {}) {
         sourceKind: "formula-source"
       });
     },
+    setFormulaSources(edits) {
+      if (!Array.isArray(edits) || edits.length === 0) {
+        throw new Error("FormulaSheet batch edit requires at least one edit");
+      }
+      if (typeof options.compileFormula !== "function") {
+        throw new Error("FormulaSheet source editing requires a formula compiler");
+      }
+      const occupied = new Set;
+      const prepared = edits.map((edit) => {
+        const index = normalizeIndex2(edit?.index, shape);
+        const key = slotKey(index);
+        if (occupied.has(key))
+          throw new Error(`FormulaSheet batch repeats ${addressFor(index)}`);
+        occupied.add(key);
+        const parts = formulaSourceParts(edit?.source, edit?.assignmentMode ?? null);
+        return { index, key, parts, formula: options.compileFormula(parts.source) };
+      });
+      for (const edit of prepared)
+        ensureSlot(edit.index, false);
+      const previous = new Map(prepared.map(({ key }) => {
+        const record = slotMetadata.get(key);
+        return [key, { ...record }];
+      }));
+      for (const { key, parts } of prepared) {
+        const record = slotMetadata.get(key);
+        record.source = parts.source;
+        record.assignmentMode = parts.assignmentMode;
+        record.view = record.view?.blank === true ? Object.freeze(Object.fromEntries(Object.entries(record.view).filter(([name]) => name !== "blank"))) : record.view;
+        record.editDiagnostics = Object.freeze([]);
+        record.diagnosticKind = null;
+        record.diagnosticSource = null;
+      }
+      const publicEdits = Object.freeze(prepared.map(({ index, parts }) => Object.freeze({
+        index: Object.freeze([...index]),
+        source: parts.source,
+        assignmentMode: parts.assignmentMode,
+        view: slotMetadata.get(slotKey(index)).view
+      })));
+      try {
+        graph.applyBatch(prepared.map(({ index, formula, parts }) => ({
+          kind: "update",
+          name: nodeNameFor(index),
+          formula,
+          source: parts.source
+        })), { type: "formula:batch", edits: publicEdits });
+      } catch (error) {
+        for (const [key, snapshot] of previous)
+          Object.assign(slotMetadata.get(key), snapshot);
+        throw error;
+      }
+      return sheet;
+    },
     setAxisLabel(axisValue, coordinateValue, labelValue) {
       const axis = exactIndex(axisValue, "FormulaSheet axis label axis");
       if (axis < 1 || axis > shape.length) {
@@ -17006,14 +17143,14 @@ function createFormulaSheet(formulasValue, options = {}) {
     }
     return graph.node(nodeNameFor(index));
   }
-  function ensureSlot(index) {
+  function ensureSlot(index, initialize = !graph.evaluating) {
     const key = slotKey(index);
     if (materializedSlotKeys.has(key))
       return graph.node(nodeNameFor(index));
     if (!formulas.defaultFormula) {
       throw new Error(`FormulaSheet slot ${addressFor(index)} is not defined`);
     }
-    return addSlot(index, formulas.defaultFormula, !graph.evaluating);
+    return addSlot(index, formulas.defaultFormula, initialize);
   }
   for (const { index, formula } of formulas.entries) {
     addSlot(index, formula, false);
@@ -18162,16 +18299,32 @@ function createSheet(args) {
     throw new Error("Sheet title must be a string");
   const rowAxis = viewAxes[0];
   const columnAxis = viewAxes[1] ?? null;
-  const rowCount = data.shape[rowAxis - 1];
-  const columnCount = columnAxis === null ? 1 : data.shape[columnAxis - 1];
+  const totalRowCount = data.shape[rowAxis - 1];
+  const totalColumnCount = columnAxis === null ? 1 : data.shape[columnAxis - 1];
+  const rowStartValue = sheetOption(entry, options, null, "rowStart");
+  const columnStartValue = sheetOption(entry, options, null, "columnStart");
+  const rowCountValue = sheetOption(entry, options, null, "rowCount");
+  const columnCountValue = sheetOption(entry, options, null, "columnCount");
+  const rowStart = rowStartValue === null ? 1 : normalizedSheetIndex(rowStartValue, totalRowCount, "Sheet rowStart");
+  const columnStart = columnStartValue === null ? 1 : normalizedSheetIndex(columnStartValue, totalColumnCount, "Sheet columnStart");
+  const requestedRowCount = rowCountValue === null ? totalRowCount : exactInteger3(rowCountValue, "Sheet rowCount");
+  const requestedColumnCount = columnCountValue === null ? totalColumnCount : exactInteger3(columnCountValue, "Sheet columnCount");
+  if (requestedRowCount < 1)
+    throw new Error("Sheet rowCount must be positive");
+  if (requestedColumnCount < 1)
+    throw new Error("Sheet columnCount must be positive");
+  const rowCount = Math.min(requestedRowCount, totalRowCount - rowStart + 1);
+  const columnCount = Math.min(requestedColumnCount, totalColumnCount - columnStart + 1);
   const rowHeaders = Array.from({ length: rowCount }, (_item, index) => {
-    const label = axisLabels[rowAxis - 1]?.[index] ?? null;
-    return label === null ? String(index + 1) : `${label} · ${index + 1}`;
+    const coordinate = rowStart + index;
+    const label = axisLabels[rowAxis - 1]?.[coordinate - 1] ?? null;
+    return label === null ? String(coordinate) : `${label} · ${coordinate}`;
   });
   const columnHeaders = Array.from({ length: columnCount }, (_item, index) => {
-    const label = columnAxis === null ? null : axisLabels[columnAxis - 1]?.[index] ?? null;
-    const fallback = sheetColumnLabel(index + 1, columnLabelMode);
-    return label === null ? fallback : `${label} · ${index + 1}`;
+    const coordinate = columnStart + index;
+    const label = columnAxis === null ? null : axisLabels[columnAxis - 1]?.[coordinate - 1] ?? null;
+    const fallback = sheetColumnLabel(coordinate, columnLabelMode);
+    return label === null ? fallback : `${label} · ${coordinate}`;
   });
   const hiddenAxes = data.shape.map((length, index) => ({
     axis: index + 1,
@@ -18185,9 +18338,11 @@ function createSheet(args) {
   })).filter(({ axis }) => !visibleAxes.has(axis));
   const cellsForSlice = (planeSlice) => Array.from({ length: rowCount }, (_row, rowIndex) => Array.from({ length: columnCount }, (_column, columnIndex) => {
     const index = planeSlice.map((item) => item);
-    index[rowAxis - 1] = rowIndex + 1;
+    const rowCoordinate = rowStart + rowIndex;
+    const columnCoordinate = columnStart + columnIndex;
+    index[rowAxis - 1] = rowCoordinate;
     if (columnAxis !== null)
-      index[columnAxis - 1] = columnIndex + 1;
+      index[columnAxis - 1] = columnCoordinate;
     const formulaMetadata = data.formulaMetadataAt?.(index) ?? null;
     const coordinateLabels = index.map((coordinate, axisIndex) => axisLabels[axisIndex]?.[coordinate - 1] ?? null);
     return Object.freeze({
@@ -18205,7 +18360,7 @@ function createSheet(args) {
       coordinateLabels: Object.freeze(coordinateLabels),
       coordinateLabel: coordinateLabels.filter((label) => label !== null).join(" / ") || null,
       address: `${addressBase}[${index.join(",")}]`,
-      displayAddress: sheetDisplayAddress(rowIndex + 1, columnIndex + 1, columnLabelMode)
+      displayAddress: sheetDisplayAddress(rowCoordinate, columnCoordinate, columnLabelMode)
     });
   }));
   const planes = sheetPlaneSlices(data.shape, slice, hiddenAxes).map((planeSlice) => Object.freeze({
@@ -18225,6 +18380,14 @@ function createSheet(args) {
     editMode: data.formulaSheet ? "formula" : data.binding ? "value" : null,
     rank,
     shape: Object.freeze([...data.shape]),
+    window: Object.freeze({
+      rowStart,
+      rowCount,
+      totalRowCount,
+      columnStart,
+      columnCount,
+      totalColumnCount
+    }),
     axes: Object.freeze(axes),
     axisLabels: Object.freeze(axisLabels),
     viewAxes: Object.freeze(viewAxes),
@@ -19123,12 +19286,19 @@ function renderOutputHtml(value, format = (item) => String(item ?? "")) {
       const diagnosticAttributes = diagnostic === null ? "" : ` data-rix-state="error" data-rix-diagnostic-kind="${escapeHtml(cell.diagnosticKind ?? "runtime")}" data-rix-diagnostics="${escapeHtml(JSON.stringify(cell.diagnostics))}"${cell.diagnosticSource === null ? "" : ` data-rix-diagnostic-source="${escapeHtml(cell.diagnosticSource)}"`} aria-invalid="true"`;
       return `<td data-rix-row="${rowIndex + 1}" data-rix-column="${columnIndex + 1}" data-rix-index="${cell.index.join(",")}" data-rix-address="${escapeHtml(cell.address)}" data-rix-display-address="${escapeHtml(cell.displayAddress)}"${cell.blank ? ' data-rix-blank="true"' : ""}${cell.coordinateLabel === null ? "" : ` data-rix-coordinate-labels="${escapeHtml(JSON.stringify(cell.coordinateLabels))}" data-rix-coordinate-label="${escapeHtml(cell.coordinateLabel)}"`}${cell.formulaSource === null ? "" : ` data-rix-formula-source="${escapeHtml(cell.formulaSource)}"`}${cell.slotId === null ? "" : ` data-rix-slot-id="${escapeHtml(cell.slotId)}"`}${cell.assignmentMode === null ? "" : ` data-rix-assignment-mode="${escapeHtml(cell.assignmentMode)}"`}${cell.dependencies.length === 0 ? "" : ` data-rix-dependencies="${escapeHtml(JSON.stringify(cell.dependencies))}"`}${diagnosticAttributes} title="${escapeHtml(title)}">${cellValue}</td>`;
     };
-    const bodies = value.planes.map((plane) => `<tbody data-rix-plane-key="${escapeHtml(plane.key)}" data-rix-slice="${plane.slice.map((item) => item ?? "").join(",")}"${plane.key === value.selectedPlaneKey ? "" : " hidden"}>${plane.cells.map((row, rowIndex) => `<tr><th scope="row" data-rix-row="${rowIndex + 1}"${headerAttributes(value.rowAxis.axis, rowIndex + 1, String(rowIndex + 1))}${value.axisLabels[value.rowAxis.axis - 1] ? ` title="${escapeHtml(value.rowAxis.name)} ${rowIndex + 1}"` : ""}>${escapeHtml(value.rowHeaders[rowIndex])}</th>${row.map((cell, columnIndex) => renderSheetCell(cell, rowIndex, columnIndex)).join("")}</tr>`).join("")}</tbody>`).join("");
+    const bodies = value.planes.map((plane) => `<tbody data-rix-plane-key="${escapeHtml(plane.key)}" data-rix-slice="${plane.slice.map((item) => item ?? "").join(",")}"${plane.key === value.selectedPlaneKey ? "" : " hidden"}>${plane.cells.map((row, rowIndex) => {
+      const rowCoordinate = value.window?.rowStart + rowIndex || rowIndex + 1;
+      return `<tr><th scope="row" data-rix-row="${rowIndex + 1}"${headerAttributes(value.rowAxis.axis, rowCoordinate, String(rowCoordinate))}${value.axisLabels[value.rowAxis.axis - 1] ? ` title="${escapeHtml(value.rowAxis.name)} ${rowCoordinate}"` : ""}>${escapeHtml(value.rowHeaders[rowIndex])}</th>${row.map((cell, columnIndex) => renderSheetCell(cell, rowIndex, columnIndex)).join("")}</tr>`;
+    }).join("")}</tbody>`).join("");
     const liveAttributes = value.editable ? ` data-rix-editable="true" data-rix-edit-mode="${value.editMode}"${value.bindingId ? ` data-rix-binding-id="${escapeHtml(value.bindingId)}"` : ""}` : "";
     const assignmentControl = value.editMode === "formula" ? `<label class="rix-output-sheet-assignment"><span>Assignment</span><select data-rix-edit-assignment-mode aria-label="Formula assignment mode">${FORMULA_SHEET_ASSIGNMENT_MODES.map((mode) => `<option value="${escapeHtml(mode)}"${mode === ":=" ? " selected" : ""}>${escapeHtml(mode)}</option>`).join("")}</select></label>` : "";
     const editor = value.editable ? `<form class="rix-output-sheet-editor" hidden><label class="rix-output-sheet-formula"><span data-rix-edit-label>Choose a cell to edit</span><input data-rix-edit-source aria-label="${value.editMode === "formula" ? "RiX formula" : "RiX value"}" autocomplete="off" spellcheck="false"></label>${assignmentControl}<button type="submit">${value.editMode === "formula" ? "Set formula" : "Set"}</button><output data-rix-edit-value aria-live="polite"></output><output data-rix-edit-status aria-live="polite"></output></form>` : "";
     const formulaAttributes = value.formulaBacked ? ` data-rix-formula-sheet="true" data-rix-formula-epoch="${value.formulaSheet.epoch}"` : "";
-    return `<section class="rix-output-sheet" data-rix-rank="${value.rank}" data-rix-selected-plane="${escapeHtml(value.selectedPlaneKey)}"${liveAttributes}${formulaAttributes}>${value.title ? `<h3 class="rix-output-sheet-title">${escapeHtml(value.title)}</h3>` : ""}<div class="rix-output-sheet-location" aria-live="polite" data-rix-summary="${escapeHtml(summary)}">${escapeHtml(summary)}</div>${value.showAxisSummary ? `<div class="rix-output-sheet-axis-summary">${escapeHtml(axisSummary)}</div>` : ""}${controls}${editor}<table><thead><tr><th class="rix-output-sheet-corner" scope="col">${escapeHtml(value.addressBase)}</th>${value.columnHeaders.map((header, column) => `<th scope="col" data-rix-column="${column + 1}"${value.columnAxis ? headerAttributes(value.columnAxis.axis, column + 1, sheetColumnLabel(column + 1, value.columnLabelMode)) : ""}${value.columnAxis && value.axisLabels[value.columnAxis.axis - 1] ? ` title="${escapeHtml(value.columnAxis.name)} ${column + 1}"` : ""}>${escapeHtml(header)}</th>`).join("")}</tr></thead>${bodies}</table></section>`;
+    const windowAttributes = value.window ? ` data-rix-window-row-start="${value.window.rowStart}" data-rix-window-row-count="${value.window.rowCount}" data-rix-window-row-total="${value.window.totalRowCount}" data-rix-window-column-start="${value.window.columnStart}" data-rix-window-column-count="${value.window.columnCount}" data-rix-window-column-total="${value.window.totalColumnCount}"` : "";
+    return `<section class="rix-output-sheet" data-rix-rank="${value.rank}" data-rix-selected-plane="${escapeHtml(value.selectedPlaneKey)}"${windowAttributes}${liveAttributes}${formulaAttributes}>${value.title ? `<h3 class="rix-output-sheet-title">${escapeHtml(value.title)}</h3>` : ""}<div class="rix-output-sheet-location" aria-live="polite" data-rix-summary="${escapeHtml(summary)}">${escapeHtml(summary)}</div>${value.showAxisSummary ? `<div class="rix-output-sheet-axis-summary">${escapeHtml(axisSummary)}</div>` : ""}${controls}${editor}<table><thead><tr><th class="rix-output-sheet-corner" scope="col">${escapeHtml(value.addressBase)}</th>${value.columnHeaders.map((header, column) => {
+      const columnCoordinate = value.window?.columnStart + column || column + 1;
+      return `<th scope="col" data-rix-column="${column + 1}"${value.columnAxis ? headerAttributes(value.columnAxis.axis, columnCoordinate, sheetColumnLabel(columnCoordinate, value.columnLabelMode)) : ""}${value.columnAxis && value.axisLabels[value.columnAxis.axis - 1] ? ` title="${escapeHtml(value.columnAxis.name)} ${columnCoordinate}"` : ""}>${escapeHtml(header)}</th>`;
+    }).join("")}</tr></thead>${bodies}</table></section>`;
   }
   if (value.kind === "figure")
     return `<figure class="rix-output-figure"${value.label ? ` id="${escapeHtml(value.label)}"` : ""}>${renderOutputHtml(value.content, format)}${value.caption ? `<figcaption>${escapeHtml(value.caption)}</figcaption>` : ""}</figure>`;
@@ -21952,7 +22122,7 @@ function runtimeRandom(context) {
   t ^= t + Math.imul(t ^ t >>> 7, t | 61);
   return ((t ^ t >>> 14) >>> 0) / 4294967296;
 }
-function randomBigIntBelow(context, exclusiveMax) {
+function randomBigIntBelow2(context, exclusiveMax) {
   if (exclusiveMax <= 0n)
     throw new Error("Random bound must be positive");
   if (exclusiveMax <= BigInt(Number.MAX_SAFE_INTEGER)) {
@@ -29776,7 +29946,7 @@ function randomGridRational(lo, hi, denominator, context) {
   if (min > max)
     throw new Error("The requested denominator has no points inside the interval");
   const width = max - min + 1n;
-  const offset = randomBigIntBelow(context, width);
+  const offset = randomBigIntBelow2(context, width);
   return new Rational(min + offset, d);
 }
 function simplestRandomRational(lo, hi, tolerance, context) {
@@ -31909,7 +32079,7 @@ var RIXCEL_FORMAT = "rixcel";
 var RIXCEL_VERSION = 2;
 var RIXCEL_ASSIGNMENT_MODES = FORMULA_SHEET_ASSIGNMENT_MODES;
 var ASSIGNMENT_MODES2 = new Set(RIXCEL_ASSIGNMENT_MODES);
-var EVENT_TYPES = new Set(["slot:set", "view:axis-label"]);
+var EVENT_TYPES = new Set(["slot:set", "slot:batch", "view:axis-label"]);
 var DOCUMENT_VIEW_KEYS = Object.freeze([
   "title",
   "axes",
@@ -32008,14 +32178,6 @@ function linearOffset(index, shape) {
     offset = offset * shape[axis] + index[axis] - 1;
   }
   return offset;
-}
-function indexFromOffset(offset, shape) {
-  const index = Array(shape.length);
-  for (let axis = shape.length - 1;axis >= 0; axis -= 1) {
-    index[axis] = offset % shape[axis] + 1;
-    offset = Math.floor(offset / shape[axis]);
-  }
-  return index;
 }
 function normalizeIndex3(value, shape, path) {
   if (!Array.isArray(value) || value.length !== shape.length) {
@@ -32128,6 +32290,9 @@ function rixCelEventCommand(event, binding = "document") {
   if (event.type === "view:axis-label") {
     return `${binding}.SetAxisLabel(${event.axis}, ${event.coordinate}, ${JSON.stringify(event.label)})`;
   }
+  if (event.type === "slot:batch") {
+    return `{; ${event.edits.map((edit) => rixCelEventCommand({ type: "slot:set", ...edit }, binding)).join("; ")} }`;
+  }
   throw new Error(`Unsupported RiXCel history event type: ${event.type}`);
 }
 function normalizeEvent(rawEvent, offset, id, shape) {
@@ -32143,7 +32308,23 @@ function normalizeEvent(rawEvent, offset, id, shape) {
     type,
     index: normalizeIndex3(event.index, shape, `${path}.index`),
     ...normalizeSlotDefinition(event, path)
-  } : (() => {
+  } : type === "slot:batch" ? (() => {
+    if (!Array.isArray(event.edits) || event.edits.length < 1) {
+      fail(`${path}.edits`, "must be a non-empty array");
+    }
+    const occupied = new Set;
+    const edits = event.edits.map((edit, editOffset) => {
+      const editPath = `${path}.edits[${editOffset}]`;
+      plainObject(edit, editPath);
+      const index = normalizeIndex3(edit.index, shape, `${editPath}.index`);
+      const key = indexKey(index);
+      if (occupied.has(key))
+        fail(`${editPath}.index`, "duplicates a coordinate in this batch");
+      occupied.add(key);
+      return { index, ...normalizeSlotDefinition(edit, editPath) };
+    });
+    return { id: eventId(id, sequence2), sequence: sequence2, type, edits };
+  })() : (() => {
     const axis = event.axis;
     const coordinate = event.coordinate;
     if (!Number.isSafeInteger(axis) || axis < 1 || axis > shape.length) {
@@ -32321,27 +32502,29 @@ function appendRixCelEvent(value, event) {
   const events = [...document.events.slice(0, document.cursor), event];
   return parseRixCelDocument({ ...document, events, cursor: events.length, drafts: document.drafts });
 }
-function materializeRixCelDocument(value) {
+function replayRixCelDocument(value) {
   const document = parseRixCelDocument(value);
-  const { size } = documentShape(document.shape);
-  const slots = Array.from({ length: size }, (_unused, offset) => {
-    const index = indexFromOffset(offset, document.shape);
-    return {
-      id: slotId(document.id, index),
-      index,
-      source: document.defaultSlot.source,
-      assignmentMode: document.defaultSlot.assignmentMode,
-      view: jsonClone(document.defaultSlot.view, "$.defaultSlot.view")
-    };
-  });
-  const byIndex = new Map(slots.map((slot) => [indexKey(slot.index), slot]));
+  const byIndex = new Map;
   let view = jsonClone(document.view, "$.view");
   for (const event of document.events.slice(0, document.cursor)) {
     if (event.type === "slot:set") {
-      const slot = byIndex.get(indexKey(event.index));
-      slot.source = event.source;
-      slot.assignmentMode = event.assignmentMode;
-      slot.view = jsonClone(event.view, `$.events[${event.sequence - 1}].view`);
+      byIndex.set(indexKey(event.index), {
+        id: slotId(document.id, event.index),
+        index: [...event.index],
+        source: event.source,
+        assignmentMode: event.assignmentMode,
+        view: jsonClone(event.view, `$.events[${event.sequence - 1}].view`)
+      });
+    } else if (event.type === "slot:batch") {
+      for (const edit of event.edits) {
+        byIndex.set(indexKey(edit.index), {
+          id: slotId(document.id, edit.index),
+          index: [...edit.index],
+          source: edit.source,
+          assignmentMode: edit.assignmentMode,
+          view: jsonClone(edit.view, `$.events[${event.sequence - 1}].edits.view`)
+        });
+      }
     } else if (event.type === "view:axis-label") {
       const labels = Array.from({ length: document.shape.length }, (_unused, axis) => {
         const existing = view.axisLabels?.[axis];
@@ -32351,7 +32534,11 @@ function materializeRixCelDocument(value) {
       view = { ...view, axisLabels: labels.map((axisLabels) => axisLabels.every((label) => label === null) ? null : axisLabels) };
     }
   }
-  return { ...document, view: normalizeDocumentView(view, "$.view", document.shape), slots };
+  return {
+    document,
+    view: normalizeDocumentView(view, "$.view", document.shape),
+    slots: [...byIndex.values()].sort((left, right) => linearOffset(left.index, document.shape) - linearOffset(right.index, document.shape))
+  };
 }
 function exportRixCelDocument(sheet) {
   if (!isFormulaSheet(sheet))
@@ -32360,24 +32547,17 @@ function exportRixCelDocument(sheet) {
     id: sheet.id,
     shape: [...sheet.shape],
     view: jsonClone(sheet.documentView ?? {}, "$.view"),
-    defaultSlot: { source: "_", assignmentMode: ":=", view: {} }
+    defaultSlot: sheet.defaultSlotDefinition ?? { source: "_", assignmentMode: ":=", view: {} }
   });
-  const visit = (axis, index) => {
-    if (axis === sheet.shape.length) {
-      const slot = sheet.slot(index);
-      if (typeof slot.source !== "string")
-        throw new Error(`RiXCel export requires source for grid[${index.join(",")}]`);
-      const current = { source: slot.source, assignmentMode: slot.assignmentMode, view: slot.view ?? {} };
-      if (JSON.stringify(current) !== JSON.stringify(document.defaultSlot)) {
-        document = appendRixCelEvent(document, { type: "slot:set", index: [...index], ...current });
-      }
-      return;
+  for (const slot of sheet.materializedSlots()) {
+    const index = [...slot.index];
+    if (typeof slot.source !== "string")
+      throw new Error(`RiXCel export requires source for grid[${index.join(",")}]`);
+    const current = { source: slot.source, assignmentMode: slot.assignmentMode, view: slot.view ?? {} };
+    if (JSON.stringify(current) !== JSON.stringify(document.defaultSlot)) {
+      document = appendRixCelEvent(document, { type: "slot:set", index, ...current });
     }
-    for (let coordinate = 1;coordinate <= sheet.shape[axis]; coordinate += 1) {
-      visit(axis + 1, [...index, coordinate]);
-    }
-  };
-  visit(0, []);
+  }
   return document;
 }
 function stringifyRixCelDocument(value, options = {}) {
@@ -32389,28 +32569,40 @@ function stringifyRixCelDocument(value, options = {}) {
   return JSON.stringify(document, null, space);
 }
 function importRixCelDocument(value, options = {}) {
-  const document = materializeRixCelDocument(value);
+  const { document, view, slots } = replayRixCelDocument(value);
   if (typeof options.compileFormula !== "function")
     throw new Error("RiXCel import requires a formula compiler");
   if (typeof options.runFormula !== "function")
     throw new Error("RiXCel import requires a deferred formula evaluator");
-  const formulas = document.slots.map((slot) => {
+  let defaultFormula;
+  try {
+    defaultFormula = options.compileFormula(document.defaultSlot.source);
+  } catch (error) {
+    throw new Error(`RiXCel default slot source did not compile: ${error.message}`);
+  }
+  const entries2 = slots.map((slot) => {
     try {
-      return options.compileFormula(slot.source);
+      return { index: slot.index, formula: options.compileFormula(slot.source) };
     } catch (error) {
       throw new Error(`RiXCel source for grid[${slot.index.join(",")}] did not compile: ${error.message}`);
     }
   });
-  const slotMetadata = new Map(document.slots.map((slot) => [indexKey(slot.index), {
+  const slotMetadata = new Map(slots.map((slot) => [indexKey(slot.index), {
     id: slot.id,
     source: slot.source,
     assignmentMode: slot.assignmentMode,
     view: slot.view
   }]));
-  return createFormulaSheet(createTensor(document.shape, formulas), {
+  return createFormulaSheet({
+    type: "sparse_formula_grid",
+    shape: document.shape,
+    entries: entries2,
+    defaultFormula
+  }, {
     ...options,
     id: document.id,
-    documentView: document.view,
+    documentView: view,
+    defaultSlotMetadata: document.defaultSlot,
     slotMetadata
   });
 }
@@ -34250,6 +34442,754 @@ function install3({ systemContext }) {
   return plot;
 }
 
+// ../rix/plugins/scene3d/scene3d.js
+var SCENE3D_SCHEMA = "rix.scene3d@1";
+var int7 = (value) => new Integer(BigInt(value));
+var str = (value) => ({ type: "string", value: String(value) });
+var seq = (values) => ({ type: "sequence", values });
+var rixMap2 = (entries2) => ({ type: "map", entries: new Map(entries2) });
+function sequence2(value, label2) {
+  if (Array.isArray(value))
+    return value;
+  if (Array.isArray(value?.values))
+    return value.values;
+  if (Array.isArray(value?.elements))
+    return value.elements;
+  throw new Error(`${label2} must be a sequence`);
+}
+function entriesFor2(args, positional, name) {
+  if (args.length === 1 && args[0]?.type === "map" && args[0].entries instanceof Map)
+    return args[0].entries;
+  if (args.length > positional.length)
+    throw new Error(`${name} received too many arguments`);
+  const entries2 = new Map(positional.slice(0, args.length).map((key, index) => [key, args[index]]));
+  const options = entries2.get("options");
+  if (options?.type === "map" && options.entries instanceof Map) {
+    for (const [key, value] of options.entries)
+      if (!entries2.has(key))
+        entries2.set(key, value);
+  }
+  return entries2;
+}
+function field(entries2, name, fallback = null) {
+  if (!(entries2 instanceof Map))
+    return fallback;
+  if (entries2.has(name))
+    return entries2.get(name);
+  const key = [...entries2.keys()].find((candidate) => String(candidate).toLowerCase() === String(name).toLowerCase());
+  return key === undefined ? fallback : entries2.get(key);
+}
+function numeric(value, label2) {
+  let result;
+  if (value instanceof Integer)
+    result = Number(value.value);
+  else if (value instanceof Rational)
+    result = Number(value.numerator) / Number(value.denominator);
+  else if (typeof value === "number")
+    result = value;
+  else if (typeof value === "bigint")
+    result = Number(value);
+  else
+    throw new Error(`${label2} must be numeric`);
+  if (!Number.isFinite(result))
+    throw new Error(`${label2} must be finite`);
+  return result;
+}
+function exact(value, label2) {
+  if (value instanceof Integer || value instanceof Rational)
+    return value;
+  throw new Error(`${label2} must be an exact integer or rational`);
+}
+function integer2(value, label2) {
+  if (value instanceof Integer)
+    return Number(value.value);
+  if (value instanceof Rational && value.denominator === 1n)
+    return Number(value.numerator);
+  if (typeof value === "number" && Number.isInteger(value))
+    return value;
+  throw new Error(`${label2} must be an integer`);
+}
+function truthy3(value, fallback = false) {
+  if (value === null || value === undefined)
+    return fallback;
+  if (value instanceof Integer)
+    return value.value !== 0n;
+  if (value instanceof Rational)
+    return value.numerator !== 0n;
+  return Boolean(value);
+}
+function text4(value, fallback = null) {
+  if (value?.type === "string")
+    return value.value;
+  return typeof value === "string" ? value : fallback;
+}
+function exactVector(value, dimension, label2) {
+  const values = sequence2(value, label2);
+  if (values.length !== dimension)
+    throw new Error(`${label2} must contain ${dimension} coordinates`);
+  return Object.freeze(values.map((item, index) => exact(item, `${label2} coordinate ${index + 1}`)));
+}
+function indexTriples(value, vertexCount, label2) {
+  return Object.freeze(sequence2(value, label2).map((triangle, triangleIndex) => {
+    const values = sequence2(triangle, `${label2} ${triangleIndex + 1}`);
+    if (values.length !== 3)
+      throw new Error(`${label2} ${triangleIndex + 1} must contain three indices`);
+    const result = values.map((item, index) => integer2(item, `${label2} ${triangleIndex + 1} index ${index + 1}`));
+    if (result.some((item) => item < 1 || item > vertexCount)) {
+      throw new Error(`${label2} ${triangleIndex + 1} indices must be between 1 and ${vertexCount}`);
+    }
+    return Object.freeze(result.map((item) => item - 1));
+  }));
+}
+function sceneValue(kind, fields = {}) {
+  return Object.freeze({
+    type: kind === "scene" ? "output" : "scene3d_node",
+    kind: kind === "scene" ? "scene3d" : kind,
+    schema: SCENE3D_SCHEMA,
+    ...fields,
+    _ext: new Map([
+      ["_type", str(kind === "scene" ? "output" : "scene3d_node")],
+      ["kind", str(kind === "scene" ? "scene3d" : kind)],
+      ["immutable", int7(1)]
+    ])
+  });
+}
+function isScene3D(value) {
+  return Boolean(value?.type === "output" && value.kind === "scene3d" && value.schema === SCENE3D_SCHEMA);
+}
+function isScene3DNode(value) {
+  return Boolean(value?.type === "scene3d_node" && value.schema === SCENE3D_SCHEMA);
+}
+function validateNode(value, label2) {
+  if (!isScene3DNode(value))
+    throw new Error(`${label2} must be a Scene3D node`);
+  return value;
+}
+function normalizeChildren(value, label2) {
+  return Object.freeze(sequence2(value, label2).map((child, index) => validateNode(child, `${label2} ${index + 1}`)));
+}
+function styleOptions(entries2) {
+  const material = field(entries2, "material");
+  const materialEntries = material?.type === "scene3d_node" && material.kind === "material" ? material.values : material?.type === "map" && material.entries instanceof Map ? material.entries : new Map;
+  const color = text4(field(entries2, "color"), text4(field(materialEntries, "color"), "#275dad"));
+  const width = field(entries2, "width", field(materialEntries, "width", int7(1)));
+  const opacity = field(entries2, "opacity", field(materialEntries, "opacity", int7(1)));
+  return Object.freeze({ color, width, opacity, material: material ?? null });
+}
+function createMaterial(args) {
+  const entries2 = entriesFor2(args, ["color", "opacity", "width"], "scene3d.Material");
+  const color = text4(field(entries2, "color"), "#275dad");
+  const opacity = field(entries2, "opacity", int7(1));
+  const width = field(entries2, "width", int7(1));
+  numeric(opacity, "scene3d.Material opacity");
+  numeric(width, "scene3d.Material width");
+  return sceneValue("material", { values: new Map([["color", str(color)], ["opacity", opacity], ["width", width]]) });
+}
+function createMesh(args) {
+  const entries2 = entriesFor2(args, ["vertices", "triangles", "options"], "scene3d.Mesh");
+  const vertices = Object.freeze(sequence2(field(entries2, "vertices"), "scene3d.Mesh vertices").map((vertex, index) => exactVector(vertex, 3, `scene3d.Mesh vertex ${index + 1}`)));
+  if (vertices.length === 0)
+    throw new Error("scene3d.Mesh requires at least one vertex");
+  const triangles = indexTriples(field(entries2, "triangles"), vertices.length, "scene3d.Mesh triangle");
+  return sceneValue("mesh", { vertices, triangles, style: styleOptions(entries2), metadata: field(entries2, "metadata") });
+}
+function createPolyline(args) {
+  const entries2 = entriesFor2(args, ["points", "options"], "scene3d.Polyline");
+  const points = Object.freeze(sequence2(field(entries2, "points"), "scene3d.Polyline points").map((point, index) => exactVector(point, 3, `scene3d.Polyline point ${index + 1}`)));
+  if (points.length < 2)
+    throw new Error("scene3d.Polyline requires at least two points");
+  return sceneValue("polyline", {
+    points,
+    closed: truthy3(field(entries2, "closed")),
+    style: styleOptions(entries2),
+    metadata: field(entries2, "metadata")
+  });
+}
+function createPointCloud(args) {
+  const entries2 = entriesFor2(args, ["points", "options"], "scene3d.PointCloud");
+  const points = Object.freeze(sequence2(field(entries2, "points"), "scene3d.PointCloud points").map((point, index) => exactVector(point, 3, `scene3d.PointCloud point ${index + 1}`)));
+  return sceneValue("point_cloud", {
+    points,
+    radius: field(entries2, "radius", int7(3)),
+    style: styleOptions(entries2),
+    metadata: field(entries2, "metadata")
+  });
+}
+function createGroup3D(args) {
+  const entries2 = entriesFor2(args, ["children", "options"], "scene3d.Group");
+  return sceneValue("group", { children: normalizeChildren(field(entries2, "children"), "scene3d.Group children"), metadata: field(entries2, "metadata") });
+}
+function identityExact() {
+  return [int7(1), int7(0), int7(0), int7(0), int7(0), int7(1), int7(0), int7(0), int7(0), int7(0), int7(1), int7(0), int7(0), int7(0), int7(0), int7(1)];
+}
+function createTransform3D(args) {
+  const entries2 = entriesFor2(args, ["children", "options"], "scene3d.Transform");
+  let matrix = identityExact();
+  const matrixValue = field(entries2, "matrix");
+  if (matrixValue !== null) {
+    const values = sequence2(matrixValue, "scene3d.Transform matrix");
+    if (values.length !== 16)
+      throw new Error("scene3d.Transform matrix must contain 16 row-major values");
+    matrix = values.map((value, index) => exact(value, `scene3d.Transform matrix value ${index + 1}`));
+  }
+  const translate = field(entries2, "translate");
+  if (translate !== null) {
+    const vector = exactVector(translate, 3, "scene3d.Transform translate");
+    matrix[3] = vector[0];
+    matrix[7] = vector[1];
+    matrix[11] = vector[2];
+  }
+  const scale = field(entries2, "scale");
+  if (scale !== null) {
+    const values = Array.isArray(scale) || Array.isArray(scale?.values) ? exactVector(scale, 3, "scene3d.Transform scale") : [exact(scale, "scene3d.Transform scale"), exact(scale, "scene3d.Transform scale"), exact(scale, "scene3d.Transform scale")];
+    matrix[0] = values[0];
+    matrix[5] = values[1];
+    matrix[10] = values[2];
+  }
+  return sceneValue("transform", {
+    children: normalizeChildren(field(entries2, "children"), "scene3d.Transform children"),
+    matrix: Object.freeze(matrix),
+    metadata: field(entries2, "metadata")
+  });
+}
+function camera(args, projection) {
+  const name = projection === "perspective" ? "scene3d.PerspectiveCamera" : "scene3d.OrthographicCamera";
+  const entries2 = entriesFor2(args, ["position", "target", "options"], name);
+  return sceneValue("camera", {
+    projection,
+    position: exactVector(field(entries2, "position"), 3, `${name} position`),
+    target: exactVector(field(entries2, "target"), 3, `${name} target`),
+    up: exactVector(field(entries2, "up", seq([int7(0), int7(0), int7(1)])), 3, `${name} up`),
+    fov: field(entries2, "fov", int7(50)),
+    near: field(entries2, "near", new Rational(1n, 100n)),
+    far: field(entries2, "far", int7(1000)),
+    scale: field(entries2, "scale")
+  });
+}
+var createPerspectiveCamera = (args) => camera(args, "perspective");
+var createOrthographicCamera = (args) => camera(args, "orthographic");
+function defaultCamera() {
+  return camera([seq([int7(4), int7(4), int7(3)]), seq([int7(0), int7(0), int7(0)])], "perspective");
+}
+function createScene3D(args) {
+  const entries2 = entriesFor2(args, ["children", "options"], "scene3d.Scene");
+  const cameraValue = field(entries2, "camera", defaultCamera());
+  if (!isScene3DNode(cameraValue) || cameraValue.kind !== "camera")
+    throw new Error("scene3d.Scene camera must be a Scene3D camera");
+  return sceneValue("scene", {
+    children: normalizeChildren(field(entries2, "children"), "scene3d.Scene children"),
+    camera: cameraValue,
+    lights: Object.freeze(field(entries2, "lights") === null ? [] : sequence2(field(entries2, "lights"), "scene3d.Scene lights")),
+    metadata: field(entries2, "metadata"),
+    coordinateSystem: Object.freeze({ handedness: "right", up: "z", units: "unspecified" })
+  });
+}
+var identityNumber = () => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+function multiply4(left, right) {
+  const result = Array(16).fill(0);
+  for (let row = 0;row < 4; row += 1)
+    for (let column = 0;column < 4; column += 1) {
+      for (let index = 0;index < 4; index += 1)
+        result[row * 4 + column] += left[row * 4 + index] * right[index * 4 + column];
+    }
+  return result;
+}
+function transformPoint(matrix, point) {
+  const [x, y, z] = point.map((value, index) => numeric(value, `Scene3D coordinate ${index + 1}`));
+  return [
+    matrix[0] * x + matrix[1] * y + matrix[2] * z + matrix[3],
+    matrix[4] * x + matrix[5] * y + matrix[6] * z + matrix[7],
+    matrix[8] * x + matrix[9] * y + matrix[10] * z + matrix[11]
+  ];
+}
+function collectPrimitives(children, parentMatrix = identityNumber(), result = []) {
+  for (const child of children) {
+    if (child.kind === "group")
+      collectPrimitives(child.children, parentMatrix, result);
+    else if (child.kind === "transform") {
+      const local = child.matrix.map((value, index) => numeric(value, `Scene3D transform ${index + 1}`));
+      collectPrimitives(child.children, multiply4(parentMatrix, local), result);
+    } else if (child.kind === "mesh") {
+      const vertices = child.vertices.map((point) => transformPoint(parentMatrix, point));
+      const edges = new Map;
+      for (const [a, b, c] of child.triangles)
+        for (const pair of [[a, b], [b, c], [c, a]]) {
+          const ordered = pair[0] < pair[1] ? pair : [pair[1], pair[0]];
+          edges.set(`${ordered[0]}:${ordered[1]}`, ordered);
+        }
+      result.push({ kind: "mesh", points: vertices, segments: [...edges.values()], triangles: child.triangles, style: child.style });
+    } else if (child.kind === "polyline") {
+      const points = child.points.map((point) => transformPoint(parentMatrix, point));
+      const segments = points.slice(1).map((_, index) => [index, index + 1]);
+      if (child.closed && points.length > 2)
+        segments.push([points.length - 1, 0]);
+      result.push({ kind: "lines", points, segments, style: child.style });
+    } else if (child.kind === "point_cloud") {
+      result.push({ kind: "points", points: child.points.map((point) => transformPoint(parentMatrix, point)), radius: child.radius, style: child.style });
+    } else if (child.kind !== "material" && child.kind !== "camera") {
+      throw new Error(`Unsupported Scene3D node '${child.kind}'`);
+    }
+  }
+  return result;
+}
+function flattenScene3D(scene) {
+  if (!isScene3D(scene))
+    throw new Error("Expected a Scene3D scene");
+  return collectPrimitives(scene.children);
+}
+var subtract = (a, b) => a.map((value, index) => value - b[index]);
+var dot = (a, b) => a.reduce((sum, value, index) => sum + value * b[index], 0);
+var cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+function normalize(value, label2) {
+  const length = Math.hypot(...value);
+  if (length < 0.000000000001)
+    throw new Error(`${label2} must not be zero or collinear with the view direction`);
+  return value.map((entry) => entry / length);
+}
+function cameraFrame(cameraValue) {
+  const position = cameraValue.position.map((value, index) => numeric(value, `Camera position ${index + 1}`));
+  const target = cameraValue.target.map((value, index) => numeric(value, `Camera target ${index + 1}`));
+  const upHint = cameraValue.up.map((value, index) => numeric(value, `Camera up ${index + 1}`));
+  const forward = normalize(subtract(target, position), "Camera view direction");
+  const right = normalize(cross(forward, upHint), "Camera up vector");
+  const up = cross(right, forward);
+  return { position, forward, right, up };
+}
+function cameraPoint(point, frame) {
+  const delta = subtract(point, frame.position);
+  return [dot(delta, frame.right), dot(delta, frame.up), dot(delta, frame.forward)];
+}
+function clipDepth(a, b, near, far) {
+  let start = a;
+  let end = b;
+  if (start[2] < near && end[2] < near || start[2] > far && end[2] > far)
+    return null;
+  for (const plane of [near, far]) {
+    const below = plane === near ? (point) => point[2] < plane : (point) => point[2] > plane;
+    if (below(start) !== below(end)) {
+      const t = (plane - start[2]) / (end[2] - start[2]);
+      const cut = start.map((value, index) => value + (end[index] - value) * t);
+      if (below(start))
+        start = cut;
+      else
+        end = cut;
+    }
+  }
+  return [start, end];
+}
+function styleMap2(style, fill = false) {
+  return rixMap2([
+    [fill ? "fill" : "stroke", str(style.color)],
+    [fill ? "stroke" : "fill", str(fill ? style.color : "none")],
+    ["width", style.width],
+    ["opacity", style.opacity]
+  ]);
+}
+function snapshotScene3D(args) {
+  const entries2 = entriesFor2(args, ["scene", "options"], "scene3d.Snapshot");
+  const scene = field(entries2, "scene");
+  if (!isScene3D(scene))
+    throw new Error("scene3d.Snapshot requires a Scene3D scene");
+  const mode = text4(field(entries2, "mode"), "wireframe");
+  if (mode !== "wireframe")
+    throw new Error("scene3d.Snapshot currently supports only mode='wireframe'");
+  const sizeValue = field(entries2, "size", seq([int7(640), int7(480)]));
+  const [width, height] = sequence2(sizeValue, "scene3d.Snapshot size").map((value, index) => numeric(value, `scene3d.Snapshot size ${index + 1}`));
+  if (width <= 0 || height <= 0)
+    throw new Error("scene3d.Snapshot size must be positive");
+  const cameraValue = field(entries2, "camera", scene.camera);
+  if (!isScene3DNode(cameraValue) || cameraValue.kind !== "camera")
+    throw new Error("scene3d.Snapshot camera must be a Scene3D camera");
+  const primitives = flattenScene3D(scene);
+  const frame = cameraFrame(cameraValue);
+  const near = numeric(cameraValue.near, "Camera near plane");
+  const far = numeric(cameraValue.far, "Camera far plane");
+  if (!(near > 0 && far > near))
+    throw new Error("Camera requires 0 < near < far");
+  const cameraPrimitives = primitives.map((primitive) => ({ ...primitive, points: primitive.points.map((point) => cameraPoint(point, frame)) }));
+  const aspect = width / height;
+  let project;
+  if (cameraValue.projection === "perspective") {
+    const fov = numeric(cameraValue.fov, "Camera field of view");
+    if (!(fov > 0 && fov < 180))
+      throw new Error("Perspective camera fov must be between 0 and 180 degrees");
+    const focal = 1 / Math.tan(fov * Math.PI / 360);
+    project = ([x, y, depth]) => [(1 + x * focal / (depth * aspect)) * width / 2, (1 - y * focal / depth) * height / 2];
+  } else {
+    const all = cameraPrimitives.flatMap((primitive) => primitive.points);
+    const centerX = all.length ? (Math.min(...all.map((point) => point[0])) + Math.max(...all.map((point) => point[0]))) / 2 : 0;
+    const centerY = all.length ? (Math.min(...all.map((point) => point[1])) + Math.max(...all.map((point) => point[1]))) / 2 : 0;
+    const requested = cameraValue.scale === null ? null : numeric(cameraValue.scale, "Orthographic camera scale");
+    const spanX = all.length ? Math.max(...all.map((point) => point[0])) - Math.min(...all.map((point) => point[0])) : 1;
+    const spanY = all.length ? Math.max(...all.map((point) => point[1])) - Math.min(...all.map((point) => point[1])) : 1;
+    const vertical = requested ?? Math.max(spanY, spanX / aspect, 1) * 1.12;
+    project = ([x, y]) => [width / 2 + (x - centerX) * height / vertical, height / 2 - (y - centerY) * height / vertical];
+  }
+  const children = [];
+  let segmentCount = 0;
+  let pointCount = 0;
+  for (const primitive of cameraPrimitives) {
+    if (primitive.kind === "lines" || primitive.kind === "mesh")
+      for (const [aIndex, bIndex] of primitive.segments) {
+        let endpoints = [primitive.points[aIndex], primitive.points[bIndex]];
+        if (cameraValue.projection === "perspective")
+          endpoints = clipDepth(endpoints[0], endpoints[1], near, far);
+        if (!endpoints)
+          continue;
+        children.push(createPath([[project(endpoints[0]), project(endpoints[1])], styleMap2(primitive.style)]));
+        segmentCount += 1;
+      }
+    else {
+      const radius = numeric(primitive.radius, "PointCloud radius");
+      for (const point of primitive.points) {
+        if (cameraValue.projection === "perspective" && (point[2] < near || point[2] > far))
+          continue;
+        children.push(createCircle([project(point), radius, styleMap2(primitive.style, true)]));
+        pointCount += 1;
+      }
+    }
+  }
+  const graphic = createGraphic([[width, height], children, rixMap2([["schema", str("rix.graphics@1")], ["source", str(SCENE3D_SCHEMA)], ["mode", str(mode)]])]);
+  const diagnostics = scene.lights.length > 0 ? [rixMap2([["level", str("info")], ["code", str("scene3d-wireframe-ignores-lights")], ["message", str("Wireframe snapshots do not evaluate Scene3D lights.")]])] : [];
+  return rixMap2([
+    ["value", graphic],
+    ["resolved", int7(1)],
+    ["uncertainty", seq([])],
+    ["work", rixMap2([["primitives", int7(primitives.length)], ["segments", int7(segmentCount)], ["points", int7(pointCount)]])],
+    ["source", rixMap2([["schema", str(SCENE3D_SCHEMA)], ["projection", str(cameraValue.projection)], ["mode", str(mode)]])],
+    ["diagnostics", seq(diagnostics)]
+  ]);
+}
+
+// ../rix/plugins/scene3d/scene3d.plugin.rix.js
+var HELPERS = new Map([
+  ["Scene", createScene3D],
+  ["Group", createGroup3D],
+  ["Transform", createTransform3D],
+  ["Mesh", createMesh],
+  ["Polyline", createPolyline],
+  ["PointCloud", createPointCloud],
+  ["Material", createMaterial],
+  ["PerspectiveCamera", createPerspectiveCamera],
+  ["OrthographicCamera", createOrthographicCamera],
+  ["Snapshot", snapshotScene3D]
+]);
+function createScene3DPluginCollection() {
+  const entries2 = new Map;
+  const extension = new Map([["immutable", new Integer(1n)]]);
+  for (const [name, helper] of HELPERS) {
+    entries2.set(name, helper);
+    entries2.set(name.toUpperCase(), helper);
+    extension.set(name.toUpperCase(), { type: "method_builtin", name, impl: (args) => helper(args.slice(1)) });
+  }
+  return { type: "map", entries: entries2, _ext: extension };
+}
+function install4({ systemContext }) {
+  const collection = createScene3DPluginCollection();
+  systemContext.registerHostValue("scene3d", collection, {
+    doc: "Exact retained 3D scenes and deterministic wireframe snapshots",
+    groups: ["Scene3D", "Graphics"]
+  });
+  return collection;
+}
+
+// ../rix/plugins/nd/nd.js
+var ND_SCHEMA = "rix.nd@1";
+var PROJECTION_SCHEMA = "rix.nd.projection@1";
+var int8 = (value) => new Integer(BigInt(value));
+var str2 = (value) => ({ type: "string", value: String(value) });
+var seq2 = (values) => ({ type: "sequence", values });
+var map2 = (entries2) => ({ type: "map", entries: new Map(entries2) });
+var zero = () => new Rational(0n, 1n);
+var one = () => new Rational(1n, 1n);
+function rational(value, label2) {
+  if (value instanceof Rational)
+    return value;
+  if (value instanceof Integer)
+    return new Rational(value.value, 1n);
+  throw new Error(`${label2} must be an exact integer or rational`);
+}
+function integer3(value, label2) {
+  const number = value instanceof Integer ? Number(value.value) : value instanceof Rational && value.denominator === 1n ? Number(value.numerator) : NaN;
+  if (!Number.isSafeInteger(number))
+    throw new Error(`${label2} must be an integer`);
+  return number;
+}
+function ndValue(kind, fields) {
+  return Object.freeze({
+    type: "nd_geometry",
+    kind,
+    schema: ND_SCHEMA,
+    ...fields,
+    _ext: new Map([["_type", str2("nd_geometry")], ["kind", str2(kind)], ["immutable", int8(1)]])
+  });
+}
+function isNdGeometry(value) {
+  return value?.type === "nd_geometry" && value.schema === ND_SCHEMA;
+}
+function points(value, label2, requiredDimension = null) {
+  let dimension = requiredDimension;
+  const result = sequence2(value, label2).map((point, pointIndex) => {
+    const coordinates = sequence2(point, `${label2} ${pointIndex + 1}`);
+    if (dimension === null)
+      dimension = coordinates.length;
+    if (coordinates.length !== dimension)
+      throw new Error(`${label2} ${pointIndex + 1} must have dimension ${dimension}`);
+    if (dimension < 1)
+      throw new Error(`${label2} points cannot be empty`);
+    return Object.freeze(coordinates.map((coordinate, index) => exact(coordinate, `${label2} ${pointIndex + 1} coordinate ${index + 1}`)));
+  });
+  return { dimension: dimension ?? 0, values: Object.freeze(result) };
+}
+function edgePairs(value, vertexCount, label2) {
+  return Object.freeze(sequence2(value, label2).map((edge, edgeIndex) => {
+    const pair = sequence2(edge, `${label2} ${edgeIndex + 1}`);
+    if (pair.length !== 2)
+      throw new Error(`${label2} ${edgeIndex + 1} must contain two indices`);
+    const values = pair.map((item, index) => integer3(item, `${label2} ${edgeIndex + 1} index ${index + 1}`));
+    if (values.some((item) => item < 1 || item > vertexCount))
+      throw new Error(`${label2} indices must be between 1 and ${vertexCount}`);
+    return Object.freeze(values.map((item) => item - 1));
+  }));
+}
+function provenance(entries2) {
+  const value = field(entries2, "provenance");
+  return value === null ? Object.freeze([]) : Object.freeze(sequence2(value, "n-dimensional provenance"));
+}
+function truthy4(value) {
+  if (value instanceof Integer)
+    return value.value !== 0n;
+  if (value instanceof Rational)
+    return value.numerator !== 0n;
+  return Boolean(value);
+}
+function createNdPoint(args) {
+  const entries2 = entriesFor2(args, ["coordinates", "options"], "nd.Point");
+  const coordinates = sequence2(field(entries2, "coordinates"), "nd.Point coordinates");
+  if (coordinates.length < 1)
+    throw new Error("nd.Point requires at least one coordinate");
+  return ndValue("point", {
+    dimension: coordinates.length,
+    coordinates: Object.freeze(coordinates.map((value, index) => exact(value, `nd.Point coordinate ${index + 1}`))),
+    provenance: provenance(entries2),
+    metadata: field(entries2, "metadata")
+  });
+}
+function createNdPolyline(args) {
+  const entries2 = entriesFor2(args, ["points", "options"], "nd.Polyline");
+  const normalized = points(field(entries2, "points"), "nd.Polyline point");
+  if (normalized.values.length < 2)
+    throw new Error("nd.Polyline requires at least two points");
+  return ndValue("polyline", {
+    dimension: normalized.dimension,
+    points: normalized.values,
+    closed: truthy4(field(entries2, "closed")),
+    provenance: provenance(entries2),
+    metadata: field(entries2, "metadata"),
+    style: field(entries2, "style")
+  });
+}
+function createNdPolytope(args) {
+  const entries2 = entriesFor2(args, ["vertices", "edges", "options"], "nd.Polytope");
+  const normalized = points(field(entries2, "vertices"), "nd.Polytope vertex");
+  if (normalized.values.length < 1)
+    throw new Error("nd.Polytope requires vertices");
+  return ndValue("polytope", {
+    dimension: normalized.dimension,
+    vertices: normalized.values,
+    edges: edgePairs(field(entries2, "edges"), normalized.values.length, "nd.Polytope edge"),
+    provenance: provenance(entries2),
+    metadata: field(entries2, "metadata"),
+    style: field(entries2, "style")
+  });
+}
+function projectionValue(matrix, offset, method6, provenanceValue = []) {
+  const targetDimension = matrix.length;
+  const sourceDimension = matrix[0]?.length ?? 0;
+  if (sourceDimension < 1 || targetDimension < 1)
+    throw new Error("nd.Projection matrix cannot be empty");
+  if (!matrix.every((row) => row.length === sourceDimension))
+    throw new Error("nd.Projection matrix rows must have equal lengths");
+  if (offset.length !== targetDimension)
+    throw new Error(`nd.Projection offset must have ${targetDimension} coordinates`);
+  return Object.freeze({
+    type: "nd_projection",
+    kind: "affine",
+    schema: PROJECTION_SCHEMA,
+    sourceDimension,
+    targetDimension,
+    matrix: Object.freeze(matrix.map((row) => Object.freeze(row.map((value, index) => exact(value, `nd.Projection matrix coordinate ${index + 1}`))))),
+    offset: Object.freeze(offset.map((value, index) => exact(value, `nd.Projection offset ${index + 1}`))),
+    method: method6,
+    provenance: Object.freeze(provenanceValue),
+    _ext: new Map([["_type", str2("nd_projection")], ["immutable", int8(1)]])
+  });
+}
+function createProjection(args) {
+  const entries2 = entriesFor2(args, ["matrix", "offset", "options"], "nd.Projection");
+  const rows = sequence2(field(entries2, "matrix"), "nd.Projection matrix").map((row, index) => sequence2(row, `nd.Projection matrix row ${index + 1}`));
+  const offsetValue = field(entries2, "offset");
+  const offset = offsetValue === null ? rows.map(() => zero()) : sequence2(offsetValue, "nd.Projection offset");
+  return projectionValue(rows, offset, field(entries2, "method")?.value ?? "affine", provenance(entries2));
+}
+function coordinateProjection(args) {
+  const entries2 = entriesFor2(args, ["sourceDimension", "axes"], "nd.CoordinateProjection");
+  const sourceDimension = integer3(field(entries2, "sourceDimension"), "nd.CoordinateProjection source dimension");
+  const axes = sequence2(field(entries2, "axes"), "nd.CoordinateProjection axes").map((axis, index) => integer3(axis, `nd.CoordinateProjection axis ${index + 1}`));
+  if (sourceDimension < 1 || axes.length < 1 || new Set(axes).size !== axes.length || axes.some((axis) => axis < 1 || axis > sourceDimension)) {
+    throw new Error("nd.CoordinateProjection axes must be unique indices in the source dimension");
+  }
+  const rows = axes.map((axis) => Array.from({ length: sourceDimension }, (_, index) => index === axis - 1 ? one() : zero()));
+  return projectionValue(rows, axes.map(() => zero()), "coordinate", [map2([["axes", seq2(axes.map(int8))]])]);
+}
+function cayleyRotation(args) {
+  const entries2 = entriesFor2(args, ["dimension", "axis1", "axis2", "t"], "nd.CayleyRotation");
+  const dimension = integer3(field(entries2, "dimension"), "nd.CayleyRotation dimension");
+  const axis1 = integer3(field(entries2, "axis1"), "nd.CayleyRotation axis1");
+  const axis2 = integer3(field(entries2, "axis2"), "nd.CayleyRotation axis2");
+  if (dimension < 2 || axis1 < 1 || axis2 < 1 || axis1 > dimension || axis2 > dimension || axis1 === axis2) {
+    throw new Error("nd.CayleyRotation axes must be distinct indices in the dimension");
+  }
+  let cosine;
+  let sine;
+  const t = field(entries2, "t");
+  if (isCayleyInfinity(t)) {
+    cosine = new Rational(-1n, 1n);
+    sine = zero();
+  } else {
+    const parameter = rational(t, "nd.CayleyRotation t");
+    const square = parameter.multiply(parameter);
+    const denominator = one().add(square);
+    cosine = one().subtract(square).divide(denominator);
+    sine = new Rational(2n, 1n).multiply(parameter).divide(denominator);
+  }
+  const matrix = Array.from({ length: dimension }, (_, row) => Array.from({ length: dimension }, (_2, column) => row === column ? one() : zero()));
+  matrix[axis1 - 1][axis1 - 1] = cosine;
+  matrix[axis1 - 1][axis2 - 1] = sine.negate ? sine.negate() : new Rational(-sine.numerator, sine.denominator);
+  matrix[axis2 - 1][axis1 - 1] = sine;
+  matrix[axis2 - 1][axis2 - 1] = cosine;
+  return projectionValue(matrix, Array.from({ length: dimension }, zero), "cayley-rotation", [map2([
+    ["axes", seq2([int8(axis1), int8(axis2)])],
+    ["parameter", t]
+  ])]);
+}
+function multiplyMatrices(left, right) {
+  if (left[0].length !== right.length)
+    throw new Error("nd.Compose projection dimensions do not match");
+  return left.map((row) => right[0].map((_, column) => row.reduce((sum, value, index) => sum.add(rational(value, "projection value").multiply(rational(right[index][column], "projection value"))), zero())));
+}
+function applyMatrix(matrix, vector, offset) {
+  return matrix.map((row, rowIndex) => row.reduce((sum, coefficient, index) => sum.add(rational(coefficient, "projection coefficient").multiply(rational(vector[index], "projected coordinate"))), rational(offset[rowIndex], "projection offset")));
+}
+function composeProjections(args) {
+  const entries2 = entriesFor2(args, ["after", "before"], "nd.Compose");
+  const after = field(entries2, "after");
+  const before = field(entries2, "before");
+  if (after?.type !== "nd_projection" || before?.type !== "nd_projection")
+    throw new Error("nd.Compose requires two projections");
+  if (before.targetDimension !== after.sourceDimension)
+    throw new Error("nd.Compose projection dimensions do not match");
+  const matrix = multiplyMatrices(after.matrix, before.matrix);
+  const offset = applyMatrix(after.matrix, before.offset, after.offset);
+  return projectionValue(matrix, offset, "composition", [...before.provenance, ...after.provenance]);
+}
+function projectCoordinates(coordinates, projection, label2) {
+  if (coordinates.length !== projection.sourceDimension)
+    throw new Error(`${label2} dimension ${coordinates.length} does not match projection source dimension ${projection.sourceDimension}`);
+  return Object.freeze(applyMatrix(projection.matrix, coordinates, projection.offset));
+}
+function projectGeometry(args) {
+  const entries2 = entriesFor2(args, ["geometry", "projection"], "nd.Project");
+  const geometry = field(entries2, "geometry");
+  const projection = field(entries2, "projection");
+  if (!isNdGeometry(geometry))
+    throw new Error("nd.Project geometry must be n-dimensional geometry");
+  if (projection?.type !== "nd_projection" || projection.schema !== PROJECTION_SCHEMA)
+    throw new Error("nd.Project requires an nd.Projection");
+  const trace = [...geometry.provenance, projection];
+  if (geometry.kind === "point")
+    return ndValue("point", { ...geometry, dimension: projection.targetDimension, coordinates: projectCoordinates(geometry.coordinates, projection, "nd.Point"), provenance: Object.freeze(trace) });
+  if (geometry.kind === "polyline")
+    return ndValue("polyline", { ...geometry, dimension: projection.targetDimension, points: Object.freeze(geometry.points.map((point) => projectCoordinates(point, projection, "nd.Polyline"))), provenance: Object.freeze(trace) });
+  if (geometry.kind === "polytope")
+    return ndValue("polytope", { ...geometry, dimension: projection.targetDimension, vertices: Object.freeze(geometry.vertices.map((point) => projectCoordinates(point, projection, "nd.Polytope"))), provenance: Object.freeze(trace) });
+  throw new Error(`nd.Project does not support geometry kind '${geometry.kind}'`);
+}
+function hypercube(args) {
+  const entries2 = entriesFor2(args, ["dimension", "size"], "nd.Hypercube");
+  const dimension = integer3(field(entries2, "dimension"), "nd.Hypercube dimension");
+  if (dimension < 1 || dimension > 10)
+    throw new Error("nd.Hypercube dimension must be between 1 and 10");
+  const half = rational(field(entries2, "size", int8(2)), "nd.Hypercube size").divide(new Rational(2n, 1n));
+  const negative = half.negate ? half.negate() : new Rational(-half.numerator, half.denominator);
+  const vertexCount = 2 ** dimension;
+  const vertices = Array.from({ length: vertexCount }, (_, bits) => Array.from({ length: dimension }, (_2, axis) => bits & 1 << axis ? half : negative));
+  const edges = [];
+  for (let bits = 0;bits < vertexCount; bits += 1)
+    for (let axis = 0;axis < dimension; axis += 1) {
+      const other = bits ^ 1 << axis;
+      if (bits < other)
+        edges.push([bits + 1, other + 1]);
+    }
+  return createNdPolytope([seq2(vertices.map(seq2)), seq2(edges.map((edge) => seq2(edge.map(int8))))]);
+}
+function styleOptions2(style) {
+  return style?.type === "map" ? style : map2([]);
+}
+function toScene3D(args) {
+  const entries2 = entriesFor2(args, ["geometry", "options"], "nd.ToScene3D");
+  const geometry = field(entries2, "geometry");
+  if (!isNdGeometry(geometry))
+    throw new Error("nd.ToScene3D requires n-dimensional geometry");
+  if (geometry.dimension !== 3)
+    throw new Error(`nd.ToScene3D requires dimension 3; explicitly project dimension ${geometry.dimension} first`);
+  const style = field(entries2, "style", geometry.style);
+  let children;
+  if (geometry.kind === "point")
+    children = [createPointCloud([seq2([seq2(geometry.coordinates)]), styleOptions2(style)])];
+  else if (geometry.kind === "polyline")
+    children = [createPolyline([seq2(geometry.points.map(seq2)), styleOptions2(style)])];
+  else if (geometry.kind === "polytope") {
+    children = geometry.edges.map(([a, b]) => createPolyline([seq2([seq2(geometry.vertices[a]), seq2(geometry.vertices[b])]), styleOptions2(style)]));
+  } else
+    throw new Error(`nd.ToScene3D does not support geometry kind '${geometry.kind}'`);
+  const group = createGroup3D([seq2(children)]);
+  const camera2 = field(entries2, "camera");
+  return createScene3D([camera2 === null ? map2([["children", seq2([group])], ["metadata", map2([["source", str2(ND_SCHEMA)], ["projectionCount", int8(geometry.provenance.length)]])]]) : map2([["children", seq2([group])], ["camera", camera2], ["metadata", map2([["source", str2(ND_SCHEMA)], ["projectionCount", int8(geometry.provenance.length)]])]])]);
+}
+
+// ../rix/plugins/nd/nd.plugin.rix.js
+var HELPERS2 = new Map([
+  ["Point", createNdPoint],
+  ["Polyline", createNdPolyline],
+  ["Polytope", createNdPolytope],
+  ["Hypercube", hypercube],
+  ["Projection", createProjection],
+  ["CoordinateProjection", coordinateProjection],
+  ["CayleyRotation", cayleyRotation],
+  ["Compose", composeProjections],
+  ["Project", projectGeometry],
+  ["ToScene3D", toScene3D]
+]);
+function createNdPluginCollection() {
+  const entries2 = new Map;
+  const extension = new Map([["immutable", new Integer(1n)]]);
+  for (const [name, helper] of HELPERS2) {
+    entries2.set(name, helper);
+    entries2.set(name.toUpperCase(), helper);
+    extension.set(name.toUpperCase(), { type: "method_builtin", name, impl: (args) => helper(args.slice(1)) });
+  }
+  return { type: "map", entries: entries2, _ext: extension };
+}
+function install5({ systemContext }) {
+  const collection = createNdPluginCollection();
+  systemContext.registerHostValue("nd", collection, {
+    doc: "Exact n-dimensional geometry and explicit projection records",
+    groups: ["Geometry", "Scene3D", "Exact"]
+  });
+  return collection;
+}
+
 // ../rix/plugins/renderers/common.js
 function outputKind(value) {
   return value?.type === "output" ? value.kind : value?.type || typeof value;
@@ -34269,7 +35209,7 @@ function rixString4(value) {
     return value.value;
   return typeof value === "string" ? value : null;
 }
-function sequence2(value, label2) {
+function sequence3(value, label2) {
   if (Array.isArray(value))
     return value;
   if (Array.isArray(value?.values))
@@ -34283,7 +35223,7 @@ function mapEntries2(value) {
     return value.entries;
   return null;
 }
-function field(value, name, fallback = null) {
+function field2(value, name, fallback = null) {
   const entries2 = mapEntries2(value);
   if (entries2) {
     if (entries2.has(name))
@@ -34300,7 +35240,7 @@ function field(value, name, fallback = null) {
   return fallback;
 }
 function option(options, name, fallback = null) {
-  return field(options, name, fallback);
+  return field2(options, name, fallback);
 }
 function numberValue2(value, label2) {
   let result;
@@ -34322,13 +35262,13 @@ function stableNumber(value, label2 = "coordinate") {
   return Number(numberValue2(value, label2).toFixed(6)).toString();
 }
 function point(value, label2) {
-  const values = sequence2(value, label2);
+  const values = sequence3(value, label2);
   if (values.length !== 2)
     throw new Error(`${label2} must contain two coordinates`);
   return values.map((entry, index) => numberValue2(entry, `${label2} ${index === 0 ? "x" : "y"}`));
 }
 function styleValue2(style, name, fallback = null) {
-  return field(style, name, fallback);
+  return field2(style, name, fallback);
 }
 function boolValue(value) {
   if (value instanceof Integer)
@@ -34404,40 +35344,40 @@ var definition = {
     return { content };
   }
 };
-function install4(api) {
+function install6(api) {
   return installRendererPlugin({ ...api, definition });
 }
 
 // ../rix/plugins/render-canvas/canvas-plan.js
 function pathData(node) {
   if (!node.commands) {
-    const points = node.points.map((entry, index) => point(entry, `Path point ${index + 1}`));
+    const points2 = node.points.map((entry, index) => point(entry, `Path point ${index + 1}`));
     const closed = boolValue(styleValue2(node.style, "closed", false));
-    return points.map(([x, y], index) => `${index ? "L" : "M"}${stableNumber(x)} ${stableNumber(y)}`).join(" ") + (closed ? " Z" : "");
+    return points2.map(([x, y], index) => `${index ? "L" : "M"}${stableNumber(x)} ${stableNumber(y)}`).join(" ") + (closed ? " Z" : "");
   }
   return node.commands.map((command, index) => {
-    const op = (rixString4(field(command, "op")) || field(command, "op", "")).toLowerCase();
-    const destination = () => point(field(command, "to"), `Path command ${index + 1} destination`);
+    const op = (rixString4(field2(command, "op")) || field2(command, "op", "")).toLowerCase();
+    const destination = () => point(field2(command, "to"), `Path command ${index + 1} destination`);
     if (["move", "m", "line", "l"].includes(op)) {
       const [x, y] = destination();
       return `${op === "move" || op === "m" ? "M" : "L"}${stableNumber(x)} ${stableNumber(y)}`;
     }
     if (["quadratic", "quad", "q"].includes(op)) {
-      const [cx, cy] = point(field(command, "control"), `Path command ${index + 1} control`);
+      const [cx, cy] = point(field2(command, "control"), `Path command ${index + 1} control`);
       const [x, y] = destination();
       return `Q${stableNumber(cx)} ${stableNumber(cy)} ${stableNumber(x)} ${stableNumber(y)}`;
     }
     if (["cubic", "curve", "c"].includes(op)) {
-      const [c1x, c1y] = point(field(command, "control1"), `Path command ${index + 1} control1`);
-      const [c2x, c2y] = point(field(command, "control2"), `Path command ${index + 1} control2`);
+      const [c1x, c1y] = point(field2(command, "control1"), `Path command ${index + 1} control1`);
+      const [c2x, c2y] = point(field2(command, "control2"), `Path command ${index + 1} control2`);
       const [x, y] = destination();
       return `C${stableNumber(c1x)} ${stableNumber(c1y)} ${stableNumber(c2x)} ${stableNumber(c2y)} ${stableNumber(x)} ${stableNumber(y)}`;
     }
     if (["arc", "a"].includes(op)) {
-      const [rx, ry] = point(field(command, "radius"), `Path command ${index + 1} radius`);
-      const rotation = numberValue2(field(command, "rotation", 0), `Path command ${index + 1} rotation`);
-      const large = boolValue(field(command, "large", false)) ? 1 : 0;
-      const sweep = boolValue(field(command, "sweep", false)) ? 1 : 0;
+      const [rx, ry] = point(field2(command, "radius"), `Path command ${index + 1} radius`);
+      const rotation = numberValue2(field2(command, "rotation", 0), `Path command ${index + 1} rotation`);
+      const large = boolValue(field2(command, "large", false)) ? 1 : 0;
+      const sweep = boolValue(field2(command, "sweep", false)) ? 1 : 0;
       const [x, y] = destination();
       return `A${stableNumber(rx)} ${stableNumber(ry)} ${stableNumber(rotation)} ${large} ${sweep} ${stableNumber(x)} ${stableNumber(y)}`;
     }
@@ -34554,7 +35494,7 @@ var definition2 = {
     };
   }
 };
-function install5(api) {
+function install7(api) {
   return installRendererPlugin({ ...api, definition: definition2 });
 }
 
@@ -34620,7 +35560,7 @@ function mergedStyle3(parent, own) {
   return { ...parent, ...styleObject(own) };
 }
 function destination(command, index) {
-  return point(field(command, "to"), `Path command ${index + 1} destination`);
+  return point(field2(command, "to"), `Path command ${index + 1} destination`);
 }
 function pathSource(node, path) {
   if (!node.commands) {
@@ -34632,7 +35572,7 @@ function pathSource(node, path) {
   let current = null;
   let subpathStart = null;
   node.commands.forEach((command, index) => {
-    const op = (rixString4(field(command, "op")) || field(command, "op", "")).toLowerCase();
+    const op = (rixString4(field2(command, "op")) || field2(command, "op", "")).toLowerCase();
     if (["move", "m"].includes(op)) {
       const [x, y] = destination(command, index);
       current = [x, y];
@@ -34649,7 +35589,7 @@ function pathSource(node, path) {
     if (["quadratic", "quad", "q"].includes(op)) {
       if (!current)
         throw new UnsupportedRenderError(`${path}: quadratic command has no current point`, { target: "tikz" });
-      const [cx, cy] = point(field(command, "control"), `Path command ${index + 1} control`);
+      const [cx, cy] = point(field2(command, "control"), `Path command ${index + 1} control`);
       const [x, y] = destination(command, index);
       const control1 = [current[0] + (cx - current[0]) * 2 / 3, current[1] + (cy - current[1]) * 2 / 3];
       const control2 = [x + (cx - x) * 2 / 3, y + (cy - y) * 2 / 3];
@@ -34658,8 +35598,8 @@ function pathSource(node, path) {
       return;
     }
     if (["cubic", "curve", "c"].includes(op)) {
-      const [c1x, c1y] = point(field(command, "control1"), `Path command ${index + 1} control1`);
-      const [c2x, c2y] = point(field(command, "control2"), `Path command ${index + 1} control2`);
+      const [c1x, c1y] = point(field2(command, "control1"), `Path command ${index + 1} control1`);
+      const [c2x, c2y] = point(field2(command, "control2"), `Path command ${index + 1} control2`);
       const [x, y] = destination(command, index);
       parts.push(` .. controls (${stableNumber(c1x)},${stableNumber(c1y)}) and (${stableNumber(c2x)},${stableNumber(c2y)}) .. (${stableNumber(x)},${stableNumber(y)})`);
       current = [x, y];
@@ -34781,7 +35721,7 @@ var definition3 = {
 function boolOption(value) {
   return value?.value === 1n || value === true || value === 1;
 }
-function install6(api) {
+function install8(api) {
   return installRendererPlugin({ ...api, definition: definition3 });
 }
 
@@ -35027,8 +35967,8 @@ function latexRows(rows, state) {
 function gridRule(value, kind, boundary) {
   const fieldName = kind === "vertical" ? "afterColumn" : "aboveRow";
   return value.rules.some((rule) => {
-    const ruleKind = rixString4(field(rule, "kind")) || field(rule, "kind");
-    const position = field(rule, fieldName);
+    const ruleKind = rixString4(field2(rule, "kind")) || field2(rule, "kind");
+    const position = field2(rule, fieldName);
     return ruleKind === kind && position !== null && numberValue2(position, `Grid ${fieldName}`) === boundary;
   });
 }
@@ -35203,14 +36143,14 @@ ${makeTitle}${body.trim()}
   };
 }
 function quartoFrontMatter(options) {
-  const metadata = field(options, "metadata", options);
+  const metadata = field2(options, "metadata", options);
   const keys = ["title", "author", "date", "format"];
   const lines = [];
   for (const key of keys) {
-    const value = field(metadata, key);
-    const text4 = rixString4(value) ?? (typeof value === "string" ? value : null);
-    if (text4 !== null)
-      lines.push(`${key}: ${JSON.stringify(text4)}`);
+    const value = field2(metadata, key);
+    const text5 = rixString4(value) ?? (typeof value === "string" ? value : null);
+    if (text5 !== null)
+      lines.push(`${key}: ${JSON.stringify(text5)}`);
   }
   if (!lines.some((line2) => line2.startsWith("format:")))
     lines.push("format: html");
@@ -35235,7 +36175,7 @@ var definition4 = {
     return renderMarkdown(value, { format, render });
   }
 };
-function install7(api) {
+function install9(api) {
   return installRendererPlugin({ ...api, definition: definition4 });
 }
 
@@ -35279,7 +36219,7 @@ var definition5 = {
     };
   }
 };
-function install8(api) {
+function install10(api) {
   return installRendererPlugin({ ...api, definition: definition5 });
 }
 
@@ -35297,7 +36237,7 @@ var definition6 = {
     return { ...rendered, content: `${quartoFrontMatter(options)}${rendered.content}` };
   }
 };
-function install9(api) {
+function install11(api) {
   return installRendererPlugin({ ...api, definition: definition6 });
 }
 
@@ -35319,7 +36259,7 @@ var definition7 = {
     });
   }
 };
-function install10(api) {
+function install12(api) {
   return installRendererPlugin({ ...api, definition: definition7 });
 }
 
@@ -35359,7 +36299,7 @@ function createDefinition(rasterizeSvg = null) {
     }
   };
 }
-function install11(api) {
+function install13(api) {
   return installRendererPlugin({ ...api, definition: createDefinition(api.rasterizeSvg) });
 }
 
@@ -35395,8 +36335,162 @@ function createDefinition2(compileLatex = null) {
     }
   };
 }
-function install12(api) {
+function install14(api) {
   return installRendererPlugin({ ...api, definition: createDefinition2(api.compileLatex) });
+}
+
+// ../rix/plugins/render-gltf/gltf-renderer.js
+function rgba(color, opacity = 1) {
+  const match = /^#([0-9a-f]{6}|[0-9a-f]{3})$/i.exec(color || "");
+  if (!match)
+    return [0.153, 0.365, 0.678, opacity];
+  const hex = match[1].length === 3 ? [...match[1]].map((item) => item + item).join("") : match[1];
+  return [0, 2, 4].map((offset) => parseInt(hex.slice(offset, offset + 2), 16) / 255).concat(opacity);
+}
+function zUpToYUp([x, y, z]) {
+  return [x, z, -y];
+}
+function align4(value) {
+  return value + 3 & ~3;
+}
+function base64(bytes) {
+  let binary2 = "";
+  const chunk = 32768;
+  for (let offset = 0;offset < bytes.length; offset += chunk) {
+    binary2 += String.fromCharCode(...bytes.subarray(offset, Math.min(bytes.length, offset + chunk)));
+  }
+  if (typeof btoa === "function")
+    return btoa(binary2);
+  throw new Error("This host does not provide browser-compatible base64 encoding");
+}
+function encodeBuffer(chunks) {
+  const total = chunks.reduce((size, chunk) => align4(size) + chunk.byteLength, 0);
+  const bytes = new Uint8Array(align4(total));
+  const views = [];
+  let offset = 0;
+  for (const chunk of chunks) {
+    offset = align4(offset);
+    bytes.set(chunk, offset);
+    views.push({ byteOffset: offset, byteLength: chunk.byteLength });
+    offset += chunk.byteLength;
+  }
+  return { bytes, views };
+}
+function floatBytes(values) {
+  const bytes = new Uint8Array(values.length * 4);
+  const view = new DataView(bytes.buffer);
+  values.forEach((value, index) => view.setFloat32(index * 4, value, true));
+  return bytes;
+}
+function uintBytes(values) {
+  const bytes = new Uint8Array(values.length * 4);
+  const view = new DataView(bytes.buffer);
+  values.forEach((value, index) => view.setUint32(index * 4, value, true));
+  return bytes;
+}
+function exportSceneGltf(scene, { pretty = true } = {}) {
+  if (!isScene3D(scene))
+    throw new Error("gltf accepts a Scene3D scene");
+  const primitives = flattenScene3D(scene);
+  const chunks = [];
+  const records = [];
+  let approximated = false;
+  for (const primitive of primitives) {
+    const positions = primitive.points.map(zUpToYUp);
+    if (positions.some((point2) => point2.some((value) => Math.fround(value) !== value)))
+      approximated = true;
+    const flatPositions = positions.flat();
+    let indices;
+    let mode;
+    if (primitive.kind === "mesh") {
+      indices = primitive.triangles.flat();
+      mode = 4;
+    } else if (primitive.kind === "lines") {
+      indices = primitive.segments.flat();
+      mode = 1;
+    } else {
+      indices = positions.map((_, index) => index);
+      mode = 0;
+    }
+    const positionChunk = chunks.push(floatBytes(flatPositions)) - 1;
+    const indexChunk = chunks.push(uintBytes(indices)) - 1;
+    records.push({ primitive, positions, indices, mode, positionChunk, indexChunk });
+  }
+  const encoded = encodeBuffer(chunks);
+  const gltf = {
+    asset: { version: "2.0", generator: "RiX glTF renderer" },
+    scene: 0,
+    scenes: [{ name: "RiX Scene3D", nodes: records.map((_, index) => index) }],
+    nodes: records.map((_, index) => ({ name: `RiX primitive ${index + 1}`, mesh: index })),
+    meshes: [],
+    materials: [],
+    accessors: [],
+    bufferViews: encoded.views.map((view) => ({ buffer: 0, ...view })),
+    buffers: [{ byteLength: encoded.bytes.byteLength, uri: `data:application/octet-stream;base64,${base64(encoded.bytes)}` }],
+    extras: {
+      rix: { schema: SCENE3D_SCHEMA, sourceCoordinates: "right-handed Z-up", exportedCoordinates: "right-handed Y-up" }
+    }
+  };
+  records.forEach((record, index) => {
+    const style = record.primitive.style;
+    const opacity = Number(style?.opacity?.value ?? style?.opacity?.numerator ?? style?.opacity ?? 1) / Number(style?.opacity?.denominator ?? 1);
+    const material = gltf.materials.push({
+      name: `RiX material ${index + 1}`,
+      pbrMetallicRoughness: { baseColorFactor: rgba(style?.color, opacity), metallicFactor: 0, roughnessFactor: 1 },
+      alphaMode: opacity < 1 ? "BLEND" : "OPAQUE",
+      doubleSided: true
+    }) - 1;
+    const xs = record.positions.map((point2) => point2[0]);
+    const ys = record.positions.map((point2) => point2[1]);
+    const zs = record.positions.map((point2) => point2[2]);
+    const positionAccessor = gltf.accessors.push({
+      bufferView: record.positionChunk,
+      componentType: 5126,
+      count: record.positions.length,
+      type: "VEC3",
+      min: [Math.min(...xs), Math.min(...ys), Math.min(...zs)],
+      max: [Math.max(...xs), Math.max(...ys), Math.max(...zs)]
+    }) - 1;
+    const indexAccessor = gltf.accessors.push({
+      bufferView: record.indexChunk,
+      componentType: 5125,
+      count: record.indices.length,
+      type: "SCALAR",
+      min: record.indices.length ? [Math.min(...record.indices)] : [0],
+      max: record.indices.length ? [Math.max(...record.indices)] : [0]
+    }) - 1;
+    gltf.meshes.push({
+      name: `RiX mesh ${index + 1}`,
+      primitives: [{ attributes: { POSITION: positionAccessor }, indices: indexAccessor, material, mode: record.mode }]
+    });
+  });
+  const diagnostics = [];
+  if (approximated)
+    diagnostics.push(diagnostic("gltf-float32-approximation", "Exact Scene3D coordinates were rounded to glTF Float32 positions at export."));
+  if (primitives.some((primitive) => primitive.kind === "lines"))
+    diagnostics.push(diagnostic("gltf-line-width-portability", "glTF line primitives do not portably preserve Scene3D line widths.", "info"));
+  if (scene.lights.length)
+    diagnostics.push(diagnostic("gltf-lights-not-exported", "Scene3D lights are retained by the scene but are not exported in glTF phase 1.", "info"));
+  return { content: `${JSON.stringify(gltf, null, pretty ? 2 : 0)}
+`, diagnostics, metadata: { schema: "model/gltf+json", primitives: records.length } };
+}
+
+// ../rix/plugins/render-gltf/gltf.plugin.rix.js
+var definition8 = {
+  target: "gltf",
+  mime: "model/gltf+json",
+  extension: "gltf",
+  aliases: ["model/gltf+json"],
+  inputKinds: ["scene3d"],
+  deterministic: true,
+  description: "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values",
+  render({ value, options }) {
+    requireOutput(value, ["scene3d"], "gltf");
+    return exportSceneGltf(value, { pretty: options?.pretty !== false });
+  }
+};
+function install15(api) {
+  return installRendererPlugin({ ...api, definition: definition8 });
 }
 
 // ../rix/plugins/bundled.js
@@ -35440,17 +36534,53 @@ var BUNDLED_PLUGINS = [
     },
     install: ({ systemContext }) => install3({ systemContext })
   },
+  {
+    metadata: {
+      id: "scene3d",
+      description: "Exact retained 3D scenes with deterministic wireframe Graphics snapshots.",
+      kind: "host",
+      mount: "scene3d",
+      exports: ["Scene", "Group", "Transform", "Mesh", "Polyline", "PointCloud", "Material", "PerspectiveCamera", "OrthographicCamera", "Snapshot"],
+      groups: ["Scene3D", "Graphics"],
+      permissions: [],
+      provides: ["rix.scene3d@1"],
+      schemas: ["rix.scene3d@1"],
+      snapshot: true,
+      deterministic: true,
+      defaultEnabled: false
+    },
+    install: ({ systemContext }) => install4({ systemContext })
+  },
+  {
+    metadata: {
+      id: "nd",
+      description: "Exact n-dimensional geometry with explicit affine and Cayley projection records.",
+      kind: "host",
+      mount: "nd",
+      exports: ["Point", "Polyline", "Polytope", "Hypercube", "Projection", "CoordinateProjection", "CayleyRotation", "Compose", "Project", "ToScene3D"],
+      groups: ["Geometry", "Scene3D", "Exact"],
+      permissions: [],
+      requires: ["rix.scene3d@1"],
+      provides: ["rix.nd@1", "rix.nd.projection@1"],
+      schemas: ["rix.nd@1", "rix.nd.projection@1"],
+      snapshot: true,
+      deterministic: true,
+      defaultEnabled: false
+    },
+    install: ({ systemContext }) => install5({ systemContext })
+  },
   ...[
-    ["svg", "Portable SVG renderer for core Graphics scenes.", "svg", ["Render"], [], install4, "image/svg+xml", true],
-    ["canvas", "Serializable Canvas 2D drawing plans for core Graphics scenes.", "canvas", ["Render"], [], install5, "application/vnd.rix.canvas+json", true],
-    ["tikz", "Editable TikZ/PGF source renderer for core Graphics scenes.", "tikz", ["Render"], [], install6, "text/x-tikz", true],
-    ["markdown", "CommonMark-oriented renderer for portable RiX documents.", "markdown", ["Render"], [], install7, "text/markdown", true],
-    ["html", "Standalone semantic HTML renderer for portable RiX output trees.", "html", ["Render"], [], install8, "text/html", true],
-    ["quarto", "Quarto Markdown renderer with front matter and portable figure lowering.", "quarto", ["Render"], [], install9, "text/x-quarto", true],
-    ["latex", "Standalone LaTeX renderer for portable RiX documents and figures.", "latex", ["Render"], [], install10, "text/x-tex", true],
-    ["png", "PNG snapshot renderer for core Graphics through a host rasterizer.", "png", ["Render"], ["process"], install11, "image/png", true],
-    ["pdf", "PDF document and figure renderer orchestrated through LaTeX.", "pdf", ["Render"], ["process", "files"], install12, "application/pdf", false]
-  ].map(([id, description, mount, exports, permissions, install13, mime, deterministic]) => ({
+    ["svg", "Portable SVG renderer for core Graphics scenes.", "svg", ["Render"], [], install6, "image/svg+xml", true],
+    ["canvas", "Serializable Canvas 2D drawing plans for core Graphics scenes.", "canvas", ["Render"], [], install7, "application/vnd.rix.canvas+json", true],
+    ["tikz", "Editable TikZ/PGF source renderer for core Graphics scenes.", "tikz", ["Render"], [], install8, "text/x-tikz", true],
+    ["markdown", "CommonMark-oriented renderer for portable RiX documents.", "markdown", ["Render"], [], install9, "text/markdown", true],
+    ["html", "Standalone semantic HTML renderer for portable RiX output trees.", "html", ["Render"], [], install10, "text/html", true],
+    ["quarto", "Quarto Markdown renderer with front matter and portable figure lowering.", "quarto", ["Render"], [], install11, "text/x-quarto", true],
+    ["latex", "Standalone LaTeX renderer for portable RiX documents and figures.", "latex", ["Render"], [], install12, "text/x-tex", true],
+    ["png", "PNG snapshot renderer for core Graphics through a host rasterizer.", "png", ["Render"], ["process"], install13, "image/png", true],
+    ["pdf", "PDF document and figure renderer orchestrated through LaTeX.", "pdf", ["Render"], ["process", "files"], install14, "application/pdf", false],
+    ["gltf", "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", "gltf", ["Render"], [], install15, "model/gltf+json", true]
+  ].map(([id, description, mount, exports, permissions, install16, mime, deterministic]) => ({
     metadata: {
       id,
       description,
@@ -35465,21 +36595,21 @@ var BUNDLED_PLUGINS = [
       deterministic,
       defaultEnabled: false
     },
-    install: install13
+    install: install16
   }))
 ];
 function installBundledPlugins(catalog) {
-  for (const { metadata, install: install13 } of BUNDLED_PLUGINS) {
+  for (const { metadata, install: install16 } of BUNDLED_PLUGINS) {
     if (catalog.info(metadata.id))
       continue;
     catalog.addMetadata(metadata, { kind: "host" });
-    catalog.registerInstaller(metadata.id, install13);
+    catalog.registerInstaller(metadata.id, install16);
   }
   return catalog;
 }
 
 // ../rix/src/eval/functions/units.js
-function int7(value) {
+function int9(value) {
   return new Integer(BigInt(value));
 }
 function stringValue6(value, label2) {
@@ -35549,7 +36679,7 @@ function parseExactExpression(source, collection) {
       if (!match)
         throw new Error(`Expected integer exponent in exact expression '${source}'`);
       index += match[0].length;
-      value = powScalar(value, int7(match[0]));
+      value = powScalar(value, int9(match[0]));
     }
     return value;
   }
@@ -35577,10 +36707,10 @@ function multiplyWithUnits(left, right) {
   if (isScalar(left) && isUnitValue(right))
     return constructQuantity(left, right);
   if (isQuantity(left) && isUnitValue(right)) {
-    return multiplyQuantityValues(left, constructQuantity(int7(1), right));
+    return multiplyQuantityValues(left, constructQuantity(int9(1), right));
   }
   if (isUnitValue(left) && isQuantity(right)) {
-    return multiplyQuantityValues(constructQuantity(int7(1), left), right);
+    return multiplyQuantityValues(constructQuantity(int9(1), left), right);
   }
   return multiplyQuantityValues(left, right);
 }
@@ -35590,21 +36720,21 @@ function divideWithUnits(left, right) {
   if (isScalar(left) && isUnitValue(right))
     return constructQuantity(left, invertUnit(right));
   if (isUnitValue(left) && isScalar(right))
-    return constructQuantity(divideScalars(int7(1), right), left);
+    return constructQuantity(divideScalars(int9(1), right), left);
   if (isQuantity(left) && isUnitValue(right)) {
-    return divideQuantityValues(left, constructQuantity(int7(1), right));
+    return divideQuantityValues(left, constructQuantity(int9(1), right));
   }
   if (isUnitValue(left) && isQuantity(right)) {
-    return divideQuantityValues(constructQuantity(int7(1), left), right);
+    return divideQuantityValues(constructQuantity(int9(1), left), right);
   }
   return divideQuantityValues(left, right);
 }
 function resolveTargetUnit(target, context, systemContext) {
   if (isUnitValue(target))
     return target;
-  const text4 = stringValue6(target, "ConvertUnit target");
+  const text5 = stringValue6(target, "ConvertUnit target");
   const collection = activeCollection(context, systemContext, "Units", ["UNITS", "Units"]);
-  return parseUnitExpression(text4, collection);
+  return parseUnitExpression(text5, collection);
 }
 var unitExactFunctions = {
   UNIT: {
@@ -35648,7 +36778,7 @@ var unitExactFunctions = {
   }
 };
 function boolResult3(value) {
-  return value ? int7(1) : null;
+  return value ? int9(1) : null;
 }
 function addWithOptionalWarning([left, right], context) {
   const warnings = context?.getEnv?.("warnings", runtimeDefaults.warnings) ?? runtimeDefaults.warnings;
@@ -35913,11 +37043,11 @@ var CORE_SYNTAX_CAPABILITIES = {
   Lambda: "LAMBDA"
 };
 var LEGACY_OPERATOR_CAPABILITIES = ["EQ", "NEQ", "LT", "GT", "LTE", "GTE", "SAME_CELL"];
-function coreOperationCapability(operation, definition8) {
+function coreOperationCapability(operation, definition9) {
   return {
-    lazy: definition8.lazy === true,
-    pure: definition8.pure === true,
-    doc: definition8.doc || `Core operation ${operation}`,
+    lazy: definition9.lazy === true,
+    pure: definition9.pure === true,
+    doc: definition9.doc || `Core operation ${operation}`,
     impl(args, _context, evaluate) {
       return evaluate({ fn: operation, args });
     }
@@ -35961,10 +37091,10 @@ function createDefaultSystemContext(options = {}) {
   const frozen = options.frozen !== false;
   const ctx = new SystemContext(new Map, false);
   const units = options.units || createDefaultUnitCollection();
-  const exact = options.exact || createDefaultExactCollection();
-  const complex = options.complex || createDefaultComplexCollection(exact);
+  const exact2 = options.exact || createDefaultExactCollection();
+  const complex = options.complex || createDefaultComplexCollection(exact2);
   ctx.registerValue("Units", units, { doc: "Canonical RiX unit collection" });
-  ctx.registerValue("Exact", exact, { doc: "Canonical RiX exact-generator collection" });
+  ctx.registerValue("Exact", exact2, { doc: "Canonical RiX exact-generator collection" });
   ctx.registerValue("Complex", complex, { doc: "Exact complex-number operations" });
   const algebra = createAlgebraOutputCollection();
   ctx.registerValue("Algebra", algebra, { doc: "Algebra presentation helpers" });
@@ -36019,15 +37149,15 @@ function createDefaultSystemContext(options = {}) {
     ...functionFunctions
   };
   for (const [displayName, operation] of Object.entries(CORE_SYNTAX_CAPABILITIES)) {
-    const definition8 = syntaxSources[operation];
-    if (definition8) {
-      ctx.register(displayName, coreOperationCapability(operation, definition8));
+    const definition9 = syntaxSources[operation];
+    if (definition9) {
+      ctx.register(displayName, coreOperationCapability(operation, definition9));
     }
   }
   for (const operation of LEGACY_OPERATOR_CAPABILITIES) {
-    const definition8 = syntaxSources[operation];
-    if (definition8)
-      ctx.register(operation, coreOperationCapability(operation, definition8));
+    const definition9 = syntaxSources[operation];
+    if (definition9)
+      ctx.register(operation, coreOperationCapability(operation, definition9));
   }
   ctx.register("Params", { impl: parameterListCapability, doc: "Create a positional parameter descriptor from names" });
   ctx.register("Pair", { impl: mapPairCapability, doc: "Create a key/value entry for .Map" });
@@ -37253,8 +38383,8 @@ async function withReleasedAsyncAdmission(state, callback) {
   }
 }
 async function evaluateAsyncCollectionBody(irNode, context, registry, systemContext, state) {
-  const definition8 = registry.get(irNode.fn);
-  if (!definition8)
+  const definition9 = registry.get(irNode.fn);
+  if (!definition9)
     throw new Error(`Unknown collection constructor: ${irNode.fn}`);
   const args = irNode.args;
   const hasHeader = args[0]?.header && !args[0].fn;
@@ -37317,7 +38447,7 @@ async function evaluateAsyncCollectionBody(irNode, context, registry, systemCont
     }
   }
   const resolvedEvaluate = (node) => node?.fn ? evaluate(node, context, registry, systemContext) : node;
-  return await definition8.impl(resolved, context, resolvedEvaluate, systemContext);
+  return await definition9.impl(resolved, context, resolvedEvaluate, systemContext);
 }
 async function evaluateAsyncCollection(irNode, context, registry, systemContext, state) {
   return withReleasedAsyncAdmission(state, () => evaluateAsyncCollectionBody(irNode, context, registry, systemContext, state));
@@ -37392,10 +38522,10 @@ function rawFusedSource(sourceNode) {
   return { fn: sourceNode.fn, header, entries: entries2, shell: { type, values: [] } };
 }
 function captureFusedSourceValue(source, entry, value, context, registry, systemContext) {
-  const definition8 = registry.get(source.fn);
+  const definition9 = registry.get(source.fn);
   const resolvedEntry = entry && !entry.fn && entry.expression ? { ...entry, expression: value } : value;
   const args = source.header ? [source.header, resolvedEntry] : [resolvedEntry];
-  const collection = definition8.impl(args, context, (node) => node?.fn ? evaluate(node, context, registry, systemContext) : node, systemContext);
+  const collection = definition9.impl(args, context, (node) => node?.fn ? evaluate(node, context, registry, systemContext) : node, systemContext);
   return collection.values[0];
 }
 async function runAsyncPipeStages(value, index, key, collection, stages, callables, context, registry, systemContext, state, explicitLocator = null) {
@@ -37738,12 +38868,12 @@ async function evaluateAsyncSort(args, context, registry, systemContext, state) 
   return { type: collection.type || "sequence", values: sorted };
 }
 async function evaluateAsyncResolvedBarrier(irNode, context, registry, systemContext, state) {
-  const definition8 = registry.get(irNode.fn);
+  const definition9 = registry.get(irNode.fn);
   const resolved = [];
   for (const arg of irNode.args) {
     resolved.push(await evaluateAsyncInternal(arg, context, registry, systemContext, state));
   }
-  return await definition8.impl(resolved, context, (value) => value, systemContext);
+  return await definition9.impl(resolved, context, (value) => value, systemContext);
 }
 function isAsyncCallableValue(value) {
   return typeof value === "function" || [
@@ -37801,8 +38931,8 @@ async function evaluateAsyncSplit(args, context, registry, systemContext, state)
   const separator = await evaluateAsyncInternal(args[1], context, registry, systemContext, state);
   const isRegex = typeof separator === "function" && separator.toString?.().startsWith("[Regex");
   if (!isAsyncCallableValue(separator) || isRegex) {
-    const definition8 = registry.get("PSPLIT");
-    return definition8.impl([collection, separator], context, (value) => value, systemContext);
+    const definition9 = registry.get("PSPLIT");
+    return definition9.impl([collection, separator], context, (value) => value, systemContext);
   }
   const { items, isString, isStringObject: isStringObject2 } = asyncBarrierLinearItems(collection, "PSPLIT");
   if (!items)
@@ -37835,8 +38965,8 @@ async function evaluateAsyncChunk(args, context, registry, systemContext, state)
     collection = materializeLazySequence(collection);
   const boundary = await evaluateAsyncInternal(args[1], context, registry, systemContext, state);
   if (!isAsyncCallableValue(boundary)) {
-    const definition8 = registry.get("PCHUNK");
-    return definition8.impl([collection, boundary], context, (value) => value, systemContext);
+    const definition9 = registry.get("PCHUNK");
+    return definition9.impl([collection, boundary], context, (value) => value, systemContext);
   }
   const { items, isString, isStringObject: isStringObject2 } = asyncBarrierLinearItems(collection, "PCHUNK");
   if (!items)
@@ -38294,7 +39424,7 @@ async function evaluateAsyncInternal(irNode, context, registry, systemContext, s
       return last;
     }
     if (fn === "BREAK") {
-      const definition9 = registry.get(fn);
+      const definition10 = registry.get(fn);
       const hasMeta = args[0] && !args[0].fn;
       context.push(undefined, { isolated: true, readThrough: true });
       let value;
@@ -38303,19 +39433,19 @@ async function evaluateAsyncInternal(irNode, context, registry, systemContext, s
       } finally {
         context.pop();
       }
-      return definition9.impl(hasMeta ? [args[0], value] : [value], context, (node) => node);
+      return definition10.impl(hasMeta ? [args[0], value] : [value], context, (node) => node);
     }
     if (fn === "DESTRUCTURE_ASSIGN") {
       const value = await evalAsync(args[2]);
       return coreFunctions.DESTRUCTURE_ASSIGN.impl([args[0], args[1], value], context, (node) => node?.fn ? evaluate(node, context, registry, systemContext) : node);
     }
     if (["ASSIGN", "ASSIGN_COPY", "ASSIGN_UPDATE", "ASSIGN_DEEP_COPY", "ASSIGN_DEEP_UPDATE", "OUTER_ASSIGN", "OUTER_UPDATE", "GLOBAL"].includes(fn)) {
-      const definition9 = registry.get(fn);
+      const definition10 = registry.get(fn);
       if (fn === "ASSIGN" && ["RETRIEVE", "OUTER_RETRIEVE"].includes(args[1]?.fn)) {
-        return definition9.impl(args, context, (node) => evaluate(node, context, registry, systemContext));
+        return definition10.impl(args, context, (node) => evaluate(node, context, registry, systemContext));
       }
       const value = await evalAsync(args[1]);
-      return definition9.impl([args[0], value, ...args.slice(2)], context, (node) => node);
+      return definition10.impl([args[0], value, ...args.slice(2)], context, (node) => node);
     }
     if (fn === "LAMBDA" || fn === "FUNCDEF" || fn === "MULTIFUNCDEF") {
       return markLexicalAsyncCallable(evaluate(irNode, context, registry, systemContext), state);
@@ -38352,19 +39482,19 @@ async function evaluateAsyncInternal(irNode, context, registry, systemContext, s
       };
       return evalAsync(replace(args[1]));
     }
-    const definition8 = registry.get(fn);
-    if (!definition8)
+    const definition9 = registry.get(fn);
+    if (!definition9)
       return await evaluate(irNode, context, registry, systemContext);
-    if (definition8.lazy) {
-      return await definition8.impl(args, context, (node) => evaluate(node, context, registry, systemContext), systemContext);
+    if (definition9.lazy) {
+      return await definition9.impl(args, context, (node) => evaluate(node, context, registry, systemContext), systemContext);
     }
     const evaluatedArgs = [];
     for (const arg of args)
       evaluatedArgs.push(await evalAsync(arg));
-    if (!definition8.holeAware && evaluatedArgs.some(isHole)) {
+    if (!definition9.holeAware && evaluatedArgs.some(isHole)) {
       throw new Error(`Cannot use undefined/hole value in computation (in ${fn})`);
     }
-    return await definition8.impl(evaluatedArgs, context, (node) => evaluate(node, context, registry, systemContext), systemContext);
+    return await definition9.impl(evaluatedArgs, context, (node) => evaluate(node, context, registry, systemContext), systemContext);
   } catch (error) {
     throw annotateEvaluationError(error, irNode, context);
   }
@@ -38545,13 +39675,38 @@ function sheetPlaneKey2(selections) {
   return [...selections].sort((left, right) => Number(left.axis) - Number(right.axis)).map(({ axis, value }) => `${Number(axis)}:${Number(value)}`).join(",");
 }
 var RIXCEL_FORMULA_CLIPBOARD_TYPE = "application/x-rixcel-formula";
-function parseSheetFormulaClipboard(text4, fallbackAssignmentMode = ":=") {
-  const source = String(text4 ?? "");
+var RIXCEL_FORMULA_BLOCK_CLIPBOARD_TYPE = "application/x-rixcel-formula-block";
+function parseSheetFormulaClipboard(text5, fallbackAssignmentMode = ":=") {
+  const source = String(text5 ?? "");
   const match = source.match(/^\s*(::=|~~=|:=|~=|=)\s*([\s\S]+)$/u);
   return Object.freeze({
     source: match ? match[2] : source,
     assignmentMode: match?.[1] ?? fallbackAssignmentMode
   });
+}
+function parseSheetFormulaBlock(text5, fallbackAssignmentMode = ":=") {
+  const rows = String(text5 ?? "").replace(/\r\n?/gu, `
+`).split(`
+`);
+  if (rows.at(-1) === "")
+    rows.pop();
+  return Object.freeze(rows.map((row) => Object.freeze(row.split("\t").map((cell) => parseSheetFormulaClipboard(cell, fallbackAssignmentMode)))));
+}
+function sheetFormulaFill(block, direction = "down") {
+  if (!Array.isArray(block) || block.length === 0 || !block.every((row) => Array.isArray(row))) {
+    throw new Error("Formula fill requires a non-empty rectangular block");
+  }
+  const width = block[0].length;
+  if (width === 0 || !block.every((row) => row.length === width)) {
+    throw new Error("Formula fill requires a non-empty rectangular block");
+  }
+  if (direction === "down") {
+    return Object.freeze(block.map((_row, row) => Object.freeze(block[0].map((formula) => Object.freeze({ ...formula })))));
+  }
+  if (direction === "right") {
+    return Object.freeze(block.map((row) => Object.freeze(row.map(() => Object.freeze({ ...row[0] })))));
+  }
+  throw new Error(`Unsupported formula fill direction: ${direction}`);
 }
 function sheetCellDiagnostics(dataset = {}) {
   let diagnostics = [];
@@ -38649,6 +39804,8 @@ function enhanceSheet(sheet, options) {
   const editStatus = editForm?.querySelector("[data-rix-edit-status]");
   const editableHeaders = [...sheet.querySelectorAll("th[data-rix-header-axis][data-rix-header-coordinate]")];
   let selectedCell = null;
+  let selectionAnchor = null;
+  let selectedCells = [];
   let editPending = false;
   if (editForm && typeof options.onEdit === "function")
     editForm.hidden = false;
@@ -38709,12 +39866,40 @@ function enhanceSheet(sheet, options) {
       updateCellTitle(candidate);
     }
   }
-  function select(cell, { focus = false, notify = true } = {}) {
+  function selectionFor(cell, extend) {
+    if (!extend || !selectionAnchor || selectionAnchor.closest("tbody") !== cell.closest("tbody")) {
+      selectionAnchor = cell;
+      return [cell];
+    }
+    const rowStart = Math.min(Number(selectionAnchor.dataset.rixRow), Number(cell.dataset.rixRow));
+    const rowEnd = Math.max(Number(selectionAnchor.dataset.rixRow), Number(cell.dataset.rixRow));
+    const columnStart = Math.min(Number(selectionAnchor.dataset.rixColumn), Number(cell.dataset.rixColumn));
+    const columnEnd = Math.max(Number(selectionAnchor.dataset.rixColumn), Number(cell.dataset.rixColumn));
+    return [...cell.closest("tbody").querySelectorAll("td[data-rix-address]")].filter((candidate) => {
+      const row = Number(candidate.dataset.rixRow);
+      const column = Number(candidate.dataset.rixColumn);
+      return row >= rowStart && row <= rowEnd && column >= columnStart && column <= columnEnd;
+    });
+  }
+  function selectedFormulaBlock() {
+    const rows = [...new Set(selectedCells.map((cell) => Number(cell.dataset.rixRow)))].sort((a, b) => a - b);
+    const columns = [...new Set(selectedCells.map((cell) => Number(cell.dataset.rixColumn)))].sort((a, b) => a - b);
+    return rows.map((row) => columns.map((column) => {
+      const cell = selectedCells.find((candidate) => Number(candidate.dataset.rixRow) === row && Number(candidate.dataset.rixColumn) === column);
+      return {
+        source: cell?.dataset.rixFormulaSource ?? "_",
+        assignmentMode: cell?.dataset.rixAssignmentMode || ":="
+      };
+    }));
+  }
+  function select(cell, { focus = false, notify = true, extend = false } = {}) {
+    selectedCells = selectionFor(cell, extend);
+    const selectedSet = new Set(selectedCells);
     for (const candidate of cells) {
-      const selected = candidate === cell;
+      const selected = selectedSet.has(candidate);
       candidate.classList.toggle("rix-sheet-cell-selected", selected);
       candidate.setAttribute("aria-selected", String(selected));
-      candidate.tabIndex = selected ? 0 : -1;
+      candidate.tabIndex = candidate === cell ? 0 : -1;
     }
     const detail = eventDetail(cell);
     selectedCell = cell;
@@ -38749,8 +39934,9 @@ function enhanceSheet(sheet, options) {
     if (focus)
       cell.focus();
     if (notify) {
-      options.onSelection?.(detail, cell, sheet);
-      dispatchSheetEvent(sheet, "rix-sheet-select", detail);
+      const selection = selectedCells.map(eventDetail);
+      options.onSelection?.({ ...detail, selection }, cell, sheet);
+      dispatchSheetEvent(sheet, "rix-sheet-select", { ...detail, selection });
     }
     return detail;
   }
@@ -38793,6 +39979,35 @@ function enhanceSheet(sheet, options) {
     editForm.requestSubmit();
     return true;
   }
+  async function applyFormulaBlock(originCell, block, kind = "paste") {
+    if (typeof options.onBatchEdit !== "function" || !Array.isArray(block) || !block.length)
+      return false;
+    const bodyCells = [...originCell.closest("tbody").querySelectorAll("td[data-rix-address]")];
+    const originRow = Number(originCell.dataset.rixRow);
+    const originColumn = Number(originCell.dataset.rixColumn);
+    const edits = [];
+    for (const [rowOffset, row] of block.entries()) {
+      for (const [columnOffset, formula] of row.entries()) {
+        const target = bodyCells.find((candidate) => Number(candidate.dataset.rixRow) === originRow + rowOffset && Number(candidate.dataset.rixColumn) === originColumn + columnOffset);
+        if (!target)
+          continue;
+        edits.push({
+          ...eventDetail(target),
+          source: formula.source,
+          assignmentMode: formula.assignmentMode || ":="
+        });
+      }
+    }
+    if (!edits.length)
+      return false;
+    const result = await options.onBatchEdit({ type: kind, edits }, originCell, sheet);
+    if (result?.type === "error")
+      throw new Error(result.text);
+    if (Array.isArray(result?.updates))
+      applyCellUpdates(result.updates);
+    dispatchSheetEvent(sheet, `rix-sheet-${kind}`, { edits, revision: result?.revision ?? null });
+    return true;
+  }
   function changePlane() {
     const selections = planeSelectors.map((selector2) => ({
       axis: Number(selector2.dataset.rixSheetAxis),
@@ -38830,7 +40045,7 @@ function enhanceSheet(sheet, options) {
     });
     cell.addEventListener("click", (event) => {
       event.stopPropagation();
-      select(cell, { focus: true });
+      select(cell, { focus: true, extend: event.shiftKey });
     });
     cell.addEventListener("dblclick", (event) => {
       event.preventDefault();
@@ -38843,7 +40058,11 @@ function enhanceSheet(sheet, options) {
       const source = cell.dataset.rixFormulaSource;
       if (!event.clipboardData || source === undefined)
         return;
-      event.clipboardData.setData("text/plain", `${cell.dataset.rixAssignmentMode || ":="} ${source}`);
+      const block = selectedFormulaBlock();
+      const plain = block.map((row) => row.map((formula) => `${formula.assignmentMode} ${formula.source}`).join("\t")).join(`
+`);
+      event.clipboardData.setData("text/plain", plain);
+      event.clipboardData.setData(RIXCEL_FORMULA_BLOCK_CLIPBOARD_TYPE, JSON.stringify({ cells: block }));
       event.clipboardData.setData(RIXCEL_FORMULA_CLIPBOARD_TYPE, JSON.stringify({
         source,
         assignmentMode: cell.dataset.rixAssignmentMode || ":="
@@ -38851,7 +40070,32 @@ function enhanceSheet(sheet, options) {
       event.preventDefault();
       dispatchSheetEvent(sheet, "rix-sheet-copy", eventDetail(cell));
     });
-    cell.addEventListener("paste", (event) => {
+    cell.addEventListener("paste", async (event) => {
+      let block = null;
+      const encoded = event.clipboardData?.getData?.(RIXCEL_FORMULA_BLOCK_CLIPBOARD_TYPE);
+      if (encoded) {
+        try {
+          const parsed = JSON.parse(encoded);
+          if (Array.isArray(parsed.cells))
+            block = parsed.cells;
+        } catch {
+          block = null;
+        }
+      }
+      block ??= parseSheetFormulaBlock(event.clipboardData?.getData?.("text/plain") ?? "");
+      if (block.length > 1 || block[0]?.length > 1) {
+        if (!options.onBatchEdit)
+          return;
+        event.preventDefault();
+        event.stopPropagation();
+        try {
+          await applyFormulaBlock(cell, block, "paste");
+        } catch (error) {
+          if (editStatus)
+            editStatus.textContent = error.message || String(error);
+        }
+        return;
+      }
       if (!pasteInto(cell, event.clipboardData))
         return;
       event.preventDefault();
@@ -38859,6 +40103,19 @@ function enhanceSheet(sheet, options) {
       dispatchSheetEvent(sheet, "rix-sheet-paste", eventDetail(cell));
     });
     cell.addEventListener("keydown", (event) => {
+      if ((event.metaKey || event.ctrlKey) && (event.key === "d" || event.key === "r")) {
+        if (selectedCells.length > 1 && options.onBatchEdit) {
+          event.preventDefault();
+          event.stopPropagation();
+          const block = sheetFormulaFill(selectedFormulaBlock(), event.key === "d" ? "down" : "right");
+          const origin = selectedCells.reduce((best, candidate) => Number(candidate.dataset.rixRow) < Number(best.dataset.rixRow) || candidate.dataset.rixRow === best.dataset.rixRow && Number(candidate.dataset.rixColumn) < Number(best.dataset.rixColumn) ? candidate : best);
+          applyFormulaBlock(origin, block, "fill").catch((error) => {
+            if (editStatus)
+              editStatus.textContent = error.message || String(error);
+          });
+        }
+        return;
+      }
       if (event.key === "F2") {
         event.preventDefault();
         event.stopPropagation();
@@ -38889,7 +40146,7 @@ function enhanceSheet(sheet, options) {
       event.stopPropagation();
       const target = bodyCells.find((candidate) => Number(candidate.dataset.rixRow) === next.row && Number(candidate.dataset.rixColumn) === next.column);
       if (target)
-        select(target, { focus: true });
+        select(target, { focus: true, extend: event.shiftKey });
     });
   }
   if (typeof options.onHeaderEdit === "function") {
@@ -39017,9 +40274,9 @@ function enhanceSheet(sheet, options) {
         }
         if (result?.type === "error")
           throw new Error(result.text);
-        const exact = submittedCell.textContent.trim();
+        const exact2 = submittedCell.textContent.trim();
         if (editValue)
-          editValue.textContent = `Exact value: ${exact}`;
+          editValue.textContent = `Exact value: ${exact2}`;
         if (editStatus)
           editStatus.textContent = "Saved";
         options.onEditCommitted?.(detail, result, submittedCell, sheet);
@@ -39471,11 +40728,11 @@ function normalizedIndex(index, shape) {
     throw new Error(`Sheet edit index must contain ${shape.length} entries`);
   }
   return index.map((value, axis) => {
-    const integer2 = Number(value);
-    if (!Number.isInteger(integer2) || integer2 < 1 || integer2 > shape[axis]) {
+    const integer4 = Number(value);
+    if (!Number.isInteger(integer4) || integer4 < 1 || integer4 > shape[axis]) {
       throw new Error(`Sheet edit index ${value} is out of range on axis ${axis + 1}`);
     }
-    return integer2;
+    return integer4;
   });
 }
 
@@ -40103,6 +41360,29 @@ function mountOutputWidgets(root, value, options = {}) {
               revision: widgetSession.revision
             };
           }
+        } : null,
+        onBatchEdit: widgetSession?.editMode === "formula" ? async (detail) => {
+          try {
+            if (typeof options.beforeSheetBatchEdit === "function") {
+              await options.beforeSheetBatchEdit(detail, widgetSession.current());
+            }
+            widgetSession.formulaSheet.setFormulaSources(detail.edits.map((edit) => ({
+              index: edit.index,
+              source: edit.source,
+              assignmentMode: edit.assignmentMode
+            })));
+            return {
+              type: "result",
+              updates: widgetSession.cellUpdates(format),
+              revision: widgetSession.revision
+            };
+          } catch (error) {
+            return {
+              type: "error",
+              text: error instanceof Error ? error.message : String(error),
+              revision: widgetSession.revision
+            };
+          }
         } : null
       });
     }
@@ -40347,8 +41627,8 @@ function preview(value, formatValue2) {
   if (value === undefined)
     return "";
   try {
-    const text4 = formatValue2 ? formatValue2(value) : String(value);
-    return text4.length > 72 ? `${text4.slice(0, 69)}…` : text4;
+    const text5 = formatValue2 ? formatValue2(value) : String(value);
+    return text5.length > 72 ? `${text5.slice(0, 69)}…` : text5;
   } catch {
     return "";
   }
@@ -40564,7 +41844,7 @@ function collection() {
   }
   return { type: "map", entries: entries2, _ext: extension };
 }
-function install13({ systemContext }) {
+function install16({ systemContext }) {
   const value = collection();
   systemContext.registerHostCallableValue("arrayJs", value, {
     impl(args) {
@@ -40675,17 +41955,17 @@ function floorDiv3(numerator, denominator) {
   return numerator >= 0n ? numerator / denominator : -((-numerator + denominator - 1n) / denominator);
 }
 function decimalRounded(value, places, mode) {
-  const exact = exactFloatRational(value);
+  const exact2 = exactFloatRational(value);
   const scale = 10n ** BigInt(places);
-  const scaled = exact.numerator * scale;
-  const lower2 = floorDiv3(scaled, exact.denominator);
+  const scaled = exact2.numerator * scale;
+  const lower2 = floorDiv3(scaled, exact2.denominator);
   let coefficient = lower2;
-  if (mode === "ceiling" && scaled !== lower2 * exact.denominator)
+  if (mode === "ceiling" && scaled !== lower2 * exact2.denominator)
     coefficient += 1n;
   if (mode === "round") {
-    const remainder = scaled - lower2 * exact.denominator;
+    const remainder = scaled - lower2 * exact2.denominator;
     const doubled = remainder * 2n;
-    if (doubled > exact.denominator || doubled === exact.denominator && (lower2 & 1n) !== 0n)
+    if (doubled > exact2.denominator || doubled === exact2.denominator && (lower2 & 1n) !== 0n)
       coefficient += 1n;
   }
   return new Rational(coefficient, scale);
@@ -40794,8 +42074,8 @@ function installBrowserApproxMathPlugin({ systemContext, registry }) {
   };
   add("Float", (args, _context, evaluate2) => requireFloat(args[1], evaluate2));
   add("Interval", (args, _context, evaluate2) => {
-    const exact = exactFloatRational(requireFloat(args[1], evaluate2));
-    return new RationalInterval(exact, exact);
+    const exact2 = exactFloatRational(requireFloat(args[1], evaluate2));
+    return new RationalInterval(exact2, exact2);
   });
   add("Round", (args, _context, evaluate2) => decimalRounded(requireFloat(args[1], evaluate2), decimalPlaces(args[2]), "round"));
   add("Floor", (args, _context, evaluate2) => decimalRounded(requireFloat(args[1], evaluate2), decimalPlaces(args[2]), "floor"));
@@ -40816,17 +42096,17 @@ function installBrowserApproxMathPlugin({ systemContext, registry }) {
   });
   return systemContext;
 }
-var install14 = installBrowserApproxMathPlugin;
+var install17 = installBrowserApproxMathPlugin;
 
 // src/generated/bundled-plugin-catalog.js
 function createBundledPluginCatalog() {
   const catalog = new PluginCatalog;
   catalog.addMetadata({ id: "canvas", description: "Serializable Canvas 2D drawing plans for core Graphics scenes.", kind: "host", mount: "canvas", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.canvas@1"], targets: ["canvas", "application/vnd.rix.canvas+json"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:canvas" }, { sourcePath: "bundled:canvas", kind: "host" });
-  catalog.registerInstaller("canvas", install5);
+  catalog.registerInstaller("canvas", install7);
   catalog.addMetadata({ id: "draw", description: "Convenient 2D drawing helpers that produce core Graphics nodes.", kind: "host", mount: "draw", exports: ["Line", "Polygon", "Label", "Box", "Circle"], groups: ["Draw"], permissions: [], defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:draw" }, { sourcePath: "bundled:draw", kind: "host" });
   catalog.registerInstaller("draw", install);
   catalog.addMetadata({ id: "example-array-js", description: "Teaching JavaScript plugin demonstrating array sum, summary text, and reversal.", kind: "host", mount: "arrayJs", exports: ["Sum", "Describe", "Reverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:example-array-js" }, { sourcePath: "bundled:example-array-js", kind: "host" });
-  catalog.registerInstaller("example-array-js", install13);
+  catalog.registerInstaller("example-array-js", install16);
   catalog.addMetadata({ id: "example-array-rix", description: "Teaching RiX plugin demonstrating array sum, summary text, and reversal.", kind: "rix", mount: "arrayRix", exports: ["arrayRixSum", "arrayRixDescribe", "arrayRixReverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:example-array-rix" }, { source: `/**
 id: example-array-rix
 description: Teaching RiX plugin demonstrating array sum, summary text, and reversal.
@@ -40843,25 +42123,31 @@ defaultEnabled: false
 .Host.Register("arrayRixReverse", (values) -> values.Reverse(), "Reverse an array", ["Examples"]);
 `, sourcePath: "bundled:example-array-rix", kind: "rix" });
   catalog.addMetadata({ id: "float", description: "JavaScript IEEE-754 Float conversion and optional approximate math.", kind: "host", mount: "float", exports: ["Float", "Interval", "Round", "Floor", "Ceiling", "Abs", "Sqrt", "Sin", "Cos", "Tan", "Log", "Exp"], groups: ["ApproximateMath", "Float"], permissions: [], defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:float" }, { sourcePath: "bundled:float", kind: "host" });
-  catalog.registerInstaller("float", install14);
+  catalog.registerInstaller("float", install17);
+  catalog.addMetadata({ id: "gltf", description: "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", kind: "host", mount: "gltf", exports: ["Render"], groups: ["Renderers", "Scene3D"], permissions: [], requires: ["rix.scene3d@1"], provides: ["rix.renderer.gltf@1"], targets: ["gltf", "model/gltf+json"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:gltf" }, { sourcePath: "bundled:gltf", kind: "host" });
+  catalog.registerInstaller("gltf", install15);
   catalog.addMetadata({ id: "html", description: "Standalone semantic HTML renderer for portable RiX output trees.", kind: "host", mount: "html", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.html@1"], targets: ["html", "text/html"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:html" }, { sourcePath: "bundled:html", kind: "host" });
-  catalog.registerInstaller("html", install8);
+  catalog.registerInstaller("html", install10);
   catalog.addMetadata({ id: "latex", description: "Standalone LaTeX renderer for portable RiX documents and figures.", kind: "host", mount: "latex", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.latex@1"], targets: ["latex", "text/x-tex"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:latex" }, { sourcePath: "bundled:latex", kind: "host" });
-  catalog.registerInstaller("latex", install10);
+  catalog.registerInstaller("latex", install12);
   catalog.addMetadata({ id: "markdown", description: "CommonMark-oriented renderer for portable RiX documents.", kind: "host", mount: "markdown", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.markdown@1"], targets: ["markdown", "text/markdown"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:markdown" }, { sourcePath: "bundled:markdown", kind: "host" });
-  catalog.registerInstaller("markdown", install7);
+  catalog.registerInstaller("markdown", install9);
+  catalog.addMetadata({ id: "nd", description: "Exact n-dimensional geometry with explicit affine and Cayley projection records.", kind: "host", mount: "nd", exports: ["Point", "Polyline", "Polytope", "Hypercube", "Projection", "CoordinateProjection", "CayleyRotation", "Compose", "Project", "ToScene3D"], groups: ["Geometry", "Scene3D", "Exact"], permissions: [], requires: ["rix.scene3d@1"], provides: ["rix.nd@1", "rix.nd.projection@1"], schemas: ["rix.nd@1", "rix.nd.projection@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:nd" }, { sourcePath: "bundled:nd", kind: "host" });
+  catalog.registerInstaller("nd", install5);
   catalog.addMetadata({ id: "pdf", description: "PDF document and figure renderer orchestrated through LaTeX.", kind: "host", mount: "pdf", exports: ["Render"], groups: ["Renderers"], permissions: ["process", "files"], provides: ["rix.renderer.pdf@1"], targets: ["pdf", "application/pdf"], snapshot: true, deterministic: false, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:pdf" }, { sourcePath: "bundled:pdf", kind: "host" });
-  catalog.registerInstaller("pdf", install12);
+  catalog.registerInstaller("pdf", install14);
   catalog.addMetadata({ id: "plot", description: "Portable plotting helpers that produce core Graphics scenes.", kind: "host", mount: "plot", exports: ["Polynomial"], groups: ["Plot"], permissions: [], defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:plot" }, { sourcePath: "bundled:plot", kind: "host" });
   catalog.registerInstaller("plot", install3);
   catalog.addMetadata({ id: "png", description: "PNG snapshot renderer for core Graphics through a host rasterizer.", kind: "host", mount: "png", exports: ["Render"], groups: ["Renderers"], permissions: ["process"], provides: ["rix.renderer.png@1"], targets: ["png", "image/png"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:png" }, { sourcePath: "bundled:png", kind: "host" });
-  catalog.registerInstaller("png", install11);
+  catalog.registerInstaller("png", install13);
   catalog.addMetadata({ id: "quarto", description: "Quarto Markdown renderer with front matter and portable figure lowering.", kind: "host", mount: "quarto", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.quarto@1"], targets: ["quarto", "text/x-quarto"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:quarto" }, { sourcePath: "bundled:quarto", kind: "host" });
-  catalog.registerInstaller("quarto", install9);
+  catalog.registerInstaller("quarto", install11);
+  catalog.addMetadata({ id: "scene3d", description: "Exact retained 3D scenes with deterministic wireframe Graphics snapshots.", kind: "host", mount: "scene3d", exports: ["Scene", "Group", "Transform", "Mesh", "Polyline", "PointCloud", "Material", "PerspectiveCamera", "OrthographicCamera", "Snapshot"], groups: ["Scene3D", "Graphics"], permissions: [], provides: ["rix.scene3d@1"], schemas: ["rix.scene3d@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:scene3d" }, { sourcePath: "bundled:scene3d", kind: "host" });
+  catalog.registerInstaller("scene3d", install4);
   catalog.addMetadata({ id: "svg", description: "Portable SVG renderer for core Graphics scenes.", kind: "host", mount: "svg", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.svg@1"], targets: ["svg", "image/svg+xml"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:svg" }, { sourcePath: "bundled:svg", kind: "host" });
-  catalog.registerInstaller("svg", install4);
+  catalog.registerInstaller("svg", install6);
   catalog.addMetadata({ id: "tikz", description: "Editable TikZ/PGF source renderer for core Graphics scenes.", kind: "host", mount: "tikz", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.tikz@1"], targets: ["tikz", "text/x-tikz"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:tikz" }, { sourcePath: "bundled:tikz", kind: "host" });
-  catalog.registerInstaller("tikz", install6);
+  catalog.registerInstaller("tikz", install8);
   return catalog;
 }
 
@@ -41033,5 +42319,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { formatValue, mountOutputWidgets, findHelp, createRixRepl };
 
-//# debugId=8B388CE58DBF93D764756E2164756E21
-//# sourceMappingURL=chunk-8bbw9579.js.map
+//# debugId=8A013BD2A4EE1CAB64756E2164756E21
+//# sourceMappingURL=chunk-qwyxr5a0.js.map
