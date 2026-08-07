@@ -328,6 +328,7 @@ test("the web REPL catalogs bundled plugins and loads approved JavaScript on dem
     expect(available).toContain("float");
     expect(available).toContain("numerics");
     expect(available).toContain("oracle");
+    expect(available).toContain("radix");
     expect(available).toContain("draw");
     expect(available).toContain("plot");
     expect(repl.run(".float(1 / 3)").type).toBe("error");
@@ -344,6 +345,8 @@ test("the web REPL catalogs bundled plugins and loads approved JavaScript on dem
         .toBe("enclosed");
     expect(repl.run('.numerics.Sample(.float(1 / 3), {= maxWork=20 })[:status]').text)
         .toBe("approximate");
+    expect(repl.run('.Plugin.Load("radix")').type).toBe("result");
+    expect(repl.run('(1/7).PeriodLength(10)').text).toBe("6");
 
     expect(repl.run(".draw.Circle([10, 10], 4)").type).toBe("error");
     expect(repl.run('.Plugin.Load("draw")').type).toBe("result");
@@ -407,11 +410,11 @@ bounds`);
 test("a dot-prefixed system call starts a new notebook statement", () => {
     const repl = createRixRepl();
     const response = repl.run(`grid := 0:1 :: 5
-.RandomSeed(7)
+.RNG(:default, {= seed=7 })
 0:1 :% (1, 1000)`);
 
     expect(response.type).toBe("result");
-    expect(response.text).toBe("11/1000");
+    expect(response.text).toBe("3/10");
 });
 
 test(".Help(topic) returns matching inline RiX REPL help", () => {

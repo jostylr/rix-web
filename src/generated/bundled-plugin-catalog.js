@@ -13,9 +13,10 @@ import { install as install9 } from "../../../rix/plugins/render-pdf/pdf.plugin.
 import { install as install10 } from "../../../rix/plugins/plot/plot.plugin.rix.js";
 import { install as install11 } from "../../../rix/plugins/render-png/png.plugin.rix.js";
 import { install as install12 } from "../../../rix/plugins/render-quarto/quarto.plugin.rix.js";
-import { install as install13 } from "../../../rix/plugins/scene3d/scene3d.plugin.rix.js";
-import { install as install14 } from "../../../rix/plugins/render-svg/svg.plugin.rix.js";
-import { install as install15 } from "../../../rix/plugins/render-tikz/tikz.plugin.rix.js";
+import { install as install13 } from "../../../rix/plugins/radix/radix.plugin.rix.js";
+import { install as install14 } from "../../../rix/plugins/scene3d/scene3d.plugin.rix.js";
+import { install as install15 } from "../../../rix/plugins/render-svg/svg.plugin.rix.js";
+import { install as install16 } from "../../../rix/plugins/render-tikz/tikz.plugin.rix.js";
 
 export function createBundledPluginCatalog() {
   const catalog = new PluginCatalog();
@@ -48,11 +49,13 @@ export function createBundledPluginCatalog() {
   catalog.registerInstaller("png", install11);
   catalog.addMetadata({"id":"quarto","description":"Quarto Markdown renderer with front matter and portable figure lowering.","kind":"host","mount":"quarto","exports":["Render"],"groups":["Renderers"],"permissions":[],"provides":["rix.renderer.quarto@1"],"targets":["quarto","text/x-quarto"],"snapshot":true,"deterministic":true,"defaultEnabled":false,"operatorDefinitions":[],"requires":[],"optional":[],"schemas":[],"operatorFiles":[],"ignore":false,"sourcePath":"bundled:quarto"}, { sourcePath: "bundled:quarto", kind: "host" });
   catalog.registerInstaller("quarto", install12);
+  catalog.addMetadata({"id":"radix","description":"Bounded exact positional expansions and repeating-period analysis for rational values.","kind":"host","mount":"radix","exports":["Expansion","Digits","PeriodLength","PeriodInfo","ToString"],"groups":["Exact","Radix"],"permissions":[],"defaultEnabled":false,"operatorDefinitions":[],"requires":[],"optional":[],"provides":[],"schemas":[],"targets":[],"snapshot":false,"deterministic":false,"operatorFiles":[],"ignore":false,"sourcePath":"bundled:radix"}, { sourcePath: "bundled:radix", kind: "host" });
+  catalog.registerInstaller("radix", install13);
   catalog.addMetadata({"id":"scene3d","description":"Exact retained 3D scenes with deterministic wireframe Graphics snapshots.","kind":"host","mount":"scene3d","exports":["Scene","Group","Transform","Mesh","Polyline","PointCloud","Material","PerspectiveCamera","OrthographicCamera","Snapshot"],"groups":["Scene3D","Graphics"],"permissions":[],"provides":["rix.scene3d@1"],"schemas":["rix.scene3d@1"],"snapshot":true,"deterministic":true,"defaultEnabled":false,"operatorDefinitions":[],"requires":[],"optional":[],"targets":[],"operatorFiles":[],"ignore":false,"sourcePath":"bundled:scene3d"}, { sourcePath: "bundled:scene3d", kind: "host" });
-  catalog.registerInstaller("scene3d", install13);
+  catalog.registerInstaller("scene3d", install14);
   catalog.addMetadata({"id":"svg","description":"Portable SVG renderer for core Graphics scenes.","kind":"host","mount":"svg","exports":["Render"],"groups":["Renderers"],"permissions":[],"provides":["rix.renderer.svg@1"],"targets":["svg","image/svg+xml"],"snapshot":true,"deterministic":true,"defaultEnabled":false,"operatorDefinitions":[],"requires":[],"optional":[],"schemas":[],"operatorFiles":[],"ignore":false,"sourcePath":"bundled:svg"}, { sourcePath: "bundled:svg", kind: "host" });
-  catalog.registerInstaller("svg", install14);
+  catalog.registerInstaller("svg", install15);
   catalog.addMetadata({"id":"tikz","description":"Editable TikZ/PGF source renderer for core Graphics scenes.","kind":"host","mount":"tikz","exports":["Render"],"groups":["Renderers"],"permissions":[],"provides":["rix.renderer.tikz@1"],"targets":["tikz","text/x-tikz"],"snapshot":true,"deterministic":true,"defaultEnabled":false,"operatorDefinitions":[],"requires":[],"optional":[],"schemas":[],"operatorFiles":[],"ignore":false,"sourcePath":"bundled:tikz"}, { sourcePath: "bundled:tikz", kind: "host" });
-  catalog.registerInstaller("tikz", install15);
+  catalog.registerInstaller("tikz", install16);
   return catalog;
 }

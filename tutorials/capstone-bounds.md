@@ -1,5 +1,5 @@
 ---
-number: 3f
+number: 3g
 title: Capstone: bounds check
 description: Use exact notation, intervals, and safe defaults together.
 ---

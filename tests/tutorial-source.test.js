@@ -131,11 +131,27 @@ test("structural arithmetic has focused notation and parser lessons", async () =
     expect(parsers).toContain("`.Poly:");
 });
 
+test("method extensions and scoped randomness have focused runnable lessons", async () => {
+    expect(tutorialByNumber("3e")?.file).toBe("scoped-randomness.html");
+    expect(tutorialByNumber("10d")?.file).toBe("method-extensions.html");
+    const randomness = await Bun.file(new URL("../tutorials/scoped-randomness.md", import.meta.url)).text();
+    const methods = await Bun.file(new URL("../tutorials/method-extensions.md", import.meta.url)).text();
+    const float = await Bun.file(new URL("../../rix/plugins/float/tutorial.md", import.meta.url)).text();
+    expect(randomness).toContain(".RNG(:default, {= seed=77 })");
+    expect(randomness).toContain("RandomPartition");
+    expect(randomness).toContain("seed=:random");
+    expect(methods).toContain(".RegisterMethod(:Rational, :Twice");
+    expect(methods).toContain("already exists");
+    expect(methods).toContain('.Plugin.Load("radix")');
+    expect(float).toContain("(1 / 3).Float()");
+});
+
 test("plugin tutorials are generated after core lessons and grouped by theme", async () => {
     expect(tutorialByNumber("14")?.title).toBe("Plugins: Numbers and numerics");
     expect(tutorialByNumber("14a")?.file).toBe("plugin-float.html");
     expect(tutorialByNumber("14b")?.file).toBe("plugin-numerics.html");
     expect(tutorialByNumber("14c")?.file).toBe("plugin-oracle.html");
+    expect(tutorialByNumber("14d")?.file).toBe("plugin-radix.html");
     expect(tutorialByNumber("15")?.title).toBe("Plugins: Graphics and geometry");
     expect(tutorialByNumber("15a")?.pluginId).toBe("draw");
     expect(tutorialByNumber("15b")?.pluginId).toBe("nd");

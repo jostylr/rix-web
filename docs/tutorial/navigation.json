@@ -127,6 +127,15 @@
     {
       "number": "3e",
       "parent": "3",
+      "file": "scoped-randomness.html",
+      "title": "Scoped reproducible randomness",
+      "description": "Reset, inherit, and locally replace deterministic random streams.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "3f",
+      "parent": "3",
       "file": "holes.html",
       "title": "Nulls and holes",
       "description": "Undefined values, defaults, and coalescing.",
@@ -134,7 +143,7 @@
       "status": "implemented"
     },
     {
-      "number": "3f",
+      "number": "3g",
       "parent": "3",
       "file": "capstone-bounds.html",
       "title": "Capstone: bounds check",
@@ -525,6 +534,15 @@
     {
       "number": "10d",
       "parent": "10",
+      "file": "method-extensions.html",
+      "title": "Extend existing types",
+      "description": "Add collision-safe receiver methods without patching individual values.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "10e",
+      "parent": "10",
       "file": "capstone-package-design.html",
       "title": "Capstone: package design",
       "description": "Design a safe RiX package boundary.",
@@ -774,6 +792,15 @@
       "file": "plugin-oracle.html",
       "title": "Rational betweenness oracles",
       "description": "Query and refine a real number through exact rational intervals.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "14d",
+      "parent": "14",
+      "file": "plugin-radix.html",
+      "title": "Inspect an exact repeating expansion",
+      "description": "Compute bounded positional digits and a rational's exact repeating period.",
       "pluginGroup": false,
       "status": "implemented"
     },

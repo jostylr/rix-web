@@ -66,6 +66,19 @@ export const pluginTutorials = [
     "pluginTutorial": true
   },
   {
+    "pluginId": "radix",
+    "pluginDirectory": "radix",
+    "title": "Inspect an exact repeating expansion",
+    "description": "Compute bounded positional digits and a rational's exact repeating period.",
+    "status": "implemented",
+    "theme": "Numbers and numerics",
+    "sourcePath": "../rix/plugins/radix/tutorial.md",
+    "number": "14d",
+    "parent": "14",
+    "file": "plugin-radix.html",
+    "pluginTutorial": true
+  },
+  {
     "pluginId": "draw",
     "pluginDirectory": "draw",
     "title": "Drawing portable graphics",

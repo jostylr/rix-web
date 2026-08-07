@@ -93,12 +93,13 @@ the requested denominator grid inside the interval. Returned rationals are
 reduced, so `500/1000` displays as `1/2`.
 
 ```rix edu
-.RandomSeed(7);
+.RNG(:default, {= seed=7 });
 0:1 :% (5, 1000) ;
 ```
 
-Seeding is local to the current RiX session. Run the cell again with the same
-seed to reproduce the same sample; change the seed to obtain another stream.
+The selected generator belongs to the current lexical scope. Run the cell again
+with the same seed to reproduce the same sample; change the seed to obtain
+another stream.
 
 ## Sample with a tolerance
 
@@ -106,14 +107,14 @@ Without a denominator, RiX first samples a real-like point uniformly and then
 returns the simplest rational within a small default tolerance.
 
 ```rix edu
-.RandomSeed(21);
+.RNG(:default, {= seed=21 });
 0:1 :% 4 ;
 ```
 
 Supply `_` in the denominator position to override the tolerance explicitly.
 
 ```rix edu
-.RandomSeed(21);
+.RNG(:default, {= seed=21 });
 0:1 :% (4, _, 1/100) ;
 ```
 
@@ -127,7 +128,7 @@ subintervals containing the original endpoints. With a denominator, selection
 is without replacement on that rational grid.
 
 ```rix edu
-.RandomSeed(12);
+.RNG(:default, {= seed=12 });
 0:1 :/% (4, 1000) ;
 ```
 
@@ -152,14 +153,15 @@ Create eleven exact points from `-1:1`, partition the same interval into four
 equal regions, then seed the random stream and choose three points from a
 denominator-100 grid.
 
-    exactGrid := -1:1 :: 11
+    exactGrid := -1:1 :: 11;
     regions := -1:1 :/: 4;
-    .RandomSeed(42)
-    samples := -1:1 :% (3, 100)
-    [exactGrid[1:11], regions, samples]
+    .RNG(:default, {= seed=42 });
+    samples := -1:1 :% (3, 100);
+    [exactGrid[1:11], regions, samples];
 :::
 
 ## Keep going
 
-Return to lazy generators to map and filter these point sequences without
+Continue to scoped reproducible randomness to isolate streams in nested scopes
+and closures, or return to lazy generators to transform point sequences without
 materializing more values than your calculation needs.

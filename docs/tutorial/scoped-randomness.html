@@ -1,0 +1,54 @@
+<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Reset, inherit, and locally replace deterministic random streams." /><title>Scoped reproducible randomness — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./expressions.html#lesson-start" title="Expressions and exact notation">3</a> <span aria-hidden="true">·</span> <span>e</span></p><h1>Scoped reproducible randomness</h1><p class="deck">Reset, inherit, and locally replace deterministic random streams.</p><div class="lesson-content"><h2>Reproduce a stream exactly</h2>
+<p>Every fresh RiX runtime starts with the same simple default random stream. Call <code>.RNG</code> when the stream itself is part of the calculation. An explicit seed makes the choice visible and reproducible:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.RNG(:default, {= seed=77 });
+first := .RAND_NAME(12);
+.RNG(:default, {= seed=77 });
+{: first, .RAND_NAME(12) };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The two strings match because each <code>.RNG</code> call constructs a fresh generator. Calling <code>.RNG()</code> with no arguments also constructs a fresh default generator with RiX&#039;s fixed startup seed.</p>
+<h2>Keep a local experiment local</h2>
+<p>A nested scope initially uses its parent&#039;s generator. Installing another one inside that scope changes the default there and in its subscopes, without advancing or replacing the outer generator:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="15" spellcheck="false">OuterRun := () -&gt; {;
+    .RNG(:default, {= seed=41 });
+    first := .RAND_NAME(8);
+    Local := () -&gt; {;
+        .RNG(:default, {= seed=99 });
+        .RAND_NAME(8)
+    };
+    Local();
+    {: first, .RAND_NAME(8) }
+};
+Baseline := () -&gt; {;
+    .RNG(:default, {= seed=41 });
+    {: .RAND_NAME(8), .RAND_NAME(8) }
+};
+{: OuterRun(), Baseline() };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The two result tuples match. <code>Local</code> draws from its own stream, so it does not consume a value from the stream selected by <code>OuterRun</code>.</p>
+<h2>Let closures retain their stream</h2>
+<p>A closure keeps the RNG selected in the lexical scope where the closure was created. That makes independent, repeatable simulation components possible:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">Maker := (seed) -&gt; {;
+    .RNG(:default, {= seed=seed });
+    () -&gt; .RAND_NAME(10)
+};
+Left := Maker(5);
+Right := Maker(5);
+{: Left(), Left(), Right(), Right() };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The first and third strings match, as do the second and fourth. Each closure has independent state even though both began from seed <code>5</code>.</p>
+<h2>Draw exact rationals from an interval</h2>
+<p><code>RationalInterval.Random</code> and <code>RandomPartition</code> consume the currently selected stream. Their parameter tuple contains a count, an optional fixed denominator, and an optional tolerance:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.RNG(:default, {= seed=456 });
+point := (0:1).Random({: 1, 1000 });
+parts := (0:1).RandomPartition({: 4, 1000 });
+{= point=point, partitions=parts };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>A count of one returns one rational. <code>RandomPartition</code> returns the requested number of touching subintervals, including the original endpoints. The <code>:%</code> and <code>:/%</code> interval operators use the same scoped stream.</p>
+<h2>Ask the host for an unpredictable seed</h2>
+<p>Use <code>seed=:random</code> only when reproducibility is not wanted:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">info := .RNG(:default, {= seed=:random });
+info.Get(&quot;seed&quot;);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>RiX asks the host for entropy—Web Crypto in a browser host—and reports the chosen seed. It raises an error if the host has no entropy service. This option randomizes the seed; the bundled default generator remains a small, non-cryptographic reproducible generator. Approved hosts can also provide a different RNG implementation.</p>
+<aside class="challenge"><p class="eyebrow">Challenge</p><h3>Build two matching samples</h3><p>Create a function that installs seed <code>2026</code> and draws three rationals from <code>-1:1</code> on a denominator-100 grid. Create two independent calls and confirm by inspection that their returned samples match.</p><section class="tutorial-cell"><header><span>Your RiX answer</span><button type="button" data-tutorial-run>Run answer</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false" placeholder="# Write your RiX solution here">Sample := () -&gt; {;
+    .RNG(:default, {= seed=2026 });
+    -1:1 :% (3, 100)
+};
+{: Sample(), Sample() };</textarea><div class="tutorial-output" data-tutorial-output></div></section></aside>
+<h2>Keep going</h2>
+<p>Return to interval generation for exact grids and partitions, or continue to holes and defaults for calculations where a value may be absent.</p></div><section class="api-links"><h2>Reference</h2><ul><li><a href="https://docs.rix.ratmath.com/eval/syntax-guide.html#operators" data-doc-reference target="_blank" rel="noreferrer">Syntax and operators ↗</a></li><li><a href="https://docs.rix.ratmath.com/introduction.html#number-systems-and-notation" data-doc-reference target="_blank" rel="noreferrer">Number notation ↗</a></li></ul></section><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
