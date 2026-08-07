@@ -111,6 +111,48 @@ test("the web REPL returns structured HTML for portable output values", () => {
     expect(response.text).toContain("-3");
 });
 
+test("the browser-safe renderer plugins produce their text and source targets", () => {
+    const graphic = `.Graphics.Graphic([120, 80], [
+        .Graphics.Circle([60, 40], 24, {= fill="#0c7b7f" }),
+        .Graphics.Text([60, 44], "RiX", {= fill="white", anchor="middle" })
+    ])`;
+    const document = `.Fragment([
+        .Heading(1, "Renderer report"),
+        .Paragraph("One portable document.")
+    ])`;
+    const cases = [
+        ["svg", `.svg.Render(${graphic}).Get("content")`, "<svg"],
+        ["canvas", `.canvas.Render(${graphic}).Get("content")`, "rix.canvas-plan@1"],
+        ["tikz", `.tikz.Render(${graphic}).Get("content")`, "\\begin{tikzpicture}"],
+        ["markdown", `.markdown.Render(${document}).Get("content")`, "# Renderer report"],
+        ["html", `.html.Render(${document}).Get("content")`, "<!doctype html>"],
+        ["quarto", `.quarto.Render(${document}).Get("content")`, "---\nformat: html"],
+        ["latex", `.latex.Render(${document}).Get("content")`, "\\documentclass{article}"],
+    ];
+
+    for (const [plugin, expression, expected] of cases) {
+        const response = createRixRepl().run(`.Plugin.Load("${plugin}"); ${expression};`);
+        expect(response.type, plugin).toBe("result");
+        expect(response.value.value, plugin).toContain(expected);
+    }
+});
+
+test("PNG and PDF expose browser contracts without pretending to have host tools", () => {
+    const png = createRixRepl().run(`
+        .Plugin.Load("png");
+        .png.Render(.Graphics.Graphic([20, 20], [.Graphics.Circle([10, 10], 5)]));
+    `);
+    expect(png.type).toBe("error");
+    expect(png.text).toContain("png-rasterizer-unavailable");
+
+    const pdf = createRixRepl().run(`
+        .Plugin.Load("pdf");
+        .pdf.Render(.Fragment([.Paragraph("portable")]));
+    `);
+    expect(pdf.type).toBe("error");
+    expect(pdf.text).toContain("pdf-toolchain-unavailable");
+});
+
 test("the web REPL returns address-aware Sheet HTML", () => {
     const repl = createRixRepl();
     const response = repl.run(".Sheet({:2x3: 1, 2, 3; 4, 5, 6})");

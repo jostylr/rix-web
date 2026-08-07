@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { parse, tokenize } from "../../rix/src/index.js";
 import { tutorialByNumber, tutorials } from "../src/tutorial-index.js";
 import { normalizeReplSource } from "../src/repl-source.js";
+import { createBundledPluginCatalog } from "../src/generated/bundled-plugin-catalog.js";
 
 function tutorialBody(source) {
     return source.replace(/^---\n[\s\S]*?\n---\n?/, "");
@@ -137,10 +138,33 @@ test("plugin tutorials are generated after core lessons and grouped by theme", a
     expect(tutorialByNumber("15")?.title).toBe("Plugins: Graphics and geometry");
     expect(tutorialByNumber("15a")?.pluginId).toBe("draw");
     expect(tutorialByNumber("15b")?.pluginId).toBe("plot");
+    expect(tutorialByNumber("16")?.title).toBe("Plugins: Renderers and exporters");
+    expect(tutorials.filter(({ parent }) => parent === "16").map(({ pluginId }) => pluginId)).toEqual([
+        "canvas", "html", "latex", "markdown", "pdf", "png", "quarto", "svg", "tikz",
+    ]);
     const generator = await Bun.file(new URL("../scripts/generate-plugin-tutorial-index.js", import.meta.url)).text();
     expect(generator).toContain('path.join(pluginsRoot, entry.name, "tutorial.md")');
     expect(generator).toContain('"Numbers and numerics"');
     expect(generator).toContain('"Graphics and geometry"');
+    expect(generator).toContain('"Renderers and exporters"');
+});
+
+test("every implemented plugin tutorial has a browser catalog contract", () => {
+    const ids = new Set(createBundledPluginCatalog().list().map(({ id }) => id));
+    for (const tutorial of tutorials.filter(({ pluginTutorial, status }) => pluginTutorial && status === "implemented")) {
+        expect(ids.has(tutorial.pluginId), tutorial.pluginId).toBe(true);
+    }
+});
+
+test("built renderer tutorial pages are present", async () => {
+    for (const id of ["canvas", "html", "latex", "markdown", "pdf", "png", "quarto", "svg", "tikz"]) {
+        const page = Bun.file(new URL(`../docs/tutorial/plugin-${id}.html`, import.meta.url));
+        expect(await page.exists(), id).toBe(true);
+        const source = await page.text();
+        expect(source, id).toContain("Runnable RiX");
+        expect(source, id).toContain("https://docs.rix.ratmath.com/eval/renderer-guide.html");
+        expect(source, id).toContain(`rix/plugins/render-${id}/tutorial.md`);
+    }
 });
 
 test("proposed plugin tutorials render as non-runnable acceptance documentation", async () => {
@@ -190,6 +214,7 @@ test("tutorial references use the published RiX documentation", async () => {
     const source = await Bun.file(new URL("../scripts/build-tutorials.js", import.meta.url)).text();
     expect(source).toContain("https://docs.rix.ratmath.com/eval/syntax-guide.html#assignment-definition");
     expect(source).toContain("https://docs.rix.ratmath.com/developer-guide.html#adding-a-user-facing-capability");
+    expect(source).toContain("https://docs.rix.ratmath.com/eval/renderer-guide.html");
     expect(source).not.toContain("github.com/jostylr/ratmath/blob/main/rix/docs");
 });
 

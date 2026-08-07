@@ -50,7 +50,8 @@ for (const entry of await readdir(pluginsRoot, { withFileTypes: true })) {
     const meta = parseFrontmatter(source);
     const theme = meta.theme || "Developer plugins";
     discovered.push({
-        pluginId: entry.name,
+        pluginId: meta.plugin || entry.name,
+        pluginDirectory: entry.name,
         title: meta.title || entry.name,
         description: meta.description || `Learn the optional ${entry.name} plugin.`,
         status: meta.status || "implemented",

@@ -15,11 +15,20 @@ export const pluginTutorialGroups = [
     "description": "Portable drawing, plots, constructions, and scene authoring.",
     "pluginGroup": true,
     "theme": "Graphics and geometry"
+  },
+  {
+    "number": "16",
+    "file": "plugins-renderers-and-exporters.html",
+    "title": "Plugins: Renderers and exporters",
+    "description": "Turn semantic RiX values into portable target formats.",
+    "pluginGroup": true,
+    "theme": "Renderers and exporters"
   }
 ];
 export const pluginTutorials = [
   {
     "pluginId": "float",
+    "pluginDirectory": "float",
     "title": "Optional Float math",
     "description": "Load IEEE-754 approximate math without making it a core RiX numeric type.",
     "status": "implemented",
@@ -32,6 +41,7 @@ export const pluginTutorials = [
   },
   {
     "pluginId": "oracle",
+    "pluginDirectory": "oracle",
     "title": "Rational betweenness oracles",
     "description": "Query and refine a real number through exact rational intervals.",
     "status": "proposed",
@@ -44,6 +54,7 @@ export const pluginTutorials = [
   },
   {
     "pluginId": "draw",
+    "pluginDirectory": "draw",
     "title": "Drawing portable graphics",
     "description": "Use the optional draw package to create core graphics scene nodes.",
     "status": "implemented",
@@ -56,6 +67,7 @@ export const pluginTutorials = [
   },
   {
     "pluginId": "plot",
+    "pluginDirectory": "plot",
     "title": "Plotting a polynomial",
     "description": "Build a portable graphics scene with the plot plugin.",
     "status": "implemented",
@@ -64,6 +76,123 @@ export const pluginTutorials = [
     "number": "15b",
     "parent": "15",
     "file": "plugin-plot.html",
+    "pluginTutorial": true
+  },
+  {
+    "pluginId": "canvas",
+    "pluginDirectory": "render-canvas",
+    "title": "Build a Canvas repaint plan",
+    "description": "Lower a Graphics scene to versioned Canvas 2D commands.",
+    "status": "implemented",
+    "theme": "Renderers and exporters",
+    "sourcePath": "../rix/plugins/render-canvas/tutorial.md",
+    "number": "16a",
+    "parent": "16",
+    "file": "plugin-canvas.html",
+    "pluginTutorial": true
+  },
+  {
+    "pluginId": "html",
+    "pluginDirectory": "render-html",
+    "title": "Build a standalone HTML report",
+    "description": "Render portable headings and exact values as semantic HTML.",
+    "status": "implemented",
+    "theme": "Renderers and exporters",
+    "sourcePath": "../rix/plugins/render-html/tutorial.md",
+    "number": "16b",
+    "parent": "16",
+    "file": "plugin-html.html",
+    "pluginTutorial": true
+  },
+  {
+    "pluginId": "latex",
+    "pluginDirectory": "render-latex",
+    "title": "Export a LaTeX report",
+    "description": "Combine exact math, a table, and a portable document structure in TeX.",
+    "status": "implemented",
+    "theme": "Renderers and exporters",
+    "sourcePath": "../rix/plugins/render-latex/tutorial.md",
+    "number": "16c",
+    "parent": "16",
+    "file": "plugin-latex.html",
+    "pluginTutorial": true
+  },
+  {
+    "pluginId": "markdown",
+    "pluginDirectory": "render-markdown",
+    "title": "Write a Markdown report",
+    "description": "Preserve document structure and a table in portable Markdown.",
+    "status": "implemented",
+    "theme": "Renderers and exporters",
+    "sourcePath": "../rix/plugins/render-markdown/tutorial.md",
+    "number": "16d",
+    "parent": "16",
+    "file": "plugin-markdown.html",
+    "pluginTutorial": true
+  },
+  {
+    "pluginId": "pdf",
+    "pluginDirectory": "render-pdf",
+    "title": "Prepare a PDF report",
+    "description": "Build the portable document consumed by the host PDF pipeline.",
+    "status": "implemented",
+    "theme": "Renderers and exporters",
+    "sourcePath": "../rix/plugins/render-pdf/tutorial.md",
+    "number": "16e",
+    "parent": "16",
+    "file": "plugin-pdf.html",
+    "pluginTutorial": true
+  },
+  {
+    "pluginId": "png",
+    "pluginDirectory": "render-png",
+    "title": "Prepare a PNG snapshot",
+    "description": "Build the portable Graphics value used by the host PNG rasterizer.",
+    "status": "implemented",
+    "theme": "Renderers and exporters",
+    "sourcePath": "../rix/plugins/render-png/tutorial.md",
+    "number": "16f",
+    "parent": "16",
+    "file": "plugin-png.html",
+    "pluginTutorial": true
+  },
+  {
+    "pluginId": "quarto",
+    "pluginDirectory": "render-quarto",
+    "title": "Author a Quarto source document",
+    "description": "Add front matter and a semantic callout to a QMD report.",
+    "status": "implemented",
+    "theme": "Renderers and exporters",
+    "sourcePath": "../rix/plugins/render-quarto/tutorial.md",
+    "number": "16g",
+    "parent": "16",
+    "file": "plugin-quarto.html",
+    "pluginTutorial": true
+  },
+  {
+    "pluginId": "svg",
+    "pluginDirectory": "render-svg",
+    "title": "Export a portable SVG",
+    "description": "Render one core Graphics scene as accessible SVG source.",
+    "status": "implemented",
+    "theme": "Renderers and exporters",
+    "sourcePath": "../rix/plugins/render-svg/tutorial.md",
+    "number": "16h",
+    "parent": "16",
+    "file": "plugin-svg.html",
+    "pluginTutorial": true
+  },
+  {
+    "pluginId": "tikz",
+    "pluginDirectory": "render-tikz",
+    "title": "Export an editable TikZ diagram",
+    "description": "Turn core Graphics geometry into publication-ready TikZ source.",
+    "status": "implemented",
+    "theme": "Renderers and exporters",
+    "sourcePath": "../rix/plugins/render-tikz/tutorial.md",
+    "number": "16i",
+    "parent": "16",
+    "file": "plugin-tikz.html",
     "pluginTutorial": true
   }
 ];

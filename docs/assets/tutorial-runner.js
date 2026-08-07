@@ -2,7 +2,7 @@ import {
   createRixRepl,
   formatValue,
   mountOutputWidgets
-} from "./chunk-q4vbxwk7.js";
+} from "./chunk-8bbw9579.js";
 import {
   mountTutorialNavigation
 } from "./chunk-g5p2fpmt.js";

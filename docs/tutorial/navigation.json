@@ -743,6 +743,14 @@
       "status": "implemented"
     },
     {
+      "number": "16",
+      "file": "plugins-renderers-and-exporters.html",
+      "title": "Plugins: Renderers and exporters",
+      "description": "Turn semantic RiX values into portable target formats.",
+      "pluginGroup": true,
+      "status": "implemented"
+    },
+    {
       "number": "14a",
       "parent": "14",
       "file": "plugin-float.html",
@@ -775,6 +783,87 @@
       "file": "plugin-plot.html",
       "title": "Plotting a polynomial",
       "description": "Build a portable graphics scene with the plot plugin.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "16a",
+      "parent": "16",
+      "file": "plugin-canvas.html",
+      "title": "Build a Canvas repaint plan",
+      "description": "Lower a Graphics scene to versioned Canvas 2D commands.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "16b",
+      "parent": "16",
+      "file": "plugin-html.html",
+      "title": "Build a standalone HTML report",
+      "description": "Render portable headings and exact values as semantic HTML.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "16c",
+      "parent": "16",
+      "file": "plugin-latex.html",
+      "title": "Export a LaTeX report",
+      "description": "Combine exact math, a table, and a portable document structure in TeX.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "16d",
+      "parent": "16",
+      "file": "plugin-markdown.html",
+      "title": "Write a Markdown report",
+      "description": "Preserve document structure and a table in portable Markdown.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "16e",
+      "parent": "16",
+      "file": "plugin-pdf.html",
+      "title": "Prepare a PDF report",
+      "description": "Build the portable document consumed by the host PDF pipeline.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "16f",
+      "parent": "16",
+      "file": "plugin-png.html",
+      "title": "Prepare a PNG snapshot",
+      "description": "Build the portable Graphics value used by the host PNG rasterizer.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "16g",
+      "parent": "16",
+      "file": "plugin-quarto.html",
+      "title": "Author a Quarto source document",
+      "description": "Add front matter and a semantic callout to a QMD report.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "16h",
+      "parent": "16",
+      "file": "plugin-svg.html",
+      "title": "Export a portable SVG",
+      "description": "Render one core Graphics scene as accessible SVG source.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "16i",
+      "parent": "16",
+      "file": "plugin-tikz.html",
+      "title": "Export an editable TikZ diagram",
+      "description": "Turn core Graphics geometry into publication-ready TikZ source.",
       "pluginGroup": false,
       "status": "implemented"
     }

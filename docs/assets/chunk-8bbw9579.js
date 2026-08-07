@@ -359,6 +359,23 @@ BaseSystem.registerPrefix("u", BaseSystem.BASE36);
 BaseSystem.registerPrefix("m", BaseSystem.BASE60);
 BaseSystem.registerPrefix("y", BaseSystem.BASE64);
 
+// ../packages/core/src/bigint.js
+function toExactBigInt(value, label = "Value") {
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value)) {
+      throw new RangeError(`${label} must be a safe integer; use a string or bigint for exact values`);
+    }
+    return BigInt(value);
+  }
+  if (typeof value === "bigint") {
+    return value;
+  }
+  if (typeof value === "string" && /^[+-]?\d+$/.test(value.trim())) {
+    return BigInt(value.trim());
+  }
+  throw new TypeError(`${label} must be an integer number, string, or bigint`);
+}
+
 // ../packages/core/src/rational.js
 var bitLength = function(int) {
   if (int === 0n)
@@ -396,12 +413,18 @@ class Rational {
   static zero = new Rational(0, 1);
   static one = new Rational(1, 1);
   constructor(numerator, denominator = 1n) {
+    if (numerator instanceof Rational) {
+      this.#numerator = numerator.numerator;
+      this.#denominator = numerator.denominator;
+      this.#isNegative = this.#numerator < 0n;
+      return;
+    }
     if (numerator && typeof numerator === "object" && numerator.constructor.name === "Integer") {
       this.#numerator = numerator.value;
       if (denominator && typeof denominator === "object" && denominator.constructor.name === "Integer") {
         this.#denominator = denominator.value;
       } else if (denominator !== undefined) {
-        this.#denominator = BigInt(denominator);
+        this.#denominator = toExactBigInt(denominator, "Rational denominator");
       } else {
         this.#denominator = 1n;
       }
@@ -451,7 +474,7 @@ class Rational {
           const parts = numerator.trim().split("/");
           if (parts.length === 1) {
             this.#numerator = BigInt(parts[0]);
-            this.#denominator = BigInt(denominator);
+            this.#denominator = toExactBigInt(denominator, "Rational denominator");
           } else if (parts.length === 2) {
             this.#numerator = BigInt(parts[0]);
             this.#denominator = BigInt(parts[1]);
@@ -461,8 +484,8 @@ class Rational {
         }
       }
     } else {
-      this.#numerator = BigInt(numerator);
-      this.#denominator = BigInt(denominator);
+      this.#numerator = toExactBigInt(numerator, "Rational numerator");
+      this.#denominator = toExactBigInt(denominator, "Rational denominator");
     }
     if (this.#denominator === 0n) {
       throw new Error("Denominator cannot be zero");
@@ -735,7 +758,6 @@ class Rational {
     if (!(baseSystem instanceof BaseSystem)) {
       throw new Error("Argument must be a BaseSystem");
     }
-    let num = this.#numerator < 0n ? -this.#numerator : this.#numerator;
     let den = this.#denominator;
     const baseBigInt = BigInt(baseSystem.base);
     if (den === 1n)
@@ -1276,6 +1298,7 @@ class Rational {
     const result = convergents[convergents.length - 1];
     result.cf = cf.slice(1);
     result._convergents = convergents;
+    result._convergentsComplete = true;
     result.wholePart = cf[0];
     return result;
   }
@@ -1370,7 +1393,7 @@ class Rational {
     return Rational.fromContinuedFraction(cfArray);
   }
   convergents(maxCount = Rational.DEFAULT_CF_LIMIT) {
-    if (!this._convergents) {
+    if (!this._convergents || !this._convergentsComplete && this._convergents.length < maxCount) {
       const cf = this.toContinuedFraction(maxCount);
       if (cf.length === 1) {
         this._convergents = [new Rational(cf[0], 1n)];
@@ -1392,6 +1415,8 @@ class Rational {
         }
         this._convergents = convergents;
       }
+      const last = this._convergents[this._convergents.length - 1];
+      this._convergentsComplete = last.equals(this);
     }
     if (maxCount && this._convergents && this._convergents.length > maxCount) {
       return this._convergents.slice(0, maxCount);
@@ -1507,6 +1532,44 @@ class Rational {
 }
 
 // ../packages/core/src/rational-interval.js
+function hasTerminatingDecimal(value) {
+  let denominator = value.denominator;
+  while (denominator % 2n === 0n)
+    denominator /= 2n;
+  while (denominator % 5n === 0n)
+    denominator /= 5n;
+  return denominator === 1n;
+}
+function exactTerminatingDecimal(value) {
+  if (!hasTerminatingDecimal(value))
+    return null;
+  const isNegative = value.numerator < 0n;
+  const numerator = isNegative ? -value.numerator : value.numerator;
+  let denominator = value.denominator;
+  let twos = 0;
+  let fives = 0;
+  while (denominator % 2n === 0n) {
+    denominator /= 2n;
+    twos += 1;
+  }
+  while (denominator % 5n === 0n) {
+    denominator /= 5n;
+    fives += 1;
+  }
+  const decimalPlaces = Math.max(twos, fives);
+  const scale = 10n ** BigInt(decimalPlaces);
+  const scaled = numerator * (scale / value.denominator);
+  const integerPart = scaled / scale;
+  const sign = isNegative ? "-" : "";
+  if (decimalPlaces === 0)
+    return sign + integerPart.toString();
+  const fractionalPart = (scaled % scale).toString().padStart(decimalPlaces, "0").replace(/0+$/, "");
+  return fractionalPart.length === 0 ? sign + integerPart.toString() : `${sign}${integerPart}.${fractionalPart}`;
+}
+function exactOffsetString(value) {
+  return exactTerminatingDecimal(value) ?? value.toString();
+}
+
 class RationalInterval {
   #start;
   #end;
@@ -1840,10 +1903,16 @@ class RationalInterval {
     return `${midpointStr}[${startSign}${offStartStr}:${endSign}${offEndStr}]`;
   }
   relativeDecimalInterval() {
+    if (this.#low.equals(this.#high)) {
+      return this.toRepeatingDecimal();
+    }
     const shortestDecimal = this.#findShortestPreciseDecimal();
     const offsetStart = this.#start.subtract(shortestDecimal);
     const offsetEnd = this.#end.subtract(shortestDecimal);
-    const decimalStr = shortestDecimal.toDecimal();
+    const decimalStr = exactTerminatingDecimal(shortestDecimal);
+    if (decimalStr === null) {
+      throw new Error("Shortest decimal search returned a non-terminating value");
+    }
     const decimalPlaces = decimalStr.includes(".") ? decimalStr.split(".")[1].length : 0;
     let scaledOffsetStart, scaledOffsetEnd;
     if (decimalPlaces === 0) {
@@ -1854,51 +1923,43 @@ class RationalInterval {
       scaledOffsetStart = offsetStart.multiply(scaleFactor);
       scaledOffsetEnd = offsetEnd.multiply(scaleFactor);
     }
-    const offsetStartStr = scaledOffsetStart.toDecimal();
-    const offsetEndStr = scaledOffsetEnd.toDecimal();
-    if (offsetStart.add(offsetEnd).abs().compareTo(new Rational(1, 1e6)) < 0) {
-      const avgOffset = scaledOffsetStart.abs().add(scaledOffsetEnd.abs()).divide(new Rational(2));
-      return `${decimalStr}[+-${avgOffset.toDecimal()}]`;
+    if (offsetStart.equals(offsetEnd.negate())) {
+      return `${decimalStr}[+-${exactOffsetString(scaledOffsetEnd.abs())}]`;
     } else {
-      const off1 = { v: scaledOffsetStart, s: offsetStartStr };
-      const off2 = { v: scaledOffsetEnd, s: offsetEndStr };
+      const off1 = { v: scaledOffsetStart };
+      const off2 = { v: scaledOffsetEnd };
       const sorted = [off1, off2].sort((a, b) => b.v.compareTo(a.v));
-      const s1 = "+" + sorted[0].v.abs().toDecimal();
-      const s2 = "-" + sorted[1].v.abs().toDecimal();
+      const s1 = "+" + exactOffsetString(sorted[0].v.abs());
+      const s2 = "-" + exactOffsetString(sorted[1].v.abs());
       return `${decimalStr}[${s1}:${s2}]`;
     }
   }
   #findShortestPreciseDecimal() {
     const midpoint = this.#low.add(this.#high).divide(new Rational(2));
-    for (let precision = 0;precision <= 20; precision++) {
-      const scale = new Rational(10).pow(precision);
+    let scale = Rational.one;
+    while (true) {
       const lowScaled = this.#low.multiply(scale);
       const highScaled = this.#high.multiply(scale);
       const minInt = this.#ceilRational(lowScaled);
       const maxInt = this.#floorRational(highScaled);
       if (minInt.compareTo(maxInt) <= 0) {
-        const candidates = [];
-        let current = minInt;
-        while (current.compareTo(maxInt) <= 0) {
-          candidates.push(current.divide(scale));
-          current = current.add(new Rational(1));
+        const scaledMidpoint = midpoint.multiply(scale);
+        let bestInt;
+        if (scaledMidpoint.lessThanOrEqual(minInt)) {
+          bestInt = minInt;
+        } else if (scaledMidpoint.greaterThanOrEqual(maxInt)) {
+          bestInt = maxInt;
+        } else {
+          const lower = this.#floorRational(scaledMidpoint);
+          const upper = this.#ceilRational(scaledMidpoint);
+          const lowerDistance = scaledMidpoint.subtract(lower).abs();
+          const upperDistance = upper.subtract(scaledMidpoint).abs();
+          bestInt = lowerDistance.lessThanOrEqual(upperDistance) ? lower : upper;
         }
-        if (candidates.length > 0) {
-          let best = candidates[0];
-          let bestDistance = best.subtract(midpoint).abs();
-          for (let i = 1;i < candidates.length; i++) {
-            const distance = candidates[i].subtract(midpoint).abs();
-            const comparison = distance.compareTo(bestDistance);
-            if (comparison < 0 || comparison === 0 && candidates[i].compareTo(best) < 0) {
-              best = candidates[i];
-              bestDistance = distance;
-            }
-          }
-          return best;
-        }
+        return bestInt.divide(scale);
       }
+      scale = scale.multiply(new Rational(10));
     }
-    return midpoint;
   }
   #ceilRational(rational) {
     if (rational.denominator === 1n) {
@@ -1929,41 +1990,30 @@ class RationalInterval {
     return this.#low.add(this.#high).divide(new Rational(2));
   }
   shortestDecimal(base = 10) {
-    const baseBigInt = BigInt(base);
+    const baseBigInt = toExactBigInt(base, "Base");
     if (baseBigInt <= 1n) {
       throw new Error("Base must be greater than 1");
     }
     if (this.#low.equals(this.#high)) {
       const value = this.#low;
-      let k2 = 0;
-      let denominator2 = 1n;
-      while (k2 <= 50) {
-        const numeratorCandidate = value.multiply(new Rational(denominator2));
-        if (numeratorCandidate.denominator === 1n) {
-          return new Rational(numeratorCandidate.numerator, denominator2);
-        }
-        k2++;
-        denominator2 *= baseBigInt;
+      let remainingDenominator = value.denominator;
+      while (remainingDenominator !== 1n) {
+        const commonFactor = this.#gcd(remainingDenominator, baseBigInt);
+        if (commonFactor === 1n)
+          return null;
+        remainingDenominator /= commonFactor;
       }
-      return null;
+      return new Rational(value.numerator, value.denominator);
     }
-    const intervalLength = this.#high.subtract(this.#low);
-    const lengthAsNumber = Number(intervalLength.numerator) / Number(intervalLength.denominator);
-    const baseAsNumber = Number(baseBigInt);
-    let maxK = Math.ceil(Math.log(1 / lengthAsNumber) / Math.log(baseAsNumber));
-    maxK = Math.max(0, maxK + 2);
-    let k = 0;
     let denominator = 1n;
-    while (k <= maxK) {
+    while (true) {
       const minNumerator = this.#ceilRational(this.#low.multiply(new Rational(denominator)));
       const maxNumerator = this.#floorRational(this.#high.multiply(new Rational(denominator)));
       if (minNumerator.lessThanOrEqual(maxNumerator)) {
         return new Rational(minNumerator.numerator, denominator);
       }
-      k++;
       denominator *= baseBigInt;
     }
-    throw new Error("Failed to find shortest decimal representation (exceeded theoretical bound)");
   }
   randomRational(maxDenominator = 1000) {
     const maxDenom = BigInt(maxDenominator);
@@ -2025,7 +2075,7 @@ class Fraction {
       const parts = numerator.trim().split("/");
       if (parts.length === 1) {
         this.#numerator = BigInt(parts[0]);
-        this.#denominator = BigInt(denominator);
+        this.#denominator = toExactBigInt(denominator, "Fraction denominator");
       } else if (parts.length === 2) {
         this.#numerator = BigInt(parts[0]);
         this.#denominator = BigInt(parts[1]);
@@ -2033,8 +2083,8 @@ class Fraction {
         throw new Error("Invalid fraction format. Use 'a/b' or 'a'");
       }
     } else {
-      this.#numerator = BigInt(numerator);
-      this.#denominator = BigInt(denominator);
+      this.#numerator = toExactBigInt(numerator, "Fraction numerator");
+      this.#denominator = toExactBigInt(denominator, "Fraction denominator");
     }
     if (this.#denominator === 0n) {
       if (this.#numerator === 0n) {
@@ -2432,14 +2482,16 @@ class Integer {
   static zero = new Integer(0);
   static one = new Integer(1);
   constructor(value) {
-    if (typeof value === "string") {
+    if (value instanceof Integer) {
+      this.#value = value.value;
+    } else if (typeof value === "string") {
       const trimmed = value.trim();
       if (!/^-?\d+$/.test(trimmed)) {
         throw new Error("Invalid integer format. Must be a whole number");
       }
       this.#value = BigInt(trimmed);
     } else {
-      this.#value = BigInt(value);
+      this.#value = toExactBigInt(value, "Integer value");
     }
   }
   get value() {
@@ -2867,7 +2919,7 @@ function parseUncertainty(input) {
   }
   const parts = body.split(/\s*:\s*/);
   if (parts.length > 2 || parts.length === 0 || parts.some((part) => part.length === 0)) {
-    throw new Error("Decimal interval brackets require one or two comma- or colon-separated values");
+    throw new Error("Decimal interval brackets require one or two colon-separated values");
   }
   const hasSignedPart = parts.some((part) => part.startsWith("+") || part.startsWith("-"));
   if (hasSignedPart) {
@@ -2895,15 +2947,9 @@ function parseUncertainty(input) {
         return parseDecimalValue(`${shape.sign}${shape.integer}.${suffix}`);
       }
       const cleanSuffix2 = cleanDigits(suffix);
-      if (!/^\d+$/.test(cleanSuffix2)) {
-        throw new Error(`Invalid decimal interval endpoint: ${suffix}`);
-      }
       return parseDecimalValue(`${shape.sign}${shape.integer}.${cleanSuffix2}`);
     }
     const cleanSuffix = cleanDigits(suffix);
-    if (!/^\d+$/.test(cleanSuffix)) {
-      throw new Error(`Invalid compact interval endpoint: ${suffix}`);
-    }
     const point = shape.hasPoint ? "." : "";
     return parseDecimalValue(`${shape.sign}${shape.integer}${point}${shape.fractional}${cleanSuffix}`);
   };
@@ -3239,6 +3285,8 @@ var symbols = [
   "/~=",
   "|>&&",
   "|>||",
+  "|>_",
+  "|>!",
   "|>>",
   "|:>",
   "|>:",
@@ -5472,7 +5520,7 @@ var runtimeDefaults = Object.freeze({
     implicitUnitConversion: false,
     reactiveUntrackedRead: true
   }),
-  scriptPermissionNames: Object.freeze(["IMPORTS", "NET", "FILES", "PLUGINS"]),
+  scriptPermissionNames: Object.freeze(["IMPORTS", "NET", "FILES", "PLUGINS", "BACKGROUND"]),
   defaultScriptCapabilityPolicy: Object.freeze({
     includeAllFunctions: true,
     permissions: Object.freeze(["IMPORTS"])
@@ -5487,7 +5535,8 @@ var runtimeDefaults = Object.freeze({
     Arith: Object.freeze(["ADD", "SUB", "MUL", "DIV", "INTDIV", "DIVMOD", "MOD", "POW", "FACTORIAL", "DOUBLEFACTORIAL"]),
     Logic: Object.freeze(["EQ", "NEQ", "LT", "GT", "LTE", "GTE", "AND", "OR", "NOT"]),
     Collections: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "MAP", "FILTER", "REDUCE", "TGEN", "Stream"]),
-    Async: Object.freeze(["Stream"]),
+    Async: Object.freeze(["Stream", "Retry"]),
+    Background: Object.freeze(["BACKGROUND"]),
     Maps: Object.freeze(["MAP", "KEYOF", "KEYS", "VALUES"]),
     Arrays: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "MAP", "FILTER", "REDUCE", "TGEN"]),
     Strings: Object.freeze(["UPPER", "SUBSTR", "PRINT"]),
@@ -5504,6 +5553,32 @@ var runtimeDefaults = Object.freeze({
   })
 });
 
+// ../rix/src/runtime/expected-error.js
+var PIPE_SKIP = Object.freeze({ type: "__pipe_skip__" });
+function isPipeSkip(value) {
+  return value === PIPE_SKIP || value?.type === "__pipe_skip__";
+}
+function materializePipeSkip(value) {
+  return isPipeSkip(value) ? null : value;
+}
+function expectedErrorArgs(value) {
+  if (!value || value.type !== "tuple" || !Array.isArray(value.values) || value.values.length === 0) {
+    return null;
+  }
+  const tag = value.values[0];
+  const spelling = tag?.type === "string" ? tag.value : typeof tag === "string" ? tag : null;
+  return spelling === "error" || spelling === ":error" ? value.values.slice(1) : null;
+}
+function expectedErrorKind(value) {
+  const args = expectedErrorArgs(value);
+  if (!args || args.length === 0)
+    return null;
+  const kind = args[0];
+  if (kind?.type === "string")
+    return kind.value.replace(/^:/, "");
+  return typeof kind === "string" ? kind.replace(/^:/, "") : String(kind);
+}
+
 // ../rix/src/runtime/constructor-capture.js
 var CONSTRUCTOR_CAPTURE_MODES = Object.freeze({
   alias: "alias",
@@ -5516,6 +5591,7 @@ function constructorDefaultCaptureMode(context) {
   return context?.getEnv?.("defaultConstructorCaptureMode") || runtimeDefaults.defaultConstructorCaptureMode;
 }
 function captureResolvedValue(value, mode) {
+  value = materializePipeSkip(value);
   if (mode === CONSTRUCTOR_CAPTURE_MODES.alias) {
     return value;
   }
@@ -8518,6 +8594,12 @@ function createReactiveGraph(options = {}) {
       read(name) {
         name = canonicalName(name);
         const node = requireNode(name);
+        if (!states.has(name)) {
+          requested.add(name);
+          stagedValues.set(name, node.value);
+          states.set(name, node.kind === "computed" ? "dirty" : "clean");
+          dependencies.set(name, new Set(node.dependencies));
+        }
         if (currentName && currentName !== name)
           dependencies.get(currentName).add(name);
         if (node.kind === "source")
@@ -8613,6 +8695,12 @@ function createReactiveGraph(options = {}) {
     type: "reactive_graph",
     id,
     epoch: 0,
+    get evaluating() {
+      return activeEpoch !== null;
+    },
+    get nodeCount() {
+      return nodes.size;
+    },
     _ext: graphMethods(),
     addSource(name, value) {
       name = normalizeName(name);
@@ -8653,6 +8741,13 @@ function createReactiveGraph(options = {}) {
         throw new Error(node.diagnostics[0] || `Reactive node ${name} has an error`);
       }
       return node.value;
+    },
+    has(name) {
+      try {
+        return nodes.has(canonicalName(name));
+      } catch {
+        return false;
+      }
     },
     peek(name) {
       name = normalizeName(name);
@@ -9405,7 +9500,8 @@ function createAsyncStream(options) {
       root: createRoot(options),
       stages: [],
       finite: options.finite === true,
-      label: options.label || "stream"
+      label: options.label || "stream",
+      callbackSource: options.callbackSource ?? null
     },
     _ext: options.ext ? new Map(options.ext) : new Map
   };
@@ -9420,7 +9516,8 @@ function derive(source, stage, options = {}) {
       root: source._stream.root,
       stages: [...source._stream.stages, stage],
       finite: options.finite ?? source._stream.finite,
-      label: options.label || `${source._stream.label}.${stage.kind}`
+      label: options.label || `${source._stream.label}.${stage.kind}`,
+      callbackSource: source._stream.callbackSource
     },
     _ext: new Map
   };
@@ -9430,6 +9527,9 @@ function mapAsyncStream(source, mapper) {
 }
 function filterAsyncStream(source, predicate) {
   return derive(source, { kind: "filter", callable: predicate });
+}
+function expectedErrorAsyncStream(source, handler) {
+  return derive(source, { kind: "expected_error", callable: handler });
 }
 function takeAsyncStream(source, countValue) {
   const count = positiveInteger(countValue, "Stream Take count", { allowZero: true });
@@ -9449,7 +9549,7 @@ function windowAsyncStream(source, sizeValue, stepValue = new Integer(1n)) {
   return derive(source, { kind: "window", size, step, buffer: [], sinceEmit: 0 });
 }
 function asyncStreamSupportsConcurrentItems(stream) {
-  return isAsyncStream(stream) && stream._stream.stages.every((stage) => stage.kind === "map" || stage.kind === "filter");
+  return isAsyncStream(stream) && stream._stream.stages.every((stage) => stage.kind === "map" || stage.kind === "filter" || stage.kind === "expected_error");
 }
 function asyncStreamCanCompleteWithoutPull(stream) {
   return isAsyncStream(stream) && stream._stream.stages.some((stage) => stage.kind === "take" && stage.seen >= stage.count);
@@ -9539,21 +9639,36 @@ async function pullRawAsyncStream(stream, signal = null) {
   return operation;
 }
 async function applyStage(stage, values, stream, execution) {
+  const callbackSource = stream._stream.callbackSource ?? stream;
   if (stage.kind === "map") {
     const mapped = [];
     for (const entry of values) {
-      mapped.push(await execution.invoke(stage.callable, [entry, new Integer(BigInt(execution.sourceIndex)), stream]));
+      mapped.push(await execution.invoke(stage.callable, [entry, new Integer(BigInt(execution.sourceIndex)), callbackSource]));
     }
     return { values: mapped, stop: false };
   }
   if (stage.kind === "filter") {
     const kept = [];
     for (const entry of values) {
-      const result = await execution.invoke(stage.callable, [entry, new Integer(BigInt(execution.sourceIndex)), stream]);
+      const result = await execution.invoke(stage.callable, [entry, new Integer(BigInt(execution.sourceIndex)), callbackSource]);
       if (result !== null && result !== undefined)
         kept.push(entry);
     }
     return { values: kept, stop: false };
+  }
+  if (stage.kind === "expected_error") {
+    const recovered = [];
+    for (const entry of values) {
+      const args = expectedErrorArgs(entry);
+      if (args === null) {
+        recovered.push(entry);
+        continue;
+      }
+      const result = await execution.invoke(stage.callable, args);
+      if (result !== null && result !== undefined)
+        recovered.push(result);
+    }
+    return { values: recovered, stop: false };
   }
   if (stage.kind === "drop") {
     const kept = [];
@@ -9649,11 +9764,12 @@ async function consumeAsyncStreamSequential(stream, terminal, execution) {
       throw new Error("Count requires a finite or explicitly bounded async stream");
     }
     if (terminal.bound === 0 || asyncStreamCanCompleteWithoutPull(stream)) {
+      reason = { kind: "early terminal" };
       if (terminal.kind === "collect")
         return rixSequence([]);
       if (terminal.kind === "count")
         return new Integer(0n);
-      if (terminal.kind === "forEach" || terminal.kind === "first" || terminal.kind === "find")
+      if (terminal.kind === "forEach" || terminal.kind === "first" || terminal.kind === "find" || terminal.kind === "all")
         return null;
       return result;
     }
@@ -9667,17 +9783,28 @@ async function consumeAsyncStreamSequential(stream, terminal, execution) {
         if (terminal.kind === "collect")
           result.push(value);
         else if (terminal.kind === "forEach")
-          await execution.invoke(terminal.callable, [value, new Integer(BigInt(count)), stream]);
+          await execution.invoke(terminal.callable, [value, new Integer(BigInt(count)), stream._stream.callbackSource ?? stream]);
         else if (terminal.kind === "reduce")
-          result = await execution.invoke(terminal.callable, [result, value, new Integer(BigInt(count)), stream]);
-        else if (terminal.kind === "first")
+          result = await execution.invoke(terminal.callable, [result, value, new Integer(BigInt(count)), stream._stream.callbackSource ?? stream]);
+        else if (terminal.kind === "first") {
+          reason = { kind: "early terminal" };
           return value;
-        else if (terminal.kind === "find") {
-          const match = await execution.invoke(terminal.callable, [value, new Integer(BigInt(count)), stream]);
-          if (match !== null && match !== undefined)
+        } else if (terminal.kind === "find") {
+          const match = await execution.invoke(terminal.callable, [value, new Integer(BigInt(count)), stream._stream.callbackSource ?? stream]);
+          if (match !== null && match !== undefined) {
+            reason = { kind: "early terminal" };
             return value;
+          }
+        } else if (terminal.kind === "all") {
+          const match = await execution.invoke(terminal.callable, [value, new Integer(BigInt(count)), stream._stream.callbackSource ?? stream]);
+          if (match === null || match === undefined) {
+            reason = { kind: "early terminal" };
+            return null;
+          }
+          result = value;
         }
         if (terminal.bound !== null && count >= terminal.bound) {
+          reason = { kind: "early terminal" };
           if (terminal.kind === "collect")
             return rixSequence(result);
           if (terminal.kind === "count")
@@ -9685,8 +9812,10 @@ async function consumeAsyncStreamSequential(stream, terminal, execution) {
           return result;
         }
       }
-      if (processed.stop)
+      if (processed.stop) {
+        reason = { kind: "early terminal" };
         break;
+      }
     }
     const flushed = await flushAsyncStreamStages(stream, execution);
     for (const value of flushed) {
@@ -9699,6 +9828,16 @@ async function consumeAsyncStreamSequential(stream, terminal, execution) {
         result = await execution.invoke(terminal.callable, [result, value, new Integer(BigInt(count)), stream]);
       else if (terminal.kind === "first")
         return value;
+      else if (terminal.kind === "find") {
+        const match = await execution.invoke(terminal.callable, [value, new Integer(BigInt(count)), stream]);
+        if (match !== null && match !== undefined)
+          return value;
+      } else if (terminal.kind === "all") {
+        const match = await execution.invoke(terminal.callable, [value, new Integer(BigInt(count)), stream]);
+        if (match === null || match === undefined)
+          return null;
+        result = value;
+      }
     }
     if (terminal.kind === "collect")
       return rixSequence(result);
@@ -9708,6 +9847,8 @@ async function consumeAsyncStreamSequential(stream, terminal, execution) {
       return null;
     if (terminal.kind === "first" || terminal.kind === "find")
       return null;
+    if (terminal.kind === "all")
+      return count === 0 ? null : result;
     return result;
   } catch (error) {
     reason = error;
@@ -10075,6 +10216,11 @@ function callWithConcreteArgs(fn, callArgs, context, evaluate) {
     return invokeMultifunction(fn, callArgs, context, evaluate, { callName: fn.__name });
   }
   if (fn.type === "sysref") {
+    const systemContext = context.getEnv?.("__system_context__", null);
+    const capability = systemContext?.get?.(fn.name);
+    if (capability?.kind === "function") {
+      return capability.impl(callArgs, context, evaluate);
+    }
     return evaluate({ fn: fn.name, args: callArgs });
   }
   if (typeof fn === "function") {
@@ -10094,7 +10240,7 @@ function invokeTraversalCallback(func, callArgs, context, evaluate) {
     return callWithConcreteArgs(func, [callArgs[0]], context, evaluate);
   }
   if (func && func.type === "sysref") {
-    return evaluate({ fn: func.name, args: callArgs });
+    return callWithConcreteArgs(func, callArgs, context, evaluate);
   }
   if (func && (func.type === "function" || func.type === "lambda")) {
     return invokeUserCallable(func, callArgs, context, evaluate, {
@@ -10292,6 +10438,8 @@ var functionFunctions = {
     lazy: true,
     impl(args, context, evaluate) {
       const value = evaluate(args[0]);
+      if (isPipeSkip(value))
+        return PIPE_SKIP;
       const funcNode = args[1];
       const callArgs = value && value.type === "tuple" ? value.values : [value];
       if (funcNode.fn === "RETRIEVE") {
@@ -10786,10 +10934,126 @@ var functionFunctions = {
     },
     doc: "Chunk a collection into subarrays by size or boundary predicate"
   },
+  PFOREACH: {
+    lazy: true,
+    impl(args, context, evaluate) {
+      const collection = evaluate(args[0]);
+      if (isPipeSkip(collection))
+        return null;
+      if (collection === null || collection === undefined)
+        return null;
+      const func = evaluate(args[1]);
+      if (isAsyncStream(collection)) {
+        throw new Error("|>_ on an async stream requires promise-aware RiX evaluation");
+      }
+      if (isLazySequence(collection)) {
+        for (let index = 1;; index++) {
+          const item = ensureLazyIndex(collection, index);
+          if (collection._lazy.done && collection._lazy.cache.length < index)
+            break;
+          invokeTraversalCallback(func, [item, new Integer(BigInt(index)), collection], context, evaluate);
+        }
+        return null;
+      }
+      if (isTensor(collection)) {
+        forEachTensorCell(collection, (item, tuple) => {
+          invokeTraversalCallback(func, [item, tensorIndexTuple(tuple), collection], context, evaluate);
+        });
+        return null;
+      }
+      if (collection?.type === "map") {
+        if (!(collection.entries instanceof Map))
+          throw new Error("PFOREACH: invalid map");
+        for (const [key, value] of collection.entries) {
+          invokeTraversalCallback(func, [value, { type: "string", value: key }, collection], context, evaluate);
+        }
+        return null;
+      }
+      const isStringObject = collection?.type === "string";
+      const isString = typeof collection === "string" || isStringObject;
+      const items = isString ? Array.from(isStringObject ? collection.value : collection).map((value) => isStringObject ? { type: "string", value } : value) : Array.isArray(collection?.values) ? collection.values : null;
+      if (!items)
+        throw new Error("PFOREACH requires a collection, lazy source, or async stream");
+      for (let index = 0;index < items.length; index++) {
+        invokeTraversalCallback(func, [items[index], new Integer(BigInt(index + 1)), collection], context, evaluate);
+      }
+      return null;
+    },
+    doc: "Drain a source through a callback, ignore callback results, and return null"
+  },
+  PEXPECT: {
+    lazy: true,
+    impl(args, context, evaluate) {
+      const source = evaluate(args[0]);
+      if (isPipeSkip(source))
+        return PIPE_SKIP;
+      let handler;
+      const recover = (value) => {
+        const errorArgs = expectedErrorArgs(value);
+        if (errorArgs === null)
+          return value;
+        handler ??= evaluate(args[1]);
+        const result = callWithConcreteArgs(handler, errorArgs, context, evaluate);
+        return result === null || result === undefined ? PIPE_SKIP : result;
+      };
+      if (source?.type === "tuple" || expectedErrorArgs(source) !== null) {
+        return recover(source);
+      }
+      if (isAsyncStream(source)) {
+        handler ??= evaluate(args[1]);
+        return expectedErrorAsyncStream(source, handler);
+      }
+      if (isLazySequence(source)) {
+        const recovered = mapLazySequence(source, recover);
+        return filterLazySequence(recovered, (value) => !isPipeSkip(value));
+      }
+      if (isTensor(source)) {
+        const records = [];
+        let skipped = false;
+        forEachTensorCell(source, (value, tuple) => {
+          const result = recover(value);
+          if (isPipeSkip(result))
+            skipped = true;
+          else
+            records.push({ value: result, locator: tensorIndexTuple(tuple) });
+        });
+        if (!skipped)
+          return createTensor(source.shape, records.map((record) => record.value));
+        return {
+          type: "sequence",
+          values: records.map((record) => ({ type: "tuple", values: [record.value, record.locator] }))
+        };
+      }
+      if (source?.type === "map") {
+        if (!(source.entries instanceof Map))
+          throw new Error("PEXPECT: invalid map");
+        const entries = new Map;
+        for (const [key, value] of source.entries) {
+          const result = recover(value);
+          if (!isPipeSkip(result))
+            entries.set(key, result);
+        }
+        return { type: "map", entries };
+      }
+      if (source && Array.isArray(source.values)) {
+        const values = [];
+        for (const value of source.values) {
+          const result = recover(value);
+          if (!isPipeSkip(result))
+            values.push(result);
+        }
+        return { type: source.type || "sequence", values };
+      }
+      return recover(source);
+    },
+    doc: "Recover expected {: :error, ... } values or skip when the handler returns null"
+  },
   PMAP: {
     lazy: true,
     impl(args, context, evaluate) {
       const collection = evaluate(args[0]);
+      if (isPipeSkip(collection))
+        return PIPE_SKIP;
       const funcNode = args[1];
       if (collection === null || collection === undefined)
         return null;
@@ -10859,6 +11123,8 @@ var functionFunctions = {
     lazy: true,
     impl(args, context, evaluate) {
       const collection = evaluate(args[0]);
+      if (isPipeSkip(collection))
+        return PIPE_SKIP;
       const funcNode = args[1];
       if (collection === null || collection === undefined)
         return null;
@@ -10920,6 +11186,8 @@ var functionFunctions = {
     lazy: true,
     impl(args, context, evaluate) {
       let collection = evaluate(args[0]);
+      if (isPipeSkip(collection))
+        return PIPE_SKIP;
       const funcNode = args[1];
       const initProvided = args.length > 2;
       const explicitInit = initProvided ? evaluate(args[2]) : null;
@@ -11095,6 +11363,8 @@ var functionFunctions = {
     lazy: true,
     impl(args, context, evaluate) {
       const collection = evaluate(args[0]);
+      if (isPipeSkip(collection))
+        return PIPE_SKIP;
       const funcNode = args[1];
       if (collection === null || collection === undefined)
         return null;
@@ -11178,6 +11448,8 @@ var functionFunctions = {
     lazy: true,
     impl(args, context, evaluate) {
       const collection = evaluate(args[0]);
+      if (isPipeSkip(collection))
+        return PIPE_SKIP;
       const funcNode = args[1];
       if (collection === null || collection === undefined)
         return null;
@@ -16253,6 +16525,33 @@ function requireFormula(formula, index) {
   return formula;
 }
 function normalizeFormulaGrid(value) {
+  if (value?.type === "sparse_formula_grid") {
+    if (!Array.isArray(value.shape) || value.shape.length === 0) {
+      throw new Error("Sparse FormulaSheet requires a non-empty shape");
+    }
+    const shape = value.shape.map((length, axis) => {
+      if (!Number.isSafeInteger(length) || length < 1) {
+        throw new Error(`Sparse FormulaSheet axis ${axis + 1} must have a positive safe length`);
+      }
+      return length;
+    });
+    const entries3 = [...value.entries ?? []].map(({ index, formula }) => ({
+      index: Object.freeze(normalizeIndex2(index, shape)),
+      formula: requireFormula(formula, index)
+    }));
+    const keys = new Set;
+    for (const { index } of entries3) {
+      const key = slotKey(index);
+      if (keys.has(key))
+        throw new Error(`Sparse FormulaSheet repeats grid[${key}]`);
+      keys.add(key);
+    }
+    return {
+      shape,
+      entries: entries3,
+      defaultFormula: requireFormula(value.defaultFormula, Array(shape.length).fill(1))
+    };
+  }
   if (isTensor(value)) {
     const shape = [...value.shape];
     if (shape.length === 0 || shape.some((length) => length === 0)) {
@@ -16265,7 +16564,7 @@ function normalizeFormulaGrid(value) {
         formula: requireFormula(formula, index)
       });
     });
-    return { shape, entries: entries3 };
+    return { shape, entries: entries3, defaultFormula: null };
   }
   const rows = valuesOf(value, "FormulaSheet formulas");
   if (rows.length === 0)
@@ -16284,7 +16583,7 @@ function normalizeFormulaGrid(value) {
       entries2.push({ index, formula: requireFormula(formula, index) });
     }
   }
-  return { shape: [matrix.length, columns], entries: entries2 };
+  return { shape: [matrix.length, columns], entries: entries2, defaultFormula: null };
 }
 function nodeNameFor(index) {
   return `slot_${index.join("_")}`;
@@ -16300,6 +16599,15 @@ function slotKey(index) {
 }
 function slotIdFor(sheetId, index) {
   return `${sheetId}:slot:${index.join(":")}`;
+}
+function visitLogicalIndices(shape, visitor, axis = 0, index = []) {
+  if (axis === shape.length) {
+    visitor(Object.freeze([...index]));
+    return;
+  }
+  for (let coordinate = 1;coordinate <= shape[axis]; coordinate += 1) {
+    visitLogicalIndices(shape, visitor, axis + 1, [...index, coordinate]);
+  }
 }
 function normalizeIndex2(index, shape) {
   const values = Array.isArray(index) ? index : index?.type === "tuple" || index?.type === "sequence" ? index.values : [index];
@@ -16382,6 +16690,12 @@ function createFormulaSheet(formulasValue, options = {}) {
   const id = options.id === null || options.id === undefined ? `formula-sheet-${nextFormulaSheetId++}` : formulaSheetId(options.id);
   const defaultAssignmentMode = assignmentMode(options.assignmentMode ?? ":=");
   const providedSlotMetadata = options.slotMetadata instanceof Map ? options.slotMetadata : new Map;
+  const defaultSlotMetadata = options.defaultSlotMetadata ?? {};
+  const defaultSlotDefinition = Object.freeze({
+    source: defaultSlotMetadata.source ?? (formulas.defaultFormula ? options.formulaSource?.(formulas.defaultFormula) : null) ?? "_",
+    assignmentMode: assignmentMode(defaultSlotMetadata.assignmentMode ?? defaultAssignmentMode),
+    view: Object.freeze({ ...defaultSlotMetadata.view ?? {} })
+  });
   const slotMetadata = new Map(formulas.entries.map(({ index, formula }) => {
     const provided = providedSlotMetadata.get(slotKey(index)) ?? {};
     const source = provided.source ?? options.formulaSource?.(formula) ?? null;
@@ -16399,6 +16713,7 @@ function createFormulaSheet(formulasValue, options = {}) {
       diagnosticSource: null
     }];
   }));
+  const materializedSlotKeys = new Set;
   const channel = new Set;
   let currentDocumentView = Object.freeze({ ...options.documentView ?? {} });
   const graph = createReactiveGraph({
@@ -16426,12 +16741,14 @@ function createFormulaSheet(formulasValue, options = {}) {
       return currentDocumentView;
     },
     graph,
+    defaultSlotDefinition,
     get epoch() {
       return graph.epoch;
     },
     _ext: formulaSheetMethods(),
     get(index) {
       const normalized = normalizeIndex2(index, shape);
+      ensureSlot(normalized);
       return graph.get(nodeNameFor(normalized));
     },
     index(selector2) {
@@ -16460,26 +16777,30 @@ function createFormulaSheet(formulasValue, options = {}) {
       return sheet.slot(resolveLabeledCoordinate(shape, sheet.documentView, selector2, "FormulaSheet.SlotAt"));
     },
     track() {
-      for (const { index } of formulas.entries) {
-        graph.get(nodeNameFor(index));
-      }
+      visitLogicalIndices(shape, (index) => sheet.get(index));
       return sheet;
     },
     getFormula(index) {
-      return graph.node(nodeNameFor(normalizeIndex2(index, shape))).formula;
+      const normalized = normalizeIndex2(index, shape);
+      ensureSlot(normalized);
+      return graph.node(nodeNameFor(normalized)).formula;
     },
     getFormulaSource(index) {
       const normalized = normalizeIndex2(index, shape);
+      ensureSlot(normalized);
       return slotMetadata.get(slotKey(normalized)).source;
     },
     reactiveNode(index) {
-      return graph.node(nodeNameFor(normalizeIndex2(index, shape)));
+      const normalized = normalizeIndex2(index, shape);
+      ensureSlot(normalized);
+      return graph.node(nodeNameFor(normalized));
     },
     setFormula(index, formula, metadata = null) {
       if (!formula || formula.fn !== "DEFER") {
         throw new Error("FormulaSheet.SetFormula requires deferred syntax @{ ... }");
       }
       const normalized = normalizeIndex2(index, shape);
+      ensureSlot(normalized);
       const record = slotMetadata.get(slotKey(normalized));
       const previousSource = record.source;
       const previousMode = record.assignmentMode;
@@ -16596,6 +16917,7 @@ function createFormulaSheet(formulasValue, options = {}) {
     },
     slot(index) {
       const normalized = normalizeIndex2(index, shape);
+      ensureSlot(normalized);
       return publicSlot(graph.node(nodeNameFor(normalized)), normalized, slotMetadata.get(slotKey(normalized)));
     },
     recalculate(cause = null) {
@@ -16608,44 +16930,93 @@ function createFormulaSheet(formulasValue, options = {}) {
       channel.add(listener);
       return () => channel.delete(listener);
     },
+    get materializedSlotCount() {
+      return materializedSlotKeys.size;
+    },
+    materializedSlots() {
+      return Object.freeze([...materializedSlotKeys].map((key) => {
+        const index = Object.freeze(key.split(",").map(Number));
+        return sheet.slot(index);
+      }));
+    },
     toString() {
       return `[FormulaSheet ${shape.join("×")} · epoch ${sheet.epoch}]`;
     }
   };
-  for (const { index, formula } of formulas.entries) {
-    const metadata = slotMetadata.get(slotKey(index));
-    graph.addComputed(nodeNameFor(index), formula, {
-      source: metadata.source,
-      initialize: false,
-      evaluator(slotFormula) {
-        const near = Object.freeze({
-          type: "formula_near",
-          rank: shape.length,
-          index,
-          get(offsets) {
-            return sheet.near(index, offsets);
+  function slotMetadataFor(index) {
+    const key = slotKey(index);
+    let metadata = slotMetadata.get(key);
+    if (metadata)
+      return metadata;
+    const idForSlot = slotIdFor(id, index);
+    metadata = {
+      id: idForSlot,
+      source: defaultSlotDefinition.source,
+      assignmentMode: defaultSlotDefinition.assignmentMode,
+      view: defaultSlotDefinition.view,
+      editDiagnostics: Object.freeze([]),
+      diagnosticKind: null,
+      diagnosticSource: null
+    };
+    slotMetadata.set(key, metadata);
+    return metadata;
+  }
+  function addSlot(index, formula, initialize) {
+    const key = slotKey(index);
+    if (materializedSlotKeys.has(key))
+      return graph.node(nodeNameFor(index));
+    const metadata = slotMetadataFor(index);
+    materializedSlotKeys.add(key);
+    try {
+      graph.addComputed(nodeNameFor(index), formula, {
+        source: metadata.source,
+        initialize,
+        evaluator(slotFormula) {
+          const near = Object.freeze({
+            type: "formula_near",
+            rank: shape.length,
+            index,
+            get(offsets) {
+              return sheet.near(index, offsets);
+            }
+          });
+          const contextualBindings = [
+            ...graph.bindings(),
+            ["grid", sheet],
+            ["near", near],
+            ["index", {
+              type: "tuple",
+              values: index.map((item) => new Integer(BigInt(item)))
+            }]
+          ];
+          if (index[0] !== undefined) {
+            contextualBindings.push(["row", new Integer(BigInt(index[0]))]);
           }
-        });
-        const contextualBindings = [
-          ...graph.bindings(),
-          ["grid", sheet],
-          ["near", near],
-          ["index", {
-            type: "tuple",
-            values: index.map((item) => new Integer(BigInt(item)))
-          }]
-        ];
-        if (index[0] !== undefined) {
-          contextualBindings.push(["row", new Integer(BigInt(index[0]))]);
+          if (index[1] !== undefined) {
+            contextualBindings.push(["col", new Integer(BigInt(index[1]))]);
+          }
+          return options.runFormula(slotFormula, Object.fromEntries(contextualBindings), {
+            reactiveGraph: graph
+          });
         }
-        if (index[1] !== undefined) {
-          contextualBindings.push(["col", new Integer(BigInt(index[1]))]);
-        }
-        return options.runFormula(slotFormula, Object.fromEntries(contextualBindings), {
-          reactiveGraph: graph
-        });
-      }
-    });
+      });
+    } catch (error) {
+      materializedSlotKeys.delete(key);
+      throw error;
+    }
+    return graph.node(nodeNameFor(index));
+  }
+  function ensureSlot(index) {
+    const key = slotKey(index);
+    if (materializedSlotKeys.has(key))
+      return graph.node(nodeNameFor(index));
+    if (!formulas.defaultFormula) {
+      throw new Error(`FormulaSheet slot ${addressFor(index)} is not defined`);
+    }
+    return addSlot(index, formulas.defaultFormula, !graph.evaluating);
+  }
+  for (const { index, formula } of formulas.entries) {
+    addSlot(index, formula, false);
   }
   graph.subscribe((event) => {
     const metadata = event.cause?.metadata;
@@ -19950,6 +20321,12 @@ var LOWERERS = {
   Pipe(node) {
     return ir2("PIPE", lowerNode(node.left), lowerNode(node.right));
   },
+  ForEachPipe(node) {
+    return ir2("PFOREACH", lowerNode(node.left), lowerNode(node.right));
+  },
+  ExpectedErrorPipe(node) {
+    return ir2("PEXPECT", lowerNode(node.left), lowerNode(node.right));
+  },
   ExplicitPipe(node) {
     return ir2("PIPE_EXPLICIT", lowerNode(node.left), lowerNode(node.right));
   },
@@ -20667,6 +21044,7 @@ class SystemContext {
     this._frozen = false;
     this._hostContext = options.hostContext || this;
     this._pluginCatalog = options.pluginCatalog || null;
+    this._rendererRegistry = options.rendererRegistry || null;
     for (const [name, entry] of capabilities) {
       const normalised = normalizeCapabilityName(name);
       const inferredKind = entry?.kind || "function";
@@ -20911,6 +21289,31 @@ class SystemContext {
     });
     return this;
   }
+  attachRendererRegistry(registry, { collection, renderValue } = {}) {
+    this._checkMutable();
+    if (!registry?.register || !registry?.render || !registry?.list) {
+      throw new Error("Renderer registry must provide register(), render(), and list()");
+    }
+    if (!collection || typeof renderValue !== "function") {
+      throw new Error("Renderer attachment requires its core namespace and render adapter");
+    }
+    this._rendererRegistry = registry;
+    this.registerValue("Renderer", collection, {
+      doc: "Discover installed output renderers and their target contracts",
+      groups: ["Renderers"]
+    });
+    this.register("Render", {
+      pure: false,
+      doc: "Render a portable value through an installed target plugin",
+      groups: ["Renderers"],
+      impl(args, evaluationContext, evaluate) {
+        if (args.length < 2 || args.length > 3)
+          throw new Error(".Render expects value, target, and optional options");
+        return renderValue(args[0], args[1], args[2] ?? null, { evaluationContext, evaluate });
+      }
+    });
+    return this;
+  }
   _rebindManagementNamespaces() {
     for (const [name, namespace] of [["Core", "core"], ["Host", "host"]]) {
       const normalised = normalizeCapabilityName(name);
@@ -20939,7 +21342,12 @@ class SystemContext {
       members.filter((name) => available.has(name))
     ]));
     const hostContext = this._hostContext === this ? undefined : this._hostContext;
-    return new SystemContext(capabilities, frozen, { groups, hostContext, pluginCatalog: this._pluginCatalog })._rebindManagementNamespaces();
+    return new SystemContext(capabilities, frozen, {
+      groups,
+      hostContext,
+      pluginCatalog: this._pluginCatalog,
+      rendererRegistry: this._rendererRegistry
+    })._rebindManagementNamespaces();
   }
   copy() {
     return this._derivedContext(new Map(this._capabilities), false);
@@ -21216,7 +21624,7 @@ function validateMetadata(metadata, sourcePath, kind) {
   if (metadata.mount !== undefined && (typeof metadata.mount !== "string" || !/^[a-z][A-Za-z0-9_]*$/.test(metadata.mount))) {
     throw new Error(`${sourcePath}: mount must be a camelCase host capability name`);
   }
-  for (const key of ["exports", "groups", "permissions", "operator-files"]) {
+  for (const key of ["exports", "groups", "permissions", "operator-files", "requires", "optional", "provides", "schemas", "targets"]) {
     if (metadata[key] !== undefined && !Array.isArray(metadata[key])) {
       throw new Error(`${sourcePath}: ${key} must be an inline YAML array or a YAML list`);
     }
@@ -21230,6 +21638,13 @@ function validateMetadata(metadata, sourcePath, kind) {
     exports: metadata.exports || [],
     groups: metadata.groups || [],
     permissions: metadata.permissions || [],
+    requires: metadata.requires || [],
+    optional: metadata.optional || [],
+    provides: metadata.provides || [],
+    schemas: metadata.schemas || [],
+    targets: metadata.targets || [],
+    snapshot: metadata.snapshot === true,
+    deterministic: metadata.deterministic === true,
     operatorFiles: metadata["operator-files"] || metadata.operatorFiles || [],
     operatorDefinitions: metadata.operatorDefinitions || [],
     defaultEnabled: metadata.defaultEnabled === true,
@@ -21368,6 +21783,11 @@ class PluginCatalog {
         ["exports", { type: "sequence", values: metadata.exports.map(rixString3) }],
         ["groups", { type: "sequence", values: metadata.groups.map(rixString3) }],
         ["permissions", { type: "sequence", values: metadata.permissions.map(rixString3) }],
+        ["requires", { type: "sequence", values: metadata.requires.map(rixString3) }],
+        ["provides", { type: "sequence", values: metadata.provides.map(rixString3) }],
+        ["targets", { type: "sequence", values: metadata.targets.map(rixString3) }],
+        ["snapshot", metadata.snapshot ? { type: "integer", value: 1n } : null],
+        ["deterministic", metadata.deterministic ? { type: "integer", value: 1n } : null],
         ["operators", { type: "sequence", values: metadata.operatorDefinitions.map((definition) => rixString3(definition.spelling)) }],
         ["loaded", loaded ? { type: "integer", value: 1n } : null]
       ])
@@ -21389,7 +21809,8 @@ class PluginCatalog {
       options,
       context: runtime.context,
       registry: runtime.registry,
-      systemContext: runtime.systemContext
+      systemContext: runtime.systemContext,
+      rendererRegistry: runtime.rendererRegistry || runtime.systemContext?._rendererRegistry || null
     };
     if (metadata.kind === "rix") {
       if (typeof runtime.loadRix !== "function")
@@ -21473,6 +21894,82 @@ function createSystemLookup(systemContext, identifierLookup = () => ({ type: "id
   lookup.resolveSystemRoot = (name) => manifest.resolveRoot(name);
   lookup.resolveSystemMember = (parent, name) => manifest.resolveMember(parent, name);
   return lookup;
+}
+
+// ../rix/src/runtime/random.js
+function seedNumber(value) {
+  if (value instanceof Integer)
+    return Number(value.value & 0xffffffffn) >>> 0;
+  if (value instanceof Rational && value.denominator === 1n)
+    return Number(value.numerator & 0xffffffffn) >>> 0;
+  if (typeof value === "bigint")
+    return Number(value & 0xffffffffn) >>> 0;
+  const number = Number(value);
+  if (!Number.isFinite(number))
+    throw new Error("Random seed must be a finite integer");
+  return Math.trunc(number) >>> 0;
+}
+function seedRuntimeRandom(context, value) {
+  const seed = seedNumber(value);
+  context.setEnv("randomState", { value: seed, seed });
+  context.setEnv("randomForkCounter", { value: 0 });
+  context.setEnv("randomFunction", null);
+  return new Integer(BigInt(seed));
+}
+function mix32(value) {
+  let mixed = value >>> 0;
+  mixed ^= mixed >>> 16;
+  mixed = Math.imul(mixed, 2146121005);
+  mixed ^= mixed >>> 15;
+  mixed = Math.imul(mixed, 2221713035);
+  mixed ^= mixed >>> 16;
+  return mixed >>> 0;
+}
+function forkRuntimeRandom(parent, child) {
+  const state = parent?.getEnv?.("randomState", null);
+  if (!state)
+    return;
+  let counter = parent.getEnv("randomForkCounter", null);
+  if (!counter) {
+    counter = { value: 0 };
+    parent.setEnv("randomForkCounter", counter);
+  }
+  const ordinal = ++counter.value;
+  const base = state.seed ?? state.value;
+  const seed = mix32((base ^ Math.imul(ordinal, 2654435769)) >>> 0);
+  child.setEnv("randomState", { value: seed, seed });
+  child.setEnv("randomForkCounter", { value: 0 });
+}
+function runtimeRandom(context) {
+  const injected = context?.getEnv?.("randomFunction", null);
+  if (typeof injected === "function")
+    return injected();
+  const state = context?.getEnv?.("randomState", null);
+  if (!state)
+    return Math.random();
+  let t = state.value = state.value + 1831565813 >>> 0;
+  t = Math.imul(t ^ t >>> 15, t | 1);
+  t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+  return ((t ^ t >>> 14) >>> 0) / 4294967296;
+}
+function randomBigIntBelow(context, exclusiveMax) {
+  if (exclusiveMax <= 0n)
+    throw new Error("Random bound must be positive");
+  if (exclusiveMax <= BigInt(Number.MAX_SAFE_INTEGER)) {
+    return BigInt(Math.floor(runtimeRandom(context) * Number(exclusiveMax)));
+  }
+  const bits = exclusiveMax.toString(2).length;
+  const chunks = Math.ceil(bits / 32);
+  const mask = (1n << BigInt(bits)) - 1n;
+  while (true) {
+    let value = 0n;
+    for (let i = 0;i < chunks; i++) {
+      value = value << 32n | BigInt(Math.floor(runtimeRandom(context) * 4294967296));
+    }
+    value &= mask;
+    if (value < exclusiveMax)
+      return value;
+  }
 }
 
 // ../rix/src/runtime/context.js
@@ -21791,7 +22288,8 @@ class Context {
       readOnly: true
     }));
     child.functions = this.functions;
-    child.env = this.env;
+    child.env = new Map(this.env);
+    forkRuntimeRandom(this, child);
     child.callStack = [...this.callStack];
     child.currentCallables = [...this.currentCallables];
     child.sharedBodyOverrides = [];
@@ -21811,6 +22309,20 @@ class Context {
       if (!token2.consumed) {
         this.sharedBodyOverrides.pop();
       }
+    }
+  }
+  async withSharedBodyAsync(bodyNode, callback) {
+    const sharedFns = new Set(["BLOCK", "LOOP", "SYSTEM"]);
+    if (!bodyNode || !sharedFns.has(bodyNode.fn)) {
+      return await callback();
+    }
+    const token2 = { fn: bodyNode.fn, consumed: false };
+    this.sharedBodyOverrides.push(token2);
+    try {
+      return await callback();
+    } finally {
+      if (!token2.consumed)
+        this.sharedBodyOverrides.pop();
     }
   }
   consumeSharedBody(fnName) {
@@ -22511,6 +23023,8 @@ var SYMBOL_TABLE = {
   "|>?": { precedence: PRECEDENCE.PIPE, associativity: "left", type: "infix" },
   "|>&&": { precedence: PRECEDENCE.PIPE, associativity: "left", type: "infix" },
   "|>||": { precedence: PRECEDENCE.PIPE, associativity: "left", type: "infix" },
+  "|>_": { precedence: PRECEDENCE.PIPE, associativity: "left", type: "infix" },
+  "|>!": { precedence: PRECEDENCE.PIPE, associativity: "left", type: "infix" },
   "|><": { precedence: PRECEDENCE.PIPE, associativity: "left", type: "infix" },
   "|>/|": { precedence: PRECEDENCE.PIPE, associativity: "left", type: "infix" },
   "|>#|": { precedence: PRECEDENCE.PIPE, associativity: "left", type: "infix" },
@@ -23545,6 +24059,22 @@ class Parser {
       }
       return this.createNode("BinaryOperation", {
         operator: operator.value,
+        left,
+        right,
+        pos: left.pos,
+        original: left.original + operator.original
+      });
+    } else if (operator.value === "|>_") {
+      right = this.parseExpression(rightPrec);
+      return this.createNode("ForEachPipe", {
+        left,
+        right,
+        pos: left.pos,
+        original: left.original + operator.original
+      });
+    } else if (operator.value === "|>!") {
+      right = this.parseExpression(rightPrec);
+      return this.createNode("ExpectedErrorPipe", {
         left,
         right,
         pos: left.pos,
@@ -27800,6 +28330,10 @@ function destructureInto(pattern, sourceRef, outerMode, context, evaluate) {
   }
   throw new Error("Invalid destructuring target");
 }
+function destructureResolvedValue(pattern, value, mode, context, evaluate) {
+  destructureInto(pattern, makeSourceRef(value), mode, context, evaluate);
+  return value;
+}
 var PREP_TRIAL_NO_MATCH = Symbol("preparedTrialNoMatch");
 function preparedTrialFailure(preserveFailure) {
   return preserveFailure ? PREP_TRIAL_NO_MATCH : null;
@@ -28345,7 +28879,7 @@ var coreFunctions = {
           return cell.value;
         }
       }
-      const value = maybeAutoMarkMultifunction(name, evaluate(rhsIR));
+      const value = maybeAutoMarkMultifunction(name, materializePipeSkip(evaluate(rhsIR)));
       recordTraceWrite(context, name, context.get(name) ?? null, value);
       context.setFresh(name, value);
       return value;
@@ -28356,7 +28890,7 @@ var coreFunctions = {
     lazy: true,
     impl(args, context, evaluate) {
       const name = resolveAssignName(args[0], evaluate);
-      const rhsValue = evaluate(args[1]);
+      const rhsValue = materializePipeSkip(evaluate(args[1]));
       const newValue = shallowCopyValue(rhsValue);
       copyAllMeta(rhsValue, newValue, "shallow");
       recordTraceWrite(context, name, context.get(name) ?? null, newValue);
@@ -28369,7 +28903,7 @@ var coreFunctions = {
     lazy: true,
     impl(args, context, evaluate) {
       const name = resolveAssignName(args[0], evaluate);
-      const rhsValue = evaluate(args[1]);
+      const rhsValue = materializePipeSkip(evaluate(args[1]));
       return performUpdate(name, rhsValue, context, "shallow", evaluate);
     },
     doc: "In-place value replacement (~=) — preserves cell identity, ordinary meta; replaces ephemeral; preserves sticky unless rhs overrides"
@@ -28378,7 +28912,7 @@ var coreFunctions = {
     lazy: true,
     impl(args, context, evaluate) {
       const name = resolveAssignName(args[0], evaluate);
-      const rhsValue = evaluate(args[1]);
+      const rhsValue = materializePipeSkip(evaluate(args[1]));
       const newValue = deepCopyValue(rhsValue);
       copyAllMeta(rhsValue, newValue, "deep");
       recordTraceWrite(context, name, context.get(name) ?? null, newValue);
@@ -28391,7 +28925,7 @@ var coreFunctions = {
     lazy: true,
     impl(args, context, evaluate) {
       const name = resolveAssignName(args[0], evaluate);
-      const rhsValue = evaluate(args[1]);
+      const rhsValue = materializePipeSkip(evaluate(args[1]));
       return performUpdate(name, rhsValue, context, "deep", evaluate);
     },
     doc: "In-place deep value replacement (~~=) — like ~= but deep-copies rhs value"
@@ -29163,57 +29697,6 @@ var methodFunctions = {
     doc: "Create a receiver-first callable from prefix ..Method syntax"
   }
 };
-
-// ../rix/src/runtime/random.js
-function seedNumber(value) {
-  if (value instanceof Integer)
-    return Number(value.value & 0xffffffffn) >>> 0;
-  if (value instanceof Rational && value.denominator === 1n)
-    return Number(value.numerator & 0xffffffffn) >>> 0;
-  if (typeof value === "bigint")
-    return Number(value & 0xffffffffn) >>> 0;
-  const number = Number(value);
-  if (!Number.isFinite(number))
-    throw new Error("Random seed must be a finite integer");
-  return Math.trunc(number) >>> 0;
-}
-function seedRuntimeRandom(context, value) {
-  const seed = seedNumber(value);
-  context.setEnv("randomState", { value: seed });
-  context.setEnv("randomFunction", null);
-  return new Integer(BigInt(seed));
-}
-function runtimeRandom(context) {
-  const injected = context?.getEnv?.("randomFunction", null);
-  if (typeof injected === "function")
-    return injected();
-  const state = context?.getEnv?.("randomState", null);
-  if (!state)
-    return Math.random();
-  let t = state.value = state.value + 1831565813 >>> 0;
-  t = Math.imul(t ^ t >>> 15, t | 1);
-  t ^= t + Math.imul(t ^ t >>> 7, t | 61);
-  return ((t ^ t >>> 14) >>> 0) / 4294967296;
-}
-function randomBigIntBelow(context, exclusiveMax) {
-  if (exclusiveMax <= 0n)
-    throw new Error("Random bound must be positive");
-  if (exclusiveMax <= BigInt(Number.MAX_SAFE_INTEGER)) {
-    return BigInt(Math.floor(runtimeRandom(context) * Number(exclusiveMax)));
-  }
-  const bits = exclusiveMax.toString(2).length;
-  const chunks = Math.ceil(bits / 32);
-  const mask = (1n << BigInt(bits)) - 1n;
-  while (true) {
-    let value = 0n;
-    for (let i = 0;i < chunks; i++) {
-      value = value << 32n | BigInt(Math.floor(runtimeRandom(context) * 4294967296));
-    }
-    value &= mask;
-    if (value < exclusiveMax)
-      return value;
-  }
-}
 
 // ../rix/src/eval/functions/advanced.js
 function toNumber(val) {
@@ -31423,9 +31906,10 @@ var outputFunctions = {
 
 // ../rix/src/runtime/rixcel-document.js
 var RIXCEL_FORMAT = "rixcel";
-var RIXCEL_VERSION = 1;
+var RIXCEL_VERSION = 2;
 var RIXCEL_ASSIGNMENT_MODES = FORMULA_SHEET_ASSIGNMENT_MODES;
 var ASSIGNMENT_MODES2 = new Set(RIXCEL_ASSIGNMENT_MODES);
+var EVENT_TYPES = new Set(["slot:set", "view:axis-label"]);
 var DOCUMENT_VIEW_KEYS = Object.freeze([
   "title",
   "axes",
@@ -31456,9 +31940,8 @@ function jsonClone(value, path, seen = new Set) {
       fail(path, "must not contain non-finite numbers");
     return value;
   }
-  if (typeof value !== "object") {
+  if (typeof value !== "object")
     fail(path, `contains unsupported ${typeof value} value`);
-  }
   if (seen.has(value))
     fail(path, "must not contain cycles");
   seen.add(value);
@@ -31496,9 +31979,8 @@ function documentId(value) {
   return value;
 }
 function documentShape(value) {
-  if (!Array.isArray(value) || value.length === 0) {
+  if (!Array.isArray(value) || value.length === 0)
     fail("$.shape", "must be a non-empty array");
-  }
   let size = 1;
   const shape = value.map((length, axis) => {
     if (!Number.isSafeInteger(length) || length < 1) {
@@ -31517,12 +31999,23 @@ function indexKey(index) {
 function slotId(id, index) {
   return `${id}:slot:${index.join(":")}`;
 }
+function eventId(id, sequence2) {
+  return `${id}:event:${sequence2}`;
+}
 function linearOffset(index, shape) {
   let offset = 0;
   for (let axis = 0;axis < shape.length; axis += 1) {
     offset = offset * shape[axis] + index[axis] - 1;
   }
   return offset;
+}
+function indexFromOffset(offset, shape) {
+  const index = Array(shape.length);
+  for (let axis = shape.length - 1;axis >= 0; axis -= 1) {
+    index[axis] = offset % shape[axis] + 1;
+    offset = Math.floor(offset / shape[axis]);
+  }
+  return index;
 }
 function normalizeIndex3(value, shape, path) {
   if (!Array.isArray(value) || value.length !== shape.length) {
@@ -31546,9 +32039,8 @@ function normalizeDocumentView(value, path, shape) {
   const entries2 = Object.entries(view);
   for (const canonical of DOCUMENT_VIEW_KEYS) {
     const matches = entries2.filter(([key]) => key.toLowerCase() === canonical.toLowerCase());
-    if (matches.length > 1) {
+    if (matches.length > 1)
       fail(path, `contains duplicate case variants for ${canonical}`);
-    }
     if (matches.length === 1 && matches[0][0] !== canonical) {
       delete view[matches[0][0]];
       view[canonical] = matches[0][1];
@@ -31581,9 +32073,7 @@ function normalizeDocumentView(value, path, shape) {
         fail(`${path}.axisLabels[${axis}]`, `must be null or contain exactly ${shape[axis]} labels`);
       }
       labels.forEach((label, index) => {
-        if (label === null)
-          return;
-        if (typeof label !== "string" || label.length === 0) {
+        if (label !== null && (typeof label !== "string" || label.length === 0)) {
           fail(`${path}.axisLabels[${axis}][${index}]`, "must be null or a non-empty string");
         }
       });
@@ -31605,9 +32095,7 @@ function normalizeDocumentView(value, path, shape) {
       if (visible.has(axis)) {
         if (coordinate !== null)
           fail(`${path}.slice[${axisIndex}]`, "must be null for a visible axis");
-        return;
-      }
-      if (!Number.isSafeInteger(coordinate) || coordinate < 1 || coordinate > shape[axisIndex]) {
+      } else if (!Number.isSafeInteger(coordinate) || coordinate < 1 || coordinate > shape[axisIndex]) {
         fail(`${path}.slice[${axisIndex}]`, `must be an integer from 1 through ${shape[axisIndex]}`);
       }
     });
@@ -31617,60 +32105,100 @@ function normalizeDocumentView(value, path, shape) {
   }
   return view;
 }
-function migrateDraft(document) {
-  const input = plainObject(document, "$");
-  const declaredVersion = input.version;
-  const isDraft = declaredVersion === 0 || declaredVersion === undefined;
-  if (!isDraft)
-    return input;
-  const format = input.format ?? input.kind;
-  if (format !== RIXCEL_FORMAT) {
-    fail("$.format", `must equal "${RIXCEL_FORMAT}"`);
+function normalizeSlotDefinition(value, path, { defaultView = {} } = {}) {
+  const slot = value === undefined ? {} : plainObject(value, path);
+  const source = slot.source ?? "_";
+  const assignmentMode2 = slot.assignmentMode ?? ":=";
+  if (typeof source !== "string" || source.trim().length === 0) {
+    fail(`${path}.source`, "must be a non-empty string");
   }
-  if (!Array.isArray(input.slots))
-    fail("$.slots", "must be an array");
-  const id = documentId(input.id);
+  if (!ASSIGNMENT_MODES2.has(assignmentMode2)) {
+    fail(`${path}.assignmentMode`, `is not supported: ${assignmentMode2}`);
+  }
   return {
-    format: RIXCEL_FORMAT,
-    version: RIXCEL_VERSION,
-    id,
-    shape: input.shape,
-    view: input.view ?? {},
-    slots: input.slots.map((slot, offset) => {
-      plainObject(slot, `$.slots[${offset}]`);
-      const index = slot.index;
-      return {
-        id: slot.id ?? (Array.isArray(index) ? slotId(id, index) : undefined),
-        index,
-        source: slot.source ?? slot.code,
-        assignmentMode: slot.assignmentMode ?? slot.op ?? ":=",
-        view: slot.view ?? slot.style ?? {}
-      };
-    })
+    source,
+    assignmentMode: assignmentMode2,
+    view: normalizeView(slot.view ?? defaultView, `${path}.view`)
   };
 }
-function parseRixCelDocument(value) {
-  const migrated = migrateDraft(documentInput(value));
-  const input = plainObject(migrated, "$");
-  if (input.format !== RIXCEL_FORMAT) {
-    fail("$.format", `must equal "${RIXCEL_FORMAT}"`);
+function rixCelEventCommand(event, binding = "document") {
+  if (event.type === "slot:set") {
+    return `${binding}.SetSource(${event.index.join(", ")}, ${JSON.stringify(event.source)}, ${JSON.stringify(event.assignmentMode)})`;
   }
-  if (!Number.isSafeInteger(input.version))
-    fail("$.version", "must be an integer");
-  if (input.version > RIXCEL_VERSION) {
-    throw new Error(`Unsupported RiXCel document version ${input.version}; this runtime supports through version ${RIXCEL_VERSION}`);
+  if (event.type === "view:axis-label") {
+    return `${binding}.SetAxisLabel(${event.axis}, ${event.coordinate}, ${JSON.stringify(event.label)})`;
   }
-  if (input.version !== RIXCEL_VERSION)
-    fail("$.version", `must equal ${RIXCEL_VERSION}`);
+  throw new Error(`Unsupported RiXCel history event type: ${event.type}`);
+}
+function normalizeEvent(rawEvent, offset, id, shape) {
+  const path = `$.events[${offset}]`;
+  const event = plainObject(rawEvent, path);
+  const sequence2 = offset + 1;
+  const type = event.type;
+  if (!EVENT_TYPES.has(type))
+    fail(`${path}.type`, `is not supported: ${type}`);
+  const normalized = type === "slot:set" ? {
+    id: eventId(id, sequence2),
+    sequence: sequence2,
+    type,
+    index: normalizeIndex3(event.index, shape, `${path}.index`),
+    ...normalizeSlotDefinition(event, path)
+  } : (() => {
+    const axis = event.axis;
+    const coordinate = event.coordinate;
+    if (!Number.isSafeInteger(axis) || axis < 1 || axis > shape.length) {
+      fail(`${path}.axis`, `must be an integer from 1 through ${shape.length}`);
+    }
+    if (!Number.isSafeInteger(coordinate) || coordinate < 1 || coordinate > shape[axis - 1]) {
+      fail(`${path}.coordinate`, `must be an integer from 1 through ${shape[axis - 1]}`);
+    }
+    if (event.label !== null && (typeof event.label !== "string" || event.label.trim().length === 0)) {
+      fail(`${path}.label`, "must be null or a non-empty string");
+    }
+    return { id: eventId(id, sequence2), sequence: sequence2, type, axis, coordinate, label: event.label };
+  })();
+  if (event.id !== undefined && event.id !== normalized.id)
+    fail(`${path}.id`, `must equal "${normalized.id}"`);
+  if (event.sequence !== undefined && event.sequence !== sequence2)
+    fail(`${path}.sequence`, `must equal ${sequence2}`);
+  const command = rixCelEventCommand(normalized);
+  if (event.command !== undefined && event.command !== command) {
+    fail(`${path}.command`, "must match the canonical RiX command");
+  }
+  return { ...normalized, command };
+}
+function normalizeDraft(rawDraft, offset, shape) {
+  const path = `$.drafts[${offset}]`;
+  const draft = plainObject(rawDraft, path);
+  const index = normalizeIndex3(draft.index, shape, `${path}.index`);
+  const source = draft.source;
+  const assignmentMode2 = draft.assignmentMode ?? ":=";
+  if (typeof source !== "string" || source.trim().length === 0)
+    fail(`${path}.source`, "must be a non-empty string");
+  if (!ASSIGNMENT_MODES2.has(assignmentMode2))
+    fail(`${path}.assignmentMode`, `is not supported: ${assignmentMode2}`);
+  if (draft.kind !== undefined && !["parse", "cycle", "runtime"].includes(draft.kind)) {
+    fail(`${path}.kind`, "must be parse, cycle, or runtime");
+  }
+  if (draft.message !== undefined && typeof draft.message !== "string")
+    fail(`${path}.message`, "must be a string");
+  const normalized = {
+    index,
+    source,
+    assignmentMode: assignmentMode2,
+    kind: draft.kind ?? "runtime",
+    message: draft.message ?? "Formula edit has not committed"
+  };
+  return { ...normalized, command: rixCelEventCommand({ type: "slot:set", ...normalized }) };
+}
+function denseVersionOne(input) {
   const id = documentId(input.id);
   const { shape, size } = documentShape(input.shape);
   if (!Array.isArray(input.slots))
     fail("$.slots", "must be an array");
-  if (input.slots.length !== size) {
+  if (input.slots.length !== size)
     fail("$.slots", `must contain exactly ${size} dense slots`);
-  }
   const occupied = new Set;
-  const ids = new Set;
   const slots = input.slots.map((rawSlot, offset) => {
     const path = `$.slots[${offset}]`;
     const slot = plainObject(rawSlot, path);
@@ -31680,67 +32208,177 @@ function parseRixCelDocument(value) {
       fail(`${path}.index`, `duplicates coordinate [${index.join(",")}]`);
     occupied.add(key);
     const expectedId = slotId(id, index);
-    if (slot.id !== expectedId) {
+    if (slot.id !== expectedId)
       fail(`${path}.id`, `must equal "${expectedId}"`);
-    }
-    if (ids.has(slot.id))
-      fail(`${path}.id`, "must be unique");
-    ids.add(slot.id);
-    if (typeof slot.source !== "string")
-      fail(`${path}.source`, "must be a string");
-    if (!ASSIGNMENT_MODES2.has(slot.assignmentMode)) {
-      fail(`${path}.assignmentMode`, `is not supported: ${slot.assignmentMode}`);
-    }
-    return {
-      id: slot.id,
-      index,
-      source: slot.source,
-      assignmentMode: slot.assignmentMode,
-      view: normalizeView(slot.view, `${path}.view`)
-    };
+    return { id: expectedId, index, ...normalizeSlotDefinition(slot, path) };
   });
   slots.sort((left, right) => linearOffset(left.index, shape) - linearOffset(right.index, shape));
+  return { id, shape, view: normalizeDocumentView(input.view, "$.view", shape), slots };
+}
+function draftToVersionOne(document) {
+  const input = plainObject(document, "$");
+  const format = input.format ?? input.kind;
+  if (format !== RIXCEL_FORMAT)
+    fail("$.format", `must equal "${RIXCEL_FORMAT}"`);
+  if (!Array.isArray(input.slots))
+    fail("$.slots", "must be an array");
+  const id = documentId(input.id);
+  return {
+    format: RIXCEL_FORMAT,
+    version: 1,
+    id,
+    shape: input.shape,
+    view: input.view ?? {},
+    slots: input.slots.map((rawSlot, offset) => {
+      const slot = plainObject(rawSlot, `$.slots[${offset}]`);
+      return {
+        id: slot.id ?? (Array.isArray(slot.index) ? slotId(id, slot.index) : undefined),
+        index: slot.index,
+        source: slot.source ?? slot.code,
+        assignmentMode: slot.assignmentMode ?? slot.op ?? ":=",
+        view: slot.view ?? slot.style ?? {}
+      };
+    })
+  };
+}
+function versionOneToVersionTwo(input) {
+  const dense = denseVersionOne(input);
+  const defaultSlot = normalizeSlotDefinition(undefined, "$.defaultSlot");
+  const events = dense.slots.filter((slot) => JSON.stringify({ source: slot.source, assignmentMode: slot.assignmentMode, view: slot.view }) !== JSON.stringify(defaultSlot)).map((slot, offset) => normalizeEvent({
+    type: "slot:set",
+    index: slot.index,
+    source: slot.source,
+    assignmentMode: slot.assignmentMode,
+    view: slot.view
+  }, offset, dense.id, dense.shape));
   return {
     format: RIXCEL_FORMAT,
     version: RIXCEL_VERSION,
-    id,
-    shape,
-    view: normalizeDocumentView(input.view, "$.view", shape),
-    slots
+    id: dense.id,
+    shape: dense.shape,
+    view: dense.view,
+    defaultSlot,
+    events,
+    cursor: events.length,
+    drafts: []
   };
+}
+function parseRixCelDocument(value) {
+  let input = plainObject(documentInput(value), "$");
+  if (input.version === undefined || input.version === 0)
+    input = draftToVersionOne(input);
+  if (input.format !== RIXCEL_FORMAT)
+    fail("$.format", `must equal "${RIXCEL_FORMAT}"`);
+  if (!Number.isSafeInteger(input.version))
+    fail("$.version", "must be an integer");
+  if (input.version > RIXCEL_VERSION) {
+    throw new Error(`Unsupported RiXCel document version ${input.version}; this runtime supports through version ${RIXCEL_VERSION}`);
+  }
+  if (input.version === 1)
+    return versionOneToVersionTwo(input);
+  if (input.version !== RIXCEL_VERSION)
+    fail("$.version", `must equal ${RIXCEL_VERSION}`);
+  const id = documentId(input.id);
+  const { shape } = documentShape(input.shape);
+  const view = normalizeDocumentView(input.view, "$.view", shape);
+  const defaultSlot = normalizeSlotDefinition(input.defaultSlot, "$.defaultSlot");
+  if (!Array.isArray(input.events))
+    fail("$.events", "must be an array");
+  const events = input.events.map((event, offset) => normalizeEvent(event, offset, id, shape));
+  const cursor = input.cursor ?? events.length;
+  if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor > events.length) {
+    fail("$.cursor", `must be an integer from 0 through ${events.length}`);
+  }
+  const draftsInput = input.drafts ?? [];
+  if (!Array.isArray(draftsInput))
+    fail("$.drafts", "must be an array");
+  const drafts = draftsInput.map((draft, offset) => normalizeDraft(draft, offset, shape));
+  const draftCoordinates = new Set;
+  for (const [offset, draft] of drafts.entries()) {
+    const key = indexKey(draft.index);
+    if (draftCoordinates.has(key))
+      fail(`$.drafts[${offset}].index`, "duplicates a draft coordinate");
+    draftCoordinates.add(key);
+  }
+  return { format: RIXCEL_FORMAT, version: RIXCEL_VERSION, id, shape, view, defaultSlot, events, cursor, drafts };
+}
+function createRixCelDocument(options = {}) {
+  const shape = options.shape ?? [20, 8];
+  return parseRixCelDocument({
+    format: RIXCEL_FORMAT,
+    version: RIXCEL_VERSION,
+    id: options.id ?? "untitled",
+    shape,
+    view: options.view ?? {},
+    defaultSlot: options.defaultSlot ?? { source: "_", assignmentMode: ":=", view: { blank: true } },
+    events: [],
+    cursor: 0,
+    drafts: []
+  });
+}
+function appendRixCelEvent(value, event) {
+  const document = parseRixCelDocument(value);
+  const events = [...document.events.slice(0, document.cursor), event];
+  return parseRixCelDocument({ ...document, events, cursor: events.length, drafts: document.drafts });
+}
+function materializeRixCelDocument(value) {
+  const document = parseRixCelDocument(value);
+  const { size } = documentShape(document.shape);
+  const slots = Array.from({ length: size }, (_unused, offset) => {
+    const index = indexFromOffset(offset, document.shape);
+    return {
+      id: slotId(document.id, index),
+      index,
+      source: document.defaultSlot.source,
+      assignmentMode: document.defaultSlot.assignmentMode,
+      view: jsonClone(document.defaultSlot.view, "$.defaultSlot.view")
+    };
+  });
+  const byIndex = new Map(slots.map((slot) => [indexKey(slot.index), slot]));
+  let view = jsonClone(document.view, "$.view");
+  for (const event of document.events.slice(0, document.cursor)) {
+    if (event.type === "slot:set") {
+      const slot = byIndex.get(indexKey(event.index));
+      slot.source = event.source;
+      slot.assignmentMode = event.assignmentMode;
+      slot.view = jsonClone(event.view, `$.events[${event.sequence - 1}].view`);
+    } else if (event.type === "view:axis-label") {
+      const labels = Array.from({ length: document.shape.length }, (_unused, axis) => {
+        const existing = view.axisLabels?.[axis];
+        return existing === null || existing === undefined ? Array(document.shape[axis]).fill(null) : [...existing];
+      });
+      labels[event.axis - 1][event.coordinate - 1] = event.label;
+      view = { ...view, axisLabels: labels.map((axisLabels) => axisLabels.every((label) => label === null) ? null : axisLabels) };
+    }
+  }
+  return { ...document, view: normalizeDocumentView(view, "$.view", document.shape), slots };
 }
 function exportRixCelDocument(sheet) {
   if (!isFormulaSheet(sheet))
     throw new Error("RiXCel export requires a FormulaSheet");
-  const slots = [];
-  const visit = (axis, index) => {
-    if (axis === sheet.shape.length) {
-      const slot = sheet.slot(index);
-      if (typeof slot.source !== "string") {
-        throw new Error(`RiXCel export requires source for grid[${index.join(",")}]`);
-      }
-      slots.push({
-        id: slot.id,
-        index: [...index],
-        source: slot.source,
-        assignmentMode: slot.assignmentMode,
-        view: jsonClone(slot.view ?? {}, `grid[${index.join(",")}].view`)
-      });
-      return;
-    }
-    for (let value = 1;value <= sheet.shape[axis]; value += 1) {
-      visit(axis + 1, [...index, value]);
-    }
-  };
-  visit(0, []);
-  return parseRixCelDocument({
-    format: RIXCEL_FORMAT,
-    version: RIXCEL_VERSION,
+  let document = createRixCelDocument({
     id: sheet.id,
     shape: [...sheet.shape],
     view: jsonClone(sheet.documentView ?? {}, "$.view"),
-    slots
+    defaultSlot: { source: "_", assignmentMode: ":=", view: {} }
   });
+  const visit = (axis, index) => {
+    if (axis === sheet.shape.length) {
+      const slot = sheet.slot(index);
+      if (typeof slot.source !== "string")
+        throw new Error(`RiXCel export requires source for grid[${index.join(",")}]`);
+      const current = { source: slot.source, assignmentMode: slot.assignmentMode, view: slot.view ?? {} };
+      if (JSON.stringify(current) !== JSON.stringify(document.defaultSlot)) {
+        document = appendRixCelEvent(document, { type: "slot:set", index: [...index], ...current });
+      }
+      return;
+    }
+    for (let coordinate = 1;coordinate <= sheet.shape[axis]; coordinate += 1) {
+      visit(axis + 1, [...index, coordinate]);
+    }
+  };
+  visit(0, []);
+  return document;
 }
 function stringifyRixCelDocument(value, options = {}) {
   const document = isFormulaSheet(value) ? exportRixCelDocument(value) : parseRixCelDocument(value);
@@ -31751,13 +32389,11 @@ function stringifyRixCelDocument(value, options = {}) {
   return JSON.stringify(document, null, space);
 }
 function importRixCelDocument(value, options = {}) {
-  const document = parseRixCelDocument(value);
-  if (typeof options.compileFormula !== "function") {
+  const document = materializeRixCelDocument(value);
+  if (typeof options.compileFormula !== "function")
     throw new Error("RiXCel import requires a formula compiler");
-  }
-  if (typeof options.runFormula !== "function") {
+  if (typeof options.runFormula !== "function")
     throw new Error("RiXCel import requires a deferred formula evaluator");
-  }
   const formulas = document.slots.map((slot) => {
     try {
       return options.compileFormula(slot.source);
@@ -31765,15 +32401,12 @@ function importRixCelDocument(value, options = {}) {
       throw new Error(`RiXCel source for grid[${slot.index.join(",")}] did not compile: ${error.message}`);
     }
   });
-  const slotMetadata = new Map(document.slots.map((slot) => [
-    indexKey(slot.index),
-    {
-      id: slot.id,
-      source: slot.source,
-      assignmentMode: slot.assignmentMode,
-      view: slot.view
-    }
-  ]));
+  const slotMetadata = new Map(document.slots.map((slot) => [indexKey(slot.index), {
+    id: slot.id,
+    source: slot.source,
+    assignmentMode: slot.assignmentMode,
+    view: slot.view
+  }]));
   return createFormulaSheet(createTensor(document.shape, formulas), {
     ...options,
     id: document.id,
@@ -32182,6 +32815,139 @@ var reactiveGraphFunctions = {
     pure: false,
     impl: reactiveGraphCapability,
     doc: "Create a transactional graph of reactive source and computed nodes"
+  }
+};
+
+// ../rix/src/eval/functions/retry.js
+function numberValue(value, label) {
+  let number;
+  if (value instanceof Integer)
+    number = Number(value.value);
+  else if (value instanceof Rational)
+    number = Number(value.numerator) / Number(value.denominator);
+  else if (typeof value === "bigint")
+    number = Number(value);
+  else
+    number = Number(value);
+  if (!Number.isFinite(number))
+    throw new Error(`Retry ${label} must be a finite number`);
+  return number;
+}
+function positiveSafeInteger(value, label) {
+  const number = numberValue(value, label);
+  if (!Number.isSafeInteger(number) || number < 1) {
+    throw new Error(`Retry ${label} must be a positive safe integer`);
+  }
+  return number;
+}
+function kindName(value) {
+  const raw = value?.type === "string" ? value.value : value;
+  if (typeof raw !== "string")
+    throw new Error("Retry kinds must contain strings or colon-strings");
+  return raw.replace(/^:/, "");
+}
+function policyKinds(value) {
+  if (value === null || value === undefined)
+    return null;
+  const values = Array.isArray(value?.values) ? value.values : null;
+  if (!values)
+    throw new Error("Retry kinds must be a finite array, tuple, or set");
+  return new Set(values.map(kindName));
+}
+function parseRetryPolicy(value) {
+  if (value?.type !== "map") {
+    return { attempts: positiveSafeInteger(value, "attempts"), delay: 0, backoff: 1, kinds: null };
+  }
+  const entries2 = value.entries;
+  if (!(entries2 instanceof Map))
+    throw new Error("Retry policy must be a valid map");
+  if (!entries2.has("attempts"))
+    throw new Error("Retry policy requires attempts");
+  const attempts = positiveSafeInteger(entries2.get("attempts"), "attempts");
+  const delay = entries2.has("delay") ? numberValue(entries2.get("delay"), "delay") : 0;
+  const backoff = entries2.has("backoff") ? numberValue(entries2.get("backoff"), "backoff") : 1;
+  if (delay < 0)
+    throw new Error("Retry delay must be non-negative");
+  if (backoff < 0)
+    throw new Error("Retry backoff must be non-negative");
+  return { attempts, delay, backoff, kinds: policyKinds(entries2.get("kinds")) };
+}
+function deferredBody(node) {
+  if (!node || node.fn !== "DEFER") {
+    throw new Error("Retry work must be deferred with @{ ... }");
+  }
+  return node.args[0];
+}
+function shouldRetry(value, policy) {
+  if (expectedErrorArgs(value) === null)
+    return false;
+  if (policy.kinds === null)
+    return true;
+  const kind = expectedErrorKind(value);
+  return kind !== null && policy.kinds.has(kind);
+}
+function retryDelay(policy, failedAttempt) {
+  return policy.delay * policy.backoff ** Math.max(0, failedAttempt - 1);
+}
+function waitForRetry(seconds, signal) {
+  if (seconds === 0) {
+    if (signal?.aborted)
+      return Promise.reject(signal.reason);
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    let timer;
+    const abort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    if (signal?.aborted)
+      return abort();
+    timer = setTimeout(() => {
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    }, seconds * 1000);
+    signal?.addEventListener("abort", abort, { once: true });
+  });
+}
+function retrySync(policyNode, workNode, context, evaluate) {
+  const policy = parseRetryPolicy(evaluate(policyNode));
+  const work = deferredBody(workNode);
+  for (let attempt = 1;attempt <= policy.attempts; attempt++) {
+    const result = withFinalizerActivationSync(context, () => context.withSharedBody(work, () => evaluate(work)));
+    if (!shouldRetry(result, policy) || attempt === policy.attempts)
+      return result;
+    if (retryDelay(policy, attempt) > 0) {
+      throw new Error("Retry delay requires promise-aware RiX evaluation");
+    }
+  }
+  return null;
+}
+async function retryAsync(policyNode, workNode, context, evaluate, signal) {
+  const policy = parseRetryPolicy(await evaluate(policyNode));
+  const work = deferredBody(workNode);
+  for (let attempt = 1;attempt <= policy.attempts; attempt++) {
+    if (signal?.aborted)
+      throw signal.reason;
+    const result = await withFinalizerActivationAsync(context, () => context.withSharedBody(work, () => evaluate(work)), {
+      graceMs: context.getEnv("asyncCleanupGraceMs", runtimeDefaults.asyncCleanupGraceMs)
+    });
+    if (!shouldRetry(result, policy) || attempt === policy.attempts)
+      return result;
+    await waitForRetry(retryDelay(policy, attempt), signal);
+  }
+  return null;
+}
+var retryCapabilities = {
+  Retry: {
+    lazy: true,
+    impl(args, context, evaluate, options) {
+      if (args.length !== 2)
+        throw new Error("Retry expects a policy/attempt count and deferred work");
+      return options ? retryAsync(args[0], args[1], context, evaluate, options.signal ?? null) : retrySync(args[0], args[1], context, evaluate);
+    },
+    doc: "Repeat deferred work for expected error tuple values under a bounded retry policy",
+    groups: ["Async"]
   }
 };
 
@@ -32900,6 +33666,315 @@ var sArithCapability = {
   }
 };
 
+// ../rix/src/runtime/renderer-registry.js
+var stringValue5 = (value) => ({ type: "string", value: String(value) });
+var sequenceValue = (values) => ({ type: "sequence", values });
+function targetName(value, label = "Render target") {
+  const result = value?.type === "string" ? value.value : value;
+  if (typeof result !== "string" || !result.trim())
+    throw new Error(`${label} must be a non-empty string or colon-string`);
+  return result.trim().toLowerCase().replace(/^\./, "");
+}
+function nativeOptions(value) {
+  if (value === null || value === undefined)
+    return {};
+  if (value?.type !== "map" || !(value.entries instanceof Map)) {
+    if (typeof value === "object" && !Array.isArray(value))
+      return value;
+    throw new Error("Render options must be a map");
+  }
+  return Object.fromEntries(Array.from(value.entries, ([key, entry]) => [String(key), entry]));
+}
+function normalizeDiagnostic(value, fallbackCode = "renderer") {
+  if (typeof value === "string")
+    return Object.freeze({ level: "warning", code: fallbackCode, message: value });
+  if (!value || typeof value !== "object")
+    return Object.freeze({ level: "warning", code: fallbackCode, message: String(value) });
+  return Object.freeze({
+    level: value.level || "warning",
+    code: value.code || fallbackCode,
+    message: String(value.message || value.code || fallbackCode),
+    ...value.path ? { path: String(value.path) } : {}
+  });
+}
+function normalizeAsset(asset, index) {
+  if (!asset || typeof asset !== "object")
+    throw new Error(`Render asset ${index + 1} must be an object`);
+  if (typeof asset.path !== "string" || !asset.path.trim())
+    throw new Error(`Render asset ${index + 1} requires a relative path`);
+  if (typeof asset.content !== "string" && !(asset.content instanceof Uint8Array)) {
+    throw new Error(`Render asset ${index + 1} content must be text or bytes`);
+  }
+  return Object.freeze({
+    path: asset.path,
+    mime: asset.mime || "application/octet-stream",
+    content: asset.content
+  });
+}
+function createRenderResult(fields) {
+  if (!fields || typeof fields !== "object")
+    throw new Error("Renderer must return a RenderResult object");
+  if (typeof fields.content !== "string" && !(fields.content instanceof Uint8Array)) {
+    throw new Error("RenderResult content must be text or Uint8Array bytes");
+  }
+  const target = targetName(fields.target, "RenderResult target");
+  return Object.freeze({
+    type: "render_result",
+    target,
+    mime: String(fields.mime || "application/octet-stream"),
+    extension: String(fields.extension || target).replace(/^\./, "").toLowerCase(),
+    content: fields.content,
+    assets: Object.freeze((fields.assets || []).map(normalizeAsset)),
+    diagnostics: Object.freeze((fields.diagnostics || []).map((item) => normalizeDiagnostic(item, `${target}.diagnostic`))),
+    deterministic: fields.deterministic !== false,
+    toolchain: fields.toolchain ? String(fields.toolchain) : null,
+    metadata: Object.freeze({ ...fields.metadata || {} })
+  });
+}
+function isRenderResult(value) {
+  return Boolean(value && value.type === "render_result" && (typeof value.content === "string" || value.content instanceof Uint8Array));
+}
+
+class UnsupportedRenderError extends Error {
+  constructor(message, { code = "unsupported-input", target = null } = {}) {
+    super(message);
+    this.name = "UnsupportedRenderError";
+    this.code = code;
+    this.target = target;
+  }
+}
+function inputKind(value) {
+  if (value?.type === "output" && value.kind)
+    return value.kind;
+  if (value?.type)
+    return value.type;
+  return typeof value;
+}
+
+class RendererRegistry {
+  constructor() {
+    this.renderers = new Map;
+    this.aliases = new Map;
+  }
+  register(definition) {
+    if (!definition || typeof definition.render !== "function")
+      throw new Error("Renderer definition requires render(request)");
+    const target = targetName(definition.target);
+    if (this.renderers.has(target))
+      throw new Error(`Renderer target '${target}' is already registered`);
+    const aliases = new Set([
+      target,
+      definition.mime,
+      definition.extension,
+      ...definition.aliases || []
+    ].filter(Boolean).map((item) => targetName(String(item))));
+    for (const alias of aliases) {
+      if (this.aliases.has(alias))
+        throw new Error(`Renderer alias '${alias}' is already registered`);
+    }
+    const entry = Object.freeze({
+      target,
+      mime: String(definition.mime || "application/octet-stream"),
+      extension: String(definition.extension || target).replace(/^\./, "").toLowerCase(),
+      aliases: Object.freeze([...aliases]),
+      inputKinds: Object.freeze([...definition.inputKinds || []]),
+      deterministic: definition.deterministic !== false,
+      description: String(definition.description || `${target} renderer`),
+      render: definition.render
+    });
+    this.renderers.set(target, entry);
+    for (const alias of aliases)
+      this.aliases.set(alias, target);
+    return entry;
+  }
+  unregister(targetValue) {
+    const entry = this.info(targetValue);
+    if (!entry)
+      return false;
+    this.renderers.delete(entry.target);
+    for (const alias of entry.aliases)
+      this.aliases.delete(alias);
+    return true;
+  }
+  resolve(targetValue) {
+    const requested = targetName(targetValue);
+    return this.aliases.get(requested) || (this.renderers.has(requested) ? requested : null);
+  }
+  info(targetValue) {
+    const resolved = this.resolve(targetValue);
+    return resolved ? this.renderers.get(resolved) : null;
+  }
+  list() {
+    return [...this.renderers.values()].sort((left, right) => left.target.localeCompare(right.target));
+  }
+  targetForPath(filename) {
+    const lower2 = String(filename).toLowerCase();
+    const aliases = [...this.aliases.keys()].filter((alias) => !alias.includes("/") && lower2.endsWith(`.${alias}`)).sort((left, right) => right.length - left.length);
+    return aliases.length ? this.resolve(aliases[0]) : null;
+  }
+  render(value, targetValue, optionsValue = null, runtime = {}) {
+    const requested = targetName(targetValue);
+    const options = nativeOptions(optionsValue);
+    const fallbacksValue = options.fallbacks ?? options.fallback ?? [];
+    const fallbacks = Array.isArray(fallbacksValue) ? fallbacksValue : Array.isArray(fallbacksValue?.values) ? fallbacksValue.values : fallbacksValue ? [fallbacksValue] : [];
+    const candidates = [requested, ...fallbacks.map((item) => targetName(item))];
+    const failures = [];
+    for (const candidate of candidates) {
+      const entry = this.info(candidate);
+      if (!entry) {
+        failures.push({ level: "warning", code: "renderer-unavailable", message: `No renderer is registered for '${candidate}'` });
+        continue;
+      }
+      if (entry.inputKinds.length && !entry.inputKinds.includes(inputKind(value))) {
+        failures.push({
+          level: "warning",
+          code: "unsupported-input",
+          message: `Renderer '${entry.target}' does not accept ${inputKind(value)} values`
+        });
+        continue;
+      }
+      try {
+        const raw = entry.render(Object.freeze({
+          value,
+          options,
+          requestedTarget: requested,
+          target: entry.target,
+          registry: this,
+          format: runtime.format || ((item) => item?.type === "string" ? item.value : String(item ?? "")),
+          render: (nestedValue, nestedTarget, nestedOptions = {}) => this.render(nestedValue, nestedTarget, { ...options, ...nestedOptions, fallback: [] }, runtime),
+          runtime
+        }));
+        const result = createRenderResult({
+          target: entry.target,
+          mime: entry.mime,
+          extension: entry.extension,
+          deterministic: entry.deterministic,
+          ...raw,
+          diagnostics: [...failures, ...raw?.diagnostics || []]
+        });
+        if (entry.target !== requested) {
+          return createRenderResult({
+            ...result,
+            diagnostics: [{
+              level: "warning",
+              code: "renderer-fallback",
+              message: `Rendered '${requested}' through fallback '${entry.target}'`
+            }, ...result.diagnostics]
+          });
+        }
+        return result;
+      } catch (error) {
+        if (!(error instanceof UnsupportedRenderError))
+          throw error;
+        failures.push({ level: "warning", code: error.code, message: error.message });
+      }
+    }
+    const detail = failures.map(({ code, message }) => `[${code}] ${message}`).join("; ");
+    throw new UnsupportedRenderError(`Cannot render ${inputKind(value)} as '${requested}'${detail ? `: ${detail}` : ""}`, {
+      code: "render-negotiation-failed",
+      target: requested
+    });
+  }
+}
+function diagnosticValue(diagnostic) {
+  return {
+    type: "map",
+    entries: new Map([
+      ["level", stringValue5(diagnostic.level)],
+      ["code", stringValue5(diagnostic.code)],
+      ["message", stringValue5(diagnostic.message)],
+      ...diagnostic.path ? [["path", stringValue5(diagnostic.path)]] : []
+    ])
+  };
+}
+function assetValue2(asset) {
+  const binary2 = asset.content instanceof Uint8Array;
+  return {
+    type: "map",
+    entries: new Map([
+      ["path", stringValue5(asset.path)],
+      ["mime", stringValue5(asset.mime)],
+      ["encoding", stringValue5(binary2 ? "base64" : "utf8")],
+      ["content", stringValue5(binary2 ? bytesToBase64(asset.content) : asset.content)]
+    ])
+  };
+}
+function renderResultValue(result) {
+  if (!isRenderResult(result))
+    throw new Error("Expected a RenderResult");
+  const binary2 = result.content instanceof Uint8Array;
+  const value = {
+    type: "map",
+    entries: new Map([
+      ["target", stringValue5(result.target)],
+      ["mime", stringValue5(result.mime)],
+      ["extension", stringValue5(result.extension)],
+      ["encoding", stringValue5(binary2 ? "base64" : "utf8")],
+      ["content", stringValue5(binary2 ? bytesToBase64(result.content) : result.content)],
+      ["assets", sequenceValue(result.assets.map(assetValue2))],
+      ["diagnostics", sequenceValue(result.diagnostics.map(diagnosticValue))],
+      ["deterministic", result.deterministic ? new Integer(1n) : null],
+      ["toolchain", result.toolchain ? stringValue5(result.toolchain) : null]
+    ]),
+    _ext: new Map([["immutable", new Integer(1n)]])
+  };
+  Object.defineProperty(value, "_renderResult", { value: result, enumerable: false });
+  return Object.freeze(value);
+}
+function bytesToBase64(bytes) {
+  let binary2 = "";
+  for (let offset = 0;offset < bytes.length; offset += 32768) {
+    binary2 += String.fromCharCode(...bytes.subarray(offset, Math.min(bytes.length, offset + 32768)));
+  }
+  if (typeof btoa === "function")
+    return btoa(binary2);
+  throw new Error("This host cannot expose binary RenderResult content as base64");
+}
+function infoValue(entry) {
+  if (!entry)
+    return null;
+  return {
+    type: "map",
+    entries: new Map([
+      ["target", stringValue5(entry.target)],
+      ["mime", stringValue5(entry.mime)],
+      ["extension", stringValue5(entry.extension)],
+      ["description", stringValue5(entry.description)],
+      ["inputs", sequenceValue(entry.inputKinds.map(stringValue5))],
+      ["aliases", sequenceValue(entry.aliases.map(stringValue5))],
+      ["deterministic", entry.deterministic ? new Integer(1n) : null]
+    ])
+  };
+}
+function createRendererCollection(registry) {
+  const list = () => sequenceValue(registry.list().map(({ target }) => stringValue5(target)));
+  const info = (target) => infoValue(registry.info(target));
+  return {
+    type: "map",
+    entries: new Map([["List", list], ["Info", info]]),
+    _ext: new Map([
+      ["LIST", { type: "method_builtin", name: "List", impl: () => list() }],
+      ["INFO", { type: "method_builtin", name: "Info", impl: (args) => info(args[1]) }],
+      ["immutable", new Integer(1n)]
+    ])
+  };
+}
+function createRendererPluginCollection(registry, target) {
+  const render = (args, runtime = {}) => {
+    if (args.length < 1 || args.length > 2)
+      throw new Error(`${target}.Render expects a value and optional options map`);
+    return renderResultValue(registry.render(args[0], target, args[1] ?? null, runtime));
+  };
+  return {
+    type: "map",
+    entries: new Map([["Render", render]]),
+    _ext: new Map([
+      ["RENDER", { type: "method_builtin", name: "Render", impl: (args) => render(args.slice(1)) }],
+      ["immutable", new Integer(1n)]
+    ])
+  };
+}
+
 // ../rix/plugins/draw/draw.plugin.rix.js
 function entriesFor(args, positional, name) {
   if (args.length === 1 && args[0]?.type === "map" && args[0].entries instanceof Map)
@@ -33175,6 +34250,1155 @@ function install3({ systemContext }) {
   return plot;
 }
 
+// ../rix/plugins/renderers/common.js
+function outputKind(value) {
+  return value?.type === "output" ? value.kind : value?.type || typeof value;
+}
+function unwrapFigure(value) {
+  return outputKind(value) === "figure" ? { value: value.content, figure: value } : { value, figure: null };
+}
+function requireOutput(value, kinds, target) {
+  const kind = outputKind(value);
+  if (!kinds.includes(kind)) {
+    throw new UnsupportedRenderError(`${target} accepts ${kinds.join(", ")}; received ${kind}`, { target });
+  }
+  return value;
+}
+function rixString4(value) {
+  if (value?.type === "string")
+    return value.value;
+  return typeof value === "string" ? value : null;
+}
+function sequence2(value, label2) {
+  if (Array.isArray(value))
+    return value;
+  if (Array.isArray(value?.values))
+    return value.values;
+  throw new Error(`${label2} must be a sequence`);
+}
+function mapEntries2(value) {
+  if (value instanceof Map)
+    return value;
+  if (value?.type === "map" && value.entries instanceof Map)
+    return value.entries;
+  return null;
+}
+function field(value, name, fallback = null) {
+  const entries2 = mapEntries2(value);
+  if (entries2) {
+    if (entries2.has(name))
+      return entries2.get(name);
+    const key = [...entries2.keys()].find((candidate) => String(candidate).toLowerCase() === String(name).toLowerCase());
+    return key === undefined ? fallback : entries2.get(key);
+  }
+  if (value && typeof value === "object") {
+    if (Object.hasOwn(value, name))
+      return value[name];
+    const key = Object.keys(value).find((candidate) => candidate.toLowerCase() === String(name).toLowerCase());
+    return key === undefined ? fallback : value[key];
+  }
+  return fallback;
+}
+function option(options, name, fallback = null) {
+  return field(options, name, fallback);
+}
+function numberValue2(value, label2) {
+  let result;
+  if (value instanceof Integer)
+    result = Number(value.value);
+  else if (value instanceof Rational)
+    result = Number(value.numerator) / Number(value.denominator);
+  else if (typeof value === "number")
+    result = value;
+  else if (typeof value === "bigint")
+    result = Number(value);
+  else
+    throw new Error(`${label2} must be numeric`);
+  if (!Number.isFinite(result))
+    throw new Error(`${label2} must be finite`);
+  return result;
+}
+function stableNumber(value, label2 = "coordinate") {
+  return Number(numberValue2(value, label2).toFixed(6)).toString();
+}
+function point(value, label2) {
+  const values = sequence2(value, label2);
+  if (values.length !== 2)
+    throw new Error(`${label2} must contain two coordinates`);
+  return values.map((entry, index) => numberValue2(entry, `${label2} ${index === 0 ? "x" : "y"}`));
+}
+function styleValue2(style, name, fallback = null) {
+  return field(style, name, fallback);
+}
+function boolValue(value) {
+  if (value instanceof Integer)
+    return value.value !== 0n;
+  if (value instanceof Rational)
+    return value.numerator !== 0n;
+  return Boolean(value);
+}
+function textValue2(value, format) {
+  return rixString4(value) ?? format(value);
+}
+function escapeHtml2(value) {
+  return String(value).replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  })[character]);
+}
+function installRendererPlugin({
+  systemContext,
+  rendererRegistry,
+  definition,
+  mount = definition.target,
+  metadata = null
+}) {
+  if (!rendererRegistry)
+    throw new Error(`Renderer '${definition.target}' requires a host renderer registry`);
+  if (metadata?.targets?.length) {
+    const declared = new Set(metadata.targets.map((target) => String(target).toLowerCase().replace(/^\./, "")));
+    if (!declared.has(definition.target) && !declared.has(String(definition.mime).toLowerCase())) {
+      throw new Error(`Renderer '${definition.target}' does not match its declared manifest targets`);
+    }
+  }
+  const registered = rendererRegistry.register(definition);
+  try {
+    const collection = createRendererPluginCollection(rendererRegistry, registered.target);
+    systemContext.registerHostValue(mount, collection, {
+      doc: definition.description || `${registered.target} renderer`,
+      groups: ["Renderers"]
+    });
+    return collection;
+  } catch (error) {
+    rendererRegistry.unregister(registered.target);
+    throw error;
+  }
+}
+function diagnostic(code, message, level = "warning", path = null) {
+  return { level, code, message, ...path ? { path } : {} };
+}
+
+// ../rix/plugins/render-svg/svg.plugin.rix.js
+var definition = {
+  target: "svg",
+  mime: "image/svg+xml",
+  extension: "svg",
+  aliases: ["image/svg+xml"],
+  inputKinds: ["graphic", "figure"],
+  deterministic: true,
+  description: "Portable SVG renderer for core Graphics scenes",
+  render({ value, options, format }) {
+    const unwrapped = unwrapFigure(value);
+    requireOutput(unwrapped.value, ["graphic"], "svg");
+    if (unwrapped.figure && outputKind(unwrapped.figure.content) !== "graphic") {
+      requireOutput(unwrapped.figure.content, ["graphic"], "svg");
+    }
+    const alt = options.alt?.type === "string" ? options.alt.value : options.alt || unwrapped.figure?.alt || null;
+    let content = renderGraphicSvg(unwrapped.value, format);
+    if (alt) {
+      content = content.replace(/<svg ([^>]+)>/, `<svg $1 aria-label="${escapeHtml2(alt)}"><title>${escapeHtml2(alt)}</title>`);
+    }
+    return { content };
+  }
+};
+function install4(api) {
+  return installRendererPlugin({ ...api, definition });
+}
+
+// ../rix/plugins/render-canvas/canvas-plan.js
+function pathData(node) {
+  if (!node.commands) {
+    const points = node.points.map((entry, index) => point(entry, `Path point ${index + 1}`));
+    const closed = boolValue(styleValue2(node.style, "closed", false));
+    return points.map(([x, y], index) => `${index ? "L" : "M"}${stableNumber(x)} ${stableNumber(y)}`).join(" ") + (closed ? " Z" : "");
+  }
+  return node.commands.map((command, index) => {
+    const op = (rixString4(field(command, "op")) || field(command, "op", "")).toLowerCase();
+    const destination = () => point(field(command, "to"), `Path command ${index + 1} destination`);
+    if (["move", "m", "line", "l"].includes(op)) {
+      const [x, y] = destination();
+      return `${op === "move" || op === "m" ? "M" : "L"}${stableNumber(x)} ${stableNumber(y)}`;
+    }
+    if (["quadratic", "quad", "q"].includes(op)) {
+      const [cx, cy] = point(field(command, "control"), `Path command ${index + 1} control`);
+      const [x, y] = destination();
+      return `Q${stableNumber(cx)} ${stableNumber(cy)} ${stableNumber(x)} ${stableNumber(y)}`;
+    }
+    if (["cubic", "curve", "c"].includes(op)) {
+      const [c1x, c1y] = point(field(command, "control1"), `Path command ${index + 1} control1`);
+      const [c2x, c2y] = point(field(command, "control2"), `Path command ${index + 1} control2`);
+      const [x, y] = destination();
+      return `C${stableNumber(c1x)} ${stableNumber(c1y)} ${stableNumber(c2x)} ${stableNumber(c2y)} ${stableNumber(x)} ${stableNumber(y)}`;
+    }
+    if (["arc", "a"].includes(op)) {
+      const [rx, ry] = point(field(command, "radius"), `Path command ${index + 1} radius`);
+      const rotation = numberValue2(field(command, "rotation", 0), `Path command ${index + 1} rotation`);
+      const large = boolValue(field(command, "large", false)) ? 1 : 0;
+      const sweep = boolValue(field(command, "sweep", false)) ? 1 : 0;
+      const [x, y] = destination();
+      return `A${stableNumber(rx)} ${stableNumber(ry)} ${stableNumber(rotation)} ${large} ${sweep} ${stableNumber(x)} ${stableNumber(y)}`;
+    }
+    if (["close", "z"].includes(op))
+      return "Z";
+    throw new Error(`Unsupported Path command '${op || "(missing op)"}'`);
+  }).join(" ");
+}
+function canvasStyle(style, defaultFill = null) {
+  const result = {};
+  const stroke = rixString4(styleValue2(style, "stroke"));
+  const fillSource = rixString4(styleValue2(style, "fill"));
+  const fill = fillSource || defaultFill;
+  const width = styleValue2(style, "width", styleValue2(style, "strokeWidth"));
+  const opacity = styleValue2(style, "opacity");
+  const dash = rixString4(styleValue2(style, "dash"));
+  if (stroke)
+    result.stroke = stroke === "none" ? null : stroke;
+  if (fill)
+    result.fill = fill === "none" ? null : fill;
+  if (width !== null && width !== undefined)
+    result.width = numberValue2(width, "stroke width");
+  if (opacity !== null && opacity !== undefined)
+    result.opacity = numberValue2(opacity, "opacity");
+  if (dash)
+    result.dash = dash.trim().split(/[ ,]+/).filter(Boolean).map(Number);
+  return result;
+}
+function mergedStyle2(parent, own, defaultFill = null) {
+  return { ...parent, ...canvasStyle(own, defaultFill) };
+}
+function transformCommands(node) {
+  const commands = [];
+  if (node.translate !== null && node.translate !== undefined)
+    commands.push(["translate", ...point(node.translate, "Transform translate")]);
+  if (node.rotate !== null && node.rotate !== undefined) {
+    const angle = numberValue2(node.rotate, "Transform rotate") * Math.PI / 180;
+    if (node.origin !== null && node.origin !== undefined) {
+      const [x, y] = point(node.origin, "Transform origin");
+      commands.push(["translate", x, y], ["rotate", angle], ["translate", -x, -y]);
+    } else
+      commands.push(["rotate", angle]);
+  }
+  if (node.scale !== null && node.scale !== undefined) {
+    const scale = Array.isArray(node.scale) || node.scale?.values ? point(node.scale, "Transform scale") : [numberValue2(node.scale, "Transform scale"), numberValue2(node.scale, "Transform scale")];
+    commands.push(["scale", ...scale]);
+  }
+  return commands;
+}
+function visit(node, commands, diagnostics, format, path = "graphic", inheritedStyle = {}) {
+  if (!node || node.type !== "output")
+    throw new Error(`${path} contains a non-Graphics scene node`);
+  if (node.kind === "path")
+    commands.push(["path2d", pathData(node), mergedStyle2(inheritedStyle, node.style)]);
+  else if (node.kind === "rectangle")
+    commands.push(["rectangle", ...point(node.origin, `${path} origin`), ...point(node.size, `${path} size`), mergedStyle2(inheritedStyle, node.style)]);
+  else if (node.kind === "circle" || node.kind === "drag_point") {
+    commands.push(["circle", ...point(node.center, `${path} center`), numberValue2(node.radius, `${path} radius`), mergedStyle2(inheritedStyle, node.style, node.kind === "drag_point" ? "#7c3aed" : null)]);
+    if (node.kind === "drag_point")
+      diagnostics.push(diagnostic("canvas-static-drag-point", "Canvas plans render DragPoint as a static marker; host interaction must bind the target separately", "info", path));
+  } else if (node.kind === "text_mark") {
+    const [x, y] = point(node.position, `${path} position`);
+    const size = styleValue2(node.style, "size", styleValue2(node.style, "fontSize", 16));
+    commands.push(["text", x, y, textValue2(node.text, format), {
+      ...mergedStyle2(inheritedStyle, node.style, "currentColor"),
+      font: rixString4(styleValue2(node.style, "font")) || "sans-serif",
+      size: numberValue2(size, `${path} font size`),
+      weight: rixString4(styleValue2(node.style, "weight")) || "normal",
+      anchor: rixString4(styleValue2(node.style, "anchor")) || "start"
+    }]);
+  } else if (["group", "transform", "clip"].includes(node.kind)) {
+    commands.push(["save"]);
+    if (node.kind === "transform")
+      commands.push(...transformCommands(node));
+    if (node.kind === "clip")
+      commands.push(["clipRect", ...node.bounds.map((entry, index) => numberValue2(entry, `${path} clip bound ${index + 1}`))]);
+    const childStyle = mergedStyle2(inheritedStyle, node.style);
+    node.children.forEach((child, index) => visit(child, commands, diagnostics, format, `${path}.${node.kind}[${index + 1}]`, childStyle));
+    commands.push(["restore"]);
+  } else
+    throw new Error(`Canvas renderer does not support Graphics node '${node.kind}'`);
+}
+function createCanvasPlan(graphic, format) {
+  const commands = [];
+  const diagnostics = [];
+  graphic.children.forEach((child, index) => visit(child, commands, diagnostics, format, `graphic[${index + 1}]`));
+  return {
+    schema: "rix.canvas-plan@1",
+    width: numberValue2(graphic.size[0], "Graphic width"),
+    height: numberValue2(graphic.size[1], "Graphic height"),
+    commands,
+    diagnostics
+  };
+}
+
+// ../rix/plugins/render-canvas/canvas.plugin.rix.js
+var definition2 = {
+  target: "canvas",
+  mime: "application/vnd.rix.canvas+json",
+  extension: "canvas.json",
+  aliases: ["canvas2d", "application/vnd.rix.canvas+json"],
+  inputKinds: ["graphic", "figure"],
+  deterministic: true,
+  description: "Serializable CanvasRenderingContext2D plan for core Graphics",
+  render({ value, format }) {
+    const { value: graphic } = unwrapFigure(value);
+    requireOutput(graphic, ["graphic"], "canvas");
+    const plan = createCanvasPlan(graphic, format);
+    return {
+      content: `${JSON.stringify({ ...plan, diagnostics: undefined })}
+`,
+      diagnostics: plan.diagnostics,
+      metadata: { width: plan.width, height: plan.height, schema: plan.schema }
+    };
+  }
+};
+function install5(api) {
+  return installRendererPlugin({ ...api, definition: definition2 });
+}
+
+// ../rix/plugins/render-tikz/tikz-renderer.js
+function texText(value) {
+  return String(value).replace(/[\\{}%$&#_^~]/g, (character) => ({
+    "\\": "\\textbackslash{}",
+    "{": "\\{",
+    "}": "\\}",
+    "%": "\\%",
+    $: "\\$",
+    "&": "\\&",
+    "#": "\\#",
+    _: "\\_",
+    "^": "\\textasciicircum{}",
+    "~": "\\textasciitilde{}"
+  })[character]);
+}
+function tikzColor(value) {
+  const color = rixString4(value);
+  if (!color)
+    return null;
+  const hex = color.match(/^#([0-9a-f]{6})$/i);
+  if (hex) {
+    const number = Number.parseInt(hex[1], 16);
+    return `{rgb,255:red,${number >> 16};green,${number >> 8 & 255};blue,${number & 255}}`;
+  }
+  return /^[A-Za-z][A-Za-z0-9]*$/.test(color) ? color : "black";
+}
+function tikzStyle(style, defaultFill = null) {
+  const values = [];
+  const stroke = tikzColor(styleValue2(style, "stroke"));
+  const fillSource = rixString4(styleValue2(style, "fill"));
+  const fill = fillSource === "none" ? null : tikzColor(styleValue2(style, "fill")) || defaultFill;
+  const width = styleValue2(style, "width", styleValue2(style, "strokeWidth"));
+  const opacity = styleValue2(style, "opacity");
+  const dash = rixString4(styleValue2(style, "dash"));
+  if (stroke)
+    values.push(`draw=${stroke}`);
+  else
+    values.push("draw=none");
+  if (fill)
+    values.push(`fill=${fill}`);
+  if (width !== null && width !== undefined)
+    values.push(`line width=${stableNumber(width, "stroke width")}pt`);
+  if (opacity !== null && opacity !== undefined)
+    values.push(`opacity=${stableNumber(opacity, "opacity")}`);
+  if (dash) {
+    const lengths = dash.trim().split(/[ ,]+/).filter(Boolean).map((part) => numberValue2(Number(part), "dash length"));
+    if (lengths.length)
+      values.push(`dash pattern=${lengths.map((length, index) => `${index % 2 ? "off" : "on"} ${stableNumber(length)}pt`).join(" ")}`);
+  }
+  return values.join(",");
+}
+function styleObject(style) {
+  if (style instanceof Map)
+    return Object.fromEntries(style);
+  if (style?.type === "map" && style.entries instanceof Map)
+    return Object.fromEntries(style.entries);
+  return style && typeof style === "object" ? style : {};
+}
+function mergedStyle3(parent, own) {
+  return { ...parent, ...styleObject(own) };
+}
+function destination(command, index) {
+  return point(field(command, "to"), `Path command ${index + 1} destination`);
+}
+function pathSource(node, path) {
+  if (!node.commands) {
+    const coordinates = node.points.map((entry, index) => point(entry, `Path point ${index + 1}`));
+    const suffix = boolValue(styleValue2(node.style, "closed", false)) ? " -- cycle" : "";
+    return coordinates.map(([x, y], index) => `${index ? " -- " : ""}(${stableNumber(x)},${stableNumber(y)})`).join("") + suffix;
+  }
+  const parts = [];
+  let current = null;
+  let subpathStart = null;
+  node.commands.forEach((command, index) => {
+    const op = (rixString4(field(command, "op")) || field(command, "op", "")).toLowerCase();
+    if (["move", "m"].includes(op)) {
+      const [x, y] = destination(command, index);
+      current = [x, y];
+      subpathStart = [x, y];
+      parts.push(`(${stableNumber(x)},${stableNumber(y)})`);
+      return;
+    }
+    if (["line", "l"].includes(op)) {
+      const [x, y] = destination(command, index);
+      current = [x, y];
+      parts.push(` -- (${stableNumber(x)},${stableNumber(y)})`);
+      return;
+    }
+    if (["quadratic", "quad", "q"].includes(op)) {
+      if (!current)
+        throw new UnsupportedRenderError(`${path}: quadratic command has no current point`, { target: "tikz" });
+      const [cx, cy] = point(field(command, "control"), `Path command ${index + 1} control`);
+      const [x, y] = destination(command, index);
+      const control1 = [current[0] + (cx - current[0]) * 2 / 3, current[1] + (cy - current[1]) * 2 / 3];
+      const control2 = [x + (cx - x) * 2 / 3, y + (cy - y) * 2 / 3];
+      parts.push(` .. controls (${stableNumber(control1[0])},${stableNumber(control1[1])}) and (${stableNumber(control2[0])},${stableNumber(control2[1])}) .. (${stableNumber(x)},${stableNumber(y)})`);
+      current = [x, y];
+      return;
+    }
+    if (["cubic", "curve", "c"].includes(op)) {
+      const [c1x, c1y] = point(field(command, "control1"), `Path command ${index + 1} control1`);
+      const [c2x, c2y] = point(field(command, "control2"), `Path command ${index + 1} control2`);
+      const [x, y] = destination(command, index);
+      parts.push(` .. controls (${stableNumber(c1x)},${stableNumber(c1y)}) and (${stableNumber(c2x)},${stableNumber(c2y)}) .. (${stableNumber(x)},${stableNumber(y)})`);
+      current = [x, y];
+      return;
+    }
+    if (["close", "z"].includes(op)) {
+      parts.push(" -- cycle");
+      current = subpathStart;
+      return;
+    }
+    if (["arc", "a"].includes(op)) {
+      throw new UnsupportedRenderError(`${path}: endpoint SVG arc commands require geometric conversion before TikZ export`, {
+        code: "tikz-svg-arc",
+        target: "tikz"
+      });
+    }
+    throw new UnsupportedRenderError(`${path}: unsupported Path command '${op || "(missing op)"}'`, { target: "tikz" });
+  });
+  return parts.join("");
+}
+function scopeOptions(node) {
+  const values = [];
+  if (node.translate !== null && node.translate !== undefined) {
+    const [x, y] = point(node.translate, "Transform translate");
+    values.push(`shift={(${stableNumber(x)}pt,${stableNumber(y)}pt)}`);
+  }
+  if (node.rotate !== null && node.rotate !== undefined) {
+    const angle = stableNumber(node.rotate, "Transform rotate");
+    if (node.origin !== null && node.origin !== undefined) {
+      const [x, y] = point(node.origin, "Transform origin");
+      values.push(`rotate around={${angle}:(${stableNumber(x)},${stableNumber(y)})}`);
+    } else
+      values.push(`rotate=${angle}`);
+  }
+  if (node.scale !== null && node.scale !== undefined) {
+    const scale = Array.isArray(node.scale) || node.scale?.values ? point(node.scale, "Transform scale") : [numberValue2(node.scale, "Transform scale"), numberValue2(node.scale, "Transform scale")];
+    values.push(`xscale=${stableNumber(scale[0])}`, `yscale=${stableNumber(scale[1])}`);
+  }
+  return values.join(",");
+}
+function renderNode(node, state, format, path, inheritedStyle = {}) {
+  if (!node || node.type !== "output")
+    throw new Error(`${path} contains a non-Graphics scene node`);
+  const resolvedStyle = mergedStyle3(inheritedStyle, node.style);
+  if (node.kind === "path")
+    return `\\path[${tikzStyle(resolvedStyle)}] ${pathSource(node, path)};`;
+  if (node.kind === "rectangle") {
+    const [x, y] = point(node.origin, `${path} origin`);
+    const [width, height] = point(node.size, `${path} size`);
+    return `\\path[${tikzStyle(resolvedStyle)}] (${stableNumber(x)},${stableNumber(y)}) rectangle (${stableNumber(x + width)},${stableNumber(y + height)});`;
+  }
+  if (node.kind === "circle" || node.kind === "drag_point") {
+    const [x, y] = point(node.center, `${path} center`);
+    if (node.kind === "drag_point")
+      state.diagnostics.push(diagnostic("tikz-static-drag-point", "TikZ renders DragPoint as a static circle", "info", path));
+    return `\\path[${tikzStyle(resolvedStyle, node.kind === "drag_point" ? tikzColor("#7c3aed") : null)}] (${stableNumber(x)},${stableNumber(y)}) circle[radius=${stableNumber(node.radius, `${path} radius`)}pt];`;
+  }
+  if (node.kind === "text_mark") {
+    const [x, y] = point(node.position, `${path} position`);
+    const anchor = rixString4(styleValue2(resolvedStyle, "anchor"));
+    const fill = tikzColor(styleValue2(resolvedStyle, "fill"));
+    const size = styleValue2(resolvedStyle, "size", styleValue2(resolvedStyle, "fontSize"));
+    const options = [
+      anchor === "middle" ? "anchor=center" : anchor === "end" ? "anchor=east" : "anchor=west",
+      fill ? `text=${fill}` : null,
+      size ? `font=\\fontsize{${stableNumber(size, `${path} font size`)}}{${stableNumber(numberValue2(size, `${path} font size`) * 1.2)}}\\selectfont` : null
+    ].filter(Boolean).join(",");
+    return `\\node[${options}] at (${stableNumber(x)},${stableNumber(y)}) {${texText(textValue2(node.text, format))}};`;
+  }
+  if (["group", "transform", "clip"].includes(node.kind)) {
+    const options = node.kind === "transform" ? scopeOptions(node) : "";
+    const lines = [`\\begin{scope}${options ? `[${options}]` : ""}`];
+    if (node.kind === "clip") {
+      const bounds = node.bounds.map((entry, index) => numberValue2(entry, `${path} clip bound ${index + 1}`));
+      lines.push(`\\clip (${stableNumber(bounds[0])},${stableNumber(bounds[1])}) rectangle (${stableNumber(bounds[0] + bounds[2])},${stableNumber(bounds[1] + bounds[3])});`);
+    }
+    node.children.forEach((child, index) => lines.push(renderNode(child, state, format, `${path}.${node.kind}[${index + 1}]`, resolvedStyle)));
+    lines.push("\\end{scope}");
+    return lines.join(`
+`);
+  }
+  throw new UnsupportedRenderError(`${path}: TikZ does not support Graphics node '${node.kind}'`, { target: "tikz" });
+}
+function renderGraphicTikz(graphic, format, { standalone = false } = {}) {
+  const state = { diagnostics: [] };
+  const body = [
+    "\\begin{tikzpicture}[x=1pt,y=-1pt]",
+    ...graphic.children.map((child, index) => renderNode(child, state, format, `graphic[${index + 1}]`)),
+    "\\end{tikzpicture}"
+  ].join(`
+`);
+  return {
+    content: standalone ? `\\documentclass[tikz,border=2pt]{standalone}
+\\usepackage{xcolor}
+\\begin{document}
+${body}
+\\end{document}
+` : `${body}
+`,
+    diagnostics: state.diagnostics
+  };
+}
+
+// ../rix/plugins/render-tikz/tikz.plugin.rix.js
+var definition3 = {
+  target: "tikz",
+  mime: "text/x-tikz",
+  extension: "tikz",
+  aliases: ["pgf"],
+  inputKinds: ["graphic", "figure"],
+  deterministic: true,
+  description: "Editable TikZ/PGF source renderer for core Graphics",
+  render({ value, options, format }) {
+    const { value: graphic } = unwrapFigure(value);
+    requireOutput(graphic, ["graphic"], "tikz");
+    return renderGraphicTikz(graphic, format, { standalone: boolOption(option(options, "standalone", false)) });
+  }
+};
+function boolOption(value) {
+  return value?.value === 1n || value === true || value === 1;
+}
+function install6(api) {
+  return installRendererPlugin({ ...api, definition: definition3 });
+}
+
+// ../rix/plugins/renderers/document-renderers.js
+function markdownEscape(value) {
+  return String(value).replace(/([\\`*{}[\]()#+.!_>-])/g, "\\$1");
+}
+function inlineMarkdown(value, state) {
+  if (!isOutputValue(value))
+    return markdownEscape(state.format(value));
+  if (value.kind === "text")
+    return markdownEscape(textValue2(value.value, state.format));
+  if (value.kind === "emphasis")
+    return `*${value.children.map((child) => inlineMarkdown(child, state)).join("")}*`;
+  if (value.kind === "strong")
+    return `**${value.children.map((child) => inlineMarkdown(child, state)).join("")}**`;
+  if (value.kind === "code") {
+    const fence = value.code.includes("`") ? "``" : "`";
+    return `${fence}${value.code}${fence}`;
+  }
+  if (value.kind === "math")
+    return `$${value.source}$`;
+  if (value.kind === "link")
+    return `[${value.children.map((child) => inlineMarkdown(child, state)).join("")}](${value.href}${value.title ? ` "${value.title.replaceAll('"', "\\\"")}"` : ""})`;
+  if (value.kind === "image")
+    return `![${value.alt}](${value.asset.ref}${value.title ? ` "${value.title.replaceAll('"', "\\\"")}"` : ""})`;
+  if (value.kind === "line_break")
+    return `  
+`;
+  return markdownEscape(formatOutputText(value, state.format));
+}
+function markdownTable(value, state) {
+  const escapeCell = (entry) => state.format(entry).replaceAll("|", "\\|").replaceAll(`
+`, "<br>");
+  const align = (column) => column.align === "right" ? "---:" : column.align === "center" ? ":---:" : ":---";
+  return [
+    `| ${value.columns.map(({ label: label2 }) => label2.replaceAll("|", "\\|")).join(" | ")} |`,
+    `| ${value.columns.map(align).join(" | ")} |`,
+    ...value.rows.map((row) => `| ${row.map(escapeCell).join(" | ")} |`)
+  ].join(`
+`);
+}
+function graphicMarkdown(value, state) {
+  try {
+    return state.render(value, "svg", { alt: state.figureAlt || "" }).content;
+  } catch (error) {
+    if (!(error instanceof UnsupportedRenderError))
+      throw error;
+    state.diagnostics.push(diagnostic("markdown-core-svg-fallback", "SVG plugin unavailable; used the core compatibility SVG adapter", "info"));
+    return renderGraphicSvg(value, state.format);
+  }
+}
+function blockMarkdown(value, state, depth = 0) {
+  if (!isOutputValue(value))
+    return state.format(value);
+  if (isInlineOutput(value))
+    return inlineMarkdown(value, state);
+  if (value.kind === "live_view")
+    return blockMarkdown(value.current, state, depth);
+  if (value.kind === "paragraph")
+    return value.children.map((child) => inlineMarkdown(child, state)).join("");
+  if (value.kind === "heading") {
+    const content = Array.isArray(value.content) ? value.content : [value.content];
+    return `${"#".repeat(value.level)} ${content.map((child) => inlineMarkdown(child, state)).join("")}${value.id ? ` {#${value.id}}` : ""}`;
+  }
+  if (value.kind === "section") {
+    const heading = `${"#".repeat(value.level)} ${value.title.map((child) => inlineMarkdown(child, state)).join("")}${value.id ? ` {#${value.id}}` : ""}`;
+    return [heading, ...value.children.map((child) => blockMarkdown(child, state, depth))].join(`
+
+`);
+  }
+  if (value.kind === "list") {
+    return value.items.map((item, index) => {
+      const marker = value.ordered ? `${(value.start ?? 1) + index}.` : "-";
+      const body = item.children.map((child) => blockMarkdown(child, state, depth + 1)).join(`
+
+`);
+      return `${marker} ${body.replaceAll(`
+`, `
+   `)}`;
+    }).join(`
+`);
+  }
+  if (value.kind === "list_item")
+    return value.children.map((child) => blockMarkdown(child, state, depth)).join(`
+
+`);
+  if (value.kind === "quote") {
+    const body = value.children.map((child) => blockMarkdown(child, state, depth)).join(`
+
+`);
+    const attribution = value.attribution ? `
+
+— ${value.attribution.map((child) => inlineMarkdown(child, state)).join("")}` : "";
+    return `${body}${attribution}`.split(`
+`).map((line2) => `> ${line2}`).join(`
+`);
+  }
+  if (value.kind === "callout") {
+    const title = value.title?.map((child) => inlineMarkdown(child, state)).join("") || value.variant;
+    const body = value.children.map((child) => blockMarkdown(child, state, depth)).join(`
+
+`);
+    if (state.quarto)
+      return `::: {.callout-${value.variant}${value.id ? ` #${value.id}` : ""} title="${title.replaceAll('"', "\\\"")}"}
+${body}
+:::`;
+    return `> **${title}**
+>
+${body.split(`
+`).map((line2) => `> ${line2}`).join(`
+`)}`;
+  }
+  if (value.kind === "code_block") {
+    const fence = value.code.includes("```") ? "````" : "```";
+    const attributes = state.quarto && (value.id || value.lineNumbers) ? ` {#${value.id || ""}${value.lineNumbers ? " code-line-numbers=true" : ""}}` : "";
+    return `${value.caption ? `${value.caption.map((child) => inlineMarkdown(child, state)).join("")}
+
+` : ""}${fence}${value.language}${attributes}
+${value.code}
+${fence}`;
+  }
+  if (value.kind === "math_block")
+    return `$$
+${value.source}
+$$${value.label ? ` {#eq-${value.label.replace(/^eq-/, "")}}` : ""}`;
+  if (value.kind === "asset")
+    return `[${value.mime} asset](${value.ref})`;
+  if (value.kind === "image")
+    return inlineMarkdown(value, state) + (value.caption ? `
+
+*${value.caption.map((child) => inlineMarkdown(child, state)).join("")}*` : "");
+  if (value.kind === "audio" || value.kind === "video") {
+    state.diagnostics.push(diagnostic("markdown-media-link", `${value.kind} is represented as a portable asset link`, "info"));
+    return `[${value.title || value.kind}](${value.asset.ref})`;
+  }
+  if (value.kind === "fragment")
+    return value.children.map((child) => blockMarkdown(child, state, depth)).join(`
+
+`);
+  if (value.kind === "snapshots")
+    return [value.title ? `## ${markdownEscape(value.title)}` : null, ...value.snapshots.map((snapshot) => blockMarkdown(snapshot.content, state, depth)), value.caption ? `*${markdownEscape(value.caption)}*` : null].filter(Boolean).join(`
+
+`);
+  if (value.kind === "timeline_render")
+    return blockMarkdown(value.content, state, depth);
+  if (value.kind === "timeline") {
+    state.diagnostics.push(diagnostic("markdown-timeline-summary", "Markdown cannot play a Timeline; emitted a summary", "warning"));
+    return `*Timeline: ${value.frames.length} frames*`;
+  }
+  if (value.kind.startsWith("control_") || value.kind === "control_panel") {
+    state.diagnostics.push(diagnostic("markdown-static-control", "Interactive controls were lowered to their static text representation", "warning"));
+    return formatOutputText(value, state.format);
+  }
+  if (value.kind === "table")
+    return [value.caption ? `**${markdownEscape(value.caption)}**` : null, markdownTable(value, state)].filter(Boolean).join(`
+
+`);
+  if (value.kind === "grid" || value.kind === "sheet") {
+    state.diagnostics.push(diagnostic("markdown-fixed-width-layout", `${value.kind} was lowered to a fixed-width static text block`, "info"));
+    return `\`\`\`text
+${formatOutputText(value, state.format)}
+\`\`\``;
+  }
+  if (value.kind === "figure") {
+    const previousAlt = state.figureAlt;
+    state.figureAlt = value.alt;
+    const body = blockMarkdown(value.content, state, depth);
+    state.figureAlt = previousAlt;
+    const caption = value.caption ? `*${markdownEscape(value.caption)}*` : "";
+    if (state.quarto && value.label)
+      return `::: {#fig-${value.label.replace(/^fig-/, "")}}
+${body}
+
+${caption}
+:::`;
+    return [body, caption].filter(Boolean).join(`
+
+`);
+  }
+  if (value.kind === "graphic")
+    return graphicMarkdown(value, state);
+  if (value.kind === "slide")
+    return [`## ${markdownEscape(value.title || "Slide")}`, blockMarkdown(value.content, state, depth)].join(`
+
+`);
+  if (value.kind === "slides")
+    return [value.title ? `# ${markdownEscape(value.title)}` : null, ...value.slides.map((slide) => blockMarkdown(slide, state, depth))].filter(Boolean).join(state.quarto ? `
+
+---
+
+` : `
+
+`);
+  state.diagnostics.push(diagnostic("markdown-text-fallback", `Used text fallback for output kind '${value.kind}'`, "warning"));
+  return formatOutputText(value, state.format);
+}
+function renderMarkdown(value, { format, render, quarto = false } = {}) {
+  const state = { format, render, quarto, diagnostics: [], figureAlt: null };
+  return { content: `${blockMarkdown(value, state).trim()}
+`, diagnostics: state.diagnostics };
+}
+function texEscape(value) {
+  return String(value).replace(/[\\{}%$&#_^~]/g, (character) => ({
+    "\\": "\\textbackslash{}",
+    "{": "\\{",
+    "}": "\\}",
+    "%": "\\%",
+    $: "\\$",
+    "&": "\\&",
+    "#": "\\#",
+    _: "\\_",
+    "^": "\\textasciicircum{}",
+    "~": "\\textasciitilde{}"
+  })[character]);
+}
+function inlineLatex(value, state) {
+  if (!isOutputValue(value))
+    return texEscape(state.format(value));
+  if (value.kind === "text")
+    return texEscape(textValue2(value.value, state.format));
+  if (value.kind === "emphasis")
+    return `\\emph{${value.children.map((child) => inlineLatex(child, state)).join("")}}`;
+  if (value.kind === "strong")
+    return `\\textbf{${value.children.map((child) => inlineLatex(child, state)).join("")}}`;
+  if (value.kind === "code")
+    return `\\texttt{${texEscape(value.code)}}`;
+  if (value.kind === "math")
+    return `$${value.source}$`;
+  if (value.kind === "link")
+    return `\\href{${value.href}}{${value.children.map((child) => inlineLatex(child, state)).join("")}}`;
+  if (value.kind === "image")
+    return `\\includegraphics${value.width ? `[width=${value.width}pt]` : ""}{${texEscape(value.asset.ref)}}`;
+  if (value.kind === "line_break")
+    return `\\\\
+`;
+  return texEscape(formatOutputText(value, state.format));
+}
+function latexRows(rows, state) {
+  return rows.map((row) => `${row.map((cell) => texEscape(state.format(cell))).join(" & ")} \\\\`).join(`
+`);
+}
+function gridRule(value, kind, boundary) {
+  const fieldName = kind === "vertical" ? "afterColumn" : "aboveRow";
+  return value.rules.some((rule) => {
+    const ruleKind = rixString4(field(rule, "kind")) || field(rule, "kind");
+    const position = field(rule, fieldName);
+    return ruleKind === kind && position !== null && numberValue2(position, `Grid ${fieldName}`) === boundary;
+  });
+}
+function latexGrid(value, state) {
+  const columns = value.columns.map((_column, index) => `${gridRule(value, "vertical", index + 1) ? "|" : ""}r`).join("");
+  const rows = [];
+  value.rows.forEach((row, index) => {
+    if (gridRule(value, "horizontal", index + 1))
+      rows.push("\\hline");
+    rows.push(`${row.map((cell) => texEscape(state.format(cell))).join(" & ")} \\\\`);
+  });
+  return `\\begin{tabular}{${columns}}
+${rows.join(`
+`)}
+\\end{tabular}`;
+}
+function blockLatex(value, state) {
+  if (!isOutputValue(value))
+    return texEscape(state.format(value));
+  if (isInlineOutput(value))
+    return inlineLatex(value, state);
+  if (value.kind === "live_view")
+    return blockLatex(value.current, state);
+  if (value.kind === "paragraph")
+    return `${value.children.map((child) => inlineLatex(child, state)).join("")}
+`;
+  if (value.kind === "heading") {
+    const commands = ["section", "subsection", "subsubsection", "paragraph", "subparagraph", "subparagraph"];
+    const content = (Array.isArray(value.content) ? value.content : [value.content]).map((child) => inlineLatex(child, state)).join("");
+    return `\\${commands[value.level - 1]}{${content}}${value.id ? `\\label{${texEscape(value.id)}}` : ""}`;
+  }
+  if (value.kind === "section") {
+    const commands = ["section", "subsection", "subsubsection", "paragraph", "subparagraph", "subparagraph"];
+    return `\\${commands[value.level - 1]}{${value.title.map((child) => inlineLatex(child, state)).join("")}}${value.id ? `\\label{${texEscape(value.id)}}` : ""}
+${value.children.map((child) => blockLatex(child, state)).join(`
+
+`)}`;
+  }
+  if (value.kind === "list") {
+    const environment = value.ordered ? "enumerate" : "itemize";
+    return `\\begin{${environment}}
+${value.items.map((item) => `\\item ${item.children.map((child) => blockLatex(child, state)).join(`
+
+`)}`).join(`
+`)}
+\\end{${environment}}`;
+  }
+  if (value.kind === "list_item")
+    return value.children.map((child) => blockLatex(child, state)).join(`
+
+`);
+  if (value.kind === "quote")
+    return `\\begin{quote}
+${value.children.map((child) => blockLatex(child, state)).join(`
+
+`)}${value.attribution ? `
+\\hfill---${value.attribution.map((child) => inlineLatex(child, state)).join("")}` : ""}
+\\end{quote}`;
+  if (value.kind === "callout")
+    return `\\begin{quote}
+\\textbf{${value.title ? value.title.map((child) => inlineLatex(child, state)).join("") : texEscape(value.variant)}}\\par
+${value.children.map((child) => blockLatex(child, state)).join(`
+
+`)}
+\\end{quote}`;
+  if (value.kind === "code_block")
+    return `${value.caption ? `\\textbf{${value.caption.map((child) => inlineLatex(child, state)).join("")}}
+` : ""}\\begin{verbatim}
+${value.code}
+\\end{verbatim}`;
+  if (value.kind === "math_block")
+    return `\\begin{equation}${value.label ? `\\label{${texEscape(value.label)}}` : ""}
+${value.source}
+\\end{equation}`;
+  if (value.kind === "asset")
+    return `\\url{${texEscape(value.ref)}}`;
+  if (value.kind === "image")
+    return inlineLatex(value, state);
+  if (value.kind === "audio" || value.kind === "video") {
+    state.diagnostics.push(diagnostic("latex-media-link", `${value.kind} cannot be embedded in static LaTeX; emitted a URL`, "warning"));
+    return `\\href{${value.asset.ref}}{${texEscape(value.title || value.kind)}}`;
+  }
+  if (value.kind === "fragment")
+    return value.children.map((child) => blockLatex(child, state)).join(`
+
+`);
+  if (value.kind === "snapshots")
+    return [value.title ? `\\section*{${texEscape(value.title)}}` : null, ...value.snapshots.map((snapshot) => blockLatex(snapshot.content, state)), value.caption ? `\\emph{${texEscape(value.caption)}}` : null].filter(Boolean).join(`
+
+`);
+  if (value.kind === "timeline_render")
+    return blockLatex(value.content, state);
+  if (value.kind === "timeline") {
+    state.diagnostics.push(diagnostic("latex-timeline-summary", "LaTeX cannot play a Timeline; emitted a summary", "warning"));
+    return `\\emph{Timeline: ${value.frames.length} frames}`;
+  }
+  if (value.kind.startsWith("control_") || value.kind === "control_panel") {
+    state.diagnostics.push(diagnostic("latex-static-control", "Interactive controls were lowered to static text", "warning"));
+    return `\\begin{verbatim}
+${formatOutputText(value, state.format)}
+\\end{verbatim}`;
+  }
+  if (value.kind === "table") {
+    const columns = value.columns.map((column) => column.align === "right" ? "r" : column.align === "center" ? "c" : "l").join("");
+    return `${value.caption ? `\\begin{table}[htbp]
+\\centering
+\\caption{${texEscape(value.caption)}}
+` : ""}\\begin{tabular}{${columns}}
+\\toprule
+${value.columns.map(({ label: label2 }) => texEscape(label2)).join(" & ")} \\\\
+\\midrule
+${latexRows(value.rows, state)}
+\\bottomrule
+\\end{tabular}${value.caption ? `
+\\end{table}` : ""}`;
+  }
+  if (value.kind === "grid")
+    return latexGrid(value, state);
+  if (value.kind === "sheet") {
+    state.diagnostics.push(diagnostic("latex-sheet-text", "Sheet was lowered to its selected static text plane", "info"));
+    return `\\begin{verbatim}
+${formatOutputText(value, state.format)}
+\\end{verbatim}`;
+  }
+  if (value.kind === "figure") {
+    return `\\begin{figure}[htbp]
+\\centering
+${blockLatex(value.content, state)}${value.caption ? `
+\\caption{${texEscape(value.caption)}}` : ""}${value.label ? `
+\\label{${texEscape(value.label)}}` : ""}
+\\end{figure}`;
+  }
+  if (value.kind === "graphic") {
+    const rendered = renderGraphicTikz(value, state.format);
+    state.diagnostics.push(...rendered.diagnostics);
+    return rendered.content.trim();
+  }
+  if (value.kind === "slide")
+    return `\\section*{${texEscape(value.title || "Slide")}}
+${blockLatex(value.content, state)}`;
+  if (value.kind === "slides")
+    return value.slides.map((slide) => blockLatex(slide, state)).join(`
+\\clearpage
+`);
+  throw new UnsupportedRenderError(`LaTeX renderer does not support output kind '${outputKind(value)}'`, { target: "latex" });
+}
+function renderLatex(value, { format, standalone = true, title = null } = {}) {
+  const state = { format, diagnostics: [] };
+  const body = blockLatex(value, state);
+  if (!standalone)
+    return { content: `${body.trim()}
+`, diagnostics: state.diagnostics };
+  const heading = title ? `\\title{${texEscape(title)}}
+\\date{}
+` : "";
+  const makeTitle = title ? `\\maketitle
+` : "";
+  return {
+    content: `\\documentclass{article}
+\\usepackage[margin=1in]{geometry}
+\\usepackage{amsmath,amssymb}
+\\usepackage{booktabs}
+\\usepackage{graphicx}
+\\usepackage{hyperref}
+\\usepackage{xcolor}
+\\usepackage{tikz}
+${heading}\\begin{document}
+${makeTitle}${body.trim()}
+\\end{document}
+`,
+    diagnostics: state.diagnostics
+  };
+}
+function quartoFrontMatter(options) {
+  const metadata = field(options, "metadata", options);
+  const keys = ["title", "author", "date", "format"];
+  const lines = [];
+  for (const key of keys) {
+    const value = field(metadata, key);
+    const text4 = rixString4(value) ?? (typeof value === "string" ? value : null);
+    if (text4 !== null)
+      lines.push(`${key}: ${JSON.stringify(text4)}`);
+  }
+  if (!lines.some((line2) => line2.startsWith("format:")))
+    lines.push("format: html");
+  return `---
+${lines.join(`
+`)}
+---
+
+`;
+}
+
+// ../rix/plugins/render-markdown/markdown.plugin.rix.js
+var definition4 = {
+  target: "markdown",
+  mime: "text/markdown",
+  extension: "md",
+  aliases: ["md", "text/markdown"],
+  inputKinds: ["fragment", "section", "paragraph", "heading", "list", "quote", "callout", "code_block", "math_block", "table", "grid", "sheet", "figure", "graphic", "snapshots", "timeline", "timeline_render", "slide", "slides"],
+  deterministic: true,
+  description: "CommonMark-oriented renderer for portable RiX documents",
+  render({ value, format, render }) {
+    return renderMarkdown(value, { format, render });
+  }
+};
+function install7(api) {
+  return installRendererPlugin({ ...api, definition: definition4 });
+}
+
+// ../rix/plugins/render-html/html.plugin.rix.js
+var DEFAULT_STYLE = `body{font-family:system-ui,sans-serif;line-height:1.5;max-width:72rem;margin:2rem auto;padding:0 1rem;color:#172033}table{border-collapse:collapse;margin:1rem 0}th,td{border:1px solid #cbd5e1;padding:.35rem .6rem}figure{margin:1.5rem 0}.rix-output-svg{max-width:100%;height:auto}pre{overflow:auto;background:#f8fafc;padding:1rem}.rix-output-callout{border-left:.3rem solid #64748b;padding:.5rem 1rem;background:#f8fafc}`;
+function staticDiagnostics(value, diagnostics, seen = new Set) {
+  if (!value || typeof value !== "object" || seen.has(value))
+    return;
+  seen.add(value);
+  if (value.type === "output" && (value.kind?.startsWith("control_") || value.kind === "control_panel" || value.kind === "drag_point")) {
+    diagnostics.push(diagnostic("html-static-interaction", `Standalone HTML preserves ${value.kind} markup but needs a host widget runtime for interaction`, "warning"));
+  }
+  for (const child of value.children || [])
+    staticDiagnostics(child, diagnostics, seen);
+  if (value.content)
+    staticDiagnostics(value.content, diagnostics, seen);
+  for (const slide of value.slides || [])
+    staticDiagnostics(slide, diagnostics, seen);
+  for (const snapshot of value.snapshots || [])
+    staticDiagnostics(snapshot.content, diagnostics, seen);
+}
+var definition5 = {
+  target: "html",
+  mime: "text/html",
+  extension: "html",
+  aliases: ["htm", "text/html"],
+  inputKinds: [],
+  deterministic: true,
+  description: "Standalone semantic HTML renderer for portable RiX output trees",
+  render({ value, options, format }) {
+    const title = rixString4(option(options, "title")) || "RiX output";
+    const style = rixString4(option(options, "style")) || DEFAULT_STYLE;
+    const body = renderOutputHtml(value, format);
+    const diagnostics = [];
+    staticDiagnostics(value, diagnostics);
+    return {
+      content: `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml2(title)}</title><style>${style}</style></head><body><main>${body}</main></body></html>
+`,
+      diagnostics
+    };
+  }
+};
+function install8(api) {
+  return installRendererPlugin({ ...api, definition: definition5 });
+}
+
+// ../rix/plugins/render-quarto/quarto.plugin.rix.js
+var definition6 = {
+  target: "quarto",
+  mime: "text/x-quarto",
+  extension: "qmd",
+  aliases: ["qmd", "text/x-quarto"],
+  inputKinds: ["fragment", "section", "paragraph", "heading", "list", "quote", "callout", "code_block", "math_block", "table", "grid", "sheet", "figure", "graphic", "snapshots", "timeline", "timeline_render", "slide", "slides"],
+  deterministic: true,
+  description: "Quarto Markdown renderer with front matter and portable figure lowering",
+  render({ value, options, format, render }) {
+    const rendered = renderMarkdown(value, { format, render, quarto: true });
+    return { ...rendered, content: `${quartoFrontMatter(options)}${rendered.content}` };
+  }
+};
+function install9(api) {
+  return installRendererPlugin({ ...api, definition: definition6 });
+}
+
+// ../rix/plugins/render-latex/latex.plugin.rix.js
+var definition7 = {
+  target: "latex",
+  mime: "text/x-tex",
+  extension: "tex",
+  aliases: ["tex", "text/x-latex"],
+  inputKinds: ["fragment", "section", "paragraph", "heading", "list", "quote", "callout", "code_block", "math_block", "table", "grid", "sheet", "figure", "graphic", "snapshots", "timeline", "timeline_render", "slide", "slides"],
+  deterministic: true,
+  description: "Standalone LaTeX renderer for portable RiX documents and figures",
+  render({ value, options, format }) {
+    const standaloneValue = option(options, "standalone", true);
+    return renderLatex(value, {
+      format,
+      standalone: standaloneValue === true || standaloneValue === null || boolValue(standaloneValue),
+      title: rixString4(option(options, "title"))
+    });
+  }
+};
+function install10(api) {
+  return installRendererPlugin({ ...api, definition: definition7 });
+}
+
+// ../rix/plugins/render-png/png.plugin.rix.js
+function createDefinition(rasterizeSvg = null) {
+  return {
+    target: "png",
+    mime: "image/png",
+    extension: "png",
+    aliases: ["image/png"],
+    inputKinds: ["graphic", "figure"],
+    deterministic: true,
+    description: "PNG snapshot renderer for core Graphics through a host rasterizer",
+    render({ value, options, format }) {
+      if (typeof rasterizeSvg !== "function") {
+        throw new UnsupportedRenderError("PNG rendering needs a host SVG rasterizer; this host installed only the portable renderer contract", {
+          code: "png-rasterizer-unavailable",
+          target: "png"
+        });
+      }
+      const { value: graphic } = unwrapFigure(value);
+      requireOutput(graphic, ["graphic"], "png");
+      const scale = option(options, "scale", 1);
+      const width = option(options, "width");
+      const height = option(options, "height");
+      const rendered = rasterizeSvg(renderGraphicSvg(graphic, format), {
+        width: width === null ? Math.round(numberValue2(graphic.size[0], "Graphic width") * numberValue2(scale, "PNG scale")) : numberValue2(width, "PNG width"),
+        height: height === null ? Math.round(numberValue2(graphic.size[1], "Graphic height") * numberValue2(scale, "PNG scale")) : numberValue2(height, "PNG height"),
+        background: rixString4(option(options, "background"))
+      });
+      return {
+        content: rendered.content,
+        toolchain: rendered.toolchain,
+        diagnostics: rendered.diagnostics || [],
+        metadata: { width: rendered.width, height: rendered.height }
+      };
+    }
+  };
+}
+function install11(api) {
+  return installRendererPlugin({ ...api, definition: createDefinition(api.rasterizeSvg) });
+}
+
+// ../rix/plugins/render-pdf/pdf.plugin.rix.js
+function createDefinition2(compileLatex = null) {
+  return {
+    target: "pdf",
+    mime: "application/pdf",
+    extension: "pdf",
+    aliases: ["application/pdf"],
+    inputKinds: ["fragment", "section", "paragraph", "heading", "list", "quote", "callout", "code_block", "math_block", "table", "grid", "sheet", "figure", "graphic", "snapshots", "timeline_render", "slide", "slides"],
+    deterministic: false,
+    description: "PDF document and figure renderer orchestrated through LaTeX",
+    render({ value, options, format }) {
+      if (typeof compileLatex !== "function") {
+        throw new UnsupportedRenderError("PDF rendering needs a host LaTeX compiler; this host installed only the portable renderer contract", {
+          code: "pdf-toolchain-unavailable",
+          target: "pdf"
+        });
+      }
+      const latex = renderLatex(value, {
+        format,
+        standalone: true,
+        title: rixString4(option(options, "title"))
+      });
+      const compiled = compileLatex(latex.content, options);
+      return {
+        content: compiled.content,
+        toolchain: compiled.toolchain,
+        diagnostics: [...latex.diagnostics, ...compiled.diagnostics || []],
+        metadata: { pages: compiled.pages || null }
+      };
+    }
+  };
+}
+function install12(api) {
+  return installRendererPlugin({ ...api, definition: createDefinition2(api.compileLatex) });
+}
+
 // ../rix/plugins/bundled.js
 var BUNDLED_PLUGINS = [
   {
@@ -33197,7 +35421,7 @@ var BUNDLED_PLUGINS = [
       kind: "host",
       mount: "draw",
       exports: ["Line", "Polygon", "Label", "Box", "Circle"],
-      groups: ["Draw", "Renderers"],
+      groups: ["Draw"],
       permissions: [],
       defaultEnabled: false
     },
@@ -33210,19 +35434,46 @@ var BUNDLED_PLUGINS = [
       kind: "host",
       mount: "plot",
       exports: ["Polynomial"],
-      groups: ["Plot", "Renderers"],
+      groups: ["Plot"],
       permissions: [],
       defaultEnabled: false
     },
     install: ({ systemContext }) => install3({ systemContext })
-  }
+  },
+  ...[
+    ["svg", "Portable SVG renderer for core Graphics scenes.", "svg", ["Render"], [], install4, "image/svg+xml", true],
+    ["canvas", "Serializable Canvas 2D drawing plans for core Graphics scenes.", "canvas", ["Render"], [], install5, "application/vnd.rix.canvas+json", true],
+    ["tikz", "Editable TikZ/PGF source renderer for core Graphics scenes.", "tikz", ["Render"], [], install6, "text/x-tikz", true],
+    ["markdown", "CommonMark-oriented renderer for portable RiX documents.", "markdown", ["Render"], [], install7, "text/markdown", true],
+    ["html", "Standalone semantic HTML renderer for portable RiX output trees.", "html", ["Render"], [], install8, "text/html", true],
+    ["quarto", "Quarto Markdown renderer with front matter and portable figure lowering.", "quarto", ["Render"], [], install9, "text/x-quarto", true],
+    ["latex", "Standalone LaTeX renderer for portable RiX documents and figures.", "latex", ["Render"], [], install10, "text/x-tex", true],
+    ["png", "PNG snapshot renderer for core Graphics through a host rasterizer.", "png", ["Render"], ["process"], install11, "image/png", true],
+    ["pdf", "PDF document and figure renderer orchestrated through LaTeX.", "pdf", ["Render"], ["process", "files"], install12, "application/pdf", false]
+  ].map(([id, description, mount, exports, permissions, install13, mime, deterministic]) => ({
+    metadata: {
+      id,
+      description,
+      kind: "host",
+      mount,
+      exports,
+      groups: ["Renderers"],
+      permissions,
+      provides: [`rix.renderer.${id}@1`],
+      targets: [id, mime],
+      snapshot: true,
+      deterministic,
+      defaultEnabled: false
+    },
+    install: install13
+  }))
 ];
 function installBundledPlugins(catalog) {
-  for (const { metadata, install: install4 } of BUNDLED_PLUGINS) {
+  for (const { metadata, install: install13 } of BUNDLED_PLUGINS) {
     if (catalog.info(metadata.id))
       continue;
     catalog.addMetadata(metadata, { kind: "host" });
-    catalog.registerInstaller(metadata.id, install4);
+    catalog.registerInstaller(metadata.id, install13);
   }
   return catalog;
 }
@@ -33231,7 +35482,7 @@ function installBundledPlugins(catalog) {
 function int7(value) {
   return new Integer(BigInt(value));
 }
-function stringValue5(value, label2) {
+function stringValue6(value, label2) {
   if (typeof value === "string")
     return value;
   if (value?.type === "string")
@@ -33351,7 +35602,7 @@ function divideWithUnits(left, right) {
 function resolveTargetUnit(target, context, systemContext) {
   if (isUnitValue(target))
     return target;
-  const text4 = stringValue5(target, "ConvertUnit target");
+  const text4 = stringValue6(target, "ConvertUnit target");
   const collection = activeCollection(context, systemContext, "Units", ["UNITS", "Units"]);
   return parseUnitExpression(text4, collection);
 }
@@ -33662,11 +35913,11 @@ var CORE_SYNTAX_CAPABILITIES = {
   Lambda: "LAMBDA"
 };
 var LEGACY_OPERATOR_CAPABILITIES = ["EQ", "NEQ", "LT", "GT", "LTE", "GTE", "SAME_CELL"];
-function coreOperationCapability(operation, definition) {
+function coreOperationCapability(operation, definition8) {
   return {
-    lazy: definition.lazy === true,
-    pure: definition.pure === true,
-    doc: definition.doc || `Core operation ${operation}`,
+    lazy: definition8.lazy === true,
+    pure: definition8.pure === true,
+    doc: definition8.doc || `Core operation ${operation}`,
     impl(args, _context, evaluate) {
       return evaluate({ fn: operation, args });
     }
@@ -33733,6 +35984,7 @@ function createDefaultSystemContext(options = {}) {
   ctx.registerAll(formulaSheetFunctions);
   ctx.registerAll(reactiveGraphFunctions);
   ctx.register("Stream", asyncStreamCapabilities.STREAM);
+  ctx.register("Retry", retryCapabilities.Retry);
   const sArith = sArithCapability.create();
   ctx.registerCallableValue("SArith", sArith.value, sArith.definition, {
     doc: sArith.definition.doc,
@@ -33767,15 +36019,15 @@ function createDefaultSystemContext(options = {}) {
     ...functionFunctions
   };
   for (const [displayName, operation] of Object.entries(CORE_SYNTAX_CAPABILITIES)) {
-    const definition = syntaxSources[operation];
-    if (definition) {
-      ctx.register(displayName, coreOperationCapability(operation, definition));
+    const definition8 = syntaxSources[operation];
+    if (definition8) {
+      ctx.register(displayName, coreOperationCapability(operation, definition8));
     }
   }
   for (const operation of LEGACY_OPERATOR_CAPABILITIES) {
-    const definition = syntaxSources[operation];
-    if (definition)
-      ctx.register(operation, coreOperationCapability(operation, definition));
+    const definition8 = syntaxSources[operation];
+    if (definition8)
+      ctx.register(operation, coreOperationCapability(operation, definition8));
   }
   ctx.register("Params", { impl: parameterListCapability, doc: "Create a positional parameter descriptor from names" });
   ctx.register("Pair", { impl: mapPairCapability, doc: "Create a key/value entry for .Map" });
@@ -33790,6 +36042,15 @@ function createDefaultSystemContext(options = {}) {
   ctx.register("DefineUnit", unitExactFunctions.DEFINEUNIT);
   ctx.register("DefineExactGenerator", unitExactFunctions.DEFINEEXACTGENERATOR);
   ctx.installManagementNamespaces();
+  const rendererRegistry = options.rendererRegistry || new RendererRegistry;
+  ctx.attachRendererRegistry(rendererRegistry, {
+    collection: createRendererCollection(rendererRegistry),
+    renderValue(value, target, renderOptions, { evaluationContext, evaluate: evaluateValue } = {}) {
+      return renderResultValue(rendererRegistry.render(value, target, renderOptions, {
+        format: (item) => formatValue(item, { context: evaluationContext, evaluate: evaluateValue })
+      }));
+    }
+  });
   const pluginCatalog = installBundledPlugins(options.pluginCatalog || new PluginCatalog);
   ctx.attachPluginCatalog(pluginCatalog);
   for (const [group, members] of Object.entries(runtimeDefaults.capabilityGroups)) {
@@ -34180,15 +36441,19 @@ function evaluateScriptImport(spec2, context, registry, systemContext) {
   const parentPermissions = parentFrame ? new Set(parentFrame.permissions) : getHostAvailablePermissions(context);
   const capabilityFrame = deriveScriptCapabilityFrame(systemContext, parentPermissions, spec2.capabilityModifiers || [], context);
   const scriptContext = new Context;
-  scriptContext.env = context.env;
+  scriptContext.env = new Map(context.env);
+  const importRuntime = {
+    ...runtime,
+    activeImports: [...runtime.activeImports, resolvedPath],
+    frameStack: [...runtime.frameStack, {
+      path: prepared.path,
+      dir: prepared.dir,
+      functionNames: capabilityFrame.functionNames,
+      permissions: capabilityFrame.permissions
+    }]
+  };
+  scriptContext.setEnv(SCRIPT_RUNTIME_ENV_KEY, importRuntime);
   scriptContext.push(undefined, { isolated: true, callableBoundary: true });
-  runtime.activeImports.push(resolvedPath);
-  runtime.frameStack.push({
-    path: prepared.path,
-    dir: prepared.dir,
-    functionNames: capabilityFrame.functionNames,
-    permissions: capabilityFrame.permissions
-  });
   try {
     bindScriptInputs(scriptContext, context, spec2.inputs || [], prepared.inputContract);
     let finalResult = null;
@@ -34205,8 +36470,52 @@ function evaluateScriptImport(spec2, context, registry, systemContext) {
     applyCallerOutputBindings(context, spec2.outputs || [], bundle);
     return bundle;
   } finally {
-    runtime.frameStack.pop();
-    runtime.activeImports.pop();
+    scriptContext.pop();
+  }
+}
+async function evaluateScriptImportAsync(spec2, context, registry, systemContext, state) {
+  const runtime = getScriptRuntime(context);
+  const parentFrame = runtime.frameStack[runtime.frameStack.length - 1] || null;
+  if (parentFrame && !parentFrame.permissions.has("IMPORTS")) {
+    throw new Error("Script imports are not allowed in this script context");
+  }
+  const resolvedPath = resolveScriptPath(spec2.path, runtime, context);
+  if (runtime.activeImports.includes(resolvedPath)) {
+    throw new Error(`Cyclic script import detected: ${[...runtime.activeImports, resolvedPath].join(" -> ")}`);
+  }
+  const prepared = prepareScript(resolvedPath, runtime);
+  const parentPermissions = parentFrame ? new Set(parentFrame.permissions) : getHostAvailablePermissions(context);
+  const capabilityFrame = deriveScriptCapabilityFrame(systemContext, parentPermissions, spec2.capabilityModifiers || [], context);
+  const scriptContext = new Context;
+  scriptContext.env = new Map(context.env);
+  const importRuntime = {
+    ...runtime,
+    activeImports: [...runtime.activeImports, resolvedPath],
+    frameStack: [...runtime.frameStack, {
+      path: prepared.path,
+      dir: prepared.dir,
+      functionNames: capabilityFrame.functionNames,
+      permissions: capabilityFrame.permissions
+    }]
+  };
+  scriptContext.setEnv(SCRIPT_RUNTIME_ENV_KEY, importRuntime);
+  scriptContext.push(undefined, { isolated: true, callableBoundary: true });
+  try {
+    bindScriptInputs(scriptContext, context, spec2.inputs || [], prepared.inputContract);
+    let finalResult = null;
+    for (const node of prepared.bodyIr) {
+      finalResult = await evaluateAsyncInternal(node, scriptContext, registry, capabilityFrame.systemContext, state);
+    }
+    if (!prepared.exportBindings || prepared.exportBindings.length === 0) {
+      if (spec2.outputs && spec2.outputs.length > 0) {
+        throw new Error("Caller-side script outputs require the imported script to declare exports");
+      }
+      return finalResult;
+    }
+    const bundle = buildExportBundle(scriptContext, prepared.exportBindings);
+    applyCallerOutputBindings(context, spec2.outputs || [], bundle);
+    return bundle;
+  } finally {
     scriptContext.pop();
   }
 }
@@ -34381,7 +36690,7 @@ var ASYNC_COLLECTION_FNS = new Set([
   "TENSOR",
   "TENSOR_LITERAL"
 ]);
-var ASYNC_PIPE_FNS = new Set(["PMAP", "PFILTER", "PANY", "PALL"]);
+var ASYNC_PIPE_FNS = new Set(["PMAP", "PFILTER", "PEXPECT", "PFOREACH", "PANY", "PALL"]);
 var ASYNC_RESOLVED_BARRIER_FNS = new Set(["PSLICE_STRICT", "PSLICE_CLAMP"]);
 function splitAsyncBlockArgs(args) {
   const first = args[0];
@@ -34564,7 +36873,7 @@ async function invokeUserCallableAsync(fn, callArgs, context, registry, systemCo
         return null;
       }
     }
-    return await evaluateAsyncInternal(fn.body, context, registry, systemContext, callableState);
+    return await context.withSharedBodyAsync(fn.body, () => evaluateAsyncInternal(fn.body, context, registry, systemContext, callableState));
   } catch (error) {
     if (callableAsync.ownsScheduler) {
       callableState.scheduler.cancelGroup(callableState.group, error);
@@ -34653,6 +36962,62 @@ async function orderedAsyncMap(items, state, worker) {
   }
   return results;
 }
+async function orderedAsyncTerminal(items, state, worker, terminal) {
+  if (items.length === 0)
+    return null;
+  const scheduler = state.scheduler;
+  const group = scheduler.createGroup(state.limit, state.group);
+  const terminalState = { ...state, group, signal: group.signal };
+  const window = Math.max(1, state.limit * 2);
+  const promises = new Array(items.length);
+  let nextToStart = 0;
+  let candidateCount = 0;
+  let lastCandidate = null;
+  const start = (index) => {
+    let promise;
+    try {
+      promise = Promise.resolve(worker(items[index], index, terminalState));
+    } catch (error) {
+      promise = Promise.reject(error);
+    }
+    promise.catch(() => {});
+    promises[index] = promise;
+  };
+  const stop = async (result) => {
+    if (!group.cancelled)
+      scheduler.cancelGroup(group, streamEarlyStop("ordered terminal result"));
+    await scheduler.waitForIdle(group);
+    return result;
+  };
+  try {
+    while (nextToStart < items.length && nextToStart < window)
+      start(nextToStart++);
+    for (let published = 0;published < items.length; published++) {
+      const record = await promises[published];
+      if (!record.dropped) {
+        candidateCount++;
+        lastCandidate = record.value;
+        if (terminal === "PANY" && record.terminalPassed)
+          return await stop(record.value);
+        if (terminal === "PALL" && !record.terminalPassed)
+          return await stop(null);
+      }
+      if (nextToStart < items.length)
+        start(nextToStart++);
+    }
+    await scheduler.waitForIdle(group);
+    if (terminal === "PALL" && candidateCount > 0)
+      return lastCandidate;
+    return null;
+  } catch (error) {
+    if (!group.cancelled)
+      scheduler.cancelGroup(group, error);
+    await scheduler.waitForIdle(group);
+    throw group.primaryError || error;
+  } finally {
+    scheduler.closeGroup(group);
+  }
+}
 function streamEarlyStop(reason = "terminal result") {
   return Object.assign(new Error(`Async stream stopped after ${reason}`), {
     kind: "cancellation",
@@ -34689,9 +37054,9 @@ async function consumeAsyncStreamStructured(stream, terminal, context, registry,
       for (const value of processed.values) {
         let terminalValue = null;
         if (terminal.kind === "forEach") {
-          terminalValue = await invokeCallableAsync(terminal.callable, [value, new Integer(BigInt(raw.sourceIndex)), stream], itemContext, registry, systemContext, itemState);
-        } else if (terminal.kind === "find") {
-          terminalValue = await invokeCallableAsync(terminal.callable, [value, new Integer(BigInt(raw.sourceIndex)), stream], itemContext, registry, systemContext, itemState);
+          terminalValue = await invokeCallableAsync(terminal.callable, [value, new Integer(BigInt(raw.sourceIndex)), stream._stream.callbackSource ?? stream], itemContext, registry, systemContext, itemState);
+        } else if (terminal.kind === "find" || terminal.kind === "all") {
+          terminalValue = await invokeCallableAsync(terminal.callable, [value, new Integer(BigInt(raw.sourceIndex)), stream._stream.callbackSource ?? stream], itemContext, registry, systemContext, itemState);
         }
         records.push({ value, terminalValue });
       }
@@ -34714,11 +37079,12 @@ async function consumeAsyncStreamStructured(stream, terminal, context, registry,
       throw new Error("Count requires a finite or explicitly bounded async stream");
     }
     if (terminal.bound === 0 || asyncStreamCanCompleteWithoutPull(stream)) {
+      stopReason = { kind: "early terminal" };
       if (terminal.kind === "collect")
         return { type: "sequence", values: [] };
       if (terminal.kind === "count")
         return new Integer(0n);
-      if (terminal.kind === "forEach" || terminal.kind === "first" || terminal.kind === "find")
+      if (terminal.kind === "forEach" || terminal.kind === "first" || terminal.kind === "find" || terminal.kind === "all")
         return null;
       return accumulator;
     }
@@ -34736,13 +37102,20 @@ async function consumeAsyncStreamStructured(stream, terminal, context, registry,
         if (terminal.kind === "collect")
           collected.push(entry.value);
         else if (terminal.kind === "reduce") {
-          accumulator = await invokeCallableAsync(terminal.callable, [accumulator, entry.value, new Integer(BigInt(outputIndex)), stream], context, registry, systemContext, state);
+          accumulator = await invokeCallableAsync(terminal.callable, [accumulator, entry.value, new Integer(BigInt(outputIndex)), stream._stream.callbackSource ?? stream], context, registry, systemContext, state);
         } else if (terminal.kind === "first") {
           finalResult = entry.value;
           stopped = true;
         } else if (terminal.kind === "find" && isTruthyAsync(entry.terminalValue)) {
           finalResult = entry.value;
           stopped = true;
+        } else if (terminal.kind === "all") {
+          if (!isTruthyAsync(entry.terminalValue)) {
+            finalResult = null;
+            stopped = true;
+          } else {
+            finalResult = entry.value;
+          }
         }
         if (terminal.bound !== null && outputIndex >= terminal.bound)
           stopped = true;
@@ -34840,6 +37213,21 @@ function asyncCollectionEntry(node, context, registry, systemContext, state) {
 async function resolveAsyncCollectionArg(arg, context, registry, systemContext, state) {
   if (arg?.fn === "HOLE")
     return arg;
+  if (arg?.fn === "GENERATOR") {
+    const resolved = [];
+    for (const component of arg.args) {
+      if (component?.fn?.startsWith("GEN_")) {
+        const opArgs = [];
+        for (const operand of component.args || []) {
+          opArgs.push(await evaluateAsyncInternal(operand, context, registry, systemContext, state));
+        }
+        resolved.push({ ...component, args: opArgs });
+      } else {
+        resolved.push(await evaluateAsyncInternal(component, context, registry, systemContext, state));
+      }
+    }
+    return { ...arg, args: resolved };
+  }
   if (arg?.fn === "SPREAD") {
     const value = await asyncCollectionEntry(arg.args[0], context, registry, systemContext, state);
     return { fn: "SPREAD", args: [value] };
@@ -34865,8 +37253,8 @@ async function withReleasedAsyncAdmission(state, callback) {
   }
 }
 async function evaluateAsyncCollectionBody(irNode, context, registry, systemContext, state) {
-  const definition = registry.get(irNode.fn);
-  if (!definition)
+  const definition8 = registry.get(irNode.fn);
+  if (!definition8)
     throw new Error(`Unknown collection constructor: ${irNode.fn}`);
   const args = irNode.args;
   const hasHeader = args[0]?.header && !args[0].fn;
@@ -34929,7 +37317,7 @@ async function evaluateAsyncCollectionBody(irNode, context, registry, systemCont
     }
   }
   const resolvedEvaluate = (node) => node?.fn ? evaluate(node, context, registry, systemContext) : node;
-  return await definition.impl(resolved, context, resolvedEvaluate, systemContext);
+  return await definition8.impl(resolved, context, resolvedEvaluate, systemContext);
 }
 async function evaluateAsyncCollection(irNode, context, registry, systemContext, state) {
   return withReleasedAsyncAdmission(state, () => evaluateAsyncCollectionBody(irNode, context, registry, systemContext, state));
@@ -35004,10 +37392,10 @@ function rawFusedSource(sourceNode) {
   return { fn: sourceNode.fn, header, entries: entries2, shell: { type, values: [] } };
 }
 function captureFusedSourceValue(source, entry, value, context, registry, systemContext) {
-  const definition = registry.get(source.fn);
+  const definition8 = registry.get(source.fn);
   const resolvedEntry = entry && !entry.fn && entry.expression ? { ...entry, expression: value } : value;
   const args = source.header ? [source.header, resolvedEntry] : [resolvedEntry];
-  const collection = definition.impl(args, context, (node) => node?.fn ? evaluate(node, context, registry, systemContext) : node, systemContext);
+  const collection = definition8.impl(args, context, (node) => node?.fn ? evaluate(node, context, registry, systemContext) : node, systemContext);
   return collection.values[0];
 }
 async function runAsyncPipeStages(value, index, key, collection, stages, callables, context, registry, systemContext, state, explicitLocator = null) {
@@ -35018,6 +37406,19 @@ async function runAsyncPipeStages(value, index, key, collection, stages, callabl
   const locator = explicitLocator ?? (key !== undefined ? { type: "string", value: key } : new Integer(BigInt(index + 1)));
   for (let stageIndex = 0;stageIndex < stages.length; stageIndex++) {
     const stage = stages[stageIndex];
+    if (stage.fn === "PEXPECT") {
+      const errorArgs = expectedErrorArgs(current);
+      if (errorArgs === null)
+        continue;
+      const result2 = await invokeCallableAsync(callables[stageIndex], errorArgs, context, registry, systemContext, state);
+      if (result2 === null || result2 === undefined) {
+        keep = false;
+        dropped = true;
+        break;
+      }
+      current = result2;
+      continue;
+    }
     const result = await invokeCallableAsync(callables[stageIndex], [current, locator, collection], context, registry, systemContext, state);
     if (stage.fn === "PMAP")
       current = result;
@@ -35028,6 +37429,8 @@ async function runAsyncPipeStages(value, index, key, collection, stages, callabl
     } else if (stage.fn === "PANY" || stage.fn === "PALL") {
       terminalPassed = isTruthyAsync(result);
       keep = terminalPassed;
+      break;
+    } else if (stage.fn === "PFOREACH") {
       break;
     }
   }
@@ -35043,24 +37446,76 @@ function asyncTerminalResult(terminal, records) {
       return null;
     return candidates.at(-1).value;
   }
+  if (terminal === "PFOREACH")
+    return null;
   return;
 }
-function deriveAsyncStreamPipe(stream, stages, callables) {
+async function evaluateAsyncStreamPipe(stream, stages, callables, context, registry, systemContext, state) {
   let derived = stream;
   for (let index = 0;index < stages.length; index++) {
     if (stages[index].fn === "PMAP")
       derived = mapAsyncStream(derived, callables[index]);
     else if (stages[index].fn === "PFILTER")
       derived = filterAsyncStream(derived, callables[index]);
-    else
+    else if (stages[index].fn === "PEXPECT")
+      derived = expectedErrorAsyncStream(derived, callables[index]);
+    else if (stages[index].fn === "PFOREACH") {
+      return createAsyncMethodExecution(context, registry, systemContext, state).consume(derived, {
+        kind: "forEach",
+        callable: callables[index],
+        initial: null,
+        bound: null
+      });
+    } else if (stages[index].fn === "PANY" || stages[index].fn === "PALL") {
+      return createAsyncMethodExecution(context, registry, systemContext, state).consume(derived, {
+        kind: stages[index].fn === "PANY" ? "find" : "all",
+        callable: callables[index],
+        initial: null,
+        bound: null
+      });
+    } else
       throw new Error("Async stream pipes support lazy |>> and |>? stages; use an explicit stream terminal to consume");
   }
   return derived;
+}
+function lazySequenceAsyncStream(source) {
+  let index = 1;
+  return createAsyncStream({
+    label: "lazy sequence",
+    finite: source._lazy.knownLength !== null,
+    callbackSource: source,
+    next(signal) {
+      if (signal?.aborted)
+        throw signal.reason;
+      const value = ensureLazyIndex(source, index);
+      if (source._lazy.done && source._lazy.cache.length < index)
+        return { done: true };
+      index++;
+      return { done: false, value };
+    }
+  });
+}
+function expectedPipeScalarSource(source, stages) {
+  if (stages[0]?.fn !== "PEXPECT")
+    return false;
+  if (expectedErrorArgs(source) !== null || source?.type === "tuple")
+    return true;
+  if (isAsyncStream(source) || isLazySequence(source) || isTensor(source) || source?.type === "map")
+    return false;
+  return !Array.isArray(source?.values);
+}
+async function evaluateScalarExpectedPipe(source, stages, callables, context, registry, systemContext, state) {
+  const record = await runAsyncPipeStages(source, 0, undefined, source, stages, callables, context, registry, systemContext, state);
+  if (stages.at(-1)?.fn === "PFOREACH")
+    return null;
+  return record.keep ? record.value : PIPE_SKIP;
 }
 async function evaluateSequentialAsyncPipe(irNode, context, registry, systemContext, state) {
   const stages = [];
   let sourceNode = irNode;
   while (sourceNode?.fn && ASYNC_PIPE_FNS.has(sourceNode.fn)) {
+    if (sourceNode.fn === "PFOREACH" && stages.length > 0)
+      break;
     stages.unshift({ fn: sourceNode.fn, callableNode: sourceNode.args[1] });
     sourceNode = sourceNode.args[0];
   }
@@ -35071,8 +37526,15 @@ async function evaluateSequentialAsyncPipe(irNode, context, registry, systemCont
   const collection = await evaluateAsyncInternal(sourceNode, context, registry, systemContext, state);
   if (collection === null || collection === undefined)
     return null;
-  if (isAsyncStream(collection))
-    return deriveAsyncStreamPipe(collection, stages, callables);
+  if (isAsyncStream(collection)) {
+    return evaluateAsyncStreamPipe(collection, stages, callables, context, registry, systemContext, state);
+  }
+  if (isLazySequence(collection)) {
+    return evaluateAsyncStreamPipe(lazySequenceAsyncStream(collection), stages, callables, context, registry, systemContext, state);
+  }
+  if (expectedPipeScalarSource(collection, stages)) {
+    return evaluateScalarExpectedPipe(collection, stages, callables, context, registry, systemContext, state);
+  }
   const items = collectionItems(collection);
   const records = [];
   for (let index = 0;index < items.length; index++) {
@@ -35080,8 +37542,9 @@ async function evaluateSequentialAsyncPipe(irNode, context, registry, systemCont
     records.push(await runAsyncPipeStages(item.value, index, item.key, collection, stages, callables, context, registry, systemContext, state, item.locator));
   }
   const terminal = stages.at(-1)?.fn;
-  if (terminal === "PANY" || terminal === "PALL")
+  if (terminal === "PANY" || terminal === "PALL" || terminal === "PFOREACH") {
     return asyncTerminalResult(terminal, records);
+  }
   return assembleAsyncPipeResult(collection, items, records, stages);
 }
 async function evaluateAsyncPipe(irNode, context, registry, systemContext, state) {
@@ -35091,6 +37554,8 @@ async function evaluateAsyncPipe(irNode, context, registry, systemContext, state
   const stages = [];
   let sourceNode = irNode;
   while (sourceNode?.fn && ASYNC_PIPE_FNS.has(sourceNode.fn)) {
+    if (sourceNode.fn === "PFOREACH" && stages.length > 0)
+      break;
     stages.unshift({ fn: sourceNode.fn, callableNode: sourceNode.args[1] });
     sourceNode = sourceNode.args[0];
   }
@@ -35100,42 +37565,59 @@ async function evaluateAsyncPipe(irNode, context, registry, systemContext, state
   }
   const fusedSource = rawFusedSource(sourceNode);
   if (fusedSource) {
-    const records2 = await orderedAsyncMap(fusedSource.entries, state, (entry, index) => {
+    const terminal2 = stages.at(-1)?.fn;
+    const runEntry = (entry, index, taskState = state) => {
       const itemContext = context.concurrentChild();
-      const branchState = childBranchState(state, index);
-      return state.scheduler.run((admission) => withAsyncItemFinalizers(itemContext, async () => {
+      const branchState = childBranchState(taskState, index);
+      return taskState.scheduler.run((admission) => withAsyncItemFinalizers(itemContext, async () => {
         const itemState = { ...branchState, admission };
         const rawNode = entry?.expression || entry;
         const resolved = await evaluateAsyncInternal(rawNode, itemContext, registry, systemContext, itemState);
         const captured = captureFusedSourceValue(fusedSource, entry, resolved, itemContext, registry, systemContext);
         return runAsyncPipeStages(captured, index, undefined, fusedSource.shell, stages, callables, itemContext, registry, systemContext, itemState);
-      }), state.group, {
+      }), taskState.group, {
         branchPath: branchState.branchPath,
         path: `${asyncTaskPath(branchState)} / fused pipe`
       });
-    });
-    const terminal2 = stages.at(-1)?.fn;
-    if (terminal2 === "PANY" || terminal2 === "PALL")
+    };
+    if (terminal2 === "PANY" || terminal2 === "PALL") {
+      return orderedAsyncTerminal(fusedSource.entries, state, runEntry, terminal2);
+    }
+    const records2 = await orderedAsyncMap(fusedSource.entries, state, runEntry);
+    if (terminal2 === "PANY" || terminal2 === "PALL" || terminal2 === "PFOREACH") {
       return asyncTerminalResult(terminal2, records2);
+    }
     return assembleAsyncPipeResult(fusedSource.shell, fusedSource.entries.map((value) => ({ value })), records2, stages);
   }
   const collection = await evaluateAsyncInternal(sourceNode, context, registry, systemContext, state);
   if (collection === null || collection === undefined)
     return null;
-  if (isAsyncStream(collection))
-    return deriveAsyncStreamPipe(collection, stages, callables);
+  if (isAsyncStream(collection)) {
+    return evaluateAsyncStreamPipe(collection, stages, callables, context, registry, systemContext, state);
+  }
+  if (isLazySequence(collection)) {
+    return evaluateAsyncStreamPipe(lazySequenceAsyncStream(collection), stages, callables, context, registry, systemContext, state);
+  }
+  if (expectedPipeScalarSource(collection, stages)) {
+    return evaluateScalarExpectedPipe(collection, stages, callables, context, registry, systemContext, state);
+  }
   const items = collectionItems(collection);
-  const records = await orderedAsyncMap(items, state, (item, index) => {
+  const terminal = stages.at(-1)?.fn;
+  const runItem = (item, index, taskState = state) => {
     const itemContext = context.concurrentChild();
-    const branchState = childBranchState(state, index);
-    return state.scheduler.run((admission) => withAsyncItemFinalizers(itemContext, () => runAsyncPipeStages(item.value, index, item.key, collection, stages, callables, itemContext, registry, systemContext, { ...branchState, admission }, item.locator)), state.group, {
+    const branchState = childBranchState(taskState, index);
+    return taskState.scheduler.run((admission) => withAsyncItemFinalizers(itemContext, () => runAsyncPipeStages(item.value, index, item.key, collection, stages, callables, itemContext, registry, systemContext, { ...branchState, admission }, item.locator)), taskState.group, {
       branchPath: branchState.branchPath,
       path: `${asyncTaskPath(branchState)} / pipe`
     });
-  });
-  const terminal = stages.at(-1)?.fn;
-  if (terminal === "PANY" || terminal === "PALL")
+  };
+  if (terminal === "PANY" || terminal === "PALL") {
+    return orderedAsyncTerminal(items, state, runItem, terminal);
+  }
+  const records = await orderedAsyncMap(items, state, runItem);
+  if (terminal === "PANY" || terminal === "PALL" || terminal === "PFOREACH") {
     return asyncTerminalResult(terminal, records);
+  }
   return assembleAsyncPipeResult(collection, items, records, stages);
 }
 function asyncReductionItems(collection) {
@@ -35256,12 +37738,12 @@ async function evaluateAsyncSort(args, context, registry, systemContext, state) 
   return { type: collection.type || "sequence", values: sorted };
 }
 async function evaluateAsyncResolvedBarrier(irNode, context, registry, systemContext, state) {
-  const definition = registry.get(irNode.fn);
+  const definition8 = registry.get(irNode.fn);
   const resolved = [];
   for (const arg of irNode.args) {
     resolved.push(await evaluateAsyncInternal(arg, context, registry, systemContext, state));
   }
-  return await definition.impl(resolved, context, (value) => value, systemContext);
+  return await definition8.impl(resolved, context, (value) => value, systemContext);
 }
 function isAsyncCallableValue(value) {
   return typeof value === "function" || [
@@ -35319,8 +37801,8 @@ async function evaluateAsyncSplit(args, context, registry, systemContext, state)
   const separator = await evaluateAsyncInternal(args[1], context, registry, systemContext, state);
   const isRegex = typeof separator === "function" && separator.toString?.().startsWith("[Regex");
   if (!isAsyncCallableValue(separator) || isRegex) {
-    const definition = registry.get("PSPLIT");
-    return definition.impl([collection, separator], context, (value) => value, systemContext);
+    const definition8 = registry.get("PSPLIT");
+    return definition8.impl([collection, separator], context, (value) => value, systemContext);
   }
   const { items, isString, isStringObject: isStringObject2 } = asyncBarrierLinearItems(collection, "PSPLIT");
   if (!items)
@@ -35353,8 +37835,8 @@ async function evaluateAsyncChunk(args, context, registry, systemContext, state)
     collection = materializeLazySequence(collection);
   const boundary = await evaluateAsyncInternal(args[1], context, registry, systemContext, state);
   if (!isAsyncCallableValue(boundary)) {
-    const definition = registry.get("PCHUNK");
-    return definition.impl([collection, boundary], context, (value) => value, systemContext);
+    const definition8 = registry.get("PCHUNK");
+    return definition8.impl([collection, boundary], context, (value) => value, systemContext);
   }
   const { items, isString, isStringObject: isStringObject2 } = asyncBarrierLinearItems(collection, "PCHUNK");
   if (!items)
@@ -35461,6 +37943,14 @@ async function evaluateAsyncScope(args, context, registry, systemContext, parent
   return withReleasedAsyncAdmission(releaseState, () => evaluateAsyncScopeBody(args, context, registry, systemContext, parentState));
 }
 function startDetachedBlock(args, context, registry, systemContext, parentState) {
+  const runtime = context.getEnv(SCRIPT_RUNTIME_ENV_KEY, null);
+  const frame = runtime?.frameStack?.[runtime.frameStack.length - 1] ?? null;
+  if (frame && !frame.permissions.has("BACKGROUND")) {
+    throw new Error("Background tasks are not allowed in this script context");
+  }
+  if (context.getEnv(REACTIVE_ACTIVE_GRAPH_ENV, null)) {
+    throw new Error("Reactive formulas cannot start detached background tasks");
+  }
   const { meta, body } = splitAsyncBlockArgs(args);
   const importedBindings = captureDetachedImports(meta.imports, context);
   const taskContext = context.concurrentChild();
@@ -35521,6 +38011,133 @@ function startDetachedBlock(args, context, registry, systemContext, parentState)
   task.finally(() => unregisterAsyncResource(context, task));
   return null;
 }
+function asyncPreparedTrialFailure(preserveFailure) {
+  return preserveFailure ? PREP_TRIAL_NO_MATCH : null;
+}
+async function evaluatePreparedTrialAsync(args, context, registry, systemContext, state, preserveFailure) {
+  const candidateNode = args[0];
+  const gates = args.slice(1);
+  if (gates.length === 0)
+    throw new Error("Prepared trial requires at least one gate");
+  let candidate;
+  try {
+    candidate = await evaluateAsyncInternal(candidateNode, context, registry, systemContext, state);
+  } catch (error) {
+    if (gates[0]?.strict === true)
+      throw error;
+    return asyncPreparedTrialFailure(preserveFailure);
+  }
+  context.push();
+  try {
+    for (let gateIndex = 0;gateIndex < gates.length; gateIndex++) {
+      const gate = gates[gateIndex] || {};
+      const strict = gate.strict === true;
+      try {
+        destructureResolvedValue(gate.pattern, candidate, "alias", context, (node) => evaluate(node, context, registry, systemContext));
+        const prep = Array.isArray(gate.prep) ? gate.prep : [];
+        for (let entryIndex = 0;entryIndex < prep.length; entryIndex++) {
+          const value = await evaluateAsyncInternal(prep[entryIndex], context, registry, systemContext, state);
+          if (!isTruthyAsync(value)) {
+            if (strict) {
+              throw new Error(`Prepared trial failed at gate ${gateIndex + 1}, prep entry ${entryIndex + 1}`);
+            }
+            return asyncPreparedTrialFailure(preserveFailure);
+          }
+        }
+      } catch (error) {
+        if (strict)
+          throw error;
+        return asyncPreparedTrialFailure(preserveFailure);
+      }
+    }
+    return candidate;
+  } finally {
+    context.pop();
+  }
+}
+async function evaluateAsyncCase(args, context, registry, systemContext, state) {
+  const { containerName, bodyArgs } = splitScopedBlockArgs(args);
+  try {
+    for (const branch of bodyArgs) {
+      const inner = unwrapDefer(branch);
+      if (inner?.fn === "CONDITION") {
+        const condition = await evaluateAsyncInternal(inner.args[0], context, registry, systemContext, state);
+        if (isTruthyAsync(condition)) {
+          return await evaluateAsyncInternal(inner.args[1], context, registry, systemContext, state);
+        }
+        continue;
+      }
+      if (inner?.fn === "PREP_TRIAL") {
+        const result = await evaluatePreparedTrialAsync(inner.args, context, registry, systemContext, state, true);
+        if (result === PREP_TRIAL_NO_MATCH)
+          continue;
+        return result;
+      }
+      return await evaluateAsyncInternal(inner, context, registry, systemContext, state);
+    }
+  } catch (error) {
+    if (matchesBreakTarget(error, "case", containerName))
+      return error.value;
+    throw error;
+  }
+  return null;
+}
+async function evaluateAsyncLoop(args, context, registry, systemContext, state) {
+  const {
+    imports,
+    containerName,
+    maxIterations: configuredMax,
+    unlimited,
+    bodyArgs
+  } = splitScopedBlockArgs(args);
+  if (bodyArgs.length > 5)
+    throw new Error(`LOOP expected at most 5 arguments, got ${bodyArgs.length}`);
+  const [rawInit, rawCondition, rawBody, rawUpdate, rawAfter] = bodyArgs.map(unwrapDefer);
+  const usable = (node) => node?.fn === "HOLE" ? null : node;
+  const [initNode, conditionNode, bodyNode, updateNode, afterNode] = [
+    rawInit,
+    rawCondition,
+    rawBody,
+    rawUpdate,
+    rawAfter
+  ].map(usable);
+  const shareCurrentScope = context.consumeSharedBody("LOOP");
+  if (!shareCurrentScope)
+    context.push(undefined, { isolated: true });
+  const evaluateShared2 = (node) => context.withSharedBody(node, () => evaluateAsyncInternal(node, context, registry, systemContext, state));
+  try {
+    applyAsyncImports(imports, context);
+    try {
+      if (initNode)
+        await evaluateShared2(initNode);
+      let result = null;
+      let iterations = 0;
+      const maxIterations = unlimited ? null : configuredMax ?? context.getEnv("defaultLoopMax", runtimeDefaults.defaultLoopMax);
+      while (true) {
+        if (state?.signal?.aborted)
+          throw state.signal.reason;
+        if (conditionNode && !isTruthyAsync(await evaluateShared2(conditionNode)))
+          break;
+        if (maxIterations !== null && iterations >= maxIterations) {
+          throw new Error(`Loop exceeded max iteration count: ${maxIterations}`);
+        }
+        if (bodyNode)
+          result = await evaluateShared2(bodyNode);
+        if (updateNode)
+          await evaluateShared2(updateNode);
+        iterations++;
+      }
+      return afterNode ? await evaluateShared2(afterNode) : result;
+    } catch (error) {
+      if (matchesBreakTarget(error, "loop", containerName))
+        return error.value;
+      throw error;
+    }
+  } finally {
+    if (!shareCurrentScope)
+      context.pop();
+  }
+}
 async function evaluateAsyncInternal(irNode, context, registry, systemContext, state = null) {
   if (irNode === null || irNode === undefined)
     return null;
@@ -35532,6 +38149,20 @@ async function evaluateAsyncInternal(irNode, context, registry, systemContext, s
   try {
     if (state?.signal?.aborted)
       throw state.signal.reason;
+    if (fn === "SCRIPT_IMPORT") {
+      return await evaluateScriptImportAsync(args[0] || {}, context, registry, systemContext, state);
+    }
+    if (fn === "CASE")
+      return await evaluateAsyncCase(args, context, registry, systemContext, state);
+    if (fn === "LOOP")
+      return await evaluateAsyncLoop(args, context, registry, systemContext, state);
+    if (fn === "PREP_TRIAL" || fn === "PREP_TRIAL_CASE") {
+      return await evaluatePreparedTrialAsync(args, context, registry, systemContext, state, fn === "PREP_TRIAL_CASE");
+    }
+    if (fn === "HOLE_COALESCE") {
+      const left = await evaluateAsyncInternal(args[0], context, registry, systemContext, state);
+      return isHole(left) ? evaluateAsyncInternal(args[1], context, registry, systemContext, state) : left;
+    }
     if (fn === "POSTFIX_FINALIZER") {
       const value = await evaluateAsyncInternal(args[0], context, registry, systemContext, state);
       const cleanup = await evaluateAsyncInternal(args[1], context, registry, systemContext, state);
@@ -35578,8 +38209,8 @@ async function evaluateAsyncInternal(irNode, context, registry, systemContext, s
     if (state && ASYNC_COLLECTION_FNS.has(fn)) {
       return await evaluateAsyncCollection(irNode, context, registry, systemContext, state);
     }
-    if (state && ASYNC_PIPE_FNS.has(fn)) {
-      return await evaluateAsyncPipe(irNode, context, registry, systemContext, state);
+    if (ASYNC_PIPE_FNS.has(fn)) {
+      return state ? await evaluateAsyncPipe(irNode, context, registry, systemContext, state) : await evaluateSequentialAsyncPipe(irNode, context, registry, systemContext, null);
     }
     if (state && fn === "PREDUCE") {
       return await evaluateAsyncReduce(args, context, registry, systemContext, state);
@@ -35623,19 +38254,29 @@ async function evaluateAsyncInternal(irNode, context, registry, systemContext, s
     }
     if (fn === "BLOCK" || fn === "SYSTEM") {
       const { meta, body } = splitAsyncBlockArgs(args);
-      context.push(undefined, { isolated: true });
+      const shareCurrentScope = context.consumeSharedBody(fn);
+      if (!shareCurrentScope)
+        context.push(undefined, { isolated: true });
       try {
         return await withFinalizerActivationAsync(context, async () => {
           applyAsyncImports(meta.imports, context);
           let result = null;
-          for (const arg of body)
-            result = await evalAsync(arg);
-          return result;
+          try {
+            for (const arg of body)
+              result = await evalAsync(arg);
+            return result;
+          } catch (error) {
+            if (fn === "BLOCK" && matchesBreakTarget(error, "block", meta.name ?? null)) {
+              return error.value;
+            }
+            throw error;
+          }
         }, {
           graceMs: context.getEnv("asyncCleanupGraceMs", runtimeDefaults.asyncCleanupGraceMs)
         });
       } finally {
-        context.pop();
+        if (!shareCurrentScope)
+          context.pop();
       }
     }
     if (fn === "TERNARY") {
@@ -35653,18 +38294,28 @@ async function evaluateAsyncInternal(irNode, context, registry, systemContext, s
       return last;
     }
     if (fn === "BREAK") {
-      const definition2 = registry.get(fn);
+      const definition9 = registry.get(fn);
       const hasMeta = args[0] && !args[0].fn;
-      const value = await evalAsync(hasMeta ? args[1] : args[0]);
-      return definition2.impl(hasMeta ? [args[0], value] : [value], context, (node) => node);
+      context.push(undefined, { isolated: true, readThrough: true });
+      let value;
+      try {
+        value = await evalAsync(hasMeta ? args[1] : args[0]);
+      } finally {
+        context.pop();
+      }
+      return definition9.impl(hasMeta ? [args[0], value] : [value], context, (node) => node);
+    }
+    if (fn === "DESTRUCTURE_ASSIGN") {
+      const value = await evalAsync(args[2]);
+      return coreFunctions.DESTRUCTURE_ASSIGN.impl([args[0], args[1], value], context, (node) => node?.fn ? evaluate(node, context, registry, systemContext) : node);
     }
     if (["ASSIGN", "ASSIGN_COPY", "ASSIGN_UPDATE", "ASSIGN_DEEP_COPY", "ASSIGN_DEEP_UPDATE", "OUTER_ASSIGN", "OUTER_UPDATE", "GLOBAL"].includes(fn)) {
-      const definition2 = registry.get(fn);
+      const definition9 = registry.get(fn);
       if (fn === "ASSIGN" && ["RETRIEVE", "OUTER_RETRIEVE"].includes(args[1]?.fn)) {
-        return definition2.impl(args, context, (node) => evaluate(node, context, registry, systemContext));
+        return definition9.impl(args, context, (node) => evaluate(node, context, registry, systemContext));
       }
       const value = await evalAsync(args[1]);
-      return definition2.impl([args[0], value, ...args.slice(2)], context, (node) => node);
+      return definition9.impl([args[0], value, ...args.slice(2)], context, (node) => node);
     }
     if (fn === "LAMBDA" || fn === "FUNCDEF" || fn === "MULTIFUNCDEF") {
       return markLexicalAsyncCallable(evaluate(irNode, context, registry, systemContext), state);
@@ -35684,6 +38335,8 @@ async function evaluateAsyncInternal(irNode, context, registry, systemContext, s
     }
     if (fn === "PIPE") {
       const value = await evalAsync(args[0]);
+      if (isPipeSkip(value))
+        return PIPE_SKIP;
       const callable = await evalAsync(args[1]);
       return invokeCallableAsync(callable, value?.type === "tuple" ? value.values : [value], context, registry, systemContext, state);
     }
@@ -35699,19 +38352,19 @@ async function evaluateAsyncInternal(irNode, context, registry, systemContext, s
       };
       return evalAsync(replace(args[1]));
     }
-    const definition = registry.get(fn);
-    if (!definition)
+    const definition8 = registry.get(fn);
+    if (!definition8)
       return await evaluate(irNode, context, registry, systemContext);
-    if (definition.lazy) {
-      return await definition.impl(args, context, (node) => evaluate(node, context, registry, systemContext), systemContext);
+    if (definition8.lazy) {
+      return await definition8.impl(args, context, (node) => evaluate(node, context, registry, systemContext), systemContext);
     }
     const evaluatedArgs = [];
     for (const arg of args)
       evaluatedArgs.push(await evalAsync(arg));
-    if (!definition.holeAware && evaluatedArgs.some(isHole)) {
+    if (!definition8.holeAware && evaluatedArgs.some(isHole)) {
       throw new Error(`Cannot use undefined/hole value in computation (in ${fn})`);
     }
-    return await definition.impl(evaluatedArgs, context, (node) => evaluate(node, context, registry, systemContext), systemContext);
+    return await definition8.impl(evaluatedArgs, context, (node) => evaluate(node, context, registry, systemContext), systemContext);
   } catch (error) {
     throw annotateEvaluationError(error, irNode, context);
   }
@@ -35784,7 +38437,7 @@ function parseAndEvaluate(code, options = {}) {
       for (const source of reads)
         options.reactiveReads.add(source);
     }
-    return result;
+    return materializePipeSkip(result);
   });
 }
 async function parseAndEvaluateAsync(code, options = {}) {
@@ -35843,7 +38496,7 @@ async function parseAndEvaluateAsync(code, options = {}) {
       for (const source of reads)
         options.reactiveReads.add(source);
     }
-    return result;
+    return materializePipeSkip(result);
   }, {
     graceMs: context.getEnv("asyncCleanupGraceMs", runtimeDefaults.asyncCleanupGraceMs)
   });
@@ -35928,11 +38581,11 @@ function sheetCellDependencies(dataset = {}) {
     return Object.freeze([]);
   }
 }
-function diagnosticStatus(diagnostic) {
-  if (!diagnostic.diagnostics.length)
+function diagnosticStatus(diagnostic2) {
+  if (!diagnostic2.diagnostics.length)
     return "";
-  const kind = diagnostic.kind ? `${diagnostic.kind[0].toUpperCase()}${diagnostic.kind.slice(1)} error: ` : "Error: ";
-  return `${kind}${diagnostic.diagnostics.join("; ")}`;
+  const kind = diagnostic2.kind ? `${diagnostic2.kind[0].toUpperCase()}${diagnostic2.kind.slice(1)} error: ` : "Error: ";
+  return `${kind}${diagnostic2.diagnostics.join("; ")}`;
 }
 function dependencyStatus(dependencies, address = "grid") {
   if (!dependencies.length)
@@ -35953,7 +38606,7 @@ function sheetRoots(root) {
 function eventDetail(cell) {
   const index = String(cell.dataset.rixIndex || "").split(",").filter(Boolean).map(Number);
   const slice = String(cell.closest("tbody")?.dataset.rixSlice || "").split(",").map((item) => item === "" ? null : Number(item));
-  const diagnostic = sheetCellDiagnostics(cell.dataset);
+  const diagnostic2 = sheetCellDiagnostics(cell.dataset);
   const dependencies = sheetCellDependencies(cell.dataset);
   return {
     address: cell.dataset.rixAddress,
@@ -35966,10 +38619,10 @@ function eventDetail(cell) {
     slice,
     row: Number(cell.dataset.rixRow),
     column: Number(cell.dataset.rixColumn),
-    state: diagnostic.state,
-    diagnostics: diagnostic.diagnostics,
-    diagnosticKind: diagnostic.kind,
-    diagnosticSource: diagnostic.source,
+    state: diagnostic2.state,
+    diagnostics: diagnostic2.diagnostics,
+    diagnosticKind: diagnostic2.kind,
+    diagnosticSource: diagnostic2.source,
     dependencies
   };
 }
@@ -35996,6 +38649,7 @@ function enhanceSheet(sheet, options) {
   const editStatus = editForm?.querySelector("[data-rix-edit-status]");
   const editableHeaders = [...sheet.querySelectorAll("th[data-rix-header-axis][data-rix-header-coordinate]")];
   let selectedCell = null;
+  let editPending = false;
   if (editForm && typeof options.onEdit === "function")
     editForm.hidden = false;
   if (!table || !cells.length)
@@ -36072,9 +38726,9 @@ function enhanceSheet(sheet, options) {
         detail.address
       ].filter(Boolean).join(" · ");
     }
-    const diagnostic = sheetCellDiagnostics(cell.dataset);
+    const diagnostic2 = sheetCellDiagnostics(cell.dataset);
     if (editInput) {
-      editInput.value = diagnostic.source ?? cell.dataset.rixFormulaSource ?? cell.textContent.trim();
+      editInput.value = diagnostic2.source ?? cell.dataset.rixFormulaSource ?? cell.textContent.trim();
     }
     if (editAssignmentMode) {
       editAssignmentMode.value = cell.dataset.rixAssignmentMode || ":=";
@@ -36087,10 +38741,10 @@ function enhanceSheet(sheet, options) {
       ].filter(Boolean).join(" · ");
     }
     if (editValue) {
-      editValue.textContent = diagnostic.state === "error" ? `Last good value: ${cell.textContent.trim()}` : `Exact value: ${cell.textContent.trim()}`;
+      editValue.textContent = diagnostic2.state === "error" ? `Last good value: ${cell.textContent.trim()}` : `Exact value: ${cell.textContent.trim()}`;
     }
     if (editStatus) {
-      editStatus.textContent = diagnosticStatus(diagnostic) || dependencyStatus(detail.dependencies, detail.address);
+      editStatus.textContent = diagnosticStatus(diagnostic2) || dependencyStatus(detail.dependencies, detail.address);
     }
     if (focus)
       cell.focus();
@@ -36324,9 +38978,11 @@ function enhanceSheet(sheet, options) {
         selectedCell.focus();
       }
     });
-    editForm.addEventListener("submit", (event) => {
+    editForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       event.stopPropagation();
+      if (editPending)
+        return;
       if (!selectedCell) {
         if (editStatus)
           editStatus.textContent = "Choose a cell first";
@@ -36337,42 +38993,54 @@ function enhanceSheet(sheet, options) {
           editStatus.textContent = "This host opened the live view read-only";
         return;
       }
+      const submittedCell = selectedCell;
       const detail = {
-        ...eventDetail(selectedCell),
+        ...eventDetail(submittedCell),
         source: editInput?.value ?? "",
         ...editAssignmentMode ? { assignmentMode: editAssignmentMode.value } : {}
       };
+      const submitButton = editForm.querySelector('button[type="submit"]');
       try {
-        const result = options.onEdit(detail, selectedCell, sheet);
-        if (result && typeof result.then === "function") {
-          throw new Error("Asynchronous Sheet edits are not supported by this host");
-        }
+        editPending = true;
+        editForm.setAttribute("aria-busy", "true");
+        if (submitButton)
+          submitButton.disabled = true;
+        if (editStatus)
+          editStatus.textContent = "Evaluating…";
+        const result = await options.onEdit(detail, submittedCell, sheet);
         if (Array.isArray(result?.updates)) {
           applyCellUpdates(result.updates);
+        } else if (result?.type === "error") {
+          throw new Error(result.text);
         } else {
-          selectedCell.textContent = result?.text ?? detail.source;
+          submittedCell.textContent = result?.text ?? detail.source;
         }
         if (result?.type === "error")
           throw new Error(result.text);
-        const exact = selectedCell.textContent.trim();
+        const exact = submittedCell.textContent.trim();
         if (editValue)
           editValue.textContent = `Exact value: ${exact}`;
         if (editStatus)
           editStatus.textContent = "Saved";
-        options.onEditCommitted?.(detail, result, selectedCell, sheet);
+        options.onEditCommitted?.(detail, result, submittedCell, sheet);
         dispatchSheetEvent(sheet, "rix-sheet-edit", {
           ...detail,
           revision: result?.revision ?? null
         });
-        selectedCell.focus();
+        submittedCell.focus();
       } catch (error) {
-        const diagnostic = sheetCellDiagnostics(selectedCell.dataset);
-        if (editValue && diagnostic.state === "error") {
-          editValue.textContent = `Last good value: ${selectedCell.textContent.trim()}`;
+        const diagnostic2 = sheetCellDiagnostics(submittedCell.dataset);
+        if (editValue && diagnostic2.state === "error") {
+          editValue.textContent = `Last good value: ${submittedCell.textContent.trim()}`;
         }
         if (editStatus) {
-          editStatus.textContent = diagnosticStatus(diagnostic) || error.message || String(error);
+          editStatus.textContent = diagnosticStatus(diagnostic2) || error.message || String(error);
         }
+      } finally {
+        editPending = false;
+        editForm.removeAttribute("aria-busy");
+        if (submitButton)
+          submitButton.disabled = false;
       }
     });
   }
@@ -37031,7 +39699,7 @@ function controlValue(control, event) {
   if (control.kind === "control_slider")
     return sliderValue(control, event.index);
   if (control.kind === "control_choice") {
-    return indexedValue(control, event.index, control.options.map((option) => option.value), "Control choice");
+    return indexedValue(control, event.index, control.options.map((option2) => option2.value), "Control choice");
   }
   if (control.kind === "control_toggle") {
     return indexedValue(control, event.index, control.values, "Control toggle");
@@ -37374,8 +40042,11 @@ function mountOutputWidgets(root, value, options = {}) {
             };
           }
         } : null,
-        onEdit: widgetSession && (widgetSession.editMode === "formula" || typeof options.evaluateEdit === "function") ? (detail) => {
+        onEdit: widgetSession && (widgetSession.editMode === "formula" || typeof options.evaluateEdit === "function") ? async (detail) => {
           try {
+            if (typeof options.beforeSheetEdit === "function") {
+              await options.beforeSheetEdit(detail, widgetSession.current());
+            }
             let valueResult = null;
             if (widgetSession.editMode !== "formula") {
               const evaluated = options.evaluateEdit(detail.source, {
@@ -37423,10 +40094,12 @@ function mountOutputWidgets(root, value, options = {}) {
               revision: widgetSession.revision
             };
           } catch (error) {
+            const failedUpdates = widgetSession.editMode === "formula" ? widgetSession.cellUpdates(format) : undefined;
+            const diagnosticUpdates = failedUpdates?.some((update) => update.state === "error" || update.diagnostics?.length) ? failedUpdates : undefined;
             return {
               type: "error",
               text: error instanceof Error ? error.message : String(error),
-              updates: widgetSession.editMode === "formula" ? widgetSession.cellUpdates(format) : undefined,
+              updates: diagnosticUpdates,
               revision: widgetSession.revision
             };
           }
@@ -37891,7 +40564,7 @@ function collection() {
   }
   return { type: "map", entries: entries2, _ext: extension };
 }
-function install4({ systemContext }) {
+function install13({ systemContext }) {
   const value = collection();
   systemContext.registerHostCallableValue("arrayJs", value, {
     impl(args) {
@@ -38143,16 +40816,18 @@ function installBrowserApproxMathPlugin({ systemContext, registry }) {
   });
   return systemContext;
 }
-var install5 = installBrowserApproxMathPlugin;
+var install14 = installBrowserApproxMathPlugin;
 
 // src/generated/bundled-plugin-catalog.js
 function createBundledPluginCatalog() {
   const catalog = new PluginCatalog;
-  catalog.addMetadata({ id: "draw", description: "Convenient 2D drawing helpers that produce core Graphics nodes.", kind: "host", mount: "draw", exports: ["Line", "Polygon", "Label", "Box", "Circle"], groups: ["Draw", "Renderers"], permissions: [], defaultEnabled: false, operatorDefinitions: [], operatorFiles: [], ignore: false, sourcePath: "bundled:draw" }, { sourcePath: "bundled:draw", kind: "host" });
+  catalog.addMetadata({ id: "canvas", description: "Serializable Canvas 2D drawing plans for core Graphics scenes.", kind: "host", mount: "canvas", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.canvas@1"], targets: ["canvas", "application/vnd.rix.canvas+json"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:canvas" }, { sourcePath: "bundled:canvas", kind: "host" });
+  catalog.registerInstaller("canvas", install5);
+  catalog.addMetadata({ id: "draw", description: "Convenient 2D drawing helpers that produce core Graphics nodes.", kind: "host", mount: "draw", exports: ["Line", "Polygon", "Label", "Box", "Circle"], groups: ["Draw"], permissions: [], defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:draw" }, { sourcePath: "bundled:draw", kind: "host" });
   catalog.registerInstaller("draw", install);
-  catalog.addMetadata({ id: "example-array-js", description: "Teaching JavaScript plugin demonstrating array sum, summary text, and reversal.", kind: "host", mount: "arrayJs", exports: ["Sum", "Describe", "Reverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, operatorDefinitions: [], operatorFiles: [], ignore: false, sourcePath: "bundled:example-array-js" }, { sourcePath: "bundled:example-array-js", kind: "host" });
-  catalog.registerInstaller("example-array-js", install4);
-  catalog.addMetadata({ id: "example-array-rix", description: "Teaching RiX plugin demonstrating array sum, summary text, and reversal.", kind: "rix", mount: "arrayRix", exports: ["arrayRixSum", "arrayRixDescribe", "arrayRixReverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, operatorDefinitions: [], operatorFiles: [], ignore: false, sourcePath: "bundled:example-array-rix" }, { source: `/**
+  catalog.addMetadata({ id: "example-array-js", description: "Teaching JavaScript plugin demonstrating array sum, summary text, and reversal.", kind: "host", mount: "arrayJs", exports: ["Sum", "Describe", "Reverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:example-array-js" }, { sourcePath: "bundled:example-array-js", kind: "host" });
+  catalog.registerInstaller("example-array-js", install13);
+  catalog.addMetadata({ id: "example-array-rix", description: "Teaching RiX plugin demonstrating array sum, summary text, and reversal.", kind: "rix", mount: "arrayRix", exports: ["arrayRixSum", "arrayRixDescribe", "arrayRixReverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:example-array-rix" }, { source: `/**
 id: example-array-rix
 description: Teaching RiX plugin demonstrating array sum, summary text, and reversal.
 kind: rix
@@ -38167,10 +40842,26 @@ defaultEnabled: false
 .Host.Register("arrayRixDescribe", (values) -> @"count @{values.Len()}; sum @{values.Reduce((total, value) -> total + value, 0)}", "Summarize an array of Integers", ["Examples"]);
 .Host.Register("arrayRixReverse", (values) -> values.Reverse(), "Reverse an array", ["Examples"]);
 `, sourcePath: "bundled:example-array-rix", kind: "rix" });
-  catalog.addMetadata({ id: "float", description: "JavaScript IEEE-754 Float conversion and optional approximate math.", kind: "host", mount: "float", exports: ["Float", "Interval", "Round", "Floor", "Ceiling", "Abs", "Sqrt", "Sin", "Cos", "Tan", "Log", "Exp"], groups: ["ApproximateMath", "Float"], permissions: [], defaultEnabled: false, operatorDefinitions: [], operatorFiles: [], ignore: false, sourcePath: "bundled:float" }, { sourcePath: "bundled:float", kind: "host" });
-  catalog.registerInstaller("float", install5);
-  catalog.addMetadata({ id: "plot", description: "Portable plotting helpers that produce core Graphics scenes.", kind: "host", mount: "plot", exports: ["Polynomial"], groups: ["Plot", "Renderers"], permissions: [], defaultEnabled: false, operatorDefinitions: [], operatorFiles: [], ignore: false, sourcePath: "bundled:plot" }, { sourcePath: "bundled:plot", kind: "host" });
+  catalog.addMetadata({ id: "float", description: "JavaScript IEEE-754 Float conversion and optional approximate math.", kind: "host", mount: "float", exports: ["Float", "Interval", "Round", "Floor", "Ceiling", "Abs", "Sqrt", "Sin", "Cos", "Tan", "Log", "Exp"], groups: ["ApproximateMath", "Float"], permissions: [], defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:float" }, { sourcePath: "bundled:float", kind: "host" });
+  catalog.registerInstaller("float", install14);
+  catalog.addMetadata({ id: "html", description: "Standalone semantic HTML renderer for portable RiX output trees.", kind: "host", mount: "html", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.html@1"], targets: ["html", "text/html"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:html" }, { sourcePath: "bundled:html", kind: "host" });
+  catalog.registerInstaller("html", install8);
+  catalog.addMetadata({ id: "latex", description: "Standalone LaTeX renderer for portable RiX documents and figures.", kind: "host", mount: "latex", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.latex@1"], targets: ["latex", "text/x-tex"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:latex" }, { sourcePath: "bundled:latex", kind: "host" });
+  catalog.registerInstaller("latex", install10);
+  catalog.addMetadata({ id: "markdown", description: "CommonMark-oriented renderer for portable RiX documents.", kind: "host", mount: "markdown", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.markdown@1"], targets: ["markdown", "text/markdown"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:markdown" }, { sourcePath: "bundled:markdown", kind: "host" });
+  catalog.registerInstaller("markdown", install7);
+  catalog.addMetadata({ id: "pdf", description: "PDF document and figure renderer orchestrated through LaTeX.", kind: "host", mount: "pdf", exports: ["Render"], groups: ["Renderers"], permissions: ["process", "files"], provides: ["rix.renderer.pdf@1"], targets: ["pdf", "application/pdf"], snapshot: true, deterministic: false, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:pdf" }, { sourcePath: "bundled:pdf", kind: "host" });
+  catalog.registerInstaller("pdf", install12);
+  catalog.addMetadata({ id: "plot", description: "Portable plotting helpers that produce core Graphics scenes.", kind: "host", mount: "plot", exports: ["Polynomial"], groups: ["Plot"], permissions: [], defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:plot" }, { sourcePath: "bundled:plot", kind: "host" });
   catalog.registerInstaller("plot", install3);
+  catalog.addMetadata({ id: "png", description: "PNG snapshot renderer for core Graphics through a host rasterizer.", kind: "host", mount: "png", exports: ["Render"], groups: ["Renderers"], permissions: ["process"], provides: ["rix.renderer.png@1"], targets: ["png", "image/png"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:png" }, { sourcePath: "bundled:png", kind: "host" });
+  catalog.registerInstaller("png", install11);
+  catalog.addMetadata({ id: "quarto", description: "Quarto Markdown renderer with front matter and portable figure lowering.", kind: "host", mount: "quarto", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.quarto@1"], targets: ["quarto", "text/x-quarto"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:quarto" }, { sourcePath: "bundled:quarto", kind: "host" });
+  catalog.registerInstaller("quarto", install9);
+  catalog.addMetadata({ id: "svg", description: "Portable SVG renderer for core Graphics scenes.", kind: "host", mount: "svg", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.svg@1"], targets: ["svg", "image/svg+xml"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:svg" }, { sourcePath: "bundled:svg", kind: "host" });
+  catalog.registerInstaller("svg", install4);
+  catalog.addMetadata({ id: "tikz", description: "Editable TikZ/PGF source renderer for core Graphics scenes.", kind: "host", mount: "tikz", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.tikz@1"], targets: ["tikz", "text/x-tikz"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:tikz" }, { sourcePath: "bundled:tikz", kind: "host" });
+  catalog.registerInstaller("tikz", install6);
   return catalog;
 }
 
@@ -38280,7 +40971,7 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
     },
     async runAsync(source) {
       const tokens = tokenize(source);
-      const usesAsyncEvaluation = tokens.some((token2) => token2.value === "{$" || token2.value === "{$$") || /\.(?:ForEach|Reduce|Collect|First|Find|Count|Close)\s*\(/i.test(source);
+      const usesAsyncEvaluation = tokens.some((token2) => token2.value === "{$" || token2.value === "{$$") || tokens.some((token2) => token2.value === "|>_" || token2.value === "|>!") || /\.(?:ForEach|Reduce|Collect|First|Find|Count|Close|Retry)\s*\(/i.test(source);
       if (!usesAsyncEvaluation)
         return this.run(source);
       const topic = inlineHelpRequest(source);
@@ -38342,5 +41033,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { formatValue, mountOutputWidgets, findHelp, createRixRepl };
 
-//# debugId=C2E4AA75BAC4BDCA64756E2164756E21
-//# sourceMappingURL=chunk-q4vbxwk7.js.map
+//# debugId=8B388CE58DBF93D764756E2164756E21
+//# sourceMappingURL=chunk-8bbw9579.js.map

@@ -3,7 +3,7 @@ import {
   findHelp,
   formatValue,
   mountOutputWidgets
-} from "./chunk-q4vbxwk7.js";
+} from "./chunk-8bbw9579.js";
 
 // src/main.js
 var repl = createRixRepl();
