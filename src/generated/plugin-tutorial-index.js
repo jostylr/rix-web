@@ -44,7 +44,7 @@ export const pluginTutorials = [
     "pluginDirectory": "oracle",
     "title": "Rational betweenness oracles",
     "description": "Query and refine a real number through exact rational intervals.",
-    "status": "proposed",
+    "status": "implemented",
     "theme": "Numbers and numerics",
     "sourcePath": "../rix/plugins/oracle/tutorial.md",
     "number": "14b",

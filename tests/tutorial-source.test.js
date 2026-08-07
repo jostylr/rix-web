@@ -134,7 +134,7 @@ test("structural arithmetic has focused notation and parser lessons", async () =
 test("plugin tutorials are generated after core lessons and grouped by theme", async () => {
     expect(tutorialByNumber("14")?.title).toBe("Plugins: Numbers and numerics");
     expect(tutorialByNumber("14a")?.file).toBe("plugin-float.html");
-    expect(tutorialByNumber("14b")?.status).toBe("proposed");
+    expect(tutorialByNumber("14b")?.status).toBe("implemented");
     expect(tutorialByNumber("15")?.title).toBe("Plugins: Graphics and geometry");
     expect(tutorialByNumber("15a")?.pluginId).toBe("draw");
     expect(tutorialByNumber("15b")?.pluginId).toBe("nd");
