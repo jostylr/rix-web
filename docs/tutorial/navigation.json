@@ -762,6 +762,14 @@
     },
     {
       "number": "16",
+      "file": "plugins-data-and-documents.html",
+      "title": "Plugins: Data and documents",
+      "description": "Relations, tables, reports, templates, and publication structure.",
+      "pluginGroup": true,
+      "status": "implemented"
+    },
+    {
+      "number": "17",
       "file": "plugins-renderers-and-exporters.html",
       "title": "Plugins: Renderers and exporters",
       "description": "Turn semantic RiX values into portable target formats.",
@@ -843,6 +851,15 @@
     {
       "number": "16a",
       "parent": "16",
+      "file": "plugin-data.html",
+      "title": "Transform an exact relation",
+      "description": "Validate, filter, sort, and present a small exact dataset.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "17a",
+      "parent": "17",
       "file": "plugin-canvas.html",
       "title": "Build a Canvas repaint plan",
       "description": "Lower a Graphics scene to versioned Canvas 2D commands.",
@@ -850,8 +867,17 @@
       "status": "implemented"
     },
     {
-      "number": "16b",
-      "parent": "16",
+      "number": "17b",
+      "parent": "17",
+      "file": "plugin-csv.html",
+      "title": "Export exact rows as CSV",
+      "description": "Produce quoted CSV and TSV without decimalizing rational cells.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "17c",
+      "parent": "17",
       "file": "plugin-gltf.html",
       "title": "Export Scene3D as glTF",
       "description": "Produce browser-safe glTF 2.0 JSON with an embedded geometry buffer.",
@@ -859,8 +885,8 @@
       "status": "implemented"
     },
     {
-      "number": "16c",
-      "parent": "16",
+      "number": "17d",
+      "parent": "17",
       "file": "plugin-html.html",
       "title": "Build a standalone HTML report",
       "description": "Render portable headings and exact values as semantic HTML.",
@@ -868,8 +894,8 @@
       "status": "implemented"
     },
     {
-      "number": "16d",
-      "parent": "16",
+      "number": "17e",
+      "parent": "17",
       "file": "plugin-latex.html",
       "title": "Export a LaTeX report",
       "description": "Combine exact math, a table, and a portable document structure in TeX.",
@@ -877,8 +903,8 @@
       "status": "implemented"
     },
     {
-      "number": "16e",
-      "parent": "16",
+      "number": "17f",
+      "parent": "17",
       "file": "plugin-markdown.html",
       "title": "Write a Markdown report",
       "description": "Preserve document structure and a table in portable Markdown.",
@@ -886,8 +912,8 @@
       "status": "implemented"
     },
     {
-      "number": "16f",
-      "parent": "16",
+      "number": "17g",
+      "parent": "17",
       "file": "plugin-pdf.html",
       "title": "Prepare a PDF report",
       "description": "Build the portable document consumed by the host PDF pipeline.",
@@ -895,8 +921,8 @@
       "status": "implemented"
     },
     {
-      "number": "16g",
-      "parent": "16",
+      "number": "17h",
+      "parent": "17",
       "file": "plugin-png.html",
       "title": "Prepare a PNG snapshot",
       "description": "Build the portable Graphics value used by the host PNG rasterizer.",
@@ -904,8 +930,8 @@
       "status": "implemented"
     },
     {
-      "number": "16h",
-      "parent": "16",
+      "number": "17i",
+      "parent": "17",
       "file": "plugin-quarto.html",
       "title": "Author a Quarto source document",
       "description": "Add front matter and a semantic callout to a QMD report.",
@@ -913,8 +939,8 @@
       "status": "implemented"
     },
     {
-      "number": "16i",
-      "parent": "16",
+      "number": "17j",
+      "parent": "17",
       "file": "plugin-svg.html",
       "title": "Export a portable SVG",
       "description": "Render one core Graphics scene as accessible SVG source.",
@@ -922,8 +948,8 @@
       "status": "implemented"
     },
     {
-      "number": "16j",
-      "parent": "16",
+      "number": "17k",
+      "parent": "17",
       "file": "plugin-tikz.html",
       "title": "Export an editable TikZ diagram",
       "description": "Turn core Graphics geometry into publication-ready TikZ source.",

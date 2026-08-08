@@ -331,6 +331,8 @@ test("the web REPL catalogs bundled plugins and loads approved JavaScript on dem
     expect(available).toContain("radix");
     expect(available).toContain("draw");
     expect(available).toContain("plot");
+    expect(available).toContain("data");
+    expect(available).toContain("csv");
     expect(repl.run(".float(1 / 3)").type).toBe("error");
     expect(repl.run('.Plugin.Load("float")').type).toBe("result");
     expect(repl.run(".float(1 / 3)").text).toBe("0.3333333333333333");
@@ -357,6 +359,10 @@ test("the web REPL catalogs bundled plugins and loads approved JavaScript on dem
     expect(plot.type).toBe("result");
     expect(plot.html).toContain("<svg");
     expect(plot.html).toContain("<path");
+
+    expect(repl.run('.Plugin.Load("data"); .Plugin.Load("csv")').type).toBe("result");
+    expect(repl.run('.csv.Render(.data.Relation(["name", "value"], [["half", 1/2]])).Get("content")').text)
+        .toBe("name,value\nhalf,1/2\n");
 });
 
 test("notebook newlines leave nested and continued expressions alone", () => {

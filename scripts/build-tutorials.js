@@ -157,7 +157,9 @@ function relatedFunctions(current) {
 function referenceLinks(current) {
     const rootNumber = current.parent || current.number;
     const root = Number.parseInt(rootNumber, 10);
-    const links = {
+    const links = current.theme === "Renderers and exporters"
+        ? [["Renderer plugin reference", "https://docs.rix.ratmath.com/eval/renderer-guide.html"]]
+        : ({
         1: [["RiX introduction", "https://docs.rix.ratmath.com/introduction.html"]],
         2: [["Methods API", "https://docs.rix.ratmath.com/eval/methods-guide.html"], ["Collection syntax", "https://docs.rix.ratmath.com/eval/syntax-guide.html#collection-syntax"]],
         3: [["Syntax and operators", "https://docs.rix.ratmath.com/eval/syntax-guide.html#operators"], ["Number notation", "https://docs.rix.ratmath.com/introduction.html#number-systems-and-notation"]],
@@ -171,8 +173,7 @@ function referenceLinks(current) {
         11: [["RiX at a glance", "https://docs.rix.ratmath.com/language-at-a-glance.html"], ["Evaluator syntax API", "https://docs.rix.ratmath.com/eval/syntax-guide.html#part-1-syntax-system-function"]],
         12: [["Structured output model", "https://docs.rix.ratmath.com/design/eval/output-model.html"], ["Sheet views", "https://docs.rix.ratmath.com/eval/sheet-guide.html"]],
         13: [["Evaluator syntax API", "https://docs.rix.ratmath.com/eval/syntax-guide.html#part-1-syntax-system-function"], ["Adding user-facing capabilities", "https://docs.rix.ratmath.com/developer-guide.html#adding-a-user-facing-capability"]],
-        16: [["Renderer plugin reference", "https://docs.rix.ratmath.com/eval/renderer-guide.html"]],
-    }[root] || [];
+    }[root] || []);
     if (!links.length) return "";
     return `<section class="api-links"><h2>Reference</h2><ul>${links.map(([label, url]) => `<li><a href="${url}" data-doc-reference target="_blank" rel="noreferrer">${escapeHtml(label)} ↗</a></li>`).join("")}</ul></section>`;
 }

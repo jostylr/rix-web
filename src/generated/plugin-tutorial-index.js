@@ -18,6 +18,14 @@ export const pluginTutorialGroups = [
   },
   {
     "number": "16",
+    "file": "plugins-data-and-documents.html",
+    "title": "Plugins: Data and documents",
+    "description": "Relations, tables, reports, templates, and publication structure.",
+    "pluginGroup": true,
+    "theme": "Data and documents"
+  },
+  {
+    "number": "17",
     "file": "plugins-renderers-and-exporters.html",
     "title": "Plugins: Renderers and exporters",
     "description": "Turn semantic RiX values into portable target formats.",
@@ -131,6 +139,19 @@ export const pluginTutorials = [
     "pluginTutorial": true
   },
   {
+    "pluginId": "data",
+    "pluginDirectory": "data",
+    "title": "Transform an exact relation",
+    "description": "Validate, filter, sort, and present a small exact dataset.",
+    "status": "implemented",
+    "theme": "Data and documents",
+    "sourcePath": "../rix/plugins/data/tutorial.md",
+    "number": "16a",
+    "parent": "16",
+    "file": "plugin-data.html",
+    "pluginTutorial": true
+  },
+  {
     "pluginId": "canvas",
     "pluginDirectory": "render-canvas",
     "title": "Build a Canvas repaint plan",
@@ -138,9 +159,22 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-canvas/tutorial.md",
-    "number": "16a",
-    "parent": "16",
+    "number": "17a",
+    "parent": "17",
     "file": "plugin-canvas.html",
+    "pluginTutorial": true
+  },
+  {
+    "pluginId": "csv",
+    "pluginDirectory": "render-csv",
+    "title": "Export exact rows as CSV",
+    "description": "Produce quoted CSV and TSV without decimalizing rational cells.",
+    "status": "implemented",
+    "theme": "Renderers and exporters",
+    "sourcePath": "../rix/plugins/render-csv/tutorial.md",
+    "number": "17b",
+    "parent": "17",
+    "file": "plugin-csv.html",
     "pluginTutorial": true
   },
   {
@@ -151,8 +185,8 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-gltf/tutorial.md",
-    "number": "16b",
-    "parent": "16",
+    "number": "17c",
+    "parent": "17",
     "file": "plugin-gltf.html",
     "pluginTutorial": true
   },
@@ -164,8 +198,8 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-html/tutorial.md",
-    "number": "16c",
-    "parent": "16",
+    "number": "17d",
+    "parent": "17",
     "file": "plugin-html.html",
     "pluginTutorial": true
   },
@@ -177,8 +211,8 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-latex/tutorial.md",
-    "number": "16d",
-    "parent": "16",
+    "number": "17e",
+    "parent": "17",
     "file": "plugin-latex.html",
     "pluginTutorial": true
   },
@@ -190,8 +224,8 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-markdown/tutorial.md",
-    "number": "16e",
-    "parent": "16",
+    "number": "17f",
+    "parent": "17",
     "file": "plugin-markdown.html",
     "pluginTutorial": true
   },
@@ -203,8 +237,8 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-pdf/tutorial.md",
-    "number": "16f",
-    "parent": "16",
+    "number": "17g",
+    "parent": "17",
     "file": "plugin-pdf.html",
     "pluginTutorial": true
   },
@@ -216,8 +250,8 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-png/tutorial.md",
-    "number": "16g",
-    "parent": "16",
+    "number": "17h",
+    "parent": "17",
     "file": "plugin-png.html",
     "pluginTutorial": true
   },
@@ -229,8 +263,8 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-quarto/tutorial.md",
-    "number": "16h",
-    "parent": "16",
+    "number": "17i",
+    "parent": "17",
     "file": "plugin-quarto.html",
     "pluginTutorial": true
   },
@@ -242,8 +276,8 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-svg/tutorial.md",
-    "number": "16i",
-    "parent": "16",
+    "number": "17j",
+    "parent": "17",
     "file": "plugin-svg.html",
     "pluginTutorial": true
   },
@@ -255,8 +289,8 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-tikz/tutorial.md",
-    "number": "16j",
-    "parent": "16",
+    "number": "17k",
+    "parent": "17",
     "file": "plugin-tikz.html",
     "pluginTutorial": true
   }
