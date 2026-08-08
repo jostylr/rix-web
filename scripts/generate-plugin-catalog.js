@@ -16,6 +16,7 @@ const pluginRoots = [
     path.resolve(root, "..", "rix", "plugins", "geometry"),
     path.resolve(root, "..", "rix", "plugins", "data"),
     path.resolve(root, "..", "rix", "plugins", "document"),
+    path.resolve(root, "..", "rix", "plugins", "render-terminal-ascii"),
     path.resolve(root, "..", "rix", "plugins", "render-svg"),
     path.resolve(root, "..", "rix", "plugins", "render-canvas"),
     path.resolve(root, "..", "rix", "plugins", "render-tikz"),

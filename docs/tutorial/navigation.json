@@ -968,6 +968,15 @@
     {
       "number": "17k",
       "parent": "17",
+      "file": "plugin-terminal-ascii.html",
+      "title": "Render exact work in strict ASCII",
+      "description": "Display synthetic division and a polynomial plot in a deterministic plain-text terminal format.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "17l",
+      "parent": "17",
       "file": "plugin-tikz.html",
       "title": "Export an editable TikZ diagram",
       "description": "Turn core Graphics geometry into publication-ready TikZ source.",

@@ -122,6 +122,7 @@ test("the browser-safe renderer plugins produce their text and source targets", 
     ])`;
     const cases = [
         ["svg", `.svg.Render(${graphic}).Get("content")`, "<svg"],
+        ["terminal-ascii", `.terminalAscii.Render(.Table(["x"], [[1]])).Get("content")`, "+---+"],
         ["canvas", `.canvas.Render(${graphic}).Get("content")`, "rix.canvas-plan@1"],
         ["tikz", `.tikz.Render(${graphic}).Get("content")`, "\\begin{tikzpicture}"],
         ["markdown", `.markdown.Render(${document}).Get("content")`, "# Renderer report"],
@@ -334,6 +335,7 @@ test("the web REPL catalogs bundled plugins and loads approved JavaScript on dem
     expect(available).toContain("geometry");
     expect(available).toContain("data");
     expect(available).toContain("document");
+    expect(available).toContain("terminal-ascii");
     expect(available).toContain("csv");
     expect(repl.run(".float(1 / 3)").type).toBe("error");
     expect(repl.run('.Plugin.Load("float")').type).toBe("result");

@@ -308,6 +308,19 @@ export const pluginTutorials = [
     "pluginTutorial": true
   },
   {
+    "pluginId": "terminal-ascii",
+    "pluginDirectory": "render-terminal-ascii",
+    "title": "Render exact work in strict ASCII",
+    "description": "Display synthetic division and a polynomial plot in a deterministic plain-text terminal format.",
+    "status": "implemented",
+    "theme": "Renderers and exporters",
+    "sourcePath": "../rix/plugins/render-terminal-ascii/tutorial.md",
+    "number": "17k",
+    "parent": "17",
+    "file": "plugin-terminal-ascii.html",
+    "pluginTutorial": true
+  },
+  {
     "pluginId": "tikz",
     "pluginDirectory": "render-tikz",
     "title": "Export an editable TikZ diagram",
@@ -315,7 +328,7 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-tikz/tutorial.md",
-    "number": "17k",
+    "number": "17l",
     "parent": "17",
     "file": "plugin-tikz.html",
     "pluginTutorial": true

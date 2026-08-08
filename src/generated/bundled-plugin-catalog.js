@@ -20,7 +20,8 @@ import { install as install16 } from "../../../rix/plugins/render-quarto/quarto.
 import { install as install17 } from "../../../rix/plugins/radix/radix.plugin.rix.js";
 import { install as install18 } from "../../../rix/plugins/scene3d/scene3d.plugin.rix.js";
 import { install as install19 } from "../../../rix/plugins/render-svg/svg.plugin.rix.js";
-import { install as install20 } from "../../../rix/plugins/render-tikz/tikz.plugin.rix.js";
+import { install as install20 } from "../../../rix/plugins/render-terminal-ascii/terminal-ascii.plugin.rix.js";
+import { install as install21 } from "../../../rix/plugins/render-tikz/tikz.plugin.rix.js";
 
 export function createBundledPluginCatalog() {
   const catalog = new PluginCatalog();
@@ -67,7 +68,9 @@ export function createBundledPluginCatalog() {
   catalog.registerInstaller("scene3d", install18);
   catalog.addMetadata({"id":"svg","description":"Portable SVG renderer for core Graphics scenes.","kind":"host","mount":"svg","exports":["Render"],"groups":["Renderers"],"permissions":[],"provides":["rix.renderer.svg@1"],"targets":["svg","image/svg+xml"],"snapshot":true,"deterministic":true,"defaultEnabled":false,"operatorDefinitions":[],"requires":[],"optional":[],"schemas":[],"operatorFiles":[],"ignore":false,"sourcePath":"bundled:svg"}, { sourcePath: "bundled:svg", kind: "host" });
   catalog.registerInstaller("svg", install19);
+  catalog.addMetadata({"id":"terminal-ascii","description":"Deterministic strict-ASCII fallback for tables, grids, fragments, and simple Graphics.","kind":"host","mount":"terminalAscii","exports":["Render"],"groups":["Renderers"],"permissions":[],"provides":["rix.renderer.terminal-ascii@1"],"targets":["terminal-ascii","terminal","ascii","txt","text/plain"],"snapshot":true,"deterministic":true,"defaultEnabled":false,"operatorDefinitions":[],"requires":[],"optional":[],"schemas":[],"operatorFiles":[],"ignore":false,"sourcePath":"bundled:terminal-ascii"}, { sourcePath: "bundled:terminal-ascii", kind: "host" });
+  catalog.registerInstaller("terminal-ascii", install20);
   catalog.addMetadata({"id":"tikz","description":"Editable TikZ/PGF source renderer for core Graphics scenes.","kind":"host","mount":"tikz","exports":["Render"],"groups":["Renderers"],"permissions":[],"provides":["rix.renderer.tikz@1"],"targets":["tikz","text/x-tikz"],"snapshot":true,"deterministic":true,"defaultEnabled":false,"operatorDefinitions":[],"requires":[],"optional":[],"schemas":[],"operatorFiles":[],"ignore":false,"sourcePath":"bundled:tikz"}, { sourcePath: "bundled:tikz", kind: "host" });
-  catalog.registerInstaller("tikz", install20);
+  catalog.registerInstaller("tikz", install21);
   return catalog;
 }
