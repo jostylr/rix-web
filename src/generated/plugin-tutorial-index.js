@@ -121,6 +121,19 @@ export const pluginTutorials = [
     "pluginTutorial": true
   },
   {
+    "pluginId": "ratfun",
+    "pluginDirectory": "ratfun",
+    "title": "Work with exact rational functions",
+    "description": "Construct, cancel, compose, and reactively update callable RationalFunction values.",
+    "status": "implemented",
+    "theme": "Algebra and analysis",
+    "sourcePath": "../rix/plugins/ratfun/tutorial.md",
+    "number": "15c",
+    "parent": "15",
+    "file": "plugin-ratfun.html",
+    "pluginTutorial": true
+  },
+  {
     "pluginId": "draw",
     "pluginDirectory": "draw",
     "title": "Drawing portable graphics",

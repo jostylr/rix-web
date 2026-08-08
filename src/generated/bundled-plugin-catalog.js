@@ -20,14 +20,15 @@ import { install as install16 } from "../../../rix/plugins/render-png/png.plugin
 import { install as install17 } from "../../../rix/plugins/poly/poly.plugin.rix.js";
 import { install as install18 } from "../../../rix/plugins/render-quarto/quarto.plugin.rix.js";
 import { install as install19 } from "../../../rix/plugins/radix/radix.plugin.rix.js";
-import { install as install20 } from "../../../rix/plugins/scene3d/scene3d.plugin.rix.js";
-import { install as install21 } from "../../../rix/plugins/render-svg/svg.plugin.rix.js";
-import { install as install22 } from "../../../rix/plugins/render-terminal-ascii/terminal-ascii.plugin.rix.js";
-import { install as install23 } from "../../../rix/plugins/render-tikz/tikz.plugin.rix.js";
+import { install as install20 } from "../../../rix/plugins/ratfun/ratfun.plugin.rix.js";
+import { install as install21 } from "../../../rix/plugins/scene3d/scene3d.plugin.rix.js";
+import { install as install22 } from "../../../rix/plugins/render-svg/svg.plugin.rix.js";
+import { install as install23 } from "../../../rix/plugins/render-terminal-ascii/terminal-ascii.plugin.rix.js";
+import { install as install24 } from "../../../rix/plugins/render-tikz/tikz.plugin.rix.js";
 
 export function createBundledPluginCatalog() {
   const catalog = new PluginCatalog();
-  catalog.addMetadata({"id":"algebra","description":"Canonical exact univariate polynomials with verified division and portable synthetic-division Grids.","kind":"host","mount":"algebra","exports":["Polynomial","Coefficients","Record","Evaluate","Equal","Divide","SyntheticDivide","Quotient","Remainder","IsFactor","Grid"],"groups":["Algebra","Exact"],"permissions":[],"requires":["rix.polynomial@1"],"provides":["rix.algebra.division@1"],"schemas":["rix.algebra.division@1"],"snapshot":false,"deterministic":true,"defaultEnabled":false,"operatorDefinitions":[],"aliases":[],"optional":[],"targets":[],"operatorFiles":[],"ignore":false,"sourcePath":"bundled:algebra"}, { sourcePath: "bundled:algebra", kind: "host" });
+  catalog.addMetadata({"id":"algebra","description":"Canonical exact univariate polynomials with verified division and portable synthetic-division Grids.","kind":"host","mount":"algebra","exports":["Polynomial","Coefficients","Record","Evaluate","Equal","Divide","SyntheticDivide","Quotient","Remainder","IsFactor","Grid"],"groups":["Algebra","Exact"],"permissions":[],"requires":["rix.rational-function@1"],"provides":["rix.algebra.division@1"],"schemas":["rix.algebra.division@1"],"snapshot":false,"deterministic":true,"defaultEnabled":false,"operatorDefinitions":[],"aliases":[],"optional":[],"targets":[],"operatorFiles":[],"ignore":false,"sourcePath":"bundled:algebra"}, { sourcePath: "bundled:algebra", kind: "host" });
   catalog.registerInstaller("algebra", install0);
   catalog.addMetadata({"id":"canvas","description":"Serializable Canvas 2D drawing plans for core Graphics scenes.","kind":"host","mount":"canvas","exports":["Render"],"groups":["Renderers"],"permissions":[],"provides":["rix.renderer.canvas@1"],"targets":["canvas","application/vnd.rix.canvas+json"],"snapshot":true,"deterministic":true,"defaultEnabled":false,"operatorDefinitions":[],"aliases":[],"requires":[],"optional":[],"schemas":[],"operatorFiles":[],"ignore":false,"sourcePath":"bundled:canvas"}, { sourcePath: "bundled:canvas", kind: "host" });
   catalog.registerInstaller("canvas", install1);
@@ -70,13 +71,15 @@ export function createBundledPluginCatalog() {
   catalog.registerInstaller("quarto", install18);
   catalog.addMetadata({"id":"radix","description":"Bounded exact positional expansions and repeating-period analysis for rational values.","kind":"host","mount":"radix","exports":["Expansion","Digits","PeriodLength","PeriodInfo","ToString"],"groups":["Exact","Radix"],"permissions":[],"defaultEnabled":false,"operatorDefinitions":[],"aliases":[],"requires":[],"optional":[],"provides":[],"schemas":[],"targets":[],"snapshot":false,"deterministic":false,"operatorFiles":[],"ignore":false,"sourcePath":"bundled:radix"}, { sourcePath: "bundled:radix", kind: "host" });
   catalog.registerInstaller("radix", install19);
+  catalog.addMetadata({"id":"ratfun","description":"Canonical callable univariate rational functions with exact cancellation and Polynomial interoperability.","kind":"host","mount":"ratfun","aliases":["rationalFunction","rf"],"exports":["RationalFunction","Parse","Var","Fun"],"groups":["Algebra","Exact","Symbolic"],"permissions":[],"requires":["rix.polynomial@1"],"provides":["rix.rational-function@1"],"schemas":["rix.rational-function@1"],"snapshot":false,"deterministic":true,"defaultEnabled":false,"operatorDefinitions":[],"optional":[],"targets":[],"operatorFiles":[],"ignore":false,"sourcePath":"bundled:ratfun"}, { sourcePath: "bundled:ratfun", kind: "host" });
+  catalog.registerInstaller("ratfun", install20);
   catalog.addMetadata({"id":"scene3d","description":"Exact retained 3D scenes with deterministic wireframe Graphics snapshots.","kind":"host","mount":"scene3d","exports":["Scene","Group","Transform","Mesh","Polyline","PointCloud","Material","PerspectiveCamera","OrthographicCamera","Snapshot"],"groups":["Scene3D","Graphics"],"permissions":[],"provides":["rix.scene3d@1"],"schemas":["rix.scene3d@1"],"snapshot":true,"deterministic":true,"defaultEnabled":false,"operatorDefinitions":[],"aliases":[],"requires":[],"optional":[],"targets":[],"operatorFiles":[],"ignore":false,"sourcePath":"bundled:scene3d"}, { sourcePath: "bundled:scene3d", kind: "host" });
-  catalog.registerInstaller("scene3d", install20);
+  catalog.registerInstaller("scene3d", install21);
   catalog.addMetadata({"id":"svg","description":"Portable SVG renderer for core Graphics scenes.","kind":"host","mount":"svg","exports":["Render"],"groups":["Renderers"],"permissions":[],"provides":["rix.renderer.svg@1"],"targets":["svg","image/svg+xml"],"snapshot":true,"deterministic":true,"defaultEnabled":false,"operatorDefinitions":[],"aliases":[],"requires":[],"optional":[],"schemas":[],"operatorFiles":[],"ignore":false,"sourcePath":"bundled:svg"}, { sourcePath: "bundled:svg", kind: "host" });
-  catalog.registerInstaller("svg", install21);
+  catalog.registerInstaller("svg", install22);
   catalog.addMetadata({"id":"terminal-ascii","description":"Deterministic strict-ASCII fallback for tables, grids, fragments, and simple Graphics.","kind":"host","mount":"terminalAscii","exports":["Render"],"groups":["Renderers"],"permissions":[],"provides":["rix.renderer.terminal-ascii@1"],"targets":["terminal-ascii","terminal","ascii","txt","text/plain"],"snapshot":true,"deterministic":true,"defaultEnabled":false,"operatorDefinitions":[],"aliases":[],"requires":[],"optional":[],"schemas":[],"operatorFiles":[],"ignore":false,"sourcePath":"bundled:terminal-ascii"}, { sourcePath: "bundled:terminal-ascii", kind: "host" });
-  catalog.registerInstaller("terminal-ascii", install22);
+  catalog.registerInstaller("terminal-ascii", install23);
   catalog.addMetadata({"id":"tikz","description":"Editable TikZ/PGF source renderer for core Graphics scenes.","kind":"host","mount":"tikz","exports":["Render"],"groups":["Renderers"],"permissions":[],"provides":["rix.renderer.tikz@1"],"targets":["tikz","text/x-tikz"],"snapshot":true,"deterministic":true,"defaultEnabled":false,"operatorDefinitions":[],"aliases":[],"requires":[],"optional":[],"schemas":[],"operatorFiles":[],"ignore":false,"sourcePath":"bundled:tikz"}, { sourcePath: "bundled:tikz", kind: "host" });
-  catalog.registerInstaller("tikz", install23);
+  catalog.registerInstaller("tikz", install24);
   return catalog;
 }

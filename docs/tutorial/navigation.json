@@ -839,6 +839,15 @@
       "status": "implemented"
     },
     {
+      "number": "15c",
+      "parent": "15",
+      "file": "plugin-ratfun.html",
+      "title": "Work with exact rational functions",
+      "description": "Construct, cancel, compose, and reactively update callable RationalFunction values.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
       "number": "16a",
       "parent": "16",
       "file": "plugin-draw.html",
