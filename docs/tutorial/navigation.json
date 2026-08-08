@@ -858,6 +858,15 @@
       "status": "implemented"
     },
     {
+      "number": "16b",
+      "parent": "16",
+      "file": "plugin-document.html",
+      "title": "Assemble a numbered report",
+      "description": "Combine prose, an exact table, and a plot with portable cross-references.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
       "number": "17a",
       "parent": "17",
       "file": "plugin-canvas.html",

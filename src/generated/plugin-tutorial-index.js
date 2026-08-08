@@ -152,6 +152,19 @@ export const pluginTutorials = [
     "pluginTutorial": true
   },
   {
+    "pluginId": "document",
+    "pluginDirectory": "document",
+    "title": "Assemble a numbered report",
+    "description": "Combine prose, an exact table, and a plot with portable cross-references.",
+    "status": "implemented",
+    "theme": "Data and documents",
+    "sourcePath": "../rix/plugins/document/tutorial.md",
+    "number": "16b",
+    "parent": "16",
+    "file": "plugin-document.html",
+    "pluginTutorial": true
+  },
+  {
     "pluginId": "canvas",
     "pluginDirectory": "render-canvas",
     "title": "Build a Canvas repaint plan",
