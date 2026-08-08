@@ -330,6 +330,7 @@ test("the web REPL catalogs bundled plugins and loads approved JavaScript on dem
     expect(available).toContain("numerics");
     expect(available).toContain("oracle");
     expect(available).toContain("radix");
+    expect(available).toContain("algebra");
     expect(available).toContain("draw");
     expect(available).toContain("plot");
     expect(available).toContain("geometry");
@@ -353,6 +354,14 @@ test("the web REPL catalogs bundled plugins and loads approved JavaScript on dem
         .toBe("approximate");
     expect(repl.run('.Plugin.Load("radix")').type).toBe("result");
     expect(repl.run('(1/7).PeriodLength(10)').text).toBe("6");
+
+    expect(repl.run('.Plugin.Load("algebra")').type).toBe("result");
+    const polynomial = repl.run(`
+        p := .algebra.Polynomial([1,-6,11,-6]);
+        .algebra.Grid(.algebra.SyntheticDivide(p,2))
+    `);
+    expect(polynomial.type).toBe("result");
+    expect(polynomial.html).toContain("rix-output-grid");
 
     expect(repl.run(".draw.Circle([10, 10], 4)").type).toBe("error");
     expect(repl.run('.Plugin.Load("draw")').type).toBe("result");

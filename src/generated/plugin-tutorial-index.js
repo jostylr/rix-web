@@ -10,6 +10,14 @@ export const pluginTutorialGroups = [
   },
   {
     "number": "15",
+    "file": "plugins-algebra-and-analysis.html",
+    "title": "Plugins: Algebra and analysis",
+    "description": "Exact symbolic structures, statistics, and mathematical analysis.",
+    "pluginGroup": true,
+    "theme": "Algebra and analysis"
+  },
+  {
+    "number": "16",
     "file": "plugins-graphics-and-geometry.html",
     "title": "Plugins: Graphics and geometry",
     "description": "Portable drawing, plots, constructions, and scene authoring.",
@@ -17,7 +25,7 @@ export const pluginTutorialGroups = [
     "theme": "Graphics and geometry"
   },
   {
-    "number": "16",
+    "number": "17",
     "file": "plugins-data-and-documents.html",
     "title": "Plugins: Data and documents",
     "description": "Relations, tables, reports, templates, and publication structure.",
@@ -25,7 +33,7 @@ export const pluginTutorialGroups = [
     "theme": "Data and documents"
   },
   {
-    "number": "17",
+    "number": "18",
     "file": "plugins-renderers-and-exporters.html",
     "title": "Plugins: Renderers and exporters",
     "description": "Turn semantic RiX values into portable target formats.",
@@ -87,6 +95,19 @@ export const pluginTutorials = [
     "pluginTutorial": true
   },
   {
+    "pluginId": "algebra",
+    "pluginDirectory": "algebra",
+    "title": "Transform an exact polynomial",
+    "description": "Normalize, evaluate, divide, and display a polynomial using exact rational arithmetic.",
+    "status": "implemented",
+    "theme": "Algebra and analysis",
+    "sourcePath": "../rix/plugins/algebra/tutorial.md",
+    "number": "15a",
+    "parent": "15",
+    "file": "plugin-algebra.html",
+    "pluginTutorial": true
+  },
+  {
     "pluginId": "draw",
     "pluginDirectory": "draw",
     "title": "Drawing portable graphics",
@@ -94,8 +115,8 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Graphics and geometry",
     "sourcePath": "../rix/plugins/draw/tutorial.md",
-    "number": "15a",
-    "parent": "15",
+    "number": "16a",
+    "parent": "16",
     "file": "plugin-draw.html",
     "pluginTutorial": true
   },
@@ -107,8 +128,8 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Graphics and geometry",
     "sourcePath": "../rix/plugins/geometry/tutorial.md",
-    "number": "15b",
-    "parent": "15",
+    "number": "16b",
+    "parent": "16",
     "file": "plugin-geometry.html",
     "pluginTutorial": true
   },
@@ -120,8 +141,8 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Graphics and geometry",
     "sourcePath": "../rix/plugins/nd/tutorial.md",
-    "number": "15c",
-    "parent": "15",
+    "number": "16c",
+    "parent": "16",
     "file": "plugin-nd.html",
     "pluginTutorial": true
   },
@@ -133,8 +154,8 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Graphics and geometry",
     "sourcePath": "../rix/plugins/plot/tutorial.md",
-    "number": "15d",
-    "parent": "15",
+    "number": "16d",
+    "parent": "16",
     "file": "plugin-plot.html",
     "pluginTutorial": true
   },
@@ -146,8 +167,8 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Graphics and geometry",
     "sourcePath": "../rix/plugins/scene3d/tutorial.md",
-    "number": "15e",
-    "parent": "15",
+    "number": "16e",
+    "parent": "16",
     "file": "plugin-scene3d.html",
     "pluginTutorial": true
   },
@@ -159,8 +180,8 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Data and documents",
     "sourcePath": "../rix/plugins/data/tutorial.md",
-    "number": "16a",
-    "parent": "16",
+    "number": "17a",
+    "parent": "17",
     "file": "plugin-data.html",
     "pluginTutorial": true
   },
@@ -172,8 +193,8 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Data and documents",
     "sourcePath": "../rix/plugins/document/tutorial.md",
-    "number": "16b",
-    "parent": "16",
+    "number": "17b",
+    "parent": "17",
     "file": "plugin-document.html",
     "pluginTutorial": true
   },
@@ -185,8 +206,8 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-canvas/tutorial.md",
-    "number": "17a",
-    "parent": "17",
+    "number": "18a",
+    "parent": "18",
     "file": "plugin-canvas.html",
     "pluginTutorial": true
   },
@@ -198,8 +219,8 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-csv/tutorial.md",
-    "number": "17b",
-    "parent": "17",
+    "number": "18b",
+    "parent": "18",
     "file": "plugin-csv.html",
     "pluginTutorial": true
   },
@@ -211,8 +232,8 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-gltf/tutorial.md",
-    "number": "17c",
-    "parent": "17",
+    "number": "18c",
+    "parent": "18",
     "file": "plugin-gltf.html",
     "pluginTutorial": true
   },
@@ -224,8 +245,8 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-html/tutorial.md",
-    "number": "17d",
-    "parent": "17",
+    "number": "18d",
+    "parent": "18",
     "file": "plugin-html.html",
     "pluginTutorial": true
   },
@@ -237,8 +258,8 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-latex/tutorial.md",
-    "number": "17e",
-    "parent": "17",
+    "number": "18e",
+    "parent": "18",
     "file": "plugin-latex.html",
     "pluginTutorial": true
   },
@@ -250,8 +271,8 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-markdown/tutorial.md",
-    "number": "17f",
-    "parent": "17",
+    "number": "18f",
+    "parent": "18",
     "file": "plugin-markdown.html",
     "pluginTutorial": true
   },
@@ -263,8 +284,8 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-pdf/tutorial.md",
-    "number": "17g",
-    "parent": "17",
+    "number": "18g",
+    "parent": "18",
     "file": "plugin-pdf.html",
     "pluginTutorial": true
   },
@@ -276,8 +297,8 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-png/tutorial.md",
-    "number": "17h",
-    "parent": "17",
+    "number": "18h",
+    "parent": "18",
     "file": "plugin-png.html",
     "pluginTutorial": true
   },
@@ -289,8 +310,8 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-quarto/tutorial.md",
-    "number": "17i",
-    "parent": "17",
+    "number": "18i",
+    "parent": "18",
     "file": "plugin-quarto.html",
     "pluginTutorial": true
   },
@@ -302,8 +323,8 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-svg/tutorial.md",
-    "number": "17j",
-    "parent": "17",
+    "number": "18j",
+    "parent": "18",
     "file": "plugin-svg.html",
     "pluginTutorial": true
   },
@@ -315,8 +336,8 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-terminal-ascii/tutorial.md",
-    "number": "17k",
-    "parent": "17",
+    "number": "18k",
+    "parent": "18",
     "file": "plugin-terminal-ascii.html",
     "pluginTutorial": true
   },
@@ -328,8 +349,8 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-tikz/tutorial.md",
-    "number": "17l",
-    "parent": "17",
+    "number": "18l",
+    "parent": "18",
     "file": "plugin-tikz.html",
     "pluginTutorial": true
   }

@@ -152,14 +152,16 @@ test("plugin tutorials are generated after core lessons and grouped by theme", a
     expect(tutorialByNumber("14b")?.file).toBe("plugin-numerics.html");
     expect(tutorialByNumber("14c")?.file).toBe("plugin-oracle.html");
     expect(tutorialByNumber("14d")?.file).toBe("plugin-radix.html");
-    expect(tutorialByNumber("15")?.title).toBe("Plugins: Graphics and geometry");
-    expect(tutorials.filter(({ parent }) => parent === "15").map(({ pluginId }) => pluginId)).toEqual([
+    expect(tutorialByNumber("15")?.title).toBe("Plugins: Algebra and analysis");
+    expect(tutorialByNumber("15a")?.pluginId).toBe("algebra");
+    expect(tutorialByNumber("16")?.title).toBe("Plugins: Graphics and geometry");
+    expect(tutorials.filter(({ parent }) => parent === "16").map(({ pluginId }) => pluginId)).toEqual([
         "draw", "geometry", "nd", "plot", "scene3d",
     ]);
-    expect(tutorialByNumber("16")?.title).toBe("Plugins: Data and documents");
-    expect(tutorials.filter(({ parent }) => parent === "16").map(({ pluginId }) => pluginId)).toEqual(["data", "document"]);
-    expect(tutorialByNumber("17")?.title).toBe("Plugins: Renderers and exporters");
-    expect(tutorials.filter(({ parent }) => parent === "17").map(({ pluginId }) => pluginId)).toEqual([
+    expect(tutorialByNumber("17")?.title).toBe("Plugins: Data and documents");
+    expect(tutorials.filter(({ parent }) => parent === "17").map(({ pluginId }) => pluginId)).toEqual(["data", "document"]);
+    expect(tutorialByNumber("18")?.title).toBe("Plugins: Renderers and exporters");
+    expect(tutorials.filter(({ parent }) => parent === "18").map(({ pluginId }) => pluginId)).toEqual([
         "canvas", "csv", "gltf", "html", "latex", "markdown", "pdf", "png", "quarto", "svg", "terminal-ascii", "tikz",
     ]);
     const generator = await Bun.file(new URL("../scripts/generate-plugin-tutorial-index.js", import.meta.url)).text();
