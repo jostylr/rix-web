@@ -824,6 +824,15 @@
     {
       "number": "15b",
       "parent": "15",
+      "file": "plugin-geometry.html",
+      "title": "Construct an exact circumcircle",
+      "description": "Build a perpendicular bisector and circumcircle, then render the exact construction through portable Graphics.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "15c",
+      "parent": "15",
       "file": "plugin-nd.html",
       "title": "Project a tesseract exactly",
       "description": "Rotate 4D geometry with a rational Cayley parameter and explicitly project it to a 3D scene.",
@@ -831,7 +840,7 @@
       "status": "implemented"
     },
     {
-      "number": "15c",
+      "number": "15d",
       "parent": "15",
       "file": "plugin-plot.html",
       "title": "Plotting a polynomial",
@@ -840,7 +849,7 @@
       "status": "implemented"
     },
     {
-      "number": "15d",
+      "number": "15e",
       "parent": "15",
       "file": "plugin-scene3d.html",
       "title": "Retained 3D scenes and snapshots",

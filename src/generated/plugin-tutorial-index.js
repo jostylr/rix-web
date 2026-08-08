@@ -100,6 +100,19 @@ export const pluginTutorials = [
     "pluginTutorial": true
   },
   {
+    "pluginId": "geometry",
+    "pluginDirectory": "geometry",
+    "title": "Construct an exact circumcircle",
+    "description": "Build a perpendicular bisector and circumcircle, then render the exact construction through portable Graphics.",
+    "status": "implemented",
+    "theme": "Graphics and geometry",
+    "sourcePath": "../rix/plugins/geometry/tutorial.md",
+    "number": "15b",
+    "parent": "15",
+    "file": "plugin-geometry.html",
+    "pluginTutorial": true
+  },
+  {
     "pluginId": "nd",
     "pluginDirectory": "nd",
     "title": "Project a tesseract exactly",
@@ -107,7 +120,7 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Graphics and geometry",
     "sourcePath": "../rix/plugins/nd/tutorial.md",
-    "number": "15b",
+    "number": "15c",
     "parent": "15",
     "file": "plugin-nd.html",
     "pluginTutorial": true
@@ -120,7 +133,7 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Graphics and geometry",
     "sourcePath": "../rix/plugins/plot/tutorial.md",
-    "number": "15c",
+    "number": "15d",
     "parent": "15",
     "file": "plugin-plot.html",
     "pluginTutorial": true
@@ -133,7 +146,7 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Graphics and geometry",
     "sourcePath": "../rix/plugins/scene3d/tutorial.md",
-    "number": "15d",
+    "number": "15e",
     "parent": "15",
     "file": "plugin-scene3d.html",
     "pluginTutorial": true

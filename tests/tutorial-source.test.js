@@ -153,10 +153,9 @@ test("plugin tutorials are generated after core lessons and grouped by theme", a
     expect(tutorialByNumber("14c")?.file).toBe("plugin-oracle.html");
     expect(tutorialByNumber("14d")?.file).toBe("plugin-radix.html");
     expect(tutorialByNumber("15")?.title).toBe("Plugins: Graphics and geometry");
-    expect(tutorialByNumber("15a")?.pluginId).toBe("draw");
-    expect(tutorialByNumber("15b")?.pluginId).toBe("nd");
-    expect(tutorialByNumber("15c")?.pluginId).toBe("plot");
-    expect(tutorialByNumber("15d")?.pluginId).toBe("scene3d");
+    expect(tutorials.filter(({ parent }) => parent === "15").map(({ pluginId }) => pluginId)).toEqual([
+        "draw", "geometry", "nd", "plot", "scene3d",
+    ]);
     expect(tutorialByNumber("16")?.title).toBe("Plugins: Data and documents");
     expect(tutorials.filter(({ parent }) => parent === "16").map(({ pluginId }) => pluginId)).toEqual(["data", "document"]);
     expect(tutorialByNumber("17")?.title).toBe("Plugins: Renderers and exporters");

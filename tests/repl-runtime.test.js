@@ -331,6 +331,7 @@ test("the web REPL catalogs bundled plugins and loads approved JavaScript on dem
     expect(available).toContain("radix");
     expect(available).toContain("draw");
     expect(available).toContain("plot");
+    expect(available).toContain("geometry");
     expect(available).toContain("data");
     expect(available).toContain("document");
     expect(available).toContain("csv");
@@ -360,6 +361,16 @@ test("the web REPL catalogs bundled plugins and loads approved JavaScript on dem
     expect(plot.type).toBe("result");
     expect(plot.html).toContain("<svg");
     expect(plot.html).toContain("<path");
+
+    expect(repl.run('.Plugin.Load("geometry")').type).toBe("result");
+    const construction = repl.run(`
+        a := .geometry.Point(0,0);
+        b := .geometry.Point(4,0);
+        .geometry.Draw([a,b,.geometry.Circle(a,b)], {= view=[-1,-1,5,5], size=[240,240] })
+    `);
+    expect(construction.type).toBe("result");
+    expect(construction.html).toContain("<svg");
+    expect(construction.html).toContain("<circle");
 
     expect(repl.run('.Plugin.Load("data"); .Plugin.Load("csv")').type).toBe("result");
     expect(repl.run('.csv.Render(.data.Relation(["name", "value"], [["half", 1/2]])).Get("content")').text)
