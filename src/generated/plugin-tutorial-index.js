@@ -108,6 +108,19 @@ export const pluginTutorials = [
     "pluginTutorial": true
   },
   {
+    "pluginId": "poly",
+    "pluginDirectory": "poly",
+    "title": "Work with callable polynomials",
+    "description": "Define, compose, reactively update, and exactly divide semantic Polynomial functions.",
+    "status": "implemented",
+    "theme": "Algebra and analysis",
+    "sourcePath": "../rix/plugins/poly/tutorial.md",
+    "number": "15b",
+    "parent": "15",
+    "file": "plugin-poly.html",
+    "pluginTutorial": true
+  },
+  {
     "pluginId": "draw",
     "pluginDirectory": "draw",
     "title": "Drawing portable graphics",

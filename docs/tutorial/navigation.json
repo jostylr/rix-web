@@ -830,6 +830,15 @@
       "status": "implemented"
     },
     {
+      "number": "15b",
+      "parent": "15",
+      "file": "plugin-poly.html",
+      "title": "Work with callable polynomials",
+      "description": "Define, compose, reactively update, and exactly divide semantic Polynomial functions.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
       "number": "16a",
       "parent": "16",
       "file": "plugin-draw.html",
