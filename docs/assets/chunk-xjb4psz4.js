@@ -16401,6 +16401,8 @@ function extensionTypeNames(target) {
     names.push("Rational");
   else if (target instanceof RationalInterval)
     names.push("RationalInterval");
+  else if (target instanceof Fraction)
+    names.push("Fraction");
   else if (isTensor(target))
     names.push("Tensor");
   else if (target?.type === "sequence" || target?.type === "lazy_sequence")
@@ -19843,9 +19845,9 @@ function previewIr(node, options = {}) {
 function formatCallablePreview(fn, label) {
   const attachedSpec = getAttachedSpec(fn);
   const symbolicKind = fn._ext?.get?.("_symbolicKind")?.value || null;
-  if (attachedSpec && (symbolicKind === "Poly" || symbolicKind === "Polynomial" || symbolicKind === "RationalFunction")) {
+  if (attachedSpec && (symbolicKind === "Poly" || symbolicKind === "Polynomial" || symbolicKind === "RationalFunction" || symbolicKind === "FractionFunction")) {
     const params2 = fn.params?.positional?.map((param) => param.name).join(", ") || "";
-    const label2 = symbolicKind === "RationalFunction" ? "RationalFunction" : symbolicKind === "Polynomial" ? "Polynomial" : "Poly";
+    const label2 = symbolicKind === "RationalFunction" ? "RationalFunction" : symbolicKind === "FractionFunction" ? "FractionFunction" : symbolicKind === "Polynomial" ? "Polynomial" : "Poly";
     return `[${label2} ${params2} -> ${renderSymbolicIr(fn.body)}; Spec ${formatSymbolicSpec(attachedSpec)}]`;
   }
   const params = fn.params?.positional?.map((param) => param.isRest ? `...${param.name}` : param.name).join(", ") || "";
@@ -35331,12 +35333,256 @@ function install({ systemContext }) {
   return draw;
 }
 
-// ../rix/plugins/poly/polynomial.js
-var POLYNOMIAL_SCHEMA = "rix.polynomial@1";
+// ../rix/plugins/fraction/fraction.js
+var FRACTION_SCHEMA = "rix.fraction@1";
 var int7 = (value) => new Integer(BigInt(value));
 var str = (value) => ({ type: "string", value: String(value) });
 var seq = (values) => ({ type: "sequence", values });
 var rixMap2 = (entries2) => ({ type: "map", entries: new Map(entries2) });
+function text4(value, fallback = null) {
+  if (value?.type === "string")
+    return value.value;
+  return typeof value === "string" ? value : fallback;
+}
+function exactInteger4(value, label2) {
+  if (value instanceof Integer)
+    return value.value;
+  if (value instanceof Rational && value.denominator === 1n)
+    return value.numerator;
+  if (typeof value === "bigint" || Number.isInteger(value))
+    return BigInt(value);
+  throw new Error(`${label2} must be an exact integer`);
+}
+function isExactScalar2(value) {
+  return value instanceof Integer || value instanceof Rational || value instanceof Fraction || typeof value === "bigint" || Number.isInteger(value);
+}
+function asFraction2(value, label2 = "value") {
+  if (value instanceof Fraction)
+    return value;
+  if (value instanceof Integer)
+    return new Fraction(value.value, 1n);
+  if (value instanceof Rational)
+    return new Fraction(value.numerator, value.denominator);
+  if (typeof value === "bigint" || Number.isInteger(value))
+    return new Fraction(BigInt(value), 1n);
+  throw new Error(`${label2} must be a Fraction, Rational, or exact integer`);
+}
+function finite(value, label2) {
+  const fraction = asFraction2(value, label2);
+  if (fraction.isInfinite)
+    throw new Error(`${label2} must be finite`);
+  return fraction;
+}
+function normalizedComponents(value) {
+  const fraction = finite(value, "Fraction");
+  return fraction.denominator < 0n ? { numerator: -fraction.numerator, denominator: -fraction.denominator } : { numerator: fraction.numerator, denominator: fraction.denominator };
+}
+function gcd2(left, right) {
+  let a = left < 0n ? -left : left;
+  let b = right < 0n ? -right : right;
+  while (b !== 0n)
+    [a, b] = [b, a % b];
+  return a;
+}
+function lcm2(left, right) {
+  if (left === 0n || right === 0n)
+    return 0n;
+  return left / gcd2(left, right) * right;
+}
+function bool2(value) {
+  return value ? int7(1) : null;
+}
+function createFraction(args) {
+  if (args.length === 1)
+    return asFraction2(args[0], "fraction value");
+  if (args.length < 1 || args.length > 2)
+    throw new Error("fraction expects a value or numerator and denominator");
+  return new Fraction(exactInteger4(args[0], "Fraction numerator"), exactInteger4(args[1], "Fraction denominator"));
+}
+function commonDenominator(leftValue, rightValue, policy) {
+  const left = normalizedComponents(leftValue);
+  const right = normalizedComponents(rightValue);
+  if (policy === "like") {
+    if (left.denominator !== right.denominator) {
+      throw new Error("AddLikeDenominator requires equal denominators");
+    }
+    return new Fraction(left.numerator + right.numerator, left.denominator);
+  }
+  const denominator = lcm2(left.denominator, right.denominator);
+  return new Fraction(left.numerator * (denominator / left.denominator) + right.numerator * (denominator / right.denominator), denominator);
+}
+function crossAdd(leftValue, rightValue, subtract = false) {
+  const left = finite(leftValue, "left Fraction operand");
+  const right = finite(rightValue, "right Fraction operand");
+  const incoming = subtract ? -right.numerator : right.numerator;
+  return new Fraction(left.numerator * right.denominator + incoming * left.denominator, left.denominator * right.denominator);
+}
+function multiply(leftValue, rightValue) {
+  const left = asFraction2(leftValue, "left Fraction operand");
+  const right = asFraction2(rightValue, "right Fraction operand");
+  return new Fraction(left.numerator * right.numerator, left.denominator * right.denominator, { allowInfinite: left.denominator * right.denominator === 0n });
+}
+function divide(leftValue, rightValue) {
+  const left = asFraction2(leftValue, "left Fraction operand");
+  const right = asFraction2(rightValue, "right Fraction operand");
+  if (right.numerator === 0n)
+    throw new Error("Division by zero Fraction");
+  const denominator = left.denominator * right.numerator;
+  return new Fraction(left.numerator * right.denominator, denominator, { allowInfinite: denominator === 0n });
+}
+function compare3(leftValue, rightValue) {
+  const left = normalizedComponents(leftValue);
+  const right = normalizedComponents(rightValue);
+  const a = left.numerator * right.denominator;
+  const b = right.numerator * left.denominator;
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+function integerExponent3(value) {
+  if (value instanceof Integer)
+    return value.value;
+  if (value instanceof Rational && value.denominator === 1n)
+    return value.numerator;
+  return null;
+}
+function installFractionOperators(registry) {
+  if (!registry)
+    return;
+  const binary2 = (name, prepare, impl) => registry.installVariant(name, {
+    name: `Fraction.${name}`,
+    priority: 280,
+    prepare(args) {
+      return args.length === 2 && prepare(args[0], args[1]) ? { args } : false;
+    },
+    impl
+  });
+  const fractionPair = (left, right) => (left instanceof Fraction || right instanceof Fraction) && isExactScalar2(left) && isExactScalar2(right);
+  binary2("ADD", fractionPair, ([left, right]) => crossAdd(left, right));
+  binary2("SUB", fractionPair, ([left, right]) => crossAdd(left, right, true));
+  binary2("MUL", fractionPair, ([left, right]) => multiply(left, right));
+  binary2("DIV", fractionPair, ([left, right]) => divide(left, right));
+  binary2("POW", (left, right) => left instanceof Fraction && integerExponent3(right) !== null, ([left, right]) => left.pow(integerExponent3(right)));
+  binary2("EQ", fractionPair, ([left, right]) => bool2(asFraction2(left).equals(asFraction2(right))));
+  binary2("NEQ", fractionPair, ([left, right]) => bool2(!asFraction2(left).equals(asFraction2(right))));
+  for (const [name, predicate] of [
+    ["LT", (value) => value < 0],
+    ["LTE", (value) => value <= 0],
+    ["GT", (value) => value > 0],
+    ["GTE", (value) => value >= 0]
+  ])
+    binary2(name, fractionPair, ([left, right]) => bool2(predicate(compare3(left, right))));
+  binary2("COMPARE", fractionPair, ([left, right]) => int7(compare3(left, right)));
+  registry.installVariant("NEG", {
+    name: "Fraction.NEG",
+    priority: 280,
+    prepare(args) {
+      return args.length === 1 && args[0] instanceof Fraction ? { args } : false;
+    },
+    impl: ([value]) => new Fraction(-value.numerator, value.denominator, { allowInfinite: value.denominator === 0n })
+  });
+}
+function method5(name, impl) {
+  return { type: "method_builtin", name, impl };
+}
+function fareyParents(value) {
+  const parents = finite(value, "Fraction").fareyParents();
+  return { type: "tuple", values: [parents.left, parents.right] };
+}
+function registerFractionMethods(systemContext, owner = {}) {
+  const register = (type, name, impl) => systemContext.registerMethod(type, name, method5(name, impl), owner);
+  for (const type of ["Integer", "Rational", "Fraction"])
+    register(type, "F", ([value]) => asFraction2(value));
+  register("Fraction", "Fraction", ([value]) => value);
+  register("Fraction", "Numerator", ([value]) => int7(value.numerator));
+  register("Fraction", "Denominator", ([value]) => int7(value.denominator));
+  register("Fraction", "Rational", ([value]) => value.toRational());
+  register("Fraction", "Reduce", ([value]) => value.reduce());
+  register("Fraction", "Scale", ([value, factor]) => value.scale(exactInteger4(factor, "Fraction scale")));
+  register("Fraction", "Negate", ([value]) => new Fraction(-value.numerator, value.denominator, { allowInfinite: value.denominator === 0n }));
+  register("Fraction", "Reciprocal", ([value]) => {
+    if (value.numerator === 0n)
+      throw new Error("Zero Fraction has no reciprocal");
+    return new Fraction(value.denominator, value.numerator, { allowInfinite: value.numerator === 0n });
+  });
+  register("Fraction", "Mediant", ([value, other]) => value.mediant(asFraction2(other, "Mediant operand")));
+  register("Fraction", "AddLikeDenominator", ([value, other]) => commonDenominator(value, other, "like"));
+  register("Fraction", "AddLCMDenominator", ([value, other]) => commonDenominator(value, other, "lcm"));
+  register("Fraction", "SamePair", ([value, other]) => bool2(value.equals(asFraction2(other))));
+  register("Fraction", "Equivalent", ([value, other]) => bool2(compare3(value, other) === 0));
+  register("Fraction", "FareyParents", ([value]) => fareyParents(value));
+  register("Fraction", "SternBrocotPath", ([value]) => seq(value.sternBrocotPath().map(str)));
+  register("Fraction", "ToString", ([value]) => str(value.toString()));
+  register("Fraction", "Record", ([value]) => rixMap2([
+    ["schema", str(FRACTION_SCHEMA)],
+    ["numerator", int7(value.numerator)],
+    ["denominator", int7(value.denominator)],
+    ["reduced", bool2(value.equals(value.reduce()))]
+  ]));
+}
+function parseFraction(args, context, evaluate) {
+  const body = text4(args[1]);
+  if (body === null)
+    throw new Error(".fraction.Parse body must be a string");
+  const structural = parseStructuralArithmetic(body, context, {
+    evaluateRiX: (source) => {
+      const runtime = context.getEnv("__script_runtime__", null);
+      const nodes = lower(parse(source, runtime?.systemLookup));
+      if (nodes.length === 0)
+        throw new Error("'@(expression)' must contain a RiX expression");
+      let result = null;
+      for (const node of nodes)
+        result = evaluate(node);
+      return result;
+    }
+  });
+  const value = isStructuralLiteral(structural) ? structural.value : structural;
+  if (value instanceof Fraction)
+    return value;
+  if (value instanceof Integer || value instanceof Rational)
+    return asFraction2(value);
+  if (isStructuralForm(value)) {
+    throw new Error(".fraction backticks require one concrete fraction; use .fracfun for symbolic or compound forms");
+  }
+  throw new Error(".fraction backticks require an exact numeric fraction");
+}
+function createFractionPluginValue() {
+  const constructor = (args) => createFraction(args);
+  const parseMethod = method5("Parse", parseFraction);
+  return {
+    type: "fraction_plugin",
+    entries: new Map([["Fraction", constructor], ["FRACTION", constructor]]),
+    _ext: new Map([
+      ["PARSE", parseMethod],
+      ["Parse", parseMethod],
+      ["FRACTION", method5("Fraction", ([, ...args]) => createFraction(args))],
+      ["immutable", int7(1)]
+    ])
+  };
+}
+
+// ../rix/plugins/fraction/fraction.plugin.rix.js
+function install2({ systemContext, registry, metadata = {}, options = {} }) {
+  const value = createFractionPluginValue();
+  const mount = options.as || metadata.mount || "fraction";
+  systemContext.registerHostCallableValue(mount, value, {
+    impl: (args) => createFraction(args),
+    pure: true,
+    doc: "Construct an unreduced Fraction from a value or explicit numerator and denominator"
+  }, {
+    doc: metadata.description || "Representation-sensitive unreduced fractions",
+    groups: metadata.groups || ["Algebra", "Exact", "Symbolic"],
+    pluginId: metadata.id || "fraction"
+  });
+  registerFractionMethods(systemContext, { pluginId: metadata.id || "fraction", mount });
+  installFractionOperators(registry);
+  return value;
+}
+
+// ../rix/plugins/poly/polynomial.js
+var POLYNOMIAL_SCHEMA = "rix.polynomial@1";
+var int8 = (value) => new Integer(BigInt(value));
+var str2 = (value) => ({ type: "string", value: String(value) });
+var seq2 = (values) => ({ type: "sequence", values });
+var rixMap3 = (entries2) => ({ type: "map", entries: new Map(entries2) });
 function emptyParams() {
   return {
     positional: [],
@@ -35347,7 +35593,7 @@ function emptyParams() {
     metadata: {}
   };
 }
-function text4(value, fallback = null) {
+function text5(value, fallback = null) {
   if (value?.type === "string")
     return value.value;
   return typeof value === "string" ? value : fallback;
@@ -35374,7 +35620,7 @@ function field(map2, name, fallback = null) {
   return fallback;
 }
 function variableName2(value, fallback = null) {
-  const result = text4(value, fallback);
+  const result = text5(value, fallback);
   if (result === null)
     return null;
   if (!/^[\p{L}_][\p{L}\p{N}_]*$/u.test(result)) {
@@ -35382,7 +35628,7 @@ function variableName2(value, fallback = null) {
   }
   return result;
 }
-function isExactScalar2(value) {
+function isExactScalar3(value) {
   return value instanceof Integer || value instanceof Rational || typeof value === "bigint" || Number.isInteger(value);
 }
 function isExactZero(value) {
@@ -35432,10 +35678,10 @@ function decoratePolynomial(callable, spec2, variable, polynomial, provenance = 
   });
   if (!(callable._ext instanceof Map))
     callable._ext = new Map;
-  callable._ext.set("__type", str("Polynomial"));
-  callable._ext.set("_type", str("polynomial"));
-  callable._ext.set("_symbolicKind", str("Polynomial"));
-  callable._ext.set("immutable", int7(1));
+  callable._ext.set("__type", str2("Polynomial"));
+  callable._ext.set("_type", str2("polynomial"));
+  callable._ext.set("_symbolicKind", str2("Polynomial"));
+  callable._ext.set("immutable", int8(1));
   callable._ext.set("_spec", spec2);
   callable._spec = spec2;
   return callable;
@@ -35459,7 +35705,7 @@ function coefficientsToPolynomial(coefficients, variable, context, provenance = 
   const polynomial = new Map;
   const degree = coefficients.length - 1;
   coefficients.forEach((coefficient, index) => {
-    if (!isExactScalar2(coefficient)) {
+    if (!isExactScalar3(coefficient)) {
       throw new Error(`Polynomial coefficient ${index + 1} must be an exact integer or rational; use a symbolic spec for contextual coefficients`);
     }
     if (!isExactZero(coefficient))
@@ -35532,12 +35778,12 @@ function polynomialCoefficients(polynomial, context, evaluate, { trim = true } =
   return result;
 }
 function polynomialRecord(polynomial, context, evaluate) {
-  return rixMap2([
-    ["schema", str(POLYNOMIAL_SCHEMA)],
-    ["variable", str(requirePolynomial(polynomial).variable)],
-    ["coefficients", seq(polynomialCoefficients(polynomial, context, evaluate))],
-    ["canonical", int7(1)],
-    ["equalityPolicy", str(polynomial.equalityPolicy)]
+  return rixMap3([
+    ["schema", str2(POLYNOMIAL_SCHEMA)],
+    ["variable", str2(requirePolynomial(polynomial).variable)],
+    ["coefficients", seq2(polynomialCoefficients(polynomial, context, evaluate))],
+    ["canonical", int8(1)],
+    ["equalityPolicy", str2(polynomial.equalityPolicy)]
   ]);
 }
 function polynomialDegreeValue(polynomial, context, evaluate) {
@@ -35603,12 +35849,12 @@ function installPolynomialOperators(registry) {
     impl
   });
   for (const name of ["ADD", "SUB", "MUL"]) {
-    binary2(name, (left, right) => (isPolynomial(left) || isPolynomial(right)) && (isPolynomial(left) || isExactScalar2(left)) && (isPolynomial(right) || isExactScalar2(right)), (args, context) => symbolicPolynomial(name, args[0], args[1], context));
+    binary2(name, (left, right) => (isPolynomial(left) || isPolynomial(right)) && (isPolynomial(left) || isExactScalar3(left)) && (isPolynomial(right) || isExactScalar3(right)), (args, context) => symbolicPolynomial(name, args[0], args[1], context));
   }
-  binary2("DIV", (left, right) => isPolynomial(left) && isExactScalar2(right), (args, context) => symbolicPolynomial("DIV", args[0], args[1], context));
+  binary2("DIV", (left, right) => isPolynomial(left) && isExactScalar3(right), (args, context) => symbolicPolynomial("DIV", args[0], args[1], context));
   binary2("POW", (left, right) => isPolynomial(left) && nonnegativeExponent(right), (args, context) => symbolicPolynomial("POW", args[0], args[1], context));
-  binary2("EQ", (left, right) => isPolynomial(left) && isPolynomial(right), ([left, right]) => polynomialsEqual(left, right) ? int7(1) : null);
-  binary2("NEQ", (left, right) => isPolynomial(left) && isPolynomial(right), ([left, right]) => polynomialsEqual(left, right) ? null : int7(1));
+  binary2("EQ", (left, right) => isPolynomial(left) && isPolynomial(right), ([left, right]) => polynomialsEqual(left, right) ? int8(1) : null);
+  binary2("NEQ", (left, right) => isPolynomial(left) && isPolynomial(right), ([left, right]) => polynomialsEqual(left, right) ? null : int8(1));
   registry.installVariant("DIV", {
     name: "Polynomial.DIV.RationalFunction",
     priority: 249,
@@ -35638,31 +35884,31 @@ function installPolynomialOperators(registry) {
     impl: ([value], context) => symbolicPolynomial("NEG", value, null, context)
   });
 }
-function method5(name, impl) {
+function method6(name, impl) {
   return { type: "method_builtin", name, impl };
 }
 function conversionMethod(args, context) {
   return createPolynomial(args, context);
 }
 function registerPolynomialMethods(systemContext, owner = {}) {
-  const register = (typeName, name, impl) => systemContext.registerMethod(typeName, name, method5(name, impl), owner);
+  const register = (typeName, name, impl) => systemContext.registerMethod(typeName, name, method6(name, impl), owner);
   for (const typeName of ["symbolic_spec", "structural_form", "structural_symbol", "structural_literal"]) {
     register(typeName, "P", conversionMethod);
     register(typeName, "Polynomial", conversionMethod);
   }
   register("Polynomial", "P", ([value]) => value);
   register("Polynomial", "Polynomial", ([value]) => value);
-  register("Polynomial", "Coefficients", ([value], context, evaluate) => seq(polynomialCoefficients(value, context, evaluate)));
+  register("Polynomial", "Coefficients", ([value], context, evaluate) => seq2(polynomialCoefficients(value, context, evaluate)));
   register("Polynomial", "Record", ([value], context, evaluate) => polynomialRecord(value, context, evaluate));
   register("Polynomial", "Degree", ([value], context, evaluate) => polynomialDegreeValue(value, context, evaluate));
-  register("Polynomial", "Variable", ([value]) => str(requirePolynomial(value).variable));
+  register("Polynomial", "Variable", ([value]) => str2(requirePolynomial(value).variable));
   register("Polynomial", "Spec", ([value]) => getAttachedSpec(requirePolynomial(value)));
   register("Polynomial", "Evaluate", ([value, argument], context, evaluate) => callWithConcreteArgs(value, [argument], context, evaluate));
 }
 function modifierNames2(value) {
   if (!value)
     return [];
-  return values(value, "Polynomial parser modifiers").map((item) => text4(item));
+  return values(value, "Polynomial parser modifiers").map((item) => text5(item));
 }
 function parseVariableModifier(modifiers) {
   const matches = modifiers.map((modifier) => String(modifier).match(/^VAR\(([^)]+)\)$/iu)).filter(Boolean);
@@ -35674,7 +35920,7 @@ function parseVariableModifier(modifiers) {
   return matches.length ? variableName2(matches[0][1]) : null;
 }
 function parsePolynomial(args, context, evaluate) {
-  const body = text4(args[1]);
+  const body = text5(args[1]);
   if (body === null)
     throw new Error(".poly.Parse body must be a string");
   const variable = parseVariableModifier(modifierNames2(args[2]));
@@ -35694,8 +35940,8 @@ function parsePolynomial(args, context, evaluate) {
 }
 function createPolyPluginValue() {
   const constructor = (args, context) => createPolynomial(args, context);
-  const parse2 = method5("Parse", parsePolynomial);
-  const modifier = (name) => method5(name, () => {
+  const parse2 = method6("Parse", parsePolynomial);
+  const modifier = (name) => method6(name, () => {
     throw new Error(`.${name} is a backtick parser modifier, not a callable method`);
   });
   const entriesMap = new Map([
@@ -35712,39 +35958,21 @@ function createPolyPluginValue() {
       ["Var", modifier("Var")],
       ["FUN", modifier("Fun")],
       ["Fun", modifier("Fun")],
-      ["POLYNOMIAL", method5("Polynomial", ([, ...args], context) => createPolynomial(args, context))],
-      ["immutable", int7(1)]
+      ["POLYNOMIAL", method6("Polynomial", ([, ...args], context) => createPolynomial(args, context))],
+      ["immutable", int8(1)]
     ])
   };
 }
 
-// ../rix/plugins/poly/poly.plugin.rix.js
-function install2({ systemContext, registry, metadata = {}, options = {} }) {
-  const value = createPolyPluginValue();
-  const mount = options.as || metadata.mount || "poly";
-  systemContext.registerHostCallableValue(mount, value, {
-    impl: (args, context) => createPolynomial(args, context),
-    pure: true,
-    doc: "Construct a semantic callable Polynomial from coefficients, structural arithmetic, or a symbolic spec"
-  }, {
-    doc: metadata.description || "Semantic callable univariate polynomials",
-    groups: metadata.groups || ["Algebra", "Exact", "Symbolic"],
-    pluginId: metadata.id || "poly"
-  });
-  registerPolynomialMethods(systemContext, { pluginId: metadata.id || "poly", mount });
-  installPolynomialOperators(registry);
-  return value;
-}
-
 // ../rix/plugins/ratfun/rational-function.js
 var RATIONAL_FUNCTION_SCHEMA = "rix.rational-function@1";
-var int8 = (value) => new Integer(BigInt(value));
-var str2 = (value) => ({ type: "string", value: String(value) });
-var seq2 = (values2) => ({ type: "sequence", values: values2 });
-var rixMap3 = (entries3) => ({ type: "map", entries: new Map(entries3) });
+var int9 = (value) => new Integer(BigInt(value));
+var str3 = (value) => ({ type: "string", value: String(value) });
+var seq3 = (values2) => ({ type: "sequence", values: values2 });
+var rixMap4 = (entries3) => ({ type: "map", entries: new Map(entries3) });
 var zero = () => new Rational(0n, 1n);
 var one = () => new Rational(1n, 1n);
-function text5(value, fallback = null) {
+function text6(value, fallback = null) {
   if (value?.type === "string")
     return value.value;
   return typeof value === "string" ? value : fallback;
@@ -35771,7 +35999,7 @@ function values2(value, label2) {
   throw new Error(`${label2} must be an array, tuple, or sequence`);
 }
 function variableName3(value, fallback = null) {
-  const result = text5(value, fallback);
+  const result = text6(value, fallback);
   if (result === null)
     return null;
   if (!/^[\p{L}_][\p{L}\p{N}_]*$/u.test(result)) {
@@ -35779,7 +36007,7 @@ function variableName3(value, fallback = null) {
   }
   return result;
 }
-function isExactScalar3(value) {
+function isExactScalar4(value) {
   return value instanceof Integer || value instanceof Rational || typeof value === "bigint" || Number.isInteger(value);
 }
 function rational(value, label2) {
@@ -35811,7 +36039,7 @@ function add(left, right, subtract = false) {
     return subtract ? (a[index] || zero()).subtract(incoming) : (a[index] || zero()).add(incoming);
   }));
 }
-function multiply(left, right) {
+function multiply2(left, right) {
   const result = Array.from({ length: left.length + right.length - 1 }, zero);
   for (let a = 0;a < left.length; a += 1)
     for (let b = 0;b < right.length; b += 1) {
@@ -35842,7 +36070,7 @@ function divideWithRemainder(dividend, divisor) {
   const tail = working.slice(difference + 1);
   return { quotient: normalize(quotient), remainder: normalize(tail.length ? tail : [zero()]) };
 }
-function gcd2(left, right) {
+function gcd3(left, right) {
   let a = normalize(left);
   let b = normalize(right);
   while (!(b.length === 1 && isZero4(b[0]))) {
@@ -35866,7 +36094,7 @@ function canonicalPair(numerator, denominator) {
     throw new Error("Rational-function denominator cannot be the zero polynomial");
   if (n.length === 1 && isZero4(n[0]))
     return { numerator: [zero()], denominator: [one()], cancelledDegree: d.length - 1 };
-  const common = gcd2(n, d);
+  const common = gcd3(n, d);
   n = exactQuotient(n, common);
   d = exactQuotient(d, common);
   const leading = d[0];
@@ -35877,7 +36105,7 @@ function canonicalPair(numerator, denominator) {
   };
 }
 function polynomialValue(coefficients, variable, context) {
-  return createPolynomial([seq2(normalize(coefficients)), str2(variable)], context);
+  return createPolynomial([seq3(normalize(coefficients)), str3(variable)], context);
 }
 function rationalFunctionMetadata(value) {
   return value?._rationalFunction?.schema === RATIONAL_FUNCTION_SCHEMA ? value._rationalFunction : null;
@@ -35918,10 +36146,10 @@ function decorateRationalFunction(numerator, denominator, variable, normalizatio
   });
   if (!(callable._ext instanceof Map))
     callable._ext = new Map;
-  callable._ext.set("__type", str2("RationalFunction"));
-  callable._ext.set("_type", str2("rational_function"));
-  callable._ext.set("_symbolicKind", str2("RationalFunction"));
-  callable._ext.set("immutable", int8(1));
+  callable._ext.set("__type", str3("RationalFunction"));
+  callable._ext.set("_type", str3("rational_function"));
+  callable._ext.set("_symbolicKind", str3("RationalFunction"));
+  callable._ext.set("immutable", int9(1));
   callable._ext.set("_spec", spec2);
   callable._spec = spec2;
   return callable;
@@ -35942,7 +36170,7 @@ function polynomialFromValue(value, variable, context) {
     }
     return value;
   }
-  if (isExactScalar3(value))
+  if (isExactScalar4(value))
     return polynomialValue([rational(value, "Rational-function scalar")], variable || "x", context);
   throw new Error("RationalFunction operands must be Polynomials or exact integer/rational scalars");
 }
@@ -36046,13 +36274,13 @@ function createRationalFunction(args, context = null, evaluate = null) {
     const denominator = field2(sourceEntries, "denominator");
     if (numerator === null || denominator === null)
       throw new Error("RationalFunction record requires numerator and denominator");
-    const numeratorValue = Array.isArray(numerator) || Array.isArray(numerator?.values) ? createPolynomial([seq2(values2(numerator, "RationalFunction numerator")), str2(variable || "x")], context) : numerator;
-    const denominatorValue = Array.isArray(denominator) || Array.isArray(denominator?.values) ? createPolynomial([seq2(values2(denominator, "RationalFunction denominator")), str2(variable || "x")], context) : denominator;
+    const numeratorValue = Array.isArray(numerator) || Array.isArray(numerator?.values) ? createPolynomial([seq3(values2(numerator, "RationalFunction numerator")), str3(variable || "x")], context) : numerator;
+    const denominatorValue = Array.isArray(denominator) || Array.isArray(denominator?.values) ? createPolynomial([seq3(values2(denominator, "RationalFunction denominator")), str3(variable || "x")], context) : denominator;
     return fromPolynomialPair(numeratorValue, denominatorValue, variable, context, evaluate, [{ operation: "Record" }]);
   }
   if (second !== null)
     return fromPolynomialPair(source, second, null, context, evaluate, [{ operation: "Pair" }]);
-  if (isPolynomial(source) || isExactScalar3(source)) {
+  if (isPolynomial(source) || isExactScalar4(source)) {
     return fromPolynomialPair(source, one(), null, context, evaluate, [{ operation: "Lift" }]);
   }
   const spec2 = getAttachedSpec(source);
@@ -36093,20 +36321,20 @@ function rationalOperation(operator, left, right, context, evaluate) {
   let numerator;
   let denominator;
   if (operator === "ADD" || operator === "SUB") {
-    numerator = add(multiply(a.numerator, b.denominator), multiply(b.numerator, a.denominator), operator === "SUB");
-    denominator = multiply(a.denominator, b.denominator);
+    numerator = add(multiply2(a.numerator, b.denominator), multiply2(b.numerator, a.denominator), operator === "SUB");
+    denominator = multiply2(a.denominator, b.denominator);
   } else if (operator === "MUL") {
-    numerator = multiply(a.numerator, b.numerator);
-    denominator = multiply(a.denominator, b.denominator);
+    numerator = multiply2(a.numerator, b.numerator);
+    denominator = multiply2(a.denominator, b.denominator);
   } else if (operator === "DIV") {
-    numerator = multiply(a.numerator, b.denominator);
-    denominator = multiply(a.denominator, b.numerator);
+    numerator = multiply2(a.numerator, b.denominator);
+    denominator = multiply2(a.denominator, b.numerator);
   } else {
     throw new Error(`Unsupported RationalFunction operation ${operator}`);
   }
   return fromCoefficientPair(numerator, denominator, variable, context, [{ operation: operator, inputs: [left, right] }]);
 }
-function integerExponent3(value) {
+function integerExponent4(value) {
   if (value instanceof Integer)
     return value.value;
   if (value instanceof Rational && value.denominator === 1n)
@@ -36119,15 +36347,15 @@ function coefficientPower(base, exponent) {
   let remaining = exponent;
   while (remaining > 0n) {
     if (remaining % 2n === 1n)
-      result = multiply(result, factor);
+      result = multiply2(result, factor);
     remaining /= 2n;
     if (remaining > 0n)
-      factor = multiply(factor, factor);
+      factor = multiply2(factor, factor);
   }
   return result;
 }
 function rationalPower(value, exponentValue, context, evaluate) {
-  const exponent = integerExponent3(exponentValue);
+  const exponent = integerExponent4(exponentValue);
   if (exponent === null)
     throw new Error("RationalFunction powers require an exact integer exponent");
   const parts = isRationalFunction(value) ? metadataCoefficients(value, context, evaluate) : { numerator: exactPolynomialCoefficients(value, context, evaluate, "Polynomial power"), denominator: [one()] };
@@ -36149,7 +36377,7 @@ function rationalFunctionsEqual(left, right, context, evaluate) {
   }
 }
 function isFieldOperand(value) {
-  return isRationalFunction(value) || isPolynomial(value) || isExactScalar3(value);
+  return isRationalFunction(value) || isPolynomial(value) || isExactScalar4(value);
 }
 function installRationalFunctionOperators(registry) {
   if (!registry)
@@ -36166,11 +36394,11 @@ function installRationalFunctionOperators(registry) {
     installBinary(name, (left, right) => (isRationalFunction(left) || isRationalFunction(right)) && isFieldOperand(left) && isFieldOperand(right), ([left, right], context, evaluate) => rationalOperation(name, left, right, context, evaluate));
   }
   installBinary("DIV", (left, right) => isFieldOperand(left) && isFieldOperand(right) && (isRationalFunction(left) || isRationalFunction(right) || isPolynomial(right)), ([left, right], context, evaluate) => rationalOperation("DIV", left, right, context, evaluate));
-  installBinary("POW", (left, right) => (isRationalFunction(left) || isPolynomial(left) && (integerExponent3(right) ?? 0n) < 0n) && integerExponent3(right) !== null, ([left, right], context, evaluate) => rationalPower(left, right, context, evaluate));
+  installBinary("POW", (left, right) => (isRationalFunction(left) || isPolynomial(left) && (integerExponent4(right) ?? 0n) < 0n) && integerExponent4(right) !== null, ([left, right], context, evaluate) => rationalPower(left, right, context, evaluate));
   for (const name of ["EQ", "NEQ"]) {
     installBinary(name, (left, right) => (isRationalFunction(left) || isRationalFunction(right)) && isFieldOperand(left) && isFieldOperand(right), ([left, right], context, evaluate) => {
       const equal = rationalFunctionsEqual(left, right, context, evaluate);
-      return (name === "EQ" ? equal : !equal) ? int8(1) : null;
+      return (name === "EQ" ? equal : !equal) ? int9(1) : null;
     });
   }
   registry.installVariant("NEG", {
@@ -36179,23 +36407,23 @@ function installRationalFunctionOperators(registry) {
     prepare(args) {
       return args.length === 1 && isRationalFunction(args[0]) ? { args } : false;
     },
-    impl: ([value], context, evaluate) => rationalOperation("MUL", value, int8(-1), context, evaluate)
+    impl: ([value], context, evaluate) => rationalOperation("MUL", value, int9(-1), context, evaluate)
   });
 }
 function rationalFunctionRecord(value, context, evaluate) {
   const rationalFunction = requireRationalFunction(value);
   const coefficients = metadataCoefficients(rationalFunction, context, evaluate);
-  return rixMap3([
-    ["schema", str2(RATIONAL_FUNCTION_SCHEMA)],
-    ["variable", str2(rationalFunction.variable)],
-    ["numerator", seq2(coefficients.numerator)],
-    ["denominator", seq2(coefficients.denominator)],
-    ["canonical", int8(1)],
-    ["equalityPolicy", str2(rationalFunction.equalityPolicy)],
-    ["domainPolicy", str2(rationalFunction.domainPolicy)]
+  return rixMap4([
+    ["schema", str3(RATIONAL_FUNCTION_SCHEMA)],
+    ["variable", str3(rationalFunction.variable)],
+    ["numerator", seq3(coefficients.numerator)],
+    ["denominator", seq3(coefficients.denominator)],
+    ["canonical", int9(1)],
+    ["equalityPolicy", str3(rationalFunction.equalityPolicy)],
+    ["domainPolicy", str3(rationalFunction.domainPolicy)]
   ]);
 }
-function method6(name, impl) {
+function method7(name, impl) {
   return { type: "method_builtin", name, impl };
 }
 function conversionMethod2(args, context, evaluate) {
@@ -36222,7 +36450,7 @@ function conversionMethod2(args, context, evaluate) {
   return createRationalFunction([source], context, evaluate);
 }
 function registerRationalFunctionMethods(systemContext, owner = {}) {
-  const register = (typeName, name, impl) => systemContext.registerMethod(typeName, name, method6(name, impl), owner);
+  const register = (typeName, name, impl) => systemContext.registerMethod(typeName, name, method7(name, impl), owner);
   for (const typeName of ["symbolic_spec", "structural_form", "structural_symbol", "structural_literal", "Polynomial"]) {
     register(typeName, "R", conversionMethod2);
     register(typeName, "RationalFunction", conversionMethod2);
@@ -36231,7 +36459,7 @@ function registerRationalFunctionMethods(systemContext, owner = {}) {
   register("RationalFunction", "RationalFunction", ([value]) => value);
   register("RationalFunction", "Numerator", ([value]) => rationalFunctionMetadata(requireRationalFunction(value)).numerator);
   register("RationalFunction", "Denominator", ([value]) => rationalFunctionMetadata(requireRationalFunction(value)).denominator);
-  register("RationalFunction", "Variable", ([value]) => str2(requireRationalFunction(value).variable));
+  register("RationalFunction", "Variable", ([value]) => str3(requireRationalFunction(value).variable));
   register("RationalFunction", "Spec", ([value]) => getAttachedSpec(requireRationalFunction(value)));
   register("RationalFunction", "Record", ([value], context, evaluate) => rationalFunctionRecord(value, context, evaluate));
   register("RationalFunction", "Evaluate", ([value, argument], context, evaluate) => callWithConcreteArgs(value, [argument], context, evaluate));
@@ -36239,7 +36467,7 @@ function registerRationalFunctionMethods(systemContext, owner = {}) {
   register("RationalFunction", "Cancel", ([value]) => value);
   register("RationalFunction", "IsPolynomial", ([value], context, evaluate) => {
     const denominator = metadataCoefficients(value, context, evaluate).denominator;
-    return denominator.length === 1 && denominator[0].equals(one()) ? int8(1) : null;
+    return denominator.length === 1 && denominator[0].equals(one()) ? int9(1) : null;
   });
   register("RationalFunction", "ToPolynomial", ([value], context, evaluate) => {
     const rationalFunction = requireRationalFunction(value);
@@ -36251,11 +36479,11 @@ function registerRationalFunctionMethods(systemContext, owner = {}) {
   });
   register("RationalFunction", "Domain", ([value]) => {
     const rationalFunction = requireRationalFunction(value);
-    return rixMap3([
-      ["policy", str2(rationalFunction.domainPolicy)],
+    return rixMap4([
+      ["policy", str3(rationalFunction.domainPolicy)],
       ["denominator", rationalFunctionMetadata(rationalFunction).denominator],
-      ["condition", str2("reduced denominator != 0")],
-      ["cancelledInputRestrictionsPreserved", int8(0)]
+      ["condition", str3("reduced denominator != 0")],
+      ["cancelledInputRestrictionsPreserved", int9(0)]
     ]);
   });
   register("RationalFunction", "Compose", ([value, argument], context, evaluate) => callWithConcreteArgs(value, [argument], context, evaluate));
@@ -36263,7 +36491,7 @@ function registerRationalFunctionMethods(systemContext, owner = {}) {
 function modifierNames3(value) {
   if (!value)
     return [];
-  return values2(value, "RationalFunction parser modifiers").map((item) => text5(item));
+  return values2(value, "RationalFunction parser modifiers").map((item) => text6(item));
 }
 function parseVariableModifier2(modifiers) {
   const matches = modifiers.map((modifier) => String(modifier).match(/^VAR\(([^)]+)\)$/iu)).filter(Boolean);
@@ -36275,7 +36503,7 @@ function parseVariableModifier2(modifiers) {
   return matches.length ? variableName3(matches[0][1]) : null;
 }
 function parseRationalFunction(args, context, evaluate) {
-  const body = text5(args[1]);
+  const body = text6(args[1]);
   if (body === null)
     throw new Error(".ratfun.Parse body must be a string");
   const variable = parseVariableModifier2(modifierNames3(args[2]));
@@ -36295,8 +36523,8 @@ function parseRationalFunction(args, context, evaluate) {
 }
 function createRatfunPluginValue() {
   const constructor = (args, context, evaluate) => createRationalFunction(args, context, evaluate);
-  const parseMethod = method6("Parse", parseRationalFunction);
-  const modifier = (name) => method6(name, () => {
+  const parseMethod = method7("Parse", parseRationalFunction);
+  const modifier = (name) => method7(name, () => {
     throw new Error(`.${name} is a backtick parser modifier, not a callable method`);
   });
   const entriesMap = new Map([
@@ -36313,35 +36541,659 @@ function createRatfunPluginValue() {
       ["Var", modifier("Var")],
       ["FUN", modifier("Fun")],
       ["Fun", modifier("Fun")],
-      ["RATIONALFUNCTION", method6("RationalFunction", ([, ...args], context, evaluate) => createRationalFunction(args, context, evaluate))],
-      ["immutable", int8(1)]
+      ["RATIONALFUNCTION", method7("RationalFunction", ([, ...args], context, evaluate) => createRationalFunction(args, context, evaluate))],
+      ["immutable", int9(1)]
     ])
   };
 }
 
+// ../rix/plugins/fracfun/fraction-function.js
+var FRACTION_FUNCTION_SCHEMA = "rix.fraction-function@1";
+var int10 = (value) => new Integer(BigInt(value));
+var str4 = (value) => ({ type: "string", value: String(value) });
+var seq4 = (values3) => ({ type: "sequence", values: values3 });
+var rixMap5 = (entries4) => ({ type: "map", entries: new Map(entries4) });
+function text7(value, fallback = null) {
+  if (value?.type === "string")
+    return value.value;
+  return typeof value === "string" ? value : fallback;
+}
+function values3(value, label2) {
+  if (Array.isArray(value))
+    return value;
+  if (Array.isArray(value?.values))
+    return value.values;
+  throw new Error(`${label2} must be an array, tuple, or sequence`);
+}
+function variableName4(value, fallback = null) {
+  const result = text7(value, fallback);
+  if (result === null)
+    return null;
+  if (!/^[\p{L}_][\p{L}\p{N}_]*$/u.test(result)) {
+    throw new Error("FractionFunction variable must be a simple identifier or colon-string");
+  }
+  return result;
+}
+function metadata(value) {
+  return value?._fractionFunction?.schema === FRACTION_FUNCTION_SCHEMA ? value._fractionFunction : null;
+}
+function isFractionFunction(value) {
+  return Boolean(metadata(value));
+}
+function requireFractionFunction(value, label2 = "value") {
+  if (!isFractionFunction(value))
+    throw new Error(`${label2} must be a FractionFunction`);
+  return value;
+}
+function isExactScalar5(value) {
+  return value instanceof Integer || value instanceof Rational || value instanceof Fraction || typeof value === "bigint" || Number.isInteger(value);
+}
+function formalExactIr(value) {
+  if (value instanceof Fraction) {
+    return symbolicIr("DIV", symbolicLiteral(value.numerator), symbolicLiteral(value.denominator));
+  }
+  return exactToIr(value);
+}
+function exactInteger5(value) {
+  if (value instanceof Integer)
+    return value.value;
+  if (value instanceof Rational && value.denominator === 1n)
+    return value.numerator;
+  return null;
+}
+function cloneSpec(source, expression = expressionOf(source), options = {}) {
+  return createSymbolicSpec({
+    inputs: options.inputs || source.inputs,
+    outputMode: "expression",
+    expression,
+    imports: source.imports || [],
+    __closureScopes: options.__closureScopes || source.__closureScopes || [],
+    origin: options.origin || source.origin || ".fracfun",
+    transform: options.transform || source.transform || null
+  });
+}
+function scalarSpec(value, variable = null) {
+  return createSymbolicSpec({
+    inputs: variable ? [variable] : [],
+    outputMode: "expression",
+    expression: formalExactIr(value),
+    origin: ".fracfun exact scalar",
+    __closureScopes: []
+  });
+}
+function operandSpecs(value, context) {
+  if (isFractionFunction(value)) {
+    const info = metadata(value);
+    return { display: info.displaySpec, evaluation: info.evaluationSpec, variable: value.variable };
+  }
+  const attached = getAttachedSpec(value);
+  if (attached) {
+    return { display: attached, evaluation: attached, variable: attached.inputs.length === 1 ? attached.inputs[0] : null };
+  }
+  if (isExactScalar5(value)) {
+    const spec2 = scalarSpec(value);
+    return { display: spec2, evaluation: spec2, variable: null };
+  }
+  throw new Error("FractionFunction arithmetic accepts form functions, symbolic specs, Polynomials, RationalFunctions, and exact scalars");
+}
+function combinedSpec(operator, left, right = null, kind = "display") {
+  const leftSpec = left[kind];
+  const rightSpec = right ? right[kind] : null;
+  return combineSymbolic(operator, leftSpec, rightSpec);
+}
+function exactIntegerFromIr2(node) {
+  if (node?.fn === "LITERAL" && /^-?\d+$/.test(String(node.args[0])))
+    return BigInt(node.args[0]);
+  if (node?.fn === "NEG") {
+    const value = exactIntegerFromIr2(node.args[0]);
+    return value === null ? null : -value;
+  }
+  return null;
+}
+function isLiteral(node, value) {
+  return node?.fn === "LITERAL" && String(node.args[0]) === String(value);
+}
+function formalMultiply(left, right) {
+  if (isLiteral(left, 0) || isLiteral(right, 0))
+    return symbolicLiteral(0);
+  if (isLiteral(left, 1))
+    return right;
+  if (isLiteral(right, 1))
+    return left;
+  return symbolicIr("MUL", left, right);
+}
+function formalPower(base, exponent) {
+  if (exponent === 0n)
+    return symbolicLiteral(1);
+  if (exponent === 1n)
+    return base;
+  return symbolicIr("POW", base, symbolicLiteral(exponent));
+}
+function rationalParts3(node) {
+  if (node?.fn === "NEG") {
+    const value = rationalParts3(node.args[0]);
+    return { numerator: symbolicIr("NEG", value.numerator), denominator: value.denominator };
+  }
+  if (["ADD", "SUB", "MUL", "DIV"].includes(node?.fn)) {
+    const left = rationalParts3(node.args[0]);
+    const right = rationalParts3(node.args[1]);
+    if (node.fn === "ADD" || node.fn === "SUB")
+      return {
+        numerator: symbolicIr(node.fn, formalMultiply(left.numerator, right.denominator), formalMultiply(right.numerator, left.denominator)),
+        denominator: formalMultiply(left.denominator, right.denominator)
+      };
+    if (node.fn === "MUL")
+      return {
+        numerator: formalMultiply(left.numerator, right.numerator),
+        denominator: formalMultiply(left.denominator, right.denominator)
+      };
+    return {
+      numerator: formalMultiply(left.numerator, right.denominator),
+      denominator: formalMultiply(left.denominator, right.numerator)
+    };
+  }
+  if (node?.fn === "POW") {
+    const exponent = exactIntegerFromIr2(node.args[1]);
+    if (exponent !== null) {
+      const base = rationalParts3(node.args[0]);
+      const magnitude = exponent < 0n ? -exponent : exponent;
+      const numerator = formalPower(base.numerator, magnitude);
+      const denominator = formalPower(base.denominator, magnitude);
+      return exponent < 0n ? { numerator: denominator, denominator: numerator } : { numerator, denominator };
+    }
+  }
+  return { numerator: cloneSymbolicIr(node), denominator: symbolicLiteral(1) };
+}
+function restrictionsFromIr(node, result = []) {
+  if (!node?.fn)
+    return result;
+  if (node.fn === "DIV")
+    result.push(cloneSymbolicIr(node.args[1]));
+  if (node.fn === "POW") {
+    const exponent = exactIntegerFromIr2(node.args[1]);
+    if (exponent !== null && exponent < 0n)
+      result.push(cloneSymbolicIr(node.args[0]));
+  }
+  for (const arg of node.args || [])
+    if (arg?.fn)
+      restrictionsFromIr(arg, result);
+  return result.filter((candidate, index) => !result.slice(0, index).some((prior) => sameIr(prior, candidate)));
+}
+function inferVariable(displaySpec, evaluationSpec, requested = null) {
+  const names = [...new Set([...displaySpec.inputs || [], ...evaluationSpec.inputs || []])];
+  if (requested) {
+    if (names.some((name) => name !== requested)) {
+      throw new Error(`FractionFunction input must be exactly '${requested}'`);
+    }
+    return requested;
+  }
+  if (names.length > 1)
+    throw new Error(`FractionFunction operands use different variables (${names.join(", ")})`);
+  return names[0] || "x";
+}
+function hasContextualReads(node, inputs) {
+  if (!node?.fn)
+    return false;
+  if (node.fn === "RETRIEVE" && !inputs.has(node.args[0]) || node.fn === "OUTER_RETRIEVE")
+    return true;
+  return (node.args || []).some((arg) => arg?.fn && hasContextualReads(arg, inputs));
+}
+function canonicalCaches(displaySpec, context, evaluate) {
+  let rationalFunction = null;
+  let polynomial = null;
+  let error = null;
+  if (hasContextualReads(expressionOf(displaySpec), new Set(displaySpec.inputs || []))) {
+    return {
+      rationalFunction: null,
+      polynomial: null,
+      error: "Contextual coefficients are projected on demand to avoid stale canonical caches"
+    };
+  }
+  try {
+    rationalFunction = createRationalFunction([displaySpec], context, evaluate);
+    try {
+      polynomial = createPolynomial([displaySpec], context);
+    } catch {}
+  } catch (caught) {
+    error = caught instanceof Error ? caught.message : String(caught);
+  }
+  return { rationalFunction, polynomial, error };
+}
+function decorate(displaySpec, evaluationSpec, context, evaluate, provenance = []) {
+  const variable = inferVariable(displaySpec, evaluationSpec);
+  const normalizedDisplay = cloneSpec(displaySpec, expressionOf(displaySpec), { inputs: [variable] });
+  const normalizedEvaluation = cloneSpec(evaluationSpec, expressionOf(evaluationSpec), { inputs: [variable] });
+  const callable = polyFromSpec(normalizedDisplay);
+  callable.body = cloneSymbolicIr(expressionOf(normalizedEvaluation));
+  callable.__closureScopes = normalizedEvaluation.__closureScopes || [];
+  callable.__name = "FractionFunction";
+  callable.schema = FRACTION_FUNCTION_SCHEMA;
+  callable.variable = variable;
+  callable.canonical = false;
+  callable.equalityPolicy = "structural-form";
+  callable.domainPolicy = "original-denominators-nonzero";
+  callable.provenance = Object.freeze([...provenance]);
+  const caches = canonicalCaches(normalizedDisplay, context, evaluate);
+  callable._fractionFunction = Object.freeze({
+    schema: FRACTION_FUNCTION_SCHEMA,
+    displaySpec: normalizedDisplay,
+    evaluationSpec: normalizedEvaluation,
+    restrictions: Object.freeze(restrictionsFromIr(expressionOf(normalizedEvaluation))),
+    canonicalRationalFunction: caches.rationalFunction,
+    canonicalPolynomial: caches.polynomial,
+    canonicalError: caches.error
+  });
+  if (!(callable._ext instanceof Map))
+    callable._ext = new Map;
+  callable._ext.set("__type", str4("FractionFunction"));
+  callable._ext.set("_type", str4("fraction_function"));
+  callable._ext.set("_symbolicKind", str4("FractionFunction"));
+  callable._ext.set("immutable", int10(1));
+  callable._ext.set("_spec", normalizedDisplay);
+  callable._spec = normalizedDisplay;
+  return callable;
+}
+function fromSpec3(spec2, requestedVariable, context, evaluate, provenance = []) {
+  if (!spec2 || spec2.type !== "symbolic_spec")
+    throw new Error("FractionFunction conversion expects a symbolic specification");
+  const variable = requestedVariable ?? (spec2.inputs.length === 1 ? spec2.inputs[0] : spec2.inputs.length === 0 ? "x" : null);
+  if (!variable)
+    throw new Error("FractionFunction conversion needs one declared input or an explicit variable");
+  if (spec2.inputs.length > 1 || spec2.inputs.length === 1 && spec2.inputs[0] !== variable) {
+    throw new Error(`FractionFunction input must be exactly '${variable}'`);
+  }
+  const normalized = cloneSpec(spec2, expressionOf(spec2), { inputs: [variable] });
+  return decorate(normalized, normalized, context, evaluate, provenance);
+}
+function structuralToFractionFunction(value, requestedVariable, context, evaluate, provenance = []) {
+  const symbols2 = sortedStructuralFreeSymbols(value);
+  const variable = requestedVariable ?? (symbols2.length === 1 ? symbols2[0] : symbols2.length === 0 ? "x" : null);
+  if (!variable) {
+    throw new Error(`FractionFunction form has multiple symbols (${symbols2.join(", ")}); select one with .ff(:name)`);
+  }
+  const spec2 = createSymbolicSpec({
+    inputs: [variable],
+    outputMode: "expression",
+    expression: structuralValueToIr(value),
+    origin: ".fracfun structural form"
+  }, context);
+  return decorate(spec2, spec2, context, evaluate, provenance);
+}
+function pairToFractionFunction(numerator, denominator, context, evaluate, provenance = []) {
+  const left = operandSpecs(numerator, context);
+  const right = operandSpecs(denominator, context);
+  const display = combinedSpec("DIV", left, right, "display");
+  const evaluation = combinedSpec("DIV", left, right, "evaluation");
+  return decorate(display, evaluation, context, evaluate, provenance);
+}
+function createFractionFunction(args, context = null, evaluate = null) {
+  const [source, second = null] = args;
+  if (isFractionFunction(source) && second === null)
+    return source;
+  if (second !== null)
+    return pairToFractionFunction(source, second, context, evaluate, [{ operation: "Pair" }]);
+  const spec2 = getAttachedSpec(source);
+  if (spec2)
+    return fromSpec3(spec2, null, context, evaluate, [{ operation: "SymbolicSpec" }]);
+  if (isExactScalar5(source))
+    return fromSpec3(scalarSpec(source, "x"), "x", context, evaluate, [{ operation: "ExactScalar" }]);
+  if (source?.type?.startsWith?.("structural_") || source?.constructor?.name === "Fraction") {
+    return structuralToFractionFunction(source, null, context, evaluate, [{ operation: "StructuralForm" }]);
+  }
+  throw new Error("FractionFunction expects a form, symbolic spec, Polynomial, RationalFunction, exact scalar, or numerator/denominator pair");
+}
+function formalOperation(operator, leftValue, rightValue, context, evaluate) {
+  const left = operandSpecs(leftValue, context);
+  const right = rightValue === null ? null : operandSpecs(rightValue, context);
+  const display = combinedSpec(operator, left, right, "display");
+  const evaluation = combinedSpec(operator, left, right, "evaluation");
+  return decorate(display, evaluation, context, evaluate, [{ operation: operator, inputs: right ? [leftValue, rightValue] : [leftValue] }]);
+}
+function isFormalOperand(value) {
+  return isFractionFunction(value) || isExactScalar5(value) || Boolean(getAttachedSpec(value));
+}
+function installFractionFunctionOperators(registry) {
+  if (!registry)
+    return;
+  const binary2 = (name, prepare, impl) => registry.installVariant(name, {
+    name: `FractionFunction.${name}`,
+    priority: 290,
+    prepare(args) {
+      return args.length === 2 && prepare(args[0], args[1]) ? { args } : false;
+    },
+    impl
+  });
+  for (const name of ["ADD", "SUB", "MUL", "DIV"]) {
+    binary2(name, (left, right) => (isFractionFunction(left) || isFractionFunction(right)) && isFormalOperand(left) && isFormalOperand(right), ([left, right], context, evaluate) => formalOperation(name, left, right, context, evaluate));
+  }
+  binary2("POW", (left, right) => isFractionFunction(left) && exactInteger5(right) !== null, ([left, right], context, evaluate) => formalOperation("POW", left, right, context, evaluate));
+  for (const name of ["EQ", "NEQ"]) {
+    binary2(name, (left, right) => isFractionFunction(left) && isFractionFunction(right), ([left, right]) => {
+      const equal = left.variable === right.variable && sameIr(expressionOf(metadata(left).displaySpec), expressionOf(metadata(right).displaySpec));
+      return (name === "EQ" ? equal : !equal) ? int10(1) : null;
+    });
+  }
+  registry.installVariant("NEG", {
+    name: "FractionFunction.NEG",
+    priority: 290,
+    prepare(args) {
+      return args.length === 1 && isFractionFunction(args[0]) ? { args } : false;
+    },
+    impl: ([value], context, evaluate) => formalOperation("NEG", value, null, context, evaluate)
+  });
+}
+function transformed(value, direction, args, context, evaluate) {
+  const source = requireFractionFunction(value);
+  const display = symbolicCapabilities.TRANSFORM.impl([
+    metadata(source).displaySpec,
+    str4(direction),
+    ...args
+  ]);
+  return decorate(display, metadata(source).evaluationSpec, context, evaluate, [
+    ...source.provenance,
+    { operation: direction, inputs: args }
+  ]);
+}
+function together(value, context, evaluate) {
+  const source = requireFractionFunction(value);
+  const displaySpec = metadata(source).displaySpec;
+  const parts = rationalParts3(expressionOf(displaySpec));
+  const expression = symbolicIr("DIV", parts.numerator, parts.denominator);
+  return decorate(cloneSpec(displaySpec, expression, { transform: { operation: "Together" } }), metadata(source).evaluationSpec, context, evaluate, [...source.provenance, { operation: "Together" }]);
+}
+function canonical(value, context, evaluate) {
+  const source = requireFractionFunction(value);
+  const cached = metadata(source).canonicalRationalFunction;
+  if (cached)
+    return cached;
+  try {
+    return createRationalFunction([metadata(source).displaySpec], context, evaluate);
+  } catch (error) {
+    throw new Error(`FractionFunction has no exact rational-function projection: ${metadata(source).canonicalError || error.message}`);
+  }
+}
+function polynomial(value, context) {
+  const source = requireFractionFunction(value);
+  const cached = metadata(source).canonicalPolynomial;
+  if (cached)
+    return cached;
+  try {
+    return createPolynomial([metadata(source).displaySpec], context);
+  } catch (error) {
+    throw new Error(`FractionFunction form is not a Polynomial: ${error.message}`);
+  }
+}
+function cancelled(value, context, evaluate) {
+  const source = requireFractionFunction(value);
+  const reduced = canonical(source, context, evaluate);
+  return decorate(getAttachedSpec(reduced), metadata(source).evaluationSpec, context, evaluate, [...source.provenance, { operation: "Cancel", preservesSourceDomain: true }]);
+}
+function formPart(value, selected, context, evaluate) {
+  const source = requireFractionFunction(value);
+  const spec2 = metadata(source).displaySpec;
+  const expression = expressionOf(spec2);
+  const numerator = expression.fn === "DIV" ? expression.args[0] : expression;
+  const denominator = expression.fn === "DIV" ? expression.args[1] : symbolicLiteral(1);
+  const selectedExpression = selected === "numerator" ? numerator : denominator;
+  const part = cloneSpec(spec2, selectedExpression, { transform: { operation: selected } });
+  return decorate(part, part, context, evaluate, [{ operation: selected, inputs: [source] }]);
+}
+function restrictionsEqual(left, right) {
+  const a = metadata(left).restrictions;
+  const b = metadata(right).restrictions;
+  return a.length === b.length && a.every((item, index) => sameIr(item, b[index]));
+}
+function restrictionSpecs(value) {
+  const source = requireFractionFunction(value);
+  const info = metadata(source);
+  return info.restrictions.map((expression) => cloneSpec(info.evaluationSpec, expression, {
+    transform: { operation: "DomainRestriction" }
+  }));
+}
+function method8(name, impl) {
+  return { type: "method_builtin", name, impl };
+}
+function conversionMethod3(args, context, evaluate) {
+  if (args.length > 2)
+    throw new Error(".ff accepts only an optional variable name");
+  const [source, requestedValue = null] = args;
+  const requested = variableName4(requestedValue, null);
+  if (isFractionFunction(source)) {
+    if (requested && requested !== source.variable)
+      throw new Error(".ff cannot rename an existing FractionFunction");
+    return source;
+  }
+  const spec2 = getAttachedSpec(source);
+  if (spec2)
+    return fromSpec3(spec2, requested, context, evaluate, [{ operation: "SymbolicSpec" }]);
+  if (source?.type?.startsWith?.("structural_") || source?.constructor?.name === "Fraction") {
+    return structuralToFractionFunction(source, requested, context, evaluate, [{ operation: "StructuralForm" }]);
+  }
+  return createFractionFunction([source], context, evaluate);
+}
+function registerFractionFunctionMethods(systemContext, owner = {}) {
+  const register = (type, name, impl) => systemContext.registerMethod(type, name, method8(name, impl), owner);
+  for (const type of [
+    "symbolic_spec",
+    "structural_form",
+    "structural_symbol",
+    "structural_literal",
+    "Fraction",
+    "Integer",
+    "Rational",
+    "Polynomial",
+    "RationalFunction"
+  ]) {
+    for (const name of ["ff", "FracFun", "FractionFunction"])
+      register(type, name, conversionMethod3);
+  }
+  for (const name of ["ff", "FracFun", "FractionFunction"])
+    register("FractionFunction", name, ([value]) => value);
+  register("FractionFunction", "Form", ([value]) => metadata(requireFractionFunction(value)).displaySpec);
+  register("FractionFunction", "Spec", ([value]) => metadata(requireFractionFunction(value)).displaySpec);
+  register("FractionFunction", "EvaluationSpec", ([value]) => metadata(requireFractionFunction(value)).evaluationSpec);
+  register("FractionFunction", "Variable", ([value]) => str4(requireFractionFunction(value).variable));
+  register("FractionFunction", "Evaluate", ([value, argument], context, evaluate) => callWithConcreteArgs(value, [argument], context, evaluate));
+  register("FractionFunction", "Compose", ([value, argument], context, evaluate) => callWithConcreteArgs(value, [argument], context, evaluate));
+  register("FractionFunction", "Numerator", ([value], context, evaluate) => formPart(value, "numerator", context, evaluate));
+  register("FractionFunction", "Denominator", ([value], context, evaluate) => formPart(value, "denominator", context, evaluate));
+  register("FractionFunction", "Together", ([value], context, evaluate) => together(value, context, evaluate));
+  register("FractionFunction", "Expand", ([value], context, evaluate) => transformed(value, "expand", [], context, evaluate));
+  register("FractionFunction", "Simplify", ([value], context, evaluate) => transformed(value, "identities", [], context, evaluate));
+  register("FractionFunction", "Recenter", ([value, center], context, evaluate) => transformed(value, "center", [center], context, evaluate));
+  register("FractionFunction", "Cancel", ([value], context, evaluate) => cancelled(value, context, evaluate));
+  register("FractionFunction", "Canonical", ([value], context, evaluate) => canonical(value, context, evaluate));
+  register("FractionFunction", "R", ([value], context, evaluate) => canonical(value, context, evaluate));
+  register("FractionFunction", "Polynomial", ([value], context) => polynomial(value, context));
+  register("FractionFunction", "P", ([value], context) => polynomial(value, context));
+  register("FractionFunction", "CanonicalPolynomial", ([value], context) => polynomial(value, context));
+  register("FractionFunction", "IsPolynomial", ([value]) => metadata(requireFractionFunction(value)).canonicalPolynomial ? int10(1) : null);
+  register("FractionFunction", "SameForm", ([value, other]) => {
+    requireFractionFunction(other, "SameForm operand");
+    return value.variable === other.variable && sameIr(expressionOf(metadata(value).displaySpec), expressionOf(metadata(other).displaySpec)) ? int10(1) : null;
+  });
+  register("FractionFunction", "Equivalent", ([value, other], context, evaluate) => {
+    requireFractionFunction(other, "Equivalent operand");
+    return rationalFunctionsEqual(canonical(value, context, evaluate), canonical(other, context, evaluate), context, evaluate) ? int10(1) : null;
+  });
+  register("FractionFunction", "SameFunction", ([value, other], context, evaluate) => {
+    requireFractionFunction(other, "SameFunction operand");
+    const equivalent = rationalFunctionsEqual(canonical(value, context, evaluate), canonical(other, context, evaluate), context, evaluate);
+    return equivalent && restrictionsEqual(value, other) ? int10(1) : null;
+  });
+  register("FractionFunction", "Domain", ([value]) => rixMap5([
+    ["policy", str4("original denominators != 0")],
+    ["restrictions", seq4(restrictionSpecs(value))],
+    ["cancelledRestrictionsPreserved", int10(1)]
+  ]));
+  register("FractionFunction", "ForgetRestrictions", ([value], context, evaluate) => {
+    const source = requireFractionFunction(value);
+    return decorate(metadata(source).displaySpec, metadata(source).displaySpec, context, evaluate, [
+      ...source.provenance,
+      { operation: "ForgetRestrictions" }
+    ]);
+  });
+  register("FractionFunction", "Record", ([value]) => {
+    const source = requireFractionFunction(value);
+    const info = metadata(source);
+    return rixMap5([
+      ["schema", str4(FRACTION_FUNCTION_SCHEMA)],
+      ["variable", str4(source.variable)],
+      ["form", info.displaySpec],
+      ["evaluation", info.evaluationSpec],
+      ["canonicalAvailable", info.canonicalRationalFunction ? int10(1) : null],
+      ["polynomialAvailable", info.canonicalPolynomial ? int10(1) : null],
+      ["canonicalError", info.canonicalError ? str4(info.canonicalError) : null]
+    ]);
+  });
+}
+function modifierNames4(value) {
+  if (!value)
+    return [];
+  return values3(value, "FractionFunction parser modifiers").map((item) => text7(item));
+}
+function parseVariableModifier3(modifiers) {
+  const matches = modifiers.map((modifier) => String(modifier).match(/^VAR\(([^)]+)\)$/iu)).filter(Boolean);
+  if (matches.length > 1)
+    throw new Error(".fracfun accepts only one Var(name) modifier");
+  const unsupported = modifiers.filter((modifier) => !/^VAR\([^)]+\)$/iu.test(String(modifier)) && !/^FUN$/iu.test(String(modifier)));
+  if (unsupported.length)
+    throw new Error(`Unknown .fracfun modifier${unsupported.length === 1 ? "" : "s"}: ${unsupported.join(", ")}`);
+  return matches.length ? variableName4(matches[0][1]) : null;
+}
+function parseFractionFunction(args, context, evaluate) {
+  const body = text7(args[1]);
+  if (body === null)
+    throw new Error(".fracfun.Parse body must be a string");
+  const variable = parseVariableModifier3(modifierNames4(args[2]));
+  const structural = parseStructuralArithmetic(body, context, {
+    evaluateRiX: (source) => {
+      const runtime = context.getEnv("__script_runtime__", null);
+      const nodes = lower(parse(source, runtime?.systemLookup));
+      if (nodes.length === 0)
+        throw new Error("'@(expression)' must contain a RiX expression");
+      let result = null;
+      for (const node of nodes)
+        result = evaluate(node);
+      return result;
+    }
+  });
+  return structuralToFractionFunction(structural, variable, context, evaluate, [{ operation: ".fracfun.Parse" }]);
+}
+function createFracfunPluginValue() {
+  const constructor = (args, context, evaluate) => createFractionFunction(args, context, evaluate);
+  const parseMethod = method8("Parse", parseFractionFunction);
+  const modifier = (name) => method8(name, () => {
+    throw new Error(`.${name} is a backtick parser modifier, not a callable method`);
+  });
+  return {
+    type: "fraction_function_plugin",
+    entries: new Map([["FractionFunction", constructor], ["FRACTIONFUNCTION", constructor]]),
+    _ext: new Map([
+      ["PARSE", parseMethod],
+      ["Parse", parseMethod],
+      ["VAR", modifier("Var")],
+      ["Var", modifier("Var")],
+      ["FUN", modifier("Fun")],
+      ["Fun", modifier("Fun")],
+      ["FRACTIONFUNCTION", method8("FractionFunction", ([, ...args], context, evaluate) => createFractionFunction(args, context, evaluate))],
+      ["immutable", int10(1)]
+    ])
+  };
+}
+
+// ../rix/plugins/fracfun/fracfun.plugin.rix.js
+function install3({ systemContext, registry, metadata: metadata2 = {}, options = {} }) {
+  const value = createFracfunPluginValue();
+  const mount = options.as || metadata2.mount || "fracfun";
+  systemContext.registerHostCallableValue(mount, value, {
+    impl: (args, context, evaluate) => createFractionFunction(args, context, evaluate),
+    pure: true,
+    doc: "Construct a callable form-preserving FractionFunction"
+  }, {
+    doc: metadata2.description || "Form-preserving polynomial and rational expressions",
+    groups: metadata2.groups || ["Algebra", "Exact", "Symbolic"],
+    pluginId: metadata2.id || "fracfun"
+  });
+  registerFractionFunctionMethods(systemContext, { pluginId: metadata2.id || "fracfun", mount });
+  installFractionFunctionOperators(registry);
+  return value;
+}
+
+// ../rix/plugins/poly/poly.plugin.rix.js
+function install4({ systemContext, registry, metadata: metadata2 = {}, options = {} }) {
+  const value = createPolyPluginValue();
+  const mount = options.as || metadata2.mount || "poly";
+  systemContext.registerHostCallableValue(mount, value, {
+    impl: (args, context) => createPolynomial(args, context),
+    pure: true,
+    doc: "Construct a semantic callable Polynomial from coefficients, structural arithmetic, or a symbolic spec"
+  }, {
+    doc: metadata2.description || "Semantic callable univariate polynomials",
+    groups: metadata2.groups || ["Algebra", "Exact", "Symbolic"],
+    pluginId: metadata2.id || "poly"
+  });
+  registerPolynomialMethods(systemContext, { pluginId: metadata2.id || "poly", mount });
+  installPolynomialOperators(registry);
+  return value;
+}
+
 // ../rix/plugins/ratfun/ratfun.plugin.rix.js
-function install3({ systemContext, registry, metadata = {}, options = {} }) {
+function install5({ systemContext, registry, metadata: metadata2 = {}, options = {} }) {
   const value = createRatfunPluginValue();
-  const mount = options.as || metadata.mount || "ratfun";
+  const mount = options.as || metadata2.mount || "ratfun";
   systemContext.registerHostCallableValue(mount, value, {
     impl: (args, context, evaluate) => createRationalFunction(args, context, evaluate),
     pure: true,
     doc: "Construct a canonical callable RationalFunction from exact polynomials or a rational symbolic expression"
   }, {
-    doc: metadata.description || "Canonical callable univariate rational functions",
-    groups: metadata.groups || ["Algebra", "Exact", "Symbolic"],
-    pluginId: metadata.id || "ratfun"
+    doc: metadata2.description || "Canonical callable univariate rational functions",
+    groups: metadata2.groups || ["Algebra", "Exact", "Symbolic"],
+    pluginId: metadata2.id || "ratfun"
   });
-  registerRationalFunctionMethods(systemContext, { pluginId: metadata.id || "ratfun", mount });
+  registerRationalFunctionMethods(systemContext, { pluginId: metadata2.id || "ratfun", mount });
   installRationalFunctionOperators(registry);
+  return value;
+}
+
+// ../rix/plugins/symbolic/symbolic.plugin.rix.js
+var str5 = (value) => ({ type: "string", value: String(value) });
+var method9 = (name, impl) => ({ type: "method_builtin", name, impl });
+function install6({ systemContext, metadata: metadata2 = {} }) {
+  const fraction = (args) => createFraction(args);
+  const fractionFunction = (args, context, evaluate) => createFractionFunction(args, context, evaluate);
+  const value = {
+    type: "symbolic_plugin",
+    entries: new Map([
+      ["Fraction", fraction],
+      ["FRACTION", fraction],
+      ["FractionFunction", fractionFunction],
+      ["FRACTIONFUNCTION", fractionFunction],
+      ["Services", { type: "sequence", values: [str5("fraction"), str5("fracfun"), str5("poly"), str5("ratfun")] }]
+    ]),
+    _ext: new Map([
+      ["FRACTION", method9("Fraction", ([, ...args]) => createFraction(args))],
+      ["FRACTIONFUNCTION", method9("FractionFunction", ([, ...args], context, evaluate) => createFractionFunction(args, context, evaluate))],
+      ["SERVICES", method9("Services", () => ({
+        type: "sequence",
+        values: [str5("fraction"), str5("fracfun"), str5("poly"), str5("ratfun")]
+      }))],
+      ["immutable", new Integer(1n)]
+    ])
+  };
+  systemContext.registerHostValue("symbolic", value, {
+    doc: metadata2.description || "Representation-sensitive symbolic workspace",
+    groups: metadata2.groups || ["Algebra", "Exact", "Symbolic"],
+    pluginId: metadata2.id || "symbolic"
+  });
   return value;
 }
 
 // ../rix/plugins/algebra/algebra.js
 var DIVISION_SCHEMA = "rix.algebra.division@1";
-var int9 = (value) => new Integer(BigInt(value));
-var str3 = (value) => ({ type: "string", value: String(value) });
-var seq3 = (values3) => ({ type: "sequence", values: values3 });
+var int11 = (value) => new Integer(BigInt(value));
+var str6 = (value) => ({ type: "string", value: String(value) });
+var seq5 = (values4) => ({ type: "sequence", values: values4 });
 function entriesFor2(args, positional, name) {
   if (args.length === 1 && args[0]?.type === "map" && args[0].entries instanceof Map)
     return args[0].entries;
@@ -36361,9 +37213,9 @@ function field3(entries4, name, fallback = null) {
     return fallback;
   if (entries4.has(name))
     return entries4.get(name);
-  const canonical = String(name).toLowerCase();
+  const canonical2 = String(name).toLowerCase();
   for (const [key, value] of entries4)
-    if (String(key).toLowerCase() === canonical)
+    if (String(key).toLowerCase() === canonical2)
       return value;
   return fallback;
 }
@@ -36377,19 +37229,19 @@ function rational2(value, label2) {
 var zero2 = () => new Rational(0n, 1n);
 var one2 = () => new Rational(1n, 1n);
 var isZero5 = (value) => value.numerator === 0n;
-function normalizeCoefficients(values3, label2 = "Polynomial coefficients") {
-  if (values3.length === 0)
+function normalizeCoefficients(values4, label2 = "Polynomial coefficients") {
+  if (values4.length === 0)
     throw new Error(`${label2} cannot be empty`);
-  const exact = values3.map((value, index) => rational2(value, `${label2} ${index + 1}`));
+  const exact = values4.map((value, index) => rational2(value, `${label2} ${index + 1}`));
   const first = exact.findIndex((value) => !isZero5(value));
   return first < 0 ? [zero2()] : exact.slice(first);
 }
-function exactCoefficients(polynomial, context, evaluate, label2) {
-  requirePolynomial(polynomial, label2);
-  return normalizeCoefficients(polynomialCoefficients(polynomial, context, evaluate), `${label2} coefficients`);
+function exactCoefficients(polynomial2, context, evaluate, label2) {
+  requirePolynomial(polynomial2, label2);
+  return normalizeCoefficients(polynomialCoefficients(polynomial2, context, evaluate), `${label2} coefficients`);
 }
 function polynomialValue2(coefficients, variable, context) {
-  return createPolynomial([seq3(normalizeCoefficients(coefficients)), str3(variable)], context);
+  return createPolynomial([seq5(normalizeCoefficients(coefficients)), str6(variable)], context);
 }
 function createPolynomial2(args, context) {
   try {
@@ -36400,8 +37252,8 @@ function createPolynomial2(args, context) {
 }
 function polynomialCoefficients2(args, context, evaluate) {
   const entries4 = entriesFor2(args, ["polynomial"], "algebra.Coefficients");
-  const polynomial = requirePolynomial(field3(entries4, "polynomial"), "algebra.Coefficients value");
-  return seq3(polynomialCoefficients(polynomial, context, evaluate));
+  const polynomial2 = requirePolynomial(field3(entries4, "polynomial"), "algebra.Coefficients value");
+  return seq5(polynomialCoefficients(polynomial2, context, evaluate));
 }
 function polynomialRecord2(args, context, evaluate) {
   const entries4 = entriesFor2(args, ["polynomial"], "algebra.Record");
@@ -36409,12 +37261,12 @@ function polynomialRecord2(args, context, evaluate) {
 }
 function evaluatePolynomial(args, context, evaluate) {
   const entries4 = entriesFor2(args, ["polynomial", "value"], "algebra.Evaluate");
-  const polynomial = requirePolynomial(field3(entries4, "polynomial"), "algebra.Evaluate polynomial");
-  return callWithConcreteArgs(polynomial, [field3(entries4, "value")], context, evaluate);
+  const polynomial2 = requirePolynomial(field3(entries4, "polynomial"), "algebra.Evaluate polynomial");
+  return callWithConcreteArgs(polynomial2, [field3(entries4, "value")], context, evaluate);
 }
 function equalPolynomials(args) {
   const entries4 = entriesFor2(args, ["left", "right"], "algebra.Equal");
-  return int9(polynomialsEqual(requirePolynomial(field3(entries4, "left"), "algebra.Equal left value"), requirePolynomial(field3(entries4, "right"), "algebra.Equal right value")) ? 1 : 0);
+  return int11(polynomialsEqual(requirePolynomial(field3(entries4, "left"), "algebra.Equal left value"), requirePolynomial(field3(entries4, "right"), "algebra.Equal right value")) ? 1 : 0);
 }
 function coefficientsEqual2(left, right) {
   return left.length === right.length && left.every((value, index) => value.equals(right[index]));
@@ -36433,7 +37285,7 @@ function multiplyCoefficients(left, right) {
     }
   return normalizeCoefficients(result);
 }
-function divisionValue(dividend, divisor, quotient, remainder, coefficients, method7, extra = {}) {
+function divisionValue(dividend, divisor, quotient, remainder, coefficients, method10, extra = {}) {
   const reconstructed = addCoefficients(multiplyCoefficients(coefficients.divisor, coefficients.quotient), coefficients.remainder);
   const identityVerified = coefficientsEqual2(reconstructed, coefficients.dividend);
   const factor = coefficients.remainder.length === 1 && isZero5(coefficients.remainder[0]);
@@ -36441,7 +37293,7 @@ function divisionValue(dividend, divisor, quotient, remainder, coefficients, met
     type: "algebra_division",
     kind: "polynomial_division",
     schema: DIVISION_SCHEMA,
-    method: method7,
+    method: method10,
     dividend,
     divisor,
     quotient,
@@ -36453,17 +37305,17 @@ function divisionValue(dividend, divisor, quotient, remainder, coefficients, met
       status: factor ? "exact-factor" : "nonzero-remainder",
       equalityPolicy: dividend.equalityPolicy
     }),
-    provenance: Object.freeze([{ operation: method7 === "synthetic" ? "SyntheticDivide" : "Divide", inputs: Object.freeze([dividend, divisor]) }]),
+    provenance: Object.freeze([{ operation: method10 === "synthetic" ? "SyntheticDivide" : "Divide", inputs: Object.freeze([dividend, divisor]) }]),
     ...extra,
     _ext: new Map([
-      ["__type", str3("PolynomialDivision")],
-      ["_type", str3("algebra_division")],
-      ["kind", str3("polynomial_division")],
-      ["immutable", int9(1)]
+      ["__type", str6("PolynomialDivision")],
+      ["_type", str6("algebra_division")],
+      ["kind", str6("polynomial_division")],
+      ["immutable", int11(1)]
     ])
   });
 }
-function divideValues(dividend, divisor, context, evaluate, method7 = "long") {
+function divideValues(dividend, divisor, context, evaluate, method10 = "long") {
   requirePolynomial(dividend, "algebra.Divide dividend");
   requirePolynomial(divisor, "algebra.Divide divisor");
   if (dividend.variable !== divisor.variable)
@@ -36499,7 +37351,7 @@ function divideValues(dividend, divisor, context, evaluate, method7 = "long") {
     divisor: divisorValues,
     quotient: quotientValues,
     remainder: remainderValues
-  }, method7);
+  }, method10);
 }
 function dividePolynomials(args, context, evaluate) {
   const entries4 = entriesFor2(args, ["dividend", "divisor"], "algebra.Divide");
@@ -36507,11 +37359,11 @@ function dividePolynomials(args, context, evaluate) {
 }
 function syntheticDivide(args, context, evaluate) {
   const entries4 = entriesFor2(args, ["polynomial", "root"], "algebra.SyntheticDivide");
-  const polynomial = requirePolynomial(field3(entries4, "polynomial"), "algebra.SyntheticDivide polynomial");
+  const polynomial2 = requirePolynomial(field3(entries4, "polynomial"), "algebra.SyntheticDivide polynomial");
   const root = rational2(field3(entries4, "root"), "algebra.SyntheticDivide root");
-  const coefficients = exactCoefficients(polynomial, context, evaluate, "algebra.SyntheticDivide polynomial");
-  const divisor = polynomialValue2([one2(), root.negate()], polynomial.variable, context);
-  const result = divideValues(polynomial, divisor, context, evaluate, "synthetic");
+  const coefficients = exactCoefficients(polynomial2, context, evaluate, "algebra.SyntheticDivide polynomial");
+  const divisor = polynomialValue2([one2(), root.negate()], polynomial2.variable, context);
+  const result = divideValues(polynomial2, divisor, context, evaluate, "synthetic");
   return Object.freeze({
     ...result,
     root,
@@ -36533,7 +37385,7 @@ function divisionRemainder(args) {
 }
 function divisorIsFactor(args, context, evaluate) {
   const entries4 = entriesFor2(args, ["polynomial", "candidate"], "algebra.IsFactor");
-  return int9(divideValues(field3(entries4, "polynomial"), field3(entries4, "candidate"), context, evaluate).factor.divisorIsFactor ? 1 : 0);
+  return int11(divideValues(field3(entries4, "polynomial"), field3(entries4, "candidate"), context, evaluate).factor.divisorIsFactor ? 1 : 0);
 }
 function divisionGrid(args) {
   const entries4 = entriesFor2(args, ["division"], "algebra.Grid");
@@ -36542,11 +37394,11 @@ function divisionGrid(args) {
     throw new Error("algebra.Grid requires a SyntheticDivide result");
   return division.grid;
 }
-function method7(name, impl) {
+function method10(name, impl) {
   return { type: "method_builtin", name, impl };
 }
 function registerAlgebraMethods(systemContext, owner = {}) {
-  const register = (type, name, impl) => systemContext.registerMethod(type, name, method7(name, impl), owner);
+  const register = (type, name, impl) => systemContext.registerMethod(type, name, method10(name, impl), owner);
   register("Polynomial", "Divide", ([value, divisor], context, evaluate) => dividePolynomials([value, divisor], context, evaluate));
   register("Polynomial", "DivMod", ([value, divisor], context, evaluate) => dividePolynomials([value, divisor], context, evaluate));
   register("Polynomial", "SyntheticDiv", ([value, root], context, evaluate) => syntheticDivide([value, root], context, evaluate));
@@ -36559,7 +37411,7 @@ function registerAlgebraMethods(systemContext, owner = {}) {
 function installPolynomialDivisionOperators(registry) {
   if (!registry)
     return;
-  const install4 = (name, impl) => registry.installVariant(name, {
+  const install7 = (name, impl) => registry.installVariant(name, {
     name: `Polynomial.${name}`,
     priority: 260,
     prepare(args) {
@@ -36567,9 +37419,9 @@ function installPolynomialDivisionOperators(registry) {
     },
     impl
   });
-  install4("INTDIV", ([left, right], context, evaluate) => divideValues(left, right, context, evaluate).quotient);
-  install4("MOD", ([left, right], context, evaluate) => divideValues(left, right, context, evaluate).remainder);
-  install4("DIVMOD", ([left, right], context, evaluate) => {
+  install7("INTDIV", ([left, right], context, evaluate) => divideValues(left, right, context, evaluate).quotient);
+  install7("MOD", ([left, right], context, evaluate) => divideValues(left, right, context, evaluate).remainder);
+  install7("DIVMOD", ([left, right], context, evaluate) => {
     const result = divideValues(left, right, context, evaluate);
     return { type: "tuple", values: [result.quotient, result.remainder] };
   });
@@ -36599,13 +37451,13 @@ function createAlgebraPluginCollection() {
   }
   return { type: "map", entries: entries4, _ext: extension };
 }
-function install4({ systemContext, registry, metadata = {} }) {
+function install7({ systemContext, registry, metadata: metadata2 = {} }) {
   const collection = createAlgebraPluginCollection();
   systemContext.registerHostValue("algebra", collection, {
     doc: "Canonical exact univariate polynomials and verified transformations",
     groups: ["Algebra", "Exact"]
   });
-  registerAlgebraMethods(systemContext, { pluginId: metadata.id || "algebra", mount: metadata.mount || "algebra" });
+  registerAlgebraMethods(systemContext, { pluginId: metadata2.id || "algebra", mount: metadata2.mount || "algebra" });
   installPolynomialDivisionOperators(registry);
   return collection;
 }
@@ -36723,12 +37575,12 @@ function inverse(value) {
     throw new Error("Zero has no multiplicative inverse");
   return new ExactCayleyDickson(conjugateComponents(value.components).map((component) => component.divide(norm)));
 }
-function multiply2(left, right) {
+function multiply3(left, right) {
   return binaryValues(left, right, multiplyComponents);
 }
-function divide(left, right) {
+function divide2(left, right) {
   if (isExactAlgebra(right))
-    return multiply2(left, inverse(right));
+    return multiply3(left, inverse(right));
   const dimension = commonDimension(left, right);
   if (dimension === null)
     return null;
@@ -36762,7 +37614,7 @@ function components(args) {
     throw new Error("Components expects a quaternion or octonion");
   return { type: "sequence", values: [...value.components] };
 }
-function method8(name, impl) {
+function method11(name, impl) {
   return {
     type: "method_builtin",
     name,
@@ -36783,7 +37635,7 @@ function createExactAlgebrasCollection() {
   for (const [name, helper] of helpers) {
     entries4.set(name, helper);
     entries4.set(name.toUpperCase(), helper);
-    extension.set(name.toUpperCase(), method8(name, helper));
+    extension.set(name.toUpperCase(), method11(name, helper));
   }
   return { type: "map", entries: entries4, _ext: extension };
 }
@@ -36800,8 +37652,8 @@ function installArithmeticVariants(registry) {
   });
   binary2("ADD", (left, right) => binaryValues(left, right, addComponents));
   binary2("SUB", (left, right) => binaryValues(left, right, subtractComponents));
-  binary2("MUL", multiply2);
-  binary2("DIV", divide);
+  binary2("MUL", multiply3);
+  binary2("DIV", divide2);
   binary2("EQ", (left, right) => equal(left, right) ? new Integer(1n) : null);
   binary2("NEQ", (left, right) => equal(left, right) ? null : new Integer(1n));
   registry.installVariant("NEG", {
@@ -36813,7 +37665,7 @@ function installArithmeticVariants(registry) {
     impl: ([value]) => new ExactCayleyDickson(value.components.map((component) => component.negate()))
   });
 }
-function install5({ systemContext, registry }) {
+function install8({ systemContext, registry }) {
   const exactAlgebras = createExactAlgebrasCollection();
   systemContext.registerHostValue("exactAlgebras", exactAlgebras, {
     doc: "Exact rational quaternion and octonion constructors and operations"
@@ -36823,7 +37675,7 @@ function install5({ systemContext, registry }) {
 }
 
 // ../rix/plugins/plot/plot.plugin.rix.js
-function install6({ systemContext }) {
+function install9({ systemContext }) {
   const plot = createPlotOutputCollection();
   systemContext.registerHostValue("plot", plot, { doc: "Portable plotting helpers that produce intrinsic Graphics scenes" });
   return plot;
@@ -36831,10 +37683,10 @@ function install6({ systemContext }) {
 
 // ../rix/plugins/scene3d/scene3d.js
 var SCENE3D_SCHEMA = "rix.scene3d@1";
-var int10 = (value) => new Integer(BigInt(value));
-var str4 = (value) => ({ type: "string", value: String(value) });
-var seq4 = (values3) => ({ type: "sequence", values: values3 });
-var rixMap4 = (entries4) => ({ type: "map", entries: new Map(entries4) });
+var int12 = (value) => new Integer(BigInt(value));
+var str7 = (value) => ({ type: "string", value: String(value) });
+var seq6 = (values4) => ({ type: "sequence", values: values4 });
+var rixMap6 = (entries4) => ({ type: "map", entries: new Map(entries4) });
 function sequence2(value, label2) {
   if (Array.isArray(value))
     return value;
@@ -36905,23 +37757,23 @@ function truthy3(value, fallback = false) {
     return value.numerator !== 0n;
   return Boolean(value);
 }
-function text6(value, fallback = null) {
+function text8(value, fallback = null) {
   if (value?.type === "string")
     return value.value;
   return typeof value === "string" ? value : fallback;
 }
 function exactVector(value, dimension, label2) {
-  const values3 = sequence2(value, label2);
-  if (values3.length !== dimension)
+  const values4 = sequence2(value, label2);
+  if (values4.length !== dimension)
     throw new Error(`${label2} must contain ${dimension} coordinates`);
-  return Object.freeze(values3.map((item, index) => exact(item, `${label2} coordinate ${index + 1}`)));
+  return Object.freeze(values4.map((item, index) => exact(item, `${label2} coordinate ${index + 1}`)));
 }
 function indexTriples(value, vertexCount, label2) {
   return Object.freeze(sequence2(value, label2).map((triangle, triangleIndex) => {
-    const values3 = sequence2(triangle, `${label2} ${triangleIndex + 1}`);
-    if (values3.length !== 3)
+    const values4 = sequence2(triangle, `${label2} ${triangleIndex + 1}`);
+    if (values4.length !== 3)
       throw new Error(`${label2} ${triangleIndex + 1} must contain three indices`);
-    const result = values3.map((item, index) => integer2(item, `${label2} ${triangleIndex + 1} index ${index + 1}`));
+    const result = values4.map((item, index) => integer2(item, `${label2} ${triangleIndex + 1} index ${index + 1}`));
     if (result.some((item) => item < 1 || item > vertexCount)) {
       throw new Error(`${label2} ${triangleIndex + 1} indices must be between 1 and ${vertexCount}`);
     }
@@ -36935,9 +37787,9 @@ function sceneValue(kind, fields = {}) {
     schema: SCENE3D_SCHEMA,
     ...fields,
     _ext: new Map([
-      ["_type", str4(kind === "scene" ? "output" : "scene3d_node")],
-      ["kind", str4(kind === "scene" ? "scene3d" : kind)],
-      ["immutable", int10(1)]
+      ["_type", str7(kind === "scene" ? "output" : "scene3d_node")],
+      ["kind", str7(kind === "scene" ? "scene3d" : kind)],
+      ["immutable", int12(1)]
     ])
   });
 }
@@ -36958,19 +37810,19 @@ function normalizeChildren(value, label2) {
 function styleOptions(entries4) {
   const material = field4(entries4, "material");
   const materialEntries = material?.type === "scene3d_node" && material.kind === "material" ? material.values : material?.type === "map" && material.entries instanceof Map ? material.entries : new Map;
-  const color = text6(field4(entries4, "color"), text6(field4(materialEntries, "color"), "#275dad"));
-  const width = field4(entries4, "width", field4(materialEntries, "width", int10(1)));
-  const opacity = field4(entries4, "opacity", field4(materialEntries, "opacity", int10(1)));
+  const color = text8(field4(entries4, "color"), text8(field4(materialEntries, "color"), "#275dad"));
+  const width = field4(entries4, "width", field4(materialEntries, "width", int12(1)));
+  const opacity = field4(entries4, "opacity", field4(materialEntries, "opacity", int12(1)));
   return Object.freeze({ color, width, opacity, material: material ?? null });
 }
 function createMaterial(args) {
   const entries4 = entriesFor3(args, ["color", "opacity", "width"], "scene3d.Material");
-  const color = text6(field4(entries4, "color"), "#275dad");
-  const opacity = field4(entries4, "opacity", int10(1));
-  const width = field4(entries4, "width", int10(1));
+  const color = text8(field4(entries4, "color"), "#275dad");
+  const opacity = field4(entries4, "opacity", int12(1));
+  const width = field4(entries4, "width", int12(1));
   numeric(opacity, "scene3d.Material opacity");
   numeric(width, "scene3d.Material width");
-  return sceneValue("material", { values: new Map([["color", str4(color)], ["opacity", opacity], ["width", width]]) });
+  return sceneValue("material", { values: new Map([["color", str7(color)], ["opacity", opacity], ["width", width]]) });
 }
 function createMesh(args) {
   const entries4 = entriesFor3(args, ["vertices", "triangles", "options"], "scene3d.Mesh");
@@ -36999,7 +37851,7 @@ function createPointCloud(args) {
     throw new Error("scene3d.PointCloud requires at least one point");
   return sceneValue("point_cloud", {
     points,
-    radius: field4(entries4, "radius", int10(3)),
+    radius: field4(entries4, "radius", int12(3)),
     style: styleOptions(entries4),
     metadata: field4(entries4, "metadata")
   });
@@ -37009,17 +37861,17 @@ function createGroup3D(args) {
   return sceneValue("group", { children: normalizeChildren(field4(entries4, "children"), "scene3d.Group children"), metadata: field4(entries4, "metadata") });
 }
 function identityExact() {
-  return [int10(1), int10(0), int10(0), int10(0), int10(0), int10(1), int10(0), int10(0), int10(0), int10(0), int10(1), int10(0), int10(0), int10(0), int10(0), int10(1)];
+  return [int12(1), int12(0), int12(0), int12(0), int12(0), int12(1), int12(0), int12(0), int12(0), int12(0), int12(1), int12(0), int12(0), int12(0), int12(0), int12(1)];
 }
 function createTransform3D(args) {
   const entries4 = entriesFor3(args, ["children", "options"], "scene3d.Transform");
   let matrix = identityExact();
   const matrixValue = field4(entries4, "matrix");
   if (matrixValue !== null) {
-    const values3 = sequence2(matrixValue, "scene3d.Transform matrix");
-    if (values3.length !== 16)
+    const values4 = sequence2(matrixValue, "scene3d.Transform matrix");
+    if (values4.length !== 16)
       throw new Error("scene3d.Transform matrix must contain 16 row-major values");
-    matrix = values3.map((value, index) => exact(value, `scene3d.Transform matrix value ${index + 1}`));
+    matrix = values4.map((value, index) => exact(value, `scene3d.Transform matrix value ${index + 1}`));
   }
   const translate = field4(entries4, "translate");
   if (translate !== null) {
@@ -37030,10 +37882,10 @@ function createTransform3D(args) {
   }
   const scale2 = field4(entries4, "scale");
   if (scale2 !== null) {
-    const values3 = Array.isArray(scale2) || Array.isArray(scale2?.values) ? exactVector(scale2, 3, "scene3d.Transform scale") : [exact(scale2, "scene3d.Transform scale"), exact(scale2, "scene3d.Transform scale"), exact(scale2, "scene3d.Transform scale")];
-    matrix[0] = values3[0];
-    matrix[5] = values3[1];
-    matrix[10] = values3[2];
+    const values4 = Array.isArray(scale2) || Array.isArray(scale2?.values) ? exactVector(scale2, 3, "scene3d.Transform scale") : [exact(scale2, "scene3d.Transform scale"), exact(scale2, "scene3d.Transform scale"), exact(scale2, "scene3d.Transform scale")];
+    matrix[0] = values4[0];
+    matrix[5] = values4[1];
+    matrix[10] = values4[2];
   }
   return sceneValue("transform", {
     children: normalizeChildren(field4(entries4, "children"), "scene3d.Transform children"),
@@ -37048,17 +37900,17 @@ function camera(args, projection) {
     projection,
     position: exactVector(field4(entries4, "position"), 3, `${name} position`),
     target: exactVector(field4(entries4, "target"), 3, `${name} target`),
-    up: exactVector(field4(entries4, "up", seq4([int10(0), int10(0), int10(1)])), 3, `${name} up`),
-    fov: field4(entries4, "fov", int10(50)),
+    up: exactVector(field4(entries4, "up", seq6([int12(0), int12(0), int12(1)])), 3, `${name} up`),
+    fov: field4(entries4, "fov", int12(50)),
     near: field4(entries4, "near", new Rational(1n, 100n)),
-    far: field4(entries4, "far", int10(1000)),
+    far: field4(entries4, "far", int12(1000)),
     scale: field4(entries4, "scale")
   });
 }
 var createPerspectiveCamera = (args) => camera(args, "perspective");
 var createOrthographicCamera = (args) => camera(args, "orthographic");
 function defaultCamera() {
-  return camera([seq4([int10(4), int10(4), int10(3)]), seq4([int10(0), int10(0), int10(0)])], "perspective");
+  return camera([seq6([int12(4), int12(4), int12(3)]), seq6([int12(0), int12(0), int12(0)])], "perspective");
 }
 function createScene3D(args) {
   const entries4 = entriesFor3(args, ["children", "options"], "scene3d.Scene");
@@ -37167,9 +38019,9 @@ function clipDepth(a, b, near, far) {
   return [start, end];
 }
 function styleMap2(style, fill = false) {
-  return rixMap4([
-    [fill ? "fill" : "stroke", str4(style.color)],
-    [fill ? "stroke" : "fill", str4(fill ? style.color : "none")],
+  return rixMap6([
+    [fill ? "fill" : "stroke", str7(style.color)],
+    [fill ? "stroke" : "fill", str7(fill ? style.color : "none")],
     ["width", style.width],
     ["opacity", style.opacity]
   ]);
@@ -37179,10 +38031,10 @@ function snapshotScene3D(args) {
   const scene = field4(entries4, "scene");
   if (!isScene3D(scene))
     throw new Error("scene3d.Snapshot requires a Scene3D scene");
-  const mode = text6(field4(entries4, "mode"), "wireframe");
+  const mode = text8(field4(entries4, "mode"), "wireframe");
   if (mode !== "wireframe")
     throw new Error("scene3d.Snapshot currently supports only mode='wireframe'");
-  const sizeValue = field4(entries4, "size", seq4([int10(640), int10(480)]));
+  const sizeValue = field4(entries4, "size", seq6([int12(640), int12(480)]));
   const [width, height] = sequence2(sizeValue, "scene3d.Snapshot size").map((value, index) => numeric(value, `scene3d.Snapshot size ${index + 1}`));
   if (width <= 0 || height <= 0)
     throw new Error("scene3d.Snapshot size must be positive");
@@ -37237,15 +38089,15 @@ function snapshotScene3D(args) {
       }
     }
   }
-  const graphic = createGraphic([[width, height], children, rixMap4([["schema", str4("rix.graphics@1")], ["source", str4(SCENE3D_SCHEMA)], ["mode", str4(mode)]])]);
-  const diagnostics = scene.lights.length > 0 ? [rixMap4([["level", str4("info")], ["code", str4("scene3d-wireframe-ignores-lights")], ["message", str4("Wireframe snapshots do not evaluate Scene3D lights.")]])] : [];
-  return rixMap4([
+  const graphic = createGraphic([[width, height], children, rixMap6([["schema", str7("rix.graphics@1")], ["source", str7(SCENE3D_SCHEMA)], ["mode", str7(mode)]])]);
+  const diagnostics = scene.lights.length > 0 ? [rixMap6([["level", str7("info")], ["code", str7("scene3d-wireframe-ignores-lights")], ["message", str7("Wireframe snapshots do not evaluate Scene3D lights.")]])] : [];
+  return rixMap6([
     ["value", graphic],
-    ["resolved", int10(1)],
-    ["uncertainty", seq4([])],
-    ["work", rixMap4([["primitives", int10(primitives.length)], ["segments", int10(segmentCount)], ["points", int10(pointCount)]])],
-    ["source", rixMap4([["schema", str4(SCENE3D_SCHEMA)], ["projection", str4(cameraValue.projection)], ["mode", str4(mode)]])],
-    ["diagnostics", seq4(diagnostics)]
+    ["resolved", int12(1)],
+    ["uncertainty", seq6([])],
+    ["work", rixMap6([["primitives", int12(primitives.length)], ["segments", int12(segmentCount)], ["points", int12(pointCount)]])],
+    ["source", rixMap6([["schema", str7(SCENE3D_SCHEMA)], ["projection", str7(cameraValue.projection)], ["mode", str7(mode)]])],
+    ["diagnostics", seq6(diagnostics)]
   ]);
 }
 
@@ -37272,7 +38124,7 @@ function createScene3DPluginCollection() {
   }
   return { type: "map", entries: entries4, _ext: extension };
 }
-function install7({ systemContext }) {
+function install10({ systemContext }) {
   const collection = createScene3DPluginCollection();
   systemContext.registerHostValue("scene3d", collection, {
     doc: "Exact retained 3D scenes and deterministic wireframe snapshots",
@@ -37284,9 +38136,9 @@ function install7({ systemContext }) {
 // ../rix/plugins/nd/nd.js
 var ND_SCHEMA = "rix.nd@1";
 var PROJECTION_SCHEMA = "rix.nd.projection@1";
-var int11 = (value) => new Integer(BigInt(value));
-var str5 = (value) => ({ type: "string", value: String(value) });
-var seq5 = (values3) => ({ type: "sequence", values: values3 });
+var int13 = (value) => new Integer(BigInt(value));
+var str8 = (value) => ({ type: "string", value: String(value) });
+var seq7 = (values4) => ({ type: "sequence", values: values4 });
 var map2 = (entries4) => ({ type: "map", entries: new Map(entries4) });
 var zero3 = () => new Rational(0n, 1n);
 var one3 = () => new Rational(1n, 1n);
@@ -37309,7 +38161,7 @@ function ndValue(kind, fields) {
     kind,
     schema: ND_SCHEMA,
     ...fields,
-    _ext: new Map([["_type", str5("nd_geometry")], ["kind", str5(kind)], ["immutable", int11(1)]])
+    _ext: new Map([["_type", str8("nd_geometry")], ["kind", str8(kind)], ["immutable", int13(1)]])
   });
 }
 function isNdGeometry(value) {
@@ -37334,10 +38186,10 @@ function edgePairs(value, vertexCount, label2) {
     const pair = sequence2(edge, `${label2} ${edgeIndex + 1}`);
     if (pair.length !== 2)
       throw new Error(`${label2} ${edgeIndex + 1} must contain two indices`);
-    const values3 = pair.map((item, index) => integer3(item, `${label2} ${edgeIndex + 1} index ${index + 1}`));
-    if (values3.some((item) => item < 1 || item > vertexCount))
+    const values4 = pair.map((item, index) => integer3(item, `${label2} ${edgeIndex + 1} index ${index + 1}`));
+    if (values4.some((item) => item < 1 || item > vertexCount))
       throw new Error(`${label2} indices must be between 1 and ${vertexCount}`);
-    return Object.freeze(values3.map((item) => item - 1));
+    return Object.freeze(values4.map((item) => item - 1));
   }));
 }
 function provenance(entries4) {
@@ -37391,7 +38243,7 @@ function createNdPolytope(args) {
     style: field4(entries4, "style")
   });
 }
-function projectionValue(matrix, offset, method9, provenanceValue = []) {
+function projectionValue(matrix, offset, method12, provenanceValue = []) {
   const targetDimension = matrix.length;
   const sourceDimension = matrix[0]?.length ?? 0;
   if (sourceDimension < 1 || targetDimension < 1)
@@ -37408,9 +38260,9 @@ function projectionValue(matrix, offset, method9, provenanceValue = []) {
     targetDimension,
     matrix: Object.freeze(matrix.map((row) => Object.freeze(row.map((value, index) => exact(value, `nd.Projection matrix coordinate ${index + 1}`))))),
     offset: Object.freeze(offset.map((value, index) => exact(value, `nd.Projection offset ${index + 1}`))),
-    method: method9,
+    method: method12,
     provenance: Object.freeze(provenanceValue),
-    _ext: new Map([["_type", str5("nd_projection")], ["immutable", int11(1)]])
+    _ext: new Map([["_type", str8("nd_projection")], ["immutable", int13(1)]])
   });
 }
 function createProjection(args) {
@@ -37428,7 +38280,7 @@ function coordinateProjection(args) {
     throw new Error("nd.CoordinateProjection axes must be unique indices in the source dimension");
   }
   const rows = axes.map((axis) => Array.from({ length: sourceDimension }, (_, index) => index === axis - 1 ? one3() : zero3()));
-  return projectionValue(rows, axes.map(() => zero3()), "coordinate", [map2([["axes", seq5(axes.map(int11))]])]);
+  return projectionValue(rows, axes.map(() => zero3()), "coordinate", [map2([["axes", seq7(axes.map(int13))]])]);
 }
 function cayleyRotation(args) {
   const entries4 = entriesFor3(args, ["dimension", "axis1", "axis2", "t"], "nd.CayleyRotation");
@@ -37457,7 +38309,7 @@ function cayleyRotation(args) {
   matrix[axis2 - 1][axis1 - 1] = sine;
   matrix[axis2 - 1][axis2 - 1] = cosine;
   return projectionValue(matrix, Array.from({ length: dimension }, zero3), "cayley-rotation", [map2([
-    ["axes", seq5([int11(axis1), int11(axis2)])],
+    ["axes", seq7([int13(axis1), int13(axis2)])],
     ["parameter", t]
   ])]);
 }
@@ -37508,7 +38360,7 @@ function hypercube(args) {
   const dimension = integer3(field4(entries4, "dimension"), "nd.Hypercube dimension");
   if (dimension < 1 || dimension > 10)
     throw new Error("nd.Hypercube dimension must be between 1 and 10");
-  const half = rational3(field4(entries4, "size", int11(2)), "nd.Hypercube size").divide(new Rational(2n, 1n));
+  const half = rational3(field4(entries4, "size", int13(2)), "nd.Hypercube size").divide(new Rational(2n, 1n));
   const negative = half.negate ? half.negate() : new Rational(-half.numerator, half.denominator);
   const vertexCount = 2 ** dimension;
   const vertices = Array.from({ length: vertexCount }, (_, bits) => Array.from({ length: dimension }, (_2, axis) => bits & 1 << axis ? half : negative));
@@ -37519,7 +38371,7 @@ function hypercube(args) {
       if (bits < other)
         edges.push([bits + 1, other + 1]);
     }
-  return createNdPolytope([seq5(vertices.map(seq5)), seq5(edges.map((edge) => seq5(edge.map(int11))))]);
+  return createNdPolytope([seq7(vertices.map(seq7)), seq7(edges.map((edge) => seq7(edge.map(int13))))]);
 }
 function styleOptions2(style) {
   return style?.type === "map" ? style : map2([]);
@@ -37534,16 +38386,16 @@ function toScene3D(args) {
   const style = field4(entries4, "style", geometry.style);
   let children;
   if (geometry.kind === "point")
-    children = [createPointCloud([seq5([seq5(geometry.coordinates)]), styleOptions2(style)])];
+    children = [createPointCloud([seq7([seq7(geometry.coordinates)]), styleOptions2(style)])];
   else if (geometry.kind === "polyline")
-    children = [createPolyline([seq5(geometry.points.map(seq5)), styleOptions2(style)])];
+    children = [createPolyline([seq7(geometry.points.map(seq7)), styleOptions2(style)])];
   else if (geometry.kind === "polytope") {
-    children = geometry.edges.map(([a, b]) => createPolyline([seq5([seq5(geometry.vertices[a]), seq5(geometry.vertices[b])]), styleOptions2(style)]));
+    children = geometry.edges.map(([a, b]) => createPolyline([seq7([seq7(geometry.vertices[a]), seq7(geometry.vertices[b])]), styleOptions2(style)]));
   } else
     throw new Error(`nd.ToScene3D does not support geometry kind '${geometry.kind}'`);
-  const group = createGroup3D([seq5(children)]);
+  const group = createGroup3D([seq7(children)]);
   const camera2 = field4(entries4, "camera");
-  return createScene3D([camera2 === null ? map2([["children", seq5([group])], ["metadata", map2([["source", str5(ND_SCHEMA)], ["projectionCount", int11(geometry.provenance.length)]])]]) : map2([["children", seq5([group])], ["camera", camera2], ["metadata", map2([["source", str5(ND_SCHEMA)], ["projectionCount", int11(geometry.provenance.length)]])]])]);
+  return createScene3D([camera2 === null ? map2([["children", seq7([group])], ["metadata", map2([["source", str8(ND_SCHEMA)], ["projectionCount", int13(geometry.provenance.length)]])]]) : map2([["children", seq7([group])], ["camera", camera2], ["metadata", map2([["source", str8(ND_SCHEMA)], ["projectionCount", int13(geometry.provenance.length)]])]])]);
 }
 
 // ../rix/plugins/nd/nd.plugin.rix.js
@@ -37569,7 +38421,7 @@ function createNdPluginCollection() {
   }
   return { type: "map", entries: entries4, _ext: extension };
 }
-function install8({ systemContext }) {
+function install11({ systemContext }) {
   const collection = createNdPluginCollection();
   systemContext.registerHostValue("nd", collection, {
     doc: "Exact n-dimensional geometry and explicit projection records",
@@ -37581,10 +38433,10 @@ function install8({ systemContext }) {
 // ../rix/plugins/geometry/geometry.js
 var GEOMETRY_SCHEMA = "rix.geometry@1";
 var INTERSECTION_SCHEMA = "rix.geometry.intersection@1";
-var int12 = (value) => new Integer(BigInt(value));
-var str6 = (value) => ({ type: "string", value: String(value) });
-var seq6 = (values3) => ({ type: "sequence", values: values3 });
-var rixMap5 = (entries4) => ({ type: "map", entries: new Map(entries4) });
+var int14 = (value) => new Integer(BigInt(value));
+var str9 = (value) => ({ type: "string", value: String(value) });
+var seq8 = (values4) => ({ type: "sequence", values: values4 });
+var rixMap7 = (entries4) => ({ type: "map", entries: new Map(entries4) });
 function sequence3(value, label2) {
   if (Array.isArray(value))
     return value;
@@ -37613,9 +38465,9 @@ function field5(entries4, name, fallback = null) {
     return fallback;
   if (entries4.has(name))
     return entries4.get(name);
-  const canonical = String(name).toLowerCase();
+  const canonical2 = String(name).toLowerCase();
   for (const [key, value] of entries4)
-    if (String(key).toLowerCase() === canonical)
+    if (String(key).toLowerCase() === canonical2)
       return value;
   return fallback;
 }
@@ -37642,9 +38494,9 @@ function geometryValue(kind, fields) {
     schema: GEOMETRY_SCHEMA,
     ...fields,
     _ext: new Map([
-      ["_type", str6("geometry")],
-      ["kind", str6(kind)],
-      ["immutable", int12(1)]
+      ["_type", str9("geometry")],
+      ["kind", str9(kind)],
+      ["immutable", int14(1)]
     ])
   });
 }
@@ -37666,19 +38518,19 @@ function samePoint(left, right) {
 function negate(value) {
   return value.negate();
 }
-function pointValue(x, y, operation, inputs, metadata = null) {
+function pointValue(x, y, operation, inputs, metadata2 = null) {
   return geometryValue("point", {
     x,
     y,
     coordinates: Object.freeze([x, y]),
-    metadata,
+    metadata: metadata2,
     provenance: Object.freeze([provenance2(operation, inputs)])
   });
 }
 function createPoint(args) {
   let x;
   let y;
-  let metadata = null;
+  let metadata2 = null;
   if (args.length === 1 && (Array.isArray(args[0]) || Array.isArray(args[0]?.values) || Array.isArray(args[0]?.elements))) {
     const coordinates = sequence3(args[0], "geometry.Point coordinates");
     if (coordinates.length !== 2)
@@ -37688,11 +38540,11 @@ function createPoint(args) {
     const entries4 = entriesFor4(args, ["x", "y", "options"], "geometry.Point");
     x = field5(entries4, "x");
     y = field5(entries4, "y");
-    metadata = field5(entries4, "metadata");
+    metadata2 = field5(entries4, "metadata");
   }
-  return pointValue(rational4(x, "geometry.Point x"), rational4(y, "geometry.Point y"), "Point", [x, y], metadata);
+  return pointValue(rational4(x, "geometry.Point x"), rational4(y, "geometry.Point y"), "Point", [x, y], metadata2);
 }
-function lineFromCoefficients(a, b, c, through, operation, inputs, metadata = null, style = null) {
+function lineFromCoefficients(a, b, c, through, operation, inputs, metadata2 = null, style = null) {
   if (a.numerator === 0n && b.numerator === 0n)
     throw new Error(`${operation} cannot produce a degenerate line`);
   return geometryValue("line", {
@@ -37700,7 +38552,7 @@ function lineFromCoefficients(a, b, c, through, operation, inputs, metadata = nu
     b,
     c,
     through: Object.freeze(through),
-    metadata,
+    metadata: metadata2,
     style,
     provenance: Object.freeze([provenance2(operation, inputs)])
   });
@@ -37721,14 +38573,14 @@ function squaredDistance(first, second) {
   const dy = second.y.subtract(first.y);
   return dx.multiply(dx).add(dy.multiply(dy));
 }
-function circleValue(center, radiusSquared, through, operation, inputs, metadata = null, style = null) {
+function circleValue(center, radiusSquared, through, operation, inputs, metadata2 = null, style = null) {
   if (radiusSquared.numerator <= 0n)
     throw new Error(`${operation} requires a positive radius`);
   return geometryValue("circle", {
     center,
     radiusSquared,
     through,
-    metadata,
+    metadata: metadata2,
     style,
     provenance: Object.freeze([provenance2(operation, inputs)])
   });
@@ -37786,10 +38638,10 @@ function intersectionValue(status, points2, left, right, diagnostic) {
     diagnostic,
     provenance: Object.freeze([provenance2("Intersect", [left, right], diagnostic)]),
     _ext: new Map([
-      ["_type", str6("geometry_intersection")],
-      ["kind", str6("intersection")],
-      ["status", str6(status)],
-      ["immutable", int12(1)]
+      ["_type", str9("geometry_intersection")],
+      ["kind", str9("intersection")],
+      ["status", str9(status)],
+      ["immutable", int14(1)]
     ])
   });
 }
@@ -37822,7 +38674,7 @@ function intersectionPoints(args) {
   if (value?.type !== "geometry_intersection" || value.schema !== INTERSECTION_SCHEMA) {
     throw new Error("geometry.Points requires a geometry intersection result");
   }
-  return seq6([...value.points]);
+  return seq8([...value.points]);
 }
 function intersectionStatus(args) {
   const entries4 = entriesFor4(args, ["intersection"], "geometry.Status");
@@ -37830,7 +38682,7 @@ function intersectionStatus(args) {
   if (value?.type !== "geometry_intersection" || value.schema !== INTERSECTION_SCHEMA) {
     throw new Error("geometry.Status requires a geometry intersection result");
   }
-  return str6(value.status);
+  return str9(value.status);
 }
 function circumcircle(args) {
   const entries4 = entriesFor4(args, ["first", "second", "third", "options"], "geometry.Circumcircle");
@@ -37846,14 +38698,14 @@ function circumcircle(args) {
   return circleValue(centerResult.points[0], squaredDistance(centerResult.points[0], first), first, "Circumcircle", [first, second, third, firstBisector, secondBisector, centerResult], field5(entries4, "metadata"), field5(entries4, "style"));
 }
 function numericSequence(value, length, label2) {
-  const values3 = sequence3(value, label2);
-  if (values3.length !== length)
+  const values4 = sequence3(value, label2);
+  if (values4.length !== length)
     throw new Error(`${label2} must contain ${length} values`);
-  return values3.map((item, index) => number(item, `${label2} value ${index + 1}`));
+  return values4.map((item, index) => number(item, `${label2} value ${index + 1}`));
 }
 function styleMap3(value, defaults) {
   const supplied = value?.type === "map" && value.entries instanceof Map ? value.entries : new Map;
-  return rixMap5([...new Map([...defaults, ...supplied]).entries()]);
+  return rixMap7([...new Map([...defaults, ...supplied]).entries()]);
 }
 function lineEndpoints(line2, view) {
   const [xmin, ymin, xmax, ymax] = view;
@@ -37879,8 +38731,8 @@ function lineEndpoints(line2, view) {
   return unique.slice(0, 2);
 }
 function drawableItems(value, label2) {
-  const values3 = Array.isArray(value) || Array.isArray(value?.values) || Array.isArray(value?.elements) ? sequence3(value, label2) : [value];
-  return values3.flatMap((item, index) => {
+  const values4 = Array.isArray(value) || Array.isArray(value?.values) || Array.isArray(value?.elements) ? sequence3(value, label2) : [value];
+  return values4.flatMap((item, index) => {
     if (item?.type === "geometry_intersection" && item.schema === INTERSECTION_SCHEMA) {
       return item.status === "one" ? item.points : [item];
     }
@@ -37893,8 +38745,8 @@ function drawableItems(value, label2) {
 function drawGeometry(args) {
   const entries4 = entriesFor4(args, ["objects", "options"], "geometry.Draw");
   const items = drawableItems(field5(entries4, "objects"), "geometry.Draw object");
-  const size = numericSequence(field5(entries4, "size", seq6([int12(640), int12(480)])), 2, "geometry.Draw size");
-  const view = numericSequence(field5(entries4, "view", seq6([int12(-10), int12(-10), int12(10), int12(10)])), 4, "geometry.Draw view");
+  const size = numericSequence(field5(entries4, "size", seq8([int14(640), int14(480)])), 2, "geometry.Draw size");
+  const view = numericSequence(field5(entries4, "view", seq8([int14(-10), int14(-10), int14(10), int14(10)])), 4, "geometry.Draw view");
   const [xmin, ymin, xmax, ymax] = view;
   if (!(xmax > xmin) || !(ymax > ymin))
     throw new Error("geometry.Draw view must satisfy xmin < xmax and ymin < ymax");
@@ -37928,10 +38780,10 @@ function drawGeometry(args) {
       throw new Error(`geometry.Draw does not support geometry kind '${item.kind}'`);
     }
   }
-  return createGraphic([size, children, rixMap5([
-    ["source", str6(GEOMETRY_SCHEMA)],
-    ["projection", str6("uniform-fit")],
-    ["unresolved", int12(unresolved)]
+  return createGraphic([size, children, rixMap7([
+    ["source", str9(GEOMETRY_SCHEMA)],
+    ["projection", str9("uniform-fit")],
+    ["unresolved", int14(unresolved)]
   ])]);
 }
 
@@ -37962,7 +38814,7 @@ function createGeometryPluginCollection() {
   }
   return { type: "map", entries: entries4, _ext: extension };
 }
-function install9({ systemContext }) {
+function install12({ systemContext }) {
   const collection = createGeometryPluginCollection();
   systemContext.registerHostValue("geometry", collection, {
     doc: "Exact ruler-and-compass geometry and portable Graphics snapshots",
@@ -37973,7 +38825,7 @@ function install9({ systemContext }) {
 
 // ../rix/plugins/data/data.js
 var stringValue6 = (value) => ({ type: "string", value: String(value) });
-var sequenceValue2 = (values3) => ({ type: "sequence", values: values3 });
+var sequenceValue2 = (values4) => ({ type: "sequence", values: values4 });
 function mapValue2(entries4) {
   return { type: "map", entries: new Map(entries4), _ext: new Map([["immutable", new Integer(1n)]]) };
 }
@@ -37985,13 +38837,13 @@ function entries4(value, label2) {
   throw new Error(`${label2} must be a map`);
 }
 function field6(source, name, fallback = null) {
-  const values3 = source instanceof Map ? source : source?.entries;
-  if (!(values3 instanceof Map))
+  const values4 = source instanceof Map ? source : source?.entries;
+  if (!(values4 instanceof Map))
     return fallback;
-  if (values3.has(name))
-    return values3.get(name);
+  if (values4.has(name))
+    return values4.get(name);
   const wanted = String(name).toLowerCase();
-  for (const [key, value] of values3) {
+  for (const [key, value] of values4) {
     if (String(key).toLowerCase() === wanted)
       return value;
   }
@@ -38004,7 +38856,7 @@ function sequence4(value, label2) {
     return value.values;
   throw new Error(`${label2} must be a sequence`);
 }
-function text7(value, label2) {
+function text9(value, label2) {
   if (value?.type === "string")
     return value.value;
   if (typeof value === "string")
@@ -38024,7 +38876,7 @@ var TYPE_NAMES = new Map([
 function columnType(value, index) {
   if (value === null || value === undefined)
     return "Any";
-  const source = text7(value, `data column ${index + 1} type`).replace(/^:/, "").toLowerCase();
+  const source = text9(value, `data column ${index + 1} type`).replace(/^:/, "").toLowerCase();
   const result = TYPE_NAMES.get(source);
   if (!result)
     throw new Error(`data column ${index + 1} type must be Any, Integer, Rational, Number, or String`);
@@ -38038,22 +38890,22 @@ function normalizeColumns2(value) {
     let type;
     let nullable = true;
     if (source?.type === "string" || typeof source === "string") {
-      id = text7(source, `data column ${index + 1}`);
+      id = text9(source, `data column ${index + 1}`);
       label2 = id;
       type = "Any";
     } else {
       const spec2 = entries4(source, `data column ${index + 1}`);
-      id = text7(field6(spec2, "id", field6(spec2, "name")), `data column ${index + 1} id`);
-      label2 = field6(spec2, "label") === null ? id : text7(field6(spec2, "label"), `data column ${index + 1} label`);
+      id = text9(field6(spec2, "id", field6(spec2, "name")), `data column ${index + 1} id`);
+      label2 = field6(spec2, "label") === null ? id : text9(field6(spec2, "label"), `data column ${index + 1} label`);
       type = columnType(field6(spec2, "type"), index);
       nullable = truthy5(field6(spec2, "nullable", new Integer(1n)));
     }
     if (!id.trim())
       throw new Error(`data column ${index + 1} id must not be empty`);
-    const canonical = id.toLowerCase();
-    if (seen.has(canonical))
+    const canonical2 = id.toLowerCase();
+    if (seen.has(canonical2))
       throw new Error(`data schema contains duplicate column '${id}'`);
-    seen.add(canonical);
+    seen.add(canonical2);
     return Object.freeze({ id, label: label2, type, nullable });
   }));
 }
@@ -38073,14 +38925,14 @@ function valueMatchesType(value, type) {
   return false;
 }
 function mapRow(source, columns, rowIndex) {
-  const values3 = entries4(source, `data row ${rowIndex + 1}`);
+  const values4 = entries4(source, `data row ${rowIndex + 1}`);
   const known = new Set(columns.map(({ id }) => id.toLowerCase()));
-  for (const key of values3.keys()) {
+  for (const key of values4.keys()) {
     if (!known.has(String(key).toLowerCase())) {
       throw new Error(`data row ${rowIndex + 1} contains unknown column '${key}'`);
     }
   }
-  return columns.map(({ id }) => field6(values3, id, null));
+  return columns.map(({ id }) => field6(values4, id, null));
 }
 function normalizeRows(value, columns) {
   return Object.freeze(sequence4(value, "data rows").map((source, rowIndex) => {
@@ -38132,7 +38984,7 @@ function createRelation(args) {
   return makeRelation(columns, rows, ["relation"]);
 }
 function selectedColumnIds(value, relation, label2) {
-  const requested = sequence4(value, label2).map((entry, index) => text7(entry, `${label2} entry ${index + 1}`));
+  const requested = sequence4(value, label2).map((entry, index) => text9(entry, `${label2} entry ${index + 1}`));
   const byId = new Map(relation.columns.map((column, index) => [column.id.toLowerCase(), index]));
   const selected = requested.map((id) => {
     const index = byId.get(id.toLowerCase());
@@ -38228,7 +39080,7 @@ function relationTableView(args) {
     throw new Error("data.TableView expects a Relation and optional options");
   const relation = requireRelation(args[0], "data.TableView");
   const captionValue = option2(args[1], "caption", null);
-  const caption = captionValue === null ? null : text7(captionValue, "data.TableView caption");
+  const caption = captionValue === null ? null : text9(captionValue, "data.TableView caption");
   return Object.freeze({
     type: "output",
     kind: "table",
@@ -38280,7 +39132,7 @@ function createDataPluginCollection() {
   }
   return { type: "map", entries: entries5, _ext: extension };
 }
-function install10({ systemContext }) {
+function install13({ systemContext }) {
   const collection = createDataPluginCollection();
   systemContext.registerHostValue("data", collection, {
     doc: "Immutable typed relations and portable Table views",
@@ -38291,11 +39143,11 @@ function install10({ systemContext }) {
 
 // ../rix/plugins/document/document.js
 var stringValue7 = (value) => ({ type: "string", value: String(value) });
-var sequenceValue3 = (values3) => ({ type: "sequence", values: values3 });
-function mapValue3(values3) {
+var sequenceValue3 = (values4) => ({ type: "sequence", values: values4 });
+function mapValue3(values4) {
   return {
     type: "map",
-    entries: new Map(values3),
+    entries: new Map(values4),
     _ext: new Map([["immutable", new Integer(1n)]])
   };
 }
@@ -38307,19 +39159,19 @@ function entries5(value, label2) {
   throw new Error(`${label2} must be a map`);
 }
 function field7(source, name, fallback = null) {
-  const values3 = source instanceof Map ? source : source?.entries;
-  if (!(values3 instanceof Map))
+  const values4 = source instanceof Map ? source : source?.entries;
+  if (!(values4 instanceof Map))
     return fallback;
-  if (values3.has(name))
-    return values3.get(name);
+  if (values4.has(name))
+    return values4.get(name);
   const wanted = String(name).toLowerCase();
-  for (const [key, value] of values3) {
+  for (const [key, value] of values4) {
     if (String(key).toLowerCase() === wanted)
       return value;
   }
   return fallback;
 }
-function text8(value, label2) {
+function text10(value, label2) {
   if (value?.type === "string")
     return value.value;
   if (typeof value === "string")
@@ -38334,7 +39186,7 @@ function sequence5(value, label2) {
   throw new Error(`${label2} must be a sequence`);
 }
 function validLabel(value, label2) {
-  const result = text8(value, label2);
+  const result = text10(value, label2);
   if (!/^[A-Za-z][A-Za-z0-9:_-]*$/.test(result)) {
     throw new Error(`${label2} must start with a letter and contain only letters, digits, colon, underscore, or hyphen`);
   }
@@ -38360,15 +39212,15 @@ var THEMES = Object.freeze({
 function createDocumentTheme(args) {
   if (args.length > 2)
     throw new Error("document.Theme expects an optional name and options map");
-  const name = args[0] === null || args[0] === undefined ? "plain" : text8(args[0], "document.Theme name").toLowerCase();
+  const name = args[0] === null || args[0] === undefined ? "plain" : text10(args[0], "document.Theme name").toLowerCase();
   const defaults = THEMES[name];
   if (!defaults)
     throw new Error("document.Theme name must be :plain or :compact");
   const options = args[1] === null || args[1] === undefined ? new Map : entries5(args[1], "document.Theme options");
   const accentValue = field7(options, "accent", stringValue7(defaults.accent));
   const densityValue = field7(options, "density", stringValue7(defaults.density));
-  const accent = text8(accentValue, "document.Theme accent");
-  const density = text8(densityValue, "document.Theme density").toLowerCase();
+  const accent = text10(accentValue, "document.Theme accent");
+  const density = text10(densityValue, "document.Theme density").toLowerCase();
   if (!/^#[0-9a-f]{6}$/i.test(accent))
     throw new Error("document.Theme accent must be a six-digit hex color");
   if (!["comfortable", "compact"].includes(density)) {
@@ -38387,10 +39239,10 @@ function normalizeTheme(value) {
     return createDocumentTheme([]);
   if (value?.type === "string" || typeof value === "string")
     return createDocumentTheme([value]);
-  const values3 = entries5(value, "document.Report theme");
-  if (field7(values3, "schema")?.value === "rix.document.theme@1")
+  const values4 = entries5(value, "document.Report theme");
+  if (field7(values4, "schema")?.value === "rix.document.theme@1")
     return value;
-  return createDocumentTheme([field7(values3, "name", stringValue7("plain")), value]);
+  return createDocumentTheme([field7(values4, "name", stringValue7("plain")), value]);
 }
 function labelDocumentValue(args) {
   if (args.length !== 2)
@@ -38410,7 +39262,7 @@ function createDocumentReference(args) {
   if (args.length < 1 || args.length > 2)
     throw new Error("document.Ref expects an id and optional display text");
   const id = validLabel(args[0], "document.Ref id");
-  const display = args[1] === null || args[1] === undefined ? null : text8(args[1], "document.Ref text");
+  const display = args[1] === null || args[1] === undefined ? null : text10(args[1], "document.Ref text");
   return textNode("", { documentReference: id, documentReferenceText: display });
 }
 function childOutputs(value) {
@@ -38509,7 +39361,7 @@ function reportChildren(value) {
     return value.children;
   return sequence5(value, "document.Report children");
 }
-function metadata(theme, title) {
+function metadata2(theme, title) {
   return mapValue3([
     ["schema", stringValue7("rix.document.report@1")],
     ["title", stringValue7(title)],
@@ -38519,13 +39371,13 @@ function metadata(theme, title) {
 function createDocumentReport(args) {
   if (args.length < 2 || args.length > 3)
     throw new Error("document.Report expects a title, children, and optional options");
-  const title = text8(args[0], "document.Report title");
+  const title = text10(args[0], "document.Report title");
   if (!title.trim())
     throw new Error("document.Report title must not be empty");
   const options = args[2] === null || args[2] === undefined ? new Map : entries5(args[2], "document.Report options");
   const theme = normalizeTheme(field7(options, "theme"));
   const authorValue = field7(options, "author");
-  const author = authorValue === null ? null : text8(authorValue, "document.Report author");
+  const author = authorValue === null ? null : text10(authorValue, "document.Report author");
   const sourceChildren = reportChildren(args[1]);
   if (!sourceChildren.every(isOutputValue))
     throw new Error("document.Report children must be portable output values");
@@ -38534,7 +39386,7 @@ function createDocumentReport(args) {
   const titleStyle = mapValue3([["color", field7(theme, "accent")], ["density", field7(theme, "density")]]);
   const heading = createHeading([new Integer(1n), stringValue7(title), null, titleStyle]);
   const byline = author === null ? [] : [createParagraph([[textNode(`By ${author}`)]])];
-  const fragment = createFragment([[heading, ...byline, ...resolved], metadata(theme, title)]);
+  const fragment = createFragment([[heading, ...byline, ...resolved], metadata2(theme, title)]);
   return clone(fragment, {
     documentSchema: "rix.document.report@1",
     documentTheme: theme,
@@ -38578,7 +39430,7 @@ function createDocumentPluginCollection() {
   }
   return { type: "map", entries: entries6, _ext: extension };
 }
-function install11({ systemContext }) {
+function install14({ systemContext }) {
   const collection = createDocumentPluginCollection();
   systemContext.registerHostValue("document", collection, {
     doc: "Numbered portable reports with deterministic cross-references",
@@ -38659,10 +39511,10 @@ function stableNumber(value, label2 = "coordinate") {
   return Number(numberValue2(value, label2).toFixed(6)).toString();
 }
 function point(value, label2) {
-  const values3 = sequence6(value, label2);
-  if (values3.length !== 2)
+  const values4 = sequence6(value, label2);
+  if (values4.length !== 2)
     throw new Error(`${label2} must contain two coordinates`);
-  return values3.map((entry, index) => numberValue2(entry, `${label2} ${index === 0 ? "x" : "y"}`));
+  return values4.map((entry, index) => numberValue2(entry, `${label2} ${index === 0 ? "x" : "y"}`));
 }
 function styleValue2(style, name, fallback = null) {
   return field8(style, name, fallback);
@@ -38691,12 +39543,12 @@ function installRendererPlugin({
   rendererRegistry,
   definition,
   mount = definition.target,
-  metadata: metadata2 = null
+  metadata: metadata3 = null
 }) {
   if (!rendererRegistry)
     throw new Error(`Renderer '${definition.target}' requires a host renderer registry`);
-  if (metadata2?.targets?.length) {
-    const declared = new Set(metadata2.targets.map((target) => String(target).toLowerCase().replace(/^\./, "")));
+  if (metadata3?.targets?.length) {
+    const declared = new Set(metadata3.targets.map((target) => String(target).toLowerCase().replace(/^\./, "")));
     if (!declared.has(definition.target) && !declared.has(String(definition.mime).toLowerCase())) {
       throw new Error(`Renderer '${definition.target}' does not match its declared manifest targets`);
     }
@@ -38766,12 +39618,12 @@ function integerOption(value, fallback, label2, minimum, maximum) {
   return result;
 }
 function truncate2(value, width) {
-  const text9 = String(value);
-  if (text9.length <= width)
-    return text9;
+  const text11 = String(value);
+  if (text11.length <= width)
+    return text11;
   if (width <= 1)
     return "~";
-  return `${text9.slice(0, width - 1)}~`;
+  return `${text11.slice(0, width - 1)}~`;
 }
 function constrainText(value, state, path) {
   return String(value).split(`
@@ -38785,8 +39637,8 @@ function constrainText(value, state, path) {
 }
 function portableValueText(value, state, path) {
   if (Array.isArray(value) || Array.isArray(value?.values)) {
-    const values3 = Array.isArray(value) ? value : value.values;
-    return `[${values3.map((item, index) => portableValueText(item, state, `${path}.${index + 1}`)).join(", ")}]`;
+    const values4 = Array.isArray(value) ? value : value.values;
+    return `[${values4.map((item, index) => portableValueText(item, state, `${path}.${index + 1}`)).join(", ")}]`;
   }
   if (value?.type === "map" && value.entries instanceof Map) {
     return `{${[...value.entries].map(([key, item]) => `${key}=${portableValueText(item, state, `${path}.${key}`)}`).join(", ")}}`;
@@ -38819,14 +39671,14 @@ function shrinkWidths(widths, available, state, path) {
   return result;
 }
 function align(value, width, mode = "left") {
-  const text9 = truncate2(value, width);
+  const text11 = truncate2(value, width);
   if (mode === "right")
-    return text9.padStart(width);
+    return text11.padStart(width);
   if (mode === "center") {
-    const left = Math.floor((width - text9.length) / 2);
-    return `${" ".repeat(left)}${text9}${" ".repeat(width - text9.length - left)}`;
+    const left = Math.floor((width - text11.length) / 2);
+    return `${" ".repeat(left)}${text11}${" ".repeat(width - text11.length - left)}`;
   }
-  return text9.padEnd(width);
+  return text11.padEnd(width);
 }
 function renderTable(value, state, path) {
   const headers = value.columns.map((column, index) => strictAscii(column.label, state, `${path}.column${index + 1}`));
@@ -38923,12 +39775,12 @@ function renderGraphic(value, state, path) {
     throw new Error("Graphic size must be positive");
   const grid = Array.from({ length: height }, () => Array(width).fill(" "));
   const project = (point2) => {
-    const values3 = Array.isArray(point2) ? point2 : point2?.values;
-    if (!Array.isArray(values3) || values3.length !== 2)
+    const values4 = Array.isArray(point2) ? point2 : point2?.values;
+    if (!Array.isArray(values4) || values4.length !== 2)
       throw new Error("Graphic point must contain x and y");
     return [
-      Math.max(0, Math.min(width - 1, Math.round(numberValue2(values3[0], "Graphic x") / sourceWidth * (width - 1)))),
-      Math.max(0, Math.min(height - 1, Math.round(numberValue2(values3[1], "Graphic y") / sourceHeight * (height - 1))))
+      Math.max(0, Math.min(width - 1, Math.round(numberValue2(values4[0], "Graphic x") / sourceWidth * (width - 1)))),
+      Math.max(0, Math.min(height - 1, Math.round(numberValue2(values4[1], "Graphic y") / sourceHeight * (height - 1))))
     ];
   };
   value.children.forEach((child, index) => {
@@ -39018,22 +39870,22 @@ var definition = {
     return renderTerminalAscii(value, { options, format });
   }
 };
-function install12(api) {
+function install15(api) {
   return installRendererPlugin({ ...api, definition, mount: "terminalAscii" });
 }
 
 // ../rix/plugins/radix/radix.plugin.rix.js
-function int13(value) {
+function int15(value) {
   return new Integer(BigInt(value));
 }
-function text9(value) {
+function text11(value) {
   return { type: "string", value: String(value) };
 }
-function bool2(value) {
-  return value ? int13(1) : null;
+function bool3(value) {
+  return value ? int15(1) : null;
 }
-function sequence7(values3) {
-  return { type: "sequence", values: values3 };
+function sequence7(values4) {
+  return { type: "sequence", values: values4 };
 }
 function map3(entries6) {
   return { type: "map", entries: new Map(entries6) };
@@ -39076,7 +39928,7 @@ function exactRational3(value) {
   throw new Error("Radix operations require an exact Integer or Rational");
 }
 function radix(value) {
-  const base = exactBigInt2(value ?? int13(10), "Radix base");
+  const base = exactBigInt2(value ?? int15(10), "Radix base");
   if (base < 2n || base > 65536n) {
     throw new Error("Radix base must be between 2 and 65536");
   }
@@ -39093,16 +39945,16 @@ function unsignedParts(value) {
 }
 function integerDigits(value, base) {
   if (value === 0n)
-    return [int13(0)];
+    return [int15(0)];
   const result = [];
   let remaining = value;
   while (remaining > 0n) {
-    result.push(int13(remaining % base));
+    result.push(int15(remaining % base));
     remaining /= base;
   }
   return result.reverse();
 }
-function expandRadix(value, baseValue = int13(10), options = null) {
+function expandRadix(value, baseValue = int15(10), options = null) {
   const base = radix(baseValue);
   const maxDigits = boundedCount(mapEntry(options, "maxDigits"), "maxDigits", 1024);
   const { sign, numerator, denominator } = unsignedParts(value);
@@ -39119,7 +39971,7 @@ function expandRadix(value, baseValue = int13(10), options = null) {
     }
     seen.set(remainder, fractional.length);
     remainder *= base;
-    fractional.push(int13(remainder / denominator));
+    fractional.push(int15(remainder / denominator));
     remainder %= denominator;
   }
   if (remainder !== 0n && repeatStart === null && seen.has(remainder)) {
@@ -39129,24 +39981,24 @@ function expandRadix(value, baseValue = int13(10), options = null) {
   const prefix = repeatStart === null ? fractional : fractional.slice(0, repeatStart);
   const repeating = repeatStart === null ? null : fractional.slice(repeatStart);
   return map3([
-    ["valueKind", text9("radixExpansion")],
-    ["schema", text9("rix.radix.expansion@1")],
-    ["status", text9(complete ? "complete" : "budgetExhausted")],
-    ["base", int13(base)],
-    ["sign", int13(numerator === 0n ? 0n : sign)],
+    ["valueKind", text11("radixExpansion")],
+    ["schema", text11("rix.radix.expansion@1")],
+    ["status", text11(complete ? "complete" : "budgetExhausted")],
+    ["base", int15(base)],
+    ["sign", int15(numerator === 0n ? 0n : sign)],
     ["integerDigits", sequence7(integerDigits(whole, base))],
     ["nonRepeatingDigits", sequence7(prefix)],
     ["repeatingDigits", repeating === null ? null : sequence7(repeating)],
-    ["terminating", bool2(remainder === 0n)],
-    ["repeating", bool2(repeatStart !== null)],
-    ["complete", bool2(complete)],
-    ["truncated", bool2(!complete)],
-    ["producedDigits", int13(fractional.length)],
-    ["maxDigits", int13(maxDigits)],
-    ["remainingRemainder", int13(remainder)]
+    ["terminating", bool3(remainder === 0n)],
+    ["repeating", bool3(repeatStart !== null)],
+    ["complete", bool3(complete)],
+    ["truncated", bool3(!complete)],
+    ["producedDigits", int15(fractional.length)],
+    ["maxDigits", int15(maxDigits)],
+    ["remainingRemainder", int15(remainder)]
   ]);
 }
-function radixDigits(value, baseValue = int13(10), countValue = int13(1)) {
+function radixDigits(value, baseValue = int15(10), countValue = int15(1)) {
   const base = radix(baseValue);
   const optionsCount = mapEntry(countValue, "count", undefined);
   const count = boundedCount(countValue?.type === "map" ? optionsCount : countValue, "Digit count", 1);
@@ -39155,45 +40007,45 @@ function radixDigits(value, baseValue = int13(10), countValue = int13(1)) {
   const digits = [];
   for (let index = 0;index < count; index++) {
     remainder *= base;
-    digits.push(int13(remainder / denominator));
+    digits.push(int15(remainder / denominator));
     remainder %= denominator;
   }
   return sequence7(digits);
 }
-function gcd3(left, right) {
+function gcd4(left, right) {
   let a = left < 0n ? -left : left;
   let b = right < 0n ? -right : right;
   while (b !== 0n)
     [a, b] = [b, a % b];
   return a;
 }
-function radixPeriodInfo(value, baseValue = int13(10), options = null) {
+function radixPeriodInfo(value, baseValue = int15(10), options = null) {
   const base = radix(baseValue);
   const maxWork = boundedCount(mapEntry(options, "maxWork"), "maxWork", 1e5);
   let denominator = unsignedParts(value).denominator;
   while (true) {
-    const common = gcd3(denominator, base);
+    const common = gcd4(denominator, base);
     if (common === 1n)
       break;
     denominator /= common;
   }
   if (denominator === 1n) {
     return map3([
-      ["status", text9("complete")],
-      ["base", int13(base)],
-      ["periodLength", int13(0)],
-      ["work", int13(0)],
-      ["maxWork", int13(maxWork)]
+      ["status", text11("complete")],
+      ["base", int15(base)],
+      ["periodLength", int15(0)],
+      ["work", int15(0)],
+      ["maxWork", int15(maxWork)]
     ]);
   }
   if (maxWork === 0) {
     return map3([
-      ["status", text9("budgetExhausted")],
-      ["base", int13(base)],
+      ["status", text11("budgetExhausted")],
+      ["base", int15(base)],
       ["periodLength", null],
-      ["work", int13(0)],
-      ["maxWork", int13(0)],
-      ["reducedDenominator", int13(denominator)]
+      ["work", int15(0)],
+      ["maxWork", int15(0)],
+      ["reducedDenominator", int15(denominator)]
     ]);
   }
   let power = base % denominator;
@@ -39204,15 +40056,15 @@ function radixPeriodInfo(value, baseValue = int13(10), options = null) {
   }
   const complete = power === 1n;
   return map3([
-    ["status", text9(complete ? "complete" : "budgetExhausted")],
-    ["base", int13(base)],
-    ["periodLength", complete ? int13(length) : null],
-    ["work", int13(length)],
-    ["maxWork", int13(maxWork)],
-    ["reducedDenominator", int13(denominator)]
+    ["status", text11(complete ? "complete" : "budgetExhausted")],
+    ["base", int15(base)],
+    ["periodLength", complete ? int15(length) : null],
+    ["work", int15(length)],
+    ["maxWork", int15(maxWork)],
+    ["reducedDenominator", int15(denominator)]
   ]);
 }
-function radixPeriodLength(value, baseValue = int13(10), options = null) {
+function radixPeriodLength(value, baseValue = int15(10), options = null) {
   const info = radixPeriodInfo(value, baseValue, options);
   const length = info.entries.get("periodLength");
   if (length === null) {
@@ -39222,24 +40074,24 @@ function radixPeriodLength(value, baseValue = int13(10), options = null) {
   return length;
 }
 var DIGIT_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz";
-function digitText(values3) {
-  return values3.map((value) => DIGIT_ALPHABET[Number(value.value)]).join("");
+function digitText(values4) {
+  return values4.map((value) => DIGIT_ALPHABET[Number(value.value)]).join("");
 }
-function radixString(value, baseValue = int13(10), options = null) {
+function radixString(value, baseValue = int15(10), options = null) {
   const base = radix(baseValue);
   if (base > 36n)
     throw new Error("Radix ToString supports bases through 36; use Expansion for larger bases");
-  const expansion = expandRadix(value, int13(base), options);
+  const expansion = expandRadix(value, int15(base), options);
   const entries6 = expansion.entries;
   const negative = entries6.get("sign").value < 0n ? "-" : "";
   const whole = digitText(entries6.get("integerDigits").values);
   const prefix = digitText(entries6.get("nonRepeatingDigits").values);
   const repeating = entries6.get("repeatingDigits");
   if (repeating)
-    return text9(`${negative}${whole}.${prefix}(${digitText(repeating.values)})`);
+    return text11(`${negative}${whole}.${prefix}(${digitText(repeating.values)})`);
   if (entries6.get("terminating"))
-    return text9(prefix ? `${negative}${whole}.${prefix}` : `${negative}${whole}`);
-  return text9(`${negative}${whole}.${prefix}…`);
+    return text11(prefix ? `${negative}${whole}.${prefix}` : `${negative}${whole}`);
+  return text11(`${negative}${whole}.${prefix}…`);
 }
 function builtinMethod(name, fn) {
   return {
@@ -39259,29 +40111,29 @@ function collection() {
     ["ToString", radixString]
   ];
   const entries6 = new Map;
-  const extension = new Map([["immutable", int13(1)]]);
+  const extension = new Map([["immutable", int15(1)]]);
   for (const [name, fn] of definitions) {
-    const method9 = {
+    const method12 = {
       type: "method_builtin",
       name,
       impl(args) {
         return fn(...args.slice(1));
       }
     };
-    entries6.set(name, method9);
-    extension.set(name.toUpperCase(), method9);
+    entries6.set(name, method12);
+    extension.set(name.toUpperCase(), method12);
   }
   return { type: "map", entries: entries6, _ext: extension };
 }
-function install13({ systemContext, metadata: metadata2 = {}, options = {} }) {
+function install16({ systemContext, metadata: metadata3 = {}, options = {} }) {
   const value = collection();
   systemContext.registerHostValue("radix", value, {
     doc: "Bounded exact positional expansions and period analysis",
     groups: ["Exact", "Radix"]
   });
   const owner = {
-    pluginId: metadata2.id || "radix",
-    mount: options.as || metadata2.mount || "radix"
+    pluginId: metadata3.id || "radix",
+    mount: options.as || metadata3.mount || "radix"
   };
   for (const typeName of ["Integer", "Rational"]) {
     systemContext.registerMethod(typeName, "Expansion", builtinMethod("Expansion", expandRadix), owner);
@@ -39316,7 +40168,7 @@ var definition2 = {
     return { content };
   }
 };
-function install14(api) {
+function install17(api) {
   return installRendererPlugin({ ...api, definition: definition2 });
 }
 
@@ -39466,7 +40318,7 @@ var definition3 = {
     };
   }
 };
-function install15(api) {
+function install18(api) {
   return installRendererPlugin({ ...api, definition: definition3 });
 }
 
@@ -39497,7 +40349,7 @@ function tikzColor(value) {
   return /^[A-Za-z][A-Za-z0-9]*$/.test(color) ? color : "black";
 }
 function tikzStyle(style, defaultFill = null) {
-  const values3 = [];
+  const values4 = [];
   const stroke = tikzColor(styleValue2(style, "stroke"));
   const fillSource = rixString4(styleValue2(style, "fill"));
   const fill = fillSource === "none" ? null : tikzColor(styleValue2(style, "fill")) || defaultFill;
@@ -39505,21 +40357,21 @@ function tikzStyle(style, defaultFill = null) {
   const opacity = styleValue2(style, "opacity");
   const dash = rixString4(styleValue2(style, "dash"));
   if (stroke)
-    values3.push(`draw=${stroke}`);
+    values4.push(`draw=${stroke}`);
   else
-    values3.push("draw=none");
+    values4.push("draw=none");
   if (fill)
-    values3.push(`fill=${fill}`);
+    values4.push(`fill=${fill}`);
   if (width !== null && width !== undefined)
-    values3.push(`line width=${stableNumber(width, "stroke width")}pt`);
+    values4.push(`line width=${stableNumber(width, "stroke width")}pt`);
   if (opacity !== null && opacity !== undefined)
-    values3.push(`opacity=${stableNumber(opacity, "opacity")}`);
+    values4.push(`opacity=${stableNumber(opacity, "opacity")}`);
   if (dash) {
     const lengths = dash.trim().split(/[ ,]+/).filter(Boolean).map((part) => numberValue2(Number(part), "dash length"));
     if (lengths.length)
-      values3.push(`dash pattern=${lengths.map((length, index) => `${index % 2 ? "off" : "on"} ${stableNumber(length)}pt`).join(" ")}`);
+      values4.push(`dash pattern=${lengths.map((length, index) => `${index % 2 ? "off" : "on"} ${stableNumber(length)}pt`).join(" ")}`);
   }
-  return values3.join(",");
+  return values4.join(",");
 }
 function styleObject(style) {
   if (style instanceof Map)
@@ -39593,24 +40445,24 @@ function pathSource(node, path) {
   return parts.join("");
 }
 function scopeOptions(node) {
-  const values3 = [];
+  const values4 = [];
   if (node.translate !== null && node.translate !== undefined) {
     const [x, y] = point(node.translate, "Transform translate");
-    values3.push(`shift={(${stableNumber(x)}pt,${stableNumber(y)}pt)}`);
+    values4.push(`shift={(${stableNumber(x)}pt,${stableNumber(y)}pt)}`);
   }
   if (node.rotate !== null && node.rotate !== undefined) {
     const angle = stableNumber(node.rotate, "Transform rotate");
     if (node.origin !== null && node.origin !== undefined) {
       const [x, y] = point(node.origin, "Transform origin");
-      values3.push(`rotate around={${angle}:(${stableNumber(x)},${stableNumber(y)})}`);
+      values4.push(`rotate around={${angle}:(${stableNumber(x)},${stableNumber(y)})}`);
     } else
-      values3.push(`rotate=${angle}`);
+      values4.push(`rotate=${angle}`);
   }
   if (node.scale !== null && node.scale !== undefined) {
     const scale2 = Array.isArray(node.scale) || node.scale?.values ? point(node.scale, "Transform scale") : [numberValue2(node.scale, "Transform scale"), numberValue2(node.scale, "Transform scale")];
-    values3.push(`xscale=${stableNumber(scale2[0])}`, `yscale=${stableNumber(scale2[1])}`);
+    values4.push(`xscale=${stableNumber(scale2[0])}`, `yscale=${stableNumber(scale2[1])}`);
   }
-  return values3.join(",");
+  return values4.join(",");
 }
 function renderNode2(node, state, format, path, inheritedStyle = {}) {
   if (!node || node.type !== "output")
@@ -39693,7 +40545,7 @@ var definition4 = {
 function boolOption(value) {
   return value?.value === 1n || value === true || value === 1;
 }
-function install16(api) {
+function install19(api) {
   return installRendererPlugin({ ...api, definition: definition4 });
 }
 
@@ -40127,14 +40979,14 @@ ${makeTitle}${body.trim()}
   };
 }
 function quartoFrontMatter(options) {
-  const metadata2 = field8(options, "metadata", options);
+  const metadata3 = field8(options, "metadata", options);
   const keys = ["title", "author", "date", "format"];
   const lines = [];
   for (const key of keys) {
-    const value = field8(metadata2, key);
-    const text10 = rixString4(value) ?? (typeof value === "string" ? value : null);
-    if (text10 !== null)
-      lines.push(`${key}: ${JSON.stringify(text10)}`);
+    const value = field8(metadata3, key);
+    const text12 = rixString4(value) ?? (typeof value === "string" ? value : null);
+    if (text12 !== null)
+      lines.push(`${key}: ${JSON.stringify(text12)}`);
   }
   if (!lines.some((line2) => line2.startsWith("format:")))
     lines.push("format: html");
@@ -40159,7 +41011,7 @@ var definition5 = {
     return renderMarkdown(value, { format, render });
   }
 };
-function install17(api) {
+function install20(api) {
   return installRendererPlugin({ ...api, definition: definition5 });
 }
 
@@ -40203,7 +41055,7 @@ var definition6 = {
     };
   }
 };
-function install18(api) {
+function install21(api) {
   return installRendererPlugin({ ...api, definition: definition6 });
 }
 
@@ -40221,7 +41073,7 @@ var definition7 = {
     return { ...rendered, content: `${quartoFrontMatter(options)}${rendered.content}` };
   }
 };
-function install19(api) {
+function install22(api) {
   return installRendererPlugin({ ...api, definition: definition7 });
 }
 
@@ -40243,7 +41095,7 @@ var definition8 = {
     });
   }
 };
-function install20(api) {
+function install23(api) {
   return installRendererPlugin({ ...api, definition: definition8 });
 }
 
@@ -40283,7 +41135,7 @@ function createDefinition(rasterizeSvg = null) {
     }
   };
 }
-function install21(api) {
+function install24(api) {
   return installRendererPlugin({ ...api, definition: createDefinition(api.rasterizeSvg) });
 }
 
@@ -40319,7 +41171,7 @@ function createDefinition2(compileLatex = null) {
     }
   };
 }
-function install22(api) {
+function install25(api) {
   return installRendererPlugin({ ...api, definition: createDefinition2(api.compileLatex) });
 }
 
@@ -40360,16 +41212,16 @@ function encodeBuffer(chunks) {
   }
   return { bytes, views };
 }
-function floatBytes(values3) {
-  const bytes = new Uint8Array(values3.length * 4);
+function floatBytes(values4) {
+  const bytes = new Uint8Array(values4.length * 4);
   const view = new DataView(bytes.buffer);
-  values3.forEach((value, index) => view.setFloat32(index * 4, value, true));
+  values4.forEach((value, index) => view.setFloat32(index * 4, value, true));
   return bytes;
 }
-function uintBytes(values3) {
-  const bytes = new Uint8Array(values3.length * 4);
+function uintBytes(values4) {
+  const bytes = new Uint8Array(values4.length * 4);
   const view = new DataView(bytes.buffer);
-  values3.forEach((value, index) => view.setUint32(index * 4, value, true));
+  values4.forEach((value, index) => view.setUint32(index * 4, value, true));
   return bytes;
 }
 function exportSceneGltf(scene, { pretty = true } = {}) {
@@ -40473,19 +41325,19 @@ var definition9 = {
     return exportSceneGltf(value, { pretty: options?.pretty !== false });
   }
 };
-function install23(api) {
+function install26(api) {
   return installRendererPlugin({ ...api, definition: definition9 });
 }
 
 // ../rix/plugins/render-csv/csv-renderer.js
 var MISSING = Symbol("missing option");
 function option4(options, name, fallback) {
-  const values3 = mapEntries2(options);
-  if (values3) {
-    if (values3.has(name))
-      return values3.get(name);
+  const values4 = mapEntries2(options);
+  if (values4) {
+    if (values4.has(name))
+      return values4.get(name);
     const wanted = name.toLowerCase();
-    for (const [key, value] of values3) {
+    for (const [key, value] of values4) {
       if (String(key).toLowerCase() === wanted)
         return value;
     }
@@ -40583,8 +41435,8 @@ function scalarText(value, missing) {
     return String(value);
   throw new Error(`csv cells must be missing, strings, or exact numeric scalars; received ${value?.type || typeof value}`);
 }
-function quote(text10, delimiter) {
-  const source = String(text10);
+function quote(text12, delimiter) {
+  const source = String(text12);
   return source.includes(delimiter) || /["\r\n]/.test(source) ? `"${source.replaceAll('"', '""')}"` : source;
 }
 function renderCsv(value, { options = {}, requestedTarget = "csv" } = {}) {
@@ -40636,7 +41488,7 @@ var definition10 = {
     return renderCsv(value, { options, requestedTarget });
   }
 };
-function install24(api) {
+function install27(api) {
   return installRendererPlugin({ ...api, definition: definition10 });
 }
 
@@ -40664,7 +41516,7 @@ var BUNDLED_PLUGINS = [
       deterministic: true,
       defaultEnabled: false
     },
-    install: install13
+    install: install16
   },
   {
     metadata: {
@@ -40677,7 +41529,25 @@ var BUNDLED_PLUGINS = [
       permissions: [],
       defaultEnabled: false
     },
-    install: ({ systemContext, registry }) => install5({ systemContext, registry })
+    install: ({ systemContext, registry }) => install8({ systemContext, registry })
+  },
+  {
+    metadata: {
+      id: "fraction",
+      description: "Representation-sensitive unreduced integer fractions with mediant and classroom addition policies.",
+      kind: "host",
+      mount: "fraction",
+      aliases: ["frac", "f"],
+      exports: ["Fraction", "Parse"],
+      groups: ["Algebra", "Exact", "Symbolic"],
+      permissions: [],
+      provides: ["rix.fraction@1"],
+      schemas: ["rix.fraction@1"],
+      snapshot: true,
+      deterministic: true,
+      defaultEnabled: false
+    },
+    install: install2
   },
   {
     metadata: {
@@ -40695,7 +41565,7 @@ var BUNDLED_PLUGINS = [
       deterministic: true,
       defaultEnabled: false
     },
-    install: install2
+    install: install4
   },
   {
     metadata: {
@@ -40714,7 +41584,43 @@ var BUNDLED_PLUGINS = [
       deterministic: true,
       defaultEnabled: false
     },
+    install: install5
+  },
+  {
+    metadata: {
+      id: "fracfun",
+      description: "Form-preserving callable polynomial and rational expressions with explicit transformations and canonical projections.",
+      kind: "host",
+      mount: "fracfun",
+      aliases: ["fractionFunction", "ff"],
+      exports: ["FractionFunction", "Parse", "Var", "Fun"],
+      groups: ["Algebra", "Exact", "Symbolic"],
+      permissions: [],
+      requires: ["rix.fraction@1", "rix.rational-function@1"],
+      provides: ["rix.fraction-function@1"],
+      schemas: ["rix.fraction-function@1"],
+      snapshot: false,
+      deterministic: true,
+      defaultEnabled: false
+    },
     install: install3
+  },
+  {
+    metadata: {
+      id: "symbolic",
+      description: "Meta-plugin loading RiX representation-sensitive Fraction and FractionFunction workspaces.",
+      kind: "host",
+      mount: "symbolic",
+      exports: ["Fraction", "FractionFunction", "Services"],
+      groups: ["Algebra", "Exact", "Symbolic"],
+      permissions: [],
+      requires: ["rix.fraction-function@1"],
+      provides: ["rix.symbolic.formal@1"],
+      snapshot: false,
+      deterministic: true,
+      defaultEnabled: false
+    },
+    install: install6
   },
   {
     metadata: {
@@ -40732,7 +41638,7 @@ var BUNDLED_PLUGINS = [
       deterministic: true,
       defaultEnabled: false
     },
-    install: install4
+    install: install7
   },
   {
     metadata: {
@@ -40758,7 +41664,7 @@ var BUNDLED_PLUGINS = [
       permissions: [],
       defaultEnabled: false
     },
-    install: ({ systemContext }) => install6({ systemContext })
+    install: ({ systemContext }) => install9({ systemContext })
   },
   {
     metadata: {
@@ -40775,7 +41681,7 @@ var BUNDLED_PLUGINS = [
       deterministic: true,
       defaultEnabled: false
     },
-    install: ({ systemContext }) => install7({ systemContext })
+    install: ({ systemContext }) => install10({ systemContext })
   },
   {
     metadata: {
@@ -40793,7 +41699,7 @@ var BUNDLED_PLUGINS = [
       deterministic: true,
       defaultEnabled: false
     },
-    install: ({ systemContext }) => install8({ systemContext })
+    install: ({ systemContext }) => install11({ systemContext })
   },
   {
     metadata: {
@@ -40810,7 +41716,7 @@ var BUNDLED_PLUGINS = [
       deterministic: true,
       defaultEnabled: false
     },
-    install: ({ systemContext }) => install9({ systemContext })
+    install: ({ systemContext }) => install12({ systemContext })
   },
   {
     metadata: {
@@ -40827,7 +41733,7 @@ var BUNDLED_PLUGINS = [
       deterministic: true,
       defaultEnabled: false
     },
-    install: ({ systemContext }) => install10({ systemContext })
+    install: ({ systemContext }) => install13({ systemContext })
   },
   {
     metadata: {
@@ -40844,7 +41750,7 @@ var BUNDLED_PLUGINS = [
       deterministic: true,
       defaultEnabled: false
     },
-    install: ({ systemContext }) => install11({ systemContext })
+    install: ({ systemContext }) => install14({ systemContext })
   },
   {
     metadata: {
@@ -40861,21 +41767,21 @@ var BUNDLED_PLUGINS = [
       deterministic: true,
       defaultEnabled: false
     },
-    install: install12
+    install: install15
   },
   ...[
-    ["svg", "Portable SVG renderer for core Graphics scenes.", "svg", ["Render"], [], install14, "image/svg+xml", true],
-    ["canvas", "Serializable Canvas 2D drawing plans for core Graphics scenes.", "canvas", ["Render"], [], install15, "application/vnd.rix.canvas+json", true],
-    ["tikz", "Editable TikZ/PGF source renderer for core Graphics scenes.", "tikz", ["Render"], [], install16, "text/x-tikz", true],
-    ["markdown", "CommonMark-oriented renderer for portable RiX documents.", "markdown", ["Render"], [], install17, "text/markdown", true],
-    ["html", "Standalone semantic HTML renderer for portable RiX output trees.", "html", ["Render"], [], install18, "text/html", true],
-    ["quarto", "Quarto Markdown renderer with front matter and portable figure lowering.", "quarto", ["Render"], [], install19, "text/x-quarto", true],
-    ["latex", "Standalone LaTeX renderer for portable RiX documents and figures.", "latex", ["Render"], [], install20, "text/x-tex", true],
-    ["png", "PNG snapshot renderer for core Graphics through a host rasterizer.", "png", ["Render"], ["process"], install21, "image/png", true],
-    ["pdf", "PDF document and figure renderer orchestrated through LaTeX.", "pdf", ["Render"], ["process", "files"], install22, "application/pdf", false],
-    ["gltf", "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", "gltf", ["Render"], [], install23, "model/gltf+json", true],
-    ["csv", "Deterministic CSV and TSV export for portable Tables and typed data Relations.", "csv", ["Render"], [], install24, "text/csv", true, ["tsv", "text/tab-separated-values"], ["Renderers", "Data"]]
-  ].map(([id, description, mount, exports, permissions, install25, mime, deterministic, aliases = [], groups = ["Renderers"]]) => ({
+    ["svg", "Portable SVG renderer for core Graphics scenes.", "svg", ["Render"], [], install17, "image/svg+xml", true],
+    ["canvas", "Serializable Canvas 2D drawing plans for core Graphics scenes.", "canvas", ["Render"], [], install18, "application/vnd.rix.canvas+json", true],
+    ["tikz", "Editable TikZ/PGF source renderer for core Graphics scenes.", "tikz", ["Render"], [], install19, "text/x-tikz", true],
+    ["markdown", "CommonMark-oriented renderer for portable RiX documents.", "markdown", ["Render"], [], install20, "text/markdown", true],
+    ["html", "Standalone semantic HTML renderer for portable RiX output trees.", "html", ["Render"], [], install21, "text/html", true],
+    ["quarto", "Quarto Markdown renderer with front matter and portable figure lowering.", "quarto", ["Render"], [], install22, "text/x-quarto", true],
+    ["latex", "Standalone LaTeX renderer for portable RiX documents and figures.", "latex", ["Render"], [], install23, "text/x-tex", true],
+    ["png", "PNG snapshot renderer for core Graphics through a host rasterizer.", "png", ["Render"], ["process"], install24, "image/png", true],
+    ["pdf", "PDF document and figure renderer orchestrated through LaTeX.", "pdf", ["Render"], ["process", "files"], install25, "application/pdf", false],
+    ["gltf", "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", "gltf", ["Render"], [], install26, "model/gltf+json", true],
+    ["csv", "Deterministic CSV and TSV export for portable Tables and typed data Relations.", "csv", ["Render"], [], install27, "text/csv", true, ["tsv", "text/tab-separated-values"], ["Renderers", "Data"]]
+  ].map(([id, description, mount, exports, permissions, install28, mime, deterministic, aliases = [], groups = ["Renderers"]]) => ({
     metadata: {
       id,
       description,
@@ -40890,25 +41796,25 @@ var BUNDLED_PLUGINS = [
       deterministic,
       defaultEnabled: false
     },
-    install: install25
+    install: install28
   }))
 ];
 function installBundledPlugins(catalog) {
-  for (const { metadata: metadata2, install: install25, source, sourcePath } of BUNDLED_PLUGINS) {
-    if (catalog.info(metadata2.id))
+  for (const { metadata: metadata3, install: install28, source, sourcePath } of BUNDLED_PLUGINS) {
+    if (catalog.info(metadata3.id))
       continue;
     if (source) {
-      catalog.addMetadata(metadata2, { kind: "rix", source, sourcePath });
+      catalog.addMetadata(metadata3, { kind: "rix", source, sourcePath });
     } else {
-      catalog.addMetadata(metadata2, { kind: "host" });
-      catalog.registerInstaller(metadata2.id, install25);
+      catalog.addMetadata(metadata3, { kind: "host" });
+      catalog.registerInstaller(metadata3.id, install28);
     }
   }
   return catalog;
 }
 
 // ../rix/src/eval/functions/units.js
-function int14(value) {
+function int16(value) {
   return new Integer(BigInt(value));
 }
 function stringValue8(value, label2) {
@@ -40978,7 +41884,7 @@ function parseExactExpression(source, collection2) {
       if (!match)
         throw new Error(`Expected integer exponent in exact expression '${source}'`);
       index += match[0].length;
-      value = powScalar(value, int14(match[0]));
+      value = powScalar(value, int16(match[0]));
     }
     return value;
   }
@@ -41006,10 +41912,10 @@ function multiplyWithUnits(left, right) {
   if (isScalar(left) && isUnitValue(right))
     return constructQuantity(left, right);
   if (isQuantity(left) && isUnitValue(right)) {
-    return multiplyQuantityValues(left, constructQuantity(int14(1), right));
+    return multiplyQuantityValues(left, constructQuantity(int16(1), right));
   }
   if (isUnitValue(left) && isQuantity(right)) {
-    return multiplyQuantityValues(constructQuantity(int14(1), left), right);
+    return multiplyQuantityValues(constructQuantity(int16(1), left), right);
   }
   return multiplyQuantityValues(left, right);
 }
@@ -41019,21 +41925,21 @@ function divideWithUnits(left, right) {
   if (isScalar(left) && isUnitValue(right))
     return constructQuantity(left, invertUnit(right));
   if (isUnitValue(left) && isScalar(right))
-    return constructQuantity(divideScalars(int14(1), right), left);
+    return constructQuantity(divideScalars(int16(1), right), left);
   if (isQuantity(left) && isUnitValue(right)) {
-    return divideQuantityValues(left, constructQuantity(int14(1), right));
+    return divideQuantityValues(left, constructQuantity(int16(1), right));
   }
   if (isUnitValue(left) && isQuantity(right)) {
-    return divideQuantityValues(constructQuantity(int14(1), left), right);
+    return divideQuantityValues(constructQuantity(int16(1), left), right);
   }
   return divideQuantityValues(left, right);
 }
 function resolveTargetUnit(target, context, systemContext) {
   if (isUnitValue(target))
     return target;
-  const text10 = stringValue8(target, "ConvertUnit target");
+  const text12 = stringValue8(target, "ConvertUnit target");
   const collection2 = activeCollection(context, systemContext, "Units", ["UNITS", "Units"]);
-  return parseUnitExpression(text10, collection2);
+  return parseUnitExpression(text12, collection2);
 }
 var unitExactFunctions = {
   UNIT: {
@@ -41077,7 +41983,7 @@ var unitExactFunctions = {
   }
 };
 function boolResult3(value) {
-  return value ? int14(1) : null;
+  return value ? int16(1) : null;
 }
 function addWithOptionalWarning([left, right], context) {
   const warnings = context?.getEnv?.("warnings", runtimeDefaults.warnings) ?? runtimeDefaults.warnings;
@@ -42795,12 +43701,12 @@ function assembleAsyncPipeResult(collection2, items, records, stages = []) {
   if (collection2?.type === "map") {
     return { type: "map", entries: new Map(records.filter((r) => r.keep).map((r) => [items[r.index].key, r.value])) };
   }
-  const values3 = records.filter((record) => record.keep).map((record) => record.value);
+  const values4 = records.filter((record) => record.keep).map((record) => record.value);
   if (typeof collection2 === "string" || collection2?.type === "string") {
-    const joined = values3.map((value) => value?.type === "string" ? value.value : value).join("");
+    const joined = values4.map((value) => value?.type === "string" ? value.value : value).join("");
     return collection2?.type === "string" ? { type: "string", value: joined } : joined;
   }
-  return { type: collection2?.type || "sequence", values: values3 };
+  return { type: collection2?.type || "sequence", values: values4 };
 }
 function containsNestedAsyncCollection(node) {
   if (!node || typeof node !== "object")
@@ -43103,17 +44009,17 @@ async function evaluateAsyncReduce(args, context, registry, systemContext, state
   }
   return accumulator;
 }
-async function stableAsyncMergeSort(items, compare3) {
+async function stableAsyncMergeSort(items, compare4) {
   if (items.length < 2)
     return [...items];
   const middle = Math.floor(items.length / 2);
-  const left = await stableAsyncMergeSort(items.slice(0, middle), compare3);
-  const right = await stableAsyncMergeSort(items.slice(middle), compare3);
+  const left = await stableAsyncMergeSort(items.slice(0, middle), compare4);
+  const right = await stableAsyncMergeSort(items.slice(middle), compare4);
   const merged = [];
   let leftIndex = 0;
   let rightIndex = 0;
   while (leftIndex < left.length && rightIndex < right.length) {
-    if (await compare3(left[leftIndex], right[rightIndex]) <= 0) {
+    if (await compare4(left[leftIndex], right[rightIndex]) <= 0) {
       merged.push(left[leftIndex++]);
     } else {
       merged.push(right[rightIndex++]);
@@ -43143,7 +44049,7 @@ async function evaluateAsyncSort(args, context, registry, systemContext, state) 
     throw new Error("PSORT requires a collection");
   }
   const callable = args[1] === undefined ? null : await evaluateAsyncInternal(args[1], context, registry, systemContext, state);
-  const compare3 = async (left, right) => {
+  const compare4 = async (left, right) => {
     if (callable && !isHole(callable)) {
       const result = await invokeCallableAsync(callable, [left, right], context, registry, systemContext, state);
       if (result?.constructor?.name === "Integer")
@@ -43161,7 +44067,7 @@ async function evaluateAsyncSort(args, context, registry, systemContext, state) 
     const rightNumber = right?.constructor?.name === "Integer" ? Number(right.value) : Number(right);
     return leftNumber - rightNumber;
   };
-  const sorted = await stableAsyncMergeSort(items, compare3);
+  const sorted = await stableAsyncMergeSort(items, compare4);
   if (isString) {
     const joined = sorted.map((value) => value?.type === "string" ? value.value : value).join("");
     return isStringObject2 ? { type: "string", value: joined } : joined;
@@ -43668,12 +44574,12 @@ async function evaluateAsyncInternal(irNode, context, registry, systemContext, s
         throw new Error(`System ${capability2.kind} .${capability2.displayName} is not callable`);
       if (capability2.lazy)
         return await capability2.impl(args.slice(1), context, evalAsync, { signal: state?.signal ?? null });
-      const values3 = [];
+      const values4 = [];
       for (const arg of args.slice(1))
-        values3.push(await evalAsync(arg));
+        values4.push(await evalAsync(arg));
       if (state?.signal?.aborted)
         throw state.signal.reason;
-      return await capability2.impl(values3, context, evalAsync, { signal: state?.signal ?? null });
+      return await capability2.impl(values4, context, evalAsync, { signal: state?.signal ?? null });
     }
     if (["SYS_GET", "SYS_OBJ"].includes(fn))
       return evaluate(irNode, context, registry, systemContext);
@@ -43812,14 +44718,14 @@ function parseAndEvaluate(code, options = {}) {
   const runtime = getScriptRuntime(context, { systemLookup });
   runtime.operatorDefinitions = mergeOperatorDefinitions(context.getEnv(CUSTOM_OPERATOR_ENV_KEY2, new Map), options.operatorDefinitions);
   context.setEnv("__registry__", registry);
-  context.setEnv("__plugin_load_rix__", ({ source, sourcePath, metadata: metadata2, options: pluginOptions, operatorDefinitions, context: pluginContext = context, registry: pluginRegistry = registry, systemContext: pluginSystemContext = systemContext }) => {
+  context.setEnv("__plugin_load_rix__", ({ source, sourcePath, metadata: metadata3, options: pluginOptions, operatorDefinitions, context: pluginContext = context, registry: pluginRegistry = registry, systemContext: pluginSystemContext = systemContext }) => {
     const previousSource = pluginContext.getEnv(SOURCE_ENV_KEY, undefined);
     const previousFile = pluginContext.getEnv(CURRENT_FILE_ENV_KEY, undefined);
     const previousOwner = pluginContext.getEnv("__plugin_owner__", undefined);
     try {
-      pluginContext.setEnv("__plugin_owner__", metadata2?.id ? {
-        pluginId: metadata2.id,
-        mount: pluginOptions?.as || metadata2.mount || null
+      pluginContext.setEnv("__plugin_owner__", metadata3?.id ? {
+        pluginId: metadata3.id,
+        mount: pluginOptions?.as || metadata3.mount || null
       } : null);
       return parseAndEvaluate(source, {
         context: pluginContext,
@@ -43827,9 +44733,9 @@ function parseAndEvaluate(code, options = {}) {
         systemContext: pluginSystemContext,
         file: sourcePath,
         operatorDefinitions,
-        operatorOwner: metadata2?.id ? {
-          pluginId: metadata2.id,
-          mount: pluginOptions?.as || metadata2.mount || null
+        operatorOwner: metadata3?.id ? {
+          pluginId: metadata3.id,
+          mount: pluginOptions?.as || metadata3.mount || null
         } : null
       });
     } finally {
@@ -43886,12 +44792,12 @@ async function parseAndEvaluateAsync(code, options = {}) {
   const runtime = getScriptRuntime(context, { systemLookup });
   runtime.operatorDefinitions = mergeOperatorDefinitions(context.getEnv(CUSTOM_OPERATOR_ENV_KEY2, new Map), options.operatorDefinitions);
   context.setEnv("__registry__", registry);
-  context.setEnv("__plugin_load_rix__", async ({ source, sourcePath, metadata: metadata2, options: pluginOptions, operatorDefinitions, context: pluginContext = context, registry: pluginRegistry = registry, systemContext: pluginSystemContext = systemContext }) => {
+  context.setEnv("__plugin_load_rix__", async ({ source, sourcePath, metadata: metadata3, options: pluginOptions, operatorDefinitions, context: pluginContext = context, registry: pluginRegistry = registry, systemContext: pluginSystemContext = systemContext }) => {
     const previousOwner = pluginContext.getEnv("__plugin_owner__", undefined);
     try {
-      pluginContext.setEnv("__plugin_owner__", metadata2?.id ? {
-        pluginId: metadata2.id,
-        mount: pluginOptions?.as || metadata2.mount || null
+      pluginContext.setEnv("__plugin_owner__", metadata3?.id ? {
+        pluginId: metadata3.id,
+        mount: pluginOptions?.as || metadata3.mount || null
       } : null);
       return await parseAndEvaluateAsync(source, {
         context: pluginContext,
@@ -43899,9 +44805,9 @@ async function parseAndEvaluateAsync(code, options = {}) {
         systemContext: pluginSystemContext,
         file: sourcePath,
         operatorDefinitions,
-        operatorOwner: metadata2?.id ? {
-          pluginId: metadata2.id,
-          mount: pluginOptions?.as || metadata2.mount || null
+        operatorOwner: metadata3?.id ? {
+          pluginId: metadata3.id,
+          mount: pluginOptions?.as || metadata3.mount || null
         } : null
       });
     } finally {
@@ -43994,16 +44900,16 @@ function sheetPlaneKey2(selections) {
 }
 var RIXCEL_FORMULA_CLIPBOARD_TYPE = "application/x-rixcel-formula";
 var RIXCEL_FORMULA_BLOCK_CLIPBOARD_TYPE = "application/x-rixcel-formula-block";
-function parseSheetFormulaClipboard(text10, fallbackAssignmentMode = ":=") {
-  const source = String(text10 ?? "");
+function parseSheetFormulaClipboard(text12, fallbackAssignmentMode = ":=") {
+  const source = String(text12 ?? "");
   const match = source.match(/^\s*(::=|~~=|:=|~=|=)\s*([\s\S]+)$/u);
   return Object.freeze({
     source: match ? match[2] : source,
     assignmentMode: match?.[1] ?? fallbackAssignmentMode
   });
 }
-function parseSheetFormulaBlock(text10, fallbackAssignmentMode = ":=") {
-  const rows = String(text10 ?? "").replace(/\r\n?/gu, `
+function parseSheetFormulaBlock(text12, fallbackAssignmentMode = ":=") {
+  const rows = String(text12 ?? "").replace(/\r\n?/gu, `
 `).split(`
 `);
   if (rows.at(-1) === "")
@@ -45253,12 +46159,12 @@ function sliderValue(control, index) {
   }
   return control.low.add(control.step.multiply(new Integer(BigInt(normalized))));
 }
-function indexedValue(control, index, values3, label2) {
+function indexedValue(control, index, values4, label2) {
   const normalized = Number(index);
-  if (!Number.isInteger(normalized) || normalized < 0 || normalized >= values3.length) {
-    throw new Error(`${label2} index must be between 0 and ${values3.length - 1}`);
+  if (!Number.isInteger(normalized) || normalized < 0 || normalized >= values4.length) {
+    throw new Error(`${label2} index must be between 0 and ${values4.length - 1}`);
   }
-  return values3[normalized];
+  return values4[normalized];
 }
 function rangeValue(control, indices) {
   if (!Array.isArray(indices) || indices.length !== 2) {
@@ -45409,9 +46315,9 @@ class ControlPanelWidgetSession {
     if (this.disposed)
       throw new Error("Cannot commit a disposed ControlPanelWidgetSession");
     const edits = [...this.staged.values()].map(({ event }) => resolveControlEdit(this.controls, event));
-    const values3 = commitControlEdits(edits);
+    const values4 = commitControlEdits(edits);
     this.staged.clear();
-    return values3;
+    return values4;
   }
   clearStage() {
     if (this.disposed)
@@ -45819,10 +46725,10 @@ function mountOutputWidgets(root, value, options = {}) {
           };
           pendingFocusRequest = focusRequest;
           try {
-            const values3 = widgetSession.commit();
+            const values4 = widgetSession.commit();
             return {
               type: "result",
-              values: values3,
+              values: values4,
               revision: widgetSession.revision
             };
           } catch (error) {
@@ -45945,8 +46851,8 @@ function preview(value, formatValue2) {
   if (value === undefined)
     return "";
   try {
-    const text10 = formatValue2 ? formatValue2(value) : String(value);
-    return text10.length > 72 ? `${text10.slice(0, 69)}…` : text10;
+    const text12 = formatValue2 ? formatValue2(value) : String(value);
+    return text12.length > 72 ? `${text12.slice(0, 69)}…` : text12;
   } catch {
     return "";
   }
@@ -46143,8 +47049,8 @@ function sum(value) {
   return new Integer(valuesFrom(value).reduce((total, item) => total + integerFrom(item), 0n));
 }
 function describe(value) {
-  const values3 = valuesFrom(value);
-  return { type: "string", value: `count ${values3.length}; sum ${sum(value).value}` };
+  const values4 = valuesFrom(value);
+  return { type: "string", value: `count ${values4.length}; sum ${sum(value).value}` };
 }
 function reverse(value) {
   return { type: "sequence", values: [...valuesFrom(value)].reverse() };
@@ -46162,7 +47068,7 @@ function collection2() {
   }
   return { type: "map", entries: entries6, _ext: extension };
 }
-function install25({ systemContext }) {
+function install28({ systemContext }) {
   const value = collection2();
   systemContext.registerHostCallableValue("arrayJs", value, {
     impl(args) {
@@ -46214,17 +47120,17 @@ var mathFunctions = {
 };
 
 // ../rix/plugins/float/protocol.js
-function int15(value) {
+function int17(value) {
   return new Integer(BigInt(value));
 }
-function text10(value) {
+function text12(value) {
   return { type: "string", value };
 }
 function map4(entries6) {
   return { type: "map", entries: new Map(entries6) };
 }
-function sequence8(values3) {
-  return { type: "sequence", values: values3 };
+function sequence8(values4) {
+  return { type: "sequence", values: values4 };
 }
 function entry(value, key, fallback = null) {
   if (!(value?.entries instanceof Map))
@@ -46259,50 +47165,50 @@ function exactFloatRational(float) {
 }
 function NumericsCapabilities() {
   return map4([
-    ["valuekind", text10("numericsCapabilities")],
-    ["schema", text10("rix.numerics.capabilities@1")],
-    ["backend", text10("float")],
-    ["representation", text10("ieee754Binary64")],
-    ["operations", sequence8([text10("sample"), text10("enclose")])],
-    ["evidencelevels", sequence8([text10("approximate")])],
+    ["valuekind", text12("numericsCapabilities")],
+    ["schema", text12("rix.numerics.capabilities@1")],
+    ["backend", text12("float")],
+    ["representation", text12("ieee754Binary64")],
+    ["operations", sequence8([text12("sample"), text12("enclose")])],
+    ["evidencelevels", sequence8([text12("approximate")])],
     ["certified", null],
     ["arbitraryrefinement", null],
-    ["deterministic", int15(1)],
+    ["deterministic", int17(1)],
     ["minimumwidth", Rational.zero],
-    ["storedvalueexact", int15(1)],
+    ["storedvalueexact", int17(1)],
     ["intendedrealcertified", null]
   ]);
 }
 function Enclose(value, request) {
   const exact2 = exactFloatRational(value);
   const requestedWidth = entry(request, "absolutewidth", null);
-  const requestedWork = entry(entry(request, "work", null), "maxwork", int15(0));
+  const requestedWork = entry(entry(request, "work", null), "maxwork", int17(0));
   return map4([
-    ["valuekind", text10("enclosure")],
-    ["schema", text10("rix.numerics.enclosure@1")],
-    ["status", text10("approximate")],
+    ["valuekind", text12("enclosure")],
+    ["schema", text12("rix.numerics.enclosure@1")],
+    ["status", text12("approximate")],
     ["interval", new RationalInterval(exact2, exact2)],
     ["certified", null],
     ["goalmet", null],
     ["requestedwidth", requestedWidth],
     ["achievedwidth", Rational.zero],
-    ["evidencelevel", text10("approximate")],
-    ["backend", text10("float")],
-    ["operation", text10("sample")],
+    ["evidencelevel", text12("approximate")],
+    ["backend", text12("float")],
+    ["operation", text12("sample")],
     ["trace", sequence8([])],
     ["work", map4([
-      ["samples", int15(1)],
+      ["samples", int17(1)],
       ["maxwork", requestedWork],
       ["exhausted", null]
     ])],
     ["diagnostics", sequence8([
-      text10("storedValueOnly"),
-      text10("noErrorBoundForIntendedReal")
+      text12("storedValueOnly"),
+      text12("noErrorBoundForIntendedReal")
     ])],
     ["source", map4([
-      ["plugin", text10("float")],
-      ["representation", text10("ieee754Binary64")],
-      ["storedvalueexact", int15(1)]
+      ["plugin", text12("float")],
+      ["representation", text12("ieee754Binary64")],
+      ["storedvalueexact", int17(1)]
     ])]
   ]);
 }
@@ -46457,17 +47363,17 @@ function registerFloatType() {
     installs
   });
 }
-function method9(name, impl) {
+function method12(name, impl) {
   return { type: "method_builtin", name, impl };
 }
-function installBrowserApproxMathPlugin({ systemContext, registry, metadata: metadata2 = {}, options = {} }) {
+function installBrowserApproxMathPlugin({ systemContext, registry, metadata: metadata3 = {}, options = {} }) {
   registerFloatType();
   registry.registerAll(mathFunctions);
   installRegisteredTypes(registry, [TYPE_NAME], { skipMissing: true, skipExisting: true });
   const entries6 = new Map;
   const extension = new Map;
   const add2 = (name, impl) => {
-    const entry2 = method9(name, impl);
+    const entry2 = method12(name, impl);
     entries6.set(name, entry2);
     extension.set(name.toUpperCase(), entry2);
   };
@@ -46493,34 +47399,34 @@ function installBrowserApproxMathPlugin({ systemContext, registry, metadata: met
     doc: "Optional IEEE-754 Float conversion and approximate math",
     groups: ["ApproximateMath", "Float"]
   });
-  const floatExtension = method9("Float", (args, _context, evaluate2) => requireFloat(args[0], evaluate2));
+  const floatExtension = method12("Float", (args, _context, evaluate2) => requireFloat(args[0], evaluate2));
   const owner = {
-    pluginId: metadata2.id || "float",
-    mount: options.as || metadata2.mount || "float"
+    pluginId: metadata3.id || "float",
+    mount: options.as || metadata3.mount || "float"
   };
   systemContext.registerMethod("Integer", "Float", floatExtension, owner);
   systemContext.registerMethod("Rational", "Float", floatExtension, owner);
   return systemContext;
 }
-var install26 = installBrowserApproxMathPlugin;
+var install29 = installBrowserApproxMathPlugin;
 
 // src/generated/bundled-plugin-catalog.js
 function createBundledPluginCatalog() {
   const catalog = new PluginCatalog;
   catalog.addMetadata({ id: "algebra", description: "Canonical exact univariate polynomials with verified division and portable synthetic-division Grids.", kind: "host", mount: "algebra", exports: ["Polynomial", "Coefficients", "Record", "Evaluate", "Equal", "Divide", "SyntheticDivide", "Quotient", "Remainder", "IsFactor", "Grid"], groups: ["Algebra", "Exact"], permissions: [], requires: ["rix.rational-function@1"], provides: ["rix.algebra.division@1"], schemas: ["rix.algebra.division@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:algebra" }, { sourcePath: "bundled:algebra", kind: "host" });
-  catalog.registerInstaller("algebra", install4);
+  catalog.registerInstaller("algebra", install7);
   catalog.addMetadata({ id: "canvas", description: "Serializable Canvas 2D drawing plans for core Graphics scenes.", kind: "host", mount: "canvas", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.canvas@1"], targets: ["canvas", "application/vnd.rix.canvas+json"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:canvas" }, { sourcePath: "bundled:canvas", kind: "host" });
-  catalog.registerInstaller("canvas", install15);
+  catalog.registerInstaller("canvas", install18);
   catalog.addMetadata({ id: "csv", description: "Deterministic CSV and TSV export for portable Tables and typed data Relations.", kind: "host", mount: "csv", exports: ["Render"], groups: ["Renderers", "Data"], permissions: [], provides: ["rix.renderer.csv@1"], targets: ["csv", "text/csv", "tsv", "text/tab-separated-values"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:csv" }, { sourcePath: "bundled:csv", kind: "host" });
-  catalog.registerInstaller("csv", install24);
+  catalog.registerInstaller("csv", install27);
   catalog.addMetadata({ id: "data", description: "Immutable typed relations with deterministic projection, filtering, sorting, and Table views.", kind: "host", mount: "data", exports: ["Relation", "Project", "Filter", "Sort", "TableView", "Schema", "Rows"], groups: ["Data"], permissions: [], provides: ["rix.data.relation@1"], schemas: ["rix.data.relation@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:data" }, { sourcePath: "bundled:data", kind: "host" });
-  catalog.registerInstaller("data", install10);
+  catalog.registerInstaller("data", install13);
   catalog.addMetadata({ id: "document", description: "Numbered portable reports with labels, forward references, captions, and small semantic themes.", kind: "host", mount: "document", exports: ["Report", "Label", "Ref", "Theme", "References"], groups: ["Documents"], permissions: [], provides: ["rix.document.report@1"], schemas: ["rix.document.report@1", "rix.document.theme@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:document" }, { sourcePath: "bundled:document", kind: "host" });
-  catalog.registerInstaller("document", install11);
+  catalog.registerInstaller("document", install14);
   catalog.addMetadata({ id: "draw", description: "Convenient 2D drawing helpers that produce core Graphics nodes.", kind: "host", mount: "draw", exports: ["Line", "Polygon", "Label", "Box", "Circle"], groups: ["Draw"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:draw" }, { sourcePath: "bundled:draw", kind: "host" });
   catalog.registerInstaller("draw", install);
   catalog.addMetadata({ id: "example-array-js", description: "Teaching JavaScript plugin demonstrating array sum, summary text, and reversal.", kind: "host", mount: "arrayJs", exports: ["Sum", "Describe", "Reverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:example-array-js" }, { sourcePath: "bundled:example-array-js", kind: "host" });
-  catalog.registerInstaller("example-array-js", install25);
+  catalog.registerInstaller("example-array-js", install28);
   catalog.addMetadata({ id: "example-array-rix", description: "Teaching RiX plugin demonstrating array sum, summary text, and reversal.", kind: "rix", mount: "arrayRix", exports: ["arrayRixSum", "arrayRixDescribe", "arrayRixReverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:example-array-rix" }, { source: `/**
 id: example-array-rix
 description: Teaching RiX plugin demonstrating array sum, summary text, and reversal.
@@ -46537,19 +47443,23 @@ defaultEnabled: false
 .Host.Register("arrayRixReverse", (values) -> values.Reverse(), "Reverse an array", ["Examples"]);
 `, sourcePath: "bundled:example-array-rix", kind: "rix" });
   catalog.addMetadata({ id: "float", description: "JavaScript IEEE-754 Float conversion and optional approximate math.", kind: "host", mount: "float", exports: ["Float", "Interval", "Round", "Floor", "Ceiling", "Abs", "Sqrt", "Sin", "Cos", "Tan", "Log", "Exp"], groups: ["ApproximateMath", "Float"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:float" }, { sourcePath: "bundled:float", kind: "host" });
-  catalog.registerInstaller("float", install26);
+  catalog.registerInstaller("float", install29);
+  catalog.addMetadata({ id: "fracfun", description: "Form-preserving callable polynomial and rational expressions with explicit transformations and canonical projections.", kind: "host", mount: "fracfun", aliases: ["fractionFunction", "ff"], exports: ["FractionFunction", "Parse", "Var", "Fun"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], requires: ["rix.fraction@1", "rix.rational-function@1"], provides: ["rix.fraction-function@1"], schemas: ["rix.fraction-function@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:fracfun" }, { sourcePath: "bundled:fracfun", kind: "host" });
+  catalog.registerInstaller("fracfun", install3);
+  catalog.addMetadata({ id: "fraction", description: "Representation-sensitive unreduced integer fractions with mediant and classroom addition policies.", kind: "host", mount: "fraction", aliases: ["frac", "f"], exports: ["Fraction", "Parse"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], provides: ["rix.fraction@1"], schemas: ["rix.fraction@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:fraction" }, { sourcePath: "bundled:fraction", kind: "host" });
+  catalog.registerInstaller("fraction", install2);
   catalog.addMetadata({ id: "geometry", description: "Exact ruler-and-compass geometry with explicit intersections and portable Graphics snapshots.", kind: "host", mount: "geometry", exports: ["Point", "Line", "Circle", "Midpoint", "PerpendicularBisector", "Circumcircle", "Intersect", "Points", "Status", "Draw"], groups: ["Geometry", "Graphics", "Exact"], permissions: [], provides: ["rix.geometry@1", "rix.geometry.intersection@1"], schemas: ["rix.geometry@1", "rix.geometry.intersection@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:geometry" }, { sourcePath: "bundled:geometry", kind: "host" });
-  catalog.registerInstaller("geometry", install9);
+  catalog.registerInstaller("geometry", install12);
   catalog.addMetadata({ id: "gltf", description: "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", kind: "host", mount: "gltf", exports: ["Render"], groups: ["Renderers", "Scene3D"], permissions: [], requires: ["rix.scene3d@1"], provides: ["rix.renderer.gltf@1"], targets: ["gltf", "model/gltf+json"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:gltf" }, { sourcePath: "bundled:gltf", kind: "host" });
-  catalog.registerInstaller("gltf", install23);
+  catalog.registerInstaller("gltf", install26);
   catalog.addMetadata({ id: "html", description: "Standalone semantic HTML renderer for portable RiX output trees.", kind: "host", mount: "html", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.html@1"], targets: ["html", "text/html"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:html" }, { sourcePath: "bundled:html", kind: "host" });
-  catalog.registerInstaller("html", install18);
+  catalog.registerInstaller("html", install21);
   catalog.addMetadata({ id: "latex", description: "Standalone LaTeX renderer for portable RiX documents and figures.", kind: "host", mount: "latex", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.latex@1"], targets: ["latex", "text/x-tex"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:latex" }, { sourcePath: "bundled:latex", kind: "host" });
-  catalog.registerInstaller("latex", install20);
+  catalog.registerInstaller("latex", install23);
   catalog.addMetadata({ id: "markdown", description: "CommonMark-oriented renderer for portable RiX documents.", kind: "host", mount: "markdown", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.markdown@1"], targets: ["markdown", "text/markdown"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:markdown" }, { sourcePath: "bundled:markdown", kind: "host" });
-  catalog.registerInstaller("markdown", install17);
+  catalog.registerInstaller("markdown", install20);
   catalog.addMetadata({ id: "nd", description: "Exact n-dimensional geometry with explicit affine and Cayley projection records.", kind: "host", mount: "nd", exports: ["Point", "Polyline", "Polytope", "Hypercube", "Projection", "CoordinateProjection", "CayleyRotation", "Compose", "Project", "ToScene3D"], groups: ["Geometry", "Scene3D", "Exact"], permissions: [], requires: ["rix.scene3d@1"], provides: ["rix.nd@1", "rix.nd.projection@1"], schemas: ["rix.nd@1", "rix.nd.projection@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:nd" }, { sourcePath: "bundled:nd", kind: "host" });
-  catalog.registerInstaller("nd", install8);
+  catalog.registerInstaller("nd", install11);
   catalog.addMetadata({ id: "numerics", description: "Backend-neutral bounded enclosure and refinement orchestration.", kind: "rix", mount: "numerics", exports: ["Request", "WorkPolicy", "Enclose", "Refine", "Sample", "Capabilities", "CheckResult"], groups: ["Numerics"], permissions: [], provides: ["rix.numerics@1", "rix.enclosable-real-consumer@1"], schemas: ["rix.numerics.refinement-request@1", "rix.numerics.enclosure@1"], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:numerics" }, { source: `/**
 id: numerics
 description: Backend-neutral bounded enclosure and refinement orchestration.
@@ -47014,27 +47924,29 @@ oracleNamespace._proto = {=
 .Host.RegisterValue("oracle", oracleNamespace, "Exact rational-betweenness oracle demonstrations and bounded refinement", ["Numerics", "Exact"]);
 `, sourcePath: "bundled:oracle", kind: "rix" });
   catalog.addMetadata({ id: "pdf", description: "PDF document and figure renderer orchestrated through LaTeX.", kind: "host", mount: "pdf", exports: ["Render"], groups: ["Renderers"], permissions: ["process", "files"], provides: ["rix.renderer.pdf@1"], targets: ["pdf", "application/pdf"], snapshot: true, deterministic: false, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:pdf" }, { sourcePath: "bundled:pdf", kind: "host" });
-  catalog.registerInstaller("pdf", install22);
+  catalog.registerInstaller("pdf", install25);
   catalog.addMetadata({ id: "plot", description: "Portable plotting helpers that produce core Graphics scenes.", kind: "host", mount: "plot", exports: ["Polynomial"], groups: ["Plot"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:plot" }, { sourcePath: "bundled:plot", kind: "host" });
-  catalog.registerInstaller("plot", install6);
+  catalog.registerInstaller("plot", install9);
   catalog.addMetadata({ id: "png", description: "PNG snapshot renderer for core Graphics through a host rasterizer.", kind: "host", mount: "png", exports: ["Render"], groups: ["Renderers"], permissions: ["process"], provides: ["rix.renderer.png@1"], targets: ["png", "image/png"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:png" }, { sourcePath: "bundled:png", kind: "host" });
-  catalog.registerInstaller("png", install21);
+  catalog.registerInstaller("png", install24);
   catalog.addMetadata({ id: "poly", description: "Semantic callable univariate polynomials with structural and symbolic entry forms.", kind: "host", mount: "poly", aliases: ["polynomial", "p"], exports: ["Polynomial", "Parse", "Var", "Fun"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], provides: ["rix.polynomial@1"], schemas: ["rix.polynomial@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:poly" }, { sourcePath: "bundled:poly", kind: "host" });
-  catalog.registerInstaller("poly", install2);
+  catalog.registerInstaller("poly", install4);
   catalog.addMetadata({ id: "quarto", description: "Quarto Markdown renderer with front matter and portable figure lowering.", kind: "host", mount: "quarto", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.quarto@1"], targets: ["quarto", "text/x-quarto"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:quarto" }, { sourcePath: "bundled:quarto", kind: "host" });
-  catalog.registerInstaller("quarto", install19);
+  catalog.registerInstaller("quarto", install22);
   catalog.addMetadata({ id: "radix", description: "Bounded exact positional expansions and repeating-period analysis for rational values.", kind: "host", mount: "radix", exports: ["Expansion", "Digits", "PeriodLength", "PeriodInfo", "ToString"], groups: ["Exact", "Radix"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:radix" }, { sourcePath: "bundled:radix", kind: "host" });
-  catalog.registerInstaller("radix", install13);
+  catalog.registerInstaller("radix", install16);
   catalog.addMetadata({ id: "ratfun", description: "Canonical callable univariate rational functions with exact cancellation and Polynomial interoperability.", kind: "host", mount: "ratfun", aliases: ["rationalFunction", "rf"], exports: ["RationalFunction", "Parse", "Var", "Fun"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], requires: ["rix.polynomial@1"], provides: ["rix.rational-function@1"], schemas: ["rix.rational-function@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:ratfun" }, { sourcePath: "bundled:ratfun", kind: "host" });
-  catalog.registerInstaller("ratfun", install3);
+  catalog.registerInstaller("ratfun", install5);
   catalog.addMetadata({ id: "scene3d", description: "Exact retained 3D scenes with deterministic wireframe Graphics snapshots.", kind: "host", mount: "scene3d", exports: ["Scene", "Group", "Transform", "Mesh", "Polyline", "PointCloud", "Material", "PerspectiveCamera", "OrthographicCamera", "Snapshot"], groups: ["Scene3D", "Graphics"], permissions: [], provides: ["rix.scene3d@1"], schemas: ["rix.scene3d@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:scene3d" }, { sourcePath: "bundled:scene3d", kind: "host" });
-  catalog.registerInstaller("scene3d", install7);
+  catalog.registerInstaller("scene3d", install10);
   catalog.addMetadata({ id: "svg", description: "Portable SVG renderer for core Graphics scenes.", kind: "host", mount: "svg", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.svg@1"], targets: ["svg", "image/svg+xml"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:svg" }, { sourcePath: "bundled:svg", kind: "host" });
-  catalog.registerInstaller("svg", install14);
+  catalog.registerInstaller("svg", install17);
+  catalog.addMetadata({ id: "symbolic", description: "Meta-plugin loading RiX representation-sensitive Fraction and FractionFunction workspaces.", kind: "host", mount: "symbolic", exports: ["Fraction", "FractionFunction", "Services"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], requires: ["rix.fraction-function@1"], provides: ["rix.symbolic.formal@1"], schemas: [], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:symbolic" }, { sourcePath: "bundled:symbolic", kind: "host" });
+  catalog.registerInstaller("symbolic", install6);
   catalog.addMetadata({ id: "terminal-ascii", description: "Deterministic strict-ASCII fallback for tables, grids, fragments, and simple Graphics.", kind: "host", mount: "terminalAscii", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.terminal-ascii@1"], targets: ["terminal-ascii", "terminal", "ascii", "txt", "text/plain"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:terminal-ascii" }, { sourcePath: "bundled:terminal-ascii", kind: "host" });
-  catalog.registerInstaller("terminal-ascii", install12);
+  catalog.registerInstaller("terminal-ascii", install15);
   catalog.addMetadata({ id: "tikz", description: "Editable TikZ/PGF source renderer for core Graphics scenes.", kind: "host", mount: "tikz", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.tikz@1"], targets: ["tikz", "text/x-tikz"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:tikz" }, { sourcePath: "bundled:tikz", kind: "host" });
-  catalog.registerInstaller("tikz", install16);
+  catalog.registerInstaller("tikz", install19);
   return catalog;
 }
 
@@ -47206,5 +48118,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { formatValue, mountOutputWidgets, findHelp, createRixRepl };
 
-//# debugId=8309CFD9FF94E21064756E2164756E21
-//# sourceMappingURL=chunk-fat5rw50.js.map
+//# debugId=9669FE17140DEA2864756E2164756E21
+//# sourceMappingURL=chunk-xjb4psz4.js.map

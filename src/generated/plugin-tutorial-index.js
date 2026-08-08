@@ -108,6 +108,32 @@ export const pluginTutorials = [
     "pluginTutorial": true
   },
   {
+    "pluginId": "fracfun",
+    "pluginDirectory": "fracfun",
+    "title": "Explore form-preserving functions",
+    "description": "Keep polynomial and quotient forms visible while applying expansion, recentering, combination, and cancellation explicitly.",
+    "status": "implemented",
+    "theme": "Algebra and analysis",
+    "sourcePath": "../rix/plugins/fracfun/tutorial.md",
+    "number": "15b",
+    "parent": "15",
+    "file": "plugin-fracfun.html",
+    "pluginTutorial": true
+  },
+  {
+    "pluginId": "fraction",
+    "pluginDirectory": "fraction",
+    "title": "Explore unreduced fractions",
+    "description": "Preserve written numerator-denominator pairs, compare representations, and use classroom and mediant operations.",
+    "status": "implemented",
+    "theme": "Algebra and analysis",
+    "sourcePath": "../rix/plugins/fraction/tutorial.md",
+    "number": "15c",
+    "parent": "15",
+    "file": "plugin-fraction.html",
+    "pluginTutorial": true
+  },
+  {
     "pluginId": "poly",
     "pluginDirectory": "poly",
     "title": "Work with callable polynomials",
@@ -115,7 +141,7 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/poly/tutorial.md",
-    "number": "15b",
+    "number": "15d",
     "parent": "15",
     "file": "plugin-poly.html",
     "pluginTutorial": true
@@ -128,9 +154,22 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/ratfun/tutorial.md",
-    "number": "15c",
+    "number": "15e",
     "parent": "15",
     "file": "plugin-ratfun.html",
+    "pluginTutorial": true
+  },
+  {
+    "pluginId": "symbolic",
+    "pluginDirectory": "symbolic",
+    "title": "Load the symbolic exploration workspace",
+    "description": "Activate unreduced fractions and form-preserving functions through one meta-plugin.",
+    "status": "implemented",
+    "theme": "Algebra and analysis",
+    "sourcePath": "../rix/plugins/symbolic/tutorial.md",
+    "number": "15f",
+    "parent": "15",
+    "file": "plugin-symbolic.html",
     "pluginTutorial": true
   },
   {

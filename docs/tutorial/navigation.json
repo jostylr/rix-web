@@ -832,6 +832,24 @@
     {
       "number": "15b",
       "parent": "15",
+      "file": "plugin-fracfun.html",
+      "title": "Explore form-preserving functions",
+      "description": "Keep polynomial and quotient forms visible while applying expansion, recentering, combination, and cancellation explicitly.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "15c",
+      "parent": "15",
+      "file": "plugin-fraction.html",
+      "title": "Explore unreduced fractions",
+      "description": "Preserve written numerator-denominator pairs, compare representations, and use classroom and mediant operations.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "15d",
+      "parent": "15",
       "file": "plugin-poly.html",
       "title": "Work with callable polynomials",
       "description": "Define, compose, reactively update, and exactly divide semantic Polynomial functions.",
@@ -839,11 +857,20 @@
       "status": "implemented"
     },
     {
-      "number": "15c",
+      "number": "15e",
       "parent": "15",
       "file": "plugin-ratfun.html",
       "title": "Work with exact rational functions",
       "description": "Construct, cancel, compose, and reactively update callable RationalFunction values.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "15f",
+      "parent": "15",
+      "file": "plugin-symbolic.html",
+      "title": "Load the symbolic exploration workspace",
+      "description": "Activate unreduced fractions and form-preserving functions through one meta-plugin.",
       "pluginGroup": false,
       "status": "implemented"
     },
