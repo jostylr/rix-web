@@ -8,6 +8,7 @@ const pluginRoots = [
     path.resolve(root, "..", "rix", "plugins", "float"),
     path.resolve(root, "..", "rix", "plugins", "ball"),
     path.resolve(root, "..", "rix", "plugins", "cauchy"),
+    path.resolve(root, "..", "rix", "plugins", "continued-fraction"),
     path.resolve(root, "..", "rix", "plugins", "numerics"),
     path.resolve(root, "..", "rix", "plugins", "oracle"),
     path.resolve(root, "..", "rix", "plugins", "radix"),

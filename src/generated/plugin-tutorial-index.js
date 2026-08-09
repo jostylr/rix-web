@@ -45,8 +45,8 @@ export const pluginTutorials = [
   {
     "pluginId": "ball",
     "pluginDirectory": "ball",
-    "title": "Certified nested real balls",
-    "description": "Explore exact midpoint-radius balls and bounded square-root refinement.",
+    "title": "Certified nested real balls in RiX",
+    "description": "Use pure RiX exact midpoint-radius balls and bounded square-root refinement.",
     "status": "implemented",
     "theme": "Numbers and numerics",
     "sourcePath": "../rix/plugins/ball/tutorial.md",
@@ -69,6 +69,19 @@ export const pluginTutorials = [
     "pluginTutorial": true
   },
   {
+    "pluginId": "continued-fraction",
+    "pluginDirectory": "continued-fraction",
+    "title": "Exact continued-fraction reals in RiX",
+    "description": "Explore finite values, lazy coefficient rules, convergent cylinders, and bounded refinement.",
+    "status": "implemented",
+    "theme": "Numbers and numerics",
+    "sourcePath": "../rix/plugins/continued-fraction/tutorial.md",
+    "number": "14c",
+    "parent": "14",
+    "file": "plugin-continued-fraction.html",
+    "pluginTutorial": true
+  },
+  {
     "pluginId": "float",
     "pluginDirectory": "float",
     "title": "Optional Float math",
@@ -76,7 +89,7 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Numbers and numerics",
     "sourcePath": "../rix/plugins/float/tutorial.md",
-    "number": "14c",
+    "number": "14d",
     "parent": "14",
     "file": "plugin-float.html",
     "pluginTutorial": true
@@ -89,7 +102,7 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Numbers and numerics",
     "sourcePath": "../rix/plugins/numerics/tutorial.md",
-    "number": "14d",
+    "number": "14e",
     "parent": "14",
     "file": "plugin-numerics.html",
     "pluginTutorial": true
@@ -102,7 +115,7 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Numbers and numerics",
     "sourcePath": "../rix/plugins/oracle/tutorial.md",
-    "number": "14e",
+    "number": "14f",
     "parent": "14",
     "file": "plugin-oracle.html",
     "pluginTutorial": true
@@ -115,7 +128,7 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Numbers and numerics",
     "sourcePath": "../rix/plugins/radix/tutorial.md",
-    "number": "14f",
+    "number": "14g",
     "parent": "14",
     "file": "plugin-radix.html",
     "pluginTutorial": true

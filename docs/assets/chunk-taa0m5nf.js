@@ -28,7 +28,6 @@ import {
   install23 as install24,
   install24 as install25,
   install25 as install26,
-  install26 as install27,
   install3 as install4,
   install4 as install5,
   install5 as install6,
@@ -48,7 +47,7 @@ import {
   typeRegistry,
   unsupportedRefinementResult,
   valueMethod
-} from "./chunk-8j2sbdyp.js";
+} from "./chunk-2aw4havg.js";
 
 // src/repl-source.js
 var statementClosers = new Set([")", "]", "}", "|}", ";}", "@}", "!}", ":}"]);
@@ -138,7 +137,7 @@ function collection() {
   }
   return { type: "map", entries, _ext: extension };
 }
-function install28({ systemContext }) {
+function install27({ systemContext }) {
   const value = collection();
   systemContext.registerHostCallableValue("arrayJs", value, {
     impl(args) {
@@ -488,15 +487,316 @@ function installBrowserApproxMathPlugin({ systemContext, registry, metadata = {}
   systemContext.registerMethod("Rational", "Float", floatExtension, owner);
   return systemContext;
 }
-var install29 = installBrowserApproxMathPlugin;
+var install28 = installBrowserApproxMathPlugin;
 
 // src/generated/bundled-plugin-catalog.js
 function createBundledPluginCatalog() {
   const catalog = new PluginCatalog;
   catalog.addMetadata({ id: "algebra", description: "Canonical exact univariate polynomials with verified division and portable synthetic-division Grids.", kind: "host", mount: "algebra", exports: ["Polynomial", "Coefficients", "Record", "Evaluate", "Equal", "Divide", "SyntheticDivide", "Quotient", "Remainder", "IsFactor", "Grid"], groups: ["Algebra", "Exact"], permissions: [], requires: ["rix.rational-function@1"], provides: ["rix.algebra.division@1"], schemas: ["rix.algebra.division@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:algebra" }, { sourcePath: "bundled:algebra", kind: "host" });
   catalog.registerInstaller("algebra", install7);
-  catalog.addMetadata({ id: "ball", description: "Certified rational midpoint-radius balls and nested square-root refinement.", kind: "host", mount: "ball", exports: ["Ball", "Interval", "Sqrt", "Midpoint", "Radius", "Lower", "Upper", "Contains", "RoundOut", "Record"], groups: ["Numerics", "Exact"], permissions: [], provides: ["rix.ball@1", "rix.enclosable-real@1"], schemas: ["rix.ball@1", "rix.ball.nested-real@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:ball" }, { sourcePath: "bundled:ball", kind: "host" });
-  catalog.registerInstaller("ball", install27);
+  catalog.addMetadata({ id: "ball", description: "Certified rational midpoint-radius balls and nested square-root refinement.", kind: "rix", mount: "ball", exports: ["Ball", "Interval", "Sqrt", "Midpoint", "Radius", "Lower", "Upper", "Contains", "RoundOut", "Record"], groups: ["Numerics", "Exact"], permissions: [], provides: ["rix.ball@1", "rix.enclosable-real@1"], schemas: ["rix.ball@1", "rix.ball.nested-real@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:ball" }, { source: `/**
+id: ball
+description: Certified rational midpoint-radius balls and nested square-root refinement.
+kind: rix
+mount: ball
+exports: [Ball, Interval, Sqrt, Midpoint, Radius, Lower, Upper, Contains, RoundOut, Record]
+groups: [Numerics, Exact]
+permissions: []
+provides: [rix.ball@1, rix.enclosable-real@1]
+schemas: [rix.ball@1, rix.ball.nested-real@1]
+snapshot: false
+deterministic: true
+defaultEnabled: false
+**/
+
+BallRequireRational(value, label) -> value ~!: :Rational;
+
+BallRequireNonnegativeInteger(value, label) -> {;
+    integer = value ~!: :Integer;
+    integer >= 0 ?: integer ?_ .Error(@"@{label} must be a nonnegative Integer");
+};
+
+BallRaw(midpoint, radius ?= 0) -> {;
+    exactMidpoint = BallRequireRational(midpoint, "Ball midpoint");
+    exactRadius = BallRequireRational(radius, "Ball radius");
+    exactRadius >= 0 ?: _ ?_ .Error("Ball radius must be nonnegative");
+    {=
+        valueKind = :ball,
+        schema = "rix.ball@1",
+        midpoint = exactMidpoint,
+        radius = exactRadius,
+        interval = (exactMidpoint - exactRadius):(exactMidpoint + exactRadius)
+    };
+};
+
+BallConstruct(midpoint, radius ?= 0) -> {;
+    ball = BallRaw(midpoint, radius) ~!: :Ball;
+    .ImmutableValue(ball);
+};
+
+BallRequire(value) -> value ? :Ball ?: value ?_ .Error("Expected a Ball value");
+
+BallPromote(value) -> value ? :Ball ?: value ?_ BallConstruct(value, 0);
+
+BallFromInterval(interval) -> {;
+    exactInterval = interval ~!: :RationalInterval;
+    BallConstruct(exactInterval.Midpoint(), exactInterval.Width() / 2);
+};
+
+BallContains(ball, candidate) -> {;
+    exactBall = BallRequire(ball);
+    candidate ? :Ball
+      ?: exactBall[:interval].Contains(candidate[:interval])
+      ?_ exactBall[:interval].ContainsValue(BallRequireRational(candidate, "Ball containment candidate"));
+};
+
+BallRoundOut(ball, bits ?= 53) -> {;
+    exactBall = BallRequire(ball);
+    precision = BallRequireNonnegativeInteger(bits, "Ball dyadic precision");
+    precision <= 100000 ?: _ ?_ .Error("Ball dyadic precision must not exceed 100000 bits");
+    scale = 2^precision;
+    low = (exactBall[:interval].Low() * scale).Floor() / scale;
+    high = (exactBall[:interval].High() * scale).Ceil() / scale;
+    BallFromInterval(low:high);
+};
+
+BallRecord(ball) -> {;
+    exactBall = BallRequire(ball);
+    {=
+        valueKind = :ball,
+        schema = "rix.ball@1",
+        midpoint = exactBall[:midpoint],
+        radius = exactBall[:radius],
+        interval = exactBall[:interval],
+        lower = exactBall[:interval].Low(),
+        upper = exactBall[:interval].High(),
+        certified = 1
+    };
+};
+
+BallIntegerSqrtFloor(value) -> {;
+    n = BallRequireNonnegativeInteger(value, "Integer square root argument");
+    n < 2 ?: n ?_ {;
+        x := @n;
+        next := (x + 1) // 2;
+        {@ step = 1; @next < @x; {;
+            @x ~= @next;
+            @next ~= (@x + (@n // @x)) // 2;
+        }; step += 1 };
+        x;
+    };
+};
+
+BallExactSqrt(value) -> {;
+    numeratorRoot = BallIntegerSqrtFloor(value.Numerator());
+    denominatorRoot = BallIntegerSqrtFloor(value.Denominator());
+    exact = numeratorRoot^2 == value.Numerator() && denominatorRoot^2 == value.Denominator();
+    exact ?: numeratorRoot / denominatorRoot ?_ _;
+};
+
+BallInitialSqrt(value) -> {;
+    value >= 0 ?: _ ?_ .Error("Ball square root requires a nonnegative exact value");
+    exact = BallExactSqrt(value);
+    exact ?: BallConstruct(exact, 0) ?_ BallFromInterval(0:(value > 1 ?: value ?_ 1));
+};
+
+BallNestedRecord(real) -> {=
+    valueKind = :nestedBallReal,
+    schema = "rix.ball.nested-real@1",
+    recipe = real[:kind],
+    parameter = real[:parameter],
+    initialBall = real[:initialBall],
+    certified = 1
+};
+
+BallCapabilities(real) -> {;
+    nested = real[:valueKind] == :nestedBallReal;
+    {=
+        valueKind = :numericsCapabilities,
+        schema = "rix.numerics.capabilities@1",
+        backend = :ball,
+        representation = nested ?: :nestedRationalBalls ?_ :rationalMidpointRadius,
+        operations = [:enclose, :refine],
+        evidenceLevels = [:proof],
+        certified = 1,
+        arbitraryRefinement = nested,
+        deterministic = 1,
+        minimumWidth = 0,
+        maxCalls = nested ?: 100000 ?_ 0,
+        maxIterations = nested ?: 100000 ?_ 0
+    };
+};
+
+BallSqrtState(real, callLimit, requestedWidth ?= _) -> {;
+    low = real[:initialBall][:interval].Low();
+    high = real[:initialBall][:interval].High();
+    calls = 0;
+    {@ step = 1;
+       @calls < @callLimit && @high - @low > 0 && (@requestedWidth == _ || @high - @low > @requestedWidth);
+       {;
+           midpoint = (@low + @high) / 2;
+           midpoint^2 <= @real[:parameter]
+             ?: {; @low ~= @midpoint; }
+             ?_ {; @high ~= @midpoint; };
+           @calls += 1;
+       };
+       step += 1
+    };
+    {= ball=BallFromInterval(low:high), calls=calls };
+};
+
+BallAt(real, iterations ?= 0) -> {;
+    calls = BallRequireNonnegativeInteger(iterations, "Nested Ball iteration count");
+    BallSqrtState(real, calls)[:ball];
+};
+
+BallProtocolEnclosure(subject, request, operation) -> {;
+    capabilities = BallCapabilities(subject);
+    normalized = .RefinementRequest(request, operation, capabilities);
+    requestedWidth = normalized[:absoluteWidth];
+    maxCalls = normalized[:work][:maxCalls];
+    nested = subject[:valueKind] == :nestedBallReal;
+    state = nested
+      ?: BallSqrtState(subject, maxCalls, requestedWidth)
+      ?_ {= ball=BallRequire(subject), calls=0 };
+    selected = state[:ball];
+    interval = selected[:interval];
+    achievedWidth = interval.Width();
+    goalMet = achievedWidth <= requestedWidth;
+    status = goalMet ?: :enclosed ?_ nested ?: :budgetExhausted ?_ :resolutionFloor;
+    approximation = .CertifiedApproximation(selected[:midpoint], interval, {=
+        reason = status,
+        requested = requestedWidth,
+        achieved = achievedWidth,
+        provider = :ball
+    });
+    {=
+        valueKind = :enclosure,
+        schema = "rix.numerics.enclosure@1",
+        status = status,
+        interval = interval,
+        certified = 1,
+        goalMet = goalMet,
+        requestedWidth = requestedWidth,
+        achievedWidth = achievedWidth,
+        approximation = approximation,
+        evidenceLevel = :proof,
+        backend = :ball,
+        operation = normalized[:operation],
+        trace = [],
+        work = {=
+            calls = state[:calls],
+            iterations = state[:calls],
+            maxCalls = maxCalls,
+            exhausted = !goalMet && nested
+        },
+        diagnostics = status == :budgetExhausted
+          ?: [:maxCallsReached]
+          ?_ status == :resolutionFloor ?: [:finiteBallCannotRefine] ?_ [],
+        evidence = {=
+            kind = nested ?: :nestedBisection ?_ :exactEndpoints,
+            property = :containment,
+            subject = nested ?: subject[:parameter] ?_ subject[:interval]
+        },
+        source = {=
+            plugin = :ball,
+            schema = nested ?: "rix.ball.nested-real@1" ?_ "rix.ball@1",
+            recipe = nested ?: subject[:kind] ?_ :finite
+        }
+    };
+};
+
+BallSqrt(value) -> {;
+    radicand = BallRequireRational(value, "Ball square-root argument");
+    initial = BallInitialSqrt(radicand);
+    real = {=
+        valueKind = :nestedBallReal,
+        schema = "rix.ball.nested-real@1",
+        kind = :sqrt,
+        parameter = radicand,
+        initialBall = initial
+    };
+    real._proto = {=
+        Ball = (self, iterations ?= 0) -> BallAt(self, iterations),
+        InitialBall = (self) -> self[:initialBall],
+        Record = (self) -> BallNestedRecord(self),
+        Enclose = (self, request ?= {= }) -> BallProtocolEnclosure(self, request, :enclose),
+        Refine = (self, request ?= {= }) -> BallProtocolEnclosure(self, request, :refine),
+        NumericsCapabilities = (self) -> BallCapabilities(self)
+    };
+    .ImmutableValue(real);
+};
+
+BallAdd(left, right) -> BallFromInterval(BallPromote(left)[:interval] + BallPromote(right)[:interval]);
+BallSub(left, right) -> BallFromInterval(BallPromote(left)[:interval] - BallPromote(right)[:interval]);
+BallMul(left, right) -> BallFromInterval(BallPromote(left)[:interval] * BallPromote(right)[:interval]);
+BallDiv(left, right) -> {;
+    divisor = BallPromote(right);
+    divisor[:interval].ContainsZero() ?: .Error("Cannot divide by a Ball containing zero")
+                                        ?_ BallFromInterval(BallPromote(left)[:interval] / divisor[:interval]);
+};
+BallNeg(value) -> BallConstruct(-value[:midpoint], value[:radius]);
+BallEq(left, right) -> {;
+    a = BallPromote(left);
+    b = BallPromote(right);
+    a[:midpoint] == b[:midpoint] && a[:radius] == b[:radius];
+};
+
+.TypeKnown(:Ball) ?: _ ?_ .TypeRegister({=
+    name = :Ball,
+    nativeType = :map,
+    defaultTraits = [:number, :enclosed],
+    convertFrom = {=
+        map = (x) ?- [x[:valueKind] == :ball] -> x
+    },
+    validate = (x) -> x[:valueKind] == :ball && x[:radius] >= 0,
+    proto = {=
+        Midpoint = (self) -> self[:midpoint],
+        Radius = (self) -> self[:radius],
+        Interval = (self) -> self[:interval],
+        Lower = (self) -> self[:interval].Low(),
+        Upper = (self) -> self[:interval].High(),
+        Contains = (self, candidate) -> BallContains(self, candidate),
+        RoundOut = (self, bits ?= 53) -> BallRoundOut(self, bits),
+        Record = (self) -> BallRecord(self),
+        Enclose = (self, request ?= {= }) -> BallProtocolEnclosure(self, request, :enclose),
+        Refine = (self, request ?= {= }) -> BallProtocolEnclosure(self, request, :refine),
+        NumericsCapabilities = (self) -> BallCapabilities(self)
+    },
+    installs = {=
+        ADD = [{= name=:BallAdd, prep=(x, y) -> (x ? :Ball) || (y ? :Ball), impl=(x, y) -> BallAdd(x, y) }],
+        SUB = [{= name=:BallSub, prep=(x, y) -> (x ? :Ball) || (y ? :Ball), impl=(x, y) -> BallSub(x, y) }],
+        MUL = [{= name=:BallMul, prep=(x, y) -> (x ? :Ball) || (y ? :Ball), impl=(x, y) -> BallMul(x, y) }],
+        DIV = [{= name=:BallDiv, prep=(x, y) -> (x ? :Ball) || (y ? :Ball), impl=(x, y) -> BallDiv(x, y) }],
+        NEG = [{= name=:BallNeg, prep=(x) -> x ? :Ball, impl=(x) -> BallNeg(x) }],
+        EQ = [{= name=:BallEq, prep=(x, y) -> (x ? :Ball) || (y ? :Ball), impl=(x, y) -> BallEq(x, y) }],
+        NEQ = [{= name=:BallNeq, prep=(x, y) -> (x ? :Ball) || (y ? :Ball), impl=(x, y) -> !BallEq(x, y) }]
+    }
+});
+
+.TypeInstall(:Ball);
+
+ballNamespace = (midpoint, radius ?= 0) -> BallConstruct(midpoint, radius);
+ballNamespace._proto = {=
+    Ball = (self, midpoint, radius ?= 0) -> BallConstruct(midpoint, radius),
+    Interval = (self, low, high) -> BallFromInterval((BallRequireRational(low, "Ball lower endpoint")):(BallRequireRational(high, "Ball upper endpoint"))),
+    Sqrt = (self, value) -> BallSqrt(value),
+    Midpoint = (self, ball) -> BallRequire(ball)[:midpoint],
+    Radius = (self, ball) -> BallRequire(ball)[:radius],
+    Lower = (self, ball) -> BallRequire(ball)[:interval].Low(),
+    Upper = (self, ball) -> BallRequire(ball)[:interval].High(),
+    Contains = (self, ball, candidate) -> BallContains(ball, candidate),
+    RoundOut = (self, ball, bits ?= 53) -> BallRoundOut(ball, bits),
+    Record = (self, value) -> value[:valueKind] == :ball ?: BallRecord(value) ?_ BallNestedRecord(value)
+};
+
+.Host.RegisterCallableValue(
+    "ball",
+    ballNamespace,
+    "Certified rational midpoint-radius balls and nested square-root refinement",
+    ["Numerics", "Exact"]
+);
+`, sourcePath: "bundled:ball", kind: "rix" });
   catalog.addMetadata({ id: "canvas", description: "Serializable Canvas 2D drawing plans for core Graphics scenes.", kind: "host", mount: "canvas", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.canvas@1"], targets: ["canvas", "application/vnd.rix.canvas+json"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:canvas" }, { sourcePath: "bundled:canvas", kind: "host" });
   catalog.registerInstaller("canvas", install17);
   catalog.addMetadata({ id: "cauchy", description: "Rational Cauchy sequences with explicit certified tail bounds and moduli.", kind: "rix", mount: "cauchy", exports: ["Sequence", "Certified", "Geometric", "Term", "TailBound", "Modulus", "Enclosure", "Record"], groups: ["Numerics", "Exact"], permissions: [], provides: ["rix.cauchy@1", "rix.refinable@1", "rix.enclosable-real@1"], schemas: ["rix.cauchy.sequence@1", "rix.cauchy.real@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:cauchy" }, { source: `/**
@@ -718,7 +1018,6 @@ CauchyGeometricConstructor(first, ratio, options ?= {= }) -> {;
     exactFirst = CauchyRequireRational(first, "Cauchy geometric first term");
     exactRatio = CauchyRequireRational(ratio, "Cauchy geometric ratio");
     exactRatio.Abs() < 1 ?: _ ?_ .Error("Cauchy geometric ratio must have absolute value less than one");
-    shell = {= first=exactFirst, ratio=exactRatio };
     initial = CauchyWitness(
         exactFirst,
         exactFirst.Abs() * exactRatio.Abs() / (1 - exactRatio.Abs()),
@@ -864,6 +1163,398 @@ cauchyNamespace._proto = {=
     ["Numerics", "Exact"]
 );
 `, sourcePath: "bundled:cauchy", kind: "rix" });
+  catalog.addMetadata({ id: "continued-fraction", description: "Finite and lazy simple continued fractions with exact convergents and certified enclosures.", kind: "rix", mount: "continuedFraction", aliases: ["cf"], exports: ["Finite", "Lazy", "Periodic", "Sqrt2", "FromRational", "Coefficient", "Coefficients", "Convergent", "Convergents", "Enclosure", "ErrorInterval", "Record"], groups: ["Numerics", "Exact"], permissions: [], provides: ["rix.continued-fraction@1", "rix.refinable@1", "rix.enclosable-real@1"], schemas: ["rix.continued-fraction.finite@1", "rix.continued-fraction.lazy@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:continued-fraction" }, { source: `/**
+id: continued-fraction
+description: Finite and lazy simple continued fractions with exact convergents and certified enclosures.
+kind: rix
+mount: continuedFraction
+aliases: [cf]
+exports: [Finite, Lazy, Periodic, Sqrt2, FromRational, Coefficient, Coefficients, Convergent, Convergents, Enclosure, ErrorInterval, Record]
+groups: [Numerics, Exact]
+permissions: []
+provides: [rix.continued-fraction@1, rix.refinable@1, rix.enclosable-real@1]
+schemas: [rix.continued-fraction.finite@1, rix.continued-fraction.lazy@1]
+snapshot: false
+deterministic: true
+defaultEnabled: false
+**/
+
+CFOption(options, key, fallback) -> options.Has(key) ?: options[key] ?_ fallback;
+
+CFRequireIndex(value, label) -> {;
+    index = value ~!: :Integer;
+    index >= 0 ?: index ?_ .Error(@"@{label} must be a nonnegative Integer");
+};
+
+CFRequireCount(value, label) -> {;
+    count = value ~!: :Integer;
+    count >= 1 ?: count ?_ .Error(@"@{label} must be a positive Integer");
+};
+
+CFValidateCoefficient(value, index) -> {;
+    coefficient = value ~!: :Integer;
+    valid = index == 0 ?: 1 ?_ coefficient > 0;
+    valid
+      ?: coefficient
+      ?_ .Error(@"Continued-fraction coefficient @{index} must be a positive Integer");
+};
+
+CFCoefficientAt(real, index) -> {;
+    n = CFRequireIndex(index, "Continued-fraction coefficient index");
+    outOfRange = real[:kind] == :finite ?: n >= real[:length] ?_ _;
+    outOfRange
+      ?: .Error(@"Finite continued fraction has no coefficient at index @{n}")
+      ?_ CFValidateCoefficient(n |> real[:coefficientFunction], n);
+};
+
+CFCoefficients(real, count ?= _) -> {;
+    amount = count == _
+      ?: (real[:kind] == :finite ?: real[:length] ?_ .Error("Lazy continued fractions require an explicit coefficient count"))
+      ?_ CFRequireIndex(count, "Continued-fraction coefficient count");
+    exceedsFinite = real[:kind] == :finite ?: amount > real[:length] ?_ _;
+    exceedsFinite
+      ?: .Error("Requested coefficient count exceeds the finite continued fraction")
+      ?_ _;
+    values = [];
+    {@ index = 0; index < @amount; {;
+        @values ~= @values.Push(CFCoefficientAt(@real, index));
+    }; index += 1 };
+    values;
+};
+
+CFConvergentState(real, count) -> {;
+    amount = CFRequireCount(count, "Continued-fraction convergent count");
+    exceedsFinite = real[:kind] == :finite ?: amount > real[:length] ?_ _;
+    exceedsFinite
+      ?: .Error("Requested convergent exceeds the finite continued fraction")
+      ?_ _;
+    p0 = 0;
+    p1 = 1;
+    q0 = 1;
+    q1 = 0;
+    {@ index = 0; index < @amount; {;
+        coefficient = CFCoefficientAt(@real, index);
+        nextP = coefficient * @p1 + @p0;
+        nextQ = coefficient * @q1 + @q0;
+        @p0 ~= @p1;
+        @p1 ~= nextP;
+        @q0 ~= @q1;
+        @q1 ~= nextQ;
+    }; index += 1 };
+    {=
+        count = amount,
+        previous = q0 == 0 ?: _ ?_ p0 / q0,
+        current = q1 == 0 ?: _ ?_ p1 / q1,
+        p0 = p0,
+        p1 = p1,
+        q0 = q0,
+        q1 = q1
+    };
+};
+
+CFConvergent(real, count) -> CFConvergentState(real, count)[:current];
+
+CFConvergents(real, count ?= _) -> {;
+    amount = count == _
+      ?: (real[:kind] == :finite ?: real[:length] ?_ .Error("Lazy continued fractions require an explicit convergent count"))
+      ?_ CFRequireIndex(count, "Continued-fraction convergent count");
+    results = [];
+    {@ index = 1; index <= @amount; {;
+        @results ~= @results.Push(CFConvergent(@real, index));
+    }; index += 1 };
+    results;
+};
+
+CFWitness(real, count) -> {;
+    state = CFConvergentState(real, count);
+    interval = state[:previous]:state[:current];
+    {=
+        count = state[:count],
+        previous = state[:previous],
+        convergent = state[:current],
+        interval = interval,
+        width = interval.Width(),
+        p0 = state[:p0],
+        p1 = state[:p1],
+        q0 = state[:q0],
+        q1 = state[:q1]
+    };
+};
+
+CFNextWitness(real, witness) -> {;
+    index = witness[:count];
+    coefficient = CFCoefficientAt(real, index);
+    nextP = coefficient * witness[:p1] + witness[:p0];
+    nextQ = coefficient * witness[:q1] + witness[:q0];
+    next = nextP / nextQ;
+    interval = witness[:convergent]:next;
+    {=
+        count = index + 1,
+        previous = witness[:convergent],
+        convergent = next,
+        interval = interval,
+        width = interval.Width(),
+        p0 = witness[:p1],
+        p1 = nextP,
+        q0 = witness[:q1],
+        q1 = nextQ
+    };
+};
+
+CFEnclosureAt(real, count ?= _) -> {;
+    real[:kind] == :finite
+      ?: {;
+          exact = CFConvergent(real, count == _ ?: real[:length] ?_ count);
+          exact:exact;
+      }
+      ?_ CFWitness(real, count == _ ?: 2 ?_ CFRequireCount(count, "Continued-fraction enclosure count"))[:interval];
+};
+
+CFErrorInterval(real, count) -> {;
+    convergent = CFConvergent(real, count);
+    enclosure = CFEnclosureAt(real, real[:kind] == :finite ?: _ ?_ count);
+    (enclosure.Low() - convergent):(enclosure.High() - convergent);
+};
+
+CFCapabilities(real) -> {;
+    lazy = real[:kind] != :finite;
+    {=
+        valueKind = :numericsCapabilities,
+        schema = "rix.numerics.capabilities@1",
+        backend = :continuedFraction,
+        representation = lazy ?: :lazySimpleContinuedFraction ?_ :finiteSimpleContinuedFraction,
+        operations = [:enclose, :refine],
+        evidenceLevels = [lazy ?: real[:evidenceLevel] ?_ :proof],
+        certified = 1,
+        arbitraryRefinement = lazy,
+        deterministic = 1,
+        minimumWidth = 0,
+        maxCalls = lazy ?: 100000 ?_ 0,
+        maxIterations = lazy ?: 100000 ?_ 0
+    };
+};
+
+CFRecord(real) -> {=
+    valueKind = :continuedFraction,
+    schema = real[:schema],
+    kind = real[:kind],
+    name = real[:name],
+    coefficients = real[:kind] == :finite ?: real[:coefficients] ?_ _,
+    length = real[:kind] == :finite ?: real[:length] ?_ _,
+    period = real[:period],
+    initialEnclosure = real[:initialWitness][:interval],
+    evidence = real[:evidence],
+    certified = 1
+};
+
+CFAttachProtocol(real) -> {;
+    real._proto = {=
+        Coefficient = (self, index) -> CFCoefficientAt(self, index),
+        Coefficients = (self, count ?= _) -> CFCoefficients(self, count),
+        Convergent = (self, count) -> CFConvergent(self, count),
+        Convergents = (self, count ?= _) -> CFConvergents(self, count),
+        Value = (self) -> self[:kind] == :finite ?: CFConvergent(self, self[:length]) ?_ .Error("Lazy continued fractions do not have a finite exact Value"),
+        Enclosure = (self, count ?= _) -> CFEnclosureAt(self, count),
+        ErrorInterval = (self, count) -> CFErrorInterval(self, count),
+        Record = (self) -> CFRecord(self),
+        Enclose = (self, request ?= {= }) -> CFProtocolEnclosure(self, request, :enclose),
+        Refine = (self, request ?= {= }) -> CFProtocolEnclosure(self, request, :refine),
+        NumericsCapabilities = (self) -> CFCapabilities(self)
+    };
+    .ImmutableValue(real);
+};
+
+CFFinite(coefficients, options ?= {= }) -> {;
+    length = coefficients.Len();
+    length >= 1 ?: _ ?_ .Error("Finite continued fractions require at least one coefficient");
+    exactCoefficients = [];
+    {@ index = 0; index < @length; {;
+        @exactCoefficients ~= @exactCoefficients.Push(CFValidateCoefficient((@coefficients)[index + 1], index));
+    }; index += 1 };
+    coefficientFunction = (index) -> (@exactCoefficients)[index + 1];
+    provisional = {=
+        valueKind = :continuedFraction,
+        schema = "rix.continued-fraction.finite@1",
+        kind = :finite,
+        name = CFOption(options, "name", :finite),
+        coefficients = exactCoefficients,
+        length = length,
+        coefficientFunction = coefficientFunction,
+        evidenceLevel = :proof,
+        evidence = {= kind=:finiteEvaluation, property=:exactRationalValue }
+    };
+    exact = CFConvergent(provisional, length) ~!: :Rational;
+    provisional["initialwitness"] = {=
+        count=length,
+        previous=exact,
+        convergent=exact,
+        interval=exact:exact,
+        width=0,
+        p0=exact.Numerator(), p1=exact.Numerator(),
+        q0=exact.Denominator(), q1=exact.Denominator()
+    };
+    CFAttachProtocol(provisional);
+};
+
+CFLazy(coefficientFunction, options ?= {= }) -> {;
+    provisional = {=
+        valueKind = :continuedFraction,
+        schema = "rix.continued-fraction.lazy@1",
+        kind = CFOption(options, "kind", :lazy),
+        name = CFOption(options, "name", :lazy),
+        coefficientFunction = coefficientFunction,
+        prefix = CFOption(options, "prefix", _),
+        period = CFOption(options, "period", _),
+        evidenceLevel = CFOption(options, "evidenceLevel", :constructorGuarantee),
+        evidence = CFOption(options, "evidence", {=
+            kind=:declaredSimpleContinuedFraction,
+            property=:positiveTailCoefficients
+        })
+    };
+    provisional["initialwitness"] = CFWitness(provisional, 2);
+    CFAttachProtocol(provisional);
+};
+
+CFPeriodic(prefix, period, options ?= {= }) -> {;
+    prefixLength = prefix.Len();
+    periodLength = period.Len();
+    prefixLength >= 1 ?: _ ?_ .Error("Periodic continued fractions require a nonempty prefix");
+    periodLength >= 1 ?: _ ?_ .Error("Periodic continued fractions require a nonempty period");
+    exactPrefix = CFCoefficients(CFFinite(prefix), prefixLength);
+    exactPeriod = [];
+    {@ index = 0; index < @periodLength; {;
+        @exactPeriod ~= @exactPeriod.Push(CFValidateCoefficient((@period)[index + 1], index + 1));
+    }; index += 1 };
+    rule = (index) -> index < @prefixLength
+      ?: (@exactPrefix)[index + 1]
+      ?_ (@exactPeriod)[((index - @prefixLength) % @periodLength) + 1];
+    CFLazy(rule, {=
+        kind = :periodic,
+        name = CFOption(options, "name", :periodic),
+        prefix = exactPrefix,
+        period = exactPeriod,
+        evidenceLevel = CFOption(options, "evidenceLevel", :constructorGuarantee),
+        evidence = CFOption(options, "evidence", {=
+            kind=:periodicSimpleContinuedFraction,
+            property=:positiveRepeatingTail
+        })
+    });
+};
+
+CFSqrt2() -> CFPeriodic([1], [2], {=
+    name = :sqrt2,
+    evidenceLevel = :proof,
+    evidence = {=
+        kind=:periodicQuadraticIrrational,
+        property=:squareEqualsTwo,
+        equation="x = 1 + 1/(1+x)"
+    }
+});
+
+CFFromRational(value, options ?= {= }) -> {;
+    exact = value ~!: :Rational;
+    CFFinite(exact.ToContinuedFraction(), {= name=CFOption(options, "name", :rational) });
+};
+
+CFConstruct(value, options ?= {= }) -> {;
+    alreadyContinuedFraction = value ? :Map ?: value[:valueKind] == :continuedFraction ?_ _;
+    alreadyContinuedFraction
+      ?: value
+      ?_ (value ? :Array ?: CFFinite(value, options) ?_ CFFromRational(value, options));
+};
+
+CFRefinementState(real, requestedWidth, maxCalls, maxIterations) -> {;
+    selected = real[:initialWitness];
+    calls = 0;
+    iterations = 0;
+    {@ step = 1;
+       (@selected)[:width] > @requestedWidth && @calls < @maxCalls && @iterations < @maxIterations;
+       {;
+           @selected ~= CFNextWitness(@real, @selected);
+           @calls += 1;
+           @iterations += 1;
+       };
+       step += 1
+    };
+    {= selected=selected, calls=calls, iterations=iterations };
+};
+
+CFProtocolEnclosure(real, request, operation) -> {;
+    capabilities = CFCapabilities(real);
+    normalized = .RefinementRequest(request, operation, capabilities);
+    requestedWidth = normalized[:absoluteWidth];
+    maxCalls = normalized[:work][:maxCalls];
+    maxIterations = normalized[:work][:maxIterations];
+    finite = real[:kind] == :finite;
+    state = finite
+      ?: {= selected=real[:initialWitness], calls=0, iterations=0 }
+      ?_ CFRefinementState(real, requestedWidth, maxCalls, maxIterations);
+    selected = state[:selected];
+    achievedWidth = selected[:width];
+    goalMet = achievedWidth <= requestedWidth;
+    status = goalMet ?: :enclosed ?_ :budgetExhausted;
+    approximation = .CertifiedApproximation(selected[:convergent], selected[:interval], {=
+        reason=status,
+        requested=requestedWidth,
+        achieved=achievedWidth,
+        provider=:continuedFraction
+    });
+    {=
+        valueKind = :enclosure,
+        schema = "rix.numerics.enclosure@1",
+        status = status,
+        interval = selected[:interval],
+        certified = 1,
+        goalMet = goalMet,
+        requestedWidth = requestedWidth,
+        achievedWidth = achievedWidth,
+        approximation = approximation,
+        evidenceLevel = finite ?: :proof ?_ real[:evidenceLevel],
+        backend = :continuedFraction,
+        operation = normalized[:operation],
+        trace = [selected],
+        work = {=
+            calls=state[:calls],
+            iterations=state[:iterations],
+            coefficients=selected[:count],
+            maxCalls=maxCalls,
+            maxIterations=maxIterations,
+            exhausted=!goalMet
+        },
+        diagnostics = goalMet ?: [] ?_ [:maxCallsReached],
+        evidence = {=
+            kind=finite ?: :finiteEvaluation ?_ :consecutiveConvergents,
+            property=:containment,
+            witness=selected,
+            certificate=real[:evidence]
+        },
+        source = {= plugin=:continuedFraction, schema=real[:schema], kind=real[:kind] }
+    };
+};
+
+continuedFractionNamespace = (value, options ?= {= }) -> CFConstruct(value, options);
+continuedFractionNamespace._proto = {=
+    Finite = (self, coefficients, options ?= {= }) -> CFFinite(coefficients, options),
+    Lazy = (self, coefficientFunction, options ?= {= }) -> CFLazy(coefficientFunction, options),
+    Periodic = (self, prefix, period, options ?= {= }) -> CFPeriodic(prefix, period, options),
+    Sqrt2 = (self) -> CFSqrt2(),
+    FromRational = (self, value, options ?= {= }) -> CFFromRational(value, options),
+    Coefficient = (self, real, index) -> CFCoefficientAt(real, index),
+    Coefficients = (self, real, count ?= _) -> CFCoefficients(real, count),
+    Convergent = (self, real, count) -> CFConvergent(real, count),
+    Convergents = (self, real, count ?= _) -> CFConvergents(real, count),
+    Enclosure = (self, real, count ?= _) -> CFEnclosureAt(real, count),
+    ErrorInterval = (self, real, count) -> CFErrorInterval(real, count),
+    Record = (self, real) -> CFRecord(real)
+};
+
+.Host.RegisterCallableValue(
+    "continuedFraction",
+    continuedFractionNamespace,
+    "Finite and lazy simple continued fractions with exact convergents and certified enclosures",
+    ["Numerics", "Exact"]
+);
+`, sourcePath: "bundled:continued-fraction", kind: "rix" });
   catalog.addMetadata({ id: "csv", description: "Deterministic CSV and TSV export for portable Tables and typed data Relations.", kind: "host", mount: "csv", exports: ["Render"], groups: ["Renderers", "Data"], permissions: [], provides: ["rix.renderer.csv@1"], targets: ["csv", "text/csv", "tsv", "text/tab-separated-values"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:csv" }, { sourcePath: "bundled:csv", kind: "host" });
   catalog.registerInstaller("csv", install26);
   catalog.addMetadata({ id: "data", description: "Immutable typed relations with deterministic projection, filtering, sorting, and Table views.", kind: "host", mount: "data", exports: ["Relation", "Project", "Filter", "Sort", "TableView", "Schema", "Rows"], groups: ["Data"], permissions: [], provides: ["rix.data.relation@1"], schemas: ["rix.data.relation@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:data" }, { sourcePath: "bundled:data", kind: "host" });
@@ -873,7 +1564,7 @@ cauchyNamespace._proto = {=
   catalog.addMetadata({ id: "draw", description: "Convenient 2D drawing helpers that produce core Graphics nodes.", kind: "host", mount: "draw", exports: ["Line", "Polygon", "Label", "Box", "Circle"], groups: ["Draw"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:draw" }, { sourcePath: "bundled:draw", kind: "host" });
   catalog.registerInstaller("draw", install);
   catalog.addMetadata({ id: "example-array-js", description: "Teaching JavaScript plugin demonstrating array sum, summary text, and reversal.", kind: "host", mount: "arrayJs", exports: ["Sum", "Describe", "Reverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:example-array-js" }, { sourcePath: "bundled:example-array-js", kind: "host" });
-  catalog.registerInstaller("example-array-js", install28);
+  catalog.registerInstaller("example-array-js", install27);
   catalog.addMetadata({ id: "example-array-rix", description: "Teaching RiX plugin demonstrating array sum, summary text, and reversal.", kind: "rix", mount: "arrayRix", exports: ["arrayRixSum", "arrayRixDescribe", "arrayRixReverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:example-array-rix" }, { source: `/**
 id: example-array-rix
 description: Teaching RiX plugin demonstrating array sum, summary text, and reversal.
@@ -890,7 +1581,7 @@ defaultEnabled: false
 .Host.Register("arrayRixReverse", (values) -> values.Reverse(), "Reverse an array", ["Examples"]);
 `, sourcePath: "bundled:example-array-rix", kind: "rix" });
   catalog.addMetadata({ id: "float", description: "JavaScript IEEE-754 Float conversion and optional approximate math.", kind: "host", mount: "float", exports: ["Float", "Interval", "Round", "Floor", "Ceiling", "Abs", "Sqrt", "Sin", "Cos", "Tan", "Log", "Exp"], groups: ["ApproximateMath", "Float"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:float" }, { sourcePath: "bundled:float", kind: "host" });
-  catalog.registerInstaller("float", install29);
+  catalog.registerInstaller("float", install28);
   catalog.addMetadata({ id: "fracfun", description: "Form-preserving callable polynomial and rational expressions with explicit transformations and canonical projections.", kind: "host", mount: "fracfun", aliases: ["fractionFunction", "ff"], exports: ["FractionFunction", "Parse", "Var", "Fun"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], requires: ["rix.fraction@1", "rix.rational-function@1"], provides: ["rix.fraction-function@1"], schemas: ["rix.fraction-function@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:fracfun" }, { sourcePath: "bundled:fracfun", kind: "host" });
   catalog.registerInstaller("fracfun", install3);
   catalog.addMetadata({ id: "fraction", description: "Representation-sensitive unreduced integer fractions with mediant and classroom addition policies.", kind: "host", mount: "fraction", aliases: ["frac", "f"], exports: ["Fraction", "Parse", "FromSternBrocotPath"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], provides: ["rix.fraction@1"], schemas: ["rix.fraction@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:fraction" }, { sourcePath: "bundled:fraction", kind: "host" });
@@ -1542,5 +2233,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { findHelp, createRixRepl };
 
-//# debugId=42F39F06E170D98E64756E2164756E21
-//# sourceMappingURL=chunk-b38djzrz.js.map
+//# debugId=C1F47BD09C519B5364756E2164756E21
+//# sourceMappingURL=chunk-taa0m5nf.js.map
