@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Interactive applications and experiments built with RiX." />
+    <title>RiX Showcases</title>
+    <link rel="stylesheet" href="./assets/showcases.css" />
+  </head>
+  <body>
+    <main class="catalog">
+      <header class="catalog-header">
+        <a class="brand" href="./" aria-label="RatCalc home">
+          <span class="rm-mark">R/M</span>
+          <span><b>RiX Showcases</b><small>interactive exact mathematics</small></span>
+        </a>
+        <p>Applications and experiments that exercise RiX beyond the calculator.</p>
+        <nav aria-label="Showcase navigation"><a href="./">Back to RatCalc</a><a href="./tutorial/">Tutorials</a></nav>
+      </header>
+
+      <section class="showcase-group" aria-labelledby="stern-brocot-title">
+        <div class="group-heading">
+          <p class="eyebrow">Exact rational navigation</p>
+          <h1 id="stern-brocot-title">Stern–Brocot tree explorers</h1>
+          <p>Two implementations share the same exact RiX model while testing different boundaries between RiX and the browser host.</p>
+        </div>
+
+        <div class="showcase-grid">
+          <article class="showcase-card">
+            <p class="implementation">Native interface · RiX mathematics</p>
+            <h2>Interactive tree explorer</h2>
+            <p>The established HTML and SVG interface provides navigation, pan and zoom, URL state, and dialogs. RiX computes the nodes, tree records, and comparison formulas.</p>
+            <a class="open-link" href="./stern-brocot.html">Open native explorer <span aria-hidden="true">→</span></a>
+          </article>
+
+          <article class="showcase-card experimental">
+            <p class="implementation">Generated entirely from RiX · Early draft</p>
+            <h2>RiX-generated explorer</h2>
+            <p>A standalone reactive page generated from one RiX program, using portable controls, graphics, and exact tables. This version intentionally exposes the host capabilities still under development.</p>
+            <a class="open-link" href="./stern-brocot-rix/">Open generated explorer <span aria-hidden="true">→</span></a>
+          </article>
+        </div>
+      </section>
+
+      <footer>More RiX showcases will be added here as their shared runtime and host protocols mature.</footer>
+    </main>
+  </body>
+</html>

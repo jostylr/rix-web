@@ -28,8 +28,10 @@ for (const name of await readdir(assets)) {
     if (/^chunk-[a-z0-9]+\.js(?:\.map)?$/.test(name)) await unlink(path.join(assets, name));
 }
 await Bun.write(path.join(output, "index.html"), await readFile(path.join(source, "index.html")));
+await Bun.write(path.join(output, "showcases.html"), await readFile(path.join(source, "showcases.html")));
 await Bun.write(path.join(output, ".nojekyll"), "");
 await Bun.write(path.join(output, "assets", "app.css"), await readFile(path.join(source, "app.css")));
+await Bun.write(path.join(output, "assets", "showcases.css"), await readFile(path.join(source, "showcases.css")));
 await Bun.write(path.join(output, "stern-brocot.html"), await readFile(path.join(source, "stern-brocot.html")));
 await Bun.write(path.join(output, "assets", "stern-brocot.css"), await readFile(path.join(source, "stern-brocot.css")));
 const result = await Bun.build({
