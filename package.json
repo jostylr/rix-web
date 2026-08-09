@@ -8,6 +8,7 @@
     "build:dynamic": "bun run build",
     "build:static": "bun run build:app && bun run build:tutorials:static",
     "build:app": "bun scripts/build-app.js",
+    "build:stern-brocot": "bun scripts/build-stern-brocot-page.js",
     "build:tutorials": "bun scripts/build-tutorials.js",
     "build:tutorials:static": "bun scripts/build-tutorials.js --navigation=static",
     "test": "bun test",

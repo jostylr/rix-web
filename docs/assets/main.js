@@ -1,9 +1,11 @@
 import {
   createRixRepl,
-  findHelp,
+  findHelp
+} from "./chunk-c128pk8g.js";
+import {
   formatValue,
   mountOutputWidgets
-} from "./chunk-ffwnyw8d.js";
+} from "./chunk-0dqsaqws.js";
 
 // src/main.js
 var repl = createRixRepl();
@@ -408,5 +410,5 @@ window.addEventListener("pagehide", () => {
   repl.dispose();
 });
 
-//# debugId=0C9CF9932A4D4A7564756E2164756E21
+//# debugId=006EB5A030F3284864756E2164756E21
 //# sourceMappingURL=main.js.map

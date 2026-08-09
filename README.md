@@ -38,3 +38,14 @@ second navigation source of truth.
 The calculator accepts `.rix` files directly. Selecting a `.js` module shows an
 intentional notice: browser module execution is held behind an explicit trust
 boundary until RiX module permissions are designed.
+
+## Stern–Brocot showcases
+
+The site publishes two explorers from the same exact RiX model:
+
+- `docs/stern-brocot.html` keeps the established HTML/SVG interaction layer and
+  uses RiX for node, tree, and formula computation.
+- `docs/stern-brocot-rix/` is generated from the RiX program in
+  `../rix/examples/stern-brocot/stern-brocot-page.rix`.
+
+Both are produced by `bun run build:app` and linked from the main page.

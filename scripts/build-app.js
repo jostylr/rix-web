@@ -30,9 +30,12 @@ for (const name of await readdir(assets)) {
 await Bun.write(path.join(output, "index.html"), await readFile(path.join(source, "index.html")));
 await Bun.write(path.join(output, ".nojekyll"), "");
 await Bun.write(path.join(output, "assets", "app.css"), await readFile(path.join(source, "app.css")));
+await Bun.write(path.join(output, "stern-brocot.html"), await readFile(path.join(source, "stern-brocot.html")));
+await Bun.write(path.join(output, "assets", "stern-brocot.css"), await readFile(path.join(source, "stern-brocot.css")));
 const result = await Bun.build({
     entrypoints: [
         path.join(source, "main.js"),
+        path.join(source, "stern-brocot-web.js"),
         path.join(source, "tutorial-runner.js"),
         path.join(source, "tutorial-navigation-client.js"),
     ],
@@ -47,3 +50,5 @@ if (!result.success) {
     for (const log of result.logs) console.error(log);
     process.exit(1);
 }
+
+await import("./build-stern-brocot-page.js");

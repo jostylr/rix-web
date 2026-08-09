@@ -1,8 +1,10 @@
 import {
-  createRixRepl,
+  createRixRepl
+} from "./chunk-c128pk8g.js";
+import {
   formatValue,
   mountOutputWidgets
-} from "./chunk-ffwnyw8d.js";
+} from "./chunk-0dqsaqws.js";
 import {
   mountTutorialNavigation
 } from "./chunk-g5p2fpmt.js";
@@ -320,5 +322,5 @@ function openObjectHelp(name, requestedFunction = null) {
   dialog.showModal();
 }
 
-//# debugId=8E9917F64A723E7D64756E2164756E21
+//# debugId=E2A404D5EFF2038E64756E2164756E21
 //# sourceMappingURL=tutorial-runner.js.map
