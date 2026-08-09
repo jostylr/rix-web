@@ -43727,6 +43727,381 @@ function install27(api) {
   return installRendererPlugin({ ...api, definition: definition10 });
 }
 
+// ../rix/plugins/ball/ball.js
+var BALL_SCHEMA = "rix.ball@1";
+var NESTED_BALL_SCHEMA = "rix.ball.nested-real@1";
+var ZERO2 = Rational.zero;
+var ONE = Rational.one;
+var PROVIDER_MAX_CALLS = 100000n;
+var int16 = (value) => new Integer(BigInt(value));
+var text12 = (value) => ({ type: "string", value: String(value) });
+var bool5 = (value) => value ? int16(1) : null;
+var sequence8 = (values4 = []) => ({ type: "sequence", values: values4 });
+var map4 = (entries6 = []) => ({ type: "map", entries: new Map(entries6) });
+function exactRational4(value, label2 = "Ball value") {
+  if (value instanceof Rational)
+    return value;
+  if (value instanceof Integer)
+    return value.toRational();
+  throw new Error(`${label2} must be an exact Integer or Rational`);
+}
+function nonnegativeInteger(value, label2) {
+  if (!(value instanceof Integer) || value.value < 0n) {
+    throw new Error(`${label2} must be a nonnegative Integer`);
+  }
+  return value.value;
+}
+function intervalWidth2(interval2) {
+  return interval2.high.subtract(interval2.low);
+}
+function ballFromInterval(interval2) {
+  if (!(interval2 instanceof RationalInterval))
+    throw new Error("Ball interval must be a RationalInterval");
+  const midpoint2 = interval2.low.add(interval2.high).divide(new Rational(2n, 1n));
+  const radius = interval2.high.subtract(interval2.low).divide(new Rational(2n, 1n));
+  return new ExactBall(midpoint2, radius);
+}
+function floorDiv3(numerator, denominator) {
+  return numerator >= 0n ? numerator / denominator : -((-numerator + denominator - 1n) / denominator);
+}
+function ceilDiv3(numerator, denominator) {
+  return -floorDiv3(-numerator, denominator);
+}
+function roundOutBall(value, bitsValue = int16(53)) {
+  const ball = requireBall(value);
+  const bits = nonnegativeInteger(bitsValue, "Ball dyadic precision");
+  if (bits > 100000n)
+    throw new Error("Ball dyadic precision must not exceed 100000 bits");
+  const scale2 = 1n << bits;
+  const low = ball.interval.low;
+  const high = ball.interval.high;
+  const roundedLow = new Rational(floorDiv3(low.numerator * scale2, low.denominator), scale2);
+  const roundedHigh = new Rational(ceilDiv3(high.numerator * scale2, high.denominator), scale2);
+  return ballFromInterval(new RationalInterval(roundedLow, roundedHigh));
+}
+
+class ExactBall {
+  constructor(midpoint2, radius = ZERO2) {
+    this.type = "Ball";
+    this.schema = BALL_SCHEMA;
+    this.midpoint = exactRational4(midpoint2, "Ball midpoint");
+    this.radius = exactRational4(radius, "Ball radius");
+    if (this.radius.lessThan(ZERO2))
+      throw new Error("Ball radius must be nonnegative");
+    this.interval = new RationalInterval(this.midpoint.subtract(this.radius), this.midpoint.add(this.radius));
+    Object.freeze(this);
+  }
+  toString() {
+    return `Ball(${this.midpoint}, ${this.radius})`;
+  }
+}
+
+class NestedBallReal {
+  constructor(kind, parameter, initialBall) {
+    this.type = "NestedBallReal";
+    this.schema = NESTED_BALL_SCHEMA;
+    this.kind = String(kind);
+    this.parameter = exactRational4(parameter, "Nested Ball parameter");
+    this.initialBall = requireBall(initialBall);
+    Object.freeze(this);
+  }
+  toString() {
+    return `NestedBall(${this.kind}(${this.parameter}), ${this.initialBall.interval})`;
+  }
+}
+var isBall = (value) => value instanceof ExactBall;
+var isNestedBallReal = (value) => value instanceof NestedBallReal;
+function requireBall(value) {
+  if (!isBall(value))
+    throw new Error("Expected a Ball value");
+  return value;
+}
+function promoteBall(value, label2 = "Ball operand") {
+  return isBall(value) ? value : new ExactBall(exactRational4(value, label2), ZERO2);
+}
+function hasBall(left, right = null) {
+  return isBall(left) || isBall(right);
+}
+function binaryBall(left, right, operation) {
+  const a = promoteBall(left);
+  const b = promoteBall(right);
+  return ballFromInterval(operation(a.interval, b.interval));
+}
+function divideBalls(left, right) {
+  const divisor = promoteBall(right);
+  if (divisor.interval.containsZero())
+    throw new Error("Cannot divide by a Ball containing zero");
+  return binaryBall(left, divisor, (a, b) => a.divide(b));
+}
+function integerSqrtFloor(value) {
+  if (value < 0n)
+    throw new Error("Integer square root requires a nonnegative value");
+  if (value < 2n)
+    return value;
+  let x = 1n << BigInt(Math.ceil(value.toString(2).length / 2));
+  while (true) {
+    const next = x + value / x >> 1n;
+    if (next >= x)
+      return x;
+    x = next;
+  }
+}
+function exactRationalSqrt(value) {
+  const numerator = integerSqrtFloor(value.numerator);
+  const denominator = integerSqrtFloor(value.denominator);
+  return numerator * numerator === value.numerator && denominator * denominator === value.denominator ? new Rational(numerator, denominator) : null;
+}
+function initialSqrtBall(value) {
+  if (value.lessThan(ZERO2))
+    throw new Error("Ball square root requires a nonnegative exact value");
+  const exact2 = exactRationalSqrt(value);
+  if (exact2)
+    return new ExactBall(exact2, ZERO2);
+  const high = value.greaterThan(ONE) ? value : ONE;
+  return ballFromInterval(new RationalInterval(ZERO2, high));
+}
+function nestedSqrt(value) {
+  const radicand = exactRational4(value, "Ball square-root argument");
+  return new NestedBallReal("sqrt", radicand, initialSqrtBall(radicand));
+}
+function sqrtBallAt(real, callLimit, requestedWidth = null) {
+  if (!isNestedBallReal(real) || real.kind !== "sqrt")
+    throw new Error("Unsupported nested Ball recipe");
+  let low = real.initialBall.interval.low;
+  let high = real.initialBall.interval.high;
+  let calls = 0n;
+  while (calls < callLimit) {
+    const width = high.subtract(low);
+    if (requestedWidth && width.lessThanOrEqual(requestedWidth))
+      break;
+    if (width.equals(ZERO2))
+      break;
+    const midpoint2 = low.add(high).divide(new Rational(2n, 1n));
+    if (midpoint2.multiply(midpoint2).lessThanOrEqual(real.parameter))
+      low = midpoint2;
+    else
+      high = midpoint2;
+    calls += 1n;
+  }
+  return {
+    ball: ballFromInterval(new RationalInterval(low, high)),
+    calls
+  };
+}
+function capabilities(kind) {
+  const nested = kind === "nested";
+  return map4([
+    ["valuekind", text12("numericsCapabilities")],
+    ["schema", text12("rix.numerics.capabilities@1")],
+    ["backend", text12("ball")],
+    ["representation", text12(nested ? "nestedRationalBalls" : "rationalMidpointRadius")],
+    ["operations", sequence8([text12("enclose"), text12("refine")])],
+    ["evidencelevels", sequence8([text12("proof")])],
+    ["certified", int16(1)],
+    ["arbitraryrefinement", bool5(nested)],
+    ["deterministic", int16(1)],
+    ["minimumwidth", ZERO2],
+    ["maxcalls", int16(nested ? PROVIDER_MAX_CALLS : 0n)],
+    ["maxiterations", int16(nested ? PROVIDER_MAX_CALLS : 0n)]
+  ]);
+}
+function resultRecord(subject, requestValue) {
+  const nested = isNestedBallReal(subject);
+  const providerCapabilities = capabilities(nested ? "nested" : "finite");
+  const request = normalizeRefinementRequest(requestValue, { capabilities: providerCapabilities });
+  const requestedWidth = refinementEntry(request, "absolutewidth");
+  const maxCalls = nonnegativeInteger(refinementEntry(refinementEntry(request, "work"), "maxcalls", int16(0)), "Ball maxCalls");
+  const refined = nested ? sqrtBallAt(subject, maxCalls, requestedWidth) : { ball: requireBall(subject), calls: 0n };
+  const interval2 = refined.ball.interval;
+  const achievedWidth = intervalWidth2(interval2);
+  const goalMet = achievedWidth.lessThanOrEqual(requestedWidth);
+  const status = goalMet ? "enclosed" : nested ? "budgetExhausted" : "resolutionFloor";
+  const approximation = new CertifiedApproximation(refined.ball.midpoint, interval2, {
+    representation: {
+      kind: "derived",
+      reason: status,
+      original: null,
+      requested: requestedWidth,
+      achieved: achievedWidth,
+      provider: "ball"
+    }
+  });
+  const diagnostics = status === "budgetExhausted" ? [text12("maxCallsReached")] : status === "resolutionFloor" ? [text12("finiteBallCannotRefine")] : [];
+  return map4([
+    ["valuekind", text12("enclosure")],
+    ["schema", text12("rix.numerics.enclosure@1")],
+    ["status", text12(status)],
+    ["interval", interval2],
+    ["certified", int16(1)],
+    ["goalmet", bool5(goalMet)],
+    ["requestedwidth", requestedWidth],
+    ["achievedwidth", achievedWidth],
+    ["approximation", approximation],
+    ["evidencelevel", text12("proof")],
+    ["backend", text12("ball")],
+    ["operation", refinementEntry(request, "operation")],
+    ["trace", sequence8()],
+    ["work", map4([
+      ["calls", int16(refined.calls)],
+      ["iterations", int16(refined.calls)],
+      ["maxcalls", int16(maxCalls)],
+      ["exhausted", bool5(!goalMet && nested)]
+    ])],
+    ["diagnostics", sequence8(diagnostics)],
+    ["evidence", map4([
+      ["kind", text12(nested ? "nestedBisection" : "exactEndpoints")],
+      ["property", text12("containment")],
+      ["subject", nested ? subject.parameter : subject.interval]
+    ])],
+    ["source", map4([
+      ["plugin", text12("ball")],
+      ["schema", text12(nested ? NESTED_BALL_SCHEMA : BALL_SCHEMA)],
+      ["recipe", nested ? text12(subject.kind) : text12("finite")]
+    ])]
+  ]);
+}
+function ballRecord(value) {
+  const ball = requireBall(value);
+  return map4([
+    ["valuekind", text12("ball")],
+    ["schema", text12(BALL_SCHEMA)],
+    ["midpoint", ball.midpoint],
+    ["radius", ball.radius],
+    ["interval", ball.interval],
+    ["lower", ball.interval.low],
+    ["upper", ball.interval.high],
+    ["certified", int16(1)]
+  ]);
+}
+function nestedRecord(value) {
+  if (!isNestedBallReal(value))
+    throw new Error("Expected a NestedBallReal value");
+  return map4([
+    ["valuekind", text12("nestedBallReal")],
+    ["schema", text12(NESTED_BALL_SCHEMA)],
+    ["recipe", text12(value.kind)],
+    ["parameter", value.parameter],
+    ["initialball", value.initialBall],
+    ["certified", int16(1)]
+  ]);
+}
+function contains(ballValue, candidate) {
+  const ball = requireBall(ballValue);
+  if (isBall(candidate))
+    return ball.interval.contains(candidate.interval);
+  const exact2 = exactRational4(candidate, "Ball containment candidate");
+  return ball.interval.containsValue(exact2);
+}
+function method12(name, impl) {
+  return { type: "method_builtin", name, impl };
+}
+function registerBallMethods(systemContext, owner = {}) {
+  const register = (typeName, name, impl) => systemContext.registerMethod(typeName, name, method12(name, impl), owner);
+  register("Ball", "Midpoint", ([value]) => requireBall(value).midpoint);
+  register("Ball", "Radius", ([value]) => requireBall(value).radius);
+  register("Ball", "Interval", ([value]) => requireBall(value).interval);
+  register("Ball", "Lower", ([value]) => requireBall(value).interval.low);
+  register("Ball", "Upper", ([value]) => requireBall(value).interval.high);
+  register("Ball", "Contains", ([value, candidate]) => bool5(contains(value, candidate)));
+  register("Ball", "RoundOut", ([value, bits]) => roundOutBall(value, bits ?? int16(53)));
+  register("Ball", "Record", ([value]) => ballRecord(value));
+  register("Ball", "Enclose", ([value, request]) => resultRecord(value, request));
+  register("Ball", "Refine", ([value, request]) => resultRecord(value, request));
+  register("Ball", "NumericsCapabilities", () => capabilities("finite"));
+  register("NestedBallReal", "Ball", ([value, iterations]) => {
+    const calls = nonnegativeInteger(iterations ?? int16(0), "Nested Ball iteration count");
+    return sqrtBallAt(value, calls).ball;
+  });
+  register("NestedBallReal", "InitialBall", ([value]) => value.initialBall);
+  register("NestedBallReal", "Record", ([value]) => nestedRecord(value));
+  register("NestedBallReal", "Enclose", ([value, request]) => resultRecord(value, request));
+  register("NestedBallReal", "Refine", ([value, request]) => resultRecord(value, request));
+  register("NestedBallReal", "NumericsCapabilities", () => capabilities("nested"));
+}
+function installBallOperators(registry) {
+  if (!registry)
+    return;
+  const binary2 = (name, operation) => registry.installVariant(name, {
+    name: `Ball.${name}`,
+    priority: 220,
+    prepare(args) {
+      return args.length === 2 && hasBall(args[0], args[1]) ? { args } : false;
+    },
+    impl: ([left, right]) => operation(left, right)
+  });
+  binary2("ADD", (left, right) => binaryBall(left, right, (a, b) => a.add(b)));
+  binary2("SUB", (left, right) => binaryBall(left, right, (a, b) => a.subtract(b)));
+  binary2("MUL", (left, right) => binaryBall(left, right, (a, b) => a.multiply(b)));
+  binary2("DIV", divideBalls);
+  binary2("EQ", (left, right) => {
+    const a = promoteBall(left);
+    const b = promoteBall(right);
+    return a.midpoint.equals(b.midpoint) && a.radius.equals(b.radius) ? int16(1) : null;
+  });
+  binary2("NEQ", (left, right) => {
+    const a = promoteBall(left);
+    const b = promoteBall(right);
+    return a.midpoint.equals(b.midpoint) && a.radius.equals(b.radius) ? null : int16(1);
+  });
+  registry.installVariant("NEG", {
+    name: "Ball.NEG",
+    priority: 220,
+    prepare(args) {
+      return args.length === 1 && isBall(args[0]) ? { args } : false;
+    },
+    impl: ([value]) => new ExactBall(value.midpoint.negate(), value.radius)
+  });
+}
+function constructBall(args) {
+  if (args.length === 1 && isBall(args[0]))
+    return args[0];
+  return new ExactBall(args[0], args[1] ?? ZERO2);
+}
+function createBallPluginValue() {
+  const helpers = new Map([
+    ["Ball", (args) => constructBall(args)],
+    ["Interval", (args) => ballFromInterval(new RationalInterval(exactRational4(args[0], "Ball lower endpoint"), exactRational4(args[1], "Ball upper endpoint")))],
+    ["Sqrt", (args) => nestedSqrt(args[0])],
+    ["Midpoint", (args) => requireBall(args[0]).midpoint],
+    ["Radius", (args) => requireBall(args[0]).radius],
+    ["Lower", (args) => requireBall(args[0]).interval.low],
+    ["Upper", (args) => requireBall(args[0]).interval.high],
+    ["Contains", (args) => bool5(contains(args[0], args[1]))],
+    ["RoundOut", (args) => roundOutBall(args[0], args[1] ?? int16(53))],
+    ["Record", (args) => isBall(args[0]) ? ballRecord(args[0]) : nestedRecord(args[0])]
+  ]);
+  const entries6 = new Map;
+  const extension = new Map([["immutable", int16(1)]]);
+  for (const [name, helper] of helpers) {
+    entries6.set(name, helper);
+    entries6.set(name.toUpperCase(), helper);
+    extension.set(name.toUpperCase(), method12(name, (args) => helper(args.slice(1))));
+  }
+  return { type: "map", entries: entries6, _ext: extension };
+}
+function installBallPlugin({ systemContext, registry, metadata: metadata3 = {}, options = {} }) {
+  const value = createBallPluginValue();
+  const mount = options.as || metadata3.mount || "ball";
+  const owner = { pluginId: metadata3.id || "ball", mount };
+  systemContext.registerHostCallableValue(mount, value, {
+    impl: (args) => constructBall(args),
+    pure: true,
+    doc: "Construct an exact rational midpoint-radius Ball"
+  }, {
+    doc: metadata3.description || "Certified rational and nested Ball arithmetic",
+    groups: metadata3.groups || ["Numerics", "Exact"],
+    pluginId: metadata3.id || "ball"
+  });
+  registerBallMethods(systemContext, owner);
+  installBallOperators(registry);
+  return value;
+}
+
+// ../rix/plugins/ball/ball.plugin.rix.js
+function install28(options) {
+  return installBallPlugin(options);
+}
+
 // ../rix/plugins/bundled.js
 var BUNDLED_PLUGINS = [
   {
@@ -43743,6 +44118,23 @@ var BUNDLED_PLUGINS = [
     metadata: readPluginHeader(oracle_plugin_default, "oracle.plugin.rix"),
     source: oracle_plugin_default,
     sourcePath: "bundled:oracle.plugin.rix"
+  },
+  {
+    metadata: {
+      id: "ball",
+      description: "Certified rational midpoint-radius balls and nested square-root refinement.",
+      kind: "host",
+      mount: "ball",
+      exports: ["Ball", "Interval", "Sqrt", "Midpoint", "Radius", "Lower", "Upper", "Contains", "RoundOut", "Record"],
+      groups: ["Numerics", "Exact"],
+      permissions: [],
+      provides: ["rix.ball@1", "rix.enclosable-real@1"],
+      schemas: ["rix.ball@1", "rix.ball.nested-real@1"],
+      snapshot: false,
+      deterministic: true,
+      defaultEnabled: false
+    },
+    install: install28
   },
   {
     metadata: {
@@ -44021,7 +44413,7 @@ var BUNDLED_PLUGINS = [
     ["pdf", "PDF document and figure renderer orchestrated through LaTeX.", "pdf", ["Render"], ["process", "files"], install25, "application/pdf", false],
     ["gltf", "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", "gltf", ["Render"], [], install26, "model/gltf+json", true],
     ["csv", "Deterministic CSV and TSV export for portable Tables and typed data Relations.", "csv", ["Render"], [], install27, "text/csv", true, ["tsv", "text/tab-separated-values"], ["Renderers", "Data"]]
-  ].map(([id, description, mount, exports, permissions, install28, mime, deterministic, aliases = [], groups = ["Renderers"]]) => ({
+  ].map(([id, description, mount, exports, permissions, install29, mime, deterministic, aliases = [], groups = ["Renderers"]]) => ({
     metadata: {
       id,
       description,
@@ -44036,25 +44428,25 @@ var BUNDLED_PLUGINS = [
       deterministic,
       defaultEnabled: false
     },
-    install: install28
+    install: install29
   }))
 ];
 function installBundledPlugins(catalog) {
-  for (const { metadata: metadata3, install: install28, source, sourcePath } of BUNDLED_PLUGINS) {
+  for (const { metadata: metadata3, install: install29, source, sourcePath } of BUNDLED_PLUGINS) {
     if (catalog.info(metadata3.id))
       continue;
     if (source) {
       catalog.addMetadata(metadata3, { kind: "rix", source, sourcePath });
     } else {
       catalog.addMetadata(metadata3, { kind: "host" });
-      catalog.registerInstaller(metadata3.id, install28);
+      catalog.registerInstaller(metadata3.id, install29);
     }
   }
   return catalog;
 }
 
 // ../rix/src/eval/functions/units.js
-function int16(value) {
+function int17(value) {
   return new Integer(BigInt(value));
 }
 function stringValue8(value, label2) {
@@ -44124,7 +44516,7 @@ function parseExactExpression(source, collection2) {
       if (!match)
         throw new Error(`Expected integer exponent in exact expression '${source}'`);
       index += match[0].length;
-      value = powScalar(value, int16(match[0]));
+      value = powScalar(value, int17(match[0]));
     }
     return value;
   }
@@ -44152,10 +44544,10 @@ function multiplyWithUnits(left, right) {
   if (isScalar(left) && isUnitValue(right))
     return constructQuantity(left, right);
   if (isQuantity(left) && isUnitValue(right)) {
-    return multiplyQuantityValues(left, constructQuantity(int16(1), right));
+    return multiplyQuantityValues(left, constructQuantity(int17(1), right));
   }
   if (isUnitValue(left) && isQuantity(right)) {
-    return multiplyQuantityValues(constructQuantity(int16(1), left), right);
+    return multiplyQuantityValues(constructQuantity(int17(1), left), right);
   }
   return multiplyQuantityValues(left, right);
 }
@@ -44165,21 +44557,21 @@ function divideWithUnits(left, right) {
   if (isScalar(left) && isUnitValue(right))
     return constructQuantity(left, invertUnit(right));
   if (isUnitValue(left) && isScalar(right))
-    return constructQuantity(divideScalars(int16(1), right), left);
+    return constructQuantity(divideScalars(int17(1), right), left);
   if (isQuantity(left) && isUnitValue(right)) {
-    return divideQuantityValues(left, constructQuantity(int16(1), right));
+    return divideQuantityValues(left, constructQuantity(int17(1), right));
   }
   if (isUnitValue(left) && isQuantity(right)) {
-    return divideQuantityValues(constructQuantity(int16(1), left), right);
+    return divideQuantityValues(constructQuantity(int17(1), left), right);
   }
   return divideQuantityValues(left, right);
 }
 function resolveTargetUnit(target, context, systemContext) {
   if (isUnitValue(target))
     return target;
-  const text12 = stringValue8(target, "ConvertUnit target");
+  const text13 = stringValue8(target, "ConvertUnit target");
   const collection2 = activeCollection(context, systemContext, "Units", ["UNITS", "Units"]);
-  return parseUnitExpression(text12, collection2);
+  return parseUnitExpression(text13, collection2);
 }
 var unitExactFunctions = {
   UNIT: {
@@ -44223,7 +44615,7 @@ var unitExactFunctions = {
   }
 };
 function boolResult3(value) {
-  return value ? int16(1) : null;
+  return value ? int17(1) : null;
 }
 function addWithOptionalWarning([left, right], context) {
   const warnings = context?.getEnv?.("warnings", runtimeDefaults.warnings) ?? runtimeDefaults.warnings;
@@ -47243,16 +47635,16 @@ function sheetPlaneKey2(selections) {
 }
 var RIXCEL_FORMULA_CLIPBOARD_TYPE = "application/x-rixcel-formula";
 var RIXCEL_FORMULA_BLOCK_CLIPBOARD_TYPE = "application/x-rixcel-formula-block";
-function parseSheetFormulaClipboard(text12, fallbackAssignmentMode = ":=") {
-  const source = String(text12 ?? "");
+function parseSheetFormulaClipboard(text13, fallbackAssignmentMode = ":=") {
+  const source = String(text13 ?? "");
   const match = source.match(/^\s*(::=|~~=|:=|~=|=)\s*([\s\S]+)$/u);
   return Object.freeze({
     source: match ? match[2] : source,
     assignmentMode: match?.[1] ?? fallbackAssignmentMode
   });
 }
-function parseSheetFormulaBlock(text12, fallbackAssignmentMode = ":=") {
-  const rows = String(text12 ?? "").replace(/\r\n?/gu, `
+function parseSheetFormulaBlock(text13, fallbackAssignmentMode = ":=") {
+  const rows = String(text13 ?? "").replace(/\r\n?/gu, `
 `).split(`
 `);
   if (rows.at(-1) === "")
@@ -49194,8 +49586,8 @@ function preview(value, formatValue2) {
   if (value === undefined)
     return "";
   try {
-    const text12 = formatValue2 ? formatValue2(value) : String(value);
-    return text12.length > 72 ? `${text12.slice(0, 69)}…` : text12;
+    const text13 = formatValue2 ? formatValue2(value) : String(value);
+    return text13.length > 72 ? `${text13.slice(0, 69)}…` : text13;
   } catch {
     return "";
   }
@@ -49323,7 +49715,7 @@ function complete(source, cursor, { context, systemContext, formatValue: formatV
   }
   return { from, to: cursor, query, candidates: filterAndSort(candidates, query) };
 }
-export { tokenize, BaseSystem, Rational, RationalInterval, Fraction, Integer, disposeAsyncResources, isOutputValue, renderOutputHtml, formatValue, stringObj2 as stringObj, makeProto, valueMethod, typeRegistry, registerType, installRegisteredTypes, unsupportedRefinementResult, complete, PluginCatalog, Context, install, install2 as install1, install3 as install2, install4 as install3, install5 as install4, install6 as install5, install7 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, install21 as install19, install22 as install20, install23 as install21, install24 as install22, install25 as install23, install26 as install24, install27 as install25, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateAsync, mountOutputWidgets };
+export { tokenize, BaseSystem, Rational, RationalInterval, Fraction, Integer, disposeAsyncResources, isOutputValue, renderOutputHtml, formatValue, stringObj2 as stringObj, makeProto, valueMethod, typeRegistry, registerType, installRegisteredTypes, unsupportedRefinementResult, complete, PluginCatalog, Context, install, install2 as install1, install3 as install2, install4 as install3, install5 as install4, install6 as install5, install7 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, install21 as install19, install22 as install20, install23 as install21, install24 as install22, install25 as install23, install26 as install24, install27 as install25, install28 as install26, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateAsync, mountOutputWidgets };
 
-//# debugId=C5A20BD2D27D293164756E2164756E21
-//# sourceMappingURL=chunk-j5c9t4zh.js.map
+//# debugId=6E532D481CCB809464756E2164756E21
+//# sourceMappingURL=chunk-4njzyhga.js.map

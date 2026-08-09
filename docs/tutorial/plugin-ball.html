@@ -1,0 +1,61 @@
+<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Explore exact midpoint-radius balls and bounded square-root refinement." /><title>Certified nested real balls — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./plugins-numbers-and-numerics.html#lesson-start" title="Plugins: Numbers and numerics">14</a> <span aria-hidden="true">·</span> <span>a</span></p><h1>Certified nested real balls</h1><p class="deck">Explore exact midpoint-radius balls and bounded square-root refinement.</p><aside class="challenge"><p class="eyebrow">Develop in RiX Notebook</p><p>Open <code>rix/plugins/ball/tutorial.md</code> in the macOS app to edit this lesson with live preview and plugin-aware code results. Use Reload plugins after changing project-local plugin source.</p></aside><div class="lesson-content"><h2>Exact finite balls</h2>
+<p>A <code>Ball</code> is an immutable exact midpoint-radius snapshot. Its interval and component accessors never pass through a floating-point value:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">.Plugin.Load(&quot;ball&quot;);
+b := .ball(3 / 2, 1 / 4);
+.Table({=
+  columns = [&quot;ball&quot;, &quot;midpoint&quot;, &quot;radius&quot;, &quot;lower&quot;, &quot;upper&quot;],
+  rows = [[b, b.Midpoint(), b.Radius(), b.Lower(), b.Upper()]]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The ball contains every value from <code>5/4</code> through <code>7/4</code>, endpoints included. <code>Contains</code> can check either an exact scalar or another ball.</p>
+<h2>Outward arithmetic and dyadic grids</h2>
+<p>Finite-ball arithmetic returns the exact interval hull of the operation. <code>RoundOut</code> explicitly widens both endpoints to a selected dyadic grid:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="13" spellcheck="false">.Plugin.Load(&quot;ball&quot;);
+a := .ball(2, 1 / 10);
+b := .ball(3, 1 / 5);
+product := a * b;
+dyadic := product.RoundOut(8);
+.Table({=
+  columns = [&quot;operation&quot;, &quot;ball&quot;, &quot;certified interval&quot;],
+  rows = [
+    [&quot;a + b&quot;, a + b, (a + b).Interval()],
+    [&quot;a * b&quot;, product, product.Interval()],
+    [&quot;8-bit outward&quot;, dyadic, dyadic.Interval()]
+  ]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Division works when the divisor&#039;s ball excludes zero. A ball that contains zero cannot certify a finite reciprocal and is rejected.</p>
+<h2>A nested square-root real</h2>
+<p><code>Sqrt</code> creates a recipe rather than choosing one permanent approximation. Each requested bisection snapshot is contained in every earlier one:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="12" spellcheck="false">.Plugin.Load(&quot;ball&quot;);
+root := .ball.Sqrt(2);
+steps := [0, 1, 2, 4, 8];
+.Table({=
+  columns = [&quot;bisections&quot;, &quot;ball&quot;, &quot;interval&quot;, &quot;width&quot;],
+  rows = steps.Map((n) -&gt; [
+    n,
+    root.Ball(n),
+    root.Ball(n).Interval(),
+    root.Ball(n).Upper() - root.Ball(n).Lower()
+  ])
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The lower endpoint always squares to at most <code>2</code>, and the upper endpoint always squares to at least <code>2</code>. Perfect rational squares such as <code>9</code> start as point balls immediately.</p>
+<h2>Generic refinement and Halo decisions</h2>
+<p>The shared Numerics contract asks for a target width and always applies a finite work budget. Language Halo comparisons use the same certified protocol:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="18" spellcheck="false">.Plugin.Load(&quot;ball&quot;);
+.Plugin.Load(&quot;numerics&quot;);
+root := .ball.Sqrt(2);
+result := .numerics.Refine(root, {=
+  absoluteWidth = 1 / 1000,
+  maxWork = 20
+});
+.Table({=
+  columns = [&quot;status&quot;, &quot;interval&quot;, &quot;width&quot;, &quot;calls&quot;, &quot;certified&quot;],
+  rows = [[
+    result[:status],
+    result[:interval],
+    result[:achievedWidth],
+    result[:work][:calls],
+    result[:certified]
+  ]]
+});
+root &lt; {~ 3 / 2, 1 / 1000 };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>With <code>maxCalls=0</code>, that last comparison is an undecided value carrying <code>:budgetExhausted</code> evidence. Asking an already finite ball for a narrower enclosure similarly produces <code>:resolutionFloor</code>; neither outcome discards its best certified interval.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

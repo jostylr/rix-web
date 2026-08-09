@@ -179,10 +179,11 @@ test("number and decision tutorials cover certified notation, output modes, and 
 
 test("plugin tutorials are generated after core lessons and grouped by theme", async () => {
     expect(tutorialByNumber("14")?.title).toBe("Plugins: Numbers and numerics");
-    expect(tutorialByNumber("14a")?.file).toBe("plugin-float.html");
-    expect(tutorialByNumber("14b")?.file).toBe("plugin-numerics.html");
-    expect(tutorialByNumber("14c")?.file).toBe("plugin-oracle.html");
-    expect(tutorialByNumber("14d")?.file).toBe("plugin-radix.html");
+    expect(tutorialByNumber("14a")?.file).toBe("plugin-ball.html");
+    expect(tutorialByNumber("14b")?.file).toBe("plugin-float.html");
+    expect(tutorialByNumber("14c")?.file).toBe("plugin-numerics.html");
+    expect(tutorialByNumber("14d")?.file).toBe("plugin-oracle.html");
+    expect(tutorialByNumber("14e")?.file).toBe("plugin-radix.html");
     expect(tutorialByNumber("15")?.title).toBe("Plugins: Algebra and analysis");
     expect(tutorialByNumber("15a")?.pluginId).toBe("algebra");
     expect(tutorialByNumber("16")?.title).toBe("Plugins: Graphics and geometry");

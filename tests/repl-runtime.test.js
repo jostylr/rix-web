@@ -360,6 +360,7 @@ test("the web REPL catalogs bundled plugins and loads approved JavaScript on dem
 
     const available = repl.run('.Plugin.List()').text;
     expect(available).toContain("float");
+    expect(available).toContain("ball");
     expect(available).toContain("numerics");
     expect(available).toContain("oracle");
     expect(available).toContain("radix");
@@ -379,9 +380,14 @@ test("the web REPL catalogs bundled plugins and loads approved JavaScript on dem
     expect(repl.run(".Min(.float(1 / 2), 2)").text).toBe("0.5");
     expect(repl.run(".Max(.float(1 / 2), 2)").text).toBe("2");
     expect(repl.run(".float.Round(.float(1 / 3), 2)").text).toBe("33/100");
+    expect(repl.run('.Plugin.Load("ball")').type).toBe("result");
+    expect(repl.run('.ball(3 / 2, 1 / 4).Interval()').text).toBe("1..1/4:1..3/4");
+    expect(repl.run('.ball.Sqrt(2) < {~ 3 / 2, 1 / 1000 }').text).toBe("1");
     expect(repl.run('.Plugin.Load("numerics")').type).toBe("result");
     expect(repl.run('.Plugin.Load("oracle")').type).toBe("result");
     expect(repl.run('.numerics.Refine(.oracle.Rational(3 / 7), {= absoluteWidth=1/1000, maxWork=20 })[:status]').text)
+        .toBe("enclosed");
+    expect(repl.run('.numerics.Refine(.ball.Sqrt(2), {= absoluteWidth=1/1000, maxWork=20 })[:status]').text)
         .toBe("enclosed");
     expect(repl.run('.numerics.Sample(.float(1 / 3), {= maxWork=20 })[:status]').text)
         .toBe("approximate");

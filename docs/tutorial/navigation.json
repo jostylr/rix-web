@@ -787,6 +787,15 @@
     {
       "number": "14a",
       "parent": "14",
+      "file": "plugin-ball.html",
+      "title": "Certified nested real balls",
+      "description": "Explore exact midpoint-radius balls and bounded square-root refinement.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "14b",
+      "parent": "14",
       "file": "plugin-float.html",
       "title": "Optional Float math",
       "description": "Load IEEE-754 approximate math without making it a core RiX numeric type.",
@@ -794,7 +803,7 @@
       "status": "implemented"
     },
     {
-      "number": "14b",
+      "number": "14c",
       "parent": "14",
       "file": "plugin-numerics.html",
       "title": "Neutral numerical refinement",
@@ -803,7 +812,7 @@
       "status": "implemented"
     },
     {
-      "number": "14c",
+      "number": "14d",
       "parent": "14",
       "file": "plugin-oracle.html",
       "title": "Rational betweenness oracles",
@@ -812,7 +821,7 @@
       "status": "implemented"
     },
     {
-      "number": "14d",
+      "number": "14e",
       "parent": "14",
       "file": "plugin-radix.html",
       "title": "Inspect an exact repeating expansion",

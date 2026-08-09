@@ -43,6 +43,19 @@ export const pluginTutorialGroups = [
 ];
 export const pluginTutorials = [
   {
+    "pluginId": "ball",
+    "pluginDirectory": "ball",
+    "title": "Certified nested real balls",
+    "description": "Explore exact midpoint-radius balls and bounded square-root refinement.",
+    "status": "implemented",
+    "theme": "Numbers and numerics",
+    "sourcePath": "../rix/plugins/ball/tutorial.md",
+    "number": "14a",
+    "parent": "14",
+    "file": "plugin-ball.html",
+    "pluginTutorial": true
+  },
+  {
     "pluginId": "float",
     "pluginDirectory": "float",
     "title": "Optional Float math",
@@ -50,7 +63,7 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Numbers and numerics",
     "sourcePath": "../rix/plugins/float/tutorial.md",
-    "number": "14a",
+    "number": "14b",
     "parent": "14",
     "file": "plugin-float.html",
     "pluginTutorial": true
@@ -63,7 +76,7 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Numbers and numerics",
     "sourcePath": "../rix/plugins/numerics/tutorial.md",
-    "number": "14b",
+    "number": "14c",
     "parent": "14",
     "file": "plugin-numerics.html",
     "pluginTutorial": true
@@ -76,7 +89,7 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Numbers and numerics",
     "sourcePath": "../rix/plugins/oracle/tutorial.md",
-    "number": "14c",
+    "number": "14d",
     "parent": "14",
     "file": "plugin-oracle.html",
     "pluginTutorial": true
@@ -89,7 +102,7 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Numbers and numerics",
     "sourcePath": "../rix/plugins/radix/tutorial.md",
-    "number": "14d",
+    "number": "14e",
     "parent": "14",
     "file": "plugin-radix.html",
     "pluginTutorial": true
