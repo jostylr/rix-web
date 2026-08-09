@@ -110,7 +110,7 @@ ordinary values pass through unchanged.
 
 ```rix edu
 [1, {: :error, :missing, 2}, {: :error, :ignore, 9}, 4]
-    |>! ((kind, fallback) -> kind == :missing ?? fallback ?: _)
+    |>! ((kind, fallback) -> kind == :missing ?: fallback ?_ _)
     |>> ((value) -> value * 10);
 ```
 

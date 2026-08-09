@@ -90,7 +90,7 @@ RiX source.
 
 ### 6. Control, blocks, and deferred work
 
-- **6a Ternaries and cases** — `??` / `?:`, nested conditionals, and case
+- **6a Ternaries and cases** — `?:` / `?_` / `??`, nested decisions, and case
   containers.
 - **6b Brace sigils** — plain blocks; map, set, tuple, loop, mutation, case,
   and system containers; the space-after-sigil rule.

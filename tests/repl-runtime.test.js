@@ -75,7 +75,7 @@ test("the web REPL runs async drain, expected-value recovery, and Retry", async 
 
     const recovered = await repl.runAsync(
         "[1, {: :error, :missing, 2}, {: :error, :drop, 9}] "
-        + "|>! ((kind, fallback) -> kind == :missing ?? fallback ?: _)",
+        + "|>! ((kind, fallback) -> kind == :missing ?: fallback ?_ _)",
     );
     expect(recovered.type).toBe("result");
     expect(recovered.text).toBe("[1, 2]");

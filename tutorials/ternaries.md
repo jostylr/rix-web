@@ -6,7 +6,8 @@ description: Choose values without losing expression flow.
 
 ## Orientation
 
-The `??` and `?:` pair reads as condition, true branch, false branch. Each branch can be an expression or a code block.
+The decision markers read as `condition ?: true-branch ?_ false-branch ?? undecided-branch`.
+The false and undecided branches are optional; each branch can be an expression or a code block.
 
 Read this chapter with RatCalc open. Predict the result before running an
 example, then change a single part and run it again. That small loop of
@@ -17,7 +18,7 @@ feel like a language rather than a table of symbols.
 
 ```rix edu
 x := 7;
-x % 2 == 0 ?? "even" ?: "odd" ;
+x % 2 == 0 ?: "even" ?_ "odd" ;
 ```
 
 The final line is the displayed value; the earlier lines set up the experiment.

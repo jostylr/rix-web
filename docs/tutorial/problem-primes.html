@@ -21,8 +21,8 @@ end
 println(filter(n -&gt; !has_divisor(n), 2:30))</code></pre></section>
 <h2>RiX</h2>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="8" spellcheck="false">HasDivisor(n, d) -&gt;
-    d * d &gt; n ?? 0 ?:
-    n % d == 0 ?? 1 ?:
+    d * d &gt; n ?: 0 ?_
+    n % d == 0 ?: 1 ?_
     HasDivisor(n, d + 1);
 
 IsPrime(n) -&gt; n &gt;= 2 &amp;&amp; HasDivisor(n, 2) == 0;

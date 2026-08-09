@@ -31,6 +31,11 @@ answer := .oracle.Ask(x, (2 / 5):(1 / 2), 1 / 100);
     ])
   })
 ]);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p><code>result[:approximation]</code> is the scalar form of the work completed by the refiner. It is present whether the requested width was reached or the finite budget was exhausted:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">bounded := .oracle.Refine(x, {= width = 1/1000000, maxCalls = 3 });
+bounded[:status];         ## :budgetExhausted
+bounded[:approximation];  ## certified candidate plus the achieved enclosure</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>This value can participate in ordinary Core/RiX arithmetic and three-state comparisons. The Oracle remains responsible for further refinement; the finite approximation itself does not hide an infinite process.</p>
 <p>The trace is suitable for the CLI, RiX Web, or a document renderer. A renderer does not query the oracle itself; the bounded mathematical operation first produces a portable interval and evidence.</p>
 <h2>Reproducible alternatives</h2>
 <p>The random-halo demonstration records its seed. <code>Ask</code> replays one branch, while bounded <code>AskAll</code> shows the two finite alternatives without treating that observation as a theorem about every possible oracle:</p>

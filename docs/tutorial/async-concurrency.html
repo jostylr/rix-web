@@ -38,7 +38,7 @@
 $latest;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Expected failures can instead be ordinary tuple values shaped <code>{: :error, ...args }</code>. <code>|&gt;!</code> calls its handler with the tail entries. Returning null skips that collection item and prevents later stages from seeing it; ordinary values pass through unchanged.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">[1, {: :error, :missing, 2}, {: :error, :ignore, 9}, 4]
-    |&gt;! ((kind, fallback) -&gt; kind == :missing ?? fallback ?: _)
+    |&gt;! ((kind, fallback) -&gt; kind == :missing ?: fallback ?_ _)
     |&gt;&gt; ((value) -&gt; value * 10);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>This is deliberately not a thrown-error catch. Language failures, cancellation, breaks, and typed operational faults still use their normal control-flow and <code>##!&gt;</code> rules.</p>
 <h2>Cross ordered barriers</h2>

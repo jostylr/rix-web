@@ -43,8 +43,8 @@ println(filter(n -> !has_divisor(n), 2:30))
 
 ```rix edu
 HasDivisor(n, d) ->
-    d * d > n ?? 0 ?:
-    n % d == 0 ?? 1 ?:
+    d * d > n ?: 0 ?_
+    n % d == 0 ?: 1 ?_
     HasDivisor(n, d + 1);
 
 IsPrime(n) -> n >= 2 && HasDivisor(n, 2) == 0;

@@ -2,7 +2,7 @@
 <p>A reusable rule should have an example that demonstrates its expected behavior and a diagnostic label that gives failures context. This capstone keeps the arithmetic simple so the verification structure remains visible.</p>
 <p>This capstone deliberately reuses ideas from every lesson in its section. Read the setup first, predict the last value, and only then run the cell. If the result surprises you, inspect each named intermediate rather than changing several lines at once.</p>
 <h2>Build the solution</h2>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">ClampPositive(x) -&gt; x &gt; 0 ?? x ?: 0;
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">ClampPositive(x) -&gt; x &gt; 0 ?: x ?_ 0;
 actual := ClampPositive(-3);
 expected := 0;
 actual == expected ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>

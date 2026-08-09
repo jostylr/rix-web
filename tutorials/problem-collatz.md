@@ -47,10 +47,10 @@ println(reaches_one(27, 120))
 ## RiX
 
 ```rix edu
-NextCollatz(n) -> n % 2 == 0 ?? n / 2 ?: 3 * n + 1;
+NextCollatz(n) -> n % 2 == 0 ?: n / 2 ?_ 3 * n + 1;
 CollatzWithin(n, steps) ->
-    n == 1 ?? 1 ?:
-    steps == 0 ?? 0 ?:
+    n == 1 ?: 1 ?_
+    steps == 0 ?: 0 ?_
     CollatzWithin(NextCollatz(n), steps - 1);
 
 CollatzWithin(27, 120) ;

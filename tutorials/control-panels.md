@@ -109,7 +109,7 @@ candidate is invalid. `disabled=1` removes a control from interaction, while
 `readOnly=1` keeps its value inspectable without allowing commits.
 
 ```rix edu
-Positive(x) -> x > 0 ?? _ ?: "amount must be positive";
+Positive(x) -> x > 0 ?: _ ?_ "amount must be positive";
 $$amount := 3/4;
 $$fixed := 2;
 

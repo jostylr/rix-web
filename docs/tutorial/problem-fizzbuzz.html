@@ -26,9 +26,9 @@ end
 println(fizz_buzz.(1:15))</code></pre></section>
 <h2>RiX</h2>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">FizzBuzz(n) -&gt;
-    n % 15 == 0 ?? &quot;FizzBuzz&quot; ?:
-    n % 3 == 0 ?? &quot;Fizz&quot; ?:
-    n % 5 == 0 ?? &quot;Buzz&quot; ?:
+    n % 15 == 0 ?: &quot;FizzBuzz&quot; ?_
+    n % 3 == 0 ?: &quot;Fizz&quot; ?_
+    n % 5 == 0 ?: &quot;Buzz&quot; ?_
     n;
 
 [1, |+1, |; 15] |&gt;&gt; (n) -&gt; FizzBuzz(n) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>

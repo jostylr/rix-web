@@ -23,11 +23,11 @@ print(newton_sqrt(2, 1e-6))</code></pre></section>
 end
 println(newton_sqrt(2, 1e-6))</code></pre></section>
 <h2>RiX</h2>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="8" spellcheck="false">Gap(n, x) -&gt; x * x &gt; n ?? x * x - n ?: n - x * x;
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="8" spellcheck="false">Gap(n, x) -&gt; x * x &gt; n ?: x * x - n ?_ n - x * x;
 NewtonStep(n, x) -&gt; (x + n / x) / 2;
 NewtonSqrt(n, tolerance, guess) -&gt;
-    Gap(n, guess) &lt; tolerance ??
-        guess ?:
+    Gap(n, guess) &lt; tolerance ?:
+        guess ?_
         NewtonSqrt(n, tolerance, NewtonStep(n, guess));
 
 NewtonSqrt(2, 1 / 1000000, 1) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>

@@ -61,7 +61,7 @@ $view ;</textarea><div class="tutorial-output" data-tutorial-output></div></sect
 <p>Source evaluation remains a host responsibility. The portable control stores the target identity and current value, not a browser parser or floating-point copy.</p>
 <h2>Validate or lock a control</h2>
 <p>A validator returns <code>_</code> for an accepted value or a string explaining why a candidate is invalid. <code>disabled=1</code> removes a control from interaction, while <code>readOnly=1</code> keeps its value inspectable without allowing commits.</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="25" spellcheck="false">Positive(x) -&gt; x &gt; 0 ?? _ ?: &quot;amount must be positive&quot;;
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="25" spellcheck="false">Positive(x) -&gt; x &gt; 0 ?: _ ?_ &quot;amount must be positive&quot;;
 $$amount := 3/4;
 $$fixed := 2;
 

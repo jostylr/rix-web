@@ -45,11 +45,11 @@ println(newton_sqrt(2, 1e-6))
 ## RiX
 
 ```rix edu
-Gap(n, x) -> x * x > n ?? x * x - n ?: n - x * x;
+Gap(n, x) -> x * x > n ?: x * x - n ?_ n - x * x;
 NewtonStep(n, x) -> (x + n / x) / 2;
 NewtonSqrt(n, tolerance, guess) ->
-    Gap(n, guess) < tolerance ??
-        guess ?:
+    Gap(n, guess) < tolerance ?:
+        guess ?_
         NewtonSqrt(n, tolerance, NewtonStep(n, guess));
 
 NewtonSqrt(2, 1 / 1000000, 1) ;

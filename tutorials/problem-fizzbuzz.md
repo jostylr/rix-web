@@ -48,9 +48,9 @@ println(fizz_buzz.(1:15))
 
 ```rix edu
 FizzBuzz(n) ->
-    n % 15 == 0 ?? "FizzBuzz" ?:
-    n % 3 == 0 ?? "Fizz" ?:
-    n % 5 == 0 ?? "Buzz" ?:
+    n % 15 == 0 ?: "FizzBuzz" ?_
+    n % 3 == 0 ?: "Fizz" ?_
+    n % 5 == 0 ?: "Buzz" ?_
     n;
 
 [1, |+1, |; 15] |>> (n) -> FizzBuzz(n) ;

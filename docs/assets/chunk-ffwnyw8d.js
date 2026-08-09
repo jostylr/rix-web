@@ -587,6 +587,9 @@ class Rational {
     return this.#denominator;
   }
   add(other) {
+    if (other?.isCertifiedApproximation === true) {
+      return other._operateExactLeft("add", this);
+    }
     if (other.constructor.name === "Integer") {
       const otherAsRational = new Rational(other.value, 1n);
       return this.add(otherAsRational);
@@ -608,6 +611,9 @@ class Rational {
     }
   }
   subtract(other) {
+    if (other?.isCertifiedApproximation === true) {
+      return other._operateExactLeft("subtract", this);
+    }
     if (other.constructor.name === "Integer") {
       const otherAsRational = new Rational(other.value, 1n);
       return this.subtract(otherAsRational);
@@ -628,6 +634,9 @@ class Rational {
     }
   }
   multiply(other) {
+    if (other?.isCertifiedApproximation === true) {
+      return other._operateExactLeft("multiply", this);
+    }
     if (other.constructor.name === "Integer") {
       const otherAsRational = new Rational(other.value, 1n);
       return this.multiply(otherAsRational);
@@ -648,6 +657,9 @@ class Rational {
     }
   }
   divide(other) {
+    if (other?.isCertifiedApproximation === true) {
+      return other._operateExactLeft("divide", this);
+    }
     if (other.constructor.name === "Integer") {
       if (other.value === 0n) {
         throw new Error("Division by zero");
@@ -672,6 +684,25 @@ class Rational {
     } else {
       throw new Error(`Cannot divide Rational by ${other.constructor.name}`);
     }
+  }
+  possibleRelationsTo(other) {
+    if (other?.isCertifiedApproximation === true)
+      other = other.enclosure;
+    if (other?.constructor?.name === "Integer")
+      other = new Rational(other.value, 1n);
+    if (other instanceof Rational)
+      return this.lessThan(other) ? 1 : this.greaterThan(other) ? 4 : 2;
+    if (other?.low && other?.high) {
+      let mask = 0;
+      if (this.lessThan(other.high))
+        mask |= 1;
+      if (other.low.lessThanOrEqual(this) && this.lessThanOrEqual(other.high))
+        mask |= 2;
+      if (this.greaterThan(other.low))
+        mask |= 4;
+      return mask;
+    }
+    throw new TypeError("Possible relations require a Core numeric value");
   }
   negate() {
     return new Rational(-this.#numerator, this.#denominator);
@@ -1768,6 +1799,9 @@ class RationalInterval {
     return this.#high;
   }
   add(other) {
+    if (other?.isCertifiedApproximation === true) {
+      return this.add(other.enclosure);
+    }
     if (other.value !== undefined && typeof other.value === "bigint") {
       const otherAsRational = new Rational(other.value, 1n);
       const otherAsInterval = new RationalInterval(otherAsRational, otherAsRational);
@@ -1784,6 +1818,9 @@ class RationalInterval {
     }
   }
   subtract(other) {
+    if (other?.isCertifiedApproximation === true) {
+      return this.subtract(other.enclosure);
+    }
     if (other.value !== undefined && typeof other.value === "bigint") {
       const otherAsRational = new Rational(other.value, 1n);
       const otherAsInterval = new RationalInterval(otherAsRational, otherAsRational);
@@ -1800,6 +1837,9 @@ class RationalInterval {
     }
   }
   multiply(other) {
+    if (other?.isCertifiedApproximation === true) {
+      return this.multiply(other.enclosure);
+    }
     if (other.value !== undefined && typeof other.value === "bigint") {
       const otherAsRational = new Rational(other.value, 1n);
       const otherAsInterval = new RationalInterval(otherAsRational, otherAsRational);
@@ -1828,6 +1868,9 @@ class RationalInterval {
     }
   }
   divide(other) {
+    if (other?.isCertifiedApproximation === true) {
+      return this.divide(other.enclosure);
+    }
     if (other.value !== undefined && typeof other.value === "bigint") {
       if (other.value === 0n) {
         throw new Error("Division by zero");
@@ -1867,6 +1910,27 @@ class RationalInterval {
     } else {
       throw new Error(`Cannot divide RationalInterval by ${other.constructor.name}`);
     }
+  }
+  possibleRelationsTo(other) {
+    if (other?.isCertifiedApproximation === true)
+      other = other.enclosure;
+    if (other?.value !== undefined && typeof other.value === "bigint") {
+      other = new Rational(other.value, 1n);
+    }
+    if (other?.numerator !== undefined && other?.denominator !== undefined) {
+      other = new RationalInterval(other, other);
+    }
+    if (!other?.low || !other?.high) {
+      throw new TypeError("Possible relations require a Core numeric value");
+    }
+    let mask = 0;
+    if (this.#low.lessThan(other.high))
+      mask |= 1;
+    if (this.#low.lessThanOrEqual(other.high) && other.low.lessThanOrEqual(this.#high))
+      mask |= 2;
+    if (this.#high.greaterThan(other.low))
+      mask |= 4;
+    return mask;
   }
   reciprocate() {
     if (this.containsZero()) {
@@ -2678,6 +2742,9 @@ class Integer {
     return this.#value;
   }
   add(other) {
+    if (other?.isCertifiedApproximation === true) {
+      return other._operateExactLeft("add", this);
+    }
     if (other instanceof Integer) {
       return new Integer(this.#value + other.value);
     } else if (other instanceof Rational) {
@@ -2693,6 +2760,9 @@ class Integer {
     }
   }
   subtract(other) {
+    if (other?.isCertifiedApproximation === true) {
+      return other._operateExactLeft("subtract", this);
+    }
     if (other instanceof Integer) {
       return new Integer(this.#value - other.value);
     } else if (other instanceof Rational) {
@@ -2708,6 +2778,9 @@ class Integer {
     }
   }
   multiply(other) {
+    if (other?.isCertifiedApproximation === true) {
+      return other._operateExactLeft("multiply", this);
+    }
     if (other instanceof Integer) {
       return new Integer(this.#value * other.value);
     } else if (other instanceof Rational) {
@@ -2723,6 +2796,9 @@ class Integer {
     }
   }
   divide(other) {
+    if (other?.isCertifiedApproximation === true) {
+      return other._operateExactLeft("divide", this);
+    }
     if (other instanceof Integer) {
       if (other.value === 0n) {
         throw new Error("Division by zero");
@@ -2743,6 +2819,26 @@ class Integer {
     } else {
       throw new Error(`Cannot divide Integer by ${other.constructor.name}`);
     }
+  }
+  possibleRelationsTo(other) {
+    const point = new Rational(this.#value, 1n);
+    if (other?.isCertifiedApproximation === true)
+      other = other.enclosure;
+    if (other instanceof Integer)
+      return this.#value < other.value ? 1 : this.#value > other.value ? 4 : 2;
+    if (other instanceof Rational)
+      return point.lessThan(other) ? 1 : point.greaterThan(other) ? 4 : 2;
+    if (other?.low && other?.high) {
+      let mask = 0;
+      if (point.lessThan(other.high))
+        mask |= 1;
+      if (other.low.lessThanOrEqual(point) && point.lessThanOrEqual(other.high))
+        mask |= 2;
+      if (point.greaterThan(other.low))
+        mask |= 4;
+      return mask;
+    }
+    throw new TypeError("Possible relations require a Core numeric value");
   }
   modulo(other) {
     if (other.value === 0n) {
@@ -2930,6 +3026,386 @@ class Integer {
   toJSON() {
     return { $ratmath: "Integer", value: this.#value.toString() };
   }
+}
+
+// ../packages/core/src/certified-approximation.js
+var Relation = Object.freeze({
+  LESS: 1,
+  EQUAL: 2,
+  GREATER: 4
+});
+function asRational(value, label = "value") {
+  if (value instanceof Rational)
+    return value;
+  if (value instanceof Integer)
+    return value.toRational();
+  throw new TypeError(`${label} must be an Integer or Rational`);
+}
+function exactScalar(value) {
+  const rational = asRational(value);
+  return rational.denominator === 1n ? new Integer(rational.numerator) : rational;
+}
+function pointInterval(value) {
+  const rational = asRational(value);
+  return new RationalInterval(rational, rational);
+}
+function freezeRepresentation(value) {
+  if (value === null || value === undefined)
+    return null;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("Approximation representation must be an object");
+  }
+  const copy = { ...value };
+  if (Array.isArray(copy.certifiedPrefix)) {
+    copy.certifiedPrefix = Object.freeze([...copy.certifiedPrefix]);
+  }
+  if (Array.isArray(copy.provisionalSuffix)) {
+    copy.provisionalSuffix = Object.freeze([...copy.provisionalSuffix]);
+  }
+  return Object.freeze(copy);
+}
+function isPoint(interval) {
+  return interval.low.equals(interval.high);
+}
+function normalize(candidate, enclosure, options = {}) {
+  if (isPoint(enclosure) && options.preserveWrapper !== true) {
+    return exactScalar(enclosure.low);
+  }
+  return new CertifiedApproximation(candidate, enclosure, options);
+}
+function operand(value) {
+  if (value instanceof CertifiedApproximation) {
+    return { candidate: value.candidate, enclosure: value.enclosure, approximation: true };
+  }
+  if (value instanceof RationalInterval) {
+    return { candidate: null, enclosure: value, intervalCollection: true };
+  }
+  if (value instanceof Integer || value instanceof Rational) {
+    return { candidate: value, enclosure: pointInterval(value), exact: true };
+  }
+  return null;
+}
+function derivedOptions(left, right = null) {
+  return {
+    representation: {
+      kind: "derived",
+      reason: "derived",
+      original: null
+    },
+    sourceId: Symbol("ratmath-derived-approximation"),
+    dependencies: right ? [left.sourceId, right.sourceId].filter(Boolean) : [left.sourceId].filter(Boolean)
+  };
+}
+function serializeSourceId(sourceId) {
+  return typeof sourceId === "string" || typeof sourceId === "number" ? sourceId : null;
+}
+function relationEnclosure(value) {
+  if (value instanceof CertifiedApproximation)
+    return value.enclosure;
+  if (value instanceof RationalInterval)
+    return value;
+  if (value instanceof Integer || value instanceof Rational)
+    return pointInterval(value);
+  throw new TypeError("Possible relations require Core numeric values");
+}
+function possibleRelations(left, right) {
+  if (left instanceof CertifiedApproximation && right instanceof CertifiedApproximation && left.sameSource(right)) {
+    return Relation.EQUAL;
+  }
+  const a = relationEnclosure(left);
+  const b = relationEnclosure(right);
+  let result = 0;
+  if (a.low.lessThan(b.high))
+    result |= Relation.LESS;
+  if (a.low.lessThanOrEqual(b.high) && b.low.lessThanOrEqual(a.high)) {
+    result |= Relation.EQUAL;
+  }
+  if (a.high.greaterThan(b.low))
+    result |= Relation.GREATER;
+  return result;
+}
+
+class CertifiedApproximation {
+  #candidate;
+  #enclosure;
+  #representation;
+  #sourceId;
+  #dependencies;
+  constructor(candidate, enclosure, options = {}) {
+    const exactCandidate = exactScalar(candidate);
+    if (!(enclosure instanceof RationalInterval)) {
+      throw new TypeError("Certified approximation enclosure must be a RationalInterval");
+    }
+    if (!enclosure.containsValue(asRational(exactCandidate))) {
+      throw new RangeError("Certified approximation candidate must lie in its enclosure");
+    }
+    this.#candidate = exactCandidate;
+    this.#enclosure = enclosure;
+    this.#representation = freezeRepresentation(options.representation);
+    this.#sourceId = options.sourceId ?? Symbol("ratmath-certified-approximation");
+    this.#dependencies = Object.freeze([...options.dependencies || []]);
+  }
+  get candidate() {
+    return this.#candidate;
+  }
+  get enclosure() {
+    return this.#enclosure;
+  }
+  get representation() {
+    return this.#representation;
+  }
+  get sourceId() {
+    return this.#sourceId;
+  }
+  get dependencies() {
+    return this.#dependencies;
+  }
+  get low() {
+    return this.#enclosure.low;
+  }
+  get high() {
+    return this.#enclosure.high;
+  }
+  get isCertifiedApproximation() {
+    return true;
+  }
+  sameSource(other) {
+    return this === other || other instanceof CertifiedApproximation && this.#sourceId !== null && this.#sourceId !== undefined && this.#sourceId === other.sourceId;
+  }
+  copy() {
+    return new CertifiedApproximation(this.#candidate, this.#enclosure, {
+      representation: this.#representation,
+      sourceId: this.#sourceId,
+      dependencies: this.#dependencies
+    });
+  }
+  #binary(other, operation) {
+    const rhs = operand(other);
+    if (!rhs)
+      throw new TypeError(`Cannot ${operation} CertifiedApproximation and ${other?.constructor?.name ?? typeof other}`);
+    if (rhs.intervalCollection) {
+      return this.#enclosure[operation](rhs.enclosure);
+    }
+    if (rhs.approximation && this.sameSource(other)) {
+      if (operation === "subtract")
+        return Integer.zero;
+      if (operation === "divide") {
+        if (this.#enclosure.containsZero()) {
+          throw new Error("Cannot divide an approximation containing zero by itself");
+        }
+        return Integer.one;
+      }
+    }
+    const candidate = this.#candidate[operation](rhs.candidate);
+    const enclosure = this.#enclosure[operation](rhs.enclosure);
+    return normalize(candidate, enclosure, derivedOptions(this, rhs.approximation ? other : null));
+  }
+  add(other) {
+    return this.#binary(other, "add");
+  }
+  subtract(other) {
+    return this.#binary(other, "subtract");
+  }
+  multiply(other) {
+    return this.#binary(other, "multiply");
+  }
+  divide(other) {
+    return this.#binary(other, "divide");
+  }
+  _operateExactLeft(operation, left) {
+    const lhs = operand(left);
+    if (!lhs?.exact)
+      throw new TypeError("Left operand must be an exact Core scalar");
+    if (operation === "add" || operation === "multiply")
+      return this[operation](left);
+    const candidate = lhs.candidate[operation](this.#candidate);
+    const enclosure = lhs.enclosure[operation](this.#enclosure);
+    return normalize(candidate, enclosure, derivedOptions(this));
+  }
+  negate() {
+    const representation = this.#representation?.kind === "radix" ? { ...this.#representation, original: this.#representation.original ? `-${this.#representation.original}`.replace(/^--/, "") : null } : { kind: "derived", reason: "derived", original: null };
+    return normalize(this.#candidate.negate(), this.#enclosure.negate(), {
+      representation,
+      sourceId: Symbol("ratmath-derived-approximation"),
+      dependencies: [this.#sourceId]
+    });
+  }
+  reciprocal() {
+    return normalize(asRational(this.#candidate).reciprocal(), this.#enclosure.reciprocate(), derivedOptions(this));
+  }
+  pow(exponent) {
+    return normalize(this.#candidate.pow(exponent), this.#enclosure.pow(exponent), derivedOptions(this));
+  }
+  E(exponent) {
+    return normalize(this.#candidate.E(exponent), this.#enclosure.E(exponent), derivedOptions(this));
+  }
+  possibleRelationsTo(other) {
+    return possibleRelations(this, other);
+  }
+  toRationalInterval() {
+    return this.#enclosure;
+  }
+  toRational() {
+    if (!isPoint(this.#enclosure)) {
+      throw new Error("Cannot convert a non-point CertifiedApproximation to Rational");
+    }
+    return this.#enclosure.low;
+  }
+  toString() {
+    if (this.#representation?.original)
+      return this.#representation.original;
+    const entirelyNegative = this.#enclosure.high.lessThan(Rational.zero);
+    const displayEnclosure = entirelyNegative ? this.#enclosure.negate() : this.#enclosure;
+    const displayCandidate = displayEnclosure.shortestDecimal();
+    const candidateText = displayCandidate.toRepeatingDecimal().replace(/#0$/, "");
+    return `${entirelyNegative ? "-" : ""}${candidateText}?[=${displayEnclosure.low}:${displayEnclosure.high}]`;
+  }
+  toJSON() {
+    return {
+      $ratmath: "CertifiedApproximation",
+      candidate: this.#candidate,
+      enclosure: this.#enclosure,
+      representation: this.#representation,
+      sourceId: serializeSourceId(this.#sourceId)
+    };
+  }
+}
+function positionalRational(sign, integerDigits, fractionalDigits, baseSystem) {
+  const integer = integerDigits.length ? baseSystem.toDecimal(integerDigits) : 0n;
+  const fractional = fractionalDigits.length ? baseSystem.toDecimal(fractionalDigits) : 0n;
+  const scale = BigInt(baseSystem.base) ** BigInt(fractionalDigits.length);
+  return new Rational((sign < 0n ? -1n : 1n) * (integer * scale + fractional), scale);
+}
+function certifiedRadixPrefix({
+  integerDigits,
+  fractionalDigits = "",
+  provisionalDigits = "",
+  negative = false,
+  baseSystem = BaseSystem.DECIMAL,
+  enclosure = null,
+  original = null,
+  reason = "literal",
+  requested = null,
+  achieved = null,
+  roundingMode = null,
+  sourceId
+}) {
+  if (!(baseSystem instanceof BaseSystem))
+    throw new TypeError("baseSystem must be a BaseSystem");
+  if (!baseSystem.isValidString(integerDigits || "0"))
+    throw new Error("Invalid radix integer digits");
+  if (fractionalDigits && !baseSystem.isValidString(fractionalDigits))
+    throw new Error("Invalid radix fractional digits");
+  if (provisionalDigits && !baseSystem.isValidString(provisionalDigits))
+    throw new Error("Invalid provisional radix digits");
+  const sign = negative ? -1n : 1n;
+  const prefix = positionalRational(sign, integerDigits || "0", fractionalDigits, baseSystem);
+  const candidateFraction = fractionalDigits + provisionalDigits;
+  const candidate = positionalRational(sign, integerDigits || "0", candidateFraction, baseSystem);
+  const width = new Rational(1n, BigInt(baseSystem.base) ** BigInt(fractionalDigits.length));
+  const prefixHull = negative ? new RationalInterval(prefix.subtract(width), prefix) : new RationalInterval(prefix, prefix.add(width));
+  const authoritative = enclosure ?? prefixHull;
+  if (!prefixHull.contains(authoritative)) {
+    throw new RangeError("Explicit enclosure must lie inside the certified radix prefix cylinder");
+  }
+  return new CertifiedApproximation(candidate, authoritative, {
+    sourceId,
+    representation: {
+      kind: "radix",
+      base: baseSystem.base,
+      characters: baseSystem.characters.join(""),
+      certifiedPrefix: `${negative ? "-" : ""}${integerDigits || "0"}${fractionalDigits.length || provisionalDigits.length ? `.${fractionalDigits}` : ""}`,
+      provisionalSuffix: provisionalDigits,
+      original,
+      reason,
+      requested,
+      achieved: achieved ?? { fractionalDigits: fractionalDigits.length },
+      roundingMode
+    }
+  });
+}
+function certifiedContinuedFractionPrefix({
+  coefficients,
+  provisionalCoefficients = [],
+  original = null,
+  reason = "literal",
+  requested = null,
+  achieved = null,
+  sourceId
+}) {
+  const certified = coefficients.map((value) => BigInt(value));
+  const provisional = provisionalCoefficients.map((value) => BigInt(value));
+  if (certified.length === 0)
+    throw new Error("Continued-fraction approximation requires a certified coefficient");
+  if (certified.slice(1).some((value) => value <= 0n) || provisional.some((value) => value <= 0n)) {
+    throw new Error("Continued-fraction tail coefficients must be positive");
+  }
+  const convergent = Rational.fromContinuedFraction(certified);
+  const adjacentCoefficients = [...certified];
+  adjacentCoefficients[adjacentCoefficients.length - 1] += 1n;
+  const adjacent = Rational.fromContinuedFraction(adjacentCoefficients);
+  const candidate = Rational.fromContinuedFraction([...certified, ...provisional]);
+  return new CertifiedApproximation(candidate, new RationalInterval(convergent, adjacent), {
+    sourceId,
+    representation: {
+      kind: "continuedFraction",
+      certifiedPrefix: certified.map(String),
+      provisionalSuffix: provisional.map(String),
+      original,
+      reason,
+      requested,
+      achieved: achieved ?? { terms: certified.length }
+    }
+  });
+}
+function boundedDecimalApproximation(value, options = {}) {
+  const fractionalDigits = options.fractionalDigits ?? 20;
+  if (!Number.isSafeInteger(fractionalDigits) || fractionalDigits < 0) {
+    throw new RangeError("fractionalDigits must be a nonnegative safe integer");
+  }
+  const rational = asRational(value);
+  const negative = rational.numerator < 0n;
+  const numerator = negative ? -rational.numerator : rational.numerator;
+  const integer = numerator / rational.denominator;
+  let remainder = numerator % rational.denominator;
+  let digits = "";
+  for (let index = 0;index < fractionalDigits && remainder !== 0n; index++) {
+    remainder *= 10n;
+    digits += String(remainder / rational.denominator);
+    remainder %= rational.denominator;
+  }
+  if (remainder === 0n)
+    return exactScalar(rational);
+  const original = `${negative ? "-" : ""}${integer}.${digits}?`;
+  return certifiedRadixPrefix({
+    integerDigits: String(integer),
+    fractionalDigits: digits,
+    negative,
+    original,
+    reason: options.reason ?? "truncated",
+    requested: { fractionalDigits },
+    achieved: { fractionalDigits: digits.length }
+  });
+}
+function boundedContinuedFractionApproximation(value, options = {}) {
+  const maxTerms = options.maxTerms ?? Rational.DEFAULT_CF_LIMIT;
+  if (!Number.isSafeInteger(maxTerms) || maxTerms < 1) {
+    throw new RangeError("maxTerms must be a positive safe integer");
+  }
+  const rational = asRational(value);
+  const coefficients = rational.toContinuedFraction({ maxTerms });
+  const extended = rational.toContinuedFraction({ maxTerms: maxTerms + 1 });
+  if (extended.length <= maxTerms)
+    return exactScalar(rational);
+  const [first, ...tail] = coefficients;
+  const original = tail.length ? `${first}.~${tail.join("~")}?` : `${first}.~?`;
+  return certifiedContinuedFractionPrefix({
+    coefficients,
+    original,
+    reason: options.reason ?? "truncated",
+    requested: { maxTerms },
+    achieved: { terms: coefficients.length }
+  });
 }
 
 // ../packages/core/src/number-parser.js
@@ -3138,8 +3614,59 @@ function parseUncertainty(input) {
   };
   return new RationalInterval(endpoint(parts[0]), endpoint(parts[1]));
 }
+function parseApproximation(input) {
+  let value = inputString(input, "certified approximation");
+  const derived = value.match(/^(.+?)\?\[=([^:]+):([^:]+)\]$/);
+  if (derived) {
+    const candidate = parseRationalLiteral(derived[1]);
+    let enclosure = new RationalInterval(parseRationalLiteral(derived[2]), parseRationalLiteral(derived[3]));
+    if (!enclosure.containsValue(candidate) && candidate.lessThan(Rational.zero) && enclosure.low.greaterThanOrEqual(Rational.zero)) {
+      enclosure = enclosure.negate();
+    }
+    return new CertifiedApproximation(candidate, enclosure, {
+      representation: {
+        kind: "derived",
+        reason: "serialized",
+        original: value
+      }
+    });
+  }
+  const explicitCf = value.startsWith("~");
+  const cfValue = explicitCf ? value.slice(1) : value;
+  const cf = cfValue.match(new RegExp(`^([+-]?${DIGITS})\\.~(${DIGITS}(?:~${DIGITS})*)\\?(${DIGITS}(?:~${DIGITS})*)?$`));
+  if (cf) {
+    const certified = [
+      BigInt(cleanDigits(cf[1], { signed: true })),
+      ...cf[2].split("~").map((term) => BigInt(cleanDigits(term)))
+    ];
+    const provisional2 = cf[3] ? cf[3].split("~").map((term) => BigInt(cleanDigits(term))) : [];
+    return certifiedContinuedFractionPrefix({
+      coefficients: certified,
+      provisionalCoefficients: provisional2,
+      original: value
+    });
+  }
+  const match = value.match(/^(.+?)\?((?:\d(?:_?\d)*)?)(\[[^\[\]]+\])?$/);
+  if (!match)
+    throw new Error(`Invalid certified approximation notation: ${input}`);
+  const shape = decimalShape(match[1]);
+  const provisional = match[2] ? cleanDigits(match[2]) : "";
+  const candidateText = shape.hasPoint ? `${shape.normalized}${provisional}` : `${shape.normalized}${provisional ? `.${provisional}` : ""}`;
+  const explicitEnclosure = match[3] ? parseUncertainty(`${candidateText}${match[3]}`) : null;
+  return certifiedRadixPrefix({
+    integerDigits: shape.integer,
+    fractionalDigits: shape.fractional,
+    provisionalDigits: provisional,
+    negative: shape.sign === "-",
+    enclosure: explicitEnclosure,
+    original: value
+  });
+}
 function parseNumber(input) {
   const value = inputString(input);
+  if (value.includes("?")) {
+    return parseApproximation(value);
+  }
   if (value.includes("[") || value.includes("]")) {
     return parseUncertainty(value);
   }
@@ -3159,6 +3686,25 @@ function parseNumber(input) {
 // ../rix/src/runtime/hole.js
 var HOLE = Object.freeze({ __rix_hole__: true });
 var isHole = (v) => v === HOLE;
+
+// ../rix/src/runtime/decision.js
+var UNDECIDED = Object.freeze({
+  __rix_undecided__: true,
+  toJSON() {
+    return { $rix: "Undecided" };
+  }
+});
+var isUndecided = (value) => value === UNDECIDED;
+function decisionState(value) {
+  if (isHole(value) || value === undefined) {
+    throw new Error("Missing data cannot be used as a decision");
+  }
+  if (value === null)
+    return "null";
+  if (isUndecided(value))
+    return "undecided";
+  return "truth";
+}
 
 // ../rix/src/runtime/tensor.js
 function exactInteger(value, label = "Index") {
@@ -3520,6 +4066,7 @@ var symbols = [
   "=>",
   "**",
   "?=",
+  "?_",
   "??",
   "?:",
   "?|",
@@ -3841,7 +4388,25 @@ function tryMatchString(input, position) {
 }
 function tryMatchExplicitCF(input, position) {
   const remaining = input.slice(position);
-  let match = remaining.match(/^~-?(?:0z\[\d+\]|0[a-zA-Z])[0-9a-zA-Z]+\.\~[0-9a-zA-Z]+(?:~[0-9a-zA-Z]+)*/);
+  let match = remaining.match(/^~-?(?:0z\[\d+\]|0[a-zA-Z])[0-9a-zA-Z]+\.~[0-9a-zA-Z]+(?:~[0-9a-zA-Z]+)*\?(?:[0-9a-zA-Z]+(?:~[0-9a-zA-Z]+)*)?/);
+  if (match) {
+    return {
+      type: "Number",
+      original: match[0],
+      value: match[0],
+      pos: [position, position, position + match[0].length]
+    };
+  }
+  match = remaining.match(/^~-?\d+\.~\d+(?:~\d+)*\?(?:\d+(?:~\d+)*)?/);
+  if (match) {
+    return {
+      type: "Number",
+      original: match[0],
+      value: match[0],
+      pos: [position, position, position + match[0].length]
+    };
+  }
+  match = remaining.match(/^~-?(?:0z\[\d+\]|0[a-zA-Z])[0-9a-zA-Z]+\.\~[0-9a-zA-Z]+(?:~[0-9a-zA-Z]+)*/);
   if (match) {
     return {
       type: "Number",
@@ -3866,6 +4431,37 @@ function tryMatchNumber(input, position) {
   let match;
   if (!/^(\d|\.\d)/.test(remaining)) {
     return null;
+  }
+  match = remaining.match(/^(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)\?(?:\d(?:_?\d)*)?(?:\[[^\]]+\])?/);
+  if (match) {
+    const after = remaining[match[0].length] ?? "";
+    const markerHasPayload = /\?\d/.test(match[0]) || match[0].includes("[");
+    if (markerHasPayload || !/[(_!:=|&?-]/.test(after)) {
+      return {
+        type: "Number",
+        original: match[0],
+        value: match[0],
+        pos: [position, position, position + match[0].length]
+      };
+    }
+  }
+  match = remaining.match(/^(?:0z\[\d+\]|0[a-zA-Z])[0-9a-zA-Z]+\.~[0-9a-zA-Z]+(?:~[0-9a-zA-Z]+)*\?(?:[0-9a-zA-Z]+(?:~[0-9a-zA-Z]+)*)?/);
+  if (match) {
+    return {
+      type: "Number",
+      original: match[0],
+      value: match[0],
+      pos: [position, position, position + match[0].length]
+    };
+  }
+  match = remaining.match(/^(?:0z\[\d+\]|0[a-zA-Z])[0-9a-zA-Z]+(?:\.[0-9a-zA-Z]*)?\?(?:[0-9a-zA-Z]+)?/);
+  if (match) {
+    return {
+      type: "Number",
+      original: match[0],
+      value: match[0],
+      pos: [position, position, position + match[0].length]
+    };
   }
   match = remaining.match(/^-?(?:0z\[\d+\]|0[a-zA-Z])[0-9a-zA-Z]+\.~[0-9a-zA-Z]+(?:~[0-9a-zA-Z]+)*/);
   if (match) {
@@ -3913,6 +4509,15 @@ function tryMatchNumber(input, position) {
     };
   }
   match = remaining.match(/^-?(?:0z\[\d+\]|0[a-zA-Z])[0-9a-zA-Z]*/);
+  if (match) {
+    return {
+      type: "Number",
+      original: match[0],
+      value: match[0],
+      pos: [position, position, position + match[0].length]
+    };
+  }
+  match = remaining.match(/^\d+\.~\d+(?:~\d+)*\?(?:\d+(?:~\d+)*)?/);
   if (match) {
     return {
       type: "Number",
@@ -4723,6 +5328,11 @@ function normalizeKeyPrimitive(value) {
   return null;
 }
 function keyOf(value) {
+  if (isUndecided(value))
+    return "?:undecided";
+  if (value?.isCertifiedApproximation === true) {
+    throw new Error("Certified approximations cannot be used as structural map keys");
+  }
   const direct = normalizeKeyPrimitive(value);
   if (direct !== null)
     return direct;
@@ -4994,6 +5604,7 @@ function createLazySequence(options) {
       pull: options.pull,
       cache: options.cache ? [...options.cache] : [],
       done: false,
+      unresolved: null,
       knownLength: options.knownLength ?? null,
       maxIterations: options.maxIterations ?? 1e4,
       label: options.label || "generator"
@@ -5025,6 +5636,12 @@ function pullLazyValue(sequence, iterationBudget = null) {
   if (attempts > budget) {
     throw new Error(`${lazy.label} exceeded the iteration limit of ${budget} while producing one value`);
   }
+  if (result.unresolved !== undefined) {
+    lazy.unresolved = result.unresolved;
+    lazy.done = true;
+    lazy.knownLength = null;
+    return { done: true, unresolved: result.unresolved, attempts };
+  }
   if (result.done) {
     lazy.done = true;
     lazy.knownLength = lazy.cache.length;
@@ -5040,6 +5657,8 @@ function ensureLazyIndex(sequence, oneBasedIndex) {
   while (sequence._lazy.cache.length < oneBasedIndex && !sequence._lazy.done) {
     pullLazyValue(sequence);
   }
+  if (sequence._lazy.unresolved !== null)
+    return sequence._lazy.unresolved;
   return sequence._lazy.cache[oneBasedIndex - 1] ?? null;
 }
 function materializeLazySequence(sequence, options = {}) {
@@ -5058,6 +5677,8 @@ function materializeLazySequence(sequence, options = {}) {
       throw new Error(`${lazy.label} exceeded the iteration limit of ${limit} while materializing`);
     }
   }
+  if (lazy.unresolved !== null)
+    return lazy.unresolved;
   return { type: "sequence", values: [...lazy.cache], _ext: new Map([["_mutable", 1]]) };
 }
 function cloneLazySequence(sequence, options = {}) {
@@ -5075,6 +5696,7 @@ function cloneLazySequence(sequence, options = {}) {
       pull: source.pull,
       cache: restart ? [] : source.cache.map(cloneValue),
       done: restart ? false : source.done,
+      unresolved: restart ? null : source.unresolved,
       knownLength: source.knownLength,
       maxIterations: source.maxIterations,
       label: source.label
@@ -5131,7 +5753,11 @@ function filterLazySequence(source, predicate, options = {}) {
         if (value === null && state.source._lazy.done && state.source._lazy.cache.length < state.sourceIndex) {
           return { done: true, attempts };
         }
-        if (predicate(value, state.sourceIndex, state.source, filtered)) {
+        const decision = predicate(value, state.sourceIndex, state.source, filtered);
+        if (options.isUnresolved?.(decision)) {
+          return { unresolved: decision, attempts };
+        }
+        if (decision) {
           return { done: false, value, attempts };
         }
       }
@@ -5159,6 +5785,10 @@ function shallowCopyValue(value) {
     return value;
   if (typeof value !== "object")
     return value;
+  if (isUndecided(value))
+    return value;
+  if (value instanceof CertifiedApproximation)
+    return value.copy();
   if (value instanceof Integer)
     return new Integer(value.value);
   if (value instanceof Rational)
@@ -5242,6 +5872,10 @@ function deepCopyValue(value) {
     return value;
   if (typeof value !== "object")
     return value;
+  if (isUndecided(value))
+    return value;
+  if (value instanceof CertifiedApproximation)
+    return value.copy();
   if (value instanceof Integer)
     return new Integer(value.value);
   if (value instanceof Rational)
@@ -5714,7 +6348,7 @@ var runtimeDefaults = Object.freeze({
     Graphics: Object.freeze(["Graphics"]),
     Draw: Object.freeze(["draw"]),
     Plot: Object.freeze(["plot"]),
-    Core: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "IF", "LOOP", "MULTI", "RAND_NAME", "PRINT", "TGEN", "KEYOF", "KEYS", "VALUES", "REGISTERMETHOD"]),
+    Core: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "IF", "LOOP", "MULTI", "RAND_NAME", "PRINT", "TGEN", "KEYOF", "KEYS", "VALUES", "REGISTERMETHOD", "CertifiedApproximation"]),
     Methods: Object.freeze(["REGISTERMETHOD"]),
     Arith: Object.freeze(["ADD", "SUB", "MUL", "DIV", "INTDIV", "DIVMOD", "MOD", "POW", "FACTORIAL", "DOUBLEFACTORIAL"]),
     Logic: Object.freeze(["EQ", "NEQ", "LT", "GT", "LTE", "GTE", "AND", "OR", "NOT"]),
@@ -9839,7 +10473,10 @@ async function applyStage(stage, values, stream, execution) {
     const kept = [];
     for (const entry of values) {
       const result = await execution.invoke(stage.callable, [entry, new Integer(BigInt(execution.sourceIndex)), callbackSource]);
-      if (result !== null && result !== undefined)
+      const state = decisionState(result);
+      if (state === "undecided")
+        return { values: [], stop: true, unresolved: UNDECIDED };
+      if (state === "truth")
         kept.push(entry);
     }
     return { values: kept, stop: false };
@@ -9915,6 +10552,9 @@ async function processAsyncStreamItem(stream, raw, execution) {
   const stageExecution = { ...execution, sourceIndex: raw.sourceIndex };
   for (const stage of stream._stream.stages) {
     const result = await applyStage(stage, values, stream, stageExecution);
+    if (result.unresolved !== undefined) {
+      return { values: [], stop: true, unresolved: result.unresolved, sourceIndex: raw.sourceIndex };
+    }
     values = result.values;
     stop ||= result.stop;
     if (values.length === 0 && !stop)
@@ -9945,6 +10585,7 @@ async function consumeAsyncStreamSequential(stream, terminal, execution) {
   let reason = { kind: "complete" };
   let primary = null;
   let claimed = false;
+  let uncertain = false;
   try {
     claimAsyncStream(stream);
     claimed = true;
@@ -9966,6 +10607,8 @@ async function consumeAsyncStreamSequential(stream, terminal, execution) {
       if (raw.done)
         break;
       const processed = await processAsyncStreamItem(stream, raw, execution);
+      if (processed.unresolved !== undefined)
+        return processed.unresolved;
       for (const value of processed.values) {
         count++;
         if (terminal.kind === "collect")
@@ -9979,17 +10622,24 @@ async function consumeAsyncStreamSequential(stream, terminal, execution) {
           return value;
         } else if (terminal.kind === "find") {
           const match = await execution.invoke(terminal.callable, [value, new Integer(BigInt(count)), stream._stream.callbackSource ?? stream]);
-          if (match !== null && match !== undefined) {
+          const state = decisionState(match);
+          if (state === "truth") {
             reason = { kind: "early terminal" };
             return value;
           }
+          if (state === "undecided")
+            uncertain = true;
         } else if (terminal.kind === "all") {
           const match = await execution.invoke(terminal.callable, [value, new Integer(BigInt(count)), stream._stream.callbackSource ?? stream]);
-          if (match === null || match === undefined) {
+          const state = decisionState(match);
+          if (state === "null") {
             reason = { kind: "early terminal" };
             return null;
           }
-          result = value;
+          if (state === "undecided")
+            uncertain = true;
+          else if (!uncertain)
+            result = value;
         }
         if (terminal.bound !== null && count >= terminal.bound) {
           reason = { kind: "early terminal" };
@@ -10018,13 +10668,20 @@ async function consumeAsyncStreamSequential(stream, terminal, execution) {
         return value;
       else if (terminal.kind === "find") {
         const match = await execution.invoke(terminal.callable, [value, new Integer(BigInt(count)), stream]);
-        if (match !== null && match !== undefined)
+        const state = decisionState(match);
+        if (state === "truth")
           return value;
+        if (state === "undecided")
+          uncertain = true;
       } else if (terminal.kind === "all") {
         const match = await execution.invoke(terminal.callable, [value, new Integer(BigInt(count)), stream]);
-        if (match === null || match === undefined)
+        const state = decisionState(match);
+        if (state === "null")
           return null;
-        result = value;
+        if (state === "undecided")
+          uncertain = true;
+        else if (!uncertain)
+          result = value;
       }
     }
     if (terminal.kind === "collect")
@@ -10033,10 +10690,12 @@ async function consumeAsyncStreamSequential(stream, terminal, execution) {
       return new Integer(BigInt(count));
     if (terminal.kind === "forEach")
       return null;
-    if (terminal.kind === "first" || terminal.kind === "find")
+    if (terminal.kind === "first")
       return null;
+    if (terminal.kind === "find")
+      return uncertain ? UNDECIDED : null;
     if (terminal.kind === "all")
-      return count === 0 ? null : result;
+      return count === 0 ? null : uncertain ? UNDECIDED : result;
     return result;
   } catch (error) {
     reason = error;
@@ -10119,7 +10778,6 @@ var asyncStreamMethodHelpers = {
 };
 
 // ../rix/src/eval/functions/functions.js
-var isTruthy = (val) => val !== null && val !== undefined;
 function callableValue(value) {
   return isReactiveNode(value) ? value.peek() : value;
 }
@@ -10202,7 +10860,10 @@ function runCallablePrep(fn, context, evaluate) {
   for (let i = 0;i < entries.length; i++) {
     try {
       const value = evaluate(entries[i]);
-      if (value === null) {
+      const state = decisionState(value);
+      if (state === "undecided")
+        return { ok: false, undecided: true };
+      if (state === "null") {
         if (strict) {
           throw prepFailureError(fn, i);
         }
@@ -10279,9 +10940,10 @@ function invokeUserCallable(fn, callArgs, context, evaluate, options = {}) {
     while (true) {
       const prepResult = runCallablePrep(fn, context, evaluate);
       if (!prepResult.ok) {
-        doTraceExit(null, false);
+        const value = prepResult.undecided ? UNDECIDED : null;
+        doTraceExit(value, false);
         traceActive = false;
-        return returnPrepStatus ? { matched: false, value: null } : null;
+        return returnPrepStatus ? { matched: prepResult.undecided === true, value } : value;
       }
       let result;
       context.pushCurrentCallable(fn, parentCallable);
@@ -10714,7 +11376,7 @@ var functionFunctions = {
       } else {
         return null;
       }
-      const normalize = (k) => {
+      const normalize2 = (k) => {
         if (k === 0)
           return null;
         if (k > 0)
@@ -10723,8 +11385,8 @@ var functionFunctions = {
           return n + 1 + k;
         return null;
       };
-      let I = normalize(i_val);
-      let J = normalize(j_val);
+      let I = normalize2(i_val);
+      let J = normalize2(j_val);
       if (I === null || J === null)
         return null;
       if (I < 1 || I > n || J < 1 || J > n)
@@ -10814,15 +11476,15 @@ var functionFunctions = {
         i_val = 1;
         j_val = 1;
       }
-      const normalize = (k) => {
+      const normalize2 = (k) => {
         if (k > 0)
           return k;
         if (k < 0)
           return n + 1 + k;
         return null;
       };
-      let I = normalize(i_val);
-      let J = normalize(j_val);
+      let I = normalize2(i_val);
+      let J = normalize2(j_val);
       if (I === null || J === null)
         return emptyOutput;
       if (n === 0)
@@ -10947,7 +11609,10 @@ var functionFunctions = {
         for (let i = 0;i < items.length; i++) {
           const item = items[i];
           const loc = new Integer(BigInt(i + 1));
-          const isSep = isTruthy(invokeTraversalCallback(sepVal, [item, loc, collection], context, evaluate));
+          const separatorState = decisionState(invokeTraversalCallback(sepVal, [item, loc, collection], context, evaluate));
+          if (separatorState === "undecided")
+            return UNDECIDED;
+          const isSep = separatorState === "truth";
           if (isSep) {
             if (!inSeparator) {
               results.push(currentPiece);
@@ -11074,7 +11739,10 @@ var functionFunctions = {
         let currentChunk = [];
         for (let i = 0;i < items.length; i++) {
           const loc = new Integer(BigInt(i + 1));
-          const isBound = isTruthy(invokeTraversalCallback(boundVal, [items[i], loc, collection], context, evaluate));
+          const boundaryState = decisionState(invokeTraversalCallback(boundVal, [items[i], loc, collection], context, evaluate));
+          if (boundaryState === "undecided")
+            return UNDECIDED;
+          const isBound = boundaryState === "truth";
           currentChunk.push(items[i]);
           if (isBound) {
             results.push(currentChunk);
@@ -11322,18 +11990,27 @@ var functionFunctions = {
         return filterAsyncStream(collection, func);
       }
       if (isLazySequence(collection)) {
-        return filterLazySequence(collection, (item, index, source) => isTruthy(invokeTraversalCallback(func, [item, new Integer(BigInt(index)), source], context, evaluate)));
+        return filterLazySequence(collection, (item, index, source) => {
+          const state = decisionState(invokeTraversalCallback(func, [item, new Integer(BigInt(index)), source], context, evaluate));
+          return state === "undecided" ? UNDECIDED : state === "truth";
+        }, { isUnresolved: (value) => value === UNDECIDED });
       }
       if (isTensor(collection)) {
         const results2 = [];
+        let uncertain = false;
         forEachTensorCell(collection, (item, tuple) => {
-          if (isTruthy(invokeTraversalCallback(func, [item, tensorIndexTuple(tuple), collection], context, evaluate))) {
+          const state = decisionState(invokeTraversalCallback(func, [item, tensorIndexTuple(tuple), collection], context, evaluate));
+          if (state === "undecided") {
+            uncertain = true;
+          } else if (state === "truth") {
             results2.push({
               type: "tuple",
               values: [item, tensorIndexTuple(tuple)]
             });
           }
         });
+        if (uncertain)
+          return UNDECIDED;
         return { type: "sequence", values: results2 };
       }
       if (collection.type === "map") {
@@ -11343,7 +12020,10 @@ var functionFunctions = {
         const newEntries = new Map;
         for (const [k, v] of entries) {
           const loc = { type: "string", value: k };
-          if (isTruthy(invokeTraversalCallback(func, [v, loc, collection], context, evaluate))) {
+          const state = decisionState(invokeTraversalCallback(func, [v, loc, collection], context, evaluate));
+          if (state === "undecided")
+            return UNDECIDED;
+          if (state === "truth") {
             newEntries.set(k, v);
           }
         }
@@ -11359,10 +12039,16 @@ var functionFunctions = {
       } else {
         throw new Error("PFILTER requires a collection");
       }
-      const results = items.filter((item, i) => {
+      const results = [];
+      for (let i = 0;i < items.length; i++) {
+        const item = items[i];
         const loc = new Integer(BigInt(i + 1));
-        return isTruthy(invokeTraversalCallback(func, [item, loc, collection], context, evaluate));
-      });
+        const state = decisionState(invokeTraversalCallback(func, [item, loc, collection], context, evaluate));
+        if (state === "undecided")
+          return UNDECIDED;
+        if (state === "truth")
+          results.push(item);
+      }
       if (isString) {
         const filteredStr = results.map((r) => r && r.type === "string" ? r.value : r).join("");
         return isStringObj ? { type: "string", value: filteredStr } : filteredStr;
@@ -11488,22 +12174,24 @@ var functionFunctions = {
         throw new Error("PSORT requires a collection");
       }
       const func = evaluate(funcNode);
-      const sorted = [...items].sort((a, b) => {
-        if (func && func.type === "partial") {
-          const result = callWithConcreteArgs(func, [a, b], context, evaluate);
-          if (result && result.constructor && result.constructor.name === "Integer")
-            return Number(result.value);
-          if (typeof result === "number")
-            return result;
+      let uncertainOrdering = false;
+      const comparatorResult = (result) => {
+        if (result === UNDECIDED) {
+          uncertainOrdering = true;
           return 0;
         }
+        if (result && result.constructor && result.constructor.name === "Integer")
+          return Number(result.value);
+        if (typeof result === "number")
+          return result;
+        return 0;
+      };
+      const sorted = [...items].sort((a, b) => {
+        if (func && func.type === "partial") {
+          return comparatorResult(callWithConcreteArgs(func, [a, b], context, evaluate));
+        }
         if (func && func.type === "sysref") {
-          const result = evaluate({ fn: func.name, args: [a, b] });
-          if (result && result.constructor && result.constructor.name === "Integer")
-            return Number(result.value);
-          if (typeof result === "number")
-            return result;
-          return 0;
+          return comparatorResult(evaluate({ fn: func.name, args: [a, b] }));
         }
         if (func && (func.type === "function" || func.type === "lambda")) {
           const scope = new Map;
@@ -11513,19 +12201,16 @@ var functionFunctions = {
           }
           context.push(scope);
           try {
-            const result = evaluate(func.body);
-            if (result && result.constructor && result.constructor.name === "Integer")
-              return Number(result.value);
-            if (typeof result === "number")
-              return result;
-            return 0;
+            return comparatorResult(evaluate(func.body));
           } finally {
             context.pop();
           }
         }
         if (typeof func === "function") {
-          const result = func(a, b);
-          return typeof result === "number" ? result : 0;
+          return comparatorResult(func(a, b));
+        }
+        if (a?.isCertifiedApproximation || b?.isCertifiedApproximation || a?.constructor?.name === "RationalInterval" || b?.constructor?.name === "RationalInterval") {
+          return comparatorResult(evaluate({ fn: "COMPARE", args: [a, b] }));
         }
         if (isString) {
           const valA = a && a.type === "string" ? a.value : a;
@@ -11540,6 +12225,8 @@ var functionFunctions = {
         const nb = b && b.constructor && b.constructor.name === "Integer" ? Number(b.value) : Number(b);
         return na - nb;
       });
+      if (uncertainOrdering)
+        return UNDECIDED;
       if (isString) {
         const joined = sorted.map((r) => r && r.type === "string" ? r.value : r).join("");
         return isStringObj ? { type: "string", value: joined } : joined;
@@ -11561,12 +12248,16 @@ var functionFunctions = {
       if (isLazySequence(collection)) {
         let index = 1;
         let last = null;
+        let uncertain2 = false;
         while (true) {
           const item = ensureLazyIndex(collection, index);
           if (collection._lazy.done && collection._lazy.cache.length < index)
-            return index === 1 ? null : last;
-          if (!isTruthy(invokeTraversalCallback(func, [item, new Integer(BigInt(index)), collection], context, evaluate)))
+            return uncertain2 ? UNDECIDED : index === 1 ? null : last;
+          const state = decisionState(invokeTraversalCallback(func, [item, new Integer(BigInt(index)), collection], context, evaluate));
+          if (state === "null")
             return null;
+          if (state === "undecided")
+            uncertain2 = true;
           last = item;
           index++;
         }
@@ -11575,11 +12266,17 @@ var functionFunctions = {
         let sawAny = false;
         let lastItem2 = null;
         let failed = false;
+        let uncertain2 = false;
         forEachTensorCell(collection, (item, tuple) => {
           if (!sawAny) {
             sawAny = true;
           }
-          if (failed || !isTruthy(invokeTraversalCallback(func, [item, tensorIndexTuple(tuple), collection], context, evaluate))) {
+          const state = decisionState(invokeTraversalCallback(func, [item, tensorIndexTuple(tuple), collection], context, evaluate));
+          if (state === "undecided") {
+            uncertain2 = true;
+            return;
+          }
+          if (failed || state === "null") {
             failed = true;
             return;
           }
@@ -11589,6 +12286,8 @@ var functionFunctions = {
           return null;
         if (failed)
           return null;
+        if (uncertain2)
+          return UNDECIDED;
         return lastItem2;
       }
       if (collection.type === "map") {
@@ -11598,14 +12297,17 @@ var functionFunctions = {
         if (entries.size === 0)
           return null;
         let lastVal = null;
+        let uncertain2 = false;
         for (const [k, v] of entries) {
           const loc = { type: "string", value: k };
-          if (!isTruthy(invokeTraversalCallback(func, [v, loc, collection], context, evaluate))) {
+          const state = decisionState(invokeTraversalCallback(func, [v, loc, collection], context, evaluate));
+          if (state === "null")
             return null;
-          }
+          if (state === "undecided")
+            uncertain2 = true;
           lastVal = v;
         }
-        return lastVal;
+        return uncertain2 ? UNDECIDED : lastVal;
       }
       const isStringObj = collection && collection.type === "string";
       const isString = typeof collection === "string" || isStringObj;
@@ -11621,15 +12323,18 @@ var functionFunctions = {
         return null;
       }
       let lastItem = null;
+      let uncertain = false;
       for (let i = 0;i < items.length; i++) {
         const item = items[i];
         const loc = new Integer(BigInt(i + 1));
-        if (!isTruthy(invokeTraversalCallback(func, [item, loc, collection], context, evaluate))) {
+        const state = decisionState(invokeTraversalCallback(func, [item, loc, collection], context, evaluate));
+        if (state === "null")
           return null;
-        }
+        if (state === "undecided")
+          uncertain = true;
         lastItem = item;
       }
-      return lastItem;
+      return uncertain ? UNDECIDED : lastItem;
     },
     doc: "Every: returns last element if predicate is truthy for ALL elements, null on first failure — callback receives (val, locator, src)"
   },
@@ -11645,37 +12350,49 @@ var functionFunctions = {
       const func = evaluate(funcNode);
       if (isLazySequence(collection)) {
         let index = 1;
+        let uncertain2 = false;
         while (true) {
           const item = ensureLazyIndex(collection, index);
           if (collection._lazy.done && collection._lazy.cache.length < index)
-            return null;
-          if (isTruthy(invokeTraversalCallback(func, [item, new Integer(BigInt(index)), collection], context, evaluate)))
+            return uncertain2 ? UNDECIDED : null;
+          const state = decisionState(invokeTraversalCallback(func, [item, new Integer(BigInt(index)), collection], context, evaluate));
+          if (state === "truth")
             return item;
+          if (state === "undecided")
+            uncertain2 = true;
           index++;
         }
       }
       if (isTensor(collection)) {
         let found = null;
         let foundAny = false;
+        let uncertain2 = false;
         forEachTensorCell(collection, (item, tuple) => {
-          if (!foundAny && isTruthy(invokeTraversalCallback(func, [item, tensorIndexTuple(tuple), collection], context, evaluate))) {
-            found = item;
-            foundAny = true;
+          if (!foundAny) {
+            const state = decisionState(invokeTraversalCallback(func, [item, tensorIndexTuple(tuple), collection], context, evaluate));
+            if (state === "truth") {
+              found = item;
+              foundAny = true;
+            } else if (state === "undecided")
+              uncertain2 = true;
           }
         });
-        return foundAny ? found : null;
+        return foundAny ? found : uncertain2 ? UNDECIDED : null;
       }
       if (collection.type === "map") {
         const entries = collection.entries;
         if (!(entries instanceof Map))
           throw new Error("PANY: invalid map");
+        let uncertain2 = false;
         for (const [k, v] of entries) {
           const loc = { type: "string", value: k };
-          if (isTruthy(invokeTraversalCallback(func, [v, loc, collection], context, evaluate))) {
+          const state = decisionState(invokeTraversalCallback(func, [v, loc, collection], context, evaluate));
+          if (state === "truth")
             return v;
-          }
+          if (state === "undecided")
+            uncertain2 = true;
         }
-        return null;
+        return uncertain2 ? UNDECIDED : null;
       }
       const isStringObj = collection && collection.type === "string";
       const isString = typeof collection === "string" || isStringObj;
@@ -11687,14 +12404,17 @@ var functionFunctions = {
       } else {
         throw new Error("PANY requires a collection");
       }
+      let uncertain = false;
       for (let i = 0;i < items.length; i++) {
         const item = items[i];
         const loc = new Integer(BigInt(i + 1));
-        if (isTruthy(invokeTraversalCallback(func, [item, loc, collection], context, evaluate))) {
+        const state = decisionState(invokeTraversalCallback(func, [item, loc, collection], context, evaluate));
+        if (state === "truth")
           return item;
-        }
+        if (state === "undecided")
+          uncertain = true;
       }
-      return null;
+      return uncertain ? UNDECIDED : null;
     },
     doc: "Any: returns first item that passed predicate, null if none pass — callback receives (val, locator, src)"
   },
@@ -11887,6 +12607,10 @@ function runtimeTypeName(value) {
     return "Rational";
   if (value instanceof RationalInterval)
     return "RationalInterval";
+  if (value instanceof CertifiedApproximation)
+    return "CertifiedApproximation";
+  if (isUndecided(value))
+    return "Undecided";
   if (isTensor(value))
     return "tensor";
   if (value?.type === "sequence")
@@ -12021,6 +12745,10 @@ function registerBuiltinSemanticTypes() {
     ["ring", ["number"]],
     ["field", ["ring", "number"]],
     ["ordered", ["number"]],
+    ["orderInquiry", ["number"]],
+    ["approximate", ["number"]],
+    ["enclosed", ["number"]],
+    ["decision"],
     ["rational", ["field", "ordered"]],
     ["integer", ["rational"]],
     ["indexable"],
@@ -12069,6 +12797,33 @@ function registerBuiltinSemanticTypes() {
       proto: () => makeProto([["Describe", valueMethod("Describe", () => stringObj2(`type:${name}`))]])
     });
   }
+  registerType({
+    name: "Undecided",
+    aliases: ["undecided"],
+    nativeType: "undecided",
+    defaultTraits: ["decision"],
+    convert: (value) => isUndecided(value) ? value : null,
+    validate: isUndecided,
+    export() {
+      return {
+        type: "map",
+        entries: new Map([
+          ["type", stringObj2("Undecided")],
+          ["data", null],
+          ["cache", null],
+          ["version", new Integer(1n)]
+        ])
+      };
+    },
+    import() {
+      return UNDECIDED;
+    },
+    proto: () => makeProto([
+      ["ToString", valueMethod("ToString", () => stringObj2("?"))],
+      ["Describe", valueMethod("Describe", () => stringObj2("type:Undecided"))]
+    ]),
+    installs: {}
+  });
   registerType({
     name: "Rational",
     aliases: ["rational"],
@@ -12189,6 +12944,51 @@ function registerBuiltinSemanticTypes() {
     installs: {}
   });
   registerType({
+    name: "CertifiedApproximation",
+    aliases: ["approximation", "approximate"],
+    nativeType: "approximation",
+    defaultTraits: ["number", "approximate", "enclosed", "orderInquiry"],
+    convertFrom: {
+      CertifiedApproximation: (value) => value,
+      approximation: (value) => value
+    },
+    convert(value) {
+      return value instanceof CertifiedApproximation ? value : null;
+    },
+    validate: (value) => value instanceof CertifiedApproximation,
+    export(value) {
+      return {
+        type: "map",
+        entries: new Map([
+          ["type", stringObj2("CertifiedApproximation")],
+          ["data", { type: "map", entries: new Map([
+            ["candidate", value.candidate],
+            ["low", value.low],
+            ["high", value.high],
+            ["spelling", stringObj2(value.toString())]
+          ]) }],
+          ["cache", null],
+          ["version", new Integer(1n)]
+        ])
+      };
+    },
+    import(value) {
+      const spelling = value?.entries?.get("data")?.entries?.get("spelling")?.value;
+      if (!spelling)
+        throw new Error("CertifiedApproximation interchange requires a spelling");
+      return parseApproximation(spelling);
+    },
+    proto: () => makeProto([
+      ["Candidate", valueMethod("Candidate", (self) => self.candidate)],
+      ["Enclosure", valueMethod("Enclosure", (self) => self.enclosure)],
+      ["Low", valueMethod("Low", (self) => self.low)],
+      ["High", valueMethod("High", (self) => self.high)],
+      ["ToString", valueMethod("ToString", (self) => stringObj2(self.toString()))],
+      ["Describe", valueMethod("Describe", () => stringObj2("type:CertifiedApproximation"))]
+    ]),
+    installs: {}
+  });
+  registerType({
     name: "RationalInterval",
     aliases: ["Interval", "interval"],
     nativeType: "interval",
@@ -12296,6 +13096,8 @@ function exportByRegisteredTypeRuntime(value, context = null, evaluate = null) {
   return invokeMaybeCallable(entry.export, [value], context, evaluate);
 }
 function finalizeImportedRegisteredValue(imported, typeName, entry) {
+  if (isUndecided(imported))
+    return imported;
   if (imported && typeof imported === "object") {
     if (!(imported._ext instanceof Map))
       imported._ext = new Map;
@@ -12328,7 +13130,7 @@ function importByRegisteredTypeRuntime(value, context = null, evaluate = null) {
     throw new Error(`No type import registered for ${typeName}`);
   return finalizeImportedRegisteredValue(invokeMaybeCallable(entry.import, [value], context, evaluate), typeName, entry);
 }
-function installRegisteredTypes(registry, typeNames = ["Integer", "Rational", "RationalInterval", "Tensor"], options = {}) {
+function installRegisteredTypes(registry, typeNames = ["Integer", "Rational", "CertifiedApproximation", "RationalInterval", "Tensor"], options = {}) {
   let order = 0;
   for (const typeName of typeNames) {
     const entry = typeRegistry.get(typeName);
@@ -12523,9 +13325,11 @@ function getLabel(value) {
 function summarizeValue(value) {
   if (value === null)
     return "_";
-  if (value instanceof Integer || value instanceof Rational || value instanceof RationalInterval) {
+  if (value instanceof Integer || value instanceof Rational || value instanceof RationalInterval || value instanceof CertifiedApproximation) {
     return value.toString();
   }
+  if (isUndecided(value))
+    return "?";
   if (value?.type === "string")
     return JSON.stringify(value.value);
   if (value?.type)
@@ -12763,10 +13567,15 @@ function rebuildSemanticMetadata(value, context) {
 }
 
 // ../rix/src/eval/functions/collections.js
-function isTruthy2(val) {
-  return val !== null && val !== undefined;
+function isTruthy(val) {
+  return decisionState(val) === "truth";
 }
 function valueKey(val) {
+  if (isUndecided(val))
+    return "?:undecided";
+  if (val?.isCertifiedApproximation === true) {
+    throw new Error("Certified approximations cannot be used as structural set keys");
+  }
   if (val === null || val === undefined)
     return "null";
   if (typeof val === "object") {
@@ -12991,7 +13800,10 @@ function createGeneratorValue(args, ctx, evaluate, defaultMode) {
           if (stage.fn === "GEN_PIPE") {
             value = invoke(stage.value, [value]);
           } else if (stage.fn === "GEN_FILTER") {
-            accepted = isTruthy2(invoke(stage.value, [value, new Integer(BigInt(state.sourcePosition)), self]));
+            const filterValue = invoke(stage.value, [value, new Integer(BigInt(state.sourcePosition)), self]);
+            if (isUndecided(filterValue))
+              return { unresolved: UNDECIDED, attempts };
+            accepted = isTruthy(filterValue);
             if (!accepted)
               break;
           }
@@ -13000,7 +13812,10 @@ function createGeneratorValue(args, ctx, evaluate, defaultMode) {
           continue;
         state.emitted++;
         if (terminal && numericLimit === null) {
-          state.stop = isTruthy2(invoke(terminal.value, [value, new Integer(BigInt(state.sourcePosition)), self]));
+          const terminalValue = invoke(terminal.value, [value, new Integer(BigInt(state.sourcePosition)), self]);
+          if (isUndecided(terminalValue))
+            return { unresolved: UNDECIDED, attempts };
+          state.stop = isTruthy(terminalValue);
         }
         return { done: false, value: captureResolvedValue(value, defaultMode), attempts };
       }
@@ -13010,6 +13825,8 @@ function createGeneratorValue(args, ctx, evaluate, defaultMode) {
   if (!eager)
     return sequence;
   const materialized = materializeLazySequence(sequence, { allowUnknown: true, maxIterations });
+  if (isUndecided(materialized))
+    return UNDECIDED;
   materialized._ext = new Map([["_mutable", new Integer(1n)]]);
   return attachBuiltinProto(materialized);
 }
@@ -13020,7 +13837,7 @@ var collectionFunctions = {
       const defaultMode = constructorDefaultCaptureMode(ctx);
       const generated = createGeneratorValue(args, ctx, evaluate, defaultMode);
       if (generated)
-        return attachBuiltinProto(generated);
+        return isUndecided(generated) ? generated : attachBuiltinProto(generated);
       const values = [];
       let i = 0;
       while (i < args.length) {
@@ -13256,7 +14073,7 @@ var collectionFunctions = {
   },
   NOT_MEMBER: {
     impl(args) {
-      return isTruthy2(collectionFunctions.MEMBER.impl(args)) ? null : new Integer(1);
+      return isTruthy(collectionFunctions.MEMBER.impl(args)) ? null : new Integer(1);
     },
     pure: true,
     doc: "Check non-membership (1 if not present, null otherwise)"
@@ -13265,7 +14082,7 @@ var collectionFunctions = {
     impl(args) {
       const [a, b] = args;
       const intersect = collectionFunctions.INTERSECT.impl([a, b]);
-      return isTruthy2(intersect) ? new Integer(1) : null;
+      return isTruthy(intersect) ? new Integer(1) : null;
     },
     pure: true,
     doc: "Check if two collections intersect (1 if true, null otherwise)"
@@ -13762,7 +14579,7 @@ function isOne3(value) {
   return false;
 }
 function liftStructuralValue(value) {
-  if (value instanceof Integer || value instanceof Fraction || value instanceof RationalInterval || isStructuralSymbol(value) || isStructuralLiteral(value) || isStructuralAlgebra(value) || isStructuralForm(value)) {
+  if (value instanceof Integer || value instanceof Fraction || value instanceof CertifiedApproximation || value instanceof RationalInterval || isStructuralSymbol(value) || isStructuralLiteral(value) || isStructuralAlgebra(value) || isStructuralForm(value)) {
     return value;
   }
   if (value instanceof Rational) {
@@ -13771,6 +14588,8 @@ function liftStructuralValue(value) {
   return Object.freeze({ type: "structural_value", value });
 }
 function literalKind(text2) {
+  if (text2.includes("?"))
+    return "CertifiedApproximation";
   if (text2.includes(".."))
     return "MixedNumber";
   if (text2.includes(".~"))
@@ -13806,15 +14625,15 @@ function constructBinary(operator, left, right, span = null, table = DEFAULT_BIN
   }
   return structuralForm(table[operator].head, [left, right], "construct", span);
 }
-function constructPrefix(operator, operand, span = null, info = DEFAULT_PREFIX[operator]) {
+function constructPrefix(operator, operand2, span = null, info = DEFAULT_PREFIX[operator]) {
   if (!info)
     throw new Error(`Unknown structural prefix operator '${operator}'`);
-  return structuralForm(info.head, [operand], "construct", span);
+  return structuralForm(info.head, [operand2], "construct", span);
 }
-function constructPostfix(operator, operand, span = null, info = DEFAULT_POSTFIX[operator]) {
+function constructPostfix(operator, operand2, span = null, info = DEFAULT_POSTFIX[operator]) {
   if (!info)
     throw new Error(`Unknown structural postfix operator '${operator}'`);
-  return structuralForm(info.head, [operand], "construct", span);
+  return structuralForm(info.head, [operand2], "construct", span);
 }
 function applyAdd(left, right) {
   left = semanticLiteralValue(left);
@@ -13946,25 +14765,25 @@ function applyStructuralBinary(operator, left, right) {
     return applyPower(left, right);
   throw new Error(`Unknown structural binary operator '${operator}'`);
 }
-function applyStructuralPrefix(operator, operand) {
-  operand = semanticLiteralValue(operand);
+function applyStructuralPrefix(operator, operand2) {
+  operand2 = semanticLiteralValue(operand2);
   if (operator === "+")
-    return operand;
+    return operand2;
   if (operator === "-") {
-    if (operand instanceof Integer)
-      return operand.negate();
-    if (operand instanceof Fraction)
-      return new Fraction(-operand.numerator, operand.denominator);
-    return structuralForm("Negative", [operand], "apply");
+    if (operand2 instanceof Integer)
+      return operand2.negate();
+    if (operand2 instanceof Fraction)
+      return new Fraction(-operand2.numerator, operand2.denominator);
+    return structuralForm("Negative", [operand2], "apply");
   }
   throw new Error(`Unknown structural prefix operator '${operator}'`);
 }
-function applyStructuralPostfix(operator, operand) {
-  operand = semanticLiteralValue(operand);
+function applyStructuralPostfix(operator, operand2) {
+  operand2 = semanticLiteralValue(operand2);
   if (operator === "!") {
-    if (operand instanceof Integer)
-      return operand.factorial();
-    return structuralForm("Factorial", [operand], "apply");
+    if (operand2 instanceof Integer)
+      return operand2.factorial();
+    return structuralForm("Factorial", [operand2], "apply");
   }
   throw new Error(`Unknown structural postfix operator '${operator}'`);
 }
@@ -13975,19 +14794,19 @@ function applyConfiguredBinary(operator, info, left, right) {
     return applyStructuralBinary(operator, left, right);
   return structuralForm(info.head, [semanticLiteralValue(left), semanticLiteralValue(right)], "apply");
 }
-function applyConfiguredPrefix(operator, info, operand) {
+function applyConfiguredPrefix(operator, info, operand2) {
   if (info.apply)
-    return info.apply(operand);
+    return info.apply(operand2);
   if (DEFAULT_PREFIX[operator])
-    return applyStructuralPrefix(operator, operand);
-  return structuralForm(info.head, [semanticLiteralValue(operand)], "apply");
+    return applyStructuralPrefix(operator, operand2);
+  return structuralForm(info.head, [semanticLiteralValue(operand2)], "apply");
 }
-function applyConfiguredPostfix(operator, info, operand) {
+function applyConfiguredPostfix(operator, info, operand2) {
   if (info.apply)
-    return info.apply(operand);
+    return info.apply(operand2);
   if (DEFAULT_POSTFIX[operator])
-    return applyStructuralPostfix(operator, operand);
-  return structuralForm(info.head, [semanticLiteralValue(operand)], "apply");
+    return applyStructuralPostfix(operator, operand2);
+  return structuralForm(info.head, [semanticLiteralValue(operand2)], "apply");
 }
 function startsOperand(current) {
   return current.type === "number" || current.type === "identifier" || current.type === "rix_expression" || current.type === "at" || current.type === "lparen";
@@ -14134,15 +14953,15 @@ class StructuralParser {
       const operator = this.advance();
       const info = this.prefix[operator.value];
       const separated = this.current.gapBefore === true;
-      const operand = this.parseExpression(separated ? this.prefix[operator.value]?.precedence ?? PREFIX_PRECEDENCE : (this.binary["^"]?.precedence ?? 100) + 1);
-      if (!separated && isStructuralForm(operand) && Object.values(this.postfix).some((postfix) => postfix.head === operand.head) && !this.groupedValues.has(operand)) {
+      const operand2 = this.parseExpression(separated ? this.prefix[operator.value]?.precedence ?? PREFIX_PRECEDENCE : (this.binary["^"]?.precedence ?? 100) + 1);
+      if (!separated && isStructuralForm(operand2) && Object.values(this.postfix).some((postfix) => postfix.head === operand2.head) && !this.groupedValues.has(operand2)) {
         this.error(operator, "ambiguous tight prefix and postfix; parenthesize the prefix or its operand");
       }
       const span = {
         start: operator.start,
-        end: structuralSourceSpan(operand)?.end ?? operator.end
+        end: structuralSourceSpan(operand2)?.end ?? operator.end
       };
-      const result = separated ? applyConfiguredPrefix(operator.value, info, operand) : constructPrefix(operator.value, operand, span, info);
+      const result = separated ? applyConfiguredPrefix(operator.value, info, operand2) : constructPrefix(operator.value, operand2, span, info);
       rememberSpan(result, span);
       if (!separated && result !== null && typeof result === "object") {
         this.tightPrefixValues.add(result);
@@ -16207,8 +17026,14 @@ var rationalExactMethods = {
   E: method2("E", ([target, exponent]) => target.E(exactBigInt(exponent, "Exponent"))),
   TOMIXEDSTRING: method2("ToMixedString", ([target]) => stringObj3(target.toMixedString())),
   TODECIMAL: method2("ToDecimal", ([target]) => stringObj3(target.toDecimal())),
+  TODECIMALAPPROXIMATION: method2("ToDecimalApproximation", ([target, digits]) => boundedDecimalApproximation(target, {
+    fractionalDigits: digits === undefined ? undefined : safeExactNumber(digits, "Fractional digits")
+  })),
   TOCONTINUEDFRACTION: method2("ToContinuedFraction", ([target, maxTerms]) => exactSequence(target.toContinuedFraction(maxTerms === undefined ? undefined : safeExactNumber(maxTerms, "Maximum terms")).map((value) => int5(value)))),
   TOCONTINUEDFRACTIONSTRING: method2("ToContinuedFractionString", ([target]) => stringObj3(target.toContinuedFractionString())),
+  TOCONTINUEDFRACTIONAPPROXIMATION: method2("ToContinuedFractionApproximation", ([target, maxTerms]) => boundedContinuedFractionApproximation(target, {
+    maxTerms: maxTerms === undefined ? undefined : safeExactNumber(maxTerms, "Maximum terms")
+  })),
   CONVERGENTS: method2("Convergents", ([target, maxCount]) => exactSequence(target.convergents(maxCount === undefined ? undefined : safeExactNumber(maxCount, "Maximum convergents")))),
   CONVERGENT: method2("Convergent", ([target, index]) => {
     const oneBasedIndex = safeExactNumber(index, "Convergent index");
@@ -16246,6 +17071,18 @@ var rationalIntervalMethods = {
   E: method2("E", ([target, exponent]) => target.E(exactBigInt(exponent, "Exponent"))),
   BITLENGTH: method2("BitLength", ([target]) => int5(target.bitLength())),
   TOMIXEDSTRING: method2("ToMixedString", ([target]) => stringObj3(target.toMixedString())),
+  TOSTRING: method2("ToString", ([target]) => stringObj3(target.toString()))
+};
+var certifiedApproximationMethods = {
+  CANDIDATE: method2("Candidate", ([target]) => target.candidate),
+  ENCLOSURE: method2("Enclosure", ([target]) => target.enclosure),
+  LOW: method2("Low", ([target]) => target.low),
+  HIGH: method2("High", ([target]) => target.high),
+  NEGATE: method2("Negate", ([target]) => target.negate()),
+  RECIPROCAL: method2("Reciprocal", ([target]) => target.reciprocal()),
+  POSSIBLERELATIONS: method2("PossibleRelations", ([target, other]) => int5(possibleRelations(target, other))),
+  CERTAINLYLESSTHAN: method2("CertainlyLessThan", ([target, other]) => bool(possibleRelations(target, other) === Relation.LESS)),
+  POSSIBLYLESSTHAN: method2("PossiblyLessThan", ([target, other]) => bool((possibleRelations(target, other) & Relation.LESS) !== 0)),
   TOSTRING: method2("ToString", ([target]) => stringObj3(target.toString()))
 };
 var structuralMethods = {
@@ -16317,6 +17154,8 @@ var PROTOS = new Map([
   ["integer", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(integerExactMethods)])],
   ["rational", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(rationalExactMethods)])],
   ["rational_interval", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(rationalIntervalMethods)])],
+  ["certified_approximation", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(certifiedApproximationMethods)])],
+  ["undecided", createBuiltinProto([...Object.entries(commonMethods)])],
   ["structural_algebra", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(structuralMethods)])],
   ["structural_symbol", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(structuralMethods)])],
   ["structural_literal", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(structuralMethods)])],
@@ -16376,12 +17215,16 @@ function checkTraitsMethod(name) {
   return method2(name, ([target], context) => checkTraits(target, context, { warnOnly: true }));
 }
 function builtinProtoFor(target) {
+  if (isUndecided(target))
+    return PROTOS.get("undecided");
   if (target instanceof Integer)
     return PROTOS.get("integer");
   if (target instanceof Rational)
     return PROTOS.get("rational");
   if (target instanceof RationalInterval)
     return PROTOS.get("rational_interval");
+  if (target instanceof CertifiedApproximation)
+    return PROTOS.get("certified_approximation");
   if (target instanceof Fraction)
     return PROTOS.get("structural_value");
   if (isTensor(target))
@@ -16401,6 +17244,10 @@ function extensionTypeNames(target) {
     names.push("Rational");
   else if (target instanceof RationalInterval)
     names.push("RationalInterval");
+  else if (target instanceof CertifiedApproximation)
+    names.push("CertifiedApproximation");
+  else if (isUndecided(target))
+    names.push("Undecided");
   else if (target instanceof Fraction)
     names.push("Fraction");
   else if (isTensor(target))
@@ -16474,6 +17321,9 @@ function builtinMethodNamesForType(typeName) {
     ["rational", "rational"],
     ["rationalinterval", "rational_interval"],
     ["interval", "rational_interval"],
+    ["certifiedapproximation", "certified_approximation"],
+    ["approximation", "certified_approximation"],
+    ["undecided", "undecided"],
     ["array", "sequence"],
     ["sequence", "sequence"],
     ["map", "map"],
@@ -19916,6 +20766,8 @@ function formatValue(val, options = {}) {
   const formatChild = (child) => formatValue(child, options);
   if (isHole(val))
     return "undefined";
+  if (isUndecided(val))
+    return "?";
   if (val === null)
     return "_";
   if (val === undefined)
@@ -20030,6 +20882,8 @@ function formatValue(val, options = {}) {
     return val.toMixedString();
   if (val instanceof RationalInterval)
     return val.toMixedString();
+  if (val instanceof CertifiedApproximation)
+    return val.toString();
   return val.toString();
 }
 
@@ -20103,7 +20957,7 @@ function lowerFunctionBody(node) {
     return ir2("NULL");
   }
   if (node.type === "TernaryOperation") {
-    return ir2("TERNARY", lowerNode(node.condition), ir2("DEFER", lowerFunctionBody(node.trueExpression)), ir2("DEFER", lowerFunctionBody(node.falseExpression)));
+    return ir2("TERNARY", lowerNode(node.condition), ir2("DEFER", lowerFunctionBody(node.trueExpression)), ir2("DEFER", node.nullExpression ? lowerFunctionBody(node.nullExpression) : ir2("NULL")), ir2("DEFER", node.undecidedExpression ? lowerFunctionBody(node.undecidedExpression) : ir2("UNDECIDED")));
   }
   if (node.type === "Call" && node.target?.type === "SelfRef") {
     const args = lowerCallArgs(node.arguments);
@@ -20186,6 +21040,9 @@ var LOWERERS = {
   },
   Hole() {
     return ir2("HOLE");
+  },
+  UndecidedLiteral() {
+    return ir2("UNDECIDED");
   },
   SemanticHas(node) {
     return ir2("SEMANTIC_HAS", lowerNode(node.expression), node.name);
@@ -20794,7 +21651,7 @@ var LOWERERS = {
     return ir2("PSORT", lowerNode(node.left), lowerNode(node.right));
   },
   TernaryOperation(node) {
-    return ir2("TERNARY", lowerNode(node.condition), ir2("DEFER", lowerNode(node.trueExpression)), ir2("DEFER", lowerNode(node.falseExpression)));
+    return ir2("TERNARY", lowerNode(node.condition), ir2("DEFER", lowerNode(node.trueExpression)), ir2("DEFER", node.nullExpression ? lowerNode(node.nullExpression) : ir2("NULL")), ir2("DEFER", node.undecidedExpression ? lowerNode(node.undecidedExpression) : ir2("UNDECIDED")));
   },
   At(node) {
     return ir2("AT", lowerNode(node.target), lowerNode(node.arg));
@@ -24096,6 +24953,11 @@ var SYMBOL_TABLE = {
     associativity: "right",
     type: "infix"
   },
+  "?_": {
+    precedence: PRECEDENCE.CONDITION,
+    associativity: "right",
+    type: "infix"
+  },
   ".": {
     precedence: PRECEDENCE.PROPERTY,
     associativity: "left",
@@ -24340,6 +25202,13 @@ class Parser {
     const left = this.parsePrefix();
     return this.parseExpressionRec(left, minPrec, false);
   }
+  parseDecisionBranchExpression() {
+    let expression = this.parseExpression(PRECEDENCE.CONDITION + 1);
+    if (this.current.value === "?:") {
+      expression = this.parseInfix(expression, this.getSymbolInfo(this.current));
+    }
+    return expression;
+  }
   parseCommaSequenceExpression(minPrec = 0) {
     const expressions = [this.parseExpression(minPrec)];
     while (this.current.value === ",") {
@@ -24422,7 +25291,12 @@ class Parser {
           original: token2.original
         });
       case "Symbol":
-        if (token2.value === "...") {
+        if (token2.value === "?") {
+          this.advance();
+          return this.createNode("UndecidedLiteral", {
+            original: token2.original
+          });
+        } else if (token2.value === "...") {
           this.advance();
           const expr = this.parseExpression(PRECEDENCE.POSTFIX);
           return this.createNode("Spread", {
@@ -24537,18 +25411,18 @@ class Parser {
           });
         } else if (token2.value === "!!") {
           this.advance();
-          const operand = this.parseExpression(PRECEDENCE.UNARY);
+          const operand2 = this.parseExpression(PRECEDENCE.UNARY);
           const inner = this.createNode("UnaryOperation", {
             operator: "!",
-            operand,
+            operand: operand2,
             pos: token2.pos,
-            original: "!" + (operand.original || "")
+            original: "!" + (operand2.original || "")
           });
           return this.createNode("UnaryOperation", {
             operator: "!",
             operand: inner,
             pos: token2.pos,
-            original: token2.original + (operand.original || "")
+            original: token2.original + (operand2.original || "")
           });
         } else if (token2.value === "+" || token2.value === "-" || token2.value === "!") {
           return this.parseUnaryOperator();
@@ -25046,20 +25920,34 @@ class Parser {
         pos: left.pos,
         original: left.original + operator.original
       });
-    } else if (operator.value === "??") {
-      const trueExpr = this.parseExpression(PRECEDENCE.CONDITION + 5);
-      if (this.current.value !== "?:") {
-        this.error('Expected "?:" in ternary operator after true expression');
+    } else if (operator.value === "?:") {
+      const trueExpr = this.parseDecisionBranchExpression();
+      let nullExpr = null;
+      let undecidedExpr = null;
+      while (this.current.value === "?_" || this.current.value === "??") {
+        const branch = this.current.value;
+        this.advance();
+        const expression = this.parseDecisionBranchExpression();
+        if (branch === "?_") {
+          if (nullExpr)
+            this.error('Duplicate "?_" null branch');
+          nullExpr = expression;
+        } else {
+          if (undecidedExpr)
+            this.error('Duplicate "??" undecided branch');
+          undecidedExpr = expression;
+        }
       }
-      this.advance();
-      const falseExpr = this.parseExpression(rightPrec);
       return this.createNode("TernaryOperation", {
         condition: left,
         trueExpression: trueExpr,
-        falseExpression: falseExpr,
+        nullExpression: nullExpr,
+        undecidedExpression: undecidedExpr,
         pos: left.pos,
         original: left.original + operator.original
       });
+    } else if (operator.value === "??") {
+      this.error('"??" is an undecided branch marker and must follow a "?:" decision conditional');
     } else if (operator.value === ".") {
       const property = this.parseMethodName();
       let systemPathInfo = null;
@@ -25287,8 +26175,8 @@ class Parser {
     while (this.isGeneratorOperator(this.current.value)) {
       const operator = this.current;
       this.advance();
-      const operand = this.parseExpression(PRECEDENCE.PIPE + 1);
-      const operatorNode = this.createGeneratorOperatorNode(operator.value, operand, operator);
+      const operand2 = this.parseExpression(PRECEDENCE.PIPE + 1);
+      const operatorNode = this.createGeneratorOperatorNode(operator.value, operand2, operator);
       operators.push(operatorNode);
     }
     if (operators.length === 0) {
@@ -25346,12 +26234,12 @@ class Parser {
         const nextSymbolInfo = this.getSymbolInfo(this.current);
         if (nextSymbolInfo && nextSymbolInfo.type === "infix") {} else {
           if (left.type === "SystemIdentifier" && left.systemInfo && left.systemInfo.type === "operator" && left.systemInfo.operatorType === "prefix") {
-            const operand = this.parseExpression(PRECEDENCE.UNARY);
+            const operand2 = this.parseExpression(PRECEDENCE.UNARY);
             left = this.createNode("UnaryOperation", {
               operator: left.name,
-              operand,
+              operand: operand2,
               pos: left.pos,
-              original: left.original + (operand.original || "")
+              original: left.original + (operand2.original || "")
             });
             continue;
           }
@@ -25562,7 +26450,7 @@ class Parser {
   isGeneratorOperator(value) {
     return ["|+", "|*", "|:", "|?", "|^", "|;", "|>"].includes(value);
   }
-  createGeneratorOperatorNode(operator, operand, token2) {
+  createGeneratorOperatorNode(operator, operand2, token2) {
     const typeMap = {
       "|+": "GeneratorAdd",
       "|*": "GeneratorMultiply",
@@ -25574,7 +26462,7 @@ class Parser {
     };
     return this.createNode(typeMap[operator], {
       operator,
-      operand,
+      operand: operand2,
       pos: token2.pos,
       original: token2.original
     });
@@ -27136,10 +28024,10 @@ class Parser {
   parseUnaryOperator() {
     const operator = this.current;
     this.advance();
-    const operand = this.parseExpression(PRECEDENCE.UNARY);
+    const operand2 = this.parseExpression(PRECEDENCE.UNARY);
     return this.createNode("UnaryOperation", {
       operator: operator.value,
-      operand,
+      operand: operand2,
       pos: operator.pos,
       original: operator.original
     });
@@ -28294,6 +29182,19 @@ function parseSimpleBaseNumeral(str, baseSystem) {
     result = result.negate();
   return result;
 }
+function normalizeBaseDigits(value, baseSystem) {
+  const usesLower = baseSystem.characters.some((character) => /[a-z]/.test(character));
+  const usesUpper = baseSystem.characters.some((character) => /[A-Z]/.test(character));
+  return Array.from(value, (character) => {
+    if (baseSystem.charMap.has(character))
+      return character;
+    if (usesLower && !usesUpper && baseSystem.charMap.has(character.toLowerCase()))
+      return character.toLowerCase();
+    if (usesUpper && !usesLower && baseSystem.charMap.has(character.toUpperCase()))
+      return character.toUpperCase();
+    return character;
+  }).join("");
+}
 function continuedFractionFromTerms(terms) {
   let acc = new Rational(terms[terms.length - 1], 1n);
   for (let i = terms.length - 2;i >= 0; i--) {
@@ -28513,9 +29414,41 @@ function resolveBaseSpecFromValue(value) {
 function parseLiteral(str) {
   if (typeof str !== "string")
     return str;
-  const isCoreUncertainty = /^[+-]?(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)\[[^\]]+\]$/.test(str);
+  const isCoreApproximation = str.includes("?") && !/^~?(?:0z\[\d+\]|0[a-zA-Z])/.test(str) && !/^0[A-Z]"/.test(str);
+  const isCoreUncertainty = isCoreApproximation || /^[+-]?(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)\[[^\]]+\]$/.test(str);
   if (isCoreUncertainty) {
     return parseNumber(str);
+  }
+  const basedApproximation = str.match(/^(-?)(?:0z\[(\d+)\]|0([a-zA-Z]))([0-9a-zA-Z]+)(?:\.([0-9a-zA-Z]*))?\?([0-9a-zA-Z]*)$/);
+  if (basedApproximation) {
+    const baseSystem2 = basedApproximation[2] ? BaseSystem.fromBase(parseInt(basedApproximation[2], 10)) : BaseSystem.getSystemForPrefix(basedApproximation[3]);
+    if (!baseSystem2)
+      throw new Error(`Unknown base prefix in approximation: ${str}`);
+    return certifiedRadixPrefix({
+      integerDigits: normalizeBaseDigits(basedApproximation[4], baseSystem2),
+      fractionalDigits: normalizeBaseDigits(basedApproximation[5] ?? "", baseSystem2),
+      provisionalDigits: normalizeBaseDigits(basedApproximation[6] ?? "", baseSystem2),
+      negative: basedApproximation[1] === "-",
+      baseSystem: baseSystem2,
+      original: str
+    });
+  }
+  const basedCfApproximation = str.match(/^~?(-?)(?:0z\[(\d+)\]|0([a-zA-Z]))([0-9a-zA-Z]+)\.~([0-9a-zA-Z]+(?:~[0-9a-zA-Z]+)*)\?([0-9a-zA-Z]+(?:~[0-9a-zA-Z]+)*)?$/);
+  if (basedCfApproximation) {
+    const baseSystem2 = basedCfApproximation[2] ? BaseSystem.fromBase(parseInt(basedCfApproximation[2], 10)) : BaseSystem.getSystemForPrefix(basedCfApproximation[3]);
+    if (!baseSystem2)
+      throw new Error(`Unknown base prefix in continued-fraction approximation: ${str}`);
+    const coefficient = (digits) => baseSystem2.toDecimal(normalizeBaseDigits(digits, baseSystem2));
+    const certified = [
+      coefficient(basedCfApproximation[4]) * (basedCfApproximation[1] === "-" ? -1n : 1n),
+      ...basedCfApproximation[5].split("~").map(coefficient)
+    ];
+    const provisional = basedCfApproximation[6] ? basedCfApproximation[6].split("~").map(coefficient) : [];
+    return certifiedContinuedFractionPrefix({
+      coefficients: certified,
+      provisionalCoefficients: provisional,
+      original: str
+    });
   }
   if (/^0[a-zA-Z]$/.test(str) || /^0z\[\d+\]$/.test(str)) {
     return str;
@@ -29190,6 +30123,44 @@ function deepSetMutable(value, flag, visited = new Set) {
   return value;
 }
 var coreFunctions = {
+  UNDECIDED: {
+    impl() {
+      return UNDECIDED;
+    },
+    pure: true,
+    doc: "Return the singleton undecided decision value"
+  },
+  CERTIFIED_APPROXIMATION: {
+    impl(args) {
+      const candidate = args[0];
+      const enclosure = args[1];
+      if (!(candidate instanceof Integer || candidate instanceof Rational)) {
+        throw new Error("CertifiedApproximation candidate must be an exact Integer or Rational");
+      }
+      if (!(enclosure instanceof RationalInterval)) {
+        throw new Error("CertifiedApproximation enclosure must be a RationalInterval");
+      }
+      const metadata = args[2]?.type === "map" && args[2].entries instanceof Map ? args[2].entries : new Map;
+      const readText = (name, fallback = null) => {
+        const value = metadata.get(name.toLowerCase()) ?? metadata.get(name);
+        if (value === null || value === undefined)
+          return fallback;
+        return value?.type === "string" ? value.value : String(value);
+      };
+      return new CertifiedApproximation(candidate, enclosure, {
+        representation: {
+          kind: "derived",
+          reason: readText("reason", "provider"),
+          original: null,
+          requested: metadata.get("requested") ?? null,
+          achieved: metadata.get("achieved") ?? null,
+          provider: readText("provider")
+        }
+      });
+    },
+    pure: true,
+    doc: "Construct a certified approximate scalar from an exact candidate and rational enclosure"
+  },
   LITERAL: {
     impl(args) {
       return parseLiteral(args[0]);
@@ -29893,6 +30864,30 @@ var coreFunctions = {
 };
 
 // ../rix/src/eval/functions/comparison.js
+function isEnclosed(value) {
+  return value instanceof CertifiedApproximation || value instanceof RationalInterval;
+}
+function relationDecision(a, b, operation) {
+  if (!isEnclosed(a) && !isEnclosed(b))
+    return null;
+  const mask = possibleRelations(a, b);
+  switch (operation) {
+    case "eq":
+      return mask === Relation.EQUAL ? true : (mask & Relation.EQUAL) === 0 ? false : UNDECIDED;
+    case "neq":
+      return mask === Relation.EQUAL ? false : (mask & Relation.EQUAL) === 0 ? true : UNDECIDED;
+    case "lt":
+      return mask === Relation.LESS ? true : (mask & Relation.LESS) === 0 ? false : UNDECIDED;
+    case "gt":
+      return mask === Relation.GREATER ? true : (mask & Relation.GREATER) === 0 ? false : UNDECIDED;
+    case "lte":
+      return (mask & Relation.GREATER) === 0 ? true : mask === Relation.GREATER ? false : UNDECIDED;
+    case "gte":
+      return (mask & Relation.LESS) === 0 ? true : mask === Relation.LESS ? false : UNDECIDED;
+    default:
+      throw new Error(`Unknown relation operation '${operation}'`);
+  }
+}
 function compare2(a, b) {
   if (a && b && typeof a.subtract === "function" && typeof b.subtract === "function") {
     const diff = a.subtract(b);
@@ -29922,12 +30917,14 @@ function compare2(a, b) {
   return 0;
 }
 function boolResult2(val) {
+  if (isUndecided(val))
+    return UNDECIDED;
   return val ? new Integer(1) : null;
 }
 function classifyMinMaxType(val) {
   if (val === null || val === undefined)
     return null;
-  if (val instanceof Integer || val instanceof Rational)
+  if (val instanceof Integer || val instanceof Rational || isEnclosed(val))
     return "number";
   if (typeof val === "number" || typeof val === "bigint")
     return "number";
@@ -29965,6 +30962,8 @@ function minMaxImpl(args, mode, context, evaluate) {
       throw new Error(`${mode} requires an active evaluator registry`);
     }
     const invocation = registry.invokeWithVariant("COMPARE", [filtered[i], best], context, evaluate);
+    if (isUndecided(invocation.value))
+      return UNDECIDED;
     const c = comparisonInteger(invocation.value);
     const [candidate, normalizedBest] = invocation.args;
     if (mode === "MIN" && c < 0 || mode === "MAX" && c > 0) {
@@ -29984,6 +30983,16 @@ var comparisonFunctions = {
         throw new Error("COMPARE requires two values from the same built-in ordered domain");
       }
       const result = compare2(args[0], args[1]);
+      if (isEnclosed(args[0]) || isEnclosed(args[1])) {
+        const mask = possibleRelations(args[0], args[1]);
+        if (mask === Relation.LESS)
+          return new Integer(-1n);
+        if (mask === Relation.EQUAL)
+          return new Integer(0n);
+        if (mask === Relation.GREATER)
+          return new Integer(1n);
+        return UNDECIDED;
+      }
       return new Integer(BigInt(result < 0 ? -1 : result > 0 ? 1 : 0));
     },
     pure: true,
@@ -29992,6 +31001,9 @@ var comparisonFunctions = {
   EQ: {
     impl(args) {
       const [a, b] = args;
+      const decision = relationDecision(a, b, "eq");
+      if (decision !== null)
+        return boolResult2(decision);
       if (a && b && typeof a.equals === "function") {
         return boolResult2(a.equals(b));
       }
@@ -30005,6 +31017,9 @@ var comparisonFunctions = {
   NEQ: {
     impl(args) {
       const [a, b] = args;
+      const decision = relationDecision(a, b, "neq");
+      if (decision !== null)
+        return boolResult2(decision);
       if (a && b && typeof a.equals === "function") {
         return boolResult2(!a.equals(b));
       }
@@ -30017,28 +31032,32 @@ var comparisonFunctions = {
   },
   LT: {
     impl(args) {
-      return boolResult2(compare2(args[0], args[1]) < 0);
+      const decision = relationDecision(args[0], args[1], "lt");
+      return decision === null ? boolResult2(compare2(args[0], args[1]) < 0) : boolResult2(decision);
     },
     pure: true,
     doc: "Less than — returns 1 or null"
   },
   GT: {
     impl(args) {
-      return boolResult2(compare2(args[0], args[1]) > 0);
+      const decision = relationDecision(args[0], args[1], "gt");
+      return decision === null ? boolResult2(compare2(args[0], args[1]) > 0) : boolResult2(decision);
     },
     pure: true,
     doc: "Greater than — returns 1 or null"
   },
   LTE: {
     impl(args) {
-      return boolResult2(compare2(args[0], args[1]) <= 0);
+      const decision = relationDecision(args[0], args[1], "lte");
+      return decision === null ? boolResult2(compare2(args[0], args[1]) <= 0) : boolResult2(decision);
     },
     pure: true,
     doc: "Less than or equal — returns 1 or null"
   },
   GTE: {
     impl(args) {
-      return boolResult2(compare2(args[0], args[1]) >= 0);
+      const decision = relationDecision(args[0], args[1], "gte");
+      return decision === null ? boolResult2(compare2(args[0], args[1]) >= 0) : boolResult2(decision);
     },
     pure: true,
     doc: "Greater than or equal — returns 1 or null"
@@ -30072,20 +31091,21 @@ var comparisonFunctions = {
 };
 
 // ../rix/src/eval/functions/logic.js
-function isTruthy3(val) {
-  return val !== null && val !== undefined;
-}
 var logicFunctions = {
   AND: {
     lazy: true,
     impl(args, ctx, evaluate) {
       let last = new Integer(1);
+      let uncertain = false;
       for (const arg of args) {
         last = evaluate(arg);
-        if (!isTruthy3(last))
-          return last;
+        const state = decisionState(last);
+        if (state === "null")
+          return null;
+        if (state === "undecided")
+          uncertain = true;
       }
-      return last;
+      return uncertain ? UNDECIDED : last;
     },
     pure: true,
     doc: "Logical AND (short-circuits on first falsy, returns deciding value)"
@@ -30094,19 +31114,24 @@ var logicFunctions = {
     lazy: true,
     impl(args, ctx, evaluate) {
       let last = null;
+      let uncertain = false;
       for (const arg of args) {
         last = evaluate(arg);
-        if (isTruthy3(last))
+        const state = decisionState(last);
+        if (state === "truth")
           return last;
+        if (state === "undecided")
+          uncertain = true;
       }
-      return last;
+      return uncertain ? UNDECIDED : last;
     },
     pure: true,
     doc: "Logical OR (short-circuits on first truthy, returns deciding value)"
   },
   NOT: {
     impl(args) {
-      return isTruthy3(args[0]) ? null : new Integer(1);
+      const state = decisionState(args[0]);
+      return state === "truth" ? null : state === "null" ? new Integer(1) : UNDECIDED;
     },
     pure: true,
     doc: "Logical NOT — returns Integer(1) for null input, null otherwise"
@@ -30114,9 +31139,6 @@ var logicFunctions = {
 };
 
 // ../rix/src/eval/functions/control.js
-function isTruthy4(val) {
-  return val !== null && val !== undefined;
-}
 function unwrapDefer(node) {
   if (node && node.fn === "DEFER" && node.args && node.args.length > 0) {
     return node.args[0];
@@ -30247,9 +31269,12 @@ var controlFunctions = {
           const inner = unwrapDefer(bodyArgs[i]);
           if (inner && inner.fn === "CONDITION") {
             const condResult = evaluate(inner.args[0]);
-            if (isTruthy4(condResult)) {
+            const state = decisionState(condResult);
+            if (state === "truth") {
               return evaluate(inner.args[1]);
             }
+            if (state === "undecided")
+              return UNDECIDED;
             continue;
           }
           if (inner && inner.fn === "PREP_TRIAL") {
@@ -30298,7 +31323,10 @@ var controlFunctions = {
           while (true) {
             if (condNode) {
               const condResult = evaluateShared(condNode, context, evaluate);
-              if (!isTruthy4(condResult))
+              const state = decisionState(condResult);
+              if (state === "undecided")
+                return UNDECIDED;
+              if (state === "null")
                 break;
             }
             if (maxIterations !== null && iterations >= maxIterations) {
@@ -30333,13 +31361,11 @@ var controlFunctions = {
     lazy: true,
     impl(args, context, evaluate) {
       const condResult = evaluate(args[0]);
-      if (isTruthy4(condResult)) {
-        return evaluate(unwrapDefer(args[1]));
-      } else {
-        return evaluate(unwrapDefer(args[2]));
-      }
+      const state = decisionState(condResult);
+      const branch = state === "truth" ? args[1] : state === "null" ? args[2] : args[3];
+      return evaluate(unwrapDefer(branch));
     },
-    doc: "Ternary conditional: condition ?? trueExpr ?: falseExpr"
+    doc: "Decision conditional: condition ?: truthExpr ?_ nullExpr ?? undecidedExpr"
   },
   BREAK: {
     lazy: true,
@@ -30621,6 +31647,14 @@ function mediantLevels(lo, hi, levels) {
 var advancedFunctions = {
   ASSERT_LT: {
     impl(args) {
+      if (args.some((value) => value instanceof CertifiedApproximation || value instanceof RationalInterval)) {
+        const relations = possibleRelations(args[0], args[1]);
+        if (relations === Relation.LESS)
+          return new Integer(1n);
+        if ((relations & Relation.LESS) !== 0)
+          return UNDECIDED;
+        throw new Error("Assertion failed: left value is not less than right value");
+      }
       const a = toNumber(args[0]);
       const b = toNumber(args[1]);
       if (!(a < b)) {
@@ -30633,6 +31667,14 @@ var advancedFunctions = {
   },
   ASSERT_LTE: {
     impl(args) {
+      if (args.some((value) => value instanceof CertifiedApproximation || value instanceof RationalInterval)) {
+        const relations = possibleRelations(args[0], args[1]);
+        if ((relations & Relation.GREATER) === 0)
+          return new Integer(1n);
+        if (relations !== Relation.GREATER)
+          return UNDECIDED;
+        throw new Error("Assertion failed: left value is greater than right value");
+      }
       const a = toNumber(args[0]);
       const b = toNumber(args[1]);
       if (!(a <= b)) {
@@ -30645,6 +31687,14 @@ var advancedFunctions = {
   },
   ASSERT_GT: {
     impl(args) {
+      if (args.some((value) => value instanceof CertifiedApproximation || value instanceof RationalInterval)) {
+        const relations = possibleRelations(args[0], args[1]);
+        if (relations === Relation.GREATER)
+          return new Integer(1n);
+        if ((relations & Relation.GREATER) !== 0)
+          return UNDECIDED;
+        throw new Error("Assertion failed: left value is not greater than right value");
+      }
       const a = toNumber(args[0]);
       const b = toNumber(args[1]);
       if (!(a > b)) {
@@ -30657,6 +31707,14 @@ var advancedFunctions = {
   },
   ASSERT_GTE: {
     impl(args) {
+      if (args.some((value) => value instanceof CertifiedApproximation || value instanceof RationalInterval)) {
+        const relations = possibleRelations(args[0], args[1]);
+        if ((relations & Relation.LESS) === 0)
+          return new Integer(1n);
+        if (relations !== Relation.LESS)
+          return UNDECIDED;
+        throw new Error("Assertion failed: left value is less than right value");
+      }
       const a = toNumber(args[0]);
       const b = toNumber(args[1]);
       if (!(a >= b)) {
@@ -31098,11 +32156,12 @@ var stdlibFunctions = {
         args: [
           args[0],
           { fn: "DEFER", args: [args[1]] },
-          args[2] ? { fn: "DEFER", args: [args[2]] } : { fn: "NULL", args: [] }
+          args[2] ? { fn: "DEFER", args: [args[2]] } : { fn: "DEFER", args: [{ fn: "NULL", args: [] }] },
+          args[3] ? { fn: "DEFER", args: [args[3]] } : { fn: "DEFER", args: [{ fn: "UNDECIDED", args: [] }] }
         ]
       });
     },
-    doc: "Conditional function IF(cond, t, f)"
+    doc: "Lazy decision conditional IF(cond, truth, null?, undecided?)"
   },
   MULTI: {
     lazy: true,
@@ -31226,8 +32285,8 @@ function toRixInt(n) {
 function toRixString(s) {
   return { type: "string", value: s };
 }
-function isTruthy5(val) {
-  return val !== null && val !== undefined;
+function isTruthy2(val) {
+  return decisionState(val) === "truth";
 }
 function inspectValue(value, depth) {
   if (value === null || value === undefined)
@@ -31387,7 +32446,9 @@ var STOP = {
   impl(args, context, evaluate) {
     const label = requireString(evaluate(args[0]), ".Stop label");
     const condition = evaluate(args[1]);
-    if (!isTruthy5(condition)) {
+    if (decisionState(condition) === "undecided")
+      return UNDECIDED;
+    if (!isTruthy2(condition)) {
       return null;
     }
     const dataMapArg = args.length >= 3 ? evaluate(args[2]) : null;
@@ -31440,6 +32501,7 @@ function runSequentialTests(label, setupNode, testArgs, filePath, context, evalu
   let totalFailed = 0;
   let totalErrored = 0;
   let totalSkipped = 0;
+  let totalUnresolved = 0;
   let stopped = false;
   context.push(undefined, { isolated: true });
   let setupResult = { type: "map", entries: new Map([["passed", toRixInt(1)]]) };
@@ -31473,7 +32535,12 @@ function runSequentialTests(label, setupNode, testArgs, filePath, context, evalu
         } else {
           val = evaluate(testNode);
         }
-        if (isTruthy5(val)) {
+        const state = decisionState(val);
+        if (state === "undecided") {
+          results.push(makeTestEntry(i + 1, null, val, null, false, true));
+          totalUnresolved++;
+          passedAll = false;
+        } else if (state === "truth") {
           results.push(makeTestEntry(i + 1, true, val, null, false));
           totalPassed++;
         } else {
@@ -31503,6 +32570,7 @@ function runSequentialTests(label, setupNode, testArgs, filePath, context, evalu
   summaryEntries.set("failed", toRixInt(totalFailed));
   summaryEntries.set("errored", toRixInt(totalErrored));
   summaryEntries.set("skipped", toRixInt(totalSkipped));
+  summaryEntries.set("unresolved", toRixInt(totalUnresolved));
   const resultEntries = new Map;
   resultEntries.set("kind", toRixString("test"));
   resultEntries.set("label", toRixString(label));
@@ -31522,13 +32590,19 @@ function runSequentialTestsFromValues(label, setupNode, testValues, filePath, co
   let passedAll = true;
   let totalPassed = 0;
   let totalFailed = 0;
+  let totalUnresolved = 0;
   context.push(undefined, { isolated: true });
   try {
     evaluate(setupNode);
   } catch {}
   for (let i = 0;i < testValues.length; i++) {
     const val = testValues[i];
-    if (isTruthy5(val)) {
+    const state = decisionState(val);
+    if (state === "undecided") {
+      results.push(makeTestEntry(i + 1, null, val, null, false, true));
+      totalUnresolved++;
+      passedAll = false;
+    } else if (state === "truth") {
       results.push(makeTestEntry(i + 1, true, val, null, false));
       totalPassed++;
     } else {
@@ -31544,6 +32618,7 @@ function runSequentialTestsFromValues(label, setupNode, testValues, filePath, co
   summaryEntries.set("failed", toRixInt(totalFailed));
   summaryEntries.set("errored", toRixInt(0));
   summaryEntries.set("skipped", toRixInt(0));
+  summaryEntries.set("unresolved", toRixInt(totalUnresolved));
   const resultEntries = new Map;
   resultEntries.set("kind", toRixString("test"));
   resultEntries.set("label", toRixString(label));
@@ -31580,8 +32655,14 @@ function runIsolatedTestsFromValues(label, setupNode, testsMap, filePath, contex
   let totalPassed = 0;
   let totalFailed = 0;
   let totalErrored = 0;
+  let totalUnresolved = 0;
   for (const { key, value } of testEntries) {
-    if (isTruthy5(value)) {
+    const state = decisionState(value);
+    if (state === "undecided") {
+      resultMap.set(key, makeIsolatedEntry(null, value, null, true));
+      totalUnresolved++;
+      passedAll = false;
+    } else if (state === "truth") {
       resultMap.set(key, makeIsolatedEntry(true, value, null));
       totalPassed++;
     } else {
@@ -31590,7 +32671,7 @@ function runIsolatedTestsFromValues(label, setupNode, testsMap, filePath, contex
       passedAll = false;
     }
   }
-  return buildIsolatedResult(label, filePath, passedAll, resultMap, testEntries.length, totalPassed, totalFailed, totalErrored, diag);
+  return buildIsolatedResult(label, filePath, passedAll, resultMap, testEntries.length, totalPassed, totalFailed, totalErrored, diag, totalUnresolved);
 }
 function runIsolatedTestEntries(label, setupNode, testEntries, filePath, context, evaluate, diag) {
   const resultMap = new Map;
@@ -31598,6 +32679,7 @@ function runIsolatedTestEntries(label, setupNode, testEntries, filePath, context
   let totalPassed = 0;
   let totalFailed = 0;
   let totalErrored = 0;
+  let totalUnresolved = 0;
   for (const { key, valNode } of testEntries) {
     context.push(undefined, { isolated: true });
     try {
@@ -31608,7 +32690,12 @@ function runIsolatedTestEntries(label, setupNode, testEntries, filePath, context
       } else {
         val = evaluate(valNode);
       }
-      if (isTruthy5(val)) {
+      const state = decisionState(val);
+      if (state === "undecided") {
+        resultMap.set(key, makeIsolatedEntry(null, val, null, true));
+        totalUnresolved++;
+        passedAll = false;
+      } else if (state === "truth") {
         resultMap.set(key, makeIsolatedEntry(true, val, null));
         totalPassed++;
       } else {
@@ -31624,14 +32711,15 @@ function runIsolatedTestEntries(label, setupNode, testEntries, filePath, context
       context.pop();
     }
   }
-  return buildIsolatedResult(label, filePath, passedAll, resultMap, testEntries.length, totalPassed, totalFailed, totalErrored, diag);
+  return buildIsolatedResult(label, filePath, passedAll, resultMap, testEntries.length, totalPassed, totalFailed, totalErrored, diag, totalUnresolved);
 }
-function buildIsolatedResult(label, filePath, passedAll, resultMap, total, passed, failed, errored, diag) {
+function buildIsolatedResult(label, filePath, passedAll, resultMap, total, passed, failed, errored, diag, unresolved = 0) {
   const summaryEntries = new Map;
   summaryEntries.set("total", toRixInt(total));
   summaryEntries.set("passed", toRixInt(passed));
   summaryEntries.set("failed", toRixInt(failed));
   summaryEntries.set("errored", toRixInt(errored));
+  summaryEntries.set("unresolved", toRixInt(unresolved));
   const resultEntries = new Map;
   resultEntries.set("kind", toRixString("test"));
   resultEntries.set("label", toRixString(label));
@@ -31645,7 +32733,7 @@ function buildIsolatedResult(label, filePath, passedAll, resultMap, total, passe
   diag.registerTestResult(filePath, label, resultObj);
   return resultObj;
 }
-function makeTestEntry(index, passed, value, error, skipped) {
+function makeTestEntry(index, passed, value, error, skipped, unresolved = false) {
   const entries2 = new Map;
   entries2.set("index", toRixInt(index));
   entries2.set("passed", passed === true ? toRixInt(1) : null);
@@ -31654,15 +32742,17 @@ function makeTestEntry(index, passed, value, error, skipped) {
   if (error !== null && error !== undefined)
     entries2.set("error", toRixString(error));
   entries2.set("skipped", skipped ? toRixInt(1) : null);
+  entries2.set("unresolved", unresolved ? toRixInt(1) : null);
   return { type: "map", entries: entries2 };
 }
-function makeIsolatedEntry(passed, value, error) {
+function makeIsolatedEntry(passed, value, error, unresolved = false) {
   const entries2 = new Map;
   entries2.set("passed", passed ? toRixInt(1) : null);
   if (value !== null && value !== undefined)
     entries2.set("value", value);
   if (error !== null && error !== undefined)
     entries2.set("error", toRixString(error));
+  entries2.set("unresolved", unresolved ? toRixInt(1) : null);
   return { type: "map", entries: entries2 };
 }
 var DEBUG = {
@@ -34824,16 +35914,16 @@ schemas: [rix.oracle@1]
 defaultEnabled: false
 **/
 
-Option(options, key, fallback) -> options.Has(key) ?? options[key] ?: fallback;
+Option(options, key, fallback) -> options.Has(key) ?: options[key] ?_ fallback;
 
 RequirePositive(value, label) -> {;
     rational = value ~!: :Rational;
-    rational > 0 ?? rational ?: .Error(@"@{label} must be a positive rational");
+    rational > 0 ?: rational ?_ .Error(@"@{label} must be a positive rational");
 };
 
 RequireNonnegativeInteger(value, label) -> {;
     integer = value ~!: :Integer;
-    integer >= 0 ?? integer ?: .Error(@"@{label} must be a nonnegative integer");
+    integer >= 0 ?: integer ?_ .Error(@"@{label} must be a nonnegative integer");
 };
 
 AsInterval(value) -> value ~!: :RationalInterval;
@@ -34888,7 +35978,7 @@ OracleProphecy(real, interval, query ?= _, branch ?= :direct) -> {=
 
 OracleAnswer(status, query, prophecy ?= _, reason ?= _, procedure ?= _) -> {;
     validStatus = {| :yes, :no, :unknown |}.Has(status);
-    validStatus ?? {=
+    validStatus ?: {=
         valueKind = :oracleAnswer,
         schema = "rix.oracle.answer@1",
         status = status,
@@ -34899,7 +35989,7 @@ OracleAnswer(status, query, prophecy ?= _, reason ?= _, procedure ?= _) -> {;
         procedure = procedure,
         evidence = _,
         work = {= calls = 1, iterations = 1 }
-    } ?: .Error("Oracle answer status must be :yes, :no, or :unknown");
+    } ?_ .Error("Oracle answer status must be :yes, :no, or :unknown");
 };
 
 BuildRationalOracle(exactValue, selectedProcedure, options) -> {;
@@ -34912,7 +36002,7 @@ BuildRationalOracle(exactValue, selectedProcedure, options) -> {;
         parameters = {= value = exactValue },
         eta = _,
         declaredProperties = [:range, :existence, :separation, :disjointness, :consistency, :singularity, :closure],
-        choicePolicy = selectedProcedure == :randomHalo ?? :enumerable ?: :single,
+        choicePolicy = selectedProcedure == :randomHalo ?: :enumerable ?_ :single,
         seed = Option(options, "seed", 1),
         provenance = {= plugin = :oracle, version = 1, source = :rationalConstructor }
     };
@@ -34928,8 +36018,8 @@ RationalOracle(value, options ?= {= }) -> {;
     exactValue = value ~!: :Rational;
     procedure = Option(options, "procedure", :singular);
     allowed = {| :singular, :reflexive, :halo, :randomHalo, :bisection |};
-    allowed.Has(procedure) ?? BuildRationalOracle(exactValue, procedure, options)
-                           ?: .Error("Unknown rational oracle procedure");
+    allowed.Has(procedure) ?: BuildRationalOracle(exactValue, procedure, options)
+                           ?_ .Error("Unknown rational oracle procedure");
 };
 
 PointProphecy(real, query, branch) -> {;
@@ -34954,8 +36044,8 @@ SingularAnswer(real, query, procedure) -> {;
     high = IntervalHigh(interval);
     inside = value >= low && value <= high;
     point = PointProphecy(real, query, procedure);
-    inside ?? OracleAnswer(:yes, query, point, :contained, procedure)
-           ?: OracleAnswer(:no, query, point, :disjoint, procedure);
+    inside ?: OracleAnswer(:yes, query, point, :contained, procedure)
+           ?_ OracleAnswer(:no, query, point, :disjoint, procedure);
 };
 
 ReflexiveAnswer(real, query, procedure) -> {;
@@ -34964,8 +36054,8 @@ ReflexiveAnswer(real, query, procedure) -> {;
     low = IntervalLow(interval);
     high = IntervalHigh(interval);
     inside = value >= low && value <= high;
-    inside ?? OracleAnswer(:yes, query, OracleProphecy(real, interval, query, :reflexive), :contained, procedure)
-           ?: OracleAnswer(:no, query, PointProphecy(real, query, procedure), :disjoint, procedure);
+    inside ?: OracleAnswer(:yes, query, OracleProphecy(real, interval, query, :reflexive), :contained, procedure)
+           ?_ OracleAnswer(:no, query, PointProphecy(real, query, procedure), :disjoint, procedure);
 };
 
 HaloAnswer(real, query, procedure, branch, yesReason, noReason) -> {;
@@ -34975,16 +36065,16 @@ HaloAnswer(real, query, procedure, branch, yesReason, noReason) -> {;
     low = IntervalLow(interval);
     high = IntervalHigh(interval);
     inOpenHalo = value > low - delta && value < high + delta;
-    inOpenHalo ?? OracleAnswer(:yes, query, HaloProphecy(real, query, branch), yesReason, procedure)
-               ?: OracleAnswer(:no, query, PointProphecy(real, query, procedure), noReason, procedure);
+    inOpenHalo ?: OracleAnswer(:yes, query, HaloProphecy(real, query, branch), yesReason, procedure)
+               ?_ OracleAnswer(:no, query, PointProphecy(real, query, procedure), noReason, procedure);
 };
 
-AskWithProcedure(real, query, procedure) -> {;
-    procedure == :singular ?? SingularAnswer(real, query, procedure) ?:
-    procedure == :reflexive ?? ReflexiveAnswer(real, query, procedure) ?:
-    procedure == :halo ?? HaloAnswer(real, query, procedure, :halo, :withinHalo, :outsideHalo) ?:
-    procedure == :bisection ?? HaloAnswer(real, query, procedure, :bisection, :bisectionWitness, :separated) ?:
-    OracleAnswer(:unknown, query, _, :procedureUnknown, procedure);
+AskWithProcedure(real, query, procedure) -> {?
+    procedure == :singular ? SingularAnswer(real, query, procedure);
+    procedure == :reflexive ? ReflexiveAnswer(real, query, procedure);
+    procedure == :halo ? HaloAnswer(real, query, procedure, :halo, :withinHalo, :outsideHalo);
+    procedure == :bisection ? HaloAnswer(real, query, procedure, :bisection, :bisectionWitness, :separated);
+    OracleAnswer(:unknown, query, _, :procedureUnknown, procedure)
 };
 
 OracleCheckReturnedRange(answer, status, query, prophecy) -> {;
@@ -34997,10 +36087,10 @@ OracleCheckReturnedRange(answer, status, query, prophecy) -> {;
     prophecyHigh = IntervalHigh(prophecyInterval);
     intersects = prophecyHigh >= low && prophecyLow <= high;
     withinHalo = prophecyLow > low - delta && prophecyHigh < high + delta;
-    valid = status == :yes ?? (intersects && withinHalo) ?: !intersects;
+    valid = status == :yes ?: (intersects && withinHalo) ?_ !intersects;
     {=
         valid = valid,
-        reason = valid ?? :rangeChecked ?: :rangeViolation,
+        reason = valid ?: :rangeChecked ?_ :rangeViolation,
         status = status,
         intersects = intersects,
         withinHalo = withinHalo,
@@ -35026,36 +36116,37 @@ OracleCheckRange(answer) -> {;
 
 CheckedAnswer(answer) -> {;
     check = OracleCheckRange(answer);
-    check[:valid] ?? answer ?: .Error("Oracle procedure produced an answer that violates Range");
+    check[:valid] ?: answer ?_ .Error("Oracle procedure produced an answer that violates Range");
 };
 
 OracleAsk(real, interval, delta, auxiliary ?= _) -> {;
-    real[:constructor] == :rational ?? _ ?: .Error("Phase 1 Ask supports rational oracle constructors");
+    real[:constructor] == :rational ?: _ ?_ .Error("Phase 1 Ask supports rational oracle constructors");
     query = OracleQuery(interval, delta, auxiliary);
     procedure = real[:procedure];
     chosen = procedure == :randomHalo
-        ?? (.Mod(real[:seed], 2) == 0 ?? :singular ?: :halo)
-        ?: procedure;
+        ?: (.Mod(real[:seed], 2) == 0 ?: :singular ?_ :halo)
+        ?_ procedure;
     CheckedAnswer(AskWithProcedure(real, query, chosen));
 };
 
 RandomHaloAlternatives(real, interval, delta, maxAlternatives) -> {;
     query = OracleQuery(interval, delta, _);
     singular = CheckedAnswer(AskWithProcedure(real, query, :singular));
-    maxAlternatives == 1 ?? [singular]
-        ?: [singular, CheckedAnswer(AskWithProcedure(real, query, :halo))];
+    maxAlternatives == 1 ?: [singular]
+        ?_ [singular, CheckedAnswer(AskWithProcedure(real, query, :halo))];
 };
 
 OracleAskAll(real, interval, delta, options ?= {= }) -> {;
     maxAlternatives = OracleWorkPolicy(options)[:maxAlternatives];
-    maxAlternatives == 0 ?? [] ?:
+    maxAlternatives == 0 ?: [] ?_ (
       real[:procedure] == :randomHalo
-        ?? RandomHaloAlternatives(real, interval, delta, maxAlternatives)
-        ?: [OracleAsk(real, interval, delta)];
+        ?: RandomHaloAlternatives(real, interval, delta, maxAlternatives)
+        ?_ [OracleAsk(real, interval, delta)]
+    );
 };
 
 OracleRefine(real, options ?= {= }) -> {;
-    real[:constructor] == :rational ?? _ ?: .Error("Phase 1 Refine supports rational oracle constructors");
+    real[:constructor] == :rational ?: _ ?_ .Error("Phase 1 Refine supports rational oracle constructors");
     requestedWidth = RequirePositive(Option(options, "width", 1 / 1000), "width");
     maxCalls = RequireNonnegativeInteger(Option(options, "maxcalls", 100), "maxCalls");
     keepTrace = Option(options, "trace", 1);
@@ -35069,33 +36160,40 @@ OracleRefine(real, options ?= {= }) -> {;
     {@ iteration = 1; @achievedWidth > @requestedWidth && @calls < @maxCalls; {;
         midpoint = (@low + @high) / 2;
         chooseLeft = @value <= midpoint;
-        nextLow = chooseLeft ?? @low ?: midpoint;
-        nextHigh = chooseLeft ?? midpoint ?: @high;
+        nextLow = chooseLeft ?: @low ?_ midpoint;
+        nextHigh = chooseLeft ?: midpoint ?_ @high;
         @low = nextLow;
         @high = nextHigh;
         @calls += 1;
         @achievedWidth = @high - @low;
-        @trace = @keepTrace ?? @trace.Push({=
+        @trace = @keepTrace ?: @trace.Push({=
             iteration = iteration,
             split = midpoint,
-            branch = @value <= midpoint ?? :left ?: :right,
+            branch = @value <= midpoint ?: :left ?_ :right,
             interval = @low:@high,
             width = @achievedWidth,
             delta = @achievedWidth / 3,
             answer = :constructorGuarantee
-        }) ?: @trace;
+        }) ?_ @trace;
       };
       iteration += 1
     };
 
     enclosed = achievedWidth <= requestedWidth;
+    approximation = .CertifiedApproximation((low + high) / 2, low:high, {=
+        reason = enclosed ?: :refined ?_ :budgetExhausted,
+        requested = requestedWidth,
+        achieved = achievedWidth,
+        provider = :oracle
+    });
     {=
         valueKind = :oracleRefinement,
         schema = "rix.oracle.refinement@1",
-        status = enclosed ?? :enclosed ?: :budgetExhausted,
+        status = enclosed ?: :enclosed ?_ :budgetExhausted,
         interval = low:high,
         requestedWidth = requestedWidth,
         achievedWidth = achievedWidth,
+        approximation = approximation,
         trace = trace,
         work = {= calls = calls, maxCalls = maxCalls, exhausted = !enclosed },
         assumptions = [:rationalConstructor, :range, :existence, :separation],
@@ -35133,6 +36231,7 @@ OracleProtocolEnclose(real, request) -> {;
         goalMet = goalMet,
         requestedWidth = request[:absoluteWidth],
         achievedWidth = refined[:achievedWidth],
+        approximation = refined[:approximation],
         evidenceLevel = :constructorGuarantee,
         backend = :oracle,
         operation = request[:operation],
@@ -35175,16 +36274,16 @@ schemas: [rix.numerics.refinement-request@1, rix.numerics.enclosure@1]
 defaultEnabled: false
 **/
 
-Option(options, key, fallback) -> options.Has(key) ?? options[key] ?: fallback;
+Option(options, key, fallback) -> options.Has(key) ?: options[key] ?_ fallback;
 
 RequirePositive(value, label) -> {;
     rational = value ~!: :Rational;
-    rational > 0 ?? rational ?: .Error(@"@{label} must be a positive rational");
+    rational > 0 ?: rational ?_ .Error(@"@{label} must be a positive rational");
 };
 
 RequireNonnegativeInteger(value, label) -> {;
     integer = value ~!: :Integer;
-    integer >= 0 ?? integer ?: .Error(@"@{label} must be a nonnegative integer");
+    integer >= 0 ?: integer ?_ .Error(@"@{label} must be a nonnegative integer");
 };
 
 NumericsWorkPolicy(options ?= {= }) -> {;
@@ -35205,7 +36304,7 @@ NumericsRequest(options ?= {= }) -> {;
         "absoluteWidth"
     );
     relativeWidth = Option(options, "relativewidth", _);
-    relativeWidth == _ ?? _ ?: RequirePositive(relativeWidth, "relativeWidth");
+    relativeWidth == _ ?: _ ?_ RequirePositive(relativeWidth, "relativeWidth");
     {=
         valueKind = :refinementRequest,
         schema = "rix.numerics.refinement-request@1",
@@ -35221,7 +36320,7 @@ NumericsRequest(options ?= {= }) -> {;
 
 AsRequest(value) -> {;
     isRequest = value.Has("schema") && value[:schema] == "rix.numerics.refinement-request@1";
-    isRequest ?? value ?: NumericsRequest(value);
+    isRequest ?: value ?_ NumericsRequest(value);
 };
 
 CheckEnclosure(result, request) -> {;
@@ -35232,6 +36331,7 @@ CheckEnclosure(result, request) -> {;
     validStatus = {| :enclosed, :approximate, :goalNotMet, :budgetExhausted, :unsupported |}.Has(result[:status]);
     interval = result[:interval] ~!: :RationalInterval;
     schemaValid = result[:schema] == "rix.numerics.enclosure@1";
+    approximationPresent = !result[:certified] || result.Has("approximation");
     valid = fieldsPresent && validStatus && schemaValid;
     {=
         valueKind = :numericsResultCheck,
@@ -35239,6 +36339,7 @@ CheckEnclosure(result, request) -> {;
         fieldsPresent = fieldsPresent,
         statusValid = validStatus,
         schemaValid = schemaValid,
+        approximationPresent = approximationPresent,
         interval = interval,
         request = request,
         result = result
@@ -35247,7 +36348,7 @@ CheckEnclosure(result, request) -> {;
 
 CheckedEnclosure(result, request) -> {;
     check = CheckEnclosure(result, request);
-    check[:valid] ?? result ?: .Error("EnclosableReal provider returned an invalid enclosure record");
+    check[:valid] ?: result ?_ .Error("EnclosableReal provider returned an invalid enclosure record");
 };
 
 ProviderEnclose(value, request) -> CheckedEnclosure(value.Enclose(request), request);
@@ -35270,6 +36371,7 @@ numericsNamespace._proto = {=
     Enclose = (self, value, options ?= {= }) -> NumericsEnclose(value, options),
     Refine = (self, value, options ?= {= }) -> NumericsRefine(value, options),
     Sample = (self, value, options ?= {= }) -> NumericsEnclose(value, options),
+    Approximation = (self, result) -> result.Has("approximation") ?: result[:approximation] ?_ _,
     Capabilities = (self, value) -> value.NumericsCapabilities(),
     CheckResult = (self, result, options ?= {= }) -> CheckEnclosure(result, AsRequest(options))
 };
@@ -36020,7 +37122,7 @@ function rational(value, label2) {
   throw new Error(`${label2} must have exact integer or rational coefficients`);
 }
 var isZero4 = (value) => value.numerator === 0n;
-function normalize(valuesList, label2 = "Polynomial coefficients") {
+function normalize2(valuesList, label2 = "Polynomial coefficients") {
   if (valuesList.length === 0)
     throw new Error(`${label2} cannot be empty`);
   const exact = valuesList.map((value, index) => rational(value, `${label2} ${index + 1}`));
@@ -36034,7 +37136,7 @@ function add(left, right, subtract = false) {
   const length = Math.max(left.length, right.length);
   const a = [...Array(length - left.length).fill(null), ...left];
   const b = [...Array(length - right.length).fill(null), ...right];
-  return normalize(Array.from({ length }, (_, index) => {
+  return normalize2(Array.from({ length }, (_, index) => {
     const incoming = b[index] || zero();
     return subtract ? (a[index] || zero()).subtract(incoming) : (a[index] || zero()).add(incoming);
   }));
@@ -36045,14 +37147,14 @@ function multiply2(left, right) {
     for (let b = 0;b < right.length; b += 1) {
       result[a + b] = result[a + b].add(left[a].multiply(right[b]));
     }
-  return normalize(result);
+  return normalize2(result);
 }
 function scale(valuesList, divisor) {
-  return normalize(valuesList.map((value) => value.divide(divisor)));
+  return normalize2(valuesList.map((value) => value.divide(divisor)));
 }
 function divideWithRemainder(dividend, divisor) {
-  const a = normalize(dividend);
-  const b = normalize(divisor);
+  const a = normalize2(dividend);
+  const b = normalize2(divisor);
   if (b.length === 1 && isZero4(b[0]))
     throw new Error("Rational-function denominator cannot be the zero polynomial");
   if (a.length < b.length || a.length === 1 && isZero4(a[0]))
@@ -36068,11 +37170,11 @@ function divideWithRemainder(dividend, divisor) {
     }
   }
   const tail = working.slice(difference + 1);
-  return { quotient: normalize(quotient), remainder: normalize(tail.length ? tail : [zero()]) };
+  return { quotient: normalize2(quotient), remainder: normalize2(tail.length ? tail : [zero()]) };
 }
 function gcd3(left, right) {
-  let a = normalize(left);
-  let b = normalize(right);
+  let a = normalize2(left);
+  let b = normalize2(right);
   while (!(b.length === 1 && isZero4(b[0]))) {
     const remainder = divideWithRemainder(a, b).remainder;
     a = b;
@@ -36088,8 +37190,8 @@ function exactQuotient(dividend, divisor) {
   return result.quotient;
 }
 function canonicalPair(numerator, denominator) {
-  let n = normalize(numerator, "Rational-function numerator coefficients");
-  let d = normalize(denominator, "Rational-function denominator coefficients");
+  let n = normalize2(numerator, "Rational-function numerator coefficients");
+  let d = normalize2(denominator, "Rational-function denominator coefficients");
   if (d.length === 1 && isZero4(d[0]))
     throw new Error("Rational-function denominator cannot be the zero polynomial");
   if (n.length === 1 && isZero4(n[0]))
@@ -36105,7 +37207,7 @@ function canonicalPair(numerator, denominator) {
   };
 }
 function polynomialValue(coefficients, variable, context) {
-  return createPolynomial([seq3(normalize(coefficients)), str3(variable)], context);
+  return createPolynomial([seq3(normalize2(coefficients)), str3(variable)], context);
 }
 function rationalFunctionMetadata(value) {
   return value?._rationalFunction?.schema === RATIONAL_FUNCTION_SCHEMA ? value._rationalFunction : null;
@@ -36161,7 +37263,7 @@ function fromCoefficientPair(numerator, denominator, variable, context, provenan
   return decorateRationalFunction(n, d, variable, canonical, context, provenance);
 }
 function exactPolynomialCoefficients(polynomial, context, evaluate, label2) {
-  return normalize(polynomialCoefficients(requirePolynomial(polynomial, label2), context, evaluate), `${label2} coefficients`);
+  return normalize2(polynomialCoefficients(requirePolynomial(polynomial, label2), context, evaluate), `${label2} coefficients`);
 }
 function polynomialFromValue(value, variable, context) {
   if (isPolynomial(value)) {
@@ -37981,7 +39083,7 @@ function flattenScene3D(scene) {
 var subtract = (a, b) => a.map((value, index) => value - b[index]);
 var dot = (a, b) => a.reduce((sum, value, index) => sum + value * b[index], 0);
 var cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-function normalize2(value, label2) {
+function normalize3(value, label2) {
   const length = Math.hypot(...value);
   if (length < 0.000000000001)
     throw new Error(`${label2} must not be zero or collinear with the view direction`);
@@ -37991,8 +39093,8 @@ function cameraFrame(cameraValue) {
   const position = cameraValue.position.map((value, index) => numeric(value, `Camera position ${index + 1}`));
   const target = cameraValue.target.map((value, index) => numeric(value, `Camera target ${index + 1}`));
   const upHint = cameraValue.up.map((value, index) => numeric(value, `Camera up ${index + 1}`));
-  const forward = normalize2(subtract(target, position), "Camera view direction");
-  const right = normalize2(cross(forward, upHint), "Camera up vector");
+  const forward = normalize3(subtract(target, position), "Camera view direction");
+  const right = normalize3(cross(forward, upHint), "Camera up vector");
   const up = cross(right, forward);
   return { position, forward, right, up };
 }
@@ -42332,6 +43434,10 @@ function createDefaultSystemContext(options = {}) {
   ctx.register("EVAL", coreFunctions.EVAL);
   ctx.register("TypeExport", coreFunctions.TYPE_EXPORT);
   ctx.register("TypeImport", coreFunctions.TYPE_IMPORT);
+  ctx.register("CertifiedApproximation", {
+    ...coreFunctions.CERTIFIED_APPROXIMATION,
+    groups: ["Core"]
+  });
   ctx.register("TraitRegister", coreFunctions.TRAIT_REGISTER);
   ctx.register("TypeRegister", coreFunctions.TYPE_REGISTER);
   ctx.register("TypeInstall", coreFunctions.TYPE_INSTALL);
@@ -43102,7 +44208,7 @@ function captureDetachedImports(imports, context) {
   return bindings;
 }
 function isTruthyAsync(value) {
-  return value !== null && value !== undefined;
+  return decisionState(value) === "truth";
 }
 function markLexicalAsyncCallable(value, state) {
   const enabled2 = !!state?.scheduler && state.parallelCollections !== false;
@@ -43202,7 +44308,10 @@ async function invokeUserCallableAsync(fn, callArgs, context, registry, systemCo
     ]) {
       try {
         const passed = await evaluateAsyncInternal(prep, context, registry, systemContext, callableState);
-        if (!isTruthyAsync(passed))
+        const state2 = decisionState(passed);
+        if (state2 === "undecided")
+          return UNDECIDED;
+        if (state2 === "null")
           return null;
       } catch (error) {
         if (fn.params?.prepStrict === true)
@@ -43310,6 +44419,7 @@ async function orderedAsyncTerminal(items, state, worker, terminal) {
   let nextToStart = 0;
   let candidateCount = 0;
   let lastCandidate = null;
+  let uncertain = false;
   const start = (index) => {
     let promise;
     try {
@@ -43334,15 +44444,19 @@ async function orderedAsyncTerminal(items, state, worker, terminal) {
       if (!record.dropped) {
         candidateCount++;
         lastCandidate = record.value;
-        if (terminal === "PANY" && record.terminalPassed)
+        if (record.terminalState === "undecided")
+          uncertain = true;
+        if (terminal === "PANY" && record.terminalState === "truth")
           return await stop(record.value);
-        if (terminal === "PALL" && !record.terminalPassed)
+        if (terminal === "PALL" && record.terminalState === "null")
           return await stop(null);
       }
       if (nextToStart < items.length)
         start(nextToStart++);
     }
     await scheduler.waitForIdle(group);
+    if (uncertain)
+      return UNDECIDED;
     if (terminal === "PALL" && candidateCount > 0)
       return lastCandidate;
     return null;
@@ -43387,6 +44501,9 @@ async function consumeAsyncStreamStructured(stream, terminal, context, registry,
         signal: group.signal,
         invoke: (callable, args) => invokeCallableAsync(callable, args, itemContext, registry, systemContext, itemState)
       });
+      if (processed.unresolved !== undefined) {
+        return { done: false, index, records: [], stop: true, unresolved: processed.unresolved };
+      }
       const records = [];
       for (const value of processed.values) {
         let terminalValue = null;
@@ -43434,6 +44551,10 @@ async function consumeAsyncStreamStructured(stream, terminal, context, registry,
         cancelPending(streamEarlyStop("source completion"));
         break;
       }
+      if (record.unresolved !== undefined) {
+        finalResult = record.unresolved;
+        stopped = true;
+      }
       for (const entry of record.records) {
         outputIndex++;
         if (terminal.kind === "collect")
@@ -43443,15 +44564,24 @@ async function consumeAsyncStreamStructured(stream, terminal, context, registry,
         } else if (terminal.kind === "first") {
           finalResult = entry.value;
           stopped = true;
-        } else if (terminal.kind === "find" && isTruthyAsync(entry.terminalValue)) {
-          finalResult = entry.value;
-          stopped = true;
+        } else if (terminal.kind === "find") {
+          const entryState = decisionState(entry.terminalValue);
+          if (entryState === "truth") {
+            finalResult = entry.value;
+            stopped = true;
+          } else if (entryState === "undecided" && finalResult === undefined) {
+            finalResult = UNDECIDED;
+          }
         } else if (terminal.kind === "all") {
-          if (!isTruthyAsync(entry.terminalValue)) {
+          const entryState = decisionState(entry.terminalValue);
+          if (entryState === "null") {
             finalResult = null;
             stopped = true;
+          } else if (entryState === "undecided") {
+            finalResult = UNDECIDED;
           } else {
-            finalResult = entry.value;
+            if (finalResult !== UNDECIDED)
+              finalResult = entry.value;
           }
         }
         if (terminal.bound !== null && outputIndex >= terminal.bound)
@@ -43555,8 +44685,8 @@ async function resolveAsyncCollectionArg(arg, context, registry, systemContext, 
     for (const component of arg.args) {
       if (component?.fn?.startsWith("GEN_")) {
         const opArgs = [];
-        for (const operand of component.args || []) {
-          opArgs.push(await evaluateAsyncInternal(operand, context, registry, systemContext, state));
+        for (const operand2 of component.args || []) {
+          opArgs.push(await evaluateAsyncInternal(operand2, context, registry, systemContext, state));
         }
         resolved.push({ ...component, args: opArgs });
       } else {
@@ -43685,6 +44815,8 @@ function collectionItems(collection2) {
   throw new Error("Async pipe requires a finite collection");
 }
 function assembleAsyncPipeResult(collection2, items, records, stages = []) {
+  if (records.some((record) => record.unresolved === true))
+    return UNDECIDED;
   if (isTensor(collection2)) {
     const kept = records.filter((record) => record.keep);
     if (stages.some((stage) => stage.fn === "PFILTER")) {
@@ -43740,6 +44872,8 @@ async function runAsyncPipeStages(value, index, key, collection2, stages, callab
   let keep = true;
   let dropped = false;
   let terminalPassed = null;
+  let terminalState = null;
+  let unresolved = false;
   const locator = explicitLocator ?? (key !== undefined ? { type: "string", value: key } : new Integer(BigInt(index + 1)));
   for (let stageIndex = 0;stageIndex < stages.length; stageIndex++) {
     const stage = stages[stageIndex];
@@ -43759,28 +44893,41 @@ async function runAsyncPipeStages(value, index, key, collection2, stages, callab
     const result = await invokeCallableAsync(callables[stageIndex], [current, locator, collection2], context, registry, systemContext, state);
     if (stage.fn === "PMAP")
       current = result;
-    else if (stage.fn === "PFILTER" && !isTruthyAsync(result)) {
-      keep = false;
-      dropped = true;
-      break;
+    else if (stage.fn === "PFILTER") {
+      const resultState = decisionState(result);
+      if (resultState === "undecided") {
+        unresolved = true;
+        break;
+      }
+      if (resultState === "null") {
+        keep = false;
+        dropped = true;
+        break;
+      }
     } else if (stage.fn === "PANY" || stage.fn === "PALL") {
-      terminalPassed = isTruthyAsync(result);
-      keep = terminalPassed;
+      terminalState = decisionState(result);
+      terminalPassed = terminalState === "truth";
+      keep = true;
       break;
     } else if (stage.fn === "PFOREACH") {
       break;
     }
   }
-  return { index, value: current, keep, dropped, terminalPassed };
+  return { index, value: current, keep, dropped, terminalPassed, terminalState, unresolved };
 }
 function asyncTerminalResult(terminal, records) {
   if (terminal === "PANY") {
-    return records.find((record) => !record.dropped && record.terminalPassed)?.value ?? null;
+    const match = records.find((record) => !record.dropped && record.terminalState === "truth");
+    if (match)
+      return match.value;
+    return records.some((record) => !record.dropped && record.terminalState === "undecided") ? UNDECIDED : null;
   }
   if (terminal === "PALL") {
     const candidates = records.filter((record) => !record.dropped);
-    if (candidates.length === 0 || candidates.some((record) => !record.terminalPassed))
+    if (candidates.length === 0 || candidates.some((record) => record.terminalState === "null"))
       return null;
+    if (candidates.some((record) => record.terminalState === "undecided"))
+      return UNDECIDED;
     return candidates.at(-1).value;
   }
   if (terminal === "PFOREACH")
@@ -44049,14 +45196,25 @@ async function evaluateAsyncSort(args, context, registry, systemContext, state) 
     throw new Error("PSORT requires a collection");
   }
   const callable = args[1] === undefined ? null : await evaluateAsyncInternal(args[1], context, registry, systemContext, state);
+  let uncertainOrdering = false;
+  const comparatorResult = (result) => {
+    if (result === UNDECIDED) {
+      uncertainOrdering = true;
+      return 0;
+    }
+    if (result?.constructor?.name === "Integer")
+      return Number(result.value);
+    if (typeof result === "number")
+      return result;
+    return 0;
+  };
   const compare4 = async (left, right) => {
     if (callable && !isHole(callable)) {
       const result = await invokeCallableAsync(callable, [left, right], context, registry, systemContext, state);
-      if (result?.constructor?.name === "Integer")
-        return Number(result.value);
-      if (typeof result === "number")
-        return result;
-      return 0;
+      return comparatorResult(result);
+    }
+    if (left?.isCertifiedApproximation || right?.isCertifiedApproximation || left?.constructor?.name === "RationalInterval" || right?.constructor?.name === "RationalInterval") {
+      return comparatorResult(await evaluateAsyncInternal({ fn: "COMPARE", args: [left, right] }, context, registry, systemContext, state));
     }
     if (isString) {
       const leftValue = left?.type === "string" ? left.value : left;
@@ -44068,6 +45226,8 @@ async function evaluateAsyncSort(args, context, registry, systemContext, state) 
     return leftNumber - rightNumber;
   };
   const sorted = await stableAsyncMergeSort(items, compare4);
+  if (uncertainOrdering)
+    return UNDECIDED;
   if (isString) {
     const joined = sorted.map((value) => value?.type === "string" ? value.value : value).join("");
     return isStringObject2 ? { type: "string", value: joined } : joined;
@@ -44149,7 +45309,11 @@ async function evaluateAsyncSplit(args, context, registry, systemContext, state)
   let inSeparator = false;
   for (let index = 0;index < items.length; index++) {
     const locator = new Integer(BigInt(index + 1));
-    const separates = isTruthyAsync(await invokeCallableAsync(separator, [items[index], locator, collection2], context, registry, systemContext, state));
+    const separatorValue = await invokeCallableAsync(separator, [items[index], locator, collection2], context, registry, systemContext, state);
+    const separatorState = decisionState(separatorValue);
+    if (separatorState === "undecided")
+      return UNDECIDED;
+    const separates = separatorState === "truth";
     if (separates) {
       if (!inSeparator) {
         pieces.push(currentPiece);
@@ -44183,7 +45347,11 @@ async function evaluateAsyncChunk(args, context, registry, systemContext, state)
   for (let index = 0;index < items.length; index++) {
     const item = items[index];
     const locator = new Integer(BigInt(index + 1));
-    const endsChunk = isTruthyAsync(await invokeCallableAsync(boundary, [item, locator, collection2], context, registry, systemContext, state));
+    const boundaryValue = await invokeCallableAsync(boundary, [item, locator, collection2], context, registry, systemContext, state);
+    const boundaryState = decisionState(boundaryValue);
+    if (boundaryState === "undecided")
+      return UNDECIDED;
+    const endsChunk = boundaryState === "truth";
     currentPiece.push(item);
     if (endsChunk) {
       pieces.push(currentPiece);
@@ -44618,17 +45786,24 @@ async function evaluateAsyncInternal(irNode, context, registry, systemContext, s
     }
     if (fn === "TERNARY") {
       const condition = await evalAsync(args[0]);
-      const branch = isTruthyAsync(condition) ? args[1] : args[2];
+      const state2 = decisionState(condition);
+      const branch = state2 === "truth" ? args[1] : state2 === "null" ? args[2] : args[3];
       return evalAsync(branch?.fn === "DEFER" ? branch.args[0] : branch);
     }
     if (fn === "AND" || fn === "OR") {
       let last = fn === "AND" ? new Integer(1n) : null;
+      let uncertain = false;
       for (const arg of args) {
         last = await evalAsync(arg);
-        if (fn === "AND" ? !isTruthyAsync(last) : isTruthyAsync(last))
+        const state2 = decisionState(last);
+        if (fn === "AND" && state2 === "null")
+          return null;
+        if (fn === "OR" && state2 === "truth")
           return last;
+        if (state2 === "undecided")
+          uncertain = true;
       }
-      return last;
+      return uncertain ? UNDECIDED : last;
     }
     if (fn === "BREAK") {
       const definition12 = registry.get(fn);
@@ -47473,16 +48648,16 @@ schemas: [rix.numerics.refinement-request@1, rix.numerics.enclosure@1]
 defaultEnabled: false
 **/
 
-Option(options, key, fallback) -> options.Has(key) ?? options[key] ?: fallback;
+Option(options, key, fallback) -> options.Has(key) ?: options[key] ?_ fallback;
 
 RequirePositive(value, label) -> {;
     rational = value ~!: :Rational;
-    rational > 0 ?? rational ?: .Error(@"@{label} must be a positive rational");
+    rational > 0 ?: rational ?_ .Error(@"@{label} must be a positive rational");
 };
 
 RequireNonnegativeInteger(value, label) -> {;
     integer = value ~!: :Integer;
-    integer >= 0 ?? integer ?: .Error(@"@{label} must be a nonnegative integer");
+    integer >= 0 ?: integer ?_ .Error(@"@{label} must be a nonnegative integer");
 };
 
 NumericsWorkPolicy(options ?= {= }) -> {;
@@ -47503,7 +48678,7 @@ NumericsRequest(options ?= {= }) -> {;
         "absoluteWidth"
     );
     relativeWidth = Option(options, "relativewidth", _);
-    relativeWidth == _ ?? _ ?: RequirePositive(relativeWidth, "relativeWidth");
+    relativeWidth == _ ?: _ ?_ RequirePositive(relativeWidth, "relativeWidth");
     {=
         valueKind = :refinementRequest,
         schema = "rix.numerics.refinement-request@1",
@@ -47519,7 +48694,7 @@ NumericsRequest(options ?= {= }) -> {;
 
 AsRequest(value) -> {;
     isRequest = value.Has("schema") && value[:schema] == "rix.numerics.refinement-request@1";
-    isRequest ?? value ?: NumericsRequest(value);
+    isRequest ?: value ?_ NumericsRequest(value);
 };
 
 CheckEnclosure(result, request) -> {;
@@ -47530,6 +48705,7 @@ CheckEnclosure(result, request) -> {;
     validStatus = {| :enclosed, :approximate, :goalNotMet, :budgetExhausted, :unsupported |}.Has(result[:status]);
     interval = result[:interval] ~!: :RationalInterval;
     schemaValid = result[:schema] == "rix.numerics.enclosure@1";
+    approximationPresent = !result[:certified] || result.Has("approximation");
     valid = fieldsPresent && validStatus && schemaValid;
     {=
         valueKind = :numericsResultCheck,
@@ -47537,6 +48713,7 @@ CheckEnclosure(result, request) -> {;
         fieldsPresent = fieldsPresent,
         statusValid = validStatus,
         schemaValid = schemaValid,
+        approximationPresent = approximationPresent,
         interval = interval,
         request = request,
         result = result
@@ -47545,7 +48722,7 @@ CheckEnclosure(result, request) -> {;
 
 CheckedEnclosure(result, request) -> {;
     check = CheckEnclosure(result, request);
-    check[:valid] ?? result ?: .Error("EnclosableReal provider returned an invalid enclosure record");
+    check[:valid] ?: result ?_ .Error("EnclosableReal provider returned an invalid enclosure record");
 };
 
 ProviderEnclose(value, request) -> CheckedEnclosure(value.Enclose(request), request);
@@ -47568,6 +48745,7 @@ numericsNamespace._proto = {=
     Enclose = (self, value, options ?= {= }) -> NumericsEnclose(value, options),
     Refine = (self, value, options ?= {= }) -> NumericsRefine(value, options),
     Sample = (self, value, options ?= {= }) -> NumericsEnclose(value, options),
+    Approximation = (self, result) -> result.Has("approximation") ?: result[:approximation] ?_ _,
     Capabilities = (self, value) -> value.NumericsCapabilities(),
     CheckResult = (self, result, options ?= {= }) -> CheckEnclosure(result, AsRequest(options))
 };
@@ -47587,16 +48765,16 @@ schemas: [rix.oracle@1]
 defaultEnabled: false
 **/
 
-Option(options, key, fallback) -> options.Has(key) ?? options[key] ?: fallback;
+Option(options, key, fallback) -> options.Has(key) ?: options[key] ?_ fallback;
 
 RequirePositive(value, label) -> {;
     rational = value ~!: :Rational;
-    rational > 0 ?? rational ?: .Error(@"@{label} must be a positive rational");
+    rational > 0 ?: rational ?_ .Error(@"@{label} must be a positive rational");
 };
 
 RequireNonnegativeInteger(value, label) -> {;
     integer = value ~!: :Integer;
-    integer >= 0 ?? integer ?: .Error(@"@{label} must be a nonnegative integer");
+    integer >= 0 ?: integer ?_ .Error(@"@{label} must be a nonnegative integer");
 };
 
 AsInterval(value) -> value ~!: :RationalInterval;
@@ -47651,7 +48829,7 @@ OracleProphecy(real, interval, query ?= _, branch ?= :direct) -> {=
 
 OracleAnswer(status, query, prophecy ?= _, reason ?= _, procedure ?= _) -> {;
     validStatus = {| :yes, :no, :unknown |}.Has(status);
-    validStatus ?? {=
+    validStatus ?: {=
         valueKind = :oracleAnswer,
         schema = "rix.oracle.answer@1",
         status = status,
@@ -47662,7 +48840,7 @@ OracleAnswer(status, query, prophecy ?= _, reason ?= _, procedure ?= _) -> {;
         procedure = procedure,
         evidence = _,
         work = {= calls = 1, iterations = 1 }
-    } ?: .Error("Oracle answer status must be :yes, :no, or :unknown");
+    } ?_ .Error("Oracle answer status must be :yes, :no, or :unknown");
 };
 
 BuildRationalOracle(exactValue, selectedProcedure, options) -> {;
@@ -47675,7 +48853,7 @@ BuildRationalOracle(exactValue, selectedProcedure, options) -> {;
         parameters = {= value = exactValue },
         eta = _,
         declaredProperties = [:range, :existence, :separation, :disjointness, :consistency, :singularity, :closure],
-        choicePolicy = selectedProcedure == :randomHalo ?? :enumerable ?: :single,
+        choicePolicy = selectedProcedure == :randomHalo ?: :enumerable ?_ :single,
         seed = Option(options, "seed", 1),
         provenance = {= plugin = :oracle, version = 1, source = :rationalConstructor }
     };
@@ -47691,8 +48869,8 @@ RationalOracle(value, options ?= {= }) -> {;
     exactValue = value ~!: :Rational;
     procedure = Option(options, "procedure", :singular);
     allowed = {| :singular, :reflexive, :halo, :randomHalo, :bisection |};
-    allowed.Has(procedure) ?? BuildRationalOracle(exactValue, procedure, options)
-                           ?: .Error("Unknown rational oracle procedure");
+    allowed.Has(procedure) ?: BuildRationalOracle(exactValue, procedure, options)
+                           ?_ .Error("Unknown rational oracle procedure");
 };
 
 PointProphecy(real, query, branch) -> {;
@@ -47717,8 +48895,8 @@ SingularAnswer(real, query, procedure) -> {;
     high = IntervalHigh(interval);
     inside = value >= low && value <= high;
     point = PointProphecy(real, query, procedure);
-    inside ?? OracleAnswer(:yes, query, point, :contained, procedure)
-           ?: OracleAnswer(:no, query, point, :disjoint, procedure);
+    inside ?: OracleAnswer(:yes, query, point, :contained, procedure)
+           ?_ OracleAnswer(:no, query, point, :disjoint, procedure);
 };
 
 ReflexiveAnswer(real, query, procedure) -> {;
@@ -47727,8 +48905,8 @@ ReflexiveAnswer(real, query, procedure) -> {;
     low = IntervalLow(interval);
     high = IntervalHigh(interval);
     inside = value >= low && value <= high;
-    inside ?? OracleAnswer(:yes, query, OracleProphecy(real, interval, query, :reflexive), :contained, procedure)
-           ?: OracleAnswer(:no, query, PointProphecy(real, query, procedure), :disjoint, procedure);
+    inside ?: OracleAnswer(:yes, query, OracleProphecy(real, interval, query, :reflexive), :contained, procedure)
+           ?_ OracleAnswer(:no, query, PointProphecy(real, query, procedure), :disjoint, procedure);
 };
 
 HaloAnswer(real, query, procedure, branch, yesReason, noReason) -> {;
@@ -47738,16 +48916,16 @@ HaloAnswer(real, query, procedure, branch, yesReason, noReason) -> {;
     low = IntervalLow(interval);
     high = IntervalHigh(interval);
     inOpenHalo = value > low - delta && value < high + delta;
-    inOpenHalo ?? OracleAnswer(:yes, query, HaloProphecy(real, query, branch), yesReason, procedure)
-               ?: OracleAnswer(:no, query, PointProphecy(real, query, procedure), noReason, procedure);
+    inOpenHalo ?: OracleAnswer(:yes, query, HaloProphecy(real, query, branch), yesReason, procedure)
+               ?_ OracleAnswer(:no, query, PointProphecy(real, query, procedure), noReason, procedure);
 };
 
-AskWithProcedure(real, query, procedure) -> {;
-    procedure == :singular ?? SingularAnswer(real, query, procedure) ?:
-    procedure == :reflexive ?? ReflexiveAnswer(real, query, procedure) ?:
-    procedure == :halo ?? HaloAnswer(real, query, procedure, :halo, :withinHalo, :outsideHalo) ?:
-    procedure == :bisection ?? HaloAnswer(real, query, procedure, :bisection, :bisectionWitness, :separated) ?:
-    OracleAnswer(:unknown, query, _, :procedureUnknown, procedure);
+AskWithProcedure(real, query, procedure) -> {?
+    procedure == :singular ? SingularAnswer(real, query, procedure);
+    procedure == :reflexive ? ReflexiveAnswer(real, query, procedure);
+    procedure == :halo ? HaloAnswer(real, query, procedure, :halo, :withinHalo, :outsideHalo);
+    procedure == :bisection ? HaloAnswer(real, query, procedure, :bisection, :bisectionWitness, :separated);
+    OracleAnswer(:unknown, query, _, :procedureUnknown, procedure)
 };
 
 OracleCheckReturnedRange(answer, status, query, prophecy) -> {;
@@ -47760,10 +48938,10 @@ OracleCheckReturnedRange(answer, status, query, prophecy) -> {;
     prophecyHigh = IntervalHigh(prophecyInterval);
     intersects = prophecyHigh >= low && prophecyLow <= high;
     withinHalo = prophecyLow > low - delta && prophecyHigh < high + delta;
-    valid = status == :yes ?? (intersects && withinHalo) ?: !intersects;
+    valid = status == :yes ?: (intersects && withinHalo) ?_ !intersects;
     {=
         valid = valid,
-        reason = valid ?? :rangeChecked ?: :rangeViolation,
+        reason = valid ?: :rangeChecked ?_ :rangeViolation,
         status = status,
         intersects = intersects,
         withinHalo = withinHalo,
@@ -47789,36 +48967,37 @@ OracleCheckRange(answer) -> {;
 
 CheckedAnswer(answer) -> {;
     check = OracleCheckRange(answer);
-    check[:valid] ?? answer ?: .Error("Oracle procedure produced an answer that violates Range");
+    check[:valid] ?: answer ?_ .Error("Oracle procedure produced an answer that violates Range");
 };
 
 OracleAsk(real, interval, delta, auxiliary ?= _) -> {;
-    real[:constructor] == :rational ?? _ ?: .Error("Phase 1 Ask supports rational oracle constructors");
+    real[:constructor] == :rational ?: _ ?_ .Error("Phase 1 Ask supports rational oracle constructors");
     query = OracleQuery(interval, delta, auxiliary);
     procedure = real[:procedure];
     chosen = procedure == :randomHalo
-        ?? (.Mod(real[:seed], 2) == 0 ?? :singular ?: :halo)
-        ?: procedure;
+        ?: (.Mod(real[:seed], 2) == 0 ?: :singular ?_ :halo)
+        ?_ procedure;
     CheckedAnswer(AskWithProcedure(real, query, chosen));
 };
 
 RandomHaloAlternatives(real, interval, delta, maxAlternatives) -> {;
     query = OracleQuery(interval, delta, _);
     singular = CheckedAnswer(AskWithProcedure(real, query, :singular));
-    maxAlternatives == 1 ?? [singular]
-        ?: [singular, CheckedAnswer(AskWithProcedure(real, query, :halo))];
+    maxAlternatives == 1 ?: [singular]
+        ?_ [singular, CheckedAnswer(AskWithProcedure(real, query, :halo))];
 };
 
 OracleAskAll(real, interval, delta, options ?= {= }) -> {;
     maxAlternatives = OracleWorkPolicy(options)[:maxAlternatives];
-    maxAlternatives == 0 ?? [] ?:
+    maxAlternatives == 0 ?: [] ?_ (
       real[:procedure] == :randomHalo
-        ?? RandomHaloAlternatives(real, interval, delta, maxAlternatives)
-        ?: [OracleAsk(real, interval, delta)];
+        ?: RandomHaloAlternatives(real, interval, delta, maxAlternatives)
+        ?_ [OracleAsk(real, interval, delta)]
+    );
 };
 
 OracleRefine(real, options ?= {= }) -> {;
-    real[:constructor] == :rational ?? _ ?: .Error("Phase 1 Refine supports rational oracle constructors");
+    real[:constructor] == :rational ?: _ ?_ .Error("Phase 1 Refine supports rational oracle constructors");
     requestedWidth = RequirePositive(Option(options, "width", 1 / 1000), "width");
     maxCalls = RequireNonnegativeInteger(Option(options, "maxcalls", 100), "maxCalls");
     keepTrace = Option(options, "trace", 1);
@@ -47832,33 +49011,40 @@ OracleRefine(real, options ?= {= }) -> {;
     {@ iteration = 1; @achievedWidth > @requestedWidth && @calls < @maxCalls; {;
         midpoint = (@low + @high) / 2;
         chooseLeft = @value <= midpoint;
-        nextLow = chooseLeft ?? @low ?: midpoint;
-        nextHigh = chooseLeft ?? midpoint ?: @high;
+        nextLow = chooseLeft ?: @low ?_ midpoint;
+        nextHigh = chooseLeft ?: midpoint ?_ @high;
         @low = nextLow;
         @high = nextHigh;
         @calls += 1;
         @achievedWidth = @high - @low;
-        @trace = @keepTrace ?? @trace.Push({=
+        @trace = @keepTrace ?: @trace.Push({=
             iteration = iteration,
             split = midpoint,
-            branch = @value <= midpoint ?? :left ?: :right,
+            branch = @value <= midpoint ?: :left ?_ :right,
             interval = @low:@high,
             width = @achievedWidth,
             delta = @achievedWidth / 3,
             answer = :constructorGuarantee
-        }) ?: @trace;
+        }) ?_ @trace;
       };
       iteration += 1
     };
 
     enclosed = achievedWidth <= requestedWidth;
+    approximation = .CertifiedApproximation((low + high) / 2, low:high, {=
+        reason = enclosed ?: :refined ?_ :budgetExhausted,
+        requested = requestedWidth,
+        achieved = achievedWidth,
+        provider = :oracle
+    });
     {=
         valueKind = :oracleRefinement,
         schema = "rix.oracle.refinement@1",
-        status = enclosed ?? :enclosed ?: :budgetExhausted,
+        status = enclosed ?: :enclosed ?_ :budgetExhausted,
         interval = low:high,
         requestedWidth = requestedWidth,
         achievedWidth = achievedWidth,
+        approximation = approximation,
         trace = trace,
         work = {= calls = calls, maxCalls = maxCalls, exhausted = !enclosed },
         assumptions = [:rationalConstructor, :range, :existence, :separation],
@@ -47896,6 +49082,7 @@ OracleProtocolEnclose(real, request) -> {;
         goalMet = goalMet,
         requestedWidth = request[:absoluteWidth],
         achievedWidth = refined[:achievedWidth],
+        approximation = refined[:approximation],
         evidenceLevel = :constructorGuarantee,
         backend = :oracle,
         operation = request[:operation],
@@ -48118,5 +49305,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { formatValue, mountOutputWidgets, findHelp, createRixRepl };
 
-//# debugId=9669FE17140DEA2864756E2164756E21
-//# sourceMappingURL=chunk-xjb4psz4.js.map
+//# debugId=35834BE32E6D683B64756E2164756E21
+//# sourceMappingURL=chunk-ffwnyw8d.js.map

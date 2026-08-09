@@ -1,5 +1,5 @@
 <!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Use one bounded protocol with certified Oracle and approximate Float providers." /><title>Neutral numerical refinement — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./plugins-numbers-and-numerics.html#lesson-start" title="Plugins: Numbers and numerics">14</a> <span aria-hidden="true">·</span> <span>b</span></p><h1>Neutral numerical refinement</h1><p class="deck">Use one bounded protocol with certified Oracle and approximate Float providers.</p><aside class="challenge"><p class="eyebrow">Develop in RiX Notebook</p><p>Open <code>rix/plugins/numerics/tutorial.md</code> in the macOS app to edit this lesson with live preview and plugin-aware code results. Use Reload plugins after changing project-local plugin source.</p></aside><div class="lesson-content"><p>Load Numerics and a certified real backend. Numerics only calls methods on the value; it does not know which plugin constructed it:</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="17" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="18" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
 .Plugin.Load(&quot;oracle&quot;);
 
 real := .oracle.Rational(3 / 7, {= procedure = :bisection });
@@ -10,12 +10,15 @@ certified := .numerics.Refine(real, {=
 });
 
 .Table({=
-  columns = [&quot;status&quot;, &quot;certified&quot;, &quot;goal met&quot;, &quot;interval&quot;, &quot;width&quot;, &quot;calls&quot;],
+  columns = [&quot;status&quot;, &quot;certified&quot;, &quot;goal met&quot;, &quot;value&quot;, &quot;interval&quot;, &quot;width&quot;, &quot;calls&quot;],
   rows = [[
     certified[:status], certified[:certified], certified[:goalMet],
-    certified[:interval], certified[:achievedWidth], certified[:work][:calls]
+    certified[:approximation], certified[:interval],
+    certified[:achievedWidth], certified[:work][:calls]
   ]]
 });</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The provider always returns its structured work record. When its enclosure is certified, <code>approximation</code> is also a first-class <code>CertifiedApproximation</code>. Reaching <code>maxWork</code> therefore does not throw away completed work or invent digits: the status becomes <code>:budgetExhausted</code>, while the value retains the candidate, the exact enclosure reached so far, and requested/achieved precision metadata. <code>.numerics.Approximation(result)</code> extracts that value.</p>
+<p>When displayed after derived work it may use an interval spelling; bounded radix conversion such as <code>(1/7).ToDecimalApproximation(5)</code> instead produces the parseable prefix <code>0.14285?</code>. By contrast, <code>...</code> remains display-only truncation and never claims a certified enclosure.</p>
 <p>The same request shape works with the Float provider:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="15" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
 .Plugin.Load(&quot;float&quot;);

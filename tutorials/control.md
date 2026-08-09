@@ -17,7 +17,7 @@ feel like a language rather than a table of symbols.
 
 ```rix edu
 x := -4;
-x > 0 ?? x ?: -x ;
+x > 0 ?: x ?_ -x ;
 ```
 
 The final line is the displayed value; the earlier lines set up the experiment.
