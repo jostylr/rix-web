@@ -13,6 +13,9 @@ answer := .oracle.Ask(x, (2 / 5):(1 / 2), 1 / 100);
   ]]
 });</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The answer is structured data. <code>:yes</code>, <code>:no</code>, and <code>:unknown</code> are distinct, and a returned prophecy is an exact rational interval with provenance rather than a pair of display decimals.</p>
+<p>When ordinary RiX control flow needs a logical value, adapt the procedural answer explicitly:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">decision := .oracle.Decision(answer);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p><code>:yes</code> becomes true, <code>:no</code> becomes null/false, and <code>:unknown</code> becomes a diagnostic undecided value carrying the query, reason, evidence, and work. This keeps the procedure&#039;s three statuses without making a symbol accidentally truthy.</p>
 <p>Refine the same represented number with a finite work budget:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="17" spellcheck="false">result := .oracle.Refine(x, {=
   width = 1 / 1000,
@@ -36,6 +39,15 @@ answer := .oracle.Ask(x, (2 / 5):(1 / 2), 1 / 100);
 bounded[:status];         ## :budgetExhausted
 bounded[:approximation];  ## certified candidate plus the achieved enclosure</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>This value can participate in ordinary Core/RiX arithmetic and three-state comparisons. The Oracle remains responsible for further refinement; the finite approximation itself does not hide an infinite process.</p>
+<h2>Language Halo neighborhoods</h2>
+<p>A language Halo is the compact comparison and membership surface for bounded certified refinement:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">.Plugin.Load(&quot;oracle&quot;);
+
+x := .oracle.Rational(3 / 7);
+x &lt; {~ 1 / 2, 1 / 1000 };
+x ? {~ (2 / 5):(1 / 2), 1 / 1000 };
+x &lt; {~ 1 / 2, 1 / 1000, {= maxCalls=3 } };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>This is not the paper procedure named <code>:halo</code>. In <code>.oracle.Ask</code>, <code>delta</code> expands the query&#039;s open neighborhood. In <code>{~ target, epsilon }</code>, epsilon only sets the requested enclosure width; the target itself is unchanged. If a budget ends, RiX still uses the best certified enclosure to prove a result when it can, otherwise the decision is undecided with <code>:budgetExhausted</code> details.</p>
 <p>The trace is suitable for the CLI, RiX Web, or a document renderer. A renderer does not query the oracle itself; the bounded mathematical operation first produces a portable interval and evidence.</p>
 <h2>Reproducible alternatives</h2>
 <p>The random-halo demonstration records its seed. <code>Ask</code> replays one branch, while bounded <code>AskAll</code> shows the two finite alternatives without treating that observation as a theorem about every possible oracle:</p>

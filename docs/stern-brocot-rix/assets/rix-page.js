@@ -27,6 +27,7 @@
     ">>",
     "<>",
     "_>",
+    "~>",
     "<_",
     "||>",
     "~~=",
@@ -603,7 +604,7 @@
         pos: [position, position, position + match[0].length]
       };
     }
-    match = remaining.match(/^(?:(?:\d(?:_?\d)*|\{\d+~\d+\})+(?:\.(?:\d(?:_?\d)*|\{\d+~\d+\})*)?|\.(?:\d(?:_?\d)*|\{\d+~\d+\})+)(?:#(?:\d(?:_?\d)*|\{\d+~\d+\})+)?/);
+    match = remaining.match(/^(?:(?:\d(?:_?\d)*|\{\d+~\d+\})+(?:\.(?:\d(?:_?\d)*|\{\d+~\d+\})+)?|\.(?:\d(?:_?\d)*|\{\d+~\d+\})+)(?:#(?:\d(?:_?\d)*|\{\d+~\d+\})+)?/);
     if (match) {
       return {
         type: "Number",
@@ -1768,6 +1769,11 @@
       type: "infix"
     },
     "_>": {
+      precedence: PRECEDENCE.CONVERSION,
+      associativity: "left",
+      type: "infix"
+    },
+    "~>": {
       precedence: PRECEDENCE.CONVERSION,
       associativity: "left",
       type: "infix"
@@ -5383,7 +5389,7 @@
           parameters: namedSig.parameters,
           prep,
           prepStrict,
-          prepUndecided,
+          ...prepUndecided !== "stop" ? { prepUndecided } : {},
           ...variantName ? { variantName } : {},
           mode: operator === "^=>" ? "prepend" : "append",
           body,
@@ -5397,7 +5403,7 @@
           parameters: namedSig.parameters,
           prep,
           prepStrict,
-          prepUndecided,
+          ...prepUndecided !== "stop" ? { prepUndecided } : {},
           ...variantName ? { variantName } : {},
           body,
           pos: left.pos,
@@ -5410,7 +5416,7 @@
           parameters: lambdaParameters,
           prep,
           prepStrict,
-          prepUndecided,
+          ...prepUndecided !== "stop" ? { prepUndecided } : {},
           ...variantName ? { variantName } : {},
           body,
           pos: left.pos,
@@ -10124,7 +10130,26 @@
       return { $rix: "Undecided" };
     }
   });
-  var isUndecided = (value) => value === UNDECIDED;
+
+  class UndecidedDiagnostic {
+    constructor(reason, details = null) {
+      this.__rix_undecided__ = true;
+      this.reason = String(reason || "undecided");
+      this.details = details;
+      this._ext = new Map([
+        ["reason", { type: "string", value: this.reason }],
+        ...details === null ? [] : [["details", details]]
+      ]);
+    }
+    toJSON() {
+      return { $rix: "Undecided", reason: this.reason, details: this.details };
+    }
+    copy() {
+      return new UndecidedDiagnostic(this.reason, this.details);
+    }
+  }
+  var undecidedDiagnostic = (reason, details = null) => new UndecidedDiagnostic(reason, details);
+  var isUndecided = (value) => value === UNDECIDED || value instanceof UndecidedDiagnostic;
   function decisionState(value) {
     if (isHole(value) || value === undefined) {
       throw new Error("Missing data cannot be used as a decision");
@@ -11960,7 +11985,7 @@ ${indentStr})`;
       Graphics: Object.freeze(["Graphics"]),
       Draw: Object.freeze(["draw"]),
       Plot: Object.freeze(["plot"]),
-      Core: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "IF", "LOOP", "MULTI", "RAND_NAME", "PRINT", "TGEN", "KEYOF", "KEYS", "VALUES", "REGISTERMETHOD", "CertifiedApproximation"]),
+      Core: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "IF", "LOOP", "MULTI", "RAND_NAME", "PRINT", "TGEN", "KEYOF", "KEYS", "VALUES", "REGISTERMETHOD", "CertifiedApproximation", "Undecided", "RefinementRequest", "RefinementEffectiveLimits", "RefinementSupports", "RefinementCheck", "RefinementUnsupported"]),
       Methods: Object.freeze(["REGISTERMETHOD"]),
       Arith: Object.freeze(["ADD", "SUB", "MUL", "DIV", "INTDIV", "DIVMOD", "MOD", "POW", "FACTORIAL", "DOUBLEFACTORIAL"]),
       Logic: Object.freeze(["EQ", "NEQ", "LT", "GT", "LTE", "GTE", "AND", "OR", "NOT"]),
@@ -15192,9 +15217,11 @@ ${indentStr})`;
     const label = fn?.name || "<lambda>";
     return new Error(`${label} prep failed at entry ${entryIndex + 1}`);
   }
-  function prepUndecidedError(fn, entryIndex) {
+  function prepUndecidedError(fn, entryIndex, undecided = UNDECIDED) {
     const label = fn?.name || "<lambda>";
-    return new Error(`${label} prep remained undecided at entry ${entryIndex + 1}`);
+    const error = new Error(`${label} prep remained undecided at entry ${entryIndex + 1}`);
+    error.undecided = undecided;
+    return error;
   }
   function runCallablePrep(fn, context, evaluate) {
     const conditionals = Array.isArray(fn?.params?.conditionals) ? fn.params.conditionals : [];
@@ -15211,8 +15238,8 @@ ${indentStr})`;
         const state = decisionState(value);
         if (state === "undecided") {
           if (undecidedMode === "throw")
-            throw prepUndecidedError(fn, i);
-          return { ok: false, undecided: true, fallthrough: undecidedMode === "fallthrough" };
+            throw prepUndecidedError(fn, i, value);
+          return { ok: false, undecided: true, value, fallthrough: undecidedMode === "fallthrough" };
         }
         if (state === "null") {
           if (strict) {
@@ -15293,7 +15320,7 @@ ${indentStr})`;
       while (true) {
         const prepResult = runCallablePrep(fn, context, evaluate);
         if (!prepResult.ok) {
-          const value = prepResult.undecided ? UNDECIDED : null;
+          const value = prepResult.undecided ? prepResult.value ?? UNDECIDED : null;
           doTraceExit(value, false);
           traceActive = false;
           return returnPrepStatus ? { matched: prepResult.undecided === true && prepResult.fallthrough !== true, value, unresolved: prepResult.undecided === true } : value;
@@ -21856,6 +21883,8 @@ ${indented.join(`,
       return value;
     if (typeof value !== "object")
       return value;
+    if (value instanceof UndecidedDiagnostic)
+      return value.copy();
     if (isUndecided(value))
       return value;
     if (value instanceof CertifiedApproximation)
@@ -21943,6 +21972,8 @@ ${indented.join(`,
       return value;
     if (typeof value !== "object")
       return value;
+    if (value instanceof UndecidedDiagnostic)
+      return value.copy();
     if (isUndecided(value))
       return value;
     if (value instanceof CertifiedApproximation)
@@ -22824,19 +22855,26 @@ ${indented.join(`,
       defaultTraits: ["decision"],
       convert: (value) => isUndecided(value) ? value : null,
       validate: isUndecided,
-      export() {
+      export(value) {
         return {
           type: "map",
           entries: new Map([
             ["type", stringObj2("Undecided")],
-            ["data", null],
+            ["data", value instanceof UndecidedDiagnostic ? {
+              type: "map",
+              entries: new Map([
+                ["reason", stringObj2(value.reason)],
+                ["details", value.details]
+              ])
+            } : null],
             ["cache", null],
             ["version", new Integer(1n)]
           ])
         };
       },
-      import() {
-        return UNDECIDED;
+      import(value) {
+        const data = value.entries.get("data");
+        return data?.type === "map" && data.entries.get("reason")?.value ? new UndecidedDiagnostic(data.entries.get("reason").value, data.entries.get("details") ?? null) : UNDECIDED;
       },
       proto: () => makeProto([
         ["ToString", valueMethod("ToString", () => stringObj2("?"))],
@@ -23586,6 +23624,700 @@ ${indented.join(`,
     return value;
   }
 
+  // rix/src/runtime/refinement.js
+  var REFINEMENT_REQUEST_SCHEMA = "rix.numerics.refinement-request@1";
+  var REFINEMENT_RESULT_SCHEMA = "rix.numerics.enclosure@1";
+  var REFINEMENT_CAPABILITIES_SCHEMA = "rix.numerics.capabilities@1";
+  var OPERATIONS = new Set(["enclose", "refine", "sample"]);
+  var STATUSES = new Set([
+    "enclosed",
+    "approximate",
+    "goalNotMet",
+    "budgetExhausted",
+    "resolutionFloor",
+    "unsupported",
+    "unknown"
+  ]);
+  var LIMIT_KEYS = ["maxwork", "maxcalls", "maxiterations", "maxdepth", "timeout", "memory"];
+  var EVIDENCE_RANK = new Map([
+    ["approximate", 0],
+    ["observed", 1],
+    ["assumed", 2],
+    ["constructorGuarantee", 3],
+    ["proof", 4]
+  ]);
+  var refinementText = (value) => ({ type: "string", value: String(value) });
+  var refinementMap = (entries2 = []) => ({ type: "map", entries: new Map(entries2) });
+  var refinementSequence = (values = []) => ({ type: "sequence", values });
+  function refinementEntry(value, key, fallback = null) {
+    if (!(value?.type === "map" && value.entries instanceof Map))
+      return fallback;
+    const wanted = String(key).toLowerCase();
+    for (const [candidate, item] of value.entries) {
+      if (String(candidate).toLowerCase() === wanted)
+        return item;
+    }
+    return fallback;
+  }
+  function nameOf(value, fallback = null) {
+    if (value === null || value === undefined)
+      return fallback;
+    if (value?.type === "string")
+      return value.value;
+    return String(value);
+  }
+  function asRational3(value, label, { positive = false } = {}) {
+    const rational = value instanceof Integer ? value.toRational() : value;
+    if (!(rational instanceof Rational))
+      throw new TypeError(`${label} must be an exact Integer or Rational`);
+    if (positive && !rational.greaterThan(Rational.zero))
+      throw new RangeError(`${label} must be positive`);
+    return rational;
+  }
+  function asNonnegativeInteger(value, label) {
+    if (!(value instanceof Integer) || value.value < 0n)
+      throw new RangeError(`${label} must be a nonnegative Integer`);
+    return value;
+  }
+  function truth(value) {
+    return value !== null && value !== undefined;
+  }
+  function bool(value) {
+    return value ? new Integer(1n) : null;
+  }
+  function option(map2, key, fallback) {
+    if (arguments.length < 3)
+      fallback = null;
+    if (!(map2?.type === "map" && map2.entries instanceof Map))
+      return fallback;
+    const wanted = String(key).toLowerCase();
+    for (const [candidate, value] of map2.entries) {
+      if (String(candidate).toLowerCase() === wanted)
+        return value;
+    }
+    return fallback;
+  }
+  function exactLessThanOrEqual(left, right) {
+    const a = left instanceof Integer ? left.toRational() : left;
+    const b = right instanceof Integer ? right.toRational() : right;
+    if (!(a instanceof Rational) || !(b instanceof Rational))
+      return null;
+    return a.lessThanOrEqual(b);
+  }
+  function restrictiveLimit(requested, provider) {
+    if (requested === null || requested === undefined)
+      return provider ?? null;
+    if (provider === null || provider === undefined)
+      return requested;
+    const comparison = exactLessThanOrEqual(requested, provider);
+    return comparison === null || comparison ? requested : provider;
+  }
+  function normalizeLimitKey(key) {
+    const normalized = String(key).toLowerCase();
+    return normalized === "maxmemory" ? "memory" : normalized;
+  }
+  function providerLimits(capabilities) {
+    const found = new Map;
+    if (!(capabilities?.type === "map" && capabilities.entries instanceof Map))
+      return found;
+    for (const [key, value] of capabilities.entries) {
+      const normalized = normalizeLimitKey(key);
+      if (LIMIT_KEYS.includes(normalized))
+        found.set(normalized, value);
+    }
+    for (const container of ["limits", "work"]) {
+      const nested = refinementEntry(capabilities, container, null);
+      if (!(nested?.type === "map" && nested.entries instanceof Map))
+        continue;
+      for (const [key, value] of nested.entries) {
+        const normalized = normalizeLimitKey(key);
+        if (LIMIT_KEYS.includes(normalized))
+          found.set(normalized, value);
+      }
+    }
+    return found;
+  }
+  function requestedLimits(options) {
+    const found = new Map;
+    const work = option(options, "work", null);
+    for (const key of LIMIT_KEYS) {
+      const aliases = key === "memory" ? ["memory", "maxmemory"] : [key];
+      let value;
+      for (const alias of aliases) {
+        value = option(options, alias, undefined);
+        if (value === undefined && work)
+          value = option(work, alias, undefined);
+        if (value !== undefined)
+          break;
+      }
+      if (value !== undefined)
+        found.set(key, value);
+    }
+    return found;
+  }
+  function normalizeWork(options, capabilities) {
+    const requested = requestedLimits(options);
+    const defaults = new Map([
+      ["maxwork", new Integer(100n)]
+    ]);
+    if (!requested.has("maxwork"))
+      requested.set("maxwork", defaults.get("maxwork"));
+    if (!requested.has("maxcalls"))
+      requested.set("maxcalls", requested.get("maxwork"));
+    if (!requested.has("maxiterations"))
+      requested.set("maxiterations", requested.get("maxwork"));
+    const provider = providerLimits(capabilities);
+    const effective = new Map;
+    for (const key of LIMIT_KEYS) {
+      const value = restrictiveLimit(requested.get(key), provider.get(key));
+      if (value === null || value === undefined)
+        continue;
+      if (["maxwork", "maxcalls", "maxiterations", "maxdepth", "memory"].includes(key)) {
+        asNonnegativeInteger(value, key);
+      } else if (key === "timeout") {
+        asRational3(value, key, { positive: true });
+      }
+      effective.set(key, value);
+    }
+    return refinementMap(effective);
+  }
+  function normalizeRefinementRequest(options = null, { operation = null, capabilities = null } = {}) {
+    const source = options?.type === "map" && options.entries instanceof Map ? options : refinementMap();
+    const selectedOperation = nameOf(operation, nameOf(option(source, "operation", null), "enclose"));
+    if (!OPERATIONS.has(selectedOperation))
+      throw new RangeError(`Unknown refinement operation '${selectedOperation}'`);
+    const absoluteWidth = asRational3(option(source, "absolutewidth", option(source, "width", new Rational(1n, 1000n))), "absoluteWidth", { positive: true });
+    const relativeWidthValue = option(source, "relativewidth", null);
+    const relativeWidth = relativeWidthValue === null ? null : asRational3(relativeWidthValue, "relativeWidth", { positive: true });
+    const work = normalizeWork(source, capabilities);
+    const entries2 = [
+      ["valuekind", refinementText("refinementRequest")],
+      ["schema", refinementText(REFINEMENT_REQUEST_SCHEMA)],
+      ["operation", refinementText(selectedOperation)],
+      ["absolutewidth", absoluteWidth],
+      ["relativewidth", relativeWidth],
+      ["evidencerequired", option(source, "evidencerequired", refinementText("any"))],
+      ["trace", option(source, "trace", new Integer(1n))],
+      ["seed", option(source, "seed", new Integer(1n))],
+      ["work", work]
+    ];
+    const purpose = option(source, "purpose", null);
+    if (purpose !== null)
+      entries2.push(["purpose", purpose]);
+    for (const key of ["timeout", "memory"]) {
+      const value = refinementEntry(work, key, null);
+      if (value !== null)
+        entries2.push([key, value]);
+    }
+    return refinementMap(entries2);
+  }
+  function refinementEffectiveLimits(request, capabilities = null) {
+    return normalizeWork(normalizeRefinementRequest(request), capabilities);
+  }
+  function refinementSupports(capabilities, operation) {
+    if (!(capabilities?.type === "map" && capabilities.entries instanceof Map))
+      return false;
+    if (nameOf(refinementEntry(capabilities, "schema", null)) !== REFINEMENT_CAPABILITIES_SCHEMA)
+      return false;
+    const wanted = nameOf(operation);
+    const operations = refinementEntry(capabilities, "operations", null)?.values;
+    return Array.isArray(operations) && operations.some((item) => nameOf(item) === wanted);
+  }
+  function intervalWidth(interval2) {
+    return interval2.high.subtract(interval2.low);
+  }
+  function limitObserved(work, name) {
+    if (!(work?.type === "map" && work.entries instanceof Map))
+      return null;
+    const aliases = name === "maxwork" ? ["total", "work", "calls"] : name === "maxcalls" ? ["calls"] : name === "maxiterations" ? ["iterations"] : name === "maxdepth" ? ["depth"] : name === "timeout" ? ["elapsed", "timeout"] : name === "memory" ? ["memory", "maxmemory"] : [];
+    for (const alias of aliases) {
+      const value = refinementEntry(work, alias, null);
+      if (value !== null)
+        return value;
+    }
+    return null;
+  }
+  function evidenceSatisfies(actualValue, requiredValue) {
+    const required = nameOf(requiredValue, "any");
+    if (required === "any")
+      return true;
+    const actual = nameOf(actualValue, "");
+    if (!EVIDENCE_RANK.has(required))
+      return actual === required;
+    return (EVIDENCE_RANK.get(actual) ?? -1) >= EVIDENCE_RANK.get(required);
+  }
+  function checkRefinementResult(result, request, capabilities = null) {
+    const normalizedRequest = normalizeRefinementRequest(request);
+    const isMap = result?.type === "map" && result.entries instanceof Map;
+    const requiredFields = [
+      "schema",
+      "status",
+      "interval",
+      "certified",
+      "goalmet",
+      "evidencelevel",
+      "backend",
+      "operation",
+      "requestedwidth",
+      "achievedwidth",
+      "work",
+      "diagnostics"
+    ];
+    const fieldsPresent = isMap && requiredFields.every((key) => {
+      const wanted = key.toLowerCase();
+      return Array.from(result.entries.keys()).some((candidate) => String(candidate).toLowerCase() === wanted);
+    });
+    const schemaValid = isMap && nameOf(refinementEntry(result, "schema", null)) === REFINEMENT_RESULT_SCHEMA;
+    const status = nameOf(refinementEntry(result, "status", null));
+    const statusValid = STATUSES.has(status);
+    const interval2 = refinementEntry(result, "interval", null);
+    const intervalValid = interval2 instanceof RationalInterval;
+    const requestedOperation = nameOf(refinementEntry(normalizedRequest, "operation", null));
+    const operationValid = nameOf(refinementEntry(result, "operation", null)) === requestedOperation;
+    const capabilityValid = capabilities === null || refinementSupports(capabilities, requestedOperation);
+    const certified = truth(refinementEntry(result, "certified", null));
+    const certificationValid = capabilities === null || !certified || truth(refinementEntry(capabilities, "certified", null));
+    const approximation = refinementEntry(result, "approximation", null);
+    const approximationPresent = !certified || approximation instanceof CertifiedApproximation;
+    const approximationConsistent = !certified || approximation instanceof CertifiedApproximation && intervalValid && approximation.enclosure.equals(interval2);
+    const achievedWidth = refinementEntry(result, "achievedwidth", null);
+    const widthConsistent = !intervalValid || (achievedWidth instanceof Integer || achievedWidth instanceof Rational) && asRational3(achievedWidth, "achievedWidth").equals(intervalWidth(interval2));
+    const requestedWidth = refinementEntry(normalizedRequest, "absolutewidth", null);
+    const resultRequestedWidth = refinementEntry(result, "requestedwidth", null);
+    const requestedWidthConsistent = (resultRequestedWidth instanceof Integer || resultRequestedWidth instanceof Rational) && asRational3(resultRequestedWidth, "requestedWidth").equals(requestedWidth);
+    const widthGoal = intervalValid && intervalWidth(interval2).lessThanOrEqual(requestedWidth);
+    const goalMet = truth(refinementEntry(result, "goalmet", null));
+    const goalConsistent = certified ? goalMet === widthGoal && !(["budgetExhausted", "resolutionFloor", "unsupported", "unknown"].includes(status) && goalMet) : !goalMet;
+    const statusConsistent = (status !== "enclosed" || certified && goalMet) && (status !== "approximate" || !certified) && (status !== "unsupported" || !certified);
+    const evidenceValid = evidenceSatisfies(refinementEntry(result, "evidencelevel", null), refinementEntry(normalizedRequest, "evidencerequired", null));
+    const capabilityEvidence = refinementEntry(capabilities, "evidencelevels", null)?.values;
+    const actualEvidence = nameOf(refinementEntry(result, "evidencelevel", null));
+    const capabilityEvidenceValid = capabilities === null || !Array.isArray(capabilityEvidence) || capabilityEvidence.some((item) => nameOf(item) === actualEvidence);
+    const work = refinementEntry(result, "work", null);
+    const requestWork = refinementEntry(normalizedRequest, "work", null);
+    let workWithinLimits = work?.type === "map" && work.entries instanceof Map;
+    if (workWithinLimits) {
+      for (const key of LIMIT_KEYS) {
+        const limit = refinementEntry(requestWork, key, null);
+        const observed = limitObserved(work, key);
+        if (limit !== null && observed !== null && exactLessThanOrEqual(observed, limit) !== true) {
+          workWithinLimits = false;
+          break;
+        }
+      }
+    }
+    const valid = Boolean(fieldsPresent && schemaValid && statusValid && intervalValid && operationValid && capabilityValid && certificationValid && approximationPresent && approximationConsistent && requestedWidthConsistent && widthConsistent && goalConsistent && statusConsistent && evidenceValid && capabilityEvidenceValid && workWithinLimits);
+    return refinementMap([
+      ["valuekind", refinementText("numericsResultCheck")],
+      ["valid", bool(valid)],
+      ["fieldspresent", bool(fieldsPresent)],
+      ["schemavalid", bool(schemaValid)],
+      ["statusvalid", bool(statusValid)],
+      ["intervalvalid", bool(intervalValid)],
+      ["operationvalid", bool(operationValid)],
+      ["capabilityvalid", bool(capabilityValid)],
+      ["certificationvalid", bool(certificationValid)],
+      ["approximationpresent", bool(approximationPresent)],
+      ["approximationconsistent", bool(approximationConsistent)],
+      ["widthconsistent", bool(widthConsistent)],
+      ["requestedwidthconsistent", bool(requestedWidthConsistent)],
+      ["goalconsistent", bool(goalConsistent)],
+      ["statusconsistent", bool(statusConsistent)],
+      ["evidencevalid", bool(evidenceValid)],
+      ["capabilityevidencevalid", bool(capabilityEvidenceValid)],
+      ["workwithinlimits", bool(workWithinLimits)],
+      ["interval", interval2],
+      ["request", normalizedRequest],
+      ["result", result]
+    ]);
+  }
+  function unsupportedRefinementResult(request, capabilities = null, reason = "unsupported") {
+    const normalized = normalizeRefinementRequest(request);
+    const operation = refinementEntry(normalized, "operation", refinementText("refine"));
+    const backend = refinementEntry(capabilities, "backend", refinementText("unknown"));
+    return refinementMap([
+      ["valuekind", refinementText("enclosure")],
+      ["schema", refinementText(REFINEMENT_RESULT_SCHEMA)],
+      ["status", refinementText("unsupported")],
+      ["interval", RationalInterval.zero],
+      ["certified", null],
+      ["goalmet", null],
+      ["requestedwidth", refinementEntry(normalized, "absolutewidth", null)],
+      ["achievedwidth", Rational.zero],
+      ["evidencelevel", refinementText("approximate")],
+      ["backend", backend],
+      ["operation", operation],
+      ["work", refinementMap()],
+      ["diagnostics", refinementSequence([refinementText(reason)])]
+    ]);
+  }
+  function refinementOutcome(result, request, capabilities = null) {
+    const check = checkRefinementResult(result, request, capabilities);
+    const status = nameOf(refinementEntry(result, "status", null), "unknown");
+    const certified = truth(refinementEntry(result, "certified", null));
+    const approximation = refinementEntry(result, "approximation", null);
+    const details = refinementMap([
+      ["status", refinementEntry(result, "status", refinementText(status))],
+      ["backend", refinementEntry(result, "backend", refinementText("unknown"))],
+      ["requestedwidth", refinementEntry(request, "absolutewidth", null)],
+      ["achievedwidth", refinementEntry(result, "achievedwidth", null)],
+      ["work", refinementEntry(result, "work", refinementMap())],
+      ["diagnostics", refinementEntry(result, "diagnostics", refinementSequence())],
+      ["evidence", refinementEntry(result, "evidence", null)],
+      ["check", check]
+    ]);
+    if (!certified)
+      return { value: null, reason: status === "unsupported" ? "unsupported" : "providerUncertified", details, check };
+    if (!truth(refinementEntry(check, "valid", null)))
+      return { value: null, reason: "invalidProviderResult", details, check };
+    if (approximation instanceof CertifiedApproximation) {
+      const fallbackReason = status === "budgetExhausted" ? "budgetExhausted" : status === "resolutionFloor" ? "resolutionFloor" : status === "unsupported" ? "unsupported" : status === "unknown" ? "unknown" : "haloResolutionReached";
+      return { value: approximation, reason: fallbackReason, details, check };
+    }
+    return { value: null, reason: "invalidProviderResult", details, check };
+  }
+
+  // rix/src/eval/functions/comparison.js
+  function haloRequest(halo, purpose, capabilities = null) {
+    const entries2 = new Map(halo.limits?.entries ?? []);
+    entries2.set("absolutewidth", halo.epsilon);
+    entries2.set("purpose", { type: "string", value: purpose });
+    return normalizeRefinementRequest(refinementMap(entries2), {
+      operation: { type: "string", value: "refine" },
+      capabilities
+    });
+  }
+  function maybeRefineForHalo(value, halo, operation, context, evaluate) {
+    if (!(halo instanceof HaloNeighborhood))
+      return { value, diagnostic: null };
+    if (isEnclosed(value) || value instanceof Integer || value instanceof Rational)
+      return { value, diagnostic: null };
+    let method4;
+    try {
+      method4 = resolveMethod(value, "REFINE", context);
+    } catch (error) {
+      if (/Method not found/.test(error?.message || "")) {
+        return { value, diagnostic: undecidedDiagnostic("unsupported", refinementMap([
+          ["operation", { type: "string", value: "refine" }]
+        ])) };
+      }
+      throw error;
+    }
+    const invokeMethod = (resolved, args) => resolved.type === "method_builtin" ? resolved.impl(args, context, evaluate, callWithConcreteArgs) : callWithConcreteArgs(resolved, args, context, evaluate);
+    let capabilitiesMethod = null;
+    try {
+      capabilitiesMethod = resolveMethod(value, "NUMERICSCAPABILITIES", context);
+    } catch (error) {
+      if (!/Method not found/.test(error?.message || ""))
+        throw error;
+    }
+    const capabilities = capabilitiesMethod ? invokeMethod(capabilitiesMethod, [value]) : null;
+    if (capabilities && typeof capabilities.then === "function") {
+      throw new Error("Async halo capabilities require an async comparison context");
+    }
+    if (capabilities === null) {
+      return { value, diagnostic: undecidedDiagnostic("unsupported", refinementMap([
+        ["operation", { type: "string", value: "refine" }],
+        ["diagnostics", { type: "sequence", values: [{ type: "string", value: "missingNumericsCapabilities" }] }]
+      ])) };
+    }
+    const request = haloRequest(halo, operation, capabilities);
+    if (capabilities !== null && !refinementSupports(capabilities, "refine")) {
+      const reason = refinementEntry(capabilities, "certified", null) === null ? "providerUncertified" : "unsupported";
+      return { value, diagnostic: undecidedDiagnostic(reason, refinementMap([
+        ["operation", { type: "string", value: "refine" }],
+        ["backend", refinementEntry(capabilities, "backend", null)],
+        ["capabilities", capabilities]
+      ])) };
+    }
+    const result = invokeMethod(method4, [value, request]);
+    if (result && typeof result.then === "function") {
+      throw new Error("Async halo refinement requires an async comparison context");
+    }
+    const outcome = refinementOutcome(result, request, capabilities);
+    return {
+      value: outcome.value ?? value,
+      diagnostic: outcome.value === null ? undecidedDiagnostic(outcome.reason, outcome.details) : outcome.reason === "haloResolutionReached" ? null : undecidedDiagnostic(outcome.reason, outcome.details)
+    };
+  }
+  function isEnclosed(value) {
+    return value instanceof CertifiedApproximation || value instanceof RationalInterval;
+  }
+  function relationDecision(a, b, operation) {
+    if (!isEnclosed(a) && !isEnclosed(b))
+      return null;
+    const mask = possibleRelations(a, b);
+    switch (operation) {
+      case "eq":
+        return mask === Relation.EQUAL ? true : (mask & Relation.EQUAL) === 0 ? false : UNDECIDED;
+      case "neq":
+        return mask === Relation.EQUAL ? false : (mask & Relation.EQUAL) === 0 ? true : UNDECIDED;
+      case "lt":
+        return mask === Relation.LESS ? true : (mask & Relation.LESS) === 0 ? false : UNDECIDED;
+      case "gt":
+        return mask === Relation.GREATER ? true : (mask & Relation.GREATER) === 0 ? false : UNDECIDED;
+      case "lte":
+        return (mask & Relation.GREATER) === 0 ? true : mask === Relation.GREATER ? false : UNDECIDED;
+      case "gte":
+        return (mask & Relation.LESS) === 0 ? true : mask === Relation.LESS ? false : UNDECIDED;
+      default:
+        throw new Error(`Unknown relation operation '${operation}'`);
+    }
+  }
+  function haloDecision(left, right, operation, unresolvedDiagnostic = null) {
+    if (!(right instanceof HaloNeighborhood))
+      return null;
+    if (unresolvedDiagnostic && !isEnclosed(left) && !(left instanceof Integer || left instanceof Rational)) {
+      return unresolvedDiagnostic;
+    }
+    if (right.target instanceof RationalInterval) {
+      throw new Error(`Relational halo target for '${operation}' must be an exact scalar`);
+    }
+    const mask = possibleRelations(left, right.target);
+    const unresolved = () => unresolvedDiagnostic ?? undecidedDiagnostic("haloResolutionReached", {
+      type: "map",
+      entries: new Map([
+        ["epsilon", right.epsilon],
+        ["limits", right.limits]
+      ])
+    });
+    switch (operation) {
+      case "eq":
+        return mask === Relation.EQUAL ? true : (mask & Relation.EQUAL) === 0 ? false : unresolved();
+      case "neq":
+        return mask === Relation.EQUAL ? false : (mask & Relation.EQUAL) === 0 ? true : unresolved();
+      case "lt":
+        return mask === Relation.LESS ? true : (mask & Relation.LESS) === 0 ? false : unresolved();
+      case "gt":
+        return mask === Relation.GREATER ? true : (mask & Relation.GREATER) === 0 ? false : unresolved();
+      case "lte":
+        return (mask & Relation.GREATER) === 0 ? true : mask === Relation.GREATER ? false : unresolved();
+      case "gte":
+        return (mask & Relation.LESS) === 0 ? true : mask === Relation.LESS ? false : unresolved();
+      default:
+        throw new Error(`Unknown halo relation '${operation}'`);
+    }
+  }
+  function compare(a, b) {
+    if (a && b && typeof a.subtract === "function" && typeof b.subtract === "function") {
+      const diff = a.subtract(b);
+      if (typeof diff.sign === "function")
+        return Number(diff.sign().value ?? diff.sign());
+      if (typeof diff.numerator === "bigint") {
+        if (diff.numerator < 0n)
+          return -1;
+        if (diff.numerator > 0n)
+          return 1;
+        return 0;
+      }
+      if (typeof diff.value === "bigint") {
+        if (diff.value < 0n)
+          return -1;
+        if (diff.value > 0n)
+          return 1;
+        return 0;
+      }
+    }
+    const valA = a && a.type === "string" ? a.value : a;
+    const valB = b && b.type === "string" ? b.value : b;
+    if (valA < valB)
+      return -1;
+    if (valA > valB)
+      return 1;
+    return 0;
+  }
+  function boolResult2(val) {
+    if (isUndecided(val))
+      return val;
+    return val ? new Integer(1) : null;
+  }
+  function classifyMinMaxType(val) {
+    if (val === null || val === undefined)
+      return null;
+    if (val instanceof Integer || val instanceof Rational || isEnclosed(val))
+      return "number";
+    if (typeof val === "number" || typeof val === "bigint")
+      return "number";
+    if (typeof val === "string")
+      return "string";
+    if (val && typeof val === "object" && val.type === "string")
+      return "string";
+    return "invalid";
+  }
+  function resolveCell(irNode, context) {
+    if (!irNode || typeof irNode !== "object")
+      return null;
+    if (irNode.fn === "RETRIEVE") {
+      return context.getCell(irNode.args[0]);
+    }
+    if (irNode.fn === "OUTER_RETRIEVE") {
+      return context.getOuterCell(irNode.args[0]);
+    }
+    return null;
+  }
+  function comparisonInteger(value) {
+    if (value instanceof Integer && [-1n, 0n, 1n].includes(value.value))
+      return Number(value.value);
+    throw new Error("COMPARE variants must return -1, 0, or 1 as a RiX integer");
+  }
+  function minMaxImpl(args, mode, context, evaluate) {
+    const filtered = args.filter((v) => v !== null && v !== undefined);
+    if (filtered.length === 0) {
+      throw new Error(`${mode} requires at least one non-null comparable argument`);
+    }
+    let best = filtered[0];
+    for (let i = 1;i < filtered.length; i++) {
+      const registry = context?.getEnv?.("__registry__", null);
+      if (!registry?.invokeWithVariant) {
+        throw new Error(`${mode} requires an active evaluator registry`);
+      }
+      const invocation = registry.invokeWithVariant("COMPARE", [filtered[i], best], context, evaluate);
+      if (isUndecided(invocation.value))
+        return UNDECIDED;
+      const c = comparisonInteger(invocation.value);
+      const [candidate, normalizedBest] = invocation.args;
+      if (mode === "MIN" && c < 0 || mode === "MAX" && c > 0) {
+        best = candidate;
+      } else {
+        best = normalizedBest;
+      }
+    }
+    return best;
+  }
+  var comparisonFunctions = {
+    COMPARE: {
+      impl(args) {
+        const leftType = classifyMinMaxType(args[0]);
+        const rightType = classifyMinMaxType(args[1]);
+        if (!leftType || leftType === "invalid" || leftType !== rightType) {
+          throw new Error("COMPARE requires two values from the same built-in ordered domain");
+        }
+        const result = compare(args[0], args[1]);
+        if (isEnclosed(args[0]) || isEnclosed(args[1])) {
+          const mask = possibleRelations(args[0], args[1]);
+          if (mask === Relation.LESS)
+            return new Integer(-1n);
+          if (mask === Relation.EQUAL)
+            return new Integer(0n);
+          if (mask === Relation.GREATER)
+            return new Integer(1n);
+          return UNDECIDED;
+        }
+        return new Integer(BigInt(result < 0 ? -1 : result > 0 ? 1 : 0));
+      },
+      pure: true,
+      doc: "Compare two values; returns -1, 0, or 1"
+    },
+    EQ: {
+      impl(args, context, evaluate) {
+        const [rawA, b] = args;
+        const refinement = maybeRefineForHalo(rawA, b, "eq", context, evaluate);
+        const a = refinement.value;
+        const decision = haloDecision(a, b, "eq", refinement.diagnostic) ?? relationDecision(a, b, "eq");
+        if (decision !== null)
+          return boolResult2(decision);
+        if (a && b && typeof a.equals === "function") {
+          return boolResult2(a.equals(b));
+        }
+        if (a && b && a.type === "string" && b.type === "string")
+          return boolResult2(a.value === b.value);
+        return boolResult2(a === b);
+      },
+      preempt: (args) => args[1] instanceof HaloNeighborhood,
+      pure: false,
+      doc: "Equality check — returns 1 or null"
+    },
+    NEQ: {
+      impl(args, context, evaluate) {
+        const [rawA, b] = args;
+        const refinement = maybeRefineForHalo(rawA, b, "neq", context, evaluate);
+        const a = refinement.value;
+        const decision = haloDecision(a, b, "neq", refinement.diagnostic) ?? relationDecision(a, b, "neq");
+        if (decision !== null)
+          return boolResult2(decision);
+        if (a && b && typeof a.equals === "function") {
+          return boolResult2(!a.equals(b));
+        }
+        if (a && b && a.type === "string" && b.type === "string")
+          return boolResult2(a.value !== b.value);
+        return boolResult2(a !== b);
+      },
+      preempt: (args) => args[1] instanceof HaloNeighborhood,
+      pure: false,
+      doc: "Inequality check — returns 1 or null"
+    },
+    LT: {
+      impl(args, context, evaluate) {
+        const refinement = maybeRefineForHalo(args[0], args[1], "lt", context, evaluate);
+        const left = refinement.value;
+        const decision = haloDecision(left, args[1], "lt", refinement.diagnostic) ?? relationDecision(left, args[1], "lt");
+        return decision === null ? boolResult2(compare(left, args[1]) < 0) : boolResult2(decision);
+      },
+      preempt: (args) => args[1] instanceof HaloNeighborhood,
+      pure: false,
+      doc: "Less than — returns 1 or null"
+    },
+    GT: {
+      impl(args, context, evaluate) {
+        const refinement = maybeRefineForHalo(args[0], args[1], "gt", context, evaluate);
+        const left = refinement.value;
+        const decision = haloDecision(left, args[1], "gt", refinement.diagnostic) ?? relationDecision(left, args[1], "gt");
+        return decision === null ? boolResult2(compare(left, args[1]) > 0) : boolResult2(decision);
+      },
+      preempt: (args) => args[1] instanceof HaloNeighborhood,
+      pure: false,
+      doc: "Greater than — returns 1 or null"
+    },
+    LTE: {
+      impl(args, context, evaluate) {
+        const refinement = maybeRefineForHalo(args[0], args[1], "lte", context, evaluate);
+        const left = refinement.value;
+        const decision = haloDecision(left, args[1], "lte", refinement.diagnostic) ?? relationDecision(left, args[1], "lte");
+        return decision === null ? boolResult2(compare(left, args[1]) <= 0) : boolResult2(decision);
+      },
+      preempt: (args) => args[1] instanceof HaloNeighborhood,
+      pure: false,
+      doc: "Less than or equal — returns 1 or null"
+    },
+    GTE: {
+      impl(args, context, evaluate) {
+        const refinement = maybeRefineForHalo(args[0], args[1], "gte", context, evaluate);
+        const left = refinement.value;
+        const decision = haloDecision(left, args[1], "gte", refinement.diagnostic) ?? relationDecision(left, args[1], "gte");
+        return decision === null ? boolResult2(compare(left, args[1]) >= 0) : boolResult2(decision);
+      },
+      preempt: (args) => args[1] instanceof HaloNeighborhood,
+      pure: false,
+      doc: "Greater than or equal — returns 1 or null"
+    },
+    SAME_CELL: {
+      lazy: true,
+      impl(args, context, evalFn) {
+        const leftCell = resolveCell(args[0], context);
+        const rightCell = resolveCell(args[1], context);
+        if (leftCell && rightCell && leftCell === rightCell) {
+          return new Integer(1);
+        }
+        return null;
+      },
+      doc: "Identity comparison (===) — returns 1 if both sides refer to the same cell, null otherwise"
+    },
+    MIN: {
+      impl(args, context, evaluate) {
+        return minMaxImpl(args, "MIN", context, evaluate);
+      },
+      pure: true,
+      doc: "Minimum over n arguments (ignores nulls)"
+    },
+    MAX: {
+      impl(args, context, evaluate) {
+        return minMaxImpl(args, "MAX", context, evaluate);
+      },
+      pure: true,
+      doc: "Maximum over n arguments (ignores nulls)"
+    }
+  };
+
   // rix/src/eval/functions/collections.js
   function isTruthy(val) {
     return decisionState(val) === "truth";
@@ -23657,7 +24389,7 @@ ${indented.join(`,
     }
     return null;
   };
-  var compare = (a, b) => {
+  var compare2 = (a, b) => {
     const aRat = toRationalOrNull(a);
     const bRat = toRationalOrNull(b);
     if (aRat && bRat) {
@@ -24031,7 +24763,7 @@ ${indented.join(`,
             return true;
           const nextVals = getValues(args[idx]);
           for (const nextVal of nextVals) {
-            const cmp = compare(currentVal, nextVal);
+            const cmp = compare2(currentVal, nextVal);
             if (direction === 1 && cmp > 0)
               return false;
             if (direction === -1 && cmp < 0)
@@ -24062,22 +24794,27 @@ ${indented.join(`,
       doc: "Create an interval [lo, hi] or test betweenness like a:b:c"
     },
     MEMBER: {
-      impl(args) {
-        const [x, coll] = args;
+      impl(args, context, evaluate) {
+        let [x, coll] = args;
         if (!coll || typeof coll !== "object")
           return null;
         if (coll instanceof HaloNeighborhood) {
           if (!(coll.target instanceof RationalInterval)) {
             throw new Error("Membership halo target must be a RationalInterval");
           }
+          const refinement = maybeRefineForHalo(x, coll, "member", context, evaluate);
+          x = refinement.value;
           const enclosure = enclosureOf(x);
           if (!enclosure)
-            throw new Error("Halo membership requires an exact or enclosed numeric value");
+            return refinement.diagnostic ?? undecidedDiagnostic("unsupported");
           if (coll.target.contains(enclosure))
             return new Integer(1);
           if (enclosure.high.lessThan(coll.target.low) || enclosure.low.greaterThan(coll.target.high))
             return null;
-          return UNDECIDED;
+          return refinement.diagnostic ?? undecidedDiagnostic("haloOverlap", {
+            type: "map",
+            entries: new Map([["epsilon", coll.epsilon], ["limits", coll.limits]])
+          });
         }
         if (coll.type === "set" || coll.type === "tuple" || coll.type === "sequence") {
           const values = coll.values || coll.elements || [];
@@ -24089,8 +24826,8 @@ ${indented.join(`,
         } else if (coll instanceof RationalInterval || coll.type === "interval") {
           const lo = coll instanceof RationalInterval ? coll.start : coll.lo;
           const hi = coll instanceof RationalInterval ? coll.end : coll.hi;
-          const cmpLo = compare(lo, x);
-          const cmpHi = compare(x, hi);
+          const cmpLo = compare2(lo, x);
+          const cmpHi = compare2(x, hi);
           if (cmpLo <= 0 && cmpHi <= 0)
             return new Integer(1);
         } else if (coll.type === "map") {
@@ -24101,16 +24838,16 @@ ${indented.join(`,
         }
         return null;
       },
-      pure: true,
+      pure: false,
       doc: "Check membership (1 if present, null otherwise)"
     },
     NOT_MEMBER: {
-      impl(args) {
-        const result = collectionFunctions.MEMBER.impl(args);
+      impl(args, context, evaluate) {
+        const result = collectionFunctions.MEMBER.impl(args, context, evaluate);
         const state = decisionState(result);
-        return state === "undecided" ? UNDECIDED : state === "truth" ? null : new Integer(1);
+        return state === "undecided" ? result : state === "truth" ? null : new Integer(1);
       },
-      pure: true,
+      pure: false,
       doc: "Check non-membership (1 if not present, null otherwise)"
     },
     INTERSECTS: {
@@ -24144,8 +24881,8 @@ ${indented.join(`,
           const ahi = a instanceof RationalInterval ? a.end : a.hi;
           const blo = b instanceof RationalInterval ? b.start : b.lo;
           const bhi = b instanceof RationalInterval ? b.end : b.hi;
-          const lo = compare(alo, blo) <= 0 ? alo : blo;
-          const hi = compare(ahi, bhi) >= 0 ? ahi : bhi;
+          const lo = compare2(alo, blo) <= 0 ? alo : blo;
+          const hi = compare2(ahi, bhi) >= 0 ? ahi : bhi;
           return collectionFunctions.INTERVAL.impl([lo, hi]);
         }
         throw new Error(`UNION not defined for these types: ${a.type || a.constructor?.name || typeof a} and ${b.type || b.constructor?.name || typeof b}`);
@@ -24168,9 +24905,9 @@ ${indented.join(`,
           const ahi = a instanceof RationalInterval ? a.end : a.hi;
           const blo = b instanceof RationalInterval ? b.start : b.lo;
           const bhi = b instanceof RationalInterval ? b.end : b.hi;
-          const lo = compare(alo, blo) >= 0 ? alo : blo;
-          const hi = compare(ahi, bhi) <= 0 ? ahi : bhi;
-          if (compare(lo, hi) <= 0) {
+          const lo = compare2(alo, blo) >= 0 ? alo : blo;
+          const hi = compare2(ahi, bhi) <= 0 ? ahi : bhi;
+          if (compare2(lo, hi) <= 0) {
             return collectionFunctions.INTERVAL.impl([lo, hi]);
           }
           return null;
@@ -24322,7 +25059,7 @@ ${indented.join(`,
   function truthy2(value) {
     return value !== null && value !== undefined;
   }
-  function bool(flag) {
+  function bool2(flag) {
     return flag ? int6(1) : null;
   }
   function stringValue3(value) {
@@ -24334,6 +25071,55 @@ ${indented.join(`,
   }
   function stringObj3(value) {
     return { type: "string", value };
+  }
+  function optionValue(options, name, fallback = undefined) {
+    if (options?.type !== "map" || !(options.entries instanceof Map))
+      return fallback;
+    return options.entries.get(name.toLowerCase()) ?? options.entries.get(name) ?? fallback;
+  }
+  function numericFormatOptions(value, countName, label) {
+    if (value === undefined)
+      return {};
+    if (value?.type === "map") {
+      const count = optionValue(value, countName);
+      const longValue = optionValue(value, "long", null);
+      return {
+        ...count === undefined || count === null ? {} : { [countName]: safeExactNumber(count, label) },
+        ...longValue === null ? {} : { long: truthy2(longValue) }
+      };
+    }
+    return { [countName]: safeExactNumber(value, label) };
+  }
+  function localeNumberString(target, options) {
+    const decimal = stringValue3(optionValue(options, "decimal", stringObj3(".")));
+    const group = stringValue3(optionValue(options, "group", stringObj3("_")));
+    const groupSizeValue = optionValue(options, "groupsize", new Integer(3n));
+    const groupSize = safeExactNumber(groupSizeValue, "Locale group size");
+    if (groupSize < 1)
+      throw new Error("Locale group size must be positive");
+    const raw = target.toRepeatingDecimal().replace(/#0$/, "");
+    const sign = raw.startsWith("-") ? "-" : "";
+    const unsigned = sign ? raw.slice(1) : raw;
+    const dot = unsigned.indexOf(".");
+    const integer2 = dot === -1 ? unsigned.split("#")[0] : unsigned.slice(0, dot);
+    const tail = dot === -1 ? unsigned.slice(integer2.length) : unsigned.slice(dot + 1);
+    const grouped = integer2.replace(new RegExp(`\\B(?=(\\d{${groupSize}})+(?!\\d))`, "g"), group);
+    return dot === -1 ? `${sign}${grouped}${tail}` : `${sign}${grouped}${decimal}${tail}`;
+  }
+  function repeatingOptions(options) {
+    if (options === undefined)
+      return;
+    if (options?.type !== "map") {
+      return { limit: safeExactNumber(options, "Repeating-decimal limit") };
+    }
+    const limit = optionValue(options, "limit", undefined);
+    const onLimit = optionValue(options, "onlimit", undefined);
+    const repeat = optionValue(options, "userepeatnotation", undefined);
+    return {
+      ...limit === undefined ? {} : { limit: safeExactNumber(limit, "Repeating-decimal limit") },
+      ...onLimit === undefined ? {} : { onLimit: stringValue3(onLimit) },
+      ...repeat === undefined ? {} : { useRepeatNotation: truthy2(repeat) }
+    };
   }
   function exactBigInt(value, label) {
     if (value instanceof Integer)
@@ -24807,7 +25593,7 @@ ${indented.join(`,
     }),
     ISEMPTY: method4("ISEMPTY", ([target]) => {
       ensureSequence(target, "IsEmpty");
-      return bool(target.values.length === 0);
+      return bool2(target.values.length === 0);
     }),
     GET: method4("GET", ([target, index]) => {
       ensureSequence(target, "Get");
@@ -24823,7 +25609,7 @@ ${indented.join(`,
     }),
     INCLUDES: method4("INCLUDES", ([target, value]) => {
       ensureSequence(target, "Includes");
-      return bool(target.values.some((entry) => valueKey2(entry) === valueKey2(value)));
+      return bool2(target.values.some((entry) => valueKey2(entry) === valueKey2(value)));
     }),
     INDEXOF: method4("INDEXOF", ([target, value]) => {
       ensureSequence(target, "IndexOf");
@@ -24841,7 +25627,7 @@ ${indented.join(`,
     HASAT: method4("HASAT", ([target, index]) => {
       ensureSequence(target, "HasAt");
       const found = sequenceAt(target, index);
-      return bool(found !== null && !isHole(found));
+      return bool2(found !== null && !isHole(found));
     }),
     SLICE: method4("SLICE", ([target, start, end]) => {
       ensureSequence(target, "Slice");
@@ -25070,7 +25856,7 @@ ${indented.join(`,
     }),
     ISEMPTY: method4("ISEMPTY", ([target]) => {
       ensureLazyIndex(target, 1);
-      return bool(target._lazy.done && target._lazy.cache.length === 0);
+      return bool2(target._lazy.done && target._lazy.cache.length === 0);
     }),
     GET: method4("GET", ([target, index]) => {
       const raw = numericIndex(index);
@@ -25142,7 +25928,7 @@ ${indented.join(`,
       bound: optionalBound(bound, "Count bound")
     })),
     CLOSE: method4("CLOSE", ([target, reason]) => asyncStreamMethodHelpers.closeAsyncStream(target, reason)),
-    DONE: method4("DONE", ([target]) => bool(asyncStreamMethodHelpers.asyncStreamDone(target))),
+    DONE: method4("DONE", ([target]) => bool2(asyncStreamMethodHelpers.asyncStreamDone(target))),
     STATUS: method4("STATUS", ([target]) => asyncStreamMethodHelpers.asyncStreamStatus(target))
   };
   var iterableMethods = {
@@ -25170,7 +25956,7 @@ ${indented.join(`,
       const amount = offset === undefined ? 0 : iteratorStep(offset, "Iterator peek offset");
       return iteratorLookup(target.source, target.cursor + amount).value;
     }),
-    DONE: method4("DONE", ([target]) => bool(target.cursor === null)),
+    DONE: method4("DONE", ([target]) => bool2(target.cursor === null)),
     INDEX: method4("INDEX", ([target]) => target.cursor === null ? null : int6(target.cursor)),
     RESET: method4("RESET", ([target, index]) => {
       if (index === undefined || !isIndexedIteratorSource(target.source)) {
@@ -25200,11 +25986,11 @@ ${indented.join(`,
     }),
     ISEMPTY: method4("ISEMPTY", ([target]) => {
       ensureMap(target, "IsEmpty");
-      return bool(target.entries.size === 0);
+      return bool2(target.entries.size === 0);
     }),
     HAS: method4("HAS", ([target, key]) => {
       ensureMap(target, "Has");
-      return bool(target.entries.has(keyOf(key)));
+      return bool2(target.entries.has(keyOf(key)));
     }),
     GET: method4("GET", ([target, key]) => {
       ensureMap(target, "Get");
@@ -25368,11 +26154,11 @@ ${indented.join(`,
     }),
     ISEMPTY: method4("ISEMPTY", ([target]) => {
       ensureSet(target, "IsEmpty");
-      return bool(target.values.length === 0);
+      return bool2(target.values.length === 0);
     }),
     HAS: method4("HAS", ([target, value]) => {
       ensureSet(target, "Has");
-      return bool(setHas(target, value));
+      return bool2(setHas(target, value));
     }),
     VALUES: method4("VALUES", ([target]) => {
       ensureSet(target, "Values");
@@ -25435,17 +26221,17 @@ ${indented.join(`,
     SUBSETOF: method4("SUBSETOF", ([target, other]) => {
       ensureSet(target, "SubsetOf");
       ensureSet(other, "SubsetOf");
-      return bool(target.values.every((value) => setHas(other, value)));
+      return bool2(target.values.every((value) => setHas(other, value)));
     }),
     SUPERSETOF: method4("SUPERSETOF", ([target, other]) => {
       ensureSet(target, "SupersetOf");
       ensureSet(other, "SupersetOf");
-      return bool(other.values.every((value) => setHas(target, value)));
+      return bool2(other.values.every((value) => setHas(target, value)));
     }),
     DISJOINT: method4("DISJOINT", ([target, other]) => {
       ensureSet(target, "Disjoint");
       ensureSet(other, "Disjoint");
-      return bool(target.values.every((value) => !setHas(other, value)));
+      return bool2(target.values.every((value) => !setHas(other, value)));
     }),
     FILTER: method4("FILTER", ([target, iterator], context, evaluate, invoke) => {
       ensureSet(target, "Filter");
@@ -25467,7 +26253,7 @@ ${indented.join(`,
     }),
     ISEMPTY: method4("ISEMPTY", ([target]) => {
       ensureString(target, "IsEmpty");
-      return bool(target.value.length === 0);
+      return bool2(target.value.length === 0);
     }),
     GET: method4("GET", ([target, index]) => {
       ensureString(target, "Get");
@@ -25484,15 +26270,15 @@ ${indented.join(`,
     }),
     INCLUDES: method4("INCLUDES", ([target, needle]) => {
       ensureString(target, "Includes");
-      return bool(target.value.includes(stringValue3(needle)));
+      return bool2(target.value.includes(stringValue3(needle)));
     }),
     STARTSWITH: method4("STARTSWITH", ([target, prefix]) => {
       ensureString(target, "StartsWith");
-      return bool(target.value.startsWith(stringValue3(prefix)));
+      return bool2(target.value.startsWith(stringValue3(prefix)));
     }),
     ENDSWITH: method4("ENDSWITH", ([target, suffix]) => {
       ensureString(target, "EndsWith");
-      return bool(target.value.endsWith(stringValue3(suffix)));
+      return bool2(target.value.endsWith(stringValue3(suffix)));
     }),
     INDEXOF: method4("INDEXOF", ([target, needle]) => {
       ensureString(target, "IndexOf");
@@ -25771,14 +26557,34 @@ ${indented.join(`,
     ROUNDTO: method4("RoundTo", ([target, places, mode]) => target.roundTo(safeExactNumber(places, "Decimal places"), mode === undefined ? undefined : stringValue3(mode))),
     E: method4("E", ([target, exponent]) => target.E(exactBigInt(exponent, "Exponent"))),
     TOMIXEDSTRING: method4("ToMixedString", ([target]) => stringObj3(target.toMixedString())),
-    TODECIMAL: method4("ToDecimal", ([target]) => stringObj3(target.toDecimal())),
-    TODECIMALAPPROXIMATION: method4("ToDecimalApproximation", ([target, digits]) => boundedDecimalApproximation(target, {
-      fractionalDigits: digits === undefined ? undefined : safeExactNumber(digits, "Fractional digits")
+    TODECIMAL: method4("ToDecimal", ([target, options]) => {
+      const parsed = numericFormatOptions(options, "maxDigits", "Maximum decimal digits");
+      return stringObj3(target.toDecimal(parsed.maxDigits));
+    }),
+    TOLOCALESTRING: method4("ToLocaleString", ([target, options]) => stringObj3(localeNumberString(target, options ?? { type: "map", entries: new Map }))),
+    TOREPEATINGDECIMAL: method4("ToRepeatingDecimal", ([target, options]) => {
+      const parsed = repeatingOptions(options);
+      const result = target.toRepeatingDecimalWithPeriod(parsed ?? true).decimal;
+      return result === null ? null : stringObj3(result);
+    }),
+    TOREPEATINGDECIMALINFO: method4("ToRepeatingDecimalInfo", ([target, options]) => {
+      const info = target.toRepeatingDecimalWithPeriod(repeatingOptions(options) ?? true);
+      return {
+        type: "map",
+        entries: new Map([
+          ["decimal", info.decimal === null ? null : stringObj3(info.decimal)],
+          ["period", int6(info.period)],
+          ["truncated", bool2(info.truncated)]
+        ])
+      };
+    }),
+    TODECIMALAPPROXIMATION: method4("ToDecimalApproximation", ([target, options]) => boundedDecimalApproximation(target, {
+      fractionalDigits: numericFormatOptions(options, "fractionalDigits", "Fractional digits").fractionalDigits
     })),
-    TOCONTINUEDFRACTION: method4("ToContinuedFraction", ([target, maxTerms]) => exactSequence(target.toContinuedFraction(maxTerms === undefined ? undefined : safeExactNumber(maxTerms, "Maximum terms")).map((value) => int6(value)))),
-    TOCONTINUEDFRACTIONSTRING: method4("ToContinuedFractionString", ([target]) => stringObj3(target.toContinuedFractionString())),
-    TOCONTINUEDFRACTIONAPPROXIMATION: method4("ToContinuedFractionApproximation", ([target, maxTerms]) => boundedContinuedFractionApproximation(target, {
-      maxTerms: maxTerms === undefined ? undefined : safeExactNumber(maxTerms, "Maximum terms")
+    TOCONTINUEDFRACTION: method4("ToContinuedFraction", ([target, options]) => exactSequence(target.toContinuedFraction(numericFormatOptions(options, "maxTerms", "Maximum terms")).map((value) => int6(value)))),
+    TOCONTINUEDFRACTIONSTRING: method4("ToContinuedFractionString", ([target, options]) => stringObj3(target.toContinuedFractionString(numericFormatOptions(options, "maxTerms", "Maximum terms")))),
+    TOCONTINUEDFRACTIONAPPROXIMATION: method4("ToContinuedFractionApproximation", ([target, options]) => boundedContinuedFractionApproximation(target, {
+      maxTerms: numericFormatOptions(options, "maxTerms", "Maximum terms").maxTerms
     })),
     CONVERGENTS: method4("Convergents", ([target, maxCount]) => exactSequence(target.convergents(maxCount === undefined ? undefined : safeExactNumber(maxCount, "Maximum convergents")))),
     CONVERGENT: method4("Convergent", ([target, index]) => {
@@ -25799,15 +26605,15 @@ ${indented.join(`,
     LOW: method4("Low", ([target]) => target.low),
     HIGH: method4("High", ([target]) => target.high),
     WIDTH: method4("Width", ([target]) => target.high.subtract(target.low)),
-    ISASCENDING: method4("IsAscending", ([target]) => bool(target.isAscending)),
+    ISASCENDING: method4("IsAscending", ([target]) => bool2(target.isAscending)),
     MIDPOINT: method4("Midpoint", ([target]) => target.midpoint()),
     MEDIANT: method4("Mediant", ([target]) => target.mediant()),
     NEGATE: method4("Negate", ([target]) => target.negate()),
     RECIPROCAL: method4("Reciprocal", ([target]) => target.reciprocate()),
-    OVERLAPS: method4("Overlaps", ([target, other]) => bool(target.overlaps(exactInterval(other, "Other interval")))),
-    CONTAINS: method4("Contains", ([target, other]) => bool(target.contains(exactInterval(other, "Contained interval")))),
-    CONTAINSVALUE: method4("ContainsValue", ([target, value]) => bool(target.containsValue(exactRational2(value, "Contained value")))),
-    CONTAINSZERO: method4("ContainsZero", ([target]) => bool(target.containsZero())),
+    OVERLAPS: method4("Overlaps", ([target, other]) => bool2(target.overlaps(exactInterval(other, "Other interval")))),
+    CONTAINS: method4("Contains", ([target, other]) => bool2(target.contains(exactInterval(other, "Contained interval")))),
+    CONTAINSVALUE: method4("ContainsValue", ([target, value]) => bool2(target.containsValue(exactRational2(value, "Contained value")))),
+    CONTAINSZERO: method4("ContainsZero", ([target]) => bool2(target.containsZero())),
     INTERSECTION: method4("Intersection", ([target, other]) => target.intersection(exactInterval(other, "Other interval"))),
     UNION: method4("Union", ([target, other]) => target.union(exactInterval(other, "Other interval"))),
     SHORTESTDECIMAL: method4("ShortestDecimal", ([target, base]) => target.shortestDecimal(base === undefined ? undefined : exactBigInt(base, "Base"))),
@@ -25817,6 +26623,18 @@ ${indented.join(`,
     E: method4("E", ([target, exponent]) => target.E(exactBigInt(exponent, "Exponent"))),
     BITLENGTH: method4("BitLength", ([target]) => int6(target.bitLength())),
     TOMIXEDSTRING: method4("ToMixedString", ([target]) => stringObj3(target.toMixedString())),
+    TOREPEATINGDECIMAL: method4("ToRepeatingDecimal", ([target, options]) => {
+      const maxDigits = optionValue(options, "maxdigits", undefined);
+      const onLimit = optionValue(options, "onlimit", undefined);
+      const text4 = target.toRepeatingDecimal(options?.type === "map" ? {
+        ...maxDigits === undefined ? {} : { maxDigits: safeExactNumber(maxDigits, "Maximum decimal digits") },
+        ...onLimit === undefined ? {} : { onLimit: stringValue3(onLimit) }
+      } : true);
+      return text4 === null ? null : stringObj3(text4);
+    }),
+    TOCOMPACTDECIMAL: method4("ToCompactDecimal", ([target]) => stringObj3(target.compactedDecimalInterval())),
+    TORELATIVEMIDDECIMAL: method4("ToRelativeMidDecimal", ([target]) => stringObj3(target.relativeMidDecimalInterval())),
+    TORELATIVEDECIMAL: method4("ToRelativeDecimal", ([target]) => stringObj3(target.relativeDecimalInterval())),
     TOSTRING: method4("ToString", ([target]) => stringObj3(target.toString()))
   };
   var certifiedApproximationMethods = {
@@ -25827,8 +26645,8 @@ ${indented.join(`,
     NEGATE: method4("Negate", ([target]) => target.negate()),
     RECIPROCAL: method4("Reciprocal", ([target]) => target.reciprocal()),
     POSSIBLERELATIONS: method4("PossibleRelations", ([target, other]) => int6(possibleRelations(target, other))),
-    CERTAINLYLESSTHAN: method4("CertainlyLessThan", ([target, other]) => bool(possibleRelations(target, other) === Relation.LESS)),
-    POSSIBLYLESSTHAN: method4("PossiblyLessThan", ([target, other]) => bool((possibleRelations(target, other) & Relation.LESS) !== 0)),
+    CERTAINLYLESSTHAN: method4("CertainlyLessThan", ([target, other]) => bool2(possibleRelations(target, other) === Relation.LESS)),
+    POSSIBLYLESSTHAN: method4("PossiblyLessThan", ([target, other]) => bool2((possibleRelations(target, other) & Relation.LESS) !== 0)),
     TOSTRING: method4("ToString", ([target]) => stringObj3(target.toString()))
   };
   var structuralMethods = {
@@ -26476,6 +27294,9 @@ ${indented.join(`,
       if (op === "_>") {
         return ir2("TOBASE", lowerNode(node.left), lowerNode(node.right));
       }
+      if (op === "~>") {
+        return ir2("CERTIFY_FORMAT", lowerNode(node.left), lowerNode(node.right));
+      }
       if (op === "<_") {
         return ir2("FROMBASE", lowerNode(node.left), lowerNode(node.right));
       }
@@ -26615,7 +27436,7 @@ ${indented.join(`,
         pattern: lowerDestructureTarget(gate.pattern),
         prep: gate.prep?.type === "Array" ? gate.prep.elements.map(lowerNode) : [],
         strict: gate.strict === true,
-        undecidedMode: gate.undecidedMode || "stop"
+        ...gate.undecidedMode && gate.undecidedMode !== "stop" ? { undecidedMode: gate.undecidedMode } : {}
       }));
       return ir2("PREP_TRIAL", lowerNode(node.candidate), ...gates);
     },
@@ -27272,7 +28093,8 @@ ${indented.join(`,
         impl,
         lazy: options.lazy || false,
         pure: options.pure || false,
-        doc: options.doc || ""
+        doc: options.doc || "",
+        preempt: options.preempt || null
       };
       if (this.multifunctionNames.has(name) && !entry.lazy) {
         this.functions.set(name, this._createSystemMultifunction(name, entry));
@@ -27288,6 +28110,7 @@ ${indented.join(`,
           name: "NativeFallback",
           impl: fallback.impl,
           prep: null,
+          preempt: fallback.preempt,
           nativeFallback: true,
           targetFunction: name,
           installOrder: Number.POSITIVE_INFINITY
@@ -27325,6 +28148,14 @@ ${indented.join(`,
       const func = this.functions.get(name);
       if (!func?.systemMultifunction) {
         throw new Error(`${name} is not a system multifunction`);
+      }
+      const nativeFallback = func.variants.find((variant2) => variant2.nativeFallback);
+      if (nativeFallback?.preempt?.(args, context, evaluate)) {
+        return {
+          value: nativeFallback.impl(args, context, evaluate),
+          args,
+          variant: nativeFallback
+        };
       }
       const candidates = [];
       for (const variant2 of func.variants) {
@@ -27820,7 +28651,7 @@ ${indented.join(`,
       throw new Error("Random seed must be a finite integer");
     return Math.trunc(number) >>> 0;
   }
-  function option(value, key, fallback = undefined) {
+  function option2(value, key, fallback = undefined) {
     if (value?.entries instanceof Map) {
       if (value.entries.has(key))
         return value.entries.get(key);
@@ -27856,7 +28687,7 @@ ${indented.join(`,
     throw new Error("Random seed selection requires host entropy, but this host provides none");
   }
   function requestedSeed(options, context) {
-    const requested = option(options, "seed", DEFAULT_RANDOM_SEED);
+    const requested = option2(options, "seed", DEFAULT_RANDOM_SEED);
     const name = nameValue(requested);
     if (name?.toLowerCase() === "random")
       return entropySeed(context);
@@ -29469,6 +30300,9 @@ ${indented.join(`,
       const limitedShifted = s.match(/^(?:\^|_\^|shifted)(\d+)$/);
       if (limitedShifted)
         return { mode: 5, limit: parseInt(limitedShifted[1], 10) };
+      const limitedCf = s.match(/^(?:\.~|~|cf)(\d+)$/);
+      if (limitedCf)
+        return { mode: s.startsWith("~") ? 4 : 3, limit: parseInt(limitedCf[1], 10) };
       const alias = BASE_MODE_ALIASES.get(s);
       if (alias !== undefined)
         return { mode: alias };
@@ -29485,6 +30319,37 @@ ${indented.join(`,
   }
   function toBaseDigitsInt(value, baseSystem) {
     return groupDigits(baseSystem.fromDecimal(value));
+  }
+  function boundedBaseApproximation(value, baseSystem, digitLimit) {
+    if (value instanceof CertifiedApproximation)
+      return value;
+    const limit = digitLimit ?? DEFAULT_BASE_EXPANSION_LIMIT;
+    if (!Number.isSafeInteger(limit) || limit < 0)
+      throw new Error("Certified radix digit limit must be nonnegative");
+    const rational = toRationalValue(value);
+    const negative = rational.numerator < 0n;
+    const numerator = negative ? -rational.numerator : rational.numerator;
+    const integer2 = numerator / rational.denominator;
+    let remainder = numerator % rational.denominator;
+    let digits = "";
+    for (let index = 0;index < limit && remainder !== 0n; index++) {
+      remainder *= BigInt(baseSystem.base);
+      digits += baseSystem.fromDecimal(remainder / rational.denominator);
+      remainder %= rational.denominator;
+    }
+    if (remainder === 0n)
+      return value;
+    const integerDigits = baseSystem.fromDecimal(integer2);
+    return certifiedRadixPrefix({
+      integerDigits,
+      fractionalDigits: digits,
+      negative,
+      baseSystem,
+      original: `${negative ? "-" : ""}${integerDigits}${digits.length ? `.${digits}` : ""}?`,
+      reason: "truncated",
+      requested: { fractionalDigits: limit, base: baseSystem.base },
+      achieved: { fractionalDigits: digits.length }
+    });
   }
   function toBaseString(value, baseSystem, modeSpec = { mode: 1 }) {
     const mode = typeof modeSpec === "number" ? modeSpec : modeSpec?.mode ?? 1;
@@ -30217,6 +31082,11 @@ ${indented.join(`,
     const location = entryIndex === null ? `gate ${gateIndex + 1}` : `gate ${gateIndex + 1}, prep entry ${entryIndex + 1}`;
     return new Error(`Prepared trial failed at ${location}`);
   }
+  function preparedTrialUndecidedError(gateIndex, entryIndex, undecided) {
+    const error = new Error(`Prepared trial remained undecided at gate ${gateIndex + 1}, prep entry ${entryIndex + 1}`);
+    error.undecided = undecided;
+    return error;
+  }
   function evaluatePreparedTrial(args, context, evaluate, preserveFailure) {
     const candidateNode = args[0];
     const gates = args.slice(1);
@@ -30244,7 +31114,7 @@ ${indented.join(`,
             const state = decisionState(value);
             if (state === "undecided") {
               if (gate.undecidedMode === "throw") {
-                throw new Error(`Prepared trial remained undecided at gate ${gateIndex + 1}, prep entry ${entryIndex + 1}`);
+                throw preparedTrialUndecidedError(gateIndex, entryIndex, value);
               }
               if (gate.undecidedMode === "fallthrough") {
                 return preserveFailure ? PREP_TRIAL_NO_MATCH : UNDECIDED;
@@ -30313,6 +31183,53 @@ ${indented.join(`,
       },
       pure: true,
       doc: "Return the singleton undecided decision value"
+    },
+    UNDECIDED_DIAGNOSTIC: {
+      impl(args) {
+        const reason = args[0]?.type === "string" ? args[0].value : String(args[0] ?? "undecided");
+        return undecidedDiagnostic(reason, args[1] ?? null);
+      },
+      pure: true,
+      doc: "Construct an undecided decision carrying a reason and optional evidence"
+    },
+    REFINEMENT_REQUEST: {
+      impl(args) {
+        return normalizeRefinementRequest(args[0], {
+          operation: isHole(args[1]) ? null : args[1] ?? null,
+          capabilities: isHole(args[2]) ? null : args[2] ?? null
+        });
+      },
+      pure: true,
+      doc: "Normalize a shared bounded numerical refinement request"
+    },
+    REFINEMENT_EFFECTIVE_LIMITS: {
+      impl(args) {
+        return refinementEffectiveLimits(args[0], args[1] ?? null);
+      },
+      pure: true,
+      doc: "Intersect requester and numerical-provider resource limits"
+    },
+    REFINEMENT_SUPPORTS: {
+      impl(args) {
+        return refinementSupports(args[0], args[1]) ? new Integer(1n) : null;
+      },
+      pure: true,
+      doc: "Check whether numerical provider capabilities support an operation"
+    },
+    REFINEMENT_CHECK: {
+      impl(args) {
+        return checkRefinementResult(args[0], args[1], isHole(args[2]) ? null : args[2] ?? null);
+      },
+      pure: true,
+      doc: "Validate a numerical provider result against its request and capabilities"
+    },
+    REFINEMENT_UNSUPPORTED: {
+      impl(args) {
+        const reason = args[2]?.type === "string" ? args[2].value : String(args[2] ?? "unsupported");
+        return unsupportedRefinementResult(args[0], isHole(args[1]) ? null : args[1] ?? null, reason);
+      },
+      pure: true,
+      doc: "Construct a structured unsupported numerical result"
     },
     CERTIFIED_APPROXIMATION: {
       impl(args) {
@@ -30532,6 +31449,31 @@ ${indented.join(`,
         return { type: "string", value: text4 };
       },
       doc: "Format number to base string: expr _> baseSpec"
+    },
+    CERTIFY_FORMAT: {
+      lazy: true,
+      impl(args, context, evaluate) {
+        const value = evaluate(args[0]);
+        let spec2 = evaluate(args[1]);
+        let baseValue = new Integer(10n);
+        let modeSpec;
+        if (spec2?.type === "tuple" && Array.isArray(spec2.values) && spec2.values.length === 2) {
+          baseValue = spec2.values[0];
+          modeSpec = resolveModeSpec(spec2.values[1]);
+        } else {
+          modeSpec = resolveModeSpec(spec2);
+        }
+        const baseSystem = resolveBaseSpecFromValue(baseValue);
+        if (modeSpec.mode === 3 || modeSpec.mode === 4) {
+          return boundedContinuedFractionApproximation(value, {
+            maxTerms: modeSpec.limit ?? Rational.DEFAULT_CF_LIMIT
+          });
+        }
+        if (modeSpec.mode === 1 || modeSpec.mode === 6)
+          return value;
+        return boundedBaseApproximation(value, baseSystem, modeSpec.limit);
+      },
+      doc: "Convert an exact number to a bounded certified representation"
     },
     FROMBASE: {
       lazy: true,
@@ -31044,241 +31986,6 @@ ${indented.join(`,
         }
       },
       doc: "Evaluate a deferred AST node or expression: .Eval(ast, bindings ?= _, mode ?= :inherit)"
-    }
-  };
-
-  // rix/src/eval/functions/comparison.js
-  function isEnclosed(value) {
-    return value instanceof CertifiedApproximation || value instanceof RationalInterval;
-  }
-  function relationDecision(a, b, operation) {
-    if (!isEnclosed(a) && !isEnclosed(b))
-      return null;
-    const mask = possibleRelations(a, b);
-    switch (operation) {
-      case "eq":
-        return mask === Relation.EQUAL ? true : (mask & Relation.EQUAL) === 0 ? false : UNDECIDED;
-      case "neq":
-        return mask === Relation.EQUAL ? false : (mask & Relation.EQUAL) === 0 ? true : UNDECIDED;
-      case "lt":
-        return mask === Relation.LESS ? true : (mask & Relation.LESS) === 0 ? false : UNDECIDED;
-      case "gt":
-        return mask === Relation.GREATER ? true : (mask & Relation.GREATER) === 0 ? false : UNDECIDED;
-      case "lte":
-        return (mask & Relation.GREATER) === 0 ? true : mask === Relation.GREATER ? false : UNDECIDED;
-      case "gte":
-        return (mask & Relation.LESS) === 0 ? true : mask === Relation.LESS ? false : UNDECIDED;
-      default:
-        throw new Error(`Unknown relation operation '${operation}'`);
-    }
-  }
-  function haloDecision(left, right, operation) {
-    if (!(right instanceof HaloNeighborhood))
-      return null;
-    if (right.target instanceof RationalInterval) {
-      throw new Error(`Relational halo target for '${operation}' must be an exact scalar`);
-    }
-    return relationDecision(left, right.target, operation);
-  }
-  function compare2(a, b) {
-    if (a && b && typeof a.subtract === "function" && typeof b.subtract === "function") {
-      const diff = a.subtract(b);
-      if (typeof diff.sign === "function")
-        return Number(diff.sign().value ?? diff.sign());
-      if (typeof diff.numerator === "bigint") {
-        if (diff.numerator < 0n)
-          return -1;
-        if (diff.numerator > 0n)
-          return 1;
-        return 0;
-      }
-      if (typeof diff.value === "bigint") {
-        if (diff.value < 0n)
-          return -1;
-        if (diff.value > 0n)
-          return 1;
-        return 0;
-      }
-    }
-    const valA = a && a.type === "string" ? a.value : a;
-    const valB = b && b.type === "string" ? b.value : b;
-    if (valA < valB)
-      return -1;
-    if (valA > valB)
-      return 1;
-    return 0;
-  }
-  function boolResult2(val) {
-    if (isUndecided(val))
-      return UNDECIDED;
-    return val ? new Integer(1) : null;
-  }
-  function classifyMinMaxType(val) {
-    if (val === null || val === undefined)
-      return null;
-    if (val instanceof Integer || val instanceof Rational || isEnclosed(val))
-      return "number";
-    if (typeof val === "number" || typeof val === "bigint")
-      return "number";
-    if (typeof val === "string")
-      return "string";
-    if (val && typeof val === "object" && val.type === "string")
-      return "string";
-    return "invalid";
-  }
-  function resolveCell(irNode, context) {
-    if (!irNode || typeof irNode !== "object")
-      return null;
-    if (irNode.fn === "RETRIEVE") {
-      return context.getCell(irNode.args[0]);
-    }
-    if (irNode.fn === "OUTER_RETRIEVE") {
-      return context.getOuterCell(irNode.args[0]);
-    }
-    return null;
-  }
-  function comparisonInteger(value) {
-    if (value instanceof Integer && [-1n, 0n, 1n].includes(value.value))
-      return Number(value.value);
-    throw new Error("COMPARE variants must return -1, 0, or 1 as a RiX integer");
-  }
-  function minMaxImpl(args, mode, context, evaluate) {
-    const filtered = args.filter((v) => v !== null && v !== undefined);
-    if (filtered.length === 0) {
-      throw new Error(`${mode} requires at least one non-null comparable argument`);
-    }
-    let best = filtered[0];
-    for (let i = 1;i < filtered.length; i++) {
-      const registry = context?.getEnv?.("__registry__", null);
-      if (!registry?.invokeWithVariant) {
-        throw new Error(`${mode} requires an active evaluator registry`);
-      }
-      const invocation = registry.invokeWithVariant("COMPARE", [filtered[i], best], context, evaluate);
-      if (isUndecided(invocation.value))
-        return UNDECIDED;
-      const c = comparisonInteger(invocation.value);
-      const [candidate, normalizedBest] = invocation.args;
-      if (mode === "MIN" && c < 0 || mode === "MAX" && c > 0) {
-        best = candidate;
-      } else {
-        best = normalizedBest;
-      }
-    }
-    return best;
-  }
-  var comparisonFunctions = {
-    COMPARE: {
-      impl(args) {
-        const leftType = classifyMinMaxType(args[0]);
-        const rightType = classifyMinMaxType(args[1]);
-        if (!leftType || leftType === "invalid" || leftType !== rightType) {
-          throw new Error("COMPARE requires two values from the same built-in ordered domain");
-        }
-        const result = compare2(args[0], args[1]);
-        if (isEnclosed(args[0]) || isEnclosed(args[1])) {
-          const mask = possibleRelations(args[0], args[1]);
-          if (mask === Relation.LESS)
-            return new Integer(-1n);
-          if (mask === Relation.EQUAL)
-            return new Integer(0n);
-          if (mask === Relation.GREATER)
-            return new Integer(1n);
-          return UNDECIDED;
-        }
-        return new Integer(BigInt(result < 0 ? -1 : result > 0 ? 1 : 0));
-      },
-      pure: true,
-      doc: "Compare two values; returns -1, 0, or 1"
-    },
-    EQ: {
-      impl(args) {
-        const [a, b] = args;
-        const decision = haloDecision(a, b, "eq") ?? relationDecision(a, b, "eq");
-        if (decision !== null)
-          return boolResult2(decision);
-        if (a && b && typeof a.equals === "function") {
-          return boolResult2(a.equals(b));
-        }
-        if (a && b && a.type === "string" && b.type === "string")
-          return boolResult2(a.value === b.value);
-        return boolResult2(a === b);
-      },
-      pure: true,
-      doc: "Equality check — returns 1 or null"
-    },
-    NEQ: {
-      impl(args) {
-        const [a, b] = args;
-        const decision = haloDecision(a, b, "neq") ?? relationDecision(a, b, "neq");
-        if (decision !== null)
-          return boolResult2(decision);
-        if (a && b && typeof a.equals === "function") {
-          return boolResult2(!a.equals(b));
-        }
-        if (a && b && a.type === "string" && b.type === "string")
-          return boolResult2(a.value !== b.value);
-        return boolResult2(a !== b);
-      },
-      pure: true,
-      doc: "Inequality check — returns 1 or null"
-    },
-    LT: {
-      impl(args) {
-        const decision = haloDecision(args[0], args[1], "lt") ?? relationDecision(args[0], args[1], "lt");
-        return decision === null ? boolResult2(compare2(args[0], args[1]) < 0) : boolResult2(decision);
-      },
-      pure: true,
-      doc: "Less than — returns 1 or null"
-    },
-    GT: {
-      impl(args) {
-        const decision = haloDecision(args[0], args[1], "gt") ?? relationDecision(args[0], args[1], "gt");
-        return decision === null ? boolResult2(compare2(args[0], args[1]) > 0) : boolResult2(decision);
-      },
-      pure: true,
-      doc: "Greater than — returns 1 or null"
-    },
-    LTE: {
-      impl(args) {
-        const decision = haloDecision(args[0], args[1], "lte") ?? relationDecision(args[0], args[1], "lte");
-        return decision === null ? boolResult2(compare2(args[0], args[1]) <= 0) : boolResult2(decision);
-      },
-      pure: true,
-      doc: "Less than or equal — returns 1 or null"
-    },
-    GTE: {
-      impl(args) {
-        const decision = haloDecision(args[0], args[1], "gte") ?? relationDecision(args[0], args[1], "gte");
-        return decision === null ? boolResult2(compare2(args[0], args[1]) >= 0) : boolResult2(decision);
-      },
-      pure: true,
-      doc: "Greater than or equal — returns 1 or null"
-    },
-    SAME_CELL: {
-      lazy: true,
-      impl(args, context, evalFn) {
-        const leftCell = resolveCell(args[0], context);
-        const rightCell = resolveCell(args[1], context);
-        if (leftCell && rightCell && leftCell === rightCell) {
-          return new Integer(1);
-        }
-        return null;
-      },
-      doc: "Identity comparison (===) — returns 1 if both sides refer to the same cell, null otherwise"
-    },
-    MIN: {
-      impl(args, context, evaluate) {
-        return minMaxImpl(args, "MIN", context, evaluate);
-      },
-      pure: true,
-      doc: "Minimum over n arguments (ignores nulls)"
-    },
-    MAX: {
-      impl(args, context, evaluate) {
-        return minMaxImpl(args, "MAX", context, evaluate);
-      },
-      pure: true,
-      doc: "Maximum over n arguments (ignores nulls)"
     }
   };
 
@@ -34675,9 +35382,9 @@ ${pad}}`;
     const optionEntries = args[1]?.type === "map" && args[1].entries instanceof Map ? args[1].entries : args[1] === undefined ? new Map : null;
     if (!optionEntries)
       throw new Error(".FormulaSheet options must be a map");
-    const option2 = (name, fallback = null) => optionEntries.get(name) ?? optionEntries.get(name.toLowerCase()) ?? fallback;
+    const option3 = (name, fallback = null) => optionEntries.get(name) ?? optionEntries.get(name.toLowerCase()) ?? fallback;
     const stringOption = (name, fallback = null) => {
-      const value = option2(name);
+      const value = option3(name);
       if (value === null)
         return fallback;
       const text4 = value?.type === "string" ? value.value : typeof value === "string" ? value : null;
@@ -34685,7 +35392,7 @@ ${pad}}`;
         throw new Error(`FormulaSheet ${name} must be a string`);
       return text4;
     };
-    const viewOption = option2("view");
+    const viewOption = option3("view");
     if (viewOption !== null && (viewOption?.type !== "map" || !(viewOption.entries instanceof Map))) {
       throw new Error("FormulaSheet view must be a map");
     }
@@ -34773,10 +35480,10 @@ ${pad}}`;
     if (value?.type !== "map" || !(value.entries instanceof Map)) {
       throw new Error(`${label} options must be a map`);
     }
-    const option2 = (name) => value.entries.get(name) ?? value.entries.get(name.toLowerCase());
-    const headerValue = option2("header");
+    const option3 = (name) => value.entries.get(name) ?? value.entries.get(name.toLowerCase());
+    const headerValue = option3("header");
     const header = headerValue instanceof Integer ? headerValue.value !== 0n : headerValue === null || headerValue === undefined ? false : Boolean(headerValue);
-    const idValue = option2("id");
+    const idValue = option3("id");
     const id = idValue === undefined ? null : delimitedText(idValue, `${label} id`);
     return { header, id };
   }
@@ -36098,7 +36805,7 @@ id: oracle
 description: Exact rational-betweenness oracle demonstrations and bounded refinement.
 kind: rix
 mount: oracle
-exports: [Rational, Query, Answer, Prophecy, WorkPolicy, Evidence, Ask, AskAll, CheckRange, Refine]
+exports: [Rational, Query, Answer, Decision, Prophecy, WorkPolicy, Evidence, Ask, AskAll, CheckRange, Refine]
 groups: [Numerics, Exact]
 permissions: []
 provides: [rix.oracle@1, rix.enclosable-real@1]
@@ -36182,6 +36889,23 @@ OracleAnswer(status, query, prophecy ?= _, reason ?= _, procedure ?= _) -> {;
         evidence = _,
         work = {= calls = 1, iterations = 1 }
     } ?_ .Error("Oracle answer status must be :yes, :no, or :unknown");
+};
+
+OracleDecision(answer) -> {;
+    check = OracleCheckRange(answer);
+    check[:valid] ?: {?
+      answer[:status] == :yes ? 1;
+      answer[:status] == :no ? _;
+      answer[:status] == :unknown ? .Undecided(:oracleUnknown, {=
+        reason = answer[:reason],
+        procedure = answer[:procedure],
+        query = answer[:query],
+        prophecy = answer[:prophecy],
+        evidence = answer[:evidence],
+        work = answer[:work]
+      });
+      .Error("Oracle Decision requires an answer with :yes, :no, or :unknown status")
+    } ?_ .Error("Oracle Decision received an answer that violates Range");
 };
 
 BuildRationalOracle(exactValue, selectedProcedure, options) -> {;
@@ -36408,12 +37132,16 @@ OracleNumericsCapabilities(real) -> {=
 };
 
 OracleProtocolEnclose(real, request) -> {;
+    workRequest = request[:work];
     refined = OracleRefine(real, {=
         width = request[:absoluteWidth],
-        maxCalls = request[:work][:maxCalls],
+        maxCalls = workRequest[:maxCalls],
         trace = request[:trace]
     });
     goalMet = refined[:status] == :enclosed;
+    diagnostics = [];
+    diagnostics = workRequest.Has("timeout") ?: diagnostics.Push(:timeoutNotCooperativelyEnforced) ?_ diagnostics;
+    diagnostics = workRequest.Has("memory") ?: diagnostics.Push(:memoryNotCooperativelyEnforced) ?_ diagnostics;
     {=
         valueKind = :enclosure,
         schema = "rix.numerics.enclosure@1",
@@ -36429,7 +37157,7 @@ OracleProtocolEnclose(real, request) -> {;
         operation = request[:operation],
         trace = refined[:trace],
         work = refined[:work],
-        diagnostics = [],
+        diagnostics = diagnostics,
         evidence = refined[:evidence],
         source = real[:provenance]
     };
@@ -36440,6 +37168,7 @@ oracleNamespace._proto = {=
     Rational = (self, value, options ?= {= }) -> RationalOracle(value, options),
     Query = (self, interval, delta, auxiliary ?= _) -> OracleQuery(interval, delta, auxiliary),
     Answer = (self, status, query, prophecy ?= _, reason ?= _) -> OracleAnswer(status, query, prophecy, reason),
+    Decision = (self, answer) -> OracleDecision(answer),
     Prophecy = (self, real, interval, query ?= _) -> OracleProphecy(real, interval, query),
     WorkPolicy = (self, options ?= {= }) -> OracleWorkPolicy(options),
     Evidence = (self, property, level, subject, witness ?= _) -> OracleEvidence(property, level, subject, witness),
@@ -36458,7 +37187,7 @@ id: numerics
 description: Backend-neutral bounded enclosure and refinement orchestration.
 kind: rix
 mount: numerics
-exports: [Request, WorkPolicy, Enclose, Refine, Sample, Capabilities, CheckResult]
+exports: [Request, WorkPolicy, EffectiveLimits, Enclose, Refine, Sample, Capabilities, CheckResult]
 groups: [Numerics]
 permissions: []
 provides: [rix.numerics@1, rix.enclosable-real-consumer@1]
@@ -36466,106 +37195,49 @@ schemas: [rix.numerics.refinement-request@1, rix.numerics.enclosure@1]
 defaultEnabled: false
 **/
 
-Option(options, key, fallback) -> options.Has(key) ?: options[key] ?_ fallback;
+NumericsRequest(options ?= {= }, operation ?= _, capabilities ?= _) ->
+    .RefinementRequest(options, operation, capabilities);
 
-RequirePositive(value, label) -> {;
-    rational = value ~!: :Rational;
-    rational > 0 ?: rational ?_ .Error(@"@{label} must be a positive rational");
-};
+NumericsWorkPolicy(options ?= {= }) -> NumericsRequest(options)[:work];
 
-RequireNonnegativeInteger(value, label) -> {;
-    integer = value ~!: :Integer;
-    integer >= 0 ?: integer ?_ .Error(@"@{label} must be a nonnegative integer");
-};
+NumericsEffectiveLimits(request, capabilities ?= {= }) ->
+    .RefinementEffectiveLimits(request, capabilities);
 
-NumericsWorkPolicy(options ?= {= }) -> {;
-    maxWork = RequireNonnegativeInteger(Option(options, "maxwork", 100), "maxWork");
-    {=
-        valueKind = :numericsWorkPolicy,
-        schema = "rix.numerics.work-policy@1",
-        maxWork = maxWork,
-        maxCalls = RequireNonnegativeInteger(Option(options, "maxcalls", maxWork), "maxCalls"),
-        maxIterations = RequireNonnegativeInteger(Option(options, "maxiterations", maxWork), "maxIterations"),
-        maxDepth = RequireNonnegativeInteger(Option(options, "maxdepth", maxWork), "maxDepth")
-    };
-};
+CheckEnclosure(result, request, capabilities ?= _) ->
+    .RefinementCheck(result, request, capabilities);
 
-NumericsRequest(options ?= {= }) -> {;
-    width = RequirePositive(
-        Option(options, "absolutewidth", Option(options, "width", 1 / 1000)),
-        "absoluteWidth"
-    );
-    relativeWidth = Option(options, "relativewidth", _);
-    relativeWidth == _ ?: _ ?_ RequirePositive(relativeWidth, "relativeWidth");
-    {=
-        valueKind = :refinementRequest,
-        schema = "rix.numerics.refinement-request@1",
-        operation = Option(options, "operation", :enclose),
-        absoluteWidth = width,
-        relativeWidth = relativeWidth,
-        evidenceRequired = Option(options, "evidencerequired", :any),
-        trace = Option(options, "trace", 1),
-        seed = Option(options, "seed", 1),
-        work = NumericsWorkPolicy(options)
-    };
-};
-
-AsRequest(value) -> {;
-    isRequest = value.Has("schema") && value[:schema] == "rix.numerics.refinement-request@1";
-    isRequest ?: value ?_ NumericsRequest(value);
-};
-
-CheckEnclosure(result, request) -> {;
-    fieldsPresent = result.Has("status") && result.Has("interval") &&
-        result.Has("certified") && result.Has("goalmet") &&
-        result.Has("evidencelevel") && result.Has("backend") &&
-        result.Has("work") && result.Has("diagnostics");
-    validStatus = {| :enclosed, :approximate, :goalNotMet, :budgetExhausted, :unsupported |}.Has(result[:status]);
-    interval = result[:interval] ~!: :RationalInterval;
-    schemaValid = result[:schema] == "rix.numerics.enclosure@1";
-    approximationPresent = !result[:certified] || result.Has("approximation");
-    valid = fieldsPresent && validStatus && schemaValid;
-    {=
-        valueKind = :numericsResultCheck,
-        valid = valid,
-        fieldsPresent = fieldsPresent,
-        statusValid = validStatus,
-        schemaValid = schemaValid,
-        approximationPresent = approximationPresent,
-        interval = interval,
-        request = request,
-        result = result
-    };
-};
-
-CheckedEnclosure(result, request) -> {;
-    check = CheckEnclosure(result, request);
+CheckedEnclosure(result, request, capabilities) -> {;
+    check = CheckEnclosure(result, request, capabilities);
     check[:valid] ?: result ?_ .Error("EnclosableReal provider returned an invalid enclosure record");
 };
 
-ProviderEnclose(value, request) -> CheckedEnclosure(value.Enclose(request), request);
-ProviderRefine(value, request) -> CheckedEnclosure(value.Refine(request), request);
+InvokeProvider(value, request, selectedOperation) ->
+    selectedOperation == :enclose ?: value.Enclose(request) ?_
+    selectedOperation == :refine ?: value.Refine(request) ?_
+    selectedOperation == :sample ?: value.Sample(request) ?_
+    .RefinementUnsupported(request, value.NumericsCapabilities(), :unknownOperation);
 
-NumericsEnclose(value, options ?= {= }) -> {;
-    request = AsRequest(options);
-    ProviderEnclose(value, request);
-};
-
-NumericsRefine(value, options ?= {= }) -> {;
-    request = AsRequest(options);
-    ProviderRefine(value, request);
+ProviderOperation(value, options, operation) -> {;
+    capabilities = value.NumericsCapabilities();
+    request = NumericsRequest(options, operation, capabilities);
+    supported = .RefinementSupports(capabilities, operation);
+    result = supported ?: InvokeProvider(value, request, operation)
+                       ?_ .RefinementUnsupported(request, capabilities, :operationUnsupported);
+    supported ?: CheckedEnclosure(result, request, capabilities) ?_ result;
 };
 
 numericsNamespace = {= };
 numericsNamespace._proto = {=
     Request = (self, options ?= {= }) -> NumericsRequest(options),
     WorkPolicy = (self, options ?= {= }) -> NumericsWorkPolicy(options),
-    Enclose = (self, value, options ?= {= }) -> NumericsEnclose(value, options),
-    Refine = (self, value, options ?= {= }) -> NumericsRefine(value, options),
-    Sample = (self, value, options ?= {= }) -> NumericsEnclose(value, options),
+    EffectiveLimits = (self, request, capabilities ?= {= }) -> NumericsEffectiveLimits(request, capabilities),
+    Enclose = (self, value, options ?= {= }) -> ProviderOperation(value, options, :enclose),
+    Refine = (self, value, options ?= {= }) -> ProviderOperation(value, options, :refine),
+    Sample = (self, value, options ?= {= }) -> ProviderOperation(value, options, :sample),
     Approximation = (self, result) -> result.Has("approximation") ?: result[:approximation] ?_ _,
     Capabilities = (self, value) -> value.NumericsCapabilities(),
-    CheckResult = (self, result, options ?= {= }) -> CheckEnclosure(result, AsRequest(options))
+    CheckResult = (self, result, options ?= {= }, capabilities ?= _) ->
+        CheckEnclosure(result, NumericsRequest(options), capabilities)
 };
 
 .Host.RegisterValue("numerics", numericsNamespace, "Backend-neutral bounded enclosure and refinement orchestration", ["Numerics"]);
@@ -36787,7 +37459,7 @@ defaultEnabled: false
       return 0n;
     return left / gcd2(left, right) * right;
   }
-  function bool2(value) {
+  function bool3(value) {
     return value ? int7(1) : null;
   }
   function createFraction(args) {
@@ -36859,15 +37531,15 @@ defaultEnabled: false
     binary2("MUL", fractionPair, ([left, right]) => multiply(left, right));
     binary2("DIV", fractionPair, ([left, right]) => divide(left, right));
     binary2("POW", (left, right) => left instanceof Fraction && integerExponent3(right) !== null, ([left, right]) => left.pow(integerExponent3(right)));
-    binary2("EQ", fractionPair, ([left, right]) => bool2(asFraction2(left).equals(asFraction2(right))));
-    binary2("NEQ", fractionPair, ([left, right]) => bool2(!asFraction2(left).equals(asFraction2(right))));
+    binary2("EQ", fractionPair, ([left, right]) => bool3(asFraction2(left).equals(asFraction2(right))));
+    binary2("NEQ", fractionPair, ([left, right]) => bool3(!asFraction2(left).equals(asFraction2(right))));
     for (const [name, predicate] of [
       ["LT", (value) => value < 0],
       ["LTE", (value) => value <= 0],
       ["GT", (value) => value > 0],
       ["GTE", (value) => value >= 0]
     ])
-      binary2(name, fractionPair, ([left, right]) => bool2(predicate(compare3(left, right))));
+      binary2(name, fractionPair, ([left, right]) => bool3(predicate(compare3(left, right))));
     binary2("COMPARE", fractionPair, ([left, right]) => int7(compare3(left, right)));
     registry.installVariant("NEG", {
       name: "Fraction.NEG",
@@ -36928,22 +37600,22 @@ defaultEnabled: false
     register("Fraction", "Mediant", ([value, other]) => value.mediant(asFraction2(other, "Mediant operand")));
     register("Fraction", "AddLikeDenominator", ([value, other]) => commonDenominator(value, other, "like"));
     register("Fraction", "AddLCMDenominator", ([value, other]) => commonDenominator(value, other, "lcm"));
-    register("Fraction", "SamePair", ([value, other]) => bool2(value.equals(asFraction2(other))));
-    register("Fraction", "Equivalent", ([value, other]) => bool2(compare3(value, other) === 0));
+    register("Fraction", "SamePair", ([value, other]) => bool3(value.equals(asFraction2(other))));
+    register("Fraction", "Equivalent", ([value, other]) => bool3(compare3(value, other) === 0));
     register("Fraction", "FareyParents", ([value]) => fareyParents(value));
     register("Fraction", "SternBrocotPath", ([value, maxLength]) => sternBrocotPath(value, maxLength));
     register("Fraction", "SternBrocotParent", ([value]) => finite(value, "Fraction").sternBrocotParent());
     register("Fraction", "SternBrocotChildren", ([value]) => sternBrocotChildren(value));
     register("Fraction", "SternBrocotAncestors", ([value]) => seq(finite(value, "Fraction").sternBrocotAncestors()));
     register("Fraction", "SternBrocotDepth", ([value]) => int7(finite(value, "Fraction").sternBrocotDepth()));
-    register("Fraction", "IsSternBrocotValid", ([value]) => bool2(value.isSternBrocotValid()));
-    register("Fraction", "IsInfinite", ([value]) => bool2(value.isInfinite));
+    register("Fraction", "IsSternBrocotValid", ([value]) => bool3(value.isSternBrocotValid()));
+    register("Fraction", "IsInfinite", ([value]) => bool3(value.isInfinite));
     register("Fraction", "ToString", ([value]) => str(value.toString()));
     register("Fraction", "Record", ([value]) => rixMap2([
       ["schema", str(FRACTION_SCHEMA)],
       ["numerator", int7(value.numerator)],
       ["denominator", int7(value.denominator)],
-      ["reduced", bool2(value.equals(value.reduce()))]
+      ["reduced", bool3(value.equals(value.reduce()))]
     ]));
   }
   function parseFraction(args, context, evaluate) {
@@ -40388,7 +41060,7 @@ defaultEnabled: false
       return value;
     throw new Error(`${label2} must be a string or colon-string`);
   }
-  function option2(options, name, fallback = null) {
+  function option3(options, name, fallback = null) {
     return options === null || options === undefined ? fallback : field6(entries4(options, "data options"), name, fallback);
   }
   var TYPE_NAMES = new Map([
@@ -40580,8 +41252,8 @@ defaultEnabled: false
     const selected = selectedColumnIds(args[1], relation, "data.Sort columns");
     if (!selected.length)
       throw new Error("data.Sort requires at least one column");
-    const descending = truthy5(option2(args[2], "descending", null));
-    const missingFirst = truthy5(option2(args[2], "missingFirst", null));
+    const descending = truthy5(option3(args[2], "descending", null));
+    const missingFirst = truthy5(option3(args[2], "missingFirst", null));
     const decorated = relation.rows.map((row, index) => ({ row, index }));
     decorated.sort((left, right) => {
       for (const columnIndex of selected) {
@@ -40604,7 +41276,7 @@ defaultEnabled: false
     if (args.length < 1 || args.length > 2)
       throw new Error("data.TableView expects a Relation and optional options");
     const relation = requireRelation(args[0], "data.TableView");
-    const captionValue = option2(args[1], "caption", null);
+    const captionValue = option3(args[1], "caption", null);
     const caption = captionValue === null ? null : text9(captionValue, "data.TableView caption");
     return Object.freeze({
       type: "output",
@@ -41013,7 +41685,7 @@ defaultEnabled: false
     }
     return fallback;
   }
-  function option3(options, name, fallback = null) {
+  function option4(options, name, fallback = null) {
     return field8(options, name, fallback);
   }
   function numberValue2(value, label2) {
@@ -41406,7 +42078,7 @@ defaultEnabled: false
   function text11(value) {
     return { type: "string", value: String(value) };
   }
-  function bool3(value) {
+  function bool4(value) {
     return value ? int15(1) : null;
   }
   function sequence7(values4) {
@@ -41514,10 +42186,10 @@ defaultEnabled: false
       ["integerDigits", sequence7(integerDigits(whole, base))],
       ["nonRepeatingDigits", sequence7(prefix)],
       ["repeatingDigits", repeating === null ? null : sequence7(repeating)],
-      ["terminating", bool3(remainder === 0n)],
-      ["repeating", bool3(repeatStart !== null)],
-      ["complete", bool3(complete)],
-      ["truncated", bool3(!complete)],
+      ["terminating", bool4(remainder === 0n)],
+      ["repeating", bool4(repeatStart !== null)],
+      ["complete", bool4(complete)],
+      ["truncated", bool4(!complete)],
       ["producedDigits", int15(fractional.length)],
       ["maxDigits", int15(maxDigits)],
       ["remainingRemainder", int15(remainder)]
@@ -42064,7 +42736,7 @@ ${body}
     render({ value, options, format }) {
       const { value: graphic } = unwrapFigure(value);
       requireOutput(graphic, ["graphic"], "tikz");
-      return renderGraphicTikz(graphic, format, { standalone: boolOption(option3(options, "standalone", false)) });
+      return renderGraphicTikz(graphic, format, { standalone: boolOption(option4(options, "standalone", false)) });
     }
   };
   function boolOption(value) {
@@ -42569,8 +43241,8 @@ ${lines.join(`
     deterministic: true,
     description: "Standalone semantic HTML renderer for portable RiX output trees",
     render({ value, options, format }) {
-      const title = rixString4(option3(options, "title")) || "RiX output";
-      const style = rixString4(option3(options, "style")) || DEFAULT_STYLE;
+      const title = rixString4(option4(options, "title")) || "RiX output";
+      const style = rixString4(option4(options, "style")) || DEFAULT_STYLE;
       const body = renderOutputHtml(value, format);
       const diagnostics = [];
       staticDiagnostics(value, diagnostics);
@@ -42588,7 +43260,7 @@ ${lines.join(`
 
   // rix/plugins/render-quarto/quarto.plugin.rix.js
   function assetPolicy(options) {
-    const requested = (rixString4(option3(options, "assets")) || "inline").toLowerCase();
+    const requested = (rixString4(option4(options, "assets")) || "inline").toLowerCase();
     if (requested === "inline")
       return null;
     if (["external", "svg", "external-svg"].includes(requested))
@@ -42598,7 +43270,7 @@ ${lines.join(`
     throw new Error("quarto assets must be 'inline', 'svg', or 'png'");
   }
   function assetDirectory(options) {
-    const directory = rixString4(option3(options, "assetDir")) || "assets";
+    const directory = rixString4(option4(options, "assetDir")) || "assets";
     if (!directory || directory.startsWith("/") || directory.includes("\\") || directory.split("/").includes("..")) {
       throw new Error("quarto assetDir must be a safe relative directory");
     }
@@ -42646,11 +43318,11 @@ ${lines.join(`
     deterministic: true,
     description: "Standalone LaTeX renderer for portable RiX documents and figures",
     render({ value, options, format }) {
-      const standaloneValue = option3(options, "standalone", true);
+      const standaloneValue = option4(options, "standalone", true);
       return renderLatex(value, {
         format,
         standalone: standaloneValue === true || standaloneValue === null || boolValue(standaloneValue),
-        title: rixString4(option3(options, "title"))
+        title: rixString4(option4(options, "title"))
       });
     }
   };
@@ -42677,13 +43349,13 @@ ${lines.join(`
         }
         const { value: graphic } = unwrapFigure(value);
         requireOutput(graphic, ["graphic"], "png");
-        const scale2 = option3(options, "scale", 1);
-        const width = option3(options, "width");
-        const height = option3(options, "height");
+        const scale2 = option4(options, "scale", 1);
+        const width = option4(options, "width");
+        const height = option4(options, "height");
         const rendered = rasterizeSvg(renderGraphicSvg(graphic, format), {
           width: width === null ? Math.round(numberValue2(graphic.size[0], "Graphic width") * numberValue2(scale2, "PNG scale")) : numberValue2(width, "PNG width"),
           height: height === null ? Math.round(numberValue2(graphic.size[1], "Graphic height") * numberValue2(scale2, "PNG scale")) : numberValue2(height, "PNG height"),
-          background: rixString4(option3(options, "background"))
+          background: rixString4(option4(options, "background"))
         });
         return {
           content: rendered.content,
@@ -42718,7 +43390,7 @@ ${lines.join(`
         const latex = renderLatex(value, {
           format,
           standalone: true,
-          title: rixString4(option3(options, "title"))
+          title: rixString4(option4(options, "title"))
         });
         const compiled = compileLatex(latex.content, options);
         return {
@@ -42890,7 +43562,7 @@ ${lines.join(`
 
   // rix/plugins/render-csv/csv-renderer.js
   var MISSING = Symbol("missing option");
-  function option4(options, name, fallback) {
+  function option5(options, name, fallback) {
     const values4 = mapEntries2(options);
     if (values4) {
       if (values4.has(name))
@@ -43003,11 +43675,11 @@ ${lines.join(`
     if (!source) {
       throw new UnsupportedRenderError("csv accepts Table and data Relation values", { target: "csv" });
     }
-    const delimiter = delimiterOption(option4(options, "delimiter", MISSING), requestedTarget);
-    const newline = newlineOption(option4(options, "newline", MISSING));
-    const includeHeader = booleanOption(option4(options, "header", MISSING), true);
-    const finalNewline = booleanOption(option4(options, "finalNewline", MISSING), true);
-    const missingValue = option4(options, "missing", MISSING);
+    const delimiter = delimiterOption(option5(options, "delimiter", MISSING), requestedTarget);
+    const newline = newlineOption(option5(options, "newline", MISSING));
+    const includeHeader = booleanOption(option5(options, "header", MISSING), true);
+    const finalNewline = booleanOption(option5(options, "finalNewline", MISSING), true);
+    const missingValue = option5(options, "missing", MISSING);
     const missing = missingValue === MISSING ? "" : stringOption(missingValue, "csv missing value");
     const rows = [];
     if (includeHeader)
@@ -43900,6 +44572,12 @@ ${lines.join(`
       ...coreFunctions.CERTIFIED_APPROXIMATION,
       groups: ["Core"]
     });
+    ctx.register("Undecided", { ...coreFunctions.UNDECIDED_DIAGNOSTIC, groups: ["Core"] });
+    ctx.register("RefinementRequest", { ...coreFunctions.REFINEMENT_REQUEST, groups: ["Core", "Numerics"] });
+    ctx.register("RefinementEffectiveLimits", { ...coreFunctions.REFINEMENT_EFFECTIVE_LIMITS, groups: ["Core", "Numerics"] });
+    ctx.register("RefinementSupports", { ...coreFunctions.REFINEMENT_SUPPORTS, groups: ["Core", "Numerics"] });
+    ctx.register("RefinementCheck", { ...coreFunctions.REFINEMENT_CHECK, groups: ["Core", "Numerics"] });
+    ctx.register("RefinementUnsupported", { ...coreFunctions.REFINEMENT_UNSUPPORTED, groups: ["Core", "Numerics"] });
     ctx.register("TraitRegister", coreFunctions.TRAIT_REGISTER);
     ctx.register("TypeRegister", coreFunctions.TYPE_REGISTER);
     ctx.register("TypeInstall", coreFunctions.TYPE_INSTALL);
@@ -44775,9 +45453,11 @@ ${lines.join(`
           const state2 = decisionState(passed);
           if (state2 === "undecided") {
             if (fn.params?.prepUndecided === "throw") {
-              throw new Error(`${fn.name || "<lambda>"} prep remained undecided at entry ${prepIndex + 1}`);
+              const error = new Error(`${fn.name || "<lambda>"} prep remained undecided at entry ${prepIndex + 1}`);
+              error.undecided = passed;
+              throw error;
             }
-            return UNDECIDED;
+            return passed;
           }
           if (state2 === "null")
             return null;
@@ -46015,7 +46695,9 @@ ${lines.join(`
             const prepState = decisionState(value);
             if (prepState === "undecided") {
               if (gate.undecidedMode === "throw") {
-                throw new Error(`Prepared trial remained undecided at gate ${gateIndex + 1}, prep entry ${entryIndex + 1}`);
+                const error = new Error(`Prepared trial remained undecided at gate ${gateIndex + 1}, prep entry ${entryIndex + 1}`);
+                error.undecided = value;
+                throw error;
               }
               if (gate.undecidedMode === "fallthrough") {
                 return preserveFailure ? PREP_TRIAL_NO_MATCH : UNDECIDED;
@@ -47432,7 +48114,7 @@ ${lines.join(`
     if (control.kind === "control_slider")
       return sliderValue(control, event.index);
     if (control.kind === "control_choice") {
-      return indexedValue(control, event.index, control.options.map((option5) => option5.value), "Control choice");
+      return indexedValue(control, event.index, control.options.map((option6) => option6.value), "Control choice");
     }
     if (control.kind === "control_toggle") {
       return indexedValue(control, event.index, control.values, "Control toggle");
@@ -48548,7 +49230,7 @@ ${lines.join(`
       ["intendedrealcertified", null]
     ]);
   }
-  function Enclose(value, request) {
+  function approximateStoredValue(value, request, operation) {
     const exact2 = exactFloatRational(value);
     const requestedWidth = entry(request, "absolutewidth", null);
     const requestedWork = entry(entry(request, "work", null), "maxwork", int17(0));
@@ -48563,7 +49245,7 @@ ${lines.join(`
       ["achievedwidth", Rational.zero],
       ["evidencelevel", text12("approximate")],
       ["backend", text12("float")],
-      ["operation", text12("sample")],
+      ["operation", text12(operation)],
       ["trace", sequence8([])],
       ["work", map4([
         ["samples", int17(1)],
@@ -48580,6 +49262,15 @@ ${lines.join(`
         ["storedvalueexact", int17(1)]
       ])]
     ]);
+  }
+  function Sample(value, request) {
+    return approximateStoredValue(value, request, "sample");
+  }
+  function Enclose(value, request) {
+    return approximateStoredValue(value, request, "enclose");
+  }
+  function Refine(_value, request) {
+    return unsupportedRefinementResult(request, NumericsCapabilities(), "noArbitraryRefinementForIntendedReal");
   }
 
   // rix/plugins/float/browser-installer.js
@@ -48725,8 +49416,9 @@ ${lines.join(`
       proto: () => makeProto([
         ["ToString", valueMethod("ToString", (value) => stringObj2(String(value.value)))],
         ["Value", valueMethod("Value", (value) => stringObj2(String(value.value)))],
-        ["Enclose", valueMethod("Enclose", (value, request) => Enclose(value, request))],
-        ["Refine", valueMethod("Refine", (value, request) => Enclose(value, request))],
+        ["Sample", valueMethod("Sample", (value, [request]) => Sample(value, request))],
+        ["Enclose", valueMethod("Enclose", (value, [request]) => Enclose(value, request))],
+        ["Refine", valueMethod("Refine", (value, [request]) => Refine(value, request))],
         ["NumericsCapabilities", valueMethod("NumericsCapabilities", () => NumericsCapabilities())]
       ]),
       installs

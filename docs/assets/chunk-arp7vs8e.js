@@ -45,8 +45,9 @@ import {
   stringObj,
   tokenize,
   typeRegistry,
+  unsupportedRefinementResult,
   valueMethod
-} from "./chunk-8tzmew29.js";
+} from "./chunk-j5c9t4zh.js";
 
 // src/repl-source.js
 var statementClosers = new Set([")", "]", "}", "|}", ";}", "@}", "!}", ":}"]);
@@ -247,7 +248,7 @@ function NumericsCapabilities() {
     ["intendedrealcertified", null]
   ]);
 }
-function Enclose(value, request) {
+function approximateStoredValue(value, request, operation) {
   const exact = exactFloatRational(value);
   const requestedWidth = entry(request, "absolutewidth", null);
   const requestedWork = entry(entry(request, "work", null), "maxwork", int(0));
@@ -262,7 +263,7 @@ function Enclose(value, request) {
     ["achievedwidth", Rational.zero],
     ["evidencelevel", text("approximate")],
     ["backend", text("float")],
-    ["operation", text("sample")],
+    ["operation", text(operation)],
     ["trace", sequence([])],
     ["work", map([
       ["samples", int(1)],
@@ -279,6 +280,15 @@ function Enclose(value, request) {
       ["storedvalueexact", int(1)]
     ])]
   ]);
+}
+function Sample(value, request) {
+  return approximateStoredValue(value, request, "sample");
+}
+function Enclose(value, request) {
+  return approximateStoredValue(value, request, "enclose");
+}
+function Refine(_value, request) {
+  return unsupportedRefinementResult(request, NumericsCapabilities(), "noArbitraryRefinementForIntendedReal");
 }
 
 // ../rix/plugins/float/browser-installer.js
@@ -424,8 +434,9 @@ function registerFloatType() {
     proto: () => makeProto([
       ["ToString", valueMethod("ToString", (value) => stringObj(String(value.value)))],
       ["Value", valueMethod("Value", (value) => stringObj(String(value.value)))],
-      ["Enclose", valueMethod("Enclose", (value, request) => Enclose(value, request))],
-      ["Refine", valueMethod("Refine", (value, request) => Enclose(value, request))],
+      ["Sample", valueMethod("Sample", (value, [request]) => Sample(value, request))],
+      ["Enclose", valueMethod("Enclose", (value, [request]) => Enclose(value, request))],
+      ["Refine", valueMethod("Refine", (value, [request]) => Refine(value, request))],
       ["NumericsCapabilities", valueMethod("NumericsCapabilities", () => NumericsCapabilities())]
     ]),
     installs
@@ -528,12 +539,12 @@ defaultEnabled: false
   catalog.registerInstaller("markdown", install19);
   catalog.addMetadata({ id: "nd", description: "Exact n-dimensional geometry with explicit affine and Cayley projection records.", kind: "host", mount: "nd", exports: ["Point", "Polyline", "Polytope", "Hypercube", "Projection", "CoordinateProjection", "CayleyRotation", "Compose", "Project", "ToScene3D"], groups: ["Geometry", "Scene3D", "Exact"], permissions: [], requires: ["rix.scene3d@1"], provides: ["rix.nd@1", "rix.nd.projection@1"], schemas: ["rix.nd@1", "rix.nd.projection@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:nd" }, { sourcePath: "bundled:nd", kind: "host" });
   catalog.registerInstaller("nd", install10);
-  catalog.addMetadata({ id: "numerics", description: "Backend-neutral bounded enclosure and refinement orchestration.", kind: "rix", mount: "numerics", exports: ["Request", "WorkPolicy", "Enclose", "Refine", "Sample", "Capabilities", "CheckResult"], groups: ["Numerics"], permissions: [], provides: ["rix.numerics@1", "rix.enclosable-real-consumer@1"], schemas: ["rix.numerics.refinement-request@1", "rix.numerics.enclosure@1"], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:numerics" }, { source: `/**
+  catalog.addMetadata({ id: "numerics", description: "Backend-neutral bounded enclosure and refinement orchestration.", kind: "rix", mount: "numerics", exports: ["Request", "WorkPolicy", "EffectiveLimits", "Enclose", "Refine", "Sample", "Capabilities", "CheckResult"], groups: ["Numerics"], permissions: [], provides: ["rix.numerics@1", "rix.enclosable-real-consumer@1"], schemas: ["rix.numerics.refinement-request@1", "rix.numerics.enclosure@1"], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:numerics" }, { source: `/**
 id: numerics
 description: Backend-neutral bounded enclosure and refinement orchestration.
 kind: rix
 mount: numerics
-exports: [Request, WorkPolicy, Enclose, Refine, Sample, Capabilities, CheckResult]
+exports: [Request, WorkPolicy, EffectiveLimits, Enclose, Refine, Sample, Capabilities, CheckResult]
 groups: [Numerics]
 permissions: []
 provides: [rix.numerics@1, rix.enclosable-real-consumer@1]
@@ -541,116 +552,59 @@ schemas: [rix.numerics.refinement-request@1, rix.numerics.enclosure@1]
 defaultEnabled: false
 **/
 
-Option(options, key, fallback) -> options.Has(key) ?: options[key] ?_ fallback;
+NumericsRequest(options ?= {= }, operation ?= _, capabilities ?= _) ->
+    .RefinementRequest(options, operation, capabilities);
 
-RequirePositive(value, label) -> {;
-    rational = value ~!: :Rational;
-    rational > 0 ?: rational ?_ .Error(@"@{label} must be a positive rational");
-};
+NumericsWorkPolicy(options ?= {= }) -> NumericsRequest(options)[:work];
 
-RequireNonnegativeInteger(value, label) -> {;
-    integer = value ~!: :Integer;
-    integer >= 0 ?: integer ?_ .Error(@"@{label} must be a nonnegative integer");
-};
+NumericsEffectiveLimits(request, capabilities ?= {= }) ->
+    .RefinementEffectiveLimits(request, capabilities);
 
-NumericsWorkPolicy(options ?= {= }) -> {;
-    maxWork = RequireNonnegativeInteger(Option(options, "maxwork", 100), "maxWork");
-    {=
-        valueKind = :numericsWorkPolicy,
-        schema = "rix.numerics.work-policy@1",
-        maxWork = maxWork,
-        maxCalls = RequireNonnegativeInteger(Option(options, "maxcalls", maxWork), "maxCalls"),
-        maxIterations = RequireNonnegativeInteger(Option(options, "maxiterations", maxWork), "maxIterations"),
-        maxDepth = RequireNonnegativeInteger(Option(options, "maxdepth", maxWork), "maxDepth")
-    };
-};
+CheckEnclosure(result, request, capabilities ?= _) ->
+    .RefinementCheck(result, request, capabilities);
 
-NumericsRequest(options ?= {= }) -> {;
-    width = RequirePositive(
-        Option(options, "absolutewidth", Option(options, "width", 1 / 1000)),
-        "absoluteWidth"
-    );
-    relativeWidth = Option(options, "relativewidth", _);
-    relativeWidth == _ ?: _ ?_ RequirePositive(relativeWidth, "relativeWidth");
-    {=
-        valueKind = :refinementRequest,
-        schema = "rix.numerics.refinement-request@1",
-        operation = Option(options, "operation", :enclose),
-        absoluteWidth = width,
-        relativeWidth = relativeWidth,
-        evidenceRequired = Option(options, "evidencerequired", :any),
-        trace = Option(options, "trace", 1),
-        seed = Option(options, "seed", 1),
-        work = NumericsWorkPolicy(options)
-    };
-};
-
-AsRequest(value) -> {;
-    isRequest = value.Has("schema") && value[:schema] == "rix.numerics.refinement-request@1";
-    isRequest ?: value ?_ NumericsRequest(value);
-};
-
-CheckEnclosure(result, request) -> {;
-    fieldsPresent = result.Has("status") && result.Has("interval") &&
-        result.Has("certified") && result.Has("goalmet") &&
-        result.Has("evidencelevel") && result.Has("backend") &&
-        result.Has("work") && result.Has("diagnostics");
-    validStatus = {| :enclosed, :approximate, :goalNotMet, :budgetExhausted, :unsupported |}.Has(result[:status]);
-    interval = result[:interval] ~!: :RationalInterval;
-    schemaValid = result[:schema] == "rix.numerics.enclosure@1";
-    approximationPresent = !result[:certified] || result.Has("approximation");
-    valid = fieldsPresent && validStatus && schemaValid;
-    {=
-        valueKind = :numericsResultCheck,
-        valid = valid,
-        fieldsPresent = fieldsPresent,
-        statusValid = validStatus,
-        schemaValid = schemaValid,
-        approximationPresent = approximationPresent,
-        interval = interval,
-        request = request,
-        result = result
-    };
-};
-
-CheckedEnclosure(result, request) -> {;
-    check = CheckEnclosure(result, request);
+CheckedEnclosure(result, request, capabilities) -> {;
+    check = CheckEnclosure(result, request, capabilities);
     check[:valid] ?: result ?_ .Error("EnclosableReal provider returned an invalid enclosure record");
 };
 
-ProviderEnclose(value, request) -> CheckedEnclosure(value.Enclose(request), request);
-ProviderRefine(value, request) -> CheckedEnclosure(value.Refine(request), request);
+InvokeProvider(value, request, selectedOperation) ->
+    selectedOperation == :enclose ?: value.Enclose(request) ?_
+    selectedOperation == :refine ?: value.Refine(request) ?_
+    selectedOperation == :sample ?: value.Sample(request) ?_
+    .RefinementUnsupported(request, value.NumericsCapabilities(), :unknownOperation);
 
-NumericsEnclose(value, options ?= {= }) -> {;
-    request = AsRequest(options);
-    ProviderEnclose(value, request);
-};
-
-NumericsRefine(value, options ?= {= }) -> {;
-    request = AsRequest(options);
-    ProviderRefine(value, request);
+ProviderOperation(value, options, operation) -> {;
+    capabilities = value.NumericsCapabilities();
+    request = NumericsRequest(options, operation, capabilities);
+    supported = .RefinementSupports(capabilities, operation);
+    result = supported ?: InvokeProvider(value, request, operation)
+                       ?_ .RefinementUnsupported(request, capabilities, :operationUnsupported);
+    supported ?: CheckedEnclosure(result, request, capabilities) ?_ result;
 };
 
 numericsNamespace = {= };
 numericsNamespace._proto = {=
     Request = (self, options ?= {= }) -> NumericsRequest(options),
     WorkPolicy = (self, options ?= {= }) -> NumericsWorkPolicy(options),
-    Enclose = (self, value, options ?= {= }) -> NumericsEnclose(value, options),
-    Refine = (self, value, options ?= {= }) -> NumericsRefine(value, options),
-    Sample = (self, value, options ?= {= }) -> NumericsEnclose(value, options),
+    EffectiveLimits = (self, request, capabilities ?= {= }) -> NumericsEffectiveLimits(request, capabilities),
+    Enclose = (self, value, options ?= {= }) -> ProviderOperation(value, options, :enclose),
+    Refine = (self, value, options ?= {= }) -> ProviderOperation(value, options, :refine),
+    Sample = (self, value, options ?= {= }) -> ProviderOperation(value, options, :sample),
     Approximation = (self, result) -> result.Has("approximation") ?: result[:approximation] ?_ _,
     Capabilities = (self, value) -> value.NumericsCapabilities(),
-    CheckResult = (self, result, options ?= {= }) -> CheckEnclosure(result, AsRequest(options))
+    CheckResult = (self, result, options ?= {= }, capabilities ?= _) ->
+        CheckEnclosure(result, NumericsRequest(options), capabilities)
 };
 
 .Host.RegisterValue("numerics", numericsNamespace, "Backend-neutral bounded enclosure and refinement orchestration", ["Numerics"]);
 `, sourcePath: "bundled:numerics", kind: "rix" });
-  catalog.addMetadata({ id: "oracle", description: "Exact rational-betweenness oracle demonstrations and bounded refinement.", kind: "rix", mount: "oracle", exports: ["Rational", "Query", "Answer", "Prophecy", "WorkPolicy", "Evidence", "Ask", "AskAll", "CheckRange", "Refine"], groups: ["Numerics", "Exact"], permissions: [], provides: ["rix.oracle@1", "rix.enclosable-real@1"], schemas: ["rix.oracle@1"], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:oracle" }, { source: `/**
+  catalog.addMetadata({ id: "oracle", description: "Exact rational-betweenness oracle demonstrations and bounded refinement.", kind: "rix", mount: "oracle", exports: ["Rational", "Query", "Answer", "Decision", "Prophecy", "WorkPolicy", "Evidence", "Ask", "AskAll", "CheckRange", "Refine"], groups: ["Numerics", "Exact"], permissions: [], provides: ["rix.oracle@1", "rix.enclosable-real@1"], schemas: ["rix.oracle@1"], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:oracle" }, { source: `/**
 id: oracle
 description: Exact rational-betweenness oracle demonstrations and bounded refinement.
 kind: rix
 mount: oracle
-exports: [Rational, Query, Answer, Prophecy, WorkPolicy, Evidence, Ask, AskAll, CheckRange, Refine]
+exports: [Rational, Query, Answer, Decision, Prophecy, WorkPolicy, Evidence, Ask, AskAll, CheckRange, Refine]
 groups: [Numerics, Exact]
 permissions: []
 provides: [rix.oracle@1, rix.enclosable-real@1]
@@ -734,6 +688,23 @@ OracleAnswer(status, query, prophecy ?= _, reason ?= _, procedure ?= _) -> {;
         evidence = _,
         work = {= calls = 1, iterations = 1 }
     } ?_ .Error("Oracle answer status must be :yes, :no, or :unknown");
+};
+
+OracleDecision(answer) -> {;
+    check = OracleCheckRange(answer);
+    check[:valid] ?: {?
+      answer[:status] == :yes ? 1;
+      answer[:status] == :no ? _;
+      answer[:status] == :unknown ? .Undecided(:oracleUnknown, {=
+        reason = answer[:reason],
+        procedure = answer[:procedure],
+        query = answer[:query],
+        prophecy = answer[:prophecy],
+        evidence = answer[:evidence],
+        work = answer[:work]
+      });
+      .Error("Oracle Decision requires an answer with :yes, :no, or :unknown status")
+    } ?_ .Error("Oracle Decision received an answer that violates Range");
 };
 
 BuildRationalOracle(exactValue, selectedProcedure, options) -> {;
@@ -960,12 +931,16 @@ OracleNumericsCapabilities(real) -> {=
 };
 
 OracleProtocolEnclose(real, request) -> {;
+    workRequest = request[:work];
     refined = OracleRefine(real, {=
         width = request[:absoluteWidth],
-        maxCalls = request[:work][:maxCalls],
+        maxCalls = workRequest[:maxCalls],
         trace = request[:trace]
     });
     goalMet = refined[:status] == :enclosed;
+    diagnostics = [];
+    diagnostics = workRequest.Has("timeout") ?: diagnostics.Push(:timeoutNotCooperativelyEnforced) ?_ diagnostics;
+    diagnostics = workRequest.Has("memory") ?: diagnostics.Push(:memoryNotCooperativelyEnforced) ?_ diagnostics;
     {=
         valueKind = :enclosure,
         schema = "rix.numerics.enclosure@1",
@@ -981,7 +956,7 @@ OracleProtocolEnclose(real, request) -> {;
         operation = request[:operation],
         trace = refined[:trace],
         work = refined[:work],
-        diagnostics = [],
+        diagnostics = diagnostics,
         evidence = refined[:evidence],
         source = real[:provenance]
     };
@@ -992,6 +967,7 @@ oracleNamespace._proto = {=
     Rational = (self, value, options ?= {= }) -> RationalOracle(value, options),
     Query = (self, interval, delta, auxiliary ?= _) -> OracleQuery(interval, delta, auxiliary),
     Answer = (self, status, query, prophecy ?= _, reason ?= _) -> OracleAnswer(status, query, prophecy, reason),
+    Decision = (self, answer) -> OracleDecision(answer),
     Prophecy = (self, real, interval, query ?= _) -> OracleProphecy(real, interval, query),
     WorkPolicy = (self, options ?= {= }) -> OracleWorkPolicy(options),
     Evidence = (self, property, level, subject, witness ?= _) -> OracleEvidence(property, level, subject, witness),
@@ -1198,5 +1174,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { findHelp, createRixRepl };
 
-//# debugId=1DA8CFB0B8C90DBB64756E2164756E21
-//# sourceMappingURL=chunk-516kneeh.js.map
+//# debugId=4802F0E298BB7FD664756E2164756E21
+//# sourceMappingURL=chunk-arp7vs8e.js.map
