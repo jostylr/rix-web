@@ -128,6 +128,22 @@ accepted := ReadScore(6) ?!- value: [value ? :Integer, value > 0];
 accepted ;
 ```
 
+Two additional markers control undecided checks. `??-` makes undecided a soft
+no-match, so an ordered case advances; `??!-` requires a decided check and
+throws otherwise:
+
+```rix edu
+ReadScore = x -> x;
+[
+    {? ReadScore(0.5?) ??- value: [value < 0.55]; :fallback },
+    ReadScore(0.5?) ?- value: [value < 0.55]
+];
+```
+
+The first element is `:fallback`; the second remains `?`. Replace `??-` by
+`??!-` to turn inadequate refinement into an error. This is especially useful
+with a halo guard such as `value < {~ 0.55, 0.001, {= timeout=1 } }`.
+
 Try a second value of your own. When an advanced feature depends on files,
 JavaScript, or extension registration, RatCalc explains the concept but does
 not grant browser permissions implicitly. Use the detail pages and the help

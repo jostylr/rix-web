@@ -13,6 +13,8 @@
     "/\\=",
     "\\/",
     "/\\",
+    "??!-",
+    "??-",
     "?!-",
     "?-",
     "^=>",
@@ -601,7 +603,7 @@
         pos: [position, position, position + match[0].length]
       };
     }
-    match = remaining.match(/^-?(?:\d+\.\d+|\.\d+)/);
+    match = remaining.match(/^(?:(?:\d(?:_?\d)*|\{\d+~\d+\})+(?:\.(?:\d(?:_?\d)*|\{\d+~\d+\})*)?|\.(?:\d(?:_?\d)*|\{\d+~\d+\})+)(?:#(?:\d(?:_?\d)*|\{\d+~\d+\})+)?/);
     if (match) {
       return {
         type: "Number",
@@ -610,7 +612,16 @@
         pos: [position, position, position + match[0].length]
       };
     }
-    match = remaining.match(/^-?\d+/);
+    match = remaining.match(/^(?:\d(?:_?\d)*\.\d(?:_?\d)*|\.\d(?:_?\d)*)/);
+    if (match) {
+      return {
+        type: "Number",
+        original: match[0],
+        value: match[0],
+        pos: [position, position, position + match[0].length]
+      };
+    }
+    match = remaining.match(/^\d(?:_?\d)*/);
     if (match) {
       return {
         type: "Number",
@@ -897,7 +908,7 @@
         };
       }
     }
-    const sigilChars = new Set(["@", ";", "|", ":", "=", "?", "$", "#", "^", ">"]);
+    const sigilChars = new Set(["@", ";", "|", ":", "=", "?", "$", "#", "^", ">", "~"]);
     if (sigilChars.has(ch)) {
       const sigil = ch;
       const after = input[position + 2];
@@ -962,7 +973,7 @@
       return null;
     }
     const { line, col } = posToLineCol(input, position);
-    throw new Error(`'{' must be followed by a space, a sigil (@;|:=?$#^>), or an operator (+, *, &&, ||, \\/, /\\, ++, <<, >>) at line ${line}:${col}`);
+    throw new Error(`'{' must be followed by a space, a sigil (@;|:=?$#^>~), or an operator (+, *, &&, ||, \\/, /\\, ++, <<, >>) at line ${line}:${col}`);
   }
   function tryMatchSystemSpecHeader(input, position) {
     const start = position + 2;
@@ -1854,6 +1865,8 @@
     },
     "?-": { precedence: PRECEDENCE.ARROW, associativity: "right", type: "infix" },
     "?!-": { precedence: PRECEDENCE.ARROW, associativity: "right", type: "infix" },
+    "??-": { precedence: PRECEDENCE.ARROW, associativity: "right", type: "infix" },
+    "??!-": { precedence: PRECEDENCE.ARROW, associativity: "right", type: "infix" },
     "?": {
       precedence: PRECEDENCE.CONDITION,
       associativity: "left",
@@ -1922,6 +1935,7 @@
     "{$": { precedence: 0, type: "brace_sigil" },
     "{^": { precedence: 0, type: "brace_sigil" },
     "{>": { precedence: 0, type: "brace_sigil" },
+    "{~": { precedence: 0, type: "brace_sigil" },
     "{!": { precedence: 0, type: "brace_sigil" },
     "..": { precedence: PRECEDENCE.PROPERTY, associativity: "left", type: "infix" },
     ".|": { precedence: PRECEDENCE.PROPERTY, associativity: "left", type: "postfix" },
@@ -2230,7 +2244,7 @@
             return this.parseAngleForm();
           } else if (token.value === "{") {
             return this.parseBraceContainer();
-          } else if (token.value === "{=" || token.value === "{?" || token.value === "{;" || token.value === "{|" || token.value === "{:" || token.value === "{@" || token.value === "{#" || token.value === "{.." || token.value === "{>" || token.value === "{^" || token.value === "{$" || token.value === "{$$") {
+          } else if (token.value === "{=" || token.value === "{?" || token.value === "{;" || token.value === "{|" || token.value === "{:" || token.value === "{@" || token.value === "{#" || token.value === "{.." || token.value === "{>" || token.value === "{~" || token.value === "{^" || token.value === "{$" || token.value === "{$$") {
             if (token.value === "{#") {
               return this.parseSystemSpecLiteral();
             }
@@ -2483,9 +2497,11 @@
           original: left.original + operator.original
         });
       }
-      if (operator.value === "?-" || operator.value === "?!-") {
+      if (["?-", "?!-", "??-", "??!-"].includes(operator.value)) {
+        const prepOperator = operator.value;
         this.advance();
-        const strict = operator.value === "?!-";
+        const strict = prepOperator.includes("!");
+        const undecidedMode = prepOperator.startsWith("??") ? strict ? "throw" : "fallthrough" : "stop";
         const first = this.current.value === "[" ? this.parseArray() : this.parseExpression(PRECEDENCE.INTERVAL + 1);
         if (this.current.value === ":") {
           this.advance();
@@ -2494,7 +2510,7 @@
           }
           const prep2 = this.parseArray();
           const pattern = this.convertExpressionToDestructureTarget(first);
-          const gate = { pattern, prep: prep2, strict };
+          const gate = { pattern, prep: prep2, strict, undecidedMode };
           if (left.type === "PreparedTrial") {
             return this.createNode("PreparedTrial", {
               candidate: left.candidate,
@@ -2528,6 +2544,7 @@
         const fnNode = this.buildFunctionArrowNode(left, arrow, body, {
           prep,
           prepStrict,
+          prepUndecided: undecidedMode,
           variantName
         });
         if (fnNode) {
@@ -4134,7 +4151,8 @@
         "{$": "AsyncContainer",
         "{$$": "DetachedBlock",
         "{^": "ValueOutfit",
-        "{>": "MultifunctionContainer"
+        "{>": "MultifunctionContainer",
+        "{~": "HaloContainer"
       };
       const nodeType = sigilTypeMap[effectiveSigil];
       const temporalSigils = new Set(["{?", "{;", "{@", "{$", "{$$"]);
@@ -4222,6 +4240,9 @@
         this.error(`Expected closing ${primaryCloser} for ${nodeType}`);
       }
       this.advance();
+      if (effectiveSigil === "{~" && (elements.length < 2 || elements.length > 3)) {
+        this.error("Halo neighborhood requires target, positive epsilon, and optional limits map");
+      }
       return this.createNode(nodeType, {
         sigil,
         ...containerName && !options.destructureAlias ? { name: containerName } : {},
@@ -5351,7 +5372,7 @@
       return name;
     }
     buildFunctionArrowNode(left, operator, body, options = {}) {
-      const { prep = null, prepStrict = false, variantName = null } = options;
+      const { prep = null, prepStrict = false, prepUndecided = "stop", variantName = null } = options;
       const namedSig = this.extractNamedFunctionSignature(left);
       if (operator === "=>" || operator === "^=>") {
         if (!namedSig) {
@@ -5362,6 +5383,7 @@
           parameters: namedSig.parameters,
           prep,
           prepStrict,
+          prepUndecided,
           ...variantName ? { variantName } : {},
           mode: operator === "^=>" ? "prepend" : "append",
           body,
@@ -5375,6 +5397,7 @@
           parameters: namedSig.parameters,
           prep,
           prepStrict,
+          prepUndecided,
           ...variantName ? { variantName } : {},
           body,
           pos: left.pos,
@@ -5387,6 +5410,7 @@
           parameters: lambdaParameters,
           prep,
           prepStrict,
+          prepUndecided,
           ...variantName ? { variantName } : {},
           body,
           pos: left.pos,
@@ -9404,6 +9428,9 @@
     if (Array.isArray(copy.provisionalSuffix)) {
       copy.provisionalSuffix = Object.freeze([...copy.provisionalSuffix]);
     }
+    if (copy.presentationHint && typeof copy.presentationHint === "object") {
+      copy.presentationHint = Object.freeze({ ...copy.presentationHint });
+    }
     return Object.freeze(copy);
   }
   function isPoint(interval) {
@@ -9427,16 +9454,67 @@
     }
     return null;
   }
+  function presentationHint(value) {
+    const rep = value?.representation;
+    if (rep?.kind !== "radix")
+      return null;
+    const certified = String(rep.certifiedPrefix ?? "");
+    const dot = certified.indexOf(".");
+    return {
+      base: rep.base,
+      characters: rep.characters,
+      certifiedFractionalDigits: dot === -1 ? 0 : certified.length - dot - 1,
+      provisionalDigits: String(rep.provisionalSuffix ?? "").length
+    };
+  }
   function derivedOptions(left, right = null) {
+    const hint = presentationHint(left) ?? presentationHint(right);
     return {
       representation: {
         kind: "derived",
         reason: "derived",
-        original: null
+        original: null,
+        ...hint ? { presentationHint: hint } : {}
       },
       sourceId: Symbol("ratmath-derived-approximation"),
       dependencies: right ? [left.sourceId, right.sourceId].filter(Boolean) : [left.sourceId].filter(Boolean)
     };
+  }
+  function decimalCylinder(interval, maxDigits = 100) {
+    if (interval.low.lessThan(Rational.zero))
+      return null;
+    let scale = 1n;
+    for (let digits = 0;digits <= maxDigits; digits++) {
+      const lowNumerator = interval.low.numerator * scale;
+      const highNumerator = interval.high.numerator * scale;
+      if (lowNumerator % interval.low.denominator === 0n && highNumerator % interval.high.denominator === 0n) {
+        const lowGrid = lowNumerator / interval.low.denominator;
+        const highGrid = highNumerator / interval.high.denominator;
+        if (highGrid === lowGrid + 1n)
+          return { digits, scale, lowGrid };
+      }
+      scale *= 10n;
+    }
+    return null;
+  }
+  function fixedDecimalFromGrid(grid, digits) {
+    const text = grid.toString();
+    if (digits === 0)
+      return text;
+    const padded = text.padStart(digits + 1, "0");
+    return `${padded.slice(0, -digits)}.${padded.slice(-digits)}`;
+  }
+  function candidateFractionalDigits(value, count) {
+    const rational = asRational(value);
+    const numerator = rational.numerator < 0n ? -rational.numerator : rational.numerator;
+    let remainder = numerator % rational.denominator;
+    let result = "";
+    for (let index = 0;index < count; index++) {
+      remainder *= 10n;
+      result += String(remainder / rational.denominator);
+      remainder %= rational.denominator;
+    }
+    return result;
   }
   function serializeSourceId(sourceId) {
     return typeof sourceId === "string" || typeof sourceId === "number" ? sourceId : null;
@@ -9598,6 +9676,16 @@
         return this.#representation.original;
       const entirelyNegative = this.#enclosure.high.lessThan(Rational.zero);
       const displayEnclosure = entirelyNegative ? this.#enclosure.negate() : this.#enclosure;
+      const hint = this.#representation?.presentationHint;
+      const cylinder = hint?.base === 10 ? decimalCylinder(displayEnclosure) : null;
+      if (cylinder) {
+        const prefix = fixedDecimalFromGrid(cylinder.lowGrid, cylinder.digits);
+        const provisionalCount = hint.provisionalDigits ?? 0;
+        const displayCandidate2 = entirelyNegative ? this.#candidate.negate() : this.#candidate;
+        const candidateDigits = candidateFractionalDigits(displayCandidate2, cylinder.digits + provisionalCount);
+        const provisional = provisionalCount > 0 ? candidateDigits.slice(cylinder.digits, cylinder.digits + provisionalCount) : "";
+        return `${entirelyNegative ? "-" : ""}${prefix}?${provisional}`;
+      }
       const displayCandidate = displayEnclosure.shortestDecimal();
       const candidateText = displayCandidate.toRepeatingDecimal().replace(/#0$/, "");
       return `${entirelyNegative ? "-" : ""}${candidateText}?[=${displayEnclosure.low}:${displayEnclosure.high}]`;
@@ -10086,6 +10174,49 @@
       throw new Error("Invalid .key type; must be string or integer");
     }
     return normalized;
+  }
+
+  // rix/src/runtime/halo.js
+  function asRational2(value, label) {
+    if (value instanceof Integer)
+      return value.toRational();
+    if (value instanceof Rational)
+      return value;
+    throw new TypeError(`${label} must be an exact Integer or Rational`);
+  }
+  function enclosureOf(value) {
+    if (value instanceof CertifiedApproximation)
+      return value.enclosure;
+    if (value instanceof RationalInterval)
+      return value;
+    if (value instanceof Integer || value instanceof Rational) {
+      const point = asRational2(value, "Halo value");
+      return new RationalInterval(point, point);
+    }
+    return null;
+  }
+
+  class HaloNeighborhood {
+    constructor(target, epsilon, limits = null) {
+      if (!(target instanceof Integer || target instanceof Rational || target instanceof RationalInterval)) {
+        throw new TypeError("Halo target must be an exact scalar or RationalInterval");
+      }
+      const width = asRational2(epsilon, "Halo epsilon");
+      if (!width.greaterThan(Rational.zero)) {
+        throw new RangeError("Halo epsilon must be positive");
+      }
+      if (limits !== null && (limits?.type !== "map" || !(limits.entries instanceof Map))) {
+        throw new TypeError("Halo limits must be a map");
+      }
+      this.target = target;
+      this.epsilon = width;
+      this.limits = limits;
+      this.type = "halo";
+      Object.freeze(this);
+    }
+    toString() {
+      return `{~ ${this.target}, ${this.epsilon}${this.limits ? ", ..." : ""} }`;
+    }
   }
 
   // rix/src/runtime/tensor.js
@@ -15061,6 +15192,10 @@ ${indentStr})`;
     const label = fn?.name || "<lambda>";
     return new Error(`${label} prep failed at entry ${entryIndex + 1}`);
   }
+  function prepUndecidedError(fn, entryIndex) {
+    const label = fn?.name || "<lambda>";
+    return new Error(`${label} prep remained undecided at entry ${entryIndex + 1}`);
+  }
   function runCallablePrep(fn, context, evaluate) {
     const conditionals = Array.isArray(fn?.params?.conditionals) ? fn.params.conditionals : [];
     const prep = Array.isArray(fn?.params?.prep) ? fn.params.prep : [];
@@ -15069,12 +15204,16 @@ ${indentStr})`;
       return { ok: true };
     }
     const strict = fn?.params?.prepStrict === true;
+    const undecidedMode = fn?.params?.prepUndecided || "stop";
     for (let i = 0;i < entries.length; i++) {
       try {
         const value = evaluate(entries[i]);
         const state = decisionState(value);
-        if (state === "undecided")
-          return { ok: false, undecided: true };
+        if (state === "undecided") {
+          if (undecidedMode === "throw")
+            throw prepUndecidedError(fn, i);
+          return { ok: false, undecided: true, fallthrough: undecidedMode === "fallthrough" };
+        }
         if (state === "null") {
           if (strict) {
             throw prepFailureError(fn, i);
@@ -15082,6 +15221,8 @@ ${indentStr})`;
           return { ok: false };
         }
       } catch (error) {
+        if (error?.message?.includes("prep remained undecided"))
+          throw error;
         if (strict) {
           throw error;
         }
@@ -15155,7 +15296,7 @@ ${indentStr})`;
           const value = prepResult.undecided ? UNDECIDED : null;
           doTraceExit(value, false);
           traceActive = false;
-          return returnPrepStatus ? { matched: prepResult.undecided === true, value } : value;
+          return returnPrepStatus ? { matched: prepResult.undecided === true && prepResult.fallthrough !== true, value, unresolved: prepResult.undecided === true } : value;
         }
         let result;
         context.pushCurrentCallable(fn, parentCallable);
@@ -15201,6 +15342,7 @@ ${indentStr})`;
     const namedOnly = options.namedOnly ?? null;
     rebuildMultifunctionState(multifn);
     const variants = namedOnly ? [namedOnly] : multifn.values;
+    let unresolved = null;
     for (let index = 0;index < variants.length; index++) {
       const variant = variants[index];
       if (!variant || variant.type !== "function" && variant.type !== "lambda") {
@@ -15226,6 +15368,8 @@ ${indentStr})`;
         returnPrepStatus: true
       });
       if (!result.matched) {
+        if (result.unresolved)
+          unresolved = result.value;
         traceCallEvent(context, {
           event: "prep_fail",
           fn: ownerName || "<multifunction>",
@@ -15244,7 +15388,7 @@ ${indentStr})`;
       });
       return result.value;
     }
-    return null;
+    return unresolved ?? null;
   }
   function callWithConcreteArgs(fn, callArgs, context, evaluate) {
     if (!fn)
@@ -21454,6 +21598,8 @@ ${formatOutputText(slide, format)}`).join(`
       return val.toMixedString();
     if (val instanceof CertifiedApproximation)
       return val.toString();
+    if (val instanceof HaloNeighborhood)
+      return val.toString();
     return val.toString();
   }
 
@@ -23920,6 +24066,19 @@ ${indented.join(`,
         const [x, coll] = args;
         if (!coll || typeof coll !== "object")
           return null;
+        if (coll instanceof HaloNeighborhood) {
+          if (!(coll.target instanceof RationalInterval)) {
+            throw new Error("Membership halo target must be a RationalInterval");
+          }
+          const enclosure = enclosureOf(x);
+          if (!enclosure)
+            throw new Error("Halo membership requires an exact or enclosed numeric value");
+          if (coll.target.contains(enclosure))
+            return new Integer(1);
+          if (enclosure.high.lessThan(coll.target.low) || enclosure.low.greaterThan(coll.target.high))
+            return null;
+          return UNDECIDED;
+        }
         if (coll.type === "set" || coll.type === "tuple" || coll.type === "sequence") {
           const values = coll.values || coll.elements || [];
           const xKey = valueKey(x);
@@ -23947,7 +24106,9 @@ ${indented.join(`,
     },
     NOT_MEMBER: {
       impl(args) {
-        return isTruthy(collectionFunctions.MEMBER.impl(args)) ? null : new Integer(1);
+        const result = collectionFunctions.MEMBER.impl(args);
+        const state = decisionState(result);
+        return state === "undecided" ? UNDECIDED : state === "truth" ? null : new Integer(1);
       },
       pure: true,
       doc: "Check non-membership (1 if not present, null otherwise)"
@@ -26453,24 +26614,25 @@ ${indented.join(`,
       const gates = (node.gates || []).map((gate) => ({
         pattern: lowerDestructureTarget(gate.pattern),
         prep: gate.prep?.type === "Array" ? gate.prep.elements.map(lowerNode) : [],
-        strict: gate.strict === true
+        strict: gate.strict === true,
+        undecidedMode: gate.undecidedMode || "stop"
       }));
       return ir2("PREP_TRIAL", lowerNode(node.candidate), ...gates);
     },
     FunctionDefinition(node) {
       const name = node.name.name || node.name.value;
-      const params = lowerParams(node.parameters, node.prep, node.prepStrict, node.variantName);
+      const params = lowerParams(node.parameters, node.prep, node.prepStrict, node.variantName, node.prepUndecided);
       const body = lowerFunctionBody(node.body);
       return ir2("FUNCDEF", name, params, body);
     },
     FunctionLambda(node) {
-      const params = lowerParams(node.parameters, node.prep, node.prepStrict, node.variantName);
+      const params = lowerParams(node.parameters, node.prep, node.prepStrict, node.variantName, node.prepUndecided);
       const body = lowerFunctionBody(node.body);
       return ir2("LAMBDA", params, body);
     },
     FunctionVariantDefinition(node) {
       const name = node.name.name || node.name.value;
-      const params = lowerParams(node.parameters, node.prep, node.prepStrict, node.variantName);
+      const params = lowerParams(node.parameters, node.prep, node.prepStrict, node.variantName, node.prepUndecided);
       const body = lowerFunctionBody(node.body);
       return ir2("MULTIFUNCDEF", name, node.mode, params, body);
     },
@@ -26597,6 +26759,9 @@ ${indented.join(`,
     },
     MultifunctionContainer(node) {
       return ir2("MULTIFUNCTION", ...node.elements.map(lowerNode));
+    },
+    HaloContainer(node) {
+      return ir2("HALO", ...node.elements.map(lowerNode));
     },
     LoopContainer(node) {
       const hasMeta = node.imports && node.imports.length > 0 || node.name || node.maxIterations !== undefined || node.unlimited === true;
@@ -27059,7 +27224,7 @@ ${indented.join(`,
     }
     return result;
   }
-  function lowerParams(params, prep = null, prepStrict = false, variantName = null) {
+  function lowerParams(params, prep = null, prepStrict = false, variantName = null, prepUndecided = "stop") {
     if (!params)
       return { positional: [], keyword: [], conditionals: [] };
     return {
@@ -27079,6 +27244,7 @@ ${indented.join(`,
       conditionals: (params.conditionals || []).map(lowerNode),
       prep: prep && prep.type === "Array" ? prep.elements.map(lowerNode) : [],
       prepStrict: prepStrict === true,
+      prepUndecided,
       metadata: {
         ...params.metadata || {},
         ...variantName ? { variantName } : {}
@@ -29415,6 +29581,9 @@ ${indented.join(`,
     if (isCoreUncertainty) {
       return parseNumber(str);
     }
+    if (/^(?:(?:\d(?:_?\d)*|\{\d+~\d+\})+(?:\.(?:\d(?:_?\d)*|\{\d+~\d+\})*)?|\.(?:\d(?:_?\d)*|\{\d+~\d+\})+)(?:#(?:\d(?:_?\d)*|\{\d+~\d+\})+)?$/.test(str)) {
+      return parseNumber(str);
+    }
     const basedApproximation = str.match(/^(-?)(?:0z\[(\d+)\]|0([a-zA-Z]))([0-9a-zA-Z]+)(?:\.([0-9a-zA-Z]*))?\?([0-9a-zA-Z]*)$/);
     if (basedApproximation) {
       const baseSystem2 = basedApproximation[2] ? BaseSystem.fromBase(parseInt(basedApproximation[2], 10)) : BaseSystem.getSystemForPrefix(basedApproximation[3]);
@@ -30072,7 +30241,17 @@ ${indented.join(`,
           const prep = Array.isArray(gate.prep) ? gate.prep : [];
           for (let entryIndex = 0;entryIndex < prep.length; entryIndex++) {
             const value = evaluate(prep[entryIndex]);
-            if (value === null) {
+            const state = decisionState(value);
+            if (state === "undecided") {
+              if (gate.undecidedMode === "throw") {
+                throw new Error(`Prepared trial remained undecided at gate ${gateIndex + 1}, prep entry ${entryIndex + 1}`);
+              }
+              if (gate.undecidedMode === "fallthrough") {
+                return preserveFailure ? PREP_TRIAL_NO_MATCH : UNDECIDED;
+              }
+              return UNDECIDED;
+            }
+            if (state === "null") {
               if (strict) {
                 throw preparedTrialFailureError(gateIndex, entryIndex);
               }
@@ -30080,6 +30259,8 @@ ${indented.join(`,
             }
           }
         } catch (error) {
+          if (error?.message?.includes("remained undecided"))
+            throw error;
           if (strict)
             throw error;
           return preparedTrialFailure(preserveFailure);
@@ -30119,6 +30300,13 @@ ${indented.join(`,
     return value;
   }
   var coreFunctions = {
+    HALO: {
+      impl(args) {
+        return new HaloNeighborhood(args[0], args[1], args[2] ?? null);
+      },
+      pure: true,
+      doc: "Construct a halo neighborhood for bounded-refinement comparison"
+    },
     UNDECIDED: {
       impl() {
         return UNDECIDED;
@@ -30884,6 +31072,14 @@ ${indented.join(`,
         throw new Error(`Unknown relation operation '${operation}'`);
     }
   }
+  function haloDecision(left, right, operation) {
+    if (!(right instanceof HaloNeighborhood))
+      return null;
+    if (right.target instanceof RationalInterval) {
+      throw new Error(`Relational halo target for '${operation}' must be an exact scalar`);
+    }
+    return relationDecision(left, right.target, operation);
+  }
   function compare2(a, b) {
     if (a && b && typeof a.subtract === "function" && typeof b.subtract === "function") {
       const diff = a.subtract(b);
@@ -30997,7 +31193,7 @@ ${indented.join(`,
     EQ: {
       impl(args) {
         const [a, b] = args;
-        const decision = relationDecision(a, b, "eq");
+        const decision = haloDecision(a, b, "eq") ?? relationDecision(a, b, "eq");
         if (decision !== null)
           return boolResult2(decision);
         if (a && b && typeof a.equals === "function") {
@@ -31013,7 +31209,7 @@ ${indented.join(`,
     NEQ: {
       impl(args) {
         const [a, b] = args;
-        const decision = relationDecision(a, b, "neq");
+        const decision = haloDecision(a, b, "neq") ?? relationDecision(a, b, "neq");
         if (decision !== null)
           return boolResult2(decision);
         if (a && b && typeof a.equals === "function") {
@@ -31028,7 +31224,7 @@ ${indented.join(`,
     },
     LT: {
       impl(args) {
-        const decision = relationDecision(args[0], args[1], "lt");
+        const decision = haloDecision(args[0], args[1], "lt") ?? relationDecision(args[0], args[1], "lt");
         return decision === null ? boolResult2(compare2(args[0], args[1]) < 0) : boolResult2(decision);
       },
       pure: true,
@@ -31036,7 +31232,7 @@ ${indented.join(`,
     },
     GT: {
       impl(args) {
-        const decision = relationDecision(args[0], args[1], "gt");
+        const decision = haloDecision(args[0], args[1], "gt") ?? relationDecision(args[0], args[1], "gt");
         return decision === null ? boolResult2(compare2(args[0], args[1]) > 0) : boolResult2(decision);
       },
       pure: true,
@@ -31044,7 +31240,7 @@ ${indented.join(`,
     },
     LTE: {
       impl(args) {
-        const decision = relationDecision(args[0], args[1], "lte");
+        const decision = haloDecision(args[0], args[1], "lte") ?? relationDecision(args[0], args[1], "lte");
         return decision === null ? boolResult2(compare2(args[0], args[1]) <= 0) : boolResult2(decision);
       },
       pure: true,
@@ -31052,7 +31248,7 @@ ${indented.join(`,
     },
     GTE: {
       impl(args) {
-        const decision = relationDecision(args[0], args[1], "gte");
+        const decision = haloDecision(args[0], args[1], "gte") ?? relationDecision(args[0], args[1], "gte");
         return decision === null ? boolResult2(compare2(args[0], args[1]) >= 0) : boolResult2(decision);
       },
       pure: true,
@@ -39059,6 +39255,35 @@ defaultEnabled: false
     numeric(width, "scene3d.Material width");
     return sceneValue("material", { values: new Map([["color", str7(color)], ["opacity", opacity], ["width", width]]) });
   }
+  function lightOptions(entries4, name) {
+    const color = text8(field4(entries4, "color"), "#ffffff");
+    const intensity = field4(entries4, "intensity", int12(1));
+    if (numeric(intensity, `${name} intensity`) < 0)
+      throw new Error(`${name} intensity must be nonnegative`);
+    if (!/^#[0-9a-f]{6}$/i.test(color) && !/^#[0-9a-f]{3}$/i.test(color)) {
+      throw new Error(`${name} color must be a three- or six-digit hexadecimal color`);
+    }
+    return { color, intensity };
+  }
+  function createAmbientLight(args) {
+    const entries4 = entriesFor3(args, ["color", "intensity"], "scene3d.AmbientLight");
+    return sceneValue("ambient_light", lightOptions(entries4, "scene3d.AmbientLight"));
+  }
+  function createDirectionalLight(args) {
+    const entries4 = entriesFor3(args, ["direction", "options"], "scene3d.DirectionalLight");
+    const direction = exactVector(field4(entries4, "direction"), 3, "scene3d.DirectionalLight direction");
+    if (Math.hypot(...direction.map((value, index) => numeric(value, `scene3d.DirectionalLight direction ${index + 1}`))) < 0.000000000001) {
+      throw new Error("scene3d.DirectionalLight direction must not be zero");
+    }
+    return sceneValue("directional_light", { direction, ...lightOptions(entries4, "scene3d.DirectionalLight") });
+  }
+  function createPointLight(args) {
+    const entries4 = entriesFor3(args, ["position", "options"], "scene3d.PointLight");
+    return sceneValue("point_light", {
+      position: exactVector(field4(entries4, "position"), 3, "scene3d.PointLight position"),
+      ...lightOptions(entries4, "scene3d.PointLight")
+    });
+  }
   function createMesh(args) {
     const entries4 = entriesFor3(args, ["vertices", "triangles", "options"], "scene3d.Mesh");
     const vertices = Object.freeze(sequence2(field4(entries4, "vertices"), "scene3d.Mesh vertices").map((vertex, index) => exactVector(vertex, 3, `scene3d.Mesh vertex ${index + 1}`)));
@@ -39152,10 +39377,16 @@ defaultEnabled: false
     const cameraValue = field4(entries4, "camera", defaultCamera());
     if (!isScene3DNode(cameraValue) || cameraValue.kind !== "camera")
       throw new Error("scene3d.Scene camera must be a Scene3D camera");
+    const lights = field4(entries4, "lights") === null ? [] : sequence2(field4(entries4, "lights"), "scene3d.Scene lights");
+    for (const [index, light] of lights.entries()) {
+      if (!isScene3DNode(light) || !["ambient_light", "directional_light", "point_light"].includes(light.kind)) {
+        throw new Error(`scene3d.Scene light ${index + 1} must be a Scene3D light`);
+      }
+    }
     return sceneValue("scene", {
       children: normalizeChildren(field4(entries4, "children"), "scene3d.Scene children"),
       camera: cameraValue,
-      lights: Object.freeze(field4(entries4, "lights") === null ? [] : sequence2(field4(entries4, "lights"), "scene3d.Scene lights")),
+      lights: Object.freeze([...lights]),
       metadata: field4(entries4, "metadata"),
       coordinateSystem: Object.freeze({ handedness: "right", up: "z", units: "unspecified" })
     });
@@ -39261,14 +39492,47 @@ defaultEnabled: false
       ["opacity", style.opacity]
     ]);
   }
+  function rgb(color) {
+    if (!/^#[0-9a-f]{6}$/i.test(color) && !/^#[0-9a-f]{3}$/i.test(color)) {
+      throw new Error("Scene3D lit snapshots require hexadecimal material colors");
+    }
+    const source = color.length === 4 ? color.slice(1).split("").map((digit) => digit + digit).join("") : color.slice(1);
+    return [0, 2, 4].map((offset) => Number.parseInt(source.slice(offset, offset + 2), 16));
+  }
+  function hex(values4) {
+    return `#${values4.map((value) => Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, "0")).join("")}`;
+  }
+  function litMeshColor(style, triangle, lights) {
+    const edge1 = subtract(triangle[1], triangle[0]);
+    const edge2 = subtract(triangle[2], triangle[0]);
+    const normal = normalize3(cross(edge1, edge2), "Scene3D triangle");
+    const center = [0, 1, 2].map((index) => triangle.reduce((sum, point) => sum + point[index], 0) / 3);
+    const illumination = [0, 0, 0];
+    const activeLights = lights.length ? lights : [{ kind: "ambient_light", color: "#ffffff", intensity: int12(1) }];
+    for (const light of activeLights) {
+      let factor = numeric(light.intensity, "Scene3D light intensity");
+      if (light.kind === "directional_light") {
+        const direction = normalize3(light.direction.map((value, index) => -numeric(value, `Directional light direction ${index + 1}`)), "Directional light direction");
+        factor *= Math.abs(dot(normal, direction));
+      } else if (light.kind === "point_light") {
+        const position = light.position.map((value, index) => numeric(value, `Point light position ${index + 1}`));
+        factor *= Math.abs(dot(normal, normalize3(subtract(position, center), "Point light position")));
+      }
+      const lightRgb = rgb(light.color);
+      for (let index = 0;index < 3; index += 1)
+        illumination[index] += factor * lightRgb[index] / 255;
+    }
+    const base = rgb(style.color);
+    return hex(base.map((value, index) => value * Math.min(1, illumination[index])));
+  }
   function snapshotScene3D(args) {
     const entries4 = entriesFor3(args, ["scene", "options"], "scene3d.Snapshot");
     const scene = field4(entries4, "scene");
     if (!isScene3D(scene))
       throw new Error("scene3d.Snapshot requires a Scene3D scene");
     const mode = text8(field4(entries4, "mode"), "wireframe");
-    if (mode !== "wireframe")
-      throw new Error("scene3d.Snapshot currently supports only mode='wireframe'");
+    if (!["wireframe", "lit"].includes(mode))
+      throw new Error("scene3d.Snapshot mode must be 'wireframe' or 'lit'");
     const sizeValue = field4(entries4, "size", seq6([int12(640), int12(480)]));
     const [width, height] = sequence2(sizeValue, "scene3d.Snapshot size").map((value, index) => numeric(value, `scene3d.Snapshot size ${index + 1}`));
     if (width <= 0 || height <= 0)
@@ -39304,8 +39568,31 @@ defaultEnabled: false
     const children = [];
     let segmentCount = 0;
     let pointCount = 0;
+    let faceCount = 0;
+    if (mode === "lit") {
+      const faces = cameraPrimitives.flatMap((primitive) => {
+        if (primitive.kind !== "mesh")
+          return [];
+        return primitive.triangles.map((indices) => {
+          const points = indices.map((index) => primitive.points[index]);
+          return { points, style: primitive.style, depth: points.reduce((sum, point) => sum + point[2], 0) / 3 };
+        }).filter(({ points }) => points.every((point) => point[2] >= near && point[2] <= far));
+      }).sort((left, right) => right.depth - left.depth);
+      for (const face of faces) {
+        const worldPoints = face.points.map((point) => {
+          const delta = [
+            frame.right[0] * point[0] + frame.up[0] * point[1] + frame.forward[0] * point[2],
+            frame.right[1] * point[0] + frame.up[1] * point[1] + frame.forward[1] * point[2],
+            frame.right[2] * point[0] + frame.up[2] * point[1] + frame.forward[2] * point[2]
+          ];
+          return delta.map((value, index) => value + frame.position[index]);
+        });
+        children.push(createPath([face.points.map(project), styleMap2({ ...face.style, color: litMeshColor(face.style, worldPoints, scene.lights) }, true)]));
+        faceCount += 1;
+      }
+    }
     for (const primitive of cameraPrimitives) {
-      if (primitive.kind === "lines" || primitive.kind === "mesh")
+      if (primitive.kind === "lines" || primitive.kind === "mesh" && mode === "wireframe")
         for (const [aIndex, bIndex] of primitive.segments) {
           let endpoints = [primitive.points[aIndex], primitive.points[bIndex]];
           endpoints = clipDepth(endpoints[0], endpoints[1], near, far);
@@ -39314,7 +39601,7 @@ defaultEnabled: false
           children.push(createPath([[project(endpoints[0]), project(endpoints[1])], styleMap2(primitive.style)]));
           segmentCount += 1;
         }
-      else {
+      else if (primitive.kind === "points") {
         const radius = numeric(primitive.radius, "PointCloud radius");
         for (const point of primitive.points) {
           if (point[2] < near || point[2] > far)
@@ -39325,12 +39612,12 @@ defaultEnabled: false
       }
     }
     const graphic = createGraphic([[width, height], children, rixMap6([["schema", str7("rix.graphics@1")], ["source", str7(SCENE3D_SCHEMA)], ["mode", str7(mode)]])]);
-    const diagnostics = scene.lights.length > 0 ? [rixMap6([["level", str7("info")], ["code", str7("scene3d-wireframe-ignores-lights")], ["message", str7("Wireframe snapshots do not evaluate Scene3D lights.")]])] : [];
+    const diagnostics = mode === "wireframe" && scene.lights.length > 0 ? [rixMap6([["level", str7("info")], ["code", str7("scene3d-wireframe-ignores-lights")], ["message", str7("Wireframe snapshots do not evaluate Scene3D lights.")]])] : [];
     return rixMap6([
       ["value", graphic],
       ["resolved", int12(1)],
       ["uncertainty", seq6([])],
-      ["work", rixMap6([["primitives", int12(primitives.length)], ["segments", int12(segmentCount)], ["points", int12(pointCount)]])],
+      ["work", rixMap6([["primitives", int12(primitives.length)], ["segments", int12(segmentCount)], ["faces", int12(faceCount)], ["points", int12(pointCount)]])],
       ["source", rixMap6([["schema", str7(SCENE3D_SCHEMA)], ["projection", str7(cameraValue.projection)], ["mode", str7(mode)]])],
       ["diagnostics", seq6(diagnostics)]
     ]);
@@ -39345,6 +39632,9 @@ defaultEnabled: false
     ["Polyline", createPolyline],
     ["PointCloud", createPointCloud],
     ["Material", createMaterial],
+    ["AmbientLight", createAmbientLight],
+    ["DirectionalLight", createDirectionalLight],
+    ["PointLight", createPointLight],
     ["PerspectiveCamera", createPerspectiveCamera],
     ["OrthographicCamera", createOrthographicCamera],
     ["Snapshot", snapshotScene3D]
@@ -39362,7 +39652,7 @@ defaultEnabled: false
   function install10({ systemContext }) {
     const collection = createScene3DPluginCollection();
     systemContext.registerHostValue("scene3d", collection, {
-      doc: "Exact retained 3D scenes and deterministic wireframe snapshots",
+      doc: "Exact retained 3D scenes and deterministic wireframe or lit snapshots",
       groups: ["Scene3D", "Graphics"]
     });
     return collection;
@@ -41576,9 +41866,9 @@ defaultEnabled: false
     const color = rixString4(value);
     if (!color)
       return null;
-    const hex = color.match(/^#([0-9a-f]{6})$/i);
-    if (hex) {
-      const number2 = Number.parseInt(hex[1], 16);
+    const hex2 = color.match(/^#([0-9a-f]{6})$/i);
+    if (hex2) {
+      const number2 = Number.parseInt(hex2[1], 16);
       return `{rgb,255:red,${number2 >> 16};green,${number2 >> 8 & 255};blue,${number2 & 255}}`;
     }
     return /^[A-Za-z][A-Za-z0-9]*$/.test(color) ? color : "black";
@@ -41824,6 +42114,8 @@ ${body}
 `);
   }
   function graphicMarkdown(value, state) {
+    if (typeof state.graphic === "function")
+      return state.graphic(value, state);
     try {
       return state.render(value, "svg", { alt: state.figureAlt || "" }).content;
     } catch (error) {
@@ -41986,8 +42278,8 @@ ${caption}
     state.diagnostics.push(diagnostic("markdown-text-fallback", `Used text fallback for output kind '${value.kind}'`, "warning"));
     return formatOutputText(value, state.format);
   }
-  function renderMarkdown(value, { format, render, quarto = false } = {}) {
-    const state = { format, render, quarto, diagnostics: [], figureAlt: null };
+  function renderMarkdown(value, { format, render, quarto = false, graphic = null } = {}) {
+    const state = { format, render, quarto, graphic, diagnostics: [], figureAlt: null };
     return { content: `${blockMarkdown(value, state).trim()}
 `, diagnostics: state.diagnostics };
   }
@@ -42295,6 +42587,23 @@ ${lines.join(`
   }
 
   // rix/plugins/render-quarto/quarto.plugin.rix.js
+  function assetPolicy(options) {
+    const requested = (rixString4(option3(options, "assets")) || "inline").toLowerCase();
+    if (requested === "inline")
+      return null;
+    if (["external", "svg", "external-svg"].includes(requested))
+      return "svg";
+    if (["png", "external-png"].includes(requested))
+      return "png";
+    throw new Error("quarto assets must be 'inline', 'svg', or 'png'");
+  }
+  function assetDirectory(options) {
+    const directory = rixString4(option3(options, "assetDir")) || "assets";
+    if (!directory || directory.startsWith("/") || directory.includes("\\") || directory.split("/").includes("..")) {
+      throw new Error("quarto assetDir must be a safe relative directory");
+    }
+    return directory.replace(/\/$/, "");
+  }
   var definition7 = {
     target: "quarto",
     mime: "text/x-quarto",
@@ -42304,8 +42613,23 @@ ${lines.join(`
     deterministic: true,
     description: "Quarto Markdown renderer with front matter and portable figure lowering",
     render({ value, options, format, render }) {
-      const rendered = renderMarkdown(value, { format, render, quarto: true });
-      return { ...rendered, content: `${quartoFrontMatter(options)}${rendered.content}` };
+      const policy = assetPolicy(options);
+      const assets = [];
+      let figure = 0;
+      const rendered = renderMarkdown(value, {
+        format,
+        render,
+        quarto: true,
+        graphic: policy ? (graphic, state) => {
+          figure += 1;
+          const nested = render(graphic, policy, { alt: state.figureAlt || "" });
+          const path2 = `${assetDirectory(options)}/figure-${figure}.${nested.extension}`;
+          assets.push({ path: path2, mime: nested.mime, content: nested.content });
+          state.diagnostics.push(...nested.diagnostics);
+          return `![${state.figureAlt || `Figure ${figure}`}](${path2})`;
+        } : null
+      });
+      return { ...rendered, assets, content: `${quartoFrontMatter(options)}${rendered.content}` };
     }
   };
   function install22(api) {
@@ -42415,8 +42739,8 @@ ${lines.join(`
     const match = /^#([0-9a-f]{6}|[0-9a-f]{3})$/i.exec(color || "");
     if (!match)
       return [0.153, 0.365, 0.678, opacity];
-    const hex = match[1].length === 3 ? [...match[1]].map((item) => item + item).join("") : match[1];
-    return [0, 2, 4].map((offset) => parseInt(hex.slice(offset, offset + 2), 16) / 255).concat(opacity);
+    const hex2 = match[1].length === 3 ? [...match[1]].map((item) => item + item).join("") : match[1];
+    return [0, 2, 4].map((offset) => parseInt(hex2.slice(offset, offset + 2), 16) / 255).concat(opacity);
   }
   function zUpToYUp([x, y, z]) {
     return [x, z, -y];
@@ -42909,10 +43233,10 @@ ${lines.join(`
     {
       metadata: {
         id: "scene3d",
-        description: "Exact retained 3D scenes with deterministic wireframe Graphics snapshots.",
+        description: "Exact retained 3D scenes with deterministic wireframe and lit Graphics snapshots.",
         kind: "host",
         mount: "scene3d",
-        exports: ["Scene", "Group", "Transform", "Mesh", "Polyline", "PointCloud", "Material", "PerspectiveCamera", "OrthographicCamera", "Snapshot"],
+        exports: ["Scene", "Group", "Transform", "Mesh", "Polyline", "PointCloud", "Material", "AmbientLight", "DirectionalLight", "PointLight", "PerspectiveCamera", "OrthographicCamera", "Snapshot"],
         groups: ["Scene3D", "Graphics"],
         permissions: [],
         provides: ["rix.scene3d@1"],
@@ -44440,18 +44764,26 @@ ${lines.join(`
       context.pushCall(fn.name);
     context.pushCurrentCallable(fn, fn.__parentMultifunction ?? null);
     try {
-      for (const prep of [
+      const prepEntries = [
         ...fn.params?.conditionals || [],
         ...fn.params?.prep || []
-      ]) {
+      ];
+      for (let prepIndex = 0;prepIndex < prepEntries.length; prepIndex++) {
+        const prep = prepEntries[prepIndex];
         try {
           const passed = await evaluateAsyncInternal(prep, context, registry, systemContext, callableState);
           const state2 = decisionState(passed);
-          if (state2 === "undecided")
+          if (state2 === "undecided") {
+            if (fn.params?.prepUndecided === "throw") {
+              throw new Error(`${fn.name || "<lambda>"} prep remained undecided at entry ${prepIndex + 1}`);
+            }
             return UNDECIDED;
+          }
           if (state2 === "null")
             return null;
         } catch (error) {
+          if (error?.message?.includes("prep remained undecided"))
+            throw error;
           if (fn.params?.prepStrict === true)
             throw error;
           return null;
@@ -45680,7 +46012,17 @@ ${lines.join(`
           const prep = Array.isArray(gate.prep) ? gate.prep : [];
           for (let entryIndex = 0;entryIndex < prep.length; entryIndex++) {
             const value = await evaluateAsyncInternal(prep[entryIndex], context, registry, systemContext, state);
-            if (!isTruthyAsync(value)) {
+            const prepState = decisionState(value);
+            if (prepState === "undecided") {
+              if (gate.undecidedMode === "throw") {
+                throw new Error(`Prepared trial remained undecided at gate ${gateIndex + 1}, prep entry ${entryIndex + 1}`);
+              }
+              if (gate.undecidedMode === "fallthrough") {
+                return preserveFailure ? PREP_TRIAL_NO_MATCH : UNDECIDED;
+              }
+              return UNDECIDED;
+            }
+            if (prepState === "null") {
               if (strict) {
                 throw new Error(`Prepared trial failed at gate ${gateIndex + 1}, prep entry ${entryIndex + 1}`);
               }
@@ -45688,6 +46030,8 @@ ${lines.join(`
             }
           }
         } catch (error) {
+          if (error?.message?.includes("remained undecided"))
+            throw error;
           if (strict)
             throw error;
           return asyncPreparedTrialFailure(preserveFailure);
@@ -48543,10 +48887,10 @@ defaultEnabled: false
     }, null, array_rix_plugin_default);
     addPlugin(catalog, {
       id: "scene3d",
-      description: "Exact retained 3D scenes with deterministic wireframe Graphics snapshots.",
+      description: "Exact retained 3D scenes with deterministic wireframe and lit Graphics snapshots.",
       kind: "host",
       mount: "scene3d",
-      exports: ["Scene", "Group", "Transform", "Mesh", "Polyline", "PointCloud", "Material", "PerspectiveCamera", "OrthographicCamera", "Snapshot"],
+      exports: ["Scene", "Group", "Transform", "Mesh", "Polyline", "PointCloud", "Material", "AmbientLight", "DirectionalLight", "PointLight", "PerspectiveCamera", "OrthographicCamera", "Snapshot"],
       groups: ["Scene3D", "Graphics"],
       permissions: [],
       provides: ["rix.scene3d@1"],

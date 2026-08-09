@@ -11,6 +11,7 @@ import { normalizeReplSource } from "../src/repl-source.js";
 import { replayTutorialSources, replayTutorialSourcesAsync, tutorialSectionCells } from "../src/tutorial-replay.js";
 import { createRixRepl } from "../src/repl-runtime.js";
 import { tutorials } from "../src/tutorial-index.js";
+import { paintCanvasPlan } from "../../rix/plugins/render-canvas/canvas-plan.js";
 
 test("the web REPL runtime keeps its RiX context between cells", () => {
     const context = new Context();
@@ -136,6 +137,38 @@ test("the browser-safe renderer plugins produce their text and source targets", 
         expect(response.type, plugin).toBe("result");
         expect(response.value.value, plugin).toContain(expected);
     }
+});
+
+test("the browser Canvas executor repaints a serialized plugin plan", () => {
+    const response = createRixRepl().run(`
+        .Plugin.Load("canvas");
+        .canvas.Render(.Graphics.Graphic([80, 60], [
+            .Graphics.Rectangle([5, 6], [20, 10], {= fill="#2563eb" }),
+            .Graphics.Circle([50, 30], 8, {= stroke="#111827" })
+        ])).Get("content");
+    `);
+    expect(response.type).toBe("result");
+    const plan = JSON.parse(response.value.value);
+    const calls = [];
+    const PreviousPath2D = globalThis.Path2D;
+    globalThis.Path2D = class {
+        rect(...args) { calls.push(["rect", ...args]); }
+        arc(...args) { calls.push(["arc", ...args]); }
+    };
+    const context = {
+        save: () => calls.push(["save"]), restore: () => calls.push(["restore"]),
+        fill: () => calls.push(["fill"]), stroke: () => calls.push(["stroke"]),
+        setLineDash: () => {},
+    };
+    try {
+        expect(paintCanvasPlan(context, plan)).toBe(context);
+    } finally {
+        globalThis.Path2D = PreviousPath2D;
+    }
+    expect(calls.some(([name]) => name === "rect")).toBe(true);
+    expect(calls.some(([name]) => name === "arc")).toBe(true);
+    expect(calls.filter(([name]) => name === "fill")).toHaveLength(1);
+    expect(calls.filter(([name]) => name === "stroke")).toHaveLength(1);
 });
 
 test("PNG and PDF expose browser contracts without pretending to have host tools", () => {

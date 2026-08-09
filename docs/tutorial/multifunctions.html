@@ -31,6 +31,13 @@ Abs(-7) ;</textarea><div class="tutorial-output" data-tutorial-output></div></se
     Classify(0.5?)
 ];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The last result is <code>?</code>. The enclosure represented by <code>0.5?</code> contains values on both sides of <code>0.55</code>, so the first variant might apply. Skipping it would make selecting <code>AtOrAbove</code> or <code>Fallback</code> unsound. Strict <code>?!-</code> still propagates undecided as <code>?</code>; strictness turns decisive prep failure or an error into an error, not lack of evidence into one.</p>
+<p>When a later variant is explicitly prepared to handle the ambiguous region, use <code>??-</code> to make undecided a no-match:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">Classify = {&gt;
+    (x) ??- [x &lt; 0.55] /Below/ -&gt; :below,
+    (x) /Unresolved/ -&gt; :needsRefinement
+};
+Classify(0.5?);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Use <code>??!-</code> when dispatch may continue only after the guard becomes decidable. An undecided result then throws, as do decisive prep failures and prep errors. Reason-bearing undecided values still display as <code>?</code>; their external <code>reason</code> property and trace data distinguish halo overlap, resolution, and budget exhaustion for diagnostics.</p>
 <h2>Handle undecided explicitly</h2>
 <p>When uncertainty is part of the intended result, move the comparison into ordinary decision control and give it an explicit <code>??</code> branch:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="12" spellcheck="false">Classify(x) -&gt; {;

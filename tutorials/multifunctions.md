@@ -72,6 +72,23 @@ make selecting `AtOrAbove` or `Fallback` unsound. Strict `?!-` still propagates
 undecided as `?`; strictness turns decisive prep failure or an error into an
 error, not lack of evidence into one.
 
+When a later variant is explicitly prepared to handle the ambiguous region,
+use `??-` to make undecided a no-match:
+
+```rix edu
+Classify = {>
+    (x) ??- [x < 0.55] /Below/ -> :below,
+    (x) /Unresolved/ -> :needsRefinement
+};
+Classify(0.5?);
+```
+
+Use `??!-` when dispatch may continue only after the guard becomes decidable.
+An undecided result then throws, as do decisive prep failures and prep errors.
+Reason-bearing undecided values still display as `?`; their external `reason`
+property and trace data distinguish halo overlap, resolution, and budget
+exhaustion for diagnostics.
+
 ## Handle undecided explicitly
 
 When uncertainty is part of the intended result, move the comparison into

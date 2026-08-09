@@ -9,4 +9,20 @@ mesh := .scene3d.Mesh(
 camera := .scene3d.PerspectiveCamera([4,4,3], [0,0,1]);
 scene := .scene3d.Scene([mesh], {= camera=camera });
 .scene3d.Snapshot(scene, {= size=[520,360], mode=&quot;wireframe&quot; })[&quot;value&quot;];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>The browser renders the returned core Graphic. The initial mode is deliberately called <code>wireframe</code>: lighting and hidden-line removal are not silently approximated.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
+<p>The browser renders the returned core Graphic. The initial mode is deliberately called <code>wireframe</code>: hidden-line removal is not silently approximated.</p>
+<h2>Add retained lights and request a lit view</h2>
+<p>Ambient, directional, and point lights remain part of the Scene3D value. The Phase 1 <code>lit</code> snapshot uses deterministic flat Lambert shading and painter&#039;s ordering; it does not claim hidden-surface or shadow certification.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="14" spellcheck="false">.Plugin.Load(&quot;scene3d&quot;);
+mesh := .scene3d.Mesh(
+    [[-1,-1,0], [1,-1,0], [0,1,0]],
+    [[1,2,3]],
+    {= color=&quot;#4080c0&quot; }
+);
+scene := .scene3d.Scene([mesh], {=
+    camera=.scene3d.PerspectiveCamera([3,3,2], [0,0,0]),
+    lights=[
+        .scene3d.AmbientLight(&quot;#ffffff&quot;, 1/4),
+        .scene3d.DirectionalLight([1,1,-2], {= intensity=3/4 })
+    ]
+});
+.scene3d.Snapshot(scene, {= size=[360,240], mode=&quot;lit&quot; })[&quot;value&quot;];</textarea><div class="tutorial-output" data-tutorial-output></div></section></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

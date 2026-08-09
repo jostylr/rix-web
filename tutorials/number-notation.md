@@ -22,6 +22,9 @@ feel like a language rather than a table of symbols.
 ```rix edu
 values := [
     1000,
+    1_000,
+    .125,
+    0.{0~7}1,
     -3 / 4,
     0.125,
     0.1#6,
@@ -58,6 +61,10 @@ values;
 makes a signed first coefficient explicit, while unary `-` negates the entire
 continued fraction. `_^` is RiX's exact radix-shift notation: `1.25_^3` means
 `1.25 * 10^3`, not an inexact scientific-number literal.
+
+RiX deliberately does not accept `E`/`e` exponent input. Use `_^`. Underscores
+group digits without changing the value, and `{digits~count}` compresses a long
+run, so `0.{0~7}1` is exactly `0.00000001`.
 
 ## Exact interval input forms
 
@@ -101,6 +108,27 @@ hexadecimal := 0xA.B?C;
 ];
 ```
 
+## Halo neighborhoods
+
+A halo requests bounded refinement around an exact comparison target. It does
+not enlarge that target or define approximate equality:
+
+```rix edu
+x := 0.549?;
+[
+    x < {~ 0.55, 0.001 },
+    0.551? ? {~ 0.55:0.56, 0.001 },
+    0.5495 ? {~ 0.55:0.56, 0.001 },
+    x ? {~ 0.55:0.56, 0.001 }
+];
+```
+
+Membership is true when `x`'s enclosure fits in the target interval, false
+when disjoint, and `?` only for overlap. The disjoint `0.5495` example is false
+even though it lies within epsilon of the interval. Optional limits are a map:
+`{~ target, epsilon, {= timeout=2, memory=64_000_000, maxWork=5000 } }`.
+Requester and provider limits combine by taking the more restrictive bound.
+
 `23.456?789` has candidate `23.456789` and certified enclosure
 `23.456:23.457`. A bracket may certify a compatible tighter bound, as in
 `23.456?789[+-12]`. Derived and provider values use a parseable explicit form
@@ -122,6 +150,11 @@ decision := x < 23.4565;
         ?? "certified enclosure overlaps the boundary"
 ];
 ```
+
+The first result is `24.456?789`: candidate digits participate in arithmetic
+and remain visible when that spelling reconstructs exactly the derived
+enclosure. When it cannot, RiX uses `candidate?[=low:high]`; the `=` labels the
+following interval as authoritative and is not an arithmetic operation.
 
 ## Every built-in base prefix
 
@@ -181,6 +214,9 @@ The mode aliases are `/` or `fraction`, `..` or `mixed`, `.`/`#`/`repeat`,
 named/custom base can be paired with a mode. `<_` reverses parseable base
 output:
 
+`.~` is the ordinary continued-fraction spelling; `~` adds an explicit leading
+marker for contexts where the start could be ambiguous.
+
 ```rix edu
 q := 1/3;
 binary := q _> (0b, ".");
@@ -205,33 +241,44 @@ parseable and safe for arithmetic:
 ```rix edu
 [
     (1/97) _> ".12",
-    (1/7).ToDecimalApproximation(5),
-    (103993/33102).ToContinuedFractionApproximation(3)
+    (1/7).ToDecimalApproximation({= fractionalDigits=5 }),
+    (103993/33102).ToContinuedFractionApproximation({= maxTerms=3 }),
+    (1/97) ~> ".12",
+    (103993/33102) ~> ".~3"
 ];
 ```
 
 `ToDecimal()` is also a display string when the decimal does not terminate;
-use `ToDecimalApproximation(digits)` when omitted digits must carry a guarantee.
+use `ToDecimalApproximation` or certified-conversion operator `~>` when omitted
+digits must carry a guarantee. Unlike `_>`, `~>` returns a numeric exact value
+or `CertifiedApproximation`, never a mere display string.
 
-## Current Core input boundary
+## Receiver option maps and locale display
 
-The runnable cells above cover every current RiX number family. Core's
-standalone number-only parser additionally accepts leading-dot decimals such as
-`.125`, grouped integer digits such as `1_000`, and compressed decimal digit
-runs such as `{0~8}`. Those lexical conveniences are not currently RiX source
-forms: write `0.125`, use ungrouped integer digits, and expand compressed input
-digits in RiX. This difference concerns source spelling, not the exact values
-Core can represent.
+Complicated formatting options use maps. `long=1` chooses the alternate finite
+continued fraction ending in `1`. Locale is display-only—RiX source remains
+locale-independent:
 
-## Current Core formatting boundary
+```rix edu
+q := 3/2;
+interval := 1.2356:1.2367;
+[
+    q.ToContinuedFractionString({= long=1 }),
+    (1234567/100).ToLocaleString({= decimal=",", group=".", groupSize=3 }),
+    (1/97).ToRepeatingDecimal({= limit=12, onLimit=:trunc }),
+    (1/97).ToRepeatingDecimalInfo({= limit=12, onLimit=:trunc }),
+    interval.ToRepeatingDecimal(),
+    interval.ToCompactDecimal(),
+    interval.ToRelativeMidDecimal(),
+    interval.ToRelativeDecimal()
+];
+```
 
-Most Core number output is available through the methods and `_>` modes above,
-but RiX does not yet expose every Core formatter option. The missing surfaces
-are scientific `E` strings and period annotations, repeating-decimal
-`error`/`null`/`trunc` policies and period metadata, the alternate finite
-continued fraction ending in `1`, and the interval-specific repeating,
-relative, midpoint-relative, and compact decimal strings. `_^` shifted output
-is exact and useful, but it is not identical to Core's scientific formatter.
+All Core exact, repeating-period, continued-fraction, and interval display
+families now have RiX receiver methods. Core's `E` scientific string is the one
+intentional exception: RiX uses `_>` mode `"_^"` because `E` notation is not a
+RiX number syntax. `_>` covers the common parseable styles; receiver maps cover
+period metadata, alternate continued fractions, interval spellings, and locale.
 
 Try a second value of your own. When an advanced feature depends on files,
 JavaScript, or extension registration, RatCalc explains the concept but does

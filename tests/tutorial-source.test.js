@@ -161,15 +161,20 @@ test("number and decision tutorials cover certified notation, output modes, and 
     for (const mode of ['q _> "/"', 'q _> ".."', 'q _> "."', 'q _> ".~"', 'q _> "~"', 'q _> "^"']) {
         expect(numbers, mode).toContain(mode);
     }
-    expect(numbers).toContain("Current Core input boundary");
-    expect(numbers).toContain("leading-dot decimals");
-    expect(numbers).toContain("Current Core formatting boundary");
-    expect(numbers).toContain("scientific `E` strings");
+    expect(numbers).toContain(".125");
+    expect(numbers).toContain("1_000");
+    expect(numbers).toContain("0.{0~7}1");
+    expect(numbers).toContain("Receiver option maps and locale display");
+    expect(numbers).toContain("intentional exception");
+    expect(numbers).toContain('(1/97) ~> ".12"');
+    expect(numbers).toContain("Halo neighborhoods");
     expect(decisions).toContain("Undecided is a third result");
     expect(decisions).toContain("? && _");
     expect(multifunctions).toContain("Undecided guards block unsafe fallthrough");
     expect(multifunctions).toContain("Classify(0.5?)");
     expect(multifunctions).toContain("?? :needsRefinement");
+    expect(multifunctions).toContain("??-");
+    expect(multifunctions).toContain("??!-");
 });
 
 test("plugin tutorials are generated after core lessons and grouped by theme", async () => {

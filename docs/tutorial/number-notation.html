@@ -2,8 +2,11 @@
 <p>RiX distinguishes exact values, certified uncertain scalars, and interval collections. Its number syntax covers integers, rational division, finite and repeating decimals, mixed numbers, radix shifts, continued fractions, exact intervals, certified prefixes, and bases without passing through floating point.</p>
 <p>Read this chapter with RatCalc open. Predict the result before running an example, then change a single part and run it again. That small loop of prediction, execution, and inspection is the fastest way to make RiX syntax feel like a language rather than a table of symbols.</p>
 <h2>A worked example</h2>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">values := [
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="13" spellcheck="false">values := [
     1000,
+    1_000,
+    .125,
+    0.{0~7}1,
     -3 / 4,
     0.125,
     0.1#6,
@@ -25,6 +28,7 @@ values;</textarea><div class="tutorial-output" data-tutorial-output></div></sect
 ];
 values;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p><code>#</code> begins the repeating digits. Continued fractions use <code>.~</code>; a leading <code>~</code> makes a signed first coefficient explicit, while unary <code>-</code> negates the entire continued fraction. <code>_^</code> is RiX&#039;s exact radix-shift notation: <code>1.25_^3</code> means <code>1.25 * 10^3</code>, not an inexact scientific-number literal.</p>
+<p>RiX deliberately does not accept <code>E</code>/<code>e</code> exponent input. Use <code>_^</code>. Underscores group digits without changing the value, and <code>{digits~count}</code> compresses a long run, so <code>0.{0~7}1</code> is exactly <code>0.00000001</code>.</p>
 <h2>Exact interval input forms</h2>
 <p>A colon constructs an exact closed interval. Decimal brackets provide compact suffix and last-place-offset forms, including exact repeating endpoints:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="9" spellcheck="false">intervals := [
@@ -50,6 +54,16 @@ hexadecimal := 0xA.B?C;
     continued.Enclosure(),
     hexadecimal
 ];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Halo neighborhoods</h2>
+<p>A halo requests bounded refinement around an exact comparison target. It does not enlarge that target or define approximate equality:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">x := 0.549?;
+[
+    x &lt; {~ 0.55, 0.001 },
+    0.551? ? {~ 0.55:0.56, 0.001 },
+    0.5495 ? {~ 0.55:0.56, 0.001 },
+    x ? {~ 0.55:0.56, 0.001 }
+];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Membership is true when <code>x</code>&#039;s enclosure fits in the target interval, false when disjoint, and <code>?</code> only for overlap. The disjoint <code>0.5495</code> example is false even though it lies within epsilon of the interval. Optional limits are a map: <code>{~ target, epsilon, {= timeout=2, memory=64_000_000, maxWork=5000 } }</code>. Requester and provider limits combine by taking the more restrictive bound.</p>
 <p><code>23.456?789</code> has candidate <code>23.456789</code> and certified enclosure <code>23.456:23.457</code>. A bracket may certify a compatible tighter bound, as in <code>23.456?789[+-12]</code>. Derived and provider values use a parseable explicit form such as <code>23.556?[=5889/250:23557/1000]</code> when no honest shared digit prefix describes the full enclosure.</p>
 <p>Arithmetic preserves the uncertain scalar and its exact enclosure. A comparison produces true, false, or standalone undecided <code>?</code>:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">x := 23.456?789;
@@ -62,6 +76,7 @@ decision := x &lt; 23.4565;
         ?_ &quot;certainly not less&quot;
         ?? &quot;certified enclosure overlaps the boundary&quot;
 ];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The first result is <code>24.456?789</code>: candidate digits participate in arithmetic and remain visible when that spelling reconstructs exactly the derived enclosure. When it cannot, RiX uses <code>candidate?[=low:high]</code>; the <code>=</code> labels the following interval as authoritative and is not an arithmetic operation.</p>
 <h2>Every built-in base prefix</h2>
 <p>The built-in prefixes are binary <code>0b</code>, ternary <code>0t</code>, quaternary <code>0q</code>, base 5 <code>0f</code>, base 7 <code>0s</code>, octal <code>0o</code>, duodecimal <code>0d</code>, hexadecimal <code>0x</code>, base 20 <code>0v</code>, base 36 <code>0u</code>, base 60 <code>0m</code>, and base 64 <code>0y</code>. <code>0z[N]</code> selects a base from 2 through 64 directly:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">[
@@ -92,6 +107,7 @@ formatted := 1199/16 _&gt; digits;
     q _&gt; &quot;^&quot;
 ];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The mode aliases are <code>/</code> or <code>fraction</code>, <code>..</code> or <code>mixed</code>, <code>.</code>/<code>#</code>/<code>repeat</code>, <code>.~</code> or <code>cf</code>, <code>~</code> or <code>cf_explicit</code>, and <code>^</code>/<code>_^</code>/<code>shifted</code>. A numeric base or named/custom base can be paired with a mode. <code>&lt;_</code> reverses parseable base output:</p>
+<p><code>.~</code> is the ordinary continued-fraction spelling; <code>~</code> adds an explicit leading marker for contexts where the start could be ambiguous.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">q := 1/3;
 binary := q _&gt; (0b, &quot;.&quot;);
 [
@@ -105,16 +121,29 @@ binary := q _&gt; (0b, &quot;.&quot;);
 ];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>Limits: display truncation versus certification</h2>
 <p>A limit appended to radix or shifted mode, such as <code>.12</code> or <code>^12</code>, may end in <code>...</code>. That is deliberately display-only and does not describe a new numeric value. Ask for a certified approximation when the limited result must remain parseable and safe for arithmetic:</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">[
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">[
     (1/97) _&gt; &quot;.12&quot;,
-    (1/7).ToDecimalApproximation(5),
-    (103993/33102).ToContinuedFractionApproximation(3)
+    (1/7).ToDecimalApproximation({= fractionalDigits=5 }),
+    (103993/33102).ToContinuedFractionApproximation({= maxTerms=3 }),
+    (1/97) ~&gt; &quot;.12&quot;,
+    (103993/33102) ~&gt; &quot;.~3&quot;
 ];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p><code>ToDecimal()</code> is also a display string when the decimal does not terminate; use <code>ToDecimalApproximation(digits)</code> when omitted digits must carry a guarantee.</p>
-<h2>Current Core input boundary</h2>
-<p>The runnable cells above cover every current RiX number family. Core&#039;s standalone number-only parser additionally accepts leading-dot decimals such as <code>.125</code>, grouped integer digits such as <code>1_000</code>, and compressed decimal digit runs such as <code>{0~8}</code>. Those lexical conveniences are not currently RiX source forms: write <code>0.125</code>, use ungrouped integer digits, and expand compressed input digits in RiX. This difference concerns source spelling, not the exact values Core can represent.</p>
-<h2>Current Core formatting boundary</h2>
-<p>Most Core number output is available through the methods and <code>_&gt;</code> modes above, but RiX does not yet expose every Core formatter option. The missing surfaces are scientific <code>E</code> strings and period annotations, repeating-decimal <code>error</code>/<code>null</code>/<code>trunc</code> policies and period metadata, the alternate finite continued fraction ending in <code>1</code>, and the interval-specific repeating, relative, midpoint-relative, and compact decimal strings. <code>_^</code> shifted output is exact and useful, but it is not identical to Core&#039;s scientific formatter.</p>
+<p><code>ToDecimal()</code> is also a display string when the decimal does not terminate; use <code>ToDecimalApproximation</code> or certified-conversion operator <code>~&gt;</code> when omitted digits must carry a guarantee. Unlike <code>_&gt;</code>, <code>~&gt;</code> returns a numeric exact value or <code>CertifiedApproximation</code>, never a mere display string.</p>
+<h2>Receiver option maps and locale display</h2>
+<p>Complicated formatting options use maps. <code>long=1</code> chooses the alternate finite continued fraction ending in <code>1</code>. Locale is display-only—RiX source remains locale-independent:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="12" spellcheck="false">q := 3/2;
+interval := 1.2356:1.2367;
+[
+    q.ToContinuedFractionString({= long=1 }),
+    (1234567/100).ToLocaleString({= decimal=&quot;,&quot;, group=&quot;.&quot;, groupSize=3 }),
+    (1/97).ToRepeatingDecimal({= limit=12, onLimit=:trunc }),
+    (1/97).ToRepeatingDecimalInfo({= limit=12, onLimit=:trunc }),
+    interval.ToRepeatingDecimal(),
+    interval.ToCompactDecimal(),
+    interval.ToRelativeMidDecimal(),
+    interval.ToRelativeDecimal()
+];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>All Core exact, repeating-period, continued-fraction, and interval display families now have RiX receiver methods. Core&#039;s <code>E</code> scientific string is the one intentional exception: RiX uses <code>_&gt;</code> mode <code>&quot;_^&quot;</code> because <code>E</code> notation is not a RiX number syntax. <code>_&gt;</code> covers the common parseable styles; receiver maps cover period metadata, alternate continued fractions, interval spellings, and locale.</p>
 <p>Try a second value of your own. When an advanced feature depends on files, JavaScript, or extension registration, RatCalc explains the concept but does not grant browser permissions implicitly. Use the detail pages and the help panel to connect this experiment to the broader language rules.</p>
 <aside class="challenge"><p class="eyebrow">Challenge</p><h3>Number notation practice</h3><p>Create one exact repeating decimal and one certified decimal prefix. Compare each with a nearby rational, then handle the certified comparison&#039;s undecided case explicitly.</p><section class="tutorial-cell"><header><span>Your RiX answer</span><button type="button" data-tutorial-run>Run answer</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false" placeholder="# Write your RiX solution here"></textarea><div class="tutorial-output" data-tutorial-output></div></section></aside>
 <h2>Keep going</h2>
