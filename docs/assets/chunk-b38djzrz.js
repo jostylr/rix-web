@@ -29,7 +29,6 @@ import {
   install24 as install25,
   install25 as install26,
   install26 as install27,
-  install27 as install28,
   install3 as install4,
   install4 as install5,
   install5 as install6,
@@ -49,7 +48,7 @@ import {
   typeRegistry,
   unsupportedRefinementResult,
   valueMethod
-} from "./chunk-913x3v0q.js";
+} from "./chunk-8j2sbdyp.js";
 
 // src/repl-source.js
 var statementClosers = new Set([")", "]", "}", "|}", ";}", "@}", "!}", ":}"]);
@@ -139,7 +138,7 @@ function collection() {
   }
   return { type: "map", entries, _ext: extension };
 }
-function install29({ systemContext }) {
+function install28({ systemContext }) {
   const value = collection();
   systemContext.registerHostCallableValue("arrayJs", value, {
     impl(args) {
@@ -489,7 +488,7 @@ function installBrowserApproxMathPlugin({ systemContext, registry, metadata = {}
   systemContext.registerMethod("Rational", "Float", floatExtension, owner);
   return systemContext;
 }
-var install30 = installBrowserApproxMathPlugin;
+var install29 = installBrowserApproxMathPlugin;
 
 // src/generated/bundled-plugin-catalog.js
 function createBundledPluginCatalog() {
@@ -500,8 +499,371 @@ function createBundledPluginCatalog() {
   catalog.registerInstaller("ball", install27);
   catalog.addMetadata({ id: "canvas", description: "Serializable Canvas 2D drawing plans for core Graphics scenes.", kind: "host", mount: "canvas", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.canvas@1"], targets: ["canvas", "application/vnd.rix.canvas+json"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:canvas" }, { sourcePath: "bundled:canvas", kind: "host" });
   catalog.registerInstaller("canvas", install17);
-  catalog.addMetadata({ id: "cauchy", description: "Rational Cauchy sequences with explicit certified tail bounds and moduli.", kind: "host", mount: "cauchy", exports: ["Sequence", "Certified", "Geometric", "Term", "TailBound", "Modulus", "Enclosure", "Record"], groups: ["Numerics", "Exact"], permissions: [], provides: ["rix.cauchy@1", "rix.refinable@1", "rix.enclosable-real@1"], schemas: ["rix.cauchy.sequence@1", "rix.cauchy.real@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:cauchy" }, { sourcePath: "bundled:cauchy", kind: "host" });
-  catalog.registerInstaller("cauchy", install28);
+  catalog.addMetadata({ id: "cauchy", description: "Rational Cauchy sequences with explicit certified tail bounds and moduli.", kind: "rix", mount: "cauchy", exports: ["Sequence", "Certified", "Geometric", "Term", "TailBound", "Modulus", "Enclosure", "Record"], groups: ["Numerics", "Exact"], permissions: [], provides: ["rix.cauchy@1", "rix.refinable@1", "rix.enclosable-real@1"], schemas: ["rix.cauchy.sequence@1", "rix.cauchy.real@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:cauchy" }, { source: `/**
+id: cauchy
+description: Rational Cauchy sequences with explicit certified tail bounds and moduli.
+kind: rix
+mount: cauchy
+exports: [Sequence, Certified, Geometric, Term, TailBound, Modulus, Enclosure, Record]
+groups: [Numerics, Exact]
+permissions: []
+provides: [rix.cauchy@1, rix.refinable@1, rix.enclosable-real@1]
+schemas: [rix.cauchy.sequence@1, rix.cauchy.real@1]
+snapshot: false
+deterministic: true
+defaultEnabled: false
+**/
+
+CauchyOption(options, key, fallback) -> options.Has(key) ?: options[key] ?_ fallback;
+
+CauchyRequireRational(value, label) -> value ~!: :Rational;
+
+CauchyRequirePositive(value, label) -> {;
+    rational = CauchyRequireRational(value, label);
+    rational > 0 ?: rational ?_ .Error(@"@{label} must be positive");
+};
+
+CauchyRequireNonnegative(value, label) -> {;
+    rational = CauchyRequireRational(value, label);
+    rational >= 0 ?: rational ?_ .Error(@"@{label} must be nonnegative");
+};
+
+CauchyRequireIndex(value, label) -> {;
+    integer = value ~!: :Integer;
+    integer >= 0 ?: integer ?_ .Error(@"@{label} must be a nonnegative Integer");
+};
+
+CauchyWitness(term, tailBound, index) -> {;
+    exactTerm = CauchyRequireRational(term, @"Cauchy term @{index}");
+    exactTail = CauchyRequireNonnegative(tailBound, @"Cauchy tail bound @{index}");
+    interval = (exactTerm - exactTail):(exactTerm + exactTail);
+    {=
+        index = index,
+        term = exactTerm,
+        tailBound = exactTail,
+        interval = interval,
+        width = interval.Width()
+    };
+};
+
+CauchyTermAt(real, index) -> {;
+    n = CauchyRequireIndex(index, "Cauchy term index");
+    real[:kind] == :geometric
+      ?: CauchyGeometricTerm(real, n)
+      ?_ CauchyRequireRational(real[:termFunction](n), @"Cauchy term @{n}");
+};
+
+CauchyTailBoundAt(real, index) -> {;
+    n = CauchyRequireIndex(index, "Cauchy tail-bound index");
+    real[:kind] == :geometric
+      ?: CauchyGeometricTailBound(real, n)
+      ?_ CauchyRequireNonnegative(real[:tailFunction](n), @"Cauchy tail bound @{n}");
+};
+
+CauchyWitnessAt(real, index) -> CauchyWitness(
+    CauchyTermAt(real, index),
+    CauchyTailBoundAt(real, index),
+    index
+);
+
+CauchyGeometricTerm(real, index) ->
+    real[:first] * (1 - real[:ratio]^(index + 1)) / (1 - real[:ratio]);
+
+CauchyGeometricTailBound(real, index) -> {;
+    magnitude = real[:ratio].Abs();
+    real[:first].Abs() * magnitude^(index + 1) / (1 - magnitude);
+};
+
+CauchyGeometricModulus(real, radius) -> {;
+    requestedRadius = CauchyRequirePositive(radius, "Cauchy modulus radius");
+    index = 0;
+    bound = CauchyGeometricTailBound(real, index);
+    {@ step = 1; @bound > @requestedRadius && @index < 100000; {;
+        @index += 1;
+        @bound = CauchyGeometricTailBound(@real, @index);
+    }; step += 1 };
+    bound <= requestedRadius ?: index
+      ?_ .Error("Cauchy modulus exceeds the provider index limit");
+};
+
+CauchyModulusAt(real, radius) -> {;
+    requestedRadius = CauchyRequirePositive(radius, "Cauchy modulus radius");
+    index = real[:kind] == :geometric
+      ?: CauchyGeometricModulus(real, requestedRadius)
+      ?_ CauchyRequireIndex(real[:modulusFunction](requestedRadius), "Cauchy modulus result");
+    witness = CauchyWitnessAt(real, index);
+    witness[:tailBound] <= requestedRadius ?: index
+      ?_ .Error(@"Cauchy modulus certificate failed at index @{index}: tail bound @{witness[:tailBound]} exceeds @{requestedRadius}");
+};
+
+CauchyCapabilities(real) -> {;
+    certified = real[:kind] != :bare;
+    evidenceLevels = real[:kind] == :geometric
+      ?: [:proof]
+      ?_ (real[:kind] == :declared ?: [:constructorGuarantee] ?_ []);
+    {=
+        valueKind = :numericsCapabilities,
+        schema = "rix.numerics.capabilities@1",
+        backend = :cauchy,
+        representation = certified ?: :rationalSequenceWithTailModulus ?_ :bareRationalSequence,
+        operations = certified ?: [:enclose, :refine] ?_ [],
+        evidenceLevels = evidenceLevels,
+        certified = certified,
+        arbitraryRefinement = certified,
+        deterministic = 1,
+        minimumWidth = 0,
+        maxCalls = certified ?: 100000 ?_ 0,
+        maxIterations = certified ?: 100000 ?_ 0
+    };
+};
+
+CauchyBareRecord(real) -> {=
+    valueKind = :cauchySequence,
+    schema = "rix.cauchy.sequence@1",
+    name = real[:name],
+    certified = _,
+    tailModulus = _
+};
+
+CauchyCertifiedRecord(real) -> {;
+    record = {=
+        valueKind = :cauchyReal,
+        schema = "rix.cauchy.real@1",
+        name = real[:name],
+        kind = real[:kind],
+        certified = 1,
+        initialWitness = real[:initialWitness],
+        evidence = real[:evidence]
+    };
+    real[:kind] == :geometric ?: {;
+        @record["first"] = @real[:first];
+        @record["ratio"] = @real[:ratio];
+    } ?_ _;
+    record;
+};
+
+CauchyRecord(real) -> real[:kind] == :bare ?: CauchyBareRecord(real) ?_ CauchyCertifiedRecord(real);
+
+CauchyUnsupported(real, request, operation) -> .RefinementUnsupported(
+    .RefinementRequest(request, operation, CauchyCapabilities(real)),
+    CauchyCapabilities(real),
+    :missingCertifiedTailModulus
+);
+
+CauchyAttachBareProtocol(real) -> {;
+    real._proto = {=
+        Term = (self, index) -> CauchyTermAt(self, index),
+        Record = (self) -> CauchyRecord(self),
+        NumericsCapabilities = (self) -> CauchyCapabilities(self),
+        Enclose = (self, request ?= {= }) -> CauchyUnsupported(self, request, :enclose),
+        Refine = (self, request ?= {= }) -> CauchyUnsupported(self, request, :refine)
+    };
+    real;
+};
+
+CauchyAttachCertifiedProtocol(real) -> {;
+    real._proto = {=
+        Term = (self, index) -> CauchyTermAt(self, index),
+        TailBound = (self, index) -> CauchyTailBoundAt(self, index),
+        Modulus = (self, radius) -> CauchyModulusAt(self, radius),
+        Enclosure = (self, index) -> CauchyWitnessAt(self, index)[:interval],
+        InitialEnclosure = (self) -> self[:initialWitness][:interval],
+        Record = (self) -> CauchyRecord(self),
+        NumericsCapabilities = (self) -> CauchyCapabilities(self),
+        Enclose = (self, request ?= {= }) -> CauchyProtocolEnclosure(self, request, :enclose),
+        Refine = (self, request ?= {= }) -> CauchyProtocolEnclosure(self, request, :refine)
+    };
+    real;
+};
+
+BuildBareCauchy(termFunction, options) -> CauchyAttachBareProtocol({=
+    valueKind = :cauchySequence,
+    schema = "rix.cauchy.sequence@1",
+    kind = :bare,
+    name = CauchyOption(options, "name", :sequence),
+    termFunction = termFunction,
+    provenance = {= plugin=:cauchy, version=1, source=:sequence }
+});
+
+BuildCertifiedCauchy(termFunction, tailFunction, modulusFunction, options) -> {;
+    initialTerm = CauchyRequireRational(0 |> termFunction, "Cauchy term 0");
+    initialTail = CauchyRequireNonnegative(0 |> tailFunction, "Cauchy tail bound 0");
+    CauchyAttachCertifiedProtocol({=
+        valueKind = :cauchyReal,
+        schema = "rix.cauchy.real@1",
+        kind = :declared,
+        name = CauchyOption(options, "name", :certifiedSequence),
+        termFunction = termFunction,
+        tailFunction = tailFunction,
+        modulusFunction = modulusFunction,
+        evidence = CauchyOption(options, "evidence", :declaredTailModulus),
+        initialWitness = CauchyWitness(initialTerm, initialTail, 0),
+        provenance = {= plugin=:cauchy, version=1, source=:declaredTailModulus }
+    });
+};
+
+CauchySequenceConstructor(termFunction, tailFunction ?= _, modulusFunction ?= _, options ?= {= }) -> {;
+    noCertificate = tailFunction == _ && modulusFunction == _;
+    completeCertificate = tailFunction != _ && modulusFunction != _;
+    {? noCertificate ? BuildBareCauchy(termFunction, options);
+       completeCertificate ? BuildCertifiedCauchy(termFunction, tailFunction, modulusFunction, options);
+       .Error("cauchy.Sequence expects term, or term, tailBound, modulus, and optional options")
+    };
+};
+
+CauchyCertifiedConstructor(termFunction, tailFunction, modulusFunction, options ?= {= }) ->
+    BuildCertifiedCauchy(termFunction, tailFunction, modulusFunction, options);
+
+CauchyGeometricConstructor(first, ratio, options ?= {= }) -> {;
+    exactFirst = CauchyRequireRational(first, "Cauchy geometric first term");
+    exactRatio = CauchyRequireRational(ratio, "Cauchy geometric ratio");
+    exactRatio.Abs() < 1 ?: _ ?_ .Error("Cauchy geometric ratio must have absolute value less than one");
+    shell = {= first=exactFirst, ratio=exactRatio };
+    initial = CauchyWitness(
+        exactFirst,
+        exactFirst.Abs() * exactRatio.Abs() / (1 - exactRatio.Abs()),
+        0
+    );
+    CauchyAttachCertifiedProtocol({=
+        valueKind = :cauchyReal,
+        schema = "rix.cauchy.real@1",
+        kind = :geometric,
+        name = CauchyOption(options, "name", :geometricSeries),
+        first = exactFirst,
+        ratio = exactRatio,
+        evidence = {=
+            kind = :geometricTail,
+            property = :absoluteRemainderBound,
+            ratio = exactRatio
+        },
+        initialWitness = initial,
+        provenance = {= plugin=:cauchy, version=1, source=:geometricTail }
+    });
+};
+
+CauchyGeometricRefinement(real, requestedWidth, maxCalls, maxIterations) -> {;
+    selected = real[:initialWitness];
+    calls = 0;
+    iterations = 0;
+    {@ step = 1;
+       @selected[:width] > @requestedWidth && @calls < @maxCalls && @iterations < @maxIterations;
+       {;
+           @selected = CauchyWitnessAt(@real, @selected[:index] + 1);
+           @calls += 1;
+           @iterations += 1;
+       };
+       step += 1
+    };
+    {=
+        selected = selected,
+        calls = calls,
+        iterations = iterations,
+        diagnostic = selected[:width] <= requestedWidth ?: _ ?_ :workBudgetReached
+    };
+};
+
+CauchyDeclaredRefinement(real, requestedWidth, maxCalls, maxIterations) -> {;
+    selected = real[:initialWitness];
+    calls = 0;
+    iterations = 0;
+    diagnostic = _;
+    selected[:width] > requestedWidth ?: {;
+        enoughWork = @maxCalls >= 3 && @maxIterations >= 1;
+        enoughWork ?: {;
+            targetRadius = @requestedWidth / 2;
+            index = CauchyRequireIndex(@real[:modulusFunction](targetRadius), "Cauchy modulus result");
+            @calls = 1;
+            candidate = CauchyWitnessAt(@real, index);
+            @calls = 3;
+            @iterations = 1;
+            candidate[:tailBound] <= targetRadius ?: _ ?_ .Error(
+                @"Cauchy modulus certificate failed at index @{index}: tail bound @{candidate[:tailBound]} exceeds @{targetRadius}"
+            );
+            candidate[:interval].Overlaps(@real[:initialWitness][:interval]) ?: _ ?_ .Error(
+                @"Cauchy certificate at index @{index} contradicts the initial certified enclosure"
+            );
+            @selected = candidate;
+        } ?_ {;
+            @diagnostic = :insufficientBudgetForModulusWitness;
+        };
+    } ?_ _;
+    {= selected=selected, calls=calls, iterations=iterations, diagnostic=diagnostic };
+};
+
+CauchyProtocolEnclosure(real, request, operation) -> {;
+    capabilities = CauchyCapabilities(real);
+    normalized = .RefinementRequest(request, operation, capabilities);
+    requestedWidth = normalized[:absoluteWidth];
+    maxCalls = normalized[:work][:maxCalls];
+    maxIterations = normalized[:work][:maxIterations];
+    state = real[:kind] == :geometric
+      ?: CauchyGeometricRefinement(real, requestedWidth, maxCalls, maxIterations)
+      ?_ CauchyDeclaredRefinement(real, requestedWidth, maxCalls, maxIterations);
+    selected = state[:selected];
+    achievedWidth = selected[:width];
+    goalMet = achievedWidth <= requestedWidth;
+    status = goalMet ?: :enclosed ?_ :budgetExhausted;
+    evidenceLevel = real[:kind] == :geometric ?: :proof ?_ :constructorGuarantee;
+    approximation = .CertifiedApproximation(selected[:term], selected[:interval], {=
+        reason = status,
+        requested = requestedWidth,
+        achieved = achievedWidth,
+        provider = :cauchy
+    });
+    {=
+        valueKind = :enclosure,
+        schema = "rix.numerics.enclosure@1",
+        status = status,
+        interval = selected[:interval],
+        certified = 1,
+        goalMet = goalMet,
+        requestedWidth = requestedWidth,
+        achievedWidth = achievedWidth,
+        approximation = approximation,
+        evidenceLevel = evidenceLevel,
+        backend = :cauchy,
+        operation = normalized[:operation],
+        trace = [selected],
+        work = {=
+            calls = state[:calls],
+            iterations = state[:iterations],
+            index = selected[:index],
+            maxCalls = maxCalls,
+            maxIterations = maxIterations,
+            exhausted = !goalMet
+        },
+        diagnostics = state[:diagnostic] == _ ?: [] ?_ [state[:diagnostic]],
+        evidence = {=
+            kind = real[:kind] == :geometric ?: :geometricTail ?_ :declaredTailModulus,
+            property = :limitWithinTermPlusOrMinusTailBound,
+            witness = selected,
+            certificate = real[:evidence]
+        },
+        source = real[:provenance]
+    };
+};
+
+cauchyNamespace = {= };
+cauchyNamespace._proto = {=
+    Sequence = (self, termFunction, tailFunction ?= _, modulusFunction ?= _, options ?= {= }) ->
+        CauchySequenceConstructor(termFunction, tailFunction, modulusFunction, options),
+    Certified = (self, termFunction, tailFunction, modulusFunction, options ?= {= }) ->
+        CauchyCertifiedConstructor(termFunction, tailFunction, modulusFunction, options),
+    Geometric = (self, first, ratio, options ?= {= }) -> CauchyGeometricConstructor(first, ratio, options),
+    Term = (self, real, index) -> CauchyTermAt(real, index),
+    TailBound = (self, real, index) -> CauchyTailBoundAt(real, index),
+    Modulus = (self, real, radius) -> CauchyModulusAt(real, radius),
+    Enclosure = (self, real, index) -> CauchyWitnessAt(real, index)[:interval],
+    Record = (self, real) -> CauchyRecord(real)
+};
+
+.Host.RegisterValue(
+    "cauchy",
+    cauchyNamespace,
+    "Rational Cauchy sequences with explicit certified tail bounds and moduli",
+    ["Numerics", "Exact"]
+);
+`, sourcePath: "bundled:cauchy", kind: "rix" });
   catalog.addMetadata({ id: "csv", description: "Deterministic CSV and TSV export for portable Tables and typed data Relations.", kind: "host", mount: "csv", exports: ["Render"], groups: ["Renderers", "Data"], permissions: [], provides: ["rix.renderer.csv@1"], targets: ["csv", "text/csv", "tsv", "text/tab-separated-values"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:csv" }, { sourcePath: "bundled:csv", kind: "host" });
   catalog.registerInstaller("csv", install26);
   catalog.addMetadata({ id: "data", description: "Immutable typed relations with deterministic projection, filtering, sorting, and Table views.", kind: "host", mount: "data", exports: ["Relation", "Project", "Filter", "Sort", "TableView", "Schema", "Rows"], groups: ["Data"], permissions: [], provides: ["rix.data.relation@1"], schemas: ["rix.data.relation@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:data" }, { sourcePath: "bundled:data", kind: "host" });
@@ -511,7 +873,7 @@ function createBundledPluginCatalog() {
   catalog.addMetadata({ id: "draw", description: "Convenient 2D drawing helpers that produce core Graphics nodes.", kind: "host", mount: "draw", exports: ["Line", "Polygon", "Label", "Box", "Circle"], groups: ["Draw"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:draw" }, { sourcePath: "bundled:draw", kind: "host" });
   catalog.registerInstaller("draw", install);
   catalog.addMetadata({ id: "example-array-js", description: "Teaching JavaScript plugin demonstrating array sum, summary text, and reversal.", kind: "host", mount: "arrayJs", exports: ["Sum", "Describe", "Reverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:example-array-js" }, { sourcePath: "bundled:example-array-js", kind: "host" });
-  catalog.registerInstaller("example-array-js", install29);
+  catalog.registerInstaller("example-array-js", install28);
   catalog.addMetadata({ id: "example-array-rix", description: "Teaching RiX plugin demonstrating array sum, summary text, and reversal.", kind: "rix", mount: "arrayRix", exports: ["arrayRixSum", "arrayRixDescribe", "arrayRixReverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:example-array-rix" }, { source: `/**
 id: example-array-rix
 description: Teaching RiX plugin demonstrating array sum, summary text, and reversal.
@@ -528,7 +890,7 @@ defaultEnabled: false
 .Host.Register("arrayRixReverse", (values) -> values.Reverse(), "Reverse an array", ["Examples"]);
 `, sourcePath: "bundled:example-array-rix", kind: "rix" });
   catalog.addMetadata({ id: "float", description: "JavaScript IEEE-754 Float conversion and optional approximate math.", kind: "host", mount: "float", exports: ["Float", "Interval", "Round", "Floor", "Ceiling", "Abs", "Sqrt", "Sin", "Cos", "Tan", "Log", "Exp"], groups: ["ApproximateMath", "Float"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:float" }, { sourcePath: "bundled:float", kind: "host" });
-  catalog.registerInstaller("float", install30);
+  catalog.registerInstaller("float", install29);
   catalog.addMetadata({ id: "fracfun", description: "Form-preserving callable polynomial and rational expressions with explicit transformations and canonical projections.", kind: "host", mount: "fracfun", aliases: ["fractionFunction", "ff"], exports: ["FractionFunction", "Parse", "Var", "Fun"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], requires: ["rix.fraction@1", "rix.rational-function@1"], provides: ["rix.fraction-function@1"], schemas: ["rix.fraction-function@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:fracfun" }, { sourcePath: "bundled:fracfun", kind: "host" });
   catalog.registerInstaller("fracfun", install3);
   catalog.addMetadata({ id: "fraction", description: "Representation-sensitive unreduced integer fractions with mediant and classroom addition policies.", kind: "host", mount: "fraction", aliases: ["frac", "f"], exports: ["Fraction", "Parse", "FromSternBrocotPath"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], provides: ["rix.fraction@1"], schemas: ["rix.fraction@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:fraction" }, { sourcePath: "bundled:fraction", kind: "host" });
@@ -1180,5 +1542,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { findHelp, createRixRepl };
 
-//# debugId=4B651CE59F5351BD64756E2164756E21
-//# sourceMappingURL=chunk-zxnwke65.js.map
+//# debugId=42F39F06E170D98E64756E2164756E21
+//# sourceMappingURL=chunk-b38djzrz.js.map

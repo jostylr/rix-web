@@ -37243,6 +37243,373 @@ numericsNamespace._proto = {=
 .Host.RegisterValue("numerics", numericsNamespace, "Backend-neutral bounded enclosure and refinement orchestration", ["Numerics"]);
 `;
 
+  // rix/plugins/cauchy/cauchy.plugin.rix
+  var cauchy_plugin_default = `/**
+id: cauchy
+description: Rational Cauchy sequences with explicit certified tail bounds and moduli.
+kind: rix
+mount: cauchy
+exports: [Sequence, Certified, Geometric, Term, TailBound, Modulus, Enclosure, Record]
+groups: [Numerics, Exact]
+permissions: []
+provides: [rix.cauchy@1, rix.refinable@1, rix.enclosable-real@1]
+schemas: [rix.cauchy.sequence@1, rix.cauchy.real@1]
+snapshot: false
+deterministic: true
+defaultEnabled: false
+**/
+
+CauchyOption(options, key, fallback) -> options.Has(key) ?: options[key] ?_ fallback;
+
+CauchyRequireRational(value, label) -> value ~!: :Rational;
+
+CauchyRequirePositive(value, label) -> {;
+    rational = CauchyRequireRational(value, label);
+    rational > 0 ?: rational ?_ .Error(@"@{label} must be positive");
+};
+
+CauchyRequireNonnegative(value, label) -> {;
+    rational = CauchyRequireRational(value, label);
+    rational >= 0 ?: rational ?_ .Error(@"@{label} must be nonnegative");
+};
+
+CauchyRequireIndex(value, label) -> {;
+    integer = value ~!: :Integer;
+    integer >= 0 ?: integer ?_ .Error(@"@{label} must be a nonnegative Integer");
+};
+
+CauchyWitness(term, tailBound, index) -> {;
+    exactTerm = CauchyRequireRational(term, @"Cauchy term @{index}");
+    exactTail = CauchyRequireNonnegative(tailBound, @"Cauchy tail bound @{index}");
+    interval = (exactTerm - exactTail):(exactTerm + exactTail);
+    {=
+        index = index,
+        term = exactTerm,
+        tailBound = exactTail,
+        interval = interval,
+        width = interval.Width()
+    };
+};
+
+CauchyTermAt(real, index) -> {;
+    n = CauchyRequireIndex(index, "Cauchy term index");
+    real[:kind] == :geometric
+      ?: CauchyGeometricTerm(real, n)
+      ?_ CauchyRequireRational(real[:termFunction](n), @"Cauchy term @{n}");
+};
+
+CauchyTailBoundAt(real, index) -> {;
+    n = CauchyRequireIndex(index, "Cauchy tail-bound index");
+    real[:kind] == :geometric
+      ?: CauchyGeometricTailBound(real, n)
+      ?_ CauchyRequireNonnegative(real[:tailFunction](n), @"Cauchy tail bound @{n}");
+};
+
+CauchyWitnessAt(real, index) -> CauchyWitness(
+    CauchyTermAt(real, index),
+    CauchyTailBoundAt(real, index),
+    index
+);
+
+CauchyGeometricTerm(real, index) ->
+    real[:first] * (1 - real[:ratio]^(index + 1)) / (1 - real[:ratio]);
+
+CauchyGeometricTailBound(real, index) -> {;
+    magnitude = real[:ratio].Abs();
+    real[:first].Abs() * magnitude^(index + 1) / (1 - magnitude);
+};
+
+CauchyGeometricModulus(real, radius) -> {;
+    requestedRadius = CauchyRequirePositive(radius, "Cauchy modulus radius");
+    index = 0;
+    bound = CauchyGeometricTailBound(real, index);
+    {@ step = 1; @bound > @requestedRadius && @index < 100000; {;
+        @index += 1;
+        @bound = CauchyGeometricTailBound(@real, @index);
+    }; step += 1 };
+    bound <= requestedRadius ?: index
+      ?_ .Error("Cauchy modulus exceeds the provider index limit");
+};
+
+CauchyModulusAt(real, radius) -> {;
+    requestedRadius = CauchyRequirePositive(radius, "Cauchy modulus radius");
+    index = real[:kind] == :geometric
+      ?: CauchyGeometricModulus(real, requestedRadius)
+      ?_ CauchyRequireIndex(real[:modulusFunction](requestedRadius), "Cauchy modulus result");
+    witness = CauchyWitnessAt(real, index);
+    witness[:tailBound] <= requestedRadius ?: index
+      ?_ .Error(@"Cauchy modulus certificate failed at index @{index}: tail bound @{witness[:tailBound]} exceeds @{requestedRadius}");
+};
+
+CauchyCapabilities(real) -> {;
+    certified = real[:kind] != :bare;
+    evidenceLevels = real[:kind] == :geometric
+      ?: [:proof]
+      ?_ (real[:kind] == :declared ?: [:constructorGuarantee] ?_ []);
+    {=
+        valueKind = :numericsCapabilities,
+        schema = "rix.numerics.capabilities@1",
+        backend = :cauchy,
+        representation = certified ?: :rationalSequenceWithTailModulus ?_ :bareRationalSequence,
+        operations = certified ?: [:enclose, :refine] ?_ [],
+        evidenceLevels = evidenceLevels,
+        certified = certified,
+        arbitraryRefinement = certified,
+        deterministic = 1,
+        minimumWidth = 0,
+        maxCalls = certified ?: 100000 ?_ 0,
+        maxIterations = certified ?: 100000 ?_ 0
+    };
+};
+
+CauchyBareRecord(real) -> {=
+    valueKind = :cauchySequence,
+    schema = "rix.cauchy.sequence@1",
+    name = real[:name],
+    certified = _,
+    tailModulus = _
+};
+
+CauchyCertifiedRecord(real) -> {;
+    record = {=
+        valueKind = :cauchyReal,
+        schema = "rix.cauchy.real@1",
+        name = real[:name],
+        kind = real[:kind],
+        certified = 1,
+        initialWitness = real[:initialWitness],
+        evidence = real[:evidence]
+    };
+    real[:kind] == :geometric ?: {;
+        @record["first"] = @real[:first];
+        @record["ratio"] = @real[:ratio];
+    } ?_ _;
+    record;
+};
+
+CauchyRecord(real) -> real[:kind] == :bare ?: CauchyBareRecord(real) ?_ CauchyCertifiedRecord(real);
+
+CauchyUnsupported(real, request, operation) -> .RefinementUnsupported(
+    .RefinementRequest(request, operation, CauchyCapabilities(real)),
+    CauchyCapabilities(real),
+    :missingCertifiedTailModulus
+);
+
+CauchyAttachBareProtocol(real) -> {;
+    real._proto = {=
+        Term = (self, index) -> CauchyTermAt(self, index),
+        Record = (self) -> CauchyRecord(self),
+        NumericsCapabilities = (self) -> CauchyCapabilities(self),
+        Enclose = (self, request ?= {= }) -> CauchyUnsupported(self, request, :enclose),
+        Refine = (self, request ?= {= }) -> CauchyUnsupported(self, request, :refine)
+    };
+    real;
+};
+
+CauchyAttachCertifiedProtocol(real) -> {;
+    real._proto = {=
+        Term = (self, index) -> CauchyTermAt(self, index),
+        TailBound = (self, index) -> CauchyTailBoundAt(self, index),
+        Modulus = (self, radius) -> CauchyModulusAt(self, radius),
+        Enclosure = (self, index) -> CauchyWitnessAt(self, index)[:interval],
+        InitialEnclosure = (self) -> self[:initialWitness][:interval],
+        Record = (self) -> CauchyRecord(self),
+        NumericsCapabilities = (self) -> CauchyCapabilities(self),
+        Enclose = (self, request ?= {= }) -> CauchyProtocolEnclosure(self, request, :enclose),
+        Refine = (self, request ?= {= }) -> CauchyProtocolEnclosure(self, request, :refine)
+    };
+    real;
+};
+
+BuildBareCauchy(termFunction, options) -> CauchyAttachBareProtocol({=
+    valueKind = :cauchySequence,
+    schema = "rix.cauchy.sequence@1",
+    kind = :bare,
+    name = CauchyOption(options, "name", :sequence),
+    termFunction = termFunction,
+    provenance = {= plugin=:cauchy, version=1, source=:sequence }
+});
+
+BuildCertifiedCauchy(termFunction, tailFunction, modulusFunction, options) -> {;
+    initialTerm = CauchyRequireRational(0 |> termFunction, "Cauchy term 0");
+    initialTail = CauchyRequireNonnegative(0 |> tailFunction, "Cauchy tail bound 0");
+    CauchyAttachCertifiedProtocol({=
+        valueKind = :cauchyReal,
+        schema = "rix.cauchy.real@1",
+        kind = :declared,
+        name = CauchyOption(options, "name", :certifiedSequence),
+        termFunction = termFunction,
+        tailFunction = tailFunction,
+        modulusFunction = modulusFunction,
+        evidence = CauchyOption(options, "evidence", :declaredTailModulus),
+        initialWitness = CauchyWitness(initialTerm, initialTail, 0),
+        provenance = {= plugin=:cauchy, version=1, source=:declaredTailModulus }
+    });
+};
+
+CauchySequenceConstructor(termFunction, tailFunction ?= _, modulusFunction ?= _, options ?= {= }) -> {;
+    noCertificate = tailFunction == _ && modulusFunction == _;
+    completeCertificate = tailFunction != _ && modulusFunction != _;
+    {? noCertificate ? BuildBareCauchy(termFunction, options);
+       completeCertificate ? BuildCertifiedCauchy(termFunction, tailFunction, modulusFunction, options);
+       .Error("cauchy.Sequence expects term, or term, tailBound, modulus, and optional options")
+    };
+};
+
+CauchyCertifiedConstructor(termFunction, tailFunction, modulusFunction, options ?= {= }) ->
+    BuildCertifiedCauchy(termFunction, tailFunction, modulusFunction, options);
+
+CauchyGeometricConstructor(first, ratio, options ?= {= }) -> {;
+    exactFirst = CauchyRequireRational(first, "Cauchy geometric first term");
+    exactRatio = CauchyRequireRational(ratio, "Cauchy geometric ratio");
+    exactRatio.Abs() < 1 ?: _ ?_ .Error("Cauchy geometric ratio must have absolute value less than one");
+    shell = {= first=exactFirst, ratio=exactRatio };
+    initial = CauchyWitness(
+        exactFirst,
+        exactFirst.Abs() * exactRatio.Abs() / (1 - exactRatio.Abs()),
+        0
+    );
+    CauchyAttachCertifiedProtocol({=
+        valueKind = :cauchyReal,
+        schema = "rix.cauchy.real@1",
+        kind = :geometric,
+        name = CauchyOption(options, "name", :geometricSeries),
+        first = exactFirst,
+        ratio = exactRatio,
+        evidence = {=
+            kind = :geometricTail,
+            property = :absoluteRemainderBound,
+            ratio = exactRatio
+        },
+        initialWitness = initial,
+        provenance = {= plugin=:cauchy, version=1, source=:geometricTail }
+    });
+};
+
+CauchyGeometricRefinement(real, requestedWidth, maxCalls, maxIterations) -> {;
+    selected = real[:initialWitness];
+    calls = 0;
+    iterations = 0;
+    {@ step = 1;
+       @selected[:width] > @requestedWidth && @calls < @maxCalls && @iterations < @maxIterations;
+       {;
+           @selected = CauchyWitnessAt(@real, @selected[:index] + 1);
+           @calls += 1;
+           @iterations += 1;
+       };
+       step += 1
+    };
+    {=
+        selected = selected,
+        calls = calls,
+        iterations = iterations,
+        diagnostic = selected[:width] <= requestedWidth ?: _ ?_ :workBudgetReached
+    };
+};
+
+CauchyDeclaredRefinement(real, requestedWidth, maxCalls, maxIterations) -> {;
+    selected = real[:initialWitness];
+    calls = 0;
+    iterations = 0;
+    diagnostic = _;
+    selected[:width] > requestedWidth ?: {;
+        enoughWork = @maxCalls >= 3 && @maxIterations >= 1;
+        enoughWork ?: {;
+            targetRadius = @requestedWidth / 2;
+            index = CauchyRequireIndex(@real[:modulusFunction](targetRadius), "Cauchy modulus result");
+            @calls = 1;
+            candidate = CauchyWitnessAt(@real, index);
+            @calls = 3;
+            @iterations = 1;
+            candidate[:tailBound] <= targetRadius ?: _ ?_ .Error(
+                @"Cauchy modulus certificate failed at index @{index}: tail bound @{candidate[:tailBound]} exceeds @{targetRadius}"
+            );
+            candidate[:interval].Overlaps(@real[:initialWitness][:interval]) ?: _ ?_ .Error(
+                @"Cauchy certificate at index @{index} contradicts the initial certified enclosure"
+            );
+            @selected = candidate;
+        } ?_ {;
+            @diagnostic = :insufficientBudgetForModulusWitness;
+        };
+    } ?_ _;
+    {= selected=selected, calls=calls, iterations=iterations, diagnostic=diagnostic };
+};
+
+CauchyProtocolEnclosure(real, request, operation) -> {;
+    capabilities = CauchyCapabilities(real);
+    normalized = .RefinementRequest(request, operation, capabilities);
+    requestedWidth = normalized[:absoluteWidth];
+    maxCalls = normalized[:work][:maxCalls];
+    maxIterations = normalized[:work][:maxIterations];
+    state = real[:kind] == :geometric
+      ?: CauchyGeometricRefinement(real, requestedWidth, maxCalls, maxIterations)
+      ?_ CauchyDeclaredRefinement(real, requestedWidth, maxCalls, maxIterations);
+    selected = state[:selected];
+    achievedWidth = selected[:width];
+    goalMet = achievedWidth <= requestedWidth;
+    status = goalMet ?: :enclosed ?_ :budgetExhausted;
+    evidenceLevel = real[:kind] == :geometric ?: :proof ?_ :constructorGuarantee;
+    approximation = .CertifiedApproximation(selected[:term], selected[:interval], {=
+        reason = status,
+        requested = requestedWidth,
+        achieved = achievedWidth,
+        provider = :cauchy
+    });
+    {=
+        valueKind = :enclosure,
+        schema = "rix.numerics.enclosure@1",
+        status = status,
+        interval = selected[:interval],
+        certified = 1,
+        goalMet = goalMet,
+        requestedWidth = requestedWidth,
+        achievedWidth = achievedWidth,
+        approximation = approximation,
+        evidenceLevel = evidenceLevel,
+        backend = :cauchy,
+        operation = normalized[:operation],
+        trace = [selected],
+        work = {=
+            calls = state[:calls],
+            iterations = state[:iterations],
+            index = selected[:index],
+            maxCalls = maxCalls,
+            maxIterations = maxIterations,
+            exhausted = !goalMet
+        },
+        diagnostics = state[:diagnostic] == _ ?: [] ?_ [state[:diagnostic]],
+        evidence = {=
+            kind = real[:kind] == :geometric ?: :geometricTail ?_ :declaredTailModulus,
+            property = :limitWithinTermPlusOrMinusTailBound,
+            witness = selected,
+            certificate = real[:evidence]
+        },
+        source = real[:provenance]
+    };
+};
+
+cauchyNamespace = {= };
+cauchyNamespace._proto = {=
+    Sequence = (self, termFunction, tailFunction ?= _, modulusFunction ?= _, options ?= {= }) ->
+        CauchySequenceConstructor(termFunction, tailFunction, modulusFunction, options),
+    Certified = (self, termFunction, tailFunction, modulusFunction, options ?= {= }) ->
+        CauchyCertifiedConstructor(termFunction, tailFunction, modulusFunction, options),
+    Geometric = (self, first, ratio, options ?= {= }) -> CauchyGeometricConstructor(first, ratio, options),
+    Term = (self, real, index) -> CauchyTermAt(real, index),
+    TailBound = (self, real, index) -> CauchyTailBoundAt(real, index),
+    Modulus = (self, real, radius) -> CauchyModulusAt(real, radius),
+    Enclosure = (self, real, index) -> CauchyWitnessAt(real, index)[:interval],
+    Record = (self, real) -> CauchyRecord(real)
+};
+
+.Host.RegisterValue(
+    "cauchy",
+    cauchyNamespace,
+    "Rational Cauchy sequences with explicit certified tail bounds and moduli",
+    ["Numerics", "Exact"]
+);
+`;
+
   // rix/plugins/stern-brocot/stern-brocot.plugin.rix
   var stern_brocot_plugin_default = `/**
 id: stern-brocot
@@ -44098,438 +44465,6 @@ ${lines.join(`
     return installBallPlugin(options);
   }
 
-  // rix/plugins/cauchy/cauchy.js
-  var CAUCHY_SEQUENCE_SCHEMA = "rix.cauchy.sequence@1";
-  var CAUCHY_REAL_SCHEMA = "rix.cauchy.real@1";
-  var ZERO3 = Rational.zero;
-  var ONE2 = Rational.one;
-  var TWO = new Rational(2n, 1n);
-  var PROVIDER_MAX_WORK = 100000n;
-  var int17 = (value) => new Integer(BigInt(value));
-  var text13 = (value) => ({ type: "string", value: String(value) });
-  var bool6 = (value) => value ? int17(1) : null;
-  var sequence9 = (values4 = []) => ({ type: "sequence", values: values4 });
-  var map5 = (entries6 = []) => ({ type: "map", entries: new Map(entries6) });
-  function exactRational5(value, label2) {
-    if (value instanceof Rational)
-      return value;
-    if (value instanceof Integer)
-      return value.toRational();
-    throw new Error(`${label2} must be an exact Integer or Rational`);
-  }
-  function nonnegativeInteger2(value, label2) {
-    if (!(value instanceof Integer) || value.value < 0n) {
-      throw new Error(`${label2} must be a nonnegative Integer`);
-    }
-    return value.value;
-  }
-  function option6(options, key, fallback = null) {
-    if (!(options?.type === "map" && options.entries instanceof Map))
-      return fallback;
-    const wanted = String(key).toLowerCase();
-    for (const [candidate, value] of options.entries) {
-      if (String(candidate).toLowerCase() === wanted)
-        return value;
-    }
-    return fallback;
-  }
-  function nameOption(options, fallback) {
-    const value = option6(options, "name", null);
-    return value?.type === "string" ? value.value : value === null ? fallback : String(value);
-  }
-  function invokeExact(callable, args, runtime, label2) {
-    if (typeof runtime?.invoke !== "function")
-      throw new Error(`${label2} requires an evaluator callback`);
-    const result = runtime.invoke(callable, args, runtime.context, runtime.evaluate);
-    if (result && typeof result.then === "function") {
-      throw new Error(`${label2} must be synchronous in Cauchy Phase 1`);
-    }
-    return result;
-  }
-  function exactTerm(value, index) {
-    return exactRational5(value, `Cauchy term ${index}`);
-  }
-  function exactTailBound(value, index) {
-    const bound = exactRational5(value, `Cauchy tail bound ${index}`);
-    if (bound.lessThan(ZERO3))
-      throw new Error(`Cauchy tail bound ${index} must be nonnegative`);
-    return bound;
-  }
-  function witness(term, tailBound, index) {
-    return Object.freeze({
-      index,
-      term,
-      tailBound,
-      interval: new RationalInterval(term.subtract(tailBound), term.add(tailBound))
-    });
-  }
-  function witnessRecord(value) {
-    return map5([
-      ["index", int17(value.index)],
-      ["term", value.term],
-      ["tailbound", value.tailBound],
-      ["interval", value.interval],
-      ["width", value.interval.high.subtract(value.interval.low)]
-    ]);
-  }
-
-  class CauchySequence {
-    constructor(termCallable, { name = "sequence" } = {}) {
-      if (termCallable === null || termCallable === undefined)
-        throw new Error("Cauchy Sequence requires a term function");
-      this.type = "CauchySequence";
-      this.schema = CAUCHY_SEQUENCE_SCHEMA;
-      this.termCallable = termCallable;
-      this.name = String(name);
-      Object.freeze(this);
-    }
-    toString() {
-      return `CauchySequence(${this.name}, uncertified)`;
-    }
-  }
-
-  class CertifiedCauchyReal {
-    constructor({
-      kind,
-      name,
-      termCallable = null,
-      tailCallable = null,
-      modulusCallable = null,
-      first = null,
-      ratio = null,
-      evidence = null,
-      initialWitness
-    }) {
-      this.type = "CauchyReal";
-      this.schema = CAUCHY_REAL_SCHEMA;
-      this.kind = String(kind);
-      this.name = String(name);
-      this.termCallable = termCallable;
-      this.tailCallable = tailCallable;
-      this.modulusCallable = modulusCallable;
-      this.first = first;
-      this.ratio = ratio;
-      this.evidence = evidence;
-      this.initialWitness = initialWitness;
-      Object.freeze(this);
-    }
-    toString() {
-      return `CauchyReal(${this.name}, ${this.kind}, ${this.initialWitness.interval})`;
-    }
-  }
-  var isCauchySequence = (value) => value instanceof CauchySequence;
-  var isCertifiedCauchyReal = (value) => value instanceof CertifiedCauchyReal;
-  function requireSequence(value) {
-    if (!isCauchySequence(value) && !isCertifiedCauchyReal(value))
-      throw new Error("Expected a Cauchy sequence value");
-    return value;
-  }
-  function requireCertified(value) {
-    if (!isCertifiedCauchyReal(value))
-      throw new Error("Expected a certified Cauchy real");
-    return value;
-  }
-  function geometricTerm(real, index) {
-    const power = real.ratio.pow(index + 1n);
-    return real.first.multiply(ONE2.subtract(power)).divide(ONE2.subtract(real.ratio));
-  }
-  function geometricTailBound(real, index) {
-    const magnitude = real.ratio.abs();
-    return real.first.abs().multiply(magnitude.pow(index + 1n)).divide(ONE2.subtract(magnitude));
-  }
-  function witnessAt(real, index, runtime) {
-    if (real.kind === "geometric") {
-      return witness(geometricTerm(real, index), geometricTailBound(real, index), index);
-    }
-    const indexValue = int17(index);
-    return witness(exactTerm(invokeExact(real.termCallable, [indexValue], runtime, "Cauchy term function"), index), exactTailBound(invokeExact(real.tailCallable, [indexValue], runtime, "Cauchy tail-bound function"), index), index);
-  }
-  function constructSequence(args, runtime) {
-    if (args.length === 1)
-      return new CauchySequence(args[0]);
-    if (args.length === 3 || args.length === 4)
-      return constructCertified(args, runtime);
-    throw new Error("cauchy.Sequence expects term, or term, tailBound, modulus, and optional options");
-  }
-  function constructCertified(args, runtime) {
-    if (args.length < 3 || args.length > 4) {
-      throw new Error("cauchy.Certified expects term, tailBound, modulus, and optional options");
-    }
-    const [termCallable, tailCallable, modulusCallable, options = null] = args;
-    if (termCallable === null || tailCallable === null || modulusCallable === null) {
-      throw new Error("Certified Cauchy construction requires term, tail-bound, and modulus functions");
-    }
-    const initialTerm = exactTerm(invokeExact(termCallable, [int17(0)], runtime, "Cauchy term function"), 0n);
-    const initialTail = exactTailBound(invokeExact(tailCallable, [int17(0)], runtime, "Cauchy tail-bound function"), 0n);
-    return new CertifiedCauchyReal({
-      kind: "declared",
-      name: nameOption(options, "certifiedSequence"),
-      termCallable,
-      tailCallable,
-      modulusCallable,
-      evidence: option6(options, "evidence", text13("declaredTailModulus")),
-      initialWitness: witness(initialTerm, initialTail, 0n)
-    });
-  }
-  function constructGeometric(args) {
-    if (args.length < 2 || args.length > 3) {
-      throw new Error("cauchy.Geometric expects first term, ratio, and optional options");
-    }
-    const first = exactRational5(args[0], "Cauchy geometric first term");
-    const ratio = exactRational5(args[1], "Cauchy geometric ratio");
-    if (!ratio.abs().lessThan(ONE2))
-      throw new Error("Cauchy geometric ratio must have absolute value less than one");
-    const shell = { first, ratio };
-    const initial = witness(first, first.abs().multiply(ratio.abs()).divide(ONE2.subtract(ratio.abs())), 0n);
-    return new CertifiedCauchyReal({
-      kind: "geometric",
-      name: nameOption(args[2], "geometricSeries"),
-      first,
-      ratio,
-      evidence: map5([
-        ["kind", text13("geometricTail")],
-        ["property", text13("absoluteRemainderBound")],
-        ["ratio", ratio]
-      ]),
-      initialWitness: initial
-    });
-  }
-  function termAt(value, indexValue, runtime) {
-    const sequenceValue4 = requireSequence(value);
-    const index = nonnegativeInteger2(indexValue, "Cauchy term index");
-    if (isCertifiedCauchyReal(sequenceValue4))
-      return witnessAt(sequenceValue4, index, runtime).term;
-    return exactTerm(invokeExact(sequenceValue4.termCallable, [int17(index)], runtime, "Cauchy term function"), index);
-  }
-  function tailBoundAt(value, indexValue, runtime) {
-    const real = requireCertified(value);
-    const index = nonnegativeInteger2(indexValue, "Cauchy tail-bound index");
-    return witnessAt(real, index, runtime).tailBound;
-  }
-  function enclosureAt(value, indexValue, runtime) {
-    const real = requireCertified(value);
-    const index = nonnegativeInteger2(indexValue, "Cauchy enclosure index");
-    return witnessAt(real, index, runtime).interval;
-  }
-  function modulusAt(value, radiusValue, runtime) {
-    const real = requireCertified(value);
-    const radius = exactRational5(radiusValue, "Cauchy modulus radius");
-    if (!radius.greaterThan(ZERO3))
-      throw new Error("Cauchy modulus radius must be positive");
-    if (real.kind === "geometric") {
-      let index2 = 0n;
-      while (geometricTailBound(real, index2).greaterThan(radius)) {
-        index2 += 1n;
-        if (index2 > PROVIDER_MAX_WORK)
-          throw new Error("Cauchy modulus exceeds the provider index limit");
-      }
-      return int17(index2);
-    }
-    const indexValue = invokeExact(real.modulusCallable, [radius], runtime, "Cauchy modulus function");
-    const index = nonnegativeInteger2(indexValue, "Cauchy modulus result");
-    const bound = witnessAt(real, index, runtime).tailBound;
-    if (bound.greaterThan(radius)) {
-      throw new Error(`Cauchy modulus certificate failed at index ${index}: tail bound ${bound} exceeds ${radius}`);
-    }
-    return int17(index);
-  }
-  function capabilities2(kind) {
-    const certified = kind !== "bare";
-    const evidenceLevels = kind === "geometric" ? [text13("proof")] : kind === "declared" ? [text13("constructorGuarantee")] : [];
-    return map5([
-      ["valuekind", text13("numericsCapabilities")],
-      ["schema", text13("rix.numerics.capabilities@1")],
-      ["backend", text13("cauchy")],
-      ["representation", text13(certified ? "rationalSequenceWithTailModulus" : "bareRationalSequence")],
-      ["operations", sequence9(certified ? [text13("enclose"), text13("refine")] : [])],
-      ["evidencelevels", sequence9(evidenceLevels)],
-      ["certified", bool6(certified)],
-      ["arbitraryrefinement", bool6(certified)],
-      ["deterministic", int17(1)],
-      ["minimumwidth", ZERO3],
-      ["maxcalls", int17(certified ? PROVIDER_MAX_WORK : 0n)],
-      ["maxiterations", int17(certified ? PROVIDER_MAX_WORK : 0n)]
-    ]);
-  }
-  function refinementResult(real, requestValue, runtime) {
-    const providerCapabilities = capabilities2(real.kind);
-    const request = normalizeRefinementRequest(requestValue, { capabilities: providerCapabilities });
-    const requestedWidth = refinementEntry(request, "absolutewidth");
-    const work = refinementEntry(request, "work");
-    const maxCalls = nonnegativeInteger2(refinementEntry(work, "maxcalls", int17(0)), "Cauchy maxCalls");
-    const maxIterations = nonnegativeInteger2(refinementEntry(work, "maxiterations", int17(0)), "Cauchy maxIterations");
-    let selected = real.initialWitness;
-    let calls = 0n;
-    let iterations = 0n;
-    let diagnostic2 = null;
-    const initialWidth = selected.interval.high.subtract(selected.interval.low);
-    if (initialWidth.greaterThan(requestedWidth)) {
-      if (real.kind === "geometric") {
-        const budget = maxCalls < maxIterations ? maxCalls : maxIterations;
-        while (iterations < budget) {
-          const nextIndex = selected.index + 1n;
-          selected = witnessAt(real, nextIndex, runtime);
-          calls += 1n;
-          iterations += 1n;
-          if (selected.interval.high.subtract(selected.interval.low).lessThanOrEqual(requestedWidth))
-            break;
-        }
-        if (selected.interval.high.subtract(selected.interval.low).greaterThan(requestedWidth)) {
-          diagnostic2 = "workBudgetReached";
-        }
-      } else if (maxCalls < 3n || maxIterations < 1n) {
-        diagnostic2 = "insufficientBudgetForModulusWitness";
-      } else {
-        const targetRadius = requestedWidth.divide(TWO);
-        const indexValue = invokeExact(real.modulusCallable, [targetRadius], runtime, "Cauchy modulus function");
-        calls += 1n;
-        const index = nonnegativeInteger2(indexValue, "Cauchy modulus result");
-        const candidate = witnessAt(real, index, runtime);
-        calls += 2n;
-        iterations = 1n;
-        if (candidate.tailBound.greaterThan(targetRadius)) {
-          throw new Error(`Cauchy modulus certificate failed at index ${index}: tail bound ${candidate.tailBound} exceeds ${targetRadius}`);
-        }
-        if (!candidate.interval.overlaps(real.initialWitness.interval)) {
-          throw new Error(`Cauchy certificate at index ${index} contradicts the initial certified enclosure`);
-        }
-        selected = candidate;
-      }
-    }
-    const interval2 = selected.interval;
-    const achievedWidth = interval2.high.subtract(interval2.low);
-    const goalMet = achievedWidth.lessThanOrEqual(requestedWidth);
-    const status = goalMet ? "enclosed" : "budgetExhausted";
-    const approximation = new CertifiedApproximation(selected.term, interval2, {
-      representation: {
-        kind: "derived",
-        reason: status,
-        original: null,
-        requested: requestedWidth,
-        achieved: achievedWidth,
-        provider: "cauchy"
-      }
-    });
-    return map5([
-      ["valuekind", text13("enclosure")],
-      ["schema", text13("rix.numerics.enclosure@1")],
-      ["status", text13(status)],
-      ["interval", interval2],
-      ["certified", int17(1)],
-      ["goalmet", bool6(goalMet)],
-      ["requestedwidth", requestedWidth],
-      ["achievedwidth", achievedWidth],
-      ["approximation", approximation],
-      ["evidencelevel", text13(real.kind === "geometric" ? "proof" : "constructorGuarantee")],
-      ["backend", text13("cauchy")],
-      ["operation", refinementEntry(request, "operation")],
-      ["trace", sequence9([witnessRecord(selected)])],
-      ["work", map5([
-        ["calls", int17(calls)],
-        ["iterations", int17(iterations)],
-        ["index", int17(selected.index)],
-        ["maxcalls", int17(maxCalls)],
-        ["maxiterations", int17(maxIterations)],
-        ["exhausted", bool6(!goalMet)]
-      ])],
-      ["diagnostics", sequence9(diagnostic2 ? [text13(diagnostic2)] : [])],
-      ["evidence", map5([
-        ["kind", text13(real.kind === "geometric" ? "geometricTail" : "declaredTailModulus")],
-        ["property", text13("limitWithinTermPlusOrMinusTailBound")],
-        ["witness", witnessRecord(selected)],
-        ["certificate", real.evidence]
-      ])],
-      ["source", map5([
-        ["plugin", text13("cauchy")],
-        ["schema", text13(CAUCHY_REAL_SCHEMA)],
-        ["recipe", text13(real.kind)],
-        ["name", text13(real.name)]
-      ])]
-    ]);
-  }
-  function record(value) {
-    const sequenceValue4 = requireSequence(value);
-    if (isCauchySequence(sequenceValue4)) {
-      return map5([
-        ["valuekind", text13("cauchySequence")],
-        ["schema", text13(CAUCHY_SEQUENCE_SCHEMA)],
-        ["name", text13(sequenceValue4.name)],
-        ["certified", null],
-        ["tailmodulus", null]
-      ]);
-    }
-    const entries6 = [
-      ["valuekind", text13("cauchyReal")],
-      ["schema", text13(CAUCHY_REAL_SCHEMA)],
-      ["name", text13(sequenceValue4.name)],
-      ["kind", text13(sequenceValue4.kind)],
-      ["certified", int17(1)],
-      ["initialwitness", witnessRecord(sequenceValue4.initialWitness)],
-      ["evidence", sequenceValue4.evidence]
-    ];
-    if (sequenceValue4.kind === "geometric") {
-      entries6.push(["first", sequenceValue4.first], ["ratio", sequenceValue4.ratio]);
-    }
-    return map5(entries6);
-  }
-  function method13(name, impl) {
-    return { type: "method_builtin", name, impl };
-  }
-  function registerCauchyMethods(systemContext, owner = {}) {
-    const register = (typeName, name, impl) => systemContext.registerMethod(typeName, name, method13(name, impl), owner);
-    register("CauchySequence", "Term", ([value, index], context, evaluate, invoke) => termAt(value, index, { context, evaluate, invoke }));
-    register("CauchySequence", "Record", ([value]) => record(value));
-    register("CauchySequence", "NumericsCapabilities", () => capabilities2("bare"));
-    register("CauchySequence", "Enclose", ([value, request]) => unsupportedRefinementResult(request, capabilities2("bare"), "missingCertifiedTailModulus"));
-    register("CauchySequence", "Refine", ([value, request]) => unsupportedRefinementResult(request, capabilities2("bare"), "missingCertifiedTailModulus"));
-    register("CauchyReal", "Term", ([value, index], context, evaluate, invoke) => termAt(value, index, { context, evaluate, invoke }));
-    register("CauchyReal", "TailBound", ([value, index], context, evaluate, invoke) => tailBoundAt(value, index, { context, evaluate, invoke }));
-    register("CauchyReal", "Modulus", ([value, radius], context, evaluate, invoke) => modulusAt(value, radius, { context, evaluate, invoke }));
-    register("CauchyReal", "Enclosure", ([value, index], context, evaluate, invoke) => enclosureAt(value, index, { context, evaluate, invoke }));
-    register("CauchyReal", "InitialEnclosure", ([value]) => requireCertified(value).initialWitness.interval);
-    register("CauchyReal", "Record", ([value]) => record(value));
-    register("CauchyReal", "NumericsCapabilities", ([value]) => capabilities2(requireCertified(value).kind));
-    register("CauchyReal", "Enclose", ([value, request], context, evaluate, invoke) => refinementResult(requireCertified(value), request, { context, evaluate, invoke }));
-    register("CauchyReal", "Refine", ([value, request], context, evaluate, invoke) => refinementResult(requireCertified(value), request, { context, evaluate, invoke }));
-  }
-  function createCauchyPluginValue() {
-    const helpers = new Map([
-      ["Sequence", (args, runtime) => constructSequence(args, runtime)],
-      ["Certified", (args, runtime) => constructCertified(args, runtime)],
-      ["Geometric", (args) => constructGeometric(args)],
-      ["Term", (args, runtime) => termAt(args[0], args[1], runtime)],
-      ["TailBound", (args, runtime) => tailBoundAt(args[0], args[1], runtime)],
-      ["Modulus", (args, runtime) => modulusAt(args[0], args[1], runtime)],
-      ["Enclosure", (args, runtime) => enclosureAt(args[0], args[1], runtime)],
-      ["Record", (args) => record(args[0])]
-    ]);
-    const entries6 = new Map;
-    const extension = new Map([["immutable", int17(1)]]);
-    for (const [name, helper] of helpers) {
-      entries6.set(name, helper);
-      entries6.set(name.toUpperCase(), helper);
-      extension.set(name.toUpperCase(), method13(name, (args, context, evaluate, invoke) => helper(args.slice(1), { context, evaluate, invoke })));
-    }
-    return { type: "map", entries: entries6, _ext: extension };
-  }
-  function installCauchyPlugin({ systemContext, metadata: metadata3 = {}, options = {} }) {
-    const value = createCauchyPluginValue();
-    const mount = options.as || metadata3.mount || "cauchy";
-    const owner = { pluginId: metadata3.id || "cauchy", mount };
-    systemContext.registerHostValue(mount, value, {
-      doc: metadata3.description || "Rational Cauchy sequences with certified tail moduli",
-      groups: metadata3.groups || ["Numerics", "Exact"],
-      pluginId: metadata3.id || "cauchy"
-    });
-    registerCauchyMethods(systemContext, owner);
-    return value;
-  }
-
-  // rix/plugins/cauchy/cauchy.plugin.rix.js
-  function install29(options) {
-    return installCauchyPlugin(options);
-  }
-
   // rix/plugins/bundled.js
   var BUNDLED_PLUGINS = [
     {
@@ -44565,21 +44500,9 @@ ${lines.join(`
       install: install28
     },
     {
-      metadata: {
-        id: "cauchy",
-        description: "Rational Cauchy sequences with explicit certified tail bounds and moduli.",
-        kind: "host",
-        mount: "cauchy",
-        exports: ["Sequence", "Certified", "Geometric", "Term", "TailBound", "Modulus", "Enclosure", "Record"],
-        groups: ["Numerics", "Exact"],
-        permissions: [],
-        provides: ["rix.cauchy@1", "rix.refinable@1", "rix.enclosable-real@1"],
-        schemas: ["rix.cauchy.sequence@1", "rix.cauchy.real@1"],
-        snapshot: false,
-        deterministic: true,
-        defaultEnabled: false
-      },
-      install: install29
+      metadata: readPluginHeader(cauchy_plugin_default, "cauchy.plugin.rix"),
+      source: cauchy_plugin_default,
+      sourcePath: "bundled:cauchy.plugin.rix"
     },
     {
       metadata: {
@@ -44858,7 +44781,7 @@ ${lines.join(`
       ["pdf", "PDF document and figure renderer orchestrated through LaTeX.", "pdf", ["Render"], ["process", "files"], install25, "application/pdf", false],
       ["gltf", "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", "gltf", ["Render"], [], install26, "model/gltf+json", true],
       ["csv", "Deterministic CSV and TSV export for portable Tables and typed data Relations.", "csv", ["Render"], [], install27, "text/csv", true, ["tsv", "text/tab-separated-values"], ["Renderers", "Data"]]
-    ].map(([id, description, mount, exports, permissions, install30, mime, deterministic, aliases = [], groups = ["Renderers"]]) => ({
+    ].map(([id, description, mount, exports, permissions, install29, mime, deterministic, aliases = [], groups = ["Renderers"]]) => ({
       metadata: {
         id,
         description,
@@ -44873,25 +44796,25 @@ ${lines.join(`
         deterministic,
         defaultEnabled: false
       },
-      install: install30
+      install: install29
     }))
   ];
   function installBundledPlugins(catalog) {
-    for (const { metadata: metadata3, install: install30, source, sourcePath } of BUNDLED_PLUGINS) {
+    for (const { metadata: metadata3, install: install29, source, sourcePath } of BUNDLED_PLUGINS) {
       if (catalog.info(metadata3.id))
         continue;
       if (source) {
         catalog.addMetadata(metadata3, { kind: "rix", source, sourcePath });
       } else {
         catalog.addMetadata(metadata3, { kind: "host" });
-        catalog.registerInstaller(metadata3.id, install30);
+        catalog.registerInstaller(metadata3.id, install29);
       }
     }
     return catalog;
   }
 
   // rix/src/eval/functions/units.js
-  function int18(value) {
+  function int17(value) {
     return new Integer(BigInt(value));
   }
   function stringValue8(value, label2) {
@@ -44961,7 +44884,7 @@ ${lines.join(`
         if (!match)
           throw new Error(`Expected integer exponent in exact expression '${source}'`);
         index += match[0].length;
-        value = powScalar(value, int18(match[0]));
+        value = powScalar(value, int17(match[0]));
       }
       return value;
     }
@@ -44989,10 +44912,10 @@ ${lines.join(`
     if (isScalar(left) && isUnitValue(right))
       return constructQuantity(left, right);
     if (isQuantity(left) && isUnitValue(right)) {
-      return multiplyQuantityValues(left, constructQuantity(int18(1), right));
+      return multiplyQuantityValues(left, constructQuantity(int17(1), right));
     }
     if (isUnitValue(left) && isQuantity(right)) {
-      return multiplyQuantityValues(constructQuantity(int18(1), left), right);
+      return multiplyQuantityValues(constructQuantity(int17(1), left), right);
     }
     return multiplyQuantityValues(left, right);
   }
@@ -45002,21 +44925,21 @@ ${lines.join(`
     if (isScalar(left) && isUnitValue(right))
       return constructQuantity(left, invertUnit(right));
     if (isUnitValue(left) && isScalar(right))
-      return constructQuantity(divideScalars(int18(1), right), left);
+      return constructQuantity(divideScalars(int17(1), right), left);
     if (isQuantity(left) && isUnitValue(right)) {
-      return divideQuantityValues(left, constructQuantity(int18(1), right));
+      return divideQuantityValues(left, constructQuantity(int17(1), right));
     }
     if (isUnitValue(left) && isQuantity(right)) {
-      return divideQuantityValues(constructQuantity(int18(1), left), right);
+      return divideQuantityValues(constructQuantity(int17(1), left), right);
     }
     return divideQuantityValues(left, right);
   }
   function resolveTargetUnit(target, context, systemContext) {
     if (isUnitValue(target))
       return target;
-    const text14 = stringValue8(target, "ConvertUnit target");
+    const text13 = stringValue8(target, "ConvertUnit target");
     const collection2 = activeCollection(context, systemContext, "Units", ["UNITS", "Units"]);
-    return parseUnitExpression(text14, collection2);
+    return parseUnitExpression(text13, collection2);
   }
   var unitExactFunctions = {
     UNIT: {
@@ -45060,7 +44983,7 @@ ${lines.join(`
     }
   };
   function boolResult3(value) {
-    return value ? int18(1) : null;
+    return value ? int17(1) : null;
   }
   function addWithOptionalWarning([left, right], context) {
     const warnings = context?.getEnv?.("warnings", runtimeDefaults.warnings) ?? runtimeDefaults.warnings;
@@ -46431,15 +46354,15 @@ ${lines.join(`
       while (nextToStart < items.length && nextToStart < window)
         start(nextToStart++);
       for (let published = 0;published < items.length; published++) {
-        const record2 = await promises[published];
-        if (!record2.dropped) {
+        const record = await promises[published];
+        if (!record.dropped) {
           candidateCount++;
-          lastCandidate = record2.value;
-          if (record2.terminalState === "undecided")
+          lastCandidate = record.value;
+          if (record.terminalState === "undecided")
             uncertain = true;
-          if (terminal === "PANY" && record2.terminalState === "truth")
-            return await stop(record2.value);
-          if (terminal === "PALL" && record2.terminalState === "null")
+          if (terminal === "PANY" && record.terminalState === "truth")
+            return await stop(record.value);
+          if (terminal === "PALL" && record.terminalState === "null")
             return await stop(null);
         }
         if (nextToStart < items.length)
@@ -46536,17 +46459,17 @@ ${lines.join(`
       while (nextToStart < window)
         start(nextToStart++);
       while (!stopped) {
-        const record2 = await promises[nextToPublish++];
-        if (record2.done) {
+        const record = await promises[nextToPublish++];
+        if (record.done) {
           stopReason = { kind: "complete" };
           cancelPending(streamEarlyStop("source completion"));
           break;
         }
-        if (record2.unresolved !== undefined) {
-          finalResult = record2.unresolved;
+        if (record.unresolved !== undefined) {
+          finalResult = record.unresolved;
           stopped = true;
         }
-        for (const entry of record2.records) {
+        for (const entry of record.records) {
           outputIndex++;
           if (terminal.kind === "collect")
             collected.push(entry.value);
@@ -46580,7 +46503,7 @@ ${lines.join(`
           if (stopped)
             break;
         }
-        if (record2.stop)
+        if (record.stop)
           stopped = true;
         if (stopped) {
           stopReason = { kind: "early terminal" };
@@ -46806,25 +46729,25 @@ ${lines.join(`
     throw new Error("Async pipe requires a finite collection");
   }
   function assembleAsyncPipeResult(collection2, items, records, stages = []) {
-    if (records.some((record2) => record2.unresolved === true))
+    if (records.some((record) => record.unresolved === true))
       return UNDECIDED;
     if (isTensor(collection2)) {
-      const kept = records.filter((record2) => record2.keep);
+      const kept = records.filter((record) => record.keep);
       if (stages.some((stage) => stage.fn === "PFILTER")) {
         return {
           type: "sequence",
-          values: kept.map((record2) => ({
+          values: kept.map((record) => ({
             type: "tuple",
-            values: [record2.value, items[record2.index].locator]
+            values: [record.value, items[record.index].locator]
           }))
         };
       }
-      return createTensor(collection2.shape, kept.map((record2) => record2.value));
+      return createTensor(collection2.shape, kept.map((record) => record.value));
     }
     if (collection2?.type === "map") {
       return { type: "map", entries: new Map(records.filter((r) => r.keep).map((r) => [items[r.index].key, r.value])) };
     }
-    const values4 = records.filter((record2) => record2.keep).map((record2) => record2.value);
+    const values4 = records.filter((record) => record.keep).map((record) => record.value);
     if (typeof collection2 === "string" || collection2?.type === "string") {
       const joined = values4.map((value) => value?.type === "string" ? value.value : value).join("");
       return collection2?.type === "string" ? { type: "string", value: joined } : joined;
@@ -46908,16 +46831,16 @@ ${lines.join(`
   }
   function asyncTerminalResult(terminal, records) {
     if (terminal === "PANY") {
-      const match = records.find((record2) => !record2.dropped && record2.terminalState === "truth");
+      const match = records.find((record) => !record.dropped && record.terminalState === "truth");
       if (match)
         return match.value;
-      return records.some((record2) => !record2.dropped && record2.terminalState === "undecided") ? UNDECIDED : null;
+      return records.some((record) => !record.dropped && record.terminalState === "undecided") ? UNDECIDED : null;
     }
     if (terminal === "PALL") {
-      const candidates = records.filter((record2) => !record2.dropped);
-      if (candidates.length === 0 || candidates.some((record2) => record2.terminalState === "null"))
+      const candidates = records.filter((record) => !record.dropped);
+      if (candidates.length === 0 || candidates.some((record) => record.terminalState === "null"))
         return null;
-      if (candidates.some((record2) => record2.terminalState === "undecided"))
+      if (candidates.some((record) => record.terminalState === "undecided"))
         return UNDECIDED;
       return candidates.at(-1).value;
     }
@@ -46980,10 +46903,10 @@ ${lines.join(`
     return !Array.isArray(source?.values);
   }
   async function evaluateScalarExpectedPipe(source, stages, callables, context, registry, systemContext, state) {
-    const record2 = await runAsyncPipeStages(source, 0, undefined, source, stages, callables, context, registry, systemContext, state);
+    const record = await runAsyncPipeStages(source, 0, undefined, source, stages, callables, context, registry, systemContext, state);
     if (stages.at(-1)?.fn === "PFOREACH")
       return null;
-    return record2.keep ? record2.value : PIPE_SKIP;
+    return record.keep ? record.value : PIPE_SKIP;
   }
   async function evaluateSequentialAsyncPipe(irNode, context, registry, systemContext, state) {
     const stages = [];
@@ -48080,16 +48003,16 @@ ${lines.join(`
   }
   var RIXCEL_FORMULA_CLIPBOARD_TYPE = "application/x-rixcel-formula";
   var RIXCEL_FORMULA_BLOCK_CLIPBOARD_TYPE = "application/x-rixcel-formula-block";
-  function parseSheetFormulaClipboard(text14, fallbackAssignmentMode = ":=") {
-    const source = String(text14 ?? "");
+  function parseSheetFormulaClipboard(text13, fallbackAssignmentMode = ":=") {
+    const source = String(text13 ?? "");
     const match = source.match(/^\s*(::=|~~=|:=|~=|=)\s*([\s\S]+)$/u);
     return Object.freeze({
       source: match ? match[2] : source,
       assignmentMode: match?.[1] ?? fallbackAssignmentMode
     });
   }
-  function parseSheetFormulaBlock(text14, fallbackAssignmentMode = ":=") {
-    const rows = String(text14 ?? "").replace(/\r\n?/gu, `
+  function parseSheetFormulaBlock(text13, fallbackAssignmentMode = ":=") {
+    const rows = String(text13 ?? "").replace(/\r\n?/gu, `
 `).split(`
 `);
     if (rows.at(-1) === "")
@@ -48955,7 +48878,7 @@ ${lines.join(`
     if (control.kind === "control_slider")
       return sliderValue(control, event.index);
     if (control.kind === "control_choice") {
-      return indexedValue(control, event.index, control.options.map((option7) => option7.value), "Control choice");
+      return indexedValue(control, event.index, control.options.map((option6) => option6.value), "Control choice");
     }
     if (control.kind === "control_toggle") {
       return indexedValue(control, event.index, control.values, "Control toggle");
@@ -50012,16 +49935,16 @@ ${lines.join(`
   };
 
   // rix/plugins/float/protocol.js
-  function int19(value) {
+  function int18(value) {
     return new Integer(BigInt(value));
   }
-  function text14(value) {
+  function text13(value) {
     return { type: "string", value };
   }
-  function map6(entries6) {
+  function map5(entries6) {
     return { type: "map", entries: new Map(entries6) };
   }
-  function sequence10(values4) {
+  function sequence9(values4) {
     return { type: "sequence", values: values4 };
   }
   function entry(value, key, fallback = null) {
@@ -50056,51 +49979,51 @@ ${lines.join(`
     return binaryExponent >= 0 ? new Rational(numerator << BigInt(binaryExponent), 1n) : new Rational(numerator, 1n << BigInt(-binaryExponent));
   }
   function NumericsCapabilities() {
-    return map6([
-      ["valuekind", text14("numericsCapabilities")],
-      ["schema", text14("rix.numerics.capabilities@1")],
-      ["backend", text14("float")],
-      ["representation", text14("ieee754Binary64")],
-      ["operations", sequence10([text14("sample"), text14("enclose")])],
-      ["evidencelevels", sequence10([text14("approximate")])],
+    return map5([
+      ["valuekind", text13("numericsCapabilities")],
+      ["schema", text13("rix.numerics.capabilities@1")],
+      ["backend", text13("float")],
+      ["representation", text13("ieee754Binary64")],
+      ["operations", sequence9([text13("sample"), text13("enclose")])],
+      ["evidencelevels", sequence9([text13("approximate")])],
       ["certified", null],
       ["arbitraryrefinement", null],
-      ["deterministic", int19(1)],
+      ["deterministic", int18(1)],
       ["minimumwidth", Rational.zero],
-      ["storedvalueexact", int19(1)],
+      ["storedvalueexact", int18(1)],
       ["intendedrealcertified", null]
     ]);
   }
   function approximateStoredValue(value, request, operation) {
     const exact2 = exactFloatRational(value);
     const requestedWidth = entry(request, "absolutewidth", null);
-    const requestedWork = entry(entry(request, "work", null), "maxwork", int19(0));
-    return map6([
-      ["valuekind", text14("enclosure")],
-      ["schema", text14("rix.numerics.enclosure@1")],
-      ["status", text14("approximate")],
+    const requestedWork = entry(entry(request, "work", null), "maxwork", int18(0));
+    return map5([
+      ["valuekind", text13("enclosure")],
+      ["schema", text13("rix.numerics.enclosure@1")],
+      ["status", text13("approximate")],
       ["interval", new RationalInterval(exact2, exact2)],
       ["certified", null],
       ["goalmet", null],
       ["requestedwidth", requestedWidth],
       ["achievedwidth", Rational.zero],
-      ["evidencelevel", text14("approximate")],
-      ["backend", text14("float")],
-      ["operation", text14(operation)],
-      ["trace", sequence10([])],
-      ["work", map6([
-        ["samples", int19(1)],
+      ["evidencelevel", text13("approximate")],
+      ["backend", text13("float")],
+      ["operation", text13(operation)],
+      ["trace", sequence9([])],
+      ["work", map5([
+        ["samples", int18(1)],
         ["maxwork", requestedWork],
         ["exhausted", null]
       ])],
-      ["diagnostics", sequence10([
-        text14("storedValueOnly"),
-        text14("noErrorBoundForIntendedReal")
+      ["diagnostics", sequence9([
+        text13("storedValueOnly"),
+        text13("noErrorBoundForIntendedReal")
       ])],
-      ["source", map6([
-        ["plugin", text14("float")],
-        ["representation", text14("ieee754Binary64")],
-        ["storedvalueexact", int19(1)]
+      ["source", map5([
+        ["plugin", text13("float")],
+        ["representation", text13("ieee754Binary64")],
+        ["storedvalueexact", int18(1)]
       ])]
     ]);
   }
@@ -50265,7 +50188,7 @@ ${lines.join(`
       installs
     });
   }
-  function method14(name, impl) {
+  function method13(name, impl) {
     return { type: "method_builtin", name, impl };
   }
   function installBrowserApproxMathPlugin({ systemContext, registry, metadata: metadata3 = {}, options = {} }) {
@@ -50275,7 +50198,7 @@ ${lines.join(`
     const entries6 = new Map;
     const extension = new Map;
     const add2 = (name, impl) => {
-      const entry2 = method14(name, impl);
+      const entry2 = method13(name, impl);
       entries6.set(name, entry2);
       extension.set(name.toUpperCase(), entry2);
     };
@@ -50301,7 +50224,7 @@ ${lines.join(`
       doc: "Optional IEEE-754 Float conversion and approximate math",
       groups: ["ApproximateMath", "Float"]
     });
-    const floatExtension = method14("Float", (args, _context, evaluate2) => requireFloat(args[0], evaluate2));
+    const floatExtension = method13("Float", (args, _context, evaluate2) => requireFloat(args[0], evaluate2));
     const owner = {
       pluginId: metadata3.id || "float",
       mount: options.as || metadata3.mount || "float"
@@ -50310,7 +50233,7 @@ ${lines.join(`
     systemContext.registerMethod("Rational", "Float", floatExtension, owner);
     return systemContext;
   }
-  var install30 = installBrowserApproxMathPlugin;
+  var install29 = installBrowserApproxMathPlugin;
 
   // rix/examples/plugins/example-array-js/array-js.plugin.rix.js
   function valuesFrom(value) {
@@ -50349,7 +50272,7 @@ ${lines.join(`
     }
     return { type: "map", entries: entries6, _ext: extension };
   }
-  function install31({ systemContext }) {
+  function install30({ systemContext }) {
     const value = collection2();
     systemContext.registerHostCallableValue("arrayJs", value, {
       impl(args) {
@@ -50397,7 +50320,7 @@ defaultEnabled: false
       groups: ["ApproximateMath", "Float"],
       permissions: [],
       defaultEnabled: false
-    }, install30);
+    }, install29);
     addPlugin(catalog, {
       id: "example-array-js",
       description: "Teaching JavaScript plugin demonstrating array helpers.",
@@ -50407,7 +50330,7 @@ defaultEnabled: false
       groups: ["Examples"],
       permissions: [],
       defaultEnabled: false
-    }, install31);
+    }, install30);
     addPlugin(catalog, {
       id: "example-array-rix",
       description: "Teaching RiX plugin demonstrating array helpers.",

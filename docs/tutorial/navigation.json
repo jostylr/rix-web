@@ -797,8 +797,8 @@
       "number": "14b",
       "parent": "14",
       "file": "plugin-cauchy.html",
-      "title": "Certified Cauchy sequences",
-      "description": "Turn rational terms and effective tail bounds into certified real enclosures.",
+      "title": "Certified Cauchy sequences in RiX",
+      "description": "Use pure RiX rational terms and effective tail bounds to build certified real enclosures.",
       "pluginGroup": false,
       "status": "implemented"
     },

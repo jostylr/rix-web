@@ -58,8 +58,8 @@ export const pluginTutorials = [
   {
     "pluginId": "cauchy",
     "pluginDirectory": "cauchy",
-    "title": "Certified Cauchy sequences",
-    "description": "Turn rational terms and effective tail bounds into certified real enclosures.",
+    "title": "Certified Cauchy sequences in RiX",
+    "description": "Use pure RiX rational terms and effective tail bounds to build certified real enclosures.",
     "status": "implemented",
     "theme": "Numbers and numerics",
     "sourcePath": "../rix/plugins/cauchy/tutorial.md",
