@@ -38,6 +38,42 @@ score := -2;
 } ;
 ```
 
+## Undecided is a third result
+
+An uncertain numeric comparison does not pretend that overlap means false.
+When the available enclosure supports both outcomes it returns standalone `?`,
+and `??` selects the corresponding branch:
+
+```rix edu
+x := 23.456?789;
+relation := x < 23.4565;
+[
+    relation,
+    relation
+        ?: "certainly less"
+        ?_ "certainly not less"
+        ?? "not decided by this enclosure"
+];
+```
+
+The undecided value is not simply contagious. Strong three-state logic still
+uses decisive later operands when possible: `? && _` is false, while `? || 1`
+is true. Otherwise uncertainty remains:
+
+```rix edu
+[
+    ! ?,
+    ? && _,
+    ? && 1,
+    ? || 1,
+    ? || _
+];
+```
+
+Predicates, cases, assertions, loops, and guards never accept `?` as ordinary
+truth. They either expose an unresolved result or stop at a defined
+side-effect boundary.
+
 ## Try a computed value
 
 A prepared trial evaluates a candidate once, gives it a temporary name, and
@@ -49,8 +85,8 @@ ReadScore(7) ?- value: [value ? :Integer, value > 0] ;
 ```
 
 On success, the result is the original candidate. If candidate evaluation,
-binding, or a check fails, soft `?-` returns `_`. The temporary `value` binding
-does not escape the trial.
+binding, or a check fails decisively, soft `?-` returns `_`. An undecided check
+returns `?` instead. The temporary `value` binding does not escape the trial.
 
 Prepared trials become ordered alternatives inside a case container. A soft
 failure advances to the next arm:

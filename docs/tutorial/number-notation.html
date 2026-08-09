@@ -1,14 +1,121 @@
-<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Repeating decimals, bases, and continued fractions." /><title>Number notation — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./expressions.html#lesson-start" title="Expressions and exact notation">3</a> <span aria-hidden="true">·</span> <span>b</span></p><h1>Number notation</h1><p class="deck">Repeating decimals, bases, and continued fractions.</p><div class="lesson-content"><h2>Orientation</h2>
-<p>RiX has exact syntaxes for forms that are often approximate elsewhere: repeating decimals, mixed numbers, continued fractions, and alternate bases.</p>
+<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Every built-in exact, certified, interval, base, and output notation." /><title>Number notation — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./expressions.html#lesson-start" title="Expressions and exact notation">3</a> <span aria-hidden="true">·</span> <span>b</span></p><h1>Number notation</h1><p class="deck">Every built-in exact, certified, interval, base, and output notation.</p><div class="lesson-content"><h2>Orientation</h2>
+<p>RiX distinguishes exact values, certified uncertain scalars, and interval collections. Its number syntax covers integers, rational division, finite and repeating decimals, mixed numbers, radix shifts, continued fractions, exact intervals, certified prefixes, and bases without passing through floating point.</p>
 <p>Read this chapter with RatCalc open. Predict the result before running an example, then change a single part and run it again. That small loop of prediction, execution, and inspection is the fastest way to make RiX syntax feel like a language rather than a table of symbols.</p>
 <h2>A worked example</h2>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">a := 0.#3;
-b := 1..2/3;
-a + b ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">values := [
+    1000,
+    -3 / 4,
+    0.125,
+    0.1#6,
+    -2..1/4,
+    3.~7~15,
+    1.25_^3
+];
+values;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The final line is the displayed value; the earlier lines set up the experiment. Keep the setup visible so you can tell whether a name, a cell, or a collection is being reused when the expression changes.</p>
-<h2>Read the result</h2>
-<p>A repeating marker describes a rational pattern, not a floating-point approximation.</p>
+<h2>Exact scalar input forms</h2>
+<p>Integer and finite-decimal input is exact. <code>/</code> is the exact division operator, so <code>3 / 4</code> evaluates to a Rational rather than a floating value. A repeating marker describes an infinite rational pattern exactly:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="9" spellcheck="false">values := [
+    0.#3,
+    1.23#45,
+    5#3,
+    1.~2,
+    ~-1.~2,
+    -~1.~2
+];
+values;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p><code>#</code> begins the repeating digits. Continued fractions use <code>.~</code>; a leading <code>~</code> makes a signed first coefficient explicit, while unary <code>-</code> negates the entire continued fraction. <code>_^</code> is RiX&#039;s exact radix-shift notation: <code>1.25_^3</code> means <code>1.25 * 10^3</code>, not an inexact scientific-number literal.</p>
+<h2>Exact interval input forms</h2>
+<p>A colon constructs an exact closed interval. Decimal brackets provide compact suffix and last-place-offset forms, including exact repeating endpoints:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="9" spellcheck="false">intervals := [
+    1/3:2/3,
+    1.23[56:67],
+    1.23[+5:-6],
+    1.2[+-1],
+    1.2[+-0.1],
+    0.[#3:#6]
+];
+intervals;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Unsigned bracket entries append digits. Signed entries are offsets measured in units of the last visible place; <code>1.2[+-0.1]</code> is therefore <code>1.2 +/- 0.01</code>. Intervals are collections of possible values, unlike the uncertain scalars in the next section.</p>
+<h2>Certified finite approximations</h2>
+<p>Inside a number, <code>?</code> marks the end of the certified prefix. Digits or continued fraction coefficients after it remain useful candidate data, but do not narrow the authoritative enclosure:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">decimal := 23.456?789;
+continued := 3.~7~15?;
+hexadecimal := 0xA.B?C;
+[
+    decimal,
+    decimal.Candidate(),
+    decimal.Enclosure(),
+    continued,
+    continued.Enclosure(),
+    hexadecimal
+];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p><code>23.456?789</code> has candidate <code>23.456789</code> and certified enclosure <code>23.456:23.457</code>. A bracket may certify a compatible tighter bound, as in <code>23.456?789[+-12]</code>. Derived and provider values use a parseable explicit form such as <code>23.556?[=5889/250:23557/1000]</code> when no honest shared digit prefix describes the full enclosure.</p>
+<p>Arithmetic preserves the uncertain scalar and its exact enclosure. A comparison produces true, false, or standalone undecided <code>?</code>:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">x := 23.456?789;
+decision := x &lt; 23.4565;
+[
+    x + 1,
+    decision,
+    decision
+        ?: &quot;certainly less&quot;
+        ?_ &quot;certainly not less&quot;
+        ?? &quot;certified enclosure overlaps the boundary&quot;
+];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Every built-in base prefix</h2>
+<p>The built-in prefixes are binary <code>0b</code>, ternary <code>0t</code>, quaternary <code>0q</code>, base 5 <code>0f</code>, base 7 <code>0s</code>, octal <code>0o</code>, duodecimal <code>0d</code>, hexadecimal <code>0x</code>, base 20 <code>0v</code>, base 36 <code>0u</code>, base 60 <code>0m</code>, and base 64 <code>0y</code>. <code>0z[N]</code> selects a base from 2 through 64 directly:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">[
+    0b10, 0t10, 0q10, 0f10,
+    0s10, 0o10, 0d10, 0x10,
+    0v10, 0u10, 0m10, 0y10,
+    0z[6]15
+];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Lowercase prefixes are built in. An uppercase prefix can be registered once with syntax such as <code>0A = &quot;0123456789ABCDEF&quot;</code>. For local conversion without a global prefix, use a digit-alphabet string or <code>{: radix, digits }</code> tuple:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">digits := &quot;0123456789ABCDEF&quot;;
+formatted := 1199/16 _&gt; digits;
+[formatted, formatted &lt;_ digits];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Prefixed values may be ordinary radix values, fractions, mixed numbers, continued fractions, or certified prefixes. Uppercase custom prefixes also support quoted streams such as <code>0A&quot;4A.F&quot;</code> when the alphabet contains characters that would otherwise end a token.</p>
+<h2>Exact and display output styles</h2>
+<p>Receiver methods expose the common base-10 Core representations. <code>_&gt;</code> exposes the formatting modes uniformly and returns a string:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="14" spellcheck="false">q := -9/4;
+[
+    q.ToString(),
+    q.ToMixedString(),
+    q.ToDecimal(),
+    q.ToContinuedFraction(),
+    q.ToContinuedFractionString(),
+    q _&gt; &quot;/&quot;,
+    q _&gt; &quot;..&quot;,
+    q _&gt; &quot;.&quot;,
+    q _&gt; &quot;.~&quot;,
+    q _&gt; &quot;~&quot;,
+    q _&gt; &quot;^&quot;
+];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The mode aliases are <code>/</code> or <code>fraction</code>, <code>..</code> or <code>mixed</code>, <code>.</code>/<code>#</code>/<code>repeat</code>, <code>.~</code> or <code>cf</code>, <code>~</code> or <code>cf_explicit</code>, and <code>^</code>/<code>_^</code>/<code>shifted</code>. A numeric base or named/custom base can be paired with a mode. <code>&lt;_</code> reverses parseable base output:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">q := 1/3;
+binary := q _&gt; (0b, &quot;.&quot;);
+[
+    binary,
+    binary &lt;_ 0b,
+    q _&gt; (0x, &quot;.&quot;),
+    q _&gt; (0b, &quot;..&quot;),
+    q _&gt; (0b, &quot;/&quot;),
+    q _&gt; (0b, &quot;.~&quot;),
+    q _&gt; (0b, &quot;^&quot;)
+];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Limits: display truncation versus certification</h2>
+<p>A limit appended to radix or shifted mode, such as <code>.12</code> or <code>^12</code>, may end in <code>...</code>. That is deliberately display-only and does not describe a new numeric value. Ask for a certified approximation when the limited result must remain parseable and safe for arithmetic:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">[
+    (1/97) _&gt; &quot;.12&quot;,
+    (1/7).ToDecimalApproximation(5),
+    (103993/33102).ToContinuedFractionApproximation(3)
+];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p><code>ToDecimal()</code> is also a display string when the decimal does not terminate; use <code>ToDecimalApproximation(digits)</code> when omitted digits must carry a guarantee.</p>
+<h2>Current Core input boundary</h2>
+<p>The runnable cells above cover every current RiX number family. Core&#039;s standalone number-only parser additionally accepts leading-dot decimals such as <code>.125</code>, grouped integer digits such as <code>1_000</code>, and compressed decimal digit runs such as <code>{0~8}</code>. Those lexical conveniences are not currently RiX source forms: write <code>0.125</code>, use ungrouped integer digits, and expand compressed input digits in RiX. This difference concerns source spelling, not the exact values Core can represent.</p>
+<h2>Current Core formatting boundary</h2>
+<p>Most Core number output is available through the methods and <code>_&gt;</code> modes above, but RiX does not yet expose every Core formatter option. The missing surfaces are scientific <code>E</code> strings and period annotations, repeating-decimal <code>error</code>/<code>null</code>/<code>trunc</code> policies and period metadata, the alternate finite continued fraction ending in <code>1</code>, and the interval-specific repeating, relative, midpoint-relative, and compact decimal strings. <code>_^</code> shifted output is exact and useful, but it is not identical to Core&#039;s scientific formatter.</p>
 <p>Try a second value of your own. When an advanced feature depends on files, JavaScript, or extension registration, RatCalc explains the concept but does not grant browser permissions implicitly. Use the detail pages and the help panel to connect this experiment to the broader language rules.</p>
-<aside class="challenge"><p class="eyebrow">Challenge</p><h3>Number notation practice</h3><p>Evaluate <code>3.~7~15~1</code> and compare it with <code>355 / 113</code>.</p><section class="tutorial-cell"><header><span>Your RiX answer</span><button type="button" data-tutorial-run>Run answer</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false" placeholder="# Write your RiX solution here"></textarea><div class="tutorial-output" data-tutorial-output></div></section></aside>
+<aside class="challenge"><p class="eyebrow">Challenge</p><h3>Number notation practice</h3><p>Create one exact repeating decimal and one certified decimal prefix. Compare each with a nearby rational, then handle the certified comparison&#039;s undecided case explicitly.</p><section class="tutorial-cell"><header><span>Your RiX answer</span><button type="button" data-tutorial-run>Run answer</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false" placeholder="# Write your RiX solution here"></textarea><div class="tutorial-output" data-tutorial-output></div></section></aside>
 <h2>Keep going</h2>
 <p>Return to the overview when you need context, or continue to the next sibling lesson for a focused variation. Collection chapters also end with method help that includes signatures and examples.</p></div><section class="api-links"><h2>Reference</h2><ul><li><a href="https://docs.rix.ratmath.com/eval/syntax-guide.html#operators" data-doc-reference target="_blank" rel="noreferrer">Syntax and operators ↗</a></li><li><a href="https://docs.rix.ratmath.com/introduction.html#number-systems-and-notation" data-doc-reference target="_blank" rel="noreferrer">Number notation ↗</a></li></ul></section><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

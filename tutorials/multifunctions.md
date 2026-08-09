@@ -41,7 +41,60 @@ Use a soft prep clause to skip a variant and a strict one when failure should st
 } ;
 ```
 
-The result is `[3, 0, 16]`. Variants are tried in order and only prep failure falls through.
+The result is `[3, 0, 16]`. Variants are tried in order. A decisively false
+soft prep falls through; an undecided prep does not.
+
+## Undecided guards block unsafe fallthrough
+
+The three possible guard results have different dispatch meanings:
+
+- true selects the variant and evaluates its body;
+- false or null rejects a soft variant and tries the next one;
+- undecided `?` returns `?` from the multifunction without evaluating the body
+  or any later variant.
+
+```rix edu
+Classify = {>
+    (x) ?- [x < 0.55] /Below/ -> :below,
+    (x) ?- [x >= 0.55] /AtOrAbove/ -> :above,
+    (x) /Fallback/ -> :fallback
+};
+[
+    Classify(0.5),
+    Classify(0.6),
+    Classify(0.5?)
+];
+```
+
+The last result is `?`. The enclosure represented by `0.5?` contains values
+on both sides of `0.55`, so the first variant might apply. Skipping it would
+make selecting `AtOrAbove` or `Fallback` unsound. Strict `?!-` still propagates
+undecided as `?`; strictness turns decisive prep failure or an error into an
+error, not lack of evidence into one.
+
+## Handle undecided explicitly
+
+When uncertainty is part of the intended result, move the comparison into
+ordinary decision control and give it an explicit `??` branch:
+
+```rix edu
+Classify(x) -> {;
+    relation := x < 0.55;
+    relation
+        ?: :below
+        ?_ :atOrAbove
+        ?? :needsRefinement
+};
+[
+    Classify(0.5),
+    Classify(0.6),
+    Classify(0.5?)
+];
+```
+
+This makes the policy visible: ordered guard dispatch remains conservative,
+while the function body chooses how an unresolved comparison should be
+reported.
 
 Entries can also be existing functions or whole multifunctions. Whole multifunctions flatten in the order written:
 

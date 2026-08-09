@@ -13,11 +13,31 @@ x % 2 == 0 ?: &quot;even&quot; ?_ &quot;odd&quot; ;</textarea><div class="tutori
     score &lt; 0 ? &quot;negative&quot;;
     &quot;zero&quot;
 } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Undecided is a third result</h2>
+<p>An uncertain numeric comparison does not pretend that overlap means false. When the available enclosure supports both outcomes it returns standalone <code>?</code>, and <code>??</code> selects the corresponding branch:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="9" spellcheck="false">x := 23.456?789;
+relation := x &lt; 23.4565;
+[
+    relation,
+    relation
+        ?: &quot;certainly less&quot;
+        ?_ &quot;certainly not less&quot;
+        ?? &quot;not decided by this enclosure&quot;
+];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The undecided value is not simply contagious. Strong three-state logic still uses decisive later operands when possible: <code>? &amp;&amp; _</code> is false, while <code>? || 1</code> is true. Otherwise uncertainty remains:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">[
+    ! ?,
+    ? &amp;&amp; _,
+    ? &amp;&amp; 1,
+    ? || 1,
+    ? || _
+];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Predicates, cases, assertions, loops, and guards never accept <code>?</code> as ordinary truth. They either expose an unresolved result or stop at a defined side-effect boundary.</p>
 <h2>Try a computed value</h2>
 <p>A prepared trial evaluates a candidate once, gives it a temporary name, and checks that name from left to right:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">ReadScore = x -&gt; x;
 ReadScore(7) ?- value: [value ? :Integer, value &gt; 0] ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>On success, the result is the original candidate. If candidate evaluation, binding, or a check fails, soft <code>?-</code> returns <code>_</code>. The temporary <code>value</code> binding does not escape the trial.</p>
+<p>On success, the result is the original candidate. If candidate evaluation, binding, or a check fails decisively, soft <code>?-</code> returns <code>_</code>. An undecided check returns <code>?</code> instead. The temporary <code>value</code> binding does not escape the trial.</p>
 <p>Prepared trials become ordered alternatives inside a case container. A soft failure advances to the next arm:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">ReadScore = x -&gt; x;
 {?

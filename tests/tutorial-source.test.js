@@ -146,6 +146,32 @@ test("method extensions and scoped randomness have focused runnable lessons", as
     expect(float).toContain("(1 / 3).Float()");
 });
 
+test("number and decision tutorials cover certified notation, output modes, and unresolved dispatch", async () => {
+    const numbers = await Bun.file(new URL("../tutorials/number-notation.md", import.meta.url)).text();
+    const decisions = await Bun.file(new URL("../tutorials/ternaries.md", import.meta.url)).text();
+    const multifunctions = await Bun.file(new URL("../tutorials/multifunctions.md", import.meta.url)).text();
+
+    for (const spelling of [
+        "0.1#6", "-2..1/4", "3.~7~15", "1.25_^3",
+        "1.23[56:67]", "23.456?789", "3.~7~15?", "0xA.B?C",
+        "0b10", "0z[6]15", "ToDecimalApproximation", "ToContinuedFractionApproximation",
+    ]) {
+        expect(numbers, spelling).toContain(spelling);
+    }
+    for (const mode of ['q _> "/"', 'q _> ".."', 'q _> "."', 'q _> ".~"', 'q _> "~"', 'q _> "^"']) {
+        expect(numbers, mode).toContain(mode);
+    }
+    expect(numbers).toContain("Current Core input boundary");
+    expect(numbers).toContain("leading-dot decimals");
+    expect(numbers).toContain("Current Core formatting boundary");
+    expect(numbers).toContain("scientific `E` strings");
+    expect(decisions).toContain("Undecided is a third result");
+    expect(decisions).toContain("? && _");
+    expect(multifunctions).toContain("Undecided guards block unsafe fallthrough");
+    expect(multifunctions).toContain("Classify(0.5?)");
+    expect(multifunctions).toContain("?? :needsRefinement");
+});
+
 test("plugin tutorials are generated after core lessons and grouped by theme", async () => {
     expect(tutorialByNumber("14")?.title).toBe("Plugins: Numbers and numerics");
     expect(tutorialByNumber("14a")?.file).toBe("plugin-float.html");

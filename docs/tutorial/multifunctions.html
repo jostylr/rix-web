@@ -15,7 +15,37 @@ Abs(-7) ;</textarea><div class="tutorial-output" data-tutorial-output></div></se
   (x) ?- [x &gt; 0] /Positive/ -&gt; x^2,
   (x) /Zero/ -&gt; 0
 } ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>The result is <code>[3, 0, 16]</code>. Variants are tried in order and only prep failure falls through.</p>
+<p>The result is <code>[3, 0, 16]</code>. Variants are tried in order. A decisively false soft prep falls through; an undecided prep does not.</p>
+<h2>Undecided guards block unsafe fallthrough</h2>
+<p>The three possible guard results have different dispatch meanings:</p>
+<ul><li>true selects the variant and evaluates its body;</li><li>false or null rejects a soft variant and tries the next one;</li><li>undecided <code>?</code> returns <code>?</code> from the multifunction without evaluating the body</li></ul>
+<p>or any later variant.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">Classify = {&gt;
+    (x) ?- [x &lt; 0.55] /Below/ -&gt; :below,
+    (x) ?- [x &gt;= 0.55] /AtOrAbove/ -&gt; :above,
+    (x) /Fallback/ -&gt; :fallback
+};
+[
+    Classify(0.5),
+    Classify(0.6),
+    Classify(0.5?)
+];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The last result is <code>?</code>. The enclosure represented by <code>0.5?</code> contains values on both sides of <code>0.55</code>, so the first variant might apply. Skipping it would make selecting <code>AtOrAbove</code> or <code>Fallback</code> unsound. Strict <code>?!-</code> still propagates undecided as <code>?</code>; strictness turns decisive prep failure or an error into an error, not lack of evidence into one.</p>
+<h2>Handle undecided explicitly</h2>
+<p>When uncertainty is part of the intended result, move the comparison into ordinary decision control and give it an explicit <code>??</code> branch:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="12" spellcheck="false">Classify(x) -&gt; {;
+    relation := x &lt; 0.55;
+    relation
+        ?: :below
+        ?_ :atOrAbove
+        ?? :needsRefinement
+};
+[
+    Classify(0.5),
+    Classify(0.6),
+    Classify(0.5?)
+];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>This makes the policy visible: ordered guard dispatch remains conservative, while the function body chooses how an unresolved comparison should be reported.</p>
 <p>Entries can also be existing functions or whole multifunctions. Whole multifunctions flatten in the order written:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">Small = {&gt; (x) /Increment/ -&gt; x + 1 };
 Large = {&gt; (x) /Scale/ -&gt; x * 10 };
