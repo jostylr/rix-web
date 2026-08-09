@@ -56,6 +56,19 @@ export const pluginTutorials = [
     "pluginTutorial": true
   },
   {
+    "pluginId": "cauchy",
+    "pluginDirectory": "cauchy",
+    "title": "Certified Cauchy sequences",
+    "description": "Turn rational terms and effective tail bounds into certified real enclosures.",
+    "status": "implemented",
+    "theme": "Numbers and numerics",
+    "sourcePath": "../rix/plugins/cauchy/tutorial.md",
+    "number": "14b",
+    "parent": "14",
+    "file": "plugin-cauchy.html",
+    "pluginTutorial": true
+  },
+  {
     "pluginId": "float",
     "pluginDirectory": "float",
     "title": "Optional Float math",
@@ -63,7 +76,7 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Numbers and numerics",
     "sourcePath": "../rix/plugins/float/tutorial.md",
-    "number": "14b",
+    "number": "14c",
     "parent": "14",
     "file": "plugin-float.html",
     "pluginTutorial": true
@@ -76,7 +89,7 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Numbers and numerics",
     "sourcePath": "../rix/plugins/numerics/tutorial.md",
-    "number": "14c",
+    "number": "14d",
     "parent": "14",
     "file": "plugin-numerics.html",
     "pluginTutorial": true
@@ -89,7 +102,7 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Numbers and numerics",
     "sourcePath": "../rix/plugins/oracle/tutorial.md",
-    "number": "14d",
+    "number": "14e",
     "parent": "14",
     "file": "plugin-oracle.html",
     "pluginTutorial": true
@@ -102,7 +115,7 @@ export const pluginTutorials = [
     "status": "implemented",
     "theme": "Numbers and numerics",
     "sourcePath": "../rix/plugins/radix/tutorial.md",
-    "number": "14e",
+    "number": "14f",
     "parent": "14",
     "file": "plugin-radix.html",
     "pluginTutorial": true

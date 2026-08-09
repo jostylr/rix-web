@@ -1,0 +1,62 @@
+<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Turn rational terms and effective tail bounds into certified real enclosures." /><title>Certified Cauchy sequences — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./plugins-numbers-and-numerics.html#lesson-start" title="Plugins: Numbers and numerics">14</a> <span aria-hidden="true">·</span> <span>b</span></p><h1>Certified Cauchy sequences</h1><p class="deck">Turn rational terms and effective tail bounds into certified real enclosures.</p><aside class="challenge"><p class="eyebrow">Develop in RiX Notebook</p><p>Open <code>rix/plugins/cauchy/tutorial.md</code> in the macOS app to edit this lesson with live preview and plugin-aware code results. Use Reload plugins after changing project-local plugin source.</p></aside><div class="lesson-content"><h2>A sequence is not yet a certified real</h2>
+<p>A bare rational sequence supports exact term inspection, but it has no effective information about where its limit lies:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="8" spellcheck="false">.Plugin.Load(&quot;cauchy&quot;);
+.Plugin.Load(&quot;numerics&quot;);
+s := .cauchy.Sequence((n) -&gt; 1 / (n + 1));
+.Table({=
+  columns=[&quot;index&quot;, &quot;term&quot;],
+  rows=[0,1,2,3,9].Map((n) -&gt; [n, s.Term(n)])
+});
+.numerics.Refine(s)[:status];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The final status is <code>:unsupported</code>. Sampling more terms would be observation, not proof of a tail bound.</p>
+<h2>Supplying a tail bound and modulus</h2>
+<p>A certified sequence supplies <code>term(n)</code>, a nonnegative error bound around that term, and a modulus choosing an index for a requested error radius:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="13" spellcheck="false">.Plugin.Load(&quot;cauchy&quot;);
+.Plugin.Load(&quot;numerics&quot;);
+c := .cauchy.Certified(
+  (n) -&gt; n == 0 ?: 0 ?_ 1,
+  (n) -&gt; n == 0 ?: 1 ?_ 0,
+  (radius) -&gt; 1,
+  {= name=&quot;eventually one&quot;, evidence=:eventuallyConstant }
+);
+.Table({=
+  columns=[&quot;index&quot;, &quot;term&quot;, &quot;tail bound&quot;, &quot;enclosure&quot;],
+  rows=[0,1].Map((n) -&gt; [n, c.Term(n), c.TailBound(n), c.Enclosure(n)])
+});
+.numerics.Refine(c, {= absoluteWidth=1/100, maxWork=3 })[:interval];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>RiX checks that the selected tail bound actually meets the requested radius. For arbitrary supplied functions, the global convergence claim remains an explicit constructor guarantee rather than a theorem inferred from source.</p>
+<h2>A verified geometric-series real</h2>
+<p>The built-in geometric constructor knows and verifies its exact remainder formula. It retains the sequence even though this particular limit is Rational:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">.Plugin.Load(&quot;cauchy&quot;);
+g := .cauchy.Geometric(1, 1/2, {= name=&quot;binary geometric&quot; });
+.Table({=
+  columns=[&quot;index&quot;, &quot;partial sum&quot;, &quot;tail bound&quot;, &quot;certified interval&quot;],
+  rows=[0,1,2,3,8].Map((n) -&gt; [
+    n,
+    g.Term(n),
+    g.TailBound(n),
+    g.Enclosure(n)
+  ])
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>At every row the exact limit <code>2</code> lies in the interval. Negative ratios use the same absolute remainder theorem and produce certified alternating examples.</p>
+<h2>Bounded refinement and Halo decisions</h2>
+<p>Refinement advances only while its exact work budget permits. The result keeps the best tail witness whether or not the requested width is reached:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="18" spellcheck="false">.Plugin.Load(&quot;cauchy&quot;);
+.Plugin.Load(&quot;numerics&quot;);
+g := .cauchy.Geometric(1, 1/2);
+result := .numerics.Refine(g, {=
+  absoluteWidth=1/1000,
+  maxWork=20
+});
+.Table({=
+  columns=[&quot;status&quot;, &quot;index&quot;, &quot;interval&quot;, &quot;width&quot;, &quot;calls&quot;],
+  rows=[[
+    result[:status],
+    result[:work][:index],
+    result[:interval],
+    result[:achievedWidth],
+    result[:work][:calls]
+  ]]
+});
+g &lt; {~ 3, 1/1000 };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>With <code>maxCalls=0</code>, a relation not already proved by the initial enclosure remains undecided with <code>:budgetExhausted</code> evidence.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
