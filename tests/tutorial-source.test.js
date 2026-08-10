@@ -27,6 +27,20 @@ test("tutorial sources use runnable RiX blocks and a challenge", async () => {
     expect(source).toContain(":::challenge");
 });
 
+test("live lint laboratory is indexed and receives page-scoped lint controls", async () => {
+    expect(tutorialByNumber("10f")?.file).toBe("linting.html");
+    expect(tutorialByNumber("10g")?.file).toBe("capstone-package-design.html");
+    const source = await Bun.file(new URL("../tutorials/linting.md", import.meta.url)).text();
+    const generator = await Bun.file(new URL("../scripts/build-tutorials.js", import.meta.url)).text();
+    const runner = await Bun.file(new URL("../src/tutorial-runner.js", import.meta.url)).text();
+    expect(source).toContain("lint: true");
+    expect(source).toContain("RX1904");
+    expect(generator).toContain("data-tutorial-lint");
+    expect(generator).toContain('lint: meta.lint === "true"');
+    expect(runner).toContain("lintTutorialSource");
+    expect(runner).toContain("function lintCell(cell, button)");
+});
+
 test("tutorial RiX cells are ready to edit in the notebook", async () => {
     const tutorialsDir = new URL("../tutorials/", import.meta.url).pathname;
     for await (const file of new Bun.Glob("*.md").scan({ cwd: tutorialsDir })) {

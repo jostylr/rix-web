@@ -1,5 +1,5 @@
 ---
-number: 10f
+number: 10g
 title: Capstone: package design
 description: Design a safe RiX package boundary.
 ---

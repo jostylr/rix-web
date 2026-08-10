@@ -2,6 +2,7 @@ import { createRixRepl } from "./repl-runtime.js";
 import { objectHelp } from "./tutorial-object-help.js";
 import { replayTutorialSourcesAsync, tutorialSectionCells } from "./tutorial-replay.js";
 import { applyTutorialEditorKey } from "./tutorial-editor.js";
+import { lintTutorialSource } from "./tutorial-lint.js";
 import { mountTutorialNavigation } from "./tutorial-navigation.js";
 import { formatValue, mountOutputWidgets } from "../../rix/src/index.js";
 
@@ -87,6 +88,25 @@ async function runCell(cell) {
     revealTutorialOutput(output);
 }
 
+function lintCell(cell, button) {
+    const sourceInput = cell.querySelector("[data-tutorial-source]");
+    const output = cell.querySelector("[data-tutorial-output]");
+    outputDisposers.get(output)?.();
+    outputDisposers.delete(output);
+    const diagnostics = lintTutorialSource(sourceInput.value, {
+        file: button?.dataset.lintFile || "tutorial-cell.rix",
+        level: button?.dataset.lintLevel || "pedantic",
+        profile: button?.dataset.lintProfile || "all",
+    });
+    if (diagnostics.length === 0) {
+        output.innerHTML = '<div class="lint-clean"><strong>No lint findings.</strong> This cell is clean at the selected level and profile.</div>';
+        revealTutorialOutput(output);
+        return;
+    }
+    output.innerHTML = `<div class="lint-summary"><strong>${diagnostics.length} lint finding${diagnostics.length === 1 ? "" : "s"}</strong><ol class="lint-diagnostics">${diagnostics.map((diagnostic) => `<li class="lint-${escapeHtml(diagnostic.severity)}"><p><span class="lint-code">${escapeHtml(diagnostic.code)}</span><span class="lint-severity">${escapeHtml(diagnostic.severity)}</span><span class="lint-location">line ${escapeHtml(diagnostic.line)}, column ${escapeHtml(diagnostic.column)}</span></p><strong>${escapeHtml(diagnostic.title || diagnostic.message)}</strong>${diagnostic.title ? `<span>${escapeHtml(diagnostic.message)}</span>` : ""}${diagnostic.hint ? `<small>Fix: ${escapeHtml(diagnostic.hint)}</small>` : ""}</li>`).join("")}</ol></div>`;
+    revealTutorialOutput(output);
+}
+
 function openDocumentation(link) {
     const panel = document.querySelector("#tutorial-docs-panel");
     if (!panel) return;
@@ -122,6 +142,8 @@ function toggleContents() {
 document.addEventListener("click", (event) => {
     const button = event.target.closest("[data-tutorial-run]");
     if (button) runCell(button.closest(".tutorial-cell"));
+    const lintButton = event.target.closest("[data-tutorial-lint]");
+    if (lintButton) lintCell(lintButton.closest(".tutorial-cell"), lintButton);
     const objectButton = event.target.closest("[data-object-help]");
     if (objectButton) openObjectHelp(objectButton.dataset.objectHelp, objectButton.dataset.objectFunction);
     const reference = event.target.closest("[data-doc-reference]");

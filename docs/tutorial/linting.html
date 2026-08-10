@@ -1,0 +1,263 @@
+<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Find and repair scope, control-flow, reactive, mathematical, and plugin mistakes without running them." /><title>Live RiX lint laboratory — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./scripts.html#lesson-start" title="Scripts and extensions">10</a> <span aria-hidden="true">·</span> <span>f</span></p><h1>Live RiX lint laboratory</h1><p class="deck">Find and repair scope, control-flow, reactive, mathematical, and plugin mistakes without running them.</p><div class="lesson-content"><h2>How to use this laboratory</h2>
+<p>Every cell on this page has two independent actions. <strong>Lint cell</strong> runs the same static analyzer as the RiX command-line tool and never executes or edits the source. <strong>Run cell</strong> evaluates it normally. Lint the problem, read the rule code and hint, then lint the correction. You can edit either cell to test a variation.</p>
+<p>The page uses the <code>all</code> profile at <code>pedantic</code> level so the full catalog is visible. In ordinary work, begin with <code>essential</code>, move through <code>standard</code> and <code>thorough</code>, and enable <code>pedantic</code> when you want advisory style findings too.</p>
+<h2>Scope ownership: RX1001, RX1002, and RX1003</h2>
+<p>Lazy blocks own a scope. A bare name means this scope, while <code>@name</code> explicitly requests an enclosing scope. This deliberately differs from JavaScript&#039;s implicit closure lookup.</p>
+<p>Problem:</p>
+<section class="tutorial-cell tutorial-lint-cell"><header><span>Live RiX lint</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run cell</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">## lint-problem
+outer = 4;
+{;
+    local = 2;
+    outer + @local + @missing;
+};</textarea><div class="tutorial-output" data-tutorial-output aria-live="polite"></div></section>
+<p>Correction:</p>
+<section class="tutorial-cell tutorial-lint-cell"><header><span>Live RiX lint</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run cell</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">outer = 4;
+{;
+    local = 2;
+    @outer + local;
+};</textarea><div class="tutorial-output" data-tutorial-output aria-live="polite"></div></section>
+<h2>Decisions: RX1101, RX1102, and RX1703</h2>
+<p>RiX has exactly one falsy value, <code>_</code>. Zero is truthy, uncertain comparisons can produce <code>?</code>, and empty strings or collections are not JavaScript-style false.</p>
+<p>Problem:</p>
+<section class="tutorial-cell tutorial-lint-cell"><header><span>Live RiX lint</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run cell</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="9" spellcheck="false">## lint-problem
+Choose = (value, subtract ?= 0) -&gt; subtract ?: -value ?_ value;
+approx := 0.5?;
+label = &quot;RiX&quot;;
+[
+    Choose(2),
+    approx &lt; 0.55 ?: :below ?_ :above,
+    label ?: :present ?_ :empty
+];</textarea><div class="tutorial-output" data-tutorial-output aria-live="polite"></div></section>
+<p>Correction:</p>
+<section class="tutorial-cell tutorial-lint-cell"><header><span>Live RiX lint</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run cell</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="8" spellcheck="false">Choose = (value, subtract ?= _) -&gt; subtract ?: -value ?_ value;
+approx := 0.5?;
+label = &quot;RiX&quot;;
+[
+    Choose(2),
+    approx &lt; 0.55 ?: :below ?_ :above ?? :refine,
+    label.Len() &gt; 0 ?: :present ?_ :empty
+];</textarea><div class="tutorial-output" data-tutorial-output aria-live="polite"></div></section>
+<h2>Cell and value semantics: RX1201, RX1202, and RX1203</h2>
+<p><code>=</code> can share a mutable cell, <code>:=</code> makes an independent copy, and non-mutating collection methods return replacements. Immutable mathematical values cannot be refreshed in place with <code>~=</code>.</p>
+<p>Problem:</p>
+<section class="tutorial-cell tutorial-lint-cell"><header><span>Live RiX lint</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run cell</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">## lint-problem
+items = [1];
+shared = items;
+shared.Push(2);
+p := `x^2`.P();
+p ~= `x`.P();
+0;</textarea><div class="tutorial-output" data-tutorial-output aria-live="polite"></div></section>
+<p>Correction:</p>
+<section class="tutorial-cell tutorial-lint-cell"><header><span>Live RiX lint</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run cell</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">.Plugin.Load(&quot;poly&quot;);
+items := [1];
+shared := items;
+shared ~= shared.Push(2);
+p := `x^2`.P();
+p = `x`.P();
+{: shared, p };</textarea><div class="tutorial-output" data-tutorial-output aria-live="polite"></div></section>
+<h2>Bindings across paths: RX1302 and RX1303</h2>
+<p>A lazy branch may accidentally shadow an outer binding, while a name created in only one branch is not initialized on every path.</p>
+<p>Problem:</p>
+<section class="tutorial-cell tutorial-lint-cell"><header><span>Live RiX lint</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run cell</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">## lint-problem
+choice = 1;
+choice ?: {; choice = 2; choice; } ?_ _;
+choice ?: (result = 10) ?_ _;</textarea><div class="tutorial-output" data-tutorial-output aria-live="polite"></div></section>
+<p>Correction:</p>
+<section class="tutorial-cell tutorial-lint-cell"><header><span>Live RiX lint</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run cell</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">choice = 1;
+result := _;
+choice ?: {; localChoice = 2; localChoice; } ?_ _;
+choice ?: (result ~= 10) ?_ (result ~= 0);
+result;</textarea><div class="tutorial-output" data-tutorial-output aria-live="polite"></div></section>
+<h2>Loop progress and retained closures: RX1401, RX1402, and RX1403</h2>
+<p>The first loop&#039;s condition cannot change, although it is initially false and therefore safe to run. The second advances twice and retains a function that reads a loop-local binding.</p>
+<p>Problem:</p>
+<section class="tutorial-cell tutorial-lint-cell"><header><span>Live RiX lint</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run cell</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">## lint-problem
+{@ stalled = 3; stalled &lt; 3; 1; _ };
+{@ index = 1; index &lt;= 3; {;
+    callback = () -&gt; index;
+    index += 1;
+}; index += 1 };</textarea><div class="tutorial-output" data-tutorial-output aria-live="polite"></div></section>
+<p>Correction:</p>
+<section class="tutorial-cell tutorial-lint-cell"><header><span>Live RiX lint</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run cell</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">MakeConstant = value -&gt; () -&gt; @value;
+callbacks := [];
+{@ index = 1; index &lt;= 3; {;
+    callback = MakeConstant(index);
+    @callbacks ~= @callbacks.Push(callback);
+}; index += 1 };
+callbacks;</textarea><div class="tutorial-output" data-tutorial-output aria-live="polite"></div></section>
+<h2>Recursion depth: RX1501</h2>
+<p>The recursive result below is multiplied after the self-call returns, so the call is not in tail position. A bounded loop makes stack use explicit.</p>
+<p>Problem:</p>
+<section class="tutorial-cell tutorial-lint-cell"><header><span>Live RiX lint</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run cell</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">## lint-problem
+Factorial(n) -&gt; n == 0 ?: 1 ?_ n * Factorial(n - 1);
+Factorial(6);</textarea><div class="tutorial-output" data-tutorial-output aria-live="polite"></div></section>
+<p>Correction:</p>
+<section class="tutorial-cell tutorial-lint-cell"><header><span>Live RiX lint</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run cell</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">Factorial(n) -&gt; {;
+    result := 1;
+    {@ index = 2; index &lt;= @n; @result *= index; index += 1 };
+    result;
+};
+Factorial(6);</textarea><div class="tutorial-output" data-tutorial-output aria-live="polite"></div></section>
+<h2>Reactive ownership: RX1601, RX1602, RX1603, and RX1604</h2>
+<p>Reactive formulas read tracked values with <code>$name</code>; <code>$$name</code> is cell identity. Deep mutation must publish a new epoch, and dependency cycles cannot settle.</p>
+<p>Problem:</p>
+<section class="tutorial-cell tutorial-lint-cell"><header><span>Live RiX lint</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run cell</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="9" spellcheck="false">## lint-problem
+$$source := 1;
+$$snapshot := source + 1;
+identity := $$source;
+$$items := [1];
+$items.Push!(2);
+$$left := $right + 1;
+$$right := $left + 1;
+identity;</textarea><div class="tutorial-output" data-tutorial-output aria-live="polite"></div></section>
+<p>Correction:</p>
+<section class="tutorial-cell tutorial-lint-cell"><header><span>Live RiX lint</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run cell</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">$$source := 1;
+$$derived := $source + 1;
+$$items := [1];
+nextItems := items.Push(2);
+$items := nextItems;
+{: $derived, $items };</textarea><div class="tutorial-output" data-tutorial-output aria-live="polite"></div></section>
+<h2>Translation syntax: RX1701, RX1702, RX1704, RX1705, and RX1706</h2>
+<p>Lowercase <code>f(2)</code> is implicit multiplication, collections are one-based, braces create scope, and a bare uppercase callable can mean the function value rather than a call. Dense nested ternaries are valid but difficult to audit.</p>
+<p>Problem:</p>
+<section class="tutorial-cell tutorial-lint-cell"><header><span>Live RiX lint</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run cell</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="12" spellcheck="false">## lint-problem
+f = x -&gt; x + 1;
+values = [10];
+x = 2;
+F(value) -&gt; value + 1;
+[
+    f(2),
+    values[0],
+    1 ?: 2 ?_ 1 ?: 3 ?_ 1 ?: 4 ?_ 5,
+    {; @x + 1; },
+    F
+];</textarea><div class="tutorial-output" data-tutorial-output aria-live="polite"></div></section>
+<p>Correction:</p>
+<section class="tutorial-cell tutorial-lint-cell"><header><span>Live RiX lint</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run cell</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">F(value) -&gt; value + 1;
+values = [10];
+x = 2;
+[
+    F(2),
+    values[1],
+    {? x == 1 ? 2; x == 2 ? 3; 5 },
+    x + 1,
+    F(3)
+];</textarea><div class="tutorial-output" data-tutorial-output aria-live="polite"></div></section>
+<h2>Mathematical intent: RX1801 through RX1806</h2>
+<p>Exact division, structural fractions, approximate conversion, zero divisors, polynomial division, and refinement budgets each carry different contracts.</p>
+<p>Problem:</p>
+<section class="tutorial-cell tutorial-lint-cell"><header><span>Live RiX lint</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run cell</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">## lint-problem
+left = 6;
+right = 8;
+first := `6/8`.F();
+second := `3/4`.F();
+p := `x^2 + 1`.P();
+q := `x + 1`.P();
+Divide(divisor) -&gt; 1 / divisor;
+approx := .Float(2);
+refined = approx.Refine();
+{: left / right, first == second, p / q, Divide(2), refined };</textarea><div class="tutorial-output" data-tutorial-output aria-live="polite"></div></section>
+<p>Correction:</p>
+<section class="tutorial-cell tutorial-lint-cell"><header><span>Live RiX lint</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run cell</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="13" spellcheck="false">.Plugin.Load(&quot;fraction&quot;);
+.Plugin.Load(&quot;poly&quot;);
+Truncate = (left, right) -&gt; right == 0 ?: .Error(&quot;nonzero divisor required&quot;) ?_ left // right;
+first := `6/8`.F();
+second := `3/4`.F();
+p := `x^2 + 1`.P();
+q := `x + 1`.P();
+sameShape = first.SamePair(second);
+sameValue = first.Equivalent(second);
+quotient = p // q;
+remainder = p % q;
+RefineWithin = (real, request) -&gt; real.Refine(request);
+{: Truncate(6, 8), sameShape, sameValue, quotient, remainder };</textarea><div class="tutorial-output" data-tutorial-output aria-live="polite"></div></section>
+<h2>Plugin headers: RX1901</h2>
+<p>Plugin cells receive header validation before the ordinary source analyzer. The following header is missing its required description.</p>
+<p>Problem:</p>
+<section class="tutorial-cell tutorial-lint-cell"><header><span>Live RiX lint</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run cell</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">/**
+id: broken-demo
+kind: rix
+mount: brokenDemo
+**/
+## lint-problem
+1;</textarea><div class="tutorial-output" data-tutorial-output aria-live="polite"></div></section>
+<p>Correction:</p>
+<section class="tutorial-cell tutorial-lint-cell"><header><span>Live RiX lint</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run cell</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="14" spellcheck="false">/**
+id: valid-demo
+description: A small portable demonstration plugin.
+kind: rix
+mount: validDemo
+exports: [DemoValue]
+groups: [Demo]
+provides: [rix.demo@1]
+schemas: [rix.demo.Value@1]
+**/
+DemoValue = 1;
+validDemo = {= DemoValue=DemoValue };
+.Host.RegisterValue(&quot;validDemo&quot;, validDemo, &quot;valid-demo&quot;, [&quot;Demo&quot;]);
+validDemo;</textarea><div class="tutorial-output" data-tutorial-output aria-live="polite"></div></section>
+<h2>Plugin implementation contracts: RX1902, RX1903, and RX1905 through RX1910</h2>
+<p>This deliberately inconsistent plugin declares an unused export, registers the wrong mount and group, asks a portable RiX plugin for host permission, omits portable contracts, duplicates a method, disguises mutation, and registers a type without an idempotence guard.</p>
+<p>Problem:</p>
+<section class="tutorial-cell tutorial-lint-cell"><header><span>Live RiX lint</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run cell</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="16" spellcheck="false">/**
+id: lint-demo
+description: An intentionally inconsistent plugin.
+kind: rix
+mount: expectedMount
+exports: [Missing]
+groups: [Expected]
+permissions: [files]
+**/
+## lint-problem
+MutateArray(value) -&gt; value;
+.Host.RegisterValue(&quot;actualMount&quot;, {= }, &quot;lint-demo&quot;, [&quot;Other&quot;]);
+.Host.RegisterMethod(&quot;Array&quot;, &quot;Change&quot;, MutateArray, &quot;lint-demo&quot;, &quot;actualMount&quot;);
+.Host.RegisterMethod(&quot;Array&quot;, &quot;Change&quot;, MutateArray, &quot;lint-demo&quot;, &quot;actualMount&quot;);
+.TypeRegister({= name=:DemoValue });
+0;</textarea><div class="tutorial-output" data-tutorial-output aria-live="polite"></div></section>
+<p>Correction:</p>
+<section class="tutorial-cell tutorial-lint-cell"><header><span>Live RiX lint</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run cell</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="14" spellcheck="false">/**
+id: lint-demo
+description: A portable and repeatable demonstration plugin.
+kind: rix
+mount: lintDemo
+exports: [DemoValue]
+groups: [Demo]
+provides: [rix.demo@1]
+schemas: [rix.demo.Value@1]
+**/
+DemoValue = 1;
+lintDemo = {= DemoValue=DemoValue };
+.Host.RegisterValue(&quot;lintDemo&quot;, lintDemo, &quot;lint-demo&quot;, [&quot;Demo&quot;]);
+lintDemo;</textarea><div class="tutorial-output" data-tutorial-output aria-live="polite"></div></section>
+<p><code>RX1904</code> is the one catalog-level rule that cannot be truthfully decided from a single browser cell: it reports a dependency that is absent from the set of plugins being linted together. Use <code>rix lint --profile plugin path/to/plugins</code> to check it across files. Adding the required plugin to that lint target or correcting the header&#039;s <code>requires</code> entry is the fix.</p>
+<h2>Maintainability: RX2001 and RX2002</h2>
+<p>Large implicit capture sets make lazy code hard to move or test. Suppressions are escape hatches, so they must record why the exception is intentional.</p>
+<p>Problem:</p>
+<section class="tutorial-cell tutorial-lint-cell"><header><span>Live RiX lint</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run cell</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="8" spellcheck="false">## lint-problem
+a = 1;
+b = 2;
+c = 3;
+d = 4;
+1 ?: {; @a + @b + @c + @d + @a; } ?_ _;
+## rix-lint-disable-next-line RX1702
+[1][0];</textarea><div class="tutorial-output" data-tutorial-output aria-live="polite"></div></section>
+<p>Correction:</p>
+<section class="tutorial-cell tutorial-lint-cell"><header><span>Live RiX lint</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run cell</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="8" spellcheck="false">Combine = (a, b, c, d) -&gt; a + b + c + d + a;
+a = 1;
+b = 2;
+c = 3;
+d = 4;
+a == 1 ?: Combine(a, b, c, d) ?_ _;
+## rix-lint-disable-next-line RX1702 -- foreign object uses a documented zero-based index
+foreign[0];</textarea><div class="tutorial-output" data-tutorial-output aria-live="polite"></div></section>
+<h2>Choose a lint level deliberately</h2>
+<p>Levels are cumulative: <code>essential</code> is level 1, <code>standard</code> adds level 2, <code>thorough</code> adds level 3, and <code>pedantic</code> adds level 4. Profiles select domains: <code>default</code>, <code>reactive</code>, <code>math</code>, <code>plugin</code>, <code>teaching</code>, <code>pedantic</code>, or <code>all</code>. Neither this page nor the CLI edits code by default. Any future automated edit path must remain behind an explicit edit flag.</p>
+<aside class="challenge"><p class="eyebrow">Challenge</p><h3>Repair a mixed translation</h3><p>Lint this cell, repair every finding, and lint it again before running it.</p><section class="tutorial-cell tutorial-lint-cell"><header><span>Your RiX answer</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run answer</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false" placeholder="# Write your RiX solution here">values = [1, 2, 3];
+total = 0;
+{@ index = 1; index &lt;= values.Len(); {;
+    total += @values[index];
+}; index += 1 };
+values[0];</textarea><div class="tutorial-output" data-tutorial-output aria-live="polite"></div></section></aside>
+<h2>Keep going</h2>
+<p>Use the JavaScript-to-RiX gotcha lesson for the underlying semantic model, then return to the package-design capstone to apply these checks at an extension boundary.</p></div><section class="api-links"><h2>Reference</h2><ul><li><a href="https://docs.rix.ratmath.com/eval/syntax-guide.html#script-import-expressions" data-doc-reference target="_blank" rel="noreferrer">Script imports ↗</a></li><li><a href="https://docs.rix.ratmath.com/developer-guide.html#adding-a-user-facing-capability" data-doc-reference target="_blank" rel="noreferrer">Adding extensions ↗</a></li></ul></section><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

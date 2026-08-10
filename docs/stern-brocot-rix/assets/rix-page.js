@@ -49509,6 +49509,65 @@ ${lines.join(`
     return builtins[name] || { type: "identifier" };
   }
   // rix/src/eval/lint.js
+  var RIX_LINT_LEVELS = Object.freeze({
+    essential: 1,
+    standard: 2,
+    thorough: 3,
+    pedantic: 4
+  });
+  var RIX_LINT_PROFILES = Object.freeze({
+    default: ["core", "syntax"],
+    plugin: ["core", "syntax", "plugin"],
+    reactive: ["core", "syntax", "reactive"],
+    math: ["core", "syntax", "math"],
+    teaching: ["core", "syntax", "math", "reactive", "teaching"],
+    pedantic: ["core", "syntax", "math", "reactive", "plugin", "teaching", "style"],
+    all: ["core", "syntax", "math", "reactive", "plugin", "teaching", "style"]
+  });
+  var RIX_LINT_RULES = Object.freeze({
+    RX1001: { level: 1, profiles: ["core"], title: "Missing outer capture" },
+    RX1002: { level: 1, profiles: ["core"], title: "Spurious outer capture" },
+    RX1003: { level: 1, profiles: ["core"], title: "Unresolved explicit capture" },
+    RX1101: { level: 1, profiles: ["core", "teaching"], title: "Numeric decision" },
+    RX1102: { level: 1, profiles: ["core"], title: "Undecided result is not handled" },
+    RX1201: { level: 1, profiles: ["core"], title: "Immutable identity update" },
+    RX1202: { level: 2, profiles: ["core", "teaching"], title: "Mutable value alias" },
+    RX1203: { level: 2, profiles: ["core", "teaching"], title: "Ignored non-mutating result" },
+    RX1302: { level: 2, profiles: ["core"], title: "Shadowed binding" },
+    RX1303: { level: 1, profiles: ["core"], title: "Path-dependent initialization" },
+    RX1401: { level: 2, profiles: ["core"], title: "Loop condition cannot change" },
+    RX1402: { level: 1, profiles: ["core"], title: "Duplicate loop progress" },
+    RX1403: { level: 3, profiles: ["core"], title: "Loop-local closure capture" },
+    RX1501: { level: 3, profiles: ["core"], title: "Non-tail self recursion" },
+    RX1601: { level: 1, profiles: ["reactive"], title: "Untracked reactive snapshot" },
+    RX1602: { level: 3, profiles: ["reactive"], title: "Reactive identity read" },
+    RX1603: { level: 1, profiles: ["reactive"], title: "Unpublished reactive mutation" },
+    RX1604: { level: 1, profiles: ["reactive"], title: "Reactive dependency cycle" },
+    RX1701: { level: 1, profiles: ["syntax", "teaching"], title: "Lowercase call-like multiplication" },
+    RX1702: { level: 1, profiles: ["syntax", "teaching"], title: "Zero index in a one-based collection" },
+    RX1703: { level: 2, profiles: ["syntax", "teaching"], title: "Collection or string decision" },
+    RX1704: { level: 3, profiles: ["syntax", "style"], title: "Dense nested conditional" },
+    RX1705: { level: 3, profiles: ["syntax", "teaching"], title: "Block introduces capture boundary" },
+    RX1706: { level: 3, profiles: ["syntax", "teaching"], title: "Function value reference" },
+    RX1801: { level: 2, profiles: ["math", "teaching"], title: "Exact division versus truncation" },
+    RX1802: { level: 3, profiles: ["math", "teaching"], title: "Fraction equality policy" },
+    RX1803: { level: 3, profiles: ["math"], title: "Exactness discarded" },
+    RX1804: { level: 1, profiles: ["math"], title: "Unchecked divisor" },
+    RX1805: { level: 1, profiles: ["math", "plugin"], title: "Polynomial division dependency" },
+    RX1806: { level: 1, profiles: ["math", "plugin"], title: "Unbounded refinement" },
+    RX1901: { level: 1, profiles: ["plugin"], title: "Plugin header contract" },
+    RX1902: { level: 2, profiles: ["plugin"], title: "Plugin export contract" },
+    RX1903: { level: 1, profiles: ["plugin"], title: "Plugin mount contract" },
+    RX1904: { level: 1, profiles: ["plugin"], title: "Unsatisfied plugin dependency" },
+    RX1905: { level: 1, profiles: ["plugin"], title: "Plugin capability collision" },
+    RX1906: { level: 1, profiles: ["plugin"], title: "RiX plugin host dependency" },
+    RX1907: { level: 2, profiles: ["plugin"], title: "Plugin schema contract" },
+    RX1908: { level: 2, profiles: ["plugin"], title: "Mutation naming contract" },
+    RX1909: { level: 3, profiles: ["plugin"], title: "Plugin initialization idempotence" },
+    RX1910: { level: 2, profiles: ["plugin"], title: "Capability group mismatch" },
+    RX2001: { level: 2, profiles: ["style", "core"], title: "Capture-dense lazy branch" },
+    RX2002: { level: 4, profiles: ["style"], title: "Suppression lacks a reason" }
+  });
   var ASSIGNMENT_OPERATORS = new Set(["=", ":=", "~=", "::=", "~~="]);
   var UPDATE_OPERATORS = new Set(["~=", "~~=", "+=", "-=", "*=", "/=", "//=", "%=", "^=", "**=", "++=", "\\/=", "/\\=", "\\="]);
   var COMPARISON_OPERATORS = new Set(["==", "!=", "<", ">", "<=", ">="]);
@@ -49522,6 +49581,27 @@ ${lines.join(`
     "ratfun",
     "rationalFunction"
   ]);
+  var KNOWN_MUTABLE_NODE_TYPES = new Set(["Array", "ArrayContainer", "MapContainer", "SetContainer", "TensorContainer"]);
+  var KNOWN_PURE_COLLECTION_METHODS = new Set([
+    "ADD",
+    "APPEND",
+    "CONCAT",
+    "DROP",
+    "DROPLAST",
+    "FILTER",
+    "FLATMAP",
+    "MAP",
+    "PREPEND",
+    "PUSH",
+    "REVERSE",
+    "SET",
+    "SLICE",
+    "SORT",
+    "TAKE",
+    "UNIQUE",
+    "WITH"
+  ]);
+  var DIVISION_OPERATORS = new Set(["/", "//", "%", "/%"]);
   // rix/src/tools/sheet-view.js
   function moveSheetSelection(position, key, rowCount, columnCount) {
     const current = {

@@ -541,6 +541,7 @@ test("every published RiX tutorial h2 section executes in fresh state", async ()
             const repl = createRixRepl();
             const cells = section.matchAll(/```rix(?:[ \t]+[^\n]*)?[ \t]*\n([\s\S]*?)\n```/g);
             for (const [, code] of cells) {
+                if (code.includes("## lint-problem")) continue;
                 const response = await repl.runAsync(code);
                 expect(response.type, `lesson ${tutorial.number}, section ${sectionIndex}: ${response.text}`).toBe("result");
             }

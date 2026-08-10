@@ -15,3 +15,21 @@
 @media (max-width: 760px) { .tutorial-header-actions button { display: block; }.tutorial-shell.sidebar-expanded .lesson-sidebar { position: fixed; z-index: 20; top: 64px; bottom: 0; left: 0; display: block; width: min(82vw, 300px); max-height: none; overflow: auto; border-radius: 0 10px 0 0; box-shadow: 8px 0 24px rgba(0,0,0,.25); } }
 .tutorial-header-actions button { display: block; }.tutorial-shell.sidebar-collapsed .lesson-sidebar { display: none; }.tutorial-shell.sidebar-collapsed .lesson-layout { grid-template-columns: minmax(0, 1fr); }.tutorial-shell.docs-open.sidebar-collapsed .lesson-layout { grid-template-columns: minmax(0, 1.2fr) minmax(320px, .8fr); }.tutorial-shell.docs-open.sidebar-collapsed .lesson-card { grid-column: auto; }.tutorial-shell.docs-open.sidebar-collapsed .tutorial-docs-panel { grid-column: auto; } @media (max-width: 920px) and (min-width: 761px) { .tutorial-shell:not(.sidebar-collapsed) .lesson-sidebar { display: block; }.tutorial-shell.docs-open.sidebar-collapsed .lesson-layout { grid-template-columns: minmax(0, 1fr); }.tutorial-shell.docs-open.sidebar-collapsed .lesson-card { grid-column: 1; }.tutorial-shell.docs-open.sidebar-collapsed .tutorial-docs-panel { grid-column: 1; } } @media (max-width: 760px) { .tutorial-shell.sidebar-expanded .lesson-sidebar { background: #5b42a0; color: #fff; border: 1px solid rgba(255,255,255,.38); } }
 .lesson-sidebar { background: #5b42a0; border: 1px solid rgba(255,255,255,.38); box-shadow: 0 8px 24px rgba(0,0,0,.2); } @media (min-width: 921px) { .tutorial-shell.docs-open .lesson-layout { grid-template-columns: minmax(140px, 190px) minmax(320px, 1fr) minmax(320px, 1fr); }.tutorial-shell.docs-open.sidebar-collapsed .lesson-layout { grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr); } }
+
+.tutorial-cell-actions { display: flex; align-items: center; gap: 8px; }
+.tutorial-cell header .tutorial-lint-button { background: #ede9fe; color: #4c1d95; border-color: #c4b5fd; }
+.tutorial-cell header .tutorial-lint-button:hover { background: #ddd6fe; }
+.lint-clean, .lint-summary { padding: 14px 16px; }
+.lint-clean { color: #166534; background: #f0fdf4; border-left: 4px solid #22c55e; }
+.lint-diagnostics { display: grid; gap: 10px; margin: 10px 0 0; padding: 0; list-style: none; }
+.lint-diagnostics li { display: grid; gap: 4px; padding: 11px 12px; background: #fff; border: 1px solid #d9d3ea; border-left: 4px solid #8b5cf6; border-radius: 7px; color: #312e45; }
+.lint-diagnostics li.lint-error { border-left-color: #dc2626; }
+.lint-diagnostics li.lint-warning { border-left-color: #d97706; }
+.lint-diagnostics li.lint-info { border-left-color: #2563eb; }
+.lint-diagnostics p { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 0; }
+.lint-code { font: 700 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: #4c1d95; }
+.lint-severity { padding: 2px 6px; border-radius: 999px; background: #ede9fe; font-size: 10px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+.lint-location { color: #6b6680; font-size: 12px; }
+.lint-diagnostics span:not(.lint-code):not(.lint-severity):not(.lint-location), .lint-diagnostics small { display: block; }
+.lint-diagnostics small { color: #625d73; }
+@media (max-width: 520px) { .tutorial-cell > header { align-items: flex-start; gap: 8px; }.tutorial-cell-actions { flex-wrap: wrap; justify-content: flex-end; } }

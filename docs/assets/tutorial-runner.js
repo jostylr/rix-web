@@ -1,10 +1,13 @@
 import {
   createRixRepl
-} from "./chunk-b4wwj86n.js";
+} from "./chunk-stm07t9r.js";
 import {
+  PluginCatalog,
   formatValue,
-  mountOutputWidgets
-} from "./chunk-90dxb7rz.js";
+  lintRix,
+  mountOutputWidgets,
+  readPluginHeader
+} from "./chunk-9qc33bym.js";
 import {
   mountTutorialNavigation
 } from "./chunk-g5p2fpmt.js";
@@ -159,6 +162,62 @@ function applyTutorialEditorKey(value, start, end, { key, shiftKey = false } = {
   return null;
 }
 
+// src/tutorial-lint.js
+function leadingPluginMetadata(source, file) {
+  if (!/^\s*\/\*{2,}/.test(source))
+    return null;
+  const raw = readPluginHeader(source, file);
+  return new PluginCatalog().addMetadata(raw, {
+    sourcePath: file,
+    source,
+    kind: raw.kind || "rix"
+  });
+}
+function contractDiagnostic(error, file) {
+  return {
+    code: "RX1901",
+    severity: "error",
+    title: "Plugin header contract",
+    message: error instanceof Error ? error.message : String(error),
+    hint: "Begin plugin source with a valid /** YAML header **/ contract.",
+    file,
+    line: 1,
+    column: 1,
+    offset: 0,
+    level: 1
+  };
+}
+function lintTutorialSource(source, options = {}) {
+  const file = options.file || "tutorial-cell.rix";
+  let pluginMetadata = null;
+  try {
+    pluginMetadata = leadingPluginMetadata(String(source), file);
+  } catch (error) {
+    return [contractDiagnostic(error, file)];
+  }
+  try {
+    return lintRix(String(source), {
+      file,
+      level: options.level || "pedantic",
+      profile: options.profile || (pluginMetadata ? "plugin" : "all"),
+      pluginMetadata
+    });
+  } catch (error) {
+    return [{
+      code: "RX0001",
+      severity: "error",
+      title: "Source could not be analyzed",
+      message: error instanceof Error ? error.message : String(error),
+      hint: "Fix the parse error, then lint the cell again.",
+      file,
+      line: error?.line || 1,
+      column: error?.column || 1,
+      offset: error?.pos || 0,
+      level: 1
+    }];
+  }
+}
+
 // src/tutorial-runner.js
 var outputDisposers = new WeakMap;
 mountTutorialNavigation();
@@ -232,6 +291,24 @@ async function runCell(cell) {
   output.innerHTML = `<div class="${response.type === "error" ? "error" : "result"}">${escapeHtml(response.text)}</div>`;
   revealTutorialOutput(output);
 }
+function lintCell(cell, button) {
+  const sourceInput = cell.querySelector("[data-tutorial-source]");
+  const output = cell.querySelector("[data-tutorial-output]");
+  outputDisposers.get(output)?.();
+  outputDisposers.delete(output);
+  const diagnostics = lintTutorialSource(sourceInput.value, {
+    file: button?.dataset.lintFile || "tutorial-cell.rix",
+    level: button?.dataset.lintLevel || "pedantic",
+    profile: button?.dataset.lintProfile || "all"
+  });
+  if (diagnostics.length === 0) {
+    output.innerHTML = '<div class="lint-clean"><strong>No lint findings.</strong> This cell is clean at the selected level and profile.</div>';
+    revealTutorialOutput(output);
+    return;
+  }
+  output.innerHTML = `<div class="lint-summary"><strong>${diagnostics.length} lint finding${diagnostics.length === 1 ? "" : "s"}</strong><ol class="lint-diagnostics">${diagnostics.map((diagnostic) => `<li class="lint-${escapeHtml(diagnostic.severity)}"><p><span class="lint-code">${escapeHtml(diagnostic.code)}</span><span class="lint-severity">${escapeHtml(diagnostic.severity)}</span><span class="lint-location">line ${escapeHtml(diagnostic.line)}, column ${escapeHtml(diagnostic.column)}</span></p><strong>${escapeHtml(diagnostic.title || diagnostic.message)}</strong>${diagnostic.title ? `<span>${escapeHtml(diagnostic.message)}</span>` : ""}${diagnostic.hint ? `<small>Fix: ${escapeHtml(diagnostic.hint)}</small>` : ""}</li>`).join("")}</ol></div>`;
+  revealTutorialOutput(output);
+}
 function openDocumentation(link) {
   const panel = document.querySelector("#tutorial-docs-panel");
   if (!panel)
@@ -267,6 +344,9 @@ document.addEventListener("click", (event) => {
   const button = event.target.closest("[data-tutorial-run]");
   if (button)
     runCell(button.closest(".tutorial-cell"));
+  const lintButton = event.target.closest("[data-tutorial-lint]");
+  if (lintButton)
+    lintCell(lintButton.closest(".tutorial-cell"), lintButton);
   const objectButton = event.target.closest("[data-object-help]");
   if (objectButton)
     openObjectHelp(objectButton.dataset.objectHelp, objectButton.dataset.objectFunction);
@@ -322,5 +402,5 @@ function openObjectHelp(name, requestedFunction = null) {
   dialog.showModal();
 }
 
-//# debugId=E2A404D5EFF2038E64756E2164756E21
+//# debugId=E55EE6D322531DDB64756E2164756E21
 //# sourceMappingURL=tutorial-runner.js.map

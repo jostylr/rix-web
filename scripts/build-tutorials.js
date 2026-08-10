@@ -52,13 +52,21 @@ function parseFrontmatter(source) {
     return [meta, match[2]];
 }
 
-function renderMarkdown(markdown, { runnable = true } = {}) {
+function renderMarkdown(markdown, {
+    runnable = true,
+    lint = false,
+    lintProfile = "all",
+    lintLevel = "pedantic",
+} = {}) {
     const lines = markdown.split("\n");
     const html = [];
     let paragraph = [];
     let code = null;
     let codeLanguage = "";
     let challenge = null;
+    const cellActions = (runLabel) => lint
+        ? `<div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="${escapeHtml(lintProfile)}" data-lint-level="${escapeHtml(lintLevel)}">Lint cell</button><button type="button" data-tutorial-run>${runLabel}</button></div>`
+        : `<button type="button" data-tutorial-run>${runLabel}</button>`;
     const flushParagraph = () => {
         if (!paragraph.length) return;
         html.push(`<p>${renderInline(paragraph.join(" "))}</p>`);
@@ -67,7 +75,7 @@ function renderMarkdown(markdown, { runnable = true } = {}) {
     const flushCode = () => {
         if (code === null) return;
         if (codeLanguage.split(/\s+/, 1)[0].toLowerCase() === "rix" && runnable) {
-            html.push(`<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="${textareaRows(code)}" spellcheck="false">${escapeHtml(code)}</textarea><div class="tutorial-output" data-tutorial-output></div></section>`);
+            html.push(`<section class="tutorial-cell${lint ? " tutorial-lint-cell" : ""}"><header><span>${lint ? "Live RiX lint" : "Runnable RiX"}</span>${cellActions("Run cell")}</header><textarea class="tutorial-source" data-tutorial-source rows="${textareaRows(code)}" spellcheck="false">${escapeHtml(code)}</textarea><div class="tutorial-output" data-tutorial-output${lint ? ' aria-live="polite"' : ""}></div></section>`);
         } else {
             const label = !runnable && codeLanguage.split(/\s+/, 1)[0].toLowerCase() === "rix" ? "Proposed RiX API" : codeLanguage || "code";
             html.push(`<section class="comparison-code"><header>${escapeHtml(label)}</header><pre><code>${escapeHtml(code)}</code></pre></section>`);
@@ -78,7 +86,7 @@ function renderMarkdown(markdown, { runnable = true } = {}) {
     const flushChallenge = () => {
         if (!challenge) return;
         const challengeCode = challenge.code || "";
-        html.push(`<aside class="challenge"><p class="eyebrow">Challenge</p><h3>${renderInline(challenge.title || "Make it yours")}</h3><p>${renderInline(challenge.body.join(" "))}</p><section class="tutorial-cell"><header><span>Your RiX answer</span><button type="button" data-tutorial-run>Run answer</button></header><textarea class="tutorial-source" data-tutorial-source rows="${textareaRows(challengeCode)}" spellcheck="false" placeholder="# Write your RiX solution here">${escapeHtml(challengeCode)}</textarea><div class="tutorial-output" data-tutorial-output></div></section></aside>`);
+        html.push(`<aside class="challenge"><p class="eyebrow">Challenge</p><h3>${renderInline(challenge.title || "Make it yours")}</h3><p>${renderInline(challenge.body.join(" "))}</p><section class="tutorial-cell${lint ? " tutorial-lint-cell" : ""}"><header><span>Your RiX answer</span>${cellActions("Run answer")}</header><textarea class="tutorial-source" data-tutorial-source rows="${textareaRows(challengeCode)}" spellcheck="false" placeholder="# Write your RiX solution here">${escapeHtml(challengeCode)}</textarea><div class="tutorial-output" data-tutorial-output${lint ? ' aria-live="polite"' : ""}></div></section></aside>`);
         challenge = null;
     };
     for (let index = 0; index < lines.length; index += 1) {
@@ -211,7 +219,11 @@ for await (const file of new Bun.Glob("*.md").scan({ cwd: tutorialsDir })) markd
 const generatedFiles = new Set();
 for (const filename of markdownFiles) {
     const [meta, markdown] = parseFrontmatter(await Bun.file(path.join(tutorialsDir, filename)).text());
-    await Bun.write(path.join(outDir, `${path.basename(filename, ".md")}.html`), pageTemplate(meta, renderMarkdown(markdown)));
+    await Bun.write(path.join(outDir, `${path.basename(filename, ".md")}.html`), pageTemplate(meta, renderMarkdown(markdown, {
+        lint: meta.lint === "true",
+        lintProfile: meta.lintProfile || "all",
+        lintLevel: meta.lintLevel || "pedantic",
+    })));
     generatedFiles.add(`${path.basename(filename, ".md")}.html`);
 }
 for (const lesson of tutorials.filter((item) => item.pluginTutorial)) {

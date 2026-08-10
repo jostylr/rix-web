@@ -552,6 +552,15 @@
     {
       "number": "10f",
       "parent": "10",
+      "file": "linting.html",
+      "title": "Live lint laboratory",
+      "description": "Find and repair scope, control-flow, reactive, mathematical, and plugin mistakes.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "10g",
+      "parent": "10",
       "file": "capstone-package-design.html",
       "title": "Capstone: package design",
       "description": "Design a safe RiX package boundary.",
