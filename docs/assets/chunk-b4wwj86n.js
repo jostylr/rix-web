@@ -23,9 +23,6 @@ import {
   install19 as install20,
   install2 as install3,
   install20 as install21,
-  install21 as install22,
-  install22 as install23,
-  install23 as install24,
   install3 as install4,
   install4 as install5,
   install5 as install6,
@@ -45,7 +42,7 @@ import {
   typeRegistry,
   unsupportedRefinementResult,
   valueMethod
-} from "./chunk-9xzwgbs4.js";
+} from "./chunk-90dxb7rz.js";
 
 // src/repl-source.js
 var statementClosers = new Set([")", "]", "}", "|}", ";}", "@}", "!}", ":}"]);
@@ -135,7 +132,7 @@ function collection() {
   }
   return { type: "map", entries, _ext: extension };
 }
-function install25({ systemContext }) {
+function install22({ systemContext }) {
   const value = collection();
   systemContext.registerHostCallableValue("arrayJs", value, {
     impl(args) {
@@ -485,7 +482,7 @@ function installBrowserApproxMathPlugin({ systemContext, registry, metadata = {}
   systemContext.registerMethod("Rational", "Float", floatExtension, owner);
   return systemContext;
 }
-var install26 = installBrowserApproxMathPlugin;
+var install23 = installBrowserApproxMathPlugin;
 
 // src/generated/bundled-plugin-catalog.js
 function createBundledPluginCatalog() {
@@ -1233,7 +1230,7 @@ ballNamespace._proto = {=
 );
 `, sourcePath: "bundled:ball", kind: "rix" });
   catalog.addMetadata({ id: "canvas", description: "Serializable Canvas 2D drawing plans for core Graphics scenes.", kind: "host", mount: "canvas", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.canvas@1"], targets: ["canvas", "application/vnd.rix.canvas+json"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:canvas" }, { sourcePath: "bundled:canvas", kind: "host" });
-  catalog.registerInstaller("canvas", install15);
+  catalog.registerInstaller("canvas", install11);
   catalog.addMetadata({ id: "cauchy", description: "Rational Cauchy sequences with explicit certified tail bounds and moduli.", kind: "rix", mount: "cauchy", exports: ["Sequence", "Certified", "Geometric", "Term", "TailBound", "Modulus", "Enclosure", "Record"], groups: ["Numerics", "Exact"], permissions: [], provides: ["rix.cauchy@1", "rix.refinable@1", "rix.enclosable-real@1"], schemas: ["rix.cauchy.sequence@1", "rix.cauchy.real@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:cauchy" }, { source: `/**
 id: cauchy
 description: Rational Cauchy sequences with explicit certified tail bounds and moduli.
@@ -1598,6 +1595,155 @@ cauchyNamespace._proto = {=
     ["Numerics", "Exact"]
 );
 `, sourcePath: "bundled:cauchy", kind: "rix" });
+  catalog.addMetadata({ id: "complex-viz", description: "Exact domain-color sampling for complex functions rendered as portable Graphics.", kind: "rix", mount: "complexViz", aliases: ["domainColoring"], exports: ["DomainColoring", "RationalFunction", "Sample", "Pole", "Unresolved", "PhaseSector", "MagnitudeBand", "Color"], groups: ["Graphics", "Exact", "Algebra"], permissions: [], provides: ["rix.complex-visualization@1"], schemas: ["rix.complex-viz.sample@1", "rix.complex-viz.domain-coloring@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:complex-viz" }, { source: `/**
+id: complex-viz
+description: Exact domain-color sampling for complex functions rendered as portable Graphics.
+kind: rix
+mount: complexViz
+aliases: [domainColoring]
+exports: [DomainColoring, RationalFunction, Sample, Pole, Unresolved, PhaseSector, MagnitudeBand, Color]
+groups: [Graphics, Exact, Algebra]
+permissions: []
+provides: [rix.complex-visualization@1]
+schemas: [rix.complex-viz.sample@1, rix.complex-viz.domain-coloring@1]
+snapshot: true
+deterministic: true
+defaultEnabled: false
+**/
+
+CVOption(options, key, fallback) -> options.Has(key) ?: options[key] ?_ fallback;
+CVAbs(value) -> value < 0 ?: -value ?_ value;
+
+CVSample(value) -> {=
+    valueKind=:complexVizSample,
+    schema="rix.complex-viz.sample@1",
+    status=:value,
+    value=value
+};
+CVPole() -> {= valueKind=:complexVizSample, schema="rix.complex-viz.sample@1", status=:pole, value=_ };
+CVUnresolved(reason ?= :unresolved) -> {= valueKind=:complexVizSample, schema="rix.complex-viz.sample@1", status=:unresolved, reason=reason, value=_ };
+
+CVNormalizeSample(value) -> ((value ? :Map) && value.Has("status")) ?: value ?_ CVSample(value);
+
+CVRationalSample(numerator, denominator, point) -> {;
+    denominatorValue = point |> denominator;
+    .Complex.NormSquared(denominatorValue) == 0
+      ?: CVPole()
+      ?_ CVSample((point |> numerator) / denominatorValue);
+};
+
+CVRationalFunction(numerator, denominator) -> (point) -> CVRationalSample(numerator, denominator, point);
+
+CVPhaseSector(value) -> {;
+    x = .Complex.Re(value) ~!: :Rational;
+    y = .Complex.Im(value) ~!: :Rational;
+    (x == 0 && y == 0)
+      ?: :zero
+      ?_ x >= 0
+           ?: (y >= 0
+                 ?: (y <= x ?: 0 ?_ 1)
+                 ?_ ((-y) >= x ?: 6 ?_ 7))
+           ?_ (y >= 0
+                 ?: (y >= (-x) ?: 2 ?_ 3)
+                 ?_ ((-y) <= (-x) ?: 4 ?_ 5));
+};
+
+CVMagnitudeBand(value) -> {;
+    magnitudeSquared = .Complex.NormSquared(value) ~!: :Rational;
+    magnitudeSquared == 0 ?: :zero ?_ magnitudeSquared <= 1/4 ?: :small ?_ magnitudeSquared <= 4 ?: :medium ?_ :large;
+};
+
+CVPalette(sector, band) -> {;
+    small = ["#fecaca", "#fed7aa", "#fef08a", "#d9f99d", "#a7f3d0", "#a5f3fc", "#bfdbfe", "#ddd6fe"];
+    medium = ["#ef4444", "#f97316", "#eab308", "#84cc16", "#10b981", "#06b6d4", "#3b82f6", "#8b5cf6"];
+    large = ["#991b1b", "#9a3412", "#854d0e", "#3f6212", "#065f46", "#155e75", "#1e3a8a", "#4c1d95"];
+    band == :small ?: small[sector + 1] ?_ band == :medium ?: medium[sector + 1] ?_ large[sector + 1];
+};
+
+CVColor(sampleValue) -> {;
+    sample = CVNormalizeSample(sampleValue);
+    sample[:status] == :pole
+      ?: "#ffffff"
+      ?_ sample[:status] == :unresolved
+           ?: "#64748b"
+           ?_ {;
+               sector = CVPhaseSector(@sample[:value]);
+               sector == :zero ?: "#111827" ?_ CVPalette(sector, CVMagnitudeBand(@sample[:value]));
+           };
+};
+
+CVPositiveInteger(value, label) -> {;
+    integer = value ~!: :Integer;
+    integer >= 1 ?: integer ?_ .Error(@"@{label} must be a positive Integer");
+};
+
+CVDomainColoring(spec) -> {;
+    fn = spec[:fn];
+    fn == _ ?: .Error("DomainColoring requires fn") ?_ _;
+    domain = CVOption(spec, "domain", {= re=[-2, 2], im=[-2, 2] });
+    re = domain[:re];
+    im = domain[:im];
+    resolution = CVOption(spec, "resolution", [32, 32]);
+    columns = CVPositiveInteger(resolution[1], "DomainColoring columns");
+    rows = CVPositiveInteger(resolution[2], "DomainColoring rows");
+    size = CVOption(spec, "size", [360, 360]);
+    cellWidth = size[1] / columns;
+    cellHeight = size[2] / rows;
+    reStep = (re[2] - re[1]) / columns;
+    imStep = (im[2] - im[1]) / rows;
+    children := [];
+    poles := 0;
+    unresolved := 0;
+    zeros := 0;
+    {@ row = 1; row <= @rows; {;
+        {@ column = 1; column <= @columns; {;
+            real = @re[1] + (column - 1/2) * @reStep;
+            imaginary = @im[2] - (@row - 1/2) * @imStep;
+            point = .Complex.FromParts(real, imaginary);
+            sample = CVNormalizeSample(point |> @fn);
+            sample[:status] == :pole ?: {; @poles += 1; } ?_ _;
+            sample[:status] == :unresolved ?: {; @unresolved += 1; } ?_ _;
+            (sample[:status] == :value && .Complex.NormSquared(sample[:value]) == 0) ?: {; @zeros += 1; } ?_ _;
+            color = CVColor(sample);
+            @children ~= @children.Push(.Graphics.Rectangle(
+                [(column - 1) * @cellWidth, (@row - 1) * @cellHeight],
+                [@cellWidth, @cellHeight],
+                {= fill=color, stroke=color, width=0 }
+            ));
+        }; column += 1 };
+    }; row += 1 };
+    .Graphics.Graphic(size, children, {=
+        schema="rix.complex-viz.domain-coloring@1",
+        convention=:exactOctantPhaseThreeBandMagnitude,
+        phase=:octantsByCartesianDominance,
+        magnitude=:normSquaredBands,
+        magnitudeBands=[0, 1/4, 4],
+        poleColor="#ffffff",
+        unresolvedColor="#64748b",
+        zeroColor="#111827",
+        domain=domain,
+        resolution=resolution,
+        samples=rows * columns,
+        poles=poles,
+        unresolved=unresolved,
+        zeros=zeros,
+        alt="Complex domain coloring"
+    });
+};
+
+complexVizNamespace = {= };
+complexVizNamespace._proto = {=
+    DomainColoring=(self, spec)->CVDomainColoring(spec),
+    RationalFunction=(self, numerator, denominator)->CVRationalFunction(numerator, denominator),
+    Sample=(self, value)->CVSample(value),
+    Pole=(self)->CVPole(),
+    Unresolved=(self, reason ?= :unresolved)->CVUnresolved(reason),
+    PhaseSector=(self, value)->CVPhaseSector(value),
+    MagnitudeBand=(self, value)->CVMagnitudeBand(value),
+    Color=(self, value)->CVColor(value)
+};
+.Host.RegisterValue("complexViz", complexVizNamespace, "Exact complex domain coloring as portable Graphics", ["Graphics", "Exact", "Algebra"]);
+`, sourcePath: "bundled:complex-viz", kind: "rix" });
   catalog.addMetadata({ id: "continued-fraction", description: "Finite and lazy simple continued fractions with exact convergents and certified enclosures.", kind: "rix", mount: "continuedFraction", aliases: ["cf"], exports: ["Finite", "Lazy", "Periodic", "Sqrt2", "FromRational", "Coefficient", "Coefficients", "Convergent", "Convergents", "Enclosure", "ErrorInterval", "Record"], groups: ["Numerics", "Exact"], permissions: [], provides: ["rix.continued-fraction@1", "rix.refinable@1", "rix.enclosable-real@1"], schemas: ["rix.continued-fraction.finite@1", "rix.continued-fraction.lazy@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:continued-fraction" }, { source: `/**
 id: continued-fraction
 description: Finite and lazy simple continued fractions with exact convergents and certified enclosures.
@@ -1991,15 +2137,232 @@ continuedFractionNamespace._proto = {=
 );
 `, sourcePath: "bundled:continued-fraction", kind: "rix" });
   catalog.addMetadata({ id: "csv", description: "Deterministic CSV and TSV export for portable Tables and typed data Relations.", kind: "host", mount: "csv", exports: ["Render"], groups: ["Renderers", "Data"], permissions: [], provides: ["rix.renderer.csv@1"], targets: ["csv", "text/csv", "tsv", "text/tab-separated-values"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:csv" }, { sourcePath: "bundled:csv", kind: "host" });
-  catalog.registerInstaller("csv", install24);
+  catalog.registerInstaller("csv", install20);
   catalog.addMetadata({ id: "data", description: "Immutable typed relations with deterministic projection, filtering, sorting, and Table views.", kind: "host", mount: "data", exports: ["Relation", "Project", "Filter", "Sort", "TableView", "Schema", "Rows"], groups: ["Data"], permissions: [], provides: ["rix.data.relation@1"], schemas: ["rix.data.relation@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:data" }, { sourcePath: "bundled:data", kind: "host" });
-  catalog.registerInstaller("data", install10);
+  catalog.registerInstaller("data", install7);
   catalog.addMetadata({ id: "document", description: "Numbered portable reports with labels, forward references, captions, and small semantic themes.", kind: "host", mount: "document", exports: ["Report", "Label", "Ref", "Theme", "References"], groups: ["Documents"], permissions: [], provides: ["rix.document.report@1"], schemas: ["rix.document.report@1", "rix.document.theme@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:document" }, { sourcePath: "bundled:document", kind: "host" });
-  catalog.registerInstaller("document", install11);
+  catalog.registerInstaller("document", install8);
   catalog.addMetadata({ id: "draw", description: "Convenient 2D drawing helpers that produce core Graphics nodes.", kind: "host", mount: "draw", exports: ["Line", "Polygon", "Label", "Box", "Circle"], groups: ["Draw"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:draw" }, { sourcePath: "bundled:draw", kind: "host" });
   catalog.registerInstaller("draw", install);
+  catalog.addMetadata({ id: "exact-algebras", description: "Exact rational quaternion and octonion values.", kind: "rix", mount: "exactAlgebras", exports: ["Quaternion", "Octonion", "Components", "Conjugate", "NormSquared", "Inverse"], groups: ["Exact"], permissions: [], provides: ["rix.exact-algebras@1"], schemas: ["rix.exact-cayley-dickson@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:exact-algebras" }, { source: `/**
+id: exact-algebras
+description: Exact rational quaternion and octonion values.
+kind: rix
+mount: exactAlgebras
+exports: [Quaternion, Octonion, Components, Conjugate, NormSquared, Inverse]
+groups: [Exact]
+permissions: []
+provides: [rix.exact-algebras@1]
+schemas: [rix.exact-cayley-dickson@1]
+snapshot: true
+deterministic: true
+defaultEnabled: false
+**/
+
+ExactAlgebraRational(value, label ?= "component") -> {;
+    exact = value ~!: :Rational;
+    exact == _ ?: .Error(@"Exact algebra @{label} must be an Integer or Rational") ?_ exact;
+};
+
+ExactAlgebraZeroes(count) -> {;
+    result := [];
+    {@ index = 1; index <= @count; {; @result ~= @result.Push(0); }; index += 1 };
+    result;
+};
+
+ExactAlgebraConcat(left, right) -> {;
+    result := left.Map((value) -> value);
+    {@ index = 1; index <= @right.Len(); {; @result ~= @result.Push(@right[index]); }; index += 1 };
+    result;
+};
+
+ExactAlgebraValue(components) -> {;
+    dimension = components.Len();
+    dimension == 4 || dimension == 8
+      ?: _
+      ?_ .Error("Exact Cayley-Dickson values require 4 or 8 components");
+    value = {=
+        valueKind = dimension == 4 ?: :exactQuaternion ?_ :exactOctonion,
+        schema = "rix.exact-cayley-dickson@1",
+        type = dimension == 4 ?: :exact_quaternion ?_ :exact_octonion,
+        dimension = dimension,
+        components = components.Map((component) -> ExactAlgebraRational(component))
+    };
+    value.__type = "ExactAlgebra";
+    value._type = dimension == 4 ?: "exact_quaternion" ?_ "exact_octonion";
+    value._proto = {=
+        Components = (self) -> self[:components],
+        Conjugate = (self) -> ExactAlgebraConjugate(self),
+        NormSquared = (self) -> ExactAlgebraNormSquared(self),
+        Inverse = (self) -> ExactAlgebraInverse(self),
+        Record = (self) -> self
+    };
+    .ImmutableValue(value);
+};
+
+ExactAlgebraConstruct(dimension, name, values) -> {;
+    values.Len() <= dimension ?: _ ?_ .Error(@"@{name} accepts at most @{dimension} components");
+    ExactAlgebraValue(ExactAlgebraConcat(values, ExactAlgebraZeroes(dimension - values.Len())));
+};
+
+ExactQuaternion(a ?= 0, b ?= 0, c ?= 0, d ?= 0) -> ExactAlgebraConstruct(4, "Quaternion", [a,b,c,d]);
+ExactOctonion(a ?= 0, b ?= 0, c ?= 0, d ?= 0, e ?= 0, f ?= 0, g ?= 0, h ?= 0) ->
+    ExactAlgebraConstruct(8, "Octonion", [a,b,c,d,e,f,g,h]);
+
+ExactAlgebraIs(value) -> value ? :ExactAlgebra;
+ExactAlgebraRequire(value, label ?= "value") -> ExactAlgebraIs(value) ?: value ?_ .Error(@"@{label} must be a quaternion or octonion");
+ExactAlgebraScalar(value) -> (value ? :Integer) || (value ? :Rational);
+ExactAlgebraOperand(value) -> ExactAlgebraIs(value) || ExactAlgebraScalar(value);
+
+ExactAlgebraConjugateSplit(components) -> {;
+    half = components.Len() // 2;
+    ExactAlgebraConcat(ExactAlgebraConjugateComponents(components.Slice(1,half+1)), components.Slice(half+1).Map((value) -> -value));
+};
+
+ExactAlgebraConjugateComponents(components) ->
+    components.Len() == 1 ?: components ?_ ExactAlgebraConjugateSplit(components);
+
+ExactAlgebraAddComponents(left, right) -> {;
+    result := [];
+    {@ index = 1; index <= @left.Len(); {;
+        @result ~= @result.Push(@left[index] + @right[index]);
+    }; index += 1 };
+    result;
+};
+
+ExactAlgebraSubtractComponents(left, right) -> {;
+    result := [];
+    {@ index = 1; index <= @left.Len(); {;
+        @result ~= @result.Push(@left[index] - @right[index]);
+    }; index += 1 };
+    result;
+};
+
+ExactAlgebraMultiplySplit(left, right) -> {;
+    half = left.Len() // 2;
+    a = left.Slice(1,half+1);
+    b = left.Slice(half+1);
+    c = right.Slice(1,half+1);
+    d = right.Slice(half+1);
+    ExactAlgebraConcat(ExactAlgebraSubtractComponents(
+        ExactAlgebraMultiplyComponents(a, c),
+        ExactAlgebraMultiplyComponents(ExactAlgebraConjugateComponents(d), b)
+    ), ExactAlgebraAddComponents(
+        ExactAlgebraMultiplyComponents(d, a),
+        ExactAlgebraMultiplyComponents(b, ExactAlgebraConjugateComponents(c))
+    ));
+};
+
+ExactAlgebraMultiplyComponents(left, right) ->
+    left.Len() == 1 ?: [left[1] * right[1]] ?_ ExactAlgebraMultiplySplit(left, right);
+
+ExactAlgebraDimensionBoth(left, right) ->
+    left[:dimension] == right[:dimension]
+      ?: left[:dimension]
+      ?_ .Error("Quaternion and octonion operands must have the same dimension");
+ExactAlgebraDimensionLeft(left, right) ->
+    ExactAlgebraIs(right) ?: ExactAlgebraDimensionBoth(left, right) ?_ left[:dimension];
+ExactAlgebraDimensionRight(right) -> ExactAlgebraIs(right) ?: right[:dimension] ?_ _;
+ExactAlgebraDimension(left, right) ->
+    ExactAlgebraIs(left) ?: ExactAlgebraDimensionLeft(left, right) ?_ ExactAlgebraDimensionRight(right);
+
+ExactAlgebraPromote(value, dimension) -> {;
+    ExactAlgebraIs(value)
+      ?: (value[:dimension] == dimension ?: value ?_ .Error("Quaternion and octonion operands must have the same dimension"))
+      ?_ ExactAlgebraValue(ExactAlgebraConcat([ExactAlgebraRational(value, "scalar operand")], ExactAlgebraZeroes(dimension - 1)));
+};
+
+ExactAlgebraPair(left, right) -> {;
+    dimension = ExactAlgebraDimension(left, right);
+    dimension == _ ?: .Error("Exact algebra operation requires a quaternion or octonion") ?_ _;
+    a = ExactAlgebraPromote(left, dimension);
+    b = ExactAlgebraPromote(right, dimension);
+    {= left=a[:components], right=b[:components] };
+};
+
+ExactAlgebraAdd(left, right) -> {; pair=ExactAlgebraPair(left,right); ExactAlgebraValue(ExactAlgebraAddComponents(pair[:left],pair[:right])); };
+ExactAlgebraSubtract(left, right) -> {; pair=ExactAlgebraPair(left,right); ExactAlgebraValue(ExactAlgebraSubtractComponents(pair[:left],pair[:right])); };
+ExactAlgebraMultiply(left, right) -> {; pair=ExactAlgebraPair(left,right); ExactAlgebraValue(ExactAlgebraMultiplyComponents(pair[:left],pair[:right])); };
+ExactAlgebraNegate(value) -> ExactAlgebraValue(ExactAlgebraRequire(value)[:components].Map((component) -> -component));
+ExactAlgebraConjugate(value) -> ExactAlgebraValue(ExactAlgebraConjugateComponents(ExactAlgebraRequire(value)[:components]));
+
+ExactAlgebraNormSquared(value) -> {;
+    exact = ExactAlgebraRequire(value);
+    total := 0;
+    {@ index = 1; index <= @exact[:components].Len(); {;
+        component = @exact[:components][index];
+        @total += component * component;
+    }; index += 1 };
+    total;
+};
+
+ExactAlgebraInverse(value) -> {;
+    exact = ExactAlgebraRequire(value);
+    norm = ExactAlgebraNormSquared(exact);
+    norm != 0 ?: _ ?_ .Error("Zero has no multiplicative inverse");
+    ExactAlgebraValue(ExactAlgebraConjugateComponents(exact[:components]).Map((component) -> component / norm));
+};
+
+ExactAlgebraDivideScalar(left, right) -> {;
+    divisor = ExactAlgebraRational(right, "divisor");
+    divisor != 0 ?: _ ?_ .Error("Division by zero");
+    value = ExactAlgebraPromote(left, ExactAlgebraDimension(left, right));
+    ExactAlgebraValue(value[:components].Map((component) -> component / divisor));
+};
+
+ExactAlgebraDivide(left, right) ->
+    ExactAlgebraIs(right)
+      ?: ExactAlgebraMultiply(left, ExactAlgebraInverse(right))
+      ?_ ExactAlgebraDivideScalar(left, right);
+
+ExactAlgebraEqualDimension(left, right, dimension) -> {;
+    a = ExactAlgebraPromote(left, dimension)[:components];
+    b = ExactAlgebraPromote(right, dimension)[:components];
+    equal := 1;
+    {@ index = 1; index <= @a.Len() && @equal == 1; {;
+        @a[index] == @b[index] ?: _ ?_ {; @equal ~= 0; };
+    }; index += 1 };
+    equal;
+};
+
+ExactAlgebraEqual(left, right) -> {;
+    dimension = ExactAlgebraDimension(left, right);
+    dimension == _ ?: 0 ?_ ExactAlgebraEqualDimension(left, right, dimension);
+};
+
+.TypeKnown(:ExactAlgebra) ?: _ ?_ .TypeRegister({=
+    name = :ExactAlgebra,
+    nativeType = :map,
+    defaultTraits = [:number],
+    validate = (value) -> value[:schema] == "rix.exact-cayley-dickson@1",
+    proto = {= },
+    installs = {=
+        ADD = [{= name=:ExactAlgebraAdd, prep=(left,right)->ExactAlgebraOperand(left)&&ExactAlgebraOperand(right)&&(ExactAlgebraIs(left)||ExactAlgebraIs(right)), impl=ExactAlgebraAdd }],
+        SUB = [{= name=:ExactAlgebraSub, prep=(left,right)->ExactAlgebraOperand(left)&&ExactAlgebraOperand(right)&&(ExactAlgebraIs(left)||ExactAlgebraIs(right)), impl=ExactAlgebraSubtract }],
+        MUL = [{= name=:ExactAlgebraMul, prep=(left,right)->ExactAlgebraOperand(left)&&ExactAlgebraOperand(right)&&(ExactAlgebraIs(left)||ExactAlgebraIs(right)), impl=ExactAlgebraMultiply }],
+        DIV = [{= name=:ExactAlgebraDiv, prep=(left,right)->ExactAlgebraIs(left)&&ExactAlgebraOperand(right), impl=ExactAlgebraDivide }],
+        NEG = [{= name=:ExactAlgebraNeg, prep=(value)->ExactAlgebraIs(value), impl=ExactAlgebraNegate }],
+        EQ = [{= name=:ExactAlgebraEq, prep=(left,right)->ExactAlgebraOperand(left)&&ExactAlgebraOperand(right)&&(ExactAlgebraIs(left)||ExactAlgebraIs(right)), impl=(left,right)->ExactAlgebraEqual(left,right) ?: 1 ?_ _ }],
+        NEQ = [{= name=:ExactAlgebraNeq, prep=(left,right)->ExactAlgebraOperand(left)&&ExactAlgebraOperand(right)&&(ExactAlgebraIs(left)||ExactAlgebraIs(right)), impl=(left,right)->ExactAlgebraEqual(left,right) ?: _ ?_ 1 }]
+    }
+});
+
+.TypeInstall(:ExactAlgebra);
+
+exactAlgebrasNamespace = {= };
+exactAlgebrasNamespace._proto = {=
+    Quaternion = (self, a ?= 0, b ?= 0, c ?= 0, d ?= 0) -> ExactQuaternion(a,b,c,d),
+    Octonion = (self, a ?= 0, b ?= 0, c ?= 0, d ?= 0, e ?= 0, f ?= 0, g ?= 0, h ?= 0) -> ExactOctonion(a,b,c,d,e,f,g,h),
+    Components = (self, value) -> ExactAlgebraRequire(value)[:components],
+    Conjugate = (self, value) -> ExactAlgebraConjugate(value),
+    NormSquared = (self, value) -> ExactAlgebraNormSquared(value),
+    Inverse = (self, value) -> ExactAlgebraInverse(value)
+};
+
+.Host.RegisterValue("exactAlgebras", exactAlgebrasNamespace, "Exact rational quaternion and octonion constructors and operations", ["Exact"]);
+`, sourcePath: "bundled:exact-algebras", kind: "rix" });
   catalog.addMetadata({ id: "example-array-js", description: "Teaching JavaScript plugin demonstrating array sum, summary text, and reversal.", kind: "host", mount: "arrayJs", exports: ["Sum", "Describe", "Reverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:example-array-js" }, { sourcePath: "bundled:example-array-js", kind: "host" });
-  catalog.registerInstaller("example-array-js", install25);
+  catalog.registerInstaller("example-array-js", install22);
   catalog.addMetadata({ id: "example-array-rix", description: "Teaching RiX plugin demonstrating array sum, summary text, and reversal.", kind: "rix", mount: "arrayRix", exports: ["arrayRixSum", "arrayRixDescribe", "arrayRixReverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:example-array-rix" }, { source: `/**
 id: example-array-rix
 description: Teaching RiX plugin demonstrating array sum, summary text, and reversal.
@@ -2016,23 +2379,376 @@ defaultEnabled: false
 .Host.Register("arrayRixReverse", (values) -> values.Reverse(), "Reverse an array", ["Examples"]);
 `, sourcePath: "bundled:example-array-rix", kind: "rix" });
   catalog.addMetadata({ id: "float", description: "JavaScript IEEE-754 Float conversion and optional approximate math.", kind: "host", mount: "float", exports: ["Float", "Interval", "Round", "Floor", "Ceiling", "Abs", "Sqrt", "Sin", "Cos", "Tan", "Log", "Exp"], groups: ["ApproximateMath", "Float"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:float" }, { sourcePath: "bundled:float", kind: "host" });
-  catalog.registerInstaller("float", install26);
+  catalog.registerInstaller("float", install23);
   catalog.addMetadata({ id: "fracfun", description: "Form-preserving callable polynomial and rational expressions with explicit transformations and canonical projections.", kind: "host", mount: "fracfun", aliases: ["fractionFunction", "ff"], exports: ["FractionFunction", "Parse", "Var", "Fun"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], requires: ["rix.fraction@1", "rix.rational-function@1"], provides: ["rix.fraction-function@1"], schemas: ["rix.fraction-function@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:fracfun" }, { sourcePath: "bundled:fracfun", kind: "host" });
-  catalog.registerInstaller("fracfun", install3);
-  catalog.addMetadata({ id: "fraction", description: "Representation-sensitive unreduced integer fractions with mediant and classroom addition policies.", kind: "host", mount: "fraction", aliases: ["frac", "f"], exports: ["Fraction", "Parse", "FromSternBrocotPath"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], provides: ["rix.fraction@1"], schemas: ["rix.fraction@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:fraction" }, { sourcePath: "bundled:fraction", kind: "host" });
-  catalog.registerInstaller("fraction", install2);
+  catalog.registerInstaller("fracfun", install2);
+  catalog.addMetadata({ id: "fraction", description: "Representation-sensitive unreduced integer fractions with mediant and classroom addition policies.", kind: "rix", mount: "fraction", aliases: ["frac", "f"], exports: ["Fraction", "Parse", "FromSternBrocotPath"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], provides: ["rix.fraction@1"], schemas: ["rix.fraction@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:fraction" }, { source: `/**
+id: fraction
+description: Representation-sensitive unreduced integer fractions with mediant and classroom addition policies.
+kind: rix
+mount: fraction
+aliases: [frac, f]
+exports: [Fraction, Parse, FromSternBrocotPath]
+groups: [Algebra, Exact, Symbolic]
+permissions: []
+provides: [rix.fraction@1]
+schemas: [rix.fraction@1]
+snapshot: true
+deterministic: true
+defaultEnabled: false
+**/
+
+FractionInteger(value, label) -> {;
+    exact = value ~!: :Integer;
+    exact == _ ?: .Error(@"@{label} must be an exact integer") ?_ exact;
+};
+
+FractionParts(value) -> .SArith.FractionParts(value);
+FractionNumerator(value) -> FractionParts(value)[1];
+FractionDenominator(value) -> FractionParts(value)[2];
+FractionIsInfinite(value) -> FractionDenominator(value) == 0;
+
+FractionRaw(numerator, denominator ?= 1) ->
+    .SArith.Fraction(FractionInteger(numerator, "Fraction numerator"), FractionInteger(denominator, "Fraction denominator"));
+
+FractionPromote(value, label ?= "value") -> {;
+    value ? :Fraction
+      ?: value
+      ?_ (value ? :Integer
+          ?: FractionRaw(value, 1)
+          ?_ (value ? :Rational
+              ?: FractionRaw(value.Numerator(), value.Denominator())
+              ?_ .Error(@"@{label} must be a Fraction, Rational, or exact integer")));
+};
+
+FractionFinite(value, label ?= "Fraction") -> {;
+    exact = FractionPromote(value, label);
+    FractionIsInfinite(exact) ?: .Error(@"@{label} must be finite") ?_ exact;
+};
+
+FractionNormalize(value) -> {;
+    exact = FractionFinite(value);
+    numerator = FractionNumerator(exact);
+    denominator = FractionDenominator(exact);
+    denominator < 0
+      ?: {= numerator=-numerator, denominator=-denominator }
+      ?_ {= numerator=numerator, denominator=denominator };
+};
+
+FractionGcd(left, right) -> {;
+    a := left.Abs();
+    b := right.Abs();
+    {@ step = 1; @b != 0; {;
+        remainder = @a % @b;
+        @a ~= @b;
+        @b ~= remainder;
+    }; step += 1 };
+    a;
+};
+
+FractionLcm(left, right) -> left == 0 || right == 0 ?: 0 ?_ (left // FractionGcd(left, right)) * right;
+
+FractionCrossAdd(leftValue, rightValue, subtract ?= _) -> {;
+    left = FractionFinite(leftValue, "left Fraction operand");
+    right = FractionFinite(rightValue, "right Fraction operand");
+    incoming = subtract ?: -FractionNumerator(right) ?_ FractionNumerator(right);
+    FractionRaw(
+        FractionNumerator(left) * FractionDenominator(right) + incoming * FractionDenominator(left),
+        FractionDenominator(left) * FractionDenominator(right)
+    );
+};
+
+FractionMultiply(leftValue, rightValue) -> {;
+    left = FractionPromote(leftValue, "left Fraction operand");
+    right = FractionPromote(rightValue, "right Fraction operand");
+    FractionRaw(FractionNumerator(left) * FractionNumerator(right), FractionDenominator(left) * FractionDenominator(right));
+};
+
+FractionDivide(leftValue, rightValue) -> {;
+    left = FractionPromote(leftValue, "left Fraction operand");
+    right = FractionPromote(rightValue, "right Fraction operand");
+    FractionNumerator(right) != 0 ?: _ ?_ .Error("Division by zero Fraction");
+    FractionRaw(FractionNumerator(left) * FractionDenominator(right), FractionDenominator(left) * FractionNumerator(right));
+};
+
+FractionPower(value, exponent) -> {;
+    exact = FractionPromote(value);
+    power = FractionInteger(exponent, "Fraction exponent");
+    power == 0
+      ?: FractionRaw(1,1)
+      ?_ power > 0
+      ?: FractionRaw(FractionNumerator(exact)^power, FractionDenominator(exact)^power)
+      ?_ {;
+          FractionNumerator(exact) != 0 ?: _ ?_ .Error("Zero Fraction cannot have a negative exponent");
+          magnitude = -power;
+          FractionRaw(FractionDenominator(exact)^magnitude, FractionNumerator(exact)^magnitude);
+      };
+};
+
+FractionCompare(leftValue, rightValue) -> {;
+    left = FractionNormalize(leftValue);
+    right = FractionNormalize(rightValue);
+    a = left[:numerator] * right[:denominator];
+    b = right[:numerator] * left[:denominator];
+    a < b ?: -1 ?_ a > b ?: 1 ?_ 0;
+};
+
+FractionSamePair(leftValue, rightValue) -> {;
+    left = FractionPromote(leftValue);
+    right = FractionPromote(rightValue);
+    FractionNumerator(left) == FractionNumerator(right) && FractionDenominator(left) == FractionDenominator(right);
+};
+
+FractionReduce(value) -> {;
+    exact = FractionPromote(value);
+    numerator = FractionNumerator(exact);
+    denominator = FractionDenominator(exact);
+    denominator == 0
+      ?: FractionRaw(numerator < 0 ?: -1 ?_ 1, 0)
+      ?_ {;
+          common = FractionGcd(@numerator, @denominator);
+          sign = @denominator < 0 ?: -1 ?_ 1;
+          FractionRaw(sign * (@numerator // common), sign * (@denominator // common));
+      };
+};
+
+FractionMediant(leftValue, rightValue) -> {;
+    left = FractionPromote(leftValue);
+    right = FractionPromote(rightValue);
+    FractionRaw(FractionNumerator(left) + FractionNumerator(right), FractionDenominator(left) + FractionDenominator(right));
+};
+
+FractionCommonAdd(leftValue, rightValue, policy) -> {;
+    left = FractionNormalize(leftValue);
+    right = FractionNormalize(rightValue);
+    policy == :like && left[:denominator] != right[:denominator]
+      ?: .Error("AddLikeDenominator requires equal denominators")
+      ?_ _;
+    denominator = policy == :like ?: left[:denominator] ?_ FractionLcm(left[:denominator], right[:denominator]);
+    FractionRaw(
+        left[:numerator] * (denominator // left[:denominator]) + right[:numerator] * (denominator // right[:denominator]),
+        denominator
+    );
+};
+
+FractionExtendedGcd(a, b) -> {;
+    oldR := a;
+    r := b;
+    oldS := 1;
+    s := 0;
+    {@ step = 1; @r != 0; {;
+        quotient = @oldR // @r;
+        nextR = @oldR - quotient * @r;
+        @oldR ~= @r;
+        @r ~= nextR;
+        nextS = @oldS - quotient * @s;
+        @oldS ~= @s;
+        @s ~= nextS;
+    }; step += 1 };
+    {= gcd=oldR, coefficient=oldS };
+};
+
+FractionModInverse(value, modulus) -> {;
+    result = FractionExtendedGcd(value, modulus);
+    result[:gcd].Abs() == 1 ?: _ ?_ .Error("Farey parent modular inverse does not exist");
+    ((result[:coefficient] % modulus) + modulus) % modulus;
+};
+
+FractionBaseParents(numerator, denominator) -> {;
+    denominator == 1
+      ?: (numerator > 0
+          ?: {= leftNumerator=numerator-1, leftDenominator=1, rightNumerator=1, rightDenominator=0 }
+          ?_ {= leftNumerator=-1, leftDenominator=0, rightNumerator=numerator+1, rightDenominator=1 })
+      ?_ {;
+          leftDenominator = FractionModInverse(@numerator, @denominator);
+          leftNumerator = (@numerator * leftDenominator - 1) // @denominator;
+          {=
+              leftNumerator = leftNumerator,
+              leftDenominator = leftDenominator,
+              rightNumerator = @numerator - leftNumerator,
+              rightDenominator = @denominator - leftDenominator
+          };
+      };
+};
+
+FractionFareyParents(value) -> {;
+    normalized = FractionNormalize(value);
+    numerator = normalized[:numerator];
+    denominator = normalized[:denominator];
+    scale = FractionGcd(numerator, denominator);
+    reducedNumerator = numerator // scale;
+    reducedDenominator = denominator // scale;
+    reducedNumerator == 0
+      ?: (scale == 1
+          ?: {: FractionRaw(-1,0), FractionRaw(1,0) }
+          ?_ {;
+              leftDenominator = scale // 2;
+              {: FractionRaw(-1,leftDenominator), FractionRaw(1,scale-leftDenominator) };
+          })
+      ?_ {;
+          parents = FractionBaseParents(@reducedNumerator, @reducedDenominator);
+          leftCopies := (@scale * @reducedDenominator - 2 * parents[:leftDenominator] + @reducedDenominator) // (2 * @reducedDenominator);
+          leftCopies < 0 ?: {; @leftCopies ~= 0; } ?_ (leftCopies > @scale - 1 ?: {; @leftCopies ~= @scale - 1; } ?_ _);
+          rightCopies = @scale - 1 - leftCopies;
+          {:
+              FractionRaw(parents[:leftNumerator] + leftCopies * @reducedNumerator, parents[:leftDenominator] + leftCopies * @reducedDenominator),
+              FractionRaw(parents[:rightNumerator] + rightCopies * @reducedNumerator, parents[:rightDenominator] + rightCopies * @reducedDenominator)
+          };
+      };
+};
+
+FractionFromPath(path) -> {;
+    left := FractionRaw(-1,0);
+    right := FractionRaw(1,0);
+    current := FractionRaw(0,1);
+    {@ index = 1; index <= @path.Len(); {;
+        direction = @path[index];
+        direction == "L"
+          ?: {; @right ~= @current; @current ~= FractionMediant(@left, @current); }
+          ?_ (direction == "R"
+              ?: {; @left ~= @current; @current ~= FractionMediant(@current, @right); }
+              ?_ .Error("Stern-Brocot path directions must be L or R"));
+    }; index += 1 };
+    current;
+};
+
+FractionPath(value, maximum ?= 10000) -> {;
+    exact = FractionReduce(FractionFinite(value));
+    limit = FractionInteger(maximum, "Stern-Brocot path limit");
+    limit >= 0 ?: _ ?_ .Error("Stern-Brocot path limit must be a nonnegative safe integer");
+    left := FractionRaw(-1,0);
+    right := FractionRaw(1,0);
+    current := FractionRaw(0,1);
+    path := [];
+    {@ step = 1; !FractionSamePair(@current, @exact); {;
+        FractionCompare(@exact, @current) < 0
+          ?: {; @path ~= @path.Push("L"); @right ~= @current; @current ~= FractionMediant(@left, @current); }
+          ?_ {; @path ~= @path.Push("R"); @left ~= @current; @current ~= FractionMediant(@current, @right); };
+        @path.Len() <= @limit ?: _ ?_ .Error("Stern-Brocot path too long - this may indicate a bug in the algorithm");
+    }; step += 1 };
+    path;
+};
+
+FractionParent(value) -> {;
+    path = FractionPath(value);
+    path.Len() == 0 ?: _ ?_ FractionFromPath(path.DropLast());
+};
+
+FractionChildren(value) -> {;
+    path = FractionPath(value);
+    {: FractionFromPath(path.Push("L")), FractionFromPath(path.Push("R")) };
+};
+
+FractionAncestors(value) -> {;
+    path = FractionPath(value);
+    ancestors := [];
+    {@ count = 0; count < @path.Len(); {;
+        @ancestors ~= @ancestors.Push(FractionFromPath(@path.Slice(1, count + 1)));
+    }; count += 1 };
+    ancestors.Reverse();
+};
+
+FractionRecord(value) -> {;
+    exact = FractionPromote(value);
+    {=
+        schema = "rix.fraction@1",
+        numerator = FractionNumerator(exact),
+        denominator = FractionDenominator(exact),
+        reduced = FractionSamePair(exact, FractionReduce(exact)) ?: 1 ?_ _
+    };
+};
+
+FractionString(value) -> {;
+    numerator = FractionNumerator(value);
+    denominator = FractionDenominator(value);
+    denominator == 0 || denominator == 1 ?: @"@{numerator}" ?_ @"@{numerator}/@{denominator}";
+};
+
+.TypeKnown(:Fraction) ?: _ ?_ .TypeRegister({=
+    name = :Fraction,
+    nativeType = :Fraction,
+    defaultTraits = [:number, :ordered],
+    validate = (value) -> 1,
+    proto = {= },
+    installs = {=
+        ADD = [{= name=:FractionAdd, prep=(left,right)->((left ? :Fraction)||(right ? :Fraction))&&((left ? :Fraction)||(left ? :Integer)||(left ? :Rational))&&((right ? :Fraction)||(right ? :Integer)||(right ? :Rational)), impl=(left,right)->FractionCrossAdd(left,right) }],
+        SUB = [{= name=:FractionSub, prep=(left,right)->((left ? :Fraction)||(right ? :Fraction))&&((left ? :Fraction)||(left ? :Integer)||(left ? :Rational))&&((right ? :Fraction)||(right ? :Integer)||(right ? :Rational)), impl=(left,right)->FractionCrossAdd(left,right,1) }],
+        MUL = [{= name=:FractionMul, prep=(left,right)->((left ? :Fraction)||(right ? :Fraction))&&((left ? :Fraction)||(left ? :Integer)||(left ? :Rational))&&((right ? :Fraction)||(right ? :Integer)||(right ? :Rational)), impl=FractionMultiply }],
+        DIV = [{= name=:FractionDiv, prep=(left,right)->((left ? :Fraction)||(right ? :Fraction))&&((left ? :Fraction)||(left ? :Integer)||(left ? :Rational))&&((right ? :Fraction)||(right ? :Integer)||(right ? :Rational)), impl=FractionDivide }],
+        POW = [{= name=:FractionPow, prep=(left,right)->(left ? :Fraction)&&(right ? :Integer), impl=FractionPower }],
+        NEG = [{= name=:FractionNeg, prep=(value)->value ? :Fraction, impl=(value)->FractionRaw(-FractionNumerator(value),FractionDenominator(value)) }],
+        EQ = [{= name=:FractionEq, prep=(left,right)->((left ? :Fraction)||(right ? :Fraction))&&((left ? :Fraction)||(left ? :Integer)||(left ? :Rational))&&((right ? :Fraction)||(right ? :Integer)||(right ? :Rational)), impl=(left,right)->FractionSamePair(left,right) ?: 1 ?_ _ }],
+        NEQ = [{= name=:FractionNeq, prep=(left,right)->((left ? :Fraction)||(right ? :Fraction))&&((left ? :Fraction)||(left ? :Integer)||(left ? :Rational))&&((right ? :Fraction)||(right ? :Integer)||(right ? :Rational)), impl=(left,right)->FractionSamePair(left,right) ?: _ ?_ 1 }],
+        LT = [{= name=:FractionLt, prep=(left,right)->((left ? :Fraction)||(right ? :Fraction)), impl=(left,right)->FractionCompare(left,right)<0 ?: 1 ?_ _ }],
+        LTE = [{= name=:FractionLte, prep=(left,right)->((left ? :Fraction)||(right ? :Fraction)), impl=(left,right)->FractionCompare(left,right)<=0 ?: 1 ?_ _ }],
+        GT = [{= name=:FractionGt, prep=(left,right)->((left ? :Fraction)||(right ? :Fraction)), impl=(left,right)->FractionCompare(left,right)>0 ?: 1 ?_ _ }],
+        GTE = [{= name=:FractionGte, prep=(left,right)->((left ? :Fraction)||(right ? :Fraction)), impl=(left,right)->FractionCompare(left,right)>=0 ?: 1 ?_ _ }],
+        COMPARE = [{= name=:FractionCompare, prep=(left,right)->((left ? :Fraction)||(right ? :Fraction)), impl=FractionCompare }]
+    }
+});
+
+.TypeInstall(:Fraction);
+
+FractionF = (value) -> FractionPromote(value);
+.Host.RegisterMethod("Integer", "F", FractionF, "fraction", "fraction");
+.Host.RegisterMethod("Rational", "F", FractionF, "fraction", "fraction");
+.Host.RegisterMethod("Fraction", "F", FractionF, "fraction", "fraction");
+.Host.RegisterMethod("Fraction", "Fraction", (value)->value, "fraction", "fraction");
+.Host.RegisterMethod("Fraction", "Numerator", FractionNumerator, "fraction", "fraction");
+.Host.RegisterMethod("Fraction", "Denominator", FractionDenominator, "fraction", "fraction");
+.Host.RegisterMethod("Fraction", "Rational", (value)->FractionNumerator(value)/FractionDenominator(value), "fraction", "fraction");
+.Host.RegisterMethod("Fraction", "Reduce", FractionReduce, "fraction", "fraction");
+.Host.RegisterMethod("Fraction", "Scale", (value,factor)->FractionRaw(FractionNumerator(value)*FractionInteger(factor,"Fraction scale"),FractionDenominator(value)*FractionInteger(factor,"Fraction scale")), "fraction", "fraction");
+.Host.RegisterMethod("Fraction", "Negate", (value)->FractionRaw(-FractionNumerator(value),FractionDenominator(value)), "fraction", "fraction");
+.Host.RegisterMethod("Fraction", "Reciprocal", (value)->FractionNumerator(value)==0 ?: .Error("Zero Fraction has no reciprocal") ?_ FractionRaw(FractionDenominator(value),FractionNumerator(value)), "fraction", "fraction");
+.Host.RegisterMethod("Fraction", "Mediant", FractionMediant, "fraction", "fraction");
+.Host.RegisterMethod("Fraction", "AddLikeDenominator", (value,other)->FractionCommonAdd(value,other,:like), "fraction", "fraction");
+.Host.RegisterMethod("Fraction", "AddLCMDenominator", (value,other)->FractionCommonAdd(value,other,:lcm), "fraction", "fraction");
+.Host.RegisterMethod("Fraction", "SamePair", (value,other)->FractionSamePair(value,other) ?: 1 ?_ _, "fraction", "fraction");
+.Host.RegisterMethod("Fraction", "Equivalent", (value,other)->FractionCompare(value,other)==0 ?: 1 ?_ _, "fraction", "fraction");
+.Host.RegisterMethod("Fraction", "FareyParents", FractionFareyParents, "fraction", "fraction");
+.Host.RegisterMethod("Fraction", "SternBrocotPath", FractionPath, "fraction", "fraction");
+.Host.RegisterMethod("Fraction", "SternBrocotParent", FractionParent, "fraction", "fraction");
+.Host.RegisterMethod("Fraction", "SternBrocotChildren", FractionChildren, "fraction", "fraction");
+.Host.RegisterMethod("Fraction", "SternBrocotAncestors", FractionAncestors, "fraction", "fraction");
+.Host.RegisterMethod("Fraction", "SternBrocotDepth", (value)->FractionPath(value).Len(), "fraction", "fraction");
+.Host.RegisterMethod("Fraction", "IsSternBrocotValid", (value)->FractionSamePair(FractionFromPath(FractionPath(value)),FractionReduce(value)) ?: 1 ?_ _, "fraction", "fraction");
+.Host.RegisterMethod("Fraction", "IsInfinite", (value)->FractionIsInfinite(value) ?: 1 ?_ _, "fraction", "fraction");
+.Host.RegisterMethod("Fraction", "ToString", FractionString, "fraction", "fraction");
+.Host.RegisterMethod("Fraction", "Record", FractionRecord, "fraction", "fraction");
+
+FractionParse(self, body, modifiers, info) -> {;
+    value = .SArith.Parse(body, [], {= });
+    value ? :Fraction
+      ?: value
+      ?_ (((value ? :Integer)||(value ? :Rational))
+          ?: FractionPromote(value)
+          ?_ .Error(".fraction backticks require one concrete fraction; use .fracfun for symbolic or compound forms"));
+};
+
+fractionNamespace = (first, second ?= _) -> second == _ ?: FractionPromote(first,"fraction value") ?_ FractionRaw(first,second);
+fractionNamespace._proto = {=
+    Parse = FractionParse,
+    Fraction = (self, first, second ?= _) -> second == _ ?: FractionPromote(first) ?_ FractionRaw(first,second),
+    FromSternBrocotPath = (self, path) -> FractionFromPath(path)
+};
+
+.Host.RegisterCallableValue("fraction", fractionNamespace, "Representation-sensitive unreduced fractions", ["Algebra", "Exact", "Symbolic"]);
+`, sourcePath: "bundled:fraction", kind: "rix" });
   catalog.addMetadata({ id: "geometry", description: "Exact ruler-and-compass geometry with explicit intersections and portable Graphics snapshots.", kind: "host", mount: "geometry", exports: ["Point", "Line", "Circle", "Midpoint", "PerpendicularBisector", "Circumcircle", "Intersect", "Points", "Status", "Draw"], groups: ["Geometry", "Graphics", "Exact"], permissions: [], provides: ["rix.geometry@1", "rix.geometry.intersection@1"], schemas: ["rix.geometry@1", "rix.geometry.intersection@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:geometry" }, { sourcePath: "bundled:geometry", kind: "host" });
-  catalog.registerInstaller("geometry", install9);
+  catalog.registerInstaller("geometry", install6);
+  catalog.addMetadata({ id: "gif", description: "Deterministic animated GIF rendering from Slides, Timelines, or Snapshots through PNG frames.", kind: "host", mount: "gif", exports: ["Render"], groups: ["Renderers"], permissions: ["process", "files"], requires: ["rix.renderer.png@1"], provides: ["rix.renderer.gif@1"], targets: ["gif", "image/gif"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:gif" }, { sourcePath: "bundled:gif", kind: "host" });
+  catalog.registerInstaller("gif", install21);
   catalog.addMetadata({ id: "gltf", description: "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", kind: "host", mount: "gltf", exports: ["Render"], groups: ["Renderers", "Scene3D"], permissions: [], requires: ["rix.scene3d@1"], provides: ["rix.renderer.gltf@1"], targets: ["gltf", "model/gltf+json"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:gltf" }, { sourcePath: "bundled:gltf", kind: "host" });
-  catalog.registerInstaller("gltf", install23);
+  catalog.registerInstaller("gltf", install19);
   catalog.addMetadata({ id: "html", description: "Standalone semantic HTML renderer for portable RiX output trees.", kind: "host", mount: "html", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.html@1"], targets: ["html", "text/html"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:html" }, { sourcePath: "bundled:html", kind: "host" });
-  catalog.registerInstaller("html", install18);
+  catalog.registerInstaller("html", install14);
   catalog.addMetadata({ id: "latex", description: "Standalone LaTeX renderer for portable RiX documents and figures.", kind: "host", mount: "latex", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.latex@1"], targets: ["latex", "text/x-tex"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:latex" }, { sourcePath: "bundled:latex", kind: "host" });
-  catalog.registerInstaller("latex", install20);
+  catalog.registerInstaller("latex", install16);
   catalog.addMetadata({ id: "markdown", description: "CommonMark-oriented renderer for portable RiX documents.", kind: "host", mount: "markdown", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.markdown@1"], targets: ["markdown", "text/markdown"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:markdown" }, { sourcePath: "bundled:markdown", kind: "host" });
-  catalog.registerInstaller("markdown", install17);
+  catalog.registerInstaller("markdown", install13);
   catalog.addMetadata({ id: "nd", description: "Exact n-dimensional geometry with explicit affine and Cayley projection records.", kind: "host", mount: "nd", exports: ["Point", "Polyline", "Polytope", "Hypercube", "Projection", "CoordinateProjection", "CayleyRotation", "Compose", "Project", "ToScene3D"], groups: ["Geometry", "Scene3D", "Exact"], permissions: [], requires: ["rix.scene3d@1"], provides: ["rix.nd@1", "rix.nd.projection@1"], schemas: ["rix.nd@1", "rix.nd.projection@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:nd" }, { sourcePath: "bundled:nd", kind: "host" });
-  catalog.registerInstaller("nd", install8);
+  catalog.registerInstaller("nd", install5);
   catalog.addMetadata({ id: "numerics", description: "Backend-neutral bounded enclosure and refinement orchestration.", kind: "rix", mount: "numerics", exports: ["Request", "WorkPolicy", "EffectiveLimits", "Enclose", "Refine", "Sample", "Capabilities", "CheckResult"], groups: ["Numerics"], permissions: [], provides: ["rix.numerics@1", "rix.enclosable-real-consumer@1"], schemas: ["rix.numerics.refinement-request@1", "rix.numerics.enclosure@1"], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:numerics" }, { source: `/**
 id: numerics
 description: Backend-neutral bounded enclosure and refinement orchestration.
@@ -2474,11 +3190,11 @@ oracleNamespace._proto = {=
 .Host.RegisterValue("oracle", oracleNamespace, "Exact rational-betweenness oracle demonstrations and bounded refinement", ["Numerics", "Exact"]);
 `, sourcePath: "bundled:oracle", kind: "rix" });
   catalog.addMetadata({ id: "pdf", description: "PDF document and figure renderer orchestrated through LaTeX.", kind: "host", mount: "pdf", exports: ["Render"], groups: ["Renderers"], permissions: ["process", "files"], provides: ["rix.renderer.pdf@1"], targets: ["pdf", "application/pdf"], snapshot: true, deterministic: false, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:pdf" }, { sourcePath: "bundled:pdf", kind: "host" });
-  catalog.registerInstaller("pdf", install22);
+  catalog.registerInstaller("pdf", install18);
   catalog.addMetadata({ id: "plot", description: "Portable plotting helpers that produce core Graphics scenes.", kind: "host", mount: "plot", exports: ["Polynomial"], groups: ["Plot"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:plot" }, { sourcePath: "bundled:plot", kind: "host" });
-  catalog.registerInstaller("plot", install6);
+  catalog.registerInstaller("plot", install3);
   catalog.addMetadata({ id: "png", description: "PNG snapshot renderer for core Graphics through a host rasterizer.", kind: "host", mount: "png", exports: ["Render"], groups: ["Renderers"], permissions: ["process"], provides: ["rix.renderer.png@1"], targets: ["png", "image/png"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:png" }, { sourcePath: "bundled:png", kind: "host" });
-  catalog.registerInstaller("png", install21);
+  catalog.registerInstaller("png", install17);
   catalog.addMetadata({ id: "poly", description: "Semantic callable univariate polynomials with structural and symbolic entry forms.", kind: "rix", mount: "poly", aliases: ["polynomial", "p"], exports: ["Polynomial", "Parse", "Var", "Fun", "Divide", "SyntheticDivide", "SturmSequence", "RootCount"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], provides: ["rix.polynomial@1", "rix.polynomial.algorithms@1"], schemas: ["rix.polynomial@1", "rix.polynomial.division@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:poly" }, { source: `/**
 id: poly
 description: Semantic callable univariate polynomials with structural and symbolic entry forms.
@@ -2793,11 +3509,14 @@ PolyConstruct(source, second ?= _) -> {;
     isPolynomial = source ? :Polynomial;
     isArray = source ? :Array;
     isMap = source ? :Map;
+    isScalar = PolyScalar(source);
     isPolynomial
       ?: source
       ?_ (isArray
            ?: PolyFromAscending(PolyExactAscending(source, :descending), second == _ ?: :x ?_ second, _, _, [:coefficients])
-           ?_ (isMap ?: PolyFromRecord(source, second) ?_ PolySymbolic(source, second)));
+           ?_ (isScalar
+               ?: PolyFromAscending([PolyExact(source,"Polynomial coefficient")], second == _ ?: :x ?_ second, _, _, [:scalar])
+               ?_ (isMap ?: PolyFromRecord(source, second) ?_ PolySymbolic(source, second))));
 };
 
 PolyBinary(left, right, operation) -> {;
@@ -3083,21 +3802,769 @@ PolyConversion = (value, variable ?= _) -> PolyConstruct(value, variable);
 .Host.RegisterMethod("symbolic_spec", "Polynomial", PolyConversion, "poly", "poly");
 `, sourcePath: "bundled:poly", kind: "rix" });
   catalog.addMetadata({ id: "quarto", description: "Quarto Markdown renderer with front matter and portable figure lowering.", kind: "host", mount: "quarto", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.quarto@1"], targets: ["quarto", "text/x-quarto"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:quarto" }, { sourcePath: "bundled:quarto", kind: "host" });
-  catalog.registerInstaller("quarto", install19);
-  catalog.addMetadata({ id: "radix", description: "Bounded exact positional expansions and repeating-period analysis for rational values.", kind: "host", mount: "radix", exports: ["Expansion", "Digits", "PeriodLength", "PeriodInfo", "ToString"], groups: ["Exact", "Radix"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:radix" }, { sourcePath: "bundled:radix", kind: "host" });
-  catalog.registerInstaller("radix", install13);
-  catalog.addMetadata({ id: "ratfun", description: "Canonical callable univariate rational functions with exact cancellation and Polynomial interoperability.", kind: "host", mount: "ratfun", aliases: ["rationalFunction", "rf"], exports: ["RationalFunction", "Parse", "Var", "Fun"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], requires: ["rix.polynomial@1"], provides: ["rix.rational-function@1"], schemas: ["rix.rational-function@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:ratfun" }, { sourcePath: "bundled:ratfun", kind: "host" });
-  catalog.registerInstaller("ratfun", install4);
+  catalog.registerInstaller("quarto", install15);
+  catalog.addMetadata({ id: "radix", description: "Bounded exact positional expansions and repeating-period analysis for rational values.", kind: "rix", mount: "radix", exports: ["Expansion", "Digits", "PeriodLength", "PeriodInfo", "ToString"], groups: ["Exact", "Radix"], permissions: [], provides: ["rix.radix@1"], schemas: ["rix.radix.expansion@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:radix" }, { source: `/**
+id: radix
+description: Bounded exact positional expansions and repeating-period analysis for rational values.
+kind: rix
+mount: radix
+exports: [Expansion, Digits, PeriodLength, PeriodInfo, ToString]
+groups: [Exact, Radix]
+permissions: []
+provides: [rix.radix@1]
+schemas: [rix.radix.expansion@1]
+snapshot: true
+deterministic: true
+defaultEnabled: false
+**/
+
+RadixOption(options, key, fallback ?= _) -> {;
+    normalized = key.Lower();
+    options == _ ?: fallback ?_ options.Has(normalized) ?: options[normalized] ?_ fallback;
+};
+
+RadixInteger(value, label) -> {;
+    exact = value ~!: :Integer;
+    exact == _ ?: .Error(@"@{label} must be an exact integer") ?_ exact;
+};
+
+RadixBounded(value, label, fallback, maximum ?= 1000000) -> {;
+    selected = value == _ ?: fallback ?_ RadixInteger(value, label);
+    selected >= 0 && selected <= maximum
+      ?: selected
+      ?_ .Error(@"@{label} must be between 0 and @{maximum}");
+};
+
+RadixBase(value ?= 10) -> {;
+    base = RadixInteger(value, "Radix base");
+    base >= 2 && base <= 65536
+      ?: base
+      ?_ .Error("Radix base must be between 2 and 65536");
+};
+
+RadixRational(value) -> {;
+    exact = value ~!: :Rational;
+    exact == _ ?: .Error("Radix operations require an exact Integer or Rational") ?_ exact;
+};
+
+RadixUnsigned(value) -> {;
+    rational = RadixRational(value);
+    negative = rational.Numerator() < 0;
+    {=
+        sign = negative ?: -1 ?_ 1,
+        numerator = negative ?: -rational.Numerator() ?_ rational.Numerator(),
+        denominator = rational.Denominator()
+    };
+};
+
+RadixIntegerDigits(value, base) -> {;
+    value == 0
+      ?: [0]
+      ?_ {;
+          result := [];
+          remaining := value;
+          {@ step = 1; @remaining > 0; {;
+              @result ~= @result.Push(@remaining % @base);
+              @remaining ~= @remaining // @base;
+          }; step += 1 };
+          result.Reverse();
+      };
+};
+
+RadixExpansion(value, baseValue ?= 10, options ?= _) -> {;
+    base = RadixBase(baseValue);
+    maxDigits = RadixBounded(RadixOption(options, "maxDigits"), "maxDigits", 1024);
+    parts = RadixUnsigned(value);
+    whole = parts[:numerator] // parts[:denominator];
+    remainder := parts[:numerator] % parts[:denominator];
+    fractional := [];
+    seen := {= };
+    repeatStart := _;
+    {@ step = 1; @remainder != 0 && @fractional.Len() < @maxDigits && @repeatStart == _; {;
+        key = @"r@{@remainder}";
+        @seen.Has(key)
+          ?: {; @repeatStart ~= @seen[@key]; }
+          ?_ {;
+              @seen ~= @seen.Set(@key, @fractional.Len());
+              @remainder *= @base;
+              @fractional ~= @fractional.Push(@remainder // @parts[:denominator]);
+              @remainder %= @parts[:denominator];
+          };
+    }; step += 1 };
+    repeatStart == _ && remainder != 0 && seen.Has(@"r@{remainder}")
+      ?: {; repeatStart ~= seen[@"r@{remainder}"]; }
+      ?_ _;
+    complete = remainder == 0 || repeatStart != _;
+    prefix = repeatStart == _ ?: fractional ?_ fractional.Slice(1, repeatStart + 1);
+    repeating = repeatStart == _ ?: _ ?_ fractional.Slice(repeatStart + 1);
+    {=
+        valueKind = :radixExpansion,
+        schema = "rix.radix.expansion@1",
+        status = complete ?: :complete ?_ :budgetExhausted,
+        base = base,
+        sign = parts[:numerator] == 0 ?: 0 ?_ parts[:sign],
+        integerDigits = RadixIntegerDigits(whole, base),
+        nonRepeatingDigits = prefix,
+        repeatingDigits = repeating,
+        terminating = remainder == 0 ?: 1 ?_ _,
+        repeating = repeatStart != _ ?: 1 ?_ _,
+        complete = complete ?: 1 ?_ _,
+        truncated = complete ?: _ ?_ 1,
+        producedDigits = fractional.Len(),
+        maxDigits = maxDigits,
+        remainingRemainder = remainder
+    };
+};
+
+RadixDigits(value, baseValue ?= 10, countValue ?= 1) -> {;
+    base = RadixBase(baseValue);
+    requested = countValue ? :Map ?: RadixOption(countValue, "count") ?_ countValue;
+    count = RadixBounded(requested, "Digit count", 1);
+    parts = RadixUnsigned(value);
+    remainder := parts[:numerator] % parts[:denominator];
+    digits := [];
+    {@ index = 1; index <= @count; {;
+        @remainder *= @base;
+        @digits ~= @digits.Push(@remainder // @parts[:denominator]);
+        @remainder %= @parts[:denominator];
+    }; index += 1 };
+    digits;
+};
+
+RadixGcd(left, right) -> {;
+    a := left.Abs();
+    b := right.Abs();
+    {@ step = 1; @b != 0; {;
+        remainder = @a % @b;
+        @a ~= @b;
+        @b ~= remainder;
+    }; step += 1 };
+    a;
+};
+
+RadixPeriodInfo(value, baseValue ?= 10, options ?= _) -> {;
+    base = RadixBase(baseValue);
+    maxWork = RadixBounded(RadixOption(options, "maxWork"), "maxWork", 100000);
+    denominator := RadixUnsigned(value)[:denominator];
+    reducing := 1;
+    {@ step = 1; @reducing == 1; {;
+        common = RadixGcd(@denominator, @base);
+        common == 1
+          ?: {; @reducing ~= 0; }
+          ?_ {; @denominator //= @common; };
+    }; step += 1 };
+    denominator == 1
+      ?: {= status=:complete, base=base, periodLength=0, work=0, maxWork=maxWork }
+      ?_ maxWork == 0
+      ?: {= status=:budgetExhausted, base=base, periodLength=_, work=0, maxWork=0, reducedDenominator=denominator }
+      ?_ {;
+          power := @base % @denominator;
+          length := 1;
+          {@ step = 1; @power != 1 && @length < @maxWork; {;
+              @power ~= (@power * @base) % @denominator;
+              @length += 1;
+          }; step += 1 };
+          complete = power == 1;
+          {=
+              status = complete ?: :complete ?_ :budgetExhausted,
+              base = @base,
+              periodLength = complete ?: length ?_ _,
+              work = length,
+              maxWork = @maxWork,
+              reducedDenominator = @denominator
+          };
+      };
+};
+
+RadixPeriodLength(value, baseValue ?= 10, options ?= _) -> {;
+    info = RadixPeriodInfo(value, baseValue, options);
+    info[:periodLength] == _
+      ?: .Error(@"PeriodLength exceeded maxWork=@{info[:maxWork]}; use PeriodInfo for a structured result")
+      ?_ info[:periodLength];
+};
+
+RadixDigitText(values) -> {;
+    values.Len() == 0
+      ?: " ".Slice(1,1)
+      ?_ {;
+          result := "0123456789abcdefghijklmnopqrstuvwxyz"[@values[1] + 1];
+          {@ index = 2; index <= @values.Len(); {;
+              @result ~= @result + "0123456789abcdefghijklmnopqrstuvwxyz"[@values[index] + 1];
+          }; index += 1 };
+          result;
+      };
+};
+
+RadixRenderText(value, baseValue ?= 10, options ?= _) -> {;
+    base = RadixBase(baseValue);
+    base <= 36 ?: _ ?_ .Error("Radix ToString supports bases through 36; use Expansion for larger bases");
+    expansion = RadixExpansion(value, base, options);
+    negative = expansion[:sign] < 0 ?: "-" ?_ " ".Slice(1,1);
+    whole = RadixDigitText(expansion[:integerDigits]);
+    prefix = RadixDigitText(expansion[:nonRepeatingDigits]);
+    expansion[:repeatingDigits] != _
+      ?: @"@{negative}@{whole}.@{prefix}(@{RadixDigitText(expansion[:repeatingDigits])})"
+      ?_ (expansion[:terminating]
+          ?: (prefix.Len() > 0 ?: @"@{negative}@{whole}.@{prefix}" ?_ @"@{negative}@{whole}")
+          ?_ @"@{negative}@{whole}.@{prefix}…");
+};
+
+radixNamespace = {= };
+radixNamespace._proto = {=
+    Expansion = (self, value, base ?= 10, options ?= _) -> RadixExpansion(value, base, options),
+    Digits = (self, value, base ?= 10, count ?= 1) -> RadixDigits(value, base, count),
+    PeriodLength = (self, value, base ?= 10, options ?= _) -> RadixPeriodLength(value, base, options),
+    PeriodInfo = (self, value, base ?= 10, options ?= _) -> RadixPeriodInfo(value, base, options),
+    ToString = (self, value, baseValue ?= 10, options ?= _) -> {;
+        base = RadixBase(baseValue);
+        base <= 36 ?: _ ?_ .Error("Radix ToString supports bases through 36; use Expansion for larger bases");
+        expansion = RadixExpansion(value, base, options);
+        negative = expansion[:sign] < 0 ?: "-" ?_ " ".Slice(1,1);
+        whole = RadixDigitText(expansion[:integerDigits]);
+        prefix = RadixDigitText(expansion[:nonRepeatingDigits]);
+        expansion[:repeatingDigits] != _
+          ?: @"@{negative}@{whole}.@{prefix}(@{RadixDigitText(expansion[:repeatingDigits])})"
+          ?_ (expansion[:terminating]
+              ?: (prefix.Len() > 0 ?: @"@{negative}@{whole}.@{prefix}" ?_ @"@{negative}@{whole}")
+              ?_ @"@{negative}@{whole}.@{prefix}…");
+    }
+};
+
+.Host.RegisterValue("radix", radixNamespace, "Bounded exact positional expansions and period analysis", ["Exact", "Radix"]);
+
+.Host.RegisterMethod("Integer", "Expansion", RadixExpansion, "radix", "radix");
+.Host.RegisterMethod("Integer", "Digits", RadixDigits, "radix", "radix");
+.Host.RegisterMethod("Integer", "PeriodLength", RadixPeriodLength, "radix", "radix");
+.Host.RegisterMethod("Integer", "PeriodInfo", RadixPeriodInfo, "radix", "radix");
+.Host.RegisterMethod("Integer", "RadixString", (value,base ?= 10,options ?= _)->.radix.ToString(value,base,options), "radix", "radix");
+.Host.RegisterMethod("Rational", "Expansion", RadixExpansion, "radix", "radix");
+.Host.RegisterMethod("Rational", "Digits", RadixDigits, "radix", "radix");
+.Host.RegisterMethod("Rational", "PeriodLength", RadixPeriodLength, "radix", "radix");
+.Host.RegisterMethod("Rational", "PeriodInfo", RadixPeriodInfo, "radix", "radix");
+.Host.RegisterMethod("Rational", "RadixString", (value,base ?= 10,options ?= _)->.radix.ToString(value,base,options), "radix", "radix");
+`, sourcePath: "bundled:radix", kind: "rix" });
+  catalog.addMetadata({ id: "ratfun", description: "Canonical callable univariate rational functions with exact cancellation and Polynomial interoperability.", kind: "rix", mount: "ratfun", aliases: ["rationalFunction", "rf"], exports: ["RationalFunction", "Parse", "Var", "Fun"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], requires: ["rix.polynomial@1"], provides: ["rix.rational-function@1"], schemas: ["rix.rational-function@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:ratfun" }, { source: `/**
+id: ratfun
+description: Canonical callable univariate rational functions with exact cancellation and Polynomial interoperability.
+kind: rix
+mount: ratfun
+aliases: [rationalFunction, rf]
+exports: [RationalFunction, Parse, Var, Fun]
+groups: [Algebra, Exact, Symbolic]
+permissions: []
+requires: [rix.polynomial@1]
+provides: [rix.rational-function@1]
+schemas: [rix.rational-function@1]
+snapshot: false
+deterministic: true
+defaultEnabled: false
+**/
+
+RatfunIs(value) -> value ? :RationalFunction;
+RatfunRequire(value, label ?= "value") -> RatfunIs(value) ?: value ?_ .Error(@"@{label} must be a RationalFunction");
+RatfunScalar(value) -> (value ? :Integer) || (value ? :Rational);
+RatfunOperand(value) -> RatfunIs(value) || (value ? :Polynomial) || RatfunScalar(value);
+
+RatfunVariable(value) -> value == _ ?: :x ?_ value;
+RatfunPolynomial(value, variable) -> value ? :Polynomial ?: value ?_ .poly(value, variable);
+RatfunZero(polynomial) -> polynomial.Degree() == -1;
+RatfunOne(variable) -> .poly([1], variable);
+
+RatfunGcd(left, right) -> {;
+    state := [left, right];
+    {@ step = 1; @state[2].Degree() >= 0; {;
+        remainder = @state[1] % @state[2];
+        @state ~= [@state[2], remainder];
+    }; step += 1 };
+    state[1];
+};
+
+RatfunCanonical(numeratorValue, denominatorValue, variable ?= :x) -> {;
+    initialNumerator = RatfunPolynomial(numeratorValue, variable);
+    initialDenominator = RatfunPolynomial(denominatorValue, initialNumerator.Variable());
+    state := [initialNumerator, initialDenominator];
+    numerator = state[1];
+    denominator = state[2];
+    numerator.Variable() == denominator.Variable()
+      ?: _
+      ?_ .Error("RationalFunction numerator and denominator variables must match");
+    RatfunZero(denominator) ?: .Error("RationalFunction denominator cannot be zero") ?_ _;
+    RatfunZero(numerator)
+      ?: {; @state ~= [@state[1], RatfunOne(@state[1].Variable())]; }
+      ?_ {;
+          common = RatfunGcd(@numerator, @denominator);
+          common.Degree() >= 0
+            ?: {; @state ~= [@state[1] // @common, @state[2] // @common]; }
+            ?_ _;
+          leading = @state[2].Coefficients()[1];
+          @state ~= [@state[1] / leading, @state[2] / leading];
+      };
+    {: state[1], state[2] };
+};
+
+RatfunPolynomialAt(polynomial, argument) -> {;
+    coefficients = polynomial.Coefficients();
+    state := [RatfunPromote(0, polynomial.Variable())];
+    {@ index = 1; index <= @coefficients.Len(); {;
+        @state ~= [@state[1] * @argument + @coefficients[index]];
+    }; index += 1 };
+    state[1];
+};
+
+RatfunCompose(value, argument) -> {;
+    exact = RatfunRequire(value);
+    promoted = RatfunPromote(argument, exact.variable);
+    RatfunPolynomialAt(exact.numerator, promoted) / RatfunPolynomialAt(exact.denominator, promoted);
+};
+
+RatfunEvaluate(value, argument) -> {;
+    exact = RatfunRequire(value);
+    RatfunIs(argument) || (argument ? :Polynomial)
+      ?: RatfunCompose(exact, argument)
+      ?_ exact.numerator.Evaluate(argument) / exact.denominator.Evaluate(argument);
+};
+
+RatfunComposeParts(numerator, denominator, argument) -> {;
+    promoted=RatfunPromote(argument,numerator.Variable());
+    RatfunPolynomialAt(numerator,promoted)/RatfunPolynomialAt(denominator,promoted);
+};
+
+RatfunApply(numerator, denominator, argument) -> {;
+    RatfunIs(argument) || (argument ? :Polynomial)
+      ?: RatfunComposeParts(numerator,denominator,argument)
+      ?_ numerator.Evaluate(argument) / denominator.Evaluate(argument);
+};
+
+RatfunRecord(value) -> {;
+    exact = RatfunRequire(value);
+    {=
+        valueKind = :rationalFunction,
+        schema = "rix.rational-function@1",
+        variable = exact.variable,
+        numerator = exact.numerator,
+        denominator = exact.denominator,
+        canonical = 1,
+        equalityPolicy = :canonicalReducedFractionField,
+        domainPolicy = :reducedDenominatorNonzero,
+        reactive = exact.reactive,
+        provenance = exact.provenance
+    };
+};
+
+RatfunBuild(numeratorValue, denominatorValue ?= 1, variable ?= :x, provenance ?= []) -> {;
+    canonical = RatfunCanonical(numeratorValue, denominatorValue, variable);
+    numerator = canonical[1];
+    denominator = canonical[2];
+    RationalFunctionValue = (argument) -> RatfunApply(numerator, denominator, argument);
+    RationalFunctionValue.schema = "rix.rational-function@1";
+    RationalFunctionValue.variable = numerator.Variable();
+    RationalFunctionValue.numerator = numerator;
+    RationalFunctionValue.denominator = denominator;
+    RationalFunctionValue.canonical = 1;
+    RationalFunctionValue.equalityPolicy = :canonicalReducedFractionField;
+    RationalFunctionValue.domainPolicy = :reducedDenominatorNonzero;
+    RationalFunctionValue.reactive = numerator.reactive || denominator.reactive;
+    RationalFunctionValue.provenance = provenance;
+    RationalFunctionValue.__type = "RationalFunction";
+    RationalFunctionValue._type = "rational_function";
+    RationalFunctionValue._proto = {=
+        R = (self) -> self,
+        RationalFunction = (self) -> self,
+        Numerator = (self) -> self.numerator,
+        Denominator = (self) -> self.denominator,
+        Variable = (self) -> self.variable,
+        Record = (self) -> RatfunRecord(self),
+        Evaluate = (self, argument) -> RatfunEvaluate(self, argument),
+        Compose = (self, argument) -> RatfunCompose(self, argument),
+        Domain = (self) -> {=
+            valueKind=:rationalFunctionDomain,
+            condition="reduced denominator != 0",
+            denominator=self.denominator
+        }.Set("cancelledInputRestrictionsPreserved",0),
+        IsPolynomial = (self) -> self.denominator.Degree() == 0 ?: 1 ?_ _,
+        ToPolynomial = (self) -> self.denominator.Degree() == 0
+            ?: self.numerator / self.denominator.Coefficients()[1]
+            ?_ .Error("ToPolynomial requires canonical denominator 1")
+    };
+    .ImmutableValue(RationalFunctionValue);
+};
+
+RatfunPromote(value, variable ?= :x) -> {;
+    RatfunIs(value)
+      ?: value
+      ?_ (((value ? :Polynomial) || RatfunScalar(value))
+          ?: RatfunBuild(value, 1, (value ? :Polynomial ?: value.Variable() ?_ variable), [:promotion])
+          ?_ .Error("RationalFunction operand must be exact, Polynomial, or RationalFunction"));
+};
+
+RatfunSameVariable(left, right) -> left.variable == right.variable ?: 1 ?_ .Error("RationalFunction variables must match");
+RatfunAdd(leftValue, rightValue) -> {; left=RatfunPromote(leftValue); right=RatfunPromote(rightValue,left.variable); RatfunSameVariable(left,right); RatfunBuild(left.numerator*right.denominator+right.numerator*left.denominator,left.denominator*right.denominator,left.variable,[:add]); };
+RatfunSubtract(leftValue, rightValue) -> RatfunAdd(leftValue, -RatfunPromote(rightValue));
+RatfunMultiply(leftValue, rightValue) -> {; left=RatfunPromote(leftValue); right=RatfunPromote(rightValue,left.variable); RatfunSameVariable(left,right); RatfunBuild(left.numerator*right.numerator,left.denominator*right.denominator,left.variable,[:multiply]); };
+RatfunDivide(leftValue, rightValue) -> {; left=RatfunPromote(leftValue); right=RatfunPromote(rightValue,left.variable); RatfunSameVariable(left,right); RatfunZero(right.numerator) ?: .Error("RationalFunction division by zero") ?_ RatfunBuild(left.numerator*right.denominator,left.denominator*right.numerator,left.variable,[:divide]); };
+RatfunNegate(value) -> {; exact=RatfunPromote(value); RatfunBuild(-exact.numerator,exact.denominator,exact.variable,[:negate]); };
+RatfunPower(value, exponent) -> {;
+    exact = RatfunPromote(value);
+    power = exponent ~!: :Integer;
+    power == 0
+      ?: RatfunBuild(1,1,exact.variable,[:power])
+      ?_ (power > 0
+          ?: RatfunBuild(exact.numerator^power,exact.denominator^power,exact.variable,[:power])
+          ?_ RatfunBuild(exact.denominator^(-power),exact.numerator^(-power),exact.variable,[:power]));
+};
+RatfunEqual(leftValue, rightValue) -> {; left=RatfunPromote(leftValue); right=RatfunPromote(rightValue,left.variable); left.variable==right.variable && left.numerator==right.numerator && left.denominator==right.denominator; };
+
+RatfunFromStructural(structural, variable ?= :x) -> {;
+    structural.Head() == "Fraction"
+      ?: {; args=@structural.Arguments(); RatfunBuild(.poly(args[1],@variable),.poly(args[2],@variable),@variable,[:structural]); }
+      ?_ RatfunBuild(.poly(structural,variable),1,variable,[:structural]);
+};
+
+RatfunPolyFromInspect(node, variable) -> {;
+    state := [node, variable];
+    kind = state[1][:kind];
+    kind == "number"
+      ?: .poly([@state[1][:integer]],@state[2])
+      ?_ (kind == "identifier"
+          ?: (@state[1][:name] == @state[2] ?: .poly([1,0],@state[2]) ?_ .Error(@"Unexpected RationalFunction symbol @{@state[1][:name]}"))
+          ?_ (kind == "unary"
+              ?: (@state[1][:op] == "-" ?: -RatfunPolyFromInspect(@state[1][:argument],@state[2]) ?_ .Error(@"Unsupported RationalFunction unary operator @{@state[1][:op]}"))
+              ?_ (kind == "binary"
+                  ?: {;
+                      leftState:=[RatfunPolyFromInspect(@state[1][:left],@state[2])];
+                      op=@state[1][:op];
+                      op == "+" ?: @leftState[1] + RatfunPolyFromInspect(@state[1][:right],@state[2])
+                        ?_ op == "-" ?: @leftState[1] - RatfunPolyFromInspect(@state[1][:right],@state[2])
+                        ?_ op == "*" ?: @leftState[1] * RatfunPolyFromInspect(@state[1][:right],@state[2])
+                        ?_ op == "^" ?: @leftState[1] ^ @state[1][:right][:integer]
+                        ?_ .Error(@"Operator @{op} does not form a Polynomial");
+                  }
+                  ?_ .Error(@"Unsupported RationalFunction symbolic node @{kind}"))));
+};
+
+RatfunFromSpec(spec, variable ?= _) -> {;
+    inspected = .InspectSpec(spec);
+    selected = variable == _ ?: inspected[:inputs][1] ?_ variable;
+    parts = .SpecFractionParts(spec);
+    parts[2] == _
+      ?: RatfunBuild(.poly(parts[1],selected),1,selected,[:symbolicSpec])
+      ?_ RatfunBuild(.poly(parts[1],selected),.poly(parts[2],selected),selected,[:symbolicSpec]);
+};
+
+RatfunConstruct(first, second ?= _, variable ?= :x) -> {;
+    RatfunIs(first)
+      ?: first
+      ?_ (((first ? :Map) && first[:schema] == "rix.rational-function@1")
+          ?: RatfunBuild(first[:numerator],first[:denominator],first[:variable],[:record])
+          ?_ (second == _
+              ?: (((first ? :Polynomial) || RatfunScalar(first))
+                  ?: RatfunBuild(first,1,variable)
+                  ?_ RatfunFromStructural(first,variable))
+              ?_ RatfunBuild(first,second,variable)));
+};
+
+RatfunModifierVariable(modifiers) -> {;
+    variable := :x;
+    {@ index = 1; index <= @modifiers.Len(); {;
+        modifier = @modifiers[index];
+        upper = modifier.Upper();
+        upper == "FUN" ?: _ ?_ upper.StartsWith("VAR(")
+          ?: {; @variable ~= @modifier.Slice(5, @modifier.Len()); }
+          ?_ .Error(@"Unknown .ratfun modifier @{modifier}");
+    }; index += 1 };
+    variable;
+};
+
+RatfunParse(self, body, modifiers, info) -> RatfunFromStructural(.SArith.Parse(body,[],{= }),RatfunModifierVariable(modifiers));
+
+.TypeKnown(:RationalFunction) ?: _ ?_ .TypeRegister({=
+    name=:RationalFunction,
+    nativeType=:function,
+    defaultTraits=[:number],
+    validate=(value)->value.schema=="rix.rational-function@1",
+    proto={= },
+    installs={=
+        ADD=[{= name=:RatfunAdd, priority=300, prep=(left,right)->RatfunOperand(left)&&RatfunOperand(right)&&(RatfunIs(left)||RatfunIs(right)), impl=RatfunAdd }],
+        SUB=[{= name=:RatfunSub, priority=300, prep=(left,right)->RatfunOperand(left)&&RatfunOperand(right)&&(RatfunIs(left)||RatfunIs(right)), impl=RatfunSubtract }],
+        MUL=[{= name=:RatfunMul, priority=300, prep=(left,right)->RatfunOperand(left)&&RatfunOperand(right)&&(RatfunIs(left)||RatfunIs(right)), impl=RatfunMultiply }],
+        DIV=[{= name=:RatfunDiv, priority=300, prep=(left,right)->RatfunOperand(left)&&RatfunOperand(right)&&(RatfunIs(left)||RatfunIs(right)||(right ? :Polynomial)), impl=RatfunDivide }],
+        POW=[
+            {= name=:RatfunPow, priority=300, prep=(left,right)->RatfunIs(left)&&(right ? :Integer), impl=RatfunPower },
+            {= name=:PolynomialNegativePow, priority=300, prep=(left,right)->(left ? :Polynomial)&&(right ? :Integer)&&right<0, impl=RatfunPower }
+        ],
+        NEG=[{= name=:RatfunNeg, priority=300, prep=(value)->RatfunIs(value), impl=RatfunNegate }],
+        EQ=[{= name=:RatfunEq, priority=300, prep=(left,right)->RatfunOperand(left)&&RatfunOperand(right)&&(RatfunIs(left)||RatfunIs(right)), impl=(left,right)->RatfunEqual(left,right) ?: 1 ?_ _ }],
+        NEQ=[{= name=:RatfunNeq, priority=300, prep=(left,right)->RatfunOperand(left)&&RatfunOperand(right)&&(RatfunIs(left)||RatfunIs(right)), impl=(left,right)->RatfunEqual(left,right) ?: _ ?_ 1 }]
+    }
+});
+.TypeInstall(:RationalFunction);
+
+ratfunNamespace = (first, second ?= _) -> RatfunConstruct(first,second);
+ratfunNamespace._proto = {=
+    Parse=RatfunParse,
+    RationalFunction=(self,first,second ?= _)->RatfunConstruct(first,second),
+    Var=(self)->.Error(".ratfun.Var(name) is a backtick parser modifier"),
+    Fun=(self)->.Error(".ratfun.Fun is a backtick parser modifier")
+};
+.Host.RegisterCallableValue("ratfun",ratfunNamespace,"Canonical callable univariate rational functions",["Algebra","Exact","Symbolic"]);
+
+RatfunConversion=(value,variable ?= :x)->RatfunFromStructural(value,variable);
+RatfunSpecConversion=(value,variable ?= _)->RatfunFromSpec(value,variable);
+.Host.RegisterMethod("structural_form","R",RatfunConversion,"ratfun","ratfun");
+.Host.RegisterMethod("structural_symbol","R",RatfunConversion,"ratfun","ratfun");
+.Host.RegisterMethod("structural_literal","R",RatfunConversion,"ratfun","ratfun");
+.Host.RegisterMethod("symbolic_spec","R",RatfunSpecConversion,"ratfun","ratfun");
+`, sourcePath: "bundled:ratfun", kind: "rix" });
   catalog.addMetadata({ id: "scene3d", description: "Exact retained 3D scenes with deterministic wireframe and lit Graphics snapshots.", kind: "host", mount: "scene3d", exports: ["Scene", "Group", "Transform", "Mesh", "Polyline", "PointCloud", "Material", "AmbientLight", "DirectionalLight", "PointLight", "PerspectiveCamera", "OrthographicCamera", "Snapshot"], groups: ["Scene3D", "Graphics"], permissions: [], provides: ["rix.scene3d@1"], schemas: ["rix.scene3d@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:scene3d" }, { sourcePath: "bundled:scene3d", kind: "host" });
-  catalog.registerInstaller("scene3d", install7);
+  catalog.registerInstaller("scene3d", install4);
+  catalog.addMetadata({ id: "stats", description: "Exact descriptive statistics with portable summary tables, histograms, and box plots.", kind: "rix", mount: "stats", aliases: ["statistics"], exports: ["Count", "Mean", "Quantile", "Median", "Variance", "SampleVariance", "Summary", "SummaryTable", "Histogram", "HistogramGraphic", "BoxPlot"], groups: ["Statistics", "Exact", "Graphics"], permissions: [], provides: ["rix.statistics@1"], schemas: ["rix.stats.summary@1", "rix.stats.histogram@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:stats" }, { source: `/**
+id: stats
+description: Exact descriptive statistics with portable summary tables, histograms, and box plots.
+kind: rix
+mount: stats
+aliases: [statistics]
+exports: [Count, Mean, Quantile, Median, Variance, SampleVariance, Summary, SummaryTable, Histogram, HistogramGraphic, BoxPlot]
+groups: [Statistics, Exact, Graphics]
+permissions: []
+provides: [rix.statistics@1]
+schemas: [rix.stats.summary@1, rix.stats.histogram@1]
+snapshot: true
+deterministic: true
+defaultEnabled: false
+**/
+
+StatsOption(options, key, fallback) -> options.Has(key) ?: options[key] ?_ fallback;
+
+StatsValues(values, allowEmpty ?= 0) -> {;
+    values ? :Array ?: _ ?_ .Error("Statistics values must be an Array");
+    (allowEmpty == 1 || values.Len() > 0) ?: _ ?_ .Error("Statistics requires at least one value");
+    values.Map((value) -> {;
+        exact = value ~!: :Rational;
+        exact == _ ?: .Error("Statistics values must be exact Integers or Rationals") ?_ exact;
+    });
+};
+
+StatsCount(values) -> StatsValues(values, 1).Len();
+
+StatsSum(exactValues) -> exactValues.Reduce((sum, value) -> sum + value, 0);
+
+StatsMean(values) -> {;
+    exact = StatsValues(values);
+    StatsSum(exact) / exact.Len();
+};
+
+StatsQuantile(values, probability, policy ?= :linear) -> {;
+    exact = StatsValues(values).Sort();
+    p = probability ~!: :Rational;
+    (p >= 0 && p <= 1) ?: _ ?_ .Error("Quantile probability must be between 0 and 1");
+    policy == :linear ?: _ ?_ .Error("Phase 1 supports the exact :linear quantile policy");
+    rank = p * (exact.Len() - 1);
+    lowerOffset = rank.Floor();
+    lowerIndex = lowerOffset + 1;
+    weight = rank - lowerOffset;
+    lowerIndex == exact.Len()
+      ?: exact[lowerIndex]
+      ?_ exact[lowerIndex] + weight * (exact[lowerIndex + 1] - exact[lowerIndex]);
+};
+
+StatsMedian(values) -> StatsQuantile(values, 1/2);
+
+StatsVariance(values, sample ?= 0) -> {;
+    exact = StatsValues(values);
+    sample && exact.Len() < 2 ?: .Error("Sample variance requires at least two values") ?_ _;
+    mean = StatsSum(exact) / exact.Len();
+    squared = exact.Reduce((sum, value) -> sum + (value - mean)^2, 0);
+    squared / (sample == 1 ?: exact.Len() - 1 ?_ exact.Len());
+};
+
+StatsSummary(values) -> {;
+    exact = StatsValues(values);
+    sorted = exact.Sort();
+    count = sorted.Len();
+    mean = StatsSum(sorted) / count;
+    {=
+        valueKind=:statsSummary,
+        schema="rix.stats.summary@1",
+        count=count,
+        minimum=sorted[1],
+        q1=StatsQuantile(sorted, 1/4),
+        median=StatsQuantile(sorted, 1/2),
+        q3=StatsQuantile(sorted, 3/4),
+        maximum=sorted.Last(),
+        mean=mean,
+        populationVariance=StatsVariance(sorted),
+        sampleVariance=count >= 2 ?: StatsVariance(sorted, 1) ?_ _,
+        quantilePolicy=:linearNMinusOne,
+        exact=1
+    };
+};
+
+StatsSummaryTable(values, options ?= {= }) -> {;
+    summary = StatsSummary(values);
+    caption = StatsOption(options, "caption", "Exact descriptive statistics");
+    .Table(["statistic", "value"], [
+        ["count", summary[:count]],
+        ["minimum", summary[:minimum]],
+        ["q1", summary[:q1]],
+        ["median", summary[:median]],
+        ["q3", summary[:q3]],
+        ["maximum", summary[:maximum]],
+        ["mean", summary[:mean]],
+        ["population variance", summary[:populationVariance]],
+        ["sample variance", summary[:sampleVariance]]
+    ], {= caption=caption });
+};
+
+StatsPositiveInteger(value, label) -> {;
+    integer = value ~!: :Integer;
+    integer >= 1 ?: integer ?_ .Error(@"@{label} must be a positive Integer");
+};
+
+StatsZeros(length) -> {;
+    result := [];
+    {@ index = 1; index <= @length; {; @result ~= @result.Push(0); }; index += 1 };
+    result;
+};
+
+StatsHistogram(values, binCount ?= 5) -> {;
+    exact = StatsValues(values);
+    count = StatsPositiveInteger(binCount, "Histogram bin count");
+    minimum = exact.Sort()[1];
+    maximum = exact.Sort().Last();
+    constant = minimum == maximum;
+    effectiveCount = constant ?: 1 ?_ count;
+    width = constant ?: 0 ?_ (maximum - minimum) / effectiveCount;
+    counts := StatsZeros(effectiveCount);
+    {@ index = 1; index <= @exact.Len(); {;
+        bin = @constant ?: 1 ?_ ((@exact[index] - @minimum) / @width).Floor() + 1;
+        bin > @effectiveCount ?: {; @bin ~= @effectiveCount; } ?_ _;
+        @counts ~= @counts.Set(bin, @counts[bin] + 1);
+    }; index += 1 };
+    bins := [];
+    {@ index = 1; index <= @effectiveCount; {;
+        low = @constant ?: @minimum ?_ @minimum + (index - 1) * @width;
+        high = @constant ?: @maximum ?_ @minimum + index * @width;
+        @bins ~= @bins.Push({=
+            index=index,
+            low=low,
+            high=high,
+            count=@counts[index],
+            includesHigh=index == @effectiveCount
+        });
+    }; index += 1 };
+    {=
+        valueKind=:statsHistogram,
+        schema="rix.stats.histogram@1",
+        bins=bins,
+        count=exact.Len(),
+        minimum=minimum,
+        maximum=maximum,
+        width=width,
+        exact=1
+    };
+};
+
+StatsHistogramGraphic(value, options ?= {= }) -> {;
+    histogram = value ? :Array
+      ?: StatsHistogram(value, StatsOption(options, "bins", 5))
+      ?_ value;
+    histogram[:schema] == "rix.stats.histogram@1" ?: _ ?_ .Error("HistogramGraphic expects values or a stats histogram");
+    size = StatsOption(options, "size", [420, 220]);
+    fill = StatsOption(options, "fill", "#2563eb");
+    margin = 28;
+    chartWidth = size[1] - 2 * margin;
+    chartHeight = size[2] - 2 * margin;
+    bins = histogram[:bins];
+    maximumCount = bins.Map((bin) -> bin[:count]).Sort().Last();
+    cellWidth = chartWidth / bins.Len();
+    children := [
+        .Graphics.Path([[margin, margin], [margin, margin + chartHeight], [margin + chartWidth, margin + chartHeight]], {= stroke="#334155", width=1, fill="none" })
+    ];
+    {@ index = 1; index <= @bins.Len(); {;
+        height = @chartHeight * @bins[index][:count] / @maximumCount;
+        @children ~= @children.Push(.Graphics.Rectangle(
+            [@margin + (index - 1) * @cellWidth + 1, @margin + @chartHeight - height],
+            [@cellWidth - 2, height],
+            {= fill=@fill, stroke="#1e3a8a", width=1 }
+        ));
+    }; index += 1 };
+    .Graphics.Graphic(size, children, {=
+        schema="rix.stats.histogram-graphic@1",
+        histogram=histogram,
+        alt="Exact histogram"
+    });
+};
+
+StatsBoxPlot(values, options ?= {= }) -> {;
+    summary = StatsSummary(values);
+    size = StatsOption(options, "size", [420, 120]);
+    fill = StatsOption(options, "fill", "#bfdbfe");
+    left = 30;
+    right = size[1] - 30;
+    y = size[2] / 2;
+    spread = summary[:maximum] - summary[:minimum];
+    position = (value) -> @spread == 0 ?: (@left + @right) / 2 ?_ @left + (value - @summary[:minimum]) * (@right - @left) / @spread;
+    minX = summary[:minimum] |> position;
+    q1X = summary[:q1] |> position;
+    medianX = summary[:median] |> position;
+    q3X = summary[:q3] |> position;
+    maxX = summary[:maximum] |> position;
+    .Graphics.Graphic(size, [
+        .Graphics.Path([[minX, y], [maxX, y]], {= stroke="#334155", width=2, fill="none" }),
+        .Graphics.Path([[minX, y - 14], [minX, y + 14]], {= stroke="#334155", width=2 }),
+        .Graphics.Path([[maxX, y - 14], [maxX, y + 14]], {= stroke="#334155", width=2 }),
+        .Graphics.Rectangle([q1X, y - 24], [q3X - q1X, 48], {= fill=fill, stroke="#1e3a8a", width=2 }),
+        .Graphics.Path([[medianX, y - 24], [medianX, y + 24]], {= stroke="#be123c", width=3 })
+    ], {= schema="rix.stats.box-plot@1", summary=summary, alt="Exact box plot" });
+};
+
+statsNamespace = {= };
+statsNamespace._proto = {=
+    Count=(self, values)->StatsCount(values),
+    Mean=(self, values)->StatsMean(values),
+    Quantile=(self, values, probability, policy ?= :linear)->StatsQuantile(values, probability, policy),
+    Median=(self, values)->StatsMedian(values),
+    Variance=(self, values)->StatsVariance(values),
+    SampleVariance=(self, values)->StatsVariance(values, 1),
+    Summary=(self, values)->StatsSummary(values),
+    SummaryTable=(self, values, options ?= {= })->StatsSummaryTable(values, options),
+    Histogram=(self, values, binCount ?= 5)->StatsHistogram(values, binCount),
+    HistogramGraphic=(self, value, options ?= {= })->StatsHistogramGraphic(value, options),
+    BoxPlot=(self, values, options ?= {= })->StatsBoxPlot(values, options)
+};
+.Host.RegisterValue("stats", statsNamespace, "Exact descriptive statistics and portable plots", ["Statistics", "Exact", "Graphics"]);
+`, sourcePath: "bundled:stats", kind: "rix" });
   catalog.addMetadata({ id: "svg", description: "Portable SVG renderer for core Graphics scenes.", kind: "host", mount: "svg", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.svg@1"], targets: ["svg", "image/svg+xml"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:svg" }, { sourcePath: "bundled:svg", kind: "host" });
-  catalog.registerInstaller("svg", install14);
-  catalog.addMetadata({ id: "symbolic", description: "Meta-plugin loading RiX representation-sensitive Fraction and FractionFunction workspaces.", kind: "host", mount: "symbolic", exports: ["Fraction", "FractionFunction", "Services"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], requires: ["rix.fraction-function@1"], provides: ["rix.symbolic.formal@1"], schemas: [], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:symbolic" }, { sourcePath: "bundled:symbolic", kind: "host" });
-  catalog.registerInstaller("symbolic", install5);
+  catalog.registerInstaller("svg", install10);
+  catalog.addMetadata({ id: "symbolic", description: "Meta-plugin loading RiX representation-sensitive Fraction and FractionFunction workspaces.", kind: "rix", mount: "symbolic", exports: ["Fraction", "FractionFunction", "Services"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], requires: ["rix.fraction-function@1"], provides: ["rix.symbolic.formal@1"], schemas: [], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:symbolic" }, { source: `/**
+id: symbolic
+description: Meta-plugin loading RiX representation-sensitive Fraction and FractionFunction workspaces.
+kind: rix
+mount: symbolic
+exports: [Fraction, FractionFunction, Services]
+groups: [Algebra, Exact, Symbolic]
+permissions: []
+requires: [rix.fraction-function@1]
+provides: [rix.symbolic.formal@1]
+schemas: []
+snapshot: false
+deterministic: true
+defaultEnabled: false
+**/
+
+symbolicNamespace = {= };
+symbolicNamespace._proto = {=
+    Fraction = (self, first, second ?= _) -> second == _ ?: .fraction(first) ?_ .fraction(first,second),
+    FractionFunction = (self, value, variable ?= _) -> variable == _ ?: .fracfun(value) ?_ .fracfun(value,variable),
+    Services = (self) -> ["fraction","fracfun","poly","ratfun"]
+};
+
+.Host.RegisterValue("symbolic",symbolicNamespace,"Representation-sensitive symbolic workspace",["Algebra","Exact","Symbolic"]);
+`, sourcePath: "bundled:symbolic", kind: "rix" });
   catalog.addMetadata({ id: "terminal-ascii", description: "Deterministic strict-ASCII fallback for tables, grids, fragments, and simple Graphics.", kind: "host", mount: "terminalAscii", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.terminal-ascii@1"], targets: ["terminal-ascii", "terminal", "ascii", "txt", "text/plain"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:terminal-ascii" }, { sourcePath: "bundled:terminal-ascii", kind: "host" });
-  catalog.registerInstaller("terminal-ascii", install12);
+  catalog.registerInstaller("terminal-ascii", install9);
   catalog.addMetadata({ id: "tikz", description: "Editable TikZ/PGF source renderer for core Graphics scenes.", kind: "host", mount: "tikz", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.tikz@1"], targets: ["tikz", "text/x-tikz"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:tikz" }, { sourcePath: "bundled:tikz", kind: "host" });
-  catalog.registerInstaller("tikz", install16);
+  catalog.registerInstaller("tikz", install12);
   return catalog;
 }
 
@@ -3269,5 +4736,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { findHelp, createRixRepl };
 
-//# debugId=45CD408F4631769364756E2164756E21
-//# sourceMappingURL=chunk-tw1je5v3.js.map
+//# debugId=52DB58CBB070A83264756E2164756E21
+//# sourceMappingURL=chunk-b4wwj86n.js.map

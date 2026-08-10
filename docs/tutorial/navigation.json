@@ -794,6 +794,14 @@
       "status": "implemented"
     },
     {
+      "number": "19",
+      "file": "plugins-higher-dimensional-visualization.html",
+      "title": "Plugins: Higher-dimensional visualization",
+      "description": "Three-dimensional, N-dimensional, and complex-function views.",
+      "pluginGroup": true,
+      "status": "implemented"
+    },
+    {
       "number": "14a",
       "parent": "14",
       "file": "plugin-ball.html",
@@ -925,6 +933,15 @@
       "file": "plugin-symbolic.html",
       "title": "Load the symbolic exploration workspace",
       "description": "Activate unreduced fractions and form-preserving functions through one meta-plugin.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "15h",
+      "parent": "15",
+      "file": "plugin-stats.html",
+      "title": "Summarize exact data",
+      "description": "Compute rational descriptive statistics and turn them into portable tables and plots.",
       "pluginGroup": false,
       "status": "implemented"
     },
@@ -1096,6 +1113,24 @@
       "file": "plugin-tikz.html",
       "title": "Export an editable TikZ diagram",
       "description": "Turn core Graphics geometry into publication-ready TikZ source.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "18m",
+      "parent": "18",
+      "file": "plugin-gif.html",
+      "title": "Prepare an animated GIF",
+      "description": "Turn a deterministic mathematical timeline into host-rasterized GIF frames.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "19a",
+      "parent": "19",
+      "file": "plugin-complex-viz.html",
+      "title": "Color an exact complex function",
+      "description": "Sample zeros and poles with exact complex arithmetic and emit portable Graphics.",
       "pluginGroup": false,
       "status": "implemented"
     }

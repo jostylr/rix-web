@@ -298,6 +298,24 @@ Classify(0.5?);
 - Add `??` whenever an uncertain comparison can reach control flow.
 - Extract a helper when a recursive lazy branch becomes crowded with captures.
 
+## Check a translation without running it
+
+The RiX command-line linter checks these ownership and decision rules without
+loading or evaluating the program:
+
+```text
+rix lint translated.rix
+rix lint --strict --json plugins/my-plugin/my-plugin.plugin.rix
+rix explain-scope plugins/my-plugin/my-plugin.plugin.rix:42
+```
+
+`RX1001` suggests a missing `@`; `RX1002` suggests removing one. The other
+initial codes cover numeric decisions (`RX1101`), missing undecided handling
+(`RX1102`), statically recognizable immutable updates (`RX1201`), shadowing
+(`RX1302`), and capture-dense lazy branches (`RX2001`). Runtime failures carry
+the same capture hints and identify the selected ternary branch or loop
+iteration when evaluation reaches a bad path.
+
 :::challenge Capture practice
 The code is correct as written. Predict why `values`, `total`, and `item` have
 different capture markings, run it, then add a second nested branch that counts

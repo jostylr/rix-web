@@ -370,9 +370,14 @@ test("the web REPL catalogs bundled plugins and loads approved JavaScript on dem
     expect(available).toContain("plot");
     expect(available).toContain("geometry");
     expect(available).toContain("data");
+    expect(available).toContain("stats");
     expect(available).toContain("document");
+    expect(available).toContain("complex-viz");
     expect(available).toContain("terminal-ascii");
     expect(available).toContain("csv");
+    expect(available).toContain("gif");
+    expect(repl.run('.Plugin.Load("stats"); .stats.Mean([1/3, 2/3])').text).toBe("1/2");
+    expect(repl.run('.Plugin.Load("complex-viz"); .complexViz.Color(.Complex.FromParts(1, 0))').text).toBe("#ef4444");
     expect(repl.run(".float(1 / 3)").type).toBe("error");
     expect(repl.run('.Plugin.Load("float")').type).toBe("result");
     expect(repl.run(".float(1 / 3)").text).toBe("0.3333333333333333");

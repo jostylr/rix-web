@@ -39,6 +39,14 @@ export const pluginTutorialGroups = [
     "description": "Turn semantic RiX values into portable target formats.",
     "pluginGroup": true,
     "theme": "Renderers and exporters"
+  },
+  {
+    "number": "19",
+    "file": "plugins-higher-dimensional-visualization.html",
+    "title": "Plugins: Higher-dimensional visualization",
+    "description": "Three-dimensional, N-dimensional, and complex-function views.",
+    "pluginGroup": true,
+    "theme": "Higher-dimensional visualization"
   }
 ];
 export const pluginTutorials = [
@@ -250,6 +258,20 @@ export const pluginTutorials = [
     "number": "15g",
     "parent": "15",
     "file": "plugin-symbolic.html",
+    "pluginTutorial": true
+  },
+  {
+    "pluginId": "stats",
+    "pluginDirectory": "stats",
+    "title": "Summarize exact data",
+    "description": "Compute rational descriptive statistics and turn them into portable tables and plots.",
+    "status": "implemented",
+    "order": 20,
+    "theme": "Algebra and analysis",
+    "sourcePath": "../rix/plugins/stats/tutorial.md",
+    "number": "15h",
+    "parent": "15",
+    "file": "plugin-stats.html",
     "pluginTutorial": true
   },
   {
@@ -516,6 +538,34 @@ export const pluginTutorials = [
     "number": "18l",
     "parent": "18",
     "file": "plugin-tikz.html",
+    "pluginTutorial": true
+  },
+  {
+    "pluginId": "gif",
+    "pluginDirectory": "render-gif",
+    "title": "Prepare an animated GIF",
+    "description": "Turn a deterministic mathematical timeline into host-rasterized GIF frames.",
+    "status": "implemented",
+    "order": 90,
+    "theme": "Renderers and exporters",
+    "sourcePath": "../rix/plugins/render-gif/tutorial.md",
+    "number": "18m",
+    "parent": "18",
+    "file": "plugin-gif.html",
+    "pluginTutorial": true
+  },
+  {
+    "pluginId": "complex-viz",
+    "pluginDirectory": "complex-visualization",
+    "title": "Color an exact complex function",
+    "description": "Sample zeros and poles with exact complex arithmetic and emit portable Graphics.",
+    "status": "implemented",
+    "order": 30,
+    "theme": "Higher-dimensional visualization",
+    "sourcePath": "../rix/plugins/complex-visualization/tutorial.md",
+    "number": "19a",
+    "parent": "19",
+    "file": "plugin-complex-viz.html",
     "pluginTutorial": true
   }
 ];

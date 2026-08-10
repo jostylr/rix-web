@@ -26,7 +26,9 @@ const pluginRoots = [
     path.resolve(root, "..", "rix", "plugins", "nd"),
     path.resolve(root, "..", "rix", "plugins", "geometry"),
     path.resolve(root, "..", "rix", "plugins", "data"),
+    path.resolve(root, "..", "rix", "plugins", "stats"),
     path.resolve(root, "..", "rix", "plugins", "document"),
+    path.resolve(root, "..", "rix", "plugins", "complex-visualization"),
     path.resolve(root, "..", "rix", "plugins", "render-terminal-ascii"),
     path.resolve(root, "..", "rix", "plugins", "render-svg"),
     path.resolve(root, "..", "rix", "plugins", "render-canvas"),
@@ -39,6 +41,7 @@ const pluginRoots = [
     path.resolve(root, "..", "rix", "plugins", "render-pdf"),
     path.resolve(root, "..", "rix", "plugins", "render-gltf"),
     path.resolve(root, "..", "rix", "plugins", "render-csv"),
+    path.resolve(root, "..", "rix", "plugins", "render-gif"),
     path.resolve(root, "..", "rix", "examples", "plugins", "example-array-js"),
     path.resolve(root, "..", "rix", "examples", "plugins", "example-array-rix"),
 ];

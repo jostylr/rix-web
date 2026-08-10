@@ -189,6 +189,7 @@ test("plugin tutorials are generated after core lessons and grouped by theme", a
     expect(tutorialByNumber("14h")?.file).toBe("plugin-algebraic-real.html");
     expect(tutorialByNumber("15")?.title).toBe("Plugins: Algebra and analysis");
     expect(tutorialByNumber("15a")?.pluginId).toBe("algebra");
+    expect(tutorials.filter(({ parent }) => parent === "15").map(({ pluginId }) => pluginId)).toContain("stats");
     expect(tutorialByNumber("16")?.title).toBe("Plugins: Graphics and geometry");
     expect(tutorials.filter(({ parent }) => parent === "16").map(({ pluginId }) => pluginId)).toEqual([
         "draw", "geometry", "nd", "plot", "scene3d",
@@ -197,8 +198,10 @@ test("plugin tutorials are generated after core lessons and grouped by theme", a
     expect(tutorials.filter(({ parent }) => parent === "17").map(({ pluginId }) => pluginId)).toEqual(["data", "document"]);
     expect(tutorialByNumber("18")?.title).toBe("Plugins: Renderers and exporters");
     expect(tutorials.filter(({ parent }) => parent === "18").map(({ pluginId }) => pluginId)).toEqual([
-        "canvas", "csv", "gltf", "html", "latex", "markdown", "pdf", "png", "quarto", "svg", "terminal-ascii", "tikz",
+        "canvas", "csv", "gltf", "html", "latex", "markdown", "pdf", "png", "quarto", "svg", "terminal-ascii", "tikz", "gif",
     ]);
+    expect(tutorialByNumber("19")?.title).toBe("Plugins: Higher-dimensional visualization");
+    expect(tutorials.filter(({ parent }) => parent === "19").map(({ pluginId }) => pluginId)).toEqual(["complex-viz"]);
     const generator = await Bun.file(new URL("../scripts/generate-plugin-tutorial-index.js", import.meta.url)).text();
     expect(generator).toContain('path.join(pluginsRoot, entry.name, "tutorial.md")');
     expect(generator).toContain('"Numbers and numerics"');

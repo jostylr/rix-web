@@ -168,6 +168,12 @@ Classify(0.5?);</textarea><div class="tutorial-output" data-tutorial-output></di
 <ul><li>Choose <code>=</code>, <code>:=</code>, and <code>~=</code> from RiX cell semantics rather than copying a</li></ul>
 <p>JavaScript <code>=</code> mechanically.</p>
 <ul><li>Add <code>??</code> whenever an uncertain comparison can reach control flow.</li><li>Extract a helper when a recursive lazy branch becomes crowded with captures.</li></ul>
+<h2>Check a translation without running it</h2>
+<p>The RiX command-line linter checks these ownership and decision rules without loading or evaluating the program:</p>
+<section class="comparison-code"><header>text</header><pre><code>rix lint translated.rix
+rix lint --strict --json plugins/my-plugin/my-plugin.plugin.rix
+rix explain-scope plugins/my-plugin/my-plugin.plugin.rix:42</code></pre></section>
+<p><code>RX1001</code> suggests a missing <code>@</code>; <code>RX1002</code> suggests removing one. The other initial codes cover numeric decisions (<code>RX1101</code>), missing undecided handling (<code>RX1102</code>), statically recognizable immutable updates (<code>RX1201</code>), shadowing (<code>RX1302</code>), and capture-dense lazy branches (<code>RX2001</code>). Runtime failures carry the same capture hints and identify the selected ternary branch or loop iteration when evaluation reaches a bad path.</p>
 <aside class="challenge"><p class="eyebrow">Challenge</p><h3>Capture practice</h3><p>The code is correct as written. Predict why <code>values</code>, <code>total</code>, and <code>item</code> have different capture markings, run it, then add a second nested branch that counts the positive items.</p><section class="tutorial-cell"><header><span>Your RiX answer</span><button type="button" data-tutorial-run>Run answer</button></header><textarea class="tutorial-source" data-tutorial-source rows="9" spellcheck="false" placeholder="# Write your RiX solution here">SumPositive = values -&gt; {;
     total := 0;
     {@ index = 1; index &lt;= @values.Len(); {;
