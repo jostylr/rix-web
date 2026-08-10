@@ -55,6 +55,7 @@ for (const entry of await readdir(pluginsRoot, { withFileTypes: true })) {
         title: meta.title || entry.name,
         description: meta.description || `Learn the optional ${entry.name} plugin.`,
         status: meta.status || "implemented",
+        order: Number.parseFloat(meta.order) || 0,
         theme,
         sourcePath: path.relative(root, tutorialPath).split(path.sep).join("/"),
     });
@@ -85,7 +86,7 @@ for (const [groupIndex, theme] of presentThemes.entries()) {
     });
     const children = discovered
         .filter((tutorial) => tutorial.theme === theme)
-        .sort((left, right) => left.pluginId.localeCompare(right.pluginId));
+        .sort((left, right) => left.order - right.order || left.pluginId.localeCompare(right.pluginId));
     for (const [childIndex, tutorial] of children.entries()) {
         const suffix = String.fromCharCode("a".charCodeAt(0) + childIndex);
         pluginTutorials.push({

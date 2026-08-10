@@ -543,6 +543,15 @@
     {
       "number": "10e",
       "parent": "10",
+      "file": "gotcha-tutorial.html",
+      "title": "JavaScript-to-RiX gotchas",
+      "description": "Translate truth, lazy branches, captures, loops, and immutable values deliberately.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "10f",
+      "parent": "10",
       "file": "capstone-package-design.html",
       "title": "Capstone: package design",
       "description": "Design a safe RiX package boundary.",
@@ -848,6 +857,15 @@
       "status": "implemented"
     },
     {
+      "number": "14h",
+      "parent": "14",
+      "file": "plugin-algebraic-real.html",
+      "title": "Certified algebraic reals in RiX",
+      "description": "Build exact real roots, inspect Sturm certificates, refine rational intervals, and compare sqrt(2) without floating point.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
       "number": "15a",
       "parent": "15",
       "file": "plugin-algebra.html",
@@ -859,6 +877,15 @@
     {
       "number": "15b",
       "parent": "15",
+      "file": "plugin-exact-algebras.html",
+      "title": "Multiply exact quaternions and octonions",
+      "description": "Explore Cayley–Dickson multiplication, conjugation, norms, and inverses using a pure-RiX plugin.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "15c",
+      "parent": "15",
       "file": "plugin-fracfun.html",
       "title": "Explore form-preserving functions",
       "description": "Keep polynomial and quotient forms visible while applying expansion, recentering, combination, and cancellation explicitly.",
@@ -866,7 +893,7 @@
       "status": "implemented"
     },
     {
-      "number": "15c",
+      "number": "15d",
       "parent": "15",
       "file": "plugin-fraction.html",
       "title": "Explore unreduced fractions",
@@ -875,7 +902,7 @@
       "status": "implemented"
     },
     {
-      "number": "15d",
+      "number": "15e",
       "parent": "15",
       "file": "plugin-poly.html",
       "title": "Work with callable polynomials",
@@ -884,7 +911,7 @@
       "status": "implemented"
     },
     {
-      "number": "15e",
+      "number": "15f",
       "parent": "15",
       "file": "plugin-ratfun.html",
       "title": "Work with exact rational functions",
@@ -893,7 +920,7 @@
       "status": "implemented"
     },
     {
-      "number": "15f",
+      "number": "15g",
       "parent": "15",
       "file": "plugin-symbolic.html",
       "title": "Load the symbolic exploration workspace",

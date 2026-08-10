@@ -26,8 +26,6 @@ import {
   install21 as install22,
   install22 as install23,
   install23 as install24,
-  install24 as install25,
-  install25 as install26,
   install3 as install4,
   install4 as install5,
   install5 as install6,
@@ -47,7 +45,7 @@ import {
   typeRegistry,
   unsupportedRefinementResult,
   valueMethod
-} from "./chunk-2aw4havg.js";
+} from "./chunk-9xzwgbs4.js";
 
 // src/repl-source.js
 var statementClosers = new Set([")", "]", "}", "|}", ";}", "@}", "!}", ":}"]);
@@ -137,7 +135,7 @@ function collection() {
   }
   return { type: "map", entries, _ext: extension };
 }
-function install27({ systemContext }) {
+function install25({ systemContext }) {
   const value = collection();
   systemContext.registerHostCallableValue("arrayJs", value, {
     impl(args) {
@@ -487,13 +485,450 @@ function installBrowserApproxMathPlugin({ systemContext, registry, metadata = {}
   systemContext.registerMethod("Rational", "Float", floatExtension, owner);
   return systemContext;
 }
-var install28 = installBrowserApproxMathPlugin;
+var install26 = installBrowserApproxMathPlugin;
 
 // src/generated/bundled-plugin-catalog.js
 function createBundledPluginCatalog() {
   const catalog = new PluginCatalog;
-  catalog.addMetadata({ id: "algebra", description: "Canonical exact univariate polynomials with verified division and portable synthetic-division Grids.", kind: "host", mount: "algebra", exports: ["Polynomial", "Coefficients", "Record", "Evaluate", "Equal", "Divide", "SyntheticDivide", "Quotient", "Remainder", "IsFactor", "Grid"], groups: ["Algebra", "Exact"], permissions: [], requires: ["rix.rational-function@1"], provides: ["rix.algebra.division@1"], schemas: ["rix.algebra.division@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:algebra" }, { sourcePath: "bundled:algebra", kind: "host" });
-  catalog.registerInstaller("algebra", install7);
+  catalog.addMetadata({ id: "algebra", description: "Polynomial algebra façade backed by the canonical pure-RiX poly service.", kind: "rix", mount: "algebra", exports: ["Polynomial", "Coefficients", "Record", "Evaluate", "Equal", "Divide", "SyntheticDivide", "Quotient", "Remainder", "IsFactor", "Grid"], groups: ["Algebra", "Exact"], permissions: [], requires: ["rix.polynomial.algorithms@1", "rix.rational-function@1"], provides: ["rix.algebra.division@1"], schemas: ["rix.algebra.division@1", "rix.polynomial.division@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:algebra" }, { source: `/**
+id: algebra
+description: Polynomial algebra façade backed by the canonical pure-RiX poly service.
+kind: rix
+mount: algebra
+exports: [Polynomial, Coefficients, Record, Evaluate, Equal, Divide, SyntheticDivide, Quotient, Remainder, IsFactor, Grid]
+groups: [Algebra, Exact]
+permissions: []
+requires: [rix.polynomial.algorithms@1, rix.rational-function@1]
+provides: [rix.algebra.division@1]
+schemas: [rix.algebra.division@1, rix.polynomial.division@1]
+snapshot: false
+deterministic: true
+defaultEnabled: false
+**/
+
+AlgebraDivision(core, method, grid ?= _) -> {;
+    division = {=
+        valueKind = :algebraDivision,
+        schema = "rix.algebra.division@1",
+        method = method,
+        exact = 1,
+        core = core,
+        identity = {=
+            relation = "dividend = divisor * quotient + remainder",
+            verified = core[:verified]
+        },
+        factor = {=
+            divisorIsFactor = core[:divisorIsFactor] ?: 1 ?_ 0,
+            status = core[:divisorIsFactor] ?: :exactFactor ?_ :nonzeroRemainder
+        },
+        grid = grid
+    };
+    division.__type = "PolynomialDivision";
+    division._proto = {=
+        Quotient = (self) -> self[:core][:quotient],
+        Remainder = (self) -> self[:core][:remainder],
+        IsFactor = (self) -> self[:core][:divisorIsFactor],
+        Grid = (self) -> AlgebraGrid(self),
+        Record = (self) -> self
+    };
+    .ImmutableValue(division);
+};
+
+AlgebraRequireDivision(value) -> {;
+    valid = value ? :Map ?: value[:schema] == "rix.algebra.division@1" ?_ _;
+    valid ?: value ?_ .Error("Expected an algebra division result");
+};
+AlgebraDivide(dividend, divisor) -> AlgebraDivision(.poly.Divide(dividend, divisor), :long);
+AlgebraSyntheticDivide(polynomial, root) -> {;
+    core = .poly.SyntheticDivide(polynomial, root);
+    grid = .Algebra.SyntheticDivision(root, polynomial.Coefficients());
+    AlgebraDivision(core, :synthetic, grid);
+};
+AlgebraGrid(division) -> {;
+    value = AlgebraRequireDivision(division);
+    (value[:method] == :synthetic && value[:grid] != _)
+      ?: value[:grid]
+      ?_ .Error("algebra.Grid requires a SyntheticDivide result");
+};
+
+algebraNamespace = {= };
+algebraNamespace._proto = {=
+    Polynomial = (self, source, second ?= _) -> .poly(source, second),
+    Coefficients = (self, polynomial, order ?= :descending) -> polynomial.Coefficients(order),
+    Record = (self, polynomial) -> polynomial.Record(),
+    Evaluate = (self, polynomial, value) -> polynomial.Evaluate(value),
+    Equal = (self, left, right) -> left == right,
+    Divide = (self, dividend, divisor) -> AlgebraDivide(dividend, divisor),
+    SyntheticDivide = (self, polynomial, root) -> AlgebraSyntheticDivide(polynomial, root),
+    Quotient = (self, division) -> division.Quotient(),
+    Remainder = (self, division) -> division.Remainder(),
+    IsFactor = (self, dividend, candidate) -> dividend.IsFactor(candidate) ?: 1 ?_ 0,
+    Grid = (self, division) -> AlgebraGrid(division)
+};
+
+.Host.RegisterValue(
+    "algebra",
+    algebraNamespace,
+    "Polynomial algebra façade backed by .poly",
+    ["Algebra", "Exact"]
+);
+`, sourcePath: "bundled:algebra", kind: "rix" });
+  catalog.addMetadata({ id: "algebraic-real", description: "Exact real algebraic roots certified by canonical Polynomial values and Sturm isolating intervals.", kind: "rix", mount: "algebraicReal", aliases: ["ar"], exports: ["Root", "Sqrt2", "Polynomial", "Evaluate", "Derivative", "SturmSequence", "RootCount", "IsSquareFree", "Refine", "Sign", "CompareRational", "Export", "Import"], groups: ["Numerics", "Exact", "Algebra"], permissions: [], requires: ["rix.polynomial.algorithms@1"], provides: ["rix.algebraic-real@1", "rix.exact-sign@1", "rix.refinable@1", "rix.enclosable-real@1"], schemas: ["rix.algebraic-real@1", "rix.algebraic-real.export@1", "rix.polynomial@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:algebraic-real" }, { source: `/**
+id: algebraic-real
+description: Exact real algebraic roots certified by canonical Polynomial values and Sturm isolating intervals.
+kind: rix
+mount: algebraicReal
+aliases: [ar]
+exports: [Root, Sqrt2, Polynomial, Evaluate, Derivative, SturmSequence, RootCount, IsSquareFree, Refine, Sign, CompareRational, Export, Import]
+groups: [Numerics, Exact, Algebra]
+permissions: []
+requires: [rix.polynomial.algorithms@1]
+provides: [rix.algebraic-real@1, rix.exact-sign@1, rix.refinable@1, rix.enclosable-real@1]
+schemas: [rix.algebraic-real@1, rix.algebraic-real.export@1, rix.polynomial@1]
+snapshot: false
+deterministic: true
+defaultEnabled: false
+**/
+
+AROption(options, key, fallback) -> options.Has(key) ?: options[key] ?_ fallback;
+
+ARRequirePositiveInteger(value, label) -> {;
+    integer = value ~!: :Integer;
+    integer >= 1 ?: integer ?_ .Error(@"@{label} must be a positive Integer");
+};
+
+ARScalarIsZero(value, label ?= "value") -> (value ? :Integer)
+  ?: (value == 0)
+  ?_ ((value ? :Rational)
+       ?: (value.Numerator() == 0)
+       ?_ .Error(@"Expected an exact Integer or Rational @{label}; received @{value}"));
+ARSignOf(value) -> value < 0 ?: -1 ?_ value > 0 ?: 1 ?_ 0;
+
+ARPolynomial(coefficients) -> {;
+    coefficients ? :Array ?: _ ?_ .Error("Algebraic-real polynomials require an Array of coefficients");
+    candidate = .poly({= coefficients=coefficients, order=:ascending, variable=:x });
+    candidate.Degree() >= 1 ?: _ ?_ .Error("Algebraic-real polynomials must have positive degree");
+    canonicalCoefficients = candidate.PrimitiveInteger();
+    polynomial = .poly({= coefficients=canonicalCoefficients, order=:ascending, variable=:x });
+    polynomial.IsSquareFree()
+      ?: polynomial
+      ?_ .Error("Algebraic-real defining polynomial must be square-free");
+};
+
+ARRequirePolynomial(value) -> value ? :Polynomial ?: value ?_ .Error("Expected a Polynomial value");
+ARPolynomialEvaluate(polynomial, point) -> ARRequirePolynomial(polynomial).Evaluate(point ~!: :Rational);
+ARRootCount(polynomial, interval) -> ARRequirePolynomial(polynomial).RootCount(interval);
+
+ARRequireReal(value) -> {;
+    valid = value ? :Map ?: value[:valueKind] == :algebraicReal ?_ _;
+    valid ?: value ?_ .Error("Expected an AlgebraicReal value");
+};
+
+ARCapabilities(real) -> {=
+    valueKind = :numericsCapabilities,
+    schema = "rix.numerics.capabilities@1",
+    backend = :algebraicReal,
+    representation = :squareFreeIntegerPolynomialIsolatingInterval,
+    operations = [:enclose, :refine],
+    evidenceLevels = [:proof],
+    certified = 1,
+    exactSign = 1,
+    exactRationalComparison = 1,
+    arbitraryRefinement = 1,
+    deterministic = 1,
+    minimumWidth = 0,
+    maxCalls = 100000,
+    maxIterations = 100000
+};
+
+ARRefinementState(real, requestedWidth, maxCalls, maxIterations) -> {;
+    polynomial = real[:polynomial];
+    low := real[:interval].Low();
+    high := real[:interval].High();
+    lowValue := polynomial.Evaluate(low);
+    highValue := polynomial.Evaluate(high);
+    calls := 0;
+    iterations := 0;
+    {@ step = 1;
+       ((@high - @low) > @requestedWidth) && (@calls < @maxCalls) && (@iterations < @maxIterations);
+       {;
+           midpoint = (@low + @high) / 2;
+           midpointValue = @polynomial.Evaluate(midpoint);
+           ARScalarIsZero(midpointValue)
+             ?: {;
+                 @low ~= @midpoint;
+                 @high ~= @midpoint;
+                 @lowValue ~= 0;
+                 @highValue ~= 0;
+             }
+             ?_ ARSignOf(@lowValue) == ARSignOf(midpointValue)
+                  ?: {; @low ~= @midpoint; @lowValue ~= @midpointValue; }
+                  ?_ {; @high ~= @midpoint; @highValue ~= @midpointValue; };
+           @calls += 1;
+           @iterations += 1;
+       };
+       step += 1
+    };
+    interval = low:high;
+    {=
+        interval = interval,
+        width = interval.Width(),
+        midpoint = interval.Midpoint(),
+        lowValue = lowValue,
+        highValue = highValue,
+        calls = calls,
+        iterations = iterations
+    };
+};
+
+ARProtocolEnclosure(real, request, operation) -> {;
+    exactReal = ARRequireReal(real);
+    capabilities = ARCapabilities(exactReal);
+    normalized = .RefinementRequest(request, operation, capabilities);
+    requestedWidth = normalized[:absoluteWidth];
+    maxCalls = normalized[:work][:maxCalls];
+    maxIterations = normalized[:work][:maxIterations];
+    state = ARRefinementState(exactReal, requestedWidth, maxCalls, maxIterations);
+    goalMet = state[:width] <= requestedWidth;
+    status = goalMet ?: :enclosed ?_ :budgetExhausted;
+    approximation = .CertifiedApproximation(state[:midpoint], state[:interval], {=
+        reason = status,
+        requested = requestedWidth,
+        achieved = state[:width],
+        provider = :algebraicReal
+    });
+    {=
+        valueKind = :enclosure,
+        schema = "rix.numerics.enclosure@1",
+        status = status,
+        interval = state[:interval],
+        certified = 1,
+        goalMet = goalMet,
+        requestedWidth = requestedWidth,
+        achievedWidth = state[:width],
+        approximation = approximation,
+        evidenceLevel = :proof,
+        backend = :algebraicReal,
+        operation = normalized[:operation],
+        trace = [{=
+            interval=state[:interval],
+            lowValue=state[:lowValue],
+            highValue=state[:highValue],
+            rootCount=1
+        }],
+        work = {=
+            calls=state[:calls],
+            iterations=state[:iterations],
+            maxCalls=maxCalls,
+            maxIterations=maxIterations,
+            exhausted=!goalMet
+        },
+        diagnostics = goalMet ?: [] ?_ [:maxCallsReached],
+        evidence = {=
+            kind=:sturmIsolationWithSignBisection,
+            property=:containment,
+            polynomial=exactReal[:coefficients],
+            rootIndex=exactReal[:rootIndex],
+            rootCount=1
+        },
+        source = {=
+            plugin=:algebraicReal,
+            schema=exactReal[:schema],
+            rootIndex=exactReal[:rootIndex]
+        }
+    };
+};
+
+ARExactSign(real) -> {;
+    exactReal = ARRequireReal(real);
+    interval = exactReal[:interval];
+    interval.High() <= 0
+      ?: :negative
+      ?_ interval.Low() >= 0
+           ?: :positive
+           ?_ {;
+               atZero = @exactReal[:polynomial].Evaluate(0);
+               ARScalarIsZero(atZero)
+                 ?: :zero
+                 ?_ @exactReal[:polynomial].RootCount(@interval.Low():0) == 1
+                      ?: :negative
+                      ?_ :positive;
+           };
+};
+
+ARCompareRational(real, value) -> {;
+    exactReal = ARRequireReal(real);
+    rational = value ~!: :Rational;
+    interval = exactReal[:interval];
+    polynomialValue = exactReal[:polynomial].Evaluate(rational);
+    exactMatch = ARScalarIsZero(polynomialValue) ?: interval.ContainsValue(rational) ?_ _;
+    exactMatch
+      ?: :equal
+      ?_ {;
+          @rational <= @interval.Low()
+            ?: :greater
+            ?_ @rational >= @interval.High()
+                 ?: :less
+                 ?_ @exactReal[:polynomial].RootCount(@interval.Low():@rational) == 1
+                      ?: :less
+                      ?_ :greater;
+      };
+};
+
+ARExport(real) -> {;
+    exactReal = ARRequireReal(real);
+    {=
+        valueKind = :algebraicRealExport,
+        schema = "rix.algebraic-real.export@1",
+        version = 1,
+        coefficients = exactReal[:coefficients],
+        interval = exactReal[:interval],
+        rootIndex = exactReal[:rootIndex],
+        name = exactReal[:name],
+        evidence = exactReal[:evidence]
+    };
+};
+
+ARRecord(real) -> {;
+    exactReal = ARRequireReal(real);
+    {=
+        valueKind = :algebraicReal,
+        schema = exactReal[:schema],
+        polynomial = exactReal[:polynomial],
+        coefficients = exactReal[:coefficients],
+        interval = exactReal[:interval],
+        rootIndex = exactReal[:rootIndex],
+        name = exactReal[:name],
+        evidence = exactReal[:evidence],
+        certified = 1
+    };
+};
+
+ARAttachProtocol(real) -> {;
+    real._proto = {=
+        Polynomial = (self) -> self[:polynomial],
+        Coefficients = (self) -> self[:coefficients],
+        Interval = (self) -> self[:interval],
+        RootIndex = (self) -> self[:rootIndex],
+        EvaluatePolynomial = (self, point) -> self[:polynomial].Evaluate(point),
+        RootCount = (self, interval) -> self[:polynomial].RootCount(interval),
+        Sign = (self) -> ARExactSign(self),
+        CompareRational = (self, value) -> ARCompareRational(self, value),
+        Record = (self) -> ARRecord(self),
+        Export = (self) -> ARExport(self),
+        Enclose = (self, request ?= {= }) -> ARProtocolEnclosure(self, request, :enclose),
+        Refine = (self, request ?= {= }) -> ARProtocolEnclosure(self, request, :refine),
+        NumericsCapabilities = (self) -> ARCapabilities(self)
+    };
+    .ImmutableValue(real);
+};
+
+ARRoot(coefficients, interval, rootIndex ?= 1, options ?= {= }) -> {;
+    polynomial = ARPolynomial(coefficients);
+    canonical = polynomial.AscendingCoefficients();
+    exactInterval = interval ~!: :RationalInterval;
+    low = exactInterval.Low();
+    high = exactInterval.High();
+    low < high ?: _ ?_ .Error("Algebraic-real isolating interval must have increasing endpoints");
+    lowValue = polynomial.Evaluate(low);
+    highValue = polynomial.Evaluate(high);
+    lowIsRoot = ARScalarIsZero(lowValue, "low endpoint evaluation");
+    highIsRoot = ARScalarIsZero(highValue, "high endpoint evaluation");
+    endpointRoot = lowIsRoot || highIsRoot;
+    endpointRoot
+      ?: .Error("Algebraic-real isolating endpoints cannot be roots")
+      ?_ _;
+    sturmSequence = polynomial.SturmSequence();
+    isolatedCount = polynomial.RootCount(exactInterval);
+    isolatedCount == 1
+      ?: _
+      ?_ .Error(@"Algebraic-real interval must isolate exactly one distinct real root; found @{isolatedCount}");
+    index = ARRequirePositiveInteger(rootIndex, "Algebraic-real root index");
+    bound = polynomial.RootBound();
+    leftBoundary = low <= -bound ?: low - 1 ?_ -bound;
+    computedIndex = polynomial.RootCount(leftBoundary:low) + 1;
+    index == computedIndex
+      ?: _
+      ?_ .Error(@"Algebraic-real root index @{index} does not match certified index @{computedIndex}");
+    evidence = {=
+        kind = :sturmIsolation,
+        property = :uniqueRealRoot,
+        squareFree = 1,
+        rootCount = isolatedCount,
+        rootIndex = computedIndex,
+        cauchyBound = bound,
+        endpointSigns = [ARSignOf(lowValue), ARSignOf(highValue)],
+        sturmLength = sturmSequence.Len(),
+        provenance = AROption(options, "evidence", _)
+    };
+    real = {=
+        valueKind = :algebraicReal,
+        schema = "rix.algebraic-real@1",
+        name = AROption(options, "name", :root),
+        polynomial = polynomial,
+        coefficients = canonical,
+        interval = exactInterval,
+        rootIndex = computedIndex,
+        sturmSequence = sturmSequence,
+        evidence = evidence,
+        certified = 1
+    };
+    ARAttachProtocol(real);
+};
+
+ARSqrt2(sign ?= 1) -> {;
+    direction = sign ~!: :Integer;
+    direction == 1
+      ?: ARRoot([-2, 0, 1], 1:2, 2, {=
+          name=:sqrt2,
+          evidence={= kind=:definingEquation, equation="x^2 - 2 = 0", branch=:positive }
+      })
+      ?_ direction == -1
+           ?: ARRoot([-2, 0, 1], -2:-1, 1, {=
+               name=:negativeSqrt2,
+               evidence={= kind=:definingEquation, equation="x^2 - 2 = 0", branch=:negative }
+           })
+           ?_ .Error("Algebraic-real Sqrt2 sign must be 1 or -1");
+};
+
+ARImport(record) -> {;
+    valid = record ? :Map ?: record[:schema] == "rix.algebraic-real.export@1" ?_ _;
+    valid ?: _ ?_ .Error("Expected an algebraic-real export record");
+    record[:version] == 1 ?: _ ?_ .Error("Unsupported algebraic-real export version");
+    ARRoot(record[:coefficients], record[:interval], record[:rootIndex], {=
+        name=record[:name],
+        evidence=record[:evidence]
+    });
+};
+
+ARConstruct(coefficients, interval, rootIndex ?= 1, options ?= {= }) ->
+    ARRoot(coefficients, interval, rootIndex, options);
+
+algebraicRealNamespace = (coefficients, interval, rootIndex ?= 1, options ?= {= }) ->
+    ARConstruct(coefficients, interval, rootIndex, options);
+algebraicRealNamespace._proto = {=
+    Root = (self, coefficients, interval, rootIndex ?= 1, options ?= {= }) -> ARRoot(coefficients, interval, rootIndex, options),
+    Sqrt2 = (self, sign ?= 1) -> ARSqrt2(sign),
+    Polynomial = (self, coefficients) -> ARPolynomial(coefficients),
+    Evaluate = (self, coefficients, point) -> ARPolynomial(coefficients).Evaluate(point),
+    Derivative = (self, coefficients) -> ARPolynomial(coefficients).Derivative(),
+    SturmSequence = (self, coefficients) -> ARPolynomial(coefficients).SturmSequence(),
+    RootCount = (self, coefficients, interval) -> ARPolynomial(coefficients).RootCount(interval),
+    IsSquareFree = (self, coefficients) -> {; candidate=.poly({= coefficients=coefficients, order=:ascending, variable=:x }); candidate.IsSquareFree(); },
+    Refine = (self, real, request ?= {= }) -> ARProtocolEnclosure(real, request, :refine),
+    Sign = (self, real) -> ARExactSign(real),
+    CompareRational = (self, real, value) -> ARCompareRational(real, value),
+    Export = (self, real) -> ARExport(real),
+    Import = (self, record) -> ARImport(record)
+};
+
+.Host.RegisterCallableValue(
+    "algebraicReal",
+    algebraicRealNamespace,
+    "Exact real algebraic roots certified by canonical Polynomial values and Sturm isolating intervals",
+    ["Numerics", "Exact", "Algebra"]
+);
+`, sourcePath: "bundled:algebraic-real", kind: "rix" });
   catalog.addMetadata({ id: "ball", description: "Certified rational midpoint-radius balls and nested square-root refinement.", kind: "rix", mount: "ball", exports: ["Ball", "Interval", "Sqrt", "Midpoint", "Radius", "Lower", "Upper", "Contains", "RoundOut", "Record"], groups: ["Numerics", "Exact"], permissions: [], provides: ["rix.ball@1", "rix.enclosable-real@1"], schemas: ["rix.ball@1", "rix.ball.nested-real@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:ball" }, { source: `/**
 id: ball
 description: Certified rational midpoint-radius balls and nested square-root refinement.
@@ -798,7 +1233,7 @@ ballNamespace._proto = {=
 );
 `, sourcePath: "bundled:ball", kind: "rix" });
   catalog.addMetadata({ id: "canvas", description: "Serializable Canvas 2D drawing plans for core Graphics scenes.", kind: "host", mount: "canvas", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.canvas@1"], targets: ["canvas", "application/vnd.rix.canvas+json"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:canvas" }, { sourcePath: "bundled:canvas", kind: "host" });
-  catalog.registerInstaller("canvas", install17);
+  catalog.registerInstaller("canvas", install15);
   catalog.addMetadata({ id: "cauchy", description: "Rational Cauchy sequences with explicit certified tail bounds and moduli.", kind: "rix", mount: "cauchy", exports: ["Sequence", "Certified", "Geometric", "Term", "TailBound", "Modulus", "Enclosure", "Record"], groups: ["Numerics", "Exact"], permissions: [], provides: ["rix.cauchy@1", "rix.refinable@1", "rix.enclosable-real@1"], schemas: ["rix.cauchy.sequence@1", "rix.cauchy.real@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:cauchy" }, { source: `/**
 id: cauchy
 description: Rational Cauchy sequences with explicit certified tail bounds and moduli.
@@ -1556,15 +1991,15 @@ continuedFractionNamespace._proto = {=
 );
 `, sourcePath: "bundled:continued-fraction", kind: "rix" });
   catalog.addMetadata({ id: "csv", description: "Deterministic CSV and TSV export for portable Tables and typed data Relations.", kind: "host", mount: "csv", exports: ["Render"], groups: ["Renderers", "Data"], permissions: [], provides: ["rix.renderer.csv@1"], targets: ["csv", "text/csv", "tsv", "text/tab-separated-values"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:csv" }, { sourcePath: "bundled:csv", kind: "host" });
-  catalog.registerInstaller("csv", install26);
+  catalog.registerInstaller("csv", install24);
   catalog.addMetadata({ id: "data", description: "Immutable typed relations with deterministic projection, filtering, sorting, and Table views.", kind: "host", mount: "data", exports: ["Relation", "Project", "Filter", "Sort", "TableView", "Schema", "Rows"], groups: ["Data"], permissions: [], provides: ["rix.data.relation@1"], schemas: ["rix.data.relation@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:data" }, { sourcePath: "bundled:data", kind: "host" });
-  catalog.registerInstaller("data", install12);
+  catalog.registerInstaller("data", install10);
   catalog.addMetadata({ id: "document", description: "Numbered portable reports with labels, forward references, captions, and small semantic themes.", kind: "host", mount: "document", exports: ["Report", "Label", "Ref", "Theme", "References"], groups: ["Documents"], permissions: [], provides: ["rix.document.report@1"], schemas: ["rix.document.report@1", "rix.document.theme@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:document" }, { sourcePath: "bundled:document", kind: "host" });
-  catalog.registerInstaller("document", install13);
+  catalog.registerInstaller("document", install11);
   catalog.addMetadata({ id: "draw", description: "Convenient 2D drawing helpers that produce core Graphics nodes.", kind: "host", mount: "draw", exports: ["Line", "Polygon", "Label", "Box", "Circle"], groups: ["Draw"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:draw" }, { sourcePath: "bundled:draw", kind: "host" });
   catalog.registerInstaller("draw", install);
   catalog.addMetadata({ id: "example-array-js", description: "Teaching JavaScript plugin demonstrating array sum, summary text, and reversal.", kind: "host", mount: "arrayJs", exports: ["Sum", "Describe", "Reverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:example-array-js" }, { sourcePath: "bundled:example-array-js", kind: "host" });
-  catalog.registerInstaller("example-array-js", install27);
+  catalog.registerInstaller("example-array-js", install25);
   catalog.addMetadata({ id: "example-array-rix", description: "Teaching RiX plugin demonstrating array sum, summary text, and reversal.", kind: "rix", mount: "arrayRix", exports: ["arrayRixSum", "arrayRixDescribe", "arrayRixReverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:example-array-rix" }, { source: `/**
 id: example-array-rix
 description: Teaching RiX plugin demonstrating array sum, summary text, and reversal.
@@ -1581,23 +2016,23 @@ defaultEnabled: false
 .Host.Register("arrayRixReverse", (values) -> values.Reverse(), "Reverse an array", ["Examples"]);
 `, sourcePath: "bundled:example-array-rix", kind: "rix" });
   catalog.addMetadata({ id: "float", description: "JavaScript IEEE-754 Float conversion and optional approximate math.", kind: "host", mount: "float", exports: ["Float", "Interval", "Round", "Floor", "Ceiling", "Abs", "Sqrt", "Sin", "Cos", "Tan", "Log", "Exp"], groups: ["ApproximateMath", "Float"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:float" }, { sourcePath: "bundled:float", kind: "host" });
-  catalog.registerInstaller("float", install28);
+  catalog.registerInstaller("float", install26);
   catalog.addMetadata({ id: "fracfun", description: "Form-preserving callable polynomial and rational expressions with explicit transformations and canonical projections.", kind: "host", mount: "fracfun", aliases: ["fractionFunction", "ff"], exports: ["FractionFunction", "Parse", "Var", "Fun"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], requires: ["rix.fraction@1", "rix.rational-function@1"], provides: ["rix.fraction-function@1"], schemas: ["rix.fraction-function@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:fracfun" }, { sourcePath: "bundled:fracfun", kind: "host" });
   catalog.registerInstaller("fracfun", install3);
   catalog.addMetadata({ id: "fraction", description: "Representation-sensitive unreduced integer fractions with mediant and classroom addition policies.", kind: "host", mount: "fraction", aliases: ["frac", "f"], exports: ["Fraction", "Parse", "FromSternBrocotPath"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], provides: ["rix.fraction@1"], schemas: ["rix.fraction@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:fraction" }, { sourcePath: "bundled:fraction", kind: "host" });
   catalog.registerInstaller("fraction", install2);
   catalog.addMetadata({ id: "geometry", description: "Exact ruler-and-compass geometry with explicit intersections and portable Graphics snapshots.", kind: "host", mount: "geometry", exports: ["Point", "Line", "Circle", "Midpoint", "PerpendicularBisector", "Circumcircle", "Intersect", "Points", "Status", "Draw"], groups: ["Geometry", "Graphics", "Exact"], permissions: [], provides: ["rix.geometry@1", "rix.geometry.intersection@1"], schemas: ["rix.geometry@1", "rix.geometry.intersection@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:geometry" }, { sourcePath: "bundled:geometry", kind: "host" });
-  catalog.registerInstaller("geometry", install11);
+  catalog.registerInstaller("geometry", install9);
   catalog.addMetadata({ id: "gltf", description: "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", kind: "host", mount: "gltf", exports: ["Render"], groups: ["Renderers", "Scene3D"], permissions: [], requires: ["rix.scene3d@1"], provides: ["rix.renderer.gltf@1"], targets: ["gltf", "model/gltf+json"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:gltf" }, { sourcePath: "bundled:gltf", kind: "host" });
-  catalog.registerInstaller("gltf", install25);
+  catalog.registerInstaller("gltf", install23);
   catalog.addMetadata({ id: "html", description: "Standalone semantic HTML renderer for portable RiX output trees.", kind: "host", mount: "html", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.html@1"], targets: ["html", "text/html"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:html" }, { sourcePath: "bundled:html", kind: "host" });
-  catalog.registerInstaller("html", install20);
+  catalog.registerInstaller("html", install18);
   catalog.addMetadata({ id: "latex", description: "Standalone LaTeX renderer for portable RiX documents and figures.", kind: "host", mount: "latex", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.latex@1"], targets: ["latex", "text/x-tex"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:latex" }, { sourcePath: "bundled:latex", kind: "host" });
-  catalog.registerInstaller("latex", install22);
+  catalog.registerInstaller("latex", install20);
   catalog.addMetadata({ id: "markdown", description: "CommonMark-oriented renderer for portable RiX documents.", kind: "host", mount: "markdown", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.markdown@1"], targets: ["markdown", "text/markdown"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:markdown" }, { sourcePath: "bundled:markdown", kind: "host" });
-  catalog.registerInstaller("markdown", install19);
+  catalog.registerInstaller("markdown", install17);
   catalog.addMetadata({ id: "nd", description: "Exact n-dimensional geometry with explicit affine and Cayley projection records.", kind: "host", mount: "nd", exports: ["Point", "Polyline", "Polytope", "Hypercube", "Projection", "CoordinateProjection", "CayleyRotation", "Compose", "Project", "ToScene3D"], groups: ["Geometry", "Scene3D", "Exact"], permissions: [], requires: ["rix.scene3d@1"], provides: ["rix.nd@1", "rix.nd.projection@1"], schemas: ["rix.nd@1", "rix.nd.projection@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:nd" }, { sourcePath: "bundled:nd", kind: "host" });
-  catalog.registerInstaller("nd", install10);
+  catalog.registerInstaller("nd", install8);
   catalog.addMetadata({ id: "numerics", description: "Backend-neutral bounded enclosure and refinement orchestration.", kind: "rix", mount: "numerics", exports: ["Request", "WorkPolicy", "EffectiveLimits", "Enclose", "Refine", "Sample", "Capabilities", "CheckResult"], groups: ["Numerics"], permissions: [], provides: ["rix.numerics@1", "rix.enclosable-real-consumer@1"], schemas: ["rix.numerics.refinement-request@1", "rix.numerics.enclosure@1"], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:numerics" }, { source: `/**
 id: numerics
 description: Backend-neutral bounded enclosure and refinement orchestration.
@@ -2039,29 +2474,630 @@ oracleNamespace._proto = {=
 .Host.RegisterValue("oracle", oracleNamespace, "Exact rational-betweenness oracle demonstrations and bounded refinement", ["Numerics", "Exact"]);
 `, sourcePath: "bundled:oracle", kind: "rix" });
   catalog.addMetadata({ id: "pdf", description: "PDF document and figure renderer orchestrated through LaTeX.", kind: "host", mount: "pdf", exports: ["Render"], groups: ["Renderers"], permissions: ["process", "files"], provides: ["rix.renderer.pdf@1"], targets: ["pdf", "application/pdf"], snapshot: true, deterministic: false, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:pdf" }, { sourcePath: "bundled:pdf", kind: "host" });
-  catalog.registerInstaller("pdf", install24);
+  catalog.registerInstaller("pdf", install22);
   catalog.addMetadata({ id: "plot", description: "Portable plotting helpers that produce core Graphics scenes.", kind: "host", mount: "plot", exports: ["Polynomial"], groups: ["Plot"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:plot" }, { sourcePath: "bundled:plot", kind: "host" });
-  catalog.registerInstaller("plot", install8);
+  catalog.registerInstaller("plot", install6);
   catalog.addMetadata({ id: "png", description: "PNG snapshot renderer for core Graphics through a host rasterizer.", kind: "host", mount: "png", exports: ["Render"], groups: ["Renderers"], permissions: ["process"], provides: ["rix.renderer.png@1"], targets: ["png", "image/png"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:png" }, { sourcePath: "bundled:png", kind: "host" });
-  catalog.registerInstaller("png", install23);
-  catalog.addMetadata({ id: "poly", description: "Semantic callable univariate polynomials with structural and symbolic entry forms.", kind: "host", mount: "poly", aliases: ["polynomial", "p"], exports: ["Polynomial", "Parse", "Var", "Fun"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], provides: ["rix.polynomial@1"], schemas: ["rix.polynomial@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:poly" }, { sourcePath: "bundled:poly", kind: "host" });
-  catalog.registerInstaller("poly", install4);
+  catalog.registerInstaller("png", install21);
+  catalog.addMetadata({ id: "poly", description: "Semantic callable univariate polynomials with structural and symbolic entry forms.", kind: "rix", mount: "poly", aliases: ["polynomial", "p"], exports: ["Polynomial", "Parse", "Var", "Fun", "Divide", "SyntheticDivide", "SturmSequence", "RootCount"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], provides: ["rix.polynomial@1", "rix.polynomial.algorithms@1"], schemas: ["rix.polynomial@1", "rix.polynomial.division@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:poly" }, { source: `/**
+id: poly
+description: Semantic callable univariate polynomials with structural and symbolic entry forms.
+kind: rix
+mount: poly
+aliases: [polynomial, p]
+exports: [Polynomial, Parse, Var, Fun, Divide, SyntheticDivide, SturmSequence, RootCount]
+groups: [Algebra, Exact, Symbolic]
+permissions: []
+provides: [rix.polynomial@1, rix.polynomial.algorithms@1]
+schemas: [rix.polynomial@1, rix.polynomial.division@1]
+snapshot: false
+deterministic: true
+defaultEnabled: false
+**/
+
+PolyOption(options, key, fallback) -> options.Has(key) ?: options[key] ?_ fallback;
+
+PolyIsZero(value) -> (value ~!: :Rational).Numerator() == 0;
+
+PolyExact(value, label) -> {;
+    exact = value ~!: :Rational;
+    exact == _ ?: .Error(@"@{label} must be an exact Integer or Rational") ?_ exact;
+};
+
+PolyCopy(values) -> values.Map((value) -> value);
+
+PolyTrimAscending(coefficients) -> {;
+    result := PolyCopy(coefficients);
+    result.Len() >= 1 ?: _ ?_ .Error("Polynomial coefficients cannot be empty");
+    trimming := 1;
+    {@ step = 1; (@result.Len() > 1) && (@trimming == 1); {;
+        PolyIsZero(@result.Last())
+          ?: {; @result ~= @result.DropLast(); }
+          ?_ {; @trimming ~= 0; };
+    }; step += 1 };
+    result;
+};
+
+PolyExactAscending(coefficients, order ?= :ascending) -> {;
+    coefficients ? :Array ?: _ ?_ .Error("Polynomial coefficients must be an Array");
+    coefficients.Len() >= 1 ?: _ ?_ .Error("Polynomial coefficients cannot be empty");
+    exact = coefficients.Map((coefficient) -> PolyExact(coefficient, "Polynomial coefficient"));
+    ascending = order == :descending ?: exact.Reverse() ?_ order == :ascending ?: exact ?_ .Error("Polynomial coefficient order must be :ascending or :descending");
+    PolyTrimAscending(ascending);
+};
+
+PolyZeroArray(length) -> {;
+    result := [];
+    {@ index = 1; index <= @length; {; @result ~= @result.Push(0); }; index += 1 };
+    result;
+};
+
+PolyArrayAdd(left, right) -> {;
+    length = left.Len() > right.Len() ?: left.Len() ?_ right.Len();
+    result := [];
+    {@ index = 1; index <= @length; {;
+        a = index <= @left.Len() ?: @left[index] ?_ 0;
+        b = index <= @right.Len() ?: @right[index] ?_ 0;
+        @result ~= @result.Push(a + b);
+    }; index += 1 };
+    PolyTrimAscending(result);
+};
+
+PolyArrayNegate(coefficients) -> coefficients.Map((coefficient) -> -coefficient);
+PolyArraySubtract(left, right) -> PolyArrayAdd(left, PolyArrayNegate(right));
+
+PolyArrayScale(coefficients, scalar) -> {;
+    exact = PolyExact(scalar, "Polynomial scalar");
+    PolyTrimAscending(coefficients.Map((coefficient) -> coefficient * exact));
+};
+
+PolyArrayMultiply(left, right) -> {;
+    result := PolyZeroArray(left.Len() + right.Len() - 1);
+    {@ a = 1; a <= @left.Len(); {;
+        {@ b = 1; b <= @right.Len(); {;
+            index = @a + b - 1;
+            @result ~= @result.Set(index, @result[index] + @left[@a] * @right[b]);
+        }; b += 1 };
+    }; a += 1 };
+    PolyTrimAscending(result);
+};
+
+PolyArrayPower(coefficients, exponent) -> {;
+    power = exponent ~!: :Integer;
+    power >= 0 ?: _ ?_ .Error("Polynomial powers require a nonnegative exact Integer exponent");
+    result := [1];
+    base := coefficients;
+    remaining := power;
+    {@ step = 1; @remaining > 0; {;
+        @remaining % 2 == 1 ?: {; @result ~= PolyArrayMultiply(@result, @base); } ?_ _;
+        @remaining ~= @remaining // 2;
+        @remaining > 0 ?: {; @base ~= PolyArrayMultiply(@base, @base); } ?_ _;
+    }; step += 1 };
+    result;
+};
+
+PolyEvaluateStep(coefficients, index, point, accumulator) ->
+    index < 1 ?: accumulator ?_ PolyEvaluateStep(coefficients, index - 1, point, accumulator * point + coefficients[index]);
+
+PolyEvaluateAscending(coefficients, point) -> PolyEvaluateStep(coefficients, coefficients.Len(), point, 0);
+
+PolyDerivativeAscending(coefficients) -> {;
+    coefficients.Len() == 1
+      ?: [0]
+      ?_ {;
+          result := [];
+          {@ power = 1; power < @coefficients.Len(); {;
+              @result ~= @result.Push(@coefficients[power + 1] * power);
+          }; power += 1 };
+          PolyTrimAscending(result);
+      };
+};
+
+PolyVariable(value) -> value.type == "string" ?: value ?_ value;
+
+PolyRequire(value, label ?= "value") -> value ? :Polynomial ?: value ?_ .Error(@"@{label} must be a Polynomial");
+PolyScalar(value) -> (value ? :Integer) || (value ? :Rational);
+PolyOperand(value) -> (value ? :Polynomial) || PolyScalar(value);
+
+PolyCurrentAscending(polynomial) -> {;
+    exact = 0 |> polynomial.coefficientFunction;
+    PolyExactAscending(exact, :ascending);
+};
+
+PolyCurrentCoefficients(polynomial, order ?= :descending) -> {;
+    ascending = PolyCurrentAscending(PolyRequire(polynomial));
+    order == :ascending ?: ascending ?_ order == :descending ?: ascending.Reverse() ?_ .Error("Coefficient order must be :ascending or :descending");
+};
+
+PolyDegree(polynomial) -> {;
+    coefficients = PolyCurrentAscending(PolyRequire(polynomial));
+    (coefficients.Len() == 1 && PolyIsZero(coefficients[1])) ?: -1 ?_ coefficients.Len() - 1;
+};
+
+PolySameVariable(left, right) -> {;
+    left.variable == right.variable ?: 1 ?_ .Error(@"Polynomial variables must match: @{left.variable} and @{right.variable}");
+};
+
+PolyPromote(value, variable) -> value ? :Polynomial ?: value ?_ PolyFromAscending([PolyExact(value, "Polynomial operand")], variable, 0, _, [:scalar]);
+
+PolyRecord(polynomial) -> {;
+    value = PolyRequire(polynomial);
+    {=
+        valueKind = :polynomial,
+        schema = "rix.polynomial@1",
+        variable = value.variable,
+        coefficients = PolyCurrentCoefficients(value),
+        canonical = 1,
+        equalityPolicy = :currentCanonicalCoefficients,
+        reactive = value.reactive,
+        provenance = value.provenance
+    };
+};
+
+PolyArraysEqual(left, right) -> {;
+    left.Len() == right.Len()
+      ?: {;
+          equal := 1;
+          {@ index = 1; index <= @left.Len() && @equal == 1; {;
+              @left[index] == @right[index] ?: _ ?_ {; @equal ~= 0; };
+          }; index += 1 };
+          equal;
+      }
+      ?_ 0;
+};
+
+PolyEqual(left, right) -> {;
+    (left ? :Polynomial) && (right ? :Polynomial)
+      ?: (left.variable == right.variable && PolyArraysEqual(PolyCurrentAscending(left), PolyCurrentAscending(right)))
+      ?_ 0;
+};
+
+PolyFromAscending(coefficients, variable ?= :x, degreeBound ?= _, source ?= _, provenance ?= []) -> {;
+    canonical = PolyExactAscending(coefficients, :ascending);
+    provider = (unused) -> canonical;
+    PolyBuild(provider, variable, degreeBound == _ ?: canonical.Len() - 1 ?_ degreeBound, source, provenance, 0);
+};
+
+PolyBuild(coefficientFunction, variable, degreeBound, source, provenance, reactive ?= 1) -> {;
+    PolynomialValue = (argument) -> PolyEvaluateAscending(0 |> coefficientFunction, argument);
+    PolynomialValue.schema = "rix.polynomial@1";
+    PolynomialValue.variable = variable;
+    PolynomialValue.degreeBound = degreeBound;
+    PolynomialValue.canonical = 1;
+    PolynomialValue.reactive = reactive;
+    PolynomialValue.equalityPolicy = :currentCanonicalCoefficients;
+    PolynomialValue.provenance = provenance;
+    PolynomialValue.source = source;
+    PolynomialValue.coefficientFunction = coefficientFunction;
+    PolynomialValue.__type = "Polynomial";
+    PolynomialValue._type = "polynomial";
+    PolynomialValue._symbolicKind = "Polynomial";
+    PolynomialValue._proto = {=
+        P = (self) -> self,
+        Polynomial = (self) -> self,
+        Coefficients = (self, order ?= :descending) -> PolyCurrentCoefficients(self, order),
+        AscendingCoefficients = (self) -> PolyCurrentCoefficients(self, :ascending),
+        Record = (self) -> PolyRecord(self),
+        Degree = (self) -> PolyDegree(self),
+        Variable = (self) -> self.variable,
+        Source = (self) -> self.source,
+        Evaluate = (self, argument) -> PolyEvaluateAscending(PolyCurrentAscending(self), argument),
+        Derivative = (self) -> PolyDerivative(self),
+        Divide = (self, divisor) -> PolyDivide(self, divisor),
+        DivMod = (self, divisor) -> PolyDivide(self, divisor),
+        SyntheticDiv = (self, root) -> PolySyntheticDivide(self, root),
+        SyntheticDivide = (self, root) -> PolySyntheticDivide(self, root),
+        IsFactor = (self, candidate) -> PolyDivide(self, candidate)[:divisorIsFactor],
+        SturmSequence = (self) -> PolySturmSequence(self),
+        RootCount = (self, interval) -> PolyRootCount(self, interval),
+        IsSquareFree = (self) -> PolyIsSquareFree(self),
+        RootBound = (self) -> PolyRootBound(self),
+        PrimitiveInteger = (self) -> PolyPrimitiveInteger(self)
+    };
+    .ImmutableValue(PolynomialValue);
+};
+
+PolyInterpolate(sourceFunction, degree) -> {;
+    result := PolyZeroArray(degree + 1);
+    {@ i = 0; i <= @degree; {;
+        basis := [1];
+        denominator := 1;
+        {@ j = 0; j <= @degree; {;
+            @i == j
+              ?: _
+              ?_ {;
+                  @basis ~= PolyArrayMultiply(@basis, [-@j, 1]);
+                  @denominator *= @i - @j;
+              };
+        }; j += 1 };
+        factor = i |> @sourceFunction;
+        @result ~= PolyArrayAdd(@result, PolyArrayScale(basis, factor));
+    }; i += 1 };
+    PolyTrimAscending(result);
+};
+
+PolyCoefficientsFromSource(sourceFunction, variable, degree) -> {;
+    current := sourceFunction;
+    factorial := 1;
+    coefficients := [];
+    {@ power = 0; power <= @degree; {;
+        coefficient = (0 |> @current) / @factorial;
+        @coefficients ~= @coefficients.Push(coefficient);
+        power < @degree
+          ?: {;
+              @current ~= .Deriv(@current, @variable);
+              @factorial *= @power + 1;
+          }
+          ?_ _;
+    }; power += 1 };
+    PolyTrimAscending(coefficients);
+};
+
+PolyDegreePower(node, leftDegree) -> {;
+    exponentNode = node[:right];
+    valid = exponentNode[:kind] == "number" ?: exponentNode.Has("integer") ?_ _;
+    valid ?: _ ?_ .Error("Polynomial powers require a nonnegative exact Integer literal exponent");
+    exponent = exponentNode[:integer];
+    exponent >= 0 ?: leftDegree * exponent ?_ .Error("Polynomial powers require a nonnegative exact Integer exponent");
+};
+
+PolyDegreeMaximum(leftDegree, rightDegree) -> leftDegree > rightDegree ?: leftDegree ?_ rightDegree;
+PolyDegreeQuotient(leftDegree, rightDegree) -> rightDegree == 0 ?: leftDegree ?_ .Error("Polynomial source has a variable-dependent denominator");
+
+PolyDegreeBinary(node, variable) -> {;
+    operation = node[:op];
+    leftDegree = PolyDegreeFromNode(node[:left], variable);
+    rightDegree = PolyDegreeFromNode(node[:right], variable);
+    (operation == "+" || operation == "-")
+      ?: PolyDegreeMaximum(leftDegree, rightDegree)
+      ?_ (operation == "*"
+           ?: leftDegree + rightDegree
+           ?_ (operation == "/"
+                ?: PolyDegreeQuotient(leftDegree, rightDegree)
+                ?_ (operation == "^"
+                     ?: PolyDegreePower(node, leftDegree)
+                     ?_ .Error(@"Polynomial source uses unsupported operator @{operation}"))));
+};
+
+PolyDegreeFromNode(node, variable) -> {;
+    kind = node[:kind];
+    (kind == "number" || kind == "outer") ?: 0 ?_
+    (kind == "identifier" ?: (node[:name] == variable ?: 1 ?_ 0) ?_
+    (kind == "unary"
+      ?: (node[:op] == "-" ?: PolyDegreeFromNode(node[:expr], variable) ?_ .Error("Polynomial source uses an unsupported unary operator"))
+      ?_ (kind == "binary"
+           ?: PolyDegreeBinary(node, variable)
+           ?_ .Error(@"Polynomial source contains unsupported symbolic node @{kind}"))));
+};
+
+PolySymbolic(source, requestedVariable ?= _) -> {;
+    compiled = requestedVariable == _ ?: .Poly(source) ?_ .Poly(source, requestedVariable);
+    inspection = .InspectSpec(compiled);
+    inputs = inspection[:inputs];
+    inputs.Len() == 1 ?: _ ?_ .Error("Polynomial conversion requires exactly one selected input");
+    variable = inputs[1];
+    degree = PolyDegreeFromNode(inspection[:expression], variable);
+    initial = PolyCoefficientsFromSource(compiled, variable, degree);
+    provider = (unused) -> PolyCoefficientsFromSource(compiled, variable, degree);
+    PolyBuild(provider, variable, degree, compiled, [:symbolicSource], 1);
+};
+
+PolyFromRecord(source, second) -> {;
+    source.Has("coefficients") ?: _ ?_ .Error("Polynomial record requires coefficients");
+    order = PolyOption(source, "order", :descending);
+    variable = PolyOption(source, "variable", second == _ ?: :x ?_ second);
+    PolyFromAscending(PolyExactAscending(source[:coefficients], order), variable, _, _, [:record]);
+};
+
+PolyConstruct(source, second ?= _) -> {;
+    isPolynomial = source ? :Polynomial;
+    isArray = source ? :Array;
+    isMap = source ? :Map;
+    isPolynomial
+      ?: source
+      ?_ (isArray
+           ?: PolyFromAscending(PolyExactAscending(source, :descending), second == _ ?: :x ?_ second, _, _, [:coefficients])
+           ?_ (isMap ?: PolyFromRecord(source, second) ?_ PolySymbolic(source, second)));
+};
+
+PolyBinary(left, right, operation) -> {;
+    variable = (right ? :Polynomial) ?: right.variable ?_ left.variable;
+    a = PolyPromote(left, variable);
+    b = PolyPromote(right, variable);
+    PolySameVariable(a, b);
+    provider = (unused) -> operation == :add
+      ?: PolyArrayAdd(PolyCurrentAscending(a), PolyCurrentAscending(b))
+      ?_ operation == :subtract
+           ?: PolyArraySubtract(PolyCurrentAscending(a), PolyCurrentAscending(b))
+           ?_ PolyArrayMultiply(PolyCurrentAscending(a), PolyCurrentAscending(b));
+    bound = operation == :multiply ?: a.degreeBound + b.degreeBound ?_ a.degreeBound > b.degreeBound ?: a.degreeBound ?_ b.degreeBound;
+    PolyBuild(provider, variable, bound, _, [operation, a, b], 1);
+};
+
+PolyAdd(left, right) -> PolyBinary(left, right, :add);
+PolySubtract(left, right) -> PolyBinary(left, right, :subtract);
+PolyMultiply(left, right) -> PolyBinary(left, right, :multiply);
+PolyNegate(polynomial) -> {;
+    value = PolyRequire(polynomial);
+    provider = (unused) -> PolyArrayNegate(PolyCurrentAscending(value));
+    PolyBuild(provider, value.variable, value.degreeBound, _, [:negate, value], 1);
+};
+PolyScale(polynomial, scalar) -> {;
+    value = PolyRequire(polynomial);
+    exact = PolyExact(scalar, "Polynomial divisor");
+    PolyIsZero(exact) ?: .Error("Polynomial division by zero") ?_ _;
+    provider = (unused) -> PolyArrayScale(PolyCurrentAscending(value), 1 / exact);
+    PolyBuild(provider, value.variable, value.degreeBound, _, [:scale, value, exact], 1);
+};
+PolyPower(polynomial, exponent) -> {;
+    value = PolyRequire(polynomial);
+    power = exponent ~!: :Integer;
+    power >= 0 ?: _ ?_ .Error("Polynomial powers require a nonnegative exact Integer exponent");
+    provider = (unused) -> PolyArrayPower(PolyCurrentAscending(value), power);
+    PolyBuild(provider, value.variable, value.degreeBound * power, _, [:power, value, power], 1);
+};
+
+PolyReductionStep(remainder, denominator) -> {;
+    offset = remainder.Len() - denominator.Len();
+    factor = remainder.Last() / denominator.Last();
+    updated := PolyCopy(remainder);
+    {@ index = 1; index <= @denominator.Len(); {;
+        target = index + @offset;
+        @updated ~= @updated.Set(target, @updated[target] - @factor * @denominator[index]);
+    }; index += 1 };
+    {= remainder=PolyTrimAscending(updated), factor=factor, offset=offset };
+};
+
+PolyDivideArrays(dividend, divisor) -> {;
+    numerator = PolyTrimAscending(dividend);
+    denominator = PolyTrimAscending(divisor);
+    (denominator.Len() == 1 && PolyIsZero(denominator[1])) ?: .Error("Polynomial division by zero") ?_ _;
+    quotient := PolyZeroArray(numerator.Len() >= denominator.Len() ?: numerator.Len() - denominator.Len() + 1 ?_ 1);
+    remainder := numerator;
+    {@ step = 1; !(@remainder.Len() == 1 && PolyIsZero(@remainder[1])) && @remainder.Len() >= @denominator.Len(); {;
+        reduction = PolyReductionStep(@remainder, @denominator);
+        @quotient ~= @quotient.Set(reduction[:offset] + 1, @quotient[reduction[:offset] + 1] + reduction[:factor]);
+        @remainder ~= reduction[:remainder];
+    }; step += 1 };
+    {= quotient=PolyTrimAscending(quotient), remainder=PolyTrimAscending(remainder) };
+};
+
+PolyDivisionRecord(dividend, divisor, quotient, remainder, method ?= :longDivision) -> {;
+    factor = PolyDegree(remainder) == -1;
+    record = {=
+        valueKind = :polynomialDivision,
+        schema = "rix.polynomial.division@1",
+        dividend = dividend,
+        divisor = divisor,
+        quotient = quotient,
+        remainder = remainder,
+        method = method,
+        divisorIsFactor = factor,
+        verified = quotient * divisor + remainder == dividend
+    };
+    record._proto = {=
+        Quotient = (self) -> self[:quotient],
+        Remainder = (self) -> self[:remainder],
+        IsFactor = (self) -> self[:divisorIsFactor],
+        Record = (self) -> self
+    };
+    .ImmutableValue(record);
+};
+
+PolyDivide(dividend, divisor) -> {;
+    left = PolyRequire(dividend, "Polynomial dividend");
+    right = PolyRequire(divisor, "Polynomial divisor");
+    PolySameVariable(left, right);
+    arrays = PolyDivideArrays(PolyCurrentAscending(left), PolyCurrentAscending(right));
+    quotient = PolyFromAscending(arrays[:quotient], left.variable, _, _, [:quotient]);
+    remainder = PolyFromAscending(arrays[:remainder], left.variable, _, _, [:remainder]);
+    PolyDivisionRecord(left, right, quotient, remainder);
+};
+
+PolySyntheticDivide(polynomial, root) -> {;
+    value = PolyRequire(polynomial);
+    divisor = PolyFromAscending([-PolyExact(root, "Synthetic-division root"), 1], value.variable, 1, _, [:syntheticDivisor]);
+    result = PolyDivide(value, divisor);
+    PolyDivisionRecord(value, divisor, result[:quotient], result[:remainder], :synthetic);
+};
+
+PolyRemainderArrays(dividend, divisor) -> PolyDivideArrays(dividend, divisor)[:remainder];
+
+PolySturmArrays(coefficients) -> {;
+    first = PolyTrimAscending(coefficients);
+    second = PolyDerivativeAscending(first);
+    sequence := [first, second];
+    previous := first;
+    current := second;
+    {@ step = 1; !(@current.Len() == 1 && PolyIsZero(@current[1])); {;
+        remainder = PolyRemainderArrays(@previous, @current);
+        remainder.Len() == 1 && PolyIsZero(remainder[1])
+          ?: {; @current ~= [0]; }
+          ?_ {;
+              next = PolyArrayNegate(@remainder);
+              @sequence ~= @sequence.Push(next);
+              @previous ~= @current;
+              @current ~= next;
+          };
+    }; step += 1 };
+    sequence;
+};
+
+PolySturmSequence(polynomial) -> PolySturmArrays(PolyCurrentAscending(PolyRequire(polynomial)));
+PolySign(value) -> value < 0 ?: -1 ?_ value > 0 ?: 1 ?_ 0;
+
+PolyVariationsAt(sequence, point) -> {;
+    previous := 0;
+    variations := 0;
+    {@ index = 1; index <= @sequence.Len(); {;
+        sign = PolySign(PolyEvaluateAscending(@sequence[index], @point));
+        sign != 0
+          ?: {;
+              @previous != 0 && @previous != @sign ?: {; @variations += 1; } ?_ _;
+              @previous ~= @sign;
+          }
+          ?_ _;
+    }; index += 1 };
+    variations;
+};
+
+PolyRootCount(polynomial, interval) -> {;
+    value = PolyRequire(polynomial);
+    exact = interval ~!: :RationalInterval;
+    sequence = PolySturmSequence(value);
+    PolyVariationsAt(sequence, exact.Low()) - PolyVariationsAt(sequence, exact.High());
+};
+
+PolyIsSquareFree(polynomial) -> {;
+    sequence = PolySturmSequence(polynomial);
+    sequence.Last().Len() == 1;
+};
+
+PolyRootBound(polynomial) -> {;
+    coefficients = PolyCurrentAscending(PolyRequire(polynomial));
+    leading = coefficients.Last().Abs();
+    PolyIsZero(leading) ?: .Error("Zero polynomial has no finite root bound") ?_ _;
+    maximum := 0;
+    {@ index = 1; index < @coefficients.Len(); {;
+        ratio = @coefficients[index].Abs() / @leading;
+        ratio > @maximum ?: {; @maximum ~= @ratio; } ?_ _;
+    }; index += 1 };
+    1 + maximum;
+};
+
+PolyIntegerGcd(left, right) -> {;
+    a := (left ~!: :Integer).Abs();
+    b := (right ~!: :Integer).Abs();
+    {@ step = 1; @b != 0; {; remainder = @a % @b; @a ~= @b; @b ~= remainder; }; step += 1 };
+    a;
+};
+
+PolyIntegerCoefficient(value) -> {;
+    rational = value ~!: :Rational;
+    rational.Denominator() == 1
+      ?: rational.Numerator()
+      ?_ .Error("PrimitiveInteger requires integer polynomial coefficients");
+};
+
+PolyPrimitiveInteger(polynomial) -> {;
+    coefficients = PolyCurrentAscending(PolyRequire(polynomial));
+    integers = coefficients.Map((coefficient) -> PolyIntegerCoefficient(coefficient));
+    content := 0;
+    {@ index = 1; index <= @integers.Len(); {; @content ~= PolyIntegerGcd(@content, @integers[index]); }; index += 1 };
+    PolyIsZero(content)
+      ?: [0]
+      ?_ {;
+          primitive = @integers.Map((coefficient) -> coefficient // @content);
+          primitive.Last() < 0 ?: primitive.Map((coefficient) -> -coefficient) ?_ primitive;
+      };
+};
+
+PolyDerivative(polynomial) -> {;
+    value = PolyRequire(polynomial);
+    provider = (unused) -> PolyDerivativeAscending(PolyCurrentAscending(value));
+    bound = value.degreeBound > 0 ?: value.degreeBound - 1 ?_ 0;
+    PolyBuild(provider, value.variable, bound, _, [:derivative, value], 1);
+};
+
+PolyParseVariable(modifiers) -> {;
+    selected := _;
+    {@ index = 1; index <= @modifiers.Len(); {;
+        modifier = @modifiers[index];
+        upper = modifier.Upper();
+        isFun = upper == "FUN";
+        isVar = upper.StartsWith("VAR(");
+        isFun || isVar ?: _ ?_ .Error(@"Unknown .poly modifier @{modifier}");
+        isVar
+          ?: {;
+              @selected == _ ?: _ ?_ .Error(".poly accepts only one Var(name) modifier");
+              @selected ~= @modifier.Slice(5, @modifier.Len());
+          }
+          ?_ _;
+    }; index += 1 };
+    selected;
+};
+
+PolyParse(self, body, modifiers, info) -> {;
+    variable = PolyParseVariable(modifiers);
+    structural = .SArith.Parse(body, [], {= });
+    PolyConstruct(structural, variable);
+};
+
+.TypeKnown(:Polynomial) ?: _ ?_ .TypeRegister({=
+    name = :Polynomial,
+    nativeType = :function,
+    defaultTraits = [:number],
+    validate = (value) -> value.schema == "rix.polynomial@1",
+    proto = {= },
+    installs = {=
+        ADD = [{= name=:PolynomialAdd, prep=(left, right)->PolyOperand(left) && PolyOperand(right) && ((left ? :Polynomial) || (right ? :Polynomial)), impl=(left, right)->PolyAdd(left, right) }],
+        SUB = [{= name=:PolynomialSub, prep=(left, right)->PolyOperand(left) && PolyOperand(right) && ((left ? :Polynomial) || (right ? :Polynomial)), impl=(left, right)->PolySubtract(left, right) }],
+        MUL = [{= name=:PolynomialMul, prep=(left, right)->PolyOperand(left) && PolyOperand(right) && ((left ? :Polynomial) || (right ? :Polynomial)), impl=(left, right)->PolyMultiply(left, right) }],
+        DIV = [
+            {= name=:PolynomialScalarDiv, prep=(left, right)->(left ? :Polynomial) && PolyScalar(right), impl=(left, right)->PolyScale(left, right) },
+            {= name=:PolynomialDivNeedsRatfun, prep=(left, right)->(left ? :Polynomial) && (right ? :Polynomial), impl=(left, right)->.Error("Division by a Polynomial creates a RationalFunction; load .ratfun or use //, %, or /%") }
+        ],
+        POW = [{= name=:PolynomialPow, prep=(left, right)->(left ? :Polynomial) && (right ? :Integer), impl=(left, right)->PolyPower(left, right) }],
+        NEG = [{= name=:PolynomialNeg, prep=(value)->value ? :Polynomial, impl=(value)->PolyNegate(value) }],
+        EQ = [{= name=:PolynomialEq, prep=(left, right)->(left ? :Polynomial) && (right ? :Polynomial), impl=(left, right)->PolyEqual(left, right) }],
+        NEQ = [{= name=:PolynomialNeq, prep=(left, right)->(left ? :Polynomial) && (right ? :Polynomial), impl=(left, right)->!PolyEqual(left, right) }],
+        INTDIV = [{= name=:PolynomialIntDiv, prep=(left, right)->(left ? :Polynomial) && (right ? :Polynomial), impl=(left, right)->PolyDivide(left, right)[:quotient] }],
+        MOD = [{= name=:PolynomialMod, prep=(left, right)->(left ? :Polynomial) && (right ? :Polynomial), impl=(left, right)->PolyDivide(left, right)[:remainder] }],
+        DIVMOD = [{= name=:PolynomialDivMod, prep=(left, right)->(left ? :Polynomial) && (right ? :Polynomial), impl=(left, right)->{; result=PolyDivide(left,right); {: result[:quotient], result[:remainder] }; } }]
+    }
+});
+
+.TypeInstall(:Polynomial);
+
+polyNamespace = (source, second ?= _) -> PolyConstruct(source, second);
+polyNamespace._proto = {=
+    Parse = (self, body, modifiers, info) -> PolyParse(self, body, modifiers, info),
+    Polynomial = (self, source, second ?= _) -> PolyConstruct(source, second),
+    Divide = (self, dividend, divisor) -> PolyDivide(dividend, divisor),
+    SyntheticDivide = (self, polynomial, root) -> PolySyntheticDivide(polynomial, root),
+    Derivative = (self, polynomial) -> PolyDerivative(polynomial),
+    SturmSequence = (self, polynomial) -> PolySturmSequence(polynomial),
+    RootCount = (self, polynomial, interval) -> PolyRootCount(polynomial, interval),
+    IsSquareFree = (self, polynomial) -> PolyIsSquareFree(polynomial),
+    RootBound = (self, polynomial) -> PolyRootBound(polynomial),
+    PrimitiveInteger = (self, polynomial) -> PolyPrimitiveInteger(polynomial),
+    Var = (self) -> .Error(".poly.Var(name) is a backtick parser modifier"),
+    Fun = (self) -> .Error(".poly.Fun is a backtick parser modifier")
+};
+
+.Host.RegisterCallableValue(
+    "poly",
+    polyNamespace,
+    "Semantic callable univariate polynomials and exact coefficient algorithms",
+    ["Algebra", "Exact", "Symbolic"]
+);
+
+PolyConversion = (value, variable ?= _) -> PolyConstruct(value, variable);
+.Host.RegisterMethod("structural_form", "P", PolyConversion, "poly", "poly");
+.Host.RegisterMethod("structural_form", "Polynomial", PolyConversion, "poly", "poly");
+.Host.RegisterMethod("structural_symbol", "P", PolyConversion, "poly", "poly");
+.Host.RegisterMethod("structural_symbol", "Polynomial", PolyConversion, "poly", "poly");
+.Host.RegisterMethod("structural_literal", "P", PolyConversion, "poly", "poly");
+.Host.RegisterMethod("structural_literal", "Polynomial", PolyConversion, "poly", "poly");
+.Host.RegisterMethod("symbolic_spec", "P", PolyConversion, "poly", "poly");
+.Host.RegisterMethod("symbolic_spec", "Polynomial", PolyConversion, "poly", "poly");
+`, sourcePath: "bundled:poly", kind: "rix" });
   catalog.addMetadata({ id: "quarto", description: "Quarto Markdown renderer with front matter and portable figure lowering.", kind: "host", mount: "quarto", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.quarto@1"], targets: ["quarto", "text/x-quarto"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:quarto" }, { sourcePath: "bundled:quarto", kind: "host" });
-  catalog.registerInstaller("quarto", install21);
+  catalog.registerInstaller("quarto", install19);
   catalog.addMetadata({ id: "radix", description: "Bounded exact positional expansions and repeating-period analysis for rational values.", kind: "host", mount: "radix", exports: ["Expansion", "Digits", "PeriodLength", "PeriodInfo", "ToString"], groups: ["Exact", "Radix"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:radix" }, { sourcePath: "bundled:radix", kind: "host" });
-  catalog.registerInstaller("radix", install15);
+  catalog.registerInstaller("radix", install13);
   catalog.addMetadata({ id: "ratfun", description: "Canonical callable univariate rational functions with exact cancellation and Polynomial interoperability.", kind: "host", mount: "ratfun", aliases: ["rationalFunction", "rf"], exports: ["RationalFunction", "Parse", "Var", "Fun"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], requires: ["rix.polynomial@1"], provides: ["rix.rational-function@1"], schemas: ["rix.rational-function@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:ratfun" }, { sourcePath: "bundled:ratfun", kind: "host" });
-  catalog.registerInstaller("ratfun", install5);
+  catalog.registerInstaller("ratfun", install4);
   catalog.addMetadata({ id: "scene3d", description: "Exact retained 3D scenes with deterministic wireframe and lit Graphics snapshots.", kind: "host", mount: "scene3d", exports: ["Scene", "Group", "Transform", "Mesh", "Polyline", "PointCloud", "Material", "AmbientLight", "DirectionalLight", "PointLight", "PerspectiveCamera", "OrthographicCamera", "Snapshot"], groups: ["Scene3D", "Graphics"], permissions: [], provides: ["rix.scene3d@1"], schemas: ["rix.scene3d@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:scene3d" }, { sourcePath: "bundled:scene3d", kind: "host" });
-  catalog.registerInstaller("scene3d", install9);
+  catalog.registerInstaller("scene3d", install7);
   catalog.addMetadata({ id: "svg", description: "Portable SVG renderer for core Graphics scenes.", kind: "host", mount: "svg", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.svg@1"], targets: ["svg", "image/svg+xml"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:svg" }, { sourcePath: "bundled:svg", kind: "host" });
-  catalog.registerInstaller("svg", install16);
+  catalog.registerInstaller("svg", install14);
   catalog.addMetadata({ id: "symbolic", description: "Meta-plugin loading RiX representation-sensitive Fraction and FractionFunction workspaces.", kind: "host", mount: "symbolic", exports: ["Fraction", "FractionFunction", "Services"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], requires: ["rix.fraction-function@1"], provides: ["rix.symbolic.formal@1"], schemas: [], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:symbolic" }, { sourcePath: "bundled:symbolic", kind: "host" });
-  catalog.registerInstaller("symbolic", install6);
+  catalog.registerInstaller("symbolic", install5);
   catalog.addMetadata({ id: "terminal-ascii", description: "Deterministic strict-ASCII fallback for tables, grids, fragments, and simple Graphics.", kind: "host", mount: "terminalAscii", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.terminal-ascii@1"], targets: ["terminal-ascii", "terminal", "ascii", "txt", "text/plain"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:terminal-ascii" }, { sourcePath: "bundled:terminal-ascii", kind: "host" });
-  catalog.registerInstaller("terminal-ascii", install14);
+  catalog.registerInstaller("terminal-ascii", install12);
   catalog.addMetadata({ id: "tikz", description: "Editable TikZ/PGF source renderer for core Graphics scenes.", kind: "host", mount: "tikz", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.tikz@1"], targets: ["tikz", "text/x-tikz"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:tikz" }, { sourcePath: "bundled:tikz", kind: "host" });
-  catalog.registerInstaller("tikz", install18);
+  catalog.registerInstaller("tikz", install16);
   return catalog;
 }
 
@@ -2233,5 +3269,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { findHelp, createRixRepl };
 
-//# debugId=C1F47BD09C519B5364756E2164756E21
-//# sourceMappingURL=chunk-taa0m5nf.js.map
+//# debugId=45CD408F4631769364756E2164756E21
+//# sourceMappingURL=chunk-tw1je5v3.js.map

@@ -1,0 +1,71 @@
+<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Build exact real roots, inspect Sturm certificates, refine rational intervals, and compare sqrt(2) without floating point." /><title>Certified algebraic reals in RiX — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./plugins-numbers-and-numerics.html#lesson-start" title="Plugins: Numbers and numerics">14</a> <span aria-hidden="true">·</span> <span>h</span></p><h1>Certified algebraic reals in RiX</h1><p class="deck">Build exact real roots, inspect Sturm certificates, refine rational intervals, and compare sqrt(2) without floating point.</p><aside class="challenge"><p class="eyebrow">Develop in RiX Notebook</p><p>Open <code>rix/plugins/algebraic-real/tutorial.md</code> in the macOS app to edit this lesson with live preview and plugin-aware code results. Use Reload plugins after changing project-local plugin source.</p></aside><div class="lesson-content"><p>The algebraic-real plugin is written entirely in RiX and delegates polynomial work to the pure-RiX <code>.poly</code> dependency. Its algorithms use exact Integer and Rational arithmetic, so the same certificate path runs in the CLI, RiX Web, and RiX Notebook without a JavaScript plugin boundary or duplicate Polynomial representation.</p>
+<h2>Construct an isolated root</h2>
+<p>Coefficient arrays start with the constant term:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">.Plugin.Load(&quot;algebraic-real&quot;);
+root := .ar.Root([-2, 0, 1], 1:2, 2);
+.Table({=
+  columns=[&quot;polynomial&quot;, &quot;interval&quot;, &quot;real-root index&quot;, &quot;sign&quot;],
+  rows=[[
+    root.Coefficients(),
+    root.Interval(),
+    root.RootIndex(),
+    root.Sign()
+  ]]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>This identifies the positive root of <code>x^2 - 2</code>: the interval <code>1:2</code> contains one real root and one real root lies to its left, so its certified index is 2. Try changing the index to 1. Construction fails rather than retaining inconsistent metadata.</p>
+<h2>Inspect the exact certificate machinery</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">.Plugin.Load(&quot;algebraic-real&quot;);
+p := .ar.Polynomial([-4, 0, 2]);
+.Table({=
+  columns=[&quot;canonical coefficients&quot;, &quot;derivative&quot;, &quot;Sturm sequence&quot;],
+  rows=[[
+    p.Coefficients(),
+    p.Derivative().AscendingCoefficients(),
+    p.SturmSequence()
+  ]]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Content normalization changes <code>[-4, 0, 2]</code> to <code>[-2, 0, 1]</code>. The Sturm sequence is <code>[-2, 0, 1]</code>, <code>[0, 2]</code>, <code>[2]</code>. Sign-variation differences count roots in any rational interval:</p>
+<p><code>p</code> is an ordinary <code>rix.polynomial@1</code> callable. It can be passed directly to other polynomial-aware plugins; algebraic-real adds no private polynomial type.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.ar.RootCount([-2, 0, 1], -2:-1);  ## 1
+.ar.RootCount([-2, 0, 1], 1:2);    ## 1</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Repeated factors are rejected for stored algebraic reals:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">repeated := [1, -2, 1];
+.ar.IsSquareFree(repeated);          ## null; Root(...) rejects it</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Compare <code>sqrt(2)</code> exactly</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">.Plugin.Load(&quot;algebraic-real&quot;);
+root := .ar.Sqrt2();
+.Table({=
+  columns=[&quot;question&quot;, &quot;exact answer&quot;],
+  rows=[
+    [&quot;sign&quot;, root.Sign()],
+    [&quot;sqrt(2) vs 7/5&quot;, root.CompareRational(7/5)],
+    [&quot;sqrt(2) vs 3/2&quot;, root.CompareRational(3/2)]
+  ]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>No decimal approximation is needed. Polynomial evaluation proves equality when the comparator is a rational root; otherwise a Sturm count tells which side of that rational contains the isolated root.</p>
+<h2>Refine with bounded work</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="17" spellcheck="false">.Plugin.Load(&quot;algebraic-real&quot;);
+.Plugin.Load(&quot;numerics&quot;);
+root := .ar.Sqrt2();
+answer := .numerics.Refine(root, {=
+  absoluteWidth=1/1000,
+  maxWork=20
+});
+.Table({=
+  columns=[&quot;status&quot;, &quot;interval&quot;, &quot;width&quot;, &quot;bisections&quot;],
+  rows=[[
+    answer[:status],
+    answer[:interval],
+    answer[:achievedWidth],
+    answer[:work][:calls]
+  ]]
+});
+root &lt; {~ 3/2, 1/1000 };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Ten exact bisections shrink <code>1:2</code> to width <code>1/1024</code>. Set <code>maxWork=2</code> to see a <code>:budgetExhausted</code> result that still carries the best certified interval.</p>
+<h2>Save and restore</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Plugin.Load(&quot;algebraic-real&quot;);
+root := .ar.Sqrt2();
+encoded := root.Export();
+restored := .ar.Import(encoded);
+{: encoded[:schema], restored.Coefficients(), restored.Interval(), restored.Sign() };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Import recomputes normalization, square-freeness, isolation, and root index. The serialized evidence is provenance, not an unchecked authority.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

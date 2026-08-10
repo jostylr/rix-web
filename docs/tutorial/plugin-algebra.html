@@ -16,7 +16,7 @@ Copy := .algebra.Polynomial(P.Record());
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="8" spellcheck="false">.Plugin.Load(&quot;algebra&quot;);
 P := .p`x^3 - 6x^2 + 11x - 6`;
 Factor := .p`x - 2`;
-division := P.SyntheticDiv(2);
+division := .algebra.SyntheticDivide(P, 2);
 quotient := division.Quotient().Coefficients();
 remainder := division.Remainder().Coefficients();
 isFactor := P.IsFactor(Factor);

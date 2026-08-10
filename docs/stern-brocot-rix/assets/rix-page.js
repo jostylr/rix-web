@@ -5803,601 +5803,6 @@
     const parser = new Parser(tokens, systemLookup, source, customOperators);
     return parser.parse();
   }
-  // rix/src/runtime/system-context.js
-  function firstLetterIsUppercase(name) {
-    for (const character of String(name)) {
-      if (/\p{L}/u.test(character))
-        return character === character.toUpperCase();
-    }
-    return false;
-  }
-  function normalizeCapabilityName(name) {
-    const source = String(name ?? "");
-    if (!source)
-      throw new Error("Capability name must be a non-empty string");
-    return firstLetterIsUppercase(source) ? source.toUpperCase() : source.toLowerCase();
-  }
-  function capabilityNamespace(name) {
-    return firstLetterIsUppercase(name) ? "core" : "host";
-  }
-  function stringValue(value) {
-    return { type: "string", value: String(value) };
-  }
-  function rixString(value, label) {
-    if (value?.type === "string")
-      return value.value;
-    if (typeof value === "string")
-      return value;
-    throw new Error(`${label} must be a string`);
-  }
-  function rixStringList(value, label) {
-    if (value === null || value === undefined)
-      return [];
-    const items = value?.values;
-    if (!Array.isArray(items))
-      throw new Error(`${label} must be a sequence of strings`);
-    return items.map((item) => rixString(item, label));
-  }
-  function namespaceEntry(context, namespace) {
-    const title = namespace === "core" ? "Core" : "Host";
-    const canRegister = (evaluationContext) => {
-      const runtime = evaluationContext?.getEnv?.("__script_runtime__", null);
-      const frame = runtime?.frameStack?.[runtime.frameStack.length - 1];
-      if (namespace === "core") {
-        return !frame && (evaluationContext?.getEnv?.("allowCoreRegister", false) || evaluationContext?.getEnv?.("allowCapabilityRegister", false));
-      }
-      return !frame || frame.permissions?.has("PLUGINS");
-    };
-    const registryContext = namespace === "host" ? context._hostContext : context;
-    const value = {
-      type: "system_namespace",
-      namespace,
-      _ext: new Map
-    };
-    value._ext.set("REGISTER", {
-      type: "method_builtin",
-      name: "Register",
-      impl(args, evaluationContext, _evaluate, callWithConcreteArgs) {
-        if (!canRegister(evaluationContext)) {
-          throw new Error(`.${title}.Register is not permitted in this execution context`);
-        }
-        const name = rixString(args[1], `.${title}.Register name`);
-        const callable = args[2];
-        const doc = args[3]?.type === "string" ? args[3].value : "";
-        const groups = rixStringList(args[4], `.${title}.Register groups`);
-        const definition = {
-          impl(callArgs, callContext, callEvaluate) {
-            return callWithConcreteArgs(callable, callArgs, callContext, callEvaluate);
-          },
-          doc
-        };
-        const register = namespace === "core" ? registryContext.registerTrusted.bind(registryContext) : registryContext.registerHost.bind(registryContext);
-        register(name, definition, { namespace, groups });
-        if (namespace === "host" && registryContext !== context) {
-          context.registerHost(name, definition, { namespace, groups });
-        }
-        return stringValue(name);
-      }
-    });
-    value._ext.set("REGISTERVALUE", {
-      type: "method_builtin",
-      name: "RegisterValue",
-      impl(args, evaluationContext) {
-        if (!canRegister(evaluationContext)) {
-          throw new Error(`.${title}.RegisterValue is not permitted in this execution context`);
-        }
-        const name = rixString(args[1], `.${title}.RegisterValue name`);
-        const registeredValue = args[2];
-        const doc = args[3]?.type === "string" ? args[3].value : "";
-        const groups = rixStringList(args[4], `.${title}.RegisterValue groups`);
-        if (namespace === "core") {
-          context.registerValue(name, registeredValue, { namespace, doc, groups });
-        } else {
-          registryContext.registerHostValue(name, registeredValue, { namespace, doc, groups });
-          if (registryContext !== context) {
-            context.registerHostValue(name, registeredValue, { namespace, doc, groups });
-          }
-        }
-        return stringValue(name);
-      }
-    });
-    value._ext.set("REGISTERCALLABLEVALUE", {
-      type: "method_builtin",
-      name: "RegisterCallableValue",
-      impl(args, evaluationContext, _evaluate, callWithConcreteArgs) {
-        if (!canRegister(evaluationContext)) {
-          throw new Error(`.${title}.RegisterCallableValue is not permitted in this execution context`);
-        }
-        const name = rixString(args[1], `.${title}.RegisterCallableValue name`);
-        const callableValue = args[2];
-        const doc = args[3]?.type === "string" ? args[3].value : "";
-        const groups = rixStringList(args[4], `.${title}.RegisterCallableValue groups`);
-        const definition = {
-          impl(callArgs, callContext, callEvaluate) {
-            return callWithConcreteArgs(callableValue, callArgs, callContext, callEvaluate);
-          },
-          doc
-        };
-        if (namespace === "core") {
-          context.registerCallableValue(name, callableValue, definition, { namespace, doc, groups });
-        } else {
-          registryContext.registerHostCallableValue(name, callableValue, definition, { namespace, doc, groups });
-          if (registryContext !== context) {
-            context.registerHostCallableValue(name, callableValue, definition, { namespace, doc, groups });
-          }
-        }
-        return stringValue(name);
-      }
-    });
-    value._ext.set("FIND", {
-      type: "method_builtin",
-      name: "Find",
-      impl(args) {
-        const name = rixString(args[1], `.${title}.Find name`);
-        const entry = registryContext.get(name);
-        if (!entry || entry.namespace !== namespace)
-          return null;
-        return {
-          type: "map",
-          entries: new Map([
-            ["name", stringValue(entry.displayName)],
-            ["kind", stringValue(entry.kind)],
-            ["namespace", stringValue(entry.namespace)],
-            ["groups", { type: "sequence", values: (entry.groups || []).map(stringValue) }]
-          ])
-        };
-      }
-    });
-    value._ext.set("LIST", {
-      type: "method_builtin",
-      name: "List",
-      impl() {
-        return {
-          type: "sequence",
-          values: registryContext.getAllEntries({ namespace }).map((entry) => stringValue(entry.displayName))
-        };
-      }
-    });
-    return value;
-  }
-  function pluginNamespaceEntry(context, catalog) {
-    const hostContext = context._hostContext;
-    const load = (args, evaluationContext) => {
-      const runtime = evaluationContext?.getEnv?.("__script_runtime__", null);
-      const frame = runtime?.frameStack?.[runtime.frameStack.length - 1];
-      if (frame && !frame.permissions?.has("PLUGINS")) {
-        throw new Error(".Plugin.Load is not permitted in this execution context");
-      }
-      const id = rixString(args[1], ".Plugin.Load name");
-      const loader = evaluationContext?.getEnv?.("__plugin_load_rix__", null);
-      const registry = evaluationContext?.getEnv?.("__registry__", null);
-      return catalog.load(id, {
-        options: args[2],
-        context: evaluationContext,
-        registry,
-        systemContext: hostContext,
-        visibleSystemContext: context,
-        loadRix: loader
-      });
-    };
-    const value = { type: "system_namespace", namespace: "plugin", _ext: new Map };
-    value._ext.set("LOAD", {
-      type: "method_builtin",
-      name: "Load",
-      impl(args, evaluationContext) {
-        return load(args, evaluationContext);
-      }
-    });
-    value._ext.set("LIST", {
-      type: "method_builtin",
-      name: "List",
-      impl() {
-        return { type: "sequence", values: catalog.list().map((metadata) => stringValue(metadata.id)) };
-      }
-    });
-    value._ext.set("INFO", {
-      type: "method_builtin",
-      name: "Info",
-      impl(args) {
-        return catalog.infoValue(catalog.info(rixString(args[1], ".Plugin.Info name")));
-      }
-    });
-    return { value, load };
-  }
-
-  class SystemContext {
-    constructor(capabilities = new Map, frozen = false, options = {}) {
-      this._capabilities = new Map;
-      this._groups = new Map;
-      this._frozen = false;
-      this._hostContext = options.hostContext || this;
-      this._pluginCatalog = options.pluginCatalog || null;
-      this._rendererRegistry = options.rendererRegistry || null;
-      this._methodExtensions = options.methodExtensions || new Map;
-      for (const [name, entry] of capabilities) {
-        const normalised = normalizeCapabilityName(name);
-        const inferredKind = entry?.kind || "function";
-        this._capabilities.set(normalised, {
-          ...entry,
-          kind: inferredKind,
-          namespace: entry?.namespace || capabilityNamespace(name),
-          displayName: entry?.displayName || name,
-          groups: [...entry?.groups || []]
-        });
-      }
-      for (const [group, members] of Object.entries(options.groups || {})) {
-        this.registerGroup(group, members);
-      }
-      this._frozen = frozen;
-    }
-    _checkMutable() {
-      if (this._frozen)
-        throw new Error("System context is frozen and cannot be modified");
-    }
-    register(name, def, options = {}) {
-      return this._register(name, def, options, false);
-    }
-    registerTrusted(name, def, options = {}) {
-      return this._register(name, def, { ...options, namespace: "core" }, true);
-    }
-    registerHost(name, def, options = {}) {
-      return this._register(name, def, { ...options, namespace: "host" }, true);
-    }
-    registerCallableValue(name, value, def, options = {}) {
-      return this._registerCallableValue(name, value, def, options, false);
-    }
-    registerHostCallableValue(name, value, def, options = {}) {
-      return this._registerCallableValue(name, value, def, { ...options, namespace: "host" }, true);
-    }
-    _registerCallableValue(name, value, def, options, bypassFrozen) {
-      this._register(name, def, options, bypassFrozen);
-      this._capabilities.get(normalizeCapabilityName(name)).value = value;
-      return this;
-    }
-    _register(name, def, options, bypassFrozen) {
-      if (!bypassFrozen)
-        this._checkMutable();
-      const normalised = normalizeCapabilityName(name);
-      const namespace = options.namespace || capabilityNamespace(name);
-      if (namespace !== capabilityNamespace(name)) {
-        throw new Error(`Capability '${name}' does not use ${namespace === "core" ? "PascalCase" : "camelCase"} namespace spelling`);
-      }
-      const entry = {
-        kind: "function",
-        impl: typeof def === "function" ? def : def.impl,
-        lazy: def?.lazy || false,
-        pure: def?.pure || false,
-        doc: options.doc ?? def?.doc ?? "",
-        namespace,
-        displayName: options.displayName || name,
-        groups: [...new Set(options.groups || def?.groups || [])],
-        pluginId: options.pluginId || def?.pluginId || null,
-        pluginDisabled: options.pluginDisabled === true || def?.pluginDisabled === true,
-        pluginManager: options.pluginManager === true || def?.pluginManager === true
-      };
-      if (typeof entry.impl !== "function") {
-        throw new Error(`Capability '${name}' requires an implementation function`);
-      }
-      this._capabilities.set(normalised, entry);
-      this._addEntryToGroups(normalised, entry.groups);
-      return this;
-    }
-    registerValue(name, value, options = {}) {
-      return this._registerValue(name, value, options, false);
-    }
-    registerHostValue(name, value, options = {}) {
-      return this._registerValue(name, value, { ...options, namespace: "host" }, true);
-    }
-    _registerValue(name, value, options, bypassFrozen) {
-      if (!bypassFrozen)
-        this._checkMutable();
-      const normalised = normalizeCapabilityName(name);
-      const namespace = options.namespace || capabilityNamespace(name);
-      if (namespace !== capabilityNamespace(name)) {
-        throw new Error(`Capability '${name}' does not use ${namespace === "core" ? "PascalCase" : "camelCase"} namespace spelling`);
-      }
-      const entry = {
-        kind: options.kind || "value",
-        value,
-        doc: options.doc || "",
-        namespace,
-        displayName: options.displayName || name,
-        groups: [...new Set(options.groups || [])]
-      };
-      this._capabilities.set(normalised, entry);
-      this._addEntryToGroups(normalised, entry.groups);
-      return this;
-    }
-    registerMethod(typeName, methodName, callable, options = {}) {
-      const typeKey = String(typeName ?? "").replace(/^:/, "").toLowerCase();
-      const methodKey = String(methodName ?? "").replace(/^:/, "").toUpperCase();
-      if (!typeKey)
-        throw new Error("Method registration requires a target type");
-      if (!methodKey)
-        throw new Error("Method registration requires a method name");
-      if (!callable)
-        throw new Error(`Method ${methodName} requires a callable implementation`);
-      let methods = this._methodExtensions.get(typeKey);
-      if (!methods) {
-        methods = new Map;
-        this._methodExtensions.set(typeKey, methods);
-      }
-      if (methods.has(methodKey)) {
-        throw new Error(`Method ${methodName} is already registered for ${typeName}`);
-      }
-      methods.set(methodKey, {
-        callable,
-        typeName: String(typeName),
-        methodName: String(methodName),
-        pluginId: options.pluginId || null,
-        mount: options.mount || null
-      });
-      return this;
-    }
-    resolveMethodExtension(typeNames, methodName) {
-      const methodKey = String(methodName).toUpperCase();
-      for (const typeName of typeNames || []) {
-        const entry = this._methodExtensions.get(String(typeName).replace(/^:/, "").toLowerCase())?.get(methodKey);
-        if (!entry)
-          continue;
-        if (entry.mount && !this.has(entry.mount))
-          continue;
-        return entry;
-      }
-      return null;
-    }
-    registerGroup(name, members = []) {
-      this._checkMutable();
-      const group = String(name);
-      const normalisedMembers = new Set(Array.from(members, normalizeCapabilityName));
-      this._groups.set(group, normalisedMembers);
-      for (const member of normalisedMembers) {
-        const entry = this._capabilities.get(member);
-        if (entry && !entry.groups.includes(group))
-          entry.groups.push(group);
-      }
-      return this;
-    }
-    _addEntryToGroups(name, groups) {
-      for (const group of groups || []) {
-        if (!this._groups.has(group))
-          this._groups.set(group, new Set);
-        this._groups.get(group).add(name);
-      }
-    }
-    registerAll(defs) {
-      for (const [name, def] of Object.entries(defs)) {
-        this.register(name, def);
-      }
-    }
-    delete(name) {
-      this._checkMutable();
-      const normalised = normalizeCapabilityName(name);
-      this._capabilities.delete(normalised);
-      for (const members of this._groups.values())
-        members.delete(normalised);
-    }
-    renameHostCapability(from, to) {
-      const fromKey = normalizeCapabilityName(from);
-      const toKey = normalizeCapabilityName(to);
-      const entry = this._capabilities.get(fromKey);
-      if (!entry || entry.namespace !== "host")
-        throw new Error(`Unknown host capability '${from}'`);
-      if (capabilityNamespace(to) !== "host")
-        throw new Error(`Plugin mount '${to}' must use camelCase host spelling`);
-      if (fromKey !== toKey && this._capabilities.has(toKey))
-        throw new Error(`Host capability '${to}' is already registered`);
-      const renamed = { ...entry, displayName: to };
-      this._capabilities.delete(fromKey);
-      this._capabilities.set(toKey, renamed);
-      for (const members of this._groups.values()) {
-        if (members.delete(fromKey))
-          members.add(toKey);
-      }
-      return this;
-    }
-    addCapabilityGroups(name, groups = []) {
-      const key = normalizeCapabilityName(name);
-      const entry = this._capabilities.get(key);
-      if (!entry)
-        throw new Error(`Unknown capability '${name}'`);
-      for (const group of groups) {
-        if (!entry.groups.includes(group))
-          entry.groups.push(group);
-        if (!this._groups.has(group))
-          this._groups.set(group, new Set);
-        this._groups.get(group).add(key);
-      }
-      return this;
-    }
-    adoptHostCapability(source, name) {
-      const entry = source?.get?.(name);
-      if (!entry || entry.namespace !== "host")
-        throw new Error(`Unknown host capability '${name}'`);
-      if (entry.kind === "function" && Object.prototype.hasOwnProperty.call(entry, "value")) {
-        this.registerHostCallableValue(entry.displayName, entry.value, entry, entry);
-      } else if (Object.prototype.hasOwnProperty.call(entry, "value")) {
-        this.registerHostValue(entry.displayName, entry.value, entry);
-      } else {
-        this.registerHost(entry.displayName, entry, entry);
-      }
-      return this;
-    }
-    aliasHostCapability(alias, target) {
-      const entry = this.get(target);
-      if (!entry || entry.namespace !== "host")
-        throw new Error(`Unknown host capability '${target}'`);
-      if (entry.kind === "function" && Object.prototype.hasOwnProperty.call(entry, "value")) {
-        return this.registerHostCallableValue(alias, entry.value, entry, { ...entry, displayName: alias });
-      }
-      if (Object.prototype.hasOwnProperty.call(entry, "value")) {
-        return this.registerHostValue(alias, entry.value, { ...entry, displayName: alias });
-      }
-      return this.registerHost(alias, entry, { ...entry, displayName: alias });
-    }
-    freeze() {
-      this._frozen = true;
-      return this;
-    }
-    get(name) {
-      return this._capabilities.get(normalizeCapabilityName(name));
-    }
-    has(name) {
-      return this._capabilities.has(normalizeCapabilityName(name));
-    }
-    get frozen() {
-      return this._frozen;
-    }
-    call(name, args, context, evaluate) {
-      const cap = this.get(name);
-      if (!cap)
-        throw new Error(`Unknown system capability: ${name}. Use .${name}() or check available capabilities.`);
-      if (cap.kind !== "function")
-        throw new Error(`System ${cap.kind} .${cap.displayName} is not a capability function`);
-      return cap.impl(args, context, evaluate);
-    }
-    callLazy(name, args, context, evaluate) {
-      const cap = this.get(name);
-      if (!cap)
-        throw new Error(`Unknown system capability: ${name}.`);
-      if (cap.kind !== "function")
-        throw new Error(`System ${cap.kind} .${cap.displayName} is not a capability function`);
-      return cap.impl(args, context, evaluate);
-    }
-    getAllNames() {
-      return Array.from(this._capabilities.keys()).sort();
-    }
-    getAllEntries({ namespace } = {}) {
-      return Array.from(this._capabilities.values()).filter((entry) => !namespace || entry.namespace === namespace).sort((a, b) => a.displayName.localeCompare(b.displayName));
-    }
-    getAllDisplayNames(options = {}) {
-      return this.getAllEntries(options).map((entry) => entry.displayName);
-    }
-    getCapabilityGroups() {
-      return Object.fromEntries(Array.from(this._groups, ([name, members]) => [name, Array.from(members)]));
-    }
-    installManagementNamespaces() {
-      this._checkMutable();
-      if (!this.has("Core")) {
-        this.registerValue("Core", namespaceEntry(this, "core"), {
-          kind: "namespace",
-          doc: "Core capability registration and discovery"
-        });
-      }
-      if (!this.has("Host")) {
-        this.registerValue("Host", namespaceEntry(this, "host"), {
-          kind: "namespace",
-          doc: "Host/plugin capability registration and discovery"
-        });
-      }
-      return this;
-    }
-    attachPluginCatalog(catalog) {
-      this._checkMutable();
-      if (!catalog?.declareInto || !catalog?.list || !catalog?.load) {
-        throw new Error("Plugin catalog must provide declareInto(), list(), and load()");
-      }
-      this._pluginCatalog = catalog;
-      catalog.declareInto(this);
-      const plugin = pluginNamespaceEntry(this, catalog);
-      this.registerCallableValue("Plugin", plugin.value, {
-        impl(args, evaluationContext) {
-          return plugin.load([null, ...args], evaluationContext);
-        }
-      }, {
-        doc: "Discover and load host-approved RiX plugins",
-        pluginManager: true
-      });
-      return this;
-    }
-    attachRendererRegistry(registry, { collection, renderValue } = {}) {
-      this._checkMutable();
-      if (!registry?.register || !registry?.render || !registry?.list) {
-        throw new Error("Renderer registry must provide register(), render(), and list()");
-      }
-      if (!collection || typeof renderValue !== "function") {
-        throw new Error("Renderer attachment requires its core namespace and render adapter");
-      }
-      this._rendererRegistry = registry;
-      this.registerValue("Renderer", collection, {
-        doc: "Discover installed output renderers and their target contracts",
-        groups: ["Renderers"]
-      });
-      this.register("Render", {
-        pure: false,
-        doc: "Render a portable value through an installed target plugin",
-        groups: ["Renderers"],
-        impl(args, evaluationContext, evaluate) {
-          if (args.length < 2 || args.length > 3)
-            throw new Error(".Render expects value, target, and optional options");
-          return renderValue(args[0], args[1], args[2] ?? null, { evaluationContext, evaluate });
-        }
-      });
-      return this;
-    }
-    _rebindManagementNamespaces() {
-      for (const [name, namespace] of [["Core", "core"], ["Host", "host"]]) {
-        const normalised = normalizeCapabilityName(name);
-        const entry = this._capabilities.get(normalised);
-        if (entry?.kind === "namespace") {
-          this._capabilities.set(normalised, { ...entry, value: namespaceEntry(this, namespace) });
-        }
-      }
-      const pluginEntry = this._capabilities.get(normalizeCapabilityName("Plugin"));
-      if (pluginEntry?.pluginManager && this._pluginCatalog) {
-        const plugin = pluginNamespaceEntry(this, this._pluginCatalog);
-        this._capabilities.set(normalizeCapabilityName("Plugin"), {
-          ...pluginEntry,
-          value: plugin.value,
-          impl(args, evaluationContext) {
-            return plugin.load([null, ...args], evaluationContext);
-          }
-        });
-      }
-      return this;
-    }
-    _derivedContext(capabilities, frozen) {
-      const available = new Set(Array.from(capabilities.keys(), normalizeCapabilityName));
-      const groups = Object.fromEntries(Object.entries(this.getCapabilityGroups()).map(([group, members]) => [
-        group,
-        members.filter((name) => available.has(name))
-      ]));
-      const hostContext = this._hostContext === this ? undefined : this._hostContext;
-      return new SystemContext(capabilities, frozen, {
-        groups,
-        hostContext,
-        pluginCatalog: this._pluginCatalog,
-        rendererRegistry: this._rendererRegistry,
-        methodExtensions: this._methodExtensions
-      })._rebindManagementNamespaces();
-    }
-    copy() {
-      return this._derivedContext(new Map(this._capabilities), false);
-    }
-    withhold(...names) {
-      const caps = new Map(this._capabilities);
-      for (const name of names) {
-        caps.delete(normalizeCapabilityName(name));
-      }
-      return this._derivedContext(caps, true);
-    }
-    with(name, def) {
-      const result = this.copy();
-      if (def?.kind === "function" && Object.prototype.hasOwnProperty.call(def || {}, "value")) {
-        result.registerCallableValue(name, def.value, def, def);
-      } else if (def?.kind === "value" || Object.prototype.hasOwnProperty.call(def || {}, "value")) {
-        result.registerValue(name, def.value, def);
-      } else {
-        result.register(name, def, def);
-      }
-      result.freeze();
-      return result;
-    }
-    toRixValue() {
-      return { type: "system_context", context: this };
-    }
-  }
-
   // packages/core/src/base-system.js
   class BaseSystem {
     #base;
@@ -11377,7 +10782,7 @@ ${indentStr})`;
   function rat(numerator, denominator = 1n) {
     return denominator === 1n ? new Integer(numerator) : new Rational(numerator, denominator);
   }
-  function stringValue2(value, label = "name") {
+  function stringValue(value, label = "name") {
     if (typeof value === "string")
       return value;
     if (value?.type === "string")
@@ -11751,7 +11156,7 @@ ${indentStr})`;
     return result;
   }
   function defineUnitFromValue(nameValue, definition) {
-    const name = stringValue2(nameValue, "Unit name");
+    const name = stringValue(nameValue, "Unit name");
     if (isUnitValue(definition)) {
       return createUnit(name, {
         symbol: name,
@@ -11838,7 +11243,7 @@ ${indentStr})`;
     };
   }
   function unitName(value) {
-    return stringValue2(value, "Unit name");
+    return stringValue(value, "Unit name");
   }
 
   // rix/src/runtime/diagnostics.js
@@ -12358,6 +11763,1295 @@ ${indentStr})`;
     return filtered;
   }
 
+  // rix/src/runtime/structural-arithmetic.js
+  var DEFAULT_BINARY = {
+    ":": { precedence: 70, associativity: "left", head: "Interval" },
+    "+": { precedence: 80, associativity: "left", head: "Sum" },
+    "-": { precedence: 80, associativity: "left", head: "Difference" },
+    "*": { precedence: 90, associativity: "left", head: "Product" },
+    "/": { precedence: 90, associativity: "left", head: "Fraction" },
+    "^": { precedence: 100, associativity: "right", head: "Power" }
+  };
+  var DEFAULT_PREFIX = {
+    "+": { precedence: 99, head: "Positive" },
+    "-": { precedence: 99, head: "Negative" }
+  };
+  var DEFAULT_POSTFIX = {
+    "!": { precedence: 120, head: "Factorial" }
+  };
+  var PREFIX_PRECEDENCE = 99;
+  var POSTFIX_PRECEDENCE = 120;
+  var IMPLICIT_MULTIPLICATION_PRECEDENCE = 95;
+  var STRUCTURAL_SPANS = new WeakMap;
+  var STRUCTURAL_GROUPED = new WeakSet;
+  function createStructuralOperatorTable(declarations = []) {
+    const table = {
+      binary: { ...DEFAULT_BINARY },
+      prefix: { ...DEFAULT_PREFIX },
+      postfix: { ...DEFAULT_POSTFIX }
+    };
+    for (const declaration of declarations) {
+      const symbol = declaration?.symbol;
+      const fixity = String(declaration?.fixity || "infix").toLowerCase();
+      const head = declaration?.head;
+      if (!symbol || !head)
+        throw new Error("Structural operator declarations require symbol and head");
+      if (fixity === "infix" || fixity === "binary") {
+        table.binary[symbol] = {
+          precedence: Number(declaration.precedence ?? 80),
+          associativity: String(declaration.associativity || "left").toLowerCase(),
+          head,
+          apply: declaration.apply || null
+        };
+        if (!["left", "right"].includes(table.binary[symbol].associativity)) {
+          throw new Error(`Invalid associativity for structural operator '${symbol}'`);
+        }
+      } else if (fixity === "prefix") {
+        table.prefix[symbol] = {
+          precedence: Number(declaration.precedence ?? PREFIX_PRECEDENCE),
+          head,
+          apply: declaration.apply || null
+        };
+      } else if (fixity === "postfix") {
+        table.postfix[symbol] = {
+          precedence: Number(declaration.precedence ?? POSTFIX_PRECEDENCE),
+          head,
+          apply: declaration.apply || null
+        };
+      } else {
+        throw new Error(`Invalid fixity '${declaration.fixity}' for structural operator '${symbol}'`);
+      }
+    }
+    return Object.freeze({
+      binary: Object.freeze(table.binary),
+      prefix: Object.freeze(table.prefix),
+      postfix: Object.freeze(table.postfix)
+    });
+  }
+  var DEFAULT_OPERATORS = createStructuralOperatorTable();
+  function compareNames(left, right) {
+    if (left < right)
+      return -1;
+    if (left > right)
+      return 1;
+    return 0;
+  }
+  function parseError(source, offset, message) {
+    const before = source.slice(0, offset);
+    const line = before.split(`
+`).length;
+    const lastNewline = before.lastIndexOf(`
+`);
+    const column = offset - lastNewline;
+    return new Error(`SArith parse error at ${line}:${column}: ${message}`);
+  }
+  function token(type, value, start, end, gapBefore) {
+    return { type, value, start, end, gapBefore };
+  }
+  function skipTrivia(source, start) {
+    let position = start;
+    let skipped = false;
+    while (position < source.length) {
+      if (/\s/u.test(source[position])) {
+        skipped = true;
+        position++;
+        continue;
+      }
+      if (source.startsWith("##", position)) {
+        skipped = true;
+        position += 2;
+        while (position < source.length && source[position] !== `
+`)
+          position++;
+        continue;
+      }
+      if (source.startsWith("/*", position)) {
+        skipped = true;
+        const close = source.indexOf("*/", position + 2);
+        if (close === -1)
+          throw parseError(source, position, "unclosed block comment");
+        position = close + 2;
+        continue;
+      }
+      break;
+    }
+    return { position, skipped };
+  }
+  function scanRiXExpression(source, atPosition) {
+    const segment = source.slice(atPosition + 1);
+    const rixTokens = tokenize(segment);
+    let depth = 0;
+    for (const current of rixTokens) {
+      if (current.type !== "Symbol")
+        continue;
+      if (current.value === "(") {
+        depth++;
+        continue;
+      }
+      if (current.value !== ")")
+        continue;
+      depth--;
+      if (depth === 0) {
+        return {
+          body: segment.slice(1, current.pos[1]),
+          end: atPosition + 1 + current.pos[2]
+        };
+      }
+    }
+    throw parseError(source, atPosition, "unclosed '@(' RiX expression splice");
+  }
+  function tokenizeStructuralArithmetic(source, options = {}) {
+    const operators = options.operators || DEFAULT_OPERATORS;
+    const operatorGlyphs = [
+      ...Object.keys(operators.binary),
+      ...Object.keys(operators.prefix),
+      ...Object.keys(operators.postfix)
+    ].sort((left, right) => right.length - left.length);
+    const tokens = [];
+    let position = 0;
+    let previousEnd = 0;
+    while (position < source.length) {
+      const trivia = skipTrivia(source, position);
+      position = trivia.position;
+      if (position >= source.length)
+        break;
+      const start = position;
+      const gapBefore = trivia.skipped || start > previousEnd;
+      const rest = source.slice(position);
+      if (rest.startsWith("@(")) {
+        const splice = scanRiXExpression(source, position);
+        position = splice.end;
+        tokens.push(token("rix_expression", splice.body, start, position, gapBefore));
+        previousEnd = position;
+        continue;
+      }
+      const numberMatch = scanNumberLiteral(source, position);
+      if (numberMatch) {
+        position = numberMatch.pos[2];
+        tokens.push(token("number", numberMatch.value, start, position, gapBefore));
+        previousEnd = position;
+        continue;
+      }
+      const identifierMatch = rest.match(/^[\p{L}_][\p{L}\p{N}_]*/u);
+      if (identifierMatch) {
+        position += identifierMatch[0].length;
+        tokens.push(token("identifier", identifierMatch[0], start, position, gapBefore));
+        previousEnd = position;
+        continue;
+      }
+      const character = source[position];
+      if ("@()".includes(character)) {
+        position++;
+        const type = character === "(" ? "lparen" : character === ")" ? "rparen" : "at";
+        tokens.push(token(type, character, start, position, gapBefore));
+        previousEnd = position;
+        continue;
+      }
+      const operator = operatorGlyphs.find((glyph) => source.startsWith(glyph, position));
+      if (operator) {
+        position += operator.length;
+        tokens.push(token("operator", operator, start, position, gapBefore));
+        previousEnd = position;
+        continue;
+      }
+      throw parseError(source, position, `unexpected character '${character}'`);
+    }
+    tokens.push(token("end", null, source.length, source.length, source.length > previousEnd));
+    return tokens;
+  }
+  function isStructuralSymbol(value) {
+    return value?.type === "structural_symbol";
+  }
+  function isStructuralForm(value) {
+    return value?.type === "structural_form";
+  }
+  function isStructuralLiteral(value) {
+    return value?.type === "structural_literal";
+  }
+  function isStructuralAlgebra(value) {
+    return value?.type === "structural_algebra";
+  }
+  function rememberSpan(value, span) {
+    if (value && typeof value === "object" && span)
+      STRUCTURAL_SPANS.set(value, Object.freeze({ ...span }));
+    return value;
+  }
+  function structuralSourceSpan(value) {
+    return STRUCTURAL_SPANS.get(value) || value?.span || null;
+  }
+  function combinedSpan(left, right, fallback = null) {
+    const leftSpan = structuralSourceSpan(left);
+    const rightSpan = structuralSourceSpan(right);
+    if (leftSpan && rightSpan)
+      return { start: leftSpan.start, end: rightSpan.end };
+    return fallback;
+  }
+  function structuralSymbol(name, span = null) {
+    return rememberSpan(Object.freeze({
+      type: "structural_symbol",
+      name,
+      ...span ? { span: Object.freeze({ ...span }) } : {}
+    }), span);
+  }
+  function structuralLiteral(kind, notation, value, span = null) {
+    return rememberSpan(Object.freeze({
+      type: "structural_literal",
+      kind,
+      notation,
+      value,
+      ...span ? { span: Object.freeze({ ...span }) } : {}
+    }), span);
+  }
+  function structuralAlgebra(profile, components, mode = "construct", span = null) {
+    const value = Object.freeze({
+      type: "structural_algebra",
+      profile: profile.name,
+      basis: Object.freeze([...profile.basis]),
+      components: Object.freeze([...components]),
+      mode,
+      ...span ? { span: Object.freeze({ ...span }) } : {}
+    });
+    return rememberSpan(value, span);
+  }
+  function structuralForm(head, args, mode = "construct", span = null) {
+    let normalized = [...args];
+    if ((head === "Sum" || head === "Product") && normalized.some((argument) => isStructuralForm(argument) && argument.head === head && argument.mode === mode && !STRUCTURAL_GROUPED.has(argument))) {
+      normalized = normalized.flatMap((argument) => isStructuralForm(argument) && argument.head === head && argument.mode === mode && !STRUCTURAL_GROUPED.has(argument) ? argument.args : [argument]);
+    }
+    const form = Object.freeze({
+      type: "structural_form",
+      head,
+      args: Object.freeze(normalized),
+      mode,
+      ...span ? { span: Object.freeze({ ...span }) } : {}
+    });
+    return rememberSpan(form, span);
+  }
+  function integerValue(value) {
+    if (value instanceof Integer)
+      return value.value;
+    if (value instanceof Rational && value.denominator === 1n)
+      return value.numerator;
+    return null;
+  }
+  function asFraction(value) {
+    value = semanticLiteralValue(value);
+    if (value instanceof Fraction)
+      return value;
+    const integer = integerValue(value);
+    return integer === null ? null : new Fraction(integer, 1n);
+  }
+  function isZero2(value) {
+    value = semanticLiteralValue(value);
+    if (value instanceof Integer)
+      return value.value === 0n;
+    if (value instanceof Rational)
+      return value.numerator === 0n;
+    if (value instanceof Fraction)
+      return value.numerator === 0n;
+    return false;
+  }
+  function isOne2(value) {
+    value = semanticLiteralValue(value);
+    if (value instanceof Integer)
+      return value.value === 1n;
+    if (value instanceof Rational)
+      return value.numerator === value.denominator;
+    if (value instanceof Fraction)
+      return value.numerator === value.denominator;
+    return false;
+  }
+  function liftStructuralValue(value) {
+    if (value instanceof Integer || value instanceof Fraction || value instanceof CertifiedApproximation || value instanceof RationalInterval || isStructuralSymbol(value) || isStructuralLiteral(value) || isStructuralAlgebra(value) || isStructuralForm(value)) {
+      return value;
+    }
+    if (value instanceof Rational) {
+      return value.denominator === 1n ? new Integer(value.numerator) : new Fraction(value.numerator, value.denominator);
+    }
+    return Object.freeze({ type: "structural_value", value });
+  }
+  function literalKind(text) {
+    if (text.includes("?"))
+      return "CertifiedApproximation";
+    if (text.includes(".."))
+      return "MixedNumber";
+    if (text.includes(".~"))
+      return "ContinuedFraction";
+    if (/^~?(?:0z\[\d+\]|0[A-Za-z])/u.test(text))
+      return "BasedNumber";
+    if (text.includes("[") || text.includes("]"))
+      return "UncertaintyInterval";
+    return null;
+  }
+  function literalValue(text, options = {}, span = null) {
+    let value;
+    try {
+      value = parseNumber(text);
+    } catch (coreError) {
+      if (!options.evaluateRiX)
+        throw coreError;
+      value = options.evaluateRiX(text);
+    }
+    const lifted = liftStructuralValue(value);
+    const kind = literalKind(text);
+    if (kind)
+      return structuralLiteral(kind, text, lifted, span);
+    return rememberSpan(lifted, span);
+  }
+  function constructBinary(operator, left, right, span = null, table = DEFAULT_BINARY) {
+    if (operator === "/") {
+      const numerator = integerValue(left);
+      const denominator = integerValue(right);
+      if (numerator !== null && denominator !== null) {
+        return new Fraction(numerator, denominator);
+      }
+    }
+    return structuralForm(table[operator].head, [left, right], "construct", span);
+  }
+  function constructPrefix(operator, operand2, span = null, info = DEFAULT_PREFIX[operator]) {
+    if (!info)
+      throw new Error(`Unknown structural prefix operator '${operator}'`);
+    return structuralForm(info.head, [operand2], "construct", span);
+  }
+  function constructPostfix(operator, operand2, span = null, info = DEFAULT_POSTFIX[operator]) {
+    if (!info)
+      throw new Error(`Unknown structural postfix operator '${operator}'`);
+    return structuralForm(info.head, [operand2], "construct", span);
+  }
+  function applyAdd(left, right) {
+    left = semanticLiteralValue(left);
+    right = semanticLiteralValue(right);
+    if (isZero2(left))
+      return right;
+    if (isZero2(right))
+      return left;
+    if (left instanceof Integer && right instanceof Integer)
+      return left.add(right);
+    if (left instanceof RationalInterval || right instanceof RationalInterval) {
+      return exactArithmeticValue(left).add(exactArithmeticValue(right));
+    }
+    const leftFraction = asFraction(left);
+    const rightFraction = asFraction(right);
+    if (leftFraction && rightFraction && leftFraction.denominator === rightFraction.denominator) {
+      return leftFraction.add(rightFraction);
+    }
+    if (leftFraction && rightFraction) {
+      const gcd2 = greatestCommonDivisor(leftFraction.denominator, rightFraction.denominator);
+      const denominator = leftFraction.denominator / gcd2 * rightFraction.denominator;
+      return new Fraction(leftFraction.numerator * (denominator / leftFraction.denominator) + rightFraction.numerator * (denominator / rightFraction.denominator), denominator);
+    }
+    if (leftFraction && right instanceof Integer) {
+      return new Fraction(leftFraction.numerator + right.value * leftFraction.denominator, leftFraction.denominator);
+    }
+    if (left instanceof Integer && rightFraction) {
+      return new Fraction(left.value * rightFraction.denominator + rightFraction.numerator, rightFraction.denominator);
+    }
+    return structuralForm("Sum", [left, right], "apply");
+  }
+  function applySubtract(left, right) {
+    left = semanticLiteralValue(left);
+    right = semanticLiteralValue(right);
+    if (isZero2(right))
+      return left;
+    if (left instanceof Integer && right instanceof Integer)
+      return left.subtract(right);
+    if (left instanceof RationalInterval || right instanceof RationalInterval) {
+      return exactArithmeticValue(left).subtract(exactArithmeticValue(right));
+    }
+    const leftFraction = asFraction(left);
+    const rightFraction = asFraction(right);
+    if (leftFraction && rightFraction && leftFraction.denominator === rightFraction.denominator) {
+      return leftFraction.subtract(rightFraction);
+    }
+    if (leftFraction && rightFraction) {
+      const gcd2 = greatestCommonDivisor(leftFraction.denominator, rightFraction.denominator);
+      const denominator = leftFraction.denominator / gcd2 * rightFraction.denominator;
+      return new Fraction(leftFraction.numerator * (denominator / leftFraction.denominator) - rightFraction.numerator * (denominator / rightFraction.denominator), denominator);
+    }
+    if (leftFraction && right instanceof Integer) {
+      return new Fraction(leftFraction.numerator - right.value * leftFraction.denominator, leftFraction.denominator);
+    }
+    if (left instanceof Integer && rightFraction) {
+      return new Fraction(left.value * rightFraction.denominator - rightFraction.numerator, rightFraction.denominator);
+    }
+    return structuralForm("Difference", [left, right], "apply");
+  }
+  function applyMultiply(left, right) {
+    left = semanticLiteralValue(left);
+    right = semanticLiteralValue(right);
+    if (isZero2(left) || isZero2(right))
+      return new Integer(0n);
+    if (isOne2(left))
+      return right;
+    if (isOne2(right))
+      return left;
+    if (left instanceof Integer && right instanceof Integer)
+      return left.multiply(right);
+    if (left instanceof RationalInterval || right instanceof RationalInterval) {
+      return exactArithmeticValue(left).multiply(exactArithmeticValue(right));
+    }
+    const leftFraction = asFraction(left);
+    const rightFraction = asFraction(right);
+    if (leftFraction && rightFraction)
+      return leftFraction.multiply(rightFraction);
+    return structuralForm("Product", [left, right], "apply");
+  }
+  function applyDivide(left, right) {
+    left = semanticLiteralValue(left);
+    right = semanticLiteralValue(right);
+    if (isZero2(right))
+      throw new Error("Structural division by zero");
+    if (isOne2(right))
+      return left;
+    if (left instanceof RationalInterval || right instanceof RationalInterval) {
+      return exactArithmeticValue(left).divide(exactArithmeticValue(right));
+    }
+    const leftFraction = asFraction(left);
+    const rightFraction = asFraction(right);
+    if (leftFraction && rightFraction)
+      return leftFraction.divide(rightFraction);
+    return structuralForm("Fraction", [left, right], "apply");
+  }
+  function applyPower(left, right) {
+    left = semanticLiteralValue(left);
+    right = semanticLiteralValue(right);
+    const exponent = integerValue(right);
+    if (exponent === 0n)
+      return new Integer(1n);
+    if (exponent === 1n)
+      return left;
+    if (exponent !== null && left instanceof Integer)
+      return left.pow(exponent);
+    if (exponent !== null && left instanceof Fraction)
+      return left.pow(exponent);
+    return structuralForm("Power", [left, right], "apply");
+  }
+  function applyStructuralBinary(operator, left, right) {
+    if (operator === ":") {
+      left = semanticLiteralValue(left);
+      right = semanticLiteralValue(right);
+      const leftRational = toRational(left);
+      const rightRational = toRational(right);
+      if (leftRational && rightRational)
+        return new RationalInterval(leftRational, rightRational);
+      return structuralForm("Interval", [left, right], "apply");
+    }
+    if (operator === "+")
+      return applyAdd(left, right);
+    if (operator === "-")
+      return applySubtract(left, right);
+    if (operator === "*")
+      return applyMultiply(left, right);
+    if (operator === "/")
+      return applyDivide(left, right);
+    if (operator === "^")
+      return applyPower(left, right);
+    throw new Error(`Unknown structural binary operator '${operator}'`);
+  }
+  function applyStructuralPrefix(operator, operand2) {
+    operand2 = semanticLiteralValue(operand2);
+    if (operator === "+")
+      return operand2;
+    if (operator === "-") {
+      if (operand2 instanceof Integer)
+        return operand2.negate();
+      if (operand2 instanceof Fraction)
+        return new Fraction(-operand2.numerator, operand2.denominator);
+      return structuralForm("Negative", [operand2], "apply");
+    }
+    throw new Error(`Unknown structural prefix operator '${operator}'`);
+  }
+  function applyStructuralPostfix(operator, operand2) {
+    operand2 = semanticLiteralValue(operand2);
+    if (operator === "!") {
+      if (operand2 instanceof Integer)
+        return operand2.factorial();
+      return structuralForm("Factorial", [operand2], "apply");
+    }
+    throw new Error(`Unknown structural postfix operator '${operator}'`);
+  }
+  function applyConfiguredBinary(operator, info, left, right) {
+    if (info.apply)
+      return info.apply(left, right);
+    if (DEFAULT_BINARY[operator])
+      return applyStructuralBinary(operator, left, right);
+    return structuralForm(info.head, [semanticLiteralValue(left), semanticLiteralValue(right)], "apply");
+  }
+  function applyConfiguredPrefix(operator, info, operand2) {
+    if (info.apply)
+      return info.apply(operand2);
+    if (DEFAULT_PREFIX[operator])
+      return applyStructuralPrefix(operator, operand2);
+    return structuralForm(info.head, [semanticLiteralValue(operand2)], "apply");
+  }
+  function applyConfiguredPostfix(operator, info, operand2) {
+    if (info.apply)
+      return info.apply(operand2);
+    if (DEFAULT_POSTFIX[operator])
+      return applyStructuralPostfix(operator, operand2);
+    return structuralForm(info.head, [semanticLiteralValue(operand2)], "apply");
+  }
+  function startsOperand(current) {
+    return current.type === "number" || current.type === "identifier" || current.type === "rix_expression" || current.type === "at" || current.type === "lparen";
+  }
+
+  class StructuralParser {
+    constructor(source, context, options = {}) {
+      this.source = source;
+      this.context = context;
+      this.evaluateRiX = options.evaluateRiX || null;
+      this.operators = options.operators || DEFAULT_OPERATORS;
+      this.binary = this.operators.binary;
+      this.prefix = this.operators.prefix;
+      this.postfix = this.operators.postfix;
+      this.tokens = tokenizeStructuralArithmetic(source, { operators: this.operators });
+      this.index = 0;
+      this.groupedValues = new WeakSet;
+      this.tightPrefixValues = new WeakSet;
+    }
+    get current() {
+      return this.tokens[this.index];
+    }
+    get next() {
+      return this.tokens[this.index + 1];
+    }
+    advance() {
+      const current = this.current;
+      this.index++;
+      return current;
+    }
+    error(tokenValue, message) {
+      throw parseError(this.source, tokenValue?.start ?? this.source.length, message);
+    }
+    parse() {
+      if (this.current.type === "end")
+        this.error(this.current, "empty structural expression");
+      const value = this.parseExpression(0);
+      if (this.current.type !== "end") {
+        this.error(this.current, `unexpected token '${this.current.value}'`);
+      }
+      return value;
+    }
+    parseExpression(minimumPrecedence) {
+      let left = this.parsePrefix();
+      while (true) {
+        if (this.current.type === "operator" && this.postfix[this.current.value]) {
+          const info = this.postfix[this.current.value];
+          if (info.precedence < minimumPrecedence)
+            break;
+          const operator = this.advance();
+          const span = {
+            start: structuralSourceSpan(left)?.start ?? operator.start,
+            end: operator.end
+          };
+          left = rememberSpan(operator.gapBefore ? applyConfiguredPostfix(operator.value, info, left) : constructPostfix(operator.value, left, span, info), span);
+          continue;
+        }
+        if (this.current.type === "operator" && this.binary[this.current.value]) {
+          const operator = this.current;
+          const info = this.binary[operator.value];
+          if (info.precedence < minimumPrecedence)
+            break;
+          const gapAfter = this.next?.gapBefore === true;
+          if (operator.gapBefore !== gapAfter) {
+            this.error(operator, `operator '${operator.value}' must either touch both operands or be separated from both`);
+          }
+          this.advance();
+          if (operator.value === "^" && !operator.gapBefore && this.tightPrefixValues.has(left) && !this.groupedValues.has(left)) {
+            this.error(operator, `ambiguous tight prefix and power; use '${left.head === "Positive" ? "+" : "-"} x^n' or parenthesize the base`);
+          }
+          let rightMinimum = info.associativity === "right" ? info.precedence : info.precedence + 1;
+          if (operator.value === "/" && !operator.gapBefore) {
+            rightMinimum = Math.max(rightMinimum, IMPLICIT_MULTIPLICATION_PRECEDENCE + 1);
+          }
+          const right = this.parseExpression(rightMinimum);
+          if (operator.value === "/" && !operator.gapBefore && isStructuralForm(right) && (right.head === "Power" || Object.values(this.postfix).some((postfix) => postfix.head === right.head)) && !this.groupedValues.has(right)) {
+            this.error(operator, "ambiguous tight fraction denominator; parenthesize the fraction or its denominator");
+          }
+          const span = combinedSpan(left, right, { start: operator.start, end: operator.end });
+          left = rememberSpan(operator.gapBefore ? applyConfiguredBinary(operator.value, info, left, right) : constructBinary(operator.value, left, right, span, this.binary), span);
+          continue;
+        }
+        if (startsOperand(this.current)) {
+          if (IMPLICIT_MULTIPLICATION_PRECEDENCE < minimumPrecedence)
+            break;
+          const right = this.parseExpression(IMPLICIT_MULTIPLICATION_PRECEDENCE + 1);
+          left = structuralForm("Product", [left, right], "construct", combinedSpan(left, right));
+          continue;
+        }
+        break;
+      }
+      return left;
+    }
+    parsePrefix() {
+      const current = this.current;
+      if (current.type === "number") {
+        this.advance();
+        return literalValue(current.value, { evaluateRiX: this.evaluateRiX }, {
+          start: current.start,
+          end: current.end
+        });
+      }
+      if (current.type === "identifier") {
+        this.advance();
+        return structuralSymbol(current.value, { start: current.start, end: current.end });
+      }
+      if (current.type === "rix_expression") {
+        this.advance();
+        if (!this.evaluateRiX) {
+          this.error(current, "'@(expression)' requires an active RiX evaluator");
+        }
+        return rememberSpan(liftStructuralValue(this.evaluateRiX(current.value)), {
+          start: current.start,
+          end: current.end
+        });
+      }
+      if (current.type === "at") {
+        this.advance();
+        if (this.current.type !== "identifier") {
+          this.error(this.current, "'@' must be followed by an outer identifier");
+        }
+        const name = this.advance().value;
+        const value = this.context?.get?.(name);
+        if (value === undefined) {
+          this.error(current, `undefined outer value '@${name}'`);
+        }
+        return rememberSpan(liftStructuralValue(value), { start: current.start, end: this.tokens[this.index - 1].end });
+      }
+      if (current.type === "lparen") {
+        const open = this.advance();
+        const value = this.parseExpression(0);
+        if (this.current.type !== "rparen") {
+          this.error(this.current, "expected closing parenthesis");
+        }
+        const close = this.advance();
+        if (value !== null && typeof value === "object") {
+          this.groupedValues.add(value);
+          STRUCTURAL_GROUPED.add(value);
+          rememberSpan(value, { start: open.start, end: close.end });
+        }
+        return value;
+      }
+      if (current.type === "operator" && this.prefix[current.value]) {
+        const operator = this.advance();
+        const info = this.prefix[operator.value];
+        const separated = this.current.gapBefore === true;
+        const operand2 = this.parseExpression(separated ? this.prefix[operator.value]?.precedence ?? PREFIX_PRECEDENCE : (this.binary["^"]?.precedence ?? 100) + 1);
+        if (!separated && isStructuralForm(operand2) && Object.values(this.postfix).some((postfix) => postfix.head === operand2.head) && !this.groupedValues.has(operand2)) {
+          this.error(operator, "ambiguous tight prefix and postfix; parenthesize the prefix or its operand");
+        }
+        const span = {
+          start: operator.start,
+          end: structuralSourceSpan(operand2)?.end ?? operator.end
+        };
+        const result = separated ? applyConfiguredPrefix(operator.value, info, operand2) : constructPrefix(operator.value, operand2, span, info);
+        rememberSpan(result, span);
+        if (!separated && result !== null && typeof result === "object") {
+          this.tightPrefixValues.add(result);
+        }
+        return result;
+      }
+      this.error(current, `expected an operand, got '${current.value ?? "end"}'`);
+    }
+  }
+  function integerComponent(value) {
+    const integer = integerValue(value);
+    return integer === null ? null : integer;
+  }
+  function componentAdd(left, right, mode) {
+    if (isZero2(left))
+      return right;
+    if (isZero2(right))
+      return left;
+    return mode === "apply" ? applyStructuralBinary("+", left, right) : structuralForm("Sum", [left, right], "construct", combinedSpan(left, right));
+  }
+  function componentSubtract(left, right, mode) {
+    if (isZero2(right))
+      return left;
+    if (isZero2(left))
+      return componentNegate(right, mode);
+    return mode === "apply" ? applyStructuralBinary("-", left, right) : structuralForm("Difference", [left, right], "construct", combinedSpan(left, right));
+  }
+  function componentMultiply(left, right, mode) {
+    if (isZero2(left) || isZero2(right))
+      return new Integer(0n);
+    if (isOne2(left))
+      return right;
+    if (isOne2(right))
+      return left;
+    return mode === "apply" ? applyStructuralBinary("*", left, right) : structuralForm("Product", [left, right], "construct", combinedSpan(left, right));
+  }
+  function componentNegate(value, mode) {
+    if (isZero2(value))
+      return value;
+    if (value instanceof Integer)
+      return value.negate();
+    if (value instanceof Fraction)
+      return new Fraction(-value.numerator, value.denominator);
+    if (value instanceof Rational)
+      return value.negate();
+    return mode === "apply" ? applyStructuralPrefix("-", value) : structuralForm("Negative", [value], "construct", structuralSourceSpan(value));
+  }
+  function zeroComponents(length) {
+    return Array.from({ length }, () => new Integer(0n));
+  }
+  function conjugateIntegerComponents(components) {
+    if (components.length === 1)
+      return [...components];
+    const half = components.length / 2;
+    return [
+      ...conjugateIntegerComponents(components.slice(0, half)),
+      ...components.slice(half).map((value) => -value)
+    ];
+  }
+  function addIntegerComponents(left, right) {
+    return left.map((value, index) => value + right[index]);
+  }
+  function subtractIntegerComponents(left, right) {
+    return left.map((value, index) => value - right[index]);
+  }
+  function multiplyIntegerComponents(left, right) {
+    if (left.length === 1)
+      return [left[0] * right[0]];
+    const half = left.length / 2;
+    const a = left.slice(0, half);
+    const b = left.slice(half);
+    const c = right.slice(0, half);
+    const d = right.slice(half);
+    return [
+      ...subtractIntegerComponents(multiplyIntegerComponents(a, c), multiplyIntegerComponents(conjugateIntegerComponents(d), b)),
+      ...addIntegerComponents(multiplyIntegerComponents(d, a), multiplyIntegerComponents(b, conjugateIntegerComponents(c)))
+    ];
+  }
+  function cayleyMultiplicationTable(dimension) {
+    return Array.from({ length: dimension }, (_, leftIndex) => Array.from({ length: dimension }, (_2, rightIndex) => {
+      const left = Array.from({ length: dimension }, (_value, index) => index === leftIndex ? 1 : 0);
+      const right = Array.from({ length: dimension }, (_value, index) => index === rightIndex ? 1 : 0);
+      const result = multiplyIntegerComponents(left, right);
+      const resultIndex = result.findIndex((value) => value !== 0);
+      return resultIndex === -1 ? { index: 0, sign: 0 } : { index: resultIndex, sign: result[resultIndex] };
+    }));
+  }
+  function createStructuralAlgebraProfile(name, basis, options = {}) {
+    if (!name)
+      throw new Error("Structural algebra profile requires a name");
+    if (!Array.isArray(basis) || new Set(basis).size !== basis.length) {
+      throw new Error("Structural algebra profile basis names must be a unique array");
+    }
+    const dimension = basis.length + 1;
+    const multiplication = options.cayleyDickson ? cayleyMultiplicationTable(dimension) : options.multiplication || null;
+    return Object.freeze({
+      name,
+      basis: Object.freeze([...basis]),
+      multiplication
+    });
+  }
+  var STRUCTURAL_ALGEBRA_PROFILES = Object.freeze({
+    Complex: createStructuralAlgebraProfile("Complex", ["i"], { cayleyDickson: true }),
+    Quaternion: createStructuralAlgebraProfile("Quaternion", ["i", "j", "k"], { cayleyDickson: true }),
+    Octonion: createStructuralAlgebraProfile("Octonion", ["e1", "e2", "e3", "e4", "e5", "e6", "e7"], { cayleyDickson: true })
+  });
+  function algebraScalar(value, profile) {
+    return {
+      components: [value, ...zeroComponents(profile.basis.length)],
+      usesBasis: false,
+      mode: "construct",
+      unsupported: false
+    };
+  }
+  function algebraUnit(index, profile, span) {
+    const components = zeroComponents(profile.basis.length + 1);
+    components[index + 1] = rememberSpan(new Integer(1n), span);
+    return { components, usesBasis: true, mode: "construct", unsupported: false };
+  }
+  function addAlgebraStates(left, right, mode, subtract = false) {
+    return {
+      components: left.components.map((value, index) => subtract ? componentSubtract(value, right.components[index], mode) : componentAdd(value, right.components[index], mode)),
+      usesBasis: left.usesBasis || right.usesBasis,
+      mode,
+      unsupported: false
+    };
+  }
+  function scaleAlgebraState(state, scalar, mode) {
+    return {
+      components: state.components.map((component) => componentMultiply(component, scalar, mode)),
+      usesBasis: state.usesBasis,
+      mode,
+      unsupported: false
+    };
+  }
+  function multiplyAlgebraStates(left, right, profile, mode) {
+    if (!profile.multiplication)
+      return null;
+    const result = zeroComponents(profile.basis.length + 1);
+    for (let leftIndex = 0;leftIndex < left.components.length; leftIndex++) {
+      for (let rightIndex = 0;rightIndex < right.components.length; rightIndex++) {
+        const rule = profile.multiplication[leftIndex]?.[rightIndex];
+        if (!rule || rule.sign === 0)
+          continue;
+        let term = componentMultiply(left.components[leftIndex], right.components[rightIndex], mode);
+        if (rule.sign < 0)
+          term = componentNegate(term, mode);
+        result[rule.index] = componentAdd(result[rule.index], term, mode);
+      }
+    }
+    return {
+      components: result,
+      usesBasis: left.usesBasis || right.usesBasis,
+      mode,
+      unsupported: false
+    };
+  }
+  function rebuildForm(value, arguments_) {
+    return structuralForm(value.head, arguments_, value.mode, structuralSourceSpan(value));
+  }
+  function algebraState(value, profile) {
+    if (isStructuralAlgebra(value)) {
+      if (value.profile !== profile.name || value.basis.length !== profile.basis.length || value.basis.some((name, index) => name !== profile.basis[index])) {
+        return algebraScalar(value, profile);
+      }
+      return {
+        components: [...value.components],
+        usesBasis: true,
+        mode: value.mode,
+        unsupported: false
+      };
+    }
+    if (isStructuralSymbol(value)) {
+      const basisIndex = profile.basis.indexOf(value.name);
+      return basisIndex === -1 ? algebraScalar(value, profile) : algebraUnit(basisIndex, profile, structuralSourceSpan(value));
+    }
+    if (!isStructuralForm(value))
+      return algebraScalar(value, profile);
+    const states = value.args.map((argument) => algebraState(argument, profile));
+    if (states.some((state) => state.unsupported)) {
+      return {
+        ...algebraScalar(value, profile),
+        unsupported: true
+      };
+    }
+    const anyBasis = states.some((state) => state.usesBasis);
+    if (!anyBasis) {
+      return algebraScalar(rebuildForm(value, states.map((state) => state.components[0])), profile);
+    }
+    if (value.head === "Sum") {
+      return states.slice(1).reduce((left, right) => addAlgebraStates(left, right, value.mode), states[0]);
+    }
+    if (value.head === "Difference" && states.length === 2) {
+      return addAlgebraStates(states[0], states[1], value.mode, true);
+    }
+    if ((value.head === "Negative" || value.head === "Positive") && states.length === 1) {
+      return value.head === "Positive" ? states[0] : {
+        components: states[0].components.map((component) => componentNegate(component, value.mode)),
+        usesBasis: true,
+        mode: value.mode,
+        unsupported: false
+      };
+    }
+    if (value.head === "Product") {
+      if (value.mode === "construct") {
+        const basisStates = states.filter((state) => state.usesBasis);
+        if (basisStates.length === 1) {
+          const scalars = states.filter((state) => !state.usesBasis).map((state) => state.components[0]);
+          const scalar = scalars.reduce((left, right) => componentMultiply(left, right, "construct"), new Integer(1n));
+          return scaleAlgebraState(basisStates[0], scalar, "construct");
+        }
+      } else if (profile.multiplication) {
+        return states.slice(1).reduce((left, right) => multiplyAlgebraStates(left, right, profile, "apply"), states[0]);
+      }
+    }
+    if (value.head === "Fraction" && value.mode === "apply" && states.length === 2 && !states[1].usesBasis) {
+      const denominator = states[1].components[0];
+      return {
+        components: states[0].components.map((component) => applyStructuralBinary("/", component, denominator)),
+        usesBasis: states[0].usesBasis,
+        mode: "apply",
+        unsupported: false
+      };
+    }
+    if (value.head === "Power" && value.mode === "apply" && states.length === 2 && states[0].usesBasis && !states[1].usesBasis && profile.multiplication) {
+      const exponent = integerComponent(states[1].components[0]);
+      if (exponent !== null && exponent >= 0n) {
+        let result = algebraScalar(new Integer(1n), profile);
+        let factor = states[0];
+        let remaining = exponent;
+        while (remaining > 0n) {
+          if (remaining % 2n === 1n) {
+            result = multiplyAlgebraStates(result, factor, profile, "apply");
+          }
+          remaining /= 2n;
+          if (remaining > 0n)
+            factor = multiplyAlgebraStates(factor, factor, profile, "apply");
+        }
+        result.usesBasis = exponent > 0n;
+        result.mode = "apply";
+        return result;
+      }
+    }
+    return {
+      ...algebraScalar(rebuildForm(value, value.args), profile),
+      unsupported: true
+    };
+  }
+  function interpretStructuralAlgebra(value, profile) {
+    const state = algebraState(value, profile);
+    if (state.unsupported)
+      return state.components[0];
+    if (!state.usesBasis)
+      return state.components[0];
+    const onlyReal = state.components.slice(1).every(isZero2);
+    if (state.mode === "apply" && onlyReal)
+      return state.components[0];
+    return structuralAlgebra(profile, state.components, state.mode, structuralSourceSpan(value));
+  }
+  function parseStructuralArithmetic(source, context, options = {}) {
+    const value = new StructuralParser(String(source), context, options).parse();
+    return options.algebraProfile ? interpretStructuralAlgebra(value, options.algebraProfile) : value;
+  }
+  function structuralFreeSymbols(value, names = new Set) {
+    if (isStructuralSymbol(value)) {
+      names.add(value.name);
+      return names;
+    }
+    if (isStructuralForm(value)) {
+      for (const argument of value.args)
+        structuralFreeSymbols(argument, names);
+    }
+    if (isStructuralAlgebra(value)) {
+      for (const component of value.components)
+        structuralFreeSymbols(component, names);
+    }
+    return names;
+  }
+  function sortedStructuralFreeSymbols(value) {
+    return [...structuralFreeSymbols(value)].sort(compareNames);
+  }
+  function resolveStructuralValue(value, context) {
+    if (isStructuralSymbol(value)) {
+      const resolved = context?.get?.(value.name);
+      if (resolved === undefined) {
+        throw new Error(`Undefined structural function argument: ${value.name}`);
+      }
+      return liftStructuralValue(resolved);
+    }
+    if (isStructuralLiteral(value))
+      return value;
+    if (isStructuralAlgebra(value)) {
+      const profile = createStructuralAlgebraProfile(value.profile, value.basis, {
+        cayleyDickson: ["Complex", "Quaternion", "Octonion"].includes(value.profile)
+      });
+      return structuralAlgebra(profile, value.components.map((component) => resolveStructuralValue(component, context)), value.mode, structuralSourceSpan(value));
+    }
+    if (!isStructuralForm(value))
+      return value;
+    const args = value.args.map((argument) => resolveStructuralValue(argument, context));
+    if (value.mode === "construct") {
+      if (value.head === "Sum")
+        return structuralForm("Sum", args, "construct");
+      if (value.head === "Difference")
+        return constructBinary("-", args[0], args[1]);
+      if (value.head === "Product")
+        return structuralForm("Product", args, "construct");
+      if (value.head === "Fraction")
+        return constructBinary("/", args[0], args[1]);
+      if (value.head === "Power")
+        return constructBinary("^", args[0], args[1]);
+      if (value.head === "Positive")
+        return constructPrefix("+", args[0]);
+      if (value.head === "Negative")
+        return constructPrefix("-", args[0]);
+      if (value.head === "Factorial")
+        return constructPostfix("!", args[0]);
+      if (value.head === "Interval")
+        return constructBinary(":", args[0], args[1]);
+      return structuralForm(value.head, args, "construct");
+    }
+    if (value.head === "Sum")
+      return args.slice(1).reduce((result, argument) => applyStructuralBinary("+", result, argument), args[0]);
+    if (value.head === "Difference")
+      return applyStructuralBinary("-", args[0], args[1]);
+    if (value.head === "Product")
+      return args.slice(1).reduce((result, argument) => applyStructuralBinary("*", result, argument), args[0]);
+    if (value.head === "Fraction")
+      return applyStructuralBinary("/", args[0], args[1]);
+    if (value.head === "Power")
+      return applyStructuralBinary("^", args[0], args[1]);
+    if (value.head === "Positive")
+      return applyStructuralPrefix("+", args[0]);
+    if (value.head === "Negative")
+      return applyStructuralPrefix("-", args[0]);
+    if (value.head === "Factorial")
+      return applyStructuralPostfix("!", args[0]);
+    if (value.head === "Interval")
+      return applyStructuralBinary(":", args[0], args[1]);
+    return structuralForm(value.head, args, "apply");
+  }
+  function createStructuralFunction(value, context, name = null, explicitSymbols = null) {
+    const symbols2 = explicitSymbols || sortedStructuralFreeSymbols(value);
+    return {
+      type: "lambda",
+      ...name ? { name } : {},
+      params: {
+        positional: symbols2.map((symbol) => ({ name: symbol, holeDefault: null })),
+        keyword: [],
+        conditionals: [],
+        prep: [],
+        prepStrict: false,
+        metadata: {}
+      },
+      body: { fn: "SARITH_FUNCTION_BODY", args: [value] },
+      __closureScopes: context?.captureClosureScopes?.() || []
+    };
+  }
+  function structuralValueToIr(value) {
+    if (isStructuralLiteral(value))
+      return structuralValueToIr(value.value);
+    if (isStructuralAlgebra(value)) {
+      if (value.components.slice(1).every(isZero2))
+        return structuralValueToIr(value.components[0]);
+      throw new Error(`Structural ${value.profile} form cannot be represented by scalar symbolic IR`);
+    }
+    if (isStructuralSymbol(value))
+      return { fn: "RETRIEVE", args: [value.name] };
+    if (value instanceof Integer)
+      return { fn: "LITERAL", args: [value.value.toString()] };
+    if (value instanceof Fraction) {
+      return {
+        fn: "DIV",
+        args: [
+          { fn: "LITERAL", args: [value.numerator.toString()] },
+          { fn: "LITERAL", args: [value.denominator.toString()] }
+        ]
+      };
+    }
+    if (value instanceof Rational) {
+      if (value.denominator === 1n) {
+        return { fn: "LITERAL", args: [value.numerator.toString()] };
+      }
+      return {
+        fn: "DIV",
+        args: [
+          { fn: "LITERAL", args: [value.numerator.toString()] },
+          { fn: "LITERAL", args: [value.denominator.toString()] }
+        ]
+      };
+    }
+    if (value instanceof RationalInterval) {
+      return {
+        fn: "INTERVAL",
+        args: [structuralValueToIr(value.start), structuralValueToIr(value.end)]
+      };
+    }
+    if (value?.type === "structural_value") {
+      return structuralValueToIr(value.value);
+    }
+    if (!isStructuralForm(value)) {
+      throw new Error("Structural value cannot be represented by the exact symbolic IR");
+    }
+    const args = value.args.map(structuralValueToIr);
+    const heads = {
+      Sum: "ADD",
+      Difference: "SUB",
+      Product: "MUL",
+      Fraction: "DIV",
+      Power: "POW",
+      Negative: "NEG",
+      Positive: null,
+      Factorial: "FACTORIAL",
+      Interval: "INTERVAL"
+    };
+    if (!Object.prototype.hasOwnProperty.call(heads, value.head)) {
+      throw new Error(`Structural form '${value.head}' cannot be represented by the exact symbolic IR`);
+    }
+    const fn = heads[value.head];
+    if (!fn)
+      return args[0];
+    if ((fn === "ADD" || fn === "MUL") && args.length > 2) {
+      return args.slice(1).reduce((left, right) => ({ fn, args: [left, right] }), args[0]);
+    }
+    return { fn, args };
+  }
+  function formatStructuralValue(value, formatChild = String) {
+    if (isStructuralSymbol(value))
+      return value.name;
+    if (isStructuralLiteral(value))
+      return value.notation;
+    if (isStructuralAlgebra(value)) {
+      const label = value.profile === "Algebra" ? `Algebra[${value.basis.join(",")}]` : value.profile;
+      return `${label}(${value.components.map((component) => formatStructuralValue(component, formatChild)).join(", ")})`;
+    }
+    if (value?.type === "structural_value")
+      return `Value(${formatChild(value.value)})`;
+    if (!isStructuralForm(value))
+      return formatChild(value);
+    return `${value.head}(${value.args.map((argument) => formatStructuralValue(argument, formatChild)).join(", ")})`;
+  }
+  function greatestCommonDivisor(left, right) {
+    let a = left < 0n ? -left : left;
+    let b = right < 0n ? -right : right;
+    while (b !== 0n)
+      [a, b] = [b, a % b];
+    return a;
+  }
+  function semanticLiteralValue(value) {
+    return isStructuralLiteral(value) ? value.value : value;
+  }
+  function toRational(value) {
+    if (value instanceof Integer)
+      return value.toRational();
+    if (value instanceof Rational)
+      return value;
+    if (value instanceof Fraction)
+      return new Rational(value.numerator, value.denominator);
+    return null;
+  }
+  function exactArithmeticValue(value) {
+    return value instanceof Fraction ? new Rational(value.numerator, value.denominator) : value;
+  }
+  function collapseStructuralValue(value, context = null) {
+    if (isStructuralLiteral(value))
+      return collapseStructuralValue(value.value, context);
+    if (value?.type === "structural_value")
+      return collapseStructuralValue(value.value, context);
+    if (isStructuralSymbol(value)) {
+      const resolved = context?.get?.(value.name);
+      return resolved === undefined ? value : collapseStructuralValue(liftStructuralValue(resolved), context);
+    }
+    if (isStructuralAlgebra(value)) {
+      const components = value.components.map((component) => collapseStructuralValue(component, context));
+      if (components.slice(1).every(isZero2))
+        return components[0];
+      const profile = createStructuralAlgebraProfile(value.profile, value.basis, {
+        cayleyDickson: ["Complex", "Quaternion", "Octonion"].includes(value.profile)
+      });
+      return structuralAlgebra(profile, components, "apply", structuralSourceSpan(value));
+    }
+    if (!isStructuralForm(value)) {
+      return value instanceof Fraction ? new Rational(value.numerator, value.denominator) : value;
+    }
+    const args = value.args.map((argument) => collapseStructuralValue(argument, context));
+    if (value.head === "Sum")
+      return args.slice(1).reduce((result, argument) => applyStructuralBinary("+", result, argument), args[0]);
+    if (value.head === "Difference")
+      return applyStructuralBinary("-", args[0], args[1]);
+    if (value.head === "Product")
+      return args.slice(1).reduce((result, argument) => applyStructuralBinary("*", result, argument), args[0]);
+    if (value.head === "Fraction")
+      return applyStructuralBinary("/", args[0], args[1]);
+    if (value.head === "Power")
+      return applyStructuralBinary("^", args[0], args[1]);
+    if (value.head === "Positive")
+      return applyStructuralPrefix("+", args[0]);
+    if (value.head === "Negative")
+      return applyStructuralPrefix("-", args[0]);
+    if (value.head === "Factorial")
+      return applyStructuralPostfix("!", args[0]);
+    if (value.head === "Interval")
+      return applyStructuralBinary(":", args[0], args[1]);
+    return structuralForm(value.head, args, "apply");
+  }
+  function inspectStructuralValue(value) {
+    if (isStructuralSymbol(value)) {
+      return { type: "map", entries: new Map([
+        ["kind", { type: "string", value: "symbol" }],
+        ["name", { type: "string", value: value.name }],
+        ["span", spanValue(structuralSourceSpan(value))]
+      ]) };
+    }
+    if (isStructuralLiteral(value)) {
+      return { type: "map", entries: new Map([
+        ["kind", { type: "string", value: "literal" }],
+        ["head", { type: "string", value: value.kind }],
+        ["notation", { type: "string", value: value.notation }],
+        ["value", value.value],
+        ["span", spanValue(structuralSourceSpan(value))]
+      ]) };
+    }
+    if (isStructuralAlgebra(value)) {
+      return { type: "map", entries: new Map([
+        ["kind", { type: "string", value: "algebra" }],
+        ["head", { type: "string", value: value.profile }],
+        ["basis", { type: "sequence", values: value.basis.map((name) => ({ type: "string", value: name })) }],
+        ["components", { type: "sequence", values: [...value.components] }],
+        ["mode", { type: "string", value: value.mode }],
+        ["span", spanValue(structuralSourceSpan(value))]
+      ]) };
+    }
+    if (isStructuralForm(value)) {
+      return { type: "map", entries: new Map([
+        ["kind", { type: "string", value: "form" }],
+        ["head", { type: "string", value: value.head }],
+        ["mode", { type: "string", value: value.mode }],
+        ["arguments", { type: "sequence", values: [...value.args] }],
+        ["span", spanValue(structuralSourceSpan(value))]
+      ]) };
+    }
+    return { type: "map", entries: new Map([
+      ["kind", { type: "string", value: "value" }],
+      ["value", value],
+      ["span", spanValue(structuralSourceSpan(value))]
+    ]) };
+  }
+  function spanValue(span) {
+    if (!span)
+      return null;
+    return { type: "map", entries: new Map([
+      ["start", new Integer(BigInt(span.start + 1))],
+      ["end", new Integer(BigInt(span.end + 1))]
+    ]) };
+  }
+  function structurallyEqual(left, right) {
+    if (left === right)
+      return true;
+    if (isStructuralSymbol(left) && isStructuralSymbol(right))
+      return left.name === right.name;
+    if (isStructuralLiteral(left) && isStructuralLiteral(right))
+      return left.notation === right.notation;
+    if (left instanceof Integer && right instanceof Integer)
+      return left.value === right.value;
+    if (left instanceof Fraction && right instanceof Fraction) {
+      return left.numerator === right.numerator && left.denominator === right.denominator;
+    }
+    if (!isStructuralForm(left) || !isStructuralForm(right))
+      return false;
+    return left.head === right.head && left.mode === right.mode && left.args.length === right.args.length && left.args.every((argument, index) => structurallyEqual(argument, right.args[index]));
+  }
+  function provablyNonzero(value, assumptions) {
+    const semantic = semanticLiteralValue(value);
+    if (semantic instanceof Integer)
+      return semantic.value !== 0n;
+    if (semantic instanceof Fraction || semantic instanceof Rational)
+      return semantic.numerator !== 0n;
+    if (isStructuralSymbol(value))
+      return assumptions.has(value.name);
+    return false;
+  }
+  function simplifyStructuralValue(value, options = {}) {
+    const assumptions = new Set(options.nonzero || []);
+    if (isStructuralAlgebra(value)) {
+      const profile = createStructuralAlgebraProfile(value.profile, value.basis, {
+        cayleyDickson: ["Complex", "Quaternion", "Octonion"].includes(value.profile)
+      });
+      return structuralAlgebra(profile, value.components.map((component) => simplifyStructuralValue(component, options)), value.mode, structuralSourceSpan(value));
+    }
+    if (!isStructuralForm(value))
+      return value;
+    const args = value.args.map((argument) => simplifyStructuralValue(argument, options));
+    if (value.head === "Fraction" && args.length === 2) {
+      const numeratorFactors = isStructuralForm(args[0]) && args[0].head === "Product" ? [...args[0].args] : [args[0]];
+      const index = numeratorFactors.findIndex((factor) => structurallyEqual(factor, args[1]) && provablyNonzero(factor, assumptions));
+      if (index !== -1) {
+        numeratorFactors.splice(index, 1);
+        if (numeratorFactors.length === 0)
+          return new Integer(1n);
+        if (numeratorFactors.length === 1)
+          return numeratorFactors[0];
+        return structuralForm("Product", numeratorFactors, value.mode);
+      }
+    }
+    return structuralForm(value.head, args, value.mode, structuralSourceSpan(value));
+  }
+
   // rix/src/eval/functions/symbolic.js
   var BINARY_TEXT = new Map([
     ["ADD", "+"],
@@ -12398,7 +13092,7 @@ ${indentStr})`;
     return Object.fromEntries(Object.entries(node).map(([key, value]) => [key, cloneIr(value)]));
   };
   var cloneIr = cloneSymbolicIr;
-  function rixString2(value) {
+  function rixString(value) {
     return { type: "string", value: String(value) };
   }
   function rixTuple(values) {
@@ -12421,7 +13115,7 @@ ${indentStr})`;
       value._ext = new Map;
     value._ext.set("_spec", spec);
     if (kind)
-      value._ext.set("_symbolicKind", rixString2(kind));
+      value._ext.set("_symbolicKind", rixString(kind));
     return value;
   }
   function expressionOf(spec) {
@@ -12591,21 +13285,27 @@ ${indentStr})`;
   }
   function serializeIr(node) {
     if (!node?.fn)
-      return rixString2(String(node));
-    if (node.fn === "LITERAL")
-      return rixMap([["kind", rixString2("number")], ["value", rixString2(node.args[0])]]);
+      return rixString(String(node));
+    if (node.fn === "LITERAL") {
+      const text = String(node.args[0]);
+      return rixMap([
+        ["kind", rixString("number")],
+        ["value", rixString(text)],
+        .../^-?\d+$/.test(text) ? [["integer", new Integer(BigInt(text))]] : []
+      ]);
+    }
     if (node.fn === "RETRIEVE")
-      return rixMap([["kind", rixString2("identifier")], ["name", rixString2(node.args[0])]]);
+      return rixMap([["kind", rixString("identifier")], ["name", rixString(node.args[0])]]);
     if (node.fn === "OUTER_RETRIEVE")
-      return rixMap([["kind", rixString2("outer")], ["name", rixString2(node.args[0])]]);
+      return rixMap([["kind", rixString("outer")], ["name", rixString(node.args[0])]]);
     if (node.fn === "NEG")
-      return rixMap([["kind", rixString2("unary")], ["op", rixString2("-")], ["expr", serializeIr(node.args[0])]]);
+      return rixMap([["kind", rixString("unary")], ["op", rixString("-")], ["expr", serializeIr(node.args[0])]]);
     if (node.fn === "NOT")
-      return rixMap([["kind", rixString2("unary")], ["op", rixString2("NOT")], ["expr", serializeIr(node.args[0])]]);
+      return rixMap([["kind", rixString("unary")], ["op", rixString("NOT")], ["expr", serializeIr(node.args[0])]]);
     const op = DISPLAY_BINARY_TEXT.get(node.fn);
     if (op)
-      return rixMap([["kind", rixString2("binary")], ["op", rixString2(op)], ["left", serializeIr(node.args[0])], ["right", serializeIr(node.args[1])]]);
-    return rixMap([["kind", rixString2("ir")], ["fn", rixString2(node.fn)], ["args", rixTuple(node.args.map(serializeIr))]]);
+      return rixMap([["kind", rixString("binary")], ["op", rixString(op)], ["left", serializeIr(node.args[0])], ["right", serializeIr(node.args[1])]]);
+    return rixMap([["kind", rixString("ir")], ["fn", rixString(node.fn)], ["args", rixTuple(node.args.map(serializeIr))]]);
   }
   function inspectSymbolicSpec(spec) {
     const inspectExpression = spec.expression ? serializeIr(spec.expression) : spec.statements.length === 1 && spec.statements[0].kind === "define" ? serializeIr(spec.statements[0].expr) : null;
@@ -12613,21 +13313,21 @@ ${indentStr})`;
     const definitions = spec.statements.filter((statement) => statement.kind === "define");
     const constraints = spec.statements.filter((statement) => statement.kind === "constraint");
     return rixMap([
-      ["kind", rixString2("systemSpec")],
-      ["syntax", rixString2("#")],
-      ["form", rixString2(outputModeOf(spec))],
-      ["source", rixString2(formatSymbolicSpec(spec))],
-      ["inputs", rixTuple(spec.inputs.map(rixString2))],
-      ["outputs", rixTuple(spec.outputs.map(rixString2))],
-      ["symbols", rixTuple(symbols2.map(rixString2))],
+      ["kind", rixString("systemSpec")],
+      ["syntax", rixString("#")],
+      ["form", rixString(outputModeOf(spec))],
+      ["source", rixString(formatSymbolicSpec(spec))],
+      ["inputs", rixTuple(spec.inputs.map(rixString))],
+      ["outputs", rixTuple(spec.outputs.map(rixString))],
+      ["symbols", rixTuple(symbols2.map(rixString))],
       ["definitions", rixTuple(definitions.map((statement) => rixMap([
-        ["target", rixString2(statement.target)],
+        ["target", rixString(statement.target)],
         ["expr", serializeIr(statement.expr)]
       ])))],
       ["constraints", rixTuple(constraints.map((statement) => serializeIr(statement.expr)))],
       ["statements", rixTuple(spec.statements.map((statement) => rixMap([
-        ["kind", rixString2(statement.kind)],
-        ...statement.target ? [["target", rixString2(statement.target)]] : [],
+        ["kind", rixString(statement.kind)],
+        ...statement.target ? [["target", rixString(statement.target)]] : [],
         ["expr", serializeIr(statement.expr)]
       ])))],
       ["expression", inspectExpression]
@@ -12734,11 +13434,11 @@ ${indentStr})`;
   function rationalToIr(value) {
     return value.denominator === 1n ? literal(value.numerator) : ir("DIV", literal(value.numerator), literal(value.denominator));
   }
-  function isZero2(node) {
+  function isZero3(node) {
     const value = rationalFromIr(node);
     return Boolean(value && value.numerator === 0n);
   }
-  function isOne2(node) {
+  function isOne3(node) {
     const value = rationalFromIr(node);
     return Boolean(value && value.numerator === value.denominator);
   }
@@ -12748,35 +13448,35 @@ ${indentStr})`;
   }
   function binary(fn, left, right) {
     if (fn === "ADD") {
-      if (isZero2(left))
+      if (isZero3(left))
         return right;
-      if (isZero2(right))
+      if (isZero3(right))
         return left;
     }
     if (fn === "SUB") {
-      if (isZero2(right))
+      if (isZero3(right))
         return left;
-      if (isZero2(left))
+      if (isZero3(left))
         return neg(right);
     }
     if (fn === "MUL") {
-      if (isZero2(left) || isZero2(right))
+      if (isZero3(left) || isZero3(right))
         return literal(0);
-      if (isOne2(left))
+      if (isOne3(left))
         return right;
-      if (isOne2(right))
+      if (isOne3(right))
         return left;
     }
     if (fn === "DIV") {
-      if (isZero2(left))
+      if (isZero3(left))
         return literal(0);
-      if (isOne2(right))
+      if (isOne3(right))
         return left;
     }
     if (fn === "POW") {
-      if (isZero2(right))
+      if (isZero3(right))
         return literal(1);
-      if (isOne2(right))
+      if (isOne3(right))
         return left;
     }
     const a = rationalFromIr(left), b = rationalFromIr(right);
@@ -13001,10 +13701,10 @@ ${indentStr})`;
   function symbolicRolesValue(value, overrides = null) {
     const roles = resolveSymbolicRoles(value, overrides);
     return rixMap([
-      ["symbols", rixTuple(roles.symbols.map(rixString2))],
-      ["inputs", rixTuple(roles.inputs.map(rixString2))],
-      ["outputs", rixTuple(roles.outputs.map(rixString2))],
-      ["unassigned", rixTuple(roles.unassigned.map(rixString2))]
+      ["symbols", rixTuple(roles.symbols.map(rixString))],
+      ["inputs", rixTuple(roles.inputs.map(rixString))],
+      ["outputs", rixTuple(roles.outputs.map(rixString))],
+      ["unassigned", rixTuple(roles.unassigned.map(rixString))]
     ]);
   }
   function unionScopes(groups, referencedNames = null) {
@@ -13180,7 +13880,7 @@ ${indentStr})`;
     for (const [power, coefficient] of right) {
       const incoming = subtract ? neg(cloneIr(coefficient)) : cloneIr(coefficient);
       result.set(power, result.has(power) ? binary("ADD", result.get(power), incoming) : incoming);
-      if (isZero2(result.get(power)))
+      if (isZero3(result.get(power)))
         result.delete(power);
     }
     return result;
@@ -13192,7 +13892,7 @@ ${indentStr})`;
         const power = leftPower + rightPower;
         const coefficient = binary("MUL", cloneIr(leftCoefficient), cloneIr(rightCoefficient));
         result.set(power, result.has(power) ? binary("ADD", result.get(power), coefficient) : coefficient);
-        if (isZero2(result.get(power)))
+        if (isZero3(result.get(power)))
           result.delete(power);
       }
     }
@@ -13245,7 +13945,7 @@ ${indentStr})`;
     if (power === 0n)
       return { negative, expression: magnitude };
     const powered = power === 1n ? cloneIr(basis) : ir("POW", cloneIr(basis), literal(power));
-    return { negative, expression: isOne2(magnitude) ? powered : ir("MUL", magnitude, powered) };
+    return { negative, expression: isOne3(magnitude) ? powered : ir("MUL", magnitude, powered) };
   }
   function polynomialToIr(polynomial, basis) {
     const powers = Array.from(polynomial.keys()).sort((a, b) => a > b ? -1 : a < b ? 1 : 0);
@@ -13309,7 +14009,7 @@ ${indentStr})`;
         }
         const existing = remainder.get(targetPower) || literal(0);
         const next = binary("SUB", existing, binary("MUL", cloneIr(coefficient), cloneIr(divisorCoefficient)));
-        if (isZero2(next))
+        if (isZero3(next))
           remainder.delete(targetPower);
         else
           remainder.set(targetPower, next);
@@ -13378,7 +14078,7 @@ ${indentStr})`;
     let expression = null;
     for (let index = 0;index < remainders.length; index++) {
       const remainder = polynomialToIr(remainders[index], retrieve(variable));
-      if (isZero2(remainder))
+      if (isZero3(remainder))
         continue;
       const term = signedTerm(remainder, base.expression, BigInt(index));
       if (expression === null)
@@ -13510,9 +14210,9 @@ ${indentStr})`;
     const result = attached ? { speccable: true, profile: "attached", spec: attached } : analyzeCallable(value);
     const entries = [["speccable", result.speccable ? new Integer(1n) : null]];
     if (result.profile)
-      entries.push(["profile", rixString2(result.profile)]);
+      entries.push(["profile", rixString(result.profile)]);
     if (result.reason)
-      entries.push(["reason", rixString2(result.reason)]);
+      entries.push(["reason", rixString(result.reason)]);
     if (result.spec)
       entries.push(["spec", result.spec]);
     return rixMap(entries);
@@ -13546,8 +14246,36 @@ ${indentStr})`;
       impl: ([value]) => combineSymbolic("NEG", value)
     });
   }
+  function polynomialVariableValue(value) {
+    if (value === null || value === undefined)
+      return null;
+    if (typeof value === "string")
+      return value;
+    if (value?.type === "string")
+      return value.value;
+    throw new Error("Poly structural variable must be a colon-string or string");
+  }
+  function compilePolynomialValue(args, context) {
+    const [value, variableValue = null] = args;
+    if (value?.type?.startsWith?.("structural_") || value?.constructor?.name === "Fraction") {
+      const symbols2 = sortedStructuralFreeSymbols(value);
+      const requested = polynomialVariableValue(variableValue);
+      const variable = requested ?? (symbols2.length === 1 ? symbols2[0] : symbols2.length === 0 ? "x" : null);
+      if (!variable) {
+        throw new Error(`Poly structural form has multiple symbols (${symbols2.join(", ")}); select one explicitly`);
+      }
+      return polyFromSpec(createSymbolicSpec({
+        inputs: [variable],
+        outputMode: "expression",
+        expression: structuralValueToIr(value),
+        origin: ".Poly structural compiler",
+        __closureScopes: context?.getEnv?.("__embedded_caller_scopes__", null) || context?.captureClosureScopes?.() || []
+      }, context));
+    }
+    return polyFromSpec(getAttachedSpec(value) || value);
+  }
   var symbolicCapabilities = {
-    POLY: { impl: ([value]) => polyFromSpec(getAttachedSpec(value) || value), pure: true, doc: "Compile a single-output symbolic spec into an exact callable" },
+    POLY: { impl: (args, context) => compilePolynomialValue(args, context), pure: true, doc: "Compile a symbolic spec or structural arithmetic form into an exact callable" },
     DERIV: { impl: ([value, variable]) => calculus(value, variable, "Deriv"), pure: true, doc: "Differentiate a symbolic spec or spec-backed function exactly" },
     INTEGRATE: { impl: ([value, variable]) => calculus(value, variable, "Integrate"), pure: true, doc: "Integrate a supported symbolic spec or spec-backed function exactly" },
     TRANSFORM: { impl: (args) => transformValue(args), pure: true, doc: "Apply ordered exact symbolic transformations" },
@@ -20012,1295 +20740,6 @@ ${formatOutputText(slide, format)}`).join(`
     };
   }
 
-  // rix/src/runtime/structural-arithmetic.js
-  var DEFAULT_BINARY = {
-    ":": { precedence: 70, associativity: "left", head: "Interval" },
-    "+": { precedence: 80, associativity: "left", head: "Sum" },
-    "-": { precedence: 80, associativity: "left", head: "Difference" },
-    "*": { precedence: 90, associativity: "left", head: "Product" },
-    "/": { precedence: 90, associativity: "left", head: "Fraction" },
-    "^": { precedence: 100, associativity: "right", head: "Power" }
-  };
-  var DEFAULT_PREFIX = {
-    "+": { precedence: 99, head: "Positive" },
-    "-": { precedence: 99, head: "Negative" }
-  };
-  var DEFAULT_POSTFIX = {
-    "!": { precedence: 120, head: "Factorial" }
-  };
-  var PREFIX_PRECEDENCE = 99;
-  var POSTFIX_PRECEDENCE = 120;
-  var IMPLICIT_MULTIPLICATION_PRECEDENCE = 95;
-  var STRUCTURAL_SPANS = new WeakMap;
-  var STRUCTURAL_GROUPED = new WeakSet;
-  function createStructuralOperatorTable(declarations = []) {
-    const table = {
-      binary: { ...DEFAULT_BINARY },
-      prefix: { ...DEFAULT_PREFIX },
-      postfix: { ...DEFAULT_POSTFIX }
-    };
-    for (const declaration of declarations) {
-      const symbol = declaration?.symbol;
-      const fixity = String(declaration?.fixity || "infix").toLowerCase();
-      const head = declaration?.head;
-      if (!symbol || !head)
-        throw new Error("Structural operator declarations require symbol and head");
-      if (fixity === "infix" || fixity === "binary") {
-        table.binary[symbol] = {
-          precedence: Number(declaration.precedence ?? 80),
-          associativity: String(declaration.associativity || "left").toLowerCase(),
-          head,
-          apply: declaration.apply || null
-        };
-        if (!["left", "right"].includes(table.binary[symbol].associativity)) {
-          throw new Error(`Invalid associativity for structural operator '${symbol}'`);
-        }
-      } else if (fixity === "prefix") {
-        table.prefix[symbol] = {
-          precedence: Number(declaration.precedence ?? PREFIX_PRECEDENCE),
-          head,
-          apply: declaration.apply || null
-        };
-      } else if (fixity === "postfix") {
-        table.postfix[symbol] = {
-          precedence: Number(declaration.precedence ?? POSTFIX_PRECEDENCE),
-          head,
-          apply: declaration.apply || null
-        };
-      } else {
-        throw new Error(`Invalid fixity '${declaration.fixity}' for structural operator '${symbol}'`);
-      }
-    }
-    return Object.freeze({
-      binary: Object.freeze(table.binary),
-      prefix: Object.freeze(table.prefix),
-      postfix: Object.freeze(table.postfix)
-    });
-  }
-  var DEFAULT_OPERATORS = createStructuralOperatorTable();
-  function compareNames(left, right) {
-    if (left < right)
-      return -1;
-    if (left > right)
-      return 1;
-    return 0;
-  }
-  function parseError(source, offset, message) {
-    const before = source.slice(0, offset);
-    const line = before.split(`
-`).length;
-    const lastNewline = before.lastIndexOf(`
-`);
-    const column = offset - lastNewline;
-    return new Error(`SArith parse error at ${line}:${column}: ${message}`);
-  }
-  function token(type, value, start, end, gapBefore) {
-    return { type, value, start, end, gapBefore };
-  }
-  function skipTrivia(source, start) {
-    let position = start;
-    let skipped = false;
-    while (position < source.length) {
-      if (/\s/u.test(source[position])) {
-        skipped = true;
-        position++;
-        continue;
-      }
-      if (source.startsWith("##", position)) {
-        skipped = true;
-        position += 2;
-        while (position < source.length && source[position] !== `
-`)
-          position++;
-        continue;
-      }
-      if (source.startsWith("/*", position)) {
-        skipped = true;
-        const close = source.indexOf("*/", position + 2);
-        if (close === -1)
-          throw parseError(source, position, "unclosed block comment");
-        position = close + 2;
-        continue;
-      }
-      break;
-    }
-    return { position, skipped };
-  }
-  function scanRiXExpression(source, atPosition) {
-    const segment = source.slice(atPosition + 1);
-    const rixTokens = tokenize(segment);
-    let depth = 0;
-    for (const current of rixTokens) {
-      if (current.type !== "Symbol")
-        continue;
-      if (current.value === "(") {
-        depth++;
-        continue;
-      }
-      if (current.value !== ")")
-        continue;
-      depth--;
-      if (depth === 0) {
-        return {
-          body: segment.slice(1, current.pos[1]),
-          end: atPosition + 1 + current.pos[2]
-        };
-      }
-    }
-    throw parseError(source, atPosition, "unclosed '@(' RiX expression splice");
-  }
-  function tokenizeStructuralArithmetic(source, options = {}) {
-    const operators = options.operators || DEFAULT_OPERATORS;
-    const operatorGlyphs = [
-      ...Object.keys(operators.binary),
-      ...Object.keys(operators.prefix),
-      ...Object.keys(operators.postfix)
-    ].sort((left, right) => right.length - left.length);
-    const tokens = [];
-    let position = 0;
-    let previousEnd = 0;
-    while (position < source.length) {
-      const trivia = skipTrivia(source, position);
-      position = trivia.position;
-      if (position >= source.length)
-        break;
-      const start = position;
-      const gapBefore = trivia.skipped || start > previousEnd;
-      const rest = source.slice(position);
-      if (rest.startsWith("@(")) {
-        const splice = scanRiXExpression(source, position);
-        position = splice.end;
-        tokens.push(token("rix_expression", splice.body, start, position, gapBefore));
-        previousEnd = position;
-        continue;
-      }
-      const numberMatch = scanNumberLiteral(source, position);
-      if (numberMatch) {
-        position = numberMatch.pos[2];
-        tokens.push(token("number", numberMatch.value, start, position, gapBefore));
-        previousEnd = position;
-        continue;
-      }
-      const identifierMatch = rest.match(/^[\p{L}_][\p{L}\p{N}_]*/u);
-      if (identifierMatch) {
-        position += identifierMatch[0].length;
-        tokens.push(token("identifier", identifierMatch[0], start, position, gapBefore));
-        previousEnd = position;
-        continue;
-      }
-      const character = source[position];
-      if ("@()".includes(character)) {
-        position++;
-        const type = character === "(" ? "lparen" : character === ")" ? "rparen" : "at";
-        tokens.push(token(type, character, start, position, gapBefore));
-        previousEnd = position;
-        continue;
-      }
-      const operator = operatorGlyphs.find((glyph) => source.startsWith(glyph, position));
-      if (operator) {
-        position += operator.length;
-        tokens.push(token("operator", operator, start, position, gapBefore));
-        previousEnd = position;
-        continue;
-      }
-      throw parseError(source, position, `unexpected character '${character}'`);
-    }
-    tokens.push(token("end", null, source.length, source.length, source.length > previousEnd));
-    return tokens;
-  }
-  function isStructuralSymbol(value) {
-    return value?.type === "structural_symbol";
-  }
-  function isStructuralForm(value) {
-    return value?.type === "structural_form";
-  }
-  function isStructuralLiteral(value) {
-    return value?.type === "structural_literal";
-  }
-  function isStructuralAlgebra(value) {
-    return value?.type === "structural_algebra";
-  }
-  function rememberSpan(value, span) {
-    if (value && typeof value === "object" && span)
-      STRUCTURAL_SPANS.set(value, Object.freeze({ ...span }));
-    return value;
-  }
-  function structuralSourceSpan(value) {
-    return STRUCTURAL_SPANS.get(value) || value?.span || null;
-  }
-  function combinedSpan(left, right, fallback = null) {
-    const leftSpan = structuralSourceSpan(left);
-    const rightSpan = structuralSourceSpan(right);
-    if (leftSpan && rightSpan)
-      return { start: leftSpan.start, end: rightSpan.end };
-    return fallback;
-  }
-  function structuralSymbol(name, span = null) {
-    return rememberSpan(Object.freeze({
-      type: "structural_symbol",
-      name,
-      ...span ? { span: Object.freeze({ ...span }) } : {}
-    }), span);
-  }
-  function structuralLiteral(kind, notation, value, span = null) {
-    return rememberSpan(Object.freeze({
-      type: "structural_literal",
-      kind,
-      notation,
-      value,
-      ...span ? { span: Object.freeze({ ...span }) } : {}
-    }), span);
-  }
-  function structuralAlgebra(profile, components, mode = "construct", span = null) {
-    const value = Object.freeze({
-      type: "structural_algebra",
-      profile: profile.name,
-      basis: Object.freeze([...profile.basis]),
-      components: Object.freeze([...components]),
-      mode,
-      ...span ? { span: Object.freeze({ ...span }) } : {}
-    });
-    return rememberSpan(value, span);
-  }
-  function structuralForm(head, args, mode = "construct", span = null) {
-    let normalized = [...args];
-    if ((head === "Sum" || head === "Product") && normalized.some((argument) => isStructuralForm(argument) && argument.head === head && argument.mode === mode && !STRUCTURAL_GROUPED.has(argument))) {
-      normalized = normalized.flatMap((argument) => isStructuralForm(argument) && argument.head === head && argument.mode === mode && !STRUCTURAL_GROUPED.has(argument) ? argument.args : [argument]);
-    }
-    const form = Object.freeze({
-      type: "structural_form",
-      head,
-      args: Object.freeze(normalized),
-      mode,
-      ...span ? { span: Object.freeze({ ...span }) } : {}
-    });
-    return rememberSpan(form, span);
-  }
-  function integerValue(value) {
-    if (value instanceof Integer)
-      return value.value;
-    if (value instanceof Rational && value.denominator === 1n)
-      return value.numerator;
-    return null;
-  }
-  function asFraction(value) {
-    value = semanticLiteralValue(value);
-    if (value instanceof Fraction)
-      return value;
-    const integer2 = integerValue(value);
-    return integer2 === null ? null : new Fraction(integer2, 1n);
-  }
-  function isZero3(value) {
-    value = semanticLiteralValue(value);
-    if (value instanceof Integer)
-      return value.value === 0n;
-    if (value instanceof Rational)
-      return value.numerator === 0n;
-    if (value instanceof Fraction)
-      return value.numerator === 0n;
-    return false;
-  }
-  function isOne3(value) {
-    value = semanticLiteralValue(value);
-    if (value instanceof Integer)
-      return value.value === 1n;
-    if (value instanceof Rational)
-      return value.numerator === value.denominator;
-    if (value instanceof Fraction)
-      return value.numerator === value.denominator;
-    return false;
-  }
-  function liftStructuralValue(value) {
-    if (value instanceof Integer || value instanceof Fraction || value instanceof CertifiedApproximation || value instanceof RationalInterval || isStructuralSymbol(value) || isStructuralLiteral(value) || isStructuralAlgebra(value) || isStructuralForm(value)) {
-      return value;
-    }
-    if (value instanceof Rational) {
-      return value.denominator === 1n ? new Integer(value.numerator) : new Fraction(value.numerator, value.denominator);
-    }
-    return Object.freeze({ type: "structural_value", value });
-  }
-  function literalKind(text4) {
-    if (text4.includes("?"))
-      return "CertifiedApproximation";
-    if (text4.includes(".."))
-      return "MixedNumber";
-    if (text4.includes(".~"))
-      return "ContinuedFraction";
-    if (/^~?(?:0z\[\d+\]|0[A-Za-z])/u.test(text4))
-      return "BasedNumber";
-    if (text4.includes("[") || text4.includes("]"))
-      return "UncertaintyInterval";
-    return null;
-  }
-  function literalValue(text4, options = {}, span = null) {
-    let value;
-    try {
-      value = parseNumber(text4);
-    } catch (coreError) {
-      if (!options.evaluateRiX)
-        throw coreError;
-      value = options.evaluateRiX(text4);
-    }
-    const lifted = liftStructuralValue(value);
-    const kind = literalKind(text4);
-    if (kind)
-      return structuralLiteral(kind, text4, lifted, span);
-    return rememberSpan(lifted, span);
-  }
-  function constructBinary(operator, left, right, span = null, table = DEFAULT_BINARY) {
-    if (operator === "/") {
-      const numerator = integerValue(left);
-      const denominator = integerValue(right);
-      if (numerator !== null && denominator !== null) {
-        return new Fraction(numerator, denominator);
-      }
-    }
-    return structuralForm(table[operator].head, [left, right], "construct", span);
-  }
-  function constructPrefix(operator, operand2, span = null, info = DEFAULT_PREFIX[operator]) {
-    if (!info)
-      throw new Error(`Unknown structural prefix operator '${operator}'`);
-    return structuralForm(info.head, [operand2], "construct", span);
-  }
-  function constructPostfix(operator, operand2, span = null, info = DEFAULT_POSTFIX[operator]) {
-    if (!info)
-      throw new Error(`Unknown structural postfix operator '${operator}'`);
-    return structuralForm(info.head, [operand2], "construct", span);
-  }
-  function applyAdd(left, right) {
-    left = semanticLiteralValue(left);
-    right = semanticLiteralValue(right);
-    if (isZero3(left))
-      return right;
-    if (isZero3(right))
-      return left;
-    if (left instanceof Integer && right instanceof Integer)
-      return left.add(right);
-    if (left instanceof RationalInterval || right instanceof RationalInterval) {
-      return exactArithmeticValue(left).add(exactArithmeticValue(right));
-    }
-    const leftFraction = asFraction(left);
-    const rightFraction = asFraction(right);
-    if (leftFraction && rightFraction && leftFraction.denominator === rightFraction.denominator) {
-      return leftFraction.add(rightFraction);
-    }
-    if (leftFraction && rightFraction) {
-      const gcd2 = greatestCommonDivisor(leftFraction.denominator, rightFraction.denominator);
-      const denominator = leftFraction.denominator / gcd2 * rightFraction.denominator;
-      return new Fraction(leftFraction.numerator * (denominator / leftFraction.denominator) + rightFraction.numerator * (denominator / rightFraction.denominator), denominator);
-    }
-    if (leftFraction && right instanceof Integer) {
-      return new Fraction(leftFraction.numerator + right.value * leftFraction.denominator, leftFraction.denominator);
-    }
-    if (left instanceof Integer && rightFraction) {
-      return new Fraction(left.value * rightFraction.denominator + rightFraction.numerator, rightFraction.denominator);
-    }
-    return structuralForm("Sum", [left, right], "apply");
-  }
-  function applySubtract(left, right) {
-    left = semanticLiteralValue(left);
-    right = semanticLiteralValue(right);
-    if (isZero3(right))
-      return left;
-    if (left instanceof Integer && right instanceof Integer)
-      return left.subtract(right);
-    if (left instanceof RationalInterval || right instanceof RationalInterval) {
-      return exactArithmeticValue(left).subtract(exactArithmeticValue(right));
-    }
-    const leftFraction = asFraction(left);
-    const rightFraction = asFraction(right);
-    if (leftFraction && rightFraction && leftFraction.denominator === rightFraction.denominator) {
-      return leftFraction.subtract(rightFraction);
-    }
-    if (leftFraction && rightFraction) {
-      const gcd2 = greatestCommonDivisor(leftFraction.denominator, rightFraction.denominator);
-      const denominator = leftFraction.denominator / gcd2 * rightFraction.denominator;
-      return new Fraction(leftFraction.numerator * (denominator / leftFraction.denominator) - rightFraction.numerator * (denominator / rightFraction.denominator), denominator);
-    }
-    if (leftFraction && right instanceof Integer) {
-      return new Fraction(leftFraction.numerator - right.value * leftFraction.denominator, leftFraction.denominator);
-    }
-    if (left instanceof Integer && rightFraction) {
-      return new Fraction(left.value * rightFraction.denominator - rightFraction.numerator, rightFraction.denominator);
-    }
-    return structuralForm("Difference", [left, right], "apply");
-  }
-  function applyMultiply(left, right) {
-    left = semanticLiteralValue(left);
-    right = semanticLiteralValue(right);
-    if (isZero3(left) || isZero3(right))
-      return new Integer(0n);
-    if (isOne3(left))
-      return right;
-    if (isOne3(right))
-      return left;
-    if (left instanceof Integer && right instanceof Integer)
-      return left.multiply(right);
-    if (left instanceof RationalInterval || right instanceof RationalInterval) {
-      return exactArithmeticValue(left).multiply(exactArithmeticValue(right));
-    }
-    const leftFraction = asFraction(left);
-    const rightFraction = asFraction(right);
-    if (leftFraction && rightFraction)
-      return leftFraction.multiply(rightFraction);
-    return structuralForm("Product", [left, right], "apply");
-  }
-  function applyDivide(left, right) {
-    left = semanticLiteralValue(left);
-    right = semanticLiteralValue(right);
-    if (isZero3(right))
-      throw new Error("Structural division by zero");
-    if (isOne3(right))
-      return left;
-    if (left instanceof RationalInterval || right instanceof RationalInterval) {
-      return exactArithmeticValue(left).divide(exactArithmeticValue(right));
-    }
-    const leftFraction = asFraction(left);
-    const rightFraction = asFraction(right);
-    if (leftFraction && rightFraction)
-      return leftFraction.divide(rightFraction);
-    return structuralForm("Fraction", [left, right], "apply");
-  }
-  function applyPower(left, right) {
-    left = semanticLiteralValue(left);
-    right = semanticLiteralValue(right);
-    const exponent = integerValue(right);
-    if (exponent === 0n)
-      return new Integer(1n);
-    if (exponent === 1n)
-      return left;
-    if (exponent !== null && left instanceof Integer)
-      return left.pow(exponent);
-    if (exponent !== null && left instanceof Fraction)
-      return left.pow(exponent);
-    return structuralForm("Power", [left, right], "apply");
-  }
-  function applyStructuralBinary(operator, left, right) {
-    if (operator === ":") {
-      left = semanticLiteralValue(left);
-      right = semanticLiteralValue(right);
-      const leftRational = toRational(left);
-      const rightRational = toRational(right);
-      if (leftRational && rightRational)
-        return new RationalInterval(leftRational, rightRational);
-      return structuralForm("Interval", [left, right], "apply");
-    }
-    if (operator === "+")
-      return applyAdd(left, right);
-    if (operator === "-")
-      return applySubtract(left, right);
-    if (operator === "*")
-      return applyMultiply(left, right);
-    if (operator === "/")
-      return applyDivide(left, right);
-    if (operator === "^")
-      return applyPower(left, right);
-    throw new Error(`Unknown structural binary operator '${operator}'`);
-  }
-  function applyStructuralPrefix(operator, operand2) {
-    operand2 = semanticLiteralValue(operand2);
-    if (operator === "+")
-      return operand2;
-    if (operator === "-") {
-      if (operand2 instanceof Integer)
-        return operand2.negate();
-      if (operand2 instanceof Fraction)
-        return new Fraction(-operand2.numerator, operand2.denominator);
-      return structuralForm("Negative", [operand2], "apply");
-    }
-    throw new Error(`Unknown structural prefix operator '${operator}'`);
-  }
-  function applyStructuralPostfix(operator, operand2) {
-    operand2 = semanticLiteralValue(operand2);
-    if (operator === "!") {
-      if (operand2 instanceof Integer)
-        return operand2.factorial();
-      return structuralForm("Factorial", [operand2], "apply");
-    }
-    throw new Error(`Unknown structural postfix operator '${operator}'`);
-  }
-  function applyConfiguredBinary(operator, info, left, right) {
-    if (info.apply)
-      return info.apply(left, right);
-    if (DEFAULT_BINARY[operator])
-      return applyStructuralBinary(operator, left, right);
-    return structuralForm(info.head, [semanticLiteralValue(left), semanticLiteralValue(right)], "apply");
-  }
-  function applyConfiguredPrefix(operator, info, operand2) {
-    if (info.apply)
-      return info.apply(operand2);
-    if (DEFAULT_PREFIX[operator])
-      return applyStructuralPrefix(operator, operand2);
-    return structuralForm(info.head, [semanticLiteralValue(operand2)], "apply");
-  }
-  function applyConfiguredPostfix(operator, info, operand2) {
-    if (info.apply)
-      return info.apply(operand2);
-    if (DEFAULT_POSTFIX[operator])
-      return applyStructuralPostfix(operator, operand2);
-    return structuralForm(info.head, [semanticLiteralValue(operand2)], "apply");
-  }
-  function startsOperand(current) {
-    return current.type === "number" || current.type === "identifier" || current.type === "rix_expression" || current.type === "at" || current.type === "lparen";
-  }
-
-  class StructuralParser {
-    constructor(source, context, options = {}) {
-      this.source = source;
-      this.context = context;
-      this.evaluateRiX = options.evaluateRiX || null;
-      this.operators = options.operators || DEFAULT_OPERATORS;
-      this.binary = this.operators.binary;
-      this.prefix = this.operators.prefix;
-      this.postfix = this.operators.postfix;
-      this.tokens = tokenizeStructuralArithmetic(source, { operators: this.operators });
-      this.index = 0;
-      this.groupedValues = new WeakSet;
-      this.tightPrefixValues = new WeakSet;
-    }
-    get current() {
-      return this.tokens[this.index];
-    }
-    get next() {
-      return this.tokens[this.index + 1];
-    }
-    advance() {
-      const current = this.current;
-      this.index++;
-      return current;
-    }
-    error(tokenValue, message) {
-      throw parseError(this.source, tokenValue?.start ?? this.source.length, message);
-    }
-    parse() {
-      if (this.current.type === "end")
-        this.error(this.current, "empty structural expression");
-      const value = this.parseExpression(0);
-      if (this.current.type !== "end") {
-        this.error(this.current, `unexpected token '${this.current.value}'`);
-      }
-      return value;
-    }
-    parseExpression(minimumPrecedence) {
-      let left = this.parsePrefix();
-      while (true) {
-        if (this.current.type === "operator" && this.postfix[this.current.value]) {
-          const info = this.postfix[this.current.value];
-          if (info.precedence < minimumPrecedence)
-            break;
-          const operator = this.advance();
-          const span = {
-            start: structuralSourceSpan(left)?.start ?? operator.start,
-            end: operator.end
-          };
-          left = rememberSpan(operator.gapBefore ? applyConfiguredPostfix(operator.value, info, left) : constructPostfix(operator.value, left, span, info), span);
-          continue;
-        }
-        if (this.current.type === "operator" && this.binary[this.current.value]) {
-          const operator = this.current;
-          const info = this.binary[operator.value];
-          if (info.precedence < minimumPrecedence)
-            break;
-          const gapAfter = this.next?.gapBefore === true;
-          if (operator.gapBefore !== gapAfter) {
-            this.error(operator, `operator '${operator.value}' must either touch both operands or be separated from both`);
-          }
-          this.advance();
-          if (operator.value === "^" && !operator.gapBefore && this.tightPrefixValues.has(left) && !this.groupedValues.has(left)) {
-            this.error(operator, `ambiguous tight prefix and power; use '${left.head === "Positive" ? "+" : "-"} x^n' or parenthesize the base`);
-          }
-          let rightMinimum = info.associativity === "right" ? info.precedence : info.precedence + 1;
-          if (operator.value === "/" && !operator.gapBefore) {
-            rightMinimum = Math.max(rightMinimum, IMPLICIT_MULTIPLICATION_PRECEDENCE + 1);
-          }
-          const right = this.parseExpression(rightMinimum);
-          if (operator.value === "/" && !operator.gapBefore && isStructuralForm(right) && (right.head === "Power" || Object.values(this.postfix).some((postfix) => postfix.head === right.head)) && !this.groupedValues.has(right)) {
-            this.error(operator, "ambiguous tight fraction denominator; parenthesize the fraction or its denominator");
-          }
-          const span = combinedSpan(left, right, { start: operator.start, end: operator.end });
-          left = rememberSpan(operator.gapBefore ? applyConfiguredBinary(operator.value, info, left, right) : constructBinary(operator.value, left, right, span, this.binary), span);
-          continue;
-        }
-        if (startsOperand(this.current)) {
-          if (IMPLICIT_MULTIPLICATION_PRECEDENCE < minimumPrecedence)
-            break;
-          const right = this.parseExpression(IMPLICIT_MULTIPLICATION_PRECEDENCE + 1);
-          left = structuralForm("Product", [left, right], "construct", combinedSpan(left, right));
-          continue;
-        }
-        break;
-      }
-      return left;
-    }
-    parsePrefix() {
-      const current = this.current;
-      if (current.type === "number") {
-        this.advance();
-        return literalValue(current.value, { evaluateRiX: this.evaluateRiX }, {
-          start: current.start,
-          end: current.end
-        });
-      }
-      if (current.type === "identifier") {
-        this.advance();
-        return structuralSymbol(current.value, { start: current.start, end: current.end });
-      }
-      if (current.type === "rix_expression") {
-        this.advance();
-        if (!this.evaluateRiX) {
-          this.error(current, "'@(expression)' requires an active RiX evaluator");
-        }
-        return rememberSpan(liftStructuralValue(this.evaluateRiX(current.value)), {
-          start: current.start,
-          end: current.end
-        });
-      }
-      if (current.type === "at") {
-        this.advance();
-        if (this.current.type !== "identifier") {
-          this.error(this.current, "'@' must be followed by an outer identifier");
-        }
-        const name = this.advance().value;
-        const value = this.context?.get?.(name);
-        if (value === undefined) {
-          this.error(current, `undefined outer value '@${name}'`);
-        }
-        return rememberSpan(liftStructuralValue(value), { start: current.start, end: this.tokens[this.index - 1].end });
-      }
-      if (current.type === "lparen") {
-        const open = this.advance();
-        const value = this.parseExpression(0);
-        if (this.current.type !== "rparen") {
-          this.error(this.current, "expected closing parenthesis");
-        }
-        const close = this.advance();
-        if (value !== null && typeof value === "object") {
-          this.groupedValues.add(value);
-          STRUCTURAL_GROUPED.add(value);
-          rememberSpan(value, { start: open.start, end: close.end });
-        }
-        return value;
-      }
-      if (current.type === "operator" && this.prefix[current.value]) {
-        const operator = this.advance();
-        const info = this.prefix[operator.value];
-        const separated = this.current.gapBefore === true;
-        const operand2 = this.parseExpression(separated ? this.prefix[operator.value]?.precedence ?? PREFIX_PRECEDENCE : (this.binary["^"]?.precedence ?? 100) + 1);
-        if (!separated && isStructuralForm(operand2) && Object.values(this.postfix).some((postfix) => postfix.head === operand2.head) && !this.groupedValues.has(operand2)) {
-          this.error(operator, "ambiguous tight prefix and postfix; parenthesize the prefix or its operand");
-        }
-        const span = {
-          start: operator.start,
-          end: structuralSourceSpan(operand2)?.end ?? operator.end
-        };
-        const result = separated ? applyConfiguredPrefix(operator.value, info, operand2) : constructPrefix(operator.value, operand2, span, info);
-        rememberSpan(result, span);
-        if (!separated && result !== null && typeof result === "object") {
-          this.tightPrefixValues.add(result);
-        }
-        return result;
-      }
-      this.error(current, `expected an operand, got '${current.value ?? "end"}'`);
-    }
-  }
-  function integerComponent(value) {
-    const integer2 = integerValue(value);
-    return integer2 === null ? null : integer2;
-  }
-  function componentAdd(left, right, mode) {
-    if (isZero3(left))
-      return right;
-    if (isZero3(right))
-      return left;
-    return mode === "apply" ? applyStructuralBinary("+", left, right) : structuralForm("Sum", [left, right], "construct", combinedSpan(left, right));
-  }
-  function componentSubtract(left, right, mode) {
-    if (isZero3(right))
-      return left;
-    if (isZero3(left))
-      return componentNegate(right, mode);
-    return mode === "apply" ? applyStructuralBinary("-", left, right) : structuralForm("Difference", [left, right], "construct", combinedSpan(left, right));
-  }
-  function componentMultiply(left, right, mode) {
-    if (isZero3(left) || isZero3(right))
-      return new Integer(0n);
-    if (isOne3(left))
-      return right;
-    if (isOne3(right))
-      return left;
-    return mode === "apply" ? applyStructuralBinary("*", left, right) : structuralForm("Product", [left, right], "construct", combinedSpan(left, right));
-  }
-  function componentNegate(value, mode) {
-    if (isZero3(value))
-      return value;
-    if (value instanceof Integer)
-      return value.negate();
-    if (value instanceof Fraction)
-      return new Fraction(-value.numerator, value.denominator);
-    if (value instanceof Rational)
-      return value.negate();
-    return mode === "apply" ? applyStructuralPrefix("-", value) : structuralForm("Negative", [value], "construct", structuralSourceSpan(value));
-  }
-  function zeroComponents(length) {
-    return Array.from({ length }, () => new Integer(0n));
-  }
-  function conjugateIntegerComponents(components) {
-    if (components.length === 1)
-      return [...components];
-    const half = components.length / 2;
-    return [
-      ...conjugateIntegerComponents(components.slice(0, half)),
-      ...components.slice(half).map((value) => -value)
-    ];
-  }
-  function addIntegerComponents(left, right) {
-    return left.map((value, index) => value + right[index]);
-  }
-  function subtractIntegerComponents(left, right) {
-    return left.map((value, index) => value - right[index]);
-  }
-  function multiplyIntegerComponents(left, right) {
-    if (left.length === 1)
-      return [left[0] * right[0]];
-    const half = left.length / 2;
-    const a = left.slice(0, half);
-    const b = left.slice(half);
-    const c = right.slice(0, half);
-    const d = right.slice(half);
-    return [
-      ...subtractIntegerComponents(multiplyIntegerComponents(a, c), multiplyIntegerComponents(conjugateIntegerComponents(d), b)),
-      ...addIntegerComponents(multiplyIntegerComponents(d, a), multiplyIntegerComponents(b, conjugateIntegerComponents(c)))
-    ];
-  }
-  function cayleyMultiplicationTable(dimension) {
-    return Array.from({ length: dimension }, (_, leftIndex) => Array.from({ length: dimension }, (_2, rightIndex) => {
-      const left = Array.from({ length: dimension }, (_value, index) => index === leftIndex ? 1 : 0);
-      const right = Array.from({ length: dimension }, (_value, index) => index === rightIndex ? 1 : 0);
-      const result = multiplyIntegerComponents(left, right);
-      const resultIndex = result.findIndex((value) => value !== 0);
-      return resultIndex === -1 ? { index: 0, sign: 0 } : { index: resultIndex, sign: result[resultIndex] };
-    }));
-  }
-  function createStructuralAlgebraProfile(name, basis, options = {}) {
-    if (!name)
-      throw new Error("Structural algebra profile requires a name");
-    if (!Array.isArray(basis) || new Set(basis).size !== basis.length) {
-      throw new Error("Structural algebra profile basis names must be a unique array");
-    }
-    const dimension = basis.length + 1;
-    const multiplication = options.cayleyDickson ? cayleyMultiplicationTable(dimension) : options.multiplication || null;
-    return Object.freeze({
-      name,
-      basis: Object.freeze([...basis]),
-      multiplication
-    });
-  }
-  var STRUCTURAL_ALGEBRA_PROFILES = Object.freeze({
-    Complex: createStructuralAlgebraProfile("Complex", ["i"], { cayleyDickson: true }),
-    Quaternion: createStructuralAlgebraProfile("Quaternion", ["i", "j", "k"], { cayleyDickson: true }),
-    Octonion: createStructuralAlgebraProfile("Octonion", ["e1", "e2", "e3", "e4", "e5", "e6", "e7"], { cayleyDickson: true })
-  });
-  function algebraScalar(value, profile) {
-    return {
-      components: [value, ...zeroComponents(profile.basis.length)],
-      usesBasis: false,
-      mode: "construct",
-      unsupported: false
-    };
-  }
-  function algebraUnit(index, profile, span) {
-    const components = zeroComponents(profile.basis.length + 1);
-    components[index + 1] = rememberSpan(new Integer(1n), span);
-    return { components, usesBasis: true, mode: "construct", unsupported: false };
-  }
-  function addAlgebraStates(left, right, mode, subtract = false) {
-    return {
-      components: left.components.map((value, index) => subtract ? componentSubtract(value, right.components[index], mode) : componentAdd(value, right.components[index], mode)),
-      usesBasis: left.usesBasis || right.usesBasis,
-      mode,
-      unsupported: false
-    };
-  }
-  function scaleAlgebraState(state, scalar, mode) {
-    return {
-      components: state.components.map((component) => componentMultiply(component, scalar, mode)),
-      usesBasis: state.usesBasis,
-      mode,
-      unsupported: false
-    };
-  }
-  function multiplyAlgebraStates(left, right, profile, mode) {
-    if (!profile.multiplication)
-      return null;
-    const result = zeroComponents(profile.basis.length + 1);
-    for (let leftIndex = 0;leftIndex < left.components.length; leftIndex++) {
-      for (let rightIndex = 0;rightIndex < right.components.length; rightIndex++) {
-        const rule = profile.multiplication[leftIndex]?.[rightIndex];
-        if (!rule || rule.sign === 0)
-          continue;
-        let term = componentMultiply(left.components[leftIndex], right.components[rightIndex], mode);
-        if (rule.sign < 0)
-          term = componentNegate(term, mode);
-        result[rule.index] = componentAdd(result[rule.index], term, mode);
-      }
-    }
-    return {
-      components: result,
-      usesBasis: left.usesBasis || right.usesBasis,
-      mode,
-      unsupported: false
-    };
-  }
-  function rebuildForm(value, arguments_) {
-    return structuralForm(value.head, arguments_, value.mode, structuralSourceSpan(value));
-  }
-  function algebraState(value, profile) {
-    if (isStructuralAlgebra(value)) {
-      if (value.profile !== profile.name || value.basis.length !== profile.basis.length || value.basis.some((name, index) => name !== profile.basis[index])) {
-        return algebraScalar(value, profile);
-      }
-      return {
-        components: [...value.components],
-        usesBasis: true,
-        mode: value.mode,
-        unsupported: false
-      };
-    }
-    if (isStructuralSymbol(value)) {
-      const basisIndex = profile.basis.indexOf(value.name);
-      return basisIndex === -1 ? algebraScalar(value, profile) : algebraUnit(basisIndex, profile, structuralSourceSpan(value));
-    }
-    if (!isStructuralForm(value))
-      return algebraScalar(value, profile);
-    const states = value.args.map((argument) => algebraState(argument, profile));
-    if (states.some((state) => state.unsupported)) {
-      return {
-        ...algebraScalar(value, profile),
-        unsupported: true
-      };
-    }
-    const anyBasis = states.some((state) => state.usesBasis);
-    if (!anyBasis) {
-      return algebraScalar(rebuildForm(value, states.map((state) => state.components[0])), profile);
-    }
-    if (value.head === "Sum") {
-      return states.slice(1).reduce((left, right) => addAlgebraStates(left, right, value.mode), states[0]);
-    }
-    if (value.head === "Difference" && states.length === 2) {
-      return addAlgebraStates(states[0], states[1], value.mode, true);
-    }
-    if ((value.head === "Negative" || value.head === "Positive") && states.length === 1) {
-      return value.head === "Positive" ? states[0] : {
-        components: states[0].components.map((component) => componentNegate(component, value.mode)),
-        usesBasis: true,
-        mode: value.mode,
-        unsupported: false
-      };
-    }
-    if (value.head === "Product") {
-      if (value.mode === "construct") {
-        const basisStates = states.filter((state) => state.usesBasis);
-        if (basisStates.length === 1) {
-          const scalars = states.filter((state) => !state.usesBasis).map((state) => state.components[0]);
-          const scalar = scalars.reduce((left, right) => componentMultiply(left, right, "construct"), new Integer(1n));
-          return scaleAlgebraState(basisStates[0], scalar, "construct");
-        }
-      } else if (profile.multiplication) {
-        return states.slice(1).reduce((left, right) => multiplyAlgebraStates(left, right, profile, "apply"), states[0]);
-      }
-    }
-    if (value.head === "Fraction" && value.mode === "apply" && states.length === 2 && !states[1].usesBasis) {
-      const denominator = states[1].components[0];
-      return {
-        components: states[0].components.map((component) => applyStructuralBinary("/", component, denominator)),
-        usesBasis: states[0].usesBasis,
-        mode: "apply",
-        unsupported: false
-      };
-    }
-    if (value.head === "Power" && value.mode === "apply" && states.length === 2 && states[0].usesBasis && !states[1].usesBasis && profile.multiplication) {
-      const exponent = integerComponent(states[1].components[0]);
-      if (exponent !== null && exponent >= 0n) {
-        let result = algebraScalar(new Integer(1n), profile);
-        let factor = states[0];
-        let remaining = exponent;
-        while (remaining > 0n) {
-          if (remaining % 2n === 1n) {
-            result = multiplyAlgebraStates(result, factor, profile, "apply");
-          }
-          remaining /= 2n;
-          if (remaining > 0n)
-            factor = multiplyAlgebraStates(factor, factor, profile, "apply");
-        }
-        result.usesBasis = exponent > 0n;
-        result.mode = "apply";
-        return result;
-      }
-    }
-    return {
-      ...algebraScalar(rebuildForm(value, value.args), profile),
-      unsupported: true
-    };
-  }
-  function interpretStructuralAlgebra(value, profile) {
-    const state = algebraState(value, profile);
-    if (state.unsupported)
-      return state.components[0];
-    if (!state.usesBasis)
-      return state.components[0];
-    const onlyReal = state.components.slice(1).every(isZero3);
-    if (state.mode === "apply" && onlyReal)
-      return state.components[0];
-    return structuralAlgebra(profile, state.components, state.mode, structuralSourceSpan(value));
-  }
-  function parseStructuralArithmetic(source, context, options = {}) {
-    const value = new StructuralParser(String(source), context, options).parse();
-    return options.algebraProfile ? interpretStructuralAlgebra(value, options.algebraProfile) : value;
-  }
-  function structuralFreeSymbols(value, names = new Set) {
-    if (isStructuralSymbol(value)) {
-      names.add(value.name);
-      return names;
-    }
-    if (isStructuralForm(value)) {
-      for (const argument of value.args)
-        structuralFreeSymbols(argument, names);
-    }
-    if (isStructuralAlgebra(value)) {
-      for (const component of value.components)
-        structuralFreeSymbols(component, names);
-    }
-    return names;
-  }
-  function sortedStructuralFreeSymbols(value) {
-    return [...structuralFreeSymbols(value)].sort(compareNames);
-  }
-  function resolveStructuralValue(value, context) {
-    if (isStructuralSymbol(value)) {
-      const resolved = context?.get?.(value.name);
-      if (resolved === undefined) {
-        throw new Error(`Undefined structural function argument: ${value.name}`);
-      }
-      return liftStructuralValue(resolved);
-    }
-    if (isStructuralLiteral(value))
-      return value;
-    if (isStructuralAlgebra(value)) {
-      const profile = createStructuralAlgebraProfile(value.profile, value.basis, {
-        cayleyDickson: ["Complex", "Quaternion", "Octonion"].includes(value.profile)
-      });
-      return structuralAlgebra(profile, value.components.map((component) => resolveStructuralValue(component, context)), value.mode, structuralSourceSpan(value));
-    }
-    if (!isStructuralForm(value))
-      return value;
-    const args = value.args.map((argument) => resolveStructuralValue(argument, context));
-    if (value.mode === "construct") {
-      if (value.head === "Sum")
-        return structuralForm("Sum", args, "construct");
-      if (value.head === "Difference")
-        return constructBinary("-", args[0], args[1]);
-      if (value.head === "Product")
-        return structuralForm("Product", args, "construct");
-      if (value.head === "Fraction")
-        return constructBinary("/", args[0], args[1]);
-      if (value.head === "Power")
-        return constructBinary("^", args[0], args[1]);
-      if (value.head === "Positive")
-        return constructPrefix("+", args[0]);
-      if (value.head === "Negative")
-        return constructPrefix("-", args[0]);
-      if (value.head === "Factorial")
-        return constructPostfix("!", args[0]);
-      if (value.head === "Interval")
-        return constructBinary(":", args[0], args[1]);
-      return structuralForm(value.head, args, "construct");
-    }
-    if (value.head === "Sum")
-      return args.slice(1).reduce((result, argument) => applyStructuralBinary("+", result, argument), args[0]);
-    if (value.head === "Difference")
-      return applyStructuralBinary("-", args[0], args[1]);
-    if (value.head === "Product")
-      return args.slice(1).reduce((result, argument) => applyStructuralBinary("*", result, argument), args[0]);
-    if (value.head === "Fraction")
-      return applyStructuralBinary("/", args[0], args[1]);
-    if (value.head === "Power")
-      return applyStructuralBinary("^", args[0], args[1]);
-    if (value.head === "Positive")
-      return applyStructuralPrefix("+", args[0]);
-    if (value.head === "Negative")
-      return applyStructuralPrefix("-", args[0]);
-    if (value.head === "Factorial")
-      return applyStructuralPostfix("!", args[0]);
-    if (value.head === "Interval")
-      return applyStructuralBinary(":", args[0], args[1]);
-    return structuralForm(value.head, args, "apply");
-  }
-  function createStructuralFunction(value, context, name = null, explicitSymbols = null) {
-    const symbols2 = explicitSymbols || sortedStructuralFreeSymbols(value);
-    return {
-      type: "lambda",
-      ...name ? { name } : {},
-      params: {
-        positional: symbols2.map((symbol) => ({ name: symbol, holeDefault: null })),
-        keyword: [],
-        conditionals: [],
-        prep: [],
-        prepStrict: false,
-        metadata: {}
-      },
-      body: { fn: "SARITH_FUNCTION_BODY", args: [value] },
-      __closureScopes: context?.captureClosureScopes?.() || []
-    };
-  }
-  function structuralValueToIr(value) {
-    if (isStructuralLiteral(value))
-      return structuralValueToIr(value.value);
-    if (isStructuralAlgebra(value)) {
-      if (value.components.slice(1).every(isZero3))
-        return structuralValueToIr(value.components[0]);
-      throw new Error(`Structural ${value.profile} form cannot be represented by scalar symbolic IR`);
-    }
-    if (isStructuralSymbol(value))
-      return { fn: "RETRIEVE", args: [value.name] };
-    if (value instanceof Integer)
-      return { fn: "LITERAL", args: [value.value.toString()] };
-    if (value instanceof Fraction) {
-      return {
-        fn: "DIV",
-        args: [
-          { fn: "LITERAL", args: [value.numerator.toString()] },
-          { fn: "LITERAL", args: [value.denominator.toString()] }
-        ]
-      };
-    }
-    if (value instanceof Rational) {
-      if (value.denominator === 1n) {
-        return { fn: "LITERAL", args: [value.numerator.toString()] };
-      }
-      return {
-        fn: "DIV",
-        args: [
-          { fn: "LITERAL", args: [value.numerator.toString()] },
-          { fn: "LITERAL", args: [value.denominator.toString()] }
-        ]
-      };
-    }
-    if (value instanceof RationalInterval) {
-      return {
-        fn: "INTERVAL",
-        args: [structuralValueToIr(value.start), structuralValueToIr(value.end)]
-      };
-    }
-    if (value?.type === "structural_value") {
-      return structuralValueToIr(value.value);
-    }
-    if (!isStructuralForm(value)) {
-      throw new Error("Structural value cannot be represented by the exact symbolic IR");
-    }
-    const args = value.args.map(structuralValueToIr);
-    const heads = {
-      Sum: "ADD",
-      Difference: "SUB",
-      Product: "MUL",
-      Fraction: "DIV",
-      Power: "POW",
-      Negative: "NEG",
-      Positive: null,
-      Factorial: "FACTORIAL",
-      Interval: "INTERVAL"
-    };
-    if (!Object.prototype.hasOwnProperty.call(heads, value.head)) {
-      throw new Error(`Structural form '${value.head}' cannot be represented by the exact symbolic IR`);
-    }
-    const fn = heads[value.head];
-    if (!fn)
-      return args[0];
-    if ((fn === "ADD" || fn === "MUL") && args.length > 2) {
-      return args.slice(1).reduce((left, right) => ({ fn, args: [left, right] }), args[0]);
-    }
-    return { fn, args };
-  }
-  function formatStructuralValue(value, formatChild = String) {
-    if (isStructuralSymbol(value))
-      return value.name;
-    if (isStructuralLiteral(value))
-      return value.notation;
-    if (isStructuralAlgebra(value)) {
-      const label = value.profile === "Algebra" ? `Algebra[${value.basis.join(",")}]` : value.profile;
-      return `${label}(${value.components.map((component) => formatStructuralValue(component, formatChild)).join(", ")})`;
-    }
-    if (value?.type === "structural_value")
-      return `Value(${formatChild(value.value)})`;
-    if (!isStructuralForm(value))
-      return formatChild(value);
-    return `${value.head}(${value.args.map((argument) => formatStructuralValue(argument, formatChild)).join(", ")})`;
-  }
-  function greatestCommonDivisor(left, right) {
-    let a = left < 0n ? -left : left;
-    let b = right < 0n ? -right : right;
-    while (b !== 0n)
-      [a, b] = [b, a % b];
-    return a;
-  }
-  function semanticLiteralValue(value) {
-    return isStructuralLiteral(value) ? value.value : value;
-  }
-  function toRational(value) {
-    if (value instanceof Integer)
-      return value.toRational();
-    if (value instanceof Rational)
-      return value;
-    if (value instanceof Fraction)
-      return new Rational(value.numerator, value.denominator);
-    return null;
-  }
-  function exactArithmeticValue(value) {
-    return value instanceof Fraction ? new Rational(value.numerator, value.denominator) : value;
-  }
-  function collapseStructuralValue(value, context = null) {
-    if (isStructuralLiteral(value))
-      return collapseStructuralValue(value.value, context);
-    if (value?.type === "structural_value")
-      return collapseStructuralValue(value.value, context);
-    if (isStructuralSymbol(value)) {
-      const resolved = context?.get?.(value.name);
-      return resolved === undefined ? value : collapseStructuralValue(liftStructuralValue(resolved), context);
-    }
-    if (isStructuralAlgebra(value)) {
-      const components = value.components.map((component) => collapseStructuralValue(component, context));
-      if (components.slice(1).every(isZero3))
-        return components[0];
-      const profile = createStructuralAlgebraProfile(value.profile, value.basis, {
-        cayleyDickson: ["Complex", "Quaternion", "Octonion"].includes(value.profile)
-      });
-      return structuralAlgebra(profile, components, "apply", structuralSourceSpan(value));
-    }
-    if (!isStructuralForm(value)) {
-      return value instanceof Fraction ? new Rational(value.numerator, value.denominator) : value;
-    }
-    const args = value.args.map((argument) => collapseStructuralValue(argument, context));
-    if (value.head === "Sum")
-      return args.slice(1).reduce((result, argument) => applyStructuralBinary("+", result, argument), args[0]);
-    if (value.head === "Difference")
-      return applyStructuralBinary("-", args[0], args[1]);
-    if (value.head === "Product")
-      return args.slice(1).reduce((result, argument) => applyStructuralBinary("*", result, argument), args[0]);
-    if (value.head === "Fraction")
-      return applyStructuralBinary("/", args[0], args[1]);
-    if (value.head === "Power")
-      return applyStructuralBinary("^", args[0], args[1]);
-    if (value.head === "Positive")
-      return applyStructuralPrefix("+", args[0]);
-    if (value.head === "Negative")
-      return applyStructuralPrefix("-", args[0]);
-    if (value.head === "Factorial")
-      return applyStructuralPostfix("!", args[0]);
-    if (value.head === "Interval")
-      return applyStructuralBinary(":", args[0], args[1]);
-    return structuralForm(value.head, args, "apply");
-  }
-  function inspectStructuralValue(value) {
-    if (isStructuralSymbol(value)) {
-      return { type: "map", entries: new Map([
-        ["kind", { type: "string", value: "symbol" }],
-        ["name", { type: "string", value: value.name }],
-        ["span", spanValue(structuralSourceSpan(value))]
-      ]) };
-    }
-    if (isStructuralLiteral(value)) {
-      return { type: "map", entries: new Map([
-        ["kind", { type: "string", value: "literal" }],
-        ["head", { type: "string", value: value.kind }],
-        ["notation", { type: "string", value: value.notation }],
-        ["value", value.value],
-        ["span", spanValue(structuralSourceSpan(value))]
-      ]) };
-    }
-    if (isStructuralAlgebra(value)) {
-      return { type: "map", entries: new Map([
-        ["kind", { type: "string", value: "algebra" }],
-        ["head", { type: "string", value: value.profile }],
-        ["basis", { type: "sequence", values: value.basis.map((name) => ({ type: "string", value: name })) }],
-        ["components", { type: "sequence", values: [...value.components] }],
-        ["mode", { type: "string", value: value.mode }],
-        ["span", spanValue(structuralSourceSpan(value))]
-      ]) };
-    }
-    if (isStructuralForm(value)) {
-      return { type: "map", entries: new Map([
-        ["kind", { type: "string", value: "form" }],
-        ["head", { type: "string", value: value.head }],
-        ["mode", { type: "string", value: value.mode }],
-        ["arguments", { type: "sequence", values: [...value.args] }],
-        ["span", spanValue(structuralSourceSpan(value))]
-      ]) };
-    }
-    return { type: "map", entries: new Map([
-      ["kind", { type: "string", value: "value" }],
-      ["value", value],
-      ["span", spanValue(structuralSourceSpan(value))]
-    ]) };
-  }
-  function spanValue(span) {
-    if (!span)
-      return null;
-    return { type: "map", entries: new Map([
-      ["start", new Integer(BigInt(span.start + 1))],
-      ["end", new Integer(BigInt(span.end + 1))]
-    ]) };
-  }
-  function structurallyEqual(left, right) {
-    if (left === right)
-      return true;
-    if (isStructuralSymbol(left) && isStructuralSymbol(right))
-      return left.name === right.name;
-    if (isStructuralLiteral(left) && isStructuralLiteral(right))
-      return left.notation === right.notation;
-    if (left instanceof Integer && right instanceof Integer)
-      return left.value === right.value;
-    if (left instanceof Fraction && right instanceof Fraction) {
-      return left.numerator === right.numerator && left.denominator === right.denominator;
-    }
-    if (!isStructuralForm(left) || !isStructuralForm(right))
-      return false;
-    return left.head === right.head && left.mode === right.mode && left.args.length === right.args.length && left.args.every((argument, index) => structurallyEqual(argument, right.args[index]));
-  }
-  function provablyNonzero(value, assumptions) {
-    const semantic = semanticLiteralValue(value);
-    if (semantic instanceof Integer)
-      return semantic.value !== 0n;
-    if (semantic instanceof Fraction || semantic instanceof Rational)
-      return semantic.numerator !== 0n;
-    if (isStructuralSymbol(value))
-      return assumptions.has(value.name);
-    return false;
-  }
-  function simplifyStructuralValue(value, options = {}) {
-    const assumptions = new Set(options.nonzero || []);
-    if (isStructuralAlgebra(value)) {
-      const profile = createStructuralAlgebraProfile(value.profile, value.basis, {
-        cayleyDickson: ["Complex", "Quaternion", "Octonion"].includes(value.profile)
-      });
-      return structuralAlgebra(profile, value.components.map((component) => simplifyStructuralValue(component, options)), value.mode, structuralSourceSpan(value));
-    }
-    if (!isStructuralForm(value))
-      return value;
-    const args = value.args.map((argument) => simplifyStructuralValue(argument, options));
-    if (value.head === "Fraction" && args.length === 2) {
-      const numeratorFactors = isStructuralForm(args[0]) && args[0].head === "Product" ? [...args[0].args] : [args[0]];
-      const index = numeratorFactors.findIndex((factor) => structurallyEqual(factor, args[1]) && provablyNonzero(factor, assumptions));
-      if (index !== -1) {
-        numeratorFactors.splice(index, 1);
-        if (numeratorFactors.length === 0)
-          return new Integer(1n);
-        if (numeratorFactors.length === 1)
-          return numeratorFactors[0];
-        return structuralForm("Product", numeratorFactors, value.mode);
-      }
-    }
-    return structuralForm(value.head, args, value.mode, structuralSourceSpan(value));
-  }
-
   // rix/src/eval/format.js
   function tensorValueAtTuple(tensor, tuple) {
     const value = tensor.data[tensorOffsetForTuple(tensor, tuple)];
@@ -25090,7 +24529,7 @@ ${indented.join(`,
   function bool2(flag) {
     return flag ? int6(1) : null;
   }
-  function stringValue3(value) {
+  function stringValue2(value) {
     if (value?.type === "string")
       return value.value;
     if (value === null || value === undefined)
@@ -25119,8 +24558,8 @@ ${indented.join(`,
     return { [countName]: safeExactNumber(value, label) };
   }
   function localeNumberString(target, options) {
-    const decimal = stringValue3(optionValue(options, "decimal", stringObj3(".")));
-    const group = stringValue3(optionValue(options, "group", stringObj3("_")));
+    const decimal = stringValue2(optionValue(options, "decimal", stringObj3(".")));
+    const group = stringValue2(optionValue(options, "group", stringObj3("_")));
     const groupSizeValue = optionValue(options, "groupsize", new Integer(3n));
     const groupSize = safeExactNumber(groupSizeValue, "Locale group size");
     if (groupSize < 1)
@@ -25145,7 +24584,7 @@ ${indented.join(`,
     const repeat = optionValue(options, "userepeatnotation", undefined);
     return {
       ...limit === undefined ? {} : { limit: safeExactNumber(limit, "Repeating-decimal limit") },
-      ...onLimit === undefined ? {} : { onLimit: stringValue3(onLimit) },
+      ...onLimit === undefined ? {} : { onLimit: stringValue2(onLimit) },
       ...repeat === undefined ? {} : { useRepeatNotation: truthy2(repeat) }
     };
   }
@@ -25357,10 +24796,10 @@ ${indented.join(`,
     return values.slice(start - 1, end - 1);
   }
   function charsOf(value) {
-    return Array.from(stringValue3(value)).map((char) => stringObj3(char));
+    return Array.from(stringValue2(value)).map((char) => stringObj3(char));
   }
   function fromChars(chars) {
-    return stringObj3(chars.map((char) => stringValue3(char)).join(""));
+    return stringObj3(chars.map((char) => stringValue2(char)).join(""));
   }
   function compareValues(a, b) {
     const ak = valueKey2(a);
@@ -25663,7 +25102,7 @@ ${indented.join(`,
     }),
     JOIN: method4("JOIN", ([target, separator]) => {
       ensureSequence(target, "Join");
-      return stringObj3(target.values.map((value) => stringValue3(value)).join(stringValue3(separator ?? stringObj3(","))));
+      return stringObj3(target.values.map((value) => stringValue2(value)).join(stringValue2(separator ?? stringObj3(","))));
     }),
     PUSH: method4("PUSH", ([target, ...values]) => {
       ensureSequence(target, "Push");
@@ -26298,24 +25737,24 @@ ${indented.join(`,
     }),
     INCLUDES: method4("INCLUDES", ([target, needle]) => {
       ensureString(target, "Includes");
-      return bool2(target.value.includes(stringValue3(needle)));
+      return bool2(target.value.includes(stringValue2(needle)));
     }),
     STARTSWITH: method4("STARTSWITH", ([target, prefix]) => {
       ensureString(target, "StartsWith");
-      return bool2(target.value.startsWith(stringValue3(prefix)));
+      return bool2(target.value.startsWith(stringValue2(prefix)));
     }),
     ENDSWITH: method4("ENDSWITH", ([target, suffix]) => {
       ensureString(target, "EndsWith");
-      return bool2(target.value.endsWith(stringValue3(suffix)));
+      return bool2(target.value.endsWith(stringValue2(suffix)));
     }),
     INDEXOF: method4("INDEXOF", ([target, needle]) => {
       ensureString(target, "IndexOf");
-      const idx = target.value.indexOf(stringValue3(needle));
+      const idx = target.value.indexOf(stringValue2(needle));
       return idx === -1 ? null : int6(idx + 1);
     }),
     LASTINDEXOF: method4("LASTINDEXOF", ([target, needle]) => {
       ensureString(target, "LastIndexOf");
-      const idx = target.value.lastIndexOf(stringValue3(needle));
+      const idx = target.value.lastIndexOf(stringValue2(needle));
       return idx === -1 ? null : int6(idx + 1);
     }),
     SLICE: method4("SLICE", ([target, start, end]) => {
@@ -26324,11 +25763,11 @@ ${indented.join(`,
     }),
     CONCAT: method4("CONCAT", ([target, ...parts]) => {
       ensureString(target, "Concat");
-      return stringObj3([target, ...parts].map((part) => stringValue3(part)).join(""));
+      return stringObj3([target, ...parts].map((part) => stringValue2(part)).join(""));
     }),
     SPLIT: method4("SPLIT", ([target, separator]) => {
       ensureString(target, "Split");
-      const parts = separator === undefined ? Array.from(target.value) : target.value.split(stringValue3(separator));
+      const parts = separator === undefined ? Array.from(target.value) : target.value.split(stringValue2(separator));
       return { type: "sequence", values: parts.map((part) => stringObj3(part)), _ext: mutableExt2() };
     }),
     TRIM: method4("TRIM", ([target]) => {
@@ -26353,19 +25792,19 @@ ${indented.join(`,
     }),
     REPLACE: method4("REPLACE", ([target, search, replacement]) => {
       ensureString(target, "Replace");
-      return stringObj3(target.value.replace(stringValue3(search), stringValue3(replacement)));
+      return stringObj3(target.value.replace(stringValue2(search), stringValue2(replacement)));
     }),
     REPLACEALL: method4("REPLACEALL", ([target, search, replacement]) => {
       ensureString(target, "ReplaceAll");
-      return stringObj3(target.value.split(stringValue3(search)).join(stringValue3(replacement)));
+      return stringObj3(target.value.split(stringValue2(search)).join(stringValue2(replacement)));
     }),
     PADLEFT: method4("PADLEFT", ([target, length, pad]) => {
       ensureString(target, "PadLeft");
-      return stringObj3(target.value.padStart(numericIndex(length), stringValue3(pad ?? stringObj3(" "))));
+      return stringObj3(target.value.padStart(numericIndex(length), stringValue2(pad ?? stringObj3(" "))));
     }),
     PADRIGHT: method4("PADRIGHT", ([target, length, pad]) => {
       ensureString(target, "PadRight");
-      return stringObj3(target.value.padEnd(numericIndex(length), stringValue3(pad ?? stringObj3(" "))));
+      return stringObj3(target.value.padEnd(numericIndex(length), stringValue2(pad ?? stringObj3(" "))));
     }),
     REPEAT: method4("REPEAT", ([target, count]) => {
       ensureString(target, "Repeat");
@@ -26581,8 +26020,8 @@ ${indented.join(`,
     FLOOR: method4("Floor", ([target]) => int6(target.floor())),
     CEIL: method4("Ceil", ([target]) => int6(target.ceil())),
     TRUNC: method4("Trunc", ([target]) => int6(target.trunc())),
-    ROUND: method4("Round", ([target, mode]) => int6(target.round(mode === undefined ? undefined : stringValue3(mode)))),
-    ROUNDTO: method4("RoundTo", ([target, places, mode]) => target.roundTo(safeExactNumber(places, "Decimal places"), mode === undefined ? undefined : stringValue3(mode))),
+    ROUND: method4("Round", ([target, mode]) => int6(target.round(mode === undefined ? undefined : stringValue2(mode)))),
+    ROUNDTO: method4("RoundTo", ([target, places, mode]) => target.roundTo(safeExactNumber(places, "Decimal places"), mode === undefined ? undefined : stringValue2(mode))),
     E: method4("E", ([target, exponent]) => target.E(exactBigInt(exponent, "Exponent"))),
     TOMIXEDSTRING: method4("ToMixedString", ([target]) => stringObj3(target.toMixedString())),
     TODECIMAL: method4("ToDecimal", ([target, options]) => {
@@ -26645,7 +26084,7 @@ ${indented.join(`,
     INTERSECTION: method4("Intersection", ([target, other]) => target.intersection(exactInterval(other, "Other interval"))),
     UNION: method4("Union", ([target, other]) => target.union(exactInterval(other, "Other interval"))),
     SHORTESTDECIMAL: method4("ShortestDecimal", ([target, base]) => target.shortestDecimal(base === undefined ? undefined : exactBigInt(base, "Base"))),
-    DENOMINATORINTERVAL: method4("DenominatorInterval", ([target, denominator, onEmpty]) => target.denominatorInterval(denominator === undefined || denominator === null ? undefined : exactBigInt(denominator, "Grid denominator"), onEmpty === undefined ? undefined : stringValue3(onEmpty))),
+    DENOMINATORINTERVAL: method4("DenominatorInterval", ([target, denominator, onEmpty]) => target.denominatorInterval(denominator === undefined || denominator === null ? undefined : exactBigInt(denominator, "Grid denominator"), onEmpty === undefined ? undefined : stringValue2(onEmpty))),
     RANDOM: method4("Random", ([target, parameters], _context, evaluate) => evaluate({ fn: "RANDOM", args: [target, parameters] })),
     RANDOMPARTITION: method4("RandomPartition", ([target, parameters], _context, evaluate) => evaluate({ fn: "RANDOM_PARTITION", args: [target, parameters] })),
     E: method4("E", ([target, exponent]) => target.E(exactBigInt(exponent, "Exponent"))),
@@ -26656,7 +26095,7 @@ ${indented.join(`,
       const onLimit = optionValue(options, "onlimit", undefined);
       const text4 = target.toRepeatingDecimal(options?.type === "map" ? {
         ...maxDigits === undefined ? {} : { maxDigits: safeExactNumber(maxDigits, "Maximum decimal digits") },
-        ...onLimit === undefined ? {} : { onLimit: stringValue3(onLimit) }
+        ...onLimit === undefined ? {} : { onLimit: stringValue2(onLimit) }
       } : true);
       return text4 === null ? null : stringObj3(text4);
     }),
@@ -26878,7 +26317,8 @@ ${indented.join(`,
   }
   function resolveMethod(target, name, context = null) {
     const ext = target?._ext;
-    const candidates = [name, `__${name}`, `_${name}`];
+    const upperName = String(name).toUpperCase();
+    const candidates = [...new Set([name, upperName, `__${name}`, `_${name}`, `__${upperName}`, `_${upperName}`])];
     const special = checkTraitsMethod(name);
     if (special) {
       return special;
@@ -26948,6 +26388,653 @@ ${indented.join(`,
     }
     refreshRuntimeMetadata(value, proto);
     return value;
+  }
+
+  // rix/src/runtime/system-context.js
+  function firstLetterIsUppercase(name) {
+    for (const character of String(name)) {
+      if (/\p{L}/u.test(character))
+        return character === character.toUpperCase();
+    }
+    return false;
+  }
+  function normalizeCapabilityName(name) {
+    const source = String(name ?? "");
+    if (!source)
+      throw new Error("Capability name must be a non-empty string");
+    return firstLetterIsUppercase(source) ? source.toUpperCase() : source.toLowerCase();
+  }
+  function capabilityNamespace(name) {
+    return firstLetterIsUppercase(name) ? "core" : "host";
+  }
+  function stringValue3(value) {
+    return { type: "string", value: String(value) };
+  }
+  function rixString2(value, label) {
+    if (value?.type === "string")
+      return value.value;
+    if (typeof value === "string")
+      return value;
+    throw new Error(`${label} must be a string`);
+  }
+  function rixStringList(value, label) {
+    if (value === null || value === undefined)
+      return [];
+    const items = value?.values;
+    if (!Array.isArray(items))
+      throw new Error(`${label} must be a sequence of strings`);
+    return items.map((item) => rixString2(item, label));
+  }
+  function namespaceEntry(context, namespace) {
+    const title = namespace === "core" ? "Core" : "Host";
+    const canRegister = (evaluationContext) => {
+      const runtime = evaluationContext?.getEnv?.("__script_runtime__", null);
+      const frame = runtime?.frameStack?.[runtime.frameStack.length - 1];
+      if (namespace === "core") {
+        return !frame && (evaluationContext?.getEnv?.("allowCoreRegister", false) || evaluationContext?.getEnv?.("allowCapabilityRegister", false));
+      }
+      return !frame || frame.permissions?.has("PLUGINS");
+    };
+    const registryContext = namespace === "host" ? context._hostContext : context;
+    const value = {
+      type: "system_namespace",
+      namespace,
+      _ext: new Map
+    };
+    value._ext.set("REGISTER", {
+      type: "method_builtin",
+      name: "Register",
+      impl(args, evaluationContext, _evaluate, callWithConcreteArgs2) {
+        if (!canRegister(evaluationContext)) {
+          throw new Error(`.${title}.Register is not permitted in this execution context`);
+        }
+        const name = rixString2(args[1], `.${title}.Register name`);
+        const callable = args[2];
+        const doc = args[3]?.type === "string" ? args[3].value : "";
+        const groups = rixStringList(args[4], `.${title}.Register groups`);
+        const definition = {
+          impl(callArgs, callContext, callEvaluate) {
+            return callWithConcreteArgs2(callable, callArgs, callContext, callEvaluate);
+          },
+          doc
+        };
+        const register = namespace === "core" ? registryContext.registerTrusted.bind(registryContext) : registryContext.registerHost.bind(registryContext);
+        register(name, definition, { namespace, groups });
+        if (namespace === "host" && registryContext !== context) {
+          context.registerHost(name, definition, { namespace, groups });
+        }
+        return stringValue3(name);
+      }
+    });
+    value._ext.set("REGISTERVALUE", {
+      type: "method_builtin",
+      name: "RegisterValue",
+      impl(args, evaluationContext, _evaluate, invoke) {
+        if (!canRegister(evaluationContext)) {
+          throw new Error(`.${title}.RegisterValue is not permitted in this execution context`);
+        }
+        const name = rixString2(args[1], `.${title}.RegisterValue name`);
+        const registeredValue = args[2];
+        const doc = args[3]?.type === "string" ? args[3].value : "";
+        const groups = rixStringList(args[4], `.${title}.RegisterValue groups`);
+        if (namespace === "core") {
+          context.registerValue(name, registeredValue, { namespace, doc, groups });
+        } else {
+          registryContext.registerHostValue(name, registeredValue, { namespace, doc, groups });
+          if (registryContext !== context) {
+            context.registerHostValue(name, registeredValue, { namespace, doc, groups });
+          }
+        }
+        return stringValue3(name);
+      }
+    });
+    value._ext.set("REGISTERCALLABLEVALUE", {
+      type: "method_builtin",
+      name: "RegisterCallableValue",
+      impl(args, evaluationContext, _evaluate, callWithConcreteArgs2) {
+        if (!canRegister(evaluationContext)) {
+          throw new Error(`.${title}.RegisterCallableValue is not permitted in this execution context`);
+        }
+        const name = rixString2(args[1], `.${title}.RegisterCallableValue name`);
+        const callableValue2 = args[2];
+        const doc = args[3]?.type === "string" ? args[3].value : "";
+        const groups = rixStringList(args[4], `.${title}.RegisterCallableValue groups`);
+        const definition = {
+          impl(callArgs, callContext, callEvaluate) {
+            return callWithConcreteArgs2(callableValue2, callArgs, callContext, callEvaluate);
+          },
+          doc
+        };
+        if (namespace === "core") {
+          context.registerCallableValue(name, callableValue2, definition, { namespace, doc, groups });
+        } else {
+          registryContext.registerHostCallableValue(name, callableValue2, definition, { namespace, doc, groups });
+          if (registryContext !== context) {
+            context.registerHostCallableValue(name, callableValue2, definition, { namespace, doc, groups });
+          }
+        }
+        return stringValue3(name);
+      }
+    });
+    value._ext.set("REGISTERMETHOD", {
+      type: "method_builtin",
+      name: "RegisterMethod",
+      impl(args, evaluationContext, _evaluate, invoke) {
+        if (!canRegister(evaluationContext)) {
+          throw new Error(`.${title}.RegisterMethod is not permitted in this execution context`);
+        }
+        if (namespace !== "host") {
+          throw new Error(".Core.RegisterMethod is not supported; core methods belong in trusted startup code");
+        }
+        const typeName = rixString2(args[1], ".Host.RegisterMethod type");
+        const methodName = rixString2(args[2], ".Host.RegisterMethod name");
+        const callable = args[3];
+        const pluginId = args[4]?.type === "string" ? args[4].value : null;
+        const mount = args[5]?.type === "string" ? args[5].value : null;
+        if (!isCallableValue(callable)) {
+          throw new Error(".Host.RegisterMethod requires a receiver-first callable");
+        }
+        if (builtinMethodNamesForType(typeName).has(methodName.toUpperCase())) {
+          throw new Error(`Method ${methodName} is already built in for ${typeName}`);
+        }
+        const wrapped = {
+          type: "method_builtin",
+          name: methodName,
+          impl(callArgs, callContext, callEvaluate) {
+            const envKey = "__embedded_caller_scopes__";
+            const hadCallerScopes = callContext.env.has(envKey);
+            const priorCallerScopes = callContext.getEnv(envKey, null);
+            callContext.setEnv(envKey, [{
+              bindings: callContext.globalScope,
+              scopedEnv: callContext.globalScopedEnv,
+              isolated: false,
+              readThrough: true,
+              callableBoundary: false
+            }, ...callContext.captureClosureScopes()]);
+            try {
+              return invoke(callable, callArgs, callContext, callEvaluate);
+            } finally {
+              if (hadCallerScopes)
+                callContext.setEnv(envKey, priorCallerScopes);
+              else
+                callContext.env.delete(envKey);
+            }
+          }
+        };
+        registryContext.registerMethod(typeName, methodName, wrapped, { pluginId, mount });
+        if (registryContext !== context) {
+          context.registerMethod(typeName, methodName, wrapped, { pluginId, mount });
+        }
+        return stringValue3(methodName);
+      }
+    });
+    value._ext.set("FIND", {
+      type: "method_builtin",
+      name: "Find",
+      impl(args) {
+        const name = rixString2(args[1], `.${title}.Find name`);
+        const entry = registryContext.get(name);
+        if (!entry || entry.namespace !== namespace)
+          return null;
+        return {
+          type: "map",
+          entries: new Map([
+            ["name", stringValue3(entry.displayName)],
+            ["kind", stringValue3(entry.kind)],
+            ["namespace", stringValue3(entry.namespace)],
+            ["groups", { type: "sequence", values: (entry.groups || []).map(stringValue3) }]
+          ])
+        };
+      }
+    });
+    value._ext.set("LIST", {
+      type: "method_builtin",
+      name: "List",
+      impl() {
+        return {
+          type: "sequence",
+          values: registryContext.getAllEntries({ namespace }).map((entry) => stringValue3(entry.displayName))
+        };
+      }
+    });
+    return value;
+  }
+  function pluginNamespaceEntry(context, catalog) {
+    const hostContext = context._hostContext;
+    const load = (args, evaluationContext) => {
+      const runtime = evaluationContext?.getEnv?.("__script_runtime__", null);
+      const frame = runtime?.frameStack?.[runtime.frameStack.length - 1];
+      if (frame && !frame.permissions?.has("PLUGINS")) {
+        throw new Error(".Plugin.Load is not permitted in this execution context");
+      }
+      const id = rixString2(args[1], ".Plugin.Load name");
+      const loader = evaluationContext?.getEnv?.("__plugin_load_rix__", null);
+      const registry = evaluationContext?.getEnv?.("__registry__", null);
+      return catalog.load(id, {
+        options: args[2],
+        context: evaluationContext,
+        registry,
+        systemContext: hostContext,
+        visibleSystemContext: context,
+        loadRix: loader
+      });
+    };
+    const value = { type: "system_namespace", namespace: "plugin", _ext: new Map };
+    value._ext.set("LOAD", {
+      type: "method_builtin",
+      name: "Load",
+      impl(args, evaluationContext) {
+        return load(args, evaluationContext);
+      }
+    });
+    value._ext.set("LIST", {
+      type: "method_builtin",
+      name: "List",
+      impl() {
+        return { type: "sequence", values: catalog.list().map((metadata) => stringValue3(metadata.id)) };
+      }
+    });
+    value._ext.set("INFO", {
+      type: "method_builtin",
+      name: "Info",
+      impl(args) {
+        return catalog.infoValue(catalog.info(rixString2(args[1], ".Plugin.Info name")));
+      }
+    });
+    return { value, load };
+  }
+
+  class SystemContext {
+    constructor(capabilities = new Map, frozen = false, options = {}) {
+      this._capabilities = new Map;
+      this._groups = new Map;
+      this._frozen = false;
+      this._hostContext = options.hostContext || this;
+      this._pluginCatalog = options.pluginCatalog || null;
+      this._rendererRegistry = options.rendererRegistry || null;
+      this._methodExtensions = options.methodExtensions || new Map;
+      for (const [name, entry] of capabilities) {
+        const normalised = normalizeCapabilityName(name);
+        const inferredKind = entry?.kind || "function";
+        this._capabilities.set(normalised, {
+          ...entry,
+          kind: inferredKind,
+          namespace: entry?.namespace || capabilityNamespace(name),
+          displayName: entry?.displayName || name,
+          groups: [...entry?.groups || []]
+        });
+      }
+      for (const [group, members] of Object.entries(options.groups || {})) {
+        this.registerGroup(group, members);
+      }
+      this._frozen = frozen;
+    }
+    _checkMutable() {
+      if (this._frozen)
+        throw new Error("System context is frozen and cannot be modified");
+    }
+    register(name, def, options = {}) {
+      return this._register(name, def, options, false);
+    }
+    registerTrusted(name, def, options = {}) {
+      return this._register(name, def, { ...options, namespace: "core" }, true);
+    }
+    registerHost(name, def, options = {}) {
+      return this._register(name, def, { ...options, namespace: "host" }, true);
+    }
+    registerCallableValue(name, value, def, options = {}) {
+      return this._registerCallableValue(name, value, def, options, false);
+    }
+    registerHostCallableValue(name, value, def, options = {}) {
+      return this._registerCallableValue(name, value, def, { ...options, namespace: "host" }, true);
+    }
+    _registerCallableValue(name, value, def, options, bypassFrozen) {
+      this._register(name, def, options, bypassFrozen);
+      this._capabilities.get(normalizeCapabilityName(name)).value = value;
+      return this;
+    }
+    _register(name, def, options, bypassFrozen) {
+      if (!bypassFrozen)
+        this._checkMutable();
+      const normalised = normalizeCapabilityName(name);
+      const namespace = options.namespace || capabilityNamespace(name);
+      if (namespace !== capabilityNamespace(name)) {
+        throw new Error(`Capability '${name}' does not use ${namespace === "core" ? "PascalCase" : "camelCase"} namespace spelling`);
+      }
+      const entry = {
+        kind: "function",
+        impl: typeof def === "function" ? def : def.impl,
+        lazy: def?.lazy || false,
+        pure: def?.pure || false,
+        doc: options.doc ?? def?.doc ?? "",
+        namespace,
+        displayName: options.displayName || name,
+        groups: [...new Set(options.groups || def?.groups || [])],
+        pluginId: options.pluginId || def?.pluginId || null,
+        pluginDisabled: options.pluginDisabled === true || def?.pluginDisabled === true,
+        pluginManager: options.pluginManager === true || def?.pluginManager === true
+      };
+      if (typeof entry.impl !== "function") {
+        throw new Error(`Capability '${name}' requires an implementation function`);
+      }
+      this._capabilities.set(normalised, entry);
+      this._addEntryToGroups(normalised, entry.groups);
+      return this;
+    }
+    registerValue(name, value, options = {}) {
+      return this._registerValue(name, value, options, false);
+    }
+    registerHostValue(name, value, options = {}) {
+      return this._registerValue(name, value, { ...options, namespace: "host" }, true);
+    }
+    _registerValue(name, value, options, bypassFrozen) {
+      if (!bypassFrozen)
+        this._checkMutable();
+      const normalised = normalizeCapabilityName(name);
+      const namespace = options.namespace || capabilityNamespace(name);
+      if (namespace !== capabilityNamespace(name)) {
+        throw new Error(`Capability '${name}' does not use ${namespace === "core" ? "PascalCase" : "camelCase"} namespace spelling`);
+      }
+      const entry = {
+        kind: options.kind || "value",
+        value,
+        doc: options.doc || "",
+        namespace,
+        displayName: options.displayName || name,
+        groups: [...new Set(options.groups || [])]
+      };
+      this._capabilities.set(normalised, entry);
+      this._addEntryToGroups(normalised, entry.groups);
+      return this;
+    }
+    registerMethod(typeName, methodName, callable, options = {}) {
+      const typeKey = String(typeName ?? "").replace(/^:/, "").toLowerCase();
+      const methodKey = String(methodName ?? "").replace(/^:/, "").toUpperCase();
+      if (!typeKey)
+        throw new Error("Method registration requires a target type");
+      if (!methodKey)
+        throw new Error("Method registration requires a method name");
+      if (!callable)
+        throw new Error(`Method ${methodName} requires a callable implementation`);
+      let methods = this._methodExtensions.get(typeKey);
+      if (!methods) {
+        methods = new Map;
+        this._methodExtensions.set(typeKey, methods);
+      }
+      if (methods.has(methodKey)) {
+        throw new Error(`Method ${methodName} is already registered for ${typeName}`);
+      }
+      methods.set(methodKey, {
+        callable,
+        typeName: String(typeName),
+        methodName: String(methodName),
+        pluginId: options.pluginId || null,
+        mount: options.mount || null
+      });
+      return this;
+    }
+    resolveMethodExtension(typeNames, methodName) {
+      const methodKey = String(methodName).toUpperCase();
+      for (const typeName of typeNames || []) {
+        const entry = this._methodExtensions.get(String(typeName).replace(/^:/, "").toLowerCase())?.get(methodKey);
+        if (!entry)
+          continue;
+        if (entry.mount && !this.has(entry.mount))
+          continue;
+        return entry;
+      }
+      return null;
+    }
+    registerGroup(name, members = []) {
+      this._checkMutable();
+      const group = String(name);
+      const normalisedMembers = new Set(Array.from(members, normalizeCapabilityName));
+      this._groups.set(group, normalisedMembers);
+      for (const member of normalisedMembers) {
+        const entry = this._capabilities.get(member);
+        if (entry && !entry.groups.includes(group))
+          entry.groups.push(group);
+      }
+      return this;
+    }
+    _addEntryToGroups(name, groups) {
+      for (const group of groups || []) {
+        if (!this._groups.has(group))
+          this._groups.set(group, new Set);
+        this._groups.get(group).add(name);
+      }
+    }
+    registerAll(defs) {
+      for (const [name, def] of Object.entries(defs)) {
+        this.register(name, def);
+      }
+    }
+    delete(name) {
+      this._checkMutable();
+      const normalised = normalizeCapabilityName(name);
+      this._capabilities.delete(normalised);
+      for (const members of this._groups.values())
+        members.delete(normalised);
+    }
+    renameHostCapability(from, to) {
+      const fromKey = normalizeCapabilityName(from);
+      const toKey = normalizeCapabilityName(to);
+      const entry = this._capabilities.get(fromKey);
+      if (!entry || entry.namespace !== "host")
+        throw new Error(`Unknown host capability '${from}'`);
+      if (capabilityNamespace(to) !== "host")
+        throw new Error(`Plugin mount '${to}' must use camelCase host spelling`);
+      if (fromKey !== toKey && this._capabilities.has(toKey))
+        throw new Error(`Host capability '${to}' is already registered`);
+      const renamed = { ...entry, displayName: to };
+      this._capabilities.delete(fromKey);
+      this._capabilities.set(toKey, renamed);
+      for (const members of this._groups.values()) {
+        if (members.delete(fromKey))
+          members.add(toKey);
+      }
+      return this;
+    }
+    addCapabilityGroups(name, groups = []) {
+      const key = normalizeCapabilityName(name);
+      const entry = this._capabilities.get(key);
+      if (!entry)
+        throw new Error(`Unknown capability '${name}'`);
+      for (const group of groups) {
+        if (!entry.groups.includes(group))
+          entry.groups.push(group);
+        if (!this._groups.has(group))
+          this._groups.set(group, new Set);
+        this._groups.get(group).add(key);
+      }
+      return this;
+    }
+    adoptHostCapability(source, name) {
+      const entry = source?.get?.(name);
+      if (!entry || entry.namespace !== "host")
+        throw new Error(`Unknown host capability '${name}'`);
+      if (entry.kind === "function" && Object.prototype.hasOwnProperty.call(entry, "value")) {
+        this.registerHostCallableValue(entry.displayName, entry.value, entry, entry);
+      } else if (Object.prototype.hasOwnProperty.call(entry, "value")) {
+        this.registerHostValue(entry.displayName, entry.value, entry);
+      } else {
+        this.registerHost(entry.displayName, entry, entry);
+      }
+      return this;
+    }
+    aliasHostCapability(alias, target) {
+      const entry = this.get(target);
+      if (!entry || entry.namespace !== "host")
+        throw new Error(`Unknown host capability '${target}'`);
+      if (entry.kind === "function" && Object.prototype.hasOwnProperty.call(entry, "value")) {
+        return this.registerHostCallableValue(alias, entry.value, entry, { ...entry, displayName: alias });
+      }
+      if (Object.prototype.hasOwnProperty.call(entry, "value")) {
+        return this.registerHostValue(alias, entry.value, { ...entry, displayName: alias });
+      }
+      return this.registerHost(alias, entry, { ...entry, displayName: alias });
+    }
+    freeze() {
+      this._frozen = true;
+      return this;
+    }
+    get(name) {
+      return this._capabilities.get(normalizeCapabilityName(name));
+    }
+    has(name) {
+      return this._capabilities.has(normalizeCapabilityName(name));
+    }
+    get frozen() {
+      return this._frozen;
+    }
+    call(name, args, context, evaluate) {
+      const cap = this.get(name);
+      if (!cap)
+        throw new Error(`Unknown system capability: ${name}. Use .${name}() or check available capabilities.`);
+      if (cap.kind !== "function")
+        throw new Error(`System ${cap.kind} .${cap.displayName} is not a capability function`);
+      return cap.impl(args, context, evaluate);
+    }
+    callLazy(name, args, context, evaluate) {
+      const cap = this.get(name);
+      if (!cap)
+        throw new Error(`Unknown system capability: ${name}.`);
+      if (cap.kind !== "function")
+        throw new Error(`System ${cap.kind} .${cap.displayName} is not a capability function`);
+      return cap.impl(args, context, evaluate);
+    }
+    getAllNames() {
+      return Array.from(this._capabilities.keys()).sort();
+    }
+    getAllEntries({ namespace } = {}) {
+      return Array.from(this._capabilities.values()).filter((entry) => !namespace || entry.namespace === namespace).sort((a, b) => a.displayName.localeCompare(b.displayName));
+    }
+    getAllDisplayNames(options = {}) {
+      return this.getAllEntries(options).map((entry) => entry.displayName);
+    }
+    getCapabilityGroups() {
+      return Object.fromEntries(Array.from(this._groups, ([name, members]) => [name, Array.from(members)]));
+    }
+    installManagementNamespaces() {
+      this._checkMutable();
+      if (!this.has("Core")) {
+        this.registerValue("Core", namespaceEntry(this, "core"), {
+          kind: "namespace",
+          doc: "Core capability registration and discovery"
+        });
+      }
+      if (!this.has("Host")) {
+        this.registerValue("Host", namespaceEntry(this, "host"), {
+          kind: "namespace",
+          doc: "Host/plugin capability registration and discovery"
+        });
+      }
+      return this;
+    }
+    attachPluginCatalog(catalog) {
+      this._checkMutable();
+      if (!catalog?.declareInto || !catalog?.list || !catalog?.load) {
+        throw new Error("Plugin catalog must provide declareInto(), list(), and load()");
+      }
+      this._pluginCatalog = catalog;
+      catalog.declareInto(this);
+      const plugin = pluginNamespaceEntry(this, catalog);
+      this.registerCallableValue("Plugin", plugin.value, {
+        impl(args, evaluationContext) {
+          return plugin.load([null, ...args], evaluationContext);
+        }
+      }, {
+        doc: "Discover and load host-approved RiX plugins",
+        pluginManager: true
+      });
+      return this;
+    }
+    attachRendererRegistry(registry, { collection, renderValue } = {}) {
+      this._checkMutable();
+      if (!registry?.register || !registry?.render || !registry?.list) {
+        throw new Error("Renderer registry must provide register(), render(), and list()");
+      }
+      if (!collection || typeof renderValue !== "function") {
+        throw new Error("Renderer attachment requires its core namespace and render adapter");
+      }
+      this._rendererRegistry = registry;
+      this.registerValue("Renderer", collection, {
+        doc: "Discover installed output renderers and their target contracts",
+        groups: ["Renderers"]
+      });
+      this.register("Render", {
+        pure: false,
+        doc: "Render a portable value through an installed target plugin",
+        groups: ["Renderers"],
+        impl(args, evaluationContext, evaluate) {
+          if (args.length < 2 || args.length > 3)
+            throw new Error(".Render expects value, target, and optional options");
+          return renderValue(args[0], args[1], args[2] ?? null, { evaluationContext, evaluate });
+        }
+      });
+      return this;
+    }
+    _rebindManagementNamespaces() {
+      for (const [name, namespace] of [["Core", "core"], ["Host", "host"]]) {
+        const normalised = normalizeCapabilityName(name);
+        const entry = this._capabilities.get(normalised);
+        if (entry?.kind === "namespace") {
+          this._capabilities.set(normalised, { ...entry, value: namespaceEntry(this, namespace) });
+        }
+      }
+      const pluginEntry = this._capabilities.get(normalizeCapabilityName("Plugin"));
+      if (pluginEntry?.pluginManager && this._pluginCatalog) {
+        const plugin = pluginNamespaceEntry(this, this._pluginCatalog);
+        this._capabilities.set(normalizeCapabilityName("Plugin"), {
+          ...pluginEntry,
+          value: plugin.value,
+          impl(args, evaluationContext) {
+            return plugin.load([null, ...args], evaluationContext);
+          }
+        });
+      }
+      return this;
+    }
+    _derivedContext(capabilities, frozen) {
+      const available = new Set(Array.from(capabilities.keys(), normalizeCapabilityName));
+      const groups = Object.fromEntries(Object.entries(this.getCapabilityGroups()).map(([group, members]) => [
+        group,
+        members.filter((name) => available.has(name))
+      ]));
+      const hostContext = this._hostContext === this ? undefined : this._hostContext;
+      return new SystemContext(capabilities, frozen, {
+        groups,
+        hostContext,
+        pluginCatalog: this._pluginCatalog,
+        rendererRegistry: this._rendererRegistry,
+        methodExtensions: this._methodExtensions
+      })._rebindManagementNamespaces();
+    }
+    copy() {
+      return this._derivedContext(new Map(this._capabilities), false);
+    }
+    withhold(...names) {
+      const caps = new Map(this._capabilities);
+      for (const name of names) {
+        caps.delete(normalizeCapabilityName(name));
+      }
+      return this._derivedContext(caps, true);
+    }
+    with(name, def) {
+      const result = this.copy();
+      if (def?.kind === "function" && Object.prototype.hasOwnProperty.call(def || {}, "value")) {
+        result.registerCallableValue(name, def.value, def, def);
+      } else if (def?.kind === "value" || Object.prototype.hasOwnProperty.call(def || {}, "value")) {
+        result.registerValue(name, def.value, def);
+      } else {
+        result.register(name, def, def);
+      }
+      result.freeze();
+      return result;
+    }
+    toRixValue() {
+      return { type: "system_context", context: this };
+    }
   }
 
   // rix/src/runtime/system-manifest.js
@@ -36450,7 +36537,9 @@ ${pad}}`;
   function callRegisteredParser(parserName, body, modifiers, meta, context, evaluate, systemContext) {
     if (!systemContext)
       throw new Error("No system context is available for embedded parsing");
-    const entry = systemContext.get(parserName);
+    const visibleEntry = systemContext.get(parserName);
+    const hostEntry = systemContext._hostContext?.get?.(parserName);
+    const entry = hostEntry && !hostEntry.pluginDisabled ? hostEntry : visibleEntry;
     if (!entry) {
       throw new Error(`Unknown backtick parser '.${parserName}'`);
     }
@@ -36472,10 +36561,27 @@ ${pad}}`;
       },
       parseInfoValue(meta)
     ];
-    if (parseMethod?.type === "method_builtin") {
-      return parseMethod.impl([parserObject, ...callArgs], context, evaluate, callWithConcreteArgs);
+    const envKey = "__embedded_caller_scopes__";
+    const hadCallerScopes = context.env.has(envKey);
+    const priorCallerScopes = context.getEnv(envKey, null);
+    context.setEnv(envKey, [{
+      bindings: context.globalScope,
+      scopedEnv: context.globalScopedEnv,
+      isolated: false,
+      readThrough: true,
+      callableBoundary: false
+    }, ...context.captureClosureScopes()]);
+    try {
+      if (parseMethod?.type === "method_builtin") {
+        return parseMethod.impl([parserObject, ...callArgs], context, evaluate, callWithConcreteArgs);
+      }
+      return callWithConcreteArgs(parseMethod, [parserObject, ...callArgs], context, evaluate);
+    } finally {
+      if (hadCallerScopes)
+        context.setEnv(envKey, priorCallerScopes);
+      else
+        context.env.delete(envKey);
     }
-    return callWithConcreteArgs(parseMethod, [parserObject, ...callArgs], context, evaluate);
   }
   function notationParserCapability(args) {
     const parseFunction = args[0];
@@ -38356,6 +38462,1054 @@ continuedFractionNamespace._proto = {=
 );
 `;
 
+  // rix/plugins/algebraic-real/algebraic-real.plugin.rix
+  var algebraic_real_plugin_default = `/**
+id: algebraic-real
+description: Exact real algebraic roots certified by canonical Polynomial values and Sturm isolating intervals.
+kind: rix
+mount: algebraicReal
+aliases: [ar]
+exports: [Root, Sqrt2, Polynomial, Evaluate, Derivative, SturmSequence, RootCount, IsSquareFree, Refine, Sign, CompareRational, Export, Import]
+groups: [Numerics, Exact, Algebra]
+permissions: []
+requires: [rix.polynomial.algorithms@1]
+provides: [rix.algebraic-real@1, rix.exact-sign@1, rix.refinable@1, rix.enclosable-real@1]
+schemas: [rix.algebraic-real@1, rix.algebraic-real.export@1, rix.polynomial@1]
+snapshot: false
+deterministic: true
+defaultEnabled: false
+**/
+
+AROption(options, key, fallback) -> options.Has(key) ?: options[key] ?_ fallback;
+
+ARRequirePositiveInteger(value, label) -> {;
+    integer = value ~!: :Integer;
+    integer >= 1 ?: integer ?_ .Error(@"@{label} must be a positive Integer");
+};
+
+ARScalarIsZero(value, label ?= "value") -> (value ? :Integer)
+  ?: (value == 0)
+  ?_ ((value ? :Rational)
+       ?: (value.Numerator() == 0)
+       ?_ .Error(@"Expected an exact Integer or Rational @{label}; received @{value}"));
+ARSignOf(value) -> value < 0 ?: -1 ?_ value > 0 ?: 1 ?_ 0;
+
+ARPolynomial(coefficients) -> {;
+    coefficients ? :Array ?: _ ?_ .Error("Algebraic-real polynomials require an Array of coefficients");
+    candidate = .poly({= coefficients=coefficients, order=:ascending, variable=:x });
+    candidate.Degree() >= 1 ?: _ ?_ .Error("Algebraic-real polynomials must have positive degree");
+    canonicalCoefficients = candidate.PrimitiveInteger();
+    polynomial = .poly({= coefficients=canonicalCoefficients, order=:ascending, variable=:x });
+    polynomial.IsSquareFree()
+      ?: polynomial
+      ?_ .Error("Algebraic-real defining polynomial must be square-free");
+};
+
+ARRequirePolynomial(value) -> value ? :Polynomial ?: value ?_ .Error("Expected a Polynomial value");
+ARPolynomialEvaluate(polynomial, point) -> ARRequirePolynomial(polynomial).Evaluate(point ~!: :Rational);
+ARRootCount(polynomial, interval) -> ARRequirePolynomial(polynomial).RootCount(interval);
+
+ARRequireReal(value) -> {;
+    valid = value ? :Map ?: value[:valueKind] == :algebraicReal ?_ _;
+    valid ?: value ?_ .Error("Expected an AlgebraicReal value");
+};
+
+ARCapabilities(real) -> {=
+    valueKind = :numericsCapabilities,
+    schema = "rix.numerics.capabilities@1",
+    backend = :algebraicReal,
+    representation = :squareFreeIntegerPolynomialIsolatingInterval,
+    operations = [:enclose, :refine],
+    evidenceLevels = [:proof],
+    certified = 1,
+    exactSign = 1,
+    exactRationalComparison = 1,
+    arbitraryRefinement = 1,
+    deterministic = 1,
+    minimumWidth = 0,
+    maxCalls = 100000,
+    maxIterations = 100000
+};
+
+ARRefinementState(real, requestedWidth, maxCalls, maxIterations) -> {;
+    polynomial = real[:polynomial];
+    low := real[:interval].Low();
+    high := real[:interval].High();
+    lowValue := polynomial.Evaluate(low);
+    highValue := polynomial.Evaluate(high);
+    calls := 0;
+    iterations := 0;
+    {@ step = 1;
+       ((@high - @low) > @requestedWidth) && (@calls < @maxCalls) && (@iterations < @maxIterations);
+       {;
+           midpoint = (@low + @high) / 2;
+           midpointValue = @polynomial.Evaluate(midpoint);
+           ARScalarIsZero(midpointValue)
+             ?: {;
+                 @low ~= @midpoint;
+                 @high ~= @midpoint;
+                 @lowValue ~= 0;
+                 @highValue ~= 0;
+             }
+             ?_ ARSignOf(@lowValue) == ARSignOf(midpointValue)
+                  ?: {; @low ~= @midpoint; @lowValue ~= @midpointValue; }
+                  ?_ {; @high ~= @midpoint; @highValue ~= @midpointValue; };
+           @calls += 1;
+           @iterations += 1;
+       };
+       step += 1
+    };
+    interval = low:high;
+    {=
+        interval = interval,
+        width = interval.Width(),
+        midpoint = interval.Midpoint(),
+        lowValue = lowValue,
+        highValue = highValue,
+        calls = calls,
+        iterations = iterations
+    };
+};
+
+ARProtocolEnclosure(real, request, operation) -> {;
+    exactReal = ARRequireReal(real);
+    capabilities = ARCapabilities(exactReal);
+    normalized = .RefinementRequest(request, operation, capabilities);
+    requestedWidth = normalized[:absoluteWidth];
+    maxCalls = normalized[:work][:maxCalls];
+    maxIterations = normalized[:work][:maxIterations];
+    state = ARRefinementState(exactReal, requestedWidth, maxCalls, maxIterations);
+    goalMet = state[:width] <= requestedWidth;
+    status = goalMet ?: :enclosed ?_ :budgetExhausted;
+    approximation = .CertifiedApproximation(state[:midpoint], state[:interval], {=
+        reason = status,
+        requested = requestedWidth,
+        achieved = state[:width],
+        provider = :algebraicReal
+    });
+    {=
+        valueKind = :enclosure,
+        schema = "rix.numerics.enclosure@1",
+        status = status,
+        interval = state[:interval],
+        certified = 1,
+        goalMet = goalMet,
+        requestedWidth = requestedWidth,
+        achievedWidth = state[:width],
+        approximation = approximation,
+        evidenceLevel = :proof,
+        backend = :algebraicReal,
+        operation = normalized[:operation],
+        trace = [{=
+            interval=state[:interval],
+            lowValue=state[:lowValue],
+            highValue=state[:highValue],
+            rootCount=1
+        }],
+        work = {=
+            calls=state[:calls],
+            iterations=state[:iterations],
+            maxCalls=maxCalls,
+            maxIterations=maxIterations,
+            exhausted=!goalMet
+        },
+        diagnostics = goalMet ?: [] ?_ [:maxCallsReached],
+        evidence = {=
+            kind=:sturmIsolationWithSignBisection,
+            property=:containment,
+            polynomial=exactReal[:coefficients],
+            rootIndex=exactReal[:rootIndex],
+            rootCount=1
+        },
+        source = {=
+            plugin=:algebraicReal,
+            schema=exactReal[:schema],
+            rootIndex=exactReal[:rootIndex]
+        }
+    };
+};
+
+ARExactSign(real) -> {;
+    exactReal = ARRequireReal(real);
+    interval = exactReal[:interval];
+    interval.High() <= 0
+      ?: :negative
+      ?_ interval.Low() >= 0
+           ?: :positive
+           ?_ {;
+               atZero = @exactReal[:polynomial].Evaluate(0);
+               ARScalarIsZero(atZero)
+                 ?: :zero
+                 ?_ @exactReal[:polynomial].RootCount(@interval.Low():0) == 1
+                      ?: :negative
+                      ?_ :positive;
+           };
+};
+
+ARCompareRational(real, value) -> {;
+    exactReal = ARRequireReal(real);
+    rational = value ~!: :Rational;
+    interval = exactReal[:interval];
+    polynomialValue = exactReal[:polynomial].Evaluate(rational);
+    exactMatch = ARScalarIsZero(polynomialValue) ?: interval.ContainsValue(rational) ?_ _;
+    exactMatch
+      ?: :equal
+      ?_ {;
+          @rational <= @interval.Low()
+            ?: :greater
+            ?_ @rational >= @interval.High()
+                 ?: :less
+                 ?_ @exactReal[:polynomial].RootCount(@interval.Low():@rational) == 1
+                      ?: :less
+                      ?_ :greater;
+      };
+};
+
+ARExport(real) -> {;
+    exactReal = ARRequireReal(real);
+    {=
+        valueKind = :algebraicRealExport,
+        schema = "rix.algebraic-real.export@1",
+        version = 1,
+        coefficients = exactReal[:coefficients],
+        interval = exactReal[:interval],
+        rootIndex = exactReal[:rootIndex],
+        name = exactReal[:name],
+        evidence = exactReal[:evidence]
+    };
+};
+
+ARRecord(real) -> {;
+    exactReal = ARRequireReal(real);
+    {=
+        valueKind = :algebraicReal,
+        schema = exactReal[:schema],
+        polynomial = exactReal[:polynomial],
+        coefficients = exactReal[:coefficients],
+        interval = exactReal[:interval],
+        rootIndex = exactReal[:rootIndex],
+        name = exactReal[:name],
+        evidence = exactReal[:evidence],
+        certified = 1
+    };
+};
+
+ARAttachProtocol(real) -> {;
+    real._proto = {=
+        Polynomial = (self) -> self[:polynomial],
+        Coefficients = (self) -> self[:coefficients],
+        Interval = (self) -> self[:interval],
+        RootIndex = (self) -> self[:rootIndex],
+        EvaluatePolynomial = (self, point) -> self[:polynomial].Evaluate(point),
+        RootCount = (self, interval) -> self[:polynomial].RootCount(interval),
+        Sign = (self) -> ARExactSign(self),
+        CompareRational = (self, value) -> ARCompareRational(self, value),
+        Record = (self) -> ARRecord(self),
+        Export = (self) -> ARExport(self),
+        Enclose = (self, request ?= {= }) -> ARProtocolEnclosure(self, request, :enclose),
+        Refine = (self, request ?= {= }) -> ARProtocolEnclosure(self, request, :refine),
+        NumericsCapabilities = (self) -> ARCapabilities(self)
+    };
+    .ImmutableValue(real);
+};
+
+ARRoot(coefficients, interval, rootIndex ?= 1, options ?= {= }) -> {;
+    polynomial = ARPolynomial(coefficients);
+    canonical = polynomial.AscendingCoefficients();
+    exactInterval = interval ~!: :RationalInterval;
+    low = exactInterval.Low();
+    high = exactInterval.High();
+    low < high ?: _ ?_ .Error("Algebraic-real isolating interval must have increasing endpoints");
+    lowValue = polynomial.Evaluate(low);
+    highValue = polynomial.Evaluate(high);
+    lowIsRoot = ARScalarIsZero(lowValue, "low endpoint evaluation");
+    highIsRoot = ARScalarIsZero(highValue, "high endpoint evaluation");
+    endpointRoot = lowIsRoot || highIsRoot;
+    endpointRoot
+      ?: .Error("Algebraic-real isolating endpoints cannot be roots")
+      ?_ _;
+    sturmSequence = polynomial.SturmSequence();
+    isolatedCount = polynomial.RootCount(exactInterval);
+    isolatedCount == 1
+      ?: _
+      ?_ .Error(@"Algebraic-real interval must isolate exactly one distinct real root; found @{isolatedCount}");
+    index = ARRequirePositiveInteger(rootIndex, "Algebraic-real root index");
+    bound = polynomial.RootBound();
+    leftBoundary = low <= -bound ?: low - 1 ?_ -bound;
+    computedIndex = polynomial.RootCount(leftBoundary:low) + 1;
+    index == computedIndex
+      ?: _
+      ?_ .Error(@"Algebraic-real root index @{index} does not match certified index @{computedIndex}");
+    evidence = {=
+        kind = :sturmIsolation,
+        property = :uniqueRealRoot,
+        squareFree = 1,
+        rootCount = isolatedCount,
+        rootIndex = computedIndex,
+        cauchyBound = bound,
+        endpointSigns = [ARSignOf(lowValue), ARSignOf(highValue)],
+        sturmLength = sturmSequence.Len(),
+        provenance = AROption(options, "evidence", _)
+    };
+    real = {=
+        valueKind = :algebraicReal,
+        schema = "rix.algebraic-real@1",
+        name = AROption(options, "name", :root),
+        polynomial = polynomial,
+        coefficients = canonical,
+        interval = exactInterval,
+        rootIndex = computedIndex,
+        sturmSequence = sturmSequence,
+        evidence = evidence,
+        certified = 1
+    };
+    ARAttachProtocol(real);
+};
+
+ARSqrt2(sign ?= 1) -> {;
+    direction = sign ~!: :Integer;
+    direction == 1
+      ?: ARRoot([-2, 0, 1], 1:2, 2, {=
+          name=:sqrt2,
+          evidence={= kind=:definingEquation, equation="x^2 - 2 = 0", branch=:positive }
+      })
+      ?_ direction == -1
+           ?: ARRoot([-2, 0, 1], -2:-1, 1, {=
+               name=:negativeSqrt2,
+               evidence={= kind=:definingEquation, equation="x^2 - 2 = 0", branch=:negative }
+           })
+           ?_ .Error("Algebraic-real Sqrt2 sign must be 1 or -1");
+};
+
+ARImport(record) -> {;
+    valid = record ? :Map ?: record[:schema] == "rix.algebraic-real.export@1" ?_ _;
+    valid ?: _ ?_ .Error("Expected an algebraic-real export record");
+    record[:version] == 1 ?: _ ?_ .Error("Unsupported algebraic-real export version");
+    ARRoot(record[:coefficients], record[:interval], record[:rootIndex], {=
+        name=record[:name],
+        evidence=record[:evidence]
+    });
+};
+
+ARConstruct(coefficients, interval, rootIndex ?= 1, options ?= {= }) ->
+    ARRoot(coefficients, interval, rootIndex, options);
+
+algebraicRealNamespace = (coefficients, interval, rootIndex ?= 1, options ?= {= }) ->
+    ARConstruct(coefficients, interval, rootIndex, options);
+algebraicRealNamespace._proto = {=
+    Root = (self, coefficients, interval, rootIndex ?= 1, options ?= {= }) -> ARRoot(coefficients, interval, rootIndex, options),
+    Sqrt2 = (self, sign ?= 1) -> ARSqrt2(sign),
+    Polynomial = (self, coefficients) -> ARPolynomial(coefficients),
+    Evaluate = (self, coefficients, point) -> ARPolynomial(coefficients).Evaluate(point),
+    Derivative = (self, coefficients) -> ARPolynomial(coefficients).Derivative(),
+    SturmSequence = (self, coefficients) -> ARPolynomial(coefficients).SturmSequence(),
+    RootCount = (self, coefficients, interval) -> ARPolynomial(coefficients).RootCount(interval),
+    IsSquareFree = (self, coefficients) -> {; candidate=.poly({= coefficients=coefficients, order=:ascending, variable=:x }); candidate.IsSquareFree(); },
+    Refine = (self, real, request ?= {= }) -> ARProtocolEnclosure(real, request, :refine),
+    Sign = (self, real) -> ARExactSign(real),
+    CompareRational = (self, real, value) -> ARCompareRational(real, value),
+    Export = (self, real) -> ARExport(real),
+    Import = (self, record) -> ARImport(record)
+};
+
+.Host.RegisterCallableValue(
+    "algebraicReal",
+    algebraicRealNamespace,
+    "Exact real algebraic roots certified by canonical Polynomial values and Sturm isolating intervals",
+    ["Numerics", "Exact", "Algebra"]
+);
+`;
+
+  // rix/plugins/poly/poly.plugin.rix
+  var poly_plugin_default = `/**
+id: poly
+description: Semantic callable univariate polynomials with structural and symbolic entry forms.
+kind: rix
+mount: poly
+aliases: [polynomial, p]
+exports: [Polynomial, Parse, Var, Fun, Divide, SyntheticDivide, SturmSequence, RootCount]
+groups: [Algebra, Exact, Symbolic]
+permissions: []
+provides: [rix.polynomial@1, rix.polynomial.algorithms@1]
+schemas: [rix.polynomial@1, rix.polynomial.division@1]
+snapshot: false
+deterministic: true
+defaultEnabled: false
+**/
+
+PolyOption(options, key, fallback) -> options.Has(key) ?: options[key] ?_ fallback;
+
+PolyIsZero(value) -> (value ~!: :Rational).Numerator() == 0;
+
+PolyExact(value, label) -> {;
+    exact = value ~!: :Rational;
+    exact == _ ?: .Error(@"@{label} must be an exact Integer or Rational") ?_ exact;
+};
+
+PolyCopy(values) -> values.Map((value) -> value);
+
+PolyTrimAscending(coefficients) -> {;
+    result := PolyCopy(coefficients);
+    result.Len() >= 1 ?: _ ?_ .Error("Polynomial coefficients cannot be empty");
+    trimming := 1;
+    {@ step = 1; (@result.Len() > 1) && (@trimming == 1); {;
+        PolyIsZero(@result.Last())
+          ?: {; @result ~= @result.DropLast(); }
+          ?_ {; @trimming ~= 0; };
+    }; step += 1 };
+    result;
+};
+
+PolyExactAscending(coefficients, order ?= :ascending) -> {;
+    coefficients ? :Array ?: _ ?_ .Error("Polynomial coefficients must be an Array");
+    coefficients.Len() >= 1 ?: _ ?_ .Error("Polynomial coefficients cannot be empty");
+    exact = coefficients.Map((coefficient) -> PolyExact(coefficient, "Polynomial coefficient"));
+    ascending = order == :descending ?: exact.Reverse() ?_ order == :ascending ?: exact ?_ .Error("Polynomial coefficient order must be :ascending or :descending");
+    PolyTrimAscending(ascending);
+};
+
+PolyZeroArray(length) -> {;
+    result := [];
+    {@ index = 1; index <= @length; {; @result ~= @result.Push(0); }; index += 1 };
+    result;
+};
+
+PolyArrayAdd(left, right) -> {;
+    length = left.Len() > right.Len() ?: left.Len() ?_ right.Len();
+    result := [];
+    {@ index = 1; index <= @length; {;
+        a = index <= @left.Len() ?: @left[index] ?_ 0;
+        b = index <= @right.Len() ?: @right[index] ?_ 0;
+        @result ~= @result.Push(a + b);
+    }; index += 1 };
+    PolyTrimAscending(result);
+};
+
+PolyArrayNegate(coefficients) -> coefficients.Map((coefficient) -> -coefficient);
+PolyArraySubtract(left, right) -> PolyArrayAdd(left, PolyArrayNegate(right));
+
+PolyArrayScale(coefficients, scalar) -> {;
+    exact = PolyExact(scalar, "Polynomial scalar");
+    PolyTrimAscending(coefficients.Map((coefficient) -> coefficient * exact));
+};
+
+PolyArrayMultiply(left, right) -> {;
+    result := PolyZeroArray(left.Len() + right.Len() - 1);
+    {@ a = 1; a <= @left.Len(); {;
+        {@ b = 1; b <= @right.Len(); {;
+            index = @a + b - 1;
+            @result ~= @result.Set(index, @result[index] + @left[@a] * @right[b]);
+        }; b += 1 };
+    }; a += 1 };
+    PolyTrimAscending(result);
+};
+
+PolyArrayPower(coefficients, exponent) -> {;
+    power = exponent ~!: :Integer;
+    power >= 0 ?: _ ?_ .Error("Polynomial powers require a nonnegative exact Integer exponent");
+    result := [1];
+    base := coefficients;
+    remaining := power;
+    {@ step = 1; @remaining > 0; {;
+        @remaining % 2 == 1 ?: {; @result ~= PolyArrayMultiply(@result, @base); } ?_ _;
+        @remaining ~= @remaining // 2;
+        @remaining > 0 ?: {; @base ~= PolyArrayMultiply(@base, @base); } ?_ _;
+    }; step += 1 };
+    result;
+};
+
+PolyEvaluateStep(coefficients, index, point, accumulator) ->
+    index < 1 ?: accumulator ?_ PolyEvaluateStep(coefficients, index - 1, point, accumulator * point + coefficients[index]);
+
+PolyEvaluateAscending(coefficients, point) -> PolyEvaluateStep(coefficients, coefficients.Len(), point, 0);
+
+PolyDerivativeAscending(coefficients) -> {;
+    coefficients.Len() == 1
+      ?: [0]
+      ?_ {;
+          result := [];
+          {@ power = 1; power < @coefficients.Len(); {;
+              @result ~= @result.Push(@coefficients[power + 1] * power);
+          }; power += 1 };
+          PolyTrimAscending(result);
+      };
+};
+
+PolyVariable(value) -> value.type == "string" ?: value ?_ value;
+
+PolyRequire(value, label ?= "value") -> value ? :Polynomial ?: value ?_ .Error(@"@{label} must be a Polynomial");
+PolyScalar(value) -> (value ? :Integer) || (value ? :Rational);
+PolyOperand(value) -> (value ? :Polynomial) || PolyScalar(value);
+
+PolyCurrentAscending(polynomial) -> {;
+    exact = 0 |> polynomial.coefficientFunction;
+    PolyExactAscending(exact, :ascending);
+};
+
+PolyCurrentCoefficients(polynomial, order ?= :descending) -> {;
+    ascending = PolyCurrentAscending(PolyRequire(polynomial));
+    order == :ascending ?: ascending ?_ order == :descending ?: ascending.Reverse() ?_ .Error("Coefficient order must be :ascending or :descending");
+};
+
+PolyDegree(polynomial) -> {;
+    coefficients = PolyCurrentAscending(PolyRequire(polynomial));
+    (coefficients.Len() == 1 && PolyIsZero(coefficients[1])) ?: -1 ?_ coefficients.Len() - 1;
+};
+
+PolySameVariable(left, right) -> {;
+    left.variable == right.variable ?: 1 ?_ .Error(@"Polynomial variables must match: @{left.variable} and @{right.variable}");
+};
+
+PolyPromote(value, variable) -> value ? :Polynomial ?: value ?_ PolyFromAscending([PolyExact(value, "Polynomial operand")], variable, 0, _, [:scalar]);
+
+PolyRecord(polynomial) -> {;
+    value = PolyRequire(polynomial);
+    {=
+        valueKind = :polynomial,
+        schema = "rix.polynomial@1",
+        variable = value.variable,
+        coefficients = PolyCurrentCoefficients(value),
+        canonical = 1,
+        equalityPolicy = :currentCanonicalCoefficients,
+        reactive = value.reactive,
+        provenance = value.provenance
+    };
+};
+
+PolyArraysEqual(left, right) -> {;
+    left.Len() == right.Len()
+      ?: {;
+          equal := 1;
+          {@ index = 1; index <= @left.Len() && @equal == 1; {;
+              @left[index] == @right[index] ?: _ ?_ {; @equal ~= 0; };
+          }; index += 1 };
+          equal;
+      }
+      ?_ 0;
+};
+
+PolyEqual(left, right) -> {;
+    (left ? :Polynomial) && (right ? :Polynomial)
+      ?: (left.variable == right.variable && PolyArraysEqual(PolyCurrentAscending(left), PolyCurrentAscending(right)))
+      ?_ 0;
+};
+
+PolyFromAscending(coefficients, variable ?= :x, degreeBound ?= _, source ?= _, provenance ?= []) -> {;
+    canonical = PolyExactAscending(coefficients, :ascending);
+    provider = (unused) -> canonical;
+    PolyBuild(provider, variable, degreeBound == _ ?: canonical.Len() - 1 ?_ degreeBound, source, provenance, 0);
+};
+
+PolyBuild(coefficientFunction, variable, degreeBound, source, provenance, reactive ?= 1) -> {;
+    PolynomialValue = (argument) -> PolyEvaluateAscending(0 |> coefficientFunction, argument);
+    PolynomialValue.schema = "rix.polynomial@1";
+    PolynomialValue.variable = variable;
+    PolynomialValue.degreeBound = degreeBound;
+    PolynomialValue.canonical = 1;
+    PolynomialValue.reactive = reactive;
+    PolynomialValue.equalityPolicy = :currentCanonicalCoefficients;
+    PolynomialValue.provenance = provenance;
+    PolynomialValue.source = source;
+    PolynomialValue.coefficientFunction = coefficientFunction;
+    PolynomialValue.__type = "Polynomial";
+    PolynomialValue._type = "polynomial";
+    PolynomialValue._symbolicKind = "Polynomial";
+    PolynomialValue._proto = {=
+        P = (self) -> self,
+        Polynomial = (self) -> self,
+        Coefficients = (self, order ?= :descending) -> PolyCurrentCoefficients(self, order),
+        AscendingCoefficients = (self) -> PolyCurrentCoefficients(self, :ascending),
+        Record = (self) -> PolyRecord(self),
+        Degree = (self) -> PolyDegree(self),
+        Variable = (self) -> self.variable,
+        Source = (self) -> self.source,
+        Evaluate = (self, argument) -> PolyEvaluateAscending(PolyCurrentAscending(self), argument),
+        Derivative = (self) -> PolyDerivative(self),
+        Divide = (self, divisor) -> PolyDivide(self, divisor),
+        DivMod = (self, divisor) -> PolyDivide(self, divisor),
+        SyntheticDiv = (self, root) -> PolySyntheticDivide(self, root),
+        SyntheticDivide = (self, root) -> PolySyntheticDivide(self, root),
+        IsFactor = (self, candidate) -> PolyDivide(self, candidate)[:divisorIsFactor],
+        SturmSequence = (self) -> PolySturmSequence(self),
+        RootCount = (self, interval) -> PolyRootCount(self, interval),
+        IsSquareFree = (self) -> PolyIsSquareFree(self),
+        RootBound = (self) -> PolyRootBound(self),
+        PrimitiveInteger = (self) -> PolyPrimitiveInteger(self)
+    };
+    .ImmutableValue(PolynomialValue);
+};
+
+PolyInterpolate(sourceFunction, degree) -> {;
+    result := PolyZeroArray(degree + 1);
+    {@ i = 0; i <= @degree; {;
+        basis := [1];
+        denominator := 1;
+        {@ j = 0; j <= @degree; {;
+            @i == j
+              ?: _
+              ?_ {;
+                  @basis ~= PolyArrayMultiply(@basis, [-@j, 1]);
+                  @denominator *= @i - @j;
+              };
+        }; j += 1 };
+        factor = i |> @sourceFunction;
+        @result ~= PolyArrayAdd(@result, PolyArrayScale(basis, factor));
+    }; i += 1 };
+    PolyTrimAscending(result);
+};
+
+PolyCoefficientsFromSource(sourceFunction, variable, degree) -> {;
+    current := sourceFunction;
+    factorial := 1;
+    coefficients := [];
+    {@ power = 0; power <= @degree; {;
+        coefficient = (0 |> @current) / @factorial;
+        @coefficients ~= @coefficients.Push(coefficient);
+        power < @degree
+          ?: {;
+              @current ~= .Deriv(@current, @variable);
+              @factorial *= @power + 1;
+          }
+          ?_ _;
+    }; power += 1 };
+    PolyTrimAscending(coefficients);
+};
+
+PolyDegreePower(node, leftDegree) -> {;
+    exponentNode = node[:right];
+    valid = exponentNode[:kind] == "number" ?: exponentNode.Has("integer") ?_ _;
+    valid ?: _ ?_ .Error("Polynomial powers require a nonnegative exact Integer literal exponent");
+    exponent = exponentNode[:integer];
+    exponent >= 0 ?: leftDegree * exponent ?_ .Error("Polynomial powers require a nonnegative exact Integer exponent");
+};
+
+PolyDegreeMaximum(leftDegree, rightDegree) -> leftDegree > rightDegree ?: leftDegree ?_ rightDegree;
+PolyDegreeQuotient(leftDegree, rightDegree) -> rightDegree == 0 ?: leftDegree ?_ .Error("Polynomial source has a variable-dependent denominator");
+
+PolyDegreeBinary(node, variable) -> {;
+    operation = node[:op];
+    leftDegree = PolyDegreeFromNode(node[:left], variable);
+    rightDegree = PolyDegreeFromNode(node[:right], variable);
+    (operation == "+" || operation == "-")
+      ?: PolyDegreeMaximum(leftDegree, rightDegree)
+      ?_ (operation == "*"
+           ?: leftDegree + rightDegree
+           ?_ (operation == "/"
+                ?: PolyDegreeQuotient(leftDegree, rightDegree)
+                ?_ (operation == "^"
+                     ?: PolyDegreePower(node, leftDegree)
+                     ?_ .Error(@"Polynomial source uses unsupported operator @{operation}"))));
+};
+
+PolyDegreeFromNode(node, variable) -> {;
+    kind = node[:kind];
+    (kind == "number" || kind == "outer") ?: 0 ?_
+    (kind == "identifier" ?: (node[:name] == variable ?: 1 ?_ 0) ?_
+    (kind == "unary"
+      ?: (node[:op] == "-" ?: PolyDegreeFromNode(node[:expr], variable) ?_ .Error("Polynomial source uses an unsupported unary operator"))
+      ?_ (kind == "binary"
+           ?: PolyDegreeBinary(node, variable)
+           ?_ .Error(@"Polynomial source contains unsupported symbolic node @{kind}"))));
+};
+
+PolySymbolic(source, requestedVariable ?= _) -> {;
+    compiled = requestedVariable == _ ?: .Poly(source) ?_ .Poly(source, requestedVariable);
+    inspection = .InspectSpec(compiled);
+    inputs = inspection[:inputs];
+    inputs.Len() == 1 ?: _ ?_ .Error("Polynomial conversion requires exactly one selected input");
+    variable = inputs[1];
+    degree = PolyDegreeFromNode(inspection[:expression], variable);
+    initial = PolyCoefficientsFromSource(compiled, variable, degree);
+    provider = (unused) -> PolyCoefficientsFromSource(compiled, variable, degree);
+    PolyBuild(provider, variable, degree, compiled, [:symbolicSource], 1);
+};
+
+PolyFromRecord(source, second) -> {;
+    source.Has("coefficients") ?: _ ?_ .Error("Polynomial record requires coefficients");
+    order = PolyOption(source, "order", :descending);
+    variable = PolyOption(source, "variable", second == _ ?: :x ?_ second);
+    PolyFromAscending(PolyExactAscending(source[:coefficients], order), variable, _, _, [:record]);
+};
+
+PolyConstruct(source, second ?= _) -> {;
+    isPolynomial = source ? :Polynomial;
+    isArray = source ? :Array;
+    isMap = source ? :Map;
+    isPolynomial
+      ?: source
+      ?_ (isArray
+           ?: PolyFromAscending(PolyExactAscending(source, :descending), second == _ ?: :x ?_ second, _, _, [:coefficients])
+           ?_ (isMap ?: PolyFromRecord(source, second) ?_ PolySymbolic(source, second)));
+};
+
+PolyBinary(left, right, operation) -> {;
+    variable = (right ? :Polynomial) ?: right.variable ?_ left.variable;
+    a = PolyPromote(left, variable);
+    b = PolyPromote(right, variable);
+    PolySameVariable(a, b);
+    provider = (unused) -> operation == :add
+      ?: PolyArrayAdd(PolyCurrentAscending(a), PolyCurrentAscending(b))
+      ?_ operation == :subtract
+           ?: PolyArraySubtract(PolyCurrentAscending(a), PolyCurrentAscending(b))
+           ?_ PolyArrayMultiply(PolyCurrentAscending(a), PolyCurrentAscending(b));
+    bound = operation == :multiply ?: a.degreeBound + b.degreeBound ?_ a.degreeBound > b.degreeBound ?: a.degreeBound ?_ b.degreeBound;
+    PolyBuild(provider, variable, bound, _, [operation, a, b], 1);
+};
+
+PolyAdd(left, right) -> PolyBinary(left, right, :add);
+PolySubtract(left, right) -> PolyBinary(left, right, :subtract);
+PolyMultiply(left, right) -> PolyBinary(left, right, :multiply);
+PolyNegate(polynomial) -> {;
+    value = PolyRequire(polynomial);
+    provider = (unused) -> PolyArrayNegate(PolyCurrentAscending(value));
+    PolyBuild(provider, value.variable, value.degreeBound, _, [:negate, value], 1);
+};
+PolyScale(polynomial, scalar) -> {;
+    value = PolyRequire(polynomial);
+    exact = PolyExact(scalar, "Polynomial divisor");
+    PolyIsZero(exact) ?: .Error("Polynomial division by zero") ?_ _;
+    provider = (unused) -> PolyArrayScale(PolyCurrentAscending(value), 1 / exact);
+    PolyBuild(provider, value.variable, value.degreeBound, _, [:scale, value, exact], 1);
+};
+PolyPower(polynomial, exponent) -> {;
+    value = PolyRequire(polynomial);
+    power = exponent ~!: :Integer;
+    power >= 0 ?: _ ?_ .Error("Polynomial powers require a nonnegative exact Integer exponent");
+    provider = (unused) -> PolyArrayPower(PolyCurrentAscending(value), power);
+    PolyBuild(provider, value.variable, value.degreeBound * power, _, [:power, value, power], 1);
+};
+
+PolyReductionStep(remainder, denominator) -> {;
+    offset = remainder.Len() - denominator.Len();
+    factor = remainder.Last() / denominator.Last();
+    updated := PolyCopy(remainder);
+    {@ index = 1; index <= @denominator.Len(); {;
+        target = index + @offset;
+        @updated ~= @updated.Set(target, @updated[target] - @factor * @denominator[index]);
+    }; index += 1 };
+    {= remainder=PolyTrimAscending(updated), factor=factor, offset=offset };
+};
+
+PolyDivideArrays(dividend, divisor) -> {;
+    numerator = PolyTrimAscending(dividend);
+    denominator = PolyTrimAscending(divisor);
+    (denominator.Len() == 1 && PolyIsZero(denominator[1])) ?: .Error("Polynomial division by zero") ?_ _;
+    quotient := PolyZeroArray(numerator.Len() >= denominator.Len() ?: numerator.Len() - denominator.Len() + 1 ?_ 1);
+    remainder := numerator;
+    {@ step = 1; !(@remainder.Len() == 1 && PolyIsZero(@remainder[1])) && @remainder.Len() >= @denominator.Len(); {;
+        reduction = PolyReductionStep(@remainder, @denominator);
+        @quotient ~= @quotient.Set(reduction[:offset] + 1, @quotient[reduction[:offset] + 1] + reduction[:factor]);
+        @remainder ~= reduction[:remainder];
+    }; step += 1 };
+    {= quotient=PolyTrimAscending(quotient), remainder=PolyTrimAscending(remainder) };
+};
+
+PolyDivisionRecord(dividend, divisor, quotient, remainder, method ?= :longDivision) -> {;
+    factor = PolyDegree(remainder) == -1;
+    record = {=
+        valueKind = :polynomialDivision,
+        schema = "rix.polynomial.division@1",
+        dividend = dividend,
+        divisor = divisor,
+        quotient = quotient,
+        remainder = remainder,
+        method = method,
+        divisorIsFactor = factor,
+        verified = quotient * divisor + remainder == dividend
+    };
+    record._proto = {=
+        Quotient = (self) -> self[:quotient],
+        Remainder = (self) -> self[:remainder],
+        IsFactor = (self) -> self[:divisorIsFactor],
+        Record = (self) -> self
+    };
+    .ImmutableValue(record);
+};
+
+PolyDivide(dividend, divisor) -> {;
+    left = PolyRequire(dividend, "Polynomial dividend");
+    right = PolyRequire(divisor, "Polynomial divisor");
+    PolySameVariable(left, right);
+    arrays = PolyDivideArrays(PolyCurrentAscending(left), PolyCurrentAscending(right));
+    quotient = PolyFromAscending(arrays[:quotient], left.variable, _, _, [:quotient]);
+    remainder = PolyFromAscending(arrays[:remainder], left.variable, _, _, [:remainder]);
+    PolyDivisionRecord(left, right, quotient, remainder);
+};
+
+PolySyntheticDivide(polynomial, root) -> {;
+    value = PolyRequire(polynomial);
+    divisor = PolyFromAscending([-PolyExact(root, "Synthetic-division root"), 1], value.variable, 1, _, [:syntheticDivisor]);
+    result = PolyDivide(value, divisor);
+    PolyDivisionRecord(value, divisor, result[:quotient], result[:remainder], :synthetic);
+};
+
+PolyRemainderArrays(dividend, divisor) -> PolyDivideArrays(dividend, divisor)[:remainder];
+
+PolySturmArrays(coefficients) -> {;
+    first = PolyTrimAscending(coefficients);
+    second = PolyDerivativeAscending(first);
+    sequence := [first, second];
+    previous := first;
+    current := second;
+    {@ step = 1; !(@current.Len() == 1 && PolyIsZero(@current[1])); {;
+        remainder = PolyRemainderArrays(@previous, @current);
+        remainder.Len() == 1 && PolyIsZero(remainder[1])
+          ?: {; @current ~= [0]; }
+          ?_ {;
+              next = PolyArrayNegate(@remainder);
+              @sequence ~= @sequence.Push(next);
+              @previous ~= @current;
+              @current ~= next;
+          };
+    }; step += 1 };
+    sequence;
+};
+
+PolySturmSequence(polynomial) -> PolySturmArrays(PolyCurrentAscending(PolyRequire(polynomial)));
+PolySign(value) -> value < 0 ?: -1 ?_ value > 0 ?: 1 ?_ 0;
+
+PolyVariationsAt(sequence, point) -> {;
+    previous := 0;
+    variations := 0;
+    {@ index = 1; index <= @sequence.Len(); {;
+        sign = PolySign(PolyEvaluateAscending(@sequence[index], @point));
+        sign != 0
+          ?: {;
+              @previous != 0 && @previous != @sign ?: {; @variations += 1; } ?_ _;
+              @previous ~= @sign;
+          }
+          ?_ _;
+    }; index += 1 };
+    variations;
+};
+
+PolyRootCount(polynomial, interval) -> {;
+    value = PolyRequire(polynomial);
+    exact = interval ~!: :RationalInterval;
+    sequence = PolySturmSequence(value);
+    PolyVariationsAt(sequence, exact.Low()) - PolyVariationsAt(sequence, exact.High());
+};
+
+PolyIsSquareFree(polynomial) -> {;
+    sequence = PolySturmSequence(polynomial);
+    sequence.Last().Len() == 1;
+};
+
+PolyRootBound(polynomial) -> {;
+    coefficients = PolyCurrentAscending(PolyRequire(polynomial));
+    leading = coefficients.Last().Abs();
+    PolyIsZero(leading) ?: .Error("Zero polynomial has no finite root bound") ?_ _;
+    maximum := 0;
+    {@ index = 1; index < @coefficients.Len(); {;
+        ratio = @coefficients[index].Abs() / @leading;
+        ratio > @maximum ?: {; @maximum ~= @ratio; } ?_ _;
+    }; index += 1 };
+    1 + maximum;
+};
+
+PolyIntegerGcd(left, right) -> {;
+    a := (left ~!: :Integer).Abs();
+    b := (right ~!: :Integer).Abs();
+    {@ step = 1; @b != 0; {; remainder = @a % @b; @a ~= @b; @b ~= remainder; }; step += 1 };
+    a;
+};
+
+PolyIntegerCoefficient(value) -> {;
+    rational = value ~!: :Rational;
+    rational.Denominator() == 1
+      ?: rational.Numerator()
+      ?_ .Error("PrimitiveInteger requires integer polynomial coefficients");
+};
+
+PolyPrimitiveInteger(polynomial) -> {;
+    coefficients = PolyCurrentAscending(PolyRequire(polynomial));
+    integers = coefficients.Map((coefficient) -> PolyIntegerCoefficient(coefficient));
+    content := 0;
+    {@ index = 1; index <= @integers.Len(); {; @content ~= PolyIntegerGcd(@content, @integers[index]); }; index += 1 };
+    PolyIsZero(content)
+      ?: [0]
+      ?_ {;
+          primitive = @integers.Map((coefficient) -> coefficient // @content);
+          primitive.Last() < 0 ?: primitive.Map((coefficient) -> -coefficient) ?_ primitive;
+      };
+};
+
+PolyDerivative(polynomial) -> {;
+    value = PolyRequire(polynomial);
+    provider = (unused) -> PolyDerivativeAscending(PolyCurrentAscending(value));
+    bound = value.degreeBound > 0 ?: value.degreeBound - 1 ?_ 0;
+    PolyBuild(provider, value.variable, bound, _, [:derivative, value], 1);
+};
+
+PolyParseVariable(modifiers) -> {;
+    selected := _;
+    {@ index = 1; index <= @modifiers.Len(); {;
+        modifier = @modifiers[index];
+        upper = modifier.Upper();
+        isFun = upper == "FUN";
+        isVar = upper.StartsWith("VAR(");
+        isFun || isVar ?: _ ?_ .Error(@"Unknown .poly modifier @{modifier}");
+        isVar
+          ?: {;
+              @selected == _ ?: _ ?_ .Error(".poly accepts only one Var(name) modifier");
+              @selected ~= @modifier.Slice(5, @modifier.Len());
+          }
+          ?_ _;
+    }; index += 1 };
+    selected;
+};
+
+PolyParse(self, body, modifiers, info) -> {;
+    variable = PolyParseVariable(modifiers);
+    structural = .SArith.Parse(body, [], {= });
+    PolyConstruct(structural, variable);
+};
+
+.TypeKnown(:Polynomial) ?: _ ?_ .TypeRegister({=
+    name = :Polynomial,
+    nativeType = :function,
+    defaultTraits = [:number],
+    validate = (value) -> value.schema == "rix.polynomial@1",
+    proto = {= },
+    installs = {=
+        ADD = [{= name=:PolynomialAdd, prep=(left, right)->PolyOperand(left) && PolyOperand(right) && ((left ? :Polynomial) || (right ? :Polynomial)), impl=(left, right)->PolyAdd(left, right) }],
+        SUB = [{= name=:PolynomialSub, prep=(left, right)->PolyOperand(left) && PolyOperand(right) && ((left ? :Polynomial) || (right ? :Polynomial)), impl=(left, right)->PolySubtract(left, right) }],
+        MUL = [{= name=:PolynomialMul, prep=(left, right)->PolyOperand(left) && PolyOperand(right) && ((left ? :Polynomial) || (right ? :Polynomial)), impl=(left, right)->PolyMultiply(left, right) }],
+        DIV = [
+            {= name=:PolynomialScalarDiv, prep=(left, right)->(left ? :Polynomial) && PolyScalar(right), impl=(left, right)->PolyScale(left, right) },
+            {= name=:PolynomialDivNeedsRatfun, prep=(left, right)->(left ? :Polynomial) && (right ? :Polynomial), impl=(left, right)->.Error("Division by a Polynomial creates a RationalFunction; load .ratfun or use //, %, or /%") }
+        ],
+        POW = [{= name=:PolynomialPow, prep=(left, right)->(left ? :Polynomial) && (right ? :Integer), impl=(left, right)->PolyPower(left, right) }],
+        NEG = [{= name=:PolynomialNeg, prep=(value)->value ? :Polynomial, impl=(value)->PolyNegate(value) }],
+        EQ = [{= name=:PolynomialEq, prep=(left, right)->(left ? :Polynomial) && (right ? :Polynomial), impl=(left, right)->PolyEqual(left, right) }],
+        NEQ = [{= name=:PolynomialNeq, prep=(left, right)->(left ? :Polynomial) && (right ? :Polynomial), impl=(left, right)->!PolyEqual(left, right) }],
+        INTDIV = [{= name=:PolynomialIntDiv, prep=(left, right)->(left ? :Polynomial) && (right ? :Polynomial), impl=(left, right)->PolyDivide(left, right)[:quotient] }],
+        MOD = [{= name=:PolynomialMod, prep=(left, right)->(left ? :Polynomial) && (right ? :Polynomial), impl=(left, right)->PolyDivide(left, right)[:remainder] }],
+        DIVMOD = [{= name=:PolynomialDivMod, prep=(left, right)->(left ? :Polynomial) && (right ? :Polynomial), impl=(left, right)->{; result=PolyDivide(left,right); {: result[:quotient], result[:remainder] }; } }]
+    }
+});
+
+.TypeInstall(:Polynomial);
+
+polyNamespace = (source, second ?= _) -> PolyConstruct(source, second);
+polyNamespace._proto = {=
+    Parse = (self, body, modifiers, info) -> PolyParse(self, body, modifiers, info),
+    Polynomial = (self, source, second ?= _) -> PolyConstruct(source, second),
+    Divide = (self, dividend, divisor) -> PolyDivide(dividend, divisor),
+    SyntheticDivide = (self, polynomial, root) -> PolySyntheticDivide(polynomial, root),
+    Derivative = (self, polynomial) -> PolyDerivative(polynomial),
+    SturmSequence = (self, polynomial) -> PolySturmSequence(polynomial),
+    RootCount = (self, polynomial, interval) -> PolyRootCount(polynomial, interval),
+    IsSquareFree = (self, polynomial) -> PolyIsSquareFree(polynomial),
+    RootBound = (self, polynomial) -> PolyRootBound(polynomial),
+    PrimitiveInteger = (self, polynomial) -> PolyPrimitiveInteger(polynomial),
+    Var = (self) -> .Error(".poly.Var(name) is a backtick parser modifier"),
+    Fun = (self) -> .Error(".poly.Fun is a backtick parser modifier")
+};
+
+.Host.RegisterCallableValue(
+    "poly",
+    polyNamespace,
+    "Semantic callable univariate polynomials and exact coefficient algorithms",
+    ["Algebra", "Exact", "Symbolic"]
+);
+
+PolyConversion = (value, variable ?= _) -> PolyConstruct(value, variable);
+.Host.RegisterMethod("structural_form", "P", PolyConversion, "poly", "poly");
+.Host.RegisterMethod("structural_form", "Polynomial", PolyConversion, "poly", "poly");
+.Host.RegisterMethod("structural_symbol", "P", PolyConversion, "poly", "poly");
+.Host.RegisterMethod("structural_symbol", "Polynomial", PolyConversion, "poly", "poly");
+.Host.RegisterMethod("structural_literal", "P", PolyConversion, "poly", "poly");
+.Host.RegisterMethod("structural_literal", "Polynomial", PolyConversion, "poly", "poly");
+.Host.RegisterMethod("symbolic_spec", "P", PolyConversion, "poly", "poly");
+.Host.RegisterMethod("symbolic_spec", "Polynomial", PolyConversion, "poly", "poly");
+`;
+
+  // rix/plugins/algebra/algebra.plugin.rix
+  var algebra_plugin_default = `/**
+id: algebra
+description: Polynomial algebra façade backed by the canonical pure-RiX poly service.
+kind: rix
+mount: algebra
+exports: [Polynomial, Coefficients, Record, Evaluate, Equal, Divide, SyntheticDivide, Quotient, Remainder, IsFactor, Grid]
+groups: [Algebra, Exact]
+permissions: []
+requires: [rix.polynomial.algorithms@1, rix.rational-function@1]
+provides: [rix.algebra.division@1]
+schemas: [rix.algebra.division@1, rix.polynomial.division@1]
+snapshot: false
+deterministic: true
+defaultEnabled: false
+**/
+
+AlgebraDivision(core, method, grid ?= _) -> {;
+    division = {=
+        valueKind = :algebraDivision,
+        schema = "rix.algebra.division@1",
+        method = method,
+        exact = 1,
+        core = core,
+        identity = {=
+            relation = "dividend = divisor * quotient + remainder",
+            verified = core[:verified]
+        },
+        factor = {=
+            divisorIsFactor = core[:divisorIsFactor] ?: 1 ?_ 0,
+            status = core[:divisorIsFactor] ?: :exactFactor ?_ :nonzeroRemainder
+        },
+        grid = grid
+    };
+    division.__type = "PolynomialDivision";
+    division._proto = {=
+        Quotient = (self) -> self[:core][:quotient],
+        Remainder = (self) -> self[:core][:remainder],
+        IsFactor = (self) -> self[:core][:divisorIsFactor],
+        Grid = (self) -> AlgebraGrid(self),
+        Record = (self) -> self
+    };
+    .ImmutableValue(division);
+};
+
+AlgebraRequireDivision(value) -> {;
+    valid = value ? :Map ?: value[:schema] == "rix.algebra.division@1" ?_ _;
+    valid ?: value ?_ .Error("Expected an algebra division result");
+};
+AlgebraDivide(dividend, divisor) -> AlgebraDivision(.poly.Divide(dividend, divisor), :long);
+AlgebraSyntheticDivide(polynomial, root) -> {;
+    core = .poly.SyntheticDivide(polynomial, root);
+    grid = .Algebra.SyntheticDivision(root, polynomial.Coefficients());
+    AlgebraDivision(core, :synthetic, grid);
+};
+AlgebraGrid(division) -> {;
+    value = AlgebraRequireDivision(division);
+    (value[:method] == :synthetic && value[:grid] != _)
+      ?: value[:grid]
+      ?_ .Error("algebra.Grid requires a SyntheticDivide result");
+};
+
+algebraNamespace = {= };
+algebraNamespace._proto = {=
+    Polynomial = (self, source, second ?= _) -> .poly(source, second),
+    Coefficients = (self, polynomial, order ?= :descending) -> polynomial.Coefficients(order),
+    Record = (self, polynomial) -> polynomial.Record(),
+    Evaluate = (self, polynomial, value) -> polynomial.Evaluate(value),
+    Equal = (self, left, right) -> left == right,
+    Divide = (self, dividend, divisor) -> AlgebraDivide(dividend, divisor),
+    SyntheticDivide = (self, polynomial, root) -> AlgebraSyntheticDivide(polynomial, root),
+    Quotient = (self, division) -> division.Quotient(),
+    Remainder = (self, division) -> division.Remainder(),
+    IsFactor = (self, dividend, candidate) -> dividend.IsFactor(candidate) ?: 1 ?_ 0,
+    Grid = (self, division) -> AlgebraGrid(division)
+};
+
+.Host.RegisterValue(
+    "algebra",
+    algebraNamespace,
+    "Polynomial algebra façade backed by .poly",
+    ["Algebra", "Exact"]
+);
+`;
+
   // rix/plugins/stern-brocot/stern-brocot.plugin.rix
   var stern_brocot_plugin_default = `/**
 id: stern-brocot
@@ -38796,9 +39950,6 @@ defaultEnabled: false
   // rix/plugins/poly/polynomial.js
   var POLYNOMIAL_SCHEMA = "rix.polynomial@1";
   var int8 = (value) => new Integer(BigInt(value));
-  var str2 = (value) => ({ type: "string", value: String(value) });
-  var seq2 = (values) => ({ type: "sequence", values });
-  var rixMap3 = (entries2) => ({ type: "map", entries: new Map(entries2) });
   function emptyParams() {
     return {
       positional: [],
@@ -38809,43 +39960,12 @@ defaultEnabled: false
       metadata: {}
     };
   }
-  function text5(value, fallback = null) {
-    if (value?.type === "string")
-      return value.value;
-    return typeof value === "string" ? value : fallback;
-  }
   function values(value, label2) {
     if (Array.isArray(value))
       return value;
     if (Array.isArray(value?.values))
       return value.values;
     throw new Error(`${label2} must be an array, tuple, or sequence`);
-  }
-  function entries2(value) {
-    return value?.type === "map" && value.entries instanceof Map ? value.entries : null;
-  }
-  function field(map2, name, fallback = null) {
-    if (!(map2 instanceof Map))
-      return fallback;
-    if (map2.has(name))
-      return map2.get(name);
-    const folded = name.toLowerCase();
-    for (const [key, value] of map2)
-      if (String(key).toLowerCase() === folded)
-        return value;
-    return fallback;
-  }
-  function variableName2(value, fallback = null) {
-    const result = text5(value, fallback);
-    if (result === null)
-      return null;
-    if (!/^[\p{L}_][\p{L}\p{N}_]*$/u.test(result)) {
-      throw new Error("Polynomial variable must be a simple identifier or colon-string");
-    }
-    return result;
-  }
-  function isExactScalar3(value) {
-    return value instanceof Integer || value instanceof Rational || typeof value === "bigint" || Number.isInteger(value);
   }
   function isExactZero(value) {
     if (value instanceof Integer)
@@ -38856,11 +39976,45 @@ defaultEnabled: false
       return value === 0n;
     return value === 0;
   }
+  function extensionValue(value, name) {
+    const candidate = value?._ext instanceof Map ? value._ext.get(String(name).toLowerCase()) : null;
+    return candidate?.type === "string" ? candidate.value : candidate;
+  }
+  function purePolynomialMetadata(value) {
+    if (extensionValue(value, "__type") !== "Polynomial" || extensionValue(value, "schema") !== POLYNOMIAL_SCHEMA)
+      return null;
+    return {
+      schema: POLYNOMIAL_SCHEMA,
+      variable: extensionValue(value, "variable") || "x",
+      coefficientFunction: extensionValue(value, "coefficientfunction"),
+      source: extensionValue(value, "source"),
+      pureRix: true
+    };
+  }
+  function attachInteropProperties(value, metadata = purePolynomialMetadata(value)) {
+    if (!metadata?.pureRix)
+      return value;
+    if (!Object.hasOwn(value, "schema"))
+      value.schema = metadata.schema;
+    if (!Object.hasOwn(value, "variable"))
+      value.variable = metadata.variable;
+    if (!Object.hasOwn(value, "canonical"))
+      value.canonical = true;
+    if (!Object.hasOwn(value, "equalityPolicy"))
+      value.equalityPolicy = "current-canonical-coefficients";
+    if (metadata.source?.type === "symbolic_spec" && !value._spec)
+      value._spec = metadata.source;
+    return value;
+  }
   function polynomialMetadata(value) {
-    return value?._polynomial?.schema === POLYNOMIAL_SCHEMA ? value._polynomial : null;
+    const legacy = value?._polynomial?.schema === POLYNOMIAL_SCHEMA ? value._polynomial : null;
+    return legacy || purePolynomialMetadata(value);
   }
   function isPolynomial(value) {
-    return Boolean(polynomialMetadata(value));
+    const metadata = polynomialMetadata(value);
+    if (metadata?.pureRix)
+      attachInteropProperties(value, metadata);
+    return Boolean(metadata);
   }
   function requirePolynomial(value, label2 = "value") {
     if (!isPolynomial(value))
@@ -38878,95 +40032,34 @@ defaultEnabled: false
       transform: source?.transform || { operation: "Polynomial" }
     }, context);
   }
-  function decoratePolynomial(callable, spec2, variable, polynomial, provenance = []) {
-    const degree = polynomialDegree(polynomial);
-    callable.__name = "Polynomial";
-    callable.schema = POLYNOMIAL_SCHEMA;
-    callable.variable = variable;
-    callable.degree = degree === null ? -1 : Number(degree);
-    callable.canonical = true;
-    callable.equalityPolicy = "canonical-symbolic-coefficients";
-    callable.provenance = Object.freeze([...provenance]);
-    callable._polynomial = Object.freeze({
-      schema: POLYNOMIAL_SCHEMA,
-      variable,
-      coefficients: new Map(Array.from(polynomial, ([power, coefficient]) => [power, cloneSymbolicIr(coefficient)]))
-    });
-    if (!(callable._ext instanceof Map))
-      callable._ext = new Map;
-    callable._ext.set("__type", str2("Polynomial"));
-    callable._ext.set("_type", str2("polynomial"));
-    callable._ext.set("_symbolicKind", str2("Polynomial"));
-    callable._ext.set("immutable", int8(1));
-    callable._ext.set("_spec", spec2);
-    callable._spec = spec2;
-    return callable;
+  function activePolyEntry(context) {
+    const visible = context?.getEnv?.("__system_context__", null);
+    const host = visible?._hostContext || visible;
+    return visible?.get?.("poly") || host?.get?.("poly") || null;
   }
-  function fromSpec(spec2, requestedVariable, context, provenance = []) {
-    if (!spec2 || spec2.type !== "symbolic_spec")
-      throw new Error("Polynomial conversion expects a symbolic specification");
-    const variable = requestedVariable ?? (spec2.inputs.length === 1 ? spec2.inputs[0] : null);
-    if (!variable)
-      throw new Error("Polynomial conversion needs one declared input or an explicit variable");
-    if (spec2.inputs.length > 1 || spec2.inputs.length === 1 && spec2.inputs[0] !== variable) {
-      throw new Error(`Polynomial input must be exactly '${variable}'; use a single-input symbolic spec`);
-    }
-    const polynomial = polynomialFromIr(expressionOf(spec2), variable);
-    const normalized = canonicalSpec(spec2, variable, polynomial, context);
-    return decoratePolynomial(polyFromSpec(normalized), normalized, variable, polynomial, provenance);
-  }
-  function coefficientsToPolynomial(coefficients, variable, context, provenance = []) {
-    if (coefficients.length === 0)
-      throw new Error("Polynomial coefficients cannot be empty");
+  function attachCanonicalSpec(value, context, evaluate) {
+    const metadata = purePolynomialMetadata(value);
+    if (!metadata)
+      return value;
+    const coefficients = polynomialCoefficients(value, context, evaluate);
     const polynomial = new Map;
     const degree = coefficients.length - 1;
     coefficients.forEach((coefficient, index) => {
-      if (!isExactScalar3(coefficient)) {
-        throw new Error(`Polynomial coefficient ${index + 1} must be an exact integer or rational; use a symbolic spec for contextual coefficients`);
-      }
       if (!isExactZero(coefficient))
         polynomial.set(BigInt(degree - index), exactToIr(coefficient));
     });
-    const spec2 = canonicalSpec(null, variable, polynomial, context);
-    return decoratePolynomial(polyFromSpec(spec2), spec2, variable, polynomial, provenance);
+    const spec2 = canonicalSpec(null, metadata.variable, polynomial, context);
+    value._spec = spec2;
+    return value;
   }
-  function structuralToPolynomial(value, requestedVariable, context, provenance = []) {
-    const symbols2 = sortedStructuralFreeSymbols(value);
-    const variable = requestedVariable ?? (symbols2.length === 1 ? symbols2[0] : symbols2.length === 0 ? "x" : null);
-    if (!variable) {
-      throw new Error(`Polynomial structural form has multiple symbols (${symbols2.join(", ")}); select one with .P(:name)`);
+  function createPolynomial(args, context = null, evaluate = null) {
+    const active = activePolyEntry(context);
+    if (active?.impl) {
+      const value = active.impl(args, context, evaluate);
+      attachInteropProperties(value);
+      return attachCanonicalSpec(value, context, evaluate);
     }
-    const expression = structuralValueToIr(value);
-    const source = createSymbolicSpec({
-      inputs: [variable],
-      outputMode: "expression",
-      expression,
-      origin: ".poly structural form"
-    }, context);
-    return fromSpec(source, variable, context, provenance);
-  }
-  function createPolynomial(args, context = null) {
-    const [source, second = null] = args;
-    if (isPolynomial(source))
-      return source;
-    const sourceEntries = entries2(source);
-    const optionEntries = entries2(second);
-    const requested = variableName2(field(optionEntries, "variable", sourceEntries ? field(sourceEntries, "variable") : second), null);
-    const coefficientSource = sourceEntries ? field(sourceEntries, "coefficients") : source;
-    if (sourceEntries && coefficientSource === null) {
-      throw new Error("Polynomial record requires coefficients");
-    }
-    if (Array.isArray(coefficientSource) || Array.isArray(coefficientSource?.values)) {
-      const coefficients = values(coefficientSource, "Polynomial coefficients");
-      return coefficientsToPolynomial(coefficients, requested ?? "x", context, [{ operation: "Coefficients" }]);
-    }
-    const spec2 = getAttachedSpec(source);
-    if (spec2)
-      return fromSpec(spec2, requested, context, [{ operation: "SymbolicSpec" }]);
-    if (source?.type?.startsWith?.("structural_") || source?.constructor?.name === "Fraction") {
-      return structuralToPolynomial(source, requested, context, [{ operation: "StructuralForm" }]);
-    }
-    throw new Error("Polynomial expects coefficients, a structural form, a symbolic spec, or a spec-backed function");
+    throw new Error("Polynomial construction requires the loaded pure-RiX .poly plugin");
   }
   function evaluateCoefficient(polynomial, coefficient, context, evaluate) {
     const spec2 = getAttachedSpec(polynomial);
@@ -38980,6 +40073,18 @@ defaultEnabled: false
   function polynomialCoefficients(polynomial, context, evaluate, { trim = true } = {}) {
     requirePolynomial(polynomial);
     const metadata = polynomialMetadata(polynomial);
+    if (metadata.pureRix) {
+      if (!metadata.coefficientFunction)
+        throw new Error("Pure-RiX Polynomial is missing its coefficient provider");
+      if (typeof evaluate !== "function")
+        throw new Error("Reading pure-RiX Polynomial coefficients requires an active evaluator");
+      const ascending = callWithConcreteArgs(metadata.coefficientFunction, [int8(0)], context, evaluate);
+      const result2 = [...values(ascending, "Polynomial coefficients")].reverse();
+      if (trim)
+        while (result2.length > 1 && isExactZero(result2[0]))
+          result2.shift();
+      return result2;
+    }
     const declaredDegree = polynomialDegree(metadata.coefficients);
     const result = [];
     if (declaredDegree === null)
@@ -38993,210 +40098,24 @@ defaultEnabled: false
         result.shift();
     return result;
   }
-  function polynomialRecord(polynomial, context, evaluate) {
-    return rixMap3([
-      ["schema", str2(POLYNOMIAL_SCHEMA)],
-      ["variable", str2(requirePolynomial(polynomial).variable)],
-      ["coefficients", seq2(polynomialCoefficients(polynomial, context, evaluate))],
-      ["canonical", int8(1)],
-      ["equalityPolicy", str2(polynomial.equalityPolicy)]
-    ]);
-  }
-  function polynomialDegreeValue(polynomial, context, evaluate) {
-    const coefficients = polynomialCoefficients(polynomial, context, evaluate);
-    return new Integer(coefficients.length === 1 && isExactZero(coefficients[0]) ? -1n : BigInt(coefficients.length - 1));
-  }
-  function closureCells(spec2) {
-    const result = new Map;
-    for (const scope of spec2?.__closureScopes || []) {
-      const bindings = scope?.bindings || scope;
-      if (bindings instanceof Map)
-        for (const [name, cell] of bindings)
-          result.set(name, cell);
-    }
-    return result;
-  }
-  function polynomialsEqual(left, right) {
-    if (!isPolynomial(left) || !isPolynomial(right) || left.variable !== right.variable)
-      return false;
-    const a = polynomialMetadata(left).coefficients;
-    const b = polynomialMetadata(right).coefficients;
-    if (a.size !== b.size)
-      return false;
-    for (const [power, coefficient] of a)
-      if (!b.has(power) || !sameIr(coefficient, b.get(power)))
-        return false;
-    const leftCells = closureCells(getAttachedSpec(left));
-    const rightCells = closureCells(getAttachedSpec(right));
-    const names = new Set([...leftCells.keys(), ...rightCells.keys()]);
-    for (const name of names)
-      if (leftCells.get(name) !== rightCells.get(name))
-        return false;
-    return true;
-  }
-  function polynomialVariable(left, right = null) {
-    if (isPolynomial(left))
-      return left.variable;
-    if (isPolynomial(right))
-      return right.variable;
-    return null;
-  }
-  function symbolicPolynomial(operator, left, right, context) {
-    if (isPolynomial(left) && isPolynomial(right) && left.variable !== right.variable) {
-      throw new Error(`Polynomial operators require the same variable, received '${left.variable}' and '${right.variable}'`);
-    }
-    const combined = combineSymbolic(operator, left, right);
-    return fromSpec(getAttachedSpec(combined), polynomialVariable(left, right), context, [{ operation: operator, inputs: [left, right] }]);
-  }
-  function nonnegativeExponent(value) {
-    if (value instanceof Integer)
-      return value.value >= 0n;
-    return value instanceof Rational && value.denominator === 1n && value.numerator >= 0n;
-  }
-  function installPolynomialOperators(registry) {
-    if (!registry)
-      return;
-    const binary2 = (name, prepare, impl) => registry.installVariant(name, {
-      name: `Polynomial.${name}`,
-      priority: 250,
-      prepare(args) {
-        return args.length === 2 && prepare(args[0], args[1]) ? { args } : false;
-      },
-      impl
-    });
-    for (const name of ["ADD", "SUB", "MUL"]) {
-      binary2(name, (left, right) => (isPolynomial(left) || isPolynomial(right)) && (isPolynomial(left) || isExactScalar3(left)) && (isPolynomial(right) || isExactScalar3(right)), (args, context) => symbolicPolynomial(name, args[0], args[1], context));
-    }
-    binary2("DIV", (left, right) => isPolynomial(left) && isExactScalar3(right), (args, context) => symbolicPolynomial("DIV", args[0], args[1], context));
-    binary2("POW", (left, right) => isPolynomial(left) && nonnegativeExponent(right), (args, context) => symbolicPolynomial("POW", args[0], args[1], context));
-    binary2("EQ", (left, right) => isPolynomial(left) && isPolynomial(right), ([left, right]) => polynomialsEqual(left, right) ? int8(1) : null);
-    binary2("NEQ", (left, right) => isPolynomial(left) && isPolynomial(right), ([left, right]) => polynomialsEqual(left, right) ? null : int8(1));
-    registry.installVariant("DIV", {
-      name: "Polynomial.DIV.RationalFunction",
-      priority: 249,
-      prepare(args) {
-        return args.length === 2 && isPolynomial(args[1]) ? { args } : false;
-      },
-      impl() {
-        throw new Error("Division by a Polynomial is a rational-function operation; load .ratfun (or .algebra), or use //, %, or /% for quotient/remainder");
-      }
-    });
-    registry.installVariant("POW", {
-      name: "Polynomial.POW.Unsupported",
-      priority: 249,
-      prepare(args) {
-        return args.length === 2 && isPolynomial(args[0]) && !nonnegativeExponent(args[1]) ? { args } : false;
-      },
-      impl() {
-        throw new Error("Polynomial powers require a nonnegative exact integer exponent");
-      }
-    });
-    registry.installVariant("NEG", {
-      name: "Polynomial.NEG",
-      priority: 250,
-      prepare(args) {
-        return args.length === 1 && isPolynomial(args[0]) ? { args } : false;
-      },
-      impl: ([value], context) => symbolicPolynomial("NEG", value, null, context)
-    });
-  }
-  function method6(name, impl) {
-    return { type: "method_builtin", name, impl };
-  }
-  function conversionMethod(args, context) {
-    return createPolynomial(args, context);
-  }
-  function registerPolynomialMethods(systemContext, owner = {}) {
-    const register = (typeName, name, impl) => systemContext.registerMethod(typeName, name, method6(name, impl), owner);
-    for (const typeName of ["symbolic_spec", "structural_form", "structural_symbol", "structural_literal"]) {
-      register(typeName, "P", conversionMethod);
-      register(typeName, "Polynomial", conversionMethod);
-    }
-    register("Polynomial", "P", ([value]) => value);
-    register("Polynomial", "Polynomial", ([value]) => value);
-    register("Polynomial", "Coefficients", ([value], context, evaluate) => seq2(polynomialCoefficients(value, context, evaluate)));
-    register("Polynomial", "Record", ([value], context, evaluate) => polynomialRecord(value, context, evaluate));
-    register("Polynomial", "Degree", ([value], context, evaluate) => polynomialDegreeValue(value, context, evaluate));
-    register("Polynomial", "Variable", ([value]) => str2(requirePolynomial(value).variable));
-    register("Polynomial", "Spec", ([value]) => getAttachedSpec(requirePolynomial(value)));
-    register("Polynomial", "Evaluate", ([value, argument], context, evaluate) => callWithConcreteArgs(value, [argument], context, evaluate));
-  }
-  function modifierNames2(value) {
-    if (!value)
-      return [];
-    return values(value, "Polynomial parser modifiers").map((item) => text5(item));
-  }
-  function parseVariableModifier(modifiers) {
-    const matches = modifiers.map((modifier) => String(modifier).match(/^VAR\(([^)]+)\)$/iu)).filter(Boolean);
-    if (matches.length > 1)
-      throw new Error(".poly accepts only one Var(name) modifier");
-    const unsupported = modifiers.filter((modifier) => !/^VAR\([^)]+\)$/iu.test(String(modifier)) && !/^FUN$/iu.test(String(modifier)));
-    if (unsupported.length)
-      throw new Error(`Unknown .poly modifier${unsupported.length === 1 ? "" : "s"}: ${unsupported.join(", ")}`);
-    return matches.length ? variableName2(matches[0][1]) : null;
-  }
-  function parsePolynomial(args, context, evaluate) {
-    const body = text5(args[1]);
-    if (body === null)
-      throw new Error(".poly.Parse body must be a string");
-    const variable = parseVariableModifier(modifierNames2(args[2]));
-    const structural = parseStructuralArithmetic(body, context, {
-      evaluateRiX: (source) => {
-        const runtime = context.getEnv("__script_runtime__", null);
-        const nodes = lower(parse(source, runtime?.systemLookup));
-        if (nodes.length === 0)
-          throw new Error("'@(expression)' must contain a RiX expression");
-        let result = null;
-        for (const node of nodes)
-          result = evaluate(node);
-        return result;
-      }
-    });
-    return structuralToPolynomial(structural, variable, context, [{ operation: ".poly.Parse" }]);
-  }
-  function createPolyPluginValue() {
-    const constructor = (args, context) => createPolynomial(args, context);
-    const parse2 = method6("Parse", parsePolynomial);
-    const modifier = (name) => method6(name, () => {
-      throw new Error(`.${name} is a backtick parser modifier, not a callable method`);
-    });
-    const entriesMap = new Map([
-      ["Polynomial", constructor],
-      ["POLYNOMIAL", constructor]
-    ]);
-    return {
-      type: "polynomial_plugin",
-      entries: entriesMap,
-      _ext: new Map([
-        ["PARSE", parse2],
-        ["Parse", parse2],
-        ["VAR", modifier("Var")],
-        ["Var", modifier("Var")],
-        ["FUN", modifier("Fun")],
-        ["Fun", modifier("Fun")],
-        ["POLYNOMIAL", method6("Polynomial", ([, ...args], context) => createPolynomial(args, context))],
-        ["immutable", int8(1)]
-      ])
-    };
-  }
 
   // rix/plugins/ratfun/rational-function.js
   var RATIONAL_FUNCTION_SCHEMA = "rix.rational-function@1";
   var int9 = (value) => new Integer(BigInt(value));
-  var str3 = (value) => ({ type: "string", value: String(value) });
-  var seq3 = (values2) => ({ type: "sequence", values: values2 });
-  var rixMap4 = (entries3) => ({ type: "map", entries: new Map(entries3) });
+  var str2 = (value) => ({ type: "string", value: String(value) });
+  var seq2 = (values2) => ({ type: "sequence", values: values2 });
+  var rixMap3 = (entries2) => ({ type: "map", entries: new Map(entries2) });
   var zero = () => new Rational(0n, 1n);
   var one = () => new Rational(1n, 1n);
-  function text6(value, fallback = null) {
+  function text5(value, fallback = null) {
     if (value?.type === "string")
       return value.value;
     return typeof value === "string" ? value : fallback;
   }
-  function entries3(value) {
+  function entries2(value) {
     return value?.type === "map" && value.entries instanceof Map ? value.entries : null;
   }
-  function field2(map2, name, fallback = null) {
+  function field(map2, name, fallback = null) {
     if (!(map2 instanceof Map))
       return fallback;
     if (map2.has(name))
@@ -39214,8 +40133,8 @@ defaultEnabled: false
       return value.values;
     throw new Error(`${label2} must be an array, tuple, or sequence`);
   }
-  function variableName3(value, fallback = null) {
-    const result = text6(value, fallback);
+  function variableName2(value, fallback = null) {
+    const result = text5(value, fallback);
     if (result === null)
       return null;
     if (!/^[\p{L}_][\p{L}\p{N}_]*$/u.test(result)) {
@@ -39223,7 +40142,7 @@ defaultEnabled: false
     }
     return result;
   }
-  function isExactScalar4(value) {
+  function isExactScalar3(value) {
     return value instanceof Integer || value instanceof Rational || typeof value === "bigint" || Number.isInteger(value);
   }
   function rational(value, label2) {
@@ -39320,8 +40239,8 @@ defaultEnabled: false
       cancelledDegree: common.length - 1
     };
   }
-  function polynomialValue(coefficients, variable, context) {
-    return createPolynomial([seq3(normalize2(coefficients)), str3(variable)], context);
+  function polynomialValue(coefficients, variable, context, evaluate) {
+    return createPolynomial([seq2(normalize2(coefficients)), str2(variable)], context, evaluate);
   }
   function rationalFunctionMetadata(value) {
     return value?._rationalFunction?.schema === RATIONAL_FUNCTION_SCHEMA ? value._rationalFunction : null;
@@ -39362,39 +40281,39 @@ defaultEnabled: false
     });
     if (!(callable._ext instanceof Map))
       callable._ext = new Map;
-    callable._ext.set("__type", str3("RationalFunction"));
-    callable._ext.set("_type", str3("rational_function"));
-    callable._ext.set("_symbolicKind", str3("RationalFunction"));
+    callable._ext.set("__type", str2("RationalFunction"));
+    callable._ext.set("_type", str2("rational_function"));
+    callable._ext.set("_symbolicKind", str2("RationalFunction"));
     callable._ext.set("immutable", int9(1));
     callable._ext.set("_spec", spec2);
     callable._spec = spec2;
     return callable;
   }
-  function fromCoefficientPair(numerator, denominator, variable, context, provenance = []) {
+  function fromCoefficientPair(numerator, denominator, variable, context, evaluate, provenance = []) {
     const canonical = canonicalPair(numerator, denominator);
-    const n = polynomialValue(canonical.numerator, variable, context);
-    const d = polynomialValue(canonical.denominator, variable, context);
+    const n = polynomialValue(canonical.numerator, variable, context, evaluate);
+    const d = polynomialValue(canonical.denominator, variable, context, evaluate);
     return decorateRationalFunction(n, d, variable, canonical, context, provenance);
   }
   function exactPolynomialCoefficients(polynomial, context, evaluate, label2) {
     return normalize2(polynomialCoefficients(requirePolynomial(polynomial, label2), context, evaluate), `${label2} coefficients`);
   }
-  function polynomialFromValue(value, variable, context) {
+  function polynomialFromValue(value, variable, context, evaluate) {
     if (isPolynomial(value)) {
       if (variable && value.variable !== variable) {
         throw new Error(`Rational-function operands require the same variable, received '${variable}' and '${value.variable}'`);
       }
       return value;
     }
-    if (isExactScalar4(value))
-      return polynomialValue([rational(value, "Rational-function scalar")], variable || "x", context);
+    if (isExactScalar3(value))
+      return polynomialValue([rational(value, "Rational-function scalar")], variable || "x", context, evaluate);
     throw new Error("RationalFunction operands must be Polynomials or exact integer/rational scalars");
   }
   function fromPolynomialPair(numeratorValue, denominatorValue, requestedVariable, context, evaluate, provenance = []) {
     const variable = requestedVariable || (isPolynomial(numeratorValue) ? numeratorValue.variable : null) || (isPolynomial(denominatorValue) ? denominatorValue.variable : null) || "x";
-    const numerator = polynomialFromValue(numeratorValue, variable, context);
-    const denominator = polynomialFromValue(denominatorValue, variable, context);
-    return fromCoefficientPair(exactPolynomialCoefficients(numerator, context, evaluate, "Rational-function numerator"), exactPolynomialCoefficients(denominator, context, evaluate, "Rational-function denominator"), variable, context, provenance);
+    const numerator = polynomialFromValue(numeratorValue, variable, context, evaluate);
+    const denominator = polynomialFromValue(denominatorValue, variable, context, evaluate);
+    return fromCoefficientPair(exactPolynomialCoefficients(numerator, context, evaluate, "Rational-function numerator"), exactPolynomialCoefficients(denominator, context, evaluate, "Rational-function denominator"), variable, context, evaluate, provenance);
   }
   function exactIntegerFromIr(node) {
     if (node?.fn === "LITERAL" && /^-?\d+$/.test(String(node.args[0])))
@@ -39444,7 +40363,7 @@ defaultEnabled: false
     }
     throw new Error(`RationalFunction conversion requires a rational expression in '${variable}'`);
   }
-  function fromSpec2(spec2, requestedVariable, context, evaluate, provenance = []) {
+  function fromSpec(spec2, requestedVariable, context, evaluate, provenance = []) {
     if (!spec2 || spec2.type !== "symbolic_spec")
       throw new Error("RationalFunction conversion expects a symbolic specification");
     const variable = requestedVariable ?? (spec2.inputs.length === 1 ? spec2.inputs[0] : null);
@@ -39461,8 +40380,8 @@ defaultEnabled: false
       __closureScopes: spec2.__closureScopes,
       origin: spec2.origin
     };
-    const numerator = createPolynomial([createSymbolicSpec({ ...common, expression: parts.numerator }, context)], context);
-    const denominator = createPolynomial([createSymbolicSpec({ ...common, expression: parts.denominator }, context)], context);
+    const numerator = createPolynomial([createSymbolicSpec({ ...common, expression: parts.numerator }, context)], context, evaluate);
+    const denominator = createPolynomial([createSymbolicSpec({ ...common, expression: parts.denominator }, context)], context, evaluate);
     return fromPolynomialPair(numerator, denominator, variable, context, evaluate, provenance);
   }
   function structuralToRationalFunction(value, requestedVariable, context, evaluate, provenance = []) {
@@ -39477,31 +40396,31 @@ defaultEnabled: false
       expression: structuralValueToIr(value),
       origin: ".ratfun structural form"
     }, context);
-    return fromSpec2(spec2, variable, context, evaluate, provenance);
+    return fromSpec(spec2, variable, context, evaluate, provenance);
   }
   function createRationalFunction(args, context = null, evaluate = null) {
     const [source, second = null] = args;
     if (isRationalFunction(source) && second === null)
       return source;
-    const sourceEntries = entries3(source);
+    const sourceEntries = entries2(source);
     if (sourceEntries) {
-      const variable = variableName3(field2(sourceEntries, "variable"), null);
-      const numerator = field2(sourceEntries, "numerator");
-      const denominator = field2(sourceEntries, "denominator");
+      const variable = variableName2(field(sourceEntries, "variable"), null);
+      const numerator = field(sourceEntries, "numerator");
+      const denominator = field(sourceEntries, "denominator");
       if (numerator === null || denominator === null)
         throw new Error("RationalFunction record requires numerator and denominator");
-      const numeratorValue = Array.isArray(numerator) || Array.isArray(numerator?.values) ? createPolynomial([seq3(values2(numerator, "RationalFunction numerator")), str3(variable || "x")], context) : numerator;
-      const denominatorValue = Array.isArray(denominator) || Array.isArray(denominator?.values) ? createPolynomial([seq3(values2(denominator, "RationalFunction denominator")), str3(variable || "x")], context) : denominator;
+      const numeratorValue = Array.isArray(numerator) || Array.isArray(numerator?.values) ? createPolynomial([seq2(values2(numerator, "RationalFunction numerator")), str2(variable || "x")], context, evaluate) : numerator;
+      const denominatorValue = Array.isArray(denominator) || Array.isArray(denominator?.values) ? createPolynomial([seq2(values2(denominator, "RationalFunction denominator")), str2(variable || "x")], context, evaluate) : denominator;
       return fromPolynomialPair(numeratorValue, denominatorValue, variable, context, evaluate, [{ operation: "Record" }]);
     }
     if (second !== null)
       return fromPolynomialPair(source, second, null, context, evaluate, [{ operation: "Pair" }]);
-    if (isPolynomial(source) || isExactScalar4(source)) {
+    if (isPolynomial(source) || isExactScalar3(source)) {
       return fromPolynomialPair(source, one(), null, context, evaluate, [{ operation: "Lift" }]);
     }
     const spec2 = getAttachedSpec(source);
     if (spec2)
-      return fromSpec2(spec2, null, context, evaluate, [{ operation: "SymbolicSpec" }]);
+      return fromSpec(spec2, null, context, evaluate, [{ operation: "SymbolicSpec" }]);
     if (source?.type?.startsWith?.("structural_") || source?.constructor?.name === "Fraction") {
       return structuralToRationalFunction(source, null, context, evaluate, [{ operation: "StructuralForm" }]);
     }
@@ -39520,7 +40439,7 @@ defaultEnabled: false
         throw new Error(`Rational-function operands require the same variable, received '${variable}' and '${value.variable}'`);
       return metadataCoefficients(value, context, evaluate);
     }
-    const polynomial = polynomialFromValue(value, variable, context);
+    const polynomial = polynomialFromValue(value, variable, context, evaluate);
     return { numerator: exactPolynomialCoefficients(polynomial, context, evaluate, "Rational-function operand"), denominator: [one()] };
   }
   function fieldVariable(left, right = null) {
@@ -39548,7 +40467,7 @@ defaultEnabled: false
     } else {
       throw new Error(`Unsupported RationalFunction operation ${operator}`);
     }
-    return fromCoefficientPair(numerator, denominator, variable, context, [{ operation: operator, inputs: [left, right] }]);
+    return fromCoefficientPair(numerator, denominator, variable, context, evaluate, [{ operation: operator, inputs: [left, right] }]);
   }
   function integerExponent4(value) {
     if (value instanceof Integer)
@@ -39578,7 +40497,7 @@ defaultEnabled: false
     const magnitude = exponent < 0n ? -exponent : exponent;
     const numerator = coefficientPower(parts.numerator, magnitude);
     const denominator = coefficientPower(parts.denominator, magnitude);
-    return fromCoefficientPair(exponent < 0n ? denominator : numerator, exponent < 0n ? numerator : denominator, value.variable, context, [{ operation: "POW", inputs: [value, exponentValue] }]);
+    return fromCoefficientPair(exponent < 0n ? denominator : numerator, exponent < 0n ? numerator : denominator, value.variable, context, evaluate, [{ operation: "POW", inputs: [value, exponentValue] }]);
   }
   function rationalFunctionsEqual(left, right, context, evaluate) {
     const variable = fieldVariable(left, right);
@@ -39593,7 +40512,7 @@ defaultEnabled: false
     }
   }
   function isFieldOperand(value) {
-    return isRationalFunction(value) || isPolynomial(value) || isExactScalar4(value);
+    return isRationalFunction(value) || isPolynomial(value) || isExactScalar3(value);
   }
   function installRationalFunctionOperators(registry) {
     if (!registry)
@@ -39629,24 +40548,24 @@ defaultEnabled: false
   function rationalFunctionRecord(value, context, evaluate) {
     const rationalFunction = requireRationalFunction(value);
     const coefficients = metadataCoefficients(rationalFunction, context, evaluate);
-    return rixMap4([
-      ["schema", str3(RATIONAL_FUNCTION_SCHEMA)],
-      ["variable", str3(rationalFunction.variable)],
-      ["numerator", seq3(coefficients.numerator)],
-      ["denominator", seq3(coefficients.denominator)],
+    return rixMap3([
+      ["schema", str2(RATIONAL_FUNCTION_SCHEMA)],
+      ["variable", str2(rationalFunction.variable)],
+      ["numerator", seq2(coefficients.numerator)],
+      ["denominator", seq2(coefficients.denominator)],
       ["canonical", int9(1)],
-      ["equalityPolicy", str3(rationalFunction.equalityPolicy)],
-      ["domainPolicy", str3(rationalFunction.domainPolicy)]
+      ["equalityPolicy", str2(rationalFunction.equalityPolicy)],
+      ["domainPolicy", str2(rationalFunction.domainPolicy)]
     ]);
   }
-  function method7(name, impl) {
+  function method6(name, impl) {
     return { type: "method_builtin", name, impl };
   }
-  function conversionMethod2(args, context, evaluate) {
+  function conversionMethod(args, context, evaluate) {
     if (args.length > 2)
       throw new Error(".R accepts only an optional variable name");
     const [source, requestedValue = null] = args;
-    const requested = variableName3(requestedValue, null);
+    const requested = variableName2(requestedValue, null);
     if (isRationalFunction(source)) {
       if (requested && requested !== source.variable)
         throw new Error(".R cannot rename an existing RationalFunction");
@@ -39659,23 +40578,23 @@ defaultEnabled: false
     }
     const spec2 = getAttachedSpec(source);
     if (spec2)
-      return fromSpec2(spec2, requested, context, evaluate, [{ operation: "SymbolicSpec" }]);
+      return fromSpec(spec2, requested, context, evaluate, [{ operation: "SymbolicSpec" }]);
     if (source?.type?.startsWith?.("structural_") || source?.constructor?.name === "Fraction") {
       return structuralToRationalFunction(source, requested, context, evaluate, [{ operation: "StructuralForm" }]);
     }
     return createRationalFunction([source], context, evaluate);
   }
   function registerRationalFunctionMethods(systemContext, owner = {}) {
-    const register = (typeName, name, impl) => systemContext.registerMethod(typeName, name, method7(name, impl), owner);
+    const register = (typeName, name, impl) => systemContext.registerMethod(typeName, name, method6(name, impl), owner);
     for (const typeName of ["symbolic_spec", "structural_form", "structural_symbol", "structural_literal", "Polynomial"]) {
-      register(typeName, "R", conversionMethod2);
-      register(typeName, "RationalFunction", conversionMethod2);
+      register(typeName, "R", conversionMethod);
+      register(typeName, "RationalFunction", conversionMethod);
     }
     register("RationalFunction", "R", ([value]) => value);
     register("RationalFunction", "RationalFunction", ([value]) => value);
     register("RationalFunction", "Numerator", ([value]) => rationalFunctionMetadata(requireRationalFunction(value)).numerator);
     register("RationalFunction", "Denominator", ([value]) => rationalFunctionMetadata(requireRationalFunction(value)).denominator);
-    register("RationalFunction", "Variable", ([value]) => str3(requireRationalFunction(value).variable));
+    register("RationalFunction", "Variable", ([value]) => str2(requireRationalFunction(value).variable));
     register("RationalFunction", "Spec", ([value]) => getAttachedSpec(requireRationalFunction(value)));
     register("RationalFunction", "Record", ([value], context, evaluate) => rationalFunctionRecord(value, context, evaluate));
     register("RationalFunction", "Evaluate", ([value, argument], context, evaluate) => callWithConcreteArgs(value, [argument], context, evaluate));
@@ -39695,34 +40614,34 @@ defaultEnabled: false
     });
     register("RationalFunction", "Domain", ([value]) => {
       const rationalFunction = requireRationalFunction(value);
-      return rixMap4([
-        ["policy", str3(rationalFunction.domainPolicy)],
+      return rixMap3([
+        ["policy", str2(rationalFunction.domainPolicy)],
         ["denominator", rationalFunctionMetadata(rationalFunction).denominator],
-        ["condition", str3("reduced denominator != 0")],
+        ["condition", str2("reduced denominator != 0")],
         ["cancelledInputRestrictionsPreserved", int9(0)]
       ]);
     });
     register("RationalFunction", "Compose", ([value, argument], context, evaluate) => callWithConcreteArgs(value, [argument], context, evaluate));
   }
-  function modifierNames3(value) {
+  function modifierNames2(value) {
     if (!value)
       return [];
-    return values2(value, "RationalFunction parser modifiers").map((item) => text6(item));
+    return values2(value, "RationalFunction parser modifiers").map((item) => text5(item));
   }
-  function parseVariableModifier2(modifiers) {
+  function parseVariableModifier(modifiers) {
     const matches = modifiers.map((modifier) => String(modifier).match(/^VAR\(([^)]+)\)$/iu)).filter(Boolean);
     if (matches.length > 1)
       throw new Error(".ratfun accepts only one Var(name) modifier");
     const unsupported = modifiers.filter((modifier) => !/^VAR\([^)]+\)$/iu.test(String(modifier)) && !/^FUN$/iu.test(String(modifier)));
     if (unsupported.length)
       throw new Error(`Unknown .ratfun modifier${unsupported.length === 1 ? "" : "s"}: ${unsupported.join(", ")}`);
-    return matches.length ? variableName3(matches[0][1]) : null;
+    return matches.length ? variableName2(matches[0][1]) : null;
   }
   function parseRationalFunction(args, context, evaluate) {
-    const body = text6(args[1]);
+    const body = text5(args[1]);
     if (body === null)
       throw new Error(".ratfun.Parse body must be a string");
-    const variable = parseVariableModifier2(modifierNames3(args[2]));
+    const variable = parseVariableModifier(modifierNames2(args[2]));
     const structural = parseStructuralArithmetic(body, context, {
       evaluateRiX: (source) => {
         const runtime = context.getEnv("__script_runtime__", null);
@@ -39739,8 +40658,8 @@ defaultEnabled: false
   }
   function createRatfunPluginValue() {
     const constructor = (args, context, evaluate) => createRationalFunction(args, context, evaluate);
-    const parseMethod = method7("Parse", parseRationalFunction);
-    const modifier = (name) => method7(name, () => {
+    const parseMethod = method6("Parse", parseRationalFunction);
+    const modifier = (name) => method6(name, () => {
       throw new Error(`.${name} is a backtick parser modifier, not a callable method`);
     });
     const entriesMap = new Map([
@@ -39757,7 +40676,7 @@ defaultEnabled: false
         ["Var", modifier("Var")],
         ["FUN", modifier("Fun")],
         ["Fun", modifier("Fun")],
-        ["RATIONALFUNCTION", method7("RationalFunction", ([, ...args], context, evaluate) => createRationalFunction(args, context, evaluate))],
+        ["RATIONALFUNCTION", method6("RationalFunction", ([, ...args], context, evaluate) => createRationalFunction(args, context, evaluate))],
         ["immutable", int9(1)]
       ])
     };
@@ -39766,10 +40685,10 @@ defaultEnabled: false
   // rix/plugins/fracfun/fraction-function.js
   var FRACTION_FUNCTION_SCHEMA = "rix.fraction-function@1";
   var int10 = (value) => new Integer(BigInt(value));
-  var str4 = (value) => ({ type: "string", value: String(value) });
-  var seq4 = (values3) => ({ type: "sequence", values: values3 });
-  var rixMap5 = (entries4) => ({ type: "map", entries: new Map(entries4) });
-  function text7(value, fallback = null) {
+  var str3 = (value) => ({ type: "string", value: String(value) });
+  var seq3 = (values3) => ({ type: "sequence", values: values3 });
+  var rixMap4 = (entries3) => ({ type: "map", entries: new Map(entries3) });
+  function text6(value, fallback = null) {
     if (value?.type === "string")
       return value.value;
     return typeof value === "string" ? value : fallback;
@@ -39781,8 +40700,8 @@ defaultEnabled: false
       return value.values;
     throw new Error(`${label2} must be an array, tuple, or sequence`);
   }
-  function variableName4(value, fallback = null) {
-    const result = text7(value, fallback);
+  function variableName3(value, fallback = null) {
+    const result = text6(value, fallback);
     if (result === null)
       return null;
     if (!/^[\p{L}_][\p{L}\p{N}_]*$/u.test(result)) {
@@ -39801,7 +40720,7 @@ defaultEnabled: false
       throw new Error(`${label2} must be a FractionFunction`);
     return value;
   }
-  function isExactScalar5(value) {
+  function isExactScalar4(value) {
     return value instanceof Integer || value instanceof Rational || value instanceof Fraction || typeof value === "bigint" || Number.isInteger(value);
   }
   function formalExactIr(value) {
@@ -39846,7 +40765,7 @@ defaultEnabled: false
     if (attached) {
       return { display: attached, evaluation: attached, variable: attached.inputs.length === 1 ? attached.inputs[0] : null };
     }
-    if (isExactScalar5(value)) {
+    if (isExactScalar4(value)) {
       const spec2 = scalarSpec(value);
       return { display: spec2, evaluation: spec2, variable: null };
     }
@@ -39968,7 +40887,7 @@ defaultEnabled: false
     try {
       rationalFunction = createRationalFunction([displaySpec], context, evaluate);
       try {
-        polynomial = createPolynomial([displaySpec], context);
+        polynomial = createPolynomial([displaySpec], context, evaluate);
       } catch {}
     } catch (caught) {
       error = caught instanceof Error ? caught.message : String(caught);
@@ -40001,15 +40920,15 @@ defaultEnabled: false
     });
     if (!(callable._ext instanceof Map))
       callable._ext = new Map;
-    callable._ext.set("__type", str4("FractionFunction"));
-    callable._ext.set("_type", str4("fraction_function"));
-    callable._ext.set("_symbolicKind", str4("FractionFunction"));
+    callable._ext.set("__type", str3("FractionFunction"));
+    callable._ext.set("_type", str3("fraction_function"));
+    callable._ext.set("_symbolicKind", str3("FractionFunction"));
     callable._ext.set("immutable", int10(1));
     callable._ext.set("_spec", normalizedDisplay);
     callable._spec = normalizedDisplay;
     return callable;
   }
-  function fromSpec3(spec2, requestedVariable, context, evaluate, provenance = []) {
+  function fromSpec2(spec2, requestedVariable, context, evaluate, provenance = []) {
     if (!spec2 || spec2.type !== "symbolic_spec")
       throw new Error("FractionFunction conversion expects a symbolic specification");
     const variable = requestedVariable ?? (spec2.inputs.length === 1 ? spec2.inputs[0] : spec2.inputs.length === 0 ? "x" : null);
@@ -40050,9 +40969,9 @@ defaultEnabled: false
       return pairToFractionFunction(source, second, context, evaluate, [{ operation: "Pair" }]);
     const spec2 = getAttachedSpec(source);
     if (spec2)
-      return fromSpec3(spec2, null, context, evaluate, [{ operation: "SymbolicSpec" }]);
-    if (isExactScalar5(source))
-      return fromSpec3(scalarSpec(source, "x"), "x", context, evaluate, [{ operation: "ExactScalar" }]);
+      return fromSpec2(spec2, null, context, evaluate, [{ operation: "SymbolicSpec" }]);
+    if (isExactScalar4(source))
+      return fromSpec2(scalarSpec(source, "x"), "x", context, evaluate, [{ operation: "ExactScalar" }]);
     if (source?.type?.startsWith?.("structural_") || source?.constructor?.name === "Fraction") {
       return structuralToFractionFunction(source, null, context, evaluate, [{ operation: "StructuralForm" }]);
     }
@@ -40066,7 +40985,7 @@ defaultEnabled: false
     return decorate(display, evaluation, context, evaluate, [{ operation: operator, inputs: right ? [leftValue, rightValue] : [leftValue] }]);
   }
   function isFormalOperand(value) {
-    return isFractionFunction(value) || isExactScalar5(value) || Boolean(getAttachedSpec(value));
+    return isFractionFunction(value) || isExactScalar4(value) || Boolean(getAttachedSpec(value));
   }
   function installFractionFunctionOperators(registry) {
     if (!registry)
@@ -40102,7 +41021,7 @@ defaultEnabled: false
     const source = requireFractionFunction(value);
     const display = symbolicCapabilities.TRANSFORM.impl([
       metadata(source).displaySpec,
-      str4(direction),
+      str3(direction),
       ...args
     ]);
     return decorate(display, metadata(source).evaluationSpec, context, evaluate, [
@@ -40128,13 +41047,13 @@ defaultEnabled: false
       throw new Error(`FractionFunction has no exact rational-function projection: ${metadata(source).canonicalError || error.message}`);
     }
   }
-  function polynomial(value, context) {
+  function polynomial(value, context, evaluate) {
     const source = requireFractionFunction(value);
     const cached = metadata(source).canonicalPolynomial;
     if (cached)
       return cached;
     try {
-      return createPolynomial([metadata(source).displaySpec], context);
+      return createPolynomial([metadata(source).displaySpec], context, evaluate);
     } catch (error) {
       throw new Error(`FractionFunction form is not a Polynomial: ${error.message}`);
     }
@@ -40166,14 +41085,14 @@ defaultEnabled: false
       transform: { operation: "DomainRestriction" }
     }));
   }
-  function method8(name, impl) {
+  function method7(name, impl) {
     return { type: "method_builtin", name, impl };
   }
-  function conversionMethod3(args, context, evaluate) {
+  function conversionMethod2(args, context, evaluate) {
     if (args.length > 2)
       throw new Error(".ff accepts only an optional variable name");
     const [source, requestedValue = null] = args;
-    const requested = variableName4(requestedValue, null);
+    const requested = variableName3(requestedValue, null);
     if (isFractionFunction(source)) {
       if (requested && requested !== source.variable)
         throw new Error(".ff cannot rename an existing FractionFunction");
@@ -40181,14 +41100,14 @@ defaultEnabled: false
     }
     const spec2 = getAttachedSpec(source);
     if (spec2)
-      return fromSpec3(spec2, requested, context, evaluate, [{ operation: "SymbolicSpec" }]);
+      return fromSpec2(spec2, requested, context, evaluate, [{ operation: "SymbolicSpec" }]);
     if (source?.type?.startsWith?.("structural_") || source?.constructor?.name === "Fraction") {
       return structuralToFractionFunction(source, requested, context, evaluate, [{ operation: "StructuralForm" }]);
     }
     return createFractionFunction([source], context, evaluate);
   }
   function registerFractionFunctionMethods(systemContext, owner = {}) {
-    const register = (type, name, impl) => systemContext.registerMethod(type, name, method8(name, impl), owner);
+    const register = (type, name, impl) => systemContext.registerMethod(type, name, method7(name, impl), owner);
     for (const type of [
       "symbolic_spec",
       "structural_form",
@@ -40201,14 +41120,14 @@ defaultEnabled: false
       "RationalFunction"
     ]) {
       for (const name of ["ff", "FracFun", "FractionFunction"])
-        register(type, name, conversionMethod3);
+        register(type, name, conversionMethod2);
     }
     for (const name of ["ff", "FracFun", "FractionFunction"])
       register("FractionFunction", name, ([value]) => value);
     register("FractionFunction", "Form", ([value]) => metadata(requireFractionFunction(value)).displaySpec);
     register("FractionFunction", "Spec", ([value]) => metadata(requireFractionFunction(value)).displaySpec);
     register("FractionFunction", "EvaluationSpec", ([value]) => metadata(requireFractionFunction(value)).evaluationSpec);
-    register("FractionFunction", "Variable", ([value]) => str4(requireFractionFunction(value).variable));
+    register("FractionFunction", "Variable", ([value]) => str3(requireFractionFunction(value).variable));
     register("FractionFunction", "Evaluate", ([value, argument], context, evaluate) => callWithConcreteArgs(value, [argument], context, evaluate));
     register("FractionFunction", "Compose", ([value, argument], context, evaluate) => callWithConcreteArgs(value, [argument], context, evaluate));
     register("FractionFunction", "Numerator", ([value], context, evaluate) => formPart(value, "numerator", context, evaluate));
@@ -40220,9 +41139,9 @@ defaultEnabled: false
     register("FractionFunction", "Cancel", ([value], context, evaluate) => cancelled(value, context, evaluate));
     register("FractionFunction", "Canonical", ([value], context, evaluate) => canonical(value, context, evaluate));
     register("FractionFunction", "R", ([value], context, evaluate) => canonical(value, context, evaluate));
-    register("FractionFunction", "Polynomial", ([value], context) => polynomial(value, context));
-    register("FractionFunction", "P", ([value], context) => polynomial(value, context));
-    register("FractionFunction", "CanonicalPolynomial", ([value], context) => polynomial(value, context));
+    register("FractionFunction", "Polynomial", ([value], context, evaluate) => polynomial(value, context, evaluate));
+    register("FractionFunction", "P", ([value], context, evaluate) => polynomial(value, context, evaluate));
+    register("FractionFunction", "CanonicalPolynomial", ([value], context, evaluate) => polynomial(value, context, evaluate));
     register("FractionFunction", "IsPolynomial", ([value]) => metadata(requireFractionFunction(value)).canonicalPolynomial ? int10(1) : null);
     register("FractionFunction", "SameForm", ([value, other]) => {
       requireFractionFunction(other, "SameForm operand");
@@ -40237,9 +41156,9 @@ defaultEnabled: false
       const equivalent = rationalFunctionsEqual(canonical(value, context, evaluate), canonical(other, context, evaluate), context, evaluate);
       return equivalent && restrictionsEqual(value, other) ? int10(1) : null;
     });
-    register("FractionFunction", "Domain", ([value]) => rixMap5([
-      ["policy", str4("original denominators != 0")],
-      ["restrictions", seq4(restrictionSpecs(value))],
+    register("FractionFunction", "Domain", ([value]) => rixMap4([
+      ["policy", str3("original denominators != 0")],
+      ["restrictions", seq3(restrictionSpecs(value))],
       ["cancelledRestrictionsPreserved", int10(1)]
     ]));
     register("FractionFunction", "ForgetRestrictions", ([value], context, evaluate) => {
@@ -40252,36 +41171,36 @@ defaultEnabled: false
     register("FractionFunction", "Record", ([value]) => {
       const source = requireFractionFunction(value);
       const info = metadata(source);
-      return rixMap5([
-        ["schema", str4(FRACTION_FUNCTION_SCHEMA)],
-        ["variable", str4(source.variable)],
+      return rixMap4([
+        ["schema", str3(FRACTION_FUNCTION_SCHEMA)],
+        ["variable", str3(source.variable)],
         ["form", info.displaySpec],
         ["evaluation", info.evaluationSpec],
         ["canonicalAvailable", info.canonicalRationalFunction ? int10(1) : null],
         ["polynomialAvailable", info.canonicalPolynomial ? int10(1) : null],
-        ["canonicalError", info.canonicalError ? str4(info.canonicalError) : null]
+        ["canonicalError", info.canonicalError ? str3(info.canonicalError) : null]
       ]);
     });
   }
-  function modifierNames4(value) {
+  function modifierNames3(value) {
     if (!value)
       return [];
-    return values3(value, "FractionFunction parser modifiers").map((item) => text7(item));
+    return values3(value, "FractionFunction parser modifiers").map((item) => text6(item));
   }
-  function parseVariableModifier3(modifiers) {
+  function parseVariableModifier2(modifiers) {
     const matches = modifiers.map((modifier) => String(modifier).match(/^VAR\(([^)]+)\)$/iu)).filter(Boolean);
     if (matches.length > 1)
       throw new Error(".fracfun accepts only one Var(name) modifier");
     const unsupported = modifiers.filter((modifier) => !/^VAR\([^)]+\)$/iu.test(String(modifier)) && !/^FUN$/iu.test(String(modifier)));
     if (unsupported.length)
       throw new Error(`Unknown .fracfun modifier${unsupported.length === 1 ? "" : "s"}: ${unsupported.join(", ")}`);
-    return matches.length ? variableName4(matches[0][1]) : null;
+    return matches.length ? variableName3(matches[0][1]) : null;
   }
   function parseFractionFunction(args, context, evaluate) {
-    const body = text7(args[1]);
+    const body = text6(args[1]);
     if (body === null)
       throw new Error(".fracfun.Parse body must be a string");
-    const variable = parseVariableModifier3(modifierNames4(args[2]));
+    const variable = parseVariableModifier2(modifierNames3(args[2]));
     const structural = parseStructuralArithmetic(body, context, {
       evaluateRiX: (source) => {
         const runtime = context.getEnv("__script_runtime__", null);
@@ -40298,8 +41217,8 @@ defaultEnabled: false
   }
   function createFracfunPluginValue() {
     const constructor = (args, context, evaluate) => createFractionFunction(args, context, evaluate);
-    const parseMethod = method8("Parse", parseFractionFunction);
-    const modifier = (name) => method8(name, () => {
+    const parseMethod = method7("Parse", parseFractionFunction);
+    const modifier = (name) => method7(name, () => {
       throw new Error(`.${name} is a backtick parser modifier, not a callable method`);
     });
     return {
@@ -40312,7 +41231,7 @@ defaultEnabled: false
         ["Var", modifier("Var")],
         ["FUN", modifier("Fun")],
         ["Fun", modifier("Fun")],
-        ["FRACTIONFUNCTION", method8("FractionFunction", ([, ...args], context, evaluate) => createFractionFunction(args, context, evaluate))],
+        ["FRACTIONFUNCTION", method7("FractionFunction", ([, ...args], context, evaluate) => createFractionFunction(args, context, evaluate))],
         ["immutable", int10(1)]
       ])
     };
@@ -40336,26 +41255,8 @@ defaultEnabled: false
     return value;
   }
 
-  // rix/plugins/poly/poly.plugin.rix.js
-  function install4({ systemContext, registry, metadata: metadata2 = {}, options = {} }) {
-    const value = createPolyPluginValue();
-    const mount = options.as || metadata2.mount || "poly";
-    systemContext.registerHostCallableValue(mount, value, {
-      impl: (args, context) => createPolynomial(args, context),
-      pure: true,
-      doc: "Construct a semantic callable Polynomial from coefficients, structural arithmetic, or a symbolic spec"
-    }, {
-      doc: metadata2.description || "Semantic callable univariate polynomials",
-      groups: metadata2.groups || ["Algebra", "Exact", "Symbolic"],
-      pluginId: metadata2.id || "poly"
-    });
-    registerPolynomialMethods(systemContext, { pluginId: metadata2.id || "poly", mount });
-    installPolynomialOperators(registry);
-    return value;
-  }
-
   // rix/plugins/ratfun/ratfun.plugin.rix.js
-  function install5({ systemContext, registry, metadata: metadata2 = {}, options = {} }) {
+  function install4({ systemContext, registry, metadata: metadata2 = {}, options = {} }) {
     const value = createRatfunPluginValue();
     const mount = options.as || metadata2.mount || "ratfun";
     systemContext.registerHostCallableValue(mount, value, {
@@ -40373,9 +41274,9 @@ defaultEnabled: false
   }
 
   // rix/plugins/symbolic/symbolic.plugin.rix.js
-  var str5 = (value) => ({ type: "string", value: String(value) });
-  var method9 = (name, impl) => ({ type: "method_builtin", name, impl });
-  function install6({ systemContext, metadata: metadata2 = {} }) {
+  var str4 = (value) => ({ type: "string", value: String(value) });
+  var method8 = (name, impl) => ({ type: "method_builtin", name, impl });
+  function install5({ systemContext, metadata: metadata2 = {} }) {
     const fraction = (args) => createFraction(args);
     const fractionFunction = (args, context, evaluate) => createFractionFunction(args, context, evaluate);
     const value = {
@@ -40385,14 +41286,14 @@ defaultEnabled: false
         ["FRACTION", fraction],
         ["FractionFunction", fractionFunction],
         ["FRACTIONFUNCTION", fractionFunction],
-        ["Services", { type: "sequence", values: [str5("fraction"), str5("fracfun"), str5("poly"), str5("ratfun")] }]
+        ["Services", { type: "sequence", values: [str4("fraction"), str4("fracfun"), str4("poly"), str4("ratfun")] }]
       ]),
       _ext: new Map([
-        ["FRACTION", method9("Fraction", ([, ...args]) => createFraction(args))],
-        ["FRACTIONFUNCTION", method9("FractionFunction", ([, ...args], context, evaluate) => createFractionFunction(args, context, evaluate))],
-        ["SERVICES", method9("Services", () => ({
+        ["FRACTION", method8("Fraction", ([, ...args]) => createFraction(args))],
+        ["FRACTIONFUNCTION", method8("FractionFunction", ([, ...args], context, evaluate) => createFractionFunction(args, context, evaluate))],
+        ["SERVICES", method8("Services", () => ({
           type: "sequence",
-          values: [str5("fraction"), str5("fracfun"), str5("poly"), str5("ratfun")]
+          values: [str4("fraction"), str4("fracfun"), str4("poly"), str4("ratfun")]
         }))],
         ["immutable", new Integer(1n)]
       ])
@@ -40403,279 +41304,6 @@ defaultEnabled: false
       pluginId: metadata2.id || "symbolic"
     });
     return value;
-  }
-
-  // rix/plugins/algebra/algebra.js
-  var DIVISION_SCHEMA = "rix.algebra.division@1";
-  var int11 = (value) => new Integer(BigInt(value));
-  var str6 = (value) => ({ type: "string", value: String(value) });
-  var seq5 = (values4) => ({ type: "sequence", values: values4 });
-  function entriesFor2(args, positional, name) {
-    if (args.length === 1 && args[0]?.type === "map" && args[0].entries instanceof Map)
-      return args[0].entries;
-    if (args.length > positional.length)
-      throw new Error(`${name} received too many arguments`);
-    const entries4 = new Map(positional.slice(0, args.length).map((key, index) => [key, args[index]]));
-    const options = entries4.get("options");
-    if (options?.type === "map" && options.entries instanceof Map) {
-      for (const [key, value] of options.entries)
-        if (!entries4.has(key))
-          entries4.set(key, value);
-    }
-    return entries4;
-  }
-  function field3(entries4, name, fallback = null) {
-    if (!(entries4 instanceof Map))
-      return fallback;
-    if (entries4.has(name))
-      return entries4.get(name);
-    const canonical2 = String(name).toLowerCase();
-    for (const [key, value] of entries4)
-      if (String(key).toLowerCase() === canonical2)
-        return value;
-    return fallback;
-  }
-  function rational2(value, label2) {
-    if (value instanceof Rational)
-      return value;
-    if (value instanceof Integer)
-      return new Rational(value.value, 1n);
-    throw new Error(`${label2} must be an exact integer or rational`);
-  }
-  var zero2 = () => new Rational(0n, 1n);
-  var one2 = () => new Rational(1n, 1n);
-  var isZero5 = (value) => value.numerator === 0n;
-  function normalizeCoefficients(values4, label2 = "Polynomial coefficients") {
-    if (values4.length === 0)
-      throw new Error(`${label2} cannot be empty`);
-    const exact = values4.map((value, index) => rational2(value, `${label2} ${index + 1}`));
-    const first = exact.findIndex((value) => !isZero5(value));
-    return first < 0 ? [zero2()] : exact.slice(first);
-  }
-  function exactCoefficients(polynomial2, context, evaluate, label2) {
-    requirePolynomial(polynomial2, label2);
-    return normalizeCoefficients(polynomialCoefficients(polynomial2, context, evaluate), `${label2} coefficients`);
-  }
-  function polynomialValue2(coefficients, variable, context) {
-    return createPolynomial([seq5(normalizeCoefficients(coefficients)), str6(variable)], context);
-  }
-  function createPolynomial2(args, context) {
-    try {
-      return createPolynomial(args, context);
-    } catch (error) {
-      throw new Error(`algebra.Polynomial: ${error.message}`);
-    }
-  }
-  function polynomialCoefficients2(args, context, evaluate) {
-    const entries4 = entriesFor2(args, ["polynomial"], "algebra.Coefficients");
-    const polynomial2 = requirePolynomial(field3(entries4, "polynomial"), "algebra.Coefficients value");
-    return seq5(polynomialCoefficients(polynomial2, context, evaluate));
-  }
-  function polynomialRecord2(args, context, evaluate) {
-    const entries4 = entriesFor2(args, ["polynomial"], "algebra.Record");
-    return polynomialRecord(requirePolynomial(field3(entries4, "polynomial"), "algebra.Record value"), context, evaluate);
-  }
-  function evaluatePolynomial(args, context, evaluate) {
-    const entries4 = entriesFor2(args, ["polynomial", "value"], "algebra.Evaluate");
-    const polynomial2 = requirePolynomial(field3(entries4, "polynomial"), "algebra.Evaluate polynomial");
-    return callWithConcreteArgs(polynomial2, [field3(entries4, "value")], context, evaluate);
-  }
-  function equalPolynomials(args) {
-    const entries4 = entriesFor2(args, ["left", "right"], "algebra.Equal");
-    return int11(polynomialsEqual(requirePolynomial(field3(entries4, "left"), "algebra.Equal left value"), requirePolynomial(field3(entries4, "right"), "algebra.Equal right value")) ? 1 : 0);
-  }
-  function coefficientsEqual2(left, right) {
-    return left.length === right.length && left.every((value, index) => value.equals(right[index]));
-  }
-  function addCoefficients(left, right) {
-    const length = Math.max(left.length, right.length);
-    const a = [...Array(length - left.length).fill(null), ...left];
-    const b = [...Array(length - right.length).fill(null), ...right];
-    return normalizeCoefficients(Array.from({ length }, (_, index) => (a[index] || zero2()).add(b[index] || zero2())));
-  }
-  function multiplyCoefficients(left, right) {
-    const result = Array.from({ length: left.length + right.length - 1 }, zero2);
-    for (let a = 0;a < left.length; a += 1)
-      for (let b = 0;b < right.length; b += 1) {
-        result[a + b] = result[a + b].add(left[a].multiply(right[b]));
-      }
-    return normalizeCoefficients(result);
-  }
-  function divisionValue(dividend, divisor, quotient, remainder, coefficients, method10, extra = {}) {
-    const reconstructed = addCoefficients(multiplyCoefficients(coefficients.divisor, coefficients.quotient), coefficients.remainder);
-    const identityVerified = coefficientsEqual2(reconstructed, coefficients.dividend);
-    const factor = coefficients.remainder.length === 1 && isZero5(coefficients.remainder[0]);
-    return Object.freeze({
-      type: "algebra_division",
-      kind: "polynomial_division",
-      schema: DIVISION_SCHEMA,
-      method: method10,
-      dividend,
-      divisor,
-      quotient,
-      remainder,
-      exact: true,
-      identity: Object.freeze({ relation: "dividend = divisor * quotient + remainder", verified: identityVerified }),
-      factor: Object.freeze({
-        divisorIsFactor: factor,
-        status: factor ? "exact-factor" : "nonzero-remainder",
-        equalityPolicy: dividend.equalityPolicy
-      }),
-      provenance: Object.freeze([{ operation: method10 === "synthetic" ? "SyntheticDivide" : "Divide", inputs: Object.freeze([dividend, divisor]) }]),
-      ...extra,
-      _ext: new Map([
-        ["__type", str6("PolynomialDivision")],
-        ["_type", str6("algebra_division")],
-        ["kind", str6("polynomial_division")],
-        ["immutable", int11(1)]
-      ])
-    });
-  }
-  function divideValues(dividend, divisor, context, evaluate, method10 = "long") {
-    requirePolynomial(dividend, "algebra.Divide dividend");
-    requirePolynomial(divisor, "algebra.Divide divisor");
-    if (dividend.variable !== divisor.variable)
-      throw new Error("algebra.Divide polynomials must use the same variable");
-    const dividendValues = exactCoefficients(dividend, context, evaluate, "algebra.Divide dividend");
-    const divisorValues = exactCoefficients(divisor, context, evaluate, "algebra.Divide divisor");
-    const dividendDegree = dividendValues.length === 1 && isZero5(dividendValues[0]) ? -1 : dividendValues.length - 1;
-    const divisorDegree = divisorValues.length === 1 && isZero5(divisorValues[0]) ? -1 : divisorValues.length - 1;
-    if (divisorDegree < 0)
-      throw new Error("algebra.Divide divisor cannot be the zero polynomial");
-    let quotientValues;
-    let remainderValues;
-    if (dividendDegree < divisorDegree) {
-      quotientValues = [zero2()];
-      remainderValues = dividendValues;
-    } else {
-      const difference = dividendDegree - divisorDegree;
-      quotientValues = Array.from({ length: difference + 1 }, zero2);
-      const working = [...dividendValues];
-      for (let index = 0;index <= difference; index += 1) {
-        const factor = working[index].divide(divisorValues[0]);
-        quotientValues[index] = factor;
-        for (let divisorIndex = 0;divisorIndex < divisorValues.length; divisorIndex += 1) {
-          working[index + divisorIndex] = working[index + divisorIndex].subtract(factor.multiply(divisorValues[divisorIndex]));
-        }
-      }
-      remainderValues = normalizeCoefficients(working.slice(difference + 1).length ? working.slice(difference + 1) : [zero2()]);
-    }
-    const quotient = polynomialValue2(quotientValues, dividend.variable, context);
-    const remainder = polynomialValue2(remainderValues, dividend.variable, context);
-    return divisionValue(dividend, divisor, quotient, remainder, {
-      dividend: dividendValues,
-      divisor: divisorValues,
-      quotient: quotientValues,
-      remainder: remainderValues
-    }, method10);
-  }
-  function dividePolynomials(args, context, evaluate) {
-    const entries4 = entriesFor2(args, ["dividend", "divisor"], "algebra.Divide");
-    return divideValues(field3(entries4, "dividend"), field3(entries4, "divisor"), context, evaluate);
-  }
-  function syntheticDivide(args, context, evaluate) {
-    const entries4 = entriesFor2(args, ["polynomial", "root"], "algebra.SyntheticDivide");
-    const polynomial2 = requirePolynomial(field3(entries4, "polynomial"), "algebra.SyntheticDivide polynomial");
-    const root = rational2(field3(entries4, "root"), "algebra.SyntheticDivide root");
-    const coefficients = exactCoefficients(polynomial2, context, evaluate, "algebra.SyntheticDivide polynomial");
-    const divisor = polynomialValue2([one2(), root.negate()], polynomial2.variable, context);
-    const result = divideValues(polynomial2, divisor, context, evaluate, "synthetic");
-    return Object.freeze({
-      ...result,
-      root,
-      grid: createSyntheticDivision(root, coefficients)
-    });
-  }
-  function requireDivision(value, label2) {
-    if (value?.type !== "algebra_division" || value.schema !== DIVISION_SCHEMA)
-      throw new Error(`${label2} must be an algebra division result`);
-    return value;
-  }
-  function divisionQuotient(args) {
-    const entries4 = entriesFor2(args, ["division"], "algebra.Quotient");
-    return requireDivision(field3(entries4, "division"), "algebra.Quotient value").quotient;
-  }
-  function divisionRemainder(args) {
-    const entries4 = entriesFor2(args, ["division"], "algebra.Remainder");
-    return requireDivision(field3(entries4, "division"), "algebra.Remainder value").remainder;
-  }
-  function divisorIsFactor(args, context, evaluate) {
-    const entries4 = entriesFor2(args, ["polynomial", "candidate"], "algebra.IsFactor");
-    return int11(divideValues(field3(entries4, "polynomial"), field3(entries4, "candidate"), context, evaluate).factor.divisorIsFactor ? 1 : 0);
-  }
-  function divisionGrid(args) {
-    const entries4 = entriesFor2(args, ["division"], "algebra.Grid");
-    const division = requireDivision(field3(entries4, "division"), "algebra.Grid value");
-    if (division.method !== "synthetic" || !division.grid)
-      throw new Error("algebra.Grid requires a SyntheticDivide result");
-    return division.grid;
-  }
-  function method10(name, impl) {
-    return { type: "method_builtin", name, impl };
-  }
-  function registerAlgebraMethods(systemContext, owner = {}) {
-    const register = (type, name, impl) => systemContext.registerMethod(type, name, method10(name, impl), owner);
-    register("Polynomial", "Divide", ([value, divisor], context, evaluate) => dividePolynomials([value, divisor], context, evaluate));
-    register("Polynomial", "DivMod", ([value, divisor], context, evaluate) => dividePolynomials([value, divisor], context, evaluate));
-    register("Polynomial", "SyntheticDiv", ([value, root], context, evaluate) => syntheticDivide([value, root], context, evaluate));
-    register("Polynomial", "SyntheticDivide", ([value, root], context, evaluate) => syntheticDivide([value, root], context, evaluate));
-    register("Polynomial", "IsFactor", ([value, candidate], context, evaluate) => divisorIsFactor([value, candidate], context, evaluate));
-    register("PolynomialDivision", "Quotient", ([value]) => divisionQuotient([value]));
-    register("PolynomialDivision", "Remainder", ([value]) => divisionRemainder([value]));
-    register("PolynomialDivision", "Grid", ([value]) => divisionGrid([value]));
-  }
-  function installPolynomialDivisionOperators(registry) {
-    if (!registry)
-      return;
-    const install7 = (name, impl) => registry.installVariant(name, {
-      name: `Polynomial.${name}`,
-      priority: 260,
-      prepare(args) {
-        return args.length === 2 && isPolynomial(args[0]) && isPolynomial(args[1]) ? { args } : false;
-      },
-      impl
-    });
-    install7("INTDIV", ([left, right], context, evaluate) => divideValues(left, right, context, evaluate).quotient);
-    install7("MOD", ([left, right], context, evaluate) => divideValues(left, right, context, evaluate).remainder);
-    install7("DIVMOD", ([left, right], context, evaluate) => {
-      const result = divideValues(left, right, context, evaluate);
-      return { type: "tuple", values: [result.quotient, result.remainder] };
-    });
-  }
-
-  // rix/plugins/algebra/algebra.plugin.rix.js
-  var HELPERS = new Map([
-    ["Polynomial", createPolynomial2],
-    ["Coefficients", polynomialCoefficients2],
-    ["Record", polynomialRecord2],
-    ["Evaluate", evaluatePolynomial],
-    ["Equal", equalPolynomials],
-    ["Divide", dividePolynomials],
-    ["SyntheticDivide", syntheticDivide],
-    ["Quotient", divisionQuotient],
-    ["Remainder", divisionRemainder],
-    ["IsFactor", divisorIsFactor],
-    ["Grid", divisionGrid]
-  ]);
-  function createAlgebraPluginCollection() {
-    const entries4 = new Map;
-    const extension = new Map([["immutable", new Integer(1n)]]);
-    for (const [name, helper] of HELPERS) {
-      entries4.set(name, helper);
-      entries4.set(name.toUpperCase(), helper);
-      extension.set(name.toUpperCase(), { type: "method_builtin", name, impl: (args, context, evaluate) => helper(args.slice(1), context, evaluate) });
-    }
-    return { type: "map", entries: entries4, _ext: extension };
-  }
-  function install7({ systemContext, registry, metadata: metadata2 = {} }) {
-    const collection = createAlgebraPluginCollection();
-    systemContext.registerHostValue("algebra", collection, {
-      doc: "Canonical exact univariate polynomials and verified transformations",
-      groups: ["Algebra", "Exact"]
-    });
-    registerAlgebraMethods(systemContext, { pluginId: metadata2.id || "algebra", mount: metadata2.mount || "algebra" });
-    installPolynomialDivisionOperators(registry);
-    return collection;
   }
 
   // rix/plugins/exact-algebras/exact-algebras.plugin.rix.js
@@ -40830,7 +41458,7 @@ defaultEnabled: false
       throw new Error("Components expects a quaternion or octonion");
     return { type: "sequence", values: [...value.components] };
   }
-  function method11(name, impl) {
+  function method9(name, impl) {
     return {
       type: "method_builtin",
       name,
@@ -40846,14 +41474,14 @@ defaultEnabled: false
       ["NormSquared", (args) => normSquared(args[0])],
       ["Inverse", (args) => inverse(args[0])]
     ]);
-    const entries4 = new Map;
+    const entries3 = new Map;
     const extension = new Map([["immutable", new Integer(1n)]]);
     for (const [name, helper] of helpers) {
-      entries4.set(name, helper);
-      entries4.set(name.toUpperCase(), helper);
-      extension.set(name.toUpperCase(), method11(name, helper));
+      entries3.set(name, helper);
+      entries3.set(name.toUpperCase(), helper);
+      extension.set(name.toUpperCase(), method9(name, helper));
     }
-    return { type: "map", entries: entries4, _ext: extension };
+    return { type: "map", entries: entries3, _ext: extension };
   }
   function installArithmeticVariants(registry) {
     if (!registry)
@@ -40881,7 +41509,7 @@ defaultEnabled: false
       impl: ([value]) => new ExactCayleyDickson(value.components.map((component) => component.negate()))
     });
   }
-  function install8({ systemContext, registry }) {
+  function install6({ systemContext, registry }) {
     const exactAlgebras = createExactAlgebrasCollection();
     systemContext.registerHostValue("exactAlgebras", exactAlgebras, {
       doc: "Exact rational quaternion and octonion constructors and operations"
@@ -40891,7 +41519,7 @@ defaultEnabled: false
   }
 
   // rix/plugins/plot/plot.plugin.rix.js
-  function install9({ systemContext }) {
+  function install7({ systemContext }) {
     const plot = createPlotOutputCollection();
     systemContext.registerHostValue("plot", plot, { doc: "Portable plotting helpers that produce intrinsic Graphics scenes" });
     return plot;
@@ -40899,10 +41527,10 @@ defaultEnabled: false
 
   // rix/plugins/scene3d/scene3d.js
   var SCENE3D_SCHEMA = "rix.scene3d@1";
-  var int12 = (value) => new Integer(BigInt(value));
-  var str7 = (value) => ({ type: "string", value: String(value) });
-  var seq6 = (values4) => ({ type: "sequence", values: values4 });
-  var rixMap6 = (entries4) => ({ type: "map", entries: new Map(entries4) });
+  var int11 = (value) => new Integer(BigInt(value));
+  var str5 = (value) => ({ type: "string", value: String(value) });
+  var seq4 = (values4) => ({ type: "sequence", values: values4 });
+  var rixMap5 = (entries3) => ({ type: "map", entries: new Map(entries3) });
   function sequence2(value, label2) {
     if (Array.isArray(value))
       return value;
@@ -40912,27 +41540,27 @@ defaultEnabled: false
       return value.elements;
     throw new Error(`${label2} must be a sequence`);
   }
-  function entriesFor3(args, positional, name) {
+  function entriesFor2(args, positional, name) {
     if (args.length === 1 && args[0]?.type === "map" && args[0].entries instanceof Map)
       return args[0].entries;
     if (args.length > positional.length)
       throw new Error(`${name} received too many arguments`);
-    const entries4 = new Map(positional.slice(0, args.length).map((key, index) => [key, args[index]]));
-    const options = entries4.get("options");
+    const entries3 = new Map(positional.slice(0, args.length).map((key, index) => [key, args[index]]));
+    const options = entries3.get("options");
     if (options?.type === "map" && options.entries instanceof Map) {
       for (const [key, value] of options.entries)
-        if (!entries4.has(key))
-          entries4.set(key, value);
+        if (!entries3.has(key))
+          entries3.set(key, value);
     }
-    return entries4;
+    return entries3;
   }
-  function field4(entries4, name, fallback = null) {
-    if (!(entries4 instanceof Map))
+  function field2(entries3, name, fallback = null) {
+    if (!(entries3 instanceof Map))
       return fallback;
-    if (entries4.has(name))
-      return entries4.get(name);
-    const key = [...entries4.keys()].find((candidate) => String(candidate).toLowerCase() === String(name).toLowerCase());
-    return key === undefined ? fallback : entries4.get(key);
+    if (entries3.has(name))
+      return entries3.get(name);
+    const key = [...entries3.keys()].find((candidate) => String(candidate).toLowerCase() === String(name).toLowerCase());
+    return key === undefined ? fallback : entries3.get(key);
   }
   function numeric(value, label2) {
     let result;
@@ -40973,7 +41601,7 @@ defaultEnabled: false
       return value.numerator !== 0n;
     return Boolean(value);
   }
-  function text8(value, fallback = null) {
+  function text7(value, fallback = null) {
     if (value?.type === "string")
       return value.value;
     return typeof value === "string" ? value : fallback;
@@ -41003,9 +41631,9 @@ defaultEnabled: false
       schema: SCENE3D_SCHEMA,
       ...fields,
       _ext: new Map([
-        ["_type", str7(kind === "scene" ? "output" : "scene3d_node")],
-        ["kind", str7(kind === "scene" ? "scene3d" : kind)],
-        ["immutable", int12(1)]
+        ["_type", str5(kind === "scene" ? "output" : "scene3d_node")],
+        ["kind", str5(kind === "scene" ? "scene3d" : kind)],
+        ["immutable", int11(1)]
       ])
     });
   }
@@ -41023,26 +41651,26 @@ defaultEnabled: false
   function normalizeChildren(value, label2) {
     return Object.freeze(sequence2(value, label2).map((child, index) => validateNode(child, `${label2} ${index + 1}`)));
   }
-  function styleOptions(entries4) {
-    const material = field4(entries4, "material");
+  function styleOptions(entries3) {
+    const material = field2(entries3, "material");
     const materialEntries = material?.type === "scene3d_node" && material.kind === "material" ? material.values : material?.type === "map" && material.entries instanceof Map ? material.entries : new Map;
-    const color = text8(field4(entries4, "color"), text8(field4(materialEntries, "color"), "#275dad"));
-    const width = field4(entries4, "width", field4(materialEntries, "width", int12(1)));
-    const opacity = field4(entries4, "opacity", field4(materialEntries, "opacity", int12(1)));
+    const color = text7(field2(entries3, "color"), text7(field2(materialEntries, "color"), "#275dad"));
+    const width = field2(entries3, "width", field2(materialEntries, "width", int11(1)));
+    const opacity = field2(entries3, "opacity", field2(materialEntries, "opacity", int11(1)));
     return Object.freeze({ color, width, opacity, material: material ?? null });
   }
   function createMaterial(args) {
-    const entries4 = entriesFor3(args, ["color", "opacity", "width"], "scene3d.Material");
-    const color = text8(field4(entries4, "color"), "#275dad");
-    const opacity = field4(entries4, "opacity", int12(1));
-    const width = field4(entries4, "width", int12(1));
+    const entries3 = entriesFor2(args, ["color", "opacity", "width"], "scene3d.Material");
+    const color = text7(field2(entries3, "color"), "#275dad");
+    const opacity = field2(entries3, "opacity", int11(1));
+    const width = field2(entries3, "width", int11(1));
     numeric(opacity, "scene3d.Material opacity");
     numeric(width, "scene3d.Material width");
-    return sceneValue("material", { values: new Map([["color", str7(color)], ["opacity", opacity], ["width", width]]) });
+    return sceneValue("material", { values: new Map([["color", str5(color)], ["opacity", opacity], ["width", width]]) });
   }
-  function lightOptions(entries4, name) {
-    const color = text8(field4(entries4, "color"), "#ffffff");
-    const intensity = field4(entries4, "intensity", int12(1));
+  function lightOptions(entries3, name) {
+    const color = text7(field2(entries3, "color"), "#ffffff");
+    const intensity = field2(entries3, "intensity", int11(1));
     if (numeric(intensity, `${name} intensity`) < 0)
       throw new Error(`${name} intensity must be nonnegative`);
     if (!/^#[0-9a-f]{6}$/i.test(color) && !/^#[0-9a-f]{3}$/i.test(color)) {
@@ -41051,81 +41679,81 @@ defaultEnabled: false
     return { color, intensity };
   }
   function createAmbientLight(args) {
-    const entries4 = entriesFor3(args, ["color", "intensity"], "scene3d.AmbientLight");
-    return sceneValue("ambient_light", lightOptions(entries4, "scene3d.AmbientLight"));
+    const entries3 = entriesFor2(args, ["color", "intensity"], "scene3d.AmbientLight");
+    return sceneValue("ambient_light", lightOptions(entries3, "scene3d.AmbientLight"));
   }
   function createDirectionalLight(args) {
-    const entries4 = entriesFor3(args, ["direction", "options"], "scene3d.DirectionalLight");
-    const direction = exactVector(field4(entries4, "direction"), 3, "scene3d.DirectionalLight direction");
+    const entries3 = entriesFor2(args, ["direction", "options"], "scene3d.DirectionalLight");
+    const direction = exactVector(field2(entries3, "direction"), 3, "scene3d.DirectionalLight direction");
     if (Math.hypot(...direction.map((value, index) => numeric(value, `scene3d.DirectionalLight direction ${index + 1}`))) < 0.000000000001) {
       throw new Error("scene3d.DirectionalLight direction must not be zero");
     }
-    return sceneValue("directional_light", { direction, ...lightOptions(entries4, "scene3d.DirectionalLight") });
+    return sceneValue("directional_light", { direction, ...lightOptions(entries3, "scene3d.DirectionalLight") });
   }
   function createPointLight(args) {
-    const entries4 = entriesFor3(args, ["position", "options"], "scene3d.PointLight");
+    const entries3 = entriesFor2(args, ["position", "options"], "scene3d.PointLight");
     return sceneValue("point_light", {
-      position: exactVector(field4(entries4, "position"), 3, "scene3d.PointLight position"),
-      ...lightOptions(entries4, "scene3d.PointLight")
+      position: exactVector(field2(entries3, "position"), 3, "scene3d.PointLight position"),
+      ...lightOptions(entries3, "scene3d.PointLight")
     });
   }
   function createMesh(args) {
-    const entries4 = entriesFor3(args, ["vertices", "triangles", "options"], "scene3d.Mesh");
-    const vertices = Object.freeze(sequence2(field4(entries4, "vertices"), "scene3d.Mesh vertices").map((vertex, index) => exactVector(vertex, 3, `scene3d.Mesh vertex ${index + 1}`)));
+    const entries3 = entriesFor2(args, ["vertices", "triangles", "options"], "scene3d.Mesh");
+    const vertices = Object.freeze(sequence2(field2(entries3, "vertices"), "scene3d.Mesh vertices").map((vertex, index) => exactVector(vertex, 3, `scene3d.Mesh vertex ${index + 1}`)));
     if (vertices.length === 0)
       throw new Error("scene3d.Mesh requires at least one vertex");
-    const triangles = indexTriples(field4(entries4, "triangles"), vertices.length, "scene3d.Mesh triangle");
-    return sceneValue("mesh", { vertices, triangles, style: styleOptions(entries4), metadata: field4(entries4, "metadata") });
+    const triangles = indexTriples(field2(entries3, "triangles"), vertices.length, "scene3d.Mesh triangle");
+    return sceneValue("mesh", { vertices, triangles, style: styleOptions(entries3), metadata: field2(entries3, "metadata") });
   }
   function createPolyline(args) {
-    const entries4 = entriesFor3(args, ["points", "options"], "scene3d.Polyline");
-    const points = Object.freeze(sequence2(field4(entries4, "points"), "scene3d.Polyline points").map((point, index) => exactVector(point, 3, `scene3d.Polyline point ${index + 1}`)));
+    const entries3 = entriesFor2(args, ["points", "options"], "scene3d.Polyline");
+    const points = Object.freeze(sequence2(field2(entries3, "points"), "scene3d.Polyline points").map((point, index) => exactVector(point, 3, `scene3d.Polyline point ${index + 1}`)));
     if (points.length < 2)
       throw new Error("scene3d.Polyline requires at least two points");
     return sceneValue("polyline", {
       points,
-      closed: truthy3(field4(entries4, "closed")),
-      style: styleOptions(entries4),
-      metadata: field4(entries4, "metadata")
+      closed: truthy3(field2(entries3, "closed")),
+      style: styleOptions(entries3),
+      metadata: field2(entries3, "metadata")
     });
   }
   function createPointCloud(args) {
-    const entries4 = entriesFor3(args, ["points", "options"], "scene3d.PointCloud");
-    const points = Object.freeze(sequence2(field4(entries4, "points"), "scene3d.PointCloud points").map((point, index) => exactVector(point, 3, `scene3d.PointCloud point ${index + 1}`)));
+    const entries3 = entriesFor2(args, ["points", "options"], "scene3d.PointCloud");
+    const points = Object.freeze(sequence2(field2(entries3, "points"), "scene3d.PointCloud points").map((point, index) => exactVector(point, 3, `scene3d.PointCloud point ${index + 1}`)));
     if (points.length === 0)
       throw new Error("scene3d.PointCloud requires at least one point");
     return sceneValue("point_cloud", {
       points,
-      radius: field4(entries4, "radius", int12(3)),
-      style: styleOptions(entries4),
-      metadata: field4(entries4, "metadata")
+      radius: field2(entries3, "radius", int11(3)),
+      style: styleOptions(entries3),
+      metadata: field2(entries3, "metadata")
     });
   }
   function createGroup3D(args) {
-    const entries4 = entriesFor3(args, ["children", "options"], "scene3d.Group");
-    return sceneValue("group", { children: normalizeChildren(field4(entries4, "children"), "scene3d.Group children"), metadata: field4(entries4, "metadata") });
+    const entries3 = entriesFor2(args, ["children", "options"], "scene3d.Group");
+    return sceneValue("group", { children: normalizeChildren(field2(entries3, "children"), "scene3d.Group children"), metadata: field2(entries3, "metadata") });
   }
   function identityExact() {
-    return [int12(1), int12(0), int12(0), int12(0), int12(0), int12(1), int12(0), int12(0), int12(0), int12(0), int12(1), int12(0), int12(0), int12(0), int12(0), int12(1)];
+    return [int11(1), int11(0), int11(0), int11(0), int11(0), int11(1), int11(0), int11(0), int11(0), int11(0), int11(1), int11(0), int11(0), int11(0), int11(0), int11(1)];
   }
   function createTransform3D(args) {
-    const entries4 = entriesFor3(args, ["children", "options"], "scene3d.Transform");
+    const entries3 = entriesFor2(args, ["children", "options"], "scene3d.Transform");
     let matrix = identityExact();
-    const matrixValue = field4(entries4, "matrix");
+    const matrixValue = field2(entries3, "matrix");
     if (matrixValue !== null) {
       const values4 = sequence2(matrixValue, "scene3d.Transform matrix");
       if (values4.length !== 16)
         throw new Error("scene3d.Transform matrix must contain 16 row-major values");
       matrix = values4.map((value, index) => exact(value, `scene3d.Transform matrix value ${index + 1}`));
     }
-    const translate = field4(entries4, "translate");
+    const translate = field2(entries3, "translate");
     if (translate !== null) {
       const vector = exactVector(translate, 3, "scene3d.Transform translate");
       matrix[3] = vector[0];
       matrix[7] = vector[1];
       matrix[11] = vector[2];
     }
-    const scale2 = field4(entries4, "scale");
+    const scale2 = field2(entries3, "scale");
     if (scale2 !== null) {
       const values4 = Array.isArray(scale2) || Array.isArray(scale2?.values) ? exactVector(scale2, 3, "scene3d.Transform scale") : [exact(scale2, "scene3d.Transform scale"), exact(scale2, "scene3d.Transform scale"), exact(scale2, "scene3d.Transform scale")];
       matrix[0] = values4[0];
@@ -41133,46 +41761,46 @@ defaultEnabled: false
       matrix[10] = values4[2];
     }
     return sceneValue("transform", {
-      children: normalizeChildren(field4(entries4, "children"), "scene3d.Transform children"),
+      children: normalizeChildren(field2(entries3, "children"), "scene3d.Transform children"),
       matrix: Object.freeze(matrix),
-      metadata: field4(entries4, "metadata")
+      metadata: field2(entries3, "metadata")
     });
   }
   function camera(args, projection) {
     const name = projection === "perspective" ? "scene3d.PerspectiveCamera" : "scene3d.OrthographicCamera";
-    const entries4 = entriesFor3(args, ["position", "target", "options"], name);
+    const entries3 = entriesFor2(args, ["position", "target", "options"], name);
     return sceneValue("camera", {
       projection,
-      position: exactVector(field4(entries4, "position"), 3, `${name} position`),
-      target: exactVector(field4(entries4, "target"), 3, `${name} target`),
-      up: exactVector(field4(entries4, "up", seq6([int12(0), int12(0), int12(1)])), 3, `${name} up`),
-      fov: field4(entries4, "fov", int12(50)),
-      near: field4(entries4, "near", new Rational(1n, 100n)),
-      far: field4(entries4, "far", int12(1000)),
-      scale: field4(entries4, "scale")
+      position: exactVector(field2(entries3, "position"), 3, `${name} position`),
+      target: exactVector(field2(entries3, "target"), 3, `${name} target`),
+      up: exactVector(field2(entries3, "up", seq4([int11(0), int11(0), int11(1)])), 3, `${name} up`),
+      fov: field2(entries3, "fov", int11(50)),
+      near: field2(entries3, "near", new Rational(1n, 100n)),
+      far: field2(entries3, "far", int11(1000)),
+      scale: field2(entries3, "scale")
     });
   }
   var createPerspectiveCamera = (args) => camera(args, "perspective");
   var createOrthographicCamera = (args) => camera(args, "orthographic");
   function defaultCamera() {
-    return camera([seq6([int12(4), int12(4), int12(3)]), seq6([int12(0), int12(0), int12(0)])], "perspective");
+    return camera([seq4([int11(4), int11(4), int11(3)]), seq4([int11(0), int11(0), int11(0)])], "perspective");
   }
   function createScene3D(args) {
-    const entries4 = entriesFor3(args, ["children", "options"], "scene3d.Scene");
-    const cameraValue = field4(entries4, "camera", defaultCamera());
+    const entries3 = entriesFor2(args, ["children", "options"], "scene3d.Scene");
+    const cameraValue = field2(entries3, "camera", defaultCamera());
     if (!isScene3DNode(cameraValue) || cameraValue.kind !== "camera")
       throw new Error("scene3d.Scene camera must be a Scene3D camera");
-    const lights = field4(entries4, "lights") === null ? [] : sequence2(field4(entries4, "lights"), "scene3d.Scene lights");
+    const lights = field2(entries3, "lights") === null ? [] : sequence2(field2(entries3, "lights"), "scene3d.Scene lights");
     for (const [index, light] of lights.entries()) {
       if (!isScene3DNode(light) || !["ambient_light", "directional_light", "point_light"].includes(light.kind)) {
         throw new Error(`scene3d.Scene light ${index + 1} must be a Scene3D light`);
       }
     }
     return sceneValue("scene", {
-      children: normalizeChildren(field4(entries4, "children"), "scene3d.Scene children"),
+      children: normalizeChildren(field2(entries3, "children"), "scene3d.Scene children"),
       camera: cameraValue,
       lights: Object.freeze([...lights]),
-      metadata: field4(entries4, "metadata"),
+      metadata: field2(entries3, "metadata"),
       coordinateSystem: Object.freeze({ handedness: "right", up: "z", units: "unspecified" })
     });
   }
@@ -41270,9 +41898,9 @@ defaultEnabled: false
     return [start, end];
   }
   function styleMap2(style, fill = false) {
-    return rixMap6([
-      [fill ? "fill" : "stroke", str7(style.color)],
-      [fill ? "stroke" : "fill", str7(fill ? style.color : "none")],
+    return rixMap5([
+      [fill ? "fill" : "stroke", str5(style.color)],
+      [fill ? "stroke" : "fill", str5(fill ? style.color : "none")],
       ["width", style.width],
       ["opacity", style.opacity]
     ]);
@@ -41293,7 +41921,7 @@ defaultEnabled: false
     const normal = normalize3(cross(edge1, edge2), "Scene3D triangle");
     const center = [0, 1, 2].map((index) => triangle.reduce((sum, point) => sum + point[index], 0) / 3);
     const illumination = [0, 0, 0];
-    const activeLights = lights.length ? lights : [{ kind: "ambient_light", color: "#ffffff", intensity: int12(1) }];
+    const activeLights = lights.length ? lights : [{ kind: "ambient_light", color: "#ffffff", intensity: int11(1) }];
     for (const light of activeLights) {
       let factor = numeric(light.intensity, "Scene3D light intensity");
       if (light.kind === "directional_light") {
@@ -41311,18 +41939,18 @@ defaultEnabled: false
     return hex(base.map((value, index) => value * Math.min(1, illumination[index])));
   }
   function snapshotScene3D(args) {
-    const entries4 = entriesFor3(args, ["scene", "options"], "scene3d.Snapshot");
-    const scene = field4(entries4, "scene");
+    const entries3 = entriesFor2(args, ["scene", "options"], "scene3d.Snapshot");
+    const scene = field2(entries3, "scene");
     if (!isScene3D(scene))
       throw new Error("scene3d.Snapshot requires a Scene3D scene");
-    const mode = text8(field4(entries4, "mode"), "wireframe");
+    const mode = text7(field2(entries3, "mode"), "wireframe");
     if (!["wireframe", "lit"].includes(mode))
       throw new Error("scene3d.Snapshot mode must be 'wireframe' or 'lit'");
-    const sizeValue = field4(entries4, "size", seq6([int12(640), int12(480)]));
+    const sizeValue = field2(entries3, "size", seq4([int11(640), int11(480)]));
     const [width, height] = sequence2(sizeValue, "scene3d.Snapshot size").map((value, index) => numeric(value, `scene3d.Snapshot size ${index + 1}`));
     if (width <= 0 || height <= 0)
       throw new Error("scene3d.Snapshot size must be positive");
-    const cameraValue = field4(entries4, "camera", scene.camera);
+    const cameraValue = field2(entries3, "camera", scene.camera);
     if (!isScene3DNode(cameraValue) || cameraValue.kind !== "camera")
       throw new Error("scene3d.Snapshot camera must be a Scene3D camera");
     const primitives = flattenScene3D(scene);
@@ -41396,20 +42024,20 @@ defaultEnabled: false
         }
       }
     }
-    const graphic = createGraphic([[width, height], children, rixMap6([["schema", str7("rix.graphics@1")], ["source", str7(SCENE3D_SCHEMA)], ["mode", str7(mode)]])]);
-    const diagnostics = mode === "wireframe" && scene.lights.length > 0 ? [rixMap6([["level", str7("info")], ["code", str7("scene3d-wireframe-ignores-lights")], ["message", str7("Wireframe snapshots do not evaluate Scene3D lights.")]])] : [];
-    return rixMap6([
+    const graphic = createGraphic([[width, height], children, rixMap5([["schema", str5("rix.graphics@1")], ["source", str5(SCENE3D_SCHEMA)], ["mode", str5(mode)]])]);
+    const diagnostics = mode === "wireframe" && scene.lights.length > 0 ? [rixMap5([["level", str5("info")], ["code", str5("scene3d-wireframe-ignores-lights")], ["message", str5("Wireframe snapshots do not evaluate Scene3D lights.")]])] : [];
+    return rixMap5([
       ["value", graphic],
-      ["resolved", int12(1)],
-      ["uncertainty", seq6([])],
-      ["work", rixMap6([["primitives", int12(primitives.length)], ["segments", int12(segmentCount)], ["faces", int12(faceCount)], ["points", int12(pointCount)]])],
-      ["source", rixMap6([["schema", str7(SCENE3D_SCHEMA)], ["projection", str7(cameraValue.projection)], ["mode", str7(mode)]])],
-      ["diagnostics", seq6(diagnostics)]
+      ["resolved", int11(1)],
+      ["uncertainty", seq4([])],
+      ["work", rixMap5([["primitives", int11(primitives.length)], ["segments", int11(segmentCount)], ["faces", int11(faceCount)], ["points", int11(pointCount)]])],
+      ["source", rixMap5([["schema", str5(SCENE3D_SCHEMA)], ["projection", str5(cameraValue.projection)], ["mode", str5(mode)]])],
+      ["diagnostics", seq4(diagnostics)]
     ]);
   }
 
   // rix/plugins/scene3d/scene3d.plugin.rix.js
-  var HELPERS2 = new Map([
+  var HELPERS = new Map([
     ["Scene", createScene3D],
     ["Group", createGroup3D],
     ["Transform", createTransform3D],
@@ -41425,16 +42053,16 @@ defaultEnabled: false
     ["Snapshot", snapshotScene3D]
   ]);
   function createScene3DPluginCollection() {
-    const entries4 = new Map;
+    const entries3 = new Map;
     const extension = new Map([["immutable", new Integer(1n)]]);
-    for (const [name, helper] of HELPERS2) {
-      entries4.set(name, helper);
-      entries4.set(name.toUpperCase(), helper);
+    for (const [name, helper] of HELPERS) {
+      entries3.set(name, helper);
+      entries3.set(name.toUpperCase(), helper);
       extension.set(name.toUpperCase(), { type: "method_builtin", name, impl: (args) => helper(args.slice(1)) });
     }
-    return { type: "map", entries: entries4, _ext: extension };
+    return { type: "map", entries: entries3, _ext: extension };
   }
-  function install10({ systemContext }) {
+  function install8({ systemContext }) {
     const collection = createScene3DPluginCollection();
     systemContext.registerHostValue("scene3d", collection, {
       doc: "Exact retained 3D scenes and deterministic wireframe or lit snapshots",
@@ -41446,13 +42074,13 @@ defaultEnabled: false
   // rix/plugins/nd/nd.js
   var ND_SCHEMA = "rix.nd@1";
   var PROJECTION_SCHEMA = "rix.nd.projection@1";
-  var int13 = (value) => new Integer(BigInt(value));
-  var str8 = (value) => ({ type: "string", value: String(value) });
-  var seq7 = (values4) => ({ type: "sequence", values: values4 });
-  var map2 = (entries4) => ({ type: "map", entries: new Map(entries4) });
-  var zero3 = () => new Rational(0n, 1n);
-  var one3 = () => new Rational(1n, 1n);
-  function rational3(value, label2) {
+  var int12 = (value) => new Integer(BigInt(value));
+  var str6 = (value) => ({ type: "string", value: String(value) });
+  var seq5 = (values4) => ({ type: "sequence", values: values4 });
+  var map2 = (entries3) => ({ type: "map", entries: new Map(entries3) });
+  var zero2 = () => new Rational(0n, 1n);
+  var one2 = () => new Rational(1n, 1n);
+  function rational2(value, label2) {
     if (value instanceof Rational)
       return value;
     if (value instanceof Integer)
@@ -41471,7 +42099,7 @@ defaultEnabled: false
       kind,
       schema: ND_SCHEMA,
       ...fields,
-      _ext: new Map([["_type", str8("nd_geometry")], ["kind", str8(kind)], ["immutable", int13(1)]])
+      _ext: new Map([["_type", str6("nd_geometry")], ["kind", str6(kind)], ["immutable", int12(1)]])
     });
   }
   function isNdGeometry(value) {
@@ -41502,8 +42130,8 @@ defaultEnabled: false
       return Object.freeze(values4.map((item) => item - 1));
     }));
   }
-  function provenance(entries4) {
-    const value = field4(entries4, "provenance");
+  function provenance(entries3) {
+    const value = field2(entries3, "provenance");
     return value === null ? Object.freeze([]) : Object.freeze(sequence2(value, "n-dimensional provenance"));
   }
   function truthy4(value) {
@@ -41514,46 +42142,46 @@ defaultEnabled: false
     return Boolean(value);
   }
   function createNdPoint(args) {
-    const entries4 = entriesFor3(args, ["coordinates", "options"], "nd.Point");
-    const coordinates = sequence2(field4(entries4, "coordinates"), "nd.Point coordinates");
+    const entries3 = entriesFor2(args, ["coordinates", "options"], "nd.Point");
+    const coordinates = sequence2(field2(entries3, "coordinates"), "nd.Point coordinates");
     if (coordinates.length < 1)
       throw new Error("nd.Point requires at least one coordinate");
     return ndValue("point", {
       dimension: coordinates.length,
       coordinates: Object.freeze(coordinates.map((value, index) => exact(value, `nd.Point coordinate ${index + 1}`))),
-      provenance: provenance(entries4),
-      metadata: field4(entries4, "metadata")
+      provenance: provenance(entries3),
+      metadata: field2(entries3, "metadata")
     });
   }
   function createNdPolyline(args) {
-    const entries4 = entriesFor3(args, ["points", "options"], "nd.Polyline");
-    const normalized = points(field4(entries4, "points"), "nd.Polyline point");
+    const entries3 = entriesFor2(args, ["points", "options"], "nd.Polyline");
+    const normalized = points(field2(entries3, "points"), "nd.Polyline point");
     if (normalized.values.length < 2)
       throw new Error("nd.Polyline requires at least two points");
     return ndValue("polyline", {
       dimension: normalized.dimension,
       points: normalized.values,
-      closed: truthy4(field4(entries4, "closed")),
-      provenance: provenance(entries4),
-      metadata: field4(entries4, "metadata"),
-      style: field4(entries4, "style")
+      closed: truthy4(field2(entries3, "closed")),
+      provenance: provenance(entries3),
+      metadata: field2(entries3, "metadata"),
+      style: field2(entries3, "style")
     });
   }
   function createNdPolytope(args) {
-    const entries4 = entriesFor3(args, ["vertices", "edges", "options"], "nd.Polytope");
-    const normalized = points(field4(entries4, "vertices"), "nd.Polytope vertex");
+    const entries3 = entriesFor2(args, ["vertices", "edges", "options"], "nd.Polytope");
+    const normalized = points(field2(entries3, "vertices"), "nd.Polytope vertex");
     if (normalized.values.length < 1)
       throw new Error("nd.Polytope requires vertices");
     return ndValue("polytope", {
       dimension: normalized.dimension,
       vertices: normalized.values,
-      edges: edgePairs(field4(entries4, "edges"), normalized.values.length, "nd.Polytope edge"),
-      provenance: provenance(entries4),
-      metadata: field4(entries4, "metadata"),
-      style: field4(entries4, "style")
+      edges: edgePairs(field2(entries3, "edges"), normalized.values.length, "nd.Polytope edge"),
+      provenance: provenance(entries3),
+      metadata: field2(entries3, "metadata"),
+      style: field2(entries3, "style")
     });
   }
-  function projectionValue(matrix, offset, method12, provenanceValue = []) {
+  function projectionValue(matrix, offset, method10, provenanceValue = []) {
     const targetDimension = matrix.length;
     const sourceDimension = matrix[0]?.length ?? 0;
     if (sourceDimension < 1 || targetDimension < 1)
@@ -41570,71 +42198,71 @@ defaultEnabled: false
       targetDimension,
       matrix: Object.freeze(matrix.map((row) => Object.freeze(row.map((value, index) => exact(value, `nd.Projection matrix coordinate ${index + 1}`))))),
       offset: Object.freeze(offset.map((value, index) => exact(value, `nd.Projection offset ${index + 1}`))),
-      method: method12,
+      method: method10,
       provenance: Object.freeze(provenanceValue),
-      _ext: new Map([["_type", str8("nd_projection")], ["immutable", int13(1)]])
+      _ext: new Map([["_type", str6("nd_projection")], ["immutable", int12(1)]])
     });
   }
   function createProjection(args) {
-    const entries4 = entriesFor3(args, ["matrix", "offset", "options"], "nd.Projection");
-    const rows = sequence2(field4(entries4, "matrix"), "nd.Projection matrix").map((row, index) => sequence2(row, `nd.Projection matrix row ${index + 1}`));
-    const offsetValue = field4(entries4, "offset");
-    const offset = offsetValue === null ? rows.map(() => zero3()) : sequence2(offsetValue, "nd.Projection offset");
-    return projectionValue(rows, offset, field4(entries4, "method")?.value ?? "affine", provenance(entries4));
+    const entries3 = entriesFor2(args, ["matrix", "offset", "options"], "nd.Projection");
+    const rows = sequence2(field2(entries3, "matrix"), "nd.Projection matrix").map((row, index) => sequence2(row, `nd.Projection matrix row ${index + 1}`));
+    const offsetValue = field2(entries3, "offset");
+    const offset = offsetValue === null ? rows.map(() => zero2()) : sequence2(offsetValue, "nd.Projection offset");
+    return projectionValue(rows, offset, field2(entries3, "method")?.value ?? "affine", provenance(entries3));
   }
   function coordinateProjection(args) {
-    const entries4 = entriesFor3(args, ["sourceDimension", "axes"], "nd.CoordinateProjection");
-    const sourceDimension = integer3(field4(entries4, "sourceDimension"), "nd.CoordinateProjection source dimension");
-    const axes = sequence2(field4(entries4, "axes"), "nd.CoordinateProjection axes").map((axis, index) => integer3(axis, `nd.CoordinateProjection axis ${index + 1}`));
+    const entries3 = entriesFor2(args, ["sourceDimension", "axes"], "nd.CoordinateProjection");
+    const sourceDimension = integer3(field2(entries3, "sourceDimension"), "nd.CoordinateProjection source dimension");
+    const axes = sequence2(field2(entries3, "axes"), "nd.CoordinateProjection axes").map((axis, index) => integer3(axis, `nd.CoordinateProjection axis ${index + 1}`));
     if (sourceDimension < 1 || axes.length < 1 || new Set(axes).size !== axes.length || axes.some((axis) => axis < 1 || axis > sourceDimension)) {
       throw new Error("nd.CoordinateProjection axes must be unique indices in the source dimension");
     }
-    const rows = axes.map((axis) => Array.from({ length: sourceDimension }, (_, index) => index === axis - 1 ? one3() : zero3()));
-    return projectionValue(rows, axes.map(() => zero3()), "coordinate", [map2([["axes", seq7(axes.map(int13))]])]);
+    const rows = axes.map((axis) => Array.from({ length: sourceDimension }, (_, index) => index === axis - 1 ? one2() : zero2()));
+    return projectionValue(rows, axes.map(() => zero2()), "coordinate", [map2([["axes", seq5(axes.map(int12))]])]);
   }
   function cayleyRotation(args) {
-    const entries4 = entriesFor3(args, ["dimension", "axis1", "axis2", "t"], "nd.CayleyRotation");
-    const dimension = integer3(field4(entries4, "dimension"), "nd.CayleyRotation dimension");
-    const axis1 = integer3(field4(entries4, "axis1"), "nd.CayleyRotation axis1");
-    const axis2 = integer3(field4(entries4, "axis2"), "nd.CayleyRotation axis2");
+    const entries3 = entriesFor2(args, ["dimension", "axis1", "axis2", "t"], "nd.CayleyRotation");
+    const dimension = integer3(field2(entries3, "dimension"), "nd.CayleyRotation dimension");
+    const axis1 = integer3(field2(entries3, "axis1"), "nd.CayleyRotation axis1");
+    const axis2 = integer3(field2(entries3, "axis2"), "nd.CayleyRotation axis2");
     if (dimension < 2 || axis1 < 1 || axis2 < 1 || axis1 > dimension || axis2 > dimension || axis1 === axis2) {
       throw new Error("nd.CayleyRotation axes must be distinct indices in the dimension");
     }
     let cosine;
     let sine;
-    const t = field4(entries4, "t");
+    const t = field2(entries3, "t");
     if (isCayleyInfinity(t)) {
       cosine = new Rational(-1n, 1n);
-      sine = zero3();
+      sine = zero2();
     } else {
-      const parameter = rational3(t, "nd.CayleyRotation t");
+      const parameter = rational2(t, "nd.CayleyRotation t");
       const square = parameter.multiply(parameter);
-      const denominator = one3().add(square);
-      cosine = one3().subtract(square).divide(denominator);
+      const denominator = one2().add(square);
+      cosine = one2().subtract(square).divide(denominator);
       sine = new Rational(2n, 1n).multiply(parameter).divide(denominator);
     }
-    const matrix = Array.from({ length: dimension }, (_, row) => Array.from({ length: dimension }, (_2, column) => row === column ? one3() : zero3()));
+    const matrix = Array.from({ length: dimension }, (_, row) => Array.from({ length: dimension }, (_2, column) => row === column ? one2() : zero2()));
     matrix[axis1 - 1][axis1 - 1] = cosine;
     matrix[axis1 - 1][axis2 - 1] = sine.negate ? sine.negate() : new Rational(-sine.numerator, sine.denominator);
     matrix[axis2 - 1][axis1 - 1] = sine;
     matrix[axis2 - 1][axis2 - 1] = cosine;
-    return projectionValue(matrix, Array.from({ length: dimension }, zero3), "cayley-rotation", [map2([
-      ["axes", seq7([int13(axis1), int13(axis2)])],
+    return projectionValue(matrix, Array.from({ length: dimension }, zero2), "cayley-rotation", [map2([
+      ["axes", seq5([int12(axis1), int12(axis2)])],
       ["parameter", t]
     ])]);
   }
   function multiplyMatrices(left, right) {
     if (left[0].length !== right.length)
       throw new Error("nd.Compose projection dimensions do not match");
-    return left.map((row) => right[0].map((_, column) => row.reduce((sum, value, index) => sum.add(rational3(value, "projection value").multiply(rational3(right[index][column], "projection value"))), zero3())));
+    return left.map((row) => right[0].map((_, column) => row.reduce((sum, value, index) => sum.add(rational2(value, "projection value").multiply(rational2(right[index][column], "projection value"))), zero2())));
   }
   function applyMatrix(matrix, vector, offset) {
-    return matrix.map((row, rowIndex) => row.reduce((sum, coefficient, index) => sum.add(rational3(coefficient, "projection coefficient").multiply(rational3(vector[index], "projected coordinate"))), rational3(offset[rowIndex], "projection offset")));
+    return matrix.map((row, rowIndex) => row.reduce((sum, coefficient, index) => sum.add(rational2(coefficient, "projection coefficient").multiply(rational2(vector[index], "projected coordinate"))), rational2(offset[rowIndex], "projection offset")));
   }
   function composeProjections(args) {
-    const entries4 = entriesFor3(args, ["after", "before"], "nd.Compose");
-    const after = field4(entries4, "after");
-    const before = field4(entries4, "before");
+    const entries3 = entriesFor2(args, ["after", "before"], "nd.Compose");
+    const after = field2(entries3, "after");
+    const before = field2(entries3, "before");
     if (after?.type !== "nd_projection" || before?.type !== "nd_projection")
       throw new Error("nd.Compose requires two projections");
     if (before.targetDimension !== after.sourceDimension)
@@ -41649,9 +42277,9 @@ defaultEnabled: false
     return Object.freeze(applyMatrix(projection.matrix, coordinates, projection.offset));
   }
   function projectGeometry(args) {
-    const entries4 = entriesFor3(args, ["geometry", "projection"], "nd.Project");
-    const geometry = field4(entries4, "geometry");
-    const projection = field4(entries4, "projection");
+    const entries3 = entriesFor2(args, ["geometry", "projection"], "nd.Project");
+    const geometry = field2(entries3, "geometry");
+    const projection = field2(entries3, "projection");
     if (!isNdGeometry(geometry))
       throw new Error("nd.Project geometry must be n-dimensional geometry");
     if (projection?.type !== "nd_projection" || projection.schema !== PROJECTION_SCHEMA)
@@ -41666,11 +42294,11 @@ defaultEnabled: false
     throw new Error(`nd.Project does not support geometry kind '${geometry.kind}'`);
   }
   function hypercube(args) {
-    const entries4 = entriesFor3(args, ["dimension", "size"], "nd.Hypercube");
-    const dimension = integer3(field4(entries4, "dimension"), "nd.Hypercube dimension");
+    const entries3 = entriesFor2(args, ["dimension", "size"], "nd.Hypercube");
+    const dimension = integer3(field2(entries3, "dimension"), "nd.Hypercube dimension");
     if (dimension < 1 || dimension > 10)
       throw new Error("nd.Hypercube dimension must be between 1 and 10");
-    const half = rational3(field4(entries4, "size", int13(2)), "nd.Hypercube size").divide(new Rational(2n, 1n));
+    const half = rational2(field2(entries3, "size", int12(2)), "nd.Hypercube size").divide(new Rational(2n, 1n));
     const negative = half.negate ? half.negate() : new Rational(-half.numerator, half.denominator);
     const vertexCount = 2 ** dimension;
     const vertices = Array.from({ length: vertexCount }, (_, bits) => Array.from({ length: dimension }, (_2, axis) => bits & 1 << axis ? half : negative));
@@ -41681,35 +42309,35 @@ defaultEnabled: false
         if (bits < other)
           edges.push([bits + 1, other + 1]);
       }
-    return createNdPolytope([seq7(vertices.map(seq7)), seq7(edges.map((edge) => seq7(edge.map(int13))))]);
+    return createNdPolytope([seq5(vertices.map(seq5)), seq5(edges.map((edge) => seq5(edge.map(int12))))]);
   }
   function styleOptions2(style) {
     return style?.type === "map" ? style : map2([]);
   }
   function toScene3D(args) {
-    const entries4 = entriesFor3(args, ["geometry", "options"], "nd.ToScene3D");
-    const geometry = field4(entries4, "geometry");
+    const entries3 = entriesFor2(args, ["geometry", "options"], "nd.ToScene3D");
+    const geometry = field2(entries3, "geometry");
     if (!isNdGeometry(geometry))
       throw new Error("nd.ToScene3D requires n-dimensional geometry");
     if (geometry.dimension !== 3)
       throw new Error(`nd.ToScene3D requires dimension 3; explicitly project dimension ${geometry.dimension} first`);
-    const style = field4(entries4, "style", geometry.style);
+    const style = field2(entries3, "style", geometry.style);
     let children;
     if (geometry.kind === "point")
-      children = [createPointCloud([seq7([seq7(geometry.coordinates)]), styleOptions2(style)])];
+      children = [createPointCloud([seq5([seq5(geometry.coordinates)]), styleOptions2(style)])];
     else if (geometry.kind === "polyline")
-      children = [createPolyline([seq7(geometry.points.map(seq7)), styleOptions2(style)])];
+      children = [createPolyline([seq5(geometry.points.map(seq5)), styleOptions2(style)])];
     else if (geometry.kind === "polytope") {
-      children = geometry.edges.map(([a, b]) => createPolyline([seq7([seq7(geometry.vertices[a]), seq7(geometry.vertices[b])]), styleOptions2(style)]));
+      children = geometry.edges.map(([a, b]) => createPolyline([seq5([seq5(geometry.vertices[a]), seq5(geometry.vertices[b])]), styleOptions2(style)]));
     } else
       throw new Error(`nd.ToScene3D does not support geometry kind '${geometry.kind}'`);
-    const group = createGroup3D([seq7(children)]);
-    const camera2 = field4(entries4, "camera");
-    return createScene3D([camera2 === null ? map2([["children", seq7([group])], ["metadata", map2([["source", str8(ND_SCHEMA)], ["projectionCount", int13(geometry.provenance.length)]])]]) : map2([["children", seq7([group])], ["camera", camera2], ["metadata", map2([["source", str8(ND_SCHEMA)], ["projectionCount", int13(geometry.provenance.length)]])]])]);
+    const group = createGroup3D([seq5(children)]);
+    const camera2 = field2(entries3, "camera");
+    return createScene3D([camera2 === null ? map2([["children", seq5([group])], ["metadata", map2([["source", str6(ND_SCHEMA)], ["projectionCount", int12(geometry.provenance.length)]])]]) : map2([["children", seq5([group])], ["camera", camera2], ["metadata", map2([["source", str6(ND_SCHEMA)], ["projectionCount", int12(geometry.provenance.length)]])]])]);
   }
 
   // rix/plugins/nd/nd.plugin.rix.js
-  var HELPERS3 = new Map([
+  var HELPERS2 = new Map([
     ["Point", createNdPoint],
     ["Polyline", createNdPolyline],
     ["Polytope", createNdPolytope],
@@ -41722,16 +42350,16 @@ defaultEnabled: false
     ["ToScene3D", toScene3D]
   ]);
   function createNdPluginCollection() {
-    const entries4 = new Map;
+    const entries3 = new Map;
     const extension = new Map([["immutable", new Integer(1n)]]);
-    for (const [name, helper] of HELPERS3) {
-      entries4.set(name, helper);
-      entries4.set(name.toUpperCase(), helper);
+    for (const [name, helper] of HELPERS2) {
+      entries3.set(name, helper);
+      entries3.set(name.toUpperCase(), helper);
       extension.set(name.toUpperCase(), { type: "method_builtin", name, impl: (args) => helper(args.slice(1)) });
     }
-    return { type: "map", entries: entries4, _ext: extension };
+    return { type: "map", entries: entries3, _ext: extension };
   }
-  function install11({ systemContext }) {
+  function install9({ systemContext }) {
     const collection = createNdPluginCollection();
     systemContext.registerHostValue("nd", collection, {
       doc: "Exact n-dimensional geometry and explicit projection records",
@@ -41743,10 +42371,10 @@ defaultEnabled: false
   // rix/plugins/geometry/geometry.js
   var GEOMETRY_SCHEMA = "rix.geometry@1";
   var INTERSECTION_SCHEMA = "rix.geometry.intersection@1";
-  var int14 = (value) => new Integer(BigInt(value));
-  var str9 = (value) => ({ type: "string", value: String(value) });
-  var seq8 = (values4) => ({ type: "sequence", values: values4 });
-  var rixMap7 = (entries4) => ({ type: "map", entries: new Map(entries4) });
+  var int13 = (value) => new Integer(BigInt(value));
+  var str7 = (value) => ({ type: "string", value: String(value) });
+  var seq6 = (values4) => ({ type: "sequence", values: values4 });
+  var rixMap6 = (entries3) => ({ type: "map", entries: new Map(entries3) });
   function sequence3(value, label2) {
     if (Array.isArray(value))
       return value;
@@ -41756,32 +42384,32 @@ defaultEnabled: false
       return value.elements;
     throw new Error(`${label2} must be a sequence`);
   }
-  function entriesFor4(args, positional, name) {
+  function entriesFor3(args, positional, name) {
     if (args.length === 1 && args[0]?.type === "map" && args[0].entries instanceof Map)
       return args[0].entries;
     if (args.length > positional.length)
       throw new Error(`${name} received too many arguments`);
-    const entries4 = new Map(positional.slice(0, args.length).map((key, index) => [key, args[index]]));
-    const options = entries4.get("options");
+    const entries3 = new Map(positional.slice(0, args.length).map((key, index) => [key, args[index]]));
+    const options = entries3.get("options");
     if (options?.type === "map" && options.entries instanceof Map) {
       for (const [key, value] of options.entries)
-        if (!entries4.has(key))
-          entries4.set(key, value);
+        if (!entries3.has(key))
+          entries3.set(key, value);
     }
-    return entries4;
+    return entries3;
   }
-  function field5(entries4, name, fallback = null) {
-    if (!(entries4 instanceof Map))
+  function field3(entries3, name, fallback = null) {
+    if (!(entries3 instanceof Map))
       return fallback;
-    if (entries4.has(name))
-      return entries4.get(name);
+    if (entries3.has(name))
+      return entries3.get(name);
     const canonical2 = String(name).toLowerCase();
-    for (const [key, value] of entries4)
+    for (const [key, value] of entries3)
       if (String(key).toLowerCase() === canonical2)
         return value;
     return fallback;
   }
-  function rational4(value, label2) {
+  function rational3(value, label2) {
     if (value instanceof Rational)
       return value;
     if (value instanceof Integer)
@@ -41789,7 +42417,7 @@ defaultEnabled: false
     throw new Error(`${label2} must be an exact integer or rational`);
   }
   function number(value, label2) {
-    const exact2 = rational4(value, label2);
+    const exact2 = rational3(value, label2);
     const result = Number(exact2.numerator) / Number(exact2.denominator);
     if (!Number.isFinite(result))
       throw new Error(`${label2} is outside the snapshot renderer's finite numeric range`);
@@ -41804,9 +42432,9 @@ defaultEnabled: false
       schema: GEOMETRY_SCHEMA,
       ...fields,
       _ext: new Map([
-        ["_type", str9("geometry")],
-        ["kind", str9(kind)],
-        ["immutable", int14(1)]
+        ["_type", str7("geometry")],
+        ["kind", str7(kind)],
+        ["immutable", int13(1)]
       ])
     });
   }
@@ -41847,12 +42475,12 @@ defaultEnabled: false
         throw new Error("geometry.Point coordinates must contain x and y");
       [x, y] = coordinates;
     } else {
-      const entries4 = entriesFor4(args, ["x", "y", "options"], "geometry.Point");
-      x = field5(entries4, "x");
-      y = field5(entries4, "y");
-      metadata2 = field5(entries4, "metadata");
+      const entries3 = entriesFor3(args, ["x", "y", "options"], "geometry.Point");
+      x = field3(entries3, "x");
+      y = field3(entries3, "y");
+      metadata2 = field3(entries3, "metadata");
     }
-    return pointValue(rational4(x, "geometry.Point x"), rational4(y, "geometry.Point y"), "Point", [x, y], metadata2);
+    return pointValue(rational3(x, "geometry.Point x"), rational3(y, "geometry.Point y"), "Point", [x, y], metadata2);
   }
   function lineFromCoefficients(a, b, c, through, operation, inputs, metadata2 = null, style = null) {
     if (a.numerator === 0n && b.numerator === 0n)
@@ -41868,15 +42496,15 @@ defaultEnabled: false
     });
   }
   function createLine(args) {
-    const entries4 = entriesFor4(args, ["first", "second", "options"], "geometry.Line");
-    const first = requireGeometry(field5(entries4, "first"), "point", "geometry.Line first point");
-    const second = requireGeometry(field5(entries4, "second"), "point", "geometry.Line second point");
+    const entries3 = entriesFor3(args, ["first", "second", "options"], "geometry.Line");
+    const first = requireGeometry(field3(entries3, "first"), "point", "geometry.Line first point");
+    const second = requireGeometry(field3(entries3, "second"), "point", "geometry.Line second point");
     if (samePoint(first, second))
       throw new Error("geometry.Line requires two distinct points");
     const a = first.y.subtract(second.y);
     const b = second.x.subtract(first.x);
     const c = first.x.multiply(second.y).subtract(second.x.multiply(first.y));
-    return lineFromCoefficients(a, b, c, [first, second], "Line", [first, second], field5(entries4, "metadata"), field5(entries4, "style"));
+    return lineFromCoefficients(a, b, c, [first, second], "Line", [first, second], field3(entries3, "metadata"), field3(entries3, "style"));
   }
   function squaredDistance(first, second) {
     const dx = second.x.subtract(first.x);
@@ -41896,11 +42524,11 @@ defaultEnabled: false
     });
   }
   function createGeometryCircle(args) {
-    const entries4 = entriesFor4(args, ["center", "through", "options"], "geometry.Circle");
-    const center = requireGeometry(field5(entries4, "center"), "point", "geometry.Circle center");
-    const candidate = field5(entries4, "through");
-    const explicitRadius = field5(entries4, "radius");
-    const explicitSquared = field5(entries4, "radiusSquared");
+    const entries3 = entriesFor3(args, ["center", "through", "options"], "geometry.Circle");
+    const center = requireGeometry(field3(entries3, "center"), "point", "geometry.Circle center");
+    const candidate = field3(entries3, "through");
+    const explicitRadius = field3(entries3, "radius");
+    const explicitSquared = field3(entries3, "radiusSquared");
     const specificationCount = [candidate, explicitRadius, explicitSquared].filter((value) => value !== null).length;
     if (specificationCount !== 1) {
       throw new Error("geometry.Circle requires exactly one through point, radius, or radiusSquared");
@@ -41911,31 +42539,31 @@ defaultEnabled: false
       through = requireGeometry(candidate, "point", "geometry.Circle through point");
       radiusSquared = squaredDistance(center, through);
     } else if (explicitSquared !== null) {
-      radiusSquared = rational4(explicitSquared, "geometry.Circle radiusSquared");
+      radiusSquared = rational3(explicitSquared, "geometry.Circle radiusSquared");
     } else {
-      const radius = rational4(explicitRadius ?? candidate, "geometry.Circle radius");
+      const radius = rational3(explicitRadius ?? candidate, "geometry.Circle radius");
       radiusSquared = radius.multiply(radius);
     }
-    return circleValue(center, radiusSquared, through, "Circle", through ? [center, through] : [center, radiusSquared], field5(entries4, "metadata"), field5(entries4, "style"));
+    return circleValue(center, radiusSquared, through, "Circle", through ? [center, through] : [center, radiusSquared], field3(entries3, "metadata"), field3(entries3, "style"));
   }
   function midpoint(args) {
-    const entries4 = entriesFor4(args, ["first", "second"], "geometry.Midpoint");
-    const first = requireGeometry(field5(entries4, "first"), "point", "geometry.Midpoint first point");
-    const second = requireGeometry(field5(entries4, "second"), "point", "geometry.Midpoint second point");
+    const entries3 = entriesFor3(args, ["first", "second"], "geometry.Midpoint");
+    const first = requireGeometry(field3(entries3, "first"), "point", "geometry.Midpoint first point");
+    const second = requireGeometry(field3(entries3, "second"), "point", "geometry.Midpoint second point");
     const two = new Rational(2n, 1n);
     return pointValue(first.x.add(second.x).divide(two), first.y.add(second.y).divide(two), "Midpoint", [first, second]);
   }
   function perpendicularBisector(args) {
-    const entries4 = entriesFor4(args, ["first", "second", "options"], "geometry.PerpendicularBisector");
-    const first = requireGeometry(field5(entries4, "first"), "point", "geometry.PerpendicularBisector first point");
-    const second = requireGeometry(field5(entries4, "second"), "point", "geometry.PerpendicularBisector second point");
+    const entries3 = entriesFor3(args, ["first", "second", "options"], "geometry.PerpendicularBisector");
+    const first = requireGeometry(field3(entries3, "first"), "point", "geometry.PerpendicularBisector first point");
+    const second = requireGeometry(field3(entries3, "second"), "point", "geometry.PerpendicularBisector second point");
     if (samePoint(first, second))
       throw new Error("geometry.PerpendicularBisector requires two distinct points");
     const middle = midpoint([first, second]);
     const a = second.x.subtract(first.x);
     const b = second.y.subtract(first.y);
     const c = negate(a.multiply(middle.x).add(b.multiply(middle.y)));
-    return lineFromCoefficients(a, b, c, [middle], "PerpendicularBisector", [first, second], field5(entries4, "metadata"), field5(entries4, "style"));
+    return lineFromCoefficients(a, b, c, [middle], "PerpendicularBisector", [first, second], field3(entries3, "metadata"), field3(entries3, "style"));
   }
   function intersectionValue(status, points2, left, right, diagnostic) {
     return Object.freeze({
@@ -41948,10 +42576,10 @@ defaultEnabled: false
       diagnostic,
       provenance: Object.freeze([provenance2("Intersect", [left, right], diagnostic)]),
       _ext: new Map([
-        ["_type", str9("geometry_intersection")],
-        ["kind", str9("intersection")],
-        ["status", str9(status)],
-        ["immutable", int14(1)]
+        ["_type", str7("geometry_intersection")],
+        ["kind", str7("intersection")],
+        ["status", str7(status)],
+        ["immutable", int13(1)]
       ])
     });
   }
@@ -41971,41 +42599,41 @@ defaultEnabled: false
     return intersectionValue("one", [point], left, right, null);
   }
   function intersect(args) {
-    const entries4 = entriesFor4(args, ["left", "right"], "geometry.Intersect");
-    const left = requireGeometry(field5(entries4, "left"), null, "geometry.Intersect left value");
-    const right = requireGeometry(field5(entries4, "right"), null, "geometry.Intersect right value");
+    const entries3 = entriesFor3(args, ["left", "right"], "geometry.Intersect");
+    const left = requireGeometry(field3(entries3, "left"), null, "geometry.Intersect left value");
+    const right = requireGeometry(field3(entries3, "right"), null, "geometry.Intersect right value");
     if (left.kind === "line" && right.kind === "line")
       return intersectLines(left, right);
     return intersectionValue("unsupported", [], left, right, `Phase 1 geometry.Intersect supports line-line intersections, not ${left.kind}-${right.kind}`);
   }
   function intersectionPoints(args) {
-    const entries4 = entriesFor4(args, ["intersection"], "geometry.Points");
-    const value = field5(entries4, "intersection");
+    const entries3 = entriesFor3(args, ["intersection"], "geometry.Points");
+    const value = field3(entries3, "intersection");
     if (value?.type !== "geometry_intersection" || value.schema !== INTERSECTION_SCHEMA) {
       throw new Error("geometry.Points requires a geometry intersection result");
     }
-    return seq8([...value.points]);
+    return seq6([...value.points]);
   }
   function intersectionStatus(args) {
-    const entries4 = entriesFor4(args, ["intersection"], "geometry.Status");
-    const value = field5(entries4, "intersection");
+    const entries3 = entriesFor3(args, ["intersection"], "geometry.Status");
+    const value = field3(entries3, "intersection");
     if (value?.type !== "geometry_intersection" || value.schema !== INTERSECTION_SCHEMA) {
       throw new Error("geometry.Status requires a geometry intersection result");
     }
-    return str9(value.status);
+    return str7(value.status);
   }
   function circumcircle(args) {
-    const entries4 = entriesFor4(args, ["first", "second", "third", "options"], "geometry.Circumcircle");
-    const first = requireGeometry(field5(entries4, "first"), "point", "geometry.Circumcircle first point");
-    const second = requireGeometry(field5(entries4, "second"), "point", "geometry.Circumcircle second point");
-    const third = requireGeometry(field5(entries4, "third"), "point", "geometry.Circumcircle third point");
+    const entries3 = entriesFor3(args, ["first", "second", "third", "options"], "geometry.Circumcircle");
+    const first = requireGeometry(field3(entries3, "first"), "point", "geometry.Circumcircle first point");
+    const second = requireGeometry(field3(entries3, "second"), "point", "geometry.Circumcircle second point");
+    const third = requireGeometry(field3(entries3, "third"), "point", "geometry.Circumcircle third point");
     const firstBisector = perpendicularBisector([first, second]);
     const secondBisector = perpendicularBisector([first, third]);
     const centerResult = intersect([firstBisector, secondBisector]);
     if (centerResult.status !== "one") {
       throw new Error(`geometry.Circumcircle requires three non-collinear points: ${centerResult.diagnostic}`);
     }
-    return circleValue(centerResult.points[0], squaredDistance(centerResult.points[0], first), first, "Circumcircle", [first, second, third, firstBisector, secondBisector, centerResult], field5(entries4, "metadata"), field5(entries4, "style"));
+    return circleValue(centerResult.points[0], squaredDistance(centerResult.points[0], first), first, "Circumcircle", [first, second, third, firstBisector, secondBisector, centerResult], field3(entries3, "metadata"), field3(entries3, "style"));
   }
   function numericSequence(value, length, label2) {
     const values4 = sequence3(value, label2);
@@ -42015,7 +42643,7 @@ defaultEnabled: false
   }
   function styleMap3(value, defaults) {
     const supplied = value?.type === "map" && value.entries instanceof Map ? value.entries : new Map;
-    return rixMap7([...new Map([...defaults, ...supplied]).entries()]);
+    return rixMap6([...new Map([...defaults, ...supplied]).entries()]);
   }
   function lineEndpoints(line2, view) {
     const [xmin, ymin, xmax, ymax] = view;
@@ -42053,10 +42681,10 @@ defaultEnabled: false
     });
   }
   function drawGeometry(args) {
-    const entries4 = entriesFor4(args, ["objects", "options"], "geometry.Draw");
-    const items = drawableItems(field5(entries4, "objects"), "geometry.Draw object");
-    const size = numericSequence(field5(entries4, "size", seq8([int14(640), int14(480)])), 2, "geometry.Draw size");
-    const view = numericSequence(field5(entries4, "view", seq8([int14(-10), int14(-10), int14(10), int14(10)])), 4, "geometry.Draw view");
+    const entries3 = entriesFor3(args, ["objects", "options"], "geometry.Draw");
+    const items = drawableItems(field3(entries3, "objects"), "geometry.Draw object");
+    const size = numericSequence(field3(entries3, "size", seq6([int13(640), int13(480)])), 2, "geometry.Draw size");
+    const view = numericSequence(field3(entries3, "view", seq6([int13(-10), int13(-10), int13(10), int13(10)])), 4, "geometry.Draw view");
     const [xmin, ymin, xmax, ymax] = view;
     if (!(xmax > xmin) || !(ymax > ymin))
       throw new Error("geometry.Draw view must satisfy xmin < xmax and ymin < ymax");
@@ -42090,15 +42718,15 @@ defaultEnabled: false
         throw new Error(`geometry.Draw does not support geometry kind '${item.kind}'`);
       }
     }
-    return createGraphic([size, children, rixMap7([
-      ["source", str9(GEOMETRY_SCHEMA)],
-      ["projection", str9("uniform-fit")],
-      ["unresolved", int14(unresolved)]
+    return createGraphic([size, children, rixMap6([
+      ["source", str7(GEOMETRY_SCHEMA)],
+      ["projection", str7("uniform-fit")],
+      ["unresolved", int13(unresolved)]
     ])]);
   }
 
   // rix/plugins/geometry/geometry.plugin.rix.js
-  var HELPERS4 = new Map([
+  var HELPERS3 = new Map([
     ["Point", createPoint],
     ["Line", createLine],
     ["Circle", createGeometryCircle],
@@ -42111,20 +42739,20 @@ defaultEnabled: false
     ["Draw", drawGeometry]
   ]);
   function createGeometryPluginCollection() {
-    const entries4 = new Map;
+    const entries3 = new Map;
     const extension = new Map([["immutable", new Integer(1n)]]);
-    for (const [name, helper] of HELPERS4) {
-      entries4.set(name, helper);
-      entries4.set(name.toUpperCase(), helper);
+    for (const [name, helper] of HELPERS3) {
+      entries3.set(name, helper);
+      entries3.set(name.toUpperCase(), helper);
       extension.set(name.toUpperCase(), {
         type: "method_builtin",
         name,
         impl: (args) => helper(args.slice(1))
       });
     }
-    return { type: "map", entries: entries4, _ext: extension };
+    return { type: "map", entries: entries3, _ext: extension };
   }
-  function install12({ systemContext }) {
+  function install10({ systemContext }) {
     const collection = createGeometryPluginCollection();
     systemContext.registerHostValue("geometry", collection, {
       doc: "Exact ruler-and-compass geometry and portable Graphics snapshots",
@@ -42136,17 +42764,17 @@ defaultEnabled: false
   // rix/plugins/data/data.js
   var stringValue6 = (value) => ({ type: "string", value: String(value) });
   var sequenceValue2 = (values4) => ({ type: "sequence", values: values4 });
-  function mapValue2(entries4) {
-    return { type: "map", entries: new Map(entries4), _ext: new Map([["immutable", new Integer(1n)]]) };
+  function mapValue2(entries3) {
+    return { type: "map", entries: new Map(entries3), _ext: new Map([["immutable", new Integer(1n)]]) };
   }
-  function entries4(value, label2) {
+  function entries3(value, label2) {
     if (value?.type === "map" && value.entries instanceof Map)
       return value.entries;
     if (value instanceof Map)
       return value;
     throw new Error(`${label2} must be a map`);
   }
-  function field6(source, name, fallback = null) {
+  function field4(source, name, fallback = null) {
     const values4 = source instanceof Map ? source : source?.entries;
     if (!(values4 instanceof Map))
       return fallback;
@@ -42166,7 +42794,7 @@ defaultEnabled: false
       return value.values;
     throw new Error(`${label2} must be a sequence`);
   }
-  function text9(value, label2) {
+  function text8(value, label2) {
     if (value?.type === "string")
       return value.value;
     if (typeof value === "string")
@@ -42174,7 +42802,7 @@ defaultEnabled: false
     throw new Error(`${label2} must be a string or colon-string`);
   }
   function option3(options, name, fallback = null) {
-    return options === null || options === undefined ? fallback : field6(entries4(options, "data options"), name, fallback);
+    return options === null || options === undefined ? fallback : field4(entries3(options, "data options"), name, fallback);
   }
   var TYPE_NAMES = new Map([
     ["any", "Any"],
@@ -42186,7 +42814,7 @@ defaultEnabled: false
   function columnType(value, index) {
     if (value === null || value === undefined)
       return "Any";
-    const source = text9(value, `data column ${index + 1} type`).replace(/^:/, "").toLowerCase();
+    const source = text8(value, `data column ${index + 1} type`).replace(/^:/, "").toLowerCase();
     const result = TYPE_NAMES.get(source);
     if (!result)
       throw new Error(`data column ${index + 1} type must be Any, Integer, Rational, Number, or String`);
@@ -42200,15 +42828,15 @@ defaultEnabled: false
       let type;
       let nullable = true;
       if (source?.type === "string" || typeof source === "string") {
-        id = text9(source, `data column ${index + 1}`);
+        id = text8(source, `data column ${index + 1}`);
         label2 = id;
         type = "Any";
       } else {
-        const spec2 = entries4(source, `data column ${index + 1}`);
-        id = text9(field6(spec2, "id", field6(spec2, "name")), `data column ${index + 1} id`);
-        label2 = field6(spec2, "label") === null ? id : text9(field6(spec2, "label"), `data column ${index + 1} label`);
-        type = columnType(field6(spec2, "type"), index);
-        nullable = truthy5(field6(spec2, "nullable", new Integer(1n)));
+        const spec2 = entries3(source, `data column ${index + 1}`);
+        id = text8(field4(spec2, "id", field4(spec2, "name")), `data column ${index + 1} id`);
+        label2 = field4(spec2, "label") === null ? id : text8(field4(spec2, "label"), `data column ${index + 1} label`);
+        type = columnType(field4(spec2, "type"), index);
+        nullable = truthy5(field4(spec2, "nullable", new Integer(1n)));
       }
       if (!id.trim())
         throw new Error(`data column ${index + 1} id must not be empty`);
@@ -42235,14 +42863,14 @@ defaultEnabled: false
     return false;
   }
   function mapRow(source, columns, rowIndex) {
-    const values4 = entries4(source, `data row ${rowIndex + 1}`);
+    const values4 = entries3(source, `data row ${rowIndex + 1}`);
     const known = new Set(columns.map(({ id }) => id.toLowerCase()));
     for (const key of values4.keys()) {
       if (!known.has(String(key).toLowerCase())) {
         throw new Error(`data row ${rowIndex + 1} contains unknown column '${key}'`);
       }
     }
-    return columns.map(({ id }) => field6(values4, id, null));
+    return columns.map(({ id }) => field4(values4, id, null));
   }
   function normalizeRows(value, columns) {
     return Object.freeze(sequence4(value, "data rows").map((source, rowIndex) => {
@@ -42294,7 +42922,7 @@ defaultEnabled: false
     return makeRelation(columns, rows, ["relation"]);
   }
   function selectedColumnIds(value, relation, label2) {
-    const requested = sequence4(value, label2).map((entry, index) => text9(entry, `${label2} entry ${index + 1}`));
+    const requested = sequence4(value, label2).map((entry, index) => text8(entry, `${label2} entry ${index + 1}`));
     const byId = new Map(relation.columns.map((column, index) => [column.id.toLowerCase(), index]));
     const selected = requested.map((id) => {
       const index = byId.get(id.toLowerCase());
@@ -42390,7 +43018,7 @@ defaultEnabled: false
       throw new Error("data.TableView expects a Relation and optional options");
     const relation = requireRelation(args[0], "data.TableView");
     const captionValue = option3(args[1], "caption", null);
-    const caption = captionValue === null ? null : text9(captionValue, "data.TableView caption");
+    const caption = captionValue === null ? null : text8(captionValue, "data.TableView caption");
     return Object.freeze({
       type: "output",
       kind: "table",
@@ -42419,7 +43047,7 @@ defaultEnabled: false
   }
 
   // rix/plugins/data/data.plugin.rix.js
-  var HELPERS5 = new Map([
+  var HELPERS4 = new Map([
     ["Relation", createRelation],
     ["Project", projectRelation],
     ["Filter", filterRelation],
@@ -42429,20 +43057,20 @@ defaultEnabled: false
     ["Rows", relationRows]
   ]);
   function createDataPluginCollection() {
-    const entries5 = new Map;
+    const entries4 = new Map;
     const extension = new Map([["immutable", new Integer(1n)]]);
-    for (const [name, helper] of HELPERS5) {
-      entries5.set(name, helper);
-      entries5.set(name.toUpperCase(), helper);
+    for (const [name, helper] of HELPERS4) {
+      entries4.set(name, helper);
+      entries4.set(name.toUpperCase(), helper);
       extension.set(name.toUpperCase(), {
         type: "method_builtin",
         name,
         impl: (args, context, evaluate, invoke) => helper(args.slice(1), { context, evaluate, invoke })
       });
     }
-    return { type: "map", entries: entries5, _ext: extension };
+    return { type: "map", entries: entries4, _ext: extension };
   }
-  function install13({ systemContext }) {
+  function install11({ systemContext }) {
     const collection = createDataPluginCollection();
     systemContext.registerHostValue("data", collection, {
       doc: "Immutable typed relations and portable Table views",
@@ -42461,14 +43089,14 @@ defaultEnabled: false
       _ext: new Map([["immutable", new Integer(1n)]])
     };
   }
-  function entries5(value, label2) {
+  function entries4(value, label2) {
     if (value?.type === "map" && value.entries instanceof Map)
       return value.entries;
     if (value instanceof Map)
       return value;
     throw new Error(`${label2} must be a map`);
   }
-  function field7(source, name, fallback = null) {
+  function field5(source, name, fallback = null) {
     const values4 = source instanceof Map ? source : source?.entries;
     if (!(values4 instanceof Map))
       return fallback;
@@ -42481,7 +43109,7 @@ defaultEnabled: false
     }
     return fallback;
   }
-  function text10(value, label2) {
+  function text9(value, label2) {
     if (value?.type === "string")
       return value.value;
     if (typeof value === "string")
@@ -42496,7 +43124,7 @@ defaultEnabled: false
     throw new Error(`${label2} must be a sequence`);
   }
   function validLabel(value, label2) {
-    const result = text10(value, label2);
+    const result = text9(value, label2);
     if (!/^[A-Za-z][A-Za-z0-9:_-]*$/.test(result)) {
       throw new Error(`${label2} must start with a letter and contain only letters, digits, colon, underscore, or hyphen`);
     }
@@ -42522,15 +43150,15 @@ defaultEnabled: false
   function createDocumentTheme(args) {
     if (args.length > 2)
       throw new Error("document.Theme expects an optional name and options map");
-    const name = args[0] === null || args[0] === undefined ? "plain" : text10(args[0], "document.Theme name").toLowerCase();
+    const name = args[0] === null || args[0] === undefined ? "plain" : text9(args[0], "document.Theme name").toLowerCase();
     const defaults = THEMES[name];
     if (!defaults)
       throw new Error("document.Theme name must be :plain or :compact");
-    const options = args[1] === null || args[1] === undefined ? new Map : entries5(args[1], "document.Theme options");
-    const accentValue = field7(options, "accent", stringValue7(defaults.accent));
-    const densityValue = field7(options, "density", stringValue7(defaults.density));
-    const accent = text10(accentValue, "document.Theme accent");
-    const density = text10(densityValue, "document.Theme density").toLowerCase();
+    const options = args[1] === null || args[1] === undefined ? new Map : entries4(args[1], "document.Theme options");
+    const accentValue = field5(options, "accent", stringValue7(defaults.accent));
+    const densityValue = field5(options, "density", stringValue7(defaults.density));
+    const accent = text9(accentValue, "document.Theme accent");
+    const density = text9(densityValue, "document.Theme density").toLowerCase();
     if (!/^#[0-9a-f]{6}$/i.test(accent))
       throw new Error("document.Theme accent must be a six-digit hex color");
     if (!["comfortable", "compact"].includes(density)) {
@@ -42549,10 +43177,10 @@ defaultEnabled: false
       return createDocumentTheme([]);
     if (value?.type === "string" || typeof value === "string")
       return createDocumentTheme([value]);
-    const values4 = entries5(value, "document.Report theme");
-    if (field7(values4, "schema")?.value === "rix.document.theme@1")
+    const values4 = entries4(value, "document.Report theme");
+    if (field5(values4, "schema")?.value === "rix.document.theme@1")
       return value;
-    return createDocumentTheme([field7(values4, "name", stringValue7("plain")), value]);
+    return createDocumentTheme([field5(values4, "name", stringValue7("plain")), value]);
   }
   function labelDocumentValue(args) {
     if (args.length !== 2)
@@ -42572,7 +43200,7 @@ defaultEnabled: false
     if (args.length < 1 || args.length > 2)
       throw new Error("document.Ref expects an id and optional display text");
     const id = validLabel(args[0], "document.Ref id");
-    const display = args[1] === null || args[1] === undefined ? null : text10(args[1], "document.Ref text");
+    const display = args[1] === null || args[1] === undefined ? null : text9(args[1], "document.Ref text");
     return textNode("", { documentReference: id, documentReferenceText: display });
   }
   function childOutputs(value) {
@@ -42681,19 +43309,19 @@ defaultEnabled: false
   function createDocumentReport(args) {
     if (args.length < 2 || args.length > 3)
       throw new Error("document.Report expects a title, children, and optional options");
-    const title = text10(args[0], "document.Report title");
+    const title = text9(args[0], "document.Report title");
     if (!title.trim())
       throw new Error("document.Report title must not be empty");
-    const options = args[2] === null || args[2] === undefined ? new Map : entries5(args[2], "document.Report options");
-    const theme = normalizeTheme(field7(options, "theme"));
-    const authorValue = field7(options, "author");
-    const author = authorValue === null ? null : text10(authorValue, "document.Report author");
+    const options = args[2] === null || args[2] === undefined ? new Map : entries4(args[2], "document.Report options");
+    const theme = normalizeTheme(field5(options, "theme"));
+    const authorValue = field5(options, "author");
+    const author = authorValue === null ? null : text9(authorValue, "document.Report author");
     const sourceChildren = reportChildren(args[1]);
     if (!sourceChildren.every(isOutputValue))
       throw new Error("document.Report children must be portable output values");
     const index = collectReferences(sourceChildren);
     const resolved = sourceChildren.map((child) => resolveOutput(child, index));
-    const titleStyle = mapValue3([["color", field7(theme, "accent")], ["density", field7(theme, "density")]]);
+    const titleStyle = mapValue3([["color", field5(theme, "accent")], ["density", field5(theme, "density")]]);
     const heading = createHeading([new Integer(1n), stringValue7(title), null, titleStyle]);
     const byline = author === null ? [] : [createParagraph([[textNode(`By ${author}`)]])];
     const fragment = createFragment([[heading, ...byline, ...resolved], metadata2(theme, title)]);
@@ -42719,7 +43347,7 @@ defaultEnabled: false
   }
 
   // rix/plugins/document/document.plugin.rix.js
-  var HELPERS6 = new Map([
+  var HELPERS5 = new Map([
     ["Report", createDocumentReport],
     ["Label", labelDocumentValue],
     ["Ref", createDocumentReference],
@@ -42727,20 +43355,20 @@ defaultEnabled: false
     ["References", documentReferences]
   ]);
   function createDocumentPluginCollection() {
-    const entries6 = new Map;
+    const entries5 = new Map;
     const extension = new Map([["immutable", new Integer(1n)]]);
-    for (const [name, helper] of HELPERS6) {
-      entries6.set(name, helper);
-      entries6.set(name.toUpperCase(), helper);
+    for (const [name, helper] of HELPERS5) {
+      entries5.set(name, helper);
+      entries5.set(name.toUpperCase(), helper);
       extension.set(name.toUpperCase(), {
         type: "method_builtin",
         name,
         impl: (args) => helper(args.slice(1))
       });
     }
-    return { type: "map", entries: entries6, _ext: extension };
+    return { type: "map", entries: entries5, _ext: extension };
   }
-  function install14({ systemContext }) {
+  function install12({ systemContext }) {
     const collection = createDocumentPluginCollection();
     systemContext.registerHostValue("document", collection, {
       doc: "Numbered portable reports with deterministic cross-references",
@@ -42782,13 +43410,13 @@ defaultEnabled: false
       return value.entries;
     return null;
   }
-  function field8(value, name, fallback = null) {
-    const entries6 = mapEntries2(value);
-    if (entries6) {
-      if (entries6.has(name))
-        return entries6.get(name);
-      const key = [...entries6.keys()].find((candidate) => String(candidate).toLowerCase() === String(name).toLowerCase());
-      return key === undefined ? fallback : entries6.get(key);
+  function field6(value, name, fallback = null) {
+    const entries5 = mapEntries2(value);
+    if (entries5) {
+      if (entries5.has(name))
+        return entries5.get(name);
+      const key = [...entries5.keys()].find((candidate) => String(candidate).toLowerCase() === String(name).toLowerCase());
+      return key === undefined ? fallback : entries5.get(key);
     }
     if (value && typeof value === "object") {
       if (Object.hasOwn(value, name))
@@ -42799,7 +43427,7 @@ defaultEnabled: false
     return fallback;
   }
   function option4(options, name, fallback = null) {
-    return field8(options, name, fallback);
+    return field6(options, name, fallback);
   }
   function numberValue2(value, label2) {
     let result;
@@ -42827,7 +43455,7 @@ defaultEnabled: false
     return values4.map((entry, index) => numberValue2(entry, `${label2} ${index === 0 ? "x" : "y"}`));
   }
   function styleValue2(style, name, fallback = null) {
-    return field8(style, name, fallback);
+    return field6(style, name, fallback);
   }
   function boolValue(value) {
     if (value instanceof Integer)
@@ -42928,12 +43556,12 @@ defaultEnabled: false
     return result;
   }
   function truncate2(value, width) {
-    const text11 = String(value);
-    if (text11.length <= width)
-      return text11;
+    const text10 = String(value);
+    if (text10.length <= width)
+      return text10;
     if (width <= 1)
       return "~";
-    return `${text11.slice(0, width - 1)}~`;
+    return `${text10.slice(0, width - 1)}~`;
   }
   function constrainText(value, state, path2) {
     return String(value).split(`
@@ -42981,14 +43609,14 @@ defaultEnabled: false
     return result;
   }
   function align(value, width, mode = "left") {
-    const text11 = truncate2(value, width);
+    const text10 = truncate2(value, width);
     if (mode === "right")
-      return text11.padStart(width);
+      return text10.padStart(width);
     if (mode === "center") {
-      const left = Math.floor((width - text11.length) / 2);
-      return `${" ".repeat(left)}${text11}${" ".repeat(width - text11.length - left)}`;
+      const left = Math.floor((width - text10.length) / 2);
+      return `${" ".repeat(left)}${text10}${" ".repeat(width - text10.length - left)}`;
     }
-    return text11.padEnd(width);
+    return text10.padEnd(width);
   }
   function renderTable(value, state, path2) {
     const headers = value.columns.map((column, index) => strictAscii(column.label, state, `${path2}.column${index + 1}`));
@@ -43008,13 +43636,13 @@ defaultEnabled: false
 `);
   }
   function ruleNumber(rule, name) {
-    const value = field8(rule, name);
+    const value = field6(rule, name);
     if (value === null || value === undefined)
       return null;
     return numberValue2(value, `Grid rule ${name}`);
   }
   function hasGridRule(value, kind, boundary) {
-    return value.rules.some((rule) => field8(rule, "kind") === kind && ruleNumber(rule, kind === "vertical" ? "afterColumn" : "aboveRow") === boundary);
+    return value.rules.some((rule) => field6(rule, "kind") === kind && ruleNumber(rule, kind === "vertical" ? "afterColumn" : "aboveRow") === boundary);
   }
   function renderGrid(value, state, path2) {
     const rows = value.rows.map((row, rowIndex) => row.map((cell, columnIndex) => cellText2(cell, state, `${path2}.row${rowIndex + 1}.column${columnIndex + 1}`)));
@@ -43022,7 +43650,7 @@ defaultEnabled: false
     const separators = natural.slice(1).map((_, index) => hasGridRule(value, "vertical", index + 2) ? " | " : "  ");
     const overhead = separators.reduce((sum, separator) => sum + separator.length, 0);
     const widths = shrinkWidths(natural, state.width - overhead, state, path2);
-    const styleAlign = rixString4(field8(value.style, "align")) || field8(value.style, "align") || "right";
+    const styleAlign = rixString4(field6(value.style, "align")) || field6(value.style, "align") || "right";
     const renderRow = (cells) => {
       let line2 = align(cells[0], widths[0], styleAlign);
       for (let column = 1;column < cells.length; column += 1) {
@@ -43180,25 +43808,25 @@ defaultEnabled: false
       return renderTerminalAscii(value, { options, format });
     }
   };
-  function install15(api) {
+  function install13(api) {
     return installRendererPlugin({ ...api, definition, mount: "terminalAscii" });
   }
 
   // rix/plugins/radix/radix.plugin.rix.js
-  function int15(value) {
+  function int14(value) {
     return new Integer(BigInt(value));
   }
-  function text11(value) {
+  function text10(value) {
     return { type: "string", value: String(value) };
   }
   function bool4(value) {
-    return value ? int15(1) : null;
+    return value ? int14(1) : null;
   }
   function sequence7(values4) {
     return { type: "sequence", values: values4 };
   }
-  function map3(entries6) {
-    return { type: "map", entries: new Map(entries6) };
+  function map3(entries5) {
+    return { type: "map", entries: new Map(entries5) };
   }
   function mapEntry(value, key, fallback = undefined) {
     if (!(value?.entries instanceof Map))
@@ -43238,33 +43866,33 @@ defaultEnabled: false
     throw new Error("Radix operations require an exact Integer or Rational");
   }
   function radix(value) {
-    const base = exactBigInt2(value ?? int15(10), "Radix base");
+    const base = exactBigInt2(value ?? int14(10), "Radix base");
     if (base < 2n || base > 65536n) {
       throw new Error("Radix base must be between 2 and 65536");
     }
     return base;
   }
   function unsignedParts(value) {
-    const rational5 = exactRational3(value);
-    const negative = rational5.numerator < 0n;
+    const rational4 = exactRational3(value);
+    const negative = rational4.numerator < 0n;
     return {
       sign: negative ? -1n : 1n,
-      numerator: negative ? -rational5.numerator : rational5.numerator,
-      denominator: rational5.denominator
+      numerator: negative ? -rational4.numerator : rational4.numerator,
+      denominator: rational4.denominator
     };
   }
   function integerDigits(value, base) {
     if (value === 0n)
-      return [int15(0)];
+      return [int14(0)];
     const result = [];
     let remaining = value;
     while (remaining > 0n) {
-      result.push(int15(remaining % base));
+      result.push(int14(remaining % base));
       remaining /= base;
     }
     return result.reverse();
   }
-  function expandRadix(value, baseValue = int15(10), options = null) {
+  function expandRadix(value, baseValue = int14(10), options = null) {
     const base = radix(baseValue);
     const maxDigits = boundedCount(mapEntry(options, "maxDigits"), "maxDigits", 1024);
     const { sign, numerator, denominator } = unsignedParts(value);
@@ -43281,7 +43909,7 @@ defaultEnabled: false
       }
       seen.set(remainder, fractional.length);
       remainder *= base;
-      fractional.push(int15(remainder / denominator));
+      fractional.push(int14(remainder / denominator));
       remainder %= denominator;
     }
     if (remainder !== 0n && repeatStart === null && seen.has(remainder)) {
@@ -43291,11 +43919,11 @@ defaultEnabled: false
     const prefix = repeatStart === null ? fractional : fractional.slice(0, repeatStart);
     const repeating = repeatStart === null ? null : fractional.slice(repeatStart);
     return map3([
-      ["valueKind", text11("radixExpansion")],
-      ["schema", text11("rix.radix.expansion@1")],
-      ["status", text11(complete ? "complete" : "budgetExhausted")],
-      ["base", int15(base)],
-      ["sign", int15(numerator === 0n ? 0n : sign)],
+      ["valueKind", text10("radixExpansion")],
+      ["schema", text10("rix.radix.expansion@1")],
+      ["status", text10(complete ? "complete" : "budgetExhausted")],
+      ["base", int14(base)],
+      ["sign", int14(numerator === 0n ? 0n : sign)],
       ["integerDigits", sequence7(integerDigits(whole, base))],
       ["nonRepeatingDigits", sequence7(prefix)],
       ["repeatingDigits", repeating === null ? null : sequence7(repeating)],
@@ -43303,12 +43931,12 @@ defaultEnabled: false
       ["repeating", bool4(repeatStart !== null)],
       ["complete", bool4(complete)],
       ["truncated", bool4(!complete)],
-      ["producedDigits", int15(fractional.length)],
-      ["maxDigits", int15(maxDigits)],
-      ["remainingRemainder", int15(remainder)]
+      ["producedDigits", int14(fractional.length)],
+      ["maxDigits", int14(maxDigits)],
+      ["remainingRemainder", int14(remainder)]
     ]);
   }
-  function radixDigits(value, baseValue = int15(10), countValue = int15(1)) {
+  function radixDigits(value, baseValue = int14(10), countValue = int14(1)) {
     const base = radix(baseValue);
     const optionsCount = mapEntry(countValue, "count", undefined);
     const count = boundedCount(countValue?.type === "map" ? optionsCount : countValue, "Digit count", 1);
@@ -43317,7 +43945,7 @@ defaultEnabled: false
     const digits = [];
     for (let index = 0;index < count; index++) {
       remainder *= base;
-      digits.push(int15(remainder / denominator));
+      digits.push(int14(remainder / denominator));
       remainder %= denominator;
     }
     return sequence7(digits);
@@ -43329,7 +43957,7 @@ defaultEnabled: false
       [a, b] = [b, a % b];
     return a;
   }
-  function radixPeriodInfo(value, baseValue = int15(10), options = null) {
+  function radixPeriodInfo(value, baseValue = int14(10), options = null) {
     const base = radix(baseValue);
     const maxWork = boundedCount(mapEntry(options, "maxWork"), "maxWork", 1e5);
     let denominator = unsignedParts(value).denominator;
@@ -43341,21 +43969,21 @@ defaultEnabled: false
     }
     if (denominator === 1n) {
       return map3([
-        ["status", text11("complete")],
-        ["base", int15(base)],
-        ["periodLength", int15(0)],
-        ["work", int15(0)],
-        ["maxWork", int15(maxWork)]
+        ["status", text10("complete")],
+        ["base", int14(base)],
+        ["periodLength", int14(0)],
+        ["work", int14(0)],
+        ["maxWork", int14(maxWork)]
       ]);
     }
     if (maxWork === 0) {
       return map3([
-        ["status", text11("budgetExhausted")],
-        ["base", int15(base)],
+        ["status", text10("budgetExhausted")],
+        ["base", int14(base)],
         ["periodLength", null],
-        ["work", int15(0)],
-        ["maxWork", int15(0)],
-        ["reducedDenominator", int15(denominator)]
+        ["work", int14(0)],
+        ["maxWork", int14(0)],
+        ["reducedDenominator", int14(denominator)]
       ]);
     }
     let power = base % denominator;
@@ -43366,15 +43994,15 @@ defaultEnabled: false
     }
     const complete = power === 1n;
     return map3([
-      ["status", text11(complete ? "complete" : "budgetExhausted")],
-      ["base", int15(base)],
-      ["periodLength", complete ? int15(length) : null],
-      ["work", int15(length)],
-      ["maxWork", int15(maxWork)],
-      ["reducedDenominator", int15(denominator)]
+      ["status", text10(complete ? "complete" : "budgetExhausted")],
+      ["base", int14(base)],
+      ["periodLength", complete ? int14(length) : null],
+      ["work", int14(length)],
+      ["maxWork", int14(maxWork)],
+      ["reducedDenominator", int14(denominator)]
     ]);
   }
-  function radixPeriodLength(value, baseValue = int15(10), options = null) {
+  function radixPeriodLength(value, baseValue = int14(10), options = null) {
     const info = radixPeriodInfo(value, baseValue, options);
     const length = info.entries.get("periodLength");
     if (length === null) {
@@ -43387,21 +44015,21 @@ defaultEnabled: false
   function digitText(values4) {
     return values4.map((value) => DIGIT_ALPHABET[Number(value.value)]).join("");
   }
-  function radixString(value, baseValue = int15(10), options = null) {
+  function radixString(value, baseValue = int14(10), options = null) {
     const base = radix(baseValue);
     if (base > 36n)
       throw new Error("Radix ToString supports bases through 36; use Expansion for larger bases");
-    const expansion = expandRadix(value, int15(base), options);
-    const entries6 = expansion.entries;
-    const negative = entries6.get("sign").value < 0n ? "-" : "";
-    const whole = digitText(entries6.get("integerDigits").values);
-    const prefix = digitText(entries6.get("nonRepeatingDigits").values);
-    const repeating = entries6.get("repeatingDigits");
+    const expansion = expandRadix(value, int14(base), options);
+    const entries5 = expansion.entries;
+    const negative = entries5.get("sign").value < 0n ? "-" : "";
+    const whole = digitText(entries5.get("integerDigits").values);
+    const prefix = digitText(entries5.get("nonRepeatingDigits").values);
+    const repeating = entries5.get("repeatingDigits");
     if (repeating)
-      return text11(`${negative}${whole}.${prefix}(${digitText(repeating.values)})`);
-    if (entries6.get("terminating"))
-      return text11(prefix ? `${negative}${whole}.${prefix}` : `${negative}${whole}`);
-    return text11(`${negative}${whole}.${prefix}…`);
+      return text10(`${negative}${whole}.${prefix}(${digitText(repeating.values)})`);
+    if (entries5.get("terminating"))
+      return text10(prefix ? `${negative}${whole}.${prefix}` : `${negative}${whole}`);
+    return text10(`${negative}${whole}.${prefix}…`);
   }
   function builtinMethod(name, fn) {
     return {
@@ -43420,22 +44048,22 @@ defaultEnabled: false
       ["PeriodInfo", radixPeriodInfo],
       ["ToString", radixString]
     ];
-    const entries6 = new Map;
-    const extension = new Map([["immutable", int15(1)]]);
+    const entries5 = new Map;
+    const extension = new Map([["immutable", int14(1)]]);
     for (const [name, fn] of definitions) {
-      const method12 = {
+      const method10 = {
         type: "method_builtin",
         name,
         impl(args) {
           return fn(...args.slice(1));
         }
       };
-      entries6.set(name, method12);
-      extension.set(name.toUpperCase(), method12);
+      entries5.set(name, method10);
+      extension.set(name.toUpperCase(), method10);
     }
-    return { type: "map", entries: entries6, _ext: extension };
+    return { type: "map", entries: entries5, _ext: extension };
   }
-  function install16({ systemContext, metadata: metadata3 = {}, options = {} }) {
+  function install14({ systemContext, metadata: metadata3 = {}, options = {} }) {
     const value = collection();
     systemContext.registerHostValue("radix", value, {
       doc: "Bounded exact positional expansions and period analysis",
@@ -43478,7 +44106,7 @@ defaultEnabled: false
       return { content };
     }
   };
-  function install17(api) {
+  function install15(api) {
     return installRendererPlugin({ ...api, definition: definition2 });
   }
 
@@ -43490,28 +44118,28 @@ defaultEnabled: false
       return points2.map(([x, y], index) => `${index ? "L" : "M"}${stableNumber(x)} ${stableNumber(y)}`).join(" ") + (closed ? " Z" : "");
     }
     return node.commands.map((command, index) => {
-      const op = (rixString4(field8(command, "op")) || field8(command, "op", "")).toLowerCase();
-      const destination = () => point(field8(command, "to"), `Path command ${index + 1} destination`);
+      const op = (rixString4(field6(command, "op")) || field6(command, "op", "")).toLowerCase();
+      const destination = () => point(field6(command, "to"), `Path command ${index + 1} destination`);
       if (["move", "m", "line", "l"].includes(op)) {
         const [x, y] = destination();
         return `${op === "move" || op === "m" ? "M" : "L"}${stableNumber(x)} ${stableNumber(y)}`;
       }
       if (["quadratic", "quad", "q"].includes(op)) {
-        const [cx, cy] = point(field8(command, "control"), `Path command ${index + 1} control`);
+        const [cx, cy] = point(field6(command, "control"), `Path command ${index + 1} control`);
         const [x, y] = destination();
         return `Q${stableNumber(cx)} ${stableNumber(cy)} ${stableNumber(x)} ${stableNumber(y)}`;
       }
       if (["cubic", "curve", "c"].includes(op)) {
-        const [c1x, c1y] = point(field8(command, "control1"), `Path command ${index + 1} control1`);
-        const [c2x, c2y] = point(field8(command, "control2"), `Path command ${index + 1} control2`);
+        const [c1x, c1y] = point(field6(command, "control1"), `Path command ${index + 1} control1`);
+        const [c2x, c2y] = point(field6(command, "control2"), `Path command ${index + 1} control2`);
         const [x, y] = destination();
         return `C${stableNumber(c1x)} ${stableNumber(c1y)} ${stableNumber(c2x)} ${stableNumber(c2y)} ${stableNumber(x)} ${stableNumber(y)}`;
       }
       if (["arc", "a"].includes(op)) {
-        const [rx, ry] = point(field8(command, "radius"), `Path command ${index + 1} radius`);
-        const rotation = numberValue2(field8(command, "rotation", 0), `Path command ${index + 1} rotation`);
-        const large = boolValue(field8(command, "large", false)) ? 1 : 0;
-        const sweep = boolValue(field8(command, "sweep", false)) ? 1 : 0;
+        const [rx, ry] = point(field6(command, "radius"), `Path command ${index + 1} radius`);
+        const rotation = numberValue2(field6(command, "rotation", 0), `Path command ${index + 1} rotation`);
+        const large = boolValue(field6(command, "large", false)) ? 1 : 0;
+        const sweep = boolValue(field6(command, "sweep", false)) ? 1 : 0;
         const [x, y] = destination();
         return `A${stableNumber(rx)} ${stableNumber(ry)} ${stableNumber(rotation)} ${large} ${sweep} ${stableNumber(x)} ${stableNumber(y)}`;
       }
@@ -43628,7 +44256,7 @@ defaultEnabled: false
       };
     }
   };
-  function install18(api) {
+  function install16(api) {
     return installRendererPlugin({ ...api, definition: definition3 });
   }
 
@@ -43694,7 +44322,7 @@ defaultEnabled: false
     return { ...parent, ...styleObject(own) };
   }
   function destination(command, index) {
-    return point(field8(command, "to"), `Path command ${index + 1} destination`);
+    return point(field6(command, "to"), `Path command ${index + 1} destination`);
   }
   function pathSource(node, path2) {
     if (!node.commands) {
@@ -43706,7 +44334,7 @@ defaultEnabled: false
     let current = null;
     let subpathStart = null;
     node.commands.forEach((command, index) => {
-      const op = (rixString4(field8(command, "op")) || field8(command, "op", "")).toLowerCase();
+      const op = (rixString4(field6(command, "op")) || field6(command, "op", "")).toLowerCase();
       if (["move", "m"].includes(op)) {
         const [x, y] = destination(command, index);
         current = [x, y];
@@ -43723,7 +44351,7 @@ defaultEnabled: false
       if (["quadratic", "quad", "q"].includes(op)) {
         if (!current)
           throw new UnsupportedRenderError(`${path2}: quadratic command has no current point`, { target: "tikz" });
-        const [cx, cy] = point(field8(command, "control"), `Path command ${index + 1} control`);
+        const [cx, cy] = point(field6(command, "control"), `Path command ${index + 1} control`);
         const [x, y] = destination(command, index);
         const control1 = [current[0] + (cx - current[0]) * 2 / 3, current[1] + (cy - current[1]) * 2 / 3];
         const control2 = [x + (cx - x) * 2 / 3, y + (cy - y) * 2 / 3];
@@ -43732,8 +44360,8 @@ defaultEnabled: false
         return;
       }
       if (["cubic", "curve", "c"].includes(op)) {
-        const [c1x, c1y] = point(field8(command, "control1"), `Path command ${index + 1} control1`);
-        const [c2x, c2y] = point(field8(command, "control2"), `Path command ${index + 1} control2`);
+        const [c1x, c1y] = point(field6(command, "control1"), `Path command ${index + 1} control1`);
+        const [c2x, c2y] = point(field6(command, "control2"), `Path command ${index + 1} control2`);
         const [x, y] = destination(command, index);
         parts.push(` .. controls (${stableNumber(c1x)},${stableNumber(c1y)}) and (${stableNumber(c2x)},${stableNumber(c2y)}) .. (${stableNumber(x)},${stableNumber(y)})`);
         current = [x, y];
@@ -43855,7 +44483,7 @@ ${body}
   function boolOption(value) {
     return value?.value === 1n || value === true || value === 1;
   }
-  function install19(api) {
+  function install17(api) {
     return installRendererPlugin({ ...api, definition: definition4 });
   }
 
@@ -44111,8 +44739,8 @@ ${caption}
   function gridRule(value, kind, boundary) {
     const fieldName = kind === "vertical" ? "afterColumn" : "aboveRow";
     return value.rules.some((rule) => {
-      const ruleKind = rixString4(field8(rule, "kind")) || field8(rule, "kind");
-      const position = field8(rule, fieldName);
+      const ruleKind = rixString4(field6(rule, "kind")) || field6(rule, "kind");
+      const position = field6(rule, fieldName);
       return ruleKind === kind && position !== null && numberValue2(position, `Grid ${fieldName}`) === boundary;
     });
   }
@@ -44291,14 +44919,14 @@ ${makeTitle}${body.trim()}
     };
   }
   function quartoFrontMatter(options) {
-    const metadata3 = field8(options, "metadata", options);
+    const metadata3 = field6(options, "metadata", options);
     const keys = ["title", "author", "date", "format"];
     const lines = [];
     for (const key of keys) {
-      const value = field8(metadata3, key);
-      const text12 = rixString4(value) ?? (typeof value === "string" ? value : null);
-      if (text12 !== null)
-        lines.push(`${key}: ${JSON.stringify(text12)}`);
+      const value = field6(metadata3, key);
+      const text11 = rixString4(value) ?? (typeof value === "string" ? value : null);
+      if (text11 !== null)
+        lines.push(`${key}: ${JSON.stringify(text11)}`);
     }
     if (!lines.some((line2) => line2.startsWith("format:")))
       lines.push("format: html");
@@ -44323,7 +44951,7 @@ ${lines.join(`
       return renderMarkdown(value, { format, render });
     }
   };
-  function install20(api) {
+  function install18(api) {
     return installRendererPlugin({ ...api, definition: definition5 });
   }
 
@@ -44367,7 +44995,7 @@ ${lines.join(`
       };
     }
   };
-  function install21(api) {
+  function install19(api) {
     return installRendererPlugin({ ...api, definition: definition6 });
   }
 
@@ -44417,7 +45045,7 @@ ${lines.join(`
       return { ...rendered, assets, content: `${quartoFrontMatter(options)}${rendered.content}` };
     }
   };
-  function install22(api) {
+  function install20(api) {
     return installRendererPlugin({ ...api, definition: definition7 });
   }
 
@@ -44439,7 +45067,7 @@ ${lines.join(`
       });
     }
   };
-  function install23(api) {
+  function install21(api) {
     return installRendererPlugin({ ...api, definition: definition8 });
   }
 
@@ -44479,7 +45107,7 @@ ${lines.join(`
       }
     };
   }
-  function install24(api) {
+  function install22(api) {
     return installRendererPlugin({ ...api, definition: createDefinition(api.rasterizeSvg) });
   }
 
@@ -44515,7 +45143,7 @@ ${lines.join(`
       }
     };
   }
-  function install25(api) {
+  function install23(api) {
     return installRendererPlugin({ ...api, definition: createDefinition2(api.compileLatex) });
   }
 
@@ -44669,7 +45297,7 @@ ${lines.join(`
       return exportSceneGltf(value, { pretty: options?.pretty !== false });
     }
   };
-  function install26(api) {
+  function install24(api) {
     return installRendererPlugin({ ...api, definition: definition9 });
   }
 
@@ -44779,8 +45407,8 @@ ${lines.join(`
       return String(value);
     throw new Error(`csv cells must be missing, strings, or exact numeric scalars; received ${value?.type || typeof value}`);
   }
-  function quote(text12, delimiter) {
-    const source = String(text12);
+  function quote(text11, delimiter) {
+    const source = String(text11);
     return source.includes(delimiter) || /["\r\n]/.test(source) ? `"${source.replaceAll('"', '""')}"` : source;
   }
   function renderCsv(value, { options = {}, requestedTarget = "csv" } = {}) {
@@ -44832,7 +45460,7 @@ ${lines.join(`
       return renderCsv(value, { options, requestedTarget });
     }
   };
-  function install27(api) {
+  function install25(api) {
     return installRendererPlugin({ ...api, definition: definition10 });
   }
 
@@ -44869,6 +45497,11 @@ ${lines.join(`
       sourcePath: "bundled:continued-fraction.plugin.rix"
     },
     {
+      metadata: readPluginHeader(algebraic_real_plugin_default, "algebraic-real.plugin.rix"),
+      source: algebraic_real_plugin_default,
+      sourcePath: "bundled:algebraic-real.plugin.rix"
+    },
+    {
       metadata: {
         id: "radix",
         description: "Bounded exact positional expansions and repeating-period analysis for rational values.",
@@ -44880,7 +45513,7 @@ ${lines.join(`
         deterministic: true,
         defaultEnabled: false
       },
-      install: install16
+      install: install14
     },
     {
       metadata: {
@@ -44893,7 +45526,7 @@ ${lines.join(`
         permissions: [],
         defaultEnabled: false
       },
-      install: ({ systemContext, registry }) => install8({ systemContext, registry })
+      install: ({ systemContext, registry }) => install6({ systemContext, registry })
     },
     {
       metadata: {
@@ -44914,22 +45547,9 @@ ${lines.join(`
       install: install2
     },
     {
-      metadata: {
-        id: "poly",
-        description: "Semantic callable univariate polynomials with structural and symbolic entry forms.",
-        kind: "host",
-        mount: "poly",
-        aliases: ["polynomial", "p"],
-        exports: ["Polynomial", "Parse", "Var", "Fun"],
-        groups: ["Algebra", "Exact", "Symbolic"],
-        permissions: [],
-        provides: ["rix.polynomial@1"],
-        schemas: ["rix.polynomial@1"],
-        snapshot: false,
-        deterministic: true,
-        defaultEnabled: false
-      },
-      install: install4
+      metadata: readPluginHeader(poly_plugin_default, "poly.plugin.rix"),
+      source: poly_plugin_default,
+      sourcePath: "bundled:poly.plugin.rix"
     },
     {
       metadata: {
@@ -44948,7 +45568,7 @@ ${lines.join(`
         deterministic: true,
         defaultEnabled: false
       },
-      install: install5
+      install: install4
     },
     {
       metadata: {
@@ -44984,25 +45604,12 @@ ${lines.join(`
         deterministic: true,
         defaultEnabled: false
       },
-      install: install6
+      install: install5
     },
     {
-      metadata: {
-        id: "algebra",
-        description: "Canonical exact univariate polynomials with verified division and portable synthetic-division Grids.",
-        kind: "host",
-        mount: "algebra",
-        exports: ["Polynomial", "Coefficients", "Record", "Evaluate", "Equal", "Divide", "SyntheticDivide", "Quotient", "Remainder", "IsFactor", "Grid"],
-        groups: ["Algebra", "Exact"],
-        permissions: [],
-        requires: ["rix.rational-function@1"],
-        provides: ["rix.algebra.division@1"],
-        schemas: ["rix.algebra.division@1"],
-        snapshot: false,
-        deterministic: true,
-        defaultEnabled: false
-      },
-      install: install7
+      metadata: readPluginHeader(algebra_plugin_default, "algebra.plugin.rix"),
+      source: algebra_plugin_default,
+      sourcePath: "bundled:algebra.plugin.rix"
     },
     {
       metadata: {
@@ -45028,7 +45635,7 @@ ${lines.join(`
         permissions: [],
         defaultEnabled: false
       },
-      install: ({ systemContext }) => install9({ systemContext })
+      install: ({ systemContext }) => install7({ systemContext })
     },
     {
       metadata: {
@@ -45045,7 +45652,7 @@ ${lines.join(`
         deterministic: true,
         defaultEnabled: false
       },
-      install: ({ systemContext }) => install10({ systemContext })
+      install: ({ systemContext }) => install8({ systemContext })
     },
     {
       metadata: {
@@ -45063,7 +45670,7 @@ ${lines.join(`
         deterministic: true,
         defaultEnabled: false
       },
-      install: ({ systemContext }) => install11({ systemContext })
+      install: ({ systemContext }) => install9({ systemContext })
     },
     {
       metadata: {
@@ -45080,7 +45687,7 @@ ${lines.join(`
         deterministic: true,
         defaultEnabled: false
       },
-      install: ({ systemContext }) => install12({ systemContext })
+      install: ({ systemContext }) => install10({ systemContext })
     },
     {
       metadata: {
@@ -45097,7 +45704,7 @@ ${lines.join(`
         deterministic: true,
         defaultEnabled: false
       },
-      install: ({ systemContext }) => install13({ systemContext })
+      install: ({ systemContext }) => install11({ systemContext })
     },
     {
       metadata: {
@@ -45114,7 +45721,7 @@ ${lines.join(`
         deterministic: true,
         defaultEnabled: false
       },
-      install: ({ systemContext }) => install14({ systemContext })
+      install: ({ systemContext }) => install12({ systemContext })
     },
     {
       metadata: {
@@ -45131,21 +45738,21 @@ ${lines.join(`
         deterministic: true,
         defaultEnabled: false
       },
-      install: install15
+      install: install13
     },
     ...[
-      ["svg", "Portable SVG renderer for core Graphics scenes.", "svg", ["Render"], [], install17, "image/svg+xml", true],
-      ["canvas", "Serializable Canvas 2D drawing plans for core Graphics scenes.", "canvas", ["Render"], [], install18, "application/vnd.rix.canvas+json", true],
-      ["tikz", "Editable TikZ/PGF source renderer for core Graphics scenes.", "tikz", ["Render"], [], install19, "text/x-tikz", true],
-      ["markdown", "CommonMark-oriented renderer for portable RiX documents.", "markdown", ["Render"], [], install20, "text/markdown", true],
-      ["html", "Standalone semantic HTML renderer for portable RiX output trees.", "html", ["Render"], [], install21, "text/html", true],
-      ["quarto", "Quarto Markdown renderer with front matter and portable figure lowering.", "quarto", ["Render"], [], install22, "text/x-quarto", true],
-      ["latex", "Standalone LaTeX renderer for portable RiX documents and figures.", "latex", ["Render"], [], install23, "text/x-tex", true],
-      ["png", "PNG snapshot renderer for core Graphics through a host rasterizer.", "png", ["Render"], ["process"], install24, "image/png", true],
-      ["pdf", "PDF document and figure renderer orchestrated through LaTeX.", "pdf", ["Render"], ["process", "files"], install25, "application/pdf", false],
-      ["gltf", "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", "gltf", ["Render"], [], install26, "model/gltf+json", true],
-      ["csv", "Deterministic CSV and TSV export for portable Tables and typed data Relations.", "csv", ["Render"], [], install27, "text/csv", true, ["tsv", "text/tab-separated-values"], ["Renderers", "Data"]]
-    ].map(([id, description, mount, exports, permissions, install28, mime, deterministic, aliases = [], groups = ["Renderers"]]) => ({
+      ["svg", "Portable SVG renderer for core Graphics scenes.", "svg", ["Render"], [], install15, "image/svg+xml", true],
+      ["canvas", "Serializable Canvas 2D drawing plans for core Graphics scenes.", "canvas", ["Render"], [], install16, "application/vnd.rix.canvas+json", true],
+      ["tikz", "Editable TikZ/PGF source renderer for core Graphics scenes.", "tikz", ["Render"], [], install17, "text/x-tikz", true],
+      ["markdown", "CommonMark-oriented renderer for portable RiX documents.", "markdown", ["Render"], [], install18, "text/markdown", true],
+      ["html", "Standalone semantic HTML renderer for portable RiX output trees.", "html", ["Render"], [], install19, "text/html", true],
+      ["quarto", "Quarto Markdown renderer with front matter and portable figure lowering.", "quarto", ["Render"], [], install20, "text/x-quarto", true],
+      ["latex", "Standalone LaTeX renderer for portable RiX documents and figures.", "latex", ["Render"], [], install21, "text/x-tex", true],
+      ["png", "PNG snapshot renderer for core Graphics through a host rasterizer.", "png", ["Render"], ["process"], install22, "image/png", true],
+      ["pdf", "PDF document and figure renderer orchestrated through LaTeX.", "pdf", ["Render"], ["process", "files"], install23, "application/pdf", false],
+      ["gltf", "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", "gltf", ["Render"], [], install24, "model/gltf+json", true],
+      ["csv", "Deterministic CSV and TSV export for portable Tables and typed data Relations.", "csv", ["Render"], [], install25, "text/csv", true, ["tsv", "text/tab-separated-values"], ["Renderers", "Data"]]
+    ].map(([id, description, mount, exports, permissions, install26, mime, deterministic, aliases = [], groups = ["Renderers"]]) => ({
       metadata: {
         id,
         description,
@@ -45160,25 +45767,25 @@ ${lines.join(`
         deterministic,
         defaultEnabled: false
       },
-      install: install28
+      install: install26
     }))
   ];
   function installBundledPlugins(catalog) {
-    for (const { metadata: metadata3, install: install28, source, sourcePath } of BUNDLED_PLUGINS) {
+    for (const { metadata: metadata3, install: install26, source, sourcePath } of BUNDLED_PLUGINS) {
       if (catalog.info(metadata3.id))
         continue;
       if (source) {
         catalog.addMetadata(metadata3, { kind: "rix", source, sourcePath });
       } else {
         catalog.addMetadata(metadata3, { kind: "host" });
-        catalog.registerInstaller(metadata3.id, install28);
+        catalog.registerInstaller(metadata3.id, install26);
       }
     }
     return catalog;
   }
 
   // rix/src/eval/functions/units.js
-  function int16(value) {
+  function int15(value) {
     return new Integer(BigInt(value));
   }
   function stringValue8(value, label2) {
@@ -45248,7 +45855,7 @@ ${lines.join(`
         if (!match)
           throw new Error(`Expected integer exponent in exact expression '${source}'`);
         index += match[0].length;
-        value = powScalar(value, int16(match[0]));
+        value = powScalar(value, int15(match[0]));
       }
       return value;
     }
@@ -45276,10 +45883,10 @@ ${lines.join(`
     if (isScalar(left) && isUnitValue(right))
       return constructQuantity(left, right);
     if (isQuantity(left) && isUnitValue(right)) {
-      return multiplyQuantityValues(left, constructQuantity(int16(1), right));
+      return multiplyQuantityValues(left, constructQuantity(int15(1), right));
     }
     if (isUnitValue(left) && isQuantity(right)) {
-      return multiplyQuantityValues(constructQuantity(int16(1), left), right);
+      return multiplyQuantityValues(constructQuantity(int15(1), left), right);
     }
     return multiplyQuantityValues(left, right);
   }
@@ -45289,21 +45896,21 @@ ${lines.join(`
     if (isScalar(left) && isUnitValue(right))
       return constructQuantity(left, invertUnit(right));
     if (isUnitValue(left) && isScalar(right))
-      return constructQuantity(divideScalars(int16(1), right), left);
+      return constructQuantity(divideScalars(int15(1), right), left);
     if (isQuantity(left) && isUnitValue(right)) {
-      return divideQuantityValues(left, constructQuantity(int16(1), right));
+      return divideQuantityValues(left, constructQuantity(int15(1), right));
     }
     if (isUnitValue(left) && isQuantity(right)) {
-      return divideQuantityValues(constructQuantity(int16(1), left), right);
+      return divideQuantityValues(constructQuantity(int15(1), left), right);
     }
     return divideQuantityValues(left, right);
   }
   function resolveTargetUnit(target, context, systemContext) {
     if (isUnitValue(target))
       return target;
-    const text12 = stringValue8(target, "ConvertUnit target");
+    const text11 = stringValue8(target, "ConvertUnit target");
     const collection2 = activeCollection(context, systemContext, "Units", ["UNITS", "Units"]);
-    return parseUnitExpression(text12, collection2);
+    return parseUnitExpression(text11, collection2);
   }
   var unitExactFunctions = {
     UNIT: {
@@ -45347,7 +45954,7 @@ ${lines.join(`
     }
   };
   function boolResult3(value) {
-    return value ? int16(1) : null;
+    return value ? int15(1) : null;
   }
   function addWithOptionalWarning([left, right], context) {
     const warnings = context?.getEnv?.("warnings", runtimeDefaults.warnings) ?? runtimeDefaults.warnings;
@@ -46105,17 +46712,17 @@ ${lines.join(`
     }
   }
   function buildExportBundle(scriptContext, exportBindings) {
-    const entries6 = new Map;
+    const entries5 = new Map;
     for (const spec2 of exportBindings || []) {
       const sourceCell = scriptContext.getCell(spec2.source);
       if (!sourceCell) {
         throw new Error(`Cannot export undefined script binding: ${spec2.source}`);
       }
-      entries6.set(spec2.target, buildBoundCell(sourceCell, spec2.mode));
+      entries5.set(spec2.target, buildBoundCell(sourceCell, spec2.mode));
     }
     return {
       type: "export_bundle",
-      entries: entries6
+      entries: entries5
     };
   }
   function getExportBundleCell(bundle, name) {
@@ -47045,22 +47652,22 @@ ${lines.join(`
     } else if (irNode.fn === "TENSOR_LITERAL") {
       const shapeIndex = hasHeader ? 1 : 0;
       resolved.push(args[shapeIndex]);
-      const entries6 = args.slice(shapeIndex + 1);
+      const entries5 = args.slice(shapeIndex + 1);
       if (state.parallelCollections === false) {
-        for (let index = 0;index < entries6.length; index++) {
-          resolved.push(await resolveAsyncCollectionArg(entries6[index], context, registry, systemContext, childBranchState(state, index)));
+        for (let index = 0;index < entries5.length; index++) {
+          resolved.push(await resolveAsyncCollectionArg(entries5[index], context, registry, systemContext, childBranchState(state, index)));
         }
       } else {
-        resolved.push(...await orderedAsyncMap(entries6, state, (arg, index) => resolveAsyncCollectionArg(arg, context, registry, systemContext, childBranchState(state, index))));
+        resolved.push(...await orderedAsyncMap(entries5, state, (arg, index) => resolveAsyncCollectionArg(arg, context, registry, systemContext, childBranchState(state, index))));
       }
     } else {
-      const entries6 = args.slice(start);
+      const entries5 = args.slice(start);
       if (state.parallelCollections === false) {
-        for (let index = 0;index < entries6.length; index++) {
-          resolved.push(await resolveAsyncCollectionArg(entries6[index], context, registry, systemContext, childBranchState(state, index)));
+        for (let index = 0;index < entries5.length; index++) {
+          resolved.push(await resolveAsyncCollectionArg(entries5[index], context, registry, systemContext, childBranchState(state, index)));
         }
       } else {
-        resolved.push(...await orderedAsyncMap(entries6, state, (arg, index) => resolveAsyncCollectionArg(arg, context, registry, systemContext, childBranchState(state, index))));
+        resolved.push(...await orderedAsyncMap(entries5, state, (arg, index) => resolveAsyncCollectionArg(arg, context, registry, systemContext, childBranchState(state, index))));
       }
     }
     const resolvedEvaluate = (node) => node?.fn ? evaluate(node, context, registry, systemContext) : node;
@@ -47133,12 +47740,12 @@ ${lines.join(`
     if (!sourceNode?.fn || !["ARRAY", "ARRAY_CAPTURE", "TUPLE", "SET"].includes(sourceNode.fn))
       return null;
     const header = sourceNode.args[0]?.header && !sourceNode.args[0].fn ? sourceNode.args[0] : null;
-    const entries6 = header ? sourceNode.args.slice(1) : sourceNode.args;
-    if (entries6.some((entry) => entry?.fn === "SPREAD" || entry?.fn === "GENERATOR" || containsNestedAsyncCollection(entry?.expression || entry))) {
+    const entries5 = header ? sourceNode.args.slice(1) : sourceNode.args;
+    if (entries5.some((entry) => entry?.fn === "SPREAD" || entry?.fn === "GENERATOR" || containsNestedAsyncCollection(entry?.expression || entry))) {
       return null;
     }
     const type = sourceNode.fn === "TUPLE" ? "tuple" : sourceNode.fn === "SET" ? "set" : "sequence";
-    return { fn: sourceNode.fn, header, entries: entries6, shell: { type, values: [] } };
+    return { fn: sourceNode.fn, header, entries: entries5, shell: { type, values: [] } };
   }
   function captureFusedSourceValue(source, entry, value, context, registry, systemContext) {
     const definition11 = registry.get(source.fn);
@@ -48369,16 +48976,16 @@ ${lines.join(`
   }
   var RIXCEL_FORMULA_CLIPBOARD_TYPE = "application/x-rixcel-formula";
   var RIXCEL_FORMULA_BLOCK_CLIPBOARD_TYPE = "application/x-rixcel-formula-block";
-  function parseSheetFormulaClipboard(text12, fallbackAssignmentMode = ":=") {
-    const source = String(text12 ?? "");
+  function parseSheetFormulaClipboard(text11, fallbackAssignmentMode = ":=") {
+    const source = String(text11 ?? "");
     const match = source.match(/^\s*(::=|~~=|:=|~=|=)\s*([\s\S]+)$/u);
     return Object.freeze({
       source: match ? match[2] : source,
       assignmentMode: match?.[1] ?? fallbackAssignmentMode
     });
   }
-  function parseSheetFormulaBlock(text12, fallbackAssignmentMode = ":=") {
-    const rows = String(text12 ?? "").replace(/\r\n?/gu, `
+  function parseSheetFormulaBlock(text11, fallbackAssignmentMode = ":=") {
+    const rows = String(text11 ?? "").replace(/\r\n?/gu, `
 `).split(`
 `);
     if (rows.at(-1) === "")
@@ -50301,14 +50908,14 @@ ${lines.join(`
   };
 
   // rix/plugins/float/protocol.js
-  function int17(value) {
+  function int16(value) {
     return new Integer(BigInt(value));
   }
-  function text12(value) {
+  function text11(value) {
     return { type: "string", value };
   }
-  function map4(entries6) {
-    return { type: "map", entries: new Map(entries6) };
+  function map4(entries5) {
+    return { type: "map", entries: new Map(entries5) };
   }
   function sequence8(values4) {
     return { type: "sequence", values: values4 };
@@ -50346,50 +50953,50 @@ ${lines.join(`
   }
   function NumericsCapabilities() {
     return map4([
-      ["valuekind", text12("numericsCapabilities")],
-      ["schema", text12("rix.numerics.capabilities@1")],
-      ["backend", text12("float")],
-      ["representation", text12("ieee754Binary64")],
-      ["operations", sequence8([text12("sample"), text12("enclose")])],
-      ["evidencelevels", sequence8([text12("approximate")])],
+      ["valuekind", text11("numericsCapabilities")],
+      ["schema", text11("rix.numerics.capabilities@1")],
+      ["backend", text11("float")],
+      ["representation", text11("ieee754Binary64")],
+      ["operations", sequence8([text11("sample"), text11("enclose")])],
+      ["evidencelevels", sequence8([text11("approximate")])],
       ["certified", null],
       ["arbitraryrefinement", null],
-      ["deterministic", int17(1)],
+      ["deterministic", int16(1)],
       ["minimumwidth", Rational.zero],
-      ["storedvalueexact", int17(1)],
+      ["storedvalueexact", int16(1)],
       ["intendedrealcertified", null]
     ]);
   }
   function approximateStoredValue(value, request, operation) {
     const exact2 = exactFloatRational(value);
     const requestedWidth = entry(request, "absolutewidth", null);
-    const requestedWork = entry(entry(request, "work", null), "maxwork", int17(0));
+    const requestedWork = entry(entry(request, "work", null), "maxwork", int16(0));
     return map4([
-      ["valuekind", text12("enclosure")],
-      ["schema", text12("rix.numerics.enclosure@1")],
-      ["status", text12("approximate")],
+      ["valuekind", text11("enclosure")],
+      ["schema", text11("rix.numerics.enclosure@1")],
+      ["status", text11("approximate")],
       ["interval", new RationalInterval(exact2, exact2)],
       ["certified", null],
       ["goalmet", null],
       ["requestedwidth", requestedWidth],
       ["achievedwidth", Rational.zero],
-      ["evidencelevel", text12("approximate")],
-      ["backend", text12("float")],
-      ["operation", text12(operation)],
+      ["evidencelevel", text11("approximate")],
+      ["backend", text11("float")],
+      ["operation", text11(operation)],
       ["trace", sequence8([])],
       ["work", map4([
-        ["samples", int17(1)],
+        ["samples", int16(1)],
         ["maxwork", requestedWork],
         ["exhausted", null]
       ])],
       ["diagnostics", sequence8([
-        text12("storedValueOnly"),
-        text12("noErrorBoundForIntendedReal")
+        text11("storedValueOnly"),
+        text11("noErrorBoundForIntendedReal")
       ])],
       ["source", map4([
-        ["plugin", text12("float")],
-        ["representation", text12("ieee754Binary64")],
-        ["storedvalueexact", int17(1)]
+        ["plugin", text11("float")],
+        ["representation", text11("ieee754Binary64")],
+        ["storedvalueexact", int16(1)]
       ])]
     ]);
   }
@@ -50554,18 +51161,18 @@ ${lines.join(`
       installs
     });
   }
-  function method12(name, impl) {
+  function method10(name, impl) {
     return { type: "method_builtin", name, impl };
   }
   function installBrowserApproxMathPlugin({ systemContext, registry, metadata: metadata3 = {}, options = {} }) {
     registerFloatType();
     registry.registerAll(mathFunctions);
     installRegisteredTypes(registry, [TYPE_NAME], { skipMissing: true, skipExisting: true });
-    const entries6 = new Map;
+    const entries5 = new Map;
     const extension = new Map;
     const add2 = (name, impl) => {
-      const entry2 = method12(name, impl);
-      entries6.set(name, entry2);
+      const entry2 = method10(name, impl);
+      entries5.set(name, entry2);
       extension.set(name.toUpperCase(), entry2);
     };
     add2("Float", (args, _context, evaluate2) => requireFloat(args[1], evaluate2));
@@ -50581,7 +51188,7 @@ ${lines.join(`
       add2(name, (args, _context, evaluate2) => evaluate2({ fn: name.toUpperCase(), args: [requireFloat(args[1], evaluate2)] }));
     }
     add2("Atan2", (args, _context, evaluate2) => evaluate2({ fn: "ATAN2", args: [requireFloat(args[1], evaluate2), requireFloat(args[2], evaluate2)] }));
-    const value = { type: "map", entries: entries6, _ext: extension };
+    const value = { type: "map", entries: entries5, _ext: extension };
     systemContext.registerHostCallableValue("float", value, {
       impl(args, _context, evaluate2) {
         return requireFloat(args[0], evaluate2);
@@ -50590,7 +51197,7 @@ ${lines.join(`
       doc: "Optional IEEE-754 Float conversion and approximate math",
       groups: ["ApproximateMath", "Float"]
     });
-    const floatExtension = method12("Float", (args, _context, evaluate2) => requireFloat(args[0], evaluate2));
+    const floatExtension = method10("Float", (args, _context, evaluate2) => requireFloat(args[0], evaluate2));
     const owner = {
       pluginId: metadata3.id || "float",
       mount: options.as || metadata3.mount || "float"
@@ -50599,7 +51206,7 @@ ${lines.join(`
     systemContext.registerMethod("Rational", "Float", floatExtension, owner);
     return systemContext;
   }
-  var install28 = installBrowserApproxMathPlugin;
+  var install26 = installBrowserApproxMathPlugin;
 
   // rix/examples/plugins/example-array-js/array-js.plugin.rix.js
   function valuesFrom(value) {
@@ -50626,19 +51233,19 @@ ${lines.join(`
     return { type: "sequence", values: [...valuesFrom(value)].reverse() };
   }
   function collection2() {
-    const entries6 = new Map;
+    const entries5 = new Map;
     const extension = new Map([["immutable", new Integer(1n)]]);
     for (const [name, helper] of [["Sum", sum], ["Describe", describe], ["Reverse", reverse]]) {
-      entries6.set(name, helper);
+      entries5.set(name, helper);
       extension.set(name.toUpperCase(), {
         type: "method_builtin",
         name,
         impl: (args) => helper(args[1])
       });
     }
-    return { type: "map", entries: entries6, _ext: extension };
+    return { type: "map", entries: entries5, _ext: extension };
   }
-  function install29({ systemContext }) {
+  function install27({ systemContext }) {
     const value = collection2();
     systemContext.registerHostCallableValue("arrayJs", value, {
       impl(args) {
@@ -50686,7 +51293,7 @@ defaultEnabled: false
       groups: ["ApproximateMath", "Float"],
       permissions: [],
       defaultEnabled: false
-    }, install28);
+    }, install26);
     addPlugin(catalog, {
       id: "example-array-js",
       description: "Teaching JavaScript plugin demonstrating array helpers.",
@@ -50696,7 +51303,7 @@ defaultEnabled: false
       groups: ["Examples"],
       permissions: [],
       defaultEnabled: false
-    }, install29);
+    }, install27);
     addPlugin(catalog, {
       id: "example-array-rix",
       description: "Teaching RiX plugin demonstrating array helpers.",
@@ -50717,7 +51324,7 @@ defaultEnabled: false
       permissions: [],
       provides: ["rix.scene3d@1"],
       defaultEnabled: false
-    }, install10);
+    }, install8);
     addPlugin(catalog, {
       id: "nd",
       description: "Exact n-dimensional geometry with explicit affine and Cayley projection records.",
@@ -50728,18 +51335,18 @@ defaultEnabled: false
       permissions: [],
       requires: ["rix.scene3d@1"],
       defaultEnabled: false
-    }, install11);
+    }, install9);
     for (const [id, description, installer, permissions = []] of [
-      ["svg", "Portable SVG renderer for core Graphics scenes.", install17],
-      ["canvas", "Serializable Canvas 2D drawing plans for core Graphics scenes.", install18],
-      ["tikz", "Editable TikZ/PGF source renderer for core Graphics scenes.", install19],
-      ["markdown", "CommonMark-oriented renderer for portable RiX documents.", install20],
-      ["html", "Standalone semantic HTML renderer for portable RiX output trees.", install21],
-      ["quarto", "Quarto Markdown renderer with front matter and portable figure lowering.", install22],
-      ["latex", "Standalone LaTeX renderer for portable RiX documents and figures.", install23],
-      ["png", "PNG snapshot renderer for core Graphics through a host rasterizer.", install24, ["process"]],
-      ["pdf", "PDF document and figure renderer orchestrated through LaTeX.", install25, ["process", "files"]],
-      ["gltf", "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", install26]
+      ["svg", "Portable SVG renderer for core Graphics scenes.", install15],
+      ["canvas", "Serializable Canvas 2D drawing plans for core Graphics scenes.", install16],
+      ["tikz", "Editable TikZ/PGF source renderer for core Graphics scenes.", install17],
+      ["markdown", "CommonMark-oriented renderer for portable RiX documents.", install18],
+      ["html", "Standalone semantic HTML renderer for portable RiX output trees.", install19],
+      ["quarto", "Quarto Markdown renderer with front matter and portable figure lowering.", install20],
+      ["latex", "Standalone LaTeX renderer for portable RiX documents and figures.", install21],
+      ["png", "PNG snapshot renderer for core Graphics through a host rasterizer.", install22, ["process"]],
+      ["pdf", "PDF document and figure renderer orchestrated through LaTeX.", install23, ["process", "files"]],
+      ["gltf", "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", install24]
     ]) {
       addPlugin(catalog, {
         id,
