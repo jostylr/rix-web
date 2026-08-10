@@ -304,17 +304,33 @@ The RiX command-line linter checks these ownership and decision rules without
 loading or evaluating the program:
 
 ```text
-rix lint translated.rix
-rix lint --strict --json plugins/my-plugin/my-plugin.plugin.rix
+rix lint --level=essential translated.rix
+rix lint --level=standard translated.rix
+rix lint --profile=plugin --strict --json plugins/my-plugin/my-plugin.plugin.rix
 rix explain-scope plugins/my-plugin/my-plugin.plugin.rix:42
 ```
 
-`RX1001` suggests a missing `@`; `RX1002` suggests removing one. The other
-initial codes cover numeric decisions (`RX1101`), missing undecided handling
-(`RX1102`), statically recognizable immutable updates (`RX1201`), shadowing
-(`RX1302`), and capture-dense lazy branches (`RX2001`). Runtime failures carry
-the same capture hints and identify the selected ternary branch or loop
-iteration when evaluation reaches a bad path.
+Levels are cumulative: `essential` starts with correctness hazards,
+`standard` adds common mistakes, `thorough` adds intent-sensitive checks, and
+`pedantic` includes style information. Profiles add focused reactive, math,
+teaching, or plugin checks.
+
+Linting never edits a file by default. A safe capture correction is applied
+only when you explicitly run `rix lint --fix file.rix`; larger refactors remain
+suggestions. Suppress an intentional finding locally and explain why:
+
+```text
+## rix-lint-disable-next-line RX1601 -- freeze the initial source on purpose
+$$frozen := source + 1;
+```
+
+`RX1001` suggests a missing `@`; `RX1002` suggests removing one, and `RX1003`
+catches an explicit capture with no enclosing owner. Further rules cover loop
+progress, alias/copy intent, lowercase call-like multiplication, one-based
+indexing, reactive dependency boundaries, exact division, refinement budgets,
+and plugin contracts. Runtime failures carry the same capture hints and name
+the selected ternary branch or loop iteration when evaluation reaches a bad
+path.
 
 :::challenge Capture practice
 The code is correct as written. Predict why `values`, `total`, and `item` have
