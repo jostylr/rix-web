@@ -109,8 +109,8 @@ export const pluginTutorials = [
   {
     "pluginId": "numerics",
     "pluginDirectory": "numerics",
-    "title": "Neutral numerical refinement",
-    "description": "Use one bounded protocol with certified Oracle and approximate Float providers.",
+    "title": "Universal certified arithmetic and root finding",
+    "description": "Refine every certified real through one protocol, compose unlike representations through Oracle, and run actualized root algorithms.",
     "status": "implemented",
     "order": 0,
     "theme": "Numbers and numerics",

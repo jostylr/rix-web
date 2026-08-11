@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Use one bounded protocol with certified Oracle and approximate Float providers." /><title>Neutral numerical refinement — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./plugins-numbers-and-numerics.html#lesson-start" title="Plugins: Numbers and numerics">14</a> <span aria-hidden="true">·</span> <span>e</span></p><h1>Neutral numerical refinement</h1><p class="deck">Use one bounded protocol with certified Oracle and approximate Float providers.</p><aside class="challenge"><p class="eyebrow">Develop in RiX Notebook</p><p>Open <code>rix/plugins/numerics/tutorial.md</code> in the macOS app to edit this lesson with live preview and plugin-aware code results. Use Reload plugins after changing project-local plugin source.</p></aside><div class="lesson-content"><p>Load Numerics and a certified real backend. Numerics only calls methods on the value; it does not know which plugin constructed it:</p>
+<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Refine every certified real through one protocol, compose unlike representations through Oracle, and run actualized root algorithms." /><title>Universal certified arithmetic and root finding — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./plugins-numbers-and-numerics.html#lesson-start" title="Plugins: Numbers and numerics">14</a> <span aria-hidden="true">·</span> <span>e</span></p><h1>Universal certified arithmetic and root finding</h1><p class="deck">Refine every certified real through one protocol, compose unlike representations through Oracle, and run actualized root algorithms.</p><aside class="challenge"><p class="eyebrow">Develop in RiX Notebook</p><p>Open <code>rix/plugins/numerics/tutorial.md</code> in the macOS app to edit this lesson with live preview and plugin-aware code results. Use Reload plugins after changing project-local plugin source.</p></aside><div class="lesson-content"><p>Load Numerics and a certified real backend. Numerics only calls methods on the value; it does not know which plugin constructed it:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="20" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
 .Plugin.Load(&quot;oracle&quot;);
 
@@ -57,4 +57,114 @@ x := .oracle.Rational(3 / 7);
 x &lt; {~ 1 / 2, 1 / 1000 };              ## true, certified
 x ? {~ (2 / 5):(1 / 2), 1 / 1000 };    ## true, certified membership
 x &lt; {~ 1 / 2, 1 / 1000, {= maxCalls=0 } }; ## undecided: budgetExhausted</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>Here epsilon requests enclosure width; it does not enlarge the target. An uncertified provider, including Float when interpreted as an intended real, produces a diagnostic undecided result rather than proving a relation.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
+<p>Here epsilon requests enclosure width; it does not enlarge the target. An uncertified provider, including Float when interpreted as an intended real, produces a diagnostic undecided result rather than proving a relation.</p>
+<h2>Arithmetic across real representations</h2>
+<p>Every refinable singleton-real provider advertises the same semantic contract: it denotes one real, returns certified rational enclosures, and can refine those enclosures arbitrarily. Finite balls are deliberately different: they denote a set, not a hidden singleton.</p>
+<p>Arithmetic within one family retains that family. Exact Rationals are embedded as exact leaves, so adding one does not upgrade the result to another real type:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="20" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
+.Plugin.Load(&quot;ball&quot;);
+.Plugin.Load(&quot;cauchy&quot;);
+.Plugin.Load(&quot;continued-fraction&quot;);
+.Plugin.Load(&quot;algebraic-real&quot;);
+
+b := .ball.Sqrt(2) + 1/3;
+c := .cauchy.Geometric(1, 1/2) * 3/2;
+f := .cf.Sqrt2() - 1/7;
+a := .ar.Sqrt2() / 2;
+
+.Table({=
+  columns=[&quot;expression&quot;, &quot;retained type&quot;],
+  rows=[
+    [&quot;nested ball + Rational&quot;, b.__type],
+    [&quot;Cauchy * Rational&quot;, c.__type],
+    [&quot;continued fraction - Rational&quot;, f.__type],
+    [&quot;algebraic real / Rational&quot;, a.__type]
+  ]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>When two different certified families meet, their immutable refinement recipes are adapted to Oracle and the operation result is an Oracle. No eager decimal evaluation is needed; each adapter merely answers bounded enclosure requests using the source&#039;s existing refinement protocol:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="15" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
+.Plugin.Load(&quot;cauchy&quot;);
+.Plugin.Load(&quot;algebraic-real&quot;);
+
+mixed := .cauchy.Geometric(1, 1/2) + .ar.Sqrt2();
+answer := .numerics.Refine(mixed, {=
+  absoluteWidth=1/1000, maxWork=160, trace=1
+});
+
+.Table({=
+  columns=[&quot;result type&quot;, &quot;status&quot;, &quot;interval&quot;, &quot;calls&quot;],
+  rows=[[
+    mixed.__type, answer[:status], answer[:interval], answer[:work][:calls]
+  ]]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Oracle conversion accepts only refinable singletons. <code>.oracle.From</code> therefore rejects a finite <code>.ball(midpoint, radius)</code>. Use a nested ball recipe when the value is meant to identify one real.</p>
+<p>Float is also outside implicit promotion. A Float is a stored binary64 scalar, not a refinable certificate for an intended real, so both operands must be converted explicitly:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Plugin.Load(&quot;float&quot;);
+
+explicit := .float(1/2) + .float(1/3);
+convertedAfterExactWork := .float(1/2 + 1/3);
+{: explicit, convertedAfterExactWork };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Expressions such as <code>1/2 + .float(1/3)</code> and <code>.ar.Sqrt2() + .float(1/3)</code> are dispatch errors rather than silent conversions.</p>
+<h2>Weighted averaging for n-th roots</h2>
+<p><code>.numerics.NthRoot(q, n)</code> creates a universal algorithm real. For a positive upper guess <code>x</code>, the partner <code>q/x^(n-1)</code> lies on the other side of the root. Their ordered pair is a certified enclosure, and the next upper guess is the weighted arithmetic-geometric step</p>
+<section class="comparison-code"><header>text</header><pre><code>((n - 1) x + q/x^(n-1)) / n.</code></pre></section>
+<p>Each iteration stores exact rational endpoints and discards its expression chain before beginning the next one. Trace entries expose this with <code>actualized=1</code>:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="20" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
+
+square := .numerics.Refine(.numerics.Sqrt(2), {=
+  absoluteWidth=1/1000, maxWork=30, trace=1
+});
+cube := .numerics.Refine(.numerics.NthRoot(27, 3), {=
+  absoluteWidth=1/1000, maxWork=30
+});
+negativeCube := .numerics.Refine(.numerics.NthRoot(-8, 3), {=
+  absoluteWidth=1/1000, maxWork=30
+});
+
+.Table({=
+  columns=[&quot;root&quot;, &quot;status&quot;, &quot;certified interval&quot;],
+  rows=[
+    [&quot;sqrt(2)&quot;, square[:status], square[:interval]],
+    [&quot;cuberoot(27)&quot;, cube[:status], cube[:interval]],
+    [&quot;cuberoot(-8)&quot;, negativeCube[:status], negativeCube[:interval]]
+  ]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The radicand may itself be any certified real. Consequently the fourth root of two below consumes an algebraic-real provider, while adding a Cauchy real then uses the ordinary cross-family Oracle rule:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
+.Plugin.Load(&quot;algebraic-real&quot;);
+.Plugin.Load(&quot;cauchy&quot;);
+
+fourthRoot := .numerics.Sqrt(.ar.Sqrt2());
+shifted := fourthRoot + .cauchy.Geometric(0, 1/2);
+result := .numerics.Refine(shifted, {=
+  absoluteWidth=1/1000, maxWork=180
+});
+{: shifted.__type, result[:status], result[:interval] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>An even root of an enclosure that cannot certify a nonnegative radicand returns <code>:unknown</code> with <code>:radicandSignNotCertified</code>; it never chooses a complex or absolute-value interpretation silently.</p>
+<h2>Kantorovich certification and interval Newton</h2>
+<p><code>.numerics.Kantorovich</code> first checks the supplied initial interval and rational bounds. The derivative interval must exclude zero, <code>derivativeLower</code> may not overstate its certified magnitude, and an optional interval-valued second derivative verifies <code>secondDerivativeUpper</code>. The Kantorovich inequality then certifies an initial root enclosure. Refinement uses interval Newton and intersects every new interval with the preceding one:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="24" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
+
+root := .numerics.Kantorovich(
+  (x) -&gt; x^2 - 2,
+  (x) -&gt; 2*x,
+  {=
+    interval=1:2,
+    initial=3/2,
+    derivativeLower=2,
+    secondDerivativeUpper=2,
+    secondDerivative=(x)-&gt;2
+  }
+);
+
+result := .numerics.Refine(root, {=
+  absoluteWidth=1/100000, maxWork=30, trace=1
+});
+.Table({=
+  columns=[&quot;status&quot;, &quot;evidence&quot;, &quot;interval&quot;, &quot;calls&quot;],
+  rows=[[
+    result[:status], result[:evidenceLevel],
+    result[:interval], result[:work][:calls]
+  ]]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The function and derivative may accept exact points and rational intervals, which makes interval evaluation visible and inspectable. Every Newton trace step contains the materialized guess, derivative enclosure, new certified interval, error radius, and <code>actualized=1</code>; there is no retained trail of lazy arithmetic expressions between iterations.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

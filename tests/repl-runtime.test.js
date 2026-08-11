@@ -382,9 +382,12 @@ test("the web REPL catalogs bundled plugins and loads approved JavaScript on dem
     expect(repl.run('.Plugin.Load("float")').type).toBe("result");
     expect(repl.run(".float(1 / 3)").text).toBe("0.3333333333333333");
     expect(repl.run(".float(1 / 3) * .float(3)").text).toBe("1");
-    expect(repl.run(".float(1 / 2) + 2").text).toBe("2.5");
-    expect(repl.run(".Min(.float(1 / 2), 2)").text).toBe("0.5");
-    expect(repl.run(".Max(.float(1 / 2), 2)").text).toBe("2");
+    expect(repl.run(".float(1 / 2) + 2").type).toBe("error");
+    expect(repl.run(".float(1 / 2) + .float(2)").text).toBe("2.5");
+    expect(repl.run(".Min(.float(1 / 2), 2)").type).toBe("error");
+    expect(repl.run(".Min(.float(1 / 2), .float(2))").text).toBe("0.5");
+    expect(repl.run(".Max(.float(1 / 2), 2)").type).toBe("error");
+    expect(repl.run(".Max(.float(1 / 2), .float(2))").text).toBe("2");
     expect(repl.run(".float.Round(.float(1 / 3), 2)").text).toBe("33/100");
     expect(repl.run('.Plugin.Load("ball")').type).toBe("result");
     expect(repl.run('.ball(3 / 2, 1 / 4).Interval()').text).toBe("1..1/4:1..3/4");

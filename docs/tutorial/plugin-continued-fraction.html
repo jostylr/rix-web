@@ -57,4 +57,18 @@ result := .numerics.Refine(root, {=
   ]]
 });
 root &lt; {~ 3/2, 1/1000 };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>Try changing <code>maxWork</code> to <code>0</code>, <code>1</code>, and <code>2</code>. The comparison remains undecided until the available convergent cylinder separates the two neighborhoods.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
+<p>Try changing <code>maxWork</code> to <code>0</code>, <code>1</code>, and <code>2</code>. The comparison remains undecided until the available convergent cylinder separates the two neighborhoods.</p>
+<h2>Arithmetic of continued-fraction reals</h2>
+<p>Coefficient transducers remain available for future specialized algorithms. The complete field surface works now through a certified recipe while keeping the <code>ContinuedFractionReal</code> semantic family:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">.Plugin.Load(&quot;continued-fraction&quot;);
+.Plugin.Load(&quot;numerics&quot;);
+x := .cf.Sqrt2();
+values := [x+x, x-x, x*x, x/x, -x, .Abs(x), x^2, x+1/3];
+.Table({=
+  columns=[&quot;type&quot;, &quot;interval&quot;],
+  rows=values.Map((value) -&gt; [
+    value.__type,
+    .numerics.Refine(value, {= absoluteWidth=1/1000, maxWork=120 })[:interval]
+  ])
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p><code>x+1/3</code> stays in the continued-fraction family because the Rational is an exact embeddable value. Combining <code>x</code> with a Cauchy or algebraic real instead chooses their common certified Oracle target.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

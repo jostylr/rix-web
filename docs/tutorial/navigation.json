@@ -850,8 +850,8 @@
       "number": "14e",
       "parent": "14",
       "file": "plugin-numerics.html",
-      "title": "Neutral numerical refinement",
-      "description": "Use one bounded protocol with certified Oracle and approximate Float providers.",
+      "title": "Universal certified arithmetic and root finding",
+      "description": "Refine every certified real through one protocol, compose unlike representations through Oracle, and run actualized root algorithms.",
       "pluginGroup": false,
       "status": "implemented"
     },

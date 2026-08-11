@@ -1955,6 +1955,23 @@
     "|}": { precedence: 0, type: "separator" }
   };
 
+  class RixParseError extends Error {
+    constructor(message, options = {}) {
+      const offset = Number.isInteger(options.offset) ? options.offset : 0;
+      const source = options.source || "";
+      const { line, col } = source ? posToLineCol(source, offset) : { line: 1, col: offset + 1 };
+      super(source ? `Parse error at line ${line}, column ${col} (position ${offset}): ${message}` : `Parse error at position ${offset}: ${message}`);
+      this.name = "RixParseError";
+      this.code = options.code || "RXP1000";
+      this.offset = offset;
+      this.endOffset = Number.isInteger(options.endOffset) ? Math.max(offset, options.endOffset) : offset;
+      this.line = line;
+      this.column = col;
+      this.reason = message;
+      this.token = options.token || null;
+    }
+  }
+
   class Parser {
     constructor(tokens, systemLookup, source = "", customOperators = new Map) {
       this.tokens = tokens;
@@ -2010,11 +2027,14 @@
     }
     error(message) {
       const pos = this.current ? this.current.pos : [0, 0, 0];
-      if (this.source) {
-        const { line, col } = posToLineCol(this.source, pos[0]);
-        throw new Error(`Parse error at line ${line}, column ${col} (position ${pos[0]}): ${message}`);
-      }
-      throw new Error(`Parse error at position ${pos[0]}: ${message}`);
+      const offset = Number.isInteger(pos?.[1]) ? pos[1] : pos?.[0] || 0;
+      const endOffset = Number.isInteger(pos?.[2]) ? pos[2] : offset;
+      throw new RixParseError(message, {
+        source: this.source,
+        offset,
+        endOffset,
+        token: this.current
+      });
     }
     getSymbolInfo(token) {
       if (token.type === "CustomOperator") {
@@ -37119,7 +37139,7 @@ id: oracle
 description: Exact rational-betweenness oracle demonstrations and bounded refinement.
 kind: rix
 mount: oracle
-exports: [Rational, Query, Answer, Decision, Prophecy, WorkPolicy, Evidence, Ask, AskAll, CheckRange, Refine]
+exports: [Rational, From, Operation, Query, Answer, Decision, Prophecy, WorkPolicy, Evidence, Ask, AskAll, CheckRange, Refine]
 groups: [Numerics, Exact]
 permissions: []
 provides: [rix.oracle@1, rix.enclosable-real@1]
@@ -37144,6 +37164,37 @@ AsInterval(value) -> value ~!: :RationalInterval;
 IntervalLow(interval) -> AsInterval(interval).Low();
 IntervalHigh(interval) -> AsInterval(interval).High();
 IntervalWidth(interval) -> AsInterval(interval).Width();
+
+OracleExactScalar(value) -> (value ? :Integer) || (value ? :Rational);
+OracleValue(value) -> (value ? :Map) && value[:valueKind] == :oracle;
+
+OracleRefinableSingleton(value) -> {;
+    exact = OracleExactScalar(value);
+    exact ?: 1 ?_ {;
+        mapValue = @value ? :Map;
+        mapValue ?: {;
+            capabilities = @value.NumericsCapabilities();
+            capabilities[:certified] &&
+              capabilities[:arbitraryRefinement] &&
+              capabilities[:denotation] == :singleton;
+        } ?_ _;
+    };
+};
+
+OracleBridgePair(left, right) ->
+    OracleRefinableSingleton(left) && OracleRefinableSingleton(right) &&
+    (!OracleExactScalar(left) || !OracleExactScalar(right));
+
+OracleEvidenceRank(level) -> {?
+    level == :proof ? 4;
+    level == :constructorGuarantee ? 3;
+    level == :assumed ? 2;
+    level == :observed ? 1;
+    0
+};
+
+OracleWeakerEvidence(left, right) ->
+    OracleEvidenceRank(left) <= OracleEvidenceRank(right) ?: left ?_ right;
 
 OracleWorkPolicy(options ?= {= }) -> {=
     valueKind = :oracleWorkPolicy,
@@ -37241,7 +37292,7 @@ BuildRationalOracle(exactValue, selectedProcedure, options) -> {;
         Refine = (self, request) -> OracleProtocolEnclose(self, request),
         NumericsCapabilities = (self) -> OracleNumericsCapabilities(self)
     };
-    real;
+    real ~!: :Oracle;
 };
 
 RationalOracle(value, options ?= {= }) -> {;
@@ -37250,6 +37301,79 @@ RationalOracle(value, options ?= {= }) -> {;
     allowed = {| :singular, :reflexive, :halo, :randomHalo, :bisection |};
     allowed.Has(procedure) ?: BuildRationalOracle(exactValue, procedure, options)
                            ?_ .Error("Unknown rational oracle procedure");
+};
+
+BuildSourceOracle(source) -> {;
+    capabilities = source.NumericsCapabilities();
+    valid = capabilities[:certified] &&
+      capabilities[:arbitraryRefinement] &&
+      capabilities[:denotation] == :singleton;
+    valid ?: _ ?_ .Error("Oracle conversion requires one certified arbitrarily refinable singleton real");
+    real = {=
+        valueKind = :oracle,
+        schema = "rix.oracle@1",
+        kind = :adapter,
+        constructor = :refinableAdapter,
+        procedure = :delegatedRefinement,
+        source = source,
+        parameters = {= source=source },
+        declaredProperties = [:range, :existence, :separation, :consistency, :singularity, :closure],
+        provenance = {=
+            plugin=:oracle,
+            version=2,
+            source=:certifiedSingletonAdapter,
+            backend=capabilities[:backend]
+        }
+    };
+    real._proto = {=
+        Enclose = (self, request) -> OracleProtocolEnclose(self, request),
+        Refine = (self, request) -> OracleProtocolEnclose(self, request),
+        NumericsCapabilities = (self) -> OracleNumericsCapabilities(self)
+    };
+    .ImmutableValue(real ~!: :Oracle);
+};
+
+OracleFrom(value) -> {?
+    OracleValue(value) ? value;
+    OracleExactScalar(value) ? RationalOracle(value);
+    OracleRefinableSingleton(value) ? BuildSourceOracle(value);
+    .Error("Oracle conversion requires an exact scalar or certified refinable singleton; Float and finite set enclosures require explicit interpretation")
+};
+
+BuildArithmeticOracle(operation, left, right ?= _) -> {;
+    unary = right == _;
+    a = OracleFrom(left);
+    b = unary ?: _ ?_ OracleFrom(right);
+    real = {=
+        valueKind = :oracle,
+        schema = "rix.oracle@1",
+        kind = :arithmetic,
+        constructor = :arithmetic,
+        procedure = :intervalRefinement,
+        operation = operation,
+        left = a,
+        right = b,
+        parameters = {= operation=operation, left=a, right=b },
+        declaredProperties = [:range, :existence, :separation, :consistency, :singularity, :closure],
+        provenance = {= plugin=:oracle, version=2, source=:arithmeticRecipe, operation=operation }
+    };
+    real._proto = {=
+        Enclose = (self, request) -> OracleProtocolEnclose(self, request),
+        Refine = (self, request) -> OracleProtocolEnclose(self, request),
+        NumericsCapabilities = (self) -> OracleNumericsCapabilities(self)
+    };
+    .ImmutableValue(real ~!: :Oracle);
+};
+
+OracleOperation(operation, left, right ?= _) -> {?
+    operation == :neg ? BuildArithmeticOracle(:neg, left);
+    operation == :abs ? BuildArithmeticOracle(:abs, left);
+    operation == :add ? BuildArithmeticOracle(:add, left, right);
+    operation == :sub ? BuildArithmeticOracle(:sub, left, right);
+    operation == :mul ? BuildArithmeticOracle(:mul, left, right);
+    operation == :div ? BuildArithmeticOracle(:div, left, right);
+    operation == :pow ? BuildArithmeticOracle(:pow, left, right);
+    .Error("Unsupported Oracle arithmetic operation")
 };
 
 PointProphecy(real, query, branch) -> {;
@@ -37375,7 +37499,7 @@ OracleAskAll(real, interval, delta, options ?= {= }) -> {;
     );
 };
 
-OracleRefine(real, options ?= {= }) -> {;
+OracleRefineRational(real, options ?= {= }) -> {;
     real[:constructor] == :rational ?: _ ?_ .Error("Phase 1 Refine supports rational oracle constructors");
     requestedWidth = RequirePositive(Option(options, "width", 1 / 1000), "width");
     maxCalls = RequireNonnegativeInteger(Option(options, "maxcalls", 100), "maxCalls");
@@ -37421,9 +37545,11 @@ OracleRefine(real, options ?= {= }) -> {;
         schema = "rix.oracle.refinement@1",
         status = enclosed ?: :enclosed ?_ :budgetExhausted,
         interval = low:high,
+        certified = 1,
         requestedWidth = requestedWidth,
         achievedWidth = achievedWidth,
         approximation = approximation,
+        evidenceLevel = :constructorGuarantee,
         trace = trace,
         work = {= calls = calls, maxCalls = maxCalls, exhausted = !enclosed },
         assumptions = [:rationalConstructor, :range, :existence, :separation],
@@ -37431,18 +37557,226 @@ OracleRefine(real, options ?= {= }) -> {;
     };
 };
 
-OracleNumericsCapabilities(real) -> {=
-    valueKind = :numericsCapabilities,
-    schema = "rix.numerics.capabilities@1",
-    backend = :oracle,
-    representation = :rationalBetweennessOracle,
-    operations = [:enclose, :refine],
-    evidenceLevels = [:constructorGuarantee],
-    certified = 1,
-    arbitraryRefinement = 1,
-    deterministic = 1,
-    minimumWidth = 0,
-    provider = real[:provenance]
+OraclePointRefinement(value, requestedWidth) -> {;
+    exact = value ~!: :Rational;
+    interval = exact:exact;
+    {=
+        valueKind=:oracleRefinement,
+        schema="rix.oracle.refinement@1",
+        status=:enclosed,
+        interval=interval,
+        certified=1,
+        requestedWidth=requestedWidth,
+        achievedWidth=0,
+        approximation=.CertifiedApproximation(exact, interval, {= provider=:oracle, reason=:exactScalar }),
+        evidenceLevel=:proof,
+        trace=[],
+        work={= calls=0, iterations=0, exhausted=_ },
+        evidence=OracleEvidence(:enclosure, :proof, value, interval),
+        source={= plugin=:oracle, source=:exactScalar }
+    };
+};
+
+OracleRefineSource(real, options) -> {;
+    source = real[:source];
+    capabilities = source.NumericsCapabilities();
+    requestedWidth = RequirePositive(Option(options, "width", 1/1000), "width");
+    maxCalls = RequireNonnegativeInteger(Option(options, "maxcalls", 100), "maxCalls");
+    maxIterations = RequireNonnegativeInteger(Option(options, "maxiterations", maxCalls), "maxIterations");
+    request = .RefinementRequest({=
+        absoluteWidth=requestedWidth,
+        maxWork=maxCalls,
+        maxCalls=maxCalls,
+        maxIterations=maxIterations,
+        trace=Option(options, "trace", 1)
+    }, :refine, capabilities);
+    result = source.Refine(request);
+    check = .RefinementCheck(result, request, capabilities);
+    check[:valid] ?: _ ?_ .Error("Oracle adapter received an invalid certified refinement result");
+    {=
+        valueKind=:oracleRefinement,
+        schema="rix.oracle.refinement@1",
+        status=result[:status],
+        interval=result[:interval],
+        certified=result[:certified],
+        requestedWidth=requestedWidth,
+        achievedWidth=result[:achievedWidth],
+        approximation=result[:approximation],
+        evidenceLevel=result[:evidenceLevel],
+        trace=result[:trace],
+        work=result[:work],
+        evidence=result[:evidence],
+        source={= plugin=:oracle, source=:adapter, provider=result[:source] }
+    };
+};
+
+OracleOperandExact(real) -> real[:constructor] == :rational;
+
+OracleOperandRefinement(real, requestedWidth, maxCalls, trace) ->
+    OracleOperandExact(real)
+      ?: OraclePointRefinement(real[:parameters][:value], requestedWidth)
+      ?_ OracleRefine(real, {=
+          width=requestedWidth,
+          maxcalls=maxCalls,
+          maxiterations=maxCalls,
+          trace=trace
+      });
+
+OracleAbsInterval(interval) -> {;
+    exact = AsInterval(interval);
+    exact.ContainsZero()
+      ?: 0:(.Max((-exact.Low()), exact.High()))
+      ?_ (.Min(exact.Low().Abs(), exact.High().Abs())):(.Max(exact.Low().Abs(), exact.High().Abs()));
+};
+
+OracleCombineIntervals(operation, left, right, exponent ?= _) -> {?
+    operation == :neg ? -left;
+    operation == :abs ? OracleAbsInterval(left);
+    operation == :add ? left + right;
+    operation == :sub ? left - right;
+    operation == :mul ? left * right;
+    operation == :div ? left / right;
+    operation == :pow ? left^exponent;
+    .Error("Unsupported Oracle interval arithmetic operation")
+};
+
+OracleUnresolvedArithmetic(real, requestedWidth, maxCalls, calls, leftResult, rightResult, reason) -> {=
+    valueKind=:oracleRefinement,
+    schema="rix.oracle.refinement@1",
+    status=:unknown,
+    interval=0:0,
+    certified=_,
+    requestedWidth=requestedWidth,
+    achievedWidth=0,
+    approximation=_,
+    evidenceLevel=:constructorGuarantee,
+    trace=[{= operation=real[:operation], left=leftResult[:interval], right=rightResult[:interval] }],
+    work={= calls=calls, iterations=1, maxCalls=maxCalls, exhausted=calls>=maxCalls },
+    diagnostics=[reason],
+    evidence={= kind=:unresolvedDomain, operation=real[:operation], reason=reason },
+    source=real[:provenance]
+};
+
+OracleRefineArithmetic(real, options) -> {;
+    requestedWidth = RequirePositive(Option(options, "width", 1/1000), "width");
+    maxCalls = RequireNonnegativeInteger(Option(options, "maxcalls", 100), "maxCalls");
+    keepTrace = Option(options, "trace", 1);
+    operation = real[:operation];
+    unary = operation == :neg || operation == :abs;
+    leftExact = OracleOperandExact(real[:left]);
+    rightExact = unary ?: 1 ?_ OracleOperandExact(real[:right]);
+    leftBudget = unary ?: maxCalls
+      ?_ leftExact ?: 0
+      ?_ rightExact ?: maxCalls
+      ?_ maxCalls // 2;
+    rightBudget = unary ?: 0 ?_ maxCalls - leftBudget;
+    childWidth = (operation == :add || operation == :sub || operation == :neg || operation == :abs)
+      ?: requestedWidth / 2
+      ?_ (requestedWidth < 1 ?: requestedWidth^2 / 8 ?_ requestedWidth / 8);
+    leftResult = OracleOperandRefinement(real[:left], childWidth, leftBudget, keepTrace);
+    rightResult = unary ?: _ ?_ OracleOperandRefinement(real[:right], childWidth, rightBudget, keepTrace);
+    leftCalls = Option(leftResult[:work], "calls", 0);
+    rightCalls = unary ?: 0 ?_ Option(rightResult[:work], "calls", 0);
+    calls = leftCalls + rightCalls;
+    exponentValue = operation == :pow && real[:right][:constructor] == :rational
+      ?: real[:right][:parameters][:value] ~!: :Rational
+      ?_ _;
+    exponent = operation == :pow
+      ?: (exponentValue.Denominator() == 1
+           ?: exponentValue.Numerator()
+           ?_ .Error("Oracle powers currently require an exact Integer exponent"))
+      ?_ _;
+    domainResolved = operation != :div || !(rightResult[:interval].ContainsZero());
+    resultInterval = domainResolved ?: OracleCombineIntervals(
+        operation,
+        leftResult[:interval],
+        unary ?: _ ?_ rightResult[:interval],
+        exponent
+    ) ?_ _;
+    domainResolved
+      ?: {;
+          achievedWidth = @resultInterval.Width();
+          goalMet = achievedWidth <= @requestedWidth;
+          childExhausted = @leftResult[:status] == :budgetExhausted ||
+            (!@unary && @rightResult[:status] == :budgetExhausted);
+          status = goalMet ?: :enclosed ?_ (childExhausted ?: :budgetExhausted ?_ :goalNotMet);
+          evidenceLevel = @unary
+            ?: @leftResult[:evidenceLevel]
+            ?_ OracleWeakerEvidence(@leftResult[:evidenceLevel], @rightResult[:evidenceLevel]);
+          candidate = @resultInterval.Midpoint();
+          approximation = .CertifiedApproximation(candidate, @resultInterval, {=
+              provider=:oracle,
+              reason=status,
+              operation=@operation,
+              actualized=1
+          });
+          {=
+              valueKind=:oracleRefinement,
+              schema="rix.oracle.refinement@1",
+              status=status,
+              interval=@resultInterval,
+              certified=1,
+              requestedWidth=@requestedWidth,
+              achievedWidth=achievedWidth,
+              approximation=approximation,
+              evidenceLevel=evidenceLevel,
+              trace=@keepTrace ?: [{=
+                  operation=@operation,
+                  left=@leftResult[:interval],
+                  right=@unary ?: _ ?_ @rightResult[:interval],
+                  interval=@resultInterval,
+                  candidate=candidate,
+                  actualized=1
+              }] ?_ [],
+              work={=
+                  calls=@calls,
+                  iterations=1,
+                  maxCalls=@maxCalls,
+                  exhausted=!goalMet && (childExhausted || @calls>=@maxCalls)
+              },
+              diagnostics=goalMet ?: [] ?_ [:requestedWidthNotReached],
+              evidence={=
+                  kind=:exactRationalIntervalArithmetic,
+                  property=:containment,
+                  operation=@operation,
+                  operandEvidence=[@leftResult[:evidence], @unary ?: _ ?_ @rightResult[:evidence]]
+              },
+              source=@real[:provenance]
+          };
+      }
+      ?_ OracleUnresolvedArithmetic(real, requestedWidth, maxCalls, calls, leftResult, rightResult, :divisorNotSeparatedFromZero);
+};
+
+OracleRefine(real, options ?= {= }) -> {?
+    real[:kind] == :adapter ? OracleRefineSource(real, options);
+    real[:kind] == :arithmetic ? OracleRefineArithmetic(real, options);
+    OracleRefineRational(real, options)
+};
+
+OracleNumericsCapabilities(real) -> {;
+    sourceCapabilities = real[:kind] == :adapter ?: real[:source].NumericsCapabilities() ?_ _;
+    selectedRepresentation = real[:kind] == :adapter
+      ?: :certifiedSingletonAdapter
+      ?_ (real[:kind] == :arithmetic ?: :exactIntervalArithmeticRecipe ?_ :rationalBetweennessOracle);
+    selectedEvidenceLevels = real[:kind] == :adapter
+      ?: sourceCapabilities[:evidenceLevels]
+      ?_ (real[:kind] == :arithmetic ?: [:constructorGuarantee, :proof] ?_ [:constructorGuarantee]);
+    {=
+        valueKind = :numericsCapabilities,
+        schema = "rix.numerics.capabilities@1",
+        backend = :oracle,
+        representation = selectedRepresentation,
+        denotation = :singleton,
+        operations = [:enclose, :refine],
+        evidenceLevels = selectedEvidenceLevels,
+        certified = 1,
+        arbitraryRefinement = 1,
+        deterministic = 1,
+        minimumWidth = 0,
+        maxCalls = 100000,
+        maxIterations = 100000,
+        provider = real[:provenance]
+    };
 };
 
 OracleProtocolEnclose(real, request) -> {;
@@ -37453,7 +37787,7 @@ OracleProtocolEnclose(real, request) -> {;
         trace = request[:trace]
     });
     goalMet = refined[:status] == :enclosed;
-    diagnostics = [];
+    diagnostics = refined.Has("diagnostics") ?: refined[:diagnostics] ?_ [];
     diagnostics = workRequest.Has("timeout") ?: diagnostics.Push(:timeoutNotCooperativelyEnforced) ?_ diagnostics;
     diagnostics = workRequest.Has("memory") ?: diagnostics.Push(:memoryNotCooperativelyEnforced) ?_ diagnostics;
     {=
@@ -37461,12 +37795,12 @@ OracleProtocolEnclose(real, request) -> {;
         schema = "rix.numerics.enclosure@1",
         status = refined[:status],
         interval = refined[:interval],
-        certified = 1,
+        certified = refined[:certified],
         goalMet = goalMet,
         requestedWidth = request[:absoluteWidth],
         achievedWidth = refined[:achievedWidth],
         approximation = refined[:approximation],
-        evidenceLevel = :constructorGuarantee,
+        evidenceLevel = refined[:evidenceLevel],
         backend = :oracle,
         operation = request[:operation],
         trace = refined[:trace],
@@ -37477,9 +37811,42 @@ OracleProtocolEnclose(real, request) -> {;
     };
 };
 
+.TypeKnown(:Oracle) ?: _ ?_ .TypeRegister({=
+    name=:Oracle,
+    nativeType=:map,
+    defaultTraits=[:number, :ordered],
+    convertFrom={=
+        map=(x) ?- [x[:valueKind] == :oracle] -> x
+    },
+    validate=(x)->x[:valueKind] == :oracle,
+    proto={=
+        Enclose=(self, request)->OracleProtocolEnclose(self, request),
+        Refine=(self, request)->OracleProtocolEnclose(self, request),
+        NumericsCapabilities=(self)->OracleNumericsCapabilities(self)
+    },
+    installs={=
+        ADD=[{= name=:CertifiedRealOracleAdd, priority=100, prep=(x,y)->OracleBridgePair(x,y), impl=(x,y)->OracleOperation(:add,x,y) }],
+        SUB=[{= name=:CertifiedRealOracleSub, priority=100, prep=(x,y)->OracleBridgePair(x,y), impl=(x,y)->OracleOperation(:sub,x,y) }],
+        MUL=[{= name=:CertifiedRealOracleMul, priority=100, prep=(x,y)->OracleBridgePair(x,y), impl=(x,y)->OracleOperation(:mul,x,y) }],
+        DIV=[{= name=:CertifiedRealOracleDiv, priority=100, prep=(x,y)->OracleBridgePair(x,y), impl=(x,y)->OracleOperation(:div,x,y) }],
+        POW=[{=
+            name=:CertifiedRealOraclePow,
+            priority=100,
+            prep=(x,y)->OracleRefinableSingleton(x) && !OracleExactScalar(x) && (y ? :Integer),
+            impl=(x,y)->OracleOperation(:pow,x,y)
+        }],
+        NEG=[{= name=:CertifiedRealOracleNeg, priority=100, prep=(x)->OracleRefinableSingleton(x) && !OracleExactScalar(x), impl=(x)->OracleOperation(:neg,x) }],
+        ABS=[{= name=:CertifiedRealOracleAbs, priority=100, prep=(x)->OracleRefinableSingleton(x) && !OracleExactScalar(x), impl=(x)->OracleOperation(:abs,x) }]
+    }
+});
+
+.TypeInstall(:Oracle);
+
 oracleNamespace = {= };
 oracleNamespace._proto = {=
     Rational = (self, value, options ?= {= }) -> RationalOracle(value, options),
+    From = (self, value) -> OracleFrom(value),
+    Operation = (self, operation, left, right ?= _) -> OracleOperation(operation, left, right),
     Query = (self, interval, delta, auxiliary ?= _) -> OracleQuery(interval, delta, auxiliary),
     Answer = (self, status, query, prophecy ?= _, reason ?= _) -> OracleAnswer(status, query, prophecy, reason),
     Decision = (self, answer) -> OracleDecision(answer),
@@ -37492,7 +37859,7 @@ oracleNamespace._proto = {=
     Refine = (self, real, options ?= {= }) -> OracleRefine(real, options)
 };
 
-.Host.RegisterValue("oracle", oracleNamespace, "Exact rational-betweenness oracle demonstrations and bounded refinement", ["Numerics", "Exact"]);
+.Host.RegisterValue("oracle", oracleNamespace, "Certified singleton-real adapters, exact interval arithmetic, and rational-betweenness demonstrations", ["Numerics", "Exact"]);
 `;
 
   // rix/plugins/numerics/numerics.plugin.rix
@@ -37501,13 +37868,387 @@ id: numerics
 description: Backend-neutral bounded enclosure and refinement orchestration.
 kind: rix
 mount: numerics
-exports: [Request, WorkPolicy, EffectiveLimits, Enclose, Refine, Sample, Capabilities, CheckResult]
+exports: [Request, WorkPolicy, EffectiveLimits, Enclose, Refine, Sample, Capabilities, CheckResult, NthRoot, Sqrt, Kantorovich]
 groups: [Numerics]
 permissions: []
+requires: [rix.oracle@1]
 provides: [rix.numerics@1, rix.enclosable-real-consumer@1]
-schemas: [rix.numerics.refinement-request@1, rix.numerics.enclosure@1]
+schemas: [rix.numerics.refinement-request@1, rix.numerics.enclosure@1, rix.numerics.algorithm-real@1]
 defaultEnabled: false
 **/
+
+NumericsOption(options, key, fallback) -> options.Has(key) ?: options[key] ?_ fallback;
+
+NumericsNonnegativeInteger(value, label) -> {;
+    exact = value ~!: :Integer;
+    exact >= 0 ?: exact ?_ .Error(@"@{label} must be a nonnegative Integer");
+};
+
+NumericsPositive(value, label) -> {;
+    exact = value ~!: :Rational;
+    exact > 0 ?: exact ?_ .Error(@"@{label} must be positive");
+};
+
+NumericsNonnegative(value, label) -> {;
+    exact = value ~!: :Rational;
+    exact >= 0 ?: exact ?_ .Error(@"@{label} must be nonnegative");
+};
+
+NumericsCalls(result) -> result[:work].Has("calls") ?: result[:work][:calls] ?_ 0;
+
+NumericsAsInterval(value) -> (value ? :RationalInterval)
+  ?: value
+  ?_ {; exact = @value ~!: :Rational; exact:exact; };
+
+NumericsAlgorithmCapabilities(real) -> {=
+    valueKind=:numericsCapabilities,
+    schema="rix.numerics.capabilities@1",
+    backend=:numerics,
+    representation=real[:kind],
+    denotation=:singleton,
+    operations=[:enclose, :refine],
+    evidenceLevels=[real[:evidenceLevel]],
+    certified=1,
+    arbitraryRefinement=1,
+    deterministic=1,
+    minimumWidth=0,
+    maxCalls=100000,
+    maxIterations=100000
+};
+
+NumericsExactOracle(real) -> real[:constructor] == :rational;
+
+NumericsSourceResult(real, requestedWidth, maxCalls, trace) ->
+    NumericsExactOracle(real)
+      ?: {;
+          exact = @real[:parameters][:value] ~!: :Rational;
+          interval = exact:exact;
+          {=
+              status=:enclosed,
+              interval=interval,
+              achievedWidth=0,
+              approximation=.CertifiedApproximation(exact, interval, {= provider=:numerics, reason=:exactSource }),
+              evidenceLevel=:proof,
+              evidence={= kind=:exactScalar, property=:containment },
+              work={= calls=0, iterations=0, exhausted=_ },
+              trace=[]
+          };
+      }
+      ?_ real.Refine(.RefinementRequest({=
+          absoluteWidth=requestedWidth,
+          maxWork=maxCalls,
+          maxCalls=maxCalls,
+          maxIterations=maxCalls,
+          trace=trace
+      }, :refine, real.NumericsCapabilities()));
+
+NumericsUnknownAlgorithm(real, request, interval, work, reason) -> {=
+    valueKind=:enclosure,
+    schema="rix.numerics.enclosure@1",
+    status=:unknown,
+    interval=interval,
+    certified=_,
+    goalMet=_,
+    requestedWidth=request[:absoluteWidth],
+    achievedWidth=interval.Width(),
+    approximation=_,
+    evidenceLevel=real[:evidenceLevel],
+    backend=:numerics,
+    operation=request[:operation],
+    trace=[],
+    work=work,
+    diagnostics=[reason],
+    evidence={= kind=:unresolvedDomain, reason=reason },
+    source=real[:provenance]
+};
+
+NumericsNthRootRefine(real, rawRequest, operation) -> {;
+    capabilities = NumericsAlgorithmCapabilities(real);
+    request = .RefinementRequest(rawRequest, operation, capabilities);
+    requestedWidth = request[:absoluteWidth];
+    maxCalls = request[:work][:maxCalls];
+    maxIterations = request[:work][:maxIterations];
+    degree = real[:degree];
+    sourceWidth = requestedWidth < 1 ?: requestedWidth^degree / 4 ?_ requestedWidth / 4;
+    sourceBudget = maxCalls // 2;
+    sourceResult = NumericsSourceResult(real[:radicand], sourceWidth, sourceBudget, request[:trace]);
+    sourceCalls = NumericsCalls(sourceResult);
+    qInterval = sourceResult[:interval];
+    exactZero = qInterval.Low() == 0 && qInterval.High() == 0;
+    positive = qInterval.Low() >= 0;
+    negative = qInterval.High() <= 0;
+    odd = .Mod(degree, 2) == 1;
+    domainResolved = exactZero || positive || (negative && odd);
+    domainResolved ?: {;
+        sign = @negative ?: -1 ?_ 1;
+        workingLow = @negative ?: 0 - @qInterval.High() ?_ @qInterval.Low();
+        workingHigh = @negative ?: 0 - @qInterval.Low() ?_ @qInterval.High();
+        upper := @exactZero ?: 0 ?_ .Max(1, workingHigh);
+        lower := @exactZero ?: 0 ?_ workingLow / (upper^(@degree - 1));
+        trace := [];
+        iterations := 0;
+        remainingCalls = @maxCalls - @sourceCalls;
+        iterationLimit = .Min(@maxIterations, remainingCalls);
+        {@ step=1;
+           !@exactZero && (@upper - @lower) > @requestedWidth && @iterations < @iterationLimit;
+           {;
+               partner = @workingHigh / (@upper^(@degree - 1));
+               nextUpper = ((@degree - 1) * @upper + partner) / @degree;
+               nextLower = @workingLow / (nextUpper^(@degree - 1));
+               @upper ~= nextUpper;
+               @lower ~= nextLower;
+               @iterations += 1;
+               @trace ~= @request[:trace] ?: @trace.Push({=
+                   iteration=@iterations,
+                   guess=@sign * @upper,
+                   partner=@sign * @lower,
+                   interval=@sign == 1 ?: @lower:@upper ?_ (-@upper):(-@lower),
+                   actualized=1
+               }) ?_ @trace;
+           };
+           step += 1
+        };
+        interval = sign == 1 ?: lower:upper ?_ (-upper):(-lower);
+        achievedWidth = interval.Width();
+        goalMet = achievedWidth <= @requestedWidth;
+        calls = @sourceCalls + iterations;
+        status = goalMet ?: :enclosed ?_ :budgetExhausted;
+        candidate = interval.Midpoint();
+        approximation = .CertifiedApproximation(candidate, interval, {=
+            provider=:numerics,
+            algorithm=:weightedNthRoot,
+            degree=@degree,
+            reason=status,
+            actualized=1
+        });
+        {=
+            valueKind=:enclosure,
+            schema="rix.numerics.enclosure@1",
+            status=status,
+            interval=interval,
+            certified=1,
+            goalMet=goalMet,
+            requestedWidth=@requestedWidth,
+            achievedWidth=achievedWidth,
+            approximation=approximation,
+            evidenceLevel=@real[:evidenceLevel],
+            backend=:numerics,
+            operation=@request[:operation],
+            trace=trace,
+            work={=
+                calls=calls,
+                iterations=iterations,
+                maxCalls=@maxCalls,
+                maxIterations=@maxIterations,
+                sourceCalls=@sourceCalls,
+                exhausted=!goalMet
+            },
+            diagnostics=goalMet ?: [] ?_ [:workBudgetReached],
+            evidence={=
+                kind=:weightedArithmeticGeometricMean,
+                property=:containment,
+                degree=@degree,
+                source=@sourceResult[:evidence]
+            },
+            source=@real[:provenance]
+        };
+    } ?_ NumericsUnknownAlgorithm(
+        real,
+        request,
+        qInterval,
+        {= calls=sourceCalls, iterations=0, maxCalls=maxCalls, exhausted=sourceCalls>=maxCalls },
+        :radicandSignNotCertified
+    );
+};
+
+NumericsNthRoot(value, degree ?= 2, options ?= {= }) -> {;
+    n = degree ~!: :Integer;
+    n >= 2 ?: _ ?_ .Error("NthRoot degree must be an Integer at least two");
+    source = .oracle.From(value);
+    real = {=
+        valueKind=:numericsAlgorithmReal,
+        schema="rix.numerics.algorithm-real@1",
+        kind=:weightedNthRoot,
+        degree=n,
+        radicand=source,
+        evidenceLevel=:proof,
+        provenance={= plugin=:numerics, version=2, algorithm=:weightedNthRoot, source=value }
+    };
+    real._proto = {=
+        Enclose=(self, request ?= {= })->NumericsNthRootRefine(self, request, :enclose),
+        Refine=(self, request ?= {= })->NumericsNthRootRefine(self, request, :refine),
+        NumericsCapabilities=(self)->NumericsAlgorithmCapabilities(self)
+    };
+    .ImmutableValue(real);
+};
+
+NumericsIntervalMinAbs(interval) ->
+    interval.ContainsZero() ?: 0 ?_ .Min(interval.Low().Abs(), interval.High().Abs());
+
+NumericsIntervalMaxAbs(interval) -> .Max(interval.Low().Abs(), interval.High().Abs());
+
+NumericsKantorovichRefine(real, rawRequest, operation) -> {;
+    capabilities = NumericsAlgorithmCapabilities(real);
+    request = .RefinementRequest(rawRequest, operation, capabilities);
+    requestedWidth = request[:absoluteWidth];
+    maxCalls = request[:work][:maxCalls];
+    maxIterations = request[:work][:maxIterations];
+    current := real[:initialEnclosure];
+    guess := real[:initial];
+    trace := [];
+    calls := 0;
+    iterations := 0;
+    stalled := _;
+    {@ step=1;
+       @current.Width() > @requestedWidth && @iterations < @maxIterations && @calls + 3 <= @maxCalls && !@stalled;
+       {;
+           fValue = @real[:function](@guess) ~!: :Rational;
+           derivativeValue = @real[:derivative](@guess) ~!: :Rational;
+           derivativeValue != 0 ?: _ ?_ .Error("Kantorovich Newton step encountered a zero point derivative");
+           derivativeRange = @real[:derivative](@current) ~!: :RationalInterval;
+           @calls += 3;
+           @iterations += 1;
+           derivativeRange.ContainsZero()
+             ?: {; @stalled ~= 1; }
+             ?_ {;
+                 newtonGuess = @guess - @fValue / @derivativeValue;
+                 newtonImage = (@guess:@guess) - (@fValue:@fValue) / @derivativeRange;
+                 overlaps = @current.Overlaps(newtonImage);
+                 overlaps ?: _ ?_ .Error("Interval Newton contradicted the Kantorovich enclosure");
+                 next = @current.Intersection(newtonImage);
+                 contracted = next.Width() < @current.Width();
+                 selectedGuess = next.ContainsValue(newtonGuess) ?: newtonGuess ?_ next.Midpoint();
+                 @trace ~= @request[:trace] ?: @trace.Push({=
+                     iteration=@iterations,
+                     guess=newtonGuess,
+                     candidate=selectedGuess,
+                     derivative=@derivativeValue,
+                     derivativeInterval=@derivativeRange,
+                     interval=next,
+                     errorRadius=next.Width()/2,
+                     actualized=1
+                 }) ?_ @trace;
+                 @current ~= next;
+                 @guess ~= selectedGuess;
+                 contracted ?: _ ?_ {; @stalled ~= 1; };
+             };
+       };
+       step += 1
+    };
+    achievedWidth = current.Width();
+    goalMet = achievedWidth <= requestedWidth;
+    budgetReached = iterations >= maxIterations || calls + 3 > maxCalls;
+    status = goalMet ?: :enclosed ?_ (budgetReached ?: :budgetExhausted ?_ :resolutionFloor);
+    candidate = current.ContainsValue(guess) ?: guess ?_ current.Midpoint();
+    approximation = .CertifiedApproximation(candidate, current, {=
+        provider=:numerics,
+        algorithm=:kantorovichIntervalNewton,
+        reason=status,
+        actualized=1
+    });
+    {=
+        valueKind=:enclosure,
+        schema="rix.numerics.enclosure@1",
+        status=status,
+        interval=current,
+        certified=1,
+        goalMet=goalMet,
+        requestedWidth=requestedWidth,
+        achievedWidth=achievedWidth,
+        approximation=approximation,
+        evidenceLevel=real[:evidenceLevel],
+        backend=:numerics,
+        operation=request[:operation],
+        trace=trace,
+        work={=
+            calls=calls,
+            iterations=iterations,
+            maxCalls=maxCalls,
+            maxIterations=maxIterations,
+            exhausted=!goalMet && budgetReached
+        },
+        diagnostics=goalMet ?: [] ?_ [stalled ?: :intervalNewtonResolutionFloor ?_ :workBudgetReached],
+        evidence={=
+            kind=:kantorovichWithIntervalNewton,
+            property=:existenceUniquenessAndContainment,
+            condition=real[:condition],
+            derivativeLower=real[:derivativeLower],
+            secondDerivativeUpper=real[:secondDerivativeUpper],
+            assumptions=real[:assumptions]
+        },
+        source=real[:provenance]
+    };
+};
+
+NumericsKantorovich(function, derivative, options ?= {= }) -> {;
+    domain = NumericsOption(options, "interval", _) ~!: :RationalInterval;
+    initial = NumericsOption(options, "initial", domain.Midpoint()) ~!: :Rational;
+    domain.ContainsValue(initial) ?: _ ?_ .Error("Kantorovich initial point must lie in its interval");
+    derivativeLower = NumericsPositive(
+        NumericsOption(options, "derivativelower", _),
+        "Kantorovich derivativeLower"
+    );
+    secondDerivativeUpper = NumericsNonnegative(
+        NumericsOption(options, "secondderivativeupper", _),
+        "Kantorovich secondDerivativeUpper"
+    );
+    fInitial = (initial |> function) ~!: :Rational;
+    derivativeInitial = (initial |> derivative) ~!: :Rational;
+    derivativeInitial != 0 ?: _ ?_ .Error("Kantorovich initial derivative must be nonzero");
+    derivativeRange = NumericsAsInterval(domain |> derivative);
+    derivativeRange.ContainsZero() ?: .Error("Kantorovich derivative interval must exclude zero") ?_ _;
+    observedDerivativeLower = NumericsIntervalMinAbs(derivativeRange);
+    observedDerivativeLower >= derivativeLower
+      ?: _
+      ?_ .Error("Kantorovich derivativeLower exceeds the certified interval bound");
+    secondDerivativeFunction = NumericsOption(options, "secondderivative", _);
+    secondDerivativeChecked = secondDerivativeFunction != _;
+    secondDerivativeRange = secondDerivativeChecked
+      ?: NumericsAsInterval(domain |> secondDerivativeFunction)
+      ?_ _;
+    secondDerivativeChecked
+      ?: (NumericsIntervalMaxAbs(secondDerivativeRange) <= secondDerivativeUpper
+           ?: _
+           ?_ .Error("Kantorovich secondDerivativeUpper is smaller than the certified interval bound"))
+      ?_ _;
+    beta = (fInitial / derivativeInitial).Abs();
+    condition = beta * secondDerivativeUpper / (2 * derivativeLower);
+    condition <= 1/4
+      ?: _
+      ?_ .Error("Kantorovich condition requires beta*M/(2*m) <= 1/4");
+    radius = 2 * beta;
+    initialEnclosure = (initial - radius):(initial + radius);
+    domain.Contains(initialEnclosure)
+      ?: _
+      ?_ .Error("Kantorovich certified initial ball must remain inside the supplied interval");
+    evidenceLevel = NumericsOption(options, "evidencelevel", :constructorGuarantee);
+    real = {=
+        valueKind=:numericsAlgorithmReal,
+        schema="rix.numerics.algorithm-real@1",
+        kind=:kantorovichIntervalNewton,
+        function=function,
+        derivative=derivative,
+        initial=initial,
+        domain=domain,
+        initialEnclosure=initialEnclosure,
+        derivativeLower=derivativeLower,
+        secondDerivativeUpper=secondDerivativeUpper,
+        condition=condition,
+        evidenceLevel=evidenceLevel,
+        assumptions={=
+            derivativeMatchesFunction=1,
+            twiceDifferentiableOnDomain=1,
+            secondDerivativeBound=secondDerivativeChecked ?: :intervalChecked ?_ :callerGuarantee
+        },
+        provenance={= plugin=:numerics, version=2, algorithm=:kantorovichIntervalNewton }
+    };
+    real._proto = {=
+        Enclose=(self, request ?= {= })->NumericsKantorovichRefine(self, request, :enclose),
+        Refine=(self, request ?= {= })->NumericsKantorovichRefine(self, request, :refine),
+        NumericsCapabilities=(self)->NumericsAlgorithmCapabilities(self)
+    };
+    .ImmutableValue(real);
+};
 
 NumericsRequest(options ?= {= }, operation ?= _, capabilities ?= _) ->
     .RefinementRequest(options, operation, capabilities);
@@ -37548,6 +38289,9 @@ numericsNamespace._proto = {=
     Enclose = (self, value, options ?= {= }) -> ProviderOperation(value, options, :enclose),
     Refine = (self, value, options ?= {= }) -> ProviderOperation(value, options, :refine),
     Sample = (self, value, options ?= {= }) -> ProviderOperation(value, options, :sample),
+    NthRoot = (self, value, degree ?= 2, options ?= {= }) -> NumericsNthRoot(value, degree, options),
+    Sqrt = (self, value, options ?= {= }) -> NumericsNthRoot(value, 2, options),
+    Kantorovich = (self, function, derivative, options ?= {= }) -> NumericsKantorovich(function, derivative, options),
     Approximation = (self, result) -> result.Has("approximation") ?: result[:approximation] ?_ _,
     Capabilities = (self, value) -> value.NumericsCapabilities(),
     CheckResult = (self, result, options ?= {= }, capabilities ?= _) ->
@@ -37566,8 +38310,9 @@ mount: cauchy
 exports: [Sequence, Certified, Geometric, Term, TailBound, Modulus, Enclosure, Record]
 groups: [Numerics, Exact]
 permissions: []
+requires: [rix.oracle@1]
 provides: [rix.cauchy@1, rix.refinable@1, rix.enclosable-real@1]
-schemas: [rix.cauchy.sequence@1, rix.cauchy.real@1]
+schemas: [rix.cauchy.sequence@1, rix.cauchy.real@1, rix.cauchy.arithmetic-real@1]
 snapshot: false
 deterministic: true
 defaultEnabled: false
@@ -37665,6 +38410,7 @@ CauchyCapabilities(real) -> {;
         schema = "rix.numerics.capabilities@1",
         backend = :cauchy,
         representation = certified ?: :rationalSequenceWithTailModulus ?_ :bareRationalSequence,
+        denotation = certified ?: :singleton ?_ :sequence,
         operations = certified ?: [:enclose, :refine] ?_ [],
         evidenceLevels = evidenceLevels,
         certified = certified,
@@ -37901,6 +38647,74 @@ CauchyProtocolEnclosure(real, request, operation) -> {;
     };
 };
 
+CauchyFamily(value) -> (value ? :Map) &&
+  (value[:valueKind] == :cauchyReal || value[:valueKind] == :cauchyArithmeticReal);
+CauchyExact(value) -> (value ? :Integer) || (value ? :Rational);
+CauchyArithmeticPair(left, right) ->
+  (CauchyFamily(left) || CauchyFamily(right)) &&
+  (CauchyFamily(left) || CauchyExact(left)) &&
+  (CauchyFamily(right) || CauchyExact(right));
+
+CauchyArithmeticCapabilities(real) -> {=
+    valueKind=:numericsCapabilities,
+    schema="rix.numerics.capabilities@1",
+    backend=:cauchy,
+    representation=:oracleBackedCauchyArithmetic,
+    denotation=:singleton,
+    operations=[:enclose, :refine],
+    evidenceLevels=[:constructorGuarantee, :proof],
+    certified=1,
+    arbitraryRefinement=1,
+    deterministic=1,
+    minimumWidth=0,
+    maxCalls=100000,
+    maxIterations=100000
+};
+
+CauchyArithmetic(operation, left, right ?= _) -> {;
+    unary = operation == :neg || operation == :abs;
+    recipe = unary ?: .oracle.Operation(operation, left) ?_ .oracle.Operation(operation, left, right);
+    real = {=
+        valueKind=:cauchyArithmeticReal,
+        schema="rix.cauchy.arithmetic-real@1",
+        kind=:arithmetic,
+        operation=operation,
+        recipe=recipe,
+        provenance={= plugin=:cauchy, version=2, source=:arithmeticRecipe }
+    };
+    real._proto = {=
+        Enclose=(self, request ?= {= })->self[:recipe].Enclose(request),
+        Refine=(self, request ?= {= })->self[:recipe].Refine(request),
+        NumericsCapabilities=(self)->CauchyArithmeticCapabilities(self),
+        Record=(self)->{= valueKind=self[:valueKind], schema=self[:schema], operation=self[:operation], certified=1 }
+    };
+    .ImmutableValue(real ~!: :CauchyReal);
+};
+
+.TypeKnown(:CauchyReal) ?: _ ?_ .TypeRegister({=
+    name=:CauchyReal,
+    nativeType=:map,
+    defaultTraits=[:number, :ordered],
+    convertFrom={= map=(x) ?- [CauchyFamily(x)] -> x },
+    validate=(x)->CauchyFamily(x),
+    proto={=
+        Enclose=(self,request ?= {= })->self[:kind] == :arithmetic ?: self[:recipe].Enclose(request) ?_ CauchyProtocolEnclosure(self,request,:enclose),
+        Refine=(self,request ?= {= })->self[:kind] == :arithmetic ?: self[:recipe].Refine(request) ?_ CauchyProtocolEnclosure(self,request,:refine),
+        NumericsCapabilities=(self)->self[:kind] == :arithmetic ?: CauchyArithmeticCapabilities(self) ?_ CauchyCapabilities(self)
+    },
+    installs={=
+        ADD=[{= name=:CauchyAdd, priority=300, prep=(x,y)->CauchyArithmeticPair(x,y), impl=(x,y)->CauchyArithmetic(:add,x,y) }],
+        SUB=[{= name=:CauchySub, priority=300, prep=(x,y)->CauchyArithmeticPair(x,y), impl=(x,y)->CauchyArithmetic(:sub,x,y) }],
+        MUL=[{= name=:CauchyMul, priority=300, prep=(x,y)->CauchyArithmeticPair(x,y), impl=(x,y)->CauchyArithmetic(:mul,x,y) }],
+        DIV=[{= name=:CauchyDiv, priority=300, prep=(x,y)->CauchyArithmeticPair(x,y), impl=(x,y)->CauchyArithmetic(:div,x,y) }],
+        POW=[{= name=:CauchyPow, priority=300, prep=(x,y)->CauchyFamily(x)&&(y ? :Integer), impl=(x,y)->CauchyArithmetic(:pow,x,y) }],
+        NEG=[{= name=:CauchyNeg, priority=300, prep=(x)->CauchyFamily(x), impl=(x)->CauchyArithmetic(:neg,x) }],
+        ABS=[{= name=:CauchyAbs, priority=300, prep=(x)->CauchyFamily(x), impl=(x)->CauchyArithmetic(:abs,x) }]
+    }
+});
+
+.TypeInstall(:CauchyReal);
+
 cauchyNamespace = {= };
 cauchyNamespace._proto = {=
     Sequence = (self, termFunction, tailFunction ?= _, modulusFunction ?= _, options ?= {= }) ->
@@ -37932,8 +38746,9 @@ mount: ball
 exports: [Ball, Interval, Sqrt, Midpoint, Radius, Lower, Upper, Contains, RoundOut, Record]
 groups: [Numerics, Exact]
 permissions: []
+requires: [rix.oracle@1]
 provides: [rix.ball@1, rix.enclosable-real@1]
-schemas: [rix.ball@1, rix.ball.nested-real@1]
+schemas: [rix.ball@1, rix.ball.nested-real@1, rix.ball.arithmetic-real@1]
 snapshot: false
 deterministic: true
 defaultEnabled: false
@@ -38046,6 +38861,7 @@ BallCapabilities(real) -> {;
         schema = "rix.numerics.capabilities@1",
         backend = :ball,
         representation = nested ?: :nestedRationalBalls ?_ :rationalMidpointRadius,
+        denotation = nested ?: :singleton ?_ :set,
         operations = [:enclose, :refine],
         evidenceLevels = [:proof],
         certified = 1,
@@ -38157,6 +38973,74 @@ BallSqrt(value) -> {;
     .ImmutableValue(real);
 };
 
+NestedBallFamily(value) -> (value ? :Map) &&
+  (value[:valueKind] == :nestedBallReal || value[:valueKind] == :nestedBallArithmeticReal);
+NestedBallExact(value) -> (value ? :Integer) || (value ? :Rational);
+NestedBallArithmeticPair(left, right) ->
+  (NestedBallFamily(left) || NestedBallFamily(right)) &&
+  (NestedBallFamily(left) || NestedBallExact(left)) &&
+  (NestedBallFamily(right) || NestedBallExact(right));
+
+NestedBallArithmeticCapabilities(real) -> {=
+    valueKind=:numericsCapabilities,
+    schema="rix.numerics.capabilities@1",
+    backend=:ball,
+    representation=:oracleBackedNestedBallArithmetic,
+    denotation=:singleton,
+    operations=[:enclose, :refine],
+    evidenceLevels=[:constructorGuarantee, :proof],
+    certified=1,
+    arbitraryRefinement=1,
+    deterministic=1,
+    minimumWidth=0,
+    maxCalls=100000,
+    maxIterations=100000
+};
+
+NestedBallArithmetic(operation, left, right ?= _) -> {;
+    unary = operation == :neg || operation == :abs;
+    recipe = unary ?: .oracle.Operation(operation, left) ?_ .oracle.Operation(operation, left, right);
+    real = {=
+        valueKind=:nestedBallArithmeticReal,
+        schema="rix.ball.arithmetic-real@1",
+        kind=:arithmetic,
+        operation=operation,
+        recipe=recipe,
+        provenance={= plugin=:ball, version=2, source=:arithmeticRecipe }
+    };
+    real._proto = {=
+        Enclose=(self, request ?= {= })->self[:recipe].Enclose(request),
+        Refine=(self, request ?= {= })->self[:recipe].Refine(request),
+        NumericsCapabilities=(self)->NestedBallArithmeticCapabilities(self),
+        Record=(self)->{= valueKind=self[:valueKind], schema=self[:schema], operation=self[:operation], certified=1 }
+    };
+    .ImmutableValue(real ~!: :NestedBallReal);
+};
+
+.TypeKnown(:NestedBallReal) ?: _ ?_ .TypeRegister({=
+    name=:NestedBallReal,
+    nativeType=:map,
+    defaultTraits=[:number, :ordered],
+    convertFrom={= map=(x) ?- [NestedBallFamily(x)] -> x },
+    validate=(x)->NestedBallFamily(x),
+    proto={=
+        Enclose=(self,request ?= {= })->self[:kind] == :arithmetic ?: self[:recipe].Enclose(request) ?_ BallProtocolEnclosure(self,request,:enclose),
+        Refine=(self,request ?= {= })->self[:kind] == :arithmetic ?: self[:recipe].Refine(request) ?_ BallProtocolEnclosure(self,request,:refine),
+        NumericsCapabilities=(self)->self[:kind] == :arithmetic ?: NestedBallArithmeticCapabilities(self) ?_ BallCapabilities(self)
+    },
+    installs={=
+        ADD=[{= name=:NestedBallAdd, priority=300, prep=(x,y)->NestedBallArithmeticPair(x,y), impl=(x,y)->NestedBallArithmetic(:add,x,y) }],
+        SUB=[{= name=:NestedBallSub, priority=300, prep=(x,y)->NestedBallArithmeticPair(x,y), impl=(x,y)->NestedBallArithmetic(:sub,x,y) }],
+        MUL=[{= name=:NestedBallMul, priority=300, prep=(x,y)->NestedBallArithmeticPair(x,y), impl=(x,y)->NestedBallArithmetic(:mul,x,y) }],
+        DIV=[{= name=:NestedBallDiv, priority=300, prep=(x,y)->NestedBallArithmeticPair(x,y), impl=(x,y)->NestedBallArithmetic(:div,x,y) }],
+        POW=[{= name=:NestedBallPow, priority=300, prep=(x,y)->NestedBallFamily(x)&&(y ? :Integer), impl=(x,y)->NestedBallArithmetic(:pow,x,y) }],
+        NEG=[{= name=:NestedBallNeg, priority=300, prep=(x)->NestedBallFamily(x), impl=(x)->NestedBallArithmetic(:neg,x) }],
+        ABS=[{= name=:NestedBallAbs, priority=300, prep=(x)->NestedBallFamily(x), impl=(x)->NestedBallArithmetic(:abs,x) }]
+    }
+});
+
+.TypeInstall(:NestedBallReal);
+
 BallAdd(left, right) -> BallFromInterval(BallPromote(left)[:interval] + BallPromote(right)[:interval]);
 BallSub(left, right) -> BallFromInterval(BallPromote(left)[:interval] - BallPromote(right)[:interval]);
 BallMul(left, right) -> BallFromInterval(BallPromote(left)[:interval] * BallPromote(right)[:interval]);
@@ -38194,13 +39078,13 @@ BallEq(left, right) -> {;
         NumericsCapabilities = (self) -> BallCapabilities(self)
     },
     installs = {=
-        ADD = [{= name=:BallAdd, prep=(x, y) -> (x ? :Ball) || (y ? :Ball), impl=(x, y) -> BallAdd(x, y) }],
-        SUB = [{= name=:BallSub, prep=(x, y) -> (x ? :Ball) || (y ? :Ball), impl=(x, y) -> BallSub(x, y) }],
-        MUL = [{= name=:BallMul, prep=(x, y) -> (x ? :Ball) || (y ? :Ball), impl=(x, y) -> BallMul(x, y) }],
-        DIV = [{= name=:BallDiv, prep=(x, y) -> (x ? :Ball) || (y ? :Ball), impl=(x, y) -> BallDiv(x, y) }],
-        NEG = [{= name=:BallNeg, prep=(x) -> x ? :Ball, impl=(x) -> BallNeg(x) }],
-        EQ = [{= name=:BallEq, prep=(x, y) -> (x ? :Ball) || (y ? :Ball), impl=(x, y) -> BallEq(x, y) }],
-        NEQ = [{= name=:BallNeq, prep=(x, y) -> (x ? :Ball) || (y ? :Ball), impl=(x, y) -> !BallEq(x, y) }]
+        ADD = [{= name=:BallAdd, priority=400, prep=(x, y) -> (x ? :Ball) || (y ? :Ball), impl=(x, y) -> BallAdd(x, y) }],
+        SUB = [{= name=:BallSub, priority=400, prep=(x, y) -> (x ? :Ball) || (y ? :Ball), impl=(x, y) -> BallSub(x, y) }],
+        MUL = [{= name=:BallMul, priority=400, prep=(x, y) -> (x ? :Ball) || (y ? :Ball), impl=(x, y) -> BallMul(x, y) }],
+        DIV = [{= name=:BallDiv, priority=400, prep=(x, y) -> (x ? :Ball) || (y ? :Ball), impl=(x, y) -> BallDiv(x, y) }],
+        NEG = [{= name=:BallNeg, priority=400, prep=(x) -> x ? :Ball, impl=(x) -> BallNeg(x) }],
+        EQ = [{= name=:BallEq, priority=400, prep=(x, y) -> (x ? :Ball) || (y ? :Ball), impl=(x, y) -> BallEq(x, y) }],
+        NEQ = [{= name=:BallNeq, priority=400, prep=(x, y) -> (x ? :Ball) || (y ? :Ball), impl=(x, y) -> !BallEq(x, y) }]
     }
 });
 
@@ -38238,8 +39122,9 @@ aliases: [cf]
 exports: [Finite, Lazy, Periodic, Sqrt2, FromRational, Coefficient, Coefficients, Convergent, Convergents, Enclosure, ErrorInterval, Record]
 groups: [Numerics, Exact]
 permissions: []
+requires: [rix.oracle@1]
 provides: [rix.continued-fraction@1, rix.refinable@1, rix.enclosable-real@1]
-schemas: [rix.continued-fraction.finite@1, rix.continued-fraction.lazy@1]
+schemas: [rix.continued-fraction.finite@1, rix.continued-fraction.lazy@1, rix.continued-fraction.arithmetic-real@1]
 snapshot: false
 deterministic: true
 defaultEnabled: false
@@ -38370,7 +39255,7 @@ CFNextWitness(real, witness) -> {;
 CFEnclosureAt(real, count ?= _) -> {;
     real[:kind] == :finite
       ?: {;
-          exact = CFConvergent(real, count == _ ?: real[:length] ?_ count);
+          exact = CFConvergent(@real, @count == _ ?: @real[:length] ?_ @count);
           exact:exact;
       }
       ?_ CFWitness(real, count == _ ?: 2 ?_ CFRequireCount(count, "Continued-fraction enclosure count"))[:interval];
@@ -38389,6 +39274,7 @@ CFCapabilities(real) -> {;
         schema = "rix.numerics.capabilities@1",
         backend = :continuedFraction,
         representation = lazy ?: :lazySimpleContinuedFraction ?_ :finiteSimpleContinuedFraction,
+        denotation = :singleton,
         operations = [:enclose, :refine],
         evidenceLevels = [lazy ?: real[:evidenceLevel] ?_ :proof],
         certified = 1,
@@ -38598,6 +39484,74 @@ CFProtocolEnclosure(real, request, operation) -> {;
     };
 };
 
+CFFamily(value) -> (value ? :Map) &&
+  (value[:valueKind] == :continuedFraction || value[:valueKind] == :continuedFractionArithmeticReal);
+CFExact(value) -> (value ? :Integer) || (value ? :Rational);
+CFArithmeticPair(left, right) ->
+  (CFFamily(left) || CFFamily(right)) &&
+  (CFFamily(left) || CFExact(left)) &&
+  (CFFamily(right) || CFExact(right));
+
+CFArithmeticCapabilities(real) -> {=
+    valueKind=:numericsCapabilities,
+    schema="rix.numerics.capabilities@1",
+    backend=:continuedFraction,
+    representation=:oracleBackedContinuedFractionArithmetic,
+    denotation=:singleton,
+    operations=[:enclose, :refine],
+    evidenceLevels=[:constructorGuarantee, :proof],
+    certified=1,
+    arbitraryRefinement=1,
+    deterministic=1,
+    minimumWidth=0,
+    maxCalls=100000,
+    maxIterations=100000
+};
+
+CFArithmetic(operation, left, right ?= _) -> {;
+    unary = operation == :neg || operation == :abs;
+    recipe = unary ?: .oracle.Operation(operation, left) ?_ .oracle.Operation(operation, left, right);
+    real = {=
+        valueKind=:continuedFractionArithmeticReal,
+        schema="rix.continued-fraction.arithmetic-real@1",
+        kind=:arithmetic,
+        operation=operation,
+        recipe=recipe,
+        provenance={= plugin=:continuedFraction, version=2, source=:arithmeticRecipe }
+    };
+    real._proto = {=
+        Enclose=(self, request ?= {= })->self[:recipe].Enclose(request),
+        Refine=(self, request ?= {= })->self[:recipe].Refine(request),
+        NumericsCapabilities=(self)->CFArithmeticCapabilities(self),
+        Record=(self)->{= valueKind=self[:valueKind], schema=self[:schema], operation=self[:operation], certified=1 }
+    };
+    .ImmutableValue(real ~!: :ContinuedFractionReal);
+};
+
+.TypeKnown(:ContinuedFractionReal) ?: _ ?_ .TypeRegister({=
+    name=:ContinuedFractionReal,
+    nativeType=:map,
+    defaultTraits=[:number, :ordered],
+    convertFrom={= map=(x) ?- [CFFamily(x)] -> x },
+    validate=(x)->CFFamily(x),
+    proto={=
+        Enclose=(self,request ?= {= })->self[:kind] == :arithmetic ?: self[:recipe].Enclose(request) ?_ CFProtocolEnclosure(self,request,:enclose),
+        Refine=(self,request ?= {= })->self[:kind] == :arithmetic ?: self[:recipe].Refine(request) ?_ CFProtocolEnclosure(self,request,:refine),
+        NumericsCapabilities=(self)->self[:kind] == :arithmetic ?: CFArithmeticCapabilities(self) ?_ CFCapabilities(self)
+    },
+    installs={=
+        ADD=[{= name=:CFAdd, priority=300, prep=(x,y)->CFArithmeticPair(x,y), impl=(x,y)->CFArithmetic(:add,x,y) }],
+        SUB=[{= name=:CFSub, priority=300, prep=(x,y)->CFArithmeticPair(x,y), impl=(x,y)->CFArithmetic(:sub,x,y) }],
+        MUL=[{= name=:CFMul, priority=300, prep=(x,y)->CFArithmeticPair(x,y), impl=(x,y)->CFArithmetic(:mul,x,y) }],
+        DIV=[{= name=:CFDiv, priority=300, prep=(x,y)->CFArithmeticPair(x,y), impl=(x,y)->CFArithmetic(:div,x,y) }],
+        POW=[{= name=:CFPow, priority=300, prep=(x,y)->CFFamily(x)&&(y ? :Integer), impl=(x,y)->CFArithmetic(:pow,x,y) }],
+        NEG=[{= name=:CFNeg, priority=300, prep=(x)->CFFamily(x), impl=(x)->CFArithmetic(:neg,x) }],
+        ABS=[{= name=:CFAbs, priority=300, prep=(x)->CFFamily(x), impl=(x)->CFArithmetic(:abs,x) }]
+    }
+});
+
+.TypeInstall(:ContinuedFractionReal);
+
 continuedFractionNamespace = (value, options ?= {= }) -> CFConstruct(value, options);
 continuedFractionNamespace._proto = {=
     Finite = (self, coefficients, options ?= {= }) -> CFFinite(coefficients, options),
@@ -38632,9 +39586,9 @@ aliases: [ar]
 exports: [Root, Sqrt2, Polynomial, Evaluate, Derivative, SturmSequence, RootCount, IsSquareFree, Refine, Sign, CompareRational, Export, Import]
 groups: [Numerics, Exact, Algebra]
 permissions: []
-requires: [rix.polynomial.algorithms@1]
+requires: [rix.polynomial.algorithms@1, rix.oracle@1]
 provides: [rix.algebraic-real@1, rix.exact-sign@1, rix.refinable@1, rix.enclosable-real@1]
-schemas: [rix.algebraic-real@1, rix.algebraic-real.export@1, rix.polynomial@1]
+schemas: [rix.algebraic-real@1, rix.algebraic-real.export@1, rix.algebraic-real.arithmetic-real@1, rix.polynomial@1]
 snapshot: false
 deterministic: true
 defaultEnabled: false
@@ -38679,6 +39633,7 @@ ARCapabilities(real) -> {=
     schema = "rix.numerics.capabilities@1",
     backend = :algebraicReal,
     representation = :squareFreeIntegerPolynomialIsolatingInterval,
+    denotation = :singleton,
     operations = [:enclose, :refine],
     evidenceLevels = [:proof],
     certified = 1,
@@ -38950,6 +39905,74 @@ ARImport(record) -> {;
         evidence=record[:evidence]
     });
 };
+
+ARFamily(value) -> (value ? :Map) &&
+  (value[:valueKind] == :algebraicReal || value[:valueKind] == :algebraicRealArithmeticReal);
+ARExact(value) -> (value ? :Integer) || (value ? :Rational);
+ARArithmeticPair(left, right) ->
+  (ARFamily(left) || ARFamily(right)) &&
+  (ARFamily(left) || ARExact(left)) &&
+  (ARFamily(right) || ARExact(right));
+
+ARArithmeticCapabilities(real) -> {=
+    valueKind=:numericsCapabilities,
+    schema="rix.numerics.capabilities@1",
+    backend=:algebraicReal,
+    representation=:oracleBackedAlgebraicArithmetic,
+    denotation=:singleton,
+    operations=[:enclose, :refine],
+    evidenceLevels=[:constructorGuarantee, :proof],
+    certified=1,
+    arbitraryRefinement=1,
+    deterministic=1,
+    minimumWidth=0,
+    maxCalls=100000,
+    maxIterations=100000
+};
+
+ARArithmetic(operation, left, right ?= _) -> {;
+    unary = operation == :neg || operation == :abs;
+    recipe = unary ?: .oracle.Operation(operation, left) ?_ .oracle.Operation(operation, left, right);
+    real = {=
+        valueKind=:algebraicRealArithmeticReal,
+        schema="rix.algebraic-real.arithmetic-real@1",
+        kind=:arithmetic,
+        operation=operation,
+        recipe=recipe,
+        provenance={= plugin=:algebraicReal, version=2, source=:arithmeticRecipe }
+    };
+    real._proto = {=
+        Enclose=(self, request ?= {= })->self[:recipe].Enclose(request),
+        Refine=(self, request ?= {= })->self[:recipe].Refine(request),
+        NumericsCapabilities=(self)->ARArithmeticCapabilities(self),
+        Record=(self)->{= valueKind=self[:valueKind], schema=self[:schema], operation=self[:operation], certified=1 }
+    };
+    .ImmutableValue(real ~!: :AlgebraicReal);
+};
+
+.TypeKnown(:AlgebraicReal) ?: _ ?_ .TypeRegister({=
+    name=:AlgebraicReal,
+    nativeType=:map,
+    defaultTraits=[:number, :ordered],
+    convertFrom={= map=(x) ?- [ARFamily(x)] -> x },
+    validate=(x)->ARFamily(x),
+    proto={=
+        Enclose=(self,request ?= {= })->self[:kind] == :arithmetic ?: self[:recipe].Enclose(request) ?_ ARProtocolEnclosure(self,request,:enclose),
+        Refine=(self,request ?= {= })->self[:kind] == :arithmetic ?: self[:recipe].Refine(request) ?_ ARProtocolEnclosure(self,request,:refine),
+        NumericsCapabilities=(self)->self[:kind] == :arithmetic ?: ARArithmeticCapabilities(self) ?_ ARCapabilities(self)
+    },
+    installs={=
+        ADD=[{= name=:ARAdd, priority=300, prep=(x,y)->ARArithmeticPair(x,y), impl=(x,y)->ARArithmetic(:add,x,y) }],
+        SUB=[{= name=:ARSub, priority=300, prep=(x,y)->ARArithmeticPair(x,y), impl=(x,y)->ARArithmetic(:sub,x,y) }],
+        MUL=[{= name=:ARMul, priority=300, prep=(x,y)->ARArithmeticPair(x,y), impl=(x,y)->ARArithmetic(:mul,x,y) }],
+        DIV=[{= name=:ARDiv, priority=300, prep=(x,y)->ARArithmeticPair(x,y), impl=(x,y)->ARArithmetic(:div,x,y) }],
+        POW=[{= name=:ARPow, priority=300, prep=(x,y)->ARFamily(x)&&(y ? :Integer), impl=(x,y)->ARArithmetic(:pow,x,y) }],
+        NEG=[{= name=:ARNeg, priority=300, prep=(x)->ARFamily(x), impl=(x)->ARArithmetic(:neg,x) }],
+        ABS=[{= name=:ARAbs, priority=300, prep=(x)->ARFamily(x), impl=(x)->ARArithmetic(:abs,x) }]
+    }
+});
+
+.TypeInstall(:AlgebraicReal);
 
 ARConstruct(coefficients, interval, rootIndex ?= 1, options ?= {= }) ->
     ARRoot(coefficients, interval, rootIndex, options);
@@ -39679,7 +40702,7 @@ id: stern-brocot
 description: Pure RiX Stern-Brocot node descriptions, visible tree records, and exact formula evaluation.
 kind: rix
 mount: sternBrocot
-exports: [sternBrocotDescribe, sternBrocotVisibleTree, sternBrocotEvaluate]
+exports: [Describe, VisibleTree, Evaluate, sternBrocotDescribe, sternBrocotVisibleTree, sternBrocotEvaluate]
 groups: [Exact, Graphics]
 permissions: []
 requires: [rix.fraction@1]
@@ -39757,6 +40780,19 @@ defaultEnabled: false
     };
 
     SternBrocotEvaluate(formula, fraction) -> fraction.F().Rational() |> formula;
+
+    sternBrocotNamespace = {= };
+    sternBrocotNamespace._proto = {=
+        Describe=(self, fraction)->SternBrocotDescribe(fraction),
+        VisibleTree=(self, fraction, descendantDepth ?= 3)->SternBrocotVisibleTree(fraction, descendantDepth),
+        Evaluate=(self, formula, fraction)->SternBrocotEvaluate(formula, fraction)
+    };
+    .Host.RegisterValue(
+        "sternBrocot",
+        sternBrocotNamespace,
+        "Exact Stern-Brocot descriptions, visible trees, and formula evaluation",
+        ["Exact", "Graphics"]
+    );
 
     .Host.Register(
         "sternBrocotDescribe",
@@ -39839,7 +40875,7 @@ RadixIntegerDigits(value, base) -> {;
       ?: [0]
       ?_ {;
           result := [];
-          remaining := value;
+          remaining := @value;
           {@ step = 1; @remaining > 0; {;
               @result ~= @result.Push(@remaining % @base);
               @remaining ~= @remaining // @base;
@@ -39869,7 +40905,7 @@ RadixExpansion(value, baseValue ?= 10, options ?= _) -> {;
           };
     }; step += 1 };
     repeatStart == _ && remainder != 0 && seen.Has(@"r@{remainder}")
-      ?: {; repeatStart ~= seen[@"r@{remainder}"]; }
+      ?: {; @repeatStart ~= @seen[@"r@{@remainder}"]; }
       ?_ _;
     complete = remainder == 0 || repeatStart != _;
     prefix = repeatStart == _ ?: fractional ?_ fractional.Slice(1, repeatStart + 1);
@@ -40338,9 +41374,9 @@ FractionPower(value, exponent) -> {;
       ?_ power > 0
       ?: FractionRaw(FractionNumerator(exact)^power, FractionDenominator(exact)^power)
       ?_ {;
-          FractionNumerator(exact) != 0 ?: _ ?_ .Error("Zero Fraction cannot have a negative exponent");
-          magnitude = -power;
-          FractionRaw(FractionDenominator(exact)^magnitude, FractionNumerator(exact)^magnitude);
+          FractionNumerator(@exact) != 0 ?: _ ?_ .Error("Zero Fraction cannot have a negative exponent");
+          magnitude = -@power;
+          FractionRaw(FractionDenominator(@exact)^magnitude, FractionNumerator(@exact)^magnitude);
       };
 };
 
@@ -40441,8 +41477,8 @@ FractionFareyParents(value) -> {;
       ?: (scale == 1
           ?: {: FractionRaw(-1,0), FractionRaw(1,0) }
           ?_ {;
-              leftDenominator = scale // 2;
-              {: FractionRaw(-1,leftDenominator), FractionRaw(1,scale-leftDenominator) };
+              leftDenominator = @scale // 2;
+              {: FractionRaw(-1,leftDenominator), FractionRaw(1,@scale-leftDenominator) };
           })
       ?_ {;
           parents = FractionBaseParents(@reducedNumerator, @reducedDenominator);
@@ -40777,19 +41813,19 @@ RatfunPolyFromInspect(node, variable) -> {;
     state := [node, variable];
     kind = state[1][:kind];
     kind == "number"
-      ?: .poly([@state[1][:integer]],@state[2])
+      ?: .poly([state[1][:integer]],state[2])
       ?_ (kind == "identifier"
-          ?: (@state[1][:name] == @state[2] ?: .poly([1,0],@state[2]) ?_ .Error(@"Unexpected RationalFunction symbol @{@state[1][:name]}"))
+          ?: (state[1][:name] == state[2] ?: .poly([1,0],state[2]) ?_ .Error(@"Unexpected RationalFunction symbol @{state[1][:name]}"))
           ?_ (kind == "unary"
-              ?: (@state[1][:op] == "-" ?: -RatfunPolyFromInspect(@state[1][:argument],@state[2]) ?_ .Error(@"Unsupported RationalFunction unary operator @{@state[1][:op]}"))
+              ?: (state[1][:op] == "-" ?: -RatfunPolyFromInspect(state[1][:argument],state[2]) ?_ .Error(@"Unsupported RationalFunction unary operator @{state[1][:op]}"))
               ?_ (kind == "binary"
                   ?: {;
                       leftState:=[RatfunPolyFromInspect(@state[1][:left],@state[2])];
                       op=@state[1][:op];
-                      op == "+" ?: @leftState[1] + RatfunPolyFromInspect(@state[1][:right],@state[2])
-                        ?_ op == "-" ?: @leftState[1] - RatfunPolyFromInspect(@state[1][:right],@state[2])
-                        ?_ op == "*" ?: @leftState[1] * RatfunPolyFromInspect(@state[1][:right],@state[2])
-                        ?_ op == "^" ?: @leftState[1] ^ @state[1][:right][:integer]
+                      op == "+" ?: leftState[1] + RatfunPolyFromInspect(@state[1][:right],@state[2])
+                        ?_ op == "-" ?: leftState[1] - RatfunPolyFromInspect(@state[1][:right],@state[2])
+                        ?_ op == "*" ?: leftState[1] * RatfunPolyFromInspect(@state[1][:right],@state[2])
+                        ?_ op == "^" ?: leftState[1] ^ @state[1][:right][:integer]
                         ?_ .Error(@"Operator @{op} does not form a Polynomial");
                   }
                   ?_ .Error(@"Unsupported RationalFunction symbolic node @{kind}"))));
@@ -40951,7 +41987,7 @@ StatsMedian(values) -> StatsQuantile(values, 1/2);
 
 StatsVariance(values, sample ?= 0) -> {;
     exact = StatsValues(values);
-    sample && exact.Len() < 2 ?: .Error("Sample variance requires at least two values") ?_ _;
+    sample == 1 && exact.Len() < 2 ?: .Error("Sample variance requires at least two values") ?_ _;
     mean = StatsSum(exact) / exact.Len();
     squared = exact.Reduce((sum, value) -> sum + (value - mean)^2, 0);
     squared / (sample == 1 ?: exact.Len() - 1 ?_ exact.Len());
@@ -49546,9 +50582,9 @@ ${lines.join(`
     RX1701: { level: 1, profiles: ["syntax", "teaching"], title: "Lowercase call-like multiplication" },
     RX1702: { level: 1, profiles: ["syntax", "teaching"], title: "Zero index in a one-based collection" },
     RX1703: { level: 2, profiles: ["syntax", "teaching"], title: "Collection or string decision" },
-    RX1704: { level: 3, profiles: ["syntax", "style"], title: "Dense nested conditional" },
-    RX1705: { level: 3, profiles: ["syntax", "teaching"], title: "Block introduces capture boundary" },
-    RX1706: { level: 3, profiles: ["syntax", "teaching"], title: "Function value reference" },
+    RX1704: { level: 3, profiles: ["style"], title: "Dense nested conditional" },
+    RX1705: { level: 3, profiles: ["teaching", "style"], title: "Block introduces capture boundary" },
+    RX1706: { level: 4, profiles: ["teaching", "style"], title: "Function value reference" },
     RX1801: { level: 2, profiles: ["math", "teaching"], title: "Exact division versus truncation" },
     RX1802: { level: 3, profiles: ["math", "teaching"], title: "Fraction equality policy" },
     RX1803: { level: 3, profiles: ["math"], title: "Exactness discarded" },
@@ -49565,7 +50601,7 @@ ${lines.join(`
     RX1908: { level: 2, profiles: ["plugin"], title: "Mutation naming contract" },
     RX1909: { level: 3, profiles: ["plugin"], title: "Plugin initialization idempotence" },
     RX1910: { level: 2, profiles: ["plugin"], title: "Capability group mismatch" },
-    RX2001: { level: 2, profiles: ["style", "core"], title: "Capture-dense lazy branch" },
+    RX2001: { level: 3, profiles: ["style"], title: "Capture-dense lazy branch" },
     RX2002: { level: 4, profiles: ["style"], title: "Suppression lacks a reason" }
   });
   var ASSIGNMENT_OPERATORS = new Set(["=", ":=", "~=", "::=", "~~="]);
@@ -51525,6 +52561,153 @@ ${lines.join(`
         dispose?.();
     };
   }
+  // rix/src/tools/language-service/formatter.js
+  var PIPE_OPERATORS = new Set([
+    "|>",
+    "|>>",
+    "|>?",
+    "|><",
+    "|<>",
+    "|>:",
+    "|:>",
+    "|>&&",
+    "|>||",
+    "|>_",
+    "|>!",
+    "|>/",
+    "|>//",
+    "|>/|",
+    "|>#|",
+    "|.",
+    ".|"
+  ]);
+  var SPACED_OPERATORS = new Set([
+    "=",
+    ":=",
+    "~=",
+    "::=",
+    "~~=",
+    "+=",
+    "-=",
+    "*=",
+    "/=",
+    "//=",
+    "%=",
+    "^=",
+    "**=",
+    "==",
+    "===",
+    "!=",
+    "<",
+    ">",
+    "<=",
+    ">=",
+    "&&",
+    "||",
+    "AND",
+    "OR",
+    "+",
+    "-",
+    "*",
+    "->",
+    "=>",
+    "^=>",
+    "?:",
+    "?_",
+    "??",
+    "?=",
+    "?&",
+    "!?",
+    "##@",
+    "##:",
+    "##!",
+    "##_",
+    "##!>"
+  ]);
+  var TIGHT_OPERATORS = new Set(["/", "//", "%", "^", "**", "..", ".", ":", "@", "'", "~"]);
+  var OPENERS = new Set(["(", "[", "{", "{=", "{?", "{;", "{|", "{:", "{@", "{!", "{#", "{$", "{$$"]);
+  var CLOSERS = new Set([")", "]", "}"]);
+  var EXPANDABLE_OPENERS = new Set(["{=", "{?", "{;", "{|", "{:", "{@", "{!", "{"]);
+  // rix/src/tools/language-service/index.js
+  var RIX_SEMANTIC_TOKEN_TYPES = Object.freeze([
+    "namespace",
+    "type",
+    "class",
+    "enum",
+    "interface",
+    "struct",
+    "typeParameter",
+    "parameter",
+    "variable",
+    "property",
+    "enumMember",
+    "event",
+    "function",
+    "method",
+    "macro",
+    "keyword",
+    "modifier",
+    "comment",
+    "string",
+    "number",
+    "regexp",
+    "operator"
+  ]);
+  var RIX_SEMANTIC_TOKEN_MODIFIERS = Object.freeze([
+    "declaration",
+    "definition",
+    "readonly",
+    "static",
+    "deprecated",
+    "abstract",
+    "async",
+    "modification",
+    "documentation",
+    "defaultLibrary"
+  ]);
+  var ASSIGNMENTS = new Set(["=", ":=", "~=", "::=", "~~="]);
+  var CHECK_MARKERS = new Map([
+    ["##@", "predicate"],
+    ["##:", "structural"]
+  ]);
+  var BRACE_HELP = Object.freeze({
+    "{=": "Map container",
+    "{?": "Case/conditional container",
+    "{;": "Lexical code block and capture boundary",
+    "{|": "Set container",
+    "{:": "Tuple or tensor container",
+    "{@": "Loop container",
+    "{!": "Mutation container",
+    "{#": "Symbolic constraint container",
+    "{$": "Async scope",
+    "{$$": "Concurrent async scope"
+  });
+  var STATIC_SYSTEM_CATALOG = Object.freeze([
+    ["ABS", "Absolute value"],
+    ["ALL", "Require every item to match"],
+    ["ANY", "Find a matching item"],
+    ["ARRAY", "Create an array"],
+    ["DEBUG", "Emit a debug diagnostic"],
+    ["DUMP", "Emit a formatted value"],
+    ["ERROR", "Abort with an error diagnostic"],
+    ["FILTER", "Filter a collection"],
+    ["FLOAT", "Convert to a floating value"],
+    ["FORMULASHEET", "Create a reactive formula sheet"],
+    ["INFO", "Emit an information diagnostic"],
+    ["LEN", "Return collection length"],
+    ["LOG", "Emit a log diagnostic"],
+    ["MAP", "Create or transform a map"],
+    ["OUT", "Declare a host-mediated output artifact"],
+    ["REDUCE", "Reduce a collection"],
+    ["SIMPLIFY", "Simplify a symbolic value"],
+    ["STOP", "Stop evaluation intentionally"],
+    ["TEST", "Define or run a test group"],
+    ["TESTERROR", "Test an expected error"],
+    ["TESTSTOP", "Test an expected stop"],
+    ["TRACE", "Emit a structured trace diagnostic"],
+    ["TYPEOF", "Return the runtime kind of a value"],
+    ["WARN", "Emit a warning diagnostic"]
+  ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
   // rix/plugins/float/math-functions.js
   function numberFrom(value) {
     if (value instanceof Integer)
@@ -51613,6 +52796,7 @@ ${lines.join(`
       ["schema", text8("rix.numerics.capabilities@1")],
       ["backend", text8("float")],
       ["representation", text8("ieee754Binary64")],
+      ["denotation", text8("storedScalar")],
       ["operations", sequence7([text8("sample"), text8("enclose")])],
       ["evidencelevels", sequence7([text8("approximate")])],
       ["certified", null],
@@ -51728,8 +52912,9 @@ ${lines.join(`
   function numericVariant(name, fn, arity = 2) {
     return {
       name,
+      priority: 500,
       prep(args) {
-        return args.length >= arity && args.some(isFloat);
+        return args.length >= arity && args.slice(0, arity).every(isFloat);
       },
       impl(args) {
         return float(fn(...args.map(numberFrom2)));
@@ -51739,22 +52924,17 @@ ${lines.join(`
   function compareVariant(name, relation) {
     return {
       name,
+      priority: 500,
       prep(args) {
-        return args.length === 2 && args.some(isFloat);
+        return args.length === 2 && args.every(isFloat);
       },
       impl(args) {
         return relation(numberFrom2(args[0]), numberFrom2(args[1])) ? new Integer(1n) : null;
       }
     };
   }
-  function prepareFloatComparison(args, _context, evaluate2) {
-    if (args.length !== 2 || !args.some(isFloat))
-      return false;
-    try {
-      return { args: args.map((value) => requireFloat(value, evaluate2)) };
-    } catch {
-      return false;
-    }
+  function prepareFloatComparison(args) {
+    return args.length === 2 && args.every(isFloat) ? { args } : false;
   }
   function registerFloatType() {
     if (typeRegistry.has(TYPE_NAME))
@@ -51769,6 +52949,7 @@ ${lines.join(`
       ["NEG", [numericVariant("FloatIEEE754Neg", (value) => -value, 1)]],
       ["COMPARE", [{
         name: "FloatIEEE754Compare",
+        priority: 500,
         prepare: prepareFloatComparison,
         impl(args) {
           const [left, right] = args.map(numberFrom2);
