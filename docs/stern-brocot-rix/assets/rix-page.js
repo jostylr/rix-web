@@ -14414,6 +14414,39 @@ ${indentStr})`;
   function isReactiveNode(value) {
     return Boolean(value && value.type === "reactive_node" && isReactiveGraph(value.graph));
   }
+  function isPromiseLike(value) {
+    return value !== null && (typeof value === "object" || typeof value === "function") && typeof value.then === "function";
+  }
+  function assertSynchronousFormulaValue(value, seen = new WeakSet) {
+    if (isPromiseLike(value)) {
+      if (typeof value.catch === "function")
+        value.catch(() => {});
+      throw new Error("Reactive formulas cannot suspend; resolve async work before publishing a literal value");
+    }
+    if (value === null || typeof value !== "object" && typeof value !== "function")
+      return;
+    if (seen.has(value))
+      return;
+    seen.add(value);
+    if (value instanceof Map) {
+      for (const [key, entry] of value) {
+        assertSynchronousFormulaValue(key, seen);
+        assertSynchronousFormulaValue(entry, seen);
+      }
+      return;
+    }
+    if (value instanceof Set) {
+      for (const entry of value)
+        assertSynchronousFormulaValue(entry, seen);
+      return;
+    }
+    for (const key of Reflect.ownKeys(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (descriptor && Object.hasOwn(descriptor, "value")) {
+        assertSynchronousFormulaValue(descriptor.value, seen);
+      }
+    }
+  }
   function createReactiveGraph(options = {}) {
     if (typeof options.evaluateFormula !== "function") {
       throw new Error("ReactiveGraph requires a deferred formula evaluator");
@@ -14575,6 +14608,7 @@ ${indentStr})`;
           currentName = name;
           try {
             const value = node.evaluator ? node.evaluator(node.formula, graph) : options.evaluateFormula(node.formula, graph);
+            assertSynchronousFormulaValue(value);
             stagedValues.set(name, value);
             states.set(name, "clean");
             return value;
@@ -19360,6 +19394,38 @@ ${indentStr})`;
       replacesDependencies: Object.freeze([...target.dependencies])
     });
   }
+  function createHoldControl(args, runtime = null) {
+    const entry = spec(args, ["target", "key", "pressed", "released", "label"], "Controls.Hold");
+    const target = reactiveTarget(entry, "Controls.Hold");
+    if (!has(entry, "pressed") || !has(entry, "released")) {
+      throw new Error("Controls.Hold requires explicit pressed and released values");
+    }
+    const pressed = get(entry, "pressed");
+    const released = get(entry, "released");
+    if (controlValuesEqual(pressed, released)) {
+      throw new Error("Controls.Hold pressed and released values must differ");
+    }
+    const key = shortcutKey(get(entry, "key"), "Controls.Hold key");
+    if (key === null)
+      throw new Error("Controls.Hold requires a key");
+    const value = target.get();
+    const index = controlValuesEqual(value, released) ? 0 : controlValuesEqual(value, pressed) ? 1 : -1;
+    if (index === -1)
+      throw new Error("Controls.Hold target value must match its pressed or released value");
+    return output("control_hold", {
+      id: asString(get(entry, "id")) || `${target.id}:hold`,
+      label: asString(get(entry, "label")) || `Hold ${asString(get(entry, "key")) || "key"}`,
+      help: asString(get(entry, "help")),
+      target,
+      targetId: target.id,
+      value,
+      values: Object.freeze([released, pressed]),
+      key,
+      index,
+      ...controlBehavior(entry, { value, released, pressed }, "Controls.Hold", runtime),
+      replacesDependencies: Object.freeze([...target.dependencies])
+    });
+  }
   function createControlPanel(args) {
     const entry = spec(args, ["controls", "title", "description"], "ControlPanel");
     const controls = sequence(get(entry, "controls"), "ControlPanel controls");
@@ -20509,6 +20575,8 @@ ${value.transcript.map((child) => formatInlineText(child, format)).join("")}` : 
     }
     if (value.kind === "control_action")
       return `[Action: ${value.label}]`;
+    if (value.kind === "control_hold")
+      return `${value.label}: ${value.index === 1 ? "held" : "released"}`;
     if (value.kind === "control_panel") {
       return [value.title, value.description, ...value.controls.map((control) => formatOutputText(control, format))].filter(Boolean).join(`
 `);
@@ -20696,6 +20764,10 @@ ${formatOutputText(slide, format)}`).join(`
       const shortcut = value.shortcut ? ` data-rix-control-shortcut="${escapeHtml(value.shortcut)}"` : "";
       return `<div class="rix-output-control rix-output-control-action" data-rix-control-kind="action" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${shortcut}${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><button type="button" data-rix-control-input aria-label="${escapeHtml(value.label)}"${value.shortcut ? ` aria-keyshortcuts="${escapeHtml(value.shortcut)}"` : ""}${controlInputAttributes(value)}>${escapeHtml(value.label)}</button>${controlMessages(value)}</div>`;
     }
+    if (value.kind === "control_hold") {
+      const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml(value.replacesDependencies.join(","))}"` : "";
+      return `<div class="rix-output-control rix-output-control-hold" data-rix-control-kind="hold" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}" data-rix-control-hold="${escapeHtml(value.key)}" data-rix-control-hold-state="${value.index === 1 ? "held" : "released"}" aria-keyshortcuts="${escapeHtml(value.key)}"${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><kbd>${escapeHtml(value.key)}</kbd><output data-rix-control-value>${value.index === 1 ? "Held" : "Released"}</output><button type="button" hidden data-rix-control-input data-rix-control-hold-press aria-label="Press ${escapeHtml(value.label)}"${controlInputAttributes(value)}>Press</button><button type="button" hidden data-rix-control-hold-release aria-label="Release ${escapeHtml(value.label)}"${controlInputAttributes(value)}>Release</button>${controlMessages(value)}</div>`;
+    }
     if (value.kind === "control_panel") {
       const actions = value.mode === "staged" ? `<div class="rix-output-control-actions"><button type="button" data-rix-control-submit disabled>${escapeHtml(value.submitLabel)}</button><button type="button" data-rix-control-discard disabled>${escapeHtml(value.discardLabel)}</button></div>` : "";
       return `<section class="rix-output-control-panel" data-rix-interactive="${value.interactive === false ? "false" : "true"}" data-rix-control-mode="${escapeHtml(value.mode || "immediate")}"${portableBlockStyleAttributes(value.style)}>${value.title ? `<h3>${escapeHtml(value.title)}</h3>` : ""}${value.description ? `<p>${escapeHtml(value.description)}</p>` : ""}<div class="rix-output-control-list">${value.controls.map((control) => renderOutputHtml({ ...control, style: resolvedControlStyle(value.style, control) }, format)).join("")}</div>${actions}<output class="rix-output-control-status" aria-live="polite"></output></section>`;
@@ -20831,7 +20903,8 @@ ${formatOutputText(slide, format)}`).join(`
       ["Toggle", createToggleControl],
       ["Range", createRangeControl],
       ["Reset", createResetControl],
-      ["Action", createActionControl]
+      ["Action", createActionControl],
+      ["Hold", createHoldControl]
     ]);
     const entries2 = new Map;
     const extension = new Map([["immutable", int3(1)]]);
@@ -29850,7 +29923,7 @@ ${indented.join(`,
       return null;
     return attachSuppressed(cleanupErrors[0], cleanupErrors.slice(1));
   }
-  function isPromiseLike(value) {
+  function isPromiseLike2(value) {
     return value && typeof value.then === "function";
   }
   function withFinalizerActivationSync(context, callback) {
@@ -29867,7 +29940,7 @@ ${indented.join(`,
     for (let index = finalizers.length - 1;index >= 0; index--) {
       try {
         const cleanup = finalizers[index]();
-        if (isPromiseLike(cleanup)) {
+        if (isPromiseLike2(cleanup)) {
           throw new Error("Async cleanup requires promise-aware RiX evaluation");
         }
       } catch (error) {
@@ -32974,7 +33047,7 @@ ${detail}`;
     }
     return evaluatedArgs;
   }
-  function isPromiseLike2(value) {
+  function isPromiseLike3(value) {
     return value && typeof value.then === "function";
   }
   var methodFunctions = {
@@ -33022,7 +33095,7 @@ ${detail}`;
         }
         const fn = resolveMethod(target, methodName, context);
         const result = fn?.type === "method_builtin" ? fn.impl([target, ...callArgs], context, evaluate, callWithConcreteArgs) : callWithConcreteArgs(fn, [target, ...callArgs], context, evaluate);
-        if (isPromiseLike2(result)) {
+        if (isPromiseLike3(result)) {
           result.catch(() => {});
           throw new Error(`Method ${methodName} requires promise-aware RiX evaluation`);
         }
@@ -33043,7 +33116,7 @@ ${detail}`;
             const target = callArgs[0];
             const fn = resolveMethod(target, methodName, context);
             const result = fn?.type === "method_builtin" ? fn.impl([target, ...capturedArgs], context, evaluate, callWithConcreteArgs) : callWithConcreteArgs(fn, [target, ...capturedArgs], context, evaluate);
-            if (isPromiseLike2(result)) {
+            if (isPromiseLike3(result)) {
               result.catch(() => {});
               throw new Error(`..${methodName} requires promise-aware RiX evaluation`);
             }
@@ -34309,6 +34382,210 @@ ${pad}}`;
     entries2.set("unresolved", unresolved ? toRixInt(1) : null);
     return { type: "map", entries: entries2 };
   }
+  async function runSequentialTestsAsync(label, setupNode, testArgs, filePath, context, evaluate, diag) {
+    const results = [];
+    let passedAll = true;
+    let totalPassed = 0;
+    let totalFailed = 0;
+    let totalErrored = 0;
+    let totalSkipped = 0;
+    let totalUnresolved = 0;
+    let stopped = false;
+    let setupResult = { type: "map", entries: new Map([["passed", toRixInt(1)]]) };
+    context.push(undefined, { isolated: true });
+    try {
+      try {
+        await context.withSharedBodyAsync(setupNode, () => evaluate(setupNode));
+      } catch (err) {
+        setupResult = { type: "map", entries: new Map([
+          ["passed", null],
+          ["error", toRixString(err.message)]
+        ]) };
+        passedAll = false;
+        stopped = true;
+      }
+      if (!stopped) {
+        for (let i = 0;i < testArgs.length; i++) {
+          if (stopped) {
+            results.push(makeTestEntry(i + 1, null, null, null, true));
+            totalSkipped++;
+            continue;
+          }
+          try {
+            const testNode = testArgs[i];
+            if (testNode && testNode.fn === "HOLE") {
+              results.push(makeTestEntry(i + 1, null, null, null, true));
+              totalSkipped++;
+              continue;
+            }
+            const value = testNode && testNode.fn === "BLOCK" ? await context.withSharedBodyAsync(testNode, () => evaluate(testNode)) : await evaluate(testNode);
+            const state = decisionState(value);
+            if (state === "undecided") {
+              results.push(makeTestEntry(i + 1, null, value, null, false, true));
+              totalUnresolved++;
+              passedAll = false;
+            } else if (state === "truth") {
+              results.push(makeTestEntry(i + 1, true, value, null, false));
+              totalPassed++;
+            } else {
+              results.push(makeTestEntry(i + 1, false, value, null, false));
+              totalFailed++;
+              passedAll = false;
+              stopped = true;
+            }
+          } catch (err) {
+            results.push(makeTestEntry(i + 1, false, null, err.message, false));
+            totalErrored++;
+            passedAll = false;
+            stopped = true;
+          }
+        }
+        if (stopped) {
+          for (let i = results.length;i < testArgs.length; i++) {
+            results.push(makeTestEntry(i + 1, null, null, null, true));
+            totalSkipped++;
+          }
+        }
+      }
+    } finally {
+      context.pop();
+    }
+    const summaryEntries = new Map([
+      ["total", toRixInt(testArgs.length)],
+      ["passed", toRixInt(totalPassed)],
+      ["failed", toRixInt(totalFailed)],
+      ["errored", toRixInt(totalErrored)],
+      ["skipped", toRixInt(totalSkipped)],
+      ["unresolved", toRixInt(totalUnresolved)]
+    ]);
+    const resultObj = { type: "map", entries: new Map([
+      ["kind", toRixString("test")],
+      ["label", toRixString(label)],
+      ["mode", toRixString("sequential")],
+      ["file", toRixString(filePath)],
+      ["passed", passedAll ? toRixInt(1) : null],
+      ["setup", setupResult],
+      ["results", { type: "sequence", values: results }],
+      ["summary", { type: "map", entries: summaryEntries }]
+    ]) };
+    diag.addEvent(resultObj);
+    diag.registerTestResult(filePath, label, resultObj);
+    return resultObj;
+  }
+  async function runSequentialTestsFromValuesAsync(label, setupNode, testValues, filePath, context, evaluate, diag) {
+    const results = [];
+    let passedAll = true;
+    let totalPassed = 0;
+    let totalFailed = 0;
+    let totalUnresolved = 0;
+    context.push(undefined, { isolated: true });
+    try {
+      try {
+        await context.withSharedBodyAsync(setupNode, () => evaluate(setupNode));
+      } catch {}
+      for (let i = 0;i < testValues.length; i++) {
+        const value = testValues[i];
+        const state = decisionState(value);
+        if (state === "undecided") {
+          results.push(makeTestEntry(i + 1, null, value, null, false, true));
+          totalUnresolved++;
+          passedAll = false;
+        } else if (state === "truth") {
+          results.push(makeTestEntry(i + 1, true, value, null, false));
+          totalPassed++;
+        } else {
+          results.push(makeTestEntry(i + 1, false, value, null, false));
+          totalFailed++;
+          passedAll = false;
+        }
+      }
+    } finally {
+      context.pop();
+    }
+    const summaryEntries = new Map([
+      ["total", toRixInt(testValues.length)],
+      ["passed", toRixInt(totalPassed)],
+      ["failed", toRixInt(totalFailed)],
+      ["errored", toRixInt(0)],
+      ["skipped", toRixInt(0)],
+      ["unresolved", toRixInt(totalUnresolved)]
+    ]);
+    const resultObj = { type: "map", entries: new Map([
+      ["kind", toRixString("test")],
+      ["label", toRixString(label)],
+      ["mode", toRixString("sequential")],
+      ["file", toRixString(filePath)],
+      ["passed", passedAll ? toRixInt(1) : null],
+      ["results", { type: "sequence", values: results }],
+      ["summary", { type: "map", entries: summaryEntries }]
+    ]) };
+    diag.addEvent(resultObj);
+    diag.registerTestResult(filePath, label, resultObj);
+    return resultObj;
+  }
+  async function runIsolatedTestEntriesAsync(label, setupNode, testEntries, filePath, context, evaluate, diag) {
+    const resultMap = new Map;
+    let passedAll = true;
+    let totalPassed = 0;
+    let totalFailed = 0;
+    let totalErrored = 0;
+    let totalUnresolved = 0;
+    for (const { key, valNode } of testEntries) {
+      context.push(undefined, { isolated: true });
+      try {
+        await context.withSharedBodyAsync(setupNode, () => evaluate(setupNode));
+        const value = valNode && valNode.fn === "BLOCK" ? await context.withSharedBodyAsync(valNode, () => evaluate(valNode)) : await evaluate(valNode);
+        const state = decisionState(value);
+        if (state === "undecided") {
+          resultMap.set(key, makeIsolatedEntry(null, value, null, true));
+          totalUnresolved++;
+          passedAll = false;
+        } else if (state === "truth") {
+          resultMap.set(key, makeIsolatedEntry(true, value, null));
+          totalPassed++;
+        } else {
+          resultMap.set(key, makeIsolatedEntry(false, value, null));
+          totalFailed++;
+          passedAll = false;
+        }
+      } catch (err) {
+        resultMap.set(key, makeIsolatedEntry(false, null, err.message));
+        totalErrored++;
+        passedAll = false;
+      } finally {
+        context.pop();
+      }
+    }
+    return buildIsolatedResult(label, filePath, passedAll, resultMap, testEntries.length, totalPassed, totalFailed, totalErrored, diag, totalUnresolved);
+  }
+  async function runTestAsync(args, context, evaluate) {
+    const label = requireString(await evaluate(args[0]), ".Test label");
+    const setupNode = args[1];
+    const testsNode = args[2];
+    const filePath = getCurrentFilePath(context);
+    const diag = getDiagnostics(context);
+    if (testsNode && testsNode.fn === "ARRAY") {
+      return runSequentialTestsAsync(label, setupNode, testsNode.args, filePath, context, evaluate, diag);
+    }
+    if (testsNode && (testsNode.fn === "MAP" || testsNode.fn === "MAP_OBJ")) {
+      const testEntries = [];
+      for (const arg of testsNode.args) {
+        if (!arg || arg.fn !== "MAP_PAIR") {
+          throw new Error(".Test map mode requires {= label = expr, ... } map literal");
+        }
+        testEntries.push({ key: String(arg.args[1]), valNode: arg.args[2] });
+      }
+      return runIsolatedTestEntriesAsync(label, setupNode, testEntries, filePath, context, evaluate, diag);
+    }
+    const testsValue = await evaluate(testsNode);
+    if (isRixArray(testsValue)) {
+      return runSequentialTestsFromValuesAsync(label, setupNode, testsValue.values, filePath, context, evaluate, diag);
+    }
+    if (isRixMap(testsValue)) {
+      return runIsolatedTestsFromValues(label, setupNode, testsValue, filePath, context, evaluate, diag);
+    }
+    throw new Error(".Test third argument must be an array or map of tests");
+  }
   var DEBUG = {
     lazy: true,
     impl(args, context, evaluate) {
@@ -34559,6 +34836,69 @@ ${pad}}`;
           } else {
             passed = exprOutcome === "stop";
           }
+        }
+      }
+    } finally {
+      context.pop();
+    }
+    const overallPassed = setupPassed && passed;
+    const result = buildAbortTestResult({
+      label,
+      testKind,
+      filePath,
+      expected: testKind === "error" ? "error" : "stop",
+      setupPassed,
+      setupOutcome,
+      setupValue,
+      setupAbort,
+      setupError,
+      exprOutcome,
+      exprValue,
+      exprAbort,
+      exprError,
+      passed: overallPassed
+    });
+    diag.addEvent(result);
+    diag.registerTestResult(filePath, label, result);
+    return result;
+  }
+  async function runAbortTestAsync(testKind, args, context, evaluate) {
+    const capName = testKind === "error" ? ".TestError" : ".TestStop";
+    const label = requireString(await evaluate(args[0]), `${capName} label`);
+    const setupNode = args[1];
+    const exprNode = args[2];
+    const filePath = getCurrentFilePath(context);
+    const diag = getDiagnostics(context);
+    let setupPassed = true;
+    let setupOutcome = "returned";
+    let setupValue;
+    let setupAbort;
+    let setupError = null;
+    let exprOutcome = "returned";
+    let exprValue;
+    let exprAbort;
+    let exprError = null;
+    let passed = false;
+    context.push(undefined, { isolated: true });
+    try {
+      try {
+        setupValue = await context.withSharedBodyAsync(setupNode, () => evaluate(setupNode));
+      } catch (err) {
+        setupPassed = false;
+        const classified = classifyError(err);
+        setupOutcome = classified.outcome;
+        setupAbort = classified.abort;
+        setupError = classified.error;
+      }
+      if (setupPassed) {
+        try {
+          exprValue = exprNode && exprNode.fn === "BLOCK" ? await context.withSharedBodyAsync(exprNode, () => evaluate(exprNode)) : await evaluate(exprNode);
+        } catch (err) {
+          const classified = classifyError(err);
+          exprOutcome = classified.outcome;
+          exprAbort = classified.abort;
+          exprError = classified.error;
+          passed = testKind === "error" ? exprOutcome === "error" || exprOutcome === "runtimeError" : exprOutcome === "stop";
         }
       }
     } finally {
@@ -50062,6 +50402,13 @@ ${lines.join(`
   ]);
   var ASYNC_PIPE_FNS = new Set(["PMAP", "PFILTER", "PEXPECT", "PFOREACH", "PANY", "PALL"]);
   var ASYNC_RESOLVED_BARRIER_FNS = new Set(["PSLICE_STRICT", "PSLICE_CLAMP"]);
+  var SYNC_REACTIVE_FORMULA_CAPABILITY_IMPLS = new Set([
+    reactiveGraphFunctions.REACTIVEGRAPH.impl,
+    formulaSheetFunctions.FORMULASHEET.impl,
+    formulaSheetFunctions.RIXCELIMPORT.impl,
+    formulaSheetFunctions.RIXCELIMPORTCSV.impl,
+    formulaSheetFunctions.RIXCELIMPORTTSV.impl
+  ]);
   function splitAsyncBlockArgs(args) {
     const first = args[0];
     if (first && !first.fn && (Array.isArray(first.imports) || first.name !== undefined || first.concurrencyLimit !== undefined || first.timeoutSeconds !== undefined)) {
@@ -50541,6 +50888,52 @@ ${lines.join(`
   }
   function asyncDiagnosticInteger(value) {
     return new Integer(BigInt(value));
+  }
+  async function evaluateConcreteLazyCapabilityAsync(capability2, args, context, registry, systemContext, state) {
+    if (capability2.impl === diagnosticFunctions.DUMP.impl && args.length !== 2) {
+      return capability2.impl(args, context, (value) => value);
+    }
+    if (capability2.impl === diagnosticFunctions.INFOVALUE.impl && args.length !== 2 && args.length !== 3) {
+      return capability2.impl(args, context, (value) => value);
+    }
+    const values3 = [];
+    for (const arg of args) {
+      values3.push(await evaluateAsyncInternal(arg, context, registry, systemContext, state));
+    }
+    return await capability2.impl(values3, context, (value) => value);
+  }
+  async function evaluateDefineCapabilityAsync(args, context, registry, systemContext, state) {
+    const name = coreString(await evaluateAsyncInternal(args[0], context, registry, systemContext, state), ".Define name");
+    const params = await evaluateAsyncInternal(args[1], context, registry, systemContext, state);
+    return await evaluateAsyncInternal({ fn: "FUNCDEF", args: [name, params, args[2]] }, context, registry, systemContext, state);
+  }
+  async function evaluateTensorGeneratorCapabilityAsync(args, context, registry, systemContext, state) {
+    const shape = coerceShapeValue(await evaluateAsyncInternal(args[0], context, registry, systemContext, state));
+    const callable = await evaluateAsyncInternal(args[1], context, registry, systemContext, state);
+    const tensor = createTensor(shape);
+    const tuples = [];
+    forEachTensorCell(tensor, (_value, tuple) => tuples.push(tuple));
+    const filled = [];
+    for (const tuple of tuples) {
+      filled.push(await invokeCallableAsync(callable, [tensorIndexTuple(tuple)], context, registry, systemContext, state));
+    }
+    return createTensor(shape, filled);
+  }
+  async function evaluateStopCapabilityAsync(args, context, registry, systemContext, state) {
+    const label2 = await evaluateAsyncInternal(args[0], context, registry, systemContext, state);
+    const condition = await evaluateAsyncInternal(args[1], context, registry, systemContext, state);
+    const values3 = [label2, condition];
+    if (decisionState(condition) === "truth" && args.length >= 3) {
+      values3.push(await evaluateAsyncInternal(args[2], context, registry, systemContext, state));
+    }
+    return diagnosticFunctions.STOP.impl(values3, context, (value) => value);
+  }
+  async function evaluateMultiCapabilityAsync(args, context, registry, systemContext, state) {
+    let result = null;
+    for (const arg of args) {
+      result = await evaluateAsyncInternal(arg, context, registry, systemContext, state);
+    }
+    return result;
   }
   async function evaluateDebugCapabilityAsync(args, context, registry, systemContext, state) {
     const label2 = asyncCapabilityString(await evaluateAsyncInternal(args[0], context, registry, systemContext, state), ".Debug label");
@@ -51814,6 +52207,112 @@ ${lines.join(`
     const releaseState = parentState ? { ...parentState, parallelCollections: true } : parentState;
     return withReleasedAsyncAdmission(releaseState, () => evaluateAsyncScopeBody(args, context, registry, systemContext, parentState));
   }
+  function readAsyncTemplateHole(source, start) {
+    if (!source.startsWith("@{", start))
+      return null;
+    let depth = 1;
+    let quote2 = null;
+    let index = start + 2;
+    for (;index < source.length && depth > 0; index += 1) {
+      const character = source[index];
+      if (quote2) {
+        if (character === "\\")
+          index += 1;
+        else if (character === quote2)
+          quote2 = null;
+        continue;
+      }
+      if (character === '"' || character === "'" || character === "`")
+        quote2 = character;
+      else if (character === "{")
+        depth += 1;
+      else if (character === "}")
+        depth -= 1;
+    }
+    if (depth !== 0)
+      throw new Error("Unclosed @{...} interpolation in template");
+    return { end: index, source: source.slice(start + 2, index - 1) };
+  }
+  async function evaluateOutputTemplateAsync(definition11, args, context, registry, systemContext, state) {
+    const body = args[0];
+    const resolved = new Map;
+    let rewritten = "";
+    for (let index = 0;index < body.length; ) {
+      if (body.startsWith("@@{", index)) {
+        rewritten += "@@{";
+        index += 3;
+        continue;
+      }
+      if (!body.startsWith("@{", index)) {
+        rewritten += body[index];
+        index += 1;
+        continue;
+      }
+      const hole = readAsyncTemplateHole(body, index);
+      let value = null;
+      for (const node of lower(parse(hole.source))) {
+        value = await evaluateAsyncInternal(node, context, registry, systemContext, state);
+      }
+      const name = `rixasynctemplatevalue${resolved.size}`;
+      resolved.set(name, value);
+      rewritten += `@{${name}}`;
+      index = hole.end;
+    }
+    const evaluateResolved = (node) => {
+      if (node?.fn === "RETRIEVE" && resolved.has(node.args?.[0])) {
+        return resolved.get(node.args[0]);
+      }
+      return evaluate(node, context, registry, systemContext);
+    };
+    return definition11.impl([rewritten], context, evaluateResolved, systemContext);
+  }
+  function isRawBasePrefixNode(node) {
+    return node?.fn === "LITERAL" && typeof node.args?.[0] === "string" && /^0[A-Za-z]$/.test(node.args[0]);
+  }
+  async function evaluateBaseLazyAsync(fn, definition11, args, context, registry, systemContext, state) {
+    const resolved = new Map;
+    const resolve = async (node) => {
+      if (node === undefined || isRawBasePrefixNode(node))
+        return;
+      resolved.set(node, await evaluateAsyncInternal(node, context, registry, systemContext, state));
+    };
+    if (fn === "DEFINEBASE") {
+      await resolve(args[1]);
+    } else if (fn === "TOBASE") {
+      await resolve(args[0]);
+      await resolve(args[1]);
+      await resolve(args[2]);
+    } else if (fn === "CERTIFY_FORMAT") {
+      await resolve(args[0]);
+      await resolve(args[1]);
+    } else if (fn === "FROMBASE") {
+      await resolve(args[0]);
+      await resolve(args[1]);
+    }
+    return definition11.impl(args, context, (node) => resolved.has(node) ? resolved.get(node) : evaluate(node, context, registry, systemContext), systemContext);
+  }
+  async function evaluateSelectedLazyOperandsAsync(definition11, args, operands, context, registry, systemContext, state) {
+    const resolved = new Map;
+    for (const operand2 of operands) {
+      resolved.set(operand2, await evaluateAsyncInternal(operand2, context, registry, systemContext, state));
+    }
+    return await definition11.impl(args, context, (node) => resolved.has(node) ? resolved.get(node) : evaluate(node, context, registry, systemContext), systemContext);
+  }
+  function bracketLazyOperands(args, { assignment = false } = {}) {
+    const specCount = args[1];
+    const operands = [args[0]];
+    if (assignment)
+      operands.push(args[2 + specCount]);
+    for (const spec2 of args.slice(2, 2 + specCount)) {
+      if (spec2?.fn === "FULL_SLICE")
+        continue;
+      if (spec2?.fn === "SLICE_SPEC")
+        operands.push(spec2.args[0], spec2.args[1]);
+      else
+        operands.push(spec2);
+    }
+    return operands;
+  }
   function startDetachedBlock(args, context, registry, systemContext, parentState) {
     const runtime = context.getEnv(SCRIPT_RUNTIME_ENV_KEY, null);
     const frame = runtime?.frameStack?.[runtime.frameStack.length - 1] ?? null;
@@ -52140,19 +52639,19 @@ ${lines.join(`
       if (ASYNC_PIPE_FNS.has(fn)) {
         return state ? await evaluateAsyncPipe(irNode, context, registry, systemContext, state) : await evaluateSequentialAsyncPipe(irNode, context, registry, systemContext, null);
       }
-      if (state && fn === "PREDUCE") {
+      if (fn === "PREDUCE" && registry.get(fn)?.impl === functionFunctions.PREDUCE.impl) {
         return await evaluateAsyncReduce(args, context, registry, systemContext, state);
       }
-      if (state && fn === "PSORT") {
+      if (fn === "PSORT" && registry.get(fn)?.impl === functionFunctions.PSORT.impl) {
         return await evaluateAsyncSort(args, context, registry, systemContext, state);
       }
-      if (state && ASYNC_RESOLVED_BARRIER_FNS.has(fn)) {
+      if (ASYNC_RESOLVED_BARRIER_FNS.has(fn) && registry.get(fn)?.impl === functionFunctions[fn]?.impl) {
         return await evaluateAsyncResolvedBarrier(irNode, context, registry, systemContext, state);
       }
-      if (state && fn === "PSPLIT") {
+      if (fn === "PSPLIT" && registry.get(fn)?.impl === functionFunctions.PSPLIT.impl) {
         return await evaluateAsyncSplit(args, context, registry, systemContext, state);
       }
-      if (state && fn === "PCHUNK") {
+      if (fn === "PCHUNK" && registry.get(fn)?.impl === functionFunctions.PCHUNK.impl) {
         return await evaluateAsyncChunk(args, context, registry, systemContext, state);
       }
       const evalAsync = (node) => evaluateAsyncInternal(node, context, registry, systemContext, state);
@@ -52177,6 +52676,30 @@ ${lines.join(`
         if (capability2.lazy && capability2.impl === coreFunctions.EVAL.impl) {
           return await evaluateEvalCapabilityAsync(callArgNodes, context, registry, systemContext, state);
         }
+        if (capability2.lazy && [coreFunctions.TYPE_EXPORT.impl, coreFunctions.TYPE_IMPORT.impl].includes(capability2.impl)) {
+          return await evaluateSelectedLazyOperandsAsync(capability2, callArgNodes, [callArgNodes[0]], context, registry, systemContext, state);
+        }
+        if (capability2.lazy && capability2.impl === defineCapability) {
+          return await evaluateDefineCapabilityAsync(callArgNodes, context, registry, systemContext, state);
+        }
+        if (capability2.lazy && capability2.impl === stdlibFunctions.TGEN.impl) {
+          return await evaluateTensorGeneratorCapabilityAsync(callArgNodes, context, registry, systemContext, state);
+        }
+        if (capability2.lazy && (capability2.impl === diagnosticFunctions.DUMP.impl || capability2.impl === diagnosticFunctions.INFOVALUE.impl)) {
+          return await evaluateConcreteLazyCapabilityAsync(capability2, callArgNodes, context, registry, systemContext, state);
+        }
+        if (capability2.lazy && capability2.impl === diagnosticFunctions.STOP.impl) {
+          return await evaluateStopCapabilityAsync(callArgNodes, context, registry, systemContext, state);
+        }
+        if (capability2.lazy && capability2.impl === diagnosticFunctions.TEST.impl) {
+          return await runTestAsync(callArgNodes, context, evalAsync);
+        }
+        if (capability2.lazy && (capability2.impl === diagnosticFunctions.TESTERROR.impl || capability2.impl === diagnosticFunctions.TESTSTOP.impl)) {
+          return await runAbortTestAsync(capability2.impl === diagnosticFunctions.TESTERROR.impl ? "error" : "stop", callArgNodes, context, evalAsync);
+        }
+        if (capability2.lazy && capability2.impl === stdlibFunctions.MULTI.impl) {
+          return await evaluateMultiCapabilityAsync(callArgNodes, context, registry, systemContext, state);
+        }
         if (capability2.lazy)
           return await capability2.impl(callArgNodes, context, evalAsync, {
             promiseAware: true,
@@ -52187,7 +52710,8 @@ ${lines.join(`
           values3.push(await evalAsync(arg));
         if (state?.signal?.aborted)
           throw state.signal.reason;
-        return await capability2.impl(values3, context, evalAsync, {
+        const capabilityEvaluate = SYNC_REACTIVE_FORMULA_CAPABILITY_IMPLS.has(capability2.impl) ? (node) => evaluate(node, context, registry, systemContext) : evalAsync;
+        return await capability2.impl(values3, context, capabilityEvaluate, {
           promiseAware: true,
           signal: state?.signal ?? null
         });
@@ -52343,6 +52867,43 @@ ${lines.join(`
       if (!definition11)
         return await evaluate(irNode, context, registry, systemContext);
       if (definition11.lazy) {
+        if (definition11.impl === propertyFunctions[fn]?.impl) {
+          let operands = null;
+          if (fn === "META_SET")
+            operands = [args[0], args[2]];
+          else if (fn === "META_MERGE")
+            operands = [args[0], args[1]];
+          else if (fn === "INDEX_SET")
+            operands = [args[0], args[1], args[2]];
+          else if (fn === "BRACKET_GET")
+            operands = bracketLazyOperands(args);
+          else if (fn === "BRACKET_SET")
+            operands = bracketLazyOperands(args, { assignment: true });
+          if (operands) {
+            return await evaluateSelectedLazyOperandsAsync(definition11, args, operands, context, registry, systemContext, state);
+          }
+        }
+        if ([
+          "VALUE_OUTFIT",
+          "SEMANTIC_HAS",
+          "SEMANTIC_CONVERT_SOFT",
+          "SEMANTIC_CONVERT_STRICT",
+          "TYPE_EXPORT",
+          "TYPE_IMPORT"
+        ].includes(fn) && definition11.impl === coreFunctions[fn]?.impl) {
+          const operand2 = fn === "VALUE_OUTFIT" ? args[1] : args[0];
+          return await evaluateSelectedLazyOperandsAsync(definition11, args, [operand2], context, registry, systemContext, state);
+        }
+        if (fn === "MULTIFUNCTION" && definition11.impl === functionFunctions.MULTIFUNCTION.impl) {
+          const result2 = await evaluateSelectedLazyOperandsAsync(definition11, args, args, context, registry, systemContext, state);
+          return markLexicalAsyncCallable(result2, state);
+        }
+        if ((fn === "TEMPLATE_TEXT" || fn === "DOCUMENT_TEMPLATE") && definition11.impl === outputFunctions[fn]?.impl) {
+          return await evaluateOutputTemplateAsync(definition11, args, context, registry, systemContext, state);
+        }
+        if (["DEFINEBASE", "TOBASE", "CERTIFY_FORMAT", "FROMBASE"].includes(fn) && definition11.impl === coreFunctions[fn]?.impl) {
+          return await evaluateBaseLazyAsync(fn, definition11, args, context, registry, systemContext, state);
+        }
         const result = await definition11.impl(args, context, (node) => evaluate(node, context, registry, systemContext), systemContext);
         return fn === "MULTIFUNCTION" ? markLexicalAsyncCallable(result, state) : result;
       }
@@ -53557,6 +54118,9 @@ ${lines.join(`
       return control.initial;
     if (control.kind === "control_action")
       return control.run();
+    if (control.kind === "control_hold") {
+      return indexedValue(control, event.index, control.values, "Control hold");
+    }
     if (control.kind === "control_input") {
       if (!("value" in event))
         throw new Error("Control input requires an evaluated RiX value");
@@ -54077,6 +54641,19 @@ ${lines.join(`
         }));
         continue;
       }
+      if (kind === "hold") {
+        input.addEventListener("click", () => commit({
+          ...identity(),
+          index: 1,
+          source: "hold-keydown"
+        }));
+        control.querySelector("[data-rix-control-hold-release]")?.addEventListener("click", () => commit({
+          ...identity(),
+          index: 0,
+          source: "hold-keyup"
+        }));
+        continue;
+      }
       if (kind === "choice") {
         input.addEventListener("change", () => commit({
           ...identity(),
@@ -54177,28 +54754,67 @@ ${lines.join(`
   function shortcutCandidates(root, key) {
     return [...root.querySelectorAll?.("[data-rix-control-shortcut]") || []].filter((control) => control.dataset.rixControlShortcut === key && control.dataset.rixControlDisabled !== "true" && control.dataset.rixControlReadOnly !== "true");
   }
+  function holdCandidates(root, key, { interactive = true } = {}) {
+    return [...root.querySelectorAll?.("[data-rix-control-hold]") || []].filter((control) => control.dataset.rixControlHold === key && (!interactive || control.dataset.rixControlDisabled !== "true" && control.dataset.rixControlReadOnly !== "true"));
+  }
+  function scopedChoices(router, document2, event, candidates) {
+    const scopes = [...router.scopes].filter((scope) => scope.isConnected !== false);
+    const focused = scopes.find((scope) => scope.contains?.(event.target) || scope.contains?.(document2.activeElement));
+    return focused ? [{ root: focused, candidates: candidates(focused) }] : scopes.map((scope) => ({ root: scope, candidates: candidates(scope) })).filter((choice) => choice.candidates.length > 0);
+  }
+  function preferredControl(document2, candidates) {
+    const activePanel = document2.activeElement?.closest?.(".rix-output-control-panel");
+    return candidates.find((candidate) => activePanel && candidate.closest?.(".rix-output-control-panel") === activePanel) || candidates[0];
+  }
   function enhanceControlShortcuts(root) {
     const document2 = root?.ownerDocument;
     if (!document2?.addEventListener)
       return () => {};
     let router = shortcutRouters.get(document2);
     if (!router) {
-      router = { scopes: new Set, onKeydown: null };
+      router = { scopes: new Set, activeHolds: new Map, onKeydown: null, onKeyup: null };
       router.onKeydown = (event) => {
         if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || editableTarget(event.target))
           return;
         const key = event.key?.length === 1 ? event.key.toLowerCase() : event.key;
         if (!key)
           return;
-        const scopes = [...router.scopes].filter((scope) => scope.isConnected !== false);
-        const focused = scopes.find((scope) => scope.contains?.(event.target) || scope.contains?.(document2.activeElement));
-        const choices = focused ? [{ root: focused, candidates: shortcutCandidates(focused, key) }] : scopes.map((scope) => ({ root: scope, candidates: shortcutCandidates(scope, key) })).filter(({ candidates: candidates2 }) => candidates2.length > 0);
+        const holdChoices = scopedChoices(router, document2, event, (scope) => holdCandidates(scope, key));
+        if (holdChoices.length === 1 && holdChoices[0].candidates.length > 0) {
+          event.preventDefault?.();
+          if (router.activeHolds.has(key))
+            return;
+          const control2 = preferredControl(document2, holdChoices[0].candidates);
+          const button2 = control2.querySelector?.("[data-rix-control-hold-press]");
+          if (!button2 || button2.disabled)
+            return;
+          router.activeHolds.set(key, {
+            root: holdChoices[0].root,
+            controlId: control2.dataset.rixControlId,
+            targetId: control2.dataset.rixControlTarget
+          });
+          button2.click?.();
+          return;
+        }
+        const choices = scopedChoices(router, document2, event, (scope) => shortcutCandidates(scope, key));
         if (choices.length !== 1 || choices[0].candidates.length === 0)
           return;
         const { candidates } = choices[0];
-        const activePanel = document2.activeElement?.closest?.(".rix-output-control-panel");
-        const control = candidates.find((candidate) => activePanel && candidate.closest?.(".rix-output-control-panel") === activePanel) || candidates[0];
+        const control = preferredControl(document2, candidates);
         const button = control.querySelector?.("[data-rix-control-input]");
+        if (!button || button.disabled)
+          return;
+        event.preventDefault?.();
+        button.click?.();
+      };
+      router.onKeyup = (event) => {
+        const key = event.key?.length === 1 ? event.key.toLowerCase() : event.key;
+        const active = router.activeHolds.get(key);
+        if (!active)
+          return;
+        router.activeHolds.delete(key);
+        const control = holdCandidates(active.root, key, { interactive: false }).find((candidate) => candidate.dataset.rixControlId === active.controlId && candidate.dataset.rixControlTarget === active.targetId);
+        const button = control?.querySelector?.("[data-rix-control-hold-release]");
         if (!button || button.disabled)
           return;
         event.preventDefault?.();
@@ -54206,6 +54822,7 @@ ${lines.join(`
       };
       shortcutRouters.set(document2, router);
       document2.addEventListener("keydown", router.onKeydown);
+      document2.addEventListener("keyup", router.onKeyup);
     }
     router.scopes.add(root);
     return () => {
@@ -54213,6 +54830,7 @@ ${lines.join(`
       if (router.scopes.size > 0)
         return;
       document2.removeEventListener?.("keydown", router.onKeydown);
+      document2.removeEventListener?.("keyup", router.onKeyup);
       shortcutRouters.delete(document2);
     };
   }

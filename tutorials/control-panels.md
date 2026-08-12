@@ -74,6 +74,44 @@ The shortcut does not contain browser code. It is a portable key name on the
 Action, and the host clicks the currently rendered action button so keyboard
 and pointer activation share one mutation path.
 
+## Hold a key for temporary display state
+
+A Hold control sets one exact value on keydown and restores another on keyup.
+This is useful for momentary previews: the state is ordinary reactive RiX
+state, while the browser owns only the keyboard-event routing. The preview
+selects presentation text; it does not replace the exact number. Hold Down in
+this example to switch the label to a repeating decimal, then release it to
+restore the fraction.
+
+```rix edu
+$$preview := _;
+$$value := 1/7;
+
+RepeatingDecimal(value) -> {;
+    text := value.ToRepeatingDecimal({= limit=8, onLimit="trunc" });
+    text.EndsWith("#0") ?: text.Slice(1, text.Len() - 1) ?_ text
+};
+
+Decimal(value) -> value ? :Rational ?: RepeatingDecimal(value) ?_ @"@{value}";
+
+$$view := .Fragment([
+    .ControlPanel([.Controls.Hold({=
+        target=$$preview,
+        key="ArrowDown",
+        pressed=1,
+        released=_,
+        label="Hold ↓ for decimal preview"
+    })], "Momentary display"),
+    .Text($preview == _ ?: @"@{$value}" ?_ Decimal($value))
+]);
+
+$view ;
+```
+
+The host ignores repeat keydown events and finds the current control again on
+keyup after any reactive rerender. Hold keys, like Action shortcuts, do not
+intercept keystrokes while the user is editing a form field.
+
 ## Choose how exact numbers are displayed
 
 Formatting is separate from stored value. Supply a `format` map whose keys name

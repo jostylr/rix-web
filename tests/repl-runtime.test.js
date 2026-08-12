@@ -550,4 +550,4 @@ test("every published RiX tutorial h2 section executes in fresh state", async ()
             }
         }
     }
-});
+}, 15_000);

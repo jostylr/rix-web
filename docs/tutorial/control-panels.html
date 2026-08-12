@@ -44,6 +44,31 @@ $$view := .Fragment([
 
 $view ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The shortcut does not contain browser code. It is a portable key name on the Action, and the host clicks the currently rendered action button so keyboard and pointer activation share one mutation path.</p>
+<h2>Hold a key for temporary display state</h2>
+<p>A Hold control sets one exact value on keydown and restores another on keyup. This is useful for momentary previews: the state is ordinary reactive RiX state, while the browser owns only the keyboard-event routing. The preview selects presentation text; it does not replace the exact number. Hold Down in this example to switch the label to a repeating decimal, then release it to restore the fraction.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="22" spellcheck="false">$$preview := _;
+$$value := 1/7;
+
+RepeatingDecimal(value) -&gt; {;
+    text := value.ToRepeatingDecimal({= limit=8, onLimit=&quot;trunc&quot; });
+    text.EndsWith(&quot;#0&quot;) ?: text.Slice(1, text.Len() - 1) ?_ text
+};
+
+Decimal(value) -&gt; value ? :Rational ?: RepeatingDecimal(value) ?_ @&quot;@{value}&quot;;
+
+$$view := .Fragment([
+    .ControlPanel([.Controls.Hold({=
+        target=$$preview,
+        key=&quot;ArrowDown&quot;,
+        pressed=1,
+        released=_,
+        label=&quot;Hold ↓ for decimal preview&quot;
+    })], &quot;Momentary display&quot;),
+    .Text($preview == _ ?: @&quot;@{$value}&quot; ?_ Decimal($value))
+]);
+
+$view ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The host ignores repeat keydown events and finds the current control again on keyup after any reactive rerender. Hold keys, like Action shortcuts, do not intercept keystrokes while the user is editing a form field.</p>
 <h2>Choose how exact numbers are displayed</h2>
 <p>Formatting is separate from stored value. Supply a <code>format</code> map whose keys name displayed fields and whose values are ordinary RiX functions. The slider below shows its current value as a mixed number, its bounds as decimals, and its step as a continued fraction. Moving it still stores an exact rational.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="25" spellcheck="false">Mixed(x) -&gt; x _&gt; &quot;..&quot;;

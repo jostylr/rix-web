@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { parseAndEvaluate } from "../../rix/src/index.js";
+import { createSternBrocotRixBridge } from "../src/rix-stern-brocot-bridge.js";
 
 const read = (relativePath) => Bun.file(
     new URL(`../${relativePath}`, import.meta.url),
@@ -47,10 +49,54 @@ test("the generated Stern-Brocot page declares its layout, keys, and scene actio
     expect(source).toContain('shortcut="ArrowLeft"');
     expect(source).toContain('shortcut="ArrowRight"');
     expect(source).not.toContain('shortcut="ArrowDown"');
+    expect(source).toContain('.Controls.Hold({=');
+    expect(source).toContain('key="ArrowDown"');
+    expect(source).toContain('target=$$decimalPreview');
+    expect(source).toContain('label="Maximum decimal digits"');
+    expect(source).toContain('ToRepeatingDecimal({=');
+    expect(source).toContain('onLimit="trunc"');
     expect(source.match(/\.Graphics\.Action/g)).toHaveLength(3);
+    expect(source).toContain("SternBrocotBoxWidth(text)");
+    expect(source).toContain("graphicWidth := {>>");
+    expect(source).not.toContain("[116, 46]");
+    expect(source).toContain("SternBrocotFormulaGlyph(formulaDisplay, centerX, 362)");
+    expect(source).toContain('"FORMULA RESULT"');
     expect(generated).toContain("scene-left");
+    expect(generated).toContain("FORMULA RESULT");
     expect(generated).toMatch(/href="assets\/rix-page\.css\?v=[a-f0-9]{12}"/);
     expect(generated).toMatch(/src="assets\/rix-page\.js\?v=[a-f0-9]{12}"/);
     expect(runtime).toContain('type: "graphic:action"');
     expect(runtime).toContain("enhanceControlShortcuts(root)");
+    expect(runtime).toContain("activeHolds: new Map");
+    expect(runtime).toContain("data-rix-control-hold");
+});
+
+test("the generated-page decimal formatter keeps natural endings and short periods", async () => {
+    const source = await Bun.file(new URL(
+        "../../rix/examples/stern-brocot/stern-brocot-page.rix",
+        import.meta.url,
+    )).text();
+    const bridge = createSternBrocotRixBridge();
+    bridge.context.setEnv("__output_sink__", () => {});
+    parseAndEvaluate(source, { ...bridge.runtime, file: "<decimal-page-test>" });
+    const before = parseAndEvaluate("$current", bridge.runtime);
+    const heldView = parseAndEvaluate("$decimalPreview := 1; $view", {
+        ...bridge.runtime,
+        file: "<decimal-held-test>",
+    });
+    const after = parseAndEvaluate("$current", bridge.runtime);
+    const values = parseAndEvaluate(`[
+        SternBrocotFractionText(.frac(1, 8), 1, 5),
+        SternBrocotFractionText(.frac(1, 3), 1, 5),
+        SternBrocotFractionText(.frac(1, 7), 1, 5),
+        SternBrocotFractionText(.frac(1, 1), 1, 5)
+    ]`, bridge.runtime);
+    expect(heldView.kind).toBe("fragment");
+    expect(String(after)).toBe(String(before));
+    expect(values.values.map((value) => value.value)).toEqual([
+        "0.125",
+        "0.#3",
+        "0.#14285...",
+        "1",
+    ]);
 });
