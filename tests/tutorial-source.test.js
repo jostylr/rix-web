@@ -204,6 +204,7 @@ test("plugin tutorials are generated after core lessons and grouped by theme", a
     expect(tutorialByNumber("15")?.title).toBe("Plugins: Algebra and analysis");
     expect(tutorialByNumber("15a")?.pluginId).toBe("algebra");
     expect(tutorials.filter(({ parent }) => parent === "15").map(({ pluginId }) => pluginId)).toContain("stats");
+    expect(tutorials.filter(({ parent }) => parent === "15").map(({ pluginId }) => pluginId)).toContain("stern-brocot");
     expect(tutorialByNumber("16")?.title).toBe("Plugins: Graphics and geometry");
     expect(tutorials.filter(({ parent }) => parent === "16").map(({ pluginId }) => pluginId)).toEqual([
         "draw", "geometry", "nd", "plot", "scene3d",

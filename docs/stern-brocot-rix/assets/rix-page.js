@@ -2156,6 +2156,9 @@
     }
     parseExpression(minPrec = 0) {
       const left = this.parsePrefix();
+      if (!left) {
+        this.error("Expected an expression");
+      }
       return this.parseExpressionRec(left, minPrec, false);
     }
     parseDecisionBranchExpression() {
@@ -2644,36 +2647,7 @@
         if (operator.value === "=>" || operator.value === "^=>") {
           this.error("Append/prepend syntax requires a named function signature like F(x) => body");
         }
-      } else if (operator.value === "->") {
-        right = this.parseExpression(rightPrec);
-        if (left.type === "Grouping" && left.expression && left.expression.type === "ParameterList") {
-          return this.createNode("FunctionLambda", {
-            parameters: left.expression.parameters,
-            prep: null,
-            prepStrict: false,
-            body: right,
-            pos: left.pos,
-            original: left.original + operator.original
-          });
-        }
-        const lambdaParameters = this.extractLambdaParameters(left);
-        if (lambdaParameters) {
-          return this.createNode("FunctionLambda", {
-            parameters: lambdaParameters,
-            prep: null,
-            prepStrict: false,
-            body: right,
-            pos: left.pos,
-            original: left.original + operator.original
-          });
-        }
-        return this.createNode("BinaryOperation", {
-          operator: operator.value,
-          left,
-          right,
-          pos: left.pos,
-          original: left.original + operator.original
-        });
+        this.error("Function arrow requires a named function signature or lambda parameters");
       } else if (operator.value === "|>_") {
         right = this.parseExpression(rightPrec);
         return this.createNode("ForEachPipe", {
@@ -18979,8 +18953,12 @@ ${indentStr})`;
     return output("heading", { level, content, id: asString(get(entry, "id")), style: optionalMap(get(entry, "style"), "Heading style") });
   }
   function createFragment(args) {
-    const entry = spec(args, ["children", "metadata"], "Fragment");
-    return output("fragment", { children: sequence(get(entry, "children"), "Fragment children"), metadata: optionalMap(get(entry, "metadata"), "Fragment metadata") });
+    const entry = spec(args, ["children", "metadata", "style"], "Fragment");
+    return output("fragment", {
+      children: sequence(get(entry, "children"), "Fragment children"),
+      metadata: optionalMap(get(entry, "metadata"), "Fragment metadata"),
+      style: optionalMap(get(entry, "style"), "Fragment style")
+    });
   }
   function createEmphasis(args) {
     const entry = spec(args, ["children"], "Emphasis");
@@ -19035,7 +19013,8 @@ ${indentStr})`;
       title: inlineChildren(title, "Section title"),
       children: blockChildren(get(entry, "children"), "Section children"),
       id: asString(get(entry, "id")),
-      metadata: optionalMap(get(entry, "metadata"), "Section metadata")
+      metadata: optionalMap(get(entry, "metadata"), "Section metadata"),
+      style: optionalMap(get(entry, "style"), "Section style")
     });
   }
   function createListItem(args) {
@@ -19224,6 +19203,10 @@ ${indentStr})`;
     const entry = spec(args, ["target", "label", "help", "placeholder"], "Controls.Input");
     const target = reactiveTarget(entry, "Controls.Input");
     const value = target.get();
+    const inputMode = (asString(get(entry, "inputMode")) || "expression").toLowerCase();
+    if (!["expression", "text"].includes(inputMode)) {
+      throw new Error("Controls.Input inputMode must be :expression or :text");
+    }
     return output("control_input", {
       id: asString(get(entry, "id")) || `${target.id}:input`,
       label: asString(get(entry, "label")) || target.name,
@@ -19232,6 +19215,7 @@ ${indentStr})`;
       target,
       targetId: target.id,
       value,
+      inputMode,
       ...controlBehavior(entry, { value }, "Controls.Input", runtime),
       replacesDependencies: Object.freeze([...target.dependencies])
     });
@@ -19452,6 +19436,30 @@ ${indentStr})`;
     }
     return attributes.join("");
   }
+  var PORTABLE_BLOCK_STYLE_VALUES = Object.freeze({
+    layout: new Set(["stack", "cluster", "grid", "split"]),
+    gap: new Set(["compact", "normal", "spacious"]),
+    variant: new Set(["plain", "card", "hero", "muted"]),
+    width: new Set(["narrow", "content", "full"]),
+    align: new Set(["start", "center", "stretch"]),
+    density: new Set(["compact", "comfortable"])
+  });
+  function portableBlockStyleAttributes(style) {
+    const attributes = [];
+    for (const [name, allowed] of Object.entries(PORTABLE_BLOCK_STYLE_VALUES)) {
+      const value = asString(styleValue(style, name));
+      if (value && allowed.has(value))
+        attributes.push(` data-rix-${name}="${escapeHtml(value)}"`);
+    }
+    const rawColumns = styleValue(style, "columns");
+    if (rawColumns !== null && rawColumns !== undefined) {
+      const columns = exactInteger3(rawColumns, "Portable block style columns");
+      if (columns < 1 || columns > 4)
+        throw new Error("Portable block style columns must be between 1 and 4");
+      attributes.push(` data-rix-columns="${columns}"`);
+    }
+    return attributes.join("");
+  }
   function createControlPanelSnapshot(panel) {
     if (!isOutputValue(panel) || panel.kind !== "control_panel") {
       throw new Error("Expected a ControlPanel output value");
@@ -19464,6 +19472,7 @@ ${indentStr})`;
       submitLabel: panel.submitLabel,
       discardLabel: panel.discardLabel,
       interactive: false,
+      style: panel.style,
       metadata: panel.metadata
     });
   }
@@ -19904,7 +19913,13 @@ ${indentStr})`;
     const content = get(entry, "content");
     if (content === null)
       throw new Error("Figure requires content");
-    return output("figure", { content, caption: asString(get(entry, "caption")), label: asString(get(entry, "label")), alt: asString(get(entry, "alt")) });
+    return output("figure", {
+      content,
+      caption: asString(get(entry, "caption")),
+      label: asString(get(entry, "label")),
+      alt: asString(get(entry, "alt")),
+      style: optionalMap(get(entry, "style"), "Figure style")
+    });
   }
   function createSlide(args) {
     const entry = spec(args, ["content", "title", "id", "notes", "metadata"], "Slide");
@@ -20561,7 +20576,7 @@ ${formatOutputText(slide, format)}`).join(`
     if (value.kind === "heading")
       return `<h${value.level} class="rix-output-heading"${value.id ? ` id="${escapeHtml(value.id)}"` : ""}>${Array.isArray(value.content) ? renderInlineSequence(value.content, format) : renderInlineHtml(value.content, format)}</h${value.level}>`;
     if (value.kind === "section")
-      return `<section class="rix-output-section" data-rix-section-level="${value.level}"${value.id ? ` id="${escapeHtml(value.id)}"` : ""}><h${value.level}>${renderInlineSequence(value.title, format)}</h${value.level}>${value.children.map((child) => renderOutputHtml(child, format)).join("")}</section>`;
+      return `<section class="rix-output-section" data-rix-section-level="${value.level}"${portableBlockStyleAttributes(value.style)}${value.id ? ` id="${escapeHtml(value.id)}"` : ""}><h${value.level}>${renderInlineSequence(value.title, format)}</h${value.level}>${value.children.map((child) => renderOutputHtml(child, format)).join("")}</section>`;
     if (value.kind === "list") {
       const tag = value.ordered ? "ol" : "ul";
       return `<${tag} class="rix-output-list"${value.ordered && value.start !== null ? ` start="${value.start}"` : ""}${value.tight ? ' data-rix-list-tight="true"' : ""}>${value.items.map((item) => renderOutputHtml(item, format)).join("")}</${tag}>`;
@@ -20597,7 +20612,7 @@ ${formatOutputText(slide, format)}`).join(`
       return value.caption ? `<figure class="rix-output-${tag}-figure"${value.id ? ` id="${escapeHtml(value.id)}"` : ""}>${content}</figure>` : `<section class="rix-output-${tag}-asset"${value.id ? ` id="${escapeHtml(value.id)}"` : ""}>${content}</section>`;
     }
     if (value.kind === "fragment")
-      return `<section class="rix-output-fragment">${value.children.map((child) => renderOutputHtml(child, format)).join("")}</section>`;
+      return `<section class="rix-output-fragment"${portableBlockStyleAttributes(value.style)}>${value.children.map((child) => renderOutputHtml(child, format)).join("")}</section>`;
     if (value.kind === "snapshots") {
       return `<section class="rix-output-snapshots">${value.title ? `<h2>${escapeHtml(value.title)}</h2>` : ""}<div class="rix-output-snapshot-list">${value.snapshots.map((snapshot) => {
         const origin = snapshot.origin.entries;
@@ -20614,7 +20629,7 @@ ${formatOutputText(slide, format)}`).join(`
     }
     if (value.kind === "control_input") {
       const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml(value.replacesDependencies.join(","))}"` : "";
-      return `<label class="rix-output-control rix-output-control-input" data-rix-control-kind="input" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><span class="rix-output-control-input-row"><input type="text" value="${text4(controlField(value, "value"))}" placeholder="${escapeHtml(value.placeholder)}" data-rix-control-input aria-label="${escapeHtml(value.label)}"${controlInputAttributes(value, { text: true })}><button type="button" data-rix-control-commit${controlInputAttributes(value)}>Set</button></span><output data-rix-control-value>${text4(controlField(value, "value"))}</output>${controlMessages(value)}</label>`;
+      return `<label class="rix-output-control rix-output-control-input" data-rix-control-kind="input" data-rix-control-input-mode="${escapeHtml(value.inputMode || "expression")}" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><span class="rix-output-control-input-row"><input type="text" value="${text4(controlField(value, "value"))}" placeholder="${escapeHtml(value.placeholder)}" data-rix-control-input aria-label="${escapeHtml(value.label)}"${controlInputAttributes(value, { text: true })}><button type="button" data-rix-control-commit${controlInputAttributes(value)}>Set</button></span><output data-rix-control-value>${text4(controlField(value, "value"))}</output>${controlMessages(value)}</label>`;
     }
     if (value.kind === "control_choice") {
       const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml(value.replacesDependencies.join(","))}"` : "";
@@ -20640,10 +20655,10 @@ ${formatOutputText(slide, format)}`).join(`
     }
     if (value.kind === "control_panel") {
       const actions = value.mode === "staged" ? `<div class="rix-output-control-actions"><button type="button" data-rix-control-submit disabled>${escapeHtml(value.submitLabel)}</button><button type="button" data-rix-control-discard disabled>${escapeHtml(value.discardLabel)}</button></div>` : "";
-      return `<section class="rix-output-control-panel" data-rix-interactive="${value.interactive === false ? "false" : "true"}" data-rix-control-mode="${escapeHtml(value.mode || "immediate")}">${value.title ? `<h3>${escapeHtml(value.title)}</h3>` : ""}${value.description ? `<p>${escapeHtml(value.description)}</p>` : ""}<div class="rix-output-control-list">${value.controls.map((control) => renderOutputHtml({ ...control, style: resolvedControlStyle(value.style, control) }, format)).join("")}</div>${actions}<output class="rix-output-control-status" aria-live="polite"></output></section>`;
+      return `<section class="rix-output-control-panel" data-rix-interactive="${value.interactive === false ? "false" : "true"}" data-rix-control-mode="${escapeHtml(value.mode || "immediate")}"${portableBlockStyleAttributes(value.style)}>${value.title ? `<h3>${escapeHtml(value.title)}</h3>` : ""}${value.description ? `<p>${escapeHtml(value.description)}</p>` : ""}<div class="rix-output-control-list">${value.controls.map((control) => renderOutputHtml({ ...control, style: resolvedControlStyle(value.style, control) }, format)).join("")}</div>${actions}<output class="rix-output-control-status" aria-live="polite"></output></section>`;
     }
     if (value.kind === "table")
-      return `<table class="rix-output-table"${value.label ? ` id="${escapeHtml(value.label)}"` : ""}>${value.caption ? `<caption>${escapeHtml(value.caption)}</caption>` : ""}<thead><tr>${value.columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}</tr></thead><tbody>${value.rows.map((row) => `<tr>${row.map((cell) => `<td>${text4(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+      return `<table class="rix-output-table"${portableBlockStyleAttributes(value.options)}${value.label ? ` id="${escapeHtml(value.label)}"` : ""}>${value.caption ? `<caption>${escapeHtml(value.caption)}</caption>` : ""}<thead><tr>${value.columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}</tr></thead><tbody>${value.rows.map((row) => `<tr>${row.map((cell) => `<td>${text4(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
     if (value.kind === "grid")
       return `<table class="rix-output-grid"><tbody>${value.rows.map((row, rowIndex) => `<tr${hasRule(value, "horizontal", rowIndex + 1) ? ' class="rix-grid-rule-top"' : ""}>${row.map((cell, column) => `<td${hasRule(value, "vertical", column + 1) ? ' class="rix-grid-rule-left"' : ""}>${text4(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
     if (value.kind === "sheet") {
@@ -20679,7 +20694,7 @@ ${formatOutputText(slide, format)}`).join(`
       }).join("")}</tr></thead>${bodies}</table></section>`;
     }
     if (value.kind === "figure")
-      return `<figure class="rix-output-figure"${value.label ? ` id="${escapeHtml(value.label)}"` : ""}>${renderOutputHtml(value.content, format)}${value.caption ? `<figcaption>${escapeHtml(value.caption)}</figcaption>` : ""}</figure>`;
+      return `<figure class="rix-output-figure"${portableBlockStyleAttributes(value.style)}${value.label ? ` id="${escapeHtml(value.label)}"` : ""}>${renderOutputHtml(value.content, format)}${value.caption ? `<figcaption>${escapeHtml(value.caption)}</figcaption>` : ""}</figure>`;
     if (value.kind === "graphic") {
       const interactive = graphicIsInteractive(value);
       const replacesDependencies = interactive && value.children.some(function hasReplacement(node) {
@@ -21034,8 +21049,22 @@ ${formatOutputText(slide, format)}`).join(`
     }
     return null;
   }
+  var FORMAT_ACTIVE_VALUES = Symbol("formatActiveValues");
+  var FORMAT_CYCLE_MARKER = "<cycle>";
+  function formatWithCycleGuard(value, activeValues, format) {
+    if (activeValues.has(value))
+      return FORMAT_CYCLE_MARKER;
+    activeValues.add(value);
+    try {
+      return format();
+    } finally {
+      activeValues.delete(value);
+    }
+  }
   function formatValue(val, options = {}) {
-    const formatChild = (child) => formatValue(child, options);
+    const activeValues = options[FORMAT_ACTIVE_VALUES] || new WeakSet;
+    const childOptions = options[FORMAT_ACTIVE_VALUES] ? options : { ...options, [FORMAT_ACTIVE_VALUES]: activeValues };
+    const formatChild = (child) => formatValue(child, childOptions);
     if (isHole(val))
       return "undefined";
     if (isUndecided(val))
@@ -21045,19 +21074,22 @@ ${formatOutputText(slide, format)}`).join(`
     if (val === undefined)
       return "undefined";
     if (typeof val === "object" && val !== null) {
-      if (isOutputValue(val))
-        return formatOutputText(val, formatChild);
+      if (isOutputValue(val)) {
+        return formatWithCycleGuard(val, activeValues, () => formatOutputText(val, formatChild));
+      }
       if (isSymbolicSpec(val))
         return formatSymbolicSpec(val);
       if (isStructuralAlgebra(val) || isStructuralForm(val) || isStructuralLiteral(val) || isStructuralSymbol(val) || val.type === "structural_value") {
-        return formatStructuralValue(val, formatChild);
+        return formatWithCycleGuard(val, activeValues, () => formatStructuralValue(val, formatChild));
       }
       if (isLazySequence(val)) {
-        const cached = val._lazy.cache.slice(0, 8).map(formatChild).join(", ");
-        const more = val._lazy.cache.length > 8 || !val._lazy.done ? cached ? ", …" : "…" : "";
-        const length = lazyKnownLength(val);
-        const suffix = length === null ? "" : `; length ${length}`;
-        return `[LazySequence${suffix}: ${cached}${more}]`;
+        return formatWithCycleGuard(val, activeValues, () => {
+          const cached = val._lazy.cache.slice(0, 8).map(formatChild).join(", ");
+          const more = val._lazy.cache.length > 8 || !val._lazy.done ? cached ? ", …" : "…" : "";
+          const length = lazyKnownLength(val);
+          const suffix = length === null ? "" : `; length ${length}`;
+          return `[LazySequence${suffix}: ${cached}${more}]`;
+        });
       }
       if (isAsyncStream(val)) {
         const root = val._stream.root;
@@ -21077,17 +21109,19 @@ ${formatOutputText(slide, format)}`).join(`
       if (isCayleyInfinity(val))
         return "Infinity";
       if (isCayleyValue(val)) {
-        return `Cayley(${formatChild(val.magnitude)}, ${formatChild(val.direction)})`;
+        return formatWithCycleGuard(val, activeValues, () => `Cayley(${formatChild(val.magnitude)}, ${formatChild(val.direction)})`);
       }
-      if (isQuantity(val))
-        return formatQuantity(val, formatChild);
+      if (isQuantity(val)) {
+        return formatWithCycleGuard(val, activeValues, () => formatQuantity(val, formatChild));
+      }
       if (isUnitValue(val))
         return `~[${formatUnit(val)}]`;
       if (val.type === "exact_generator" || val.type === "exact_expression") {
-        return formatExact(val, formatChild);
+        return formatWithCycleGuard(val, activeValues, () => formatExact(val, formatChild));
       }
-      if (isTensor(val))
-        return formatTensor(val, formatChild);
+      if (isTensor(val)) {
+        return formatWithCycleGuard(val, activeValues, () => formatTensor(val, formatChild));
+      }
       if (val.type === "sequence" && val._ext instanceof Map && val._ext.get("_type")?.value === "multifunction") {
         return formatMultifunctionPreview(val);
       }
@@ -21095,28 +21129,32 @@ ${formatOutputText(slide, format)}`).join(`
         const open = val.kind === "set" ? "{| " : val.kind === "tuple" ? "( " : "[";
         const close = val.kind === "set" ? " |}" : val.kind === "tuple" ? " )" : "]";
         const items = val.values || val.elements || [];
-        return open + items.map(formatChild).join(", ") + close;
+        return formatWithCycleGuard(val, activeValues, () => open + items.map(formatChild).join(", ") + close);
       }
       if (val.type === "set" || val.type === "tuple") {
         const open = val.type === "set" ? "{| " : "( ";
         const close = val.type === "set" ? " |}" : " )";
-        return open + val.values.map(formatChild).join(", ") + close;
+        return formatWithCycleGuard(val, activeValues, () => open + val.values.map(formatChild).join(", ") + close);
       }
       if (val.type === "map") {
-        const entries2 = [];
-        const mapObj = val.entries || val.elements || new Map;
-        mapObj.forEach((entryValue, key) => {
-          entries2.push(`${key}=${formatChild(entryValue)}`);
+        return formatWithCycleGuard(val, activeValues, () => {
+          const entries2 = [];
+          const mapObj = val.entries || val.elements || new Map;
+          mapObj.forEach((entryValue, key) => {
+            entries2.push(`${key}=${formatChild(entryValue)}`);
+          });
+          return `{= ${entries2.join(", ")} }`;
         });
-        return `{= ${entries2.join(", ")} }`;
       }
       if (val.type === "export_bundle") {
-        const entries2 = [];
-        const mapObj = val.entries || new Map;
-        mapObj.forEach((cell, key) => {
-          entries2.push(`${key}=${formatChild(cell?.value)}`);
+        return formatWithCycleGuard(val, activeValues, () => {
+          const entries2 = [];
+          const mapObj = val.entries || new Map;
+          mapObj.forEach((cell, key) => {
+            entries2.push(`${key}=${formatChild(cell?.value)}`);
+          });
+          return `{= ${entries2.join(", ")} }`;
         });
-        return `{= ${entries2.join(", ")} }`;
       }
       if (val.type === "function" || val.type === "lambda") {
         return formatCallablePreview(val, val.type === "lambda" ? "Lambda" : "Function");
@@ -21140,7 +21178,7 @@ ${formatOutputText(slide, format)}`).join(`
         return `${val.start || val.lo}:${val.end || val.hi}`;
       }
       if (options.semanticDisplay !== false) {
-        const semanticDisplay = formatViaSemanticDisplay(val, options);
+        const semanticDisplay = formatWithCycleGuard(val, activeValues, () => formatViaSemanticDisplay(val, childOptions));
         if (semanticDisplay !== null)
           return semanticDisplay;
       }
@@ -21498,130 +21536,207 @@ ${indented.join(`,
     }
     return value;
   }
-  function deepCopyValue(value) {
+  function deepCopyValue(value, memo = new WeakMap) {
+    if (!(memo instanceof WeakMap))
+      memo = new WeakMap;
     if (value == null)
       return value;
     if (typeof value !== "object")
       return value;
-    if (value instanceof UndecidedDiagnostic)
-      return value.copy();
+    if (memo.has(value))
+      return memo.get(value);
+    if (value instanceof UndecidedDiagnostic) {
+      const copy = value.copy();
+      memo.set(value, copy);
+      return copy;
+    }
     if (isUndecided(value))
       return value;
-    if (value instanceof CertifiedApproximation)
-      return value.copy();
-    if (value instanceof Integer)
-      return new Integer(value.value);
-    if (value instanceof Rational)
-      return new Rational(value.numerator, value.denominator);
-    if (value instanceof RationalInterval) {
-      return new RationalInterval(new Rational(value.low.numerator, value.low.denominator), new Rational(value.high.numerator, value.high.denominator));
+    if (value instanceof CertifiedApproximation) {
+      const copy = value.copy();
+      memo.set(value, copy);
+      return copy;
     }
-    if (value.type === "string")
-      return { type: "string", value: value.value };
+    if (value instanceof Integer) {
+      const copy = new Integer(value.value);
+      memo.set(value, copy);
+      return copy;
+    }
+    if (value instanceof Rational) {
+      const copy = new Rational(value.numerator, value.denominator);
+      memo.set(value, copy);
+      return copy;
+    }
+    if (value instanceof RationalInterval) {
+      const copy = new RationalInterval(new Rational(value.low.numerator, value.low.denominator), new Rational(value.high.numerator, value.high.denominator));
+      memo.set(value, copy);
+      return copy;
+    }
+    if (value.type === "string") {
+      const copy = { type: "string", value: value.value };
+      memo.set(value, copy);
+      return copy;
+    }
     if (isLazySequence(value)) {
-      return cloneLazySequence(value, { restart: true, cloneValue: deepCopyValue });
+      const copy = cloneLazySequence(value, {
+        restart: true,
+        cloneValue: (child) => deepCopyValue(child, memo)
+      });
+      memo.set(value, copy);
+      return copy;
     }
     if (value.type === "iterator") {
-      return {
+      const copy = {
         type: "iterator",
-        source: deepCopyValue(value.source),
+        source: undefined,
         cursor: value.cursor,
-        _ext: value._ext ? deepCopyMeta(value._ext) : undefined
+        _ext: undefined
       };
+      memo.set(value, copy);
+      copy.source = deepCopyValue(value.source, memo);
+      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
+      return copy;
     }
     if (value.type === "sequence") {
-      return {
+      const copy = {
         type: "sequence",
-        values: value.values.map(deepCopyValue),
-        _ext: value._ext ? deepCopyMeta(value._ext) : undefined
+        values: [],
+        _ext: undefined
       };
+      memo.set(value, copy);
+      copy.values = value.values.map((child) => deepCopyValue(child, memo));
+      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
+      return copy;
     }
     if (value.type === "tuple") {
-      return {
+      const copy = {
         type: "tuple",
-        values: value.values.map(deepCopyValue),
-        _ext: value._ext ? deepCopyMeta(value._ext) : undefined
+        values: [],
+        _ext: undefined
       };
+      memo.set(value, copy);
+      copy.values = value.values.map((child) => deepCopyValue(child, memo));
+      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
+      return copy;
     }
     if (value.type === "map" && value.entries instanceof Map) {
-      const newEntries = new Map;
-      for (const [k, v] of value.entries) {
-        newEntries.set(k, deepCopyValue(v));
-      }
-      return {
+      const copy = {
         type: "map",
-        entries: newEntries,
-        _ext: value._ext ? deepCopyMeta(value._ext) : undefined
+        entries: new Map,
+        _ext: undefined
       };
+      memo.set(value, copy);
+      for (const [k, v] of value.entries) {
+        copy.entries.set(k, deepCopyValue(v, memo));
+      }
+      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
+      return copy;
     }
     if (value.type === "export_bundle" && value.entries instanceof Map) {
-      const newEntries = new Map;
-      for (const [k, v] of value.entries) {
-        newEntries.set(k, new Cell(deepCopyValue(v.value)));
-      }
-      return {
+      const copy = {
         type: "export_bundle",
-        entries: newEntries,
-        _ext: value._ext ? deepCopyMeta(value._ext) : undefined
+        entries: new Map,
+        _ext: undefined
       };
+      memo.set(value, copy);
+      for (const [k, v] of value.entries) {
+        copy.entries.set(k, deepCopyCell(v, memo));
+      }
+      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
+      return copy;
     }
     if (value.type === "set") {
-      return {
+      const copy = {
         type: "set",
-        values: value.values.map(deepCopyValue),
-        _ext: value._ext ? deepCopyMeta(value._ext) : undefined
+        values: [],
+        _ext: undefined
       };
+      memo.set(value, copy);
+      copy.values = value.values.map((child) => deepCopyValue(child, memo));
+      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
+      return copy;
     }
     if (isTensor(value)) {
-      return {
+      const copy = {
         type: "tensor",
-        data: value.data.map(deepCopyValue),
+        data: [],
         shape: [...value.shape],
         strides: [...value.strides],
         offset: value.offset,
-        _ext: value._ext ? deepCopyMeta(value._ext) : undefined
+        _ext: undefined
       };
+      memo.set(value, copy);
+      copy.data = value.data.map((child) => deepCopyValue(child, memo));
+      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
+      return copy;
     }
     if (value.type === "quantity") {
-      return {
+      const copy = {
         ...value,
-        baseMagnitude: deepCopyValue(value.baseMagnitude),
-        displayUnit: deepCopyValue(value.displayUnit),
-        _ext: value._ext ? deepCopyMeta(value._ext) : undefined
+        baseMagnitude: undefined,
+        displayUnit: undefined,
+        _ext: undefined
       };
+      memo.set(value, copy);
+      copy.baseMagnitude = deepCopyValue(value.baseMagnitude, memo);
+      copy.displayUnit = deepCopyValue(value.displayUnit, memo);
+      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
+      return copy;
     }
     if (value.type === "unit_expr") {
-      return {
+      const copy = {
         ...value,
         factors: new Map(value.factors),
-        _ext: value._ext ? deepCopyMeta(value._ext) : undefined
+        _ext: undefined
       };
+      memo.set(value, copy);
+      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
+      return copy;
     }
     if (value.type === "exact_expression") {
-      const terms = new Map;
+      const copy = { ...value, terms: new Map, _ext: undefined };
+      memo.set(value, copy);
       for (const [key, term] of value.terms) {
-        terms.set(key, {
+        copy.terms.set(key, {
           powers: new Map(term.powers),
-          coefficient: deepCopyValue(term.coefficient)
+          coefficient: deepCopyValue(term.coefficient, memo)
         });
       }
-      return { ...value, terms, _ext: value._ext ? deepCopyMeta(value._ext) : undefined };
+      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
+      return copy;
     }
     if (value.type === "cayley") {
-      return {
+      const copy = {
         ...value,
-        magnitude: deepCopyValue(value.magnitude),
-        direction: deepCopyValue(value.direction),
-        _ext: value._ext ? deepCopyMeta(value._ext) : undefined
+        magnitude: undefined,
+        direction: undefined,
+        _ext: undefined
       };
+      memo.set(value, copy);
+      copy.magnitude = deepCopyValue(value.magnitude, memo);
+      copy.direction = deepCopyValue(value.direction, memo);
+      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
+      return copy;
     }
+    memo.set(value, value);
     return value;
   }
-  function deepCopyMeta(meta) {
+  function deepCopyMeta(meta, memo) {
+    if (memo.has(meta))
+      return memo.get(meta);
     const result = new Map;
+    memo.set(meta, result);
     for (const [key, val] of meta) {
-      result.set(key, deepCopyValue(val));
+      result.set(key, deepCopyValue(val, memo));
     }
+    return result;
+  }
+  function deepCopyCell(cell, memo) {
+    if (memo.has(cell))
+      return memo.get(cell);
+    const result = new Cell(undefined);
+    memo.set(cell, result);
+    result.value = deepCopyValue(cell.value, memo);
     return result;
   }
   function ensureExt2(obj) {
@@ -26706,7 +26821,7 @@ ${indented.join(`,
   }
   function pluginNamespaceEntry(context, catalog) {
     const hostContext = context._hostContext;
-    const load = (args, evaluationContext) => {
+    const load = (args, evaluationContext, promiseAware = false) => {
       const runtime = evaluationContext?.getEnv?.("__script_runtime__", null);
       const frame = runtime?.frameStack?.[runtime.frameStack.length - 1];
       if (frame && !frame.permissions?.has("PLUGINS")) {
@@ -26715,7 +26830,8 @@ ${indented.join(`,
       const id = rixString2(args[1], ".Plugin.Load name");
       const loader = evaluationContext?.getEnv?.("__plugin_load_rix__", null);
       const registry = evaluationContext?.getEnv?.("__registry__", null);
-      return catalog.load(id, {
+      const activate = promiseAware && typeof catalog.loadAsync === "function" ? catalog.loadAsync.bind(catalog) : catalog.load.bind(catalog);
+      return activate(id, {
         options: args[2],
         context: evaluationContext,
         registry,
@@ -26728,8 +26844,8 @@ ${indented.join(`,
     value._ext.set("LOAD", {
       type: "method_builtin",
       name: "Load",
-      impl(args, evaluationContext) {
-        return load(args, evaluationContext);
+      impl(args, evaluationContext, _evaluate, _invoke, execution) {
+        return load(args, evaluationContext, execution?.promiseAware === true);
       }
     });
     value._ext.set("LIST", {
@@ -27045,8 +27161,8 @@ ${indented.join(`,
       catalog.declareInto(this);
       const plugin = pluginNamespaceEntry(this, catalog);
       this.registerCallableValue("Plugin", plugin.value, {
-        impl(args, evaluationContext) {
-          return plugin.load([null, ...args], evaluationContext);
+        impl(args, evaluationContext, _evaluate, execution) {
+          return plugin.load([null, ...args], evaluationContext, execution?.promiseAware === true);
         }
       }, {
         doc: "Discover and load host-approved RiX plugins",
@@ -27093,8 +27209,8 @@ ${indented.join(`,
         this._capabilities.set(normalizeCapabilityName("Plugin"), {
           ...pluginEntry,
           value: plugin.value,
-          impl(args, evaluationContext) {
-            return plugin.load([null, ...args], evaluationContext);
+          impl(args, evaluationContext, _evaluate, execution) {
+            return plugin.load([null, ...args], evaluationContext, execution?.promiseAware === true);
           }
         });
       }
@@ -28684,6 +28800,8 @@ ${indented.join(`,
       this.installers = new Map(Object.entries(installers));
       this.loaded = new Map;
       this.loading = new Set;
+      this.activations = new Map;
+      this.activationDependencies = new Map;
     }
     registerInstaller(id, installer) {
       if (typeof installer !== "function")
@@ -28785,6 +28903,9 @@ ${indented.join(`,
         throw new Error(`Unknown plugin '${id}'`);
       if (this.loaded.has(metadata.id))
         return this.infoValue(metadata);
+      if (this.activations.has(metadata.id)) {
+        throw new Error(`Plugin '${metadata.id}' is already loading asynchronously; use promise-aware RiX evaluation`);
+      }
       if (this.loading.has(metadata.id)) {
         throw new Error(`Plugin dependency cycle detected while loading '${metadata.id}'`);
       }
@@ -28853,6 +28974,120 @@ ${indented.join(`,
       } finally {
         this.loading.delete(metadata.id);
       }
+    }
+    _activationPathExists(from, target, visited = new Set) {
+      if (from === target)
+        return true;
+      if (visited.has(from))
+        return false;
+      visited.add(from);
+      for (const dependency of this.activationDependencies.get(from) || []) {
+        if (this._activationPathExists(dependency, target, visited))
+          return true;
+      }
+      return false;
+    }
+    _recordActivationDependency(pluginId, dependencyId) {
+      if (pluginId === dependencyId || this._activationPathExists(dependencyId, pluginId)) {
+        throw new Error(`Plugin dependency cycle detected while loading '${pluginId}'`);
+      }
+      let dependencies = this.activationDependencies.get(pluginId);
+      if (!dependencies) {
+        dependencies = new Set;
+        this.activationDependencies.set(pluginId, dependencies);
+      }
+      dependencies.add(dependencyId);
+    }
+    _clearActivationDependencies(pluginId) {
+      this.activationDependencies.delete(pluginId);
+      for (const dependencies of this.activationDependencies.values())
+        dependencies.delete(pluginId);
+    }
+    async loadAsync(id, runtime = {}) {
+      const metadata = this.info(id);
+      if (!metadata)
+        throw new Error(`Unknown plugin '${id}'`);
+      if (this.loaded.has(metadata.id))
+        return this.infoValue(metadata);
+      if (this.loading.has(metadata.id)) {
+        throw new Error(`Plugin '${metadata.id}' is already loading synchronously`);
+      }
+      const existing = this.activations.get(metadata.id);
+      if (existing)
+        return existing;
+      let activation;
+      activation = Promise.resolve().then(() => this._activateAsync(metadata, runtime)).finally(() => {
+        if (this.activations.get(metadata.id) === activation) {
+          this.activations.delete(metadata.id);
+        }
+        this._clearActivationDependencies(metadata.id);
+      });
+      this.activations.set(metadata.id, activation);
+      return activation;
+    }
+    async _activateAsync(metadata, runtime) {
+      for (const requirement of metadata.requires) {
+        const exact = this.info(requirement);
+        const providers = exact ? [exact] : this.list().filter((candidate) => candidate.provides.includes(requirement));
+        if (providers.length === 0) {
+          throw new Error(`Plugin '${metadata.id}' requires unavailable service '${requirement}'`);
+        }
+        if (providers.length > 1) {
+          throw new Error(`Plugin '${metadata.id}' requirement '${requirement}' has multiple providers: ${providers.map(({ id: providerId }) => providerId).join(", ")}`);
+        }
+        const provider = providers[0];
+        this._recordActivationDependency(metadata.id, provider.id);
+        await this.loadAsync(provider.id, { ...runtime, options: null });
+      }
+      const options = optionMap(runtime.options);
+      if (options.as !== undefined && (typeof options.as !== "string" || !/^[a-z][A-Za-z0-9_]*$/.test(options.as))) {
+        throw new Error(`Plugin '${metadata.id}' option as must be a camelCase host capability name`);
+      }
+      const mount = options.as || metadata.mount;
+      const aliases = options.as === undefined ? metadata.aliases : [];
+      const api = {
+        metadata,
+        options,
+        context: runtime.context,
+        registry: runtime.registry,
+        systemContext: runtime.systemContext,
+        rendererRegistry: runtime.rendererRegistry || runtime.systemContext?._rendererRegistry || null
+      };
+      if (metadata.kind === "rix") {
+        if (typeof runtime.loadRix !== "function")
+          throw new Error(`No RiX plugin loader is available for '${metadata.id}'`);
+        await runtime.loadRix({
+          ...api,
+          source: metadata.source,
+          operatorDefinitions: mountedOperatorDefinitions(metadata.operatorDefinitions, metadata, mount)
+        });
+      } else {
+        const installer = this.installers.get(metadata.id);
+        if (!installer) {
+          throw new Error(`Plugin '${metadata.id}' is discoverable but its host installer has not been approved by this host`);
+        }
+        await installer(api);
+      }
+      if (metadata.mount && mount && mount !== metadata.mount) {
+        runtime.systemContext?.renameHostCapability(metadata.mount, mount);
+      }
+      for (const alias of aliases) {
+        const existing = runtime.systemContext?.get(alias);
+        if (existing && !(existing.pluginDisabled && existing.pluginId === metadata.id)) {
+          throw new Error(`Plugin '${metadata.id}' alias '${alias}' conflicts with an existing host capability`);
+        }
+        runtime.systemContext?.aliasHostCapability(alias, mount);
+      }
+      for (const name of [mount, ...aliases].filter(Boolean)) {
+        if (metadata.groups.length)
+          runtime.systemContext?.addCapabilityGroups(name, metadata.groups);
+        if (runtime.visibleSystemContext && runtime.visibleSystemContext !== runtime.systemContext) {
+          runtime.visibleSystemContext.adoptHostCapability(runtime.systemContext, name);
+        }
+      }
+      installOperatorDefinitions(runtime.context, metadata.operatorDefinitions, metadata, mount);
+      this.loaded.set(metadata.id, { metadata, mount, aliases });
+      return this.infoValue(metadata);
     }
   }
 
@@ -46479,7 +46714,7 @@ ${lines.join(`
   }
 
   // rix/plugins/render-html/html.plugin.rix.js
-  var DEFAULT_STYLE = `body{font-family:system-ui,sans-serif;line-height:1.5;max-width:72rem;margin:2rem auto;padding:0 1rem;color:#172033}table{border-collapse:collapse;margin:1rem 0}th,td{border:1px solid #cbd5e1;padding:.35rem .6rem}figure{margin:1.5rem 0}.rix-output-svg{max-width:100%;height:auto}pre{overflow:auto;background:#f8fafc;padding:1rem}.rix-output-callout{border-left:.3rem solid #64748b;padding:.5rem 1rem;background:#f8fafc}`;
+  var DEFAULT_STYLE = `:root{font-family:system-ui,sans-serif;color:#172033;background:#f5f7ff}*{box-sizing:border-box}body{line-height:1.5;max-width:72rem;margin:2rem auto;padding:0 1rem}[data-rix-layout=stack]{display:grid}[data-rix-layout=cluster]{display:flex;flex-wrap:wrap;align-items:center}[data-rix-layout=grid],[data-rix-layout=split]{display:grid}[data-rix-columns="2"]{grid-template-columns:repeat(2,minmax(0,1fr))}[data-rix-columns="3"]{grid-template-columns:repeat(3,minmax(0,1fr))}[data-rix-columns="4"]{grid-template-columns:repeat(4,minmax(0,1fr))}[data-rix-layout=split]{grid-template-columns:minmax(16rem,.8fr) minmax(0,1.4fr)}[data-rix-gap=compact]{gap:.5rem}[data-rix-gap=normal]{gap:1rem}[data-rix-gap=spacious]{gap:2rem}[data-rix-variant=card],[data-rix-variant=hero],[data-rix-variant=muted]{padding:1.25rem;border:1px solid #dfe3ed;border-radius:1rem;background:#fff}[data-rix-variant=hero]{background:linear-gradient(145deg,#fff,#f1edff)}[data-rix-variant=muted]{background:#f7f8fc}table{width:100%;border-collapse:collapse;margin:1rem 0;background:#fff}th,td{border:1px solid #cbd5e1;padding:.35rem .6rem}figure{margin:1.5rem 0}.rix-output-svg{max-width:100%;height:auto}pre{overflow:auto;background:#f8fafc;padding:1rem}.rix-output-callout{border-left:.3rem solid #64748b;padding:.5rem 1rem;background:#f8fafc}@media(max-width:760px){[data-rix-layout=grid],[data-rix-layout=split],[data-rix-columns]{grid-template-columns:1fr}}`;
   function staticDiagnostics(value, diagnostics, seen = new Set) {
     if (!value || typeof value !== "object" || seen.has(value))
       return;
@@ -47655,6 +47890,19 @@ ${lines.join(`
         context.env?.delete(POSTFIX_CHECK_VALUE_ENV);
     }
   }
+  async function withPostfixCheckValueAsync(context, value, callback) {
+    const hadPrevious = context.env?.has(POSTFIX_CHECK_VALUE_ENV) === true;
+    const previous = context.getEnv(POSTFIX_CHECK_VALUE_ENV, undefined);
+    context.setEnv(POSTFIX_CHECK_VALUE_ENV, value);
+    try {
+      return await callback();
+    } finally {
+      if (hadPrevious)
+        context.setEnv(POSTFIX_CHECK_VALUE_ENV, previous);
+      else
+        context.env?.delete(POSTFIX_CHECK_VALUE_ENV);
+    }
+  }
   function checkPostfixType(value, spec2, context, registry, evaluateValue) {
     const name = String(spec2?.name || "").toLowerCase();
     const structuralKinds = { array: "sequence", set: "set", map: "map", tuple: "tuple", tensor: "tensor" };
@@ -48687,6 +48935,26 @@ ${lines.join(`
     const maxIndex = partial.template.reduce((max, entry) => entry?.type === "placeholder" ? Math.max(max, entry.index) : max, 0);
     return { fn: partial.fn, args: [...filled, ...callArgs.slice(maxIndex)] };
   }
+  function isPlaceholderNodeAsync(node) {
+    return node && typeof node === "object" && node.fn === "PLACEHOLDER";
+  }
+  async function evaluateCallArgsAsync(argNodes, context, registry, systemContext, state) {
+    const values3 = [];
+    for (const arg of argNodes) {
+      if (arg?.fn !== "SPREAD") {
+        values3.push(await evaluateAsyncInternal(arg, context, registry, systemContext, state));
+        continue;
+      }
+      let spread = await evaluateAsyncInternal(arg.args[0], context, registry, systemContext, state);
+      if (isLazySequence(spread))
+        spread = materializeLazySequence(spread);
+      if (!spread || !["tuple", "sequence", "array", "set"].includes(spread.type)) {
+        throw new Error("Spread operator requires an iterable collection (array, tuple, sequence, set)");
+      }
+      values3.push(...spread.values || spread.elements || []);
+    }
+    return values3;
+  }
   async function bindAsyncCallScope(params, callArgs, context, registry, systemContext, state) {
     const scope = new Map;
     const positional = params?.positional || [];
@@ -48695,7 +48963,7 @@ ${lines.join(`
     for (let index = 0;index < ordinaryCount; index++) {
       const param = positional[index];
       const missing = index >= callArgs.length || isHole(callArgs[index]);
-      const value = missing && param.holeDefault ? await evaluateAsyncInternal(param.holeDefault, context, registry, systemContext, state) : missing ? null : callArgs[index];
+      const value = missing && param.holeDefault ? await evaluateAsyncInternal(param.holeDefault, context, registry, systemContext, state) : missing ? HOLE : callArgs[index];
       scope.set(param.name, value);
     }
     if (hasRest) {
@@ -48749,39 +49017,54 @@ ${lines.join(`
       });
       pushed++;
     }
-    context.push(await bindAsyncCallScope(fn.params, callArgs, context, registry, systemContext, callableState));
-    if (fn.name)
-      context.pushCall(fn.name);
-    context.pushCurrentCallable(fn, fn.__parentMultifunction ?? null);
+    let scopeActive = false;
+    let callActive = false;
+    let callableActive = false;
     try {
-      const prepEntries = [
-        ...fn.params?.conditionals || [],
-        ...fn.params?.prep || []
-      ];
-      for (let prepIndex = 0;prepIndex < prepEntries.length; prepIndex++) {
-        const prep = prepEntries[prepIndex];
-        try {
-          const passed = await evaluateAsyncInternal(prep, context, registry, systemContext, callableState);
-          const state2 = decisionState(passed);
-          if (state2 === "undecided") {
-            if (fn.params?.prepUndecided === "throw") {
-              const error = new Error(`${fn.name || "<lambda>"} prep remained undecided at entry ${prepIndex + 1}`);
-              error.undecided = passed;
-              throw error;
-            }
-            return passed;
-          }
-          if (state2 === "null")
-            return null;
-        } catch (error) {
-          if (error?.message?.includes("prep remained undecided"))
-            throw error;
-          if (fn.params?.prepStrict === true)
-            throw error;
-          return null;
-        }
+      context.push(await bindAsyncCallScope(fn.params, callArgs, context, registry, systemContext, callableState));
+      scopeActive = true;
+      if (fn.name) {
+        context.pushCall(fn.name);
+        callActive = true;
       }
-      return await context.withSharedBodyAsync(fn.body, () => evaluateAsyncInternal(fn.body, context, registry, systemContext, callableState));
+      context.pushCurrentCallable(fn, fn.__parentMultifunction ?? null);
+      callableActive = true;
+      while (true) {
+        const prepEntries = [
+          ...fn.params?.conditionals || [],
+          ...fn.params?.prep || []
+        ];
+        for (let prepIndex = 0;prepIndex < prepEntries.length; prepIndex++) {
+          const prep = prepEntries[prepIndex];
+          try {
+            const passed = await evaluateAsyncInternal(prep, context, registry, systemContext, callableState);
+            const prepState = decisionState(passed);
+            if (prepState === "undecided") {
+              if (fn.params?.prepUndecided === "throw") {
+                const error = new Error(`${fn.name || "<lambda>"} prep remained undecided at entry ${prepIndex + 1}`);
+                error.undecided = passed;
+                throw error;
+              }
+              return passed;
+            }
+            if (prepState === "null")
+              return null;
+          } catch (error) {
+            if (error?.message?.includes("prep remained undecided"))
+              throw error;
+            if (fn.params?.prepStrict === true)
+              throw error;
+            return null;
+          }
+        }
+        const result = await context.withSharedBodyAsync(fn.body, () => evaluateAsyncInternal(fn.body, context, registry, systemContext, callableState));
+        if (!isTailSelfCall(result))
+          return result;
+        context.pop();
+        scopeActive = false;
+        context.push(await bindAsyncCallScope(fn.params, result.args, context, registry, systemContext, callableState));
+        scopeActive = true;
+      }
     } catch (error) {
       if (callableAsync.ownsScheduler) {
         callableState.scheduler.cancelGroup(callableState.group, error);
@@ -48792,10 +49075,12 @@ ${lines.join(`
         await callableState.scheduler.waitForIdle(callableState.group);
         callableState.scheduler.closeGroup(callableState.group);
       }
-      context.popCurrentCallable();
-      if (fn.name)
+      if (callableActive)
+        context.popCurrentCallable();
+      if (callActive)
         context.popCall();
-      context.pop();
+      if (scopeActive)
+        context.pop();
       while (pushed-- > 0)
         context.pop();
     }
@@ -48823,7 +49108,10 @@ ${lines.join(`
         const capability2 = systemContext.get(fn.name);
         if (capability2.kind !== "function")
           throw new Error(`System ${capability2.kind} .${capability2.displayName} is not callable`);
-        return await capability2.impl(callArgs, context, (node) => evaluateAsyncInternal(node, context, registry, systemContext, state), { signal: state?.signal ?? null });
+        return await capability2.impl(callArgs, context, (node) => evaluateAsyncInternal(node, context, registry, systemContext, state), {
+          promiseAware: true,
+          signal: state?.signal ?? null
+        });
       }
       return evaluateAsyncInternal({ fn: fn.name, args: callArgs }, context, registry, systemContext, state);
     }
@@ -49094,6 +49382,7 @@ ${lines.join(`
   }
   function createAsyncMethodExecution(context, registry, systemContext, state) {
     return {
+      promiseAware: true,
       signal: state?.signal ?? null,
       invoke: (callable, args) => invokeCallableAsync(callable, args, context, registry, systemContext, state),
       consume: (stream, terminal) => withReleasedAsyncAdmission(state, async () => {
@@ -49210,7 +49499,7 @@ ${lines.join(`
               ]
             };
           };
-          return containsNestedAsyncCollection(value) ? resolveEntry() : state.scheduler.run((admission) => withAsyncItemFinalizers(itemContext, () => resolveEntry(admission)), state.group, {
+          return state.parallelCollections === false || containsNestedAsyncCollection(value) ? resolveEntry() : state.scheduler.run((admission) => withAsyncItemFinalizers(itemContext, () => resolveEntry(admission)), state.group, {
             branchPath: entryState.branchPath,
             path: asyncTaskPath(entryState, "map entry")
           });
@@ -50162,6 +50451,22 @@ ${lines.join(`
         const left = await evaluateAsyncInternal(args[0], context, registry, systemContext, state);
         return isHole(left) ? evaluateAsyncInternal(args[1], context, registry, systemContext, state) : left;
       }
+      if (fn === "POSTFIX_CHECK_VALUE") {
+        return context.getEnv(POSTFIX_CHECK_VALUE_ENV, null);
+      }
+      if (fn === "POSTFIX_PREDICATE_CHECK") {
+        const value = await evaluateAsyncInternal(args[0], context, registry, systemContext, state);
+        const passed = await withPostfixCheckValueAsync(context, value, () => evaluateAsyncInternal(args[1], context, registry, systemContext, state));
+        if (passed === null || passed === undefined) {
+          throw new Error(`##@ check failed for ${formatCheckValue(value)}`);
+        }
+        return value;
+      }
+      if (fn === "POSTFIX_TYPE_CHECK") {
+        const value = await evaluateAsyncInternal(args[0], context, registry, systemContext, state);
+        checkPostfixType(value, args[1], context, registry, (node) => evaluate(node, context, registry, systemContext));
+        return value;
+      }
       if (fn === "POSTFIX_FINALIZER") {
         const value = await evaluateAsyncInternal(args[0], context, registry, systemContext, state);
         const cleanup = await evaluateAsyncInternal(args[1], context, registry, systemContext, state);
@@ -50205,8 +50510,16 @@ ${lines.join(`
         return await evaluateAsyncScope(args, context, registry, systemContext, state);
       if (fn === "DETACH")
         return startDetachedBlock(args, context, registry, systemContext, state);
-      if (state && ASYNC_COLLECTION_FNS.has(fn)) {
-        return await evaluateAsyncCollection(irNode, context, registry, systemContext, state);
+      if (ASYNC_COLLECTION_FNS.has(fn)) {
+        const collectionState = state || {
+          scheduler: null,
+          group: null,
+          signal: null,
+          limit: 1,
+          name: null,
+          parallelCollections: false
+        };
+        return await evaluateAsyncCollection(irNode, context, registry, systemContext, collectionState);
       }
       if (ASYNC_PIPE_FNS.has(fn)) {
         return state ? await evaluateAsyncPipe(irNode, context, registry, systemContext, state) : await evaluateSequentialAsyncPipe(irNode, context, registry, systemContext, null);
@@ -50234,14 +50547,25 @@ ${lines.join(`
           throw new Error(`Unknown system capability: ${name}`);
         if (capability2.kind !== "function")
           throw new Error(`System ${capability2.kind} .${capability2.displayName} is not callable`);
+        const callArgNodes = args.slice(1);
+        if (callArgNodes.some(isPlaceholderNodeAsync)) {
+          const template = await evaluateCallArgsAsync(callArgNodes, context, registry, systemContext, state);
+          return { type: "partial", fn: { type: "sysref", name }, template };
+        }
         if (capability2.lazy)
-          return await capability2.impl(args.slice(1), context, evalAsync, { signal: state?.signal ?? null });
+          return await capability2.impl(callArgNodes, context, evalAsync, {
+            promiseAware: true,
+            signal: state?.signal ?? null
+          });
         const values3 = [];
-        for (const arg of args.slice(1))
+        for (const arg of callArgNodes)
           values3.push(await evalAsync(arg));
         if (state?.signal?.aborted)
           throw state.signal.reason;
-        return await capability2.impl(values3, context, evalAsync, { signal: state?.signal ?? null });
+        return await capability2.impl(values3, context, evalAsync, {
+          promiseAware: true,
+          signal: state?.signal ?? null
+        });
       }
       if (["SYS_GET", "SYS_OBJ"].includes(fn))
         return evaluate(irNode, context, registry, systemContext);
@@ -50334,14 +50658,30 @@ ${lines.join(`
       if (fn === "SYSREF") {
         return evaluate(irNode, context, registry, systemContext);
       }
+      if (fn === "TAIL_SELF") {
+        const currentCallable = context.getCurrentCallable();
+        if (currentCallable === undefined) {
+          throw new Error("Self reference '$' is only valid within a function body");
+        }
+        if (args.some(isPlaceholderNodeAsync)) {
+          const template = await evaluateCallArgsAsync(args, context, registry, systemContext, state);
+          return { type: "partial", fn: currentCallable, template };
+        }
+        return createTailSelfCall(await evaluateCallArgsAsync(args, context, registry, systemContext, state));
+      }
       if (fn === "CALL" || fn === "CALL_EXPR") {
         const callable = fn === "CALL" ? context.getCallable(args[0]) : await evalAsync(args[0]);
+        const argNodes = args.slice(1);
+        if (argNodes.some(isPlaceholderNodeAsync)) {
+          const template = await evaluateCallArgsAsync(argNodes, context, registry, systemContext, state);
+          const partialCallable = callable || (fn === "CALL" ? { type: "sysref", name: args[0] } : null);
+          if (!partialCallable)
+            throw new Error("Expression is not callable");
+          return { type: "partial", fn: partialCallable, template };
+        }
         if (!callable)
           throw new Error(`Undefined callable: ${args[0]}`);
-        const start = fn === "CALL" ? 1 : 1;
-        const callArgs = [];
-        for (const arg of args.slice(start))
-          callArgs.push(await evalAsync(arg));
+        const callArgs = await evaluateCallArgsAsync(argNodes, context, registry, systemContext, state);
         return invokeCallableAsync(callable, callArgs, context, registry, systemContext, state);
       }
       if (fn === "PIPE") {
@@ -51999,10 +52339,14 @@ ${lines.join(`
         }
       };
       if (kind === "input") {
-        const submit2 = () => commit({
+        const submit2 = () => commit(control.dataset.rixControlInputMode === "text" ? {
+          ...identity(),
+          rawText: input.value,
+          source: "text"
+        } : {
           ...identity(),
           sourceText: input.value,
-          source: "text"
+          source: "expression"
         });
         control.querySelector("[data-rix-control-commit]")?.addEventListener("click", submit2);
         input.addEventListener("keydown", (event) => {
@@ -52440,7 +52784,12 @@ ${lines.join(`
             pendingFocusRequest = focusRequest;
             try {
               let event = detail;
-              if (typeof detail.sourceText === "string") {
+              if (typeof detail.rawText === "string") {
+                event = {
+                  ...detail,
+                  value: { type: "string", value: detail.rawText }
+                };
+              } else if (typeof detail.sourceText === "string") {
                 const evaluate2 = options.evaluateControl || options.evaluateEdit;
                 if (typeof evaluate2 !== "function") {
                   throw new Error("This host cannot evaluate RiX control input");

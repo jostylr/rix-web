@@ -939,6 +939,15 @@
     {
       "number": "15g",
       "parent": "15",
+      "file": "plugin-stern-brocot.html",
+      "title": "Explore the exact Stern–Brocot tree",
+      "description": "Describe rational nodes, build bounded tree views, and evaluate RiX functions at exact fractions.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "15h",
+      "parent": "15",
       "file": "plugin-symbolic.html",
       "title": "Load the symbolic exploration workspace",
       "description": "Activate unreduced fractions and form-preserving functions through one meta-plugin.",
@@ -946,7 +955,7 @@
       "status": "implemented"
     },
     {
-      "number": "15h",
+      "number": "15i",
       "parent": "15",
       "file": "plugin-stats.html",
       "title": "Summarize exact data",

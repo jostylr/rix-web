@@ -42,7 +42,7 @@ import {
   typeRegistry,
   unsupportedRefinementResult,
   valueMethod
-} from "./chunk-7xq0r01q.js";
+} from "./chunk-fm4tfp9t.js";
 
 // src/repl-source.js
 var statementClosers = new Set([")", "]", "}", "|}", ";}", "@}", "!}", ":}"]);
@@ -5535,6 +5535,123 @@ statsNamespace._proto = {=
 };
 .Host.RegisterValue("stats", statsNamespace, "Exact descriptive statistics and portable plots", ["Statistics", "Exact", "Graphics"]);
 `, sourcePath: "bundled:stats", kind: "rix" });
+  catalog.addMetadata({ id: "stern-brocot", description: "Pure RiX Stern-Brocot node descriptions, visible tree records, and exact formula evaluation.", kind: "rix", mount: "sternBrocot", exports: ["Describe", "VisibleTree", "Evaluate", "sternBrocotDescribe", "sternBrocotVisibleTree", "sternBrocotEvaluate"], groups: ["Exact", "Graphics"], permissions: [], requires: ["rix.fraction@1"], provides: ["rix.stern-brocot@1"], schemas: ["rix.stern-brocot.node@1", "rix.stern-brocot.tree@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:stern-brocot" }, { source: `/**
+id: stern-brocot
+description: Pure RiX Stern-Brocot node descriptions, visible tree records, and exact formula evaluation.
+kind: rix
+mount: sternBrocot
+exports: [Describe, VisibleTree, Evaluate, sternBrocotDescribe, sternBrocotVisibleTree, sternBrocotEvaluate]
+groups: [Exact, Graphics]
+permissions: []
+requires: [rix.fraction@1]
+provides: [rix.stern-brocot@1]
+schemas: [rix.stern-brocot.node@1, rix.stern-brocot.tree@1]
+snapshot: true
+deterministic: true
+defaultEnabled: false
+**/
+
+{;
+    SternBrocotNodeRecord(fraction, role, level) -> {=
+        fraction=fraction,
+        parent=fraction.SternBrocotParent(),
+        role=role,
+        level=level,
+        path=fraction.SternBrocotPath()
+    };
+
+    SternBrocotDescribe(fraction) -> {;
+        current := fraction.F();
+        path := current.SternBrocotPath();
+        parents := current.FareyParents();
+        children := current.SternBrocotChildren();
+        rational := current.Rational() ~!: :Rational;
+        {=
+            schema="rix.stern-brocot.node@1",
+            current=current,
+            parent=current.SternBrocotParent(),
+            children=children,
+            ancestors=current.SternBrocotAncestors(),
+            depth=current.SternBrocotDepth(),
+            path=path,
+            boundaries=parents,
+            mediant=(parents[1].Denominator() + parents[2].Denominator() == 0)
+                ?: current
+                ?_ parents[1].Mediant(parents[2]),
+            rational=rational,
+            continuedFraction=rational.ToContinuedFraction(),
+            convergents=rational.Convergents()
+        }
+    };
+
+    SternBrocotVisibleTree(fraction, descendantDepth ?= 2) -> {;
+        current := fraction.F();
+        ancestors := current.SternBrocotAncestors();
+        ancestorRecords := ancestors.Map((ancestor, index) ->
+            SternBrocotNodeRecord(ancestor, "ancestor", 0 - index));
+        descendantRecords := [];
+        frontier := [current];
+        level := 1;
+        {@ tick := 0; @level <= @descendantDepth; {;
+            next := @frontier.Reduce((items, item) -> {;
+                children := item.SternBrocotChildren();
+                items ++ [children[1], children[2]]
+            }, []);
+            @descendantRecords = @descendantRecords ++ next.Map(item ->
+                SternBrocotNodeRecord(item, "descendant", @level));
+            @frontier = next
+        }; @level += 1 };
+        nodes := [SternBrocotNodeRecord(current, "current", 0)]
+            ++ ancestorRecords
+            ++ descendantRecords;
+        edges := nodes.Filter(node -> node["parent"] != _).Map(node -> {=
+            parent=node["parent"],
+            child=node["fraction"]
+        });
+        {=
+            schema="rix.stern-brocot.tree@1",
+            current=current,
+            descendantDepth=descendantDepth,
+            nodes=nodes,
+            edges=edges
+        }
+    };
+
+    SternBrocotEvaluate(formula, fraction) -> fraction.F().Rational() |> formula;
+
+    sternBrocotNamespace = {= };
+    sternBrocotNamespace._proto = {=
+        Describe=(self, fraction)->SternBrocotDescribe(fraction),
+        VisibleTree=(self, fraction, descendantDepth ?= 3)->SternBrocotVisibleTree(fraction, descendantDepth),
+        Evaluate=(self, formula, fraction)->SternBrocotEvaluate(formula, fraction)
+    };
+    .Host.RegisterValue(
+        "sternBrocot",
+        sternBrocotNamespace,
+        "Exact Stern-Brocot descriptions, visible trees, and formula evaluation",
+        ["Exact", "Graphics"]
+    );
+
+    .Host.Register(
+        "sternBrocotDescribe",
+        SternBrocotDescribe,
+        "Describe one exact Stern-Brocot node and its related values",
+        ["Exact", "Graphics"]
+    );
+    .Host.Register(
+        "sternBrocotVisibleTree",
+        SternBrocotVisibleTree,
+        "Build portable exact node and edge records around a Stern-Brocot node",
+        ["Exact", "Graphics"]
+    );
+    .Host.Register(
+        "sternBrocotEvaluate",
+        SternBrocotEvaluate,
+        "Evaluate a RiX callable at the selected exact rational",
+        ["Exact"]
+    )
+}
+`, sourcePath: "bundled:stern-brocot", kind: "rix" });
   catalog.addMetadata({ id: "svg", description: "Portable SVG renderer for core Graphics scenes.", kind: "host", mount: "svg", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.svg@1"], targets: ["svg", "image/svg+xml"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:svg" }, { sourcePath: "bundled:svg", kind: "host" });
   catalog.registerInstaller("svg", install10);
   catalog.addMetadata({ id: "symbolic", description: "Meta-plugin loading RiX representation-sensitive Fraction and FractionFunction workspaces.", kind: "rix", mount: "symbolic", exports: ["Fraction", "FractionFunction", "Services"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], requires: ["rix.fraction-function@1"], provides: ["rix.symbolic.formal@1"], schemas: [], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:symbolic" }, { source: `/**
@@ -5737,5 +5854,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { findHelp, createRixRepl };
 
-//# debugId=4F6165F42776353E64756E2164756E21
-//# sourceMappingURL=chunk-jj6f1gs1.js.map
+//# debugId=186DFC478F0687A364756E2164756E21
+//# sourceMappingURL=chunk-yp4h65qe.js.map

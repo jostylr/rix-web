@@ -247,6 +247,20 @@ export const pluginTutorials = [
     "pluginTutorial": true
   },
   {
+    "pluginId": "stern-brocot",
+    "pluginDirectory": "stern-brocot",
+    "title": "Explore the exact Stern–Brocot tree",
+    "description": "Describe rational nodes, build bounded tree views, and evaluate RiX functions at exact fractions.",
+    "status": "implemented",
+    "order": 0,
+    "theme": "Algebra and analysis",
+    "sourcePath": "../rix/plugins/stern-brocot/tutorial.md",
+    "number": "15g",
+    "parent": "15",
+    "file": "plugin-stern-brocot.html",
+    "pluginTutorial": true
+  },
+  {
     "pluginId": "symbolic",
     "pluginDirectory": "symbolic",
     "title": "Load the symbolic exploration workspace",
@@ -255,7 +269,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/symbolic/tutorial.md",
-    "number": "15g",
+    "number": "15h",
     "parent": "15",
     "file": "plugin-symbolic.html",
     "pluginTutorial": true
@@ -269,7 +283,7 @@ export const pluginTutorials = [
     "order": 20,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/stats/tutorial.md",
-    "number": "15h",
+    "number": "15i",
     "parent": "15",
     "file": "plugin-stats.html",
     "pluginTutorial": true
