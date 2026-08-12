@@ -219,6 +219,34 @@ export const pluginTutorials = [
     "pluginTutorial": true
   },
   {
+    "pluginId": "linalg",
+    "pluginDirectory": "linalg",
+    "title": "Exact linear algebra and coordinates",
+    "description": "Solve rational matrix systems and change tensor coordinates without losing tensor identity.",
+    "status": "implemented",
+    "order": 0,
+    "theme": "Algebra and analysis",
+    "sourcePath": "../rix/plugins/linalg/tutorial.md",
+    "number": "15e",
+    "parent": "15",
+    "file": "plugin-linalg.html",
+    "pluginTutorial": true
+  },
+  {
+    "pluginId": "optimize",
+    "pluginDirectory": "optimize",
+    "title": "Exact linear programming",
+    "description": "Solve a bounded standard-form linear program with exact Rational simplex arithmetic.",
+    "status": "implemented",
+    "order": 0,
+    "theme": "Algebra and analysis",
+    "sourcePath": "../rix/plugins/optimize/tutorial.md",
+    "number": "15f",
+    "parent": "15",
+    "file": "plugin-optimize.html",
+    "pluginTutorial": true
+  },
+  {
     "pluginId": "poly",
     "pluginDirectory": "poly",
     "title": "Work with callable polynomials",
@@ -227,7 +255,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/poly/tutorial.md",
-    "number": "15e",
+    "number": "15g",
     "parent": "15",
     "file": "plugin-poly.html",
     "pluginTutorial": true
@@ -241,9 +269,23 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/ratfun/tutorial.md",
-    "number": "15f",
+    "number": "15h",
     "parent": "15",
     "file": "plugin-ratfun.html",
+    "pluginTutorial": true
+  },
+  {
+    "pluginId": "solve",
+    "pluginDirectory": "solve",
+    "title": "Solving exact linear systems",
+    "description": "Turn an inert symbolic system into a named exact affine solution.",
+    "status": "implemented",
+    "order": 0,
+    "theme": "Algebra and analysis",
+    "sourcePath": "../rix/plugins/solve/tutorial.md",
+    "number": "15i",
+    "parent": "15",
+    "file": "plugin-solve.html",
     "pluginTutorial": true
   },
   {
@@ -255,7 +297,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/stern-brocot/tutorial.md",
-    "number": "15g",
+    "number": "15j",
     "parent": "15",
     "file": "plugin-stern-brocot.html",
     "pluginTutorial": true
@@ -269,7 +311,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/symbolic/tutorial.md",
-    "number": "15h",
+    "number": "15k",
     "parent": "15",
     "file": "plugin-symbolic.html",
     "pluginTutorial": true
@@ -283,7 +325,7 @@ export const pluginTutorials = [
     "order": 20,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/stats/tutorial.md",
-    "number": "15i",
+    "number": "15l",
     "parent": "15",
     "file": "plugin-stats.html",
     "pluginTutorial": true

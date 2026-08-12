@@ -31,6 +31,49 @@ $view ;
 The control receives `$$x`, the stable reactive identity. The text reads `$x`
 through its interpolation, so it is rebuilt after each committed move.
 
+## Lay out actions and add keyboard navigation
+
+Action controls can declare both portable grid placement and a root-scoped
+keyboard shortcut. Click the buttons or use Up, Left, and Right. There is
+deliberately no shortcut for Down or Root. Shortcuts pause while focus is in an
+editable field, so navigation does not steal arrow keys from text controls.
+
+```rix edu
+$$place := "root";
+
+Move(label) -> value -> label;
+
+$$view := .Fragment([
+    .ControlPanel({=
+        title="Navigation pad",
+        style={=
+            layout="grid",
+            columns=3,
+            kinds={= action={= variant="primary" } },
+            ids={=
+                parent={= row=1, column=2 },
+                left={= row=2, column=1 },
+                right={= row=2, column=3 },
+                root={= row=3, column=2, variant="quiet" }
+            }
+        },
+        controls=[
+            .Controls.Action({= id="parent", target=$$place, action=Move("parent"), label="↑ Parent", shortcut="ArrowUp" }),
+            .Controls.Action({= id="left", target=$$place, action=Move("left"), label="← Left", shortcut="ArrowLeft" }),
+            .Controls.Action({= id="right", target=$$place, action=Move("right"), label="Right →", shortcut="ArrowRight" }),
+            .Controls.Action({= id="root", target=$$place, action=Move("root"), label="Root" })
+        ]
+    }),
+    .Paragraph(@"Current destination: @{$place}")
+]);
+
+$view ;
+```
+
+The shortcut does not contain browser code. It is a portable key name on the
+Action, and the host clicks the currently rendered action button so keyboard
+and pointer activation share one mutation path.
+
 ## Choose how exact numbers are displayed
 
 Formatting is separate from stored value. Supply a `format` map whose keys name

@@ -355,6 +355,15 @@
       "status": "implemented"
     },
     {
+      "number": "7g",
+      "parent": "7",
+      "file": "async-streams.html",
+      "title": "Async streams",
+      "description": "Build lazy pull pipelines, consume them explicitly, and project event streams into reactive state.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
       "number": "8",
       "file": "semantics.html",
       "title": "Semantics, types, and units",
@@ -921,6 +930,24 @@
     {
       "number": "15e",
       "parent": "15",
+      "file": "plugin-linalg.html",
+      "title": "Exact linear algebra and coordinates",
+      "description": "Solve rational matrix systems and change tensor coordinates without losing tensor identity.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "15f",
+      "parent": "15",
+      "file": "plugin-optimize.html",
+      "title": "Exact linear programming",
+      "description": "Solve a bounded standard-form linear program with exact Rational simplex arithmetic.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "15g",
+      "parent": "15",
       "file": "plugin-poly.html",
       "title": "Work with callable polynomials",
       "description": "Define, compose, reactively update, and exactly divide semantic Polynomial functions.",
@@ -928,7 +955,7 @@
       "status": "implemented"
     },
     {
-      "number": "15f",
+      "number": "15h",
       "parent": "15",
       "file": "plugin-ratfun.html",
       "title": "Work with exact rational functions",
@@ -937,7 +964,16 @@
       "status": "implemented"
     },
     {
-      "number": "15g",
+      "number": "15i",
+      "parent": "15",
+      "file": "plugin-solve.html",
+      "title": "Solving exact linear systems",
+      "description": "Turn an inert symbolic system into a named exact affine solution.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "15j",
       "parent": "15",
       "file": "plugin-stern-brocot.html",
       "title": "Explore the exact Stern–Brocot tree",
@@ -946,7 +982,7 @@
       "status": "implemented"
     },
     {
-      "number": "15h",
+      "number": "15k",
       "parent": "15",
       "file": "plugin-symbolic.html",
       "title": "Load the symbolic exploration workspace",
@@ -955,7 +991,7 @@
       "status": "implemented"
     },
     {
-      "number": "15i",
+      "number": "15l",
       "parent": "15",
       "file": "plugin-stats.html",
       "title": "Summarize exact data",

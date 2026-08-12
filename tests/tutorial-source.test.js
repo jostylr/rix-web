@@ -21,6 +21,19 @@ test("tutorial bodies leave the page-level heading to the page template", async 
     }
 });
 
+test("every core tutorial source is indexed exactly once", async () => {
+    const tutorialsDir = new URL("../tutorials/", import.meta.url).pathname;
+    const sourceFiles = [];
+    for await (const file of new Bun.Glob("*.md").scan({ cwd: tutorialsDir })) sourceFiles.push(file);
+
+    const indexedFiles = tutorials
+        .filter(({ pluginGroup, pluginTutorial }) => !pluginGroup && !pluginTutorial)
+        .map(({ file }) => file.replace(/\.html$/, ".md"));
+
+    expect(indexedFiles.sort()).toEqual(sourceFiles.sort());
+    expect(new Set(indexedFiles).size).toBe(indexedFiles.length);
+});
+
 test("tutorial sources use runnable RiX blocks and a challenge", async () => {
     const source = await Bun.file(new URL("../tutorials/getting-started.md", import.meta.url)).text();
     expect(source).toContain("```rix edu");

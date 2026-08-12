@@ -7,6 +7,7 @@ await import("./generate-plugin-tutorial-index.js");
 const root = path.resolve(import.meta.dir, "..");
 const source = path.join(root, "src");
 const output = path.join(root, "docs");
+const schemaSource = path.join(root, "..", "rix", "schemas");
 
 const browserNodeShims = {
     name: "browser-node-shims",
@@ -34,6 +35,15 @@ await Bun.write(path.join(output, "assets", "app.css"), await readFile(path.join
 await Bun.write(path.join(output, "assets", "showcases.css"), await readFile(path.join(source, "showcases.css")));
 await Bun.write(path.join(output, "stern-brocot.html"), await readFile(path.join(source, "stern-brocot.html")));
 await Bun.write(path.join(output, "assets", "stern-brocot.css"), await readFile(path.join(source, "stern-brocot.css")));
+const schemaOutput = path.join(output, "schema");
+await mkdir(schemaOutput, { recursive: true });
+for (const name of await readdir(schemaSource)) {
+    if (!name.endsWith(".json")) continue;
+    const schemaPath = path.join(schemaSource, name);
+    const contents = await readFile(schemaPath, "utf8");
+    const publishedName = path.basename(new URL(JSON.parse(contents).$id).pathname);
+    await Bun.write(path.join(schemaOutput, publishedName), contents);
+}
 const result = await Bun.build({
     entrypoints: [
         path.join(source, "main.js"),

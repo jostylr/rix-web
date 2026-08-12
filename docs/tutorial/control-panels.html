@@ -12,6 +12,38 @@ $$view := .Fragment([
 
 $view ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The control receives <code>$$x</code>, the stable reactive identity. The text reads <code>$x</code> through its interpolation, so it is rebuilt after each committed move.</p>
+<h2>Lay out actions and add keyboard navigation</h2>
+<p>Action controls can declare both portable grid placement and a root-scoped keyboard shortcut. Click the buttons or use Up, Left, and Right. There is deliberately no shortcut for Down or Root. Shortcuts pause while focus is in an editable field, so navigation does not steal arrow keys from text controls.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="29" spellcheck="false">$$place := &quot;root&quot;;
+
+Move(label) -&gt; value -&gt; label;
+
+$$view := .Fragment([
+    .ControlPanel({=
+        title=&quot;Navigation pad&quot;,
+        style={=
+            layout=&quot;grid&quot;,
+            columns=3,
+            kinds={= action={= variant=&quot;primary&quot; } },
+            ids={=
+                parent={= row=1, column=2 },
+                left={= row=2, column=1 },
+                right={= row=2, column=3 },
+                root={= row=3, column=2, variant=&quot;quiet&quot; }
+            }
+        },
+        controls=[
+            .Controls.Action({= id=&quot;parent&quot;, target=$$place, action=Move(&quot;parent&quot;), label=&quot;↑ Parent&quot;, shortcut=&quot;ArrowUp&quot; }),
+            .Controls.Action({= id=&quot;left&quot;, target=$$place, action=Move(&quot;left&quot;), label=&quot;← Left&quot;, shortcut=&quot;ArrowLeft&quot; }),
+            .Controls.Action({= id=&quot;right&quot;, target=$$place, action=Move(&quot;right&quot;), label=&quot;Right →&quot;, shortcut=&quot;ArrowRight&quot; }),
+            .Controls.Action({= id=&quot;root&quot;, target=$$place, action=Move(&quot;root&quot;), label=&quot;Root&quot; })
+        ]
+    }),
+    .Paragraph(@&quot;Current destination: @{$place}&quot;)
+]);
+
+$view ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The shortcut does not contain browser code. It is a portable key name on the Action, and the host clicks the currently rendered action button so keyboard and pointer activation share one mutation path.</p>
 <h2>Choose how exact numbers are displayed</h2>
 <p>Formatting is separate from stored value. Supply a <code>format</code> map whose keys name displayed fields and whose values are ordinary RiX functions. The slider below shows its current value as a mixed number, its bounds as decimals, and its step as a continued fraction. Moving it still stores an exact rational.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="25" spellcheck="false">Mixed(x) -&gt; x _&gt; &quot;..&quot;;

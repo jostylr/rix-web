@@ -93,6 +93,18 @@ button { cursor: pointer; }
 .rix-output-control-panel > p { margin: -.3rem 0 .2rem; color: var(--rix-ink-muted); font-size: .86rem; line-height: 1.45; }
 .rix-output-control-list { display: grid; gap: .7rem; min-width: 0; }
 .rix-output-control-panel[data-rix-layout="cluster"] .rix-output-control-list { display: flex; flex-wrap: wrap; gap: .55rem; }
+.rix-output-control-panel[data-rix-layout="grid"] { grid-template-columns: minmax(0, 1fr); }
+.rix-output-control-panel[data-rix-layout="grid"][data-rix-columns="2"] .rix-output-control-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.rix-output-control-panel[data-rix-layout="grid"][data-rix-columns="3"] .rix-output-control-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.rix-output-control-panel[data-rix-layout="grid"][data-rix-columns="4"] .rix-output-control-list { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.rix-output-control[data-rix-control-row="1"] { grid-row: 1; }
+.rix-output-control[data-rix-control-row="2"] { grid-row: 2; }
+.rix-output-control[data-rix-control-row="3"] { grid-row: 3; }
+.rix-output-control[data-rix-control-row="4"] { grid-row: 4; }
+.rix-output-control[data-rix-control-column="1"] { grid-column: 1; }
+.rix-output-control[data-rix-control-column="2"] { grid-column: 2; }
+.rix-output-control[data-rix-control-column="3"] { grid-column: 3; }
+.rix-output-control[data-rix-control-column="4"] { grid-column: 4; }
 .rix-output-control {
     display: grid;
     grid-template-columns: minmax(6.5rem, .7fr) minmax(11rem, 1.7fr) auto;
@@ -141,6 +153,8 @@ button { cursor: pointer; }
 .rix-output-figure figcaption { margin-top: .7rem; color: var(--rix-ink-muted); font-size: .78rem; text-align: center; }
 .rix-output-graphic { max-width: 100%; margin: 0; }
 .rix-output-graphic svg { display: block; width: 100%; max-width: 100%; height: auto; }
+.rix-output-graphic-action { cursor: pointer; outline: none; }
+.rix-output-graphic-action:hover, .rix-output-graphic-action:focus-visible { filter: drop-shadow(0 0 5px rgb(101 81 198 / .55)); }
 .rix-output-svg text { font-family: ui-sans-serif, system-ui, sans-serif; }
 
 .rix-output-table {

@@ -93,6 +93,42 @@ This is the same architectural split as an editable Sheet: portable output
 describes meaning, a host adapter owns interaction, and the reactive graph owns
 recomputation.
 
+## Make scene nodes dispatch RiX actions
+
+`.Graphics.Action` wraps ordinary scene nodes. The wrapper names a reactive
+target and a RiX callable that returns its replacement. Choose either circle,
+or focus it and press Enter or Space; the selected exact value and the scene
+update together.
+
+```rix edu
+$$choice := 1;
+
+ChoiceNode(value, x, color) -> .Graphics.Action({=
+    id=@"choice-@{value}",
+    target=$$choice,
+    action=current -> value,
+    label=@"Choose exact value @{value}",
+    children=[
+        .Graphics.Circle([x,70], 34, {= fill=color, stroke="#4c1d95", width=2 }),
+        .Graphics.Text([x,77], value, {= anchor="middle", size=20, weight="bold" })
+    ]
+});
+
+$$view := .Fragment([
+    .Paragraph(@"Selected exact value: @{$choice}"),
+    .Graphics.Graphic([280,140], [
+        ChoiceNode(1, 85, $choice == 1 ?: "#c4b5fd" ?_ "#ede9fe"),
+        ChoiceNode(2, 195, $choice == 2 ?: "#c4b5fd" ?_ "#ede9fe")
+    ])
+]);
+
+$view ;
+```
+
+The retained scene stores the action ID, target ID, children, and accessible
+label—not a DOM event. The browser emits `graphic:action`; the widget session
+runs the callback and performs the same reactive replacement used by controls.
+
 :::challenge Add a reactive radius
 Create a reactive point, a derived radius based on its y coordinate, and a
 reactive Fragment containing a Graphic. Use `.Graphics.DragPoint($$point)` for

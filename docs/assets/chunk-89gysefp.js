@@ -23,6 +23,9 @@ import {
   install19 as install20,
   install2 as install3,
   install20 as install21,
+  install21 as install22,
+  install22 as install23,
+  install23 as install24,
   install3 as install4,
   install4 as install5,
   install5 as install6,
@@ -42,7 +45,7 @@ import {
   typeRegistry,
   unsupportedRefinementResult,
   valueMethod
-} from "./chunk-fm4tfp9t.js";
+} from "./chunk-ezjyb90z.js";
 
 // src/repl-source.js
 var statementClosers = new Set([")", "]", "}", "|}", ";}", "@}", "!}", ":}"]);
@@ -132,7 +135,7 @@ function collection() {
   }
   return { type: "map", entries, _ext: extension };
 }
-function install22({ systemContext }) {
+function install25({ systemContext }) {
   const value = collection();
   systemContext.registerHostCallableValue("arrayJs", value, {
     impl(args) {
@@ -480,7 +483,7 @@ function installBrowserApproxMathPlugin({ systemContext, registry, metadata = {}
   systemContext.registerMethod("Rational", "Float", floatExtension, owner);
   return systemContext;
 }
-var install23 = installBrowserApproxMathPlugin;
+var install26 = installBrowserApproxMathPlugin;
 
 // src/generated/bundled-plugin-catalog.js
 function createBundledPluginCatalog() {
@@ -1367,7 +1370,7 @@ ballNamespace._proto = {=
 );
 `, sourcePath: "bundled:ball", kind: "rix" });
   catalog.addMetadata({ id: "canvas", description: "Serializable Canvas 2D drawing plans for core Graphics scenes.", kind: "host", mount: "canvas", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.canvas@1"], targets: ["canvas", "application/vnd.rix.canvas+json"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:canvas" }, { sourcePath: "bundled:canvas", kind: "host" });
-  catalog.registerInstaller("canvas", install11);
+  catalog.registerInstaller("canvas", install14);
   catalog.addMetadata({ id: "cauchy", description: "Rational Cauchy sequences with explicit certified tail bounds and moduli.", kind: "rix", mount: "cauchy", exports: ["Sequence", "Certified", "Geometric", "Term", "TailBound", "Modulus", "Enclosure", "Record"], groups: ["Numerics", "Exact"], permissions: [], requires: ["rix.oracle@1"], provides: ["rix.cauchy@1", "rix.refinable@1", "rix.enclosable-real@1"], schemas: ["rix.cauchy.sequence@1", "rix.cauchy.real@1", "rix.cauchy.arithmetic-real@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:cauchy" }, { source: `/**
 id: cauchy
 description: Rational Cauchy sequences with explicit certified tail bounds and moduli.
@@ -2414,7 +2417,7 @@ continuedFractionNamespace._proto = {=
 );
 `, sourcePath: "bundled:continued-fraction", kind: "rix" });
   catalog.addMetadata({ id: "csv", description: "Deterministic CSV and TSV export for portable Tables and typed data Relations.", kind: "host", mount: "csv", exports: ["Render"], groups: ["Renderers", "Data"], permissions: [], provides: ["rix.renderer.csv@1"], targets: ["csv", "text/csv", "tsv", "text/tab-separated-values"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:csv" }, { sourcePath: "bundled:csv", kind: "host" });
-  catalog.registerInstaller("csv", install20);
+  catalog.registerInstaller("csv", install23);
   catalog.addMetadata({ id: "data", description: "Immutable typed relations with deterministic projection, filtering, sorting, and Table views.", kind: "host", mount: "data", exports: ["Relation", "Project", "Filter", "Sort", "TableView", "Schema", "Rows"], groups: ["Data"], permissions: [], provides: ["rix.data.relation@1"], schemas: ["rix.data.relation@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:data" }, { sourcePath: "bundled:data", kind: "host" });
   catalog.registerInstaller("data", install7);
   catalog.addMetadata({ id: "document", description: "Numbered portable reports with labels, forward references, captions, and small semantic themes.", kind: "host", mount: "document", exports: ["Report", "Label", "Ref", "Theme", "References"], groups: ["Documents"], permissions: [], provides: ["rix.document.report@1"], schemas: ["rix.document.report@1", "rix.document.theme@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:document" }, { sourcePath: "bundled:document", kind: "host" });
@@ -2639,7 +2642,7 @@ exactAlgebrasNamespace._proto = {=
 .Host.RegisterValue("exactAlgebras", exactAlgebrasNamespace, "Exact rational quaternion and octonion constructors and operations", ["Exact"]);
 `, sourcePath: "bundled:exact-algebras", kind: "rix" });
   catalog.addMetadata({ id: "example-array-js", description: "Teaching JavaScript plugin demonstrating array sum, summary text, and reversal.", kind: "host", mount: "arrayJs", exports: ["Sum", "Describe", "Reverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:example-array-js" }, { sourcePath: "bundled:example-array-js", kind: "host" });
-  catalog.registerInstaller("example-array-js", install22);
+  catalog.registerInstaller("example-array-js", install25);
   catalog.addMetadata({ id: "example-array-rix", description: "Teaching RiX plugin demonstrating array sum, summary text, and reversal.", kind: "rix", mount: "arrayRix", exports: ["arrayRixSum", "arrayRixDescribe", "arrayRixReverse"], groups: ["Examples"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:example-array-rix" }, { source: `/**
 id: example-array-rix
 description: Teaching RiX plugin demonstrating array sum, summary text, and reversal.
@@ -2656,7 +2659,7 @@ defaultEnabled: false
 .Host.Register("arrayRixReverse", (values) -> values.Reverse(), "Reverse an array", ["Examples"]);
 `, sourcePath: "bundled:example-array-rix", kind: "rix" });
   catalog.addMetadata({ id: "float", description: "JavaScript IEEE-754 Float conversion and optional approximate math.", kind: "host", mount: "float", exports: ["Float", "Interval", "Round", "Floor", "Ceiling", "Abs", "Sqrt", "Sin", "Cos", "Tan", "Log", "Exp"], groups: ["ApproximateMath", "Float"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:float" }, { sourcePath: "bundled:float", kind: "host" });
-  catalog.registerInstaller("float", install23);
+  catalog.registerInstaller("float", install26);
   catalog.addMetadata({ id: "fracfun", description: "Form-preserving callable polynomial and rational expressions with explicit transformations and canonical projections.", kind: "host", mount: "fracfun", aliases: ["fractionFunction", "ff"], exports: ["FractionFunction", "Parse", "Var", "Fun"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], requires: ["rix.fraction@1", "rix.rational-function@1"], provides: ["rix.fraction-function@1"], schemas: ["rix.fraction-function@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:fracfun" }, { sourcePath: "bundled:fracfun", kind: "host" });
   catalog.registerInstaller("fracfun", install2);
   catalog.addMetadata({ id: "fraction", description: "Representation-sensitive unreduced integer fractions with mediant and classroom addition policies.", kind: "rix", mount: "fraction", aliases: ["frac", "f"], exports: ["Fraction", "Parse", "FromSternBrocotPath"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], provides: ["rix.fraction@1"], schemas: ["rix.fraction@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:fraction" }, { source: `/**
@@ -3015,15 +3018,17 @@ fractionNamespace._proto = {=
   catalog.addMetadata({ id: "geometry", description: "Exact ruler-and-compass geometry with explicit intersections and portable Graphics snapshots.", kind: "host", mount: "geometry", exports: ["Point", "Line", "Circle", "Midpoint", "PerpendicularBisector", "Circumcircle", "Intersect", "Points", "Status", "Draw"], groups: ["Geometry", "Graphics", "Exact"], permissions: [], provides: ["rix.geometry@1", "rix.geometry.intersection@1"], schemas: ["rix.geometry@1", "rix.geometry.intersection@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:geometry" }, { sourcePath: "bundled:geometry", kind: "host" });
   catalog.registerInstaller("geometry", install6);
   catalog.addMetadata({ id: "gif", description: "Deterministic animated GIF rendering from Slides, Timelines, or Snapshots through PNG frames.", kind: "host", mount: "gif", exports: ["Render"], groups: ["Renderers"], permissions: ["process", "files"], requires: ["rix.renderer.png@1"], provides: ["rix.renderer.gif@1"], targets: ["gif", "image/gif"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:gif" }, { sourcePath: "bundled:gif", kind: "host" });
-  catalog.registerInstaller("gif", install21);
+  catalog.registerInstaller("gif", install24);
   catalog.addMetadata({ id: "gltf", description: "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", kind: "host", mount: "gltf", exports: ["Render"], groups: ["Renderers", "Scene3D"], permissions: [], requires: ["rix.scene3d@1"], provides: ["rix.renderer.gltf@1"], targets: ["gltf", "model/gltf+json"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:gltf" }, { sourcePath: "bundled:gltf", kind: "host" });
-  catalog.registerInstaller("gltf", install19);
+  catalog.registerInstaller("gltf", install22);
   catalog.addMetadata({ id: "html", description: "Standalone semantic HTML renderer for portable RiX output trees.", kind: "host", mount: "html", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.html@1"], targets: ["html", "text/html"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:html" }, { sourcePath: "bundled:html", kind: "host" });
-  catalog.registerInstaller("html", install14);
+  catalog.registerInstaller("html", install17);
   catalog.addMetadata({ id: "latex", description: "Standalone LaTeX renderer for portable RiX documents and figures.", kind: "host", mount: "latex", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.latex@1"], targets: ["latex", "text/x-tex"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:latex" }, { sourcePath: "bundled:latex", kind: "host" });
-  catalog.registerInstaller("latex", install16);
+  catalog.registerInstaller("latex", install19);
+  catalog.addMetadata({ id: "linalg", description: "Exact dense linear algebra and coordinate-aware tensor transformations.", kind: "host", mount: "linalg", exports: ["Rref", "Rank", "Determinant", "Inverse", "Solve", "VectorSpace", "Coordinates", "CoordinateTensor", "Vector", "ChangeMatrix", "Transform", "Transform!", "Components", "SameTensor"], groups: ["LinearAlgebra", "Exact"], permissions: [], provides: ["rix.linear-algebra@1", "rix.coordinate-tensor@1"], schemas: ["rix.linalg.result@1", "rix.linalg.vector-space@1", "rix.linalg.coordinates@1", "rix.linalg.coordinate-tensor@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:linalg" }, { sourcePath: "bundled:linalg", kind: "host" });
+  catalog.registerInstaller("linalg", install9);
   catalog.addMetadata({ id: "markdown", description: "CommonMark-oriented renderer for portable RiX documents.", kind: "host", mount: "markdown", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.markdown@1"], targets: ["markdown", "text/markdown"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:markdown" }, { sourcePath: "bundled:markdown", kind: "host" });
-  catalog.registerInstaller("markdown", install13);
+  catalog.registerInstaller("markdown", install16);
   catalog.addMetadata({ id: "nd", description: "Exact n-dimensional geometry with explicit affine and Cayley projection records.", kind: "host", mount: "nd", exports: ["Point", "Polyline", "Polytope", "Hypercube", "Projection", "CoordinateProjection", "CayleyRotation", "Compose", "Project", "ToScene3D"], groups: ["Geometry", "Scene3D", "Exact"], permissions: [], requires: ["rix.scene3d@1"], provides: ["rix.nd@1", "rix.nd.projection@1"], schemas: ["rix.nd@1", "rix.nd.projection@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:nd" }, { sourcePath: "bundled:nd", kind: "host" });
   catalog.registerInstaller("nd", install5);
   catalog.addMetadata({ id: "numerics", description: "Backend-neutral bounded enclosure and refinement orchestration.", kind: "rix", mount: "numerics", exports: ["Request", "WorkPolicy", "EffectiveLimits", "Enclose", "Refine", "Sample", "Capabilities", "CheckResult", "NthRoot", "Sqrt", "Kantorovich"], groups: ["Numerics"], permissions: [], requires: ["rix.oracle@1"], provides: ["rix.numerics@1", "rix.enclosable-real-consumer@1"], schemas: ["rix.numerics.refinement-request@1", "rix.numerics.enclosure@1", "rix.numerics.algorithm-real@1"], defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:numerics" }, { source: `/**
@@ -3463,6 +3468,8 @@ numericsNamespace._proto = {=
 
 .Host.RegisterValue("numerics", numericsNamespace, "Backend-neutral bounded enclosure and refinement orchestration", ["Numerics"]);
 `, sourcePath: "bundled:numerics", kind: "rix" });
+  catalog.addMetadata({ id: "optimize", description: "Exact linear-program models and deterministic Phase 1 simplex optimization.", kind: "host", mount: "optimize", exports: ["LinearProgram", "Solve", "Evaluate", "Maximize", "Minimize"], groups: ["Optimization", "Exact"], permissions: [], requires: ["rix.linear-algebra@1"], provides: ["rix.optimization@1", "rix.linear-program@1"], schemas: ["rix.optimize.linear-program@1", "rix.optimize.result@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:optimize" }, { sourcePath: "bundled:optimize", kind: "host" });
+  catalog.registerInstaller("optimize", install10);
   catalog.addMetadata({ id: "oracle", description: "Exact rational-betweenness oracle demonstrations and bounded refinement.", kind: "rix", mount: "oracle", exports: ["Rational", "From", "Operation", "Query", "Answer", "Decision", "Prophecy", "WorkPolicy", "Evidence", "Ask", "AskAll", "CheckRange", "Refine"], groups: ["Numerics", "Exact"], permissions: [], provides: ["rix.oracle@1", "rix.enclosable-real@1"], schemas: ["rix.oracle@1"], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:oracle" }, { source: `/**
 id: oracle
 description: Exact rational-betweenness oracle demonstrations and bounded refinement.
@@ -4191,11 +4198,11 @@ oracleNamespace._proto = {=
 .Host.RegisterValue("oracle", oracleNamespace, "Certified singleton-real adapters, exact interval arithmetic, and rational-betweenness demonstrations", ["Numerics", "Exact"]);
 `, sourcePath: "bundled:oracle", kind: "rix" });
   catalog.addMetadata({ id: "pdf", description: "PDF document and figure renderer orchestrated through LaTeX.", kind: "host", mount: "pdf", exports: ["Render"], groups: ["Renderers"], permissions: ["process", "files"], provides: ["rix.renderer.pdf@1"], targets: ["pdf", "application/pdf"], snapshot: true, deterministic: false, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:pdf" }, { sourcePath: "bundled:pdf", kind: "host" });
-  catalog.registerInstaller("pdf", install18);
+  catalog.registerInstaller("pdf", install21);
   catalog.addMetadata({ id: "plot", description: "Portable plotting helpers that produce core Graphics scenes.", kind: "host", mount: "plot", exports: ["Polynomial"], groups: ["Plot"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:plot" }, { sourcePath: "bundled:plot", kind: "host" });
   catalog.registerInstaller("plot", install3);
   catalog.addMetadata({ id: "png", description: "PNG snapshot renderer for core Graphics through a host rasterizer.", kind: "host", mount: "png", exports: ["Render"], groups: ["Renderers"], permissions: ["process"], provides: ["rix.renderer.png@1"], targets: ["png", "image/png"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:png" }, { sourcePath: "bundled:png", kind: "host" });
-  catalog.registerInstaller("png", install17);
+  catalog.registerInstaller("png", install20);
   catalog.addMetadata({ id: "poly", description: "Semantic callable univariate polynomials with structural and symbolic entry forms.", kind: "rix", mount: "poly", aliases: ["polynomial", "p"], exports: ["Polynomial", "Parse", "Var", "Fun", "Divide", "SyntheticDivide", "SturmSequence", "RootCount"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], provides: ["rix.polynomial@1", "rix.polynomial.algorithms@1"], schemas: ["rix.polynomial@1", "rix.polynomial.division@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:poly" }, { source: `/**
 id: poly
 description: Semantic callable univariate polynomials with structural and symbolic entry forms.
@@ -4803,7 +4810,7 @@ PolyConversion = (value, variable ?= _) -> PolyConstruct(value, variable);
 .Host.RegisterMethod("symbolic_spec", "Polynomial", PolyConversion, "poly", "poly");
 `, sourcePath: "bundled:poly", kind: "rix" });
   catalog.addMetadata({ id: "quarto", description: "Quarto Markdown renderer with front matter and portable figure lowering.", kind: "host", mount: "quarto", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.quarto@1"], targets: ["quarto", "text/x-quarto"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:quarto" }, { sourcePath: "bundled:quarto", kind: "host" });
-  catalog.registerInstaller("quarto", install15);
+  catalog.registerInstaller("quarto", install18);
   catalog.addMetadata({ id: "radix", description: "Bounded exact positional expansions and repeating-period analysis for rational values.", kind: "rix", mount: "radix", exports: ["Expansion", "Digits", "PeriodLength", "PeriodInfo", "ToString"], groups: ["Exact", "Radix"], permissions: [], provides: ["rix.radix@1"], schemas: ["rix.radix.expansion@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:radix" }, { source: `/**
 id: radix
 description: Bounded exact positional expansions and repeating-period analysis for rational values.
@@ -5318,6 +5325,8 @@ RatfunSpecConversion=(value,variable ?= _)->RatfunFromSpec(value,variable);
 `, sourcePath: "bundled:ratfun", kind: "rix" });
   catalog.addMetadata({ id: "scene3d", description: "Exact retained 3D scenes with deterministic wireframe and lit Graphics snapshots.", kind: "host", mount: "scene3d", exports: ["Scene", "Group", "Transform", "Mesh", "Polyline", "PointCloud", "Material", "AmbientLight", "DirectionalLight", "PointLight", "PerspectiveCamera", "OrthographicCamera", "Snapshot"], groups: ["Scene3D", "Graphics"], permissions: [], provides: ["rix.scene3d@1"], schemas: ["rix.scene3d@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:scene3d" }, { sourcePath: "bundled:scene3d", kind: "host" });
   catalog.registerInstaller("scene3d", install4);
+  catalog.addMetadata({ id: "solve", description: "Exact Phase 1 linear-system classification and symbolic-spec solving.", kind: "host", mount: "solve", exports: ["Classify", "Linear", "System"], groups: ["Solve", "Symbolic", "Exact"], permissions: [], requires: ["rix.linear-algebra@1"], provides: ["rix.system-solver@1"], schemas: ["rix.solve.system-result@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:solve" }, { sourcePath: "bundled:solve", kind: "host" });
+  catalog.registerInstaller("solve", install11);
   catalog.addMetadata({ id: "stats", description: "Exact descriptive statistics with portable summary tables, histograms, and box plots.", kind: "rix", mount: "stats", aliases: ["statistics"], exports: ["Count", "Mean", "Quantile", "Median", "Variance", "SampleVariance", "Summary", "SummaryTable", "Histogram", "HistogramGraphic", "BoxPlot"], groups: ["Statistics", "Exact", "Graphics"], permissions: [], provides: ["rix.statistics@1"], schemas: ["rix.stats.summary@1", "rix.stats.histogram@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:stats" }, { source: `/**
 id: stats
 description: Exact descriptive statistics with portable summary tables, histograms, and box plots.
@@ -5653,7 +5662,7 @@ defaultEnabled: false
 }
 `, sourcePath: "bundled:stern-brocot", kind: "rix" });
   catalog.addMetadata({ id: "svg", description: "Portable SVG renderer for core Graphics scenes.", kind: "host", mount: "svg", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.svg@1"], targets: ["svg", "image/svg+xml"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:svg" }, { sourcePath: "bundled:svg", kind: "host" });
-  catalog.registerInstaller("svg", install10);
+  catalog.registerInstaller("svg", install13);
   catalog.addMetadata({ id: "symbolic", description: "Meta-plugin loading RiX representation-sensitive Fraction and FractionFunction workspaces.", kind: "rix", mount: "symbolic", exports: ["Fraction", "FractionFunction", "Services"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], requires: ["rix.fraction-function@1"], provides: ["rix.symbolic.formal@1"], schemas: [], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:symbolic" }, { source: `/**
 id: symbolic
 description: Meta-plugin loading RiX representation-sensitive Fraction and FractionFunction workspaces.
@@ -5680,9 +5689,9 @@ symbolicNamespace._proto = {=
 .Host.RegisterValue("symbolic",symbolicNamespace,"Representation-sensitive symbolic workspace",["Algebra","Exact","Symbolic"]);
 `, sourcePath: "bundled:symbolic", kind: "rix" });
   catalog.addMetadata({ id: "terminal-ascii", description: "Deterministic strict-ASCII fallback for tables, grids, fragments, and simple Graphics.", kind: "host", mount: "terminalAscii", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.terminal-ascii@1"], targets: ["terminal-ascii", "terminal", "ascii", "txt", "text/plain"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:terminal-ascii" }, { sourcePath: "bundled:terminal-ascii", kind: "host" });
-  catalog.registerInstaller("terminal-ascii", install9);
+  catalog.registerInstaller("terminal-ascii", install12);
   catalog.addMetadata({ id: "tikz", description: "Editable TikZ/PGF source renderer for core Graphics scenes.", kind: "host", mount: "tikz", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.tikz@1"], targets: ["tikz", "text/x-tikz"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:tikz" }, { sourcePath: "bundled:tikz", kind: "host" });
-  catalog.registerInstaller("tikz", install12);
+  catalog.registerInstaller("tikz", install15);
   return catalog;
 }
 
@@ -5854,5 +5863,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { findHelp, createRixRepl };
 
-//# debugId=186DFC478F0687A364756E2164756E21
-//# sourceMappingURL=chunk-yp4h65qe.js.map
+//# debugId=E3C30718D5A1970664756E2164756E21
+//# sourceMappingURL=chunk-89gysefp.js.map

@@ -55,6 +55,31 @@ $view ;</textarea><div class="tutorial-output" data-tutorial-output></div></sect
 <h2>The protocol stays outside the scene</h2>
 <p>The retained Graphic stores its coordinate space, scene nodes, target ID, and current exact position. It does not store a DOM node or pointer event. During a drag the renderer previews the handle locally. On release it sends <code>graphic:position</code> with the target ID and graphic coordinates to a host-owned widget session. That session validates the target, converts the coordinates to exact RiX rationals, and replaces the reactive definition. A host that cannot provide interaction still renders the same Graphic as ordinary SVG.</p>
 <p>This is the same architectural split as an editable Sheet: portable output describes meaning, a host adapter owns interaction, and the reactive graph owns recomputation.</p>
+<h2>Make scene nodes dispatch RiX actions</h2>
+<p><code>.Graphics.Action</code> wraps ordinary scene nodes. The wrapper names a reactive target and a RiX callable that returns its replacement. Choose either circle, or focus it and press Enter or Space; the selected exact value and the scene update together.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="22" spellcheck="false">$$choice := 1;
+
+ChoiceNode(value, x, color) -&gt; .Graphics.Action({=
+    id=@&quot;choice-@{value}&quot;,
+    target=$$choice,
+    action=current -&gt; value,
+    label=@&quot;Choose exact value @{value}&quot;,
+    children=[
+        .Graphics.Circle([x,70], 34, {= fill=color, stroke=&quot;#4c1d95&quot;, width=2 }),
+        .Graphics.Text([x,77], value, {= anchor=&quot;middle&quot;, size=20, weight=&quot;bold&quot; })
+    ]
+});
+
+$$view := .Fragment([
+    .Paragraph(@&quot;Selected exact value: @{$choice}&quot;),
+    .Graphics.Graphic([280,140], [
+        ChoiceNode(1, 85, $choice == 1 ?: &quot;#c4b5fd&quot; ?_ &quot;#ede9fe&quot;),
+        ChoiceNode(2, 195, $choice == 2 ?: &quot;#c4b5fd&quot; ?_ &quot;#ede9fe&quot;)
+    ])
+]);
+
+$view ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The retained scene stores the action ID, target ID, children, and accessible label—not a DOM event. The browser emits <code>graphic:action</code>; the widget session runs the callback and performs the same reactive replacement used by controls.</p>
 <aside class="challenge"><p class="eyebrow">Challenge</p><h3>Add a reactive radius</h3><p>Create a reactive point, a derived radius based on its y coordinate, and a reactive Fragment containing a Graphic. Use <code>.Graphics.DragPoint($$point)</code> for the handle and draw a second Circle whose radius changes after the point moves.</p><section class="tutorial-cell"><header><span>Your RiX answer</span><button type="button" data-tutorial-run>Run answer</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false" placeholder="# Write your RiX solution here">$$point := {: 80, 50};
 $$radius := {; p := $point; 5 + p[2] / 10 };
 $$picture := {;

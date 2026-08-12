@@ -26,5 +26,31 @@ test("the app build publishes both Stern-Brocot variants under docs", async () =
     expect(build).toContain('path.join(output, "showcases.html")');
     expect(build).toContain('path.join(source, "stern-brocot-web.js")');
     expect(generatedBuild).toContain('"docs", "stern-brocot-rix"');
+    expect(generatedBuild).toContain('createHash("sha256")');
     expect(nativePage).toContain('src="./assets/stern-brocot-web.js"');
+});
+
+test("the generated Stern-Brocot page declares its layout, keys, and scene actions in RiX", async () => {
+    const source = await Bun.file(new URL(
+        "../../rix/examples/stern-brocot/stern-brocot-page.rix",
+        import.meta.url,
+    )).text();
+    const generated = await read("docs/stern-brocot-rix/index.html");
+    const runtime = await read("docs/stern-brocot-rix/assets/rix-page.js");
+
+    expect(source).toContain('layout="grid"');
+    expect(source).toContain("parent={= row=1, column=2 }");
+    expect(source).toContain("left={= row=2, column=1 }");
+    expect(source).toContain("right={= row=2, column=3 }");
+    expect(source).toContain("root={= row=3, column=2");
+    expect(source).toContain('shortcut="ArrowUp"');
+    expect(source).toContain('shortcut="ArrowLeft"');
+    expect(source).toContain('shortcut="ArrowRight"');
+    expect(source).not.toContain('shortcut="ArrowDown"');
+    expect(source.match(/\.Graphics\.Action/g)).toHaveLength(3);
+    expect(generated).toContain("scene-left");
+    expect(generated).toMatch(/href="assets\/rix-page\.css\?v=[a-f0-9]{12}"/);
+    expect(generated).toMatch(/src="assets\/rix-page\.js\?v=[a-f0-9]{12}"/);
+    expect(runtime).toContain('type: "graphic:action"');
+    expect(runtime).toContain("enhanceControlShortcuts(root)");
 });

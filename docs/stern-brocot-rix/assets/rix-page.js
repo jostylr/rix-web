@@ -18707,6 +18707,15 @@ ${indentStr})`;
       return callable(...args);
     throw new Error(`${label} must be a RiX callable`);
   }
+  function shortcutKey(value, label) {
+    if (value === null || value === undefined)
+      return null;
+    const key = asString(value);
+    if (key === null || !/^(?:Arrow(?:Up|Left|Right|Down)|Enter|Escape|Home|End|PageUp|PageDown|[A-Za-z0-9])$/.test(key)) {
+      throw new Error(`${label} must be a supported KeyboardEvent key`);
+    }
+    return key.length === 1 ? key.toLowerCase() : key;
+  }
   function controlDisplay(entry, fields, name, runtime, allowed = Object.keys(fields)) {
     const formatValue = get(entry, "format");
     if (formatValue === null)
@@ -19345,6 +19354,7 @@ ${indentStr})`;
       targetId: target.id,
       value,
       action,
+      shortcut: shortcutKey(get(entry, "shortcut"), "Controls.Action shortcut"),
       run: () => invokeControlCallable(action, [target.get()], runtime, "Controls.Action action"),
       ...controlBehavior(entry, { value }, "Controls.Action", runtime),
       replacesDependencies: Object.freeze([...target.dependencies])
@@ -19433,6 +19443,15 @@ ${indentStr})`;
     }
     if (width && ["auto", "compact", "full"].includes(width)) {
       attributes.push(` data-rix-control-width="${escapeHtml(width)}"`);
+    }
+    for (const name of ["row", "column"]) {
+      const raw = styleValue(style, name);
+      if (raw === null || raw === undefined)
+        continue;
+      const value = exactInteger3(raw, `Control style ${name}`);
+      if (value < 1 || value > 4)
+        throw new Error(`Control style ${name} must be between 1 and 4`);
+      attributes.push(` data-rix-control-${name}="${value}"`);
     }
     return attributes.join("");
   }
@@ -19894,6 +19913,24 @@ ${indentStr})`;
       replacesDependencies: Object.freeze([...target.dependencies])
     });
   }
+  function createGraphicAction(args, runtime = null) {
+    const entry = spec(args, ["target", "action", "children", "label"], "Graphics.Action");
+    const target = reactiveTarget(entry, "Graphics.Action");
+    const action = get(entry, "action");
+    if (action === null || action === undefined)
+      throw new Error("Graphics.Action requires an action callable");
+    return output("graphic_action", {
+      id: asString(get(entry, "id")) || `${target.id}:graphic-action`,
+      label: asString(get(entry, "label")) || "Graphic action",
+      children: sequence(get(entry, "children"), "Graphics.Action children"),
+      style: optionalMap(get(entry, "style"), "Graphics.Action style"),
+      target,
+      targetId: target.id,
+      action,
+      run: () => invokeControlCallable(action, [target.get()], runtime, "Graphics.Action action"),
+      replacesDependencies: Object.freeze([...target.dependencies])
+    });
+  }
   function createClip(args) {
     const entry = spec(args, ["children", "bounds", "style"], "Clip");
     const bounds = sequence(get(entry, "bounds"), "Clip bounds");
@@ -20293,6 +20330,11 @@ ${indentStr})`;
       const replaced = node.replacesDependencies?.length ? ` data-rix-replaces-dependencies="${escapeHtml(node.replacesDependencies.join(","))}"` : "";
       return `<circle class="rix-output-drag-point" cx="${cx}" cy="${cy}" r="${svgNumber(node.radius, "DragPoint radius")}" ${svgStyle(node.style, "#7c3aed")} tabindex="0" role="button" aria-label="${escapeHtml(node.label)}" data-rix-drag-target="${escapeHtml(node.targetId)}" data-rix-position="${cx},${cy}"${replaced}/>`;
     }
+    if (node.kind === "graphic_action") {
+      const replaced = node.replacesDependencies?.length ? ` data-rix-replaces-dependencies="${escapeHtml(node.replacesDependencies.join(","))}"` : "";
+      const style = svgStyle(node.style);
+      return `<g class="rix-output-graphic-action"${style ? ` ${style}` : ""} tabindex="0" role="button" aria-label="${escapeHtml(node.label)}" data-rix-graphic-action="${escapeHtml(node.id)}" data-rix-graphic-target="${escapeHtml(node.targetId)}"${replaced}>${node.children.map((child) => renderSvgNode(child, format, defs)).join("")}</g>`;
+    }
     if (node.kind === "text_mark")
       return renderSvgText(node, format);
     if (node.kind === "group")
@@ -20321,7 +20363,7 @@ ${indentStr})`;
     const visit = (node) => {
       if (!isOutputValue(node))
         return false;
-      if (node.kind === "drag_point")
+      if (node.kind === "drag_point" || node.kind === "graphic_action")
         return true;
       return Array.isArray(node.children) && node.children.some(visit);
     };
@@ -20651,7 +20693,8 @@ ${formatOutputText(slide, format)}`).join(`
     }
     if (value.kind === "control_action") {
       const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml(value.replacesDependencies.join(","))}"` : "";
-      return `<div class="rix-output-control rix-output-control-action" data-rix-control-kind="action" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><button type="button" data-rix-control-input aria-label="${escapeHtml(value.label)}"${controlInputAttributes(value)}>${escapeHtml(value.label)}</button>${controlMessages(value)}</div>`;
+      const shortcut = value.shortcut ? ` data-rix-control-shortcut="${escapeHtml(value.shortcut)}"` : "";
+      return `<div class="rix-output-control rix-output-control-action" data-rix-control-kind="action" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${shortcut}${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><button type="button" data-rix-control-input aria-label="${escapeHtml(value.label)}"${value.shortcut ? ` aria-keyshortcuts="${escapeHtml(value.shortcut)}"` : ""}${controlInputAttributes(value)}>${escapeHtml(value.label)}</button>${controlMessages(value)}</div>`;
     }
     if (value.kind === "control_panel") {
       const actions = value.mode === "staged" ? `<div class="rix-output-control-actions"><button type="button" data-rix-control-submit disabled>${escapeHtml(value.submitLabel)}</button><button type="button" data-rix-control-discard disabled>${escapeHtml(value.discardLabel)}</button></div>` : "";
@@ -20698,9 +20741,12 @@ ${formatOutputText(slide, format)}`).join(`
     if (value.kind === "graphic") {
       const interactive = graphicIsInteractive(value);
       const replacesDependencies = interactive && value.children.some(function hasReplacement(node) {
-        return isOutputValue(node) && (node.kind === "drag_point" && node.replacesDependencies?.length > 0 || (node.children || []).some(hasReplacement));
+        return isOutputValue(node) && ((node.kind === "drag_point" || node.kind === "graphic_action") && node.replacesDependencies?.length > 0 || (node.children || []).some(hasReplacement));
       });
-      const interactionStatus = replacesDependencies ? "Dragging will replace this point’s current reactive dependencies." : "Drag the highlighted point or use its arrow keys.";
+      const hasDragPoint = value.children.some(function containsDragPoint(node) {
+        return isOutputValue(node) && (node.kind === "drag_point" || (node.children || []).some(containsDragPoint));
+      });
+      const interactionStatus = replacesDependencies ? hasDragPoint ? "Dragging will replace this point’s current reactive dependencies." : "Using this scene action will replace its target’s current reactive dependencies." : hasDragPoint ? "Drag the highlighted point or use its arrow keys." : "Choose a highlighted scene node to navigate.";
       return `<div class="rix-output-graphic"${interactive ? ' data-rix-interactive="true"' : ""}>${renderGraphicSvg(value, format)}${interactive ? `<output class="rix-output-graphic-status" aria-live="polite">${interactionStatus}</output>` : ""}</div>`;
     }
     if (value.kind === "slide")
@@ -20734,6 +20780,7 @@ ${formatOutputText(slide, format)}`).join(`
       ["Rectangle", createRectangle],
       ["Circle", createCircle],
       ["DragPoint", createDragPoint],
+      ["Action", createGraphicAction],
       ["Clip", createClip],
       ["Snapshots", createSnapshots]
     ]);
@@ -27431,6 +27478,94 @@ ${indented.join(`,
     "\\/=": "\\/",
     "\\=": "\\"
   };
+  function uniformDimension(values, label) {
+    if (values.length === 0)
+      return 0;
+    const expected = values[0];
+    if (!values.every((value) => value === expected)) {
+      throw new Error(`Semicolon tensor is ragged along ${label}`);
+    }
+    return expected;
+  }
+  function implicitTensorLayout(structure, rank) {
+    const rows = structure || [];
+    if (rank < 2 || rows.length === 0) {
+      throw new Error("Semicolon tensor requires at least one row");
+    }
+    const columns = uniformDimension(rows.map((item) => item.row.length), "columns");
+    const shape = new Array(rank).fill(1);
+    shape[1] = columns;
+    if (rank === 2) {
+      shape[0] = rows.length;
+    } else {
+      const rowCounts = [];
+      let rowCount = 0;
+      for (const item of rows) {
+        rowCount += 1;
+        if (item.separatorLevel >= 2 || item === rows[rows.length - 1]) {
+          rowCounts.push(rowCount);
+          rowCount = 0;
+        }
+      }
+      shape[0] = uniformDimension(rowCounts, "rows");
+      for (let axis = 2;axis < rank; axis++) {
+        const groupCounts = [];
+        let groupCount = 1;
+        for (const item of rows) {
+          if (item.separatorLevel === axis)
+            groupCount += 1;
+          if (item.separatorLevel >= axis + 1 || item === rows[rows.length - 1]) {
+            groupCounts.push(groupCount);
+            groupCount = 1;
+          }
+        }
+        shape[axis] = uniformDimension(groupCounts, `axis ${axis + 1}`);
+      }
+    }
+    const expectedRows = shape[0] * shape.slice(2).reduce((product, size) => product * size, 1);
+    if (rows.length !== expectedRows) {
+      throw new Error(`Semicolon tensor shape inference expected ${expectedRows} rows, received ${rows.length}`);
+    }
+    let completedBlock = shape[0];
+    for (let index = 0;index < rows.length; index++) {
+      let expectedSeparator = 0;
+      if (index < rows.length - 1) {
+        expectedSeparator = 1;
+        completedBlock = shape[0];
+        while ((index + 1) % completedBlock === 0 && expectedSeparator < rank - 1) {
+          expectedSeparator += 1;
+          completedBlock *= shape[expectedSeparator];
+        }
+      }
+      if (rows[index].separatorLevel !== expectedSeparator) {
+        throw new Error(`Malformed semicolon tensor boundary after row ${index + 1}: expected '${";".repeat(expectedSeparator)}'`);
+      }
+    }
+    const displayElements = rows.flatMap((item) => item.row);
+    if (rank === 2 || displayElements.length === 0)
+      return { shape, elements: displayElements };
+    const displayShape = [...shape.slice(2).reverse(), shape[0], shape[1]];
+    const externalStrides = shape.map((_, axis) => shape.slice(axis + 1).reduce((product, size) => product * size, 1));
+    const elements = new Array(displayElements.length);
+    for (let linear = 0;linear < displayElements.length; linear++) {
+      let remainder = linear;
+      const displayCoordinates = displayShape.map((size, axis) => {
+        const stride = displayShape.slice(axis + 1).reduce((product, value) => product * value, 1);
+        const coordinate = stride === 0 ? 0 : Math.floor(remainder / stride);
+        remainder = stride === 0 ? 0 : remainder % stride;
+        return coordinate;
+      });
+      const higher = displayCoordinates.slice(0, -2).reverse();
+      const externalCoordinates = [
+        displayCoordinates[displayCoordinates.length - 2],
+        displayCoordinates[displayCoordinates.length - 1],
+        ...higher
+      ];
+      const externalIndex = externalCoordinates.reduce((sum, coordinate, axis) => sum + coordinate * externalStrides[axis], 0);
+      elements[externalIndex] = displayElements[linear];
+    }
+    return { shape, elements };
+  }
   var LOWERERS = {
     Number(node) {
       if (node.value && node.value.includes(":") && !node.value.includes("[")) {
@@ -27838,11 +27973,16 @@ ${indented.join(`,
       return ir2("ARRAY", ...node.elements.map(lowerNode));
     },
     Matrix(node) {
-      const rows = node.rows.map((row) => ir2("ARRAY", ...row.map(lowerNode)));
-      return ir2("MATRIX", ...rows);
+      const structure = node.rows.map((row, index) => ({
+        row,
+        separatorLevel: index === node.rows.length - 1 ? 0 : 1
+      }));
+      const layout = implicitTensorLayout(structure, 2);
+      return ir2("TENSOR_LITERAL", layout.shape, ...layout.elements.map(lowerNode));
     },
     Tensor(node) {
-      return ir2("TENSOR", ...node.elements.map(lowerNode));
+      const layout = implicitTensorLayout(node.structure, node.maxDimension);
+      return ir2("TENSOR_LITERAL", layout.shape, ...layout.elements.map(lowerNode));
     },
     TensorLiteral(node) {
       const meta = node.header ? { header: lowerNode(node.header) } : null;
@@ -45406,6 +45546,1041 @@ complexVizNamespace._proto = {=
     return collection;
   }
 
+  // rix/plugins/linalg/linalg.js
+  var LINALG_RESULT_SCHEMA = "rix.linalg.result@1";
+  var VECTOR_SPACE_SCHEMA = "rix.linalg.vector-space@1";
+  var COORDINATES_SCHEMA = "rix.linalg.coordinates@1";
+  var COORDINATE_TENSOR_SCHEMA = "rix.linalg.coordinate-tensor@1";
+  var int12 = (value) => new Integer(BigInt(value));
+  var str6 = (value) => ({ type: "string", value: String(value) });
+  var seq6 = (values3) => ({ type: "sequence", values: values3 });
+  var zero3 = () => new Rational(0n, 1n);
+  var one3 = () => new Rational(1n, 1n);
+  function exposed(value) {
+    if (typeof value === "string")
+      return str6(value);
+    if (typeof value === "number" && Number.isSafeInteger(value))
+      return int12(value);
+    if (typeof value === "boolean")
+      return value ? int12(1) : null;
+    return value;
+  }
+  function exactRational3(value, label2 = "value") {
+    if (value instanceof Rational)
+      return value;
+    if (value instanceof Integer)
+      return new Rational(value.value, 1n);
+    if (typeof value === "bigint" || Number.isSafeInteger(value))
+      return new Rational(value, 1n);
+    throw new Error(`${label2} must be an exact Integer or Rational`);
+  }
+  function integer4(value, label2) {
+    const result = value instanceof Integer ? Number(value.value) : value instanceof Rational && value.denominator === 1n ? Number(value.numerator) : Number.isSafeInteger(value) ? value : NaN;
+    if (!Number.isSafeInteger(result))
+      throw new Error(`${label2} must be an Integer`);
+    return result;
+  }
+  function text8(value, fallback = null) {
+    if (value?.type === "string")
+      return value.value;
+    if (typeof value === "string")
+      return value;
+    return fallback;
+  }
+  function isZero5(value) {
+    return exactRational3(value).numerator === 0n;
+  }
+  function copyRows(rows) {
+    return rows.map((row) => row.map((value) => exactRational3(value)));
+  }
+  function flatTensorValues(value) {
+    const values3 = [];
+    forEachTensorCell(value, (entry) => values3.push(entry));
+    return values3;
+  }
+  function exactMatrix(value, label2 = "matrix") {
+    let rows;
+    if (isTensor(value)) {
+      if (tensorRank(value) !== 2)
+        throw new Error(`${label2} must be a rank-2 tensor`);
+      const flat = flatTensorValues(value);
+      rows = Array.from({ length: value.shape[0] }, (_, row) => flat.slice(row * value.shape[1], (row + 1) * value.shape[1]));
+    } else if (value?.type === "matrix" && Array.isArray(value.rows)) {
+      rows = value.rows.map((row) => sequence2(row, `${label2} row`));
+    } else {
+      rows = sequence2(value, label2).map((row, index) => sequence2(row, `${label2} row ${index + 1}`));
+    }
+    const columns = rows[0]?.length ?? 0;
+    if (rows.length === 0 || columns === 0)
+      throw new Error(`${label2} cannot be empty`);
+    if (!rows.every((row) => row.length === columns))
+      throw new Error(`${label2} rows must have equal lengths`);
+    return rows.map((row, rowIndex) => row.map((entry, columnIndex) => exactRational3(entry, `${label2} entry ${rowIndex + 1},${columnIndex + 1}`)));
+  }
+  function exactVector2(value, label2 = "vector") {
+    let values3;
+    if (isTensor(value)) {
+      if (tensorRank(value) !== 1)
+        throw new Error(`${label2} must be a rank-1 tensor`);
+      values3 = flatTensorValues(value);
+    } else {
+      values3 = sequence2(value, label2);
+    }
+    return values3.map((entry, index) => exactRational3(entry, `${label2} entry ${index + 1}`));
+  }
+  function matrixTensor(rows) {
+    if (rows.length === 0 || rows[0].length === 0)
+      throw new Error("Matrix cannot be empty");
+    return createTensor([rows.length, rows[0].length], rows.flat());
+  }
+  function vectorTensor(values3) {
+    return createTensor([values3.length], values3);
+  }
+  function identityRows(size) {
+    return Array.from({ length: size }, (_, row) => Array.from({ length: size }, (_2, column) => row === column ? one3() : zero3()));
+  }
+  function transposeRows(rows) {
+    return Array.from({ length: rows[0].length }, (_, column) => rows.map((row) => row[column]));
+  }
+  function multiplyRows(left, right) {
+    if (left[0].length !== right.length)
+      throw new Error("Matrix multiplication dimensions must agree");
+    return left.map((row) => Array.from({ length: right[0].length }, (_, column) => row.reduce((sum, value, index) => sum.add(value.multiply(right[index][column])), zero3())));
+  }
+  function rrefRows(source, coefficientColumns = source[0].length) {
+    const rows = copyRows(source);
+    const pivots = [];
+    let pivotRow = 0;
+    for (let column = 0;column < coefficientColumns && pivotRow < rows.length; column++) {
+      const selected = rows.findIndex((row, index) => index >= pivotRow && !isZero5(row[column]));
+      if (selected < 0)
+        continue;
+      [rows[pivotRow], rows[selected]] = [rows[selected], rows[pivotRow]];
+      const pivot = rows[pivotRow][column];
+      rows[pivotRow] = rows[pivotRow].map((value) => value.divide(pivot));
+      for (let row = 0;row < rows.length; row++) {
+        if (row === pivotRow || isZero5(rows[row][column]))
+          continue;
+        const factor = rows[row][column];
+        rows[row] = rows[row].map((value, index) => value.subtract(factor.multiply(rows[pivotRow][index])));
+      }
+      pivots.push(column);
+      pivotRow += 1;
+    }
+    return { rows, pivots };
+  }
+  function inverseRows(source) {
+    if (source.length !== source[0].length)
+      throw new Error("Inverse requires a square matrix");
+    const size = source.length;
+    const reduced = rrefRows(source.map((row, index) => [...row, ...identityRows(size)[index]]), size);
+    if (reduced.pivots.length !== size)
+      throw new Error("Matrix is singular");
+    return reduced.rows.map((row) => row.slice(size));
+  }
+  function determinantRows(source) {
+    if (source.length !== source[0].length)
+      throw new Error("Determinant requires a square matrix");
+    const rows = copyRows(source);
+    let determinant = one3();
+    for (let column = 0;column < rows.length; column++) {
+      const selected = rows.findIndex((row, index) => index >= column && !isZero5(row[column]));
+      if (selected < 0)
+        return zero3();
+      if (selected !== column) {
+        [rows[column], rows[selected]] = [rows[selected], rows[column]];
+        determinant = determinant.negate();
+      }
+      const pivot = rows[column][column];
+      determinant = determinant.multiply(pivot);
+      for (let row = column + 1;row < rows.length; row++) {
+        if (isZero5(rows[row][column]))
+          continue;
+        const factor = rows[row][column].divide(pivot);
+        for (let index = column;index < rows[row].length; index++) {
+          rows[row][index] = rows[row][index].subtract(factor.multiply(rows[column][index]));
+        }
+      }
+    }
+    return determinant;
+  }
+  function linalgResult(fields) {
+    const result = {
+      type: "linalg_result",
+      schema: LINALG_RESULT_SCHEMA,
+      exact: true,
+      ...fields,
+      _ext: new Map([["_type", str6("LinearSolveResult")], ["immutable", int12(1)]])
+    };
+    for (const [name, value] of Object.entries(fields))
+      result._ext.set(name, exposed(value));
+    result._ext.set("schema", str6(LINALG_RESULT_SCHEMA));
+    result._ext.set("exact", int12(1));
+    return result;
+  }
+  function solveLinearValues(matrixValue, vectorValue) {
+    const matrix = exactMatrix(matrixValue, "Solve matrix");
+    const vector = exactVector2(vectorValue, "Solve right-hand side");
+    if (matrix.length !== vector.length)
+      throw new Error("Solve right-hand side length must equal the matrix row count");
+    const columns = matrix[0].length;
+    const reduced = rrefRows(matrix.map((row, index) => [...row, vector[index]]), columns);
+    const inconsistent = reduced.rows.some((row) => row.slice(0, columns).every(isZero5) && !isZero5(row[columns]));
+    if (inconsistent) {
+      return linalgResult({
+        status: "inconsistent",
+        solution: null,
+        particular: null,
+        nullspace: seq6([]),
+        rank: reduced.pivots.length,
+        rref: matrixTensor(reduced.rows),
+        pivots: seq6(reduced.pivots.map((column) => int12(column + 1)))
+      });
+    }
+    const particular = Array.from({ length: columns }, () => zero3());
+    reduced.pivots.forEach((column, row) => {
+      particular[column] = reduced.rows[row][columns];
+    });
+    const freeColumns = Array.from({ length: columns }, (_, index) => index).filter((column) => !reduced.pivots.includes(column));
+    const nullspace = freeColumns.map((freeColumn) => {
+      const basis = Array.from({ length: columns }, () => zero3());
+      basis[freeColumn] = one3();
+      reduced.pivots.forEach((pivotColumn, row) => {
+        basis[pivotColumn] = reduced.rows[row][freeColumn].negate();
+      });
+      return vectorTensor(basis);
+    });
+    const solution = vectorTensor(particular);
+    return linalgResult({
+      status: freeColumns.length === 0 ? "unique" : "underdetermined",
+      solution,
+      particular: solution,
+      nullspace: seq6(nullspace),
+      rank: reduced.pivots.length,
+      rref: matrixTensor(reduced.rows),
+      pivots: seq6(reduced.pivots.map((column) => int12(column + 1)))
+    });
+  }
+  function rref(args) {
+    const rows = exactMatrix(args[0], "Rref matrix");
+    return matrixTensor(rrefRows(rows).rows);
+  }
+  function rank(args) {
+    const rows = exactMatrix(args[0], "Rank matrix");
+    return int12(rrefRows(rows).pivots.length);
+  }
+  function determinant(args) {
+    return determinantRows(exactMatrix(args[0], "Determinant matrix"));
+  }
+  function inverse(args) {
+    return matrixTensor(inverseRows(exactMatrix(args[0], "Inverse matrix")));
+  }
+  function solveLinear(args) {
+    if (args.length === 1 && args[0]?.type === "map") {
+      return solveLinearValues(field(args[0].entries, "A"), field(args[0].entries, "b"));
+    }
+    if (args.length !== 2)
+      throw new Error("linalg.Solve expects a matrix and right-hand side");
+    return solveLinearValues(args[0], args[1]);
+  }
+  function spaceValue(name, dimension, metadata3 = null) {
+    return Object.freeze({
+      type: "vector_space",
+      schema: VECTOR_SPACE_SCHEMA,
+      name,
+      dimension,
+      metadata: metadata3,
+      _ext: new Map([["_type", str6("VectorSpace")], ["immutable", int12(1)], ["name", str6(name)], ["dimension", int12(dimension)], ["metadata", metadata3]])
+    });
+  }
+  function vectorSpace(args) {
+    const entries4 = entriesFor2(args, ["name", "dimension", "options"], "linalg.VectorSpace");
+    const name = text8(field(entries4, "name"), "V");
+    const dimension = integer4(field(entries4, "dimension"), "Vector-space dimension");
+    if (dimension < 1)
+      throw new Error("Vector-space dimension must be positive");
+    return spaceValue(name, dimension, field(entries4, "metadata"));
+  }
+  function requireSpace(value) {
+    if (value?.type !== "vector_space" || value.schema !== VECTOR_SPACE_SCHEMA) {
+      throw new Error("Expected a linalg VectorSpace");
+    }
+    return value;
+  }
+  function requireCoordinates(value) {
+    if (value?.type !== "coordinate_system" || value.schema !== COORDINATES_SCHEMA) {
+      throw new Error("Expected linalg Coordinates");
+    }
+    return value;
+  }
+  function coordinates(args) {
+    const entries4 = entriesFor2(args, ["space", "name", "basis", "options"], "linalg.Coordinates");
+    const space = requireSpace(field(entries4, "space"));
+    const name = text8(field(entries4, "name"), "standard");
+    const basisValue = field(entries4, "basis");
+    const basis = basisValue === null ? identityRows(space.dimension) : exactMatrix(basisValue, "Coordinate basis");
+    if (basis.length !== space.dimension || basis[0].length !== space.dimension) {
+      throw new Error(`Coordinate basis must be ${space.dimension}x${space.dimension}`);
+    }
+    const inverse2 = inverseRows(basis);
+    return Object.freeze({
+      type: "coordinate_system",
+      schema: COORDINATES_SCHEMA,
+      name,
+      space,
+      basis: matrixTensor(basis),
+      inverseBasis: matrixTensor(inverse2),
+      metadata: field(entries4, "metadata"),
+      _ext: new Map([
+        ["_type", str6("Coordinates")],
+        ["immutable", int12(1)],
+        ["name", str6(name)],
+        ["space", space],
+        ["basis", matrixTensor(basis)],
+        ["inverseBasis", matrixTensor(inverse2)]
+      ])
+    });
+  }
+  function changeMatrixValues(sourceValue, targetValue) {
+    const source = requireCoordinates(sourceValue);
+    const target = requireCoordinates(targetValue);
+    if (source.space !== target.space)
+      throw new Error("Coordinate systems must belong to the same VectorSpace");
+    return multiplyRows(exactMatrix(target.inverseBasis), exactMatrix(source.basis));
+  }
+  function changeMatrix(args) {
+    return matrixTensor(changeMatrixValues(args[0], args[1]));
+  }
+  function varianceName(value) {
+    const name = text8(value, value?.value);
+    if (["up", "contravariant"].includes(name))
+      return "up";
+    if (["down", "covariant"].includes(name))
+      return "down";
+    throw new Error("Tensor variance entries must be :up/:contravariant or :down/:covariant");
+  }
+  function normalizeVariance(value, rankValue) {
+    const values3 = value === null || value === undefined ? Array.from({ length: rankValue }, () => "up") : sequence2(value, "Tensor variance").map(varianceName);
+    if (values3.length !== rankValue)
+      throw new Error(`Tensor variance must contain ${rankValue} entries`);
+    return values3;
+  }
+  var tensorIdentitySerial = 0;
+  function coordinateTensorMethods() {
+    return new Map([
+      ["_type", str6("CoordinateTensor")],
+      ["COMPONENTS", { type: "method_builtin", name: "Components", impl: ([self]) => self.components }],
+      ["COORDINATES", { type: "method_builtin", name: "Coordinates", impl: ([self]) => self.coordinates }],
+      ["TRANSFORM", { type: "method_builtin", name: "Transform", impl: ([self, target]) => transformCoordinateTensor([self, target]) }],
+      ["TRANSFORM!", { type: "method_builtin", name: "Transform!", impl: ([self, target]) => transformCoordinateTensorBang([self, target]) }],
+      ["SAMETENSOR", { type: "method_builtin", name: "SameTensor", impl: ([self, other]) => sameTensor([self, other]) }]
+    ]);
+  }
+  function syncCoordinateTensorExtension(value) {
+    value._ext.set("components", value.components);
+    value._ext.set("coordinates", value.coordinates);
+    value._ext.set("variance", seq6(value.variance.map(str6)));
+    value._ext.set("identity", value.identity);
+    value._ext.set("equivalentTo", value.equivalentTo);
+    value._ext.set("equivalentto", value.equivalentTo);
+    value._ext.set("origin", value.origin);
+    value._ext.set("transform", value.transform);
+    return value;
+  }
+  function makeCoordinateTensor(components, coordinateSystem, variance, lineage = {}) {
+    return syncCoordinateTensorExtension({
+      type: "coordinate_tensor",
+      schema: COORDINATE_TENSOR_SCHEMA,
+      components,
+      coordinates: coordinateSystem,
+      variance,
+      identity: lineage.identity || Object.freeze({ type: "tensor_identity", serial: ++tensorIdentitySerial }),
+      equivalentTo: lineage.equivalentTo || null,
+      origin: lineage.origin || null,
+      transform: lineage.transform || null,
+      _ext: coordinateTensorMethods()
+    });
+  }
+  function requireCoordinateTensor(value) {
+    if (value?.type !== "coordinate_tensor" || value.schema !== COORDINATE_TENSOR_SCHEMA) {
+      throw new Error("Expected a coordinate-aware tensor");
+    }
+    return value;
+  }
+  function coordinateTensor(args) {
+    const entries4 = entriesFor2(args, ["components", "coordinates", "variance", "options"], "linalg.CoordinateTensor");
+    const components = field(entries4, "components");
+    if (!isTensor(components))
+      throw new Error("CoordinateTensor components must be a tensor");
+    const coordinateSystem = requireCoordinates(field(entries4, "coordinates"));
+    const rankValue = tensorRank(components);
+    if (rankValue < 1 || components.shape.some((size) => size !== coordinateSystem.space.dimension)) {
+      throw new Error("Every coordinate-tensor axis must match the VectorSpace dimension");
+    }
+    return makeCoordinateTensor(components, coordinateSystem, normalizeVariance(field(entries4, "variance"), rankValue));
+  }
+  function strides(shape) {
+    return shape.map((_, axis) => shape.slice(axis + 1).reduce((product, size) => product * size, 1));
+  }
+  function tupleForLinear(linear, shape) {
+    const result = [];
+    let remainder = linear;
+    for (const stride of strides(shape)) {
+      result.push(Math.floor(remainder / stride));
+      remainder %= stride;
+    }
+    return result;
+  }
+  function transformAxis(tensor, axis, matrix) {
+    const shape = [...tensor.shape];
+    const input = flatTensorValues(tensor).map((value) => exactRational3(value));
+    const output2 = new Array(input.length);
+    const sourceStrides = strides(shape);
+    for (let linear = 0;linear < output2.length; linear++) {
+      const targetTuple = tupleForLinear(linear, shape);
+      let sum = zero3();
+      for (let sourceIndex = 0;sourceIndex < shape[axis]; sourceIndex++) {
+        const sourceTuple = [...targetTuple];
+        sourceTuple[axis] = sourceIndex;
+        const sourceLinear = sourceTuple.reduce((total, coordinate, index) => total + coordinate * sourceStrides[index], 0);
+        sum = sum.add(matrix[targetTuple[axis]][sourceIndex].multiply(input[sourceLinear]));
+      }
+      output2[linear] = sum;
+    }
+    return createTensor(shape, output2);
+  }
+  function transformedComponents(value, target) {
+    const change = changeMatrixValues(value.coordinates, target);
+    const covariantChange = inverseRows(transposeRows(change));
+    let components = value.components;
+    value.variance.forEach((variance, axis) => {
+      components = transformAxis(components, axis, variance === "up" ? change : covariantChange);
+    });
+    return { components, change };
+  }
+  function transformCoordinateTensor(args) {
+    const value = requireCoordinateTensor(args[0]);
+    const target = requireCoordinates(args[1]);
+    if (value.coordinates === target)
+      return makeCoordinateTensor(value.components, target, [...value.variance], {
+        identity: value.identity,
+        equivalentTo: value,
+        origin: value.origin || value,
+        transform: { kind: "coordinateChange", source: value.coordinates, target, matrix: matrixTensor(identityRows(target.space.dimension)) }
+      });
+    const transformed2 = transformedComponents(value, target);
+    return makeCoordinateTensor(transformed2.components, target, [...value.variance], {
+      identity: value.identity,
+      equivalentTo: value,
+      origin: value.origin || value,
+      transform: { kind: "coordinateChange", source: value.coordinates, target, matrix: matrixTensor(transformed2.change) }
+    });
+  }
+  function snapshotCoordinateTensor(value) {
+    return makeCoordinateTensor(value.components, value.coordinates, [...value.variance], {
+      identity: value.identity,
+      equivalentTo: value.equivalentTo,
+      origin: value.origin,
+      transform: value.transform
+    });
+  }
+  function transformCoordinateTensorBang(args) {
+    const value = requireCoordinateTensor(args[0]);
+    const target = requireCoordinates(args[1]);
+    const previous = snapshotCoordinateTensor(value);
+    const transformed2 = transformedComponents(value, target);
+    value.components = transformed2.components;
+    value.coordinates = target;
+    value.equivalentTo = previous;
+    value.origin = value.origin || previous;
+    value.transform = { kind: "coordinateChange", source: previous.coordinates, target, matrix: matrixTensor(transformed2.change) };
+    return syncCoordinateTensorExtension(value);
+  }
+  function components(args) {
+    return requireCoordinateTensor(args[0]).components;
+  }
+  function sameTensor(args) {
+    return requireCoordinateTensor(args[0]).identity === requireCoordinateTensor(args[1]).identity ? int12(1) : null;
+  }
+  function vectorCoordinates(args) {
+    const coordinateSystem = requireCoordinates(args[1]);
+    const vector = exactVector2(args[0], "Vector components");
+    if (vector.length !== coordinateSystem.space.dimension)
+      throw new Error("Vector dimension does not match its coordinate system");
+    return makeCoordinateTensor(vectorTensor(vector), coordinateSystem, ["up"]);
+  }
+  var helpers = new Map([
+    ["Rref", rref],
+    ["Rank", rank],
+    ["Determinant", determinant],
+    ["Inverse", inverse],
+    ["Solve", solveLinear],
+    ["VectorSpace", vectorSpace],
+    ["Coordinates", coordinates],
+    ["CoordinateTensor", coordinateTensor],
+    ["Vector", vectorCoordinates],
+    ["ChangeMatrix", changeMatrix],
+    ["Transform", transformCoordinateTensor],
+    ["Transform!", transformCoordinateTensorBang],
+    ["Components", components],
+    ["SameTensor", sameTensor]
+  ]);
+
+  // rix/plugins/linalg/linalg.plugin.rix.js
+  function createLinalgPluginCollection() {
+    const entries4 = new Map;
+    const extension = new Map([["_mutable", new Integer(1n)]]);
+    for (const [name, helper] of helpers) {
+      entries4.set(name, helper);
+      entries4.set(name.toUpperCase(), helper);
+      extension.set(name.toUpperCase(), {
+        type: "method_builtin",
+        name,
+        impl: (args, context, evaluate, invoke) => helper(args.slice(1), { context, evaluate, invoke })
+      });
+    }
+    return { type: "map", entries: entries4, _ext: extension };
+  }
+  function install9({ systemContext }) {
+    const collection = createLinalgPluginCollection();
+    systemContext.registerHostValue("linalg", collection, {
+      doc: "Exact dense linear algebra and coordinate-aware tensors",
+      groups: ["LinearAlgebra", "Exact"]
+    });
+    return collection;
+  }
+
+  // rix/plugins/optimize/optimize.js
+  var LINEAR_PROGRAM_SCHEMA = "rix.optimize.linear-program@1";
+  var OPTIMIZATION_RESULT_SCHEMA = "rix.optimize.result@1";
+  var int13 = (value) => new Integer(BigInt(value));
+  var str7 = (value) => ({ type: "string", value: String(value) });
+  var seq7 = (values3) => ({ type: "sequence", values: values3 });
+  var zero4 = () => new Rational(0n, 1n);
+  var one4 = () => new Rational(1n, 1n);
+  function exposed2(value) {
+    if (typeof value === "string")
+      return str7(value);
+    if (typeof value === "number" && Number.isSafeInteger(value))
+      return int13(value);
+    if (typeof value === "boolean")
+      return value ? int13(1) : null;
+    return value;
+  }
+  function text9(value, fallback = null) {
+    if (value?.type === "string")
+      return value.value;
+    if (typeof value === "string")
+      return value;
+    return fallback;
+  }
+  function integer5(value, label2, fallback) {
+    if (value === null || value === undefined)
+      return fallback;
+    const result = value instanceof Integer ? Number(value.value) : value instanceof Rational && value.denominator === 1n ? Number(value.numerator) : Number.isSafeInteger(value) ? value : NaN;
+    if (!Number.isSafeInteger(result))
+      throw new Error(`${label2} must be an Integer`);
+    return result;
+  }
+  function isZero6(value) {
+    return value.numerator === 0n;
+  }
+  function isPositive(value) {
+    return value.numerator > 0n;
+  }
+  function isNegative2(value) {
+    return value.numerator < 0n;
+  }
+  function dot2(left, right) {
+    return left.reduce((sum, value, index) => sum.add(value.multiply(right[index])), zero4());
+  }
+  function linearProgramValue(objective, matrix, bounds, sense, name = null) {
+    const value = {
+      type: "linear_program",
+      schema: LINEAR_PROGRAM_SCHEMA,
+      objective: vectorTensor(objective),
+      A: matrixTensor(matrix),
+      b: vectorTensor(bounds),
+      sense,
+      variableCount: objective.length,
+      constraintCount: matrix.length,
+      relation: "<=",
+      nonnegative: true,
+      name,
+      exact: true,
+      _ext: new Map([
+        ["_type", str7("LinearProgram")],
+        ["immutable", int13(1)],
+        ["SOLVE", { type: "method_builtin", name: "Solve", impl: ([self, options]) => solveProgram([self, options]) }],
+        ["EVALUATE", { type: "method_builtin", name: "Evaluate", impl: ([self, point]) => evaluateProgram([self, point]) }]
+      ])
+    };
+    for (const key of ["objective", "A", "b"])
+      value._ext.set(key, value[key]);
+    value._ext.set("sense", str7(sense));
+    value._ext.set("name", name === null ? null : str7(name));
+    value._ext.set("variableCount", int13(objective.length));
+    value._ext.set("variablecount", int13(objective.length));
+    value._ext.set("constraintCount", int13(matrix.length));
+    value._ext.set("constraintcount", int13(matrix.length));
+    return Object.freeze(value);
+  }
+  function createLinearProgram(args) {
+    const entries4 = entriesFor2(args, ["objective", "A", "b", "options"], "optimize.LinearProgram");
+    const objective = exactVector2(field(entries4, "objective"), "Linear-program objective");
+    const matrix = exactMatrix(field(entries4, "A"), "Linear-program constraint matrix");
+    const bounds = exactVector2(field(entries4, "b"), "Linear-program bounds");
+    if (matrix[0].length !== objective.length)
+      throw new Error("Linear-program objective length must equal the matrix column count");
+    if (matrix.length !== bounds.length)
+      throw new Error("Linear-program bounds length must equal the matrix row count");
+    const sense = text9(field(entries4, "sense"), "max").toLowerCase();
+    if (!["max", "maximize", "min", "minimize"].includes(sense)) {
+      throw new Error("Linear-program sense must be :max or :min");
+    }
+    const relation = text9(field(entries4, "relation"), "<=");
+    if (relation !== "<=")
+      throw new Error("Phase 1 linear programs require A*x <= b");
+    return linearProgramValue(objective, matrix, bounds, sense.startsWith("min") ? "min" : "max", text9(field(entries4, "name")));
+  }
+  function requireProgram(value) {
+    if (value?.type !== "linear_program" || value.schema !== LINEAR_PROGRAM_SCHEMA) {
+      throw new Error("Expected an optimize LinearProgram");
+    }
+    return value;
+  }
+  function optimizationResult(program, fields) {
+    const result = {
+      type: "optimization_result",
+      schema: OPTIMIZATION_RESULT_SCHEMA,
+      program,
+      method: "exactPrimalSimplex",
+      exact: true,
+      ...fields,
+      _ext: new Map([["_type", str7("OptimizationResult")], ["immutable", int13(1)]])
+    };
+    result._ext.set("program", program);
+    result._ext.set("method", str7(result.method));
+    result._ext.set("exact", int13(1));
+    for (const [name, value] of Object.entries(fields)) {
+      result._ext.set(name, exposed2(value));
+      result._ext.set(name.toLowerCase(), exposed2(value));
+    }
+    return result;
+  }
+  function pivot(tableau, pivotRow, pivotColumn) {
+    const pivotValue = tableau[pivotRow][pivotColumn];
+    tableau[pivotRow] = tableau[pivotRow].map((value) => value.divide(pivotValue));
+    for (let row = 0;row < tableau.length; row++) {
+      if (row === pivotRow || isZero6(tableau[row][pivotColumn]))
+        continue;
+      const factor = tableau[row][pivotColumn];
+      tableau[row] = tableau[row].map((value, column) => value.subtract(factor.multiply(tableau[pivotRow][column])));
+    }
+  }
+  function solveProgram(args) {
+    const program = requireProgram(args[0]);
+    const options = args[1]?.type === "map" ? args[1].entries : new Map;
+    const maxIterations = integer5(field(options, "maxIterations"), "Simplex maxIterations", 1e4);
+    if (maxIterations < 1)
+      throw new Error("Simplex maxIterations must be positive");
+    const objective = exactVector2(program.objective);
+    const matrix = exactMatrix(program.A);
+    const bounds = exactVector2(program.b);
+    if (bounds.some(isNegative2)) {
+      throw new Error("Phase 1 simplex requires nonnegative b so x=0 is an initial feasible point");
+    }
+    const effectiveObjective = program.sense === "min" ? objective.map((value) => value.negate()) : objective;
+    const variableCount = objective.length;
+    const constraintCount = matrix.length;
+    const totalColumns = variableCount + constraintCount;
+    const tableau = matrix.map((row, rowIndex) => [
+      ...row,
+      ...Array.from({ length: constraintCount }, (_, column) => column === rowIndex ? one4() : zero4()),
+      bounds[rowIndex]
+    ]);
+    tableau.push([
+      ...effectiveObjective.map((value) => value.negate()),
+      ...Array.from({ length: constraintCount }, () => zero4()),
+      zero4()
+    ]);
+    const basis = Array.from({ length: constraintCount }, (_, index) => variableCount + index);
+    let iterations = 0;
+    while (iterations < maxIterations) {
+      const objectiveRow = tableau[constraintCount];
+      const entering = objectiveRow.slice(0, totalColumns).findIndex(isNegative2);
+      if (entering < 0)
+        break;
+      let leaving = -1;
+      let bestRatio = null;
+      for (let row = 0;row < constraintCount; row++) {
+        const coefficient = tableau[row][entering];
+        if (!isPositive(coefficient))
+          continue;
+        const ratio = tableau[row][totalColumns].divide(coefficient);
+        if (bestRatio === null || ratio.compareTo(bestRatio) < 0 || ratio.compareTo(bestRatio) === 0 && basis[row] < basis[leaving]) {
+          bestRatio = ratio;
+          leaving = row;
+        }
+      }
+      if (leaving < 0) {
+        return optimizationResult(program, {
+          status: "unbounded",
+          solution: null,
+          objectiveValue: null,
+          iterations,
+          enteringVariable: int13(entering + 1),
+          tableau: matrixTensor(tableau),
+          diagnostics: seq7([str7("No leaving row exists for the selected improving direction")])
+        });
+      }
+      pivot(tableau, leaving, entering);
+      basis[leaving] = entering;
+      iterations += 1;
+    }
+    if (iterations >= maxIterations && tableau[constraintCount].slice(0, totalColumns).some(isNegative2)) {
+      return optimizationResult(program, {
+        status: "iterationLimit",
+        solution: null,
+        objectiveValue: null,
+        iterations,
+        tableau: matrixTensor(tableau),
+        diagnostics: seq7([str7("Simplex iteration limit reached")])
+      });
+    }
+    const solution = Array.from({ length: variableCount }, () => zero4());
+    basis.forEach((column, row) => {
+      if (column < variableCount)
+        solution[column] = tableau[row][totalColumns];
+    });
+    const slacks = bounds.map((bound, row) => bound.subtract(matrix[row].reduce((sum, value, column) => sum.add(value.multiply(solution[column])), zero4())));
+    return optimizationResult(program, {
+      status: "optimal",
+      solution: vectorTensor(solution),
+      objectiveValue: dot2(objective, solution),
+      slacks: vectorTensor(slacks),
+      feasible: slacks.every((value) => !isNegative2(value)),
+      iterations,
+      basis: seq7(basis.map((column) => int13(column + 1))),
+      tableau: matrixTensor(tableau),
+      diagnostics: seq7([])
+    });
+  }
+  function evaluateProgram(args) {
+    const program = requireProgram(args[0]);
+    const point = exactVector2(args[1], "Linear-program point");
+    if (point.length !== program.variableCount)
+      throw new Error("Point dimension does not match the LinearProgram");
+    const matrix = exactMatrix(program.A);
+    const bounds = exactVector2(program.b);
+    const lhs = matrix.map((row) => dot2(row, point));
+    const feasible = point.every((value) => !isNegative2(value)) && lhs.every((value, row) => value.compareTo(bounds[row]) <= 0);
+    return {
+      type: "optimization_evaluation",
+      objectiveValue: dot2(exactVector2(program.objective), point),
+      feasible,
+      lhs: vectorTensor(lhs),
+      slacks: vectorTensor(bounds.map((bound, row) => bound.subtract(lhs[row])))
+    };
+  }
+  function solveConvenience(args, sense) {
+    const program = createLinearProgram([...args.slice(0, 3), {
+      type: "map",
+      entries: new Map([["sense", str7(sense)]])
+    }]);
+    return solveProgram([program, args[3]]);
+  }
+  var helpers2 = new Map([
+    ["LinearProgram", createLinearProgram],
+    ["Solve", solveProgram],
+    ["Evaluate", evaluateProgram],
+    ["Maximize", (args) => solveConvenience(args, "max")],
+    ["Minimize", (args) => solveConvenience(args, "min")]
+  ]);
+
+  // rix/plugins/optimize/optimize.plugin.rix.js
+  function createOptimizePluginCollection() {
+    const entries4 = new Map;
+    const extension = new Map([["immutable", new Integer(1n)]]);
+    for (const [name, helper] of helpers2) {
+      entries4.set(name, helper);
+      entries4.set(name.toUpperCase(), helper);
+      extension.set(name.toUpperCase(), {
+        type: "method_builtin",
+        name,
+        impl: (args, context, evaluate, invoke) => helper(args.slice(1), { context, evaluate, invoke })
+      });
+    }
+    return { type: "map", entries: entries4, _ext: extension };
+  }
+  function install10({ systemContext }) {
+    const collection = createOptimizePluginCollection();
+    systemContext.registerHostValue("optimize", collection, {
+      doc: "Exact linear programs and deterministic simplex optimization",
+      groups: ["Optimization", "Exact"]
+    });
+    return collection;
+  }
+
+  // rix/plugins/solve/solve.js
+  var SYSTEM_SOLUTION_SCHEMA = "rix.solve.system-result@1";
+  var int14 = (value) => new Integer(BigInt(value));
+  var str8 = (value) => ({ type: "string", value: String(value) });
+  var seq8 = (values3) => ({ type: "sequence", values: values3 });
+  var map3 = (entries4) => ({ type: "map", entries: new Map(entries4) });
+  var zero5 = () => new Rational(0n, 1n);
+  var one5 = () => new Rational(1n, 1n);
+  function exact2(value, label2) {
+    if (value instanceof Rational)
+      return value;
+    if (value instanceof Integer)
+      return new Rational(value.value, 1n);
+    throw new Error(`${label2} must be an exact Integer or Rational`);
+  }
+  function addForms(left, right, sign = 1) {
+    const coefficients = new Map(left.coefficients);
+    for (const [name, value] of right.coefficients) {
+      const contribution = sign === 1 ? value : value.negate();
+      coefficients.set(name, (coefficients.get(name) || zero5()).add(contribution));
+      if (coefficients.get(name).numerator === 0n)
+        coefficients.delete(name);
+    }
+    return {
+      coefficients,
+      constant: sign === 1 ? left.constant.add(right.constant) : left.constant.subtract(right.constant)
+    };
+  }
+  function scaleForm(form, scalar) {
+    return {
+      coefficients: new Map(Array.from(form.coefficients, ([name, value]) => [name, value.multiply(scalar)])),
+      constant: form.constant.multiply(scalar)
+    };
+  }
+  function isScalarForm(form) {
+    return form.coefficients.size === 0;
+  }
+  function literalValue3(node) {
+    if (node?.fn !== "LITERAL")
+      return null;
+    try {
+      return new Rational(String(node.args[0]));
+    } catch {
+      return null;
+    }
+  }
+  function linearForm(node, unknowns, constants) {
+    if (!node?.fn)
+      throw new Error("Unsupported empty symbolic expression");
+    if (node.fn === "LITERAL") {
+      const value = literalValue3(node);
+      if (!value)
+        throw new Error(`Unsupported numeric literal '${node.args[0]}'`);
+      return { coefficients: new Map, constant: value };
+    }
+    if (node.fn === "RETRIEVE" || node.fn === "OUTER_RETRIEVE") {
+      const name = node.args[0];
+      if (unknowns.has(name))
+        return { coefficients: new Map([[name, one5()]]), constant: zero5() };
+      if (constants.has(name))
+        return { coefficients: new Map, constant: constants.get(name) };
+      throw new Error(`Linear system needs an exact value for '${name}'`);
+    }
+    if (node.fn === "NEG")
+      return scaleForm(linearForm(node.args[0], unknowns, constants), new Rational(-1n, 1n));
+    if (node.fn === "ADD")
+      return addForms(linearForm(node.args[0], unknowns, constants), linearForm(node.args[1], unknowns, constants));
+    if (node.fn === "SUB")
+      return addForms(linearForm(node.args[0], unknowns, constants), linearForm(node.args[1], unknowns, constants), -1);
+    if (node.fn === "MUL") {
+      const left = linearForm(node.args[0], unknowns, constants);
+      const right = linearForm(node.args[1], unknowns, constants);
+      if (isScalarForm(left))
+        return scaleForm(right, left.constant);
+      if (isScalarForm(right))
+        return scaleForm(left, right.constant);
+      throw new Error("Nonlinear product found in a Phase 1 linear system");
+    }
+    if (node.fn === "DIV") {
+      const numerator = linearForm(node.args[0], unknowns, constants);
+      const denominator = linearForm(node.args[1], unknowns, constants);
+      if (!isScalarForm(denominator) || denominator.constant.numerator === 0n) {
+        throw new Error("Linear-system division requires a nonzero exact scalar denominator");
+      }
+      return scaleForm(numerator, denominator.constant.reciprocal());
+    }
+    if (node.fn === "POW") {
+      const exponent = literalValue3(node.args[1]);
+      if (exponent?.denominator === 1n && exponent.numerator === 1n)
+        return linearForm(node.args[0], unknowns, constants);
+      if (exponent?.denominator === 1n && exponent.numerator === 0n)
+        return { coefficients: new Map, constant: one5() };
+      throw new Error("Nonlinear power found in a Phase 1 linear system");
+    }
+    throw new Error(`Unsupported symbolic operation '${node.fn}' in a Phase 1 linear system`);
+  }
+  function valuesMap(value) {
+    if (value === null || value === undefined)
+      return new Map;
+    if (value?.type !== "map" || !(value.entries instanceof Map))
+      throw new Error("solve values must be a map");
+    return new Map(Array.from(value.entries, ([name, entry]) => [String(name), exact2(entry, `solve value '${name}'`)]));
+  }
+  function tensorVectorValues(value) {
+    const result = [];
+    forEachTensorCell(value, (entry) => result.push(entry));
+    return result;
+  }
+  function systemResult(spec2, roles, equations, linearResult) {
+    const values3 = linearResult.particular ? tensorVectorValues(linearResult.particular) : [];
+    const solution = linearResult.particular ? map3(roles.outputs.map((name, index) => [name, values3[index]])) : null;
+    const result = {
+      type: "system_solution",
+      schema: SYSTEM_SOLUTION_SCHEMA,
+      status: linearResult.status,
+      classification: "linearEqualities",
+      exact: true,
+      spec: spec2,
+      unknowns: seq8(roles.outputs.map(str8)),
+      solution,
+      solutionVector: linearResult.particular,
+      equations,
+      linearResult,
+      _ext: new Map([["_type", str8("SystemSolution")], ["immutable", int14(1)]])
+    };
+    result._ext.set("status", str8(result.status));
+    result._ext.set("classification", str8(result.classification));
+    result._ext.set("unknowns", result.unknowns);
+    result._ext.set("solution", solution);
+    result._ext.set("solutionVector", result.solutionVector);
+    result._ext.set("solutionvector", result.solutionVector);
+    result._ext.set("linearResult", linearResult);
+    result._ext.set("linearresult", linearResult);
+    result._ext.set("equations", int14(equations));
+    return result;
+  }
+  function defineConstants(spec2, unknowns, constants) {
+    let pending = spec2.statements.filter((statement) => statement.kind === "define" && !unknowns.has(statement.target));
+    let progressed = true;
+    while (pending.length && progressed) {
+      progressed = false;
+      pending = pending.filter((statement) => {
+        try {
+          const form = linearForm(statement.expr, unknowns, constants);
+          if (!isScalarForm(form))
+            return true;
+          constants.set(statement.target, form.constant);
+          progressed = true;
+          return false;
+        } catch {
+          return true;
+        }
+      });
+    }
+    return pending;
+  }
+  function classifySystem(args) {
+    const spec2 = getAttachedSpec(args[0]);
+    if (!spec2)
+      throw new Error("solve.Classify expects a symbolic specification");
+    const operations = spec2.statements.map((statement) => statement.kind === "define" ? "define" : statement.expr?.fn || "unknown");
+    const hasInequality = operations.some((operation) => ["LT", "LTE", "GT", "GTE"].includes(operation));
+    const hasEquality = operations.includes("EQ") || operations.includes("define");
+    return map3([
+      ["kind", str8(hasInequality ? "constrainedSystem" : hasEquality ? "equalitySystem" : "expression")],
+      ["linearCandidate", hasInequality ? null : int14(1)],
+      ["operations", seq8(operations.map(str8))]
+    ]);
+  }
+  function solveSystem(args) {
+    const entries4 = entriesFor2(args, ["spec", "options"], "solve.System");
+    const spec2 = getAttachedSpec(field(entries4, "spec"));
+    if (!spec2)
+      throw new Error("solve.System expects a symbolic specification");
+    const resolved = resolveSymbolicRoles(spec2, field(entries4, "roles"));
+    const outputs = resolved.outputs.length ? resolved.outputs : resolved.unassigned;
+    if (outputs.length === 0)
+      throw new Error("solve.System needs output roles or unassigned symbols to solve for");
+    const roles = { ...resolved, outputs };
+    const unknowns = new Set(outputs);
+    const constants = valuesMap(field(entries4, "values"));
+    const unresolvedDefinitions = defineConstants(spec2, unknowns, constants);
+    const equations = [];
+    for (const statement of spec2.statements) {
+      let equation = null;
+      if (statement.kind === "define" && unknowns.has(statement.target)) {
+        equation = {
+          fn: "SUB",
+          args: [{ fn: "RETRIEVE", args: [statement.target] }, statement.expr]
+        };
+      } else if (statement.kind === "constraint") {
+        if (statement.expr?.fn !== "EQ") {
+          throw new Error(`Phase 1 solve.System supports exact equalities, not '${statement.expr?.fn || "unknown"}'`);
+        }
+        equation = { fn: "SUB", args: [statement.expr.args[0], statement.expr.args[1]] };
+      }
+      if (equation)
+        equations.push(linearForm(equation, unknowns, constants));
+    }
+    if (unresolvedDefinitions.length) {
+      throw new Error(`Unresolved symbolic definitions: ${unresolvedDefinitions.map((statement) => statement.target).join(", ")}`);
+    }
+    if (equations.length === 0)
+      throw new Error("solve.System found no equations");
+    const matrixRows = equations.map((equation) => outputs.map((name) => equation.coefficients.get(name) || zero5()));
+    const bounds = equations.map((equation) => equation.constant.negate());
+    const matrixValue = createTensor([matrixRows.length, outputs.length], matrixRows.flat());
+    const vectorValue = createTensor([bounds.length], bounds);
+    return systemResult(spec2, roles, equations.length, solveLinearValues(matrixValue, vectorValue));
+  }
+  function solveLinear2(args) {
+    const linearResult = solveLinearValues(args[0], args[1]);
+    const result = {
+      type: "system_solution",
+      schema: SYSTEM_SOLUTION_SCHEMA,
+      status: linearResult.status,
+      classification: "linearMatrix",
+      exact: true,
+      solution: linearResult.particular,
+      linearResult,
+      _ext: new Map([["_type", str8("SystemSolution")], ["immutable", int14(1)]])
+    };
+    result._ext.set("status", str8(result.status));
+    result._ext.set("classification", str8(result.classification));
+    result._ext.set("solution", result.solution);
+    result._ext.set("linearResult", linearResult);
+    result._ext.set("linearresult", linearResult);
+    return result;
+  }
+  var helpers3 = new Map([
+    ["Classify", classifySystem],
+    ["Linear", solveLinear2],
+    ["System", solveSystem]
+  ]);
+
+  // rix/plugins/solve/solve.plugin.rix.js
+  function createSolvePluginCollection() {
+    const entries4 = new Map;
+    const extension = new Map([["immutable", new Integer(1n)]]);
+    for (const [name, helper] of helpers3) {
+      entries4.set(name, helper);
+      entries4.set(name.toUpperCase(), helper);
+      extension.set(name.toUpperCase(), {
+        type: "method_builtin",
+        name,
+        impl: (args, context, evaluate, invoke) => helper(args.slice(1), { context, evaluate, invoke })
+      });
+    }
+    return { type: "map", entries: entries4, _ext: extension };
+  }
+  function install11({ systemContext }) {
+    const collection = createSolvePluginCollection();
+    systemContext.registerHostValue("solve", collection, {
+      doc: "Exact linear-system classification and symbolic-spec solving",
+      groups: ["Solve", "Symbolic", "Exact"]
+    });
+    return collection;
+  }
+
   // rix/plugins/renderers/common.js
   function outputKind(value) {
     return value?.type === "output" ? value.kind : value?.type || typeof value;
@@ -45585,12 +46760,12 @@ complexVizNamespace._proto = {=
     return result;
   }
   function truncate2(value, width) {
-    const text8 = String(value);
-    if (text8.length <= width)
-      return text8;
+    const text10 = String(value);
+    if (text10.length <= width)
+      return text10;
     if (width <= 1)
       return "~";
-    return `${text8.slice(0, width - 1)}~`;
+    return `${text10.slice(0, width - 1)}~`;
   }
   function constrainText(value, state, path2) {
     return String(value).split(`
@@ -45638,14 +46813,14 @@ complexVizNamespace._proto = {=
     return result;
   }
   function align(value, width, mode = "left") {
-    const text8 = truncate2(value, width);
+    const text10 = truncate2(value, width);
     if (mode === "right")
-      return text8.padStart(width);
+      return text10.padStart(width);
     if (mode === "center") {
-      const left = Math.floor((width - text8.length) / 2);
-      return `${" ".repeat(left)}${text8}${" ".repeat(width - text8.length - left)}`;
+      const left = Math.floor((width - text10.length) / 2);
+      return `${" ".repeat(left)}${text10}${" ".repeat(width - text10.length - left)}`;
     }
-    return text8.padEnd(width);
+    return text10.padEnd(width);
   }
   function renderTable(value, state, path2) {
     const headers = value.columns.map((column, index) => strictAscii(column.label, state, `${path2}.column${index + 1}`));
@@ -45837,7 +47012,7 @@ complexVizNamespace._proto = {=
       return renderTerminalAscii(value, { options, format });
     }
   };
-  function install9(api) {
+  function install12(api) {
     return installRendererPlugin({ ...api, definition, mount: "terminalAscii" });
   }
 
@@ -45864,7 +47039,7 @@ complexVizNamespace._proto = {=
       return { content };
     }
   };
-  function install10(api) {
+  function install13(api) {
     return installRendererPlugin({ ...api, definition: definition2 });
   }
 
@@ -46014,7 +47189,7 @@ complexVizNamespace._proto = {=
       };
     }
   };
-  function install11(api) {
+  function install14(api) {
     return installRendererPlugin({ ...api, definition: definition3 });
   }
 
@@ -46084,9 +47259,9 @@ complexVizNamespace._proto = {=
   }
   function pathSource(node, path2) {
     if (!node.commands) {
-      const coordinates = node.points.map((entry, index) => point(entry, `Path point ${index + 1}`));
+      const coordinates2 = node.points.map((entry, index) => point(entry, `Path point ${index + 1}`));
       const suffix = boolValue(styleValue2(node.style, "closed", false)) ? " -- cycle" : "";
-      return coordinates.map(([x, y], index) => `${index ? " -- " : ""}(${stableNumber(x)},${stableNumber(y)})`).join("") + suffix;
+      return coordinates2.map(([x, y], index) => `${index ? " -- " : ""}(${stableNumber(x)},${stableNumber(y)})`).join("") + suffix;
     }
     const parts = [];
     let current = null;
@@ -46241,7 +47416,7 @@ ${body}
   function boolOption(value) {
     return value?.value === 1n || value === true || value === 1;
   }
-  function install12(api) {
+  function install15(api) {
     return installRendererPlugin({ ...api, definition: definition4 });
   }
 
@@ -46682,9 +47857,9 @@ ${makeTitle}${body.trim()}
     const lines = [];
     for (const key of keys) {
       const value = field5(metadata3, key);
-      const text8 = rixString4(value) ?? (typeof value === "string" ? value : null);
-      if (text8 !== null)
-        lines.push(`${key}: ${JSON.stringify(text8)}`);
+      const text10 = rixString4(value) ?? (typeof value === "string" ? value : null);
+      if (text10 !== null)
+        lines.push(`${key}: ${JSON.stringify(text10)}`);
     }
     if (!lines.some((line2) => line2.startsWith("format:")))
       lines.push("format: html");
@@ -46709,17 +47884,17 @@ ${lines.join(`
       return renderMarkdown(value, { format, render });
     }
   };
-  function install13(api) {
+  function install16(api) {
     return installRendererPlugin({ ...api, definition: definition5 });
   }
 
   // rix/plugins/render-html/html.plugin.rix.js
-  var DEFAULT_STYLE = `:root{font-family:system-ui,sans-serif;color:#172033;background:#f5f7ff}*{box-sizing:border-box}body{line-height:1.5;max-width:72rem;margin:2rem auto;padding:0 1rem}[data-rix-layout=stack]{display:grid}[data-rix-layout=cluster]{display:flex;flex-wrap:wrap;align-items:center}[data-rix-layout=grid],[data-rix-layout=split]{display:grid}[data-rix-columns="2"]{grid-template-columns:repeat(2,minmax(0,1fr))}[data-rix-columns="3"]{grid-template-columns:repeat(3,minmax(0,1fr))}[data-rix-columns="4"]{grid-template-columns:repeat(4,minmax(0,1fr))}[data-rix-layout=split]{grid-template-columns:minmax(16rem,.8fr) minmax(0,1.4fr)}[data-rix-gap=compact]{gap:.5rem}[data-rix-gap=normal]{gap:1rem}[data-rix-gap=spacious]{gap:2rem}[data-rix-variant=card],[data-rix-variant=hero],[data-rix-variant=muted]{padding:1.25rem;border:1px solid #dfe3ed;border-radius:1rem;background:#fff}[data-rix-variant=hero]{background:linear-gradient(145deg,#fff,#f1edff)}[data-rix-variant=muted]{background:#f7f8fc}table{width:100%;border-collapse:collapse;margin:1rem 0;background:#fff}th,td{border:1px solid #cbd5e1;padding:.35rem .6rem}figure{margin:1.5rem 0}.rix-output-svg{max-width:100%;height:auto}pre{overflow:auto;background:#f8fafc;padding:1rem}.rix-output-callout{border-left:.3rem solid #64748b;padding:.5rem 1rem;background:#f8fafc}@media(max-width:760px){[data-rix-layout=grid],[data-rix-layout=split],[data-rix-columns]{grid-template-columns:1fr}}`;
+  var DEFAULT_STYLE = `:root{font-family:system-ui,sans-serif;color:#172033;background:#f5f7ff}*{box-sizing:border-box}body{line-height:1.5;max-width:72rem;margin:2rem auto;padding:0 1rem}[data-rix-layout=stack]{display:grid}[data-rix-layout=cluster]{display:flex;flex-wrap:wrap;align-items:center}[data-rix-layout=grid],[data-rix-layout=split]{display:grid}[data-rix-columns="2"]{grid-template-columns:repeat(2,minmax(0,1fr))}[data-rix-columns="3"]{grid-template-columns:repeat(3,minmax(0,1fr))}[data-rix-columns="4"]{grid-template-columns:repeat(4,minmax(0,1fr))}[data-rix-layout=split]{grid-template-columns:minmax(16rem,.8fr) minmax(0,1.4fr)}[data-rix-gap=compact]{gap:.5rem}[data-rix-gap=normal]{gap:1rem}[data-rix-gap=spacious]{gap:2rem}[data-rix-variant=card],[data-rix-variant=hero],[data-rix-variant=muted]{padding:1.25rem;border:1px solid #dfe3ed;border-radius:1rem;background:#fff}[data-rix-variant=hero]{background:linear-gradient(145deg,#fff,#f1edff)}[data-rix-variant=muted]{background:#f7f8fc}.rix-output-control-panel[data-rix-layout=grid]{grid-template-columns:1fr}.rix-output-control-list{display:grid;gap:.5rem}.rix-output-control-panel[data-rix-layout=grid][data-rix-columns="3"] .rix-output-control-list{grid-template-columns:repeat(3,minmax(0,1fr))}.rix-output-control-panel[data-rix-layout=grid][data-rix-columns="4"] .rix-output-control-list{grid-template-columns:repeat(4,minmax(0,1fr))}[data-rix-control-row="1"]{grid-row:1}[data-rix-control-row="2"]{grid-row:2}[data-rix-control-row="3"]{grid-row:3}[data-rix-control-row="4"]{grid-row:4}[data-rix-control-column="1"]{grid-column:1}[data-rix-control-column="2"]{grid-column:2}[data-rix-control-column="3"]{grid-column:3}[data-rix-control-column="4"]{grid-column:4}table{width:100%;border-collapse:collapse;margin:1rem 0;background:#fff}th,td{border:1px solid #cbd5e1;padding:.35rem .6rem}figure{margin:1.5rem 0}.rix-output-svg{max-width:100%;height:auto}pre{overflow:auto;background:#f8fafc;padding:1rem}.rix-output-callout{border-left:.3rem solid #64748b;padding:.5rem 1rem;background:#f8fafc}@media(max-width:760px){[data-rix-layout=grid],[data-rix-layout=split],[data-rix-columns]{grid-template-columns:1fr}}`;
   function staticDiagnostics(value, diagnostics, seen = new Set) {
     if (!value || typeof value !== "object" || seen.has(value))
       return;
     seen.add(value);
-    if (value.type === "output" && (value.kind?.startsWith("control_") || value.kind === "control_panel" || value.kind === "drag_point")) {
+    if (value.type === "output" && (value.kind?.startsWith("control_") || value.kind === "control_panel" || value.kind === "drag_point" || value.kind === "graphic_action")) {
       diagnostics.push(diagnostic("html-static-interaction", `Standalone HTML preserves ${value.kind} markup but needs a host widget runtime for interaction`, "warning"));
     }
     for (const child of value.children || [])
@@ -46753,7 +47928,7 @@ ${lines.join(`
       };
     }
   };
-  function install14(api) {
+  function install17(api) {
     return installRendererPlugin({ ...api, definition: definition6 });
   }
 
@@ -46803,7 +47978,7 @@ ${lines.join(`
       return { ...rendered, assets, content: `${quartoFrontMatter(options)}${rendered.content}` };
     }
   };
-  function install15(api) {
+  function install18(api) {
     return installRendererPlugin({ ...api, definition: definition7 });
   }
 
@@ -46825,7 +48000,7 @@ ${lines.join(`
       });
     }
   };
-  function install16(api) {
+  function install19(api) {
     return installRendererPlugin({ ...api, definition: definition8 });
   }
 
@@ -46865,7 +48040,7 @@ ${lines.join(`
       }
     };
   }
-  function install17(api) {
+  function install20(api) {
     return installRendererPlugin({ ...api, definition: createDefinition(api.rasterizeSvg) });
   }
 
@@ -46901,7 +48076,7 @@ ${lines.join(`
       }
     };
   }
-  function install18(api) {
+  function install21(api) {
     return installRendererPlugin({ ...api, definition: createDefinition2(api.compileLatex) });
   }
 
@@ -47055,7 +48230,7 @@ ${lines.join(`
       return exportSceneGltf(value, { pretty: options?.pretty !== false });
     }
   };
-  function install19(api) {
+  function install22(api) {
     return installRendererPlugin({ ...api, definition: definition9 });
   }
 
@@ -47165,8 +48340,8 @@ ${lines.join(`
       return String(value);
     throw new Error(`csv cells must be missing, strings, or exact numeric scalars; received ${value?.type || typeof value}`);
   }
-  function quote(text8, delimiter) {
-    const source = String(text8);
+  function quote(text10, delimiter) {
+    const source = String(text10);
     return source.includes(delimiter) || /["\r\n]/.test(source) ? `"${source.replaceAll('"', '""')}"` : source;
   }
   function renderCsv(value, { options = {}, requestedTarget = "csv" } = {}) {
@@ -47218,7 +48393,7 @@ ${lines.join(`
       return renderCsv(value, { options, requestedTarget });
     }
   };
-  function install20(api) {
+  function install23(api) {
     return installRendererPlugin({ ...api, definition: definition10 });
   }
 
@@ -47342,7 +48517,7 @@ ${lines.join(`
       }
     };
   }
-  function install21(api) {
+  function install24(api) {
     return installRendererPlugin({ ...api, definition: createDefinition3(api.encodeGif) });
   }
 
@@ -47516,6 +48691,59 @@ ${lines.join(`
     },
     {
       metadata: {
+        id: "linalg",
+        description: "Exact dense linear algebra and coordinate-aware tensor transformations.",
+        kind: "host",
+        mount: "linalg",
+        exports: ["Rref", "Rank", "Determinant", "Inverse", "Solve", "VectorSpace", "Coordinates", "CoordinateTensor", "Vector", "ChangeMatrix", "Transform", "Transform!", "Components", "SameTensor"],
+        groups: ["LinearAlgebra", "Exact"],
+        permissions: [],
+        provides: ["rix.linear-algebra@1", "rix.coordinate-tensor@1"],
+        schemas: ["rix.linalg.result@1", "rix.linalg.vector-space@1", "rix.linalg.coordinates@1", "rix.linalg.coordinate-tensor@1"],
+        snapshot: false,
+        deterministic: true,
+        defaultEnabled: false
+      },
+      install: ({ systemContext }) => install9({ systemContext })
+    },
+    {
+      metadata: {
+        id: "optimize",
+        description: "Exact linear-program models and deterministic Phase 1 simplex optimization.",
+        kind: "host",
+        mount: "optimize",
+        exports: ["LinearProgram", "Solve", "Evaluate", "Maximize", "Minimize"],
+        groups: ["Optimization", "Exact"],
+        permissions: [],
+        requires: ["rix.linear-algebra@1"],
+        provides: ["rix.optimization@1", "rix.linear-program@1"],
+        schemas: ["rix.optimize.linear-program@1", "rix.optimize.result@1"],
+        snapshot: false,
+        deterministic: true,
+        defaultEnabled: false
+      },
+      install: ({ systemContext }) => install10({ systemContext })
+    },
+    {
+      metadata: {
+        id: "solve",
+        description: "Exact Phase 1 linear-system classification and symbolic-spec solving.",
+        kind: "host",
+        mount: "solve",
+        exports: ["Classify", "Linear", "System"],
+        groups: ["Solve", "Symbolic", "Exact"],
+        permissions: [],
+        requires: ["rix.linear-algebra@1"],
+        provides: ["rix.system-solver@1"],
+        schemas: ["rix.solve.system-result@1"],
+        snapshot: false,
+        deterministic: true,
+        defaultEnabled: false
+      },
+      install: ({ systemContext }) => install11({ systemContext })
+    },
+    {
+      metadata: {
         id: "document",
         description: "Numbered portable reports with labels, forward references, captions, and small semantic themes.",
         kind: "host",
@@ -47546,22 +48774,22 @@ ${lines.join(`
         deterministic: true,
         defaultEnabled: false
       },
-      install: install9
+      install: install12
     },
     ...[
-      ["svg", "Portable SVG renderer for core Graphics scenes.", "svg", ["Render"], [], install10, "image/svg+xml", true],
-      ["canvas", "Serializable Canvas 2D drawing plans for core Graphics scenes.", "canvas", ["Render"], [], install11, "application/vnd.rix.canvas+json", true],
-      ["tikz", "Editable TikZ/PGF source renderer for core Graphics scenes.", "tikz", ["Render"], [], install12, "text/x-tikz", true],
-      ["markdown", "CommonMark-oriented renderer for portable RiX documents.", "markdown", ["Render"], [], install13, "text/markdown", true],
-      ["html", "Standalone semantic HTML renderer for portable RiX output trees.", "html", ["Render"], [], install14, "text/html", true],
-      ["quarto", "Quarto Markdown renderer with front matter and portable figure lowering.", "quarto", ["Render"], [], install15, "text/x-quarto", true],
-      ["latex", "Standalone LaTeX renderer for portable RiX documents and figures.", "latex", ["Render"], [], install16, "text/x-tex", true],
-      ["png", "PNG snapshot renderer for core Graphics through a host rasterizer.", "png", ["Render"], ["process"], install17, "image/png", true],
-      ["pdf", "PDF document and figure renderer orchestrated through LaTeX.", "pdf", ["Render"], ["process", "files"], install18, "application/pdf", false],
-      ["gltf", "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", "gltf", ["Render"], [], install19, "model/gltf+json", true],
-      ["csv", "Deterministic CSV and TSV export for portable Tables and typed data Relations.", "csv", ["Render"], [], install20, "text/csv", true, ["tsv", "text/tab-separated-values"], ["Renderers", "Data"]],
-      ["gif", "Deterministic animated GIF rendering from Slides, Timelines, or Snapshots through PNG frames.", "gif", ["Render"], ["process", "files"], install21, "image/gif", true, [], ["Renderers"], ["rix.renderer.png@1"]]
-    ].map(([id, description, mount, exports, permissions, install22, mime, deterministic, aliases = [], groups = ["Renderers"], requires = []]) => ({
+      ["svg", "Portable SVG renderer for core Graphics scenes.", "svg", ["Render"], [], install13, "image/svg+xml", true],
+      ["canvas", "Serializable Canvas 2D drawing plans for core Graphics scenes.", "canvas", ["Render"], [], install14, "application/vnd.rix.canvas+json", true],
+      ["tikz", "Editable TikZ/PGF source renderer for core Graphics scenes.", "tikz", ["Render"], [], install15, "text/x-tikz", true],
+      ["markdown", "CommonMark-oriented renderer for portable RiX documents.", "markdown", ["Render"], [], install16, "text/markdown", true],
+      ["html", "Standalone semantic HTML renderer for portable RiX output trees.", "html", ["Render"], [], install17, "text/html", true],
+      ["quarto", "Quarto Markdown renderer with front matter and portable figure lowering.", "quarto", ["Render"], [], install18, "text/x-quarto", true],
+      ["latex", "Standalone LaTeX renderer for portable RiX documents and figures.", "latex", ["Render"], [], install19, "text/x-tex", true],
+      ["png", "PNG snapshot renderer for core Graphics through a host rasterizer.", "png", ["Render"], ["process"], install20, "image/png", true],
+      ["pdf", "PDF document and figure renderer orchestrated through LaTeX.", "pdf", ["Render"], ["process", "files"], install21, "application/pdf", false],
+      ["gltf", "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", "gltf", ["Render"], [], install22, "model/gltf+json", true],
+      ["csv", "Deterministic CSV and TSV export for portable Tables and typed data Relations.", "csv", ["Render"], [], install23, "text/csv", true, ["tsv", "text/tab-separated-values"], ["Renderers", "Data"]],
+      ["gif", "Deterministic animated GIF rendering from Slides, Timelines, or Snapshots through PNG frames.", "gif", ["Render"], ["process", "files"], install24, "image/gif", true, [], ["Renderers"], ["rix.renderer.png@1"]]
+    ].map(([id, description, mount, exports, permissions, install25, mime, deterministic, aliases = [], groups = ["Renderers"], requires = []]) => ({
       metadata: {
         id,
         description,
@@ -47577,25 +48805,25 @@ ${lines.join(`
         deterministic,
         defaultEnabled: false
       },
-      install: install22
+      install: install25
     }))
   ];
   function installBundledPlugins(catalog) {
-    for (const { metadata: metadata3, install: install22, source, sourcePath } of BUNDLED_PLUGINS) {
+    for (const { metadata: metadata3, install: install25, source, sourcePath } of BUNDLED_PLUGINS) {
       if (catalog.info(metadata3.id))
         continue;
       if (source) {
         catalog.addMetadata(metadata3, { kind: "rix", source, sourcePath });
       } else {
         catalog.addMetadata(metadata3, { kind: "host" });
-        catalog.registerInstaller(metadata3.id, install22);
+        catalog.registerInstaller(metadata3.id, install25);
       }
     }
     return catalog;
   }
 
   // rix/src/eval/functions/units.js
-  function int12(value) {
+  function int15(value) {
     return new Integer(BigInt(value));
   }
   function stringValue8(value, label2) {
@@ -47665,7 +48893,7 @@ ${lines.join(`
         if (!match)
           throw new Error(`Expected integer exponent in exact expression '${source}'`);
         index += match[0].length;
-        value = powScalar(value, int12(match[0]));
+        value = powScalar(value, int15(match[0]));
       }
       return value;
     }
@@ -47693,10 +48921,10 @@ ${lines.join(`
     if (isScalar(left) && isUnitValue(right))
       return constructQuantity(left, right);
     if (isQuantity(left) && isUnitValue(right)) {
-      return multiplyQuantityValues(left, constructQuantity(int12(1), right));
+      return multiplyQuantityValues(left, constructQuantity(int15(1), right));
     }
     if (isUnitValue(left) && isQuantity(right)) {
-      return multiplyQuantityValues(constructQuantity(int12(1), left), right);
+      return multiplyQuantityValues(constructQuantity(int15(1), left), right);
     }
     return multiplyQuantityValues(left, right);
   }
@@ -47706,21 +48934,21 @@ ${lines.join(`
     if (isScalar(left) && isUnitValue(right))
       return constructQuantity(left, invertUnit(right));
     if (isUnitValue(left) && isScalar(right))
-      return constructQuantity(divideScalars(int12(1), right), left);
+      return constructQuantity(divideScalars(int15(1), right), left);
     if (isQuantity(left) && isUnitValue(right)) {
-      return divideQuantityValues(left, constructQuantity(int12(1), right));
+      return divideQuantityValues(left, constructQuantity(int15(1), right));
     }
     if (isUnitValue(left) && isQuantity(right)) {
-      return divideQuantityValues(constructQuantity(int12(1), left), right);
+      return divideQuantityValues(constructQuantity(int15(1), left), right);
     }
     return divideQuantityValues(left, right);
   }
   function resolveTargetUnit(target, context, systemContext) {
     if (isUnitValue(target))
       return target;
-    const text8 = stringValue8(target, "ConvertUnit target");
+    const text10 = stringValue8(target, "ConvertUnit target");
     const collection = activeCollection(context, systemContext, "Units", ["UNITS", "Units"]);
-    return parseUnitExpression(text8, collection);
+    return parseUnitExpression(text10, collection);
   }
   var unitExactFunctions = {
     UNIT: {
@@ -47764,7 +48992,7 @@ ${lines.join(`
     }
   };
   function boolResult3(value) {
-    return value ? int12(1) : null;
+    return value ? int15(1) : null;
   }
   function addWithOptionalWarning([left, right], context) {
     const warnings = context?.getEnv?.("warnings", runtimeDefaults.warnings) ?? runtimeDefaults.warnings;
@@ -48090,10 +49318,10 @@ ${lines.join(`
     const frozen = options.frozen !== false;
     const ctx = new SystemContext(new Map, false);
     const units = options.units || createDefaultUnitCollection();
-    const exact2 = options.exact || createDefaultExactCollection();
-    const complex = options.complex || createDefaultComplexCollection(exact2);
+    const exact3 = options.exact || createDefaultExactCollection();
+    const complex = options.complex || createDefaultComplexCollection(exact3);
     ctx.registerValue("Units", units, { doc: "Canonical RiX unit collection" });
-    ctx.registerValue("Exact", exact2, { doc: "Canonical RiX exact-generator collection" });
+    ctx.registerValue("Exact", exact3, { doc: "Canonical RiX exact-generator collection" });
     ctx.registerValue("Complex", complex, { doc: "Exact complex-number operations" });
     const algebra = createAlgebraOutputCollection();
     ctx.registerValue("Algebra", algebra, { doc: "Algebra presentation helpers" });
@@ -48915,7 +50143,7 @@ ${lines.join(`
     if (value && (value.type === "function" || value.type === "lambda")) {
       value.__parallelCollections = enabled2;
     }
-    if (value?.type === "multifunction" && Array.isArray(value.values)) {
+    if (isMultifunctionValue(value)) {
       for (const variant of value.values)
         variant.__parallelCollections = enabled2;
     }
@@ -48974,6 +50202,58 @@ ${lines.join(`
     }
     return scope;
   }
+  function asyncPrepFailureError(fn, entryIndex) {
+    const label2 = fn?.name || "<lambda>";
+    return new Error(`${label2} prep failed at entry ${entryIndex + 1}`);
+  }
+  function asyncPrepUndecidedError(fn, entryIndex, undecided = UNDECIDED) {
+    const label2 = fn?.name || "<lambda>";
+    const error = new Error(`${label2} prep remained undecided at entry ${entryIndex + 1}`);
+    error.undecided = undecided;
+    return error;
+  }
+  async function runCallablePrepAsync(fn, context, registry, systemContext, state) {
+    const conditionals = Array.isArray(fn?.params?.conditionals) ? fn.params.conditionals : [];
+    const prep = Array.isArray(fn?.params?.prep) ? fn.params.prep : [];
+    const entries4 = [...conditionals, ...prep];
+    if (entries4.length === 0)
+      return { ok: true };
+    const strict = fn?.params?.prepStrict === true;
+    const undecidedMode = fn?.params?.prepUndecided || "stop";
+    for (let index = 0;index < entries4.length; index++) {
+      try {
+        const value = await evaluateAsyncInternal(entries4[index], context, registry, systemContext, state);
+        const prepState = decisionState(value);
+        if (prepState === "undecided") {
+          if (undecidedMode === "throw")
+            throw asyncPrepUndecidedError(fn, index, value);
+          return {
+            ok: false,
+            undecided: true,
+            value,
+            fallthrough: undecidedMode === "fallthrough"
+          };
+        }
+        if (prepState === "null") {
+          if (strict)
+            throw asyncPrepFailureError(fn, index);
+          return { ok: false };
+        }
+      } catch (error) {
+        if (error?.message?.includes("prep remained undecided"))
+          throw error;
+        if (strict)
+          throw error;
+        return { ok: false };
+      }
+    }
+    return { ok: true };
+  }
+  function traceAsyncCallEvent(context, entry) {
+    const trace = context.getEnv("__trace_context__");
+    if (trace?.active)
+      trace.log.push(entry);
+  }
   function createCallableAsyncState(fn, callerState, context) {
     if (fn.__parallelCollections !== true) {
       return {
@@ -49001,93 +50281,194 @@ ${lines.join(`
       ownsScheduler: true
     };
   }
-  async function invokeUserCallableAsync(fn, callArgs, context, registry, systemContext, state) {
+  async function invokeUserCallableAsync(fn, callArgs, context, registry, systemContext, state, options = {}) {
     const callableAsync = createCallableAsyncState(fn, state, context);
     const callableState = callableAsync.state;
+    const callName = options.callName ?? fn.name ?? null;
+    const shareBody = options.shareBody !== false;
+    const parentCallable = options.parentCallable ?? fn.__parentMultifunction ?? null;
+    const returnPrepStatus = options.returnPrepStatus === true;
     const closureScopes = Array.isArray(fn.__closureScopes) ? fn.__closureScopes : [];
+    const trace = context.getEnv("__trace_context__");
+    const restoredEnv = new Map;
     let pushed = 0;
-    for (const closure of closureScopes) {
-      context.push(closure instanceof Map ? closure : closure.bindings, {
-        scopedEnv: closure.scopedEnv,
-        isolated: closure.isolated === true,
-        readThrough: closure.readThrough === true,
-        callableBoundary: closure.callableBoundary === true,
-        snapshot: !!state?.admission,
-        readOnly: !!state?.admission
-      });
-      pushed++;
-    }
     let scopeActive = false;
     let callActive = false;
-    let callableActive = false;
+    let traceActive = false;
+    let primaryError = null;
+    let schedulerCleanupError = null;
+    const traceEnter = (args) => {
+      if (!trace?.active || trace.currentDepth >= trace.depth)
+        return false;
+      trace.log.push({ event: "enter", fn: callName || "<lambda>", depth: trace.currentDepth, args });
+      trace.currentDepth += 1;
+      return true;
+    };
+    const traceExit = (value, threw = false) => {
+      if (!traceActive || !trace)
+        return;
+      trace.currentDepth -= 1;
+      if (!threw)
+        trace.log.push({ event: "exit", fn: callName || "<lambda>", depth: trace.currentDepth, value });
+    };
     try {
+      if (fn.__rixCapturedEnv && context?.setEnv) {
+        for (const [key, value] of fn.__rixCapturedEnv) {
+          restoredEnv.set(key, {
+            has: context.env?.has(key) === true,
+            value: context.getEnv(key, undefined)
+          });
+          context.setEnv(key, value);
+        }
+      }
+      traceActive = traceEnter(callArgs);
+      for (const closure of closureScopes) {
+        context.push(closure instanceof Map ? closure : closure.bindings, {
+          scopedEnv: closure.scopedEnv,
+          isolated: closure.isolated === true,
+          readThrough: closure.readThrough === true,
+          callableBoundary: closure.callableBoundary === true,
+          snapshot: !!state?.admission,
+          readOnly: !!state?.admission
+        });
+        pushed++;
+      }
       context.push(await bindAsyncCallScope(fn.params, callArgs, context, registry, systemContext, callableState));
       scopeActive = true;
-      if (fn.name) {
-        context.pushCall(fn.name);
+      if (callName) {
+        context.pushCall(callName);
         callActive = true;
       }
-      context.pushCurrentCallable(fn, fn.__parentMultifunction ?? null);
-      callableActive = true;
       while (true) {
-        const prepEntries = [
-          ...fn.params?.conditionals || [],
-          ...fn.params?.prep || []
-        ];
-        for (let prepIndex = 0;prepIndex < prepEntries.length; prepIndex++) {
-          const prep = prepEntries[prepIndex];
-          try {
-            const passed = await evaluateAsyncInternal(prep, context, registry, systemContext, callableState);
-            const prepState = decisionState(passed);
-            if (prepState === "undecided") {
-              if (fn.params?.prepUndecided === "throw") {
-                const error = new Error(`${fn.name || "<lambda>"} prep remained undecided at entry ${prepIndex + 1}`);
-                error.undecided = passed;
-                throw error;
-              }
-              return passed;
-            }
-            if (prepState === "null")
-              return null;
-          } catch (error) {
-            if (error?.message?.includes("prep remained undecided"))
-              throw error;
-            if (fn.params?.prepStrict === true)
-              throw error;
-            return null;
-          }
+        const prepResult = await runCallablePrepAsync(fn, context, registry, systemContext, callableState);
+        if (!prepResult.ok) {
+          const value = prepResult.undecided ? prepResult.value ?? UNDECIDED : null;
+          traceExit(value);
+          traceActive = false;
+          return returnPrepStatus ? {
+            matched: prepResult.undecided === true && prepResult.fallthrough !== true,
+            value,
+            unresolved: prepResult.undecided === true
+          } : value;
         }
-        const result = await context.withSharedBodyAsync(fn.body, () => evaluateAsyncInternal(fn.body, context, registry, systemContext, callableState));
-        if (!isTailSelfCall(result))
-          return result;
+        let result;
+        context.pushCurrentCallable(fn, parentCallable);
+        try {
+          result = shareBody ? await context.withSharedBodyAsync(fn.body, () => evaluateAsyncInternal(fn.body, context, registry, systemContext, callableState)) : await evaluateAsyncInternal(fn.body, context, registry, systemContext, callableState);
+        } finally {
+          context.popCurrentCallable();
+        }
+        if (!isTailSelfCall(result)) {
+          traceExit(result);
+          traceActive = false;
+          return returnPrepStatus ? { matched: true, value: result } : result;
+        }
+        traceExit(result.args);
+        traceActive = traceEnter(result.args);
         context.pop();
         scopeActive = false;
         context.push(await bindAsyncCallScope(fn.params, result.args, context, registry, systemContext, callableState));
         scopeActive = true;
       }
     } catch (error) {
+      primaryError = error;
       if (callableAsync.ownsScheduler) {
         callableState.scheduler.cancelGroup(callableState.group, error);
       }
       throw error;
     } finally {
       if (callableAsync.ownsScheduler) {
-        await callableState.scheduler.waitForIdle(callableState.group);
-        callableState.scheduler.closeGroup(callableState.group);
+        try {
+          await callableState.scheduler.waitForIdle(callableState.group);
+        } catch (error) {
+          schedulerCleanupError = error;
+        } finally {
+          callableState.scheduler.closeGroup(callableState.group);
+        }
       }
-      if (callableActive)
-        context.popCurrentCallable();
+      for (const [key, entry] of restoredEnv) {
+        if (entry.has)
+          context.setEnv(key, entry.value);
+        else
+          context.env?.delete(key);
+      }
+      if (traceActive && trace)
+        trace.currentDepth -= 1;
       if (callActive)
         context.popCall();
       if (scopeActive)
         context.pop();
       while (pushed-- > 0)
         context.pop();
+      if (schedulerCleanupError) {
+        if (primaryError) {
+          const existing = Array.isArray(primaryError.suppressed) ? primaryError.suppressed : [];
+          primaryError.suppressed = [...existing, schedulerCleanupError];
+        } else {
+          throw schedulerCleanupError;
+        }
+      }
     }
+  }
+  async function invokeMultifunctionAsync(multifunction, callArgs, context, registry, systemContext, state, options = {}) {
+    const ownerName = options.callName ?? multifunction.__name ?? null;
+    const namedOnly = options.namedOnly ?? null;
+    rebuildMultifunctionState(multifunction);
+    const variants = namedOnly ? [namedOnly] : multifunction.values;
+    let unresolved = null;
+    for (let index = 0;index < variants.length; index++) {
+      const variant = variants[index];
+      if (!variant || variant.type !== "function" && variant.type !== "lambda") {
+        const displayIndex = namedOnly ? variant?.__name || "named" : `${index + 1}`;
+        throw new Error(`Multifunction variant ${displayIndex} is not a function`);
+      }
+      const actualIndex = namedOnly ? multifunction.values.indexOf(variant) : index;
+      const variantName = variant.__name ?? null;
+      traceAsyncCallEvent(context, {
+        event: "variant",
+        fn: ownerName || "<multifunction>",
+        depth: context.getEnv("__trace_context__")?.currentDepth ?? 0,
+        variantIndex: actualIndex + 1,
+        variantName
+      });
+      const prepEntries = (Array.isArray(variant?.params?.conditionals) ? variant.params.conditionals.length : 0) + (Array.isArray(variant?.params?.prep) ? variant.params.prep.length : 0);
+      if (!namedOnly && prepEntries === 0 && actualIndex < multifunction.values.length - 1 && shouldWarnNoPrep(context)) {
+        emitNoPrepWarning(context, ownerName, actualIndex, variantName);
+      }
+      const result = await invokeUserCallableAsync(variant, callArgs, context, registry, systemContext, state, {
+        callName: ownerName,
+        parentCallable: multifunction,
+        returnPrepStatus: true
+      });
+      if (!result.matched) {
+        if (result.unresolved)
+          unresolved = result.value;
+        traceAsyncCallEvent(context, {
+          event: "prep_fail",
+          fn: ownerName || "<multifunction>",
+          depth: context.getEnv("__trace_context__")?.currentDepth ?? 0,
+          variantIndex: actualIndex + 1,
+          variantName
+        });
+        continue;
+      }
+      traceAsyncCallEvent(context, {
+        event: "variant_selected",
+        fn: ownerName || "<multifunction>",
+        depth: context.getEnv("__trace_context__")?.currentDepth ?? 0,
+        variantIndex: actualIndex + 1,
+        variantName
+      });
+      return result.value;
+    }
+    return unresolved ?? null;
   }
   async function invokeCallableAsync(fn, callArgs, context, registry, systemContext, state) {
     if (!fn)
       throw new Error("Cannot call null/undefined");
+    if (isReactiveNode(fn)) {
+      return invokeCallableAsync(fn.peek(), callArgs, context, registry, systemContext, state);
+    }
     if (fn.type === "arityCap") {
       return invokeCallableAsync(fn.fn, callArgs.slice(0, fn.cap), context, registry, systemContext, state);
     }
@@ -49102,6 +50483,23 @@ ${lines.join(`
     }
     if (fn.type === "function" || fn.type === "lambda") {
       return invokeUserCallableAsync(fn, callArgs, context, registry, systemContext, state);
+    }
+    if (isSymbolicSpec(fn))
+      return applySymbolicSpec(fn, callArgs);
+    if (isUnitValue(fn)) {
+      if (callArgs.length !== 1)
+        throw new Error("A unit constructor expects exactly one scalar argument");
+      return constructQuantity(callArgs[0], fn);
+    }
+    if (isExactValue(fn)) {
+      if (callArgs.length !== 1)
+        throw new Error("An exact generator expects exactly one scalar argument");
+      return multiplyScalars(callArgs[0], fn);
+    }
+    if (isMultifunctionValue(fn)) {
+      return invokeMultifunctionAsync(fn, callArgs, context, registry, systemContext, state, {
+        callName: fn.__name
+      });
     }
     if (fn.type === "sysref") {
       if (systemContext?.has(fn.name)) {
@@ -49118,6 +50516,224 @@ ${lines.join(`
     if (typeof fn === "function")
       return await fn(...callArgs);
     return await callWithConcreteArgs(fn, callArgs, context, (node) => evaluate(node, context, registry, systemContext));
+  }
+  async function invokeTraversalCallbackAsync(fn, callArgs, context, registry, systemContext, state) {
+    if (fn && fn.type === "arityCap") {
+      return invokeTraversalCallbackAsync(fn.fn, callArgs.slice(0, fn.cap), context, registry, systemContext, state);
+    }
+    if (fn && fn.type === "partial") {
+      const maxIndex = fn.template.reduce((maximum, entry) => entry?.type === "placeholder" ? Math.max(maximum, entry.index) : maximum, 0);
+      return invokeCallableAsync(fn, callArgs.slice(0, maxIndex), context, registry, systemContext, state);
+    }
+    if (fn && fn.type === "method_lift") {
+      return invokeCallableAsync(fn, [callArgs[0]], context, registry, systemContext, state);
+    }
+    return invokeCallableAsync(fn, callArgs, context, registry, systemContext, state);
+  }
+  function asyncCapabilityString(value, label2) {
+    const text10 = rixStringValue(value);
+    if (text10 === null)
+      throw new Error(`${label2} must be a string`);
+    return text10;
+  }
+  function asyncDiagnosticString(value) {
+    return { type: "string", value: String(value) };
+  }
+  function asyncDiagnosticInteger(value) {
+    return new Integer(BigInt(value));
+  }
+  async function evaluateDebugCapabilityAsync(args, context, registry, systemContext, state) {
+    const label2 = asyncCapabilityString(await evaluateAsyncInternal(args[0], context, registry, systemContext, state), ".Debug label");
+    const exprNode = args[1];
+    const filePath = getCurrentFilePath(context);
+    const exprSource = irToText(exprNode);
+    const astRepr = irToText(exprNode, { pretty: true });
+    let finalValue;
+    try {
+      finalValue = await evaluateAsyncInternal(exprNode, context, registry, systemContext, state);
+    } catch (error) {
+      getDiagnostics(context).addEvent(createEvent({
+        kind: "debug",
+        label: label2,
+        file: filePath,
+        data: {
+          type: "map",
+          entries: new Map([
+            ["exprSource", asyncDiagnosticString(exprSource)],
+            ["ast", asyncDiagnosticString(astRepr)],
+            ["error", asyncDiagnosticString(error?.message ?? error)]
+          ])
+        }
+      }));
+      throw error;
+    }
+    getDiagnostics(context).addEvent(createEvent({
+      kind: "debug",
+      label: label2,
+      file: filePath,
+      data: {
+        type: "map",
+        entries: new Map([
+          ["exprSource", asyncDiagnosticString(exprSource)],
+          ["ast", asyncDiagnosticString(astRepr)],
+          ["final", finalValue]
+        ])
+      }
+    }));
+    return finalValue;
+  }
+  function recordAsyncTraceEvent(context, label2, filePath, depth, trackedVars, traceLog, finalValue) {
+    const calls = traceLog.map((entry) => {
+      const values3 = new Map([["event", asyncDiagnosticString(entry.event)]]);
+      if (entry.fn)
+        values3.set("fn", asyncDiagnosticString(entry.fn));
+      if (entry.scope)
+        values3.set("scope", asyncDiagnosticString(entry.scope));
+      if (entry.depth !== undefined)
+        values3.set("depth", asyncDiagnosticInteger(entry.depth));
+      if (entry.args)
+        values3.set("args", { type: "sequence", values: entry.args });
+      if (entry.value !== undefined)
+        values3.set("value", entry.value);
+      if (entry.var)
+        values3.set("var", asyncDiagnosticString(entry.var));
+      if (entry.old !== undefined)
+        values3.set("old", entry.old);
+      if (entry.new !== undefined)
+        values3.set("new", entry.new);
+      if (entry.variantIndex !== undefined) {
+        values3.set("variantIndex", asyncDiagnosticInteger(entry.variantIndex));
+      }
+      if (entry.variantName)
+        values3.set("variantName", asyncDiagnosticString(entry.variantName));
+      return { type: "map", entries: values3 };
+    });
+    getDiagnostics(context).addEvent(createEvent({
+      kind: "trace",
+      label: label2,
+      file: filePath,
+      data: {
+        type: "map",
+        entries: new Map([
+          ["depth", asyncDiagnosticInteger(depth)],
+          ["trackedVars", {
+            type: "sequence",
+            values: trackedVars.map(asyncDiagnosticString)
+          }],
+          ["calls", { type: "sequence", values: calls }],
+          ["final", finalValue]
+        ])
+      }
+    }));
+  }
+  async function evaluateTraceCapabilityAsync(args, context, registry, systemContext, state) {
+    const label2 = asyncCapabilityString(await evaluateAsyncInternal(args[0], context, registry, systemContext, state), ".Trace label");
+    const depth = rixIntValue(await evaluateAsyncInternal(args[1], context, registry, systemContext, state));
+    if (depth === null || depth < 0 || !Number.isInteger(depth)) {
+      throw new Error(".Trace depth must be a non-negative integer");
+    }
+    let trackedVars = [];
+    let callableNode;
+    if (args.length >= 4) {
+      const varsValue = await evaluateAsyncInternal(args[2], context, registry, systemContext, state);
+      if (isRixArray(varsValue)) {
+        trackedVars = varsValue.values.map((value) => {
+          const text10 = rixStringValue(value);
+          if (text10 === null)
+            throw new Error(".Trace trackedVars must be an array of strings");
+          return text10;
+        });
+      } else if (varsValue !== null) {
+        throw new Error(".Trace trackedVars must be an array of strings");
+      }
+      callableNode = args[3];
+    } else {
+      callableNode = args[2];
+    }
+    const filePath = getCurrentFilePath(context);
+    const traceLog = [];
+    const traceContext = {
+      depth,
+      trackedVars: new Set(trackedVars),
+      currentDepth: 0,
+      log: traceLog,
+      active: true
+    };
+    const previousTrace = context.getEnv("__trace_context__");
+    context.setEnv("__trace_context__", traceContext);
+    let finalValue;
+    try {
+      const callable = await evaluateAsyncInternal(callableNode, context, registry, systemContext, state);
+      if (callable && (callable.type === "function" || callable.type === "lambda")) {
+        finalValue = await invokeCallableAsync(callable, [], context, registry, systemContext, state);
+      } else if (typeof callable === "function") {
+        finalValue = await callable();
+      } else {
+        finalValue = callable;
+      }
+    } finally {
+      traceContext.active = false;
+      context.setEnv("__trace_context__", previousTrace || null);
+    }
+    recordAsyncTraceEvent(context, label2, filePath, depth, trackedVars, traceLog, finalValue);
+    return finalValue;
+  }
+  async function evaluateEvalCapabilityAsync(args, context, registry, systemContext, state) {
+    if (args.length === 0)
+      throw new Error("Eval expects at least 1 argument");
+    const astValue = await evaluateAsyncInternal(args[0], context, registry, systemContext, state);
+    let evalNodes;
+    if (astValue && typeof astValue === "object" && astValue.fn === "DEFER") {
+      evalNodes = [astValue.args[0]];
+    } else if (astValue && typeof astValue === "object" && astValue.type === "string") {
+      const runtime = context.getEnv("__script_runtime__");
+      try {
+        evalNodes = lower(parse(tokenize(astValue.value), runtime?.systemLookup));
+      } catch (error) {
+        throw new Error(`Eval string parse error: ${error.message}`);
+      }
+    } else {
+      throw new Error("Eval expects a deferred AST value or a string of RiX code");
+    }
+    const bindings = args.length >= 2 ? await evaluateAsyncInternal(args[1], context, registry, systemContext, state) : null;
+    const modeValue = args.length >= 3 ? await evaluateAsyncInternal(args[2], context, registry, systemContext, state) : null;
+    let mode = "inherit";
+    if (modeValue?.type === "string")
+      mode = modeValue.value;
+    else if (modeValue !== null && modeValue !== undefined) {
+      throw new Error("Eval mode must be a string or colon-string like :fresh or :inherit");
+    }
+    if (mode !== "inherit" && mode !== "fresh") {
+      throw new Error(`Eval mode must be 'inherit' or 'fresh', got '${mode}'`);
+    }
+    if (bindings !== null && bindings !== undefined && bindings.type !== "map") {
+      throw new Error("Eval bindings must be a map or null");
+    }
+    const runBody = async () => {
+      let result = null;
+      for (const node of evalNodes) {
+        result = await evaluateAsyncInternal(node, context, registry, systemContext, state);
+      }
+      return result;
+    };
+    const runSharedBody = () => evalNodes.length === 1 ? context.withSharedBodyAsync(evalNodes[0], runBody) : runBody();
+    if (mode === "inherit" && (!bindings || bindings.entries.size === 0)) {
+      return await runSharedBody();
+    }
+    context.push(undefined, { isolated: mode === "fresh" });
+    try {
+      if (bindings?.entries) {
+        for (const [key, value] of bindings.entries) {
+          if (typeof key !== "string") {
+            throw new Error(`Eval binding key must be string, got ${String(key)}`);
+          }
+          context.setFresh(key, value);
+        }
+      }
+      return await runSharedBody();
+    } finally {
+      context.pop();
+    }
   }
   function withAsyncItemFinalizers(context, callback) {
     return withFinalizerActivationAsync(context, callback, {
@@ -49249,7 +50865,7 @@ ${lines.join(`
           return { done: true, index };
         const processed = await processAsyncStreamItem(stream, raw, {
           signal: group.signal,
-          invoke: (callable, args) => invokeCallableAsync(callable, args, itemContext, registry, systemContext, itemState)
+          invoke: (callable, args) => invokeTraversalCallbackAsync(callable, args, itemContext, registry, systemContext, itemState)
         });
         if (processed.unresolved !== undefined) {
           return { done: false, index, records: [], stop: true, unresolved: processed.unresolved };
@@ -49258,9 +50874,9 @@ ${lines.join(`
         for (const value of processed.values) {
           let terminalValue = null;
           if (terminal.kind === "forEach") {
-            terminalValue = await invokeCallableAsync(terminal.callable, [value, new Integer(BigInt(raw.sourceIndex)), stream._stream.callbackSource ?? stream], itemContext, registry, systemContext, itemState);
+            terminalValue = await invokeTraversalCallbackAsync(terminal.callable, [value, new Integer(BigInt(raw.sourceIndex)), stream._stream.callbackSource ?? stream], itemContext, registry, systemContext, itemState);
           } else if (terminal.kind === "find" || terminal.kind === "all") {
-            terminalValue = await invokeCallableAsync(terminal.callable, [value, new Integer(BigInt(raw.sourceIndex)), stream._stream.callbackSource ?? stream], itemContext, registry, systemContext, itemState);
+            terminalValue = await invokeTraversalCallbackAsync(terminal.callable, [value, new Integer(BigInt(raw.sourceIndex)), stream._stream.callbackSource ?? stream], itemContext, registry, systemContext, itemState);
           }
           records.push({ value, terminalValue });
         }
@@ -49310,7 +50926,7 @@ ${lines.join(`
           if (terminal.kind === "collect")
             collected.push(entry.value);
           else if (terminal.kind === "reduce") {
-            accumulator = await invokeCallableAsync(terminal.callable, [accumulator, entry.value, new Integer(BigInt(outputIndex)), stream._stream.callbackSource ?? stream], context, registry, systemContext, state);
+            accumulator = await invokeTraversalCallbackAsync(terminal.callable, [accumulator, entry.value, new Integer(BigInt(outputIndex)), stream._stream.callbackSource ?? stream], context, registry, systemContext, state);
           } else if (terminal.kind === "first") {
             finalResult = entry.value;
             stopped = true;
@@ -49392,7 +51008,7 @@ ${lines.join(`
           }
           return await consumeAsyncStreamSequential(stream, terminal, {
             signal: state?.signal ?? null,
-            invoke: (callable, args) => invokeCallableAsync(callable, args, context, registry, systemContext, state)
+            invoke: (callable, args) => invokeTraversalCallbackAsync(callable, args, context, registry, systemContext, state)
           });
         } finally {
           unregisterAsyncResource(context, stream?._stream?.root);
@@ -49641,7 +51257,7 @@ ${lines.join(`
         current = result2;
         continue;
       }
-      const result = await invokeCallableAsync(callables[stageIndex], [current, locator, collection], context, registry, systemContext, state);
+      const result = await invokeTraversalCallbackAsync(callables[stageIndex], [current, locator, collection], context, registry, systemContext, state);
       if (stage.fn === "PMAP")
         current = result;
       else if (stage.fn === "PFILTER") {
@@ -49903,7 +51519,7 @@ ${lines.join(`
     const start = initProvided ? 0 : 1;
     for (let index = start;index < items.length; index++) {
       const item = items[index];
-      accumulator = await invokeCallableAsync(callable, [accumulator, item.value, item.locator, collection], context, registry, systemContext, state);
+      accumulator = await invokeTraversalCallbackAsync(callable, [accumulator, item.value, item.locator, collection], context, registry, systemContext, state);
     }
     return accumulator;
   }
@@ -50060,7 +51676,7 @@ ${lines.join(`
     let inSeparator = false;
     for (let index = 0;index < items.length; index++) {
       const locator = new Integer(BigInt(index + 1));
-      const separatorValue = await invokeCallableAsync(separator, [items[index], locator, collection], context, registry, systemContext, state);
+      const separatorValue = await invokeTraversalCallbackAsync(separator, [items[index], locator, collection], context, registry, systemContext, state);
       const separatorState = decisionState(separatorValue);
       if (separatorState === "undecided")
         return UNDECIDED;
@@ -50098,7 +51714,7 @@ ${lines.join(`
     for (let index = 0;index < items.length; index++) {
       const item = items[index];
       const locator = new Integer(BigInt(index + 1));
-      const boundaryValue = await invokeCallableAsync(boundary, [item, locator, collection], context, registry, systemContext, state);
+      const boundaryValue = await invokeTraversalCallbackAsync(boundary, [item, locator, collection], context, registry, systemContext, state);
       const boundaryState = decisionState(boundaryValue);
       if (boundaryState === "undecided")
         return UNDECIDED;
@@ -50552,6 +52168,15 @@ ${lines.join(`
           const template = await evaluateCallArgsAsync(callArgNodes, context, registry, systemContext, state);
           return { type: "partial", fn: { type: "sysref", name }, template };
         }
+        if (capability2.lazy && capability2.impl === diagnosticFunctions.DEBUG.impl) {
+          return await evaluateDebugCapabilityAsync(callArgNodes, context, registry, systemContext, state);
+        }
+        if (capability2.lazy && capability2.impl === diagnosticFunctions.TRACE.impl) {
+          return await evaluateTraceCapabilityAsync(callArgNodes, context, registry, systemContext, state);
+        }
+        if (capability2.lazy && capability2.impl === coreFunctions.EVAL.impl) {
+          return await evaluateEvalCapabilityAsync(callArgNodes, context, registry, systemContext, state);
+        }
         if (capability2.lazy)
           return await capability2.impl(callArgNodes, context, evalAsync, {
             promiseAware: true,
@@ -50652,11 +52277,22 @@ ${lines.join(`
         const value = await evalAsync(args[1]);
         return definition12.impl([args[0], value, ...args.slice(2)], context, (node) => node);
       }
-      if (fn === "LAMBDA" || fn === "FUNCDEF" || fn === "MULTIFUNCDEF") {
+      if (fn === "LAMBDA" || fn === "FUNCDEF") {
         return markLexicalAsyncCallable(evaluate(irNode, context, registry, systemContext), state);
+      }
+      if (fn === "MULTIFUNCDEF") {
+        const multifunction = evaluate(irNode, context, registry, systemContext);
+        const enabled2 = !!state?.scheduler && state.parallelCollections !== false;
+        const variant = multifunction.values.at(args[1] === "prepend" ? 0 : -1);
+        if (variant)
+          variant.__parallelCollections = enabled2;
+        return multifunction;
       }
       if (fn === "SYSREF") {
         return evaluate(irNode, context, registry, systemContext);
+      }
+      if (fn === "SELF" || fn === "PARENT_SELF") {
+        return registry.get(fn).impl(args, context, (node) => node);
       }
       if (fn === "TAIL_SELF") {
         const currentCallable = context.getCurrentCallable();
@@ -50707,7 +52343,8 @@ ${lines.join(`
       if (!definition11)
         return await evaluate(irNode, context, registry, systemContext);
       if (definition11.lazy) {
-        return await definition11.impl(args, context, (node) => evaluate(node, context, registry, systemContext), systemContext);
+        const result = await definition11.impl(args, context, (node) => evaluate(node, context, registry, systemContext), systemContext);
+        return fn === "MULTIFUNCTION" ? markLexicalAsyncCallable(result, state) : result;
       }
       const evaluatedArgs = [];
       for (const arg of args)
@@ -51008,16 +52645,16 @@ ${lines.join(`
   }
   var RIXCEL_FORMULA_CLIPBOARD_TYPE = "application/x-rixcel-formula";
   var RIXCEL_FORMULA_BLOCK_CLIPBOARD_TYPE = "application/x-rixcel-formula-block";
-  function parseSheetFormulaClipboard(text8, fallbackAssignmentMode = ":=") {
-    const source = String(text8 ?? "");
+  function parseSheetFormulaClipboard(text10, fallbackAssignmentMode = ":=") {
+    const source = String(text10 ?? "");
     const match = source.match(/^\s*(::=|~~=|:=|~=|=)\s*([\s\S]+)$/u);
     return Object.freeze({
       source: match ? match[2] : source,
       assignmentMode: match?.[1] ?? fallbackAssignmentMode
     });
   }
-  function parseSheetFormulaBlock(text8, fallbackAssignmentMode = ":=") {
-    const rows = String(text8 ?? "").replace(/\r\n?/gu, `
+  function parseSheetFormulaBlock(text10, fallbackAssignmentMode = ":=") {
+    const rows = String(text10 ?? "").replace(/\r\n?/gu, `
 `).split(`
 `);
     if (rows.at(-1) === "")
@@ -51606,9 +53243,9 @@ ${lines.join(`
           }
           if (result?.type === "error")
             throw new Error(result.text);
-          const exact2 = submittedCell.textContent.trim();
+          const exact3 = submittedCell.textContent.trim();
           if (editValue)
-            editValue.textContent = `Exact value: ${exact2}`;
+            editValue.textContent = `Exact value: ${exact3}`;
           if (editStatus)
             editStatus.textContent = "Saved";
           options.onEditCommitted?.(detail, result, submittedCell, sheet);
@@ -51655,11 +53292,11 @@ ${lines.join(`
       throw new Error(`Sheet edit index must contain ${shape.length} entries`);
     }
     return index.map((value, axis) => {
-      const integer4 = Number(value);
-      if (!Number.isInteger(integer4) || integer4 < 1 || integer4 > shape[axis]) {
+      const integer6 = Number(value);
+      if (!Number.isInteger(integer6) || integer6 < 1 || integer6 > shape[axis]) {
         throw new Error(`Sheet edit index ${value} is out of range on axis ${axis + 1}`);
       }
-      return integer4;
+      return integer6;
     });
   }
 
@@ -51751,15 +53388,19 @@ ${lines.join(`
       this._unsubscribe?.();
     }
   }
-  function graphicTargets(node, targets = new Map) {
+  function graphicBindings(node, bindings = { targets: new Map, actions: new Map }) {
     if (!isOutputValue(node))
-      return targets;
+      return bindings;
     if (node.kind === "drag_point" && isReactiveNode(node.target)) {
-      targets.set(node.targetId, node.target);
+      bindings.targets.set(node.targetId, node.target);
+    }
+    if (node.kind === "graphic_action" && isReactiveNode(node.target)) {
+      bindings.targets.set(node.targetId, node.target);
+      bindings.actions.set(node.id, node);
     }
     for (const child of node.children || [])
-      graphicTargets(child, targets);
-    return targets;
+      graphicBindings(child, bindings);
+    return bindings;
   }
   function exactGraphicCoordinate(value) {
     const number2 = Number(value);
@@ -51786,9 +53427,11 @@ ${lines.join(`
       }
       this.widget = widget;
       this.editMode = "position";
-      this.targets = graphicTargets(widget);
+      const bindings = graphicBindings(widget);
+      this.targets = bindings.targets;
+      this.actions = bindings.actions;
       if (this.targets.size === 0) {
-        throw new Error("A Graphic WidgetSession requires at least one DragPoint");
+        throw new Error("A Graphic WidgetSession requires at least one DragPoint or Action");
       }
       this.revision = 0;
       this.onChange = typeof options.onChange === "function" ? options.onChange : null;
@@ -51809,6 +53452,26 @@ ${lines.join(`
     dispatch(event) {
       if (this.disposed)
         throw new Error("Cannot dispatch to a disposed GraphicWidgetSession");
+      if (event?.type === "graphic:action") {
+        const action = this.actions.get(String(event.actionId || ""));
+        if (!action)
+          throw new Error(`Unknown Graphic action: ${event.actionId || "missing action"}`);
+        if (event.targetId && String(event.targetId) !== action.targetId) {
+          throw new Error("Graphic action and target IDs do not match");
+        }
+        const value2 = action.run();
+        const replacedDependencies2 = Object.freeze([...action.target.dependencies]);
+        action.target.replaceValue(value2, {
+          source: "widget",
+          widgetKind: "graphic",
+          eventType: "graphic:action",
+          actionId: action.id,
+          targetId: action.targetId,
+          inputSource: event.source ?? null,
+          replacedDependencies: replacedDependencies2
+        });
+        return value2;
+      }
       if (event?.type !== "graphic:position") {
         throw new Error(`Unsupported Graphic widget event: ${event?.type || "missing type"}`);
       }
@@ -52105,7 +53768,49 @@ ${lines.join(`
     const svg = graphic.querySelector("svg.rix-output-svg");
     const status = graphic.querySelector(".rix-output-graphic-status");
     const handles = [...graphic.querySelectorAll("[data-rix-drag-target]")];
-    if (!svg || handles.length === 0 || typeof options.onPosition !== "function")
+    const actions = [...graphic.querySelectorAll("[data-rix-graphic-action]")];
+    if (!svg || handles.length === 0 && actions.length === 0)
+      return;
+    for (const action of actions) {
+      if (typeof options.onAction !== "function")
+        continue;
+      const activate = (source) => {
+        const detail = Object.freeze({
+          type: "graphic:action",
+          actionId: action.dataset.rixGraphicAction,
+          targetId: action.dataset.rixGraphicTarget,
+          source
+        });
+        try {
+          const result = options.onAction(detail, action, graphic);
+          if (result?.type === "error")
+            throw new Error(result.text);
+          if (status)
+            status.textContent = `${action.getAttribute("aria-label") || "Scene action"} selected`;
+          dispatchGraphicEvent(graphic, "rix-graphic-action", {
+            ...detail,
+            revision: result?.revision ?? null
+          });
+          options.onActionCommitted?.(detail, result, action, graphic);
+        } catch (error) {
+          if (status)
+            status.textContent = error instanceof Error ? error.message : String(error);
+        }
+      };
+      action.addEventListener("click", (event) => {
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        activate("pointer");
+      });
+      action.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ")
+          return;
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        activate("keyboard");
+      });
+    }
+    if (handles.length === 0 || typeof options.onPosition !== "function")
       return;
     const setPreview = (handle, position) => {
       handle.setAttribute("cx", String(position[0]));
@@ -52464,6 +54169,53 @@ ${lines.join(`
       enhancePanel(panel, options);
     return root;
   }
+  function editableTarget(target) {
+    const tag = String(target?.tagName || "").toLowerCase();
+    return Boolean(target?.isContentEditable || ["input", "select", "textarea"].includes(tag));
+  }
+  var shortcutRouters = new WeakMap;
+  function shortcutCandidates(root, key) {
+    return [...root.querySelectorAll?.("[data-rix-control-shortcut]") || []].filter((control) => control.dataset.rixControlShortcut === key && control.dataset.rixControlDisabled !== "true" && control.dataset.rixControlReadOnly !== "true");
+  }
+  function enhanceControlShortcuts(root) {
+    const document2 = root?.ownerDocument;
+    if (!document2?.addEventListener)
+      return () => {};
+    let router = shortcutRouters.get(document2);
+    if (!router) {
+      router = { scopes: new Set, onKeydown: null };
+      router.onKeydown = (event) => {
+        if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || editableTarget(event.target))
+          return;
+        const key = event.key?.length === 1 ? event.key.toLowerCase() : event.key;
+        if (!key)
+          return;
+        const scopes = [...router.scopes].filter((scope) => scope.isConnected !== false);
+        const focused = scopes.find((scope) => scope.contains?.(event.target) || scope.contains?.(document2.activeElement));
+        const choices = focused ? [{ root: focused, candidates: shortcutCandidates(focused, key) }] : scopes.map((scope) => ({ root: scope, candidates: shortcutCandidates(scope, key) })).filter(({ candidates: candidates2 }) => candidates2.length > 0);
+        if (choices.length !== 1 || choices[0].candidates.length === 0)
+          return;
+        const { candidates } = choices[0];
+        const activePanel = document2.activeElement?.closest?.(".rix-output-control-panel");
+        const control = candidates.find((candidate) => activePanel && candidate.closest?.(".rix-output-control-panel") === activePanel) || candidates[0];
+        const button = control.querySelector?.("[data-rix-control-input]");
+        if (!button || button.disabled)
+          return;
+        event.preventDefault?.();
+        button.click?.();
+      };
+      shortcutRouters.set(document2, router);
+      document2.addEventListener("keydown", router.onKeydown);
+    }
+    router.scopes.add(root);
+    return () => {
+      router.scopes.delete(root);
+      if (router.scopes.size > 0)
+        return;
+      document2.removeEventListener?.("keydown", router.onKeydown);
+      shortcutRouters.delete(document2);
+    };
+  }
   // rix/src/tools/output-widgets.js
   function childOutputs2(value) {
     if (!isOutputValue(value))
@@ -52555,7 +54307,8 @@ ${lines.join(`
     const graphicRoot = renderedGraphicRoots(root)[request.graphicIndex];
     if (!graphicRoot)
       return false;
-    const handle = [...graphicRoot.querySelectorAll("[data-rix-drag-target]")].find((candidate) => candidate.dataset.rixDragTarget === request.targetId);
+    const selector2 = request.actionId ? "[data-rix-graphic-action]" : "[data-rix-drag-target]";
+    const handle = [...graphicRoot.querySelectorAll(selector2)].find((candidate) => request.actionId ? candidate.dataset.rixGraphicAction === request.actionId : candidate.dataset.rixDragTarget === request.targetId);
     if (!handle)
       return false;
     handle.focus();
@@ -52601,6 +54354,7 @@ ${lines.join(`
     let pendingFocusRequest = null;
     let disposed = false;
     let currentValue = value;
+    disposers.push(enhanceControlShortcuts(root));
     function disposeWidgets() {
       for (const dispose of widgetDisposers.splice(0))
         dispose();
@@ -52757,7 +54511,34 @@ ${lines.join(`
                 pendingFocusRequest = null;
             }
           },
-          onPositionCommitted: options.onGraphicPosition
+          onPositionCommitted: options.onGraphicPosition,
+          onAction(detail) {
+            const focusRequest = {
+              kind: "graphic",
+              graphicIndex: index,
+              actionId: detail.actionId,
+              targetId: detail.targetId
+            };
+            pendingFocusRequest = focusRequest;
+            try {
+              const valueResult = widgetSession.dispatch(detail);
+              return {
+                type: "result",
+                value: valueResult,
+                revision: widgetSession.revision
+              };
+            } catch (error) {
+              return {
+                type: "error",
+                text: error instanceof Error ? error.message : String(error),
+                revision: widgetSession.revision
+              };
+            } finally {
+              if (pendingFocusRequest === focusRequest)
+                pendingFocusRequest = null;
+            }
+          },
+          onActionCommitted: options.onGraphicAction
         });
       }
       const panelValues = collectControlPanels(outputValue);
@@ -53096,13 +54877,13 @@ ${lines.join(`
   };
 
   // rix/plugins/float/protocol.js
-  function int13(value) {
+  function int16(value) {
     return new Integer(BigInt(value));
   }
-  function text8(value) {
+  function text10(value) {
     return { type: "string", value };
   }
-  function map3(entries4) {
+  function map4(entries4) {
     return { type: "map", entries: new Map(entries4) };
   }
   function sequence7(values3) {
@@ -53140,52 +54921,52 @@ ${lines.join(`
     return binaryExponent >= 0 ? new Rational(numerator << BigInt(binaryExponent), 1n) : new Rational(numerator, 1n << BigInt(-binaryExponent));
   }
   function NumericsCapabilities() {
-    return map3([
-      ["valuekind", text8("numericsCapabilities")],
-      ["schema", text8("rix.numerics.capabilities@1")],
-      ["backend", text8("float")],
-      ["representation", text8("ieee754Binary64")],
-      ["denotation", text8("storedScalar")],
-      ["operations", sequence7([text8("sample"), text8("enclose")])],
-      ["evidencelevels", sequence7([text8("approximate")])],
+    return map4([
+      ["valuekind", text10("numericsCapabilities")],
+      ["schema", text10("rix.numerics.capabilities@1")],
+      ["backend", text10("float")],
+      ["representation", text10("ieee754Binary64")],
+      ["denotation", text10("storedScalar")],
+      ["operations", sequence7([text10("sample"), text10("enclose")])],
+      ["evidencelevels", sequence7([text10("approximate")])],
       ["certified", null],
       ["arbitraryrefinement", null],
-      ["deterministic", int13(1)],
+      ["deterministic", int16(1)],
       ["minimumwidth", Rational.zero],
-      ["storedvalueexact", int13(1)],
+      ["storedvalueexact", int16(1)],
       ["intendedrealcertified", null]
     ]);
   }
   function approximateStoredValue(value, request, operation) {
-    const exact2 = exactFloatRational(value);
+    const exact3 = exactFloatRational(value);
     const requestedWidth = entry(request, "absolutewidth", null);
-    const requestedWork = entry(entry(request, "work", null), "maxwork", int13(0));
-    return map3([
-      ["valuekind", text8("enclosure")],
-      ["schema", text8("rix.numerics.enclosure@1")],
-      ["status", text8("approximate")],
-      ["interval", new RationalInterval(exact2, exact2)],
+    const requestedWork = entry(entry(request, "work", null), "maxwork", int16(0));
+    return map4([
+      ["valuekind", text10("enclosure")],
+      ["schema", text10("rix.numerics.enclosure@1")],
+      ["status", text10("approximate")],
+      ["interval", new RationalInterval(exact3, exact3)],
       ["certified", null],
       ["goalmet", null],
       ["requestedwidth", requestedWidth],
       ["achievedwidth", Rational.zero],
-      ["evidencelevel", text8("approximate")],
-      ["backend", text8("float")],
-      ["operation", text8(operation)],
+      ["evidencelevel", text10("approximate")],
+      ["backend", text10("float")],
+      ["operation", text10(operation)],
       ["trace", sequence7([])],
-      ["work", map3([
-        ["samples", int13(1)],
+      ["work", map4([
+        ["samples", int16(1)],
         ["maxwork", requestedWork],
         ["exhausted", null]
       ])],
       ["diagnostics", sequence7([
-        text8("storedValueOnly"),
-        text8("noErrorBoundForIntendedReal")
+        text10("storedValueOnly"),
+        text10("noErrorBoundForIntendedReal")
       ])],
-      ["source", map3([
-        ["plugin", text8("float")],
-        ["representation", text8("ieee754Binary64")],
-        ["storedvalueexact", int13(1)]
+      ["source", map4([
+        ["plugin", text10("float")],
+        ["representation", text10("ieee754Binary64")],
+        ["storedvalueexact", int16(1)]
       ])]
     ]);
   }
@@ -53243,17 +55024,17 @@ ${lines.join(`
     return numerator >= 0n ? numerator / denominator : -((-numerator + denominator - 1n) / denominator);
   }
   function decimalRounded(value, places, mode) {
-    const exact2 = exactFloatRational(value);
+    const exact3 = exactFloatRational(value);
     const scale2 = 10n ** BigInt(places);
-    const scaled = exact2.numerator * scale2;
-    const lower2 = floorDiv3(scaled, exact2.denominator);
+    const scaled = exact3.numerator * scale2;
+    const lower2 = floorDiv3(scaled, exact3.denominator);
     let coefficient = lower2;
-    if (mode === "ceiling" && scaled !== lower2 * exact2.denominator)
+    if (mode === "ceiling" && scaled !== lower2 * exact3.denominator)
       coefficient += 1n;
     if (mode === "round") {
-      const remainder = scaled - lower2 * exact2.denominator;
+      const remainder = scaled - lower2 * exact3.denominator;
       const doubled = remainder * 2n;
-      if (doubled > exact2.denominator || doubled === exact2.denominator && (lower2 & 1n) !== 0n)
+      if (doubled > exact3.denominator || doubled === exact3.denominator && (lower2 & 1n) !== 0n)
         coefficient += 1n;
     }
     return new Rational(coefficient, scale2);
@@ -53363,8 +55144,8 @@ ${lines.join(`
     };
     add("Float", (args, _context, evaluate2) => requireFloat(args[1], evaluate2));
     add("Interval", (args, _context, evaluate2) => {
-      const exact2 = exactFloatRational(requireFloat(args[1], evaluate2));
-      return new RationalInterval(exact2, exact2);
+      const exact3 = exactFloatRational(requireFloat(args[1], evaluate2));
+      return new RationalInterval(exact3, exact3);
     });
     add("Round", (args, _context, evaluate2) => decimalRounded(requireFloat(args[1], evaluate2), decimalPlaces(args[2]), "round"));
     add("Floor", (args, _context, evaluate2) => decimalRounded(requireFloat(args[1], evaluate2), decimalPlaces(args[2]), "floor"));
@@ -53392,7 +55173,7 @@ ${lines.join(`
     systemContext.registerMethod("Rational", "Float", floatExtension, owner);
     return systemContext;
   }
-  var install22 = installBrowserApproxMathPlugin;
+  var install25 = installBrowserApproxMathPlugin;
 
   // rix/examples/plugins/example-array-js/array-js.plugin.rix.js
   function valuesFrom(value) {
@@ -53431,7 +55212,7 @@ ${lines.join(`
     }
     return { type: "map", entries: entries4, _ext: extension };
   }
-  function install23({ systemContext }) {
+  function install26({ systemContext }) {
     const value = collection();
     systemContext.registerHostCallableValue("arrayJs", value, {
       impl(args) {
@@ -53479,7 +55260,7 @@ defaultEnabled: false
       groups: ["ApproximateMath", "Float"],
       permissions: [],
       defaultEnabled: false
-    }, install22);
+    }, install25);
     addPlugin(catalog, {
       id: "example-array-js",
       description: "Teaching JavaScript plugin demonstrating array helpers.",
@@ -53489,7 +55270,7 @@ defaultEnabled: false
       groups: ["Examples"],
       permissions: [],
       defaultEnabled: false
-    }, install23);
+    }, install26);
     addPlugin(catalog, {
       id: "example-array-rix",
       description: "Teaching RiX plugin demonstrating array helpers.",
@@ -53523,16 +55304,16 @@ defaultEnabled: false
       defaultEnabled: false
     }, install5);
     for (const [id, description, installer, permissions = []] of [
-      ["svg", "Portable SVG renderer for core Graphics scenes.", install10],
-      ["canvas", "Serializable Canvas 2D drawing plans for core Graphics scenes.", install11],
-      ["tikz", "Editable TikZ/PGF source renderer for core Graphics scenes.", install12],
-      ["markdown", "CommonMark-oriented renderer for portable RiX documents.", install13],
-      ["html", "Standalone semantic HTML renderer for portable RiX output trees.", install14],
-      ["quarto", "Quarto Markdown renderer with front matter and portable figure lowering.", install15],
-      ["latex", "Standalone LaTeX renderer for portable RiX documents and figures.", install16],
-      ["png", "PNG snapshot renderer for core Graphics through a host rasterizer.", install17, ["process"]],
-      ["pdf", "PDF document and figure renderer orchestrated through LaTeX.", install18, ["process", "files"]],
-      ["gltf", "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", install19]
+      ["svg", "Portable SVG renderer for core Graphics scenes.", install13],
+      ["canvas", "Serializable Canvas 2D drawing plans for core Graphics scenes.", install14],
+      ["tikz", "Editable TikZ/PGF source renderer for core Graphics scenes.", install15],
+      ["markdown", "CommonMark-oriented renderer for portable RiX documents.", install16],
+      ["html", "Standalone semantic HTML renderer for portable RiX output trees.", install17],
+      ["quarto", "Quarto Markdown renderer with front matter and portable figure lowering.", install18],
+      ["latex", "Standalone LaTeX renderer for portable RiX documents and figures.", install19],
+      ["png", "PNG snapshot renderer for core Graphics through a host rasterizer.", install20, ["process"]],
+      ["pdf", "PDF document and figure renderer orchestrated through LaTeX.", install21, ["process", "files"]],
+      ["gltf", "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", install22]
     ]) {
       addPlugin(catalog, {
         id,
@@ -53549,7 +55330,15 @@ defaultEnabled: false
   }
   function showError(error) {
     const root = document.querySelector("#rix-app");
-    root.textContent = error instanceof Error ? error.stack || error.message : String(error);
+    if (error instanceof Error) {
+      const message = error.message || error.name || "RiX page error";
+      const stack = error.stack || "";
+      root.textContent = stack.includes(message) ? stack : [message, stack].filter(Boolean).join(`
+
+`);
+    } else {
+      root.textContent = String(error);
+    }
     root.classList.add("rix-page-error");
   }
   async function run() {
