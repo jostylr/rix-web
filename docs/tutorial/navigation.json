@@ -931,7 +931,7 @@
       "number": "15e",
       "parent": "15",
       "file": "plugin-linalg.html",
-      "title": "Exact linear algebra and coordinates",
+      "title": "Exact linear algebra and Frames",
       "description": "Solve rational matrix systems and change tensor coordinates without losing tensor identity.",
       "pluginGroup": false,
       "status": "implemented"

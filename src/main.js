@@ -1,5 +1,5 @@
 import { createRixRepl, findHelp } from "./repl-runtime.js";
-import { formatValue, mountOutputWidgets } from "../../rix/src/index.js";
+import { mountOutputWidgets } from "../../rix/src/index.js";
 
 const repl = createRixRepl();
 const outputHistory = document.querySelector("#output-history");
@@ -19,6 +19,13 @@ const docsToggle = document.querySelector("#docs-toggle");
 const inspectDialog = document.querySelector("#inspect-dialog");
 const inspectSource = document.querySelector("#inspect-source");
 const inspectValue = document.querySelector("#inspect-value");
+const numberDialog = document.querySelector("#number-dialog");
+const numberForm = document.querySelector("#number-form");
+const numberInputBase = document.querySelector("#number-input-base");
+const numberDisplayProfile = document.querySelector("#number-display-profile");
+const numberPersist = document.querySelector("#number-persist");
+const numberSettingsStatus = document.querySelector("#number-settings-status");
+const NUMBER_STORAGE_KEY = "ratcalc.number-config.v1";
 
 let scriptMode = false;
 let history = [];
@@ -125,7 +132,7 @@ function appendOutput(source, response) {
             outputLine.innerHTML = response.html;
             outputLine.addEventListener("click", () => openInspection(source, response.text));
             const dispose = mountOutputWidgets(outputLine, response.value, {
-                format: formatValue,
+                format: repl.formatValue,
                 observe: response.observe
                     ? (listener) => response.observe((next) => listener(next.value))
                     : null,
@@ -140,13 +147,52 @@ function appendOutput(source, response) {
                 ? escapeHtml(preview)
                 : `${escapeHtml(preview)}<span class="inject-icon" title="Use this value">→</span>`;
             if (inspectable) outputLine.addEventListener("click", () => openInspection(source, response.text));
-            else if (response.type === "result") outputLine.addEventListener("click", () => setInput(response.text));
+            else if (response.type === "result") outputLine.addEventListener("click", () => setInput(response.sourceText ?? response.text));
         }
         entry.appendChild(outputLine);
     }
     outputHistory.appendChild(entry);
     transcript.push({ source, text: response.type === "help" ? `.Help: ${response.query || "all topics"}` : response.text });
     scrollTranscript();
+}
+
+function openNumberSettings() {
+    const config = repl.numberConfig();
+    numberInputBase.value = config.input;
+    numberDisplayProfile.value = config.display;
+    numberSettingsStatus.textContent = "";
+    numberDialog.showModal();
+    numberInputBase.focus();
+}
+
+function saveNumberSettings(config) {
+    if (numberPersist.checked) localStorage.setItem(NUMBER_STORAGE_KEY, JSON.stringify(config));
+    else localStorage.removeItem(NUMBER_STORAGE_KEY);
+}
+
+function applyNumberSettings(config, { close = false } = {}) {
+    try {
+        const applied = repl.setNumberConfig(config);
+        numberInputBase.value = applied.input;
+        numberDisplayProfile.value = applied.display;
+        saveNumberSettings(applied);
+        numberSettingsStatus.textContent = `Using #${applied.input} input and ${applied.display} output.`;
+        if (close) numberDialog.close();
+    } catch (error) {
+        numberSettingsStatus.textContent = error.message || String(error);
+    }
+}
+
+function restoreNumberSettings() {
+    try {
+        const saved = JSON.parse(localStorage.getItem(NUMBER_STORAGE_KEY) || "null");
+        if (saved && typeof saved === "object") {
+            numberPersist.checked = true;
+            applyNumberSettings(saved);
+        }
+    } catch {
+        localStorage.removeItem(NUMBER_STORAGE_KEY);
+    }
 }
 
 function inlineHelp({ query, groups }) {
@@ -288,6 +334,9 @@ document.addEventListener("click", (event) => {
     switch (control.dataset.action) {
     case "run": execute(); break;
     case "help": openHelp(); break;
+    case "number-settings": openNumberSettings(); break;
+    case "close-number-settings": numberDialog.close(); input.focus(); break;
+    case "reset-number-settings": numberInputBase.value = "z[10]"; numberDisplayProfile.value = ".."; applyNumberSettings({ input: "z[10]", display: ".." }); break;
     case "close-help": helpDialog.close(); input.focus(); break;
     case "docs": setDocsOpen(docsPanel.hidden); break;
     case "close-docs": setDocsOpen(false); input.focus(); break;
@@ -334,7 +383,11 @@ input.addEventListener("keydown", (event) => {
 });
 helpSearch.addEventListener("input", () => renderHelp(helpSearch.value));
 fileInput.addEventListener("change", async () => { const [file] = fileInput.files; if (file) await loadFile(file); fileInput.value = ""; });
-[helpDialog, inspectDialog].forEach((dialog) => {
+numberForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    applyNumberSettings({ input: numberInputBase.value, display: numberDisplayProfile.value }, { close: true });
+});
+[helpDialog, inspectDialog, numberDialog].forEach((dialog) => {
     dialog.addEventListener("click", (event) => {
         if (event.target === dialog) dialog.close();
     });
@@ -342,5 +395,6 @@ fileInput.addEventListener("change", async () => { const [file] = fileInput.file
 
 displayWelcome();
 setAutoSeparateLines(autoSeparateLines);
+restoreNumberSettings();
 input.focus();
 window.addEventListener("pagehide", () => { void repl.dispose(); });

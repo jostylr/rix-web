@@ -12,7 +12,7 @@
       <header class="app-header">
         <a class="brand" href="./" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a>
         <p>Exact rational arithmetic calculator with interval support powered by RiX</p>
-        <nav aria-label="RatCalc navigation"><a href="./tutorial/">Tutorials</a><a href="./showcases.html">Showcases</a><button id="docs-toggle" type="button" data-action="docs" aria-pressed="false">Docs</button><button type="button" data-action="help">Help</button></nav>
+        <nav aria-label="RatCalc navigation"><a href="./tutorial/">Tutorials</a><a href="./showcases.html">Showcases</a><button id="docs-toggle" type="button" data-action="docs" aria-pressed="false">Docs</button><button type="button" data-action="number-settings">Numbers</button><button type="button" data-action="help">Help</button></nav>
       </header>
 
       <div class="app-workspace">
@@ -63,6 +63,22 @@
     <dialog id="inspect-dialog" class="inspect-dialog" aria-labelledby="inspect-title">
       <header class="inspect-header"><div><h2 id="inspect-title">Full result</h2><p id="inspect-source"></p></div><button type="button" data-action="close-inspect" aria-label="Close inspection">×</button></header>
       <pre id="inspect-value" class="inspect-value"></pre>
+    </dialog>
+    <dialog id="number-dialog" class="number-dialog" aria-labelledby="number-title">
+      <header class="modal-header"><div><h2 id="number-title">Number notation</h2><p>These settings apply to this RiX session.</p></div><button type="button" data-action="close-number-settings" aria-label="Close number settings">×</button></header>
+      <form id="number-form" class="number-form" method="dialog">
+        <label>Input base for <code>#</code> numerals
+          <input id="number-input-base" name="input" list="number-base-presets" value="z[10]" spellcheck="false" />
+        </label>
+        <datalist id="number-base-presets"><option value="z[10]">decimal</option><option value="b">binary</option><option value="o">octal</option><option value="x">hexadecimal</option><option value="u">base 36</option></datalist>
+        <label>Output format profile
+          <input id="number-display-profile" name="display" value=".." spellcheck="false" aria-describedby="number-format-help" />
+        </label>
+        <p id="number-format-help"><code>.[12],b,..</code> shows a 12-place decimal, binary, and a mixed fraction. Separate views with commas.</p>
+        <label class="number-persist"><input id="number-persist" type="checkbox" /> Remember in this browser</label>
+        <output id="number-settings-status" role="status"></output>
+        <div class="number-actions"><button type="button" data-action="reset-number-settings">Defaults</button><button type="submit">Apply</button></div>
+      </form>
     </dialog>
     <script type="module" src="./assets/main.js"></script>
   </body>

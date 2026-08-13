@@ -221,7 +221,7 @@ export const pluginTutorials = [
   {
     "pluginId": "linalg",
     "pluginDirectory": "linalg",
-    "title": "Exact linear algebra and coordinates",
+    "title": "Exact linear algebra and Frames",
     "description": "Solve rational matrix systems and change tensor coordinates without losing tensor identity.",
     "status": "implemented",
     "order": 0,

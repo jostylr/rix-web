@@ -524,6 +524,25 @@ test("the web REPL exposes contextual completion without evaluating the draft", 
     expect(result.candidates.map((candidate) => candidate.insertText)).toContain("_proto");
 });
 
+test("number settings control # input and multi-view output", () => {
+    const repl = createRixRepl();
+    expect(repl.setNumberConfig({ input: "b", display: ".[12],b,.." })).toEqual({
+        input: "b",
+        display: ".[12],b,..",
+    });
+    expect(repl.run("#111").text).toBe("7 · 111 · 7");
+    expect(repl.run("7/4").text).toBe("1.75 · 1.11 · 1..3/4");
+});
+
+test("presentation text is separate from lossless injection source", () => {
+    const repl = createRixRepl();
+    repl.setNumberConfig({ display: ".[3]" });
+    const response = repl.run("1/7");
+    expect(response.text).toBe("0.142…");
+    expect(response.sourceText).toBe("1/7");
+    expect(repl.run(response.sourceText).sourceText).toBe("1/7");
+});
+
 test("every indexed tutorial has a Markdown source file", async () => {
     for (const tutorial of tutorials) {
         if (tutorial.pluginGroup) continue;

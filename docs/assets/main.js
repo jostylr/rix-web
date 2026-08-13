@@ -1,11 +1,10 @@
 import {
   createRixRepl,
   findHelp
-} from "./chunk-89gysefp.js";
+} from "./chunk-nf7qt9nd.js";
 import {
-  formatValue,
   mountOutputWidgets
-} from "./chunk-ezjyb90z.js";
+} from "./chunk-qn5vyjst.js";
 
 // src/main.js
 var repl = createRixRepl();
@@ -26,6 +25,13 @@ var docsToggle = document.querySelector("#docs-toggle");
 var inspectDialog = document.querySelector("#inspect-dialog");
 var inspectSource = document.querySelector("#inspect-source");
 var inspectValue = document.querySelector("#inspect-value");
+var numberDialog = document.querySelector("#number-dialog");
+var numberForm = document.querySelector("#number-form");
+var numberInputBase = document.querySelector("#number-input-base");
+var numberDisplayProfile = document.querySelector("#number-display-profile");
+var numberPersist = document.querySelector("#number-persist");
+var numberSettingsStatus = document.querySelector("#number-settings-status");
+var NUMBER_STORAGE_KEY = "ratcalc.number-config.v1";
 var scriptMode = false;
 var history = [];
 var historyIndex = -1;
@@ -134,7 +140,7 @@ function appendOutput(source, response) {
       outputLine.innerHTML = response.html;
       outputLine.addEventListener("click", () => openInspection(source, response.text));
       const dispose = mountOutputWidgets(outputLine, response.value, {
-        format: formatValue,
+        format: repl.formatValue,
         observe: response.observe ? (listener) => response.observe((next) => listener(next.value)) : null,
         onActivate: ({ address }) => insertInputText(address),
         evaluateEdit: (editSource, { mode }) => repl.run(mode === "formula" ? `@{ ${editSource} }` : editSource)
@@ -145,13 +151,51 @@ function appendOutput(source, response) {
       if (inspectable)
         outputLine.addEventListener("click", () => openInspection(source, response.text));
       else if (response.type === "result")
-        outputLine.addEventListener("click", () => setInput(response.text));
+        outputLine.addEventListener("click", () => setInput(response.sourceText ?? response.text));
     }
     entry.appendChild(outputLine);
   }
   outputHistory.appendChild(entry);
   transcript.push({ source, text: response.type === "help" ? `.Help: ${response.query || "all topics"}` : response.text });
   scrollTranscript();
+}
+function openNumberSettings() {
+  const config = repl.numberConfig();
+  numberInputBase.value = config.input;
+  numberDisplayProfile.value = config.display;
+  numberSettingsStatus.textContent = "";
+  numberDialog.showModal();
+  numberInputBase.focus();
+}
+function saveNumberSettings(config) {
+  if (numberPersist.checked)
+    localStorage.setItem(NUMBER_STORAGE_KEY, JSON.stringify(config));
+  else
+    localStorage.removeItem(NUMBER_STORAGE_KEY);
+}
+function applyNumberSettings(config, { close = false } = {}) {
+  try {
+    const applied = repl.setNumberConfig(config);
+    numberInputBase.value = applied.input;
+    numberDisplayProfile.value = applied.display;
+    saveNumberSettings(applied);
+    numberSettingsStatus.textContent = `Using #${applied.input} input and ${applied.display} output.`;
+    if (close)
+      numberDialog.close();
+  } catch (error) {
+    numberSettingsStatus.textContent = error.message || String(error);
+  }
+}
+function restoreNumberSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(NUMBER_STORAGE_KEY) || "null");
+    if (saved && typeof saved === "object") {
+      numberPersist.checked = true;
+      applyNumberSettings(saved);
+    }
+  } catch {
+    localStorage.removeItem(NUMBER_STORAGE_KEY);
+  }
 }
 function inlineHelp({ query, groups }) {
   const panel = document.createElement("section");
@@ -290,6 +334,18 @@ document.addEventListener("click", (event) => {
     case "help":
       openHelp();
       break;
+    case "number-settings":
+      openNumberSettings();
+      break;
+    case "close-number-settings":
+      numberDialog.close();
+      input.focus();
+      break;
+    case "reset-number-settings":
+      numberInputBase.value = "z[10]";
+      numberDisplayProfile.value = "..";
+      applyNumberSettings({ input: "z[10]", display: ".." });
+      break;
     case "close-help":
       helpDialog.close();
       input.focus();
@@ -397,7 +453,11 @@ fileInput.addEventListener("change", async () => {
     await loadFile(file);
   fileInput.value = "";
 });
-[helpDialog, inspectDialog].forEach((dialog) => {
+numberForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  applyNumberSettings({ input: numberInputBase.value, display: numberDisplayProfile.value }, { close: true });
+});
+[helpDialog, inspectDialog, numberDialog].forEach((dialog) => {
   dialog.addEventListener("click", (event) => {
     if (event.target === dialog)
       dialog.close();
@@ -405,10 +465,11 @@ fileInput.addEventListener("change", async () => {
 });
 displayWelcome();
 setAutoSeparateLines(autoSeparateLines);
+restoreNumberSettings();
 input.focus();
 window.addEventListener("pagehide", () => {
   repl.dispose();
 });
 
-//# debugId=006EB5A030F3284864756E2164756E21
+//# debugId=6573BCCA9E93FB6D64756E2164756E21
 //# sourceMappingURL=main.js.map

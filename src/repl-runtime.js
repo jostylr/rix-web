@@ -5,6 +5,7 @@ import {
     disposeAsyncResources,
     complete,
     formatValue,
+    formatValueSource,
     isOutputValue,
     parseAndEvaluate,
     parseAndEvaluateAsync,
@@ -90,6 +91,22 @@ export function createRixRepl({ autoSeparateLines = true } = {}) {
     };
     let initialNames = new Set(state.context.getAllNames());
     let separateLines = autoSeparateLines;
+    const numberConfig = { input: "z[10]", display: ".." };
+
+    const configuredFormat = (value) => formatValue(value, { context: state.context, evaluate: null });
+    const applyNumberConfig = ({ input, display } = {}) => {
+        if (input !== undefined) {
+            parseAndEvaluate(`<* ${JSON.stringify(String(input))}`, { ...state, file: "<ratcalc-config>" });
+            numberConfig.input = state.context.getEnv("numInput", String(input));
+        }
+        if (display !== undefined) {
+            parseAndEvaluate(`*> ${JSON.stringify(String(display))}`, { ...state, file: "<ratcalc-config>" });
+            numberConfig.display = state.context.getEnv("numDisplay", String(display));
+        } else if (input !== undefined && state.context.getEnv("numDisplayExplicit", false) !== true) {
+            numberConfig.display = state.context.getEnv("numDisplay", numberConfig.input);
+        }
+        return { ...numberConfig };
+    };
 
     return {
         run(source) {
@@ -102,7 +119,7 @@ export function createRixRepl({ autoSeparateLines = true } = {}) {
                     file: "<ratcalc>",
                     reactiveReads,
                 });
-                const format = (value) => formatValue(value, { context: state.context, evaluate: null });
+                const format = configuredFormat;
                 const observedSource = [...reactiveReads]
                     .find((candidate) => currentReactiveValue(candidate) === result);
                 const makeResponse = (value) => ({
@@ -110,6 +127,7 @@ export function createRixRepl({ autoSeparateLines = true } = {}) {
                     source,
                     value,
                     text: format(value),
+                    sourceText: formatValueSource(value),
                     html: isOutputValue(value) ? renderOutputHtml(value, format) : null,
                     observe: observedSource
                         ? (listener) => observedSource.subscribe(() => {
@@ -141,7 +159,7 @@ export function createRixRepl({ autoSeparateLines = true } = {}) {
                     file: "<ratcalc>",
                     reactiveReads,
                 });
-                const format = (value) => formatValue(value, { context: state.context, evaluate: null });
+                const format = configuredFormat;
                 const observedSource = [...reactiveReads]
                     .find((candidate) => currentReactiveValue(candidate) === result);
                 const makeResponse = (value) => ({
@@ -149,6 +167,7 @@ export function createRixRepl({ autoSeparateLines = true } = {}) {
                     source,
                     value,
                     text: format(value),
+                    sourceText: formatValueSource(value),
                     html: isOutputValue(value) ? renderOutputHtml(value, format) : null,
                     observe: observedSource
                         ? (listener) => observedSource.subscribe(() => {
@@ -164,8 +183,19 @@ export function createRixRepl({ autoSeparateLines = true } = {}) {
         variables() {
             return state.context.getAllNames().filter((name) => !initialNames.has(name)).map((name) => ({
                 name,
-                value: formatValue(state.context.get(name), { context: state.context, evaluate: null }),
+                value: configuredFormat(state.context.get(name)),
             }));
+        },
+        formatValue: configuredFormat,
+        sourceText: formatValueSource,
+        numberConfig() {
+            return {
+                input: state.context.getEnv("numInput", numberConfig.input),
+                display: state.context.getEnv("numDisplay", numberConfig.display),
+            };
+        },
+        setNumberConfig(config) {
+            return applyNumberConfig(config);
         },
         complete(source, cursor = String(source).length) {
             return complete(source, cursor, {
@@ -178,6 +208,7 @@ export function createRixRepl({ autoSeparateLines = true } = {}) {
             await disposeAsyncResources(state.context, { kind: "session reset" });
             state.context.clear();
             initialNames = new Set(state.context.getAllNames());
+            applyNumberConfig(numberConfig);
         },
         async dispose() {
             await disposeAsyncResources(state.context, { kind: "session shutdown" });

@@ -26,9 +26,12 @@
     "<<",
     ">>",
     "<>",
+    "_>!",
     "_>",
     "~>",
     "<_",
+    "*>",
+    "<*",
     "||>",
     "~~=",
     "::=",
@@ -175,6 +178,9 @@
       token = tryMatchPostfixCheck(input, position);
       if (!token) {
         token = tryMatchComment(input, position);
+      }
+      if (!token) {
+        token = tryMatchActiveBaseNumber(input, position);
       }
       if (!token) {
         token = tryMatchNumber(input, position);
@@ -496,6 +502,15 @@
         pos: [position, position, position + match[0].length]
       };
     }
+    match = remaining.match(/^-?(?:0z\[\d+\]|0[a-zA-Z])[0-9a-zA-Z]+(?:\.[0-9a-zA-Z]*)?#[0-9a-zA-Z]+/);
+    if (match) {
+      return {
+        type: "Number",
+        original: match[0],
+        value: match[0],
+        pos: [position, position, position + match[0].length]
+      };
+    }
     match = remaining.match(/^-?0[A-Z]"(?:[^"\\]|\\.)*"/);
     if (match) {
       return {
@@ -632,6 +647,37 @@
       };
     }
     return null;
+  }
+  function tryMatchActiveBaseNumber(input, position) {
+    if (input[position] !== "#" || input[position + 1] === "#")
+      return null;
+    const remaining = input.slice(position);
+    const quoted = remaining.match(/^#`((?:[^`\\]|\\.)+)`/u);
+    if (quoted) {
+      return {
+        type: "ActiveBaseNumber",
+        original: quoted[0],
+        value: quoted[1].replace(/\\`/g, "`").replace(/\\\\/g, "\\"),
+        quoted: true,
+        pos: [position, position, position + quoted[0].length]
+      };
+    }
+    const digit = "[\\p{L}\\p{N}_@&]";
+    const digits = `${digit}+`;
+    const active = `#${digits}`;
+    const component = `${digits}(?:\\.${digit}*)?(?:#${digits})?`;
+    const mixed = new RegExp(`^#${digits}\\.\\.${active}\\/${active}`, "u");
+    const ordinary = new RegExp(`^#${component}`, "u");
+    const match = remaining.match(mixed) || remaining.match(ordinary);
+    if (!match)
+      return null;
+    return {
+      type: "ActiveBaseNumber",
+      original: match[0],
+      value: match[0],
+      quoted: false,
+      pos: [position, position, position + match[0].length]
+    };
   }
   function scanNumberLiteral(input, position = 0) {
     return tryMatchNumber(input, position) || tryMatchExplicitCF(input, position);
@@ -877,7 +923,7 @@
         const after = input[cursor + 1];
         if (!isWhitespace(after) && after !== "/" && after !== "}") {
           const { line: line2, col: col2 } = posToLineCol(input, position);
-          throw new Error(`Brace tensor alias '{=:${name}:' must be followed by a space, header, or '}' at line ${line2}:${col2}`);
+          throw new Error(`Brace shaped alias '{=:${name}:' must be followed by a space, header, or '}' at line ${line2}:${col2}`);
         }
         return makeAdvancedConstructorToken("{:", position, cursor + 1, {
           containerName: name.toLowerCase(),
@@ -1773,6 +1819,11 @@
       associativity: "left",
       type: "infix"
     },
+    "_>!": {
+      precedence: PRECEDENCE.CONVERSION,
+      associativity: "left",
+      type: "infix"
+    },
     "~>": {
       precedence: PRECEDENCE.CONVERSION,
       associativity: "left",
@@ -2134,7 +2185,7 @@
       const t = this.current;
       if (t.type === "End")
         return false;
-      if (t.type === "Number")
+      if (t.type === "Number" || t.type === "ActiveBaseNumber")
         return true;
       if (t.type === "Identifier") {
         if (t.kind === "System") {
@@ -2198,6 +2249,13 @@
             value: token.value,
             original: token.original
           });
+        case "ActiveBaseNumber":
+          this.advance();
+          return this.createNode("ActiveBaseNumber", {
+            value: token.value,
+            quoted: token.quoted === true,
+            original: token.original
+          });
         case "String":
           this.advance();
           if (token.kind === "backtick") {
@@ -2250,6 +2308,15 @@
             original: token.original
           });
         case "Symbol":
+          if (token.value === "<*" || token.value === "*>") {
+            this.advance();
+            const value = this.parseExpression(PRECEDENCE.ASSIGNMENT + 1);
+            return this.createNode("NumberConfigDirective", {
+              setting: token.value === "<*" ? "input" : "display",
+              value,
+              original: token.original + (value.original || "")
+            });
+          }
           if (token.value === "?") {
             this.advance();
             return this.createNode("UndecidedLiteral", {
@@ -3447,14 +3514,14 @@
       const metadataMap = {};
       let nonMetadataCount = 0;
       let hasSemicolons = false;
-      let matrixStructure = [];
+      let shapedStructure = [];
       let currentRow = [];
       if (this.current.value !== "]") {
         do {
           if (this.current.value === ";" || this.current.type === "SemicolonSequence") {
             hasSemicolons = true;
             const semicolonCount = this.consumeSemicolonSequence();
-            matrixStructure.push({
+            shapedStructure.push({
               row: [],
               separatorLevel: semicolonCount
             });
@@ -3473,7 +3540,7 @@
           }
           if (element.type === "BinaryOperation" && element.operator === ":=") {
             if (hasSemicolons) {
-              this.error("Cannot mix matrix/tensor syntax with metadata - use nested array syntax");
+              this.error("Cannot mix Shaped syntax with metadata - use nested array syntax");
             }
             hasMetadata = true;
             let key;
@@ -3508,11 +3575,11 @@
             }
           } else if (this.current.value === ";" || this.current.type === "SemicolonSequence") {
             if (hasMetadata) {
-              this.error("Cannot mix matrix/tensor syntax with metadata");
+              this.error("Cannot mix Shaped syntax with metadata");
             }
             hasSemicolons = true;
             const semicolonCount = this.consumeSemicolonSequence();
-            matrixStructure.push({
+            shapedStructure.push({
               row: [...currentRow],
               separatorLevel: semicolonCount
             });
@@ -3523,7 +3590,7 @@
         } while (this.current.value !== "]" && this.current.type !== "End");
       }
       if (currentRow.length > 0 || hasSemicolons) {
-        matrixStructure.push({
+        shapedStructure.push({
           row: currentRow,
           separatorLevel: 0
         });
@@ -3544,7 +3611,7 @@
         });
       }
       if (hasSemicolons) {
-        return this.buildMatrixTensor(matrixStructure, startToken);
+        return this.buildShaped(shapedStructure, startToken);
       }
       return this.createNode("Array", {
         elements,
@@ -3552,26 +3619,21 @@
         original: startToken.original
       });
     }
-    buildMatrixTensor(matrixStructure, startToken) {
-      const maxSeparatorLevel = Math.max(...matrixStructure.map((item) => item.separatorLevel));
+    buildShaped(shapedStructure, startToken) {
+      const maxSeparatorLevel = Math.max(...shapedStructure.map((item) => item.separatorLevel));
       if (maxSeparatorLevel === 1) {
-        const rows = [];
-        for (const item of matrixStructure) {
-          rows.push(item.row);
-        }
-        return this.createNode("Matrix", {
-          rows,
-          pos: startToken.pos,
-          original: startToken.original
-        });
-      } else {
-        return this.createNode("Tensor", {
-          structure: matrixStructure,
-          maxDimension: maxSeparatorLevel + 1,
+        return this.createNode("Shaped", {
+          rows: shapedStructure.map((item) => item.row),
           pos: startToken.pos,
           original: startToken.original
         });
       }
+      return this.createNode("Shaped", {
+        structure: shapedStructure,
+        maxDimension: maxSeparatorLevel + 1,
+        pos: startToken.pos,
+        original: startToken.original
+      });
     }
     isDirectAssignmentOperator(value) {
       return value === "=" || value === ":=" || value === "~=" || value === "::=" || value === "~~=";
@@ -3759,13 +3821,13 @@
           entries,
           rest
         }, current);
-      } else if (current?.type === "TensorLiteral") {
+      } else if (current?.type === "ShapedLiteral") {
         if (current.shape.length !== 2) {
-          this.error("Tensor destructuring currently supports rank-2 patterns only");
+          this.error("Shaped destructuring currently supports rank-2 patterns only");
         }
         const [rows, cols] = current.shape;
         if (current.elements.length !== rows * cols) {
-          this.error("Malformed tensor destructure");
+          this.error("Malformed shaped destructure");
         }
         const rowTargets = [];
         for (let row = 0;row < rows; row++) {
@@ -3775,7 +3837,7 @@
           }
           rowTargets.push(rowEntries);
         }
-        target = this.createDestructureTargetNode("DestructureTensorPattern", {
+        target = this.createDestructureTargetNode("DestructureShapedPattern", {
           shape: [...current.shape],
           rows: rowTargets
         }, current);
@@ -4053,7 +4115,7 @@
       this.advance();
       return name;
     }
-    parseSemanticHeader() {
+    parseSemanticHeader(options = {}) {
       if (this.current.value !== "/") {
         return null;
       }
@@ -4062,9 +4124,37 @@
       let captureMode = null;
       let name = null;
       let typeName = null;
+      let slots = null;
       const traits = [];
       let order = 0;
       while (this.current.value !== "/" && this.current.type !== "End") {
+        if (options.compactShapedType && typeName === null && this.current.type === "Identifier") {
+          typeName = this.parseHeaderDirectiveName();
+          if (this.current.value === ":") {
+            this.advance();
+            slots = [];
+            while (this.current.value !== "/" && this.current.type !== "End") {
+              if (this.current.type !== "Identifier" && this.current.type !== "OuterIdentifier") {
+                this.error("Expected a frame name in compact Vector/Covector/Tensor header");
+              }
+              const displayName = this.current.original.trim().replace(/^@/, "");
+              const bindingName = this.current.value.toLowerCase();
+              this.advance();
+              const dual = this.current.value === "*";
+              if (dual)
+                this.advance();
+              slots.push({ displayName, bindingName, dual });
+              if (this.current.value === "@") {
+                this.advance();
+                continue;
+              }
+              if (this.current.type === "OuterIdentifier")
+                continue;
+              break;
+            }
+          }
+          continue;
+        }
         if (this.isConstructorCaptureOperator(this.current.value)) {
           if (captureMode !== null) {
             this.error("Header may only specify one capture mode");
@@ -4079,6 +4169,13 @@
             this.error("Header may only specify one name");
           }
           name = this.parseHeaderDirectiveName();
+          continue;
+        }
+        if (this.current.type === "ActiveBaseNumber" && /^#[A-Za-z][A-Za-z0-9_]*$/.test(this.current.original)) {
+          if (name !== null)
+            this.error("Header may only specify one name");
+          name = this.current.original.slice(1);
+          this.advance();
           continue;
         }
         if (this.current.value === "::") {
@@ -4111,6 +4208,7 @@
         captureMode,
         name,
         typeName,
+        ...slots ? { slots } : {},
         traits,
         pos: startToken.pos,
         original: startToken.original
@@ -4135,11 +4233,11 @@
     parseBraceSigil(sigil, containerName = null, options = {}) {
       const startToken = this.current;
       this.advance();
-      const isTensorShapeSigil = sigil === "{:" && containerName && /^\d+(?:x\d+)*$/.test(containerName);
-      if (isTensorShapeSigil && !options.destructureAlias) {
-        return this.parseTensorLiteral(startToken, containerName);
+      const isShapedShapeSigil = sigil === "{:" && containerName && /^\d+(?:x\d+)*$/.test(containerName);
+      if (isShapedShapeSigil && !options.destructureAlias) {
+        return this.parseShapedLiteral(startToken, containerName);
       }
-      const effectiveSigil = isTensorShapeSigil && options.destructureAlias ? "{.." : sigil;
+      const effectiveSigil = isShapedShapeSigil && options.destructureAlias ? "{.." : sigil;
       const sigilTypeMap = {
         "{..": "ArrayContainer",
         "{=": "MapContainer",
@@ -4246,7 +4344,7 @@
       return this.createNode(nodeType, {
         sigil,
         ...containerName && !options.destructureAlias ? { name: containerName } : {},
-        ...isTensorShapeSigil && options.destructureAlias ? { tensorShape: containerName.split("x").map((part) => Number(part)) } : {},
+        ...isShapedShapeSigil && options.destructureAlias ? { shapedShape: containerName.split("x").map((part) => Number(part)) } : {},
         ...effectiveSigil === "{@" && options.loopMax !== undefined ? { maxIterations: options.loopMax } : {},
         ...effectiveSigil === "{@" && options.loopUnlimited ? { unlimited: true } : {},
         ...effectiveSigil === "{$" && options.asyncLimit !== undefined ? { concurrencyLimit: options.asyncLimit } : {},
@@ -4458,34 +4556,34 @@
         original: startToken.original
       });
     }
-    parseTensorLiteral(startToken, headerText) {
+    parseShapedLiteral(startToken, headerText) {
       const shape = headerText.split("x").map((part) => {
         const dim = Number(part);
         if (!Number.isInteger(dim) || dim < 0) {
-          this.error(`Invalid tensor dimension '${part}'`);
+          this.error(`Invalid shaped dimension '${part}'`);
         }
         return dim;
       });
       const size = shape.reduce((product, dim) => product * dim, 1);
       let elements = [];
-      const header = this.parseSemanticHeader();
+      const header = this.parseSemanticHeader({ compactShapedType: true });
       if (size === 0) {
         if (this.current.value !== "}") {
-          this.error(`Tensor literal shape ${shape.join("x")} has size 0 and must not contain elements`);
+          this.error(`Shaped literal shape ${shape.join("x")} has size 0 and must not contain elements`);
         }
       } else if (this.current.value !== "}") {
         if (shape.length === 2 && this.current.value === "[") {
-          elements = this.parseTensorRowArrayPattern(shape);
+          elements = this.parseShapedRowArrayPattern(shape);
         } else {
-          const displayTree = this.parseTensorDisplayLevel(this.getTensorDisplayLevels(shape), 0, shape);
-          elements = this.flattenTensorDisplayTree(displayTree, shape);
+          const displayTree = this.parseShapedDisplayLevel(this.getShapedDisplayLevels(shape), 0, shape);
+          elements = this.flattenShapedDisplayTree(displayTree, shape);
         }
       }
       if (this.current.value !== "}") {
-        this.error("Expected closing brace for tensor literal");
+        this.error("Expected closing brace for shaped literal");
       }
       this.advance();
-      return this.createNode("TensorLiteral", {
+      return this.createNode("ShapedLiteral", {
         shape,
         ...header ? { header } : {},
         elements,
@@ -4493,25 +4591,25 @@
         original: startToken.original
       });
     }
-    parseTensorRowArrayPattern(shape) {
+    parseShapedRowArrayPattern(shape) {
       const [rows, cols] = shape;
       const elements = [];
       for (let row = 0;row < rows; row++) {
         const rowExpr = this.parseArray();
         if (rowExpr.type !== "Array" || rowExpr.elements.length !== cols) {
-          this.error(`Malformed tensor destructure row: expected [..] with ${cols} entries`);
+          this.error(`Malformed shaped destructure row: expected [..] with ${cols} entries`);
         }
         elements.push(...rowExpr.elements);
         if (row < rows - 1) {
           if (this.current.value !== ",") {
-            this.error(`Tensor destructuring shape ${shape.join("x")} expects ',' between row arrays`);
+            this.error(`Shaped destructuring shape ${shape.join("x")} expects ',' between row arrays`);
           }
           this.advance();
         }
       }
       return elements;
     }
-    getTensorDisplayLevels(shape) {
+    getShapedDisplayLevels(shape) {
       if (shape.length === 0) {
         return [];
       }
@@ -4530,7 +4628,7 @@
       levels.push({ size: shape[1], separatorCount: 0, label: "column" });
       return levels;
     }
-    parseTensorDisplayLevel(levels, levelIndex, shape) {
+    parseShapedDisplayLevel(levels, levelIndex, shape) {
       const level = levels[levelIndex];
       if (!level) {
         return null;
@@ -4541,7 +4639,7 @@
           values.push(this.parseExpression(0));
           if (i < level.size - 1) {
             if (this.current.value !== ",") {
-              this.error(`Tensor literal shape ${shape.join("x")} expects ${level.size} columns per row`);
+              this.error(`Shaped literal shape ${shape.join("x")} expects ${level.size} columns per row`);
             }
             this.advance();
           }
@@ -4550,18 +4648,18 @@
       }
       const groups = [];
       for (let i = 0;i < level.size; i++) {
-        groups.push(this.parseTensorDisplayLevel(levels, levelIndex + 1, shape));
+        groups.push(this.parseShapedDisplayLevel(levels, levelIndex + 1, shape));
         if (i < level.size - 1) {
           const consumed = this.consumeSemicolonSequence();
           if (consumed !== level.separatorCount) {
             const sepText = ";".repeat(level.separatorCount);
-            this.error(`Tensor literal shape ${shape.join("x")} expects '${sepText}' between ${level.label}s`);
+            this.error(`Shaped literal shape ${shape.join("x")} expects '${sepText}' between ${level.label}s`);
           }
         }
       }
       return groups;
     }
-    flattenTensorDisplayTree(tree, shape) {
+    flattenShapedDisplayTree(tree, shape) {
       if (shape.length === 1) {
         return tree;
       }
@@ -5800,9 +5898,12 @@
   // packages/core/src/base-system.js
   class BaseSystem {
     #base;
+    #radix;
+    #digitOffset;
     #characters;
     #charMap;
     #name;
+    #allowReserved;
     static #prefixMap = new Map;
     static RESERVED_SYMBOLS = new Set([
       "+",
@@ -5820,7 +5921,7 @@
       "#",
       "~"
     ]);
-    constructor(characters, name) {
+    constructor(characters, name, options = {}) {
       if (typeof characters === "string") {
         this.#characters = [...characters];
       } else if (Array.isArray(characters)) {
@@ -5835,6 +5936,9 @@
         throw new Error("Each base system character must be a single Unicode character");
       }
       this.#base = this.#characters.length;
+      this.#radix = options.radix ?? this.#base;
+      this.#digitOffset = options.digitOffset ?? 0;
+      this.#allowReserved = options.allowReserved === true;
       this.#charMap = this.#createCharacterMap();
       this.#name = name || `Base ${this.#base}`;
       this.#validateBase();
@@ -5842,6 +5946,21 @@
     }
     get base() {
       return this.#base;
+    }
+    get radix() {
+      return this.#radix;
+    }
+    get digitOffset() {
+      return this.#digitOffset;
+    }
+    get supportsPositionalFractions() {
+      return this.#radix === this.#base && this.#digitOffset === 0;
+    }
+    get requiresQuoting() {
+      return this.#characters.some((character) => BaseSystem.RESERVED_SYMBOLS.has(character));
+    }
+    get allowsReservedDigits() {
+      return this.#allowReserved;
     }
     get characters() {
       return [...this.#characters];
@@ -5851,10 +5970,10 @@
     }
     getChar(value) {
       const i = Number(value);
-      if (!Number.isSafeInteger(i) || i < 0 || i >= this.#characters.length) {
+      if (!Number.isSafeInteger(i) || i < this.#digitOffset || i >= this.#digitOffset + this.#characters.length) {
         throw new Error(`Value ${value} must be an in-range integer for base ${this.#base}`);
       }
-      return this.#characters[i];
+      return this.#characters[i - this.#digitOffset];
     }
     get name() {
       return this.#name;
@@ -5862,17 +5981,19 @@
     #createCharacterMap() {
       const map = new Map;
       for (let i = 0;i < this.#characters.length; i++) {
-        map.set(this.#characters[i], i);
+        map.set(this.#characters[i], i + this.#digitOffset);
       }
       return map;
     }
     #validateBase() {
-      if (this.#base < 2) {
-        throw new Error("Base must be at least 2");
+      if (!Number.isSafeInteger(this.#radix) || Math.abs(this.#radix) < 2) {
+        throw new Error("Radix must be a safe integer with absolute value at least 2");
       }
-      if (this.#base !== this.#characters.length) {
-        throw new Error(`Base ${this.#base} does not match character set length ${this.#characters.length}`);
+      if (Math.abs(this.#radix) !== this.#characters.length) {
+        throw new Error(`Radix ${this.#radix} does not match character set length ${this.#characters.length}`);
       }
+      if (!Number.isSafeInteger(this.#digitOffset))
+        throw new Error("Digit offset must be a safe integer");
       const uniqueChars = new Set(this.#characters);
       if (uniqueChars.size !== this.#characters.length) {
         throw new Error("Character set contains duplicate characters");
@@ -5915,6 +6036,8 @@
       }
     }
     #checkForConflicts() {
+      if (this.#allowReserved)
+        return;
       const conflicts = [];
       for (const char of this.#characters) {
         if (BaseSystem.RESERVED_SYMBOLS.has(char)) {
@@ -5938,7 +6061,7 @@
         throw new Error("A minus sign must be followed by at least one digit");
       }
       let result = 0n;
-      const baseBigInt = BigInt(this.#base);
+      const baseBigInt = BigInt(this.#radix);
       for (const char of str) {
         if (!this.#charMap.has(char)) {
           throw new Error(`Invalid character '${char}' for ${this.#name} (base ${this.#base})`);
@@ -5953,22 +6076,34 @@
         throw new Error("Value must be a BigInt");
       }
       if (value === 0n) {
-        return this.#characters[0];
+        const zero = this.#characters.find((character) => this.#charMap.get(character) === 0);
+        if (zero !== undefined)
+          return zero;
+        throw new Error(`${this.#name} has no representation for zero`);
       }
-      let negative = false;
-      if (value < 0n) {
-        negative = true;
-        value = -value;
+      if (value < 0n && this.#radix > 0 && this.#digitOffset === 0) {
+        return `-${this.fromDecimal(-value)}`;
       }
-      const baseBigInt = BigInt(this.#base);
+      if (value < 0n && this.#radix > 0 && this.#digitOffset > 0) {
+        return `-${this.fromDecimal(-value)}`;
+      }
+      const radix = BigInt(this.#radix);
+      const modulus = BigInt(Math.abs(this.#radix));
+      const digitValues = this.#characters.map((character) => BigInt(this.#charMap.get(character)));
       const digits = [];
-      while (value > 0n) {
-        const remainder = Number(value % baseBigInt);
-        digits.unshift(this.#characters[remainder]);
-        value = value / baseBigInt;
+      let steps = 0;
+      while (value !== 0n) {
+        const residue = (value % modulus + modulus) % modulus;
+        const index = digitValues.findIndex((digit2) => (digit2 % modulus + modulus) % modulus === residue);
+        if (index < 0)
+          throw new Error(`No digit in ${this.#name} can encode residue ${residue}`);
+        const digit = digitValues[index];
+        digits.unshift(this.#characters[index]);
+        value = (value - digit) / radix;
+        if (++steps > 1e5)
+          throw new Error(`${this.#name} conversion did not converge`);
       }
-      const result = digits.join("");
-      return negative ? "-" + result : result;
+      return digits.join("");
     }
     isValidString(str) {
       if (typeof str !== "string") {
@@ -6001,7 +6136,7 @@
       if (!(other instanceof BaseSystem)) {
         return false;
       }
-      if (this.#base !== other.#base) {
+      if (this.#base !== other.#base || this.#radix !== other.#radix || this.#digitOffset !== other.#digitOffset) {
         return false;
       }
       for (let i = 0;i < this.#characters.length; i++) {
@@ -6125,7 +6260,7 @@
         if (uniqueLowerChars.length !== lowerChars.length) {
           console.warn("Case-insensitive conversion resulted in duplicate characters");
         }
-        return new BaseSystem(uniqueLowerChars.join(""), `${this.#name} (case-insensitive)`);
+        return new BaseSystem(uniqueLowerChars.join(""), `${this.#name} (case-insensitive)`, { radix: this.#radix, digitOffset: this.#digitOffset, allowReserved: this.#allowReserved });
       }
       throw new Error("caseSensitive must be a boolean value");
     }
@@ -6133,7 +6268,10 @@
       return {
         $ratmath: "BaseSystem",
         characters: this.#characters,
-        name: this.#name
+        name: this.#name,
+        radix: this.#radix,
+        digitOffset: this.#digitOffset,
+        allowReserved: this.#allowReserved
       };
     }
   }
@@ -9671,7 +9809,82 @@
     }
   }
 
-  // rix/src/runtime/tensor.js
+  // rix/src/runtime/shaped.js
+  function domainKey(value) {
+    return String(value ?? "").normalize("NFKC").toLocaleLowerCase("en-US");
+  }
+  function scalarDomainName(value) {
+    if (value instanceof Integer)
+      return "Integer";
+    if (value instanceof Rational)
+      return "Rational";
+    if (value instanceof RationalInterval)
+      return "RationalInterval";
+    const semantic = value?._ext instanceof Map ? value._ext.get("__type")?.value : null;
+    if (semantic)
+      return semantic;
+    if (value?.type)
+      return value.type;
+    if (typeof value === "bigint" || Number.isSafeInteger(value))
+      return "Integer";
+    return value?.constructor?.name ?? typeof value;
+  }
+  function mergeDomains(left, right) {
+    if (!left)
+      return right;
+    if (!right || domainKey(left) === domainKey(right))
+      return left;
+    const pair = new Set([domainKey(left), domainKey(right)]);
+    if ([...pair].every((name) => name === "integer" || name === "rational"))
+      return "Rational";
+    if ([...pair].every((name) => ["integer", "rational", "rationalinterval", "interval"].includes(name))) {
+      return "RationalInterval";
+    }
+    throw new Error(`Shaped entries span incompatible scalar domains ${left} and ${right}; convert them explicitly`);
+  }
+  function inferShapedScalarDomain(values) {
+    let domain = null;
+    for (const value of values || []) {
+      if (isHole(value))
+        continue;
+      domain = mergeDomains(domain, scalarDomainName(value));
+    }
+    return domain ?? "Unspecified";
+  }
+  function shapedScalarDomain(value) {
+    return value?._ext instanceof Map ? value._ext.get("scalarDomain")?.value ?? value._ext.get("scalardomain")?.value ?? "Unspecified" : "Unspecified";
+  }
+  function valueBelongsToScalarDomain(value, domain) {
+    if (isHole(value) || domainKey(domain) === "unspecified")
+      return true;
+    const source = domainKey(scalarDomainName(value));
+    const target = domainKey(domain);
+    if (source === target)
+      return true;
+    if (target === "rational" && source === "integer")
+      return true;
+    if (["rationalinterval", "interval"].includes(target) && ["integer", "rational"].includes(source))
+      return true;
+    return false;
+  }
+  function setScalarDomain(ext, domain) {
+    const label = { type: "string", value: domain };
+    ext.set("scalarDomain", label);
+    ext.set("scalardomain", label);
+  }
+  function validateShapedScalarDomain(value, requestedDomain = null) {
+    if (!isShaped(value))
+      throw new Error("Scalar-domain validation expects a Shaped value");
+    const declared = requestedDomain ?? shapedScalarDomain(value);
+    const actual = domainKey(declared) === "unspecified" ? inferShapedScalarDomain(value.data) : declared;
+    for (const entry of value.data) {
+      if (!valueBelongsToScalarDomain(entry, actual)) {
+        throw new Error(`Shaped entry from scalar domain ${scalarDomainName(entry)} does not satisfy declared domain ${actual}`);
+      }
+    }
+    setScalarDomain(value._ext, actual);
+    return value;
+  }
   function exactInteger(value, label = "Index") {
     if (value instanceof Integer) {
       return Number(value.value);
@@ -9707,11 +9920,11 @@
   function normalizeIndex(rawIndex, dimLength, axis) {
     const index = exactInteger(rawIndex, `Index for axis ${axis + 1}`);
     if (index === 0) {
-      throw new Error(`Tensor index 0 is invalid on axis ${axis + 1}`);
+      throw new Error(`Shaped index 0 is invalid on axis ${axis + 1}`);
     }
     const normalized = index < 0 ? dimLength + 1 + index : index;
     if (normalized < 1 || normalized > dimLength) {
-      throw new Error(`Tensor index ${index} is out of range for axis ${axis + 1} with length ${dimLength}`);
+      throw new Error(`Shaped index ${index} is out of range for axis ${axis + 1} with length ${dimLength}`);
     }
     return normalized;
   }
@@ -9738,17 +9951,17 @@
       value
     };
   }
-  function isTensor(value) {
-    return !!value && value.type === "tensor" && Array.isArray(value.data) && Array.isArray(value.shape) && Array.isArray(value.strides);
+  function isShaped(value) {
+    return !!value && value.type === "shaped" && Array.isArray(value.data) && Array.isArray(value.shape) && Array.isArray(value.strides);
   }
-  function tensorRank(tensor) {
-    return tensor.shape.length;
+  function shapedRank(shaped) {
+    return shaped.shape.length;
   }
-  function tensorShape(tensor) {
-    return [...tensor.shape];
+  function shapedShape(shaped) {
+    return [...shaped.shape];
   }
-  function tensorSize(tensor) {
-    return tensor.shape.reduce((product, dim) => product * dim, 1);
+  function shapedSize(shaped) {
+    return shaped.shape.reduce((product, dim) => product * dim, 1);
   }
   function computeDefaultStrides(shape) {
     const strides = new Array(shape.length);
@@ -9759,45 +9972,55 @@
     }
     return strides;
   }
-  function createTensor(shape, data = null, options = {}) {
+  function createShaped(shape, data = null, options = {}) {
     if (!Array.isArray(shape)) {
-      throw new Error("Tensor shape must be an array");
+      throw new Error("Shaped shape must be an array");
     }
     const normalizedShape = shape.map((dim, axis) => {
-      const n = exactInteger(dim, `Tensor shape axis ${axis + 1}`);
+      const n = exactInteger(dim, `Shaped shape axis ${axis + 1}`);
       if (n < 0) {
-        throw new Error(`Tensor shape axis ${axis + 1} must be nonnegative`);
+        throw new Error(`Shaped shape axis ${axis + 1} must be nonnegative`);
       }
       return n;
     });
     const size = normalizedShape.reduce((product, dim) => product * dim, 1);
     const actualData = data ? [...data] : new Array(size).fill(HOLE);
     if (actualData.length !== size) {
-      throw new Error(`Tensor literal element count mismatch (expected ${size}, got ${actualData.length})`);
+      throw new Error(`Shaped literal element count mismatch (expected ${size}, got ${actualData.length})`);
     }
-    return {
-      type: "tensor",
+    const ext = options.ext ?? new Map([["_mutable", new Integer(1n)]]);
+    const result = {
+      type: "shaped",
       data: actualData,
       shape: normalizedShape,
       strides: options.strides ? [...options.strides] : computeDefaultStrides(normalizedShape),
       offset: options.offset ?? 0,
-      _ext: options.ext ?? new Map([["_mutable", new Integer(1n)]])
+      _ext: ext
     };
+    const scalarDomain = options.scalarDomain ?? inferShapedScalarDomain(actualData);
+    setScalarDomain(ext, scalarDomain);
+    return validateShapedScalarDomain(result, scalarDomain);
   }
-  function createTensorView(tensor, view) {
-    if (!isTensor(tensor)) {
-      throw new Error("Cannot create a tensor view from a non-tensor value");
+  function createShapedView(shaped, view) {
+    if (!isShaped(shaped)) {
+      throw new Error("Cannot create a shaped view from a non-shaped value");
+    }
+    const ext = new Map(shaped._ext instanceof Map ? shaped._ext : []);
+    const semanticType = ext.get("__type")?.value?.toLowerCase?.();
+    if (semanticType === "matrix" && view.shape.length !== 2) {
+      ext.set("__type", { type: "string", value: "Shaped" });
+      ext.delete("__proto");
     }
     return {
-      type: "tensor",
-      data: tensor.data,
+      type: "shaped",
+      data: shaped.data,
       shape: [...view.shape],
       strides: [...view.strides],
       offset: view.offset,
-      _ext: tensor._ext
+      _ext: ext
     };
   }
-  function tensorIndexTuple(indices) {
+  function shapedIndexTuple(indices) {
     return {
       type: "tuple",
       values: indices.map((index) => new Integer(BigInt(index)))
@@ -9821,32 +10044,32 @@
     }
     return tuple;
   }
-  function tensorOffsetForTuple(tensor, tuple) {
-    let offset = tensor.offset;
-    for (let axis = 0;axis < tensor.shape.length; axis++) {
-      offset += (tuple[axis] - 1) * tensor.strides[axis];
+  function shapedOffsetForTuple(shaped, tuple) {
+    let offset = shaped.offset;
+    for (let axis = 0;axis < shaped.shape.length; axis++) {
+      offset += (tuple[axis] - 1) * shaped.strides[axis];
     }
     return offset;
   }
-  function forEachTensorCell(tensor, callback) {
-    const size = tensorSize(tensor);
-    if (tensor.shape.length === 0) {
-      callback(tensor.data[tensor.offset], [], tensor.offset);
+  function forEachShapedCell2(shaped, callback) {
+    const size = shapedSize(shaped);
+    if (shaped.shape.length === 0) {
+      callback(shaped.data[shaped.offset], [], shaped.offset);
       return;
     }
     for (let linear = 0;linear < size; linear++) {
-      const tuple = linearIndexToTuple(linear, tensor.shape);
-      const offset = tensorOffsetForTuple(tensor, tuple);
-      callback(tensor.data[offset], tuple, offset);
+      const tuple = linearIndexToTuple(linear, shaped.shape);
+      const offset = shapedOffsetForTuple(shaped, tuple);
+      callback(shaped.data[offset], tuple, offset);
     }
   }
-  function normalizeTensorSelectors(tensor, selectorSpecs) {
+  function normalizeShapedSelectors(shaped, selectorSpecs) {
     let specs = selectorSpecs;
     if (specs.length === 1 && specs[0]?.kind === "index" && specs[0].value && specs[0].value.type === "tuple") {
       specs = specs[0].value.values.map((value) => valueToSelectorSpec(value));
     }
-    if (specs.length !== tensor.shape.length) {
-      throw new Error(`Tensor rank mismatch: expected ${tensor.shape.length} indices, got ${specs.length}`);
+    if (specs.length !== shaped.shape.length) {
+      throw new Error(`Shaped rank mismatch: expected ${shaped.shape.length} indices, got ${specs.length}`);
     }
     return specs.map((spec, axis) => {
       if (spec.kind === "index") {
@@ -9856,8 +10079,8 @@
         }
       }
       if (spec.kind === "full") {
-        const start = normalizeIndex(1, tensor.shape[axis], axis);
-        const end = normalizeIndex(-1, tensor.shape[axis], axis);
+        const start = normalizeIndex(1, shaped.shape[axis], axis);
+        const end = normalizeIndex(-1, shaped.shape[axis], axis);
         const direction = start <= end ? 1 : -1;
         return {
           kind: "slice",
@@ -9868,8 +10091,8 @@
         };
       }
       if (spec.kind === "slice") {
-        const start = normalizeIndex(spec.start, tensor.shape[axis], axis);
-        const end = normalizeIndex(spec.end, tensor.shape[axis], axis);
+        const start = normalizeIndex(spec.start, shaped.shape[axis], axis);
+        const end = normalizeIndex(spec.end, shaped.shape[axis], axis);
         const direction = start <= end ? 1 : -1;
         return {
           kind: "slice",
@@ -9881,18 +10104,18 @@
       }
       return {
         kind: "index",
-        index: normalizeIndex(spec.value, tensor.shape[axis], axis)
+        index: normalizeIndex(spec.value, shaped.shape[axis], axis)
       };
     });
   }
-  function tensorGetBySelectors(tensor, selectorSpecs) {
-    const selectors = normalizeTensorSelectors(tensor, selectorSpecs);
-    let offset = tensor.offset;
+  function shapedGetBySelectors(shaped, selectorSpecs) {
+    const selectors = normalizeShapedSelectors(shaped, selectorSpecs);
+    let offset = shaped.offset;
     const shape = [];
     const strides = [];
     for (let axis = 0;axis < selectors.length; axis++) {
       const selector = selectors[axis];
-      const stride = tensor.strides[axis];
+      const stride = shaped.strides[axis];
       if (selector.kind === "index") {
         offset += (selector.index - 1) * stride;
         continue;
@@ -9902,19 +10125,19 @@
       strides.push(stride * selector.direction);
     }
     if (shape.length === 0) {
-      const value = tensor.data[offset];
+      const value = shaped.data[offset];
       return isHole(value) ? null : value;
     }
-    return createTensorView(tensor, { shape, strides, offset });
+    return createShapedView(shaped, { shape, strides, offset });
   }
-  function tensorAssignBySelectors(tensor, selectorSpecs, value) {
-    const selectors = normalizeTensorSelectors(tensor, selectorSpecs);
-    let offset = tensor.offset;
+  function shapedAssignBySelectors(shaped, selectorSpecs, value) {
+    const selectors = normalizeShapedSelectors(shaped, selectorSpecs);
+    let offset = shaped.offset;
     const shape = [];
     const strides = [];
     for (let axis = 0;axis < selectors.length; axis++) {
       const selector = selectors[axis];
-      const stride = tensor.strides[axis];
+      const stride = shaped.strides[axis];
       if (selector.kind === "index") {
         offset += (selector.index - 1) * stride;
         continue;
@@ -9923,24 +10146,32 @@
       shape.push(selector.length);
       strides.push(stride * selector.direction);
     }
+    let declaredDomain = shapedScalarDomain(shaped);
+    if (domainKey(declaredDomain) === "unspecified" && !isHole(value)) {
+      declaredDomain = scalarDomainName(value);
+      setScalarDomain(shaped._ext, declaredDomain);
+    }
+    if (!valueBelongsToScalarDomain(value, declaredDomain)) {
+      throw new Error(`Shaped assignment from scalar domain ${scalarDomainName(value)} does not satisfy declared domain ${declaredDomain}`);
+    }
     if (shape.length === 0) {
-      tensor.data[offset] = value;
+      shaped.data[offset] = value;
       return value;
     }
-    const view = createTensorView(tensor, { shape, strides, offset });
-    forEachTensorCell(view, (_cellValue, _tuple, cellOffset) => {
-      tensor.data[cellOffset] = value;
+    const view = createShapedView(shaped, { shape, strides, offset });
+    forEachShapedCell2(view, (_cellValue, _tuple, cellOffset) => {
+      shaped.data[cellOffset] = value;
     });
     return value;
   }
   function coerceShapeValue(shapeValue) {
-    if (isTensor(shapeValue)) {
-      return tensorShape(shapeValue);
+    if (isShaped(shapeValue)) {
+      return shapedShape(shapeValue);
     }
     if (shapeValue && shapeValue.type === "tuple") {
-      return shapeValue.values.map((value, axis) => exactInteger(value, `Tensor shape axis ${axis + 1}`));
+      return shapeValue.values.map((value, axis) => exactInteger(value, `Shaped shape axis ${axis + 1}`));
     }
-    throw new Error("TGEN expects a tensor or tuple shape");
+    throw new Error("Shaped.Generate expects a Shaped or tuple shape");
   }
 
   // rix/src/eval/ir-to-text.js
@@ -11412,15 +11643,15 @@ ${indentStr})`;
       Graphics: Object.freeze(["Graphics"]),
       Draw: Object.freeze(["draw"]),
       Plot: Object.freeze(["plot"]),
-      Core: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "IF", "LOOP", "MULTI", "RAND_NAME", "PRINT", "TGEN", "KEYOF", "KEYS", "VALUES", "REGISTERMETHOD", "CertifiedApproximation", "Undecided", "RefinementRequest", "RefinementEffectiveLimits", "RefinementSupports", "RefinementCheck", "RefinementUnsupported", "TypeKnown", "ImmutableValue"]),
+      Core: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "IF", "LOOP", "MULTI", "RAND_NAME", "PRINT", "Shaped", "KEYOF", "KEYS", "VALUES", "REGISTERMETHOD", "CertifiedApproximation", "Undecided", "RefinementRequest", "RefinementEffectiveLimits", "RefinementSupports", "RefinementCheck", "RefinementUnsupported", "TypeKnown", "ImmutableValue"]),
       Methods: Object.freeze(["REGISTERMETHOD"]),
       Arith: Object.freeze(["ADD", "SUB", "MUL", "DIV", "INTDIV", "DIVMOD", "MOD", "POW", "FACTORIAL", "DOUBLEFACTORIAL"]),
       Logic: Object.freeze(["EQ", "NEQ", "LT", "GT", "LTE", "GTE", "AND", "OR", "NOT"]),
-      Collections: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "MAP", "FILTER", "REDUCE", "TGEN", "Stream"]),
+      Collections: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "MAP", "FILTER", "REDUCE", "Shaped", "Stream"]),
       Async: Object.freeze(["Stream", "Retry"]),
       Background: Object.freeze(["BACKGROUND"]),
       Maps: Object.freeze(["MAP", "KEYOF", "KEYS", "VALUES"]),
-      Arrays: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "MAP", "FILTER", "REDUCE", "TGEN"]),
+      Arrays: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "MAP", "FILTER", "REDUCE", "Shaped"]),
       Strings: Object.freeze(["UPPER", "SUBSTR", "PRINT"]),
       Imports: Object.freeze(["IMPORTS"]),
       Plugins: Object.freeze(["PLUGINS"]),
@@ -17023,9 +17254,9 @@ ${indentStr})`;
           }
           return null;
         }
-        if (isTensor(collection)) {
-          forEachTensorCell(collection, (item, tuple) => {
-            invokeTraversalCallback(func, [item, tensorIndexTuple(tuple), collection], context, evaluate);
+        if (isShaped(collection)) {
+          forEachShapedCell2(collection, (item, tuple) => {
+            invokeTraversalCallback(func, [item, shapedIndexTuple(tuple), collection], context, evaluate);
           });
           return null;
         }
@@ -17075,18 +17306,18 @@ ${indentStr})`;
           const recovered = mapLazySequence(source, recover);
           return filterLazySequence(recovered, (value) => !isPipeSkip(value));
         }
-        if (isTensor(source)) {
+        if (isShaped(source)) {
           const records = [];
           let skipped = false;
-          forEachTensorCell(source, (value, tuple) => {
+          forEachShapedCell2(source, (value, tuple) => {
             const result = recover(value);
             if (isPipeSkip(result))
               skipped = true;
             else
-              records.push({ value: result, locator: tensorIndexTuple(tuple) });
+              records.push({ value: result, locator: shapedIndexTuple(tuple) });
           });
           if (!skipped)
-            return createTensor(source.shape, records.map((record) => record.value));
+            return createShaped(source.shape, records.map((record) => record.value));
           return {
             type: "sequence",
             values: records.map((record) => ({ type: "tuple", values: [record.value, record.locator] }))
@@ -17132,12 +17363,12 @@ ${indentStr})`;
         if (isLazySequence(collection)) {
           return mapLazySequence(collection, (item, index, source) => invokeTraversalCallback(func, [item, new Integer(BigInt(index)), source], context, evaluate));
         }
-        if (isTensor(collection)) {
+        if (isShaped(collection)) {
           const results2 = [];
-          forEachTensorCell(collection, (item, tuple) => {
-            results2.push(invokeTraversalCallback(func, [item, tensorIndexTuple(tuple), collection], context, evaluate));
+          forEachShapedCell2(collection, (item, tuple) => {
+            results2.push(invokeTraversalCallback(func, [item, shapedIndexTuple(tuple), collection], context, evaluate));
           });
-          return createTensor(collection.shape, results2);
+          return createShaped(collection.shape, results2);
         }
         if (collection.type === "map") {
           const entries = collection.entries;
@@ -17206,17 +17437,17 @@ ${indentStr})`;
             return state === "undecided" ? UNDECIDED : state === "truth";
           }, { isUnresolved: (value) => value === UNDECIDED });
         }
-        if (isTensor(collection)) {
+        if (isShaped(collection)) {
           const results2 = [];
           let uncertain = false;
-          forEachTensorCell(collection, (item, tuple) => {
-            const state = decisionState(invokeTraversalCallback(func, [item, tensorIndexTuple(tuple), collection], context, evaluate));
+          forEachShapedCell2(collection, (item, tuple) => {
+            const state = decisionState(invokeTraversalCallback(func, [item, shapedIndexTuple(tuple), collection], context, evaluate));
             if (state === "undecided") {
               uncertain = true;
             } else if (state === "truth") {
               results2.push({
                 type: "tuple",
-                values: [item, tensorIndexTuple(tuple)]
+                values: [item, shapedIndexTuple(tuple)]
               });
             }
           });
@@ -17282,10 +17513,10 @@ ${indentStr})`;
         if (isLazySequence(collection))
           collection = materializeLazySequence(collection);
         const func = evaluate(funcNode);
-        if (isTensor(collection)) {
+        if (isShaped(collection)) {
           const visited = [];
-          forEachTensorCell(collection, (item, tuple) => {
-            visited.push([item, tensorIndexTuple(tuple)]);
+          forEachShapedCell2(collection, (item, tuple) => {
+            visited.push([item, shapedIndexTuple(tuple)]);
           });
           if (visited.length === 0) {
             return initProvided ? explicitInit : null;
@@ -17473,16 +17704,16 @@ ${indentStr})`;
             index++;
           }
         }
-        if (isTensor(collection)) {
+        if (isShaped(collection)) {
           let sawAny = false;
           let lastItem2 = null;
           let failed = false;
           let uncertain2 = false;
-          forEachTensorCell(collection, (item, tuple) => {
+          forEachShapedCell2(collection, (item, tuple) => {
             if (!sawAny) {
               sawAny = true;
             }
-            const state = decisionState(invokeTraversalCallback(func, [item, tensorIndexTuple(tuple), collection], context, evaluate));
+            const state = decisionState(invokeTraversalCallback(func, [item, shapedIndexTuple(tuple), collection], context, evaluate));
             if (state === "undecided") {
               uncertain2 = true;
               return;
@@ -17574,13 +17805,13 @@ ${indentStr})`;
             index++;
           }
         }
-        if (isTensor(collection)) {
+        if (isShaped(collection)) {
           let found = null;
           let foundAny = false;
           let uncertain2 = false;
-          forEachTensorCell(collection, (item, tuple) => {
+          forEachShapedCell2(collection, (item, tuple) => {
             if (!foundAny) {
-              const state = decisionState(invokeTraversalCallback(func, [item, tensorIndexTuple(tuple), collection], context, evaluate));
+              const state = decisionState(invokeTraversalCallback(func, [item, shapedIndexTuple(tuple), collection], context, evaluate));
               if (state === "truth") {
                 found = item;
                 foundAny = true;
@@ -17678,12 +17909,12 @@ ${indentStr})`;
   function indexInto(value, selectors) {
     if (selectors.length === 0)
       return value;
-    if (isTensor(value))
-      return tensorGetBySelectors(value, selectors);
+    if (isShaped(value))
+      return shapedGetBySelectors(value, selectors);
     let current = value;
     for (const item of selectors) {
       if (item.kind !== "index") {
-        throw new Error("Slice bindings currently require tensor data");
+        throw new Error("Slice bindings currently require shaped data");
       }
       const index = integer(item.value);
       if (current?.type === "matrix" && Array.isArray(current.rows)) {
@@ -17701,14 +17932,14 @@ ${indentStr})`;
   function setInto(root, selectors, value) {
     if (selectors.length === 0)
       return value;
-    if (isTensor(root)) {
-      tensorAssignBySelectors(root, selectors, value);
+    if (isShaped(root)) {
+      shapedAssignBySelectors(root, selectors, value);
       return root;
     }
     const parent = indexInto(root, selectors.slice(0, -1));
     const final = selectors.at(-1);
     if (final.kind !== "index")
-      throw new Error("Slice assignment currently requires tensor data");
+      throw new Error("Slice assignment currently requires shaped data");
     const index = integer(final.value);
     if (parent?.type === "matrix" && Array.isArray(parent.rows)) {
       parent.rows[index - 1] = value;
@@ -18017,13 +18248,13 @@ ${indentStr})`;
         defaultFormula: requireFormula(value.defaultFormula, Array(shape.length).fill(1))
       };
     }
-    if (isTensor(value)) {
+    if (isShaped(value)) {
       const shape = [...value.shape];
       if (shape.length === 0 || shape.some((length) => length === 0)) {
-        throw new Error("FormulaSheet requires a non-empty tensor of rank 1 or greater");
+        throw new Error("FormulaSheet requires a non-empty shaped of rank 1 or greater");
       }
       const entries3 = [];
-      forEachTensorCell(value, (formula, index) => {
+      forEachShapedCell2(value, (formula, index) => {
         entries3.push({
           index: Object.freeze([...index]),
           formula: requireFormula(formula, index)
@@ -19588,14 +19819,14 @@ ${indentStr})`;
         }
       };
     }
-    if (isTensor(value)) {
+    if (isShaped(value)) {
       if (value.shape.length === 0)
         throw new Error("Sheet data must have rank 1 or greater");
       return {
-        kind: "tensor",
+        kind: "shaped",
         binding,
         shape: [...value.shape],
-        at: (index) => tensorGetBySelectors(value, index.map((item) => ({ kind: "index", value: item })))
+        at: (index) => shapedGetBySelectors(value, index.map((item) => ({ kind: "index", value: item })))
       };
     }
     if (value?.type === "matrix" && Array.isArray(value.rows)) {
@@ -19632,7 +19863,7 @@ ${indentStr})`;
         at: ([row]) => values[row - 1]
       };
     }
-    throw new Error("Sheet data must be a tensor, matrix, array, tuple, or sequence");
+    throw new Error("Sheet data must be a shaped, matrix, array, tuple, or sequence");
   }
   function normalizedSheetIndex(value, length, label) {
     const index = exactInteger3(value, label);
@@ -20779,7 +21010,7 @@ ${formatOutputText(slide, format)}`).join(`
     if (value.kind === "sheet") {
       const summary = `${value.addressBase} · shape ${value.shape.join("×")}`;
       const axisSummary = value.columnAxis ? `Rows: ${value.rowAxis.name} · Columns: ${value.columnAxis.name}` : `Rows: ${value.rowAxis.name}`;
-      const controls = value.hiddenAxes.length === 0 ? "" : `<div class="rix-output-sheet-plane-controls" aria-label="Tensor plane">${value.hiddenAxes.map(({ axis, name, length, selected, labels }) => `<label><span>${escapeHtml(name)} · axis ${axis}</span><select data-rix-sheet-axis="${axis}" aria-label="${escapeHtml(name)} axis ${axis}">${Array.from({ length }, (_item, index) => `<option value="${index + 1}"${selected === index + 1 ? " selected" : ""}>${escapeHtml(labels?.[index] ?? String(index + 1))}</option>`).join("")}</select></label>`).join("")}</div>`;
+      const controls = value.hiddenAxes.length === 0 ? "" : `<div class="rix-output-sheet-plane-controls" aria-label="Shaped plane">${value.hiddenAxes.map(({ axis, name, length, selected, labels }) => `<label><span>${escapeHtml(name)} · axis ${axis}</span><select data-rix-sheet-axis="${axis}" aria-label="${escapeHtml(name)} axis ${axis}">${Array.from({ length }, (_item, index) => `<option value="${index + 1}"${selected === index + 1 ? " selected" : ""}>${escapeHtml(labels?.[index] ?? String(index + 1))}</option>`).join("")}</select></label>`).join("")}</div>`;
       const headerAttributes = (axis, coordinate, fallback) => value.formulaBacked ? ` class="rix-sheet-header-editable" tabindex="0" data-rix-header-axis="${axis}" data-rix-header-coordinate="${coordinate}" data-rix-header-label="${escapeHtml(value.axisLabels[axis - 1]?.[coordinate - 1] ?? "")}" data-rix-header-fallback="${escapeHtml(fallback)}"` : "";
       const renderSheetCell = (cell, rowIndex, columnIndex) => {
         const diagnostic = cell.diagnostics[0] ?? null;
@@ -20940,11 +21171,11 @@ ${formatOutputText(slide, format)}`).join(`
   }
 
   // rix/src/eval/format.js
-  function tensorValueAtTuple(tensor, tuple) {
-    const value = tensor.data[tensorOffsetForTuple(tensor, tuple)];
+  function shapedValueAtTuple(shaped, tuple) {
+    const value = shaped.data[shapedOffsetForTuple(shaped, tuple)];
     return value;
   }
-  function tensorDisplayLevels(shape) {
+  function shapedDisplayLevels(shape) {
     if (shape.length === 0)
       return [];
     if (shape.length === 1) {
@@ -20965,36 +21196,36 @@ ${formatOutputText(slide, format)}`).join(`
     const higher = displayPath.slice(0, -2).reverse();
     return [displayPath[displayPath.length - 2], displayPath[displayPath.length - 1], ...higher];
   }
-  function tensorSeparator(separatorCount) {
+  function shapedSeparator(separatorCount) {
     if (separatorCount <= 0)
       return ", ";
     if (separatorCount === 1)
       return "; ";
     return ` ${";".repeat(separatorCount)} `;
   }
-  function formatTensorBody(tensor, formatValue, levels, levelIndex = 0, displayPath = []) {
+  function formatShapedBody(shaped, formatValue, levels, levelIndex = 0, displayPath = []) {
     const level = levels[levelIndex];
     if (level.separatorCount === 0) {
       const values = [];
       for (let i = 1;i <= level.size; i++) {
         const tuple = displayPathToExternalTuple([...displayPath, i]);
-        values.push(formatValue(tensorValueAtTuple(tensor, tuple)));
+        values.push(formatValue(shapedValueAtTuple(shaped, tuple)));
       }
       return values.join(", ");
     }
     const parts = [];
     for (let i = 1;i <= level.size; i++) {
-      parts.push(formatTensorBody(tensor, formatValue, levels, levelIndex + 1, [...displayPath, i]));
+      parts.push(formatShapedBody(shaped, formatValue, levels, levelIndex + 1, [...displayPath, i]));
     }
-    return parts.join(tensorSeparator(level.separatorCount));
+    return parts.join(shapedSeparator(level.separatorCount));
   }
-  function formatTensor(tensor, formatValue) {
-    const shapeText = tensor.shape.join("x");
-    if (tensorSize(tensor) === 0) {
+  function formatShaped(shaped, formatValue) {
+    const shapeText = shaped.shape.join("x");
+    if (shapedSize(shaped) === 0) {
       return `{:${shapeText}:}`;
     }
-    const levels = tensorDisplayLevels(tensor.shape);
-    return `{:${shapeText}: ${formatTensorBody(tensor, formatValue, levels)} }`;
+    const levels = shapedDisplayLevels(shaped.shape);
+    return `{:${shapeText}: ${formatShapedBody(shaped, formatValue, levels)} }`;
   }
   function truncate(text4, limit = 40) {
     if (text4.length <= limit)
@@ -21171,6 +21402,73 @@ ${formatOutputText(slide, format)}`).join(`
   }
   var FORMAT_ACTIVE_VALUES = Symbol("formatActiveValues");
   var FORMAT_CYCLE_MARKER = "<cycle>";
+  function numericRational(value) {
+    return value instanceof Integer ? value.toRational() : value;
+  }
+  function decimalPresentation(value, places) {
+    const rational = numericRational(value);
+    const negative = rational.numerator < 0n;
+    const numerator = negative ? -rational.numerator : rational.numerator;
+    const whole = numerator / rational.denominator;
+    let remainder = numerator % rational.denominator;
+    if (remainder === 0n || places === 0)
+      return `${negative ? "-" : ""}${whole}${remainder ? "…" : ""}`;
+    let digits = "";
+    for (let index = 0;index < places && remainder !== 0n; index++) {
+      remainder *= 10n;
+      digits += String(remainder / rational.denominator);
+      remainder %= rational.denominator;
+    }
+    return `${negative ? "-" : ""}${whole}.${digits}${remainder ? "…" : ""}`;
+  }
+  function displayBase(token2, context) {
+    const active = context?.getEnv?.("numInputBase", BaseSystem.DECIMAL) || BaseSystem.DECIMAL;
+    if (!token2)
+      return active;
+    const short = token2.match(/^([A-Za-z])(?:\.|\/|$)/)?.[1];
+    if (short)
+      return BaseSystem.getSystemForPrefix(short) || active;
+    const custom = token2.match(/^z\[(\d+)\]/);
+    return custom ? BaseSystem.fromBase(Number(custom[1])) : active;
+  }
+  function profileNumber(value, profile, context) {
+    const token2 = profile.replace(/\s+/g, "");
+    const rational = numericRational(value);
+    if (token2 === ".." || token2 === "mixed")
+      return rational.toMixedString();
+    if (token2 === "/" || token2 === "fraction")
+      return `${rational.numerator}/${rational.denominator}`;
+    const decimal = token2.match(/^\.\[(\d+)\]$/);
+    if (decimal)
+      return decimalPresentation(rational, Number(decimal[1]));
+    const base = displayBase(token2, context);
+    const prefix = token2.match(/^(?:[A-Za-z]|z\[\d+\])/)?.[0];
+    const suffix = prefix ? token2.slice(prefix.length) : token2;
+    if (!prefix && token2 !== ".")
+      throw new Error(`Unknown number display token '${profile}'`);
+    if (suffix === "..") {
+      const sign = rational.numerator < 0n ? -1n : 1n;
+      const absolute = rational.numerator < 0n ? -rational.numerator : rational.numerator;
+      const whole = absolute / rational.denominator;
+      const remainder = absolute % rational.denominator;
+      if (remainder === 0n)
+        return base.fromDecimal(sign * whole);
+      return `${base.fromDecimal(sign * whole)}..${base.fromDecimal(remainder)}/${base.fromDecimal(rational.denominator)}`;
+    }
+    if (suffix === "/")
+      return `${base.fromDecimal(rational.numerator)}/${base.fromDecimal(rational.denominator)}`;
+    const limited = suffix.match(/^\.\[(\d+)\]$/);
+    if (limited && base.base === 10)
+      return decimalPresentation(rational, Number(limited[1]));
+    if (!base.supportsPositionalFractions && rational.denominator !== 1n) {
+      return `${base.fromDecimal(rational.numerator)}/${base.fromDecimal(rational.denominator)}`;
+    }
+    return rational.toRepeatingBase(base).replace(/#0$/, "");
+  }
+  function formatNumberWithProfile(value, profile, context = null) {
+    const pieces = String(profile || "..").split(",").map((part) => part.trim()).filter(Boolean);
+    return pieces.map((part) => profileNumber(value, part, context)).join(" · ");
+  }
   function formatWithCycleGuard(value, activeValues, format) {
     if (activeValues.has(value))
       return FORMAT_CYCLE_MARKER;
@@ -21239,8 +21537,8 @@ ${formatOutputText(slide, format)}`).join(`
       if (val.type === "exact_generator" || val.type === "exact_expression") {
         return formatWithCycleGuard(val, activeValues, () => formatExact(val, formatChild));
       }
-      if (isTensor(val)) {
-        return formatWithCycleGuard(val, activeValues, () => formatTensor(val, formatChild));
+      if (isShaped(val)) {
+        return formatWithCycleGuard(val, activeValues, () => formatShaped(val, formatChild));
       }
       if (val.type === "sequence" && val._ext instanceof Map && val._ext.get("_type")?.value === "multifunction") {
         return formatMultifunctionPreview(val);
@@ -21308,8 +21606,10 @@ ${formatOutputText(slide, format)}`).join(`
         return `[Deferred ${kind}]`;
       }
     }
-    if (val instanceof Rational)
-      return val.toMixedString();
+    if (val instanceof Integer || val instanceof Rational) {
+      const profile = options.numberDisplay ?? options.context?.getEnv?.("numDisplay", null);
+      return profile ? formatNumberWithProfile(val, profile, options.context) : val instanceof Rational ? val.toMixedString() : val.toString();
+    }
     if (val instanceof RationalInterval)
       return val.toMixedString();
     if (val instanceof CertifiedApproximation)
@@ -21632,9 +21932,9 @@ ${indented.join(`,
         _ext: value._ext ? new Map(value._ext) : undefined
       };
     }
-    if (isTensor(value)) {
+    if (isShaped(value)) {
       return {
-        type: "tensor",
+        type: "shaped",
         data: [...value.data],
         shape: [...value.shape],
         strides: [...value.strides],
@@ -21776,9 +22076,9 @@ ${indented.join(`,
       copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
       return copy;
     }
-    if (isTensor(value)) {
+    if (isShaped(value)) {
       const copy = {
-        type: "tensor",
+        type: "shaped",
         data: [],
         shape: [...value.shape],
         strides: [...value.strides],
@@ -22260,6 +22560,10 @@ ${indented.join(`,
       return value.value;
     return String(value);
   }
+  function semanticNameKey(value) {
+    const name = colonName(value);
+    return name === null ? null : name.normalize("NFKC").toLocaleLowerCase("en-US");
+  }
   function makeProto(entries2 = []) {
     const entryMap = new Map(entries2);
     for (const [key, value] of entries2) {
@@ -22353,19 +22657,25 @@ ${indented.join(`,
       const name = colonName(spec2?.name);
       if (!name)
         throw new Error(`${this.kind} registration requires a name`);
-      if (this.entries.has(name) || this.aliases.has(name)) {
+      const key = semanticNameKey(name);
+      if (this.entries.has(key) || this.aliases.has(key)) {
         throw new Error(`Duplicate ${this.kind} registration: ${name}`);
       }
       const entry = immutableCloneSpec({ ...spec2, name });
-      this.entries.set(name, entry);
+      this.entries.set(key, entry);
       for (const alias of entry.aliases || []) {
         const aliasName = colonName(alias);
         if (!aliasName)
           continue;
-        if (this.entries.has(aliasName) || this.aliases.has(aliasName)) {
+        const aliasKey = semanticNameKey(aliasName);
+        if (aliasKey === key)
+          continue;
+        if (this.aliases.get(aliasKey) === key)
+          continue;
+        if (this.entries.has(aliasKey) || this.aliases.has(aliasKey)) {
           throw new Error(`Duplicate ${this.kind} alias: ${aliasName}`);
         }
-        this.aliases.set(aliasName, name);
+        this.aliases.set(aliasKey, key);
       }
       return entry;
     }
@@ -22373,18 +22683,19 @@ ${indented.join(`,
       const name = colonName(spec2?.name);
       if (!name)
         throw new Error(`${this.kind} registration requires a name`);
-      const previous = this.entries.get(name);
+      const key = semanticNameKey(name);
+      const previous = this.entries.get(key);
       if (!previous)
         return this.register(spec2);
       for (const [alias, target] of this.aliases) {
-        if (target === name)
+        if (target === key)
           this.aliases.delete(alias);
       }
-      this.entries.delete(name);
+      this.entries.delete(key);
       return this.register(spec2);
     }
     get(name) {
-      const key = colonName(name);
+      const key = semanticNameKey(name);
       if (!key)
         return null;
       return this.entries.get(key) ?? this.entries.get(this.aliases.get(key)) ?? null;
@@ -22393,7 +22704,7 @@ ${indented.join(`,
       return Boolean(this.get(name));
     }
     list() {
-      return Array.from(this.entries.keys());
+      return Array.from(this.entries.values(), (entry) => entry.name);
     }
   }
   var traitRegistry = new ImmutableSemanticRegistry("trait");
@@ -22407,7 +22718,7 @@ ${indented.join(`,
   }
   function replaceRegisteredType(spec2) {
     const name = colonName(spec2?.name);
-    if (builtinTypeNames.has(name))
+    if (builtinTypeNames.has(semanticNameKey(name)))
       throw new Error(`Cannot replace built-in type: ${name}`);
     return typeRegistry.replace(spec2);
   }
@@ -22415,7 +22726,7 @@ ${indented.join(`,
     const entry = typeRegistry.get(name);
     if (!entry)
       return false;
-    if (builtinTypeNames.has(entry.name))
+    if (builtinTypeNames.has(semanticNameKey(entry.name)))
       return true;
     return context?.getEnv?.("__rix_registered_types__", null)?.has(entry.name) === true;
   }
@@ -22424,20 +22735,22 @@ ${indented.join(`,
     const seen = new Set;
     const visiting = new Set;
     function visit(name) {
-      const traitName = colonName(name);
-      if (!traitName || seen.has(traitName))
-        return;
-      if (visiting.has(traitName))
-        throw new Error(`Cyclic trait implication involving ${traitName}`);
-      const entry = traitRegistry.get(traitName);
+      const requestedName = colonName(name);
+      const entry = traitRegistry.get(requestedName);
       if (!entry)
-        throw new Error(`Unknown semantic trait: ${traitName}`);
-      visiting.add(traitName);
+        throw new Error(`Unknown semantic trait: ${requestedName}`);
+      const traitName = entry.name;
+      const traitKey = semanticNameKey(traitName);
+      if (seen.has(traitKey))
+        return;
+      if (visiting.has(traitKey))
+        throw new Error(`Cyclic trait implication involving ${traitName}`);
+      visiting.add(traitKey);
       for (const implied of entry.implies || []) {
         visit(implied);
       }
-      visiting.delete(traitName);
-      seen.add(traitName);
+      visiting.delete(traitKey);
+      seen.add(traitKey);
       result.push(traitName);
     }
     for (const name of names || [])
@@ -22457,8 +22770,8 @@ ${indented.join(`,
       return "CertifiedApproximation";
     if (isUndecided(value))
       return "Undecided";
-    if (isTensor(value))
-      return "tensor";
+    if (isShaped(value))
+      return "shaped";
     if (value?.type === "sequence")
       return "array";
     if (value?.type)
@@ -22482,7 +22795,7 @@ ${indented.join(`,
     const converter = entry.convertFrom?.get(runtimeSourceType) ?? entry.convertFrom?.get(String(runtimeSourceType).toLowerCase()) ?? entry.convertFrom?.get(sourceType) ?? entry.convertFrom?.get(String(sourceType).toLowerCase());
     if (converter) {
       next = invokeMaybeCallable(converter, [value], context, evaluate);
-    } else if (entry.name === sourceType || typeName === sourceType || entry.nativeType === sourceType) {
+    } else if (semanticNameKey(entry.name) === semanticNameKey(sourceType) || semanticNameKey(typeName) === semanticNameKey(sourceType) || semanticNameKey(entry.nativeType) === semanticNameKey(sourceType)) {
       next = value;
     } else if (entry.convert) {
       next = invokeMaybeCallable(entry.convert, [value, stringObj2(sourceType)], context, evaluate);
@@ -22497,7 +22810,7 @@ ${indented.join(`,
     if (entry.validate && !truthy(invokeMaybeCallable(entry.validate, [next], context, evaluate))) {
       return null;
     }
-    return { value: next, entry, requestedTypeName: typeName };
+    return { value: next, entry, requestedTypeName: entry.name };
   }
   function isStringObject(value) {
     return value && typeof value === "object" && value.type === "string";
@@ -22548,6 +22861,157 @@ ${indented.join(`,
     if (a > b)
       return 1;
     return 0;
+  }
+  function isPlainShaped(value) {
+    if (!isShaped(value))
+      return false;
+    const semanticType = value?._ext instanceof Map ? value._ext.get("__type")?.value : null;
+    return semanticType === null || semanticType === undefined || semanticNameKey(semanticType) === "shaped";
+  }
+  function shapedValues(value) {
+    const result = [];
+    forEachShapedCell2(value, (entry) => result.push(entry));
+    return result;
+  }
+  function shapesEqual(left, right) {
+    return left.shape.length === right.shape.length && left.shape.every((dimension, axis) => dimension === right.shape[axis]);
+  }
+  function invokeScalarOperator(name, args, context, evaluate) {
+    const registry = context?.getEnv?.("__registry__", null);
+    const operation = registry?.get?.(name);
+    if (!operation)
+      throw new Error(`Shaped arithmetic requires scalar operator ${name}`);
+    return operation.impl(args, context, evaluate);
+  }
+  function shapedBinary(name, left, right, context, evaluate) {
+    const leftShaped = isPlainShaped(left);
+    const rightShaped = isPlainShaped(right);
+    if (!leftShaped && !rightShaped)
+      throw new Error(`${name} Shaped variant requires a Shaped operand`);
+    const source = leftShaped ? left : right;
+    const domain = shapedScalarDomain(source);
+    if (leftShaped && rightShaped) {
+      if (!shapesEqual(left, right)) {
+        throw new Error(`Shaped ${name} requires identical shapes; received ${left.shape.join("x")} and ${right.shape.join("x")}`);
+      }
+      const rightDomain = shapedScalarDomain(right);
+      if (semanticNameKey(domain) !== semanticNameKey(rightDomain)) {
+        throw new Error(`Shaped ${name} requires one declared scalar domain; received ${domain} and ${rightDomain}`);
+      }
+      const leftValues = shapedValues(left);
+      const rightValues = shapedValues(right);
+      return createShaped(left.shape, leftValues.map((entry, index) => invokeScalarOperator(name, [entry, rightValues[index]], context, evaluate)));
+    }
+    const scalar = leftShaped ? right : left;
+    if (!valueBelongsToScalarDomain(scalar, domain)) {
+      throw new Error(`Shaped ${name} scalar does not satisfy declared domain ${domain}; convert it explicitly`);
+    }
+    const values = shapedValues(source).map((entry) => invokeScalarOperator(name, leftShaped ? [entry, scalar] : [scalar, entry], context, evaluate));
+    return createShaped(source.shape, values);
+  }
+  function shapedEquality(left, right, context, evaluate) {
+    if (!isPlainShaped(left) || !isPlainShaped(right) || !shapesEqual(left, right))
+      return false;
+    if (semanticNameKey(shapedScalarDomain(left)) !== semanticNameKey(shapedScalarDomain(right)))
+      return false;
+    const a = shapedValues(left);
+    const b = shapedValues(right);
+    return a.every((entry, index) => truthy(invokeScalarOperator("EQ", [entry, b[index]], context, evaluate)));
+  }
+  function isMatrixValue(value) {
+    return isShaped(value) && semanticNameKey(value?._ext?.get("__type")?.value) === "matrix";
+  }
+  function requireSameMatrixDomain(left, right, operation) {
+    const leftDomain = shapedScalarDomain(left);
+    const rightDomain = shapedScalarDomain(right);
+    if (semanticNameKey(leftDomain) !== semanticNameKey(rightDomain)) {
+      throw new Error(`Matrix ${operation} requires one declared scalar domain; received ${leftDomain} and ${rightDomain}`);
+    }
+  }
+  function matrixElementwise(name, left, right, context, evaluate) {
+    if (!isMatrixValue(left) || !isMatrixValue(right)) {
+      throw new Error(`Matrix ${name} requires two Matrix values`);
+    }
+    if (!shapesEqual(left, right)) {
+      throw new Error(`Matrix ${name} requires identical shapes; received ${left.shape.join("x")} and ${right.shape.join("x")}`);
+    }
+    requireSameMatrixDomain(left, right, name);
+    const rightValues = shapedValues(right);
+    return createShaped(left.shape, shapedValues(left).map((entry, index) => invokeScalarOperator(name, [entry, rightValues[index]], context, evaluate)));
+  }
+  function matrixScalar(name, matrix, scalar, scalarFirst, context, evaluate) {
+    const domain = shapedScalarDomain(matrix);
+    if (!valueBelongsToScalarDomain(scalar, domain)) {
+      throw new Error(`Matrix ${name} scalar does not satisfy declared domain ${domain}; convert it explicitly`);
+    }
+    return createShaped(matrix.shape, shapedValues(matrix).map((entry) => invokeScalarOperator(name, scalarFirst ? [scalar, entry] : [entry, scalar], context, evaluate)));
+  }
+  function matrixProduct(left, right, context, evaluate) {
+    requireSameMatrixDomain(left, right, "multiplication");
+    const [rows, inner] = left.shape;
+    const [rightRows, columns] = right.shape;
+    if (inner !== rightRows) {
+      throw new Error(`Matrix multiplication dimensions must agree; received ${rows}x${inner} and ${rightRows}x${columns}`);
+    }
+    if (inner === 0) {
+      throw new Error("Matrix multiplication with an empty contracted dimension requires an explicit scalar zero");
+    }
+    const a = shapedValues(left);
+    const b = shapedValues(right);
+    const values = [];
+    for (let row = 0;row < rows; row++) {
+      for (let column = 0;column < columns; column++) {
+        let sum = null;
+        for (let index = 0;index < inner; index++) {
+          const product = invokeScalarOperator("MUL", [a[row * inner + index], b[index * columns + column]], context, evaluate);
+          sum = sum === null ? product : invokeScalarOperator("ADD", [sum, product], context, evaluate);
+        }
+        values.push(sum);
+      }
+    }
+    return createShaped([rows, columns], values);
+  }
+  function matrixMultiply(left, right, context, evaluate) {
+    if (isMatrixValue(left) && isMatrixValue(right))
+      return matrixProduct(left, right, context, evaluate);
+    if (isMatrixValue(left))
+      return matrixScalar("MUL", left, right, false, context, evaluate);
+    if (isMatrixValue(right))
+      return matrixScalar("MUL", right, left, true, context, evaluate);
+    throw new Error("Matrix multiplication requires a Matrix operand");
+  }
+  function matrixPower(matrix, exponent, context, evaluate) {
+    if (!(exponent instanceof Integer) || exponent.value < 0n) {
+      throw new Error("Matrix power requires a nonnegative Integer exponent");
+    }
+    if (matrix.shape[0] !== matrix.shape[1])
+      throw new Error("Matrix power requires a square Matrix");
+    const entries2 = shapedValues(matrix);
+    if (entries2.length === 0)
+      throw new Error("Matrix power requires a nonempty Matrix");
+    const zeroValue = invokeScalarOperator("SUB", [entries2[0], entries2[0]], context, evaluate);
+    const oneValue = invokeScalarOperator("POW", [entries2[0], new Integer(0n)], context, evaluate);
+    const size = matrix.shape[0];
+    let result = createShaped([size, size], Array.from({ length: size * size }, (_, index) => Math.floor(index / size) === index % size ? oneValue : zeroValue));
+    let base = matrix;
+    let remaining = exponent.value;
+    while (remaining > 0n) {
+      if ((remaining & 1n) === 1n)
+        result = matrixProduct(result, base, context, evaluate);
+      remaining >>= 1n;
+      if (remaining > 0n)
+        base = matrixProduct(base, base, context, evaluate);
+    }
+    return result;
+  }
+  function matrixEquality(left, right, context, evaluate) {
+    if (!shapesEqual(left, right))
+      return false;
+    if (semanticNameKey(shapedScalarDomain(left)) !== semanticNameKey(shapedScalarDomain(right)))
+      return false;
+    const a = shapedValues(left);
+    const b = shapedValues(right);
+    return a.every((entry, index) => truthy(invokeScalarOperator("EQ", [entry, b[index]], context, evaluate)));
   }
   var TYPE_INSTALL_FUNCTIONS = [
     "ADD",
@@ -22602,7 +23066,7 @@ ${indented.join(`,
       ["collection"],
       ["sequence", ["collection", "indexable"]],
       ["maplike", ["collection", "indexable"]],
-      ["tensor", ["indexable", "shapeAware", "collection"]],
+      ["shaped", ["indexable", "shapeAware", "collection"]],
       ["meters"],
       ["cartesian"],
       ["square"],
@@ -22881,31 +23345,31 @@ ${indented.join(`,
       installs: {}
     });
     registerType({
-      name: "Tensor",
-      aliases: ["tensor"],
-      nativeType: "tensor",
-      defaultTraits: ["tensor", "indexable", "shapeAware", "collection"],
+      name: "Shaped",
+      nativeType: "shaped",
+      defaultTraits: ["shaped", "indexable", "shapeAware", "collection"],
       convertFrom: {
-        tensor: (value) => value,
-        array: (value) => createTensor([value.values.length], value.values),
-        tuple: (value) => createTensor([value.values.length], value.values)
+        shaped: (value) => value,
+        array: (value) => createShaped([value.values.length], value.values),
+        tuple: (value) => createShaped([value.values.length], value.values)
       },
       convert(value) {
-        if (isTensor(value))
+        if (isShaped(value))
           return value;
         if (value?.type === "sequence" || value?.type === "tuple")
-          return createTensor([value.values.length], value.values);
+          return createShaped([value.values.length], value.values);
         return null;
       },
-      validate: isTensor,
+      validate: isShaped,
       export(value) {
         return {
           type: "map",
           entries: new Map([
-            ["type", stringObj2("Tensor")],
+            ["type", stringObj2("Shaped")],
             ["data", { type: "map", entries: new Map([
               ["shape", { type: "sequence", values: value.shape.map((n) => new Integer(BigInt(n))) }],
-              ["elems", { type: "sequence", values: [...value.data] }]
+              ["elems", { type: "sequence", values: [...value.data] }],
+              ["scalarDomain", stringObj2(shapedScalarDomain(value))]
             ]) }],
             ["cache", null],
             ["version", new Integer(1n)]
@@ -22916,15 +23380,62 @@ ${indented.join(`,
         const data = value?.entries?.get("data");
         const shape = data?.entries?.get("shape")?.values.map((n) => Number(n.value)) || [];
         const elems = data?.entries?.get("elems")?.values || [];
-        return createTensor(shape, elems);
+        const scalarDomain = data?.entries?.get("scalarDomain")?.value ?? null;
+        return createShaped(shape, elems, { scalarDomain });
       },
       proto: () => makeProto([
-        ["Shape", valueMethod("Shape", (self) => ({ type: "sequence", values: self.shape.map((n) => new Integer(BigInt(n))) }))],
-        ["Rank", valueMethod("Rank", (self) => new Integer(BigInt(self.shape.length)))],
-        ["Flatten", valueMethod("Flatten", (self) => ({ type: "sequence", values: [...self.data] }))],
-        ["Describe", valueMethod("Describe", () => stringObj2("type:Tensor"))]
+        ["Describe", valueMethod("Describe", () => stringObj2("type:Shaped"))]
       ]),
-      installs: {}
+      installs: {
+        ADD: [{
+          name: "ShapedElementwise",
+          priority: 200,
+          prep: (args) => args.length === 2 && (isPlainShaped(args[0]) || isPlainShaped(args[1])),
+          impl: ([left, right], context, evaluate) => shapedBinary("ADD", left, right, context, evaluate)
+        }],
+        SUB: [{
+          name: "ShapedElementwise",
+          priority: 200,
+          prep: (args) => args.length === 2 && (isPlainShaped(args[0]) || isPlainShaped(args[1])),
+          impl: ([left, right], context, evaluate) => shapedBinary("SUB", left, right, context, evaluate)
+        }],
+        MUL: [{
+          name: "ShapedElementwise",
+          priority: 200,
+          prep: (args) => args.length === 2 && (isPlainShaped(args[0]) || isPlainShaped(args[1])),
+          impl: ([left, right], context, evaluate) => shapedBinary("MUL", left, right, context, evaluate)
+        }],
+        DIV: [{
+          name: "ShapedElementwise",
+          priority: 200,
+          prep: (args) => args.length === 2 && (isPlainShaped(args[0]) || isPlainShaped(args[1])),
+          impl: ([left, right], context, evaluate) => shapedBinary("DIV", left, right, context, evaluate)
+        }],
+        POW: [{
+          name: "ShapedElementwise",
+          priority: 200,
+          prep: (args) => args.length === 2 && (isPlainShaped(args[0]) || isPlainShaped(args[1])),
+          impl: ([left, right], context, evaluate) => shapedBinary("POW", left, right, context, evaluate)
+        }],
+        NEG: [{
+          name: "ShapedElementwise",
+          priority: 200,
+          prep: (args) => args.length === 1 && isPlainShaped(args[0]),
+          impl: ([value], context, evaluate) => createShaped(value.shape, shapedValues(value).map((entry) => invokeScalarOperator("NEG", [entry], context, evaluate)))
+        }],
+        EQ: [{
+          name: "ShapedEquality",
+          priority: 200,
+          prep: (args) => args.length === 2 && isPlainShaped(args[0]) && isPlainShaped(args[1]),
+          impl: ([left, right], context, evaluate) => boolResult(shapedEquality(left, right, context, evaluate))
+        }],
+        NEQ: [{
+          name: "ShapedInequality",
+          priority: 200,
+          prep: (args) => args.length === 2 && isPlainShaped(args[0]) && isPlainShaped(args[1]),
+          impl: ([left, right], context, evaluate) => boolResult(!shapedEquality(left, right, context, evaluate))
+        }]
+      }
     });
     registerType({
       name: "Length",
@@ -22937,10 +23448,85 @@ ${indented.join(`,
       ])
     });
     registerType({ name: "Point", nativeType: "Point", defaultTraits: [], convert: (value) => value, proto: () => makeProto([["Describe", valueMethod("Describe", () => stringObj2("type:point"))]]) });
-    registerType({ name: "Matrix", nativeType: "Matrix", parent: "Tensor", defaultTraits: ["tensor"], convert: (value) => value, proto: () => makeProto([["Describe", valueMethod("Describe", () => stringObj2("type:matrix"))]]) });
-    registerType({ name: "Vector", nativeType: "Vector", defaultTraits: [], convert: (value) => value, proto: () => makeProto([["Describe", valueMethod("Describe", () => stringObj2("type:vector"))], ["KIND", valueMethod("KIND", () => stringObj2("type:vector"))]]) });
+    registerType({
+      name: "Matrix",
+      nativeType: "shaped",
+      defaultTraits: ["shaped", "indexable", "shapeAware", "collection"],
+      convert: (value) => isShaped(value) && shapedRank(value) === 2 ? value : null,
+      validate: (value) => isShaped(value) && shapedRank(value) === 2,
+      export(value) {
+        const exported = typeRegistry.get("Shaped").export(value);
+        exported.entries.set("type", stringObj2("Matrix"));
+        return exported;
+      },
+      import(value) {
+        return typeRegistry.get("Shaped").import(value);
+      },
+      proto: () => makeProto([
+        ["Describe", valueMethod("Describe", () => stringObj2("type:Matrix"))],
+        ["Transpose", valueMethod("Transpose", (self) => finalizeImportedRegisteredValue(createShaped([self.shape[1], self.shape[0]], Array.from({ length: self.shape[0] * self.shape[1] }, (_, index) => {
+          const row = Math.floor(index / self.shape[0]);
+          const column = index % self.shape[0];
+          return shapedValues(self)[column * self.shape[1] + row];
+        })), "Matrix", typeRegistry.get("Matrix")))],
+        ["Hadamard", valueMethod("Hadamard", (self, [other], context, evaluate) => finalizeImportedRegisteredValue(matrixElementwise("MUL", self, other, context, evaluate), "Matrix", typeRegistry.get("Matrix")))]
+      ]),
+      installs: {
+        ADD: [{
+          name: "MatrixAddition",
+          priority: 300,
+          prep: (args) => args.length === 2 && isMatrixValue(args[0]) && isMatrixValue(args[1]),
+          impl: ([left, right], context, evaluate) => matrixElementwise("ADD", left, right, context, evaluate)
+        }],
+        SUB: [{
+          name: "MatrixSubtraction",
+          priority: 300,
+          prep: (args) => args.length === 2 && isMatrixValue(args[0]) && isMatrixValue(args[1]),
+          impl: ([left, right], context, evaluate) => matrixElementwise("SUB", left, right, context, evaluate)
+        }],
+        MUL: [{
+          name: "MatrixMultiplication",
+          priority: 300,
+          prep: (args) => args.length === 2 && (isMatrixValue(args[0]) || isMatrixValue(args[1])),
+          impl: ([left, right], context, evaluate) => matrixMultiply(left, right, context, evaluate)
+        }],
+        DIV: [{
+          name: "MatrixScalarDivision",
+          priority: 300,
+          prep: (args) => args.length === 2 && isMatrixValue(args[0]) && !isMatrixValue(args[1]),
+          impl: ([matrix, scalar], context, evaluate) => matrixScalar("DIV", matrix, scalar, false, context, evaluate)
+        }],
+        POW: [{
+          name: "MatrixPower",
+          priority: 300,
+          prep: (args) => args.length === 2 && isMatrixValue(args[0]),
+          impl: ([matrix, exponent], context, evaluate) => matrixPower(matrix, exponent, context, evaluate)
+        }],
+        NEG: [{
+          name: "MatrixNegation",
+          priority: 300,
+          prep: (args) => args.length === 1 && isMatrixValue(args[0]),
+          impl: ([matrix], context, evaluate) => createShaped(matrix.shape, shapedValues(matrix).map((entry) => invokeScalarOperator("NEG", [entry], context, evaluate)))
+        }],
+        EQ: [{
+          name: "MatrixEquality",
+          priority: 300,
+          prep: (args) => args.length === 2 && isMatrixValue(args[0]) && isMatrixValue(args[1]),
+          impl: ([left, right], context, evaluate) => boolResult(matrixEquality(left, right, context, evaluate))
+        }],
+        NEQ: [{
+          name: "MatrixInequality",
+          priority: 300,
+          prep: (args) => args.length === 2 && isMatrixValue(args[0]) && isMatrixValue(args[1]),
+          impl: ([left, right], context, evaluate) => boolResult(!matrixEquality(left, right, context, evaluate))
+        }]
+      }
+    });
+    registerType({ name: "Vector", nativeType: "vector", defaultTraits: [], convert: (value) => value?.type === "vector" ? value : null, validate: (value) => value?.type === "vector", proto: () => makeProto([["Describe", valueMethod("Describe", () => stringObj2("type:Vector"))]]) });
+    registerType({ name: "Covector", nativeType: "covector", defaultTraits: [], convert: (value) => value?.type === "covector" ? value : null, validate: (value) => value?.type === "covector", proto: () => makeProto([["Describe", valueMethod("Describe", () => stringObj2("type:Covector"))]]) });
+    registerType({ name: "Tensor", nativeType: "tensor", defaultTraits: [], convert: (value) => value?.type === "tensor" ? value : null, validate: (value) => value?.type === "tensor", proto: () => makeProto([["Describe", valueMethod("Describe", () => stringObj2("type:Tensor"))]]) });
     for (const name of typeRegistry.list())
-      builtinTypeNames.add(name);
+      builtinTypeNames.add(semanticNameKey(name));
     builtinsRegistered = true;
   }
   function exportByRegisteredTypeRuntime(value, context = null, evaluate = null) {
@@ -22956,7 +23542,7 @@ ${indented.join(`,
     if (imported && typeof imported === "object") {
       if (!(imported._ext instanceof Map))
         imported._ext = new Map;
-      imported._ext.set("__type", stringObj2(typeName));
+      imported._ext.set("__type", stringObj2(entry?.name ?? typeName));
       const traits = resolveTraitNames(entry.defaultTraits || []);
       if (traits.length > 0) {
         imported._ext.set("__traits", {
@@ -22985,7 +23571,7 @@ ${indented.join(`,
       throw new Error(`No type import registered for ${typeName}`);
     return finalizeImportedRegisteredValue(invokeMaybeCallable(entry.import, [value], context, evaluate), typeName, entry);
   }
-  function installRegisteredTypes(registry, typeNames = ["Integer", "Rational", "CertifiedApproximation", "RationalInterval", "Tensor"], options = {}) {
+  function installRegisteredTypes(registry, typeNames = ["Integer", "Rational", "CertifiedApproximation", "RationalInterval", "Shaped", "Matrix"], options = {}) {
     let order = 0;
     for (const typeName of typeNames) {
       const entry = typeRegistry.get(typeName);
@@ -23217,6 +23803,7 @@ ${indented.join(`,
       captureMode: header?.captureMode || null,
       name: header?.name || null,
       typeName: header?.typeName || null,
+      slots: Array.isArray(header?.slots) ? header.slots.map((slot) => ({ ...slot })) : null,
       traits: Array.isArray(header?.traits) ? header.traits.map((trait) => ({ ...trait })) : []
     };
   }
@@ -23300,13 +23887,14 @@ ${indented.join(`,
     if (!(ext instanceof Map) || !name) {
       return false;
     }
-    if (ext.get("__type")?.value === name) {
+    const requestedKey = semanticNameKey(name);
+    if (semanticNameKey(ext.get("__type")?.value) === requestedKey) {
       return true;
     }
-    if (ext.get("_type")?.value === name) {
+    if (semanticNameKey(ext.get("_type")?.value) === requestedKey) {
       return true;
     }
-    return traitNamesFromSet(ext.get("__traits")).includes(name);
+    return traitNamesFromSet(ext.get("__traits")).some((traitName) => semanticNameKey(traitName) === requestedKey);
   }
   function convertSemanticType(value, typeName, context, { strict = true, warnOnFailure = false, evaluate = null } = {}) {
     const header = {
@@ -23396,7 +23984,7 @@ ${indented.join(`,
     }
     const nextTypeName = effectiveHeader.typeName ?? (options.inheritMissing ? previous.typeName : null);
     if (nextTypeName) {
-      ext.set("__type", stringObj2(nextTypeName));
+      ext.set("__type", stringObj2(typeRegistry.get(nextTypeName)?.name ?? nextTypeName));
     }
     const explicitTraits = effectiveHeader.traits.length > 0 ? effectiveHeader.traits.map((trait) => trait.name) : options.inheritMissing ? previous.traits.map((trait) => trait.name) : [];
     const typeDefaultTraits = nextTypeName ? typeRegistry.get(nextTypeName)?.defaultTraits || [] : [];
@@ -23404,7 +23992,7 @@ ${indented.join(`,
     if (nextTraits.length > 0) {
       ext.set("__traits", createTraitSet(nextTraits, nextTraits));
     }
-    if (options.warnOnTypeChange && previous.typeName && nextTypeName && previous.typeName !== nextTypeName && nextTraits.length > 0) {
+    if (options.warnOnTypeChange && previous.typeName && nextTypeName && semanticNameKey(previous.typeName) !== semanticNameKey(nextTypeName) && nextTraits.length > 0) {
       emitWarning2(context, "Semantic type changed while traits were preserved", new Map([
         ["from", stringObj2(previous.typeName)],
         ["to", stringObj2(nextTypeName)]
@@ -24998,8 +25586,8 @@ ${indented.join(`,
       _ext: mutableExt2()
     };
   }
-  function createEmptyTensorLike(tensor) {
-    return createTensor(tensor.shape, null, { ext: mutableExt2() });
+  function createEmptyShapedLike(shaped) {
+    return createShaped(shaped.shape, null, { ext: mutableExt2() });
   }
   function defaultAccumulator(target) {
     if (target?.type === "sequence")
@@ -25012,8 +25600,8 @@ ${indented.join(`,
       return createEmptyTupleLike(target);
     if (target?.type === "string")
       return stringObj3("");
-    if (isTensor(target))
-      return createEmptyTensorLike(target);
+    if (isShaped(target))
+      return createEmptyShapedLike(target);
     throw new Error("Reduce does not know how to build a default accumulator for this value");
   }
   function valueKey2(value) {
@@ -25031,8 +25619,8 @@ ${indented.join(`,
     if (value?.type === "map") {
       return `map{${Array.from(value.entries.entries()).map(([k, v]) => `${k}:${valueKey2(v)}`).join(",")}}`;
     }
-    if (isTensor(value)) {
-      return `tensor(${value.shape.join("x")})[${value.data.map(valueKey2).join(",")}]`;
+    if (isShaped(value)) {
+      return `shaped(${value.shape.join("x")})[${value.data.map(valueKey2).join(",")}]`;
     }
     if (typeof value?.toString === "function" && value.toString !== Object.prototype.toString) {
       return value.toString();
@@ -25180,18 +25768,18 @@ ${indented.join(`,
       key: int6(index + 1)
     }));
   }
-  function tensorEntries(target) {
+  function shapedEntries(target) {
     const entries2 = [];
-    forEachTensorCell(target, (value, tuple) => {
+    forEachShapedCell2(target, (value, tuple) => {
       entries2.push({
         value,
-        key: tensorIndexTuple(tuple)
+        key: shapedIndexTuple(tuple)
       });
     });
     return entries2;
   }
   function isIndexedIteratorSource(target) {
-    return target?.type === "sequence" || target?.type === "lazy_sequence" || target?.type === "tuple" || target?.type === "string" || isTensor(target);
+    return target?.type === "sequence" || target?.type === "lazy_sequence" || target?.type === "tuple" || target?.type === "string" || isShaped(target);
   }
   function iteratorStep(value, label) {
     const step = numericIndex(value, label);
@@ -25238,8 +25826,8 @@ ${indented.join(`,
       return setEntries(target);
     if (target?.type === "string")
       return stringEntries(target);
-    if (isTensor(target))
-      return tensorEntries(target);
+    if (isShaped(target))
+      return shapedEntries(target);
     throw new Error("Value is not iterable for this method");
   }
   function callIterator(fn, args, context, evaluate, invoke) {
@@ -25298,9 +25886,9 @@ ${indented.join(`,
     if (!target || target.type !== "string")
       throw new Error(`${name} is only defined for strings`);
   }
-  function ensureTensor(target, name) {
-    if (!isTensor(target))
-      throw new Error(`${name} is only defined for tensors`);
+  function ensureShaped(target, name) {
+    if (!isShaped(target))
+      throw new Error(`${name} is only defined for Shaped values`);
   }
   function mutableSetValue(target, rawIndex, value) {
     const index = normalizeWritableIndex(rawIndex, target.values.length, true);
@@ -25386,9 +25974,6 @@ ${indented.join(`,
   }
   function arithmeticAdd(a, b) {
     return arithmeticFunctions.ADD.impl([a, b]);
-  }
-  function arithmeticMul(a, b) {
-    return arithmeticFunctions.MUL.impl([a, b]);
   }
   function arithmeticDiv(a, b) {
     return arithmeticFunctions.DIV.impl([a, b]);
@@ -26189,147 +26774,128 @@ ${indented.join(`,
     }),
     REDUCE: method4("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke))
   };
-  function tensorSelectorsFromArgs(args) {
+  function shapedSelectorsFromArgs(args) {
     if (args.length === 1 && args[0]?.type === "tuple") {
       return args[0].values.map((value) => ({ kind: "index", value }));
     }
     return args.map((value) => ({ kind: "index", value }));
   }
-  var tensorMethods = {
+  var shapedMethods = {
+    SCALARDOMAIN: method4("SCALARDOMAIN", ([target]) => {
+      ensureShaped(target, "ScalarDomain");
+      return stringObj3(shapedScalarDomain(target));
+    }),
+    WITHSCALARDOMAIN: method4("WITHSCALARDOMAIN", ([target, domain]) => {
+      ensureShaped(target, "WithScalarDomain");
+      const copy = shallowCopyValue(target);
+      return validateShapedScalarDomain(copy, stringValue2(domain));
+    }),
+    "SETSCALARDOMAIN!": method4("SETSCALARDOMAIN!", ([target, domain]) => {
+      ensureShaped(target, "SetScalarDomain!");
+      return validateShapedScalarDomain(target, stringValue2(domain));
+    }),
     SHAPE: method4("SHAPE", ([target]) => {
-      ensureTensor(target, "Shape");
-      return { type: "tuple", values: tensorShape(target).map((dim) => int6(dim)) };
+      ensureShaped(target, "Shape");
+      return { type: "tuple", values: shapedShape(target).map((dim) => int6(dim)) };
     }),
     RANK: method4("RANK", ([target]) => {
-      ensureTensor(target, "Rank");
-      return int6(tensorRank(target));
+      ensureShaped(target, "Rank");
+      return int6(shapedRank(target));
     }),
     SIZE: method4("SIZE", ([target]) => {
-      ensureTensor(target, "Size");
-      return int6(tensorSize(target));
+      ensureShaped(target, "Size");
+      return int6(shapedSize(target));
     }),
     GET: method4("GET", ([target, ...selectors]) => {
-      ensureTensor(target, "Get");
-      return tensorGetBySelectors(target, tensorSelectorsFromArgs(selectors));
+      ensureShaped(target, "Get");
+      return shapedGetBySelectors(target, shapedSelectorsFromArgs(selectors));
     }),
     SET: method4("SET", ([target, ...selectorsAndValue]) => {
-      ensureTensor(target, "Set");
+      ensureShaped(target, "Set");
       const value = selectorsAndValue[selectorsAndValue.length - 1];
       const selectors = selectorsAndValue.slice(0, -1);
       const copy = shallowCopyValue(target);
-      tensorAssignBySelectors(copy, tensorSelectorsFromArgs(selectors), value);
+      shapedAssignBySelectors(copy, shapedSelectorsFromArgs(selectors), value);
       return copy;
     }),
     "SET!": method4("SET!", ([target, ...selectorsAndValue]) => {
-      ensureTensor(target, "Set!");
+      ensureShaped(target, "Set!");
       const value = selectorsAndValue[selectorsAndValue.length - 1];
       const selectors = selectorsAndValue.slice(0, -1);
-      tensorAssignBySelectors(target, tensorSelectorsFromArgs(selectors), value);
+      shapedAssignBySelectors(target, shapedSelectorsFromArgs(selectors), value);
       return target;
     }),
     RESHAPE: method4("RESHAPE", ([target, shape]) => {
-      ensureTensor(target, "Reshape");
+      ensureShaped(target, "Reshape");
       const nextShape = shape?.type === "tuple" ? shape.values.map((value) => numericIndex(value)) : null;
       if (!nextShape)
         throw new Error("Reshape expects a shape tuple");
       const expected = nextShape.reduce((product, dim) => product * dim, 1);
-      if (expected !== tensorSize(target))
+      if (expected !== shapedSize(target))
         throw new Error("Reshape size mismatch");
-      return createTensor(nextShape, target.data);
+      return createShaped(nextShape, target.data);
     }),
     FLATTEN: method4("FLATTEN", ([target]) => {
-      ensureTensor(target, "Flatten");
-      return createTensor([tensorSize(target)], [...target.data]);
+      ensureShaped(target, "Flatten");
+      return createShaped([shapedSize(target)], [...target.data]);
     }),
     TRANSPOSE: method4("TRANSPOSE", ([target]) => {
-      ensureTensor(target, "Transpose");
-      if (tensorRank(target) !== 2)
-        throw new Error("Transpose currently expects a rank-2 tensor");
-      return createTensorView(target, {
+      ensureShaped(target, "Transpose");
+      if (shapedRank(target) !== 2)
+        throw new Error("Transpose currently expects a rank-2 Shaped value");
+      return createShapedView(target, {
         shape: [target.shape[1], target.shape[0]],
         strides: [target.strides[1], target.strides[0]],
         offset: target.offset
       });
     }),
     PERMUTE: method4("PERMUTE", ([target, order]) => {
-      ensureTensor(target, "Permute");
+      ensureShaped(target, "Permute");
       if (order?.type !== "tuple")
         throw new Error("Permute expects a tuple of axis numbers");
       const axes = order.values.map((value) => numericIndex(value) - 1);
       if (axes.length !== target.shape.length)
         throw new Error("Permute rank mismatch");
-      return createTensorView(target, {
+      return createShapedView(target, {
         shape: axes.map((axis) => target.shape[axis]),
         strides: axes.map((axis) => target.strides[axis]),
         offset: target.offset
       });
     }),
     MAP: method4("MAP", ([target, iterator], context, evaluate, invoke) => {
-      ensureTensor(target, "Map");
+      ensureShaped(target, "Map");
       const data = [];
-      forEachTensorCell(target, (value, tuple) => {
-        data.push(invoke(iterator, [value, tensorIndexTuple(tuple), target], context, evaluate));
+      forEachShapedCell2(target, (value, tuple) => {
+        data.push(invoke(iterator, [value, shapedIndexTuple(tuple), target], context, evaluate));
       });
-      return createTensor(target.shape, data);
+      return createShaped(target.shape, data);
     }),
     "FILL!": method4("FILL!", ([target, value]) => {
-      ensureTensor(target, "Fill!");
-      forEachTensorCell(target, (_entry, _tuple, offset) => {
+      ensureShaped(target, "Fill!");
+      const domain = shapedScalarDomain(target);
+      if (!valueBelongsToScalarDomain(value, domain)) {
+        throw new Error(`Shaped Fill! scalar does not satisfy declared domain ${domain}`);
+      }
+      forEachShapedCell2(target, (_entry, _tuple, offset) => {
         target.data[offset] = value;
       });
       return target;
     }),
     SUM: method4("SUM", ([target]) => {
-      ensureTensor(target, "Sum");
+      ensureShaped(target, "Sum");
       let acc = int6(0);
-      forEachTensorCell(target, (value) => {
+      forEachShapedCell2(target, (value) => {
         if (!isHole(value))
           acc = arithmeticAdd(acc, value);
       });
       return acc;
     }),
     MEAN: method4("MEAN", ([target]) => {
-      ensureTensor(target, "Mean");
-      const size = tensorSize(target);
+      ensureShaped(target, "Mean");
+      const size = shapedSize(target);
       if (size === 0)
         return null;
-      return arithmeticDiv(tensorMethods.SUM.impl([target]), int6(size));
-    }),
-    DOT: method4("DOT", ([target, other]) => {
-      ensureTensor(target, "Dot");
-      ensureTensor(other, "Dot");
-      if (tensorRank(target) !== 1 || tensorRank(other) !== 1 || tensorSize(target) !== tensorSize(other)) {
-        throw new Error("Dot expects rank-1 tensors of equal size");
-      }
-      let acc = int6(0);
-      for (let i = 0;i < target.data.length; i++) {
-        acc = arithmeticAdd(acc, arithmeticMul(target.data[i], other.data[i]));
-      }
-      return acc;
-    }),
-    MATMUL: method4("MATMUL", ([target, other]) => {
-      ensureTensor(target, "MatMul");
-      ensureTensor(other, "MatMul");
-      if (tensorRank(target) !== 2 || tensorRank(other) !== 2) {
-        throw new Error("MatMul expects rank-2 tensors");
-      }
-      const [rows, inner] = target.shape;
-      const [otherInner, cols] = other.shape;
-      if (inner !== otherInner)
-        throw new Error("MatMul inner dimensions must agree");
-      const data = [];
-      for (let r = 1;r <= rows; r++) {
-        for (let c = 1;c <= cols; c++) {
-          let acc = int6(0);
-          for (let k = 1;k <= inner; k++) {
-            const a = tensorGetBySelectors(target, [{ kind: "index", value: int6(r) }, { kind: "index", value: int6(k) }]);
-            const b = tensorGetBySelectors(other, [{ kind: "index", value: int6(k) }, { kind: "index", value: int6(c) }]);
-            acc = arithmeticAdd(acc, arithmeticMul(a, b));
-          }
-          data.push(acc);
-        }
-      }
-      return createTensor([rows, cols], data);
+      return arithmeticDiv(shapedMethods.SUM.impl([target]), int6(size));
     }),
     REDUCE: method4("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke))
   };
@@ -26539,7 +27105,7 @@ ${indented.join(`,
     ["set", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iterableMethods), ...Object.entries(setMethods)])],
     ["string", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iterableMethods), ...Object.entries(stringMethods)])],
     ["tuple", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iterableMethods), ...Object.entries(tupleMethods)])],
-    ["tensor", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iterableMethods), ...Object.entries(tensorMethods)])],
+    ["shaped", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iterableMethods), ...Object.entries(shapedMethods)])],
     ["iterator", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(iteratorMethods)])],
     ["deferred", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(deferredMethods)])],
     ["exact_generator", createBuiltinProto([
@@ -26598,8 +27164,8 @@ ${indented.join(`,
       return PROTOS.get("certified_approximation");
     if (target instanceof Fraction)
       return PROTOS.get("structural_value");
-    if (isTensor(target))
-      return PROTOS.get("tensor");
+    if (isShaped(target))
+      return PROTOS.get("shaped");
     if (target && typeof target === "object" && target.fn === "DEFER")
       return PROTOS.get("deferred");
     return PROTOS.get(target?.type) ?? null;
@@ -26621,8 +27187,8 @@ ${indented.join(`,
       names.push("Undecided");
     else if (target instanceof Fraction)
       names.push("Fraction");
-    else if (isTensor(target))
-      names.push("Tensor");
+    else if (isShaped(target))
+      names.push("Shaped");
     else if (target?.type === "sequence" || target?.type === "lazy_sequence")
       names.push("Array");
     else if (target?.type)
@@ -26702,7 +27268,7 @@ ${indented.join(`,
       ["set", "set"],
       ["string", "string"],
       ["tuple", "tuple"],
-      ["tensor", "tensor"],
+      ["shaped", "shaped"],
       ["iterator", "iterator"],
       ["asyncstream", "async_stream"]
     ]);
@@ -27556,14 +28122,14 @@ ${indented.join(`,
       return 0;
     const expected = values[0];
     if (!values.every((value) => value === expected)) {
-      throw new Error(`Semicolon tensor is ragged along ${label}`);
+      throw new Error(`Semicolon Shaped literal is ragged along ${label}`);
     }
     return expected;
   }
-  function implicitTensorLayout(structure, rank) {
+  function implicitShapedLayout(structure, rank) {
     const rows = structure || [];
     if (rank < 2 || rows.length === 0) {
-      throw new Error("Semicolon tensor requires at least one row");
+      throw new Error("Semicolon Shaped literal requires at least one row");
     }
     const columns = uniformDimension(rows.map((item) => item.row.length), "columns");
     const shape = new Array(rank).fill(1);
@@ -27597,7 +28163,7 @@ ${indented.join(`,
     }
     const expectedRows = shape[0] * shape.slice(2).reduce((product, size) => product * size, 1);
     if (rows.length !== expectedRows) {
-      throw new Error(`Semicolon tensor shape inference expected ${expectedRows} rows, received ${rows.length}`);
+      throw new Error(`Semicolon Shaped literal shape inference expected ${expectedRows} rows, received ${rows.length}`);
     }
     let completedBlock = shape[0];
     for (let index = 0;index < rows.length; index++) {
@@ -27611,7 +28177,7 @@ ${indented.join(`,
         }
       }
       if (rows[index].separatorLevel !== expectedSeparator) {
-        throw new Error(`Malformed semicolon tensor boundary after row ${index + 1}: expected '${";".repeat(expectedSeparator)}'`);
+        throw new Error(`Malformed semicolon shaped boundary after row ${index + 1}: expected '${";".repeat(expectedSeparator)}'`);
       }
     }
     const displayElements = rows.flatMap((item) => item.row);
@@ -27646,6 +28212,12 @@ ${indented.join(`,
         return ir2("INTERVAL", ...parts.map((p) => ir2("LITERAL", p)));
       }
       return ir2("LITERAL", node.value);
+    },
+    ActiveBaseNumber(node) {
+      return ir2("ACTIVE_BASE_LITERAL", node.value, node.quoted === true);
+    },
+    NumberConfigDirective(node) {
+      return ir2(node.setting === "input" ? "NUM_INPUT" : "NUM_DISPLAY", lowerNode(node.value));
     },
     String(node) {
       return ir2("STRING", node.value);
@@ -27838,6 +28410,9 @@ ${indented.join(`,
       if (op === "_>") {
         return ir2("TOBASE", lowerNode(node.left), lowerNode(node.right));
       }
+      if (op === "_>!") {
+        return ir2("TOBASE_EXACT", lowerNode(node.left), lowerNode(node.right));
+      }
       if (op === "~>") {
         return ir2("CERTIFY_FORMAT", lowerNode(node.left), lowerNode(node.right));
       }
@@ -28027,6 +28602,7 @@ ${indented.join(`,
         captureMode: node.captureMode || null,
         name: node.name || null,
         typeName: node.typeName || null,
+        ...Array.isArray(node.slots) ? { slots: node.slots.map((slot) => ({ ...slot })) } : {},
         traits: (node.traits || []).map((trait) => ({
           name: trait.name,
           checkMode: trait.checkMode || null,
@@ -28045,21 +28621,17 @@ ${indented.join(`,
     Array(node) {
       return ir2("ARRAY", ...node.elements.map(lowerNode));
     },
-    Matrix(node) {
-      const structure = node.rows.map((row, index) => ({
+    Shaped(node) {
+      const structure = node.rows ? node.rows.map((row, index) => ({
         row,
         separatorLevel: index === node.rows.length - 1 ? 0 : 1
-      }));
-      const layout = implicitTensorLayout(structure, 2);
-      return ir2("TENSOR_LITERAL", layout.shape, ...layout.elements.map(lowerNode));
+      })) : node.structure;
+      const layout = implicitShapedLayout(structure, node.rows ? 2 : node.maxDimension);
+      return ir2("SHAPED_LITERAL", layout.shape, ...layout.elements.map(lowerNode));
     },
-    Tensor(node) {
-      const layout = implicitTensorLayout(node.structure, node.maxDimension);
-      return ir2("TENSOR_LITERAL", layout.shape, ...layout.elements.map(lowerNode));
-    },
-    TensorLiteral(node) {
+    ShapedLiteral(node) {
       const meta = node.header ? { header: lowerNode(node.header) } : null;
-      return meta ? ir2("TENSOR_LITERAL", meta, node.shape, ...node.elements.map(lowerNode)) : ir2("TENSOR_LITERAL", node.shape, ...node.elements.map(lowerNode));
+      return meta ? ir2("SHAPED_LITERAL", meta, node.shape, ...node.elements.map(lowerNode)) : ir2("SHAPED_LITERAL", node.shape, ...node.elements.map(lowerNode));
     },
     ValueOutfit(node) {
       const header = node.header ? lowerNode(node.header) : null;
@@ -28313,7 +28885,7 @@ ${indented.join(`,
       return ir2("ASK", lowerNode(node.target), lowerNode(node.arg));
     },
     Transpose(node) {
-      return ir2("TENSOR_TRANSPOSE", lowerNode(node.expression));
+      return ir2("SHAPED_TRANSPOSE", lowerNode(node.expression));
     },
     Derivative(node) {
       if (node.operations?.length) {
@@ -28568,7 +29140,7 @@ ${indented.join(`,
           nestedTarget: node.nestedTarget ? lowerDestructureTarget(node.nestedTarget) : null
         };
       }
-      case "DestructureTensorPattern":
+      case "DestructureShapedPattern":
         return {
           type: node.type,
           shape: [...node.shape || []],
@@ -30160,8 +30732,8 @@ ${indented.join(`,
     if (isFormulaSheet(obj)) {
       return obj.get(key);
     }
-    if (isTensor(obj)) {
-      return tensorGetBySelectors(obj, [{ kind: "index", value: key }]);
+    if (isShaped(obj)) {
+      return shapedGetBySelectors(obj, [{ kind: "index", value: key }]);
     }
     if (isMultifunctionValue(obj)) {
       const keyName = typeof key === "string" ? key : key && key.type === "string" ? key.value : null;
@@ -30251,8 +30823,8 @@ ${indented.join(`,
       const index = specs.length === 1 ? specs[0].value : specs.map((spec2) => spec2.value);
       return obj.get(index);
     }
-    if (isTensor(obj)) {
-      return tensorGetBySelectors(obj, specs);
+    if (isShaped(obj)) {
+      return shapedGetBySelectors(obj, specs);
     }
     if (specs.length === 1 && specs[0].kind === "index") {
       return indexGetResolved(obj, specs[0].value);
@@ -30264,8 +30836,8 @@ ${indented.join(`,
   }
   function indexSetResolved(obj, key, value) {
     assertMutableIndexTarget(obj);
-    if (isTensor(obj)) {
-      return tensorAssignBySelectors(obj, [{ kind: "index", value: key }], value);
+    if (isShaped(obj)) {
+      return shapedAssignBySelectors(obj, [{ kind: "index", value: key }], value);
     }
     if (obj && (obj.type === "sequence" || obj.type === "tuple")) {
       const idx = toInteger(key);
@@ -30440,7 +31012,7 @@ ${indented.join(`,
         const specs = specNodes.map((specNode) => decodeBracketSpec(specNode, evaluate));
         return bracketGetResolved(obj, specs);
       },
-      doc: "Tensor-aware bracket indexing and slicing"
+      doc: "Shaped-aware bracket indexing and slicing"
     },
     BRACKET_SET: {
       lazy: true,
@@ -30450,16 +31022,16 @@ ${indented.join(`,
         const specNodes = args.slice(2, 2 + specCount);
         const value = evaluate(args[2 + specCount]);
         const specs = specNodes.map((specNode) => decodeBracketSpec(specNode, evaluate));
-        if (isTensor(obj)) {
+        if (isShaped(obj)) {
           assertMutableIndexTarget(obj);
-          return tensorAssignBySelectors(obj, specs, value);
+          return shapedAssignBySelectors(obj, specs, value);
         }
         if (specs.length === 1 && specs[0].kind === "index") {
           return indexSetResolved(obj, specs[0].value, value);
         }
         throw new Error("Bracket slice assignment is only supported for tensors");
       },
-      doc: "Tensor-aware bracket assignment"
+      doc: "Shaped-aware bracket assignment"
     },
     KEYOF: {
       impl(args) {
@@ -30766,6 +31338,8 @@ ${indented.join(`,
     return new BaseSystem(chars, `Base ${n}`);
   }
   function ensureSafeDigits(baseSystem) {
+    if (baseSystem.allowsReservedDigits)
+      return;
     for (const ch of baseSystem.characters) {
       if (BASE_RESERVED_CHARS.has(ch)) {
         throw new Error(`Base digit '${ch}' is reserved and cannot be used in a digit alphabet`);
@@ -30832,6 +31406,9 @@ ${indented.join(`,
       throw new Error("Too many radix points");
     const intPart = dotParts[0] === "" ? "0" : dotParts[0];
     const fracPart = dotParts.length === 2 ? dotParts[1] : "";
+    if (fracPart.length && !baseSystem.supportsPositionalFractions) {
+      throw new Error(`${baseSystem.name} requires a fraction or mixed fraction; radix-point input is not defined`);
+    }
     const intVal = parseBaseInteger(intPart, baseSystem, false);
     let result = new Rational(intVal, 1n);
     if (fracPart.length) {
@@ -30923,6 +31500,9 @@ ${indented.join(`,
       value = new Rational(num, den);
       value._explicitFraction = true;
     } else if (s.includes("#")) {
+      if (!baseSystem.supportsPositionalFractions) {
+        throw new Error(`${baseSystem.name} does not define repeating fractional-place notation`);
+      }
       const parts = s.split("#");
       if (parts.length !== 2)
         throw new Error("Repeating form must have exactly one '#'");
@@ -30989,6 +31569,9 @@ ${indented.join(`,
     return groupDigits(baseSystem.fromDecimal(value));
   }
   function boundedBaseApproximation(value, baseSystem, digitLimit) {
+    if (!baseSystem.supportsPositionalFractions) {
+      throw new Error(`${baseSystem.name} does not support bounded radix-point approximations`);
+    }
     if (value instanceof CertifiedApproximation)
       return value;
     const limit = digitLimit ?? DEFAULT_BASE_EXPANSION_LIMIT;
@@ -31024,6 +31607,9 @@ ${indented.join(`,
     const limit = typeof modeSpec === "number" ? undefined : modeSpec?.limit;
     const rat2 = toRationalValue(value);
     if (mode === 2) {
+      if (!baseSystem.supportsPositionalFractions) {
+        throw new Error(`${baseSystem.name} does not define repeating fractional-place notation; use mixed or fraction mode`);
+      }
       const raw = rat2.toRepeatingBase(baseSystem);
       const shortened = shortenRepeatingExpansion(raw, limit ?? DEFAULT_BASE_EXPANSION_LIMIT);
       return groupRadixExpansion(shortened, baseSystem);
@@ -31037,6 +31623,9 @@ ${indented.join(`,
       return `${prefix}${groupDigits(terms[0])}.~${terms.slice(1).map(groupDigits).join("~")}`;
     }
     if (mode === 5) {
+      if (!baseSystem.supportsPositionalFractions) {
+        throw new Error(`${baseSystem.name} does not define shifted fractional-place notation`);
+      }
       const raw = shortenRepeatingExpansion(rat2.toRepeatingBase(baseSystem), limit ?? DEFAULT_BASE_EXPANSION_LIMIT);
       const sign2 = raw.startsWith("-") ? "-" : "";
       const body = sign2 ? raw.slice(1) : raw;
@@ -31067,6 +31656,15 @@ ${indented.join(`,
     return `${wholeStr}..${toBaseDigitsInt(rem, baseSystem)}/${toBaseDigitsInt(rat2.denominator, baseSystem)}`;
   }
   function resolveBaseSpecFromValue(value) {
+    if (value && value.type === "string") {
+      const shorthand = value.value.trim();
+      if (/^[A-Za-z]$/.test(shorthand) && BaseSystem.getSystemForPrefix(shorthand)) {
+        return BaseSystem.getSystemForPrefix(shorthand);
+      }
+      if (/^z\[\d+\]$/.test(shorthand)) {
+        return baseFromInteger(Number(shorthand.slice(2, -1)));
+      }
+    }
     if (typeof value === "string" && /^0([A-Za-z])$/.test(value)) {
       const letter = value[1];
       const base = BaseSystem.getSystemForPrefix(letter);
@@ -31092,19 +31690,86 @@ ${indented.join(`,
     if (value instanceof Rational && value.denominator === 1n) {
       return baseFromInteger(Number(value.numerator));
     }
-    if (value && value.type === "tuple" && Array.isArray(value.values) && value.values.length === 2) {
+    if (value && value.type === "tuple" && Array.isArray(value.values) && [2, 3].includes(value.values.length)) {
       const radix = value.values[0];
       const digits = value.values[1];
-      const baseFromDigits = resolveBaseSpecFromValue(digits);
+      const digitText = digits?.type === "string" ? digits.value : typeof digits === "string" ? digits : null;
+      if (digitText === null)
+        throw new Error("Tuple digits must be a string alphabet");
+      const characters = Array.from(digitText);
       const radixNum = radix instanceof Integer ? Number(radix.value) : radix instanceof Rational && radix.denominator === 1n ? Number(radix.numerator) : null;
       if (!Number.isInteger(radixNum))
         throw new Error("Tuple radix must be an integer");
-      if (radixNum !== baseFromDigits.base) {
-        throw new Error(`Tuple base mismatch: radix ${radixNum} does not match digits length ${baseFromDigits.base}`);
+      if (Math.abs(radixNum) !== characters.length) {
+        throw new Error(`Tuple base mismatch: radix ${radixNum} does not match digits length ${characters.length}`);
       }
-      return baseFromDigits;
+      let digitOffset = 0;
+      if (value.values.length === 3) {
+        const offset = value.values[2];
+        digitOffset = offset instanceof Integer ? Number(offset.value) : offset instanceof Rational && offset.denominator === 1n ? Number(offset.numerator) : NaN;
+        if (!Number.isSafeInteger(digitOffset))
+          throw new Error("Tuple digit offset must be an integer");
+      }
+      return new BaseSystem(characters, `Radix ${radixNum}`, {
+        radix: radixNum,
+        digitOffset,
+        allowReserved: true
+      });
     }
     throw new Error("Invalid base specification");
+  }
+  function baseSpecLabel(value, baseSystem) {
+    const raw = value?.type === "string" ? value.value.trim() : typeof value === "string" ? value.trim() : "";
+    if (/^0[A-Za-z]$/.test(raw))
+      return raw.slice(1);
+    if (/^[A-Za-z]$/.test(raw))
+      return raw;
+    if (/^(?:0)?z\[\d+\]$/.test(raw))
+      return raw.replace(/^0/, "");
+    const prefix = BaseSystem.getPrefixForSystem(baseSystem);
+    return prefix || `z[${baseSystem.base}]`;
+  }
+  function activeBaseBody(raw, quoted) {
+    if (quoted)
+      return raw;
+    return raw.replace(/^#/, "").replace(/\.\.#/g, "..").replace(/\/#/g, "/");
+  }
+  function validateNumberDisplayProfile(profile) {
+    const entries2 = profile.split(",").map((entry) => entry.replace(/\s+/g, "")).filter(Boolean);
+    if (!entries2.length)
+      throw new Error("Number display profile cannot be empty");
+    for (const entry of entries2) {
+      if (/^(?:\.\[\d+\]|\.\.|mixed|\/|fraction|\.)$/.test(entry))
+        continue;
+      const match = entry.match(/^([A-Za-z]|z\[(\d+)\])(?:\.\.|\/|\.|\.\[\d+\])?$/);
+      if (!match)
+        throw new Error(`Unknown number display token '${entry}'`);
+      if (match[1].length === 1 && !BaseSystem.getSystemForPrefix(match[1])) {
+        throw new Error(`Unknown base prefix '${match[1]}' in number display profile`);
+      }
+      if (match[2] && (Number(match[2]) < 2 || Number(match[2]) > 64)) {
+        throw new Error("Display base z[n] must be between 2 and 64");
+      }
+    }
+  }
+  function exactPrefixedText(text4, prefix, quoted = false) {
+    const marker = `0${prefix}`;
+    const prefixed = (component) => {
+      const negative = component.startsWith("-");
+      const digits = negative ? component.slice(1) : component;
+      const body = quoted ? JSON.stringify(digits) : digits;
+      return `${negative ? "-" : ""}${marker}${body}`;
+    };
+    if (text4.includes("..")) {
+      const [whole, fraction] = text4.split("..");
+      const [num, den] = fraction.split("/");
+      return `${prefixed(whole)}..${prefixed(num)}/${prefixed(den)}`;
+    }
+    if (text4.includes("/") && !text4.includes(".~")) {
+      const [num, den] = text4.split("/");
+      return `${prefixed(num)}/${prefixed(den)}`;
+    }
+    return prefixed(text4);
   }
   function parseLiteral(str) {
     if (typeof str !== "string")
@@ -31183,6 +31848,10 @@ ${indented.join(`,
       if (!baseSystem2)
         throw new Error(`Unknown base prefix 0${prefix}`);
       const stream = unescapeQuotedString(quotedPrefix[3]);
+      if (baseSystem2.requiresQuoting) {
+        const magnitude = parseBaseInteger(stream, baseSystem2, false);
+        return new Integer(sign ? -magnitude : magnitude);
+      }
       return fromBaseString(sign + stream, baseSystem2);
     }
     if (str.includes(".~") && !/^-?(?:0z\[\d+\]|0[a-zA-Z])/.test(str)) {
@@ -31212,7 +31881,7 @@ ${indented.join(`,
       }
       throw new Error(`Invalid radix shift format: ${str}`);
     }
-    if (posStr.includes("#")) {
+    if (posStr.includes("#") && !/^(?:0z\[\d+\]|0[a-zA-Z])/.test(posStr)) {
       return parseRepeatingDecimalLiteral(str);
     }
     const parseWithBase = (numStr, baseSystem2) => {
@@ -31721,14 +32390,14 @@ ${indented.join(`,
       }
       return;
     }
-    if (base?.type === "DestructureTensorPattern") {
+    if (base?.type === "DestructureShapedPattern") {
       const value = sourceRef.value;
-      if (!isTensor(value)) {
-        throw new Error("Wrong rhs kind for tensor destructuring pattern");
+      if (!isShaped(value)) {
+        throw new Error("Wrong rhs kind for shaped destructuring pattern");
       }
       const shape = base.shape || [];
       if (shape.length !== value.shape.length || shape.some((dim, idx) => dim !== value.shape[idx])) {
-        throw new Error("Tensor destructuring shape mismatch");
+        throw new Error("Shaped destructuring shape mismatch");
       }
       for (let row = 0;row < base.rows.length; row++) {
         for (let col = 0;col < base.rows[row].length; col++) {
@@ -31817,7 +32486,7 @@ ${indented.join(`,
     if (visited.has(value))
       return value;
     visited.add(value);
-    const supportsMutable = value.type === "sequence" || value.type === "tuple" || value.type === "map" || value.type === "set" || isTensor(value);
+    const supportsMutable = value.type === "sequence" || value.type === "tuple" || value.type === "map" || value.type === "set" || isShaped(value);
     const hasChildren = supportsMutable;
     if (!hasChildren)
       return value;
@@ -32084,6 +32753,53 @@ ${indented.join(`,
       },
       doc: "Call a named export from a local JavaScript module"
     },
+    NUM_INPUT: {
+      impl(args, context) {
+        const requested = args[0];
+        const baseSystem = resolveBaseSpecFromValue(requested);
+        ensureSafeDigits(baseSystem);
+        const label = baseSpecLabel(requested, baseSystem);
+        context.setEnv("numInput", label);
+        context.setEnv("numInputBase", baseSystem);
+        if (context.getEnv("numDisplayExplicit", false) !== true) {
+          context.setEnv("numDisplay", label);
+        }
+        return { type: "string", value: label };
+      },
+      doc: "Set the session's strict # numeral input base"
+    },
+    NUM_DISPLAY: {
+      impl(args, context) {
+        const value = args[0];
+        if (!value || value.type !== "string") {
+          throw new Error("Number display profile must be a string");
+        }
+        const profile = value.value.trim();
+        if (!profile)
+          throw new Error("Number display profile cannot be empty");
+        validateNumberDisplayProfile(profile);
+        context.setEnv("numDisplay", profile);
+        context.setEnv("numDisplayExplicit", true);
+        return { type: "string", value: profile };
+      },
+      doc: "Set the session's comma-separated number display profile"
+    },
+    ACTIVE_BASE_LITERAL: {
+      impl(args, context) {
+        const raw = String(args[0] ?? "");
+        const quoted = args[1] === true;
+        const baseSystem = context.getEnv("numInputBase", BaseSystem.DECIMAL);
+        try {
+          if (quoted)
+            return new Integer(parseBaseInteger(raw, baseSystem, false));
+          return fromBaseString(activeBaseBody(raw, quoted), baseSystem);
+        } catch (error) {
+          throw new Error(`Invalid # numeral for ${baseSystem.name}: ${error.message}`);
+        }
+      },
+      pure: false,
+      doc: "Parse a strict numeral using the session's active input base"
+    },
     DEFINEBASE: {
       lazy: true,
       impl(args, context, evaluate) {
@@ -32139,6 +32855,35 @@ ${indented.join(`,
         return { type: "string", value: text4 };
       },
       doc: "Format number to base string: expr _> baseSpec"
+    },
+    TOBASE_EXACT: {
+      lazy: true,
+      impl(args, context, evaluate) {
+        const value = evaluate(args[0]);
+        let specValue = evaluate(args[1]);
+        let modeSpec = { mode: 6 };
+        if (specValue?.type === "tuple" && Array.isArray(specValue.values) && specValue.values.length === 2) {
+          modeSpec = resolveModeSpec(specValue.values[1]);
+          specValue = specValue.values[0];
+        }
+        const baseSystem = resolveBaseSpecFromValue(specValue);
+        const prefix = BaseSystem.getPrefixForSystem(baseSystem);
+        if (!prefix) {
+          throw new Error("_>! requires a registered base prefix so its result can be parsed by RiX");
+        }
+        if (modeSpec.limit !== undefined) {
+          throw new Error("_>! does not permit a digit limit because truncation is not lossless");
+        }
+        const text4 = toBaseString(value, baseSystem, modeSpec);
+        if (text4.includes("...")) {
+          throw new Error("_>! could not produce a lossless finite RiX numeral");
+        }
+        if (baseSystem.requiresQuoting && modeSpec.mode !== 6) {
+          throw new Error("_>! punctuation-digit systems require fraction mode so every component can be quoted");
+        }
+        return { type: "string", value: exactPrefixedText(text4, prefix, baseSystem.requiresQuoting) };
+      },
+      doc: "Format a number as lossless RiX source, or fail"
     },
     CERTIFY_FORMAT: {
       lazy: true,
@@ -33497,49 +34242,51 @@ ${detail}`;
       pure: true,
       doc: "Lazy unbounded exact arithmetic sequence"
     },
-    MATRIX: {
-      impl(args) {
-        return { type: "matrix", rows: args };
-      },
-      pure: true,
-      doc: "Matrix literal"
-    },
-    TENSOR: {
-      lazy: true,
-      impl(args, context, evaluate) {
-        const defaultMode = constructorDefaultCaptureMode(context);
-        return createTensor([args.length], args.map((arg) => captureIrValue(arg, defaultMode, context, evaluate)));
-      },
-      pure: true,
-      doc: "Tensor literal"
-    },
-    TENSOR_LITERAL: {
+    SHAPED_LITERAL: {
       lazy: true,
       impl(args, context, evaluate) {
         const hasMeta = args[0] && typeof args[0] === "object" && !Array.isArray(args[0]) && args[0].header;
-        const header = hasMeta ? args[0].header : null;
+        const header = {
+          ...hasMeta ? args[0].header : null,
+          typeName: hasMeta && args[0].header?.typeName ? args[0].header.typeName : "Shaped",
+          traits: hasMeta ? args[0].header?.traits || [] : []
+        };
         const defaultMode = header?.captureMode || constructorDefaultCaptureMode(context);
         const shape = hasMeta ? args[1] : args[0];
         const values = (hasMeta ? args.slice(2) : args.slice(1)).map((arg) => captureIrValue(arg, defaultMode, context, evaluate));
-        return applySemanticHeader(attachBuiltinProto(createTensor(shape, values.length === 0 ? null : values)), header, context);
+        const shaped = attachBuiltinProto(createShaped(shape, values.length === 0 ? null : values));
+        if (Array.isArray(header.slots)) {
+          const constructTyped = context?.getEnv?.("__linalg_typed_shaped__", null);
+          if (typeof constructTyped !== "function") {
+            throw new Error(`/${header.typeName}: .../ requires the linalg plugin; call .Plugin.Load("linalg") first`);
+          }
+          const resolvedSlots = header.slots.map((slot) => {
+            const frame = context.get(slot.bindingName);
+            if (frame === undefined)
+              throw new Error(`Unknown frame binding '${slot.bindingName}' in /${header.typeName}: .../`);
+            return { ...slot, frame };
+          });
+          return constructTyped(shaped, header, resolvedSlots, context);
+        }
+        return applySemanticHeader(shaped, header, context);
       },
       pure: true,
-      doc: "Tensor literal with explicit shape"
+      doc: "Shaped literal with explicit shape"
     },
-    TENSOR_TRANSPOSE: {
+    SHAPED_TRANSPOSE: {
       impl(args) {
-        const tensor = args[0];
-        if (!isTensor(tensor) || tensorRank(tensor) !== 2) {
-          throw new Error("^^ expects rank-2 tensor (matrix)");
+        const shaped = args[0];
+        if (!isShaped(shaped) || shapedRank(shaped) !== 2) {
+          throw new Error("^^ expects a rank-2 Shaped or Matrix value");
         }
-        return createTensorView(tensor, {
-          shape: [tensor.shape[1], tensor.shape[0]],
-          strides: [tensor.strides[1], tensor.strides[0]],
-          offset: tensor.offset
+        return createShapedView(shaped, {
+          shape: [shaped.shape[1], shaped.shape[0]],
+          strides: [shaped.strides[1], shaped.strides[0]],
+          offset: shaped.offset
         });
       },
       pure: true,
-      doc: "Transpose a rank-2 tensor view"
+      doc: "Transpose a rank-2 Shaped or Matrix view"
     }
   };
 
@@ -33632,8 +34379,8 @@ ${pad}}`;
         if (coll && coll.type === "export_bundle" && coll.entries instanceof Map) {
           return new Integer(coll.entries.size);
         }
-        if (isTensor(coll)) {
-          return new Integer(BigInt(tensorSize(coll)));
+        if (isShaped(coll)) {
+          return new Integer(BigInt(shapedSize(coll)));
         }
         if (coll && typeof coll.value === "string") {
           return new Integer(coll.value.length);
@@ -33651,10 +34398,10 @@ ${pad}}`;
         if (coll && (coll.type === "sequence" || coll.type === "tuple" || coll.type === "set")) {
           return coll.values[0];
         }
-        if (isTensor(coll)) {
+        if (isShaped(coll)) {
           let first = null;
           let found = false;
-          forEachTensorCell(coll, (value) => {
+          forEachShapedCell(coll, (value) => {
             if (!found) {
               first = value;
               found = true;
@@ -33677,10 +34424,10 @@ ${pad}}`;
         if (coll && (coll.type === "sequence" || coll.type === "tuple" || coll.type === "set")) {
           return coll.values[coll.values.length - 1];
         }
-        if (isTensor(coll)) {
+        if (isShaped(coll)) {
           let last = null;
           let found = false;
-          forEachTensorCell(coll, (value) => {
+          forEachShapedCell(coll, (value) => {
             last = value;
             found = true;
           });
@@ -33710,11 +34457,11 @@ ${pad}}`;
         if (coll && (coll.type === "sequence" || coll.type === "tuple" || coll.type === "set")) {
           return coll.values[index - 1];
         }
-        if (isTensor(coll)) {
+        if (isShaped(coll)) {
           const target = idx instanceof Integer ? Number(idx.value) : Number(idx);
           let found = null;
           let seen = 0;
-          forEachTensorCell(coll, (value) => {
+          forEachShapedCell(coll, (value) => {
             seen += 1;
             if (seen === target) {
               found = value;
@@ -33760,20 +34507,6 @@ ${pad}}`;
         return evaluate({ fn: "PREDUCE", args: [args[0], args[1], args[2]] });
       },
       doc: "Reduce a collection"
-    },
-    TGEN: {
-      lazy: true,
-      impl(args, context, evaluate) {
-        const shape = coerceShapeValue(evaluate(args[0]));
-        const fn = evaluate(args[1]);
-        const tensor = createTensor(shape);
-        const filled = [];
-        forEachTensorCell(tensor, (_value, tuple) => {
-          filled.push(callWithConcreteArgs(fn, [tensorIndexTuple(tuple)], context, evaluate));
-        });
-        return createTensor(shape, filled);
-      },
-      doc: "Generate a tensor from a shape and index callback"
     },
     IF: {
       lazy: true,
@@ -33929,8 +34662,8 @@ ${pad}}`;
       const entries2 = Array.from(value.entries || []).map(([key, entry]) => `${key} = ${inspectValue(entry, depth - 1)}`);
       return `{= ${entries2.join(", ")} }`;
     }
-    if (value?.type === "tensor")
-      return `tensor[${(value.shape || []).join("x")}] ${formatValue(value)}`;
+    if (value?.type === "shaped")
+      return `shaped[${(value.shape || []).join("x")}] ${formatValue(value)}`;
     return formatValue(value);
   }
   function requireString(val, paramName) {
@@ -36513,7 +37246,7 @@ ${pad}}`;
         });
       }
     }
-    return createFormulaSheet(createTensor(shape, formulas), {
+    return createFormulaSheet(createShaped(shape, formulas), {
       ...runtime,
       id: imported.id,
       slotMetadata,
@@ -36554,7 +37287,7 @@ ${pad}}`;
     FORMULASHEET: {
       pure: false,
       impl: formulaSheetCapability,
-      doc: "Create a formula-backed sheet from a tensor or rectangular array of deferred RiX formulas"
+      doc: "Create a formula-backed sheet from a shaped or rectangular array of deferred RiX formulas"
     },
     RIXCELEXPORT: {
       pure: false,
@@ -45889,8 +46622,8 @@ complexVizNamespace._proto = {=
   // rix/plugins/linalg/linalg.js
   var LINALG_RESULT_SCHEMA = "rix.linalg.result@1";
   var VECTOR_SPACE_SCHEMA = "rix.linalg.vector-space@1";
-  var COORDINATES_SCHEMA = "rix.linalg.coordinates@1";
-  var COORDINATE_TENSOR_SCHEMA = "rix.linalg.coordinate-tensor@1";
+  var FRAME_SCHEMA = "rix.linalg.frame@1";
+  var TENSOR_SCHEMA = "rix.linalg.tensor@1";
   var int12 = (value) => new Integer(BigInt(value));
   var str6 = (value) => ({ type: "string", value: String(value) });
   var seq6 = (values3) => ({ type: "sequence", values: values3 });
@@ -45935,13 +46668,13 @@ complexVizNamespace._proto = {=
   }
   function flatTensorValues(value) {
     const values3 = [];
-    forEachTensorCell(value, (entry) => values3.push(entry));
+    forEachShapedCell2(value, (entry) => values3.push(entry));
     return values3;
   }
   function exactMatrix(value, label2 = "matrix") {
     let rows;
-    if (isTensor(value)) {
-      if (tensorRank(value) !== 2)
+    if (isShaped(value)) {
+      if (shapedRank(value) !== 2)
         throw new Error(`${label2} must be a rank-2 tensor`);
       const flat = flatTensorValues(value);
       rows = Array.from({ length: value.shape[0] }, (_, row) => flat.slice(row * value.shape[1], (row + 1) * value.shape[1]));
@@ -45959,8 +46692,8 @@ complexVizNamespace._proto = {=
   }
   function exactVector2(value, label2 = "vector") {
     let values3;
-    if (isTensor(value)) {
-      if (tensorRank(value) !== 1)
+    if (isShaped(value)) {
+      if (shapedRank(value) !== 1)
         throw new Error(`${label2} must be a rank-1 tensor`);
       values3 = flatTensorValues(value);
     } else {
@@ -45971,10 +46704,12 @@ complexVizNamespace._proto = {=
   function matrixTensor(rows) {
     if (rows.length === 0 || rows[0].length === 0)
       throw new Error("Matrix cannot be empty");
-    return createTensor([rows.length, rows[0].length], rows.flat());
+    const value = createShaped([rows.length, rows[0].length], rows.flat());
+    value._ext.set("__type", str6("Matrix"));
+    return value;
   }
   function vectorTensor(values3) {
-    return createTensor([values3.length], values3);
+    return createShaped([values3.length], values3);
   }
   function identityRows(size) {
     return Array.from({ length: size }, (_, row) => Array.from({ length: size }, (_2, column) => row === column ? one3() : zero3()));
@@ -46123,15 +46858,36 @@ complexVizNamespace._proto = {=
       throw new Error("linalg.Solve expects a matrix and right-hand side");
     return solveLinearValues(args[0], args[1]);
   }
-  function spaceValue(name, dimension, metadata3 = null) {
-    return Object.freeze({
+  var spaceIdentitySerial = 0;
+  var tensorIdentitySerial = 0;
+  var tensorRepresentationSerial = 0;
+  function scalarFieldName(value) {
+    const name = text8(value, value?.value ?? (value === null ? "Rational" : null));
+    if (!name || name.toLowerCase() !== "rational") {
+      throw new Error("Phase 1 VectorSpace currently requires over=:Rational");
+    }
+    return "Rational";
+  }
+  function spaceValue(name, dimension, over, metadata3 = null) {
+    const value = {
       type: "vector_space",
       schema: VECTOR_SPACE_SCHEMA,
+      identity: Object.freeze({ type: "vector_space_identity", serial: ++spaceIdentitySerial }),
       name,
       dimension,
+      over,
       metadata: metadata3,
-      _ext: new Map([["_type", str6("VectorSpace")], ["immutable", int12(1)], ["name", str6(name)], ["dimension", int12(dimension)], ["metadata", metadata3]])
-    });
+      definingFrame: null,
+      _ext: new Map([
+        ["_type", str6("VectorSpace")],
+        ["immutable", int12(1)],
+        ["name", str6(name)],
+        ["dimension", int12(dimension)],
+        ["over", str6(over)],
+        ["metadata", metadata3]
+      ])
+    };
+    return value;
   }
   function vectorSpace(args) {
     const entries4 = entriesFor2(args, ["name", "dimension", "options"], "linalg.VectorSpace");
@@ -46139,7 +46895,7 @@ complexVizNamespace._proto = {=
     const dimension = integer4(field(entries4, "dimension"), "Vector-space dimension");
     if (dimension < 1)
       throw new Error("Vector-space dimension must be positive");
-    return spaceValue(name, dimension, field(entries4, "metadata"));
+    return spaceValue(name, dimension, scalarFieldName(field(entries4, "over")), field(entries4, "metadata"));
   }
   function requireSpace(value) {
     if (value?.type !== "vector_space" || value.schema !== VECTOR_SPACE_SCHEMA) {
@@ -46147,45 +46903,74 @@ complexVizNamespace._proto = {=
     }
     return value;
   }
-  function requireCoordinates(value) {
-    if (value?.type !== "coordinate_system" || value.schema !== COORDINATES_SCHEMA) {
-      throw new Error("Expected linalg Coordinates");
+  function requireFrame(value) {
+    if (value?.type !== "frame" || value.schema !== FRAME_SCHEMA) {
+      if (value?.type === "vector_space")
+        throw new Error("Tensor components require a Frame, not a bare VectorSpace");
+      throw new Error("Expected a linalg Frame");
     }
     return value;
   }
-  function coordinates(args) {
-    const entries4 = entriesFor2(args, ["space", "name", "basis", "options"], "linalg.Coordinates");
+  function frame(args) {
+    const entries4 = args.length === 2 && args[1]?.type === "map" && args[1].entries instanceof Map ? new Map([["space", args[0]], ...args[1].entries]) : entriesFor2(args, ["space", "name", "basis", "options"], "linalg.Frame");
     const space = requireSpace(field(entries4, "space"));
-    const name = text8(field(entries4, "name"), "standard");
+    const name = text8(field(entries4, "name"), space.definingFrame ? "frame" : "defining");
     const basisValue = field(entries4, "basis");
-    const basis = basisValue === null ? identityRows(space.dimension) : exactMatrix(basisValue, "Coordinate basis");
-    if (basis.length !== space.dimension || basis[0].length !== space.dimension) {
-      throw new Error(`Coordinate basis must be ${space.dimension}x${space.dimension}`);
+    const defining = text8(basisValue) === "defining" || basisValue === null && space.definingFrame === null;
+    if (defining && space.definingFrame)
+      throw new Error("VectorSpace already has a defining Frame");
+    let relativeTo = field(entries4, "relativeTo");
+    let localBasis;
+    let absoluteBasis;
+    if (defining) {
+      relativeTo = null;
+      localBasis = identityRows(space.dimension);
+      absoluteBasis = localBasis;
+    } else {
+      relativeTo = requireFrame(relativeTo || space.definingFrame);
+      if (relativeTo.space !== space)
+        throw new Error("relativeTo Frame must belong to the same VectorSpace");
+      localBasis = exactMatrix(basisValue, "Frame basis");
+      if (localBasis.length !== space.dimension || localBasis[0].length !== space.dimension) {
+        throw new Error(`Frame basis must be ${space.dimension}x${space.dimension}`);
+      }
+      inverseRows(localBasis);
+      absoluteBasis = multiplyRows(exactMatrix(relativeTo.basis), localBasis);
     }
-    const inverse2 = inverseRows(basis);
-    return Object.freeze({
-      type: "coordinate_system",
-      schema: COORDINATES_SCHEMA,
+    const inverse2 = inverseRows(absoluteBasis);
+    const value = Object.freeze({
+      type: "frame",
+      schema: FRAME_SCHEMA,
       name,
       space,
-      basis: matrixTensor(basis),
+      relativeTo,
+      localBasis: matrixTensor(localBasis),
+      basis: matrixTensor(absoluteBasis),
       inverseBasis: matrixTensor(inverse2),
+      defining,
       metadata: field(entries4, "metadata"),
       _ext: new Map([
-        ["_type", str6("Coordinates")],
+        ["_type", str6("Frame")],
         ["immutable", int12(1)],
         ["name", str6(name)],
         ["space", space],
-        ["basis", matrixTensor(basis)],
-        ["inverseBasis", matrixTensor(inverse2)]
+        ["relativeTo", relativeTo],
+        ["basis", matrixTensor(absoluteBasis)],
+        ["inverseBasis", matrixTensor(inverse2)],
+        ["defining", defining ? int12(1) : null]
       ])
     });
+    if (defining) {
+      space.definingFrame = value;
+      space._ext.set("definingFrame", value);
+    }
+    return value;
   }
   function changeMatrixValues(sourceValue, targetValue) {
-    const source = requireCoordinates(sourceValue);
-    const target = requireCoordinates(targetValue);
+    const source = requireFrame(sourceValue);
+    const target = requireFrame(targetValue);
     if (source.space !== target.space)
-      throw new Error("Coordinate systems must belong to the same VectorSpace");
+      throw new Error("Frames must belong to the same VectorSpace");
     return multiplyRows(exactMatrix(target.inverseBasis), exactMatrix(source.basis));
   }
   function changeMatrix(args) {
@@ -46194,70 +46979,120 @@ complexVizNamespace._proto = {=
   function varianceName(value) {
     const name = text8(value, value?.value);
     if (["up", "contravariant"].includes(name))
-      return "up";
+      return false;
     if (["down", "covariant"].includes(name))
-      return "down";
+      return true;
     throw new Error("Tensor variance entries must be :up/:contravariant or :down/:covariant");
   }
-  function normalizeVariance(value, rankValue) {
-    const values3 = value === null || value === undefined ? Array.from({ length: rankValue }, () => "up") : sequence2(value, "Tensor variance").map(varianceName);
+  function normalizeDuals(value, rankValue) {
+    const values3 = value === null || value === undefined ? Array.from({ length: rankValue }, () => false) : sequence2(value, "Tensor variance").map(varianceName);
     if (values3.length !== rankValue)
       throw new Error(`Tensor variance must contain ${rankValue} entries`);
     return values3;
   }
-  var tensorIdentitySerial = 0;
-  function coordinateTensorMethods() {
+  function tensorTypeName(slots) {
+    if (slots.length === 1)
+      return slots[0].dual ? "Covector" : "Vector";
+    return "Tensor";
+  }
+  function tensorMethods(typeName) {
     return new Map([
-      ["_type", str6("CoordinateTensor")],
+      ["_type", str6(typeName)],
+      ["__type", str6(typeName)],
+      ["_mutable", int12(1)],
       ["COMPONENTS", { type: "method_builtin", name: "Components", impl: ([self]) => self.components }],
-      ["COORDINATES", { type: "method_builtin", name: "Coordinates", impl: ([self]) => self.coordinates }],
-      ["TRANSFORM", { type: "method_builtin", name: "Transform", impl: ([self, target]) => transformCoordinateTensor([self, target]) }],
-      ["TRANSFORM!", { type: "method_builtin", name: "Transform!", impl: ([self, target]) => transformCoordinateTensorBang([self, target]) }],
+      ["FRAME", { type: "method_builtin", name: "Frame", impl: ([self]) => self.slots.length === 1 ? self.slots[0].frame : null }],
+      ["FRAMES", { type: "method_builtin", name: "Frames", impl: ([self]) => seq6(self.slots.map((slot) => slot.frame)) }],
+      ["TRANSFORM", { type: "method_builtin", name: "Transform", impl: ([self, target], context) => transformTensor([self, target], { context }) }],
+      ["TRANSFORM!", { type: "method_builtin", name: "Transform!", impl: ([self, target], context) => transformTensorBang([self, target], { context }) }],
+      ["PAIR", { type: "method_builtin", name: "Pair", impl: ([self, other], context) => pair([self, other], { context }) }],
       ["SAMETENSOR", { type: "method_builtin", name: "SameTensor", impl: ([self, other]) => sameTensor([self, other]) }]
     ]);
   }
-  function syncCoordinateTensorExtension(value) {
+  function syncTensorExtension(value) {
     value._ext.set("components", value.components);
-    value._ext.set("coordinates", value.coordinates);
-    value._ext.set("variance", seq6(value.variance.map(str6)));
+    value._ext.set("slots", seq6(value.slots.map((slot) => ({
+      type: "map",
+      entries: new Map([["frame", slot.frame], ["dual", slot.dual ? int12(1) : null]])
+    }))));
+    value._ext.set("frame", value.slots.length === 1 ? value.slots[0].frame : null);
     value._ext.set("identity", value.identity);
+    value._ext.set("representationIdentity", value.representationIdentity);
+    value._ext.set("representationidentity", value.representationIdentity);
     value._ext.set("equivalentTo", value.equivalentTo);
     value._ext.set("equivalentto", value.equivalentTo);
     value._ext.set("origin", value.origin);
     value._ext.set("transform", value.transform);
+    value._ext.set("derivedFrom", seq6(value.derivedFrom));
+    value._ext.set("derivedfrom", seq6(value.derivedFrom));
     return value;
   }
-  function makeCoordinateTensor(components, coordinateSystem, variance, lineage = {}) {
-    return syncCoordinateTensorExtension({
-      type: "coordinate_tensor",
-      schema: COORDINATE_TENSOR_SCHEMA,
-      components,
-      coordinates: coordinateSystem,
-      variance,
-      identity: lineage.identity || Object.freeze({ type: "tensor_identity", serial: ++tensorIdentitySerial }),
-      equivalentTo: lineage.equivalentTo || null,
-      origin: lineage.origin || null,
-      transform: lineage.transform || null,
-      _ext: coordinateTensorMethods()
+  function validateComponents(components, slots) {
+    if (!isShaped(components))
+      throw new Error("Vector/Tensor components must be Shaped");
+    if (shapedRank(components) !== slots.length || slots.length < 1) {
+      throw new Error(`Tensor components rank ${shapedRank(components)} does not match ${slots.length} slots`);
+    }
+    slots.forEach((slot, axis) => {
+      requireFrame(slot.frame);
+      if (components.shape[axis] !== slot.frame.space.dimension) {
+        throw new Error(`Tensor axis ${axis + 1} has size ${components.shape[axis]} but Frame ${slot.frame.name} has dimension ${slot.frame.space.dimension}`);
+      }
     });
   }
-  function requireCoordinateTensor(value) {
-    if (value?.type !== "coordinate_tensor" || value.schema !== COORDINATE_TENSOR_SCHEMA) {
-      throw new Error("Expected a coordinate-aware tensor");
+  function recordRepresentation(identity, value, context) {
+    const configured = context?.getEnv?.("tensorLineageLimit", 30) ?? 30;
+    const limit = Math.max(1, integer4(configured, "tensorLineageLimit"));
+    if (!identity.origin)
+      identity.origin = value;
+    if (!identity.representations.includes(value))
+      identity.representations.push(value);
+    while (identity.representations.length > limit + 1) {
+      const evicted = identity.representations.splice(1, 1)[0];
+      if (evicted && evicted !== identity.origin)
+        evicted.equivalentTo = null;
+    }
+  }
+  function makeTensor(components, slots, lineage = {}, context = null) {
+    const normalizedSlots = slots.map((slot) => Object.freeze({ frame: requireFrame(slot.frame), dual: slot.dual === true }));
+    validateComponents(components, normalizedSlots);
+    const typeName = tensorTypeName(normalizedSlots);
+    const identity = lineage.identity || { type: "tensor_identity", serial: ++tensorIdentitySerial, origin: null, representations: [] };
+    const value = {
+      type: typeName.toLowerCase(),
+      schema: TENSOR_SCHEMA,
+      components,
+      slots: Object.freeze(normalizedSlots),
+      identity,
+      representationIdentity: Object.freeze({ type: "tensor_representation_identity", serial: ++tensorRepresentationSerial }),
+      equivalentTo: lineage.equivalentTo || null,
+      origin: lineage.origin || identity.origin || null,
+      transform: lineage.transform || null,
+      viewOf: lineage.viewOf || null,
+      derivedFrom: Object.freeze([...lineage.derivedFrom || []]),
+      _ext: tensorMethods(typeName)
+    };
+    if (!identity.origin) {
+      identity.origin = value;
+      value.origin = value;
+    } else if (!value.origin)
+      value.origin = identity.origin;
+    recordRepresentation(identity, value, context);
+    return syncTensorExtension(value);
+  }
+  function requireTensor(value) {
+    if (!["vector", "covector", "tensor"].includes(value?.type) || value.schema !== TENSOR_SCHEMA) {
+      throw new Error("Expected a coordinate-aware Vector, Covector, or Tensor");
     }
     return value;
   }
-  function coordinateTensor(args) {
-    const entries4 = entriesFor2(args, ["components", "coordinates", "variance", "options"], "linalg.CoordinateTensor");
+  function tensor(args, runtime = {}) {
+    const entries4 = entriesFor2(args, ["components", "frames", "variance", "options"], "linalg.Tensor");
     const components = field(entries4, "components");
-    if (!isTensor(components))
-      throw new Error("CoordinateTensor components must be a tensor");
-    const coordinateSystem = requireCoordinates(field(entries4, "coordinates"));
-    const rankValue = tensorRank(components);
-    if (rankValue < 1 || components.shape.some((size) => size !== coordinateSystem.space.dimension)) {
-      throw new Error("Every coordinate-tensor axis must match the VectorSpace dimension");
-    }
-    return makeCoordinateTensor(components, coordinateSystem, normalizeVariance(field(entries4, "variance"), rankValue));
+    const framesValue = field(entries4, "frames");
+    const frames = framesValue?.type === "frame" ? Array.from({ length: shapedRank(components) }, () => framesValue) : sequence2(framesValue, "Tensor frames").map(requireFrame);
+    const duals = normalizeDuals(field(entries4, "variance"), frames.length);
+    return makeTensor(components, frames.map((frameValue, index) => ({ frame: frameValue, dual: duals[index] })), {}, runtime.context);
   }
   function strides(shape) {
     return shape.map((_, axis) => shape.slice(axis + 1).reduce((product, size) => product * size, 1));
@@ -46271,9 +47106,9 @@ complexVizNamespace._proto = {=
     }
     return result;
   }
-  function transformAxis(tensor, axis, matrix) {
-    const shape = [...tensor.shape];
-    const input = flatTensorValues(tensor).map((value) => exactRational3(value));
+  function transformAxis(tensor2, axis, matrix) {
+    const shape = [...tensor2.shape];
+    const input = flatTensorValues(tensor2).map((value) => exactRational3(value));
     const output2 = new Array(input.length);
     const sourceStrides = strides(shape);
     for (let linear = 0;linear < output2.length; linear++) {
@@ -46287,67 +47122,200 @@ complexVizNamespace._proto = {=
       }
       output2[linear] = sum;
     }
-    return createTensor(shape, output2);
+    return createShaped(shape, output2);
   }
-  function transformedComponents(value, target) {
-    const change = changeMatrixValues(value.coordinates, target);
-    const covariantChange = inverseRows(transposeRows(change));
+  function targetFrames(value, targetValue) {
+    if (targetValue?.type === "frame")
+      return value.slots.map(() => requireFrame(targetValue));
+    const targets = sequence2(targetValue, "Transform target Frames").map(requireFrame);
+    if (targets.length !== value.slots.length) {
+      throw new Error(`Transform requires ${value.slots.length} target Frames`);
+    }
+    return targets;
+  }
+  function transformedComponents(value, targets) {
     let components = value.components;
-    value.variance.forEach((variance, axis) => {
-      components = transformAxis(components, axis, variance === "up" ? change : covariantChange);
+    const changes = [];
+    value.slots.forEach((slot, axis) => {
+      const target = targets[axis];
+      if (slot.frame.space !== target.space) {
+        throw new Error(`Target Frame ${target.name} does not belong to tensor slot ${axis + 1}'s VectorSpace`);
+      }
+      const change = changeMatrixValues(slot.frame, target);
+      const applied = slot.dual ? inverseRows(transposeRows(change)) : change;
+      components = transformAxis(components, axis, applied);
+      changes.push(matrixTensor(applied));
     });
-    return { components, change };
+    return { components, changes };
   }
-  function transformCoordinateTensor(args) {
-    const value = requireCoordinateTensor(args[0]);
-    const target = requireCoordinates(args[1]);
-    if (value.coordinates === target)
-      return makeCoordinateTensor(value.components, target, [...value.variance], {
-        identity: value.identity,
-        equivalentTo: value,
-        origin: value.origin || value,
-        transform: { kind: "coordinateChange", source: value.coordinates, target, matrix: matrixTensor(identityRows(target.space.dimension)) }
-      });
-    const transformed2 = transformedComponents(value, target);
-    return makeCoordinateTensor(transformed2.components, target, [...value.variance], {
+  function transformTensor(args, runtime = {}) {
+    const value = requireTensor(args[0]);
+    const targets = targetFrames(value, args[1]);
+    const transformed2 = transformedComponents(value, targets);
+    return makeTensor(transformed2.components, value.slots.map((slot, axis) => ({
+      frame: targets[axis],
+      dual: slot.dual
+    })), {
       identity: value.identity,
       equivalentTo: value,
-      origin: value.origin || value,
-      transform: { kind: "coordinateChange", source: value.coordinates, target, matrix: matrixTensor(transformed2.change) }
-    });
+      origin: value.identity.origin,
+      transform: {
+        kind: "coordinateChange",
+        sources: value.slots.map((slot) => slot.frame),
+        targets,
+        matrices: transformed2.changes
+      },
+      viewOf: value.viewOf
+    }, runtime.context);
   }
-  function snapshotCoordinateTensor(value) {
-    return makeCoordinateTensor(value.components, value.coordinates, [...value.variance], {
-      identity: value.identity,
-      equivalentTo: value.equivalentTo,
-      origin: value.origin,
-      transform: value.transform
-    });
+  function snapshotTensor(value) {
+    const snapshot = {
+      ...value,
+      slots: Object.freeze(value.slots.map((slot) => Object.freeze({ ...slot }))),
+      _ext: tensorMethods(tensorTypeName(value.slots))
+    };
+    return syncTensorExtension(snapshot);
   }
-  function transformCoordinateTensorBang(args) {
-    const value = requireCoordinateTensor(args[0]);
-    const target = requireCoordinates(args[1]);
-    const previous = snapshotCoordinateTensor(value);
-    const transformed2 = transformedComponents(value, target);
+  function transformTensorBang(args, runtime = {}) {
+    const value = requireTensor(args[0]);
+    const targets = targetFrames(value, args[1]);
+    const previous = snapshotTensor(value);
+    if (value.identity.origin === value) {
+      value.identity.origin = previous;
+      const originIndex = value.identity.representations.indexOf(value);
+      if (originIndex >= 0)
+        value.identity.representations[originIndex] = previous;
+    }
+    const transformed2 = transformedComponents(value, targets);
     value.components = transformed2.components;
-    value.coordinates = target;
+    value.representationIdentity = Object.freeze({ type: "tensor_representation_identity", serial: ++tensorRepresentationSerial });
+    value.slots = Object.freeze(value.slots.map((slot, axis) => Object.freeze({ frame: targets[axis], dual: slot.dual })));
     value.equivalentTo = previous;
-    value.origin = value.origin || previous;
-    value.transform = { kind: "coordinateChange", source: previous.coordinates, target, matrix: matrixTensor(transformed2.change) };
-    return syncCoordinateTensorExtension(value);
+    value.origin = value.identity.origin;
+    value.transform = {
+      kind: "coordinateChange",
+      sources: previous.slots.map((slot) => slot.frame),
+      targets,
+      matrices: transformed2.changes
+    };
+    recordRepresentation(value.identity, value, runtime.context);
+    return syncTensorExtension(value);
   }
   function components(args) {
-    return requireCoordinateTensor(args[0]).components;
+    return requireTensor(args[0]).components;
   }
   function sameTensor(args) {
-    return requireCoordinateTensor(args[0]).identity === requireCoordinateTensor(args[1]).identity ? int12(1) : null;
+    return requireTensor(args[0]).identity === requireTensor(args[1]).identity ? int12(1) : null;
   }
-  function vectorCoordinates(args) {
-    const coordinateSystem = requireCoordinates(args[1]);
-    const vector = exactVector2(args[0], "Vector components");
-    if (vector.length !== coordinateSystem.space.dimension)
-      throw new Error("Vector dimension does not match its coordinate system");
-    return makeCoordinateTensor(vectorTensor(vector), coordinateSystem, ["up"]);
+  function pair(args, runtime = {}) {
+    const first = requireTensor(args[0]);
+    const second = requireTensor(args[1]);
+    const covectorValue = first.type === "covector" ? first : second.type === "covector" ? second : null;
+    const vectorValue = first.type === "vector" ? first : second.type === "vector" ? second : null;
+    if (!covectorValue || !vectorValue || first.slots.length !== 1 || second.slots.length !== 1) {
+      throw new Error("Pair requires one Vector and one Covector");
+    }
+    if (covectorValue.slots[0].frame.space !== vectorValue.slots[0].frame.space) {
+      throw new Error("Vector and Covector must belong to the same VectorSpace");
+    }
+    const alignedVector = vectorValue.slots[0].frame === covectorValue.slots[0].frame ? vectorValue : transformTensor([vectorValue, covectorValue.slots[0].frame], runtime);
+    const covectorEntries = flatTensorValues(covectorValue.components).map(exactRational3);
+    const vectorEntries = flatTensorValues(alignedVector.components).map(exactRational3);
+    return covectorEntries.reduce((sum, entry, index) => sum.add(entry.multiply(vectorEntries[index])), zero3());
+  }
+  function vector(args, runtime = {}) {
+    const entries4 = entriesFor2(args, ["components", "frame", "options"], "linalg.Vector");
+    const frameValue = requireFrame(field(entries4, "frame"));
+    const values3 = exactVector2(field(entries4, "components"), "Vector components");
+    if (values3.length !== frameValue.space.dimension)
+      throw new Error("Vector dimension does not match its Frame");
+    return makeTensor(vectorTensor(values3), [{ frame: frameValue, dual: false }], {}, runtime.context);
+  }
+  function covector(args, runtime = {}) {
+    const entries4 = entriesFor2(args, ["components", "frame", "options"], "linalg.Covector");
+    const frameValue = requireFrame(field(entries4, "frame"));
+    const values3 = exactVector2(field(entries4, "components"), "Covector components");
+    if (values3.length !== frameValue.space.dimension)
+      throw new Error("Covector dimension does not match its Frame");
+    return makeTensor(vectorTensor(values3), [{ frame: frameValue, dual: true }], {}, runtime.context);
+  }
+  function typedShaped(componentsValue, header, resolvedSlots, context = null) {
+    const requested = String(header.typeName || "").toLowerCase();
+    if (!["vector", "covector", "tensor"].includes(requested)) {
+      throw new Error(`Compact slot annotation is only valid for Vector, Covector, or Tensor, not ${header.typeName}`);
+    }
+    if ((requested === "vector" || requested === "covector") && resolvedSlots.length !== 1) {
+      throw new Error(`${header.typeName} requires exactly one Frame annotation`);
+    }
+    const slots = resolvedSlots.map((slot) => ({
+      frame: requireFrame(slot.frame),
+      dual: requested === "covector" ? true : slot.dual === true
+    }));
+    if (requested === "vector" && slots[0].dual) {
+      return makeTensor(componentsValue, slots, {}, context);
+    }
+    if (requested === "tensor" && slots.length !== shapedRank(componentsValue)) {
+      throw new Error(`Tensor header declares ${slots.length} slots for rank-${shapedRank(componentsValue)} components`);
+    }
+    return makeTensor(componentsValue, slots, {}, context);
+  }
+  function compatibleSlots(left, right) {
+    return left.slots.length === right.slots.length && left.slots.every((slot, axis) => slot.frame.space === right.slots[axis]?.frame.space && slot.dual === right.slots[axis]?.dual);
+  }
+  function combineTensorValues(name, leftValue, rightValue, runtime = {}) {
+    const left = requireTensor(leftValue);
+    const right = requireTensor(rightValue);
+    if (!compatibleSlots(left, right))
+      throw new Error(`${name} requires tensors with the same ordered VectorSpace slots and variance`);
+    const aligned = left.slots.every((slot, axis) => slot.frame === right.slots[axis].frame) ? right : transformTensor([right, seq6(left.slots.map((slot) => slot.frame))], runtime);
+    const a = flatTensorValues(left.components).map(exactRational3);
+    const b = flatTensorValues(aligned.components).map(exactRational3);
+    const values3 = a.map((entry, index) => name === "ADD" ? entry.add(b[index]) : entry.subtract(b[index]));
+    return makeTensor(createShaped(left.components.shape, values3), left.slots, {
+      derivedFrom: [left, right]
+    }, runtime.context);
+  }
+  function scaleTensorValue(name, value, scalarValue, scalarFirst, runtime = {}) {
+    const tensorValue = requireTensor(value);
+    const scalar = exactRational3(scalarValue, "Tensor scalar");
+    const values3 = flatTensorValues(tensorValue.components).map((entry) => {
+      const exactEntry = exactRational3(entry);
+      if (name === "MUL")
+        return exactEntry.multiply(scalar);
+      return scalarFirst ? scalar.divide(exactEntry) : exactEntry.divide(scalar);
+    });
+    return makeTensor(createShaped(tensorValue.components.shape, values3), tensorValue.slots, {
+      derivedFrom: [tensorValue]
+    }, runtime.context);
+  }
+  function installTensorOperators(registry) {
+    if (!registry || registry.get("ADD")?.variants?.some((variant) => variant.name === "LinalgTensorAddition"))
+      return;
+    const isTensor = (value) => ["vector", "covector", "tensor"].includes(value?.type) && value.schema === TENSOR_SCHEMA;
+    registry.installVariant("ADD", {
+      name: "LinalgTensorAddition",
+      priority: 400,
+      prep: (args) => args.length === 2 && isTensor(args[0]) && isTensor(args[1]),
+      impl: ([left, right], context) => combineTensorValues("ADD", left, right, { context })
+    });
+    registry.installVariant("SUB", {
+      name: "LinalgTensorSubtraction",
+      priority: 400,
+      prep: (args) => args.length === 2 && isTensor(args[0]) && isTensor(args[1]),
+      impl: ([left, right], context) => combineTensorValues("SUB", left, right, { context })
+    });
+    registry.installVariant("MUL", {
+      name: "LinalgTensorScaling",
+      priority: 400,
+      prep: (args) => args.length === 2 && isTensor(args[0]) !== isTensor(args[1]),
+      impl: ([left, right], context) => isTensor(left) ? scaleTensorValue("MUL", left, right, false, { context }) : scaleTensorValue("MUL", right, left, true, { context })
+    });
+    registry.installVariant("DIV", {
+      name: "LinalgTensorDivision",
+      priority: 400,
+      prep: (args) => args.length === 2 && isTensor(args[0]) && !isTensor(args[1]),
+      impl: ([left, right], context) => scaleTensorValue("DIV", left, right, false, { context })
+    });
   }
   var helpers = new Map([
     ["Rref", rref],
@@ -46356,13 +47324,15 @@ complexVizNamespace._proto = {=
     ["Inverse", inverse],
     ["Solve", solveLinear],
     ["VectorSpace", vectorSpace],
-    ["Coordinates", coordinates],
-    ["CoordinateTensor", coordinateTensor],
-    ["Vector", vectorCoordinates],
+    ["Frame", frame],
+    ["Tensor", tensor],
+    ["Vector", vector],
+    ["Covector", covector],
     ["ChangeMatrix", changeMatrix],
-    ["Transform", transformCoordinateTensor],
-    ["Transform!", transformCoordinateTensorBang],
+    ["Transform", transformTensor],
+    ["Transform!", transformTensorBang],
     ["Components", components],
+    ["Pair", pair],
     ["SameTensor", sameTensor]
   ]);
 
@@ -46381,12 +47351,22 @@ complexVizNamespace._proto = {=
     }
     return { type: "map", entries: entries4, _ext: extension };
   }
-  function install9({ systemContext }) {
+  function install9({ systemContext, context, registry }) {
     const collection = createLinalgPluginCollection();
     systemContext.registerHostValue("linalg", collection, {
       doc: "Exact dense linear algebra and coordinate-aware tensors",
       groups: ["LinearAlgebra", "Exact"]
     });
+    context?.setEnv?.("__linalg_typed_shaped__", typedShaped);
+    installTensorOperators(registry);
+    for (const name of ["Rref", "Rank", "Determinant", "Inverse"]) {
+      const helper = helpers.get(name);
+      systemContext.registerMethod("Matrix", name, {
+        type: "method_builtin",
+        name,
+        impl: (args, evaluationContext, evaluate, invoke) => helper(args, { context: evaluationContext, evaluate, invoke })
+      }, { pluginId: "linalg", mount: "linalg" });
+    }
     return collection;
   }
 
@@ -46767,7 +47747,7 @@ complexVizNamespace._proto = {=
   }
   function tensorVectorValues(value) {
     const result = [];
-    forEachTensorCell(value, (entry) => result.push(entry));
+    forEachShapedCell2(value, (entry) => result.push(entry));
     return result;
   }
   function systemResult(spec2, roles, equations, linearResult) {
@@ -46868,8 +47848,8 @@ complexVizNamespace._proto = {=
       throw new Error("solve.System found no equations");
     const matrixRows = equations.map((equation) => outputs.map((name) => equation.coefficients.get(name) || zero5()));
     const bounds = equations.map((equation) => equation.constant.negate());
-    const matrixValue = createTensor([matrixRows.length, outputs.length], matrixRows.flat());
-    const vectorValue = createTensor([bounds.length], bounds);
+    const matrixValue = createShaped([matrixRows.length, outputs.length], matrixRows.flat());
+    const vectorValue = createShaped([bounds.length], bounds);
     return systemResult(spec2, roles, equations.length, solveLinearValues(matrixValue, vectorValue));
   }
   function solveLinear2(args) {
@@ -47599,9 +48579,9 @@ complexVizNamespace._proto = {=
   }
   function pathSource(node, path2) {
     if (!node.commands) {
-      const coordinates2 = node.points.map((entry, index) => point(entry, `Path point ${index + 1}`));
+      const coordinates = node.points.map((entry, index) => point(entry, `Path point ${index + 1}`));
       const suffix = boolValue(styleValue2(node.style, "closed", false)) ? " -- cycle" : "";
-      return coordinates2.map(([x, y], index) => `${index ? " -- " : ""}(${stableNumber(x)},${stableNumber(y)})`).join("") + suffix;
+      return coordinates.map(([x, y], index) => `${index ? " -- " : ""}(${stableNumber(x)},${stableNumber(y)})`).join("") + suffix;
     }
     const parts = [];
     let current = null;
@@ -48785,14 +49765,14 @@ ${lines.join(`
       }));
     }
     if (kind === "timeline") {
-      return value.frames.map((frame, index) => ({
-        content: frameContent(frame, `Timeline frame ${index + 1}`),
+      return value.frames.map((frame2, index) => ({
+        content: frameContent(frame2, `Timeline frame ${index + 1}`),
         duration: null
       }));
     }
     if (kind === "snapshots") {
-      return value.snapshots.map((frame, index) => ({
-        content: frameContent(frame, `Snapshot ${index + 1}`),
+      return value.snapshots.map((frame2, index) => ({
+        content: frameContent(frame2, `Snapshot ${index + 1}`),
         duration: null
       }));
     }
@@ -48809,7 +49789,7 @@ ${lines.join(`
     const durationOption = option4(options, "duration");
     const defaultSeconds = durationOption === null ? 1 : positiveSeconds(durationOption, "GIF duration");
     const timelineSeconds = outputKind2(value) === "timeline" && value.duration !== null ? positiveSeconds(value.duration, "Timeline duration") / frames.length : null;
-    return frames.map((frame, index) => centiseconds(frame.duration === null ? timelineSeconds ?? defaultSeconds : positiveSeconds(frame.duration, `Slide ${index + 1} duration`)));
+    return frames.map((frame2, index) => centiseconds(frame2.duration === null ? timelineSeconds ?? defaultSeconds : positiveSeconds(frame2.duration, `Slide ${index + 1} duration`)));
   }
   function createDefinition3(encodeGif = null) {
     return {
@@ -49035,16 +50015,16 @@ ${lines.join(`
         description: "Exact dense linear algebra and coordinate-aware tensor transformations.",
         kind: "host",
         mount: "linalg",
-        exports: ["Rref", "Rank", "Determinant", "Inverse", "Solve", "VectorSpace", "Coordinates", "CoordinateTensor", "Vector", "ChangeMatrix", "Transform", "Transform!", "Components", "SameTensor"],
+        exports: ["Rref", "Rank", "Determinant", "Inverse", "Solve", "VectorSpace", "Frame", "Tensor", "Vector", "Covector", "ChangeMatrix", "Transform", "Transform!", "Components", "Pair", "SameTensor"],
         groups: ["LinearAlgebra", "Exact"],
         permissions: [],
-        provides: ["rix.linear-algebra@1", "rix.coordinate-tensor@1"],
-        schemas: ["rix.linalg.result@1", "rix.linalg.vector-space@1", "rix.linalg.coordinates@1", "rix.linalg.coordinate-tensor@1"],
+        provides: ["rix.linear-algebra@1", "rix.tensor@1"],
+        schemas: ["rix.linalg.result@1", "rix.linalg.vector-space@1", "rix.linalg.frame@1", "rix.linalg.tensor@1"],
         snapshot: false,
         deterministic: true,
         defaultEnabled: false
       },
-      install: ({ systemContext }) => install9({ systemContext })
+      install: (api) => install9(api)
     },
     {
       metadata: {
@@ -49473,7 +50453,7 @@ ${lines.join(`
   }
   function checkPostfixType(value, spec2, context, registry, evaluateValue) {
     const name = String(spec2?.name || "").toLowerCase();
-    const structuralKinds = { array: "sequence", set: "set", map: "map", tuple: "tuple", tensor: "tensor" };
+    const structuralKinds = { array: "sequence", set: "set", map: "map", tuple: "tuple", shaped: "shaped" };
     const expectedType = spec2?.semantic ? null : structuralKinds[name];
     if (!expectedType) {
       if (!spec2?.semantic && name === "number") {
@@ -49494,10 +50474,10 @@ ${lines.join(`
     const shape = spec2?.shape;
     if (!shape)
       return;
-    if (name === "tensor") {
+    if (name === "shaped") {
       const actual = Array.from(value.shape || []);
       if (actual.length !== shape.length || actual.some((dimension, index) => dimension !== shape[index])) {
-        throw new Error(`##: check failed: expected tensor[${shape.join("x")}], received tensor[${actual.join("x")}]`);
+        throw new Error(`##: check failed: expected shaped[${shape.join("x")}], received shaped[${actual.join("x")}]`);
       }
       return;
     }
@@ -49642,6 +50622,32 @@ ${lines.join(`
       throw new Error(".Pair expects exactly a key and a value");
     return { type: "map_pair", key: args[0], value: args[1] };
   }
+  function createShapedSystemValue() {
+    return {
+      type: "system_namespace",
+      namespace: "shaped",
+      _ext: new Map([["GENERATE", {
+        type: "method_builtin",
+        name: "Generate",
+        impl(args, context, evaluate, invoke, execution = null) {
+          const shape = coerceShapeValue(args[1]);
+          const callable = args[2];
+          const empty = createShaped(shape);
+          const tuples = [];
+          forEachShapedCell2(empty, (_value, tuple) => tuples.push(tuple));
+          if (execution?.promiseAware === true) {
+            return tuples.reduce(async (pending, tuple) => {
+              const values3 = await pending;
+              values3.push(await invoke(callable, [shapedIndexTuple(tuple)]));
+              return values3;
+            }, Promise.resolve([])).then((values3) => createShaped(shape, values3));
+          }
+          const generated = tuples.map((tuple) => invoke(callable, [shapedIndexTuple(tuple)], context, evaluate));
+          return createShaped(shape, generated);
+        }
+      }]])
+    };
+  }
   function coreMapCapability(args, _context, evaluate) {
     return evaluate({ fn: "MAP_OBJ", args });
   }
@@ -49654,6 +50660,51 @@ ${lines.join(`
   var SOURCE_ENV_KEY = "__source__";
   var CUSTOM_OPERATOR_ENV_KEY2 = "__custom_operator_definitions__";
   var CURRENT_FILE_ENV_KEY = "__current_file__";
+  function createNumberConfigValue() {
+    const value = { type: "system_namespace", namespace: "number_config", _ext: new Map };
+    value._ext.set("NUMINPUT", {
+      type: "method_builtin",
+      name: "NumInput",
+      impl(args, context) {
+        return coreFunctions.NUM_INPUT.impl([args[1]], context);
+      }
+    });
+    value._ext.set("NUMDISPLAY", {
+      type: "method_builtin",
+      name: "NumDisplay",
+      impl(args, context) {
+        return coreFunctions.NUM_DISPLAY.impl([args[1]], context);
+      }
+    });
+    value._ext.set("NUMBER", {
+      type: "method_builtin",
+      name: "Number",
+      impl(args, context) {
+        const map4 = args[1]?.type === "map" ? args[1].entries : null;
+        if (!map4)
+          throw new Error(".Config.Number expects a map with input and/or display");
+        if (map4.has("input"))
+          coreFunctions.NUM_INPUT.impl([map4.get("input")], context);
+        if (map4.has("display"))
+          coreFunctions.NUM_DISPLAY.impl([map4.get("display")], context);
+        return args[1];
+      }
+    });
+    value._ext.set("CURRENT", {
+      type: "method_builtin",
+      name: "Current",
+      impl(_args, context) {
+        return {
+          type: "map",
+          entries: new Map([
+            ["input", { type: "string", value: context.getEnv("numInput", "z[10]") }],
+            ["display", { type: "string", value: context.getEnv("numDisplay", "..") }]
+          ])
+        };
+      }
+    });
+    return value;
+  }
   function createDefaultSystemContext(options = {}) {
     const frozen = options.frozen !== false;
     const ctx = new SystemContext(new Map, false);
@@ -49663,6 +50714,14 @@ ${lines.join(`
     ctx.registerValue("Units", units, { doc: "Canonical RiX unit collection" });
     ctx.registerValue("Exact", exact3, { doc: "Canonical RiX exact-generator collection" });
     ctx.registerValue("Complex", complex, { doc: "Exact complex-number operations" });
+    ctx.registerValue("Config", createNumberConfigValue(), {
+      doc: "Session-scoped RiX configuration, including numeric input and display",
+      groups: ["Core", "Numerics"]
+    });
+    ctx.registerValue("Shaped", createShapedSystemValue(), {
+      doc: "Shaped-storage constructors and explicit generation helpers",
+      groups: ["Core", "Collections", "Arrays"]
+    });
     const algebra = createAlgebraOutputCollection();
     ctx.registerValue("Algebra", algebra, { doc: "Algebra presentation helpers" });
     const graphics = createGraphicsOutputCollection();
@@ -50230,6 +51289,9 @@ ${lines.join(`
     }
   }
   function evaluate(irNode, context, registry, systemContext) {
+    if (context?.getEnv?.("__registry__", null) !== registry) {
+      context?.setEnv?.("__registry__", registry);
+    }
     if (irNode === null || irNode === undefined) {
       return null;
     }
@@ -50396,9 +51458,7 @@ ${lines.join(`
     "TUPLE",
     "SET",
     "MAP_OBJ",
-    "MATRIX",
-    "TENSOR",
-    "TENSOR_LITERAL"
+    "SHAPED_LITERAL"
   ]);
   var ASYNC_PIPE_FNS = new Set(["PMAP", "PFILTER", "PEXPECT", "PFOREACH", "PANY", "PALL"]);
   var ASYNC_RESOLVED_BARRIER_FNS = new Set(["PSLICE_STRICT", "PSLICE_CLAMP"]);
@@ -50906,18 +51966,6 @@ ${lines.join(`
     const name = coreString(await evaluateAsyncInternal(args[0], context, registry, systemContext, state), ".Define name");
     const params = await evaluateAsyncInternal(args[1], context, registry, systemContext, state);
     return await evaluateAsyncInternal({ fn: "FUNCDEF", args: [name, params, args[2]] }, context, registry, systemContext, state);
-  }
-  async function evaluateTensorGeneratorCapabilityAsync(args, context, registry, systemContext, state) {
-    const shape = coerceShapeValue(await evaluateAsyncInternal(args[0], context, registry, systemContext, state));
-    const callable = await evaluateAsyncInternal(args[1], context, registry, systemContext, state);
-    const tensor = createTensor(shape);
-    const tuples = [];
-    forEachTensorCell(tensor, (_value, tuple) => tuples.push(tuple));
-    const filled = [];
-    for (const tuple of tuples) {
-      filled.push(await invokeCallableAsync(callable, [tensorIndexTuple(tuple)], context, registry, systemContext, state));
-    }
-    return createTensor(shape, filled);
   }
   async function evaluateStopCapabilityAsync(args, context, registry, systemContext, state) {
     const label2 = await evaluateAsyncInternal(args[0], context, registry, systemContext, state);
@@ -51522,7 +52570,7 @@ ${lines.join(`
       } else {
         resolved.push(...await orderedAsyncMap(args.slice(start), state, resolveMapEntry));
       }
-    } else if (irNode.fn === "TENSOR_LITERAL") {
+    } else if (irNode.fn === "SHAPED_LITERAL") {
       const shapeIndex = hasHeader ? 1 : 0;
       resolved.push(args[shapeIndex]);
       const entries4 = args.slice(shapeIndex + 1);
@@ -51550,10 +52598,10 @@ ${lines.join(`
     return withReleasedAsyncAdmission(state, () => evaluateAsyncCollectionBody(irNode, context, registry, systemContext, state));
   }
   function collectionItems(collection) {
-    if (isTensor(collection)) {
+    if (isShaped(collection)) {
       const items = [];
-      forEachTensorCell(collection, (value, tuple) => {
-        items.push({ value, locator: tensorIndexTuple(tuple) });
+      forEachShapedCell2(collection, (value, tuple) => {
+        items.push({ value, locator: shapedIndexTuple(tuple) });
       });
       return items;
     }
@@ -51577,7 +52625,7 @@ ${lines.join(`
   function assembleAsyncPipeResult(collection, items, records, stages = []) {
     if (records.some((record) => record.unresolved === true))
       return UNDECIDED;
-    if (isTensor(collection)) {
+    if (isShaped(collection)) {
       const kept = records.filter((record) => record.keep);
       if (stages.some((stage) => stage.fn === "PFILTER")) {
         return {
@@ -51588,7 +52636,7 @@ ${lines.join(`
           }))
         };
       }
-      return createTensor(collection.shape, kept.map((record) => record.value));
+      return createShaped(collection.shape, kept.map((record) => record.value));
     }
     if (collection?.type === "map") {
       return { type: "map", entries: new Map(records.filter((r) => r.keep).map((r) => [items[r.index].key, r.value])) };
@@ -51744,7 +52792,7 @@ ${lines.join(`
       return false;
     if (expectedErrorArgs(source) !== null || source?.type === "tuple")
       return true;
-    if (isAsyncStream(source) || isLazySequence(source) || isTensor(source) || source?.type === "map")
+    if (isAsyncStream(source) || isLazySequence(source) || isShaped(source) || source?.type === "map")
       return false;
     return !Array.isArray(source?.values);
   }
@@ -51865,10 +52913,10 @@ ${lines.join(`
     return assembleAsyncPipeResult(collection, items, records, stages);
   }
   function asyncReductionItems(collection) {
-    if (isTensor(collection)) {
+    if (isShaped(collection)) {
       const items = [];
-      forEachTensorCell(collection, (value, tuple) => {
-        items.push({ value, locator: tensorIndexTuple(tuple) });
+      forEachShapedCell2(collection, (value, tuple) => {
+        items.push({ value, locator: shapedIndexTuple(tuple) });
       });
       return items;
     }
@@ -52278,7 +53326,7 @@ ${lines.join(`
     };
     if (fn === "DEFINEBASE") {
       await resolve(args[1]);
-    } else if (fn === "TOBASE") {
+    } else if (fn === "TOBASE" || fn === "TOBASE_EXACT") {
       await resolve(args[0]);
       await resolve(args[1]);
       await resolve(args[2]);
@@ -52315,8 +53363,8 @@ ${lines.join(`
   }
   function startDetachedBlock(args, context, registry, systemContext, parentState) {
     const runtime = context.getEnv(SCRIPT_RUNTIME_ENV_KEY, null);
-    const frame = runtime?.frameStack?.[runtime.frameStack.length - 1] ?? null;
-    if (frame && !frame.permissions.has("BACKGROUND")) {
+    const frame2 = runtime?.frameStack?.[runtime.frameStack.length - 1] ?? null;
+    if (frame2 && !frame2.permissions.has("BACKGROUND")) {
       throw new Error("Background tasks are not allowed in this script context");
     }
     if (context.getEnv(REACTIVE_ACTIVE_GRAPH_ENV, null)) {
@@ -52542,6 +53590,9 @@ ${lines.join(`
     }
   }
   async function evaluateAsyncInternal(irNode, context, registry, systemContext, state = null) {
+    if (context?.getEnv?.("__registry__", null) !== registry) {
+      context?.setEnv?.("__registry__", registry);
+    }
     if (irNode === null || irNode === undefined)
       return null;
     if (typeof irNode !== "object" || Array.isArray(irNode) || !irNode.fn)
@@ -52681,9 +53732,6 @@ ${lines.join(`
         }
         if (capability2.lazy && capability2.impl === defineCapability) {
           return await evaluateDefineCapabilityAsync(callArgNodes, context, registry, systemContext, state);
-        }
-        if (capability2.lazy && capability2.impl === stdlibFunctions.TGEN.impl) {
-          return await evaluateTensorGeneratorCapabilityAsync(callArgNodes, context, registry, systemContext, state);
         }
         if (capability2.lazy && (capability2.impl === diagnosticFunctions.DUMP.impl || capability2.impl === diagnosticFunctions.INFOVALUE.impl)) {
           return await evaluateConcreteLazyCapabilityAsync(capability2, callArgNodes, context, registry, systemContext, state);
@@ -52901,7 +53949,7 @@ ${lines.join(`
         if ((fn === "TEMPLATE_TEXT" || fn === "DOCUMENT_TEMPLATE") && definition11.impl === outputFunctions[fn]?.impl) {
           return await evaluateOutputTemplateAsync(definition11, args, context, registry, systemContext, state);
         }
-        if (["DEFINEBASE", "TOBASE", "CERTIFY_FORMAT", "FROMBASE"].includes(fn) && definition11.impl === coreFunctions[fn]?.impl) {
+        if (["DEFINEBASE", "TOBASE", "TOBASE_EXACT", "CERTIFY_FORMAT", "FROMBASE"].includes(fn) && definition11.impl === coreFunctions[fn]?.impl) {
           return await evaluateBaseLazyAsync(fn, definition11, args, context, registry, systemContext, state);
         }
         const result = await definition11.impl(args, context, (node) => evaluate(node, context, registry, systemContext), systemContext);
@@ -52926,6 +53974,12 @@ ${lines.join(`
     const registry = options.registry || createDefaultRegistry();
     const systemContext = options.systemContext || createDefaultSystemContext();
     context.setEnv("__system_context__", systemContext);
+    if (options.numberConfig?.input !== undefined) {
+      coreFunctions.NUM_INPUT.impl([{ type: "string", value: String(options.numberConfig.input) }], context);
+    }
+    if (options.numberConfig?.display !== undefined) {
+      coreFunctions.NUM_DISPLAY.impl([{ type: "string", value: String(options.numberConfig.display) }], context);
+    }
     const systemLookup = createSystemLookup(systemContext, options.systemLookup || defaultSystemLookup);
     const runtime = getScriptRuntime(context, { systemLookup });
     runtime.operatorDefinitions = mergeOperatorDefinitions(context.getEnv(CUSTOM_OPERATOR_ENV_KEY2, new Map), options.operatorDefinitions);
@@ -53000,6 +54054,12 @@ ${lines.join(`
     const registry = options.registry || createDefaultRegistry();
     const systemContext = options.systemContext || createDefaultSystemContext();
     context.setEnv("__system_context__", systemContext);
+    if (options.numberConfig?.input !== undefined) {
+      coreFunctions.NUM_INPUT.impl([{ type: "string", value: String(options.numberConfig.input) }], context);
+    }
+    if (options.numberConfig?.display !== undefined) {
+      coreFunctions.NUM_DISPLAY.impl([{ type: "string", value: String(options.numberConfig.display) }], context);
+    }
     const systemLookup = createSystemLookup(systemContext, options.systemLookup || defaultSystemLookup);
     const runtime = getScriptRuntime(context, { systemLookup });
     runtime.operatorDefinitions = mergeOperatorDefinitions(context.getEnv(CUSTOM_OPERATOR_ENV_KEY2, new Map), options.operatorDefinitions);
@@ -53155,7 +54215,7 @@ ${lines.join(`
     "ratfun",
     "rationalFunction"
   ]);
-  var KNOWN_MUTABLE_NODE_TYPES = new Set(["Array", "ArrayContainer", "MapContainer", "SetContainer", "TensorContainer"]);
+  var KNOWN_MUTABLE_NODE_TYPES = new Set(["Array", "ArrayContainer", "MapContainer", "SetContainer", "ShapedContainer"]);
   var KNOWN_PURE_COLLECTION_METHODS = new Set([
     "ADD",
     "APPEND",
@@ -55423,7 +56483,7 @@ ${lines.join(`
     "{?": "Case/conditional container",
     "{;": "Lexical code block and capture boundary",
     "{|": "Set container",
-    "{:": "Tuple or tensor container",
+    "{:": "Tuple or shaped container",
     "{@": "Loop container",
     "{!": "Mutation container",
     "{#": "Symbolic constraint container",

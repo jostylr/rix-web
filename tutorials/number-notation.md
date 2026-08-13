@@ -231,6 +231,111 @@ binary := q _> (0b, ".");
 ];
 ```
 
+## Session input and display settings
+
+The compact `*>` directive selects one or more presentation views. Commas mean
+“show all of these,” not “choose one”:
+
+```rix edu
+*> ".[12],b,..";
+7/4;
+```
+
+That displays a decimal with at most twelve fractional places, binary, and a
+mixed fraction. The exact Rational underneath those views is still `7/4`.
+
+`<*` selects the base of strict `#` input. Ordinary literals stay decimal, so a
+script can be explicit about which notation it is using and can change that
+notation midway through:
+
+```rix edu
+<* "b";
+five := #101;
+decimal_one_hundred_one := 101;
+<* "x";
+hexadecimal := #face;
+{: five, decimal_one_hundred_one, hexadecimal };
+```
+
+The long equivalents are `.Config.NumInput("b")` and
+`.Config.NumDisplay(".[12],b,..")`. `.Config.Number` accepts both in a map.
+RatCalc's **Numbers** panel controls the same session values and can optionally
+remember them in this browser.
+
+## Strict `#` forms and exact reinsertion
+
+The tokenizer treats each strict numeral as one unit. A repeat marker is an
+internal second `#`; a mixed fraction marks all three components:
+
+```rix edu
+<* "b";
+values := [
+    #101,
+    #101.1#10,
+    #101..#11/#1110,
+    #101 / #10
+];
+values;
+```
+
+Space or an operator ends an ordinary strict literal. A dot remains part of the
+literal, which makes a possibly ambiguous method spelling fail. Write
+`(#101).ToString()`, not `#101.ToString()`.
+
+Presentation is not serialization. `_>!` asks for lossless, parseable RiX
+source and fails when that guarantee cannot be met:
+
+```rix edu
+source := (7/4) _>! 0b;
+recreated := @@source;
+{: source, recreated };
+```
+
+RatCalc follows the same rule when you click an output to put it back into the
+input: a displayed `0.142…` injects the exact `1/7`.
+
+## Generalized positional systems
+
+Custom definitions use `{: radix, digits, offset }`. The offset is the value
+of the first digit, so the same codec covers balanced, negative-radix, and
+bijective writing systems:
+
+```rix edu
+0T = {: 3, "T01", -1 };
+0N = {: -2, "01", 0 };
+0K = {: 26, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", 1 };
+
+<* "T";
+balanced := #1T;
+<* "N";
+negabinary := #1111;
+<* "K";
+bijective := #AA;
+
+{: balanced, negabinary, bijective, (5/2) _> (0T, "/") };
+```
+
+The values are `2`, `-5`, and `27`; the last item is a balanced-ternary
+fraction string. Generalized systems support integer components, fractions,
+and mixed fractions. Conventional radix points and repeating-place expansions
+are intentionally rejected for these systems until a system-specific
+fractional-place rule is supplied.
+
+Operator characters can be digits too, but their input must be quoted so the
+token boundary is unambiguous:
+
+```rix edu
+0P = {: 2, "0+", 0 };
+<* "P";
+value := #`++`;
+source := (3/2) _>! 0P;
+{: value, source, @@source };
+```
+
+Here `#` selects the active `P` system and the backticks make `++` one digit
+stream, whose value is three. Exact output adds quoted `0P` prefixes to both
+fraction components, so evaluating `source` recreates `3/2`.
+
 ## Limits: display truncation versus certification
 
 A limit appended to radix or shifted mode, such as `.12` or `^12`, may end in
