@@ -117,31 +117,35 @@ $$items := [1];
 nextItems := items.Push(2);
 $items := nextItems;
 {: $derived, $items };</textarea><div class="tutorial-output" data-tutorial-output aria-live="polite"></div></section>
-<h2>Translation syntax: RX1701, RX1702, RX1704, RX1705, and RX1706</h2>
-<p>Lowercase <code>f(2)</code> is implicit multiplication, collections are one-based, braces create scope, and a bare uppercase callable can mean the function value rather than a call. Dense nested ternaries are valid but difficult to audit.</p>
+<h2>Translation syntax: RX1701, RX1702, and RX1704 through RX1707</h2>
+<p>Lowercase <code>f(2)</code> is implicit multiplication, collections are one-based, braces create scope, and a bare uppercase callable can mean the function value rather than a call. Dense nested ternaries are valid but difficult to audit. Active base fractions must not accidentally mix <code>#</code> input with ordinary decimal input.</p>
 <p>Problem:</p>
-<section class="tutorial-cell tutorial-lint-cell"><header><span>Live RiX lint</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run cell</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="12" spellcheck="false">## lint-problem
+<section class="tutorial-cell tutorial-lint-cell"><header><span>Live RiX lint</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run cell</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="14" spellcheck="false">## lint-problem
 f = x -&gt; x + 1;
 values = [10];
 x = 2;
 F(value) -&gt; value + 1;
+&lt;* &quot;b&quot;;
 [
     f(2),
     values[0],
     1 ?: 2 ?_ 1 ?: 3 ?_ 1 ?: 4 ?_ 5,
     {; @x + 1; },
-    F
+    F,
+    #101/11
 ];</textarea><div class="tutorial-output" data-tutorial-output aria-live="polite"></div></section>
 <p>Correction:</p>
-<section class="tutorial-cell tutorial-lint-cell"><header><span>Live RiX lint</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run cell</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">F(value) -&gt; value + 1;
+<section class="tutorial-cell tutorial-lint-cell"><header><span>Live RiX lint</span><div class="tutorial-cell-actions"><button class="tutorial-lint-button" type="button" data-tutorial-lint data-lint-profile="all" data-lint-level="pedantic">Lint cell</button><button type="button" data-tutorial-run>Run cell</button></div></header><textarea class="tutorial-source" data-tutorial-source rows="12" spellcheck="false">F(value) -&gt; value + 1;
 values = [10];
 x = 2;
+&lt;* &quot;b&quot;;
 [
     F(2),
     values[1],
     {? x == 1 ? 2; x == 2 ? 3; 5 },
     x + 1,
-    F(3)
+    F(3),
+    #101/#11
 ];</textarea><div class="tutorial-output" data-tutorial-output aria-live="polite"></div></section>
 <h2>Mathematical intent: RX1801 through RX1806</h2>
 <p>Exact division, structural fractions, approximate conversion, zero divisors, polynomial division, and refinement budgets each carry different contracts.</p>

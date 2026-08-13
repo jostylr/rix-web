@@ -1,10 +1,10 @@
 import {
   createRixRepl,
   findHelp
-} from "./chunk-nf7qt9nd.js";
+} from "./chunk-d96dpqrm.js";
 import {
   mountOutputWidgets
-} from "./chunk-qn5vyjst.js";
+} from "./chunk-p9ndrh6j.js";
 
 // src/main.js
 var repl = createRixRepl();

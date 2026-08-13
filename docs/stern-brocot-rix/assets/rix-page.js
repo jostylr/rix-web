@@ -652,8 +652,49 @@
     if (input[position] !== "#" || input[position + 1] === "#")
       return null;
     const remaining = input.slice(position);
+    const consumeMethodLikeSuffix = (spelling) => {
+      const suffix = remaining.slice(spelling.length).match(/^\.[\p{L}\p{N}_@&]+/u)?.[0] || "";
+      return spelling + suffix;
+    };
+    const quotedComponent = "#`(?:[^`\\\\]|\\\\.)+`";
+    const quotedMixed = new RegExp(`^(${quotedComponent})\\.\\.(${quotedComponent})\\/(${quotedComponent})`, "u");
+    const quotedContinued = new RegExp(`^(${quotedComponent})\\.~(${quotedComponent}(?:~${quotedComponent})*)`, "u");
+    const composite = remaining.match(quotedMixed) || remaining.match(quotedContinued);
+    if (composite) {
+      const original2 = consumeMethodLikeSuffix(composite[0]);
+      if (original2 !== composite[0]) {
+        return {
+          type: "ActiveBaseNumber",
+          original: original2,
+          value: original2,
+          quoted: false,
+          pos: [position, position, position + original2.length]
+        };
+      }
+      const components = [...composite[0].matchAll(/#`((?:[^`\\]|\\.)+)`/gu)].map((part) => part[1].replace(/\\`/g, "`").replace(/\\\\/g, "\\"));
+      return {
+        type: "ActiveBaseNumber",
+        original: composite[0],
+        value: {
+          form: composite[0].includes("..") ? "mixed" : "continued",
+          components
+        },
+        quoted: true,
+        pos: [position, position, position + composite[0].length]
+      };
+    }
     const quoted = remaining.match(/^#`((?:[^`\\]|\\.)+)`/u);
     if (quoted) {
+      const original2 = consumeMethodLikeSuffix(quoted[0]);
+      if (original2 !== quoted[0]) {
+        return {
+          type: "ActiveBaseNumber",
+          original: original2,
+          value: original2,
+          quoted: false,
+          pos: [position, position, position + original2.length]
+        };
+      }
       return {
         type: "ActiveBaseNumber",
         original: quoted[0],
@@ -666,17 +707,20 @@
     const digits = `${digit}+`;
     const active = `#${digits}`;
     const component = `${digits}(?:\\.${digit}*)?(?:#${digits})?`;
-    const mixed = new RegExp(`^#${digits}\\.\\.${active}\\/${active}`, "u");
+    const mixed = new RegExp(`^#${digits}\\.\\.#?${digits}\\/#?${digits}`, "u");
+    const explicitContinued = new RegExp(`^#~-?${digits}\\.~#?${digits}(?:~#?${digits})*`, "u");
+    const continued = new RegExp(`^#${digits}\\.~#?${digits}(?:~#?${digits})*`, "u");
     const ordinary = new RegExp(`^#${component}`, "u");
-    const match = remaining.match(mixed) || remaining.match(ordinary);
+    const match = remaining.match(mixed) || remaining.match(explicitContinued) || remaining.match(continued) || remaining.match(ordinary);
     if (!match)
       return null;
+    const original = consumeMethodLikeSuffix(match[0]);
     return {
       type: "ActiveBaseNumber",
-      original: match[0],
-      value: match[0],
+      original,
+      value: original,
       quoted: false,
-      pos: [position, position, position + match[0].length]
+      pos: [position, position, position + original.length]
     };
   }
   function scanNumberLiteral(input, position = 0) {
@@ -31732,7 +31776,19 @@ ${indented.join(`,
   function activeBaseBody(raw, quoted) {
     if (quoted)
       return raw;
-    return raw.replace(/^#/, "").replace(/\.\.#/g, "..").replace(/\/#/g, "/");
+    return raw.replace(/^#/, "").replace(/\.\.#/g, "..").replace(/\/#/g, "/").replace(/\.~#/g, ".~").replace(/~#/g, "~");
+  }
+  function parseQuotedActiveComposite(spec2, baseSystem) {
+    const terms = spec2.components.map((component) => parseBaseInteger(component, baseSystem, false));
+    if (spec2.form === "continued")
+      return continuedFractionFromTerms(terms);
+    if (spec2.form !== "mixed" || terms.length !== 3)
+      throw new Error("Invalid quoted active-base composite");
+    const [whole, numerator, denominator] = terms;
+    if (denominator === 0n)
+      throw new Error("Denominator cannot be zero");
+    const fraction = new Rational(whole < 0n ? -numerator : numerator, denominator);
+    return new Rational(whole, 1n).add(fraction);
   }
   function validateNumberDisplayProfile(profile) {
     const entries2 = profile.split(",").map((entry) => entry.replace(/\s+/g, "")).filter(Boolean);
@@ -32786,10 +32842,14 @@ ${indented.join(`,
     },
     ACTIVE_BASE_LITERAL: {
       impl(args, context) {
-        const raw = String(args[0] ?? "");
+        const rawValue = args[0];
+        const raw = typeof rawValue === "string" ? rawValue : "";
         const quoted = args[1] === true;
         const baseSystem = context.getEnv("numInputBase", BaseSystem.DECIMAL);
         try {
+          if (rawValue && typeof rawValue === "object") {
+            return parseQuotedActiveComposite(rawValue, baseSystem);
+          }
           if (quoted)
             return new Integer(parseBaseInteger(raw, baseSystem, false));
           return fromBaseString(activeBaseBody(raw, quoted), baseSystem);
@@ -54183,6 +54243,7 @@ ${lines.join(`
     RX1704: { level: 3, profiles: ["style"], title: "Dense nested conditional" },
     RX1705: { level: 3, profiles: ["teaching", "style"], title: "Block introduces capture boundary" },
     RX1706: { level: 4, profiles: ["teaching", "style"], title: "Function value reference" },
+    RX1707: { level: 2, profiles: ["syntax", "teaching"], title: "Mixed numeric notation systems" },
     RX1801: { level: 2, profiles: ["math", "teaching"], title: "Exact division versus truncation" },
     RX1802: { level: 3, profiles: ["math", "teaching"], title: "Fraction equality policy" },
     RX1803: { level: 3, profiles: ["math"], title: "Exactness discarded" },

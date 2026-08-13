@@ -133,16 +133,19 @@ hexadecimal := #face;
 {: five, decimal_one_hundred_one, hexadecimal };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The long equivalents are <code>.Config.NumInput(&quot;b&quot;)</code> and <code>.Config.NumDisplay(&quot;.[12],b,..&quot;)</code>. <code>.Config.Number</code> accepts both in a map. RatCalc&#039;s <strong>Numbers</strong> panel controls the same session values and can optionally remember them in this browser.</p>
 <h2>Strict <code>#</code> forms and exact reinsertion</h2>
-<p>The tokenizer treats each strict numeral as one unit. A repeat marker is an internal second <code>#</code>; a mixed fraction marks all three components:</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="8" spellcheck="false">&lt;* &quot;b&quot;;
+<p>The tokenizer treats each strict numeral as one unit. A repeat marker is an internal second <code>#</code>; mixed and continued-fraction modes propagate the initial base marker through their components:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">&lt;* &quot;b&quot;;
 values := [
     #101,
     #101.1#10,
-    #101..#11/#1110,
+    #101..11/1100,
+    #101.~11~10,
+    #~-1.~10,
     #101 / #10
 ];
 values;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Space or an operator ends an ordinary strict literal. A dot remains part of the literal, which makes a possibly ambiguous method spelling fail. Write <code>(#101).ToString()</code>, not <code>#101.ToString()</code>.</p>
+<p>The last fraction is an ordinary division expression, so each operand needs its own <code>#</code>; <code>#101/10</code> intentionally mixes active-base and decimal operands and receives a lint warning. The same warning catches redundant or partial inner markers such as <code>#101..#11/1110</code>.</p>
 <p>Presentation is not serialization. <code>_&gt;!</code> asks for lossless, parseable RiX source and fails when that guarantee cannot be met:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">source := (7/4) _&gt;! 0b;
 recreated := @@source;
@@ -164,12 +167,14 @@ bijective := #AA;
 {: balanced, negabinary, bijective, (5/2) _&gt; (0T, &quot;/&quot;) };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The values are <code>2</code>, <code>-5</code>, and <code>27</code>; the last item is a balanced-ternary fraction string. Generalized systems support integer components, fractions, and mixed fractions. Conventional radix points and repeating-place expansions are intentionally rejected for these systems until a system-specific fractional-place rule is supplied.</p>
 <p>Operator characters can be digits too, but their input must be quoted so the token boundary is unambiguous:</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">0P = {: 2, &quot;0+&quot;, 0 };
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">0P = {: 2, &quot;0+&quot;, 0 };
 &lt;* &quot;P&quot;;
 value := #`++`;
+mixed := #`++`..#`+`/#`+0`;
+continued := #`++`.~#`+0`;
 source := (3/2) _&gt;! 0P;
-{: value, source, @@source };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>Here <code>#</code> selects the active <code>P</code> system and the backticks make <code>++</code> one digit stream, whose value is three. Exact output adds quoted <code>0P</code> prefixes to both fraction components, so evaluating <code>source</code> recreates <code>3/2</code>.</p>
+{: value, mixed, continued, source, @@source };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Here <code>#</code> selects the active <code>P</code> system and the backticks make <code>++</code> one digit stream, whose value is three. Each mixed-number or continued-fraction component is isolated because punctuation digits could otherwise hide the structural separators. Exact output adds quoted <code>0P</code> prefixes to both fraction components, so evaluating <code>source</code> recreates <code>3/2</code>.</p>
 <h2>Limits: display truncation versus certification</h2>
 <p>A limit appended to radix or shifted mode, such as <code>.12</code> or <code>^12</code>, may end in <code>...</code>. That is deliberately display-only and does not describe a new numeric value. Ask for a certified approximation when the limited result must remain parseable and safe for arithmetic:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">[

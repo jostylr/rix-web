@@ -215,11 +215,13 @@ $items := nextItems;
 {: $derived, $items };
 ```
 
-## Translation syntax: RX1701, RX1702, RX1704, RX1705, and RX1706
+## Translation syntax: RX1701, RX1702, and RX1704 through RX1707
 
 Lowercase `f(2)` is implicit multiplication, collections are one-based, braces
 create scope, and a bare uppercase callable can mean the function value rather
-than a call. Dense nested ternaries are valid but difficult to audit.
+than a call. Dense nested ternaries are valid but difficult to audit. Active
+base fractions must not accidentally mix `#` input with ordinary decimal
+input.
 
 Problem:
 
@@ -229,12 +231,14 @@ f = x -> x + 1;
 values = [10];
 x = 2;
 F(value) -> value + 1;
+<* "b";
 [
     f(2),
     values[0],
     1 ?: 2 ?_ 1 ?: 3 ?_ 1 ?: 4 ?_ 5,
     {; @x + 1; },
-    F
+    F,
+    #101/11
 ];
 ```
 
@@ -244,12 +248,14 @@ Correction:
 F(value) -> value + 1;
 values = [10];
 x = 2;
+<* "b";
 [
     F(2),
     values[1],
     {? x == 1 ? 2; x == 2 ? 3; 5 },
     x + 1,
-    F(3)
+    F(3),
+    #101/#11
 ];
 ```
 

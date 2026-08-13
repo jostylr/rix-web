@@ -265,14 +265,17 @@ remember them in this browser.
 ## Strict `#` forms and exact reinsertion
 
 The tokenizer treats each strict numeral as one unit. A repeat marker is an
-internal second `#`; a mixed fraction marks all three components:
+internal second `#`; mixed and continued-fraction modes propagate the initial
+base marker through their components:
 
 ```rix edu
 <* "b";
 values := [
     #101,
     #101.1#10,
-    #101..#11/#1110,
+    #101..11/1100,
+    #101.~11~10,
+    #~-1.~10,
     #101 / #10
 ];
 values;
@@ -281,6 +284,11 @@ values;
 Space or an operator ends an ordinary strict literal. A dot remains part of the
 literal, which makes a possibly ambiguous method spelling fail. Write
 `(#101).ToString()`, not `#101.ToString()`.
+
+The last fraction is an ordinary division expression, so each operand needs
+its own `#`; `#101/10` intentionally mixes active-base and decimal operands and
+receives a lint warning. The same warning catches redundant or partial inner
+markers such as `#101..#11/1110`.
 
 Presentation is not serialization. `_>!` asks for lossless, parseable RiX
 source and fails when that guarantee cannot be met:
@@ -328,13 +336,17 @@ token boundary is unambiguous:
 0P = {: 2, "0+", 0 };
 <* "P";
 value := #`++`;
+mixed := #`++`..#`+`/#`+0`;
+continued := #`++`.~#`+0`;
 source := (3/2) _>! 0P;
-{: value, source, @@source };
+{: value, mixed, continued, source, @@source };
 ```
 
 Here `#` selects the active `P` system and the backticks make `++` one digit
-stream, whose value is three. Exact output adds quoted `0P` prefixes to both
-fraction components, so evaluating `source` recreates `3/2`.
+stream, whose value is three. Each mixed-number or continued-fraction
+component is isolated because punctuation digits could otherwise hide the
+structural separators. Exact output adds quoted `0P` prefixes to both fraction
+components, so evaluating `source` recreates `3/2`.
 
 ## Limits: display truncation versus certification
 
