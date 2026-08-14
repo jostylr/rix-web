@@ -34,6 +34,23 @@
             </div>
             <p id="completion-hint" class="completion-hint" role="status" hidden></p>
             <p id="script-note" class="script-note" hidden>Script mode: Enter adds a line; ↑ and ↓ move through the text; Ctrl/⌘ + Enter runs the script; Shift+↓ returns to command mode.</p>
+            <div id="mobile-keypad" class="mobile-keypad" aria-label="Math keypad">
+              <div class="mobile-key-grid">
+                <button type="button" data-insert="7">7</button><button type="button" data-insert="8">8</button><button type="button" data-insert="9">9</button><button type="button" data-insert="(">(</button><button type="button" data-insert=")">)</button>
+                <button type="button" data-insert="4">4</button><button type="button" data-insert="5">5</button><button type="button" data-insert="6">6</button><button type="button" data-insert=" * ">×</button><button type="button" data-insert=" / ">÷</button>
+                <button type="button" data-insert="1">1</button><button type="button" data-insert="2">2</button><button type="button" data-insert="3">3</button><button type="button" data-insert=" + ">+</button><button type="button" data-insert=" - ">−</button>
+                <button type="button" data-insert="0">0</button><button type="button" data-insert=".">.</button><button type="button" data-insert=":">:</button><button type="button" data-insert="/">/</button><button type="button" data-insert="^">^</button>
+                <button type="button" data-mobile-action="backspace" aria-label="Backspace">⌫</button><button type="button" data-mobile-action="clear-input">CLR</button><button type="button" data-insert=",">,</button><button type="button" data-mobile-action="commands">Commands</button><button type="button" class="mobile-run" data-action="run">Run</button>
+              </div>
+              <div id="mobile-command-panel" class="mobile-command-panel" hidden>
+                <button type="button" data-mobile-command=".help">Help</button>
+                <button type="button" data-mobile-command=".vars">Variables</button>
+                <button type="button" data-number-preset=".[20],..">Decimal + exact</button>
+                <button type="button" data-number-preset="cf">Continued fraction</button>
+                <button type="button" data-number-preset="sci[10]">Scientific</button>
+                <button type="button" data-mobile-command=".clear">Clear session</button>
+              </div>
+            </div>
           </section>
           <div class="controls" aria-label="Calculator controls">
             <button type="button" data-action="copy">Copy session</button>
@@ -74,11 +91,49 @@
         <label>Output format profile
           <input id="number-display-profile" name="display" value=".." spellcheck="false" aria-describedby="number-format-help" />
         </label>
-        <p id="number-format-help"><code>.[12],b,..</code> shows a 12-place decimal, binary, and a mixed fraction. Separate views with commas.</p>
+        <div class="number-presets" aria-label="Output format presets">
+          <button type="button" data-number-preset=".[20],..">Decimal + exact</button>
+          <button type="button" data-number-preset="/">Fraction</button>
+          <button type="button" data-number-preset="..">Mixed</button>
+          <button type="button" data-number-preset="cf">Continued fraction</button>
+          <button type="button" data-number-preset="sci[10]">Scientific</button>
+          <button type="button" data-number-preset="b,..">Binary + exact</button>
+          <button type="button" data-number-preset="x,..">Hex + exact</button>
+        </div>
+        <p id="number-format-help"><code>.[12],b,..</code> shows a 12-place decimal, binary, and a mixed fraction. Use <code>cf</code>, <code>sci[10]</code>, or <code>sci-period[10]</code> for specialized views.</p>
         <label class="number-persist"><input id="number-persist" type="checkbox" /> Remember in this browser</label>
         <output id="number-settings-status" role="status"></output>
         <div class="number-actions"><button type="button" data-action="reset-number-settings">Defaults</button><button type="submit">Apply</button></div>
       </form>
+    </dialog>
+    <dialog id="interval-dialog" class="interval-dialog" aria-labelledby="interval-title">
+      <header class="interval-header">
+        <div><p class="interval-eyebrow">Exact interval explorer</p><h2 id="interval-title">Number line and provenance</h2><p id="interval-source"></p></div>
+        <button type="button" data-action="close-interval" aria-label="Close interval explorer">×</button>
+      </header>
+      <div class="interval-body">
+        <div id="interval-provenance" class="interval-provenance" aria-label="Interval arithmetic provenance"></div>
+        <div id="interval-graphic" class="interval-graphic"></div>
+        <p class="interval-approximation-note">The values and edits are exact. Number-line coordinates are approximate browser pixels.</p>
+        <div class="interval-editor">
+          <label>Selected interval <select id="interval-selection"></select></label>
+          <label>Start <input id="interval-start" spellcheck="false" /></label>
+          <label>End <input id="interval-end" spellcheck="false" /></label>
+          <label>Step <span class="interval-step-input"><span>1 /</span><input id="interval-step" type="number" min="1" step="1" value="10" /></span></label>
+          <div class="interval-nudges" aria-label="Exact interval adjustments">
+            <button type="button" data-interval-nudge="start:-1">Start −</button><button type="button" data-interval-nudge="start:1">Start +</button>
+            <button type="button" data-interval-nudge="whole:-1">Both −</button><button type="button" data-interval-nudge="whole:1">Both +</button>
+            <button type="button" data-interval-nudge="end:-1">End −</button><button type="button" data-interval-nudge="end:1">End +</button>
+          </div>
+          <output id="interval-status" class="interval-status" role="status"></output>
+        </div>
+        <div id="interval-table" class="interval-table" aria-label="Exact textual interval values"></div>
+        <div class="interval-actions">
+          <button type="button" data-action="interval-export-svg">Export SVG</button>
+          <button type="button" data-action="interval-export-html">Export HTML</button>
+          <button type="button" data-action="interval-use" class="primary">Use exact result</button>
+        </div>
+      </div>
     </dialog>
     <script type="module" src="./assets/main.js"></script>
   </body>

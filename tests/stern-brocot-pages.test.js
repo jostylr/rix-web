@@ -11,12 +11,22 @@ test("the tidy main page links the showcase catalog", async () => {
     expect(source).toContain('href="./showcases.html"');
     expect(source).not.toContain('class="showcase-links"');
     expect(source).not.toContain('href="./stern-brocot.html"');
+    expect(source).toContain('id="mobile-keypad"');
+    expect(source).toContain('id="interval-dialog"');
+    expect(source).toContain('data-number-preset="cf"');
 });
 
 test("the showcase catalog links both Stern-Brocot variants", async () => {
     const source = await read("src/showcases.html");
     expect(source).toContain('href="./stern-brocot.html"');
     expect(source).toContain('href="./stern-brocot-rix/"');
+});
+
+test("the native explorer passes scientific precision in the supported argument position", async () => {
+    const source = await read("src/stern-brocot-web.js");
+    expect(source).toContain("exactDistance.toScientificNotation(true, 3)");
+    expect(source).toMatch(/case 'scientific':[\s\S]*toScientificNotation\(\s*true,\s*Math\.min/);
+    expect(source).not.toContain("exactDistance.toScientificNotation(3)");
 });
 
 test("the app build publishes both Stern-Brocot variants under docs", async () => {

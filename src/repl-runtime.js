@@ -53,6 +53,33 @@ export const helpGroups = [
         ],
     },
     {
+        title: "Number views",
+        items: [
+            ["Numbers", "Open the number panel for decimal, exact, base, continued-fraction, and scientific presets."],
+            ['*> ".[12],b,.."', "Show a bounded decimal, binary expansion, and exact mixed fraction together."],
+            ['*> "cf"', "Display exact numeric results as continued fractions."],
+            ['*> "sci[10]"', "Display scientific notation with ten significant digits."],
+        ],
+    },
+    {
+        title: "Intervals and graphics",
+        items: [
+            ["1/3:2/3", "Create an exact closed interval; endpoint orientation is retained."],
+            ["Explore interval", "Open the exact number line, edit endpoints, inspect arithmetic provenance, and export SVG or HTML."],
+            ["Arrow keys", "In the interval explorer, move a focused endpoint or the whole interval by the exact selected step."],
+            [".Graphics", "Build portable figures that RiX Web can render and make interactive."],
+        ],
+    },
+    {
+        title: "Scripts and plugins",
+        items: [
+            ["Script entry", "Write several RiX statements and run them together with Ctrl/Command + Enter."],
+            ["Load", "Load a local .rix file into script entry mode."],
+            ['.Plugin.Load("plot")', "Load an approved browser plugin into this session."],
+            ["Tab", "Complete names and methods from the current RiX context without evaluating the draft."],
+        ],
+    },
+    {
         title: "Calculator commands",
         items: [
             [".help", "Open this reference and its quick-start guide."],

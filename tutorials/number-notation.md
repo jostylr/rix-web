@@ -244,6 +244,10 @@ The compact `*>` directive selects one or more presentation views. Commas mean
 That displays a decimal with at most twelve fractional places, binary, and a
 mixed fraction. The exact Rational underneath those views is still `7/4`.
 
+Session profiles also accept `cf`, `sci[n]`, and `sci-period[n]` for
+continued-fraction and scientific views. The same profile formats both
+endpoints of an interval without changing its exact or oriented value.
+
 `<*` selects the base of strict `#` input. Ordinary literals stay decimal, so a
 script can be explicit about which notation it is using and can change that
 notation midway through:

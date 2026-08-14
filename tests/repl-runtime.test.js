@@ -534,6 +534,23 @@ test("number settings control # input and multi-view output", () => {
     expect(repl.run("7/4").text).toBe("1.75 · 1.11 · 1..3/4");
 });
 
+test("number settings expose continued-fraction and scientific presets for scalars and intervals", () => {
+    const repl = createRixRepl();
+    repl.setNumberConfig({ display: "cf,sci[6]" });
+    expect(repl.run("7/4").text).toBe("1.~1~3 · 1.75E0");
+    expect(repl.run("1/3:2/3").text).toBe("0.~3:0.~1~2 · 3.#3E-1:6.#6E-1");
+    expect(repl.run("2:1").text).toBe("2.~0:1.~0 · 2E0:1E0");
+    expect(() => repl.setNumberConfig({ display: "sci[0]" })).toThrow("positive safe integer");
+});
+
+test("quick help exposes the calculator's number and interval surfaces", () => {
+    const repl = createRixRepl();
+    const intervalHelp = repl.run('.Help("interval")');
+    const scientificHelp = repl.run('.Help("scientific")');
+    expect(intervalHelp.groups.flatMap(({ items }) => items).map(([syntax]) => syntax)).toContain("Explore interval");
+    expect(scientificHelp.groups.flatMap(({ items }) => items).map(([syntax]) => syntax)).toContain('*> "sci[10]"');
+});
+
 test("presentation text is separate from lossless injection source", () => {
     const repl = createRixRepl();
     repl.setNumberConfig({ display: ".[3]" });

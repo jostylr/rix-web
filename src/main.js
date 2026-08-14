@@ -1,5 +1,6 @@
 import { createRixRepl, findHelp } from "./repl-runtime.js";
 import { mountOutputWidgets } from "../../rix/src/index.js";
+import { IntervalExplorer, isRationalIntervalValue } from "./interval-explorer.js";
 
 const repl = createRixRepl();
 const outputHistory = document.querySelector("#output-history");
@@ -25,6 +26,8 @@ const numberInputBase = document.querySelector("#number-input-base");
 const numberDisplayProfile = document.querySelector("#number-display-profile");
 const numberPersist = document.querySelector("#number-persist");
 const numberSettingsStatus = document.querySelector("#number-settings-status");
+const intervalDialog = document.querySelector("#interval-dialog");
+const mobileCommandPanel = document.querySelector("#mobile-command-panel");
 const NUMBER_STORAGE_KEY = "ratcalc.number-config.v1";
 
 let scriptMode = false;
@@ -34,6 +37,11 @@ let transcript = [];
 let autoSeparateLines = true;
 let completionState = null;
 const outputDisposers = new Set();
+const intervalExplorer = new IntervalExplorer({
+    dialog: intervalDialog,
+    evaluate: (source) => repl.run(source),
+    onUse: (source) => setInput(source),
+});
 
 function escapeHtml(value) {
     return String(value).replace(/[&<>'"]/g, (character) => ({
@@ -148,6 +156,17 @@ function appendOutput(source, response) {
                 : `${escapeHtml(preview)}<span class="inject-icon" title="Use this value">→</span>`;
             if (inspectable) outputLine.addEventListener("click", () => openInspection(source, response.text));
             else if (response.type === "result") outputLine.addEventListener("click", () => setInput(response.sourceText ?? response.text));
+            if (response.type === "result" && isRationalIntervalValue(response.value)) {
+                const explore = document.createElement("button");
+                explore.type = "button";
+                explore.className = "interval-explore-button";
+                explore.textContent = "Explore interval";
+                explore.addEventListener("click", (event) => {
+                    event.stopPropagation();
+                    intervalExplorer.open(source, response.value);
+                });
+                outputLine.appendChild(explore);
+            }
         }
         entry.appendChild(outputLine);
     }
@@ -181,6 +200,37 @@ function applyNumberSettings(config, { close = false } = {}) {
     } catch (error) {
         numberSettingsStatus.textContent = error.message || String(error);
     }
+}
+
+function setNumberPreset(profile) {
+    numberDisplayProfile.value = profile;
+    applyNumberSettings({ display: profile });
+}
+
+async function copySession() {
+    const button = document.querySelector('[data-action="copy"]');
+    const text = transcript.map((entry) => `> ${entry.source}\n${entry.text}`).join("\n\n");
+    if (!text) {
+        button.textContent = "Nothing to copy";
+        setTimeout(() => { button.textContent = "Copy session"; }, 1600);
+        return;
+    }
+    try {
+        if (!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable");
+        await navigator.clipboard.writeText(text);
+        button.textContent = "Copied";
+    } catch {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.className = "clipboard-fallback";
+        document.body.appendChild(textarea);
+        textarea.select();
+        let copied = false;
+        try { copied = document.execCommand("copy"); } catch { copied = false; }
+        textarea.remove();
+        button.textContent = copied ? "Copied" : "Copy failed";
+    }
+    setTimeout(() => { button.textContent = "Copy session"; }, 1600);
 }
 
 function restoreNumberSettings() {
@@ -341,12 +391,44 @@ document.addEventListener("click", (event) => {
     case "docs": setDocsOpen(docsPanel.hidden); break;
     case "close-docs": setDocsOpen(false); input.focus(); break;
     case "close-inspect": inspectDialog.close(); input.focus(); break;
+    case "close-interval": intervalExplorer.close(); input.focus(); break;
     case "clear": void clearSession(); break;
     case "script": setScriptMode(!scriptMode); break;
     case "line-separators": setAutoSeparateLines(!autoSeparateLines); break;
-    case "copy": navigator.clipboard?.writeText(transcript.map((entry) => `> ${entry.source}\n${entry.text}`).join("\n\n")); break;
+    case "copy": void copySession(); break;
     case "load": fileInput.click(); break;
+    case "interval-export-svg": intervalExplorer.download("svg"); break;
+    case "interval-export-html": intervalExplorer.download("html"); break;
+    case "interval-use": intervalExplorer.useResult(); break;
     default: break;
+    }
+});
+
+document.addEventListener("click", (event) => {
+    const preset = event.target.closest("[data-number-preset]");
+    if (preset) {
+        setNumberPreset(preset.dataset.numberPreset);
+        if (preset.closest("#mobile-command-panel")) mobileCommandPanel.hidden = true;
+    }
+    const insert = event.target.closest("[data-insert]");
+    if (insert) insertInputText(insert.dataset.insert);
+    const mobileAction = event.target.closest("[data-mobile-action]")?.dataset.mobileAction;
+    if (mobileAction === "backspace") {
+        const start = input.selectionStart ?? input.value.length;
+        const end = input.selectionEnd ?? start;
+        if (start !== end) {
+            input.setRangeText("", start, end, "end");
+        } else if (start > 0) {
+            input.setRangeText("", start - 1, start, "end");
+        }
+        setInput(input.value);
+    }
+    if (mobileAction === "clear-input") setInput("");
+    if (mobileAction === "commands") mobileCommandPanel.hidden = !mobileCommandPanel.hidden;
+    const mobileCommand = event.target.closest("[data-mobile-command]")?.dataset.mobileCommand;
+    if (mobileCommand) {
+        mobileCommandPanel.hidden = true;
+        void execute(mobileCommand);
     }
 });
 
@@ -387,7 +469,7 @@ numberForm.addEventListener("submit", (event) => {
     event.preventDefault();
     applyNumberSettings({ input: numberInputBase.value, display: numberDisplayProfile.value }, { close: true });
 });
-[helpDialog, inspectDialog, numberDialog].forEach((dialog) => {
+[helpDialog, inspectDialog, numberDialog, intervalDialog].forEach((dialog) => {
     dialog.addEventListener("click", (event) => {
         if (event.target === dialog) dialog.close();
     });

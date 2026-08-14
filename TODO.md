@@ -20,12 +20,16 @@ and accessibility behavior belong here. Generated files under `docs/` and
 
 ## Exact-number visualization playgrounds
 
-- [ ] Add a number-line view for exact rational points and closed, oriented
-  rational intervals. Preserve exact values and interval orientation in the
-  semantic model even when the viewport uses approximate pixels.
-- [ ] Add interval-arithmetic provenance diagrams that connect operand
-  intervals and operations to their result intervals, including widening,
-  reversed presentation, undefined regions, and unresolved/certified states.
+- [x] Ship the calculator's first exact interval explorer: closed, oriented
+  interval results, exact-step endpoint editing, pointer and keyboard controls,
+  top-level arithmetic provenance, source reinsertion, SVG/HTML export, and a
+  textual exact-value alternative.
+- [ ] Generalize the number-line view to rational points and reusable RiX
+  `Graphic` scenes, while preserving exact values when the viewport uses
+  approximate pixels.
+- [ ] Expand interval-arithmetic provenance beyond the top-level expression to
+  full evaluation histories, including widening, undefined regions, and
+  unresolved/certified states.
 - [ ] Add linked views for mediants, Farey neighbors, Stern-Brocot paths,
   continued-fraction convergents, and exact convergent-error values. Reuse RiX
   methods and plugin results rather than reimplementing the mathematics in the
@@ -39,9 +43,9 @@ and accessibility behavior belong here. Generated files under `docs/` and
 - [ ] Implement the shared RiX viewport/selection protocol with pan, zoom,
   reset, focus, and semantic selection. Pointer, touch, and keyboard paths must
   operate on the same selected mathematical identities.
-- [ ] Provide stable accessible names, descriptions, reading order, focus
-  indication, and a screen-reader-friendly textual/table alternative for every
-  interactive mathematical graphic.
+- [ ] Generalize the interval explorer's accessible names, focus indication,
+  and textual/table alternative into a shared protocol for every interactive
+  mathematical graphic.
 - [ ] Announce exact selected values and meaningful state changes without
   flooding assistive technology during continuous pan, zoom, or drag updates.
 - [ ] Test keyboard-only and screen-reader workflows, reduced motion, high

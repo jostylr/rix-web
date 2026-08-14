@@ -9,7 +9,7 @@ import {
   createDefaultSystemContext,
   formatValue,
   parseAndEvaluate
-} from "./chunk-p9ndrh6j.js";
+} from "./chunk-c0ebrwr4.js";
 
 // ../packages/reals/src/index.js
 var LN2_CF = [0, 1, 2, 3, 1, 6, 3, 1, 1, 2, 1, 1, 6, 1, 6, 1, 1, 4, 1, 2, 4, 1, 1, 1, 1, 1, 1, 1, 3, 1, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
@@ -3663,7 +3663,7 @@ class SternBrocotTreeVisualizer {
         const exactDistance = targetRational.subtract(convergentRational).abs();
         let distanceScientific;
         try {
-          distanceScientific = exactDistance.toScientificNotation(3);
+          distanceScientific = exactDistance.toScientificNotation(true, 3);
         } catch (e) {
           const distanceDecimal = Number(exactDistance.numerator) / Number(exactDistance.denominator);
           distanceScientific = distanceDecimal.toExponential(3);
@@ -3835,7 +3835,7 @@ class SternBrocotTreeVisualizer {
           const decimalInfo = rational.toRepeatingDecimalWithPeriod(true);
           return decimalInfo.decimal;
         case "scientific":
-          return rational.toScientificNotation(Math.min(100, Math.max(1, Number.parseInt(this.elements.precisionInput.value, 10) || 6)));
+          return rational.toScientificNotation(true, Math.min(100, Math.max(1, Number.parseInt(this.elements.precisionInput.value, 10) || 6)));
         case "cf":
           const cf = rational.toContinuedFraction();
           if (cf.length === 1)
@@ -4020,5 +4020,5 @@ document.addEventListener("DOMContentLoaded", () => {
   sternBrocotApp = new SternBrocotTreeVisualizer;
 });
 
-//# debugId=8283309EB89D292964756E2164756E21
+//# debugId=281560480A58AB2E64756E2164756E21
 //# sourceMappingURL=stern-brocot-web.js.map

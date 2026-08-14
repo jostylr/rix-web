@@ -1604,7 +1604,7 @@ class SternBrocotTreeVisualizer {
         // Convert exact distance to scientific notation using the library
         let distanceScientific;
         try {
-          distanceScientific = exactDistance.toScientificNotation(3);
+          distanceScientific = exactDistance.toScientificNotation(true, 3);
         } catch (e) {
           // Fallback to JavaScript conversion if library method fails
           const distanceDecimal =
@@ -1819,6 +1819,7 @@ class SternBrocotTreeVisualizer {
           return decimalInfo.decimal;
         case 'scientific':
           return rational.toScientificNotation(
+            true,
             Math.min(
               100,
               Math.max(1, Number.parseInt(this.elements.precisionInput.value, 10) || 6),

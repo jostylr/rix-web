@@ -4,6 +4,14 @@ RatCalc is a static browser calculator and learning site for the Rational
 Interval Expression Language. It uses the actual RiX parser and evaluator, so
 values and a workspace persist across executed commands and tutorial cells.
 
+The calculator includes responsive command/keypad controls, exact number-view
+presets (decimal, fraction, mixed, continued fraction, scientific, binary, and
+hexadecimal), and an interval explorer. Interval results can be inspected on a
+number line, edited in exact rational steps, traced through top-level interval
+arithmetic, copied back into the session, or exported as SVG/HTML. The visual
+uses approximate pixel positions while its labels and textual table preserve
+the exact values and interval orientation.
+
 ## Develop and build
 
 From this directory:

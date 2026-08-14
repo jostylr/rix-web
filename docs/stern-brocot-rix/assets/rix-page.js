@@ -21482,6 +21482,18 @@ ${formatOutputText(slide, format)}`).join(`
       return rational.toMixedString();
     if (token2 === "/" || token2 === "fraction")
       return `${rational.numerator}/${rational.denominator}`;
+    if (token2 === ".~" || token2 === "cf")
+      return rational.toContinuedFractionString();
+    const scientific = token2.match(/^(?:sci|scientific)(?:\[(\d+)\])?$/);
+    if (scientific) {
+      const precision = scientific[1] ? Number(scientific[1]) : 10;
+      return rational.toScientificNotation(true, precision, false);
+    }
+    const scientificWithPeriod = token2.match(/^(?:sci-period|scientific-period)(?:\[(\d+)\])?$/);
+    if (scientificWithPeriod) {
+      const precision = scientificWithPeriod[1] ? Number(scientificWithPeriod[1]) : 10;
+      return rational.toScientificNotation(true, precision, true);
+    }
     const decimal = token2.match(/^\.\[(\d+)\]$/);
     if (decimal)
       return decimalPresentation(rational, Number(decimal[1]));
@@ -21512,6 +21524,10 @@ ${formatOutputText(slide, format)}`).join(`
   function formatNumberWithProfile(value, profile, context = null) {
     const pieces = String(profile || "..").split(",").map((part) => part.trim()).filter(Boolean);
     return pieces.map((part) => profileNumber(value, part, context)).join(" · ");
+  }
+  function formatIntervalWithProfile(value, profile, context = null) {
+    const pieces = String(profile || "..").split(",").map((part) => part.trim()).filter(Boolean);
+    return pieces.map((part) => `${profileNumber(value.start, part, context)}:${profileNumber(value.end, part, context)}`).join(" · ");
   }
   function formatWithCycleGuard(value, activeValues, format) {
     if (activeValues.has(value))
@@ -21654,8 +21670,10 @@ ${formatOutputText(slide, format)}`).join(`
       const profile = options.numberDisplay ?? options.context?.getEnv?.("numDisplay", null);
       return profile ? formatNumberWithProfile(val, profile, options.context) : val instanceof Rational ? val.toMixedString() : val.toString();
     }
-    if (val instanceof RationalInterval)
-      return val.toMixedString();
+    if (val instanceof RationalInterval) {
+      const profile = options.numberDisplay ?? options.context?.getEnv?.("numDisplay", null);
+      return profile ? formatIntervalWithProfile(val, profile, options.context) : val.toMixedString();
+    }
     if (val instanceof CertifiedApproximation)
       return val.toString();
     if (val instanceof HaloNeighborhood)
@@ -31795,8 +31813,16 @@ ${indented.join(`,
     if (!entries2.length)
       throw new Error("Number display profile cannot be empty");
     for (const entry of entries2) {
-      if (/^(?:\.\[\d+\]|\.\.|mixed|\/|fraction|\.)$/.test(entry))
+      if (/^(?:\.\[\d+\]|\.\.|mixed|\/|fraction|\.|\.~|cf)$/.test(entry))
         continue;
+      const scientific = entry.match(/^(?:sci|scientific|sci-period|scientific-period)(?:\[(\d+)\])?$/);
+      if (scientific) {
+        const precision = scientific[1] ? Number(scientific[1]) : 10;
+        if (!Number.isSafeInteger(precision) || precision < 1) {
+          throw new Error("Scientific display precision must be a positive safe integer");
+        }
+        continue;
+      }
       const match = entry.match(/^([A-Za-z]|z\[(\d+)\])(?:\.\.|\/|\.|\.\[\d+\])?$/);
       if (!match)
         throw new Error(`Unknown number display token '${entry}'`);

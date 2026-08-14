@@ -124,6 +124,7 @@ binary := q _&gt; (0b, &quot;.&quot;);
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">*&gt; &quot;.[12],b,..&quot;;
 7/4;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>That displays a decimal with at most twelve fractional places, binary, and a mixed fraction. The exact Rational underneath those views is still <code>7/4</code>.</p>
+<p>Session profiles also accept <code>cf</code>, <code>sci[n]</code>, and <code>sci-period[n]</code> for continued-fraction and scientific views. The same profile formats both endpoints of an interval without changing its exact or oriented value.</p>
 <p><code>&lt;*</code> selects the base of strict <code>#</code> input. Ordinary literals stay decimal, so a script can be explicit about which notation it is using and can change that notation midway through:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">&lt;* &quot;b&quot;;
 five := #101;
