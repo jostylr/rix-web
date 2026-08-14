@@ -13,6 +13,8 @@ test("the tidy main page links the showcase catalog", async () => {
     expect(source).not.toContain('href="./stern-brocot.html"');
     expect(source).toContain('id="mobile-keypad"');
     expect(source).toContain('id="interval-dialog"');
+    expect(source).toContain('id="reactive-dashboard-panel"');
+    expect(source).toContain('data-action="reactive-dashboard"');
     expect(source).toContain('data-number-preset="cf"');
 });
 

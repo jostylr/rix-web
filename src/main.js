@@ -1,6 +1,7 @@
 import { createRixRepl, findHelp } from "./repl-runtime.js";
 import { mountOutputWidgets } from "../../rix/src/index.js";
 import { IntervalExplorer, isRationalIntervalValue } from "./interval-explorer.js";
+import { ReactiveDashboard } from "./reactive-dashboard.js";
 
 const repl = createRixRepl();
 const outputHistory = document.querySelector("#output-history");
@@ -28,7 +29,15 @@ const numberPersist = document.querySelector("#number-persist");
 const numberSettingsStatus = document.querySelector("#number-settings-status");
 const intervalDialog = document.querySelector("#interval-dialog");
 const mobileCommandPanel = document.querySelector("#mobile-command-panel");
+const reactiveDashboardPanel = document.querySelector("#reactive-dashboard-panel");
+const reactiveDashboardToggle = document.querySelector("#reactive-dashboard-toggle");
 const NUMBER_STORAGE_KEY = "ratcalc.number-config.v1";
+const REACTIVE_DASHBOARD_EXAMPLE = `$$width := 3;
+$$height := 2;
+widthSlider := .Slider($$width, 0:10, 1/2, "Width");
+heightSlider := .Slider($$height, 0:10, 1/2, "Height");
+$$area := $width * $height;
+$area`;
 
 let scriptMode = false;
 let history = [];
@@ -41,6 +50,16 @@ const intervalExplorer = new IntervalExplorer({
     dialog: intervalDialog,
     evaluate: (source) => repl.run(source),
     onUse: (source) => setInput(source),
+});
+const reactiveDashboard = new ReactiveDashboard({
+    panel: reactiveDashboardPanel,
+    toggle: reactiveDashboardToggle,
+    repl,
+    onUse: (source) => setInput(source),
+    onLoadExample: () => {
+        setScriptMode(true);
+        setInput(REACTIVE_DASHBOARD_EXAMPLE);
+    },
 });
 
 function escapeHtml(value) {
@@ -196,6 +215,7 @@ function applyNumberSettings(config, { close = false } = {}) {
         numberDisplayProfile.value = applied.display;
         saveNumberSettings(applied);
         numberSettingsStatus.textContent = `Using #${applied.input} input and ${applied.display} output.`;
+        reactiveDashboard.refresh({ rebuildControls: false });
         if (close) numberDialog.close();
     } catch (error) {
         numberSettingsStatus.textContent = error.message || String(error);
@@ -273,10 +293,24 @@ function openHelp(query = "") {
 }
 
 function setDocsOpen(next) {
+    if (next && reactiveDashboard.isOpen) {
+        reactiveDashboard.close();
+        document.querySelector(".container").classList.remove("dashboard-open");
+    }
     docsPanel.hidden = !next;
     document.querySelector(".container").classList.toggle("docs-open", next);
     docsToggle.setAttribute("aria-pressed", String(next));
     docsToggle.textContent = next ? "Close docs" : "Docs";
+}
+
+function setReactiveDashboardOpen(next) {
+    if (next) {
+        setDocsOpen(false);
+        reactiveDashboard.open();
+    } else {
+        reactiveDashboard.close();
+    }
+    document.querySelector(".container").classList.toggle("dashboard-open", next);
 }
 
 function openInspection(source, value) {
@@ -294,6 +328,7 @@ async function clearSession() {
     transcript = [];
     outputHistory.innerHTML = "";
     displayWelcome();
+    reactiveDashboard.refresh();
     setInput("");
 }
 
@@ -327,6 +362,7 @@ async function execute(source = input.value) {
     historyIndex = -1;
     const response = await repl.runAsync(source);
     appendOutput(source, response);
+    reactiveDashboard.refresh();
     setInput("");
 }
 
@@ -390,6 +426,9 @@ document.addEventListener("click", (event) => {
     case "close-help": helpDialog.close(); input.focus(); break;
     case "docs": setDocsOpen(docsPanel.hidden); break;
     case "close-docs": setDocsOpen(false); input.focus(); break;
+    case "reactive-dashboard": setReactiveDashboardOpen(!reactiveDashboard.isOpen); break;
+    case "close-reactive-dashboard": setReactiveDashboardOpen(false); input.focus(); break;
+    case "refresh-reactive-dashboard": reactiveDashboard.refresh(); break;
     case "close-inspect": inspectDialog.close(); input.focus(); break;
     case "close-interval": intervalExplorer.close(); input.focus(); break;
     case "clear": void clearSession(); break;
@@ -478,5 +517,6 @@ numberForm.addEventListener("submit", (event) => {
 displayWelcome();
 setAutoSeparateLines(autoSeparateLines);
 restoreNumberSettings();
+reactiveDashboard.refresh();
 input.focus();
-window.addEventListener("pagehide", () => { void repl.dispose(); });
+window.addEventListener("pagehide", () => { reactiveDashboard.dispose(); void repl.dispose(); });

@@ -12,6 +12,12 @@ arithmetic, copied back into the session, or exported as SVG/HTML. The visual
 uses approximate pixel positions while its labels and textual table preserve
 the exact values and interval orientation.
 
+The Reactive Dashboard discovers session `$$` identities, renders derived
+values and dependency information live, and mounts explicit controls for
+editable inputs. RiX-Web provides concise `.Slider`, `.Input`, `.Choice`,
+`.Toggle`, `.Range`, `.Reset`, `.Action`, and `.Hold` shortcuts; the portable
+language forms remain available under `.Controls`.
+
 ## Develop and build
 
 From this directory:

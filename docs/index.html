@@ -12,7 +12,7 @@
       <header class="app-header">
         <a class="brand" href="./" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a>
         <p>Exact rational arithmetic calculator with interval support powered by RiX</p>
-        <nav aria-label="RatCalc navigation"><a href="./tutorial/">Tutorials</a><a href="./showcases.html">Showcases</a><button id="docs-toggle" type="button" data-action="docs" aria-pressed="false">Docs</button><button type="button" data-action="number-settings">Numbers</button><button type="button" data-action="help">Help</button></nav>
+        <nav aria-label="RatCalc navigation"><a href="./tutorial/">Tutorials</a><a href="./showcases.html">Showcases</a><button id="reactive-dashboard-toggle" type="button" data-action="reactive-dashboard" aria-pressed="false" data-count="0">Dashboard</button><button id="docs-toggle" type="button" data-action="docs" aria-pressed="false">Docs</button><button type="button" data-action="number-settings">Numbers</button><button type="button" data-action="help">Help</button></nav>
       </header>
 
       <div class="app-workspace">
@@ -48,6 +48,7 @@
                 <button type="button" data-number-preset=".[20],..">Decimal + exact</button>
                 <button type="button" data-number-preset="cf">Continued fraction</button>
                 <button type="button" data-number-preset="sci[10]">Scientific</button>
+                <button type="button" data-action="reactive-dashboard">Reactive dashboard</button>
                 <button type="button" data-mobile-command=".clear">Clear session</button>
               </div>
             </div>
@@ -65,6 +66,29 @@
         <aside id="docs-panel" class="docs-panel" aria-label="RiX documentation" hidden>
           <header class="docs-panel-header"><span>RiX documentation</span><div><a href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-action="close-docs" aria-label="Close documentation">×</button></div></header>
           <iframe src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe>
+        </aside>
+        <aside id="reactive-dashboard-panel" class="reactive-dashboard-panel" aria-label="Reactive variable dashboard" hidden>
+          <header class="reactive-dashboard-header">
+            <div><span>Reactive dashboard</span><small id="reactive-dashboard-count">0 reactive values</small></div>
+            <div><button type="button" data-action="refresh-reactive-dashboard">Refresh</button><button type="button" data-action="close-reactive-dashboard" aria-label="Close reactive dashboard">×</button></div>
+          </header>
+          <div class="reactive-dashboard-body">
+            <p class="reactive-dashboard-intro">Every <code>$$</code> value appears here. Derived values remain read-only; an explicitly assigned <code>.Slider</code>, <code>.Input</code>, <code>.Choice</code>, <code>.Toggle</code>, or <code>.Range</code> makes its target editable.</p>
+            <div id="reactive-dashboard-summary" class="reactive-dashboard-summary" aria-label="Reactive variable summary"></div>
+            <section id="reactive-dashboard-controls-section" class="reactive-dashboard-section" hidden>
+              <h2>Controls</h2>
+              <div id="reactive-dashboard-controls"></div>
+            </section>
+            <section class="reactive-dashboard-section">
+              <h2>Live values</h2>
+              <div id="reactive-dashboard-variables" class="reactive-dashboard-variables" hidden></div>
+              <div id="reactive-dashboard-empty" class="reactive-dashboard-empty">
+                <b>No reactive values yet.</b>
+                <p>Load a small exact model with two controlled inputs and one derived value.</p>
+                <button type="button" data-dashboard-example>Load dashboard example</button>
+              </div>
+            </section>
+          </div>
         </aside>
       </div>
     </main>

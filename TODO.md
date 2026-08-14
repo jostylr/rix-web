@@ -6,6 +6,16 @@ mathematics and reusable scene values belong in RiX; browser controls, layout,
 and accessibility behavior belong here. Generated files under `docs/` and
 `tmp/` are not roadmap sources.
 
+## Reactive workspace
+
+- [x] Add a discoverable Reactive Dashboard for session `$$` identities with
+  exact live values, explicit input controls, formulas, dependency links,
+  aliases, state, and diagnostics.
+- [x] Add RiX-Web-only short control constructors while retaining `.Controls.*`
+  as the portable cross-host spelling.
+- [ ] Add optional pinning, grouping, and bounded value-history charts without
+  changing the reactive graph's exact semantic values.
+
 ## Numeral-system playground
 
 - [ ] Build the interactive playground specified by the RiX `.radix` roadmap.

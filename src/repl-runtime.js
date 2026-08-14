@@ -6,6 +6,8 @@ import {
     complete,
     formatValue,
     formatValueSource,
+    irToText,
+    isReactiveNode,
     isOutputValue,
     parseAndEvaluate,
     parseAndEvaluateAsync,
@@ -14,6 +16,7 @@ import {
 } from "../../rix/src/index.js";
 import { normalizeReplSource } from "./repl-source.js";
 import { createBundledPluginCatalog } from "./generated/bundled-plugin-catalog.js";
+import { installWebControlCapabilities } from "./web-control-capabilities.js";
 
 export const helpGroups = [
     {
@@ -80,6 +83,15 @@ export const helpGroups = [
         ],
     },
     {
+        title: "Reactive dashboard",
+        items: [
+            ["$$x := 2", "Declare a reactive value; the dashboard displays it live."],
+            ["$x", "Read x and record a dependency inside another reactive definition."],
+            ["xSlider := .Slider($$x, 0:5, 1/2, \"x\")", "Give x an exact slider in RiX-Web's dashboard."],
+            ["Dashboard", "Open live values, explicit controls, formulas, dependencies, and diagnostics."],
+        ],
+    },
+    {
         title: "Calculator commands",
         items: [
             [".help", "Open this reference and its quick-start guide."],
@@ -110,11 +122,67 @@ function currentReactiveValue(source) {
     return undefined;
 }
 
+function collectControlValues(value, controls, seen = new Set()) {
+    if (!value || typeof value !== "object" || seen.has(value)) return;
+    seen.add(value);
+    if (isOutputValue(value) && value.kind?.startsWith("control_")) {
+        controls.push(value);
+        return;
+    }
+    if (isOutputValue(value) && value.kind === "control_panel") {
+        for (const control of value.controls || []) collectControlValues(control, controls, seen);
+        return;
+    }
+    if (!isOutputValue(value)) return;
+    for (const child of value.children || []) collectControlValues(child, controls, seen);
+}
+
+function diagnosticText(diagnostic) {
+    return diagnostic?.message || diagnostic?.text || diagnostic?.label || String(diagnostic);
+}
+
+const FORMULA_OPERATORS = Object.freeze({
+    ADD: ["+", 10], SUB: ["-", 10], MUL: ["*", 20], DIV: ["/", 20],
+    IDIV: ["//", 20], MOD: ["%", 20], POW: ["^", 30], INTERVAL: [":", 5],
+    EQ: ["==", 4], NEQ: ["!=", 4], LT: ["<", 4], LTE: ["<=", 4],
+    GT: [">", 4], GTE: [">=", 4],
+});
+
+function readableFormula(node, parentPrecedence = 0) {
+    if (!node || typeof node !== "object") return String(node ?? "_");
+    if (node.fn === "LITERAL") return String(node.args?.[0] ?? "_");
+    if (node.fn === "REACTIVE_READ") return `$${node.args?.[0]}`;
+    if (node.fn === "REACTIVE_NODE") return `$$${node.args?.[0]}`;
+    if (node.fn === "RETRIEVE") return String(node.args?.[0]);
+    if (node.fn === "NEG") return `-${readableFormula(node.args?.[0], 40)}`;
+    const operation = FORMULA_OPERATORS[node.fn];
+    if (operation) {
+        const [symbol, precedence] = operation;
+        const text = (node.args || []).map((arg) => readableFormula(arg, precedence)).join(` ${symbol} `);
+        return precedence < parentPrecedence ? `(${text})` : text;
+    }
+    if (node.fn === "SYS_CALL") {
+        return `.${node.args?.[0]}(${(node.args || []).slice(1).map((arg) => readableFormula(arg)).join(", ")})`;
+    }
+    return irToText(node);
+}
+
+function reactiveFormulaSource(node) {
+    if (node.source) return node.source;
+    const body = node.formula?.args?.[0];
+    return body?.fn ? readableFormula(body) : null;
+}
+
 export function createRixRepl({ autoSeparateLines = true } = {}) {
+    const systemContext = createDefaultSystemContext({
+        frozen: false,
+        pluginCatalog: createBundledPluginCatalog(),
+    });
+    installWebControlCapabilities(systemContext).freeze();
     const state = {
         context: new Context(),
         registry: createDefaultRegistry(),
-        systemContext: createDefaultSystemContext({ pluginCatalog: createBundledPluginCatalog() }),
+        systemContext,
     };
     let initialNames = new Set(state.context.getAllNames());
     let separateLines = autoSeparateLines;
@@ -212,6 +280,57 @@ export function createRixRepl({ autoSeparateLines = true } = {}) {
                 name,
                 value: configuredFormat(state.context.get(name)),
             }));
+        },
+        reactiveVariables() {
+            const names = state.context.getAllNames();
+            const controls = [];
+            for (const name of names) collectControlValues(state.context.get(name), controls);
+            const controlsByTarget = new Map();
+            for (const control of controls) {
+                if (!control.targetId) continue;
+                const list = controlsByTarget.get(control.targetId) || [];
+                if (!list.some((candidate) => candidate.id === control.id)) list.push(control);
+                controlsByTarget.set(control.targetId, list);
+            }
+
+            const byId = new Map();
+            for (const bindingName of names) {
+                const node = state.context.get(bindingName);
+                if (!isReactiveNode(node)) continue;
+                const descriptor = byId.get(node.id) || {
+                    id: node.id,
+                    name: node.name,
+                    aliases: [],
+                    node,
+                };
+                descriptor.aliases.push(bindingName);
+                byId.set(node.id, descriptor);
+            }
+
+            return [...byId.values()].map((descriptor) => {
+                const { node } = descriptor;
+                const value = node.peek();
+                return {
+                    ...descriptor,
+                    aliases: Object.freeze([...new Set(descriptor.aliases)].sort()),
+                    kind: node.kind,
+                    state: node.state,
+                    value,
+                    valueText: configuredFormat(value),
+                    sourceText: formatValueSource(value),
+                    formulaSource: reactiveFormulaSource(node),
+                    dependencies: Object.freeze([...node.dependencies].sort()),
+                    dependents: Object.freeze([...node.dependents].sort()),
+                    diagnostics: Object.freeze((node.diagnostics || []).map(diagnosticText)),
+                    controls: Object.freeze([...(controlsByTarget.get(node.id) || [])]),
+                };
+            }).sort((left, right) => left.name.localeCompare(right.name));
+        },
+        subscribeReactive(listener) {
+            if (typeof listener !== "function") throw new Error("Reactive subscriber must be a function");
+            const graphs = new Set(this.reactiveVariables().map(({ node }) => node.graph));
+            const unsubscribes = [...graphs].map((graph) => graph.subscribe(listener));
+            return () => unsubscribes.splice(0).forEach((unsubscribe) => unsubscribe?.());
         },
         formatValue: configuredFormat,
         sourceText: formatValueSource,

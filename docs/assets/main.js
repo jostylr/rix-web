@@ -1,14 +1,16 @@
 import {
   createRixRepl,
   findHelp
-} from "./chunk-yzzrqt4a.js";
+} from "./chunk-gah3xwa7.js";
 import {
   Integer,
   Rational,
   RationalInterval,
+  createControlPanel,
   mountOutputWidgets,
-  parse
-} from "./chunk-c0ebrwr4.js";
+  parse,
+  renderOutputHtml
+} from "./chunk-jgnjwpp0.js";
 
 // src/interval-explorer.js
 var SVG_NS = "http://www.w3.org/2000/svg";
@@ -392,6 +394,161 @@ ${svg}` : `<!doctype html><html lang="en"><meta charset="utf-8"><title>RiX exact
   }
 }
 
+// src/reactive-dashboard.js
+function escapeHtml2(value) {
+  return String(value).replace(/[&<>'"]/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "'": "&#039;",
+    '"': "&quot;"
+  })[character]);
+}
+function listHtml(title, names, empty) {
+  const content = names.length ? names.map((name) => `<code>${escapeHtml2(name)}</code>`).join("") : `<span>${empty}</span>`;
+  return `<div class="reactive-links"><b>${title}</b><div>${content}</div></div>`;
+}
+function reactiveVariableCardsHtml(descriptors) {
+  return descriptors.map((descriptor) => {
+    const role = descriptor.controls.length ? "controlled" : descriptor.dependencies.length ? "derived" : "input";
+    const aliases = descriptor.aliases.filter((name) => name !== descriptor.name);
+    const formula = descriptor.dependencies.length && descriptor.formulaSource ? `<div class="reactive-formula"><b>Formula</b><code>${escapeHtml2(descriptor.formulaSource)}</code></div>` : "";
+    const diagnostics = descriptor.diagnostics.length ? `<ul class="reactive-diagnostics">${descriptor.diagnostics.map((message) => `<li>${escapeHtml2(message)}</li>`).join("")}</ul>` : "";
+    return `<article class="reactive-variable-card" data-reactive-state="${escapeHtml2(descriptor.state)}">
+            <header><div><code>$$${escapeHtml2(descriptor.name)}</code>${aliases.length ? `<small>aliases: ${aliases.map(escapeHtml2).join(", ")}</small>` : ""}</div><span class="reactive-role ${role}">${role}</span></header>
+            <button type="button" class="reactive-value" data-dashboard-use="${escapeHtml2(descriptor.sourceText)}" title="Use this exact value in the calculator">${escapeHtml2(descriptor.valueText)}</button>
+            ${formula}
+            <div class="reactive-dependency-grid">
+                ${listHtml("Depends on", descriptor.dependencies, "none")}
+                ${listHtml("Feeds", descriptor.dependents, "none")}
+            </div>
+            ${diagnostics}
+            <footer><span>${escapeHtml2(descriptor.state)}</span><button type="button" data-dashboard-read="${escapeHtml2(descriptor.name)}">Insert $${escapeHtml2(descriptor.name)}</button></footer>
+        </article>`;
+  }).join("");
+}
+
+class ReactiveDashboard {
+  constructor({ panel, toggle, repl, onUse, onLoadExample }) {
+    this.panel = panel;
+    this.toggle = toggle;
+    this.repl = repl;
+    this.onUse = onUse;
+    this.onLoadExample = onLoadExample;
+    this.countElement = panel.querySelector("#reactive-dashboard-count");
+    this.summaryElement = panel.querySelector("#reactive-dashboard-summary");
+    this.controlsSection = panel.querySelector("#reactive-dashboard-controls-section");
+    this.controlsElement = panel.querySelector("#reactive-dashboard-controls");
+    this.variablesElement = panel.querySelector("#reactive-dashboard-variables");
+    this.emptyElement = panel.querySelector("#reactive-dashboard-empty");
+    this.controlDisposer = null;
+    this.reactiveDisposer = null;
+    this.renderQueued = false;
+    this.descriptors = [];
+    panel.addEventListener("click", (event) => {
+      const use = event.target.closest("[data-dashboard-use]");
+      if (use)
+        this.onUse(use.dataset.dashboardUse);
+      const read = event.target.closest("[data-dashboard-read]");
+      if (read)
+        this.onUse(`$${read.dataset.dashboardRead}`);
+      if (event.target.closest("[data-dashboard-example]"))
+        this.onLoadExample();
+    });
+  }
+  get isOpen() {
+    return !this.panel.hidden;
+  }
+  open() {
+    this.panel.hidden = false;
+    this.toggle.setAttribute("aria-pressed", "true");
+    this.toggle.textContent = "Close dashboard";
+    this.refresh();
+  }
+  close() {
+    this.panel.hidden = true;
+    this.toggle.setAttribute("aria-pressed", "false");
+    this.toggle.textContent = "Dashboard";
+    this.disposeMounted();
+  }
+  toggleOpen() {
+    if (this.isOpen)
+      this.close();
+    else
+      this.open();
+  }
+  disposeMounted() {
+    this.controlDisposer?.();
+    this.controlDisposer = null;
+    this.reactiveDisposer?.();
+    this.reactiveDisposer = null;
+  }
+  subscribe() {
+    this.reactiveDisposer?.();
+    this.reactiveDisposer = this.repl.subscribeReactive(() => {
+      if (this.renderQueued)
+        return;
+      this.renderQueued = true;
+      queueMicrotask(() => {
+        this.renderQueued = false;
+        if (this.isOpen)
+          this.refresh({ rebuildControls: false, resubscribe: false });
+      });
+    });
+  }
+  renderSummary() {
+    const controlled = this.descriptors.filter(({ controls }) => controls.length).length;
+    const derived = this.descriptors.filter(({ dependencies }) => dependencies.length).length;
+    const failed = this.descriptors.filter(({ state }) => state === "error").length;
+    const count = this.descriptors.length;
+    this.countElement.textContent = `${count} reactive ${count === 1 ? "value" : "values"}`;
+    this.summaryElement.innerHTML = `<span><b>${count}</b> total</span><span><b>${controlled}</b> controlled</span><span><b>${derived}</b> derived</span><span${failed ? ' class="has-error"' : ""}><b>${failed}</b> errors</span>`;
+    this.toggle.dataset.count = String(count);
+    this.toggle.setAttribute("aria-label", `Reactive dashboard, ${count} ${count === 1 ? "value" : "values"}`);
+  }
+  renderVariables() {
+    const hasValues = this.descriptors.length > 0;
+    this.emptyElement.hidden = hasValues;
+    this.variablesElement.hidden = !hasValues;
+    this.variablesElement.innerHTML = reactiveVariableCardsHtml(this.descriptors);
+  }
+  renderControls() {
+    this.controlDisposer?.();
+    this.controlDisposer = null;
+    const controls = this.descriptors.flatMap(({ controls: controls2 }) => controls2);
+    this.controlsSection.hidden = controls.length === 0;
+    this.controlsElement.replaceChildren();
+    if (!controls.length)
+      return;
+    const panelValue = createControlPanel([
+      controls,
+      "Reactive inputs",
+      "Only variables with an explicit control definition are editable."
+    ]);
+    this.controlsElement.innerHTML = renderOutputHtml(panelValue, this.repl.formatValue);
+    this.controlDisposer = mountOutputWidgets(this.controlsElement, panelValue, {
+      format: this.repl.formatValue,
+      evaluateControl: (source) => this.repl.run(source),
+      onControlSet: () => this.refresh({ rebuildControls: false, resubscribe: false }),
+      onControlSubmit: () => this.refresh({ rebuildControls: false, resubscribe: false })
+    });
+  }
+  refresh({ rebuildControls = true, resubscribe = true } = {}) {
+    this.descriptors = this.repl.reactiveVariables();
+    this.renderSummary();
+    if (!this.isOpen)
+      return;
+    this.renderVariables();
+    if (rebuildControls)
+      this.renderControls();
+    if (resubscribe)
+      this.subscribe();
+  }
+  dispose() {
+    this.disposeMounted();
+  }
+}
+
 // src/main.js
 var repl = createRixRepl();
 var outputHistory = document.querySelector("#output-history");
@@ -419,7 +576,15 @@ var numberPersist = document.querySelector("#number-persist");
 var numberSettingsStatus = document.querySelector("#number-settings-status");
 var intervalDialog = document.querySelector("#interval-dialog");
 var mobileCommandPanel = document.querySelector("#mobile-command-panel");
+var reactiveDashboardPanel = document.querySelector("#reactive-dashboard-panel");
+var reactiveDashboardToggle = document.querySelector("#reactive-dashboard-toggle");
 var NUMBER_STORAGE_KEY = "ratcalc.number-config.v1";
+var REACTIVE_DASHBOARD_EXAMPLE = `$$width := 3;
+$$height := 2;
+widthSlider := .Slider($$width, 0:10, 1/2, "Width");
+heightSlider := .Slider($$height, 0:10, 1/2, "Height");
+$$area := $width * $height;
+$area`;
 var scriptMode = false;
 var history = [];
 var historyIndex = -1;
@@ -432,7 +597,17 @@ var intervalExplorer = new IntervalExplorer({
   evaluate: (source) => repl.run(source),
   onUse: (source) => setInput(source)
 });
-function escapeHtml2(value) {
+var reactiveDashboard = new ReactiveDashboard({
+  panel: reactiveDashboardPanel,
+  toggle: reactiveDashboardToggle,
+  repl,
+  onUse: (source) => setInput(source),
+  onLoadExample: () => {
+    setScriptMode(true);
+    setInput(REACTIVE_DASHBOARD_EXAMPLE);
+  }
+});
+function escapeHtml3(value) {
   return String(value).replace(/[&<>'"]/g, (character) => ({
     "&": "&amp;",
     "<": "&lt;",
@@ -478,7 +653,7 @@ function renderCompletion() {
   completionGhost.replaceChildren(document.createTextNode(input.value.slice(0, to)), Object.assign(document.createElement("span"), { className: "suffix", textContent: suffix }));
   completionGhost.scrollTop = input.scrollTop;
   completionHint.hidden = false;
-  completionHint.innerHTML = `<b>${escapeHtml2(candidate.insertText)}</b> · ${escapeHtml2(candidate.detail)}${candidate.preview ? ` — ${escapeHtml2(candidate.preview)}` : ""}`;
+  completionHint.innerHTML = `<b>${escapeHtml3(candidate.insertText)}</b> · ${escapeHtml3(candidate.detail)}${candidate.preview ? ` — ${escapeHtml3(candidate.preview)}` : ""}`;
 }
 function beginCompletion() {
   if (input.selectionStart !== input.selectionEnd)
@@ -515,7 +690,7 @@ function appendOutput(source, response) {
   entry.className = "output-entry";
   const sourceLine = document.createElement("div");
   sourceLine.className = "input-line";
-  sourceLine.innerHTML = `<span class="prompt">&gt;</span>${escapeHtml2(source)}<span class="reload-icon" title="Reload expression">↻</span>`;
+  sourceLine.innerHTML = `<span class="prompt">&gt;</span>${escapeHtml3(source)}<span class="reload-icon" title="Reload expression">↻</span>`;
   sourceLine.addEventListener("click", () => setInput(source));
   entry.appendChild(sourceLine);
   if (response.type === "help") {
@@ -540,7 +715,7 @@ function appendOutput(source, response) {
       });
       outputDisposers.add(dispose);
     } else {
-      outputLine.innerHTML = response.type === "error" ? escapeHtml2(preview) : `${escapeHtml2(preview)}<span class="inject-icon" title="Use this value">→</span>`;
+      outputLine.innerHTML = response.type === "error" ? escapeHtml3(preview) : `${escapeHtml3(preview)}<span class="inject-icon" title="Use this value">→</span>`;
       if (inspectable)
         outputLine.addEventListener("click", () => openInspection(source, response.text));
       else if (response.type === "result")
@@ -584,6 +759,7 @@ function applyNumberSettings(config, { close = false } = {}) {
     numberDisplayProfile.value = applied.display;
     saveNumberSettings(applied);
     numberSettingsStatus.textContent = `Using #${applied.input} input and ${applied.display} output.`;
+    reactiveDashboard.refresh({ rebuildControls: false });
     if (close)
       numberDialog.close();
   } catch (error) {
@@ -645,15 +821,15 @@ function restoreNumberSettings() {
 function inlineHelp({ query, groups }) {
   const panel = document.createElement("section");
   panel.className = "inline-help";
-  const title = query ? `Help for “${escapeHtml2(query)}”` : "RiX and RatCalc help";
-  const body = groups.length ? groups.map((group) => `<h4>${escapeHtml2(group.title)}</h4><ul>${group.items.map(([syntax, description]) => `<li><code>${escapeHtml2(syntax)}</code> — ${escapeHtml2(description)}</li>`).join("")}</ul>`).join("") : `<p>No help topic matched “${escapeHtml2(query)}”. Try <code>.Help("interval")</code>.</p>`;
+  const title = query ? `Help for “${escapeHtml3(query)}”` : "RiX and RatCalc help";
+  const body = groups.length ? groups.map((group) => `<h4>${escapeHtml3(group.title)}</h4><ul>${group.items.map(([syntax, description]) => `<li><code>${escapeHtml3(syntax)}</code> — ${escapeHtml3(description)}</li>`).join("")}</ul>`).join("") : `<p>No help topic matched “${escapeHtml3(query)}”. Try <code>.Help("interval")</code>.</p>`;
   panel.innerHTML = `<h3>${title}</h3>${body}`;
   return panel;
 }
 function renderHelp(query = "") {
   const { groups } = findHelp(query);
   const intro = query ? "" : `<section class="help-intro"><b>Welcome to RatCalc.</b><br />Type an exact expression and press Enter. Use <code>:=</code> for a fresh value, <code>2:5</code> for an interval, and <code>.Help("topic")</code> when you want help printed directly in the transcript.</section>`;
-  const sections = groups.length ? groups.map((group) => `<section class="help-group"><h3>${escapeHtml2(group.title)}</h3>${group.items.map(([syntax, description]) => `<div class="help-item"><code>${escapeHtml2(syntax)}</code><p>${escapeHtml2(description)}</p></div>`).join("")}</section>`).join("") : `<p class="help-intro">No matching help topic. Try “interval”, “function”, or “assignment”.</p>`;
+  const sections = groups.length ? groups.map((group) => `<section class="help-group"><h3>${escapeHtml3(group.title)}</h3>${group.items.map(([syntax, description]) => `<div class="help-item"><code>${escapeHtml3(syntax)}</code><p>${escapeHtml3(description)}</p></div>`).join("")}</section>`).join("") : `<p class="help-intro">No matching help topic. Try “interval”, “function”, or “assignment”.</p>`;
   helpContent.innerHTML = intro + sections;
 }
 function openHelp(query = "") {
@@ -663,10 +839,23 @@ function openHelp(query = "") {
   helpSearch.focus();
 }
 function setDocsOpen(next) {
+  if (next && reactiveDashboard.isOpen) {
+    reactiveDashboard.close();
+    document.querySelector(".container").classList.remove("dashboard-open");
+  }
   docsPanel.hidden = !next;
   document.querySelector(".container").classList.toggle("docs-open", next);
   docsToggle.setAttribute("aria-pressed", String(next));
   docsToggle.textContent = next ? "Close docs" : "Docs";
+}
+function setReactiveDashboardOpen(next) {
+  if (next) {
+    setDocsOpen(false);
+    reactiveDashboard.open();
+  } else {
+    reactiveDashboard.close();
+  }
+  document.querySelector(".container").classList.toggle("dashboard-open", next);
 }
 function openInspection(source, value) {
   inspectSource.textContent = source;
@@ -683,6 +872,7 @@ async function clearSession() {
   transcript = [];
   outputHistory.innerHTML = "";
   displayWelcome();
+  reactiveDashboard.refresh();
   setInput("");
 }
 function displayWelcome() {
@@ -721,6 +911,7 @@ async function execute(source = input.value) {
   historyIndex = -1;
   const response = await repl.runAsync(source);
   appendOutput(source, response);
+  reactiveDashboard.refresh();
   setInput("");
 }
 function setScriptMode(next) {
@@ -801,6 +992,16 @@ document.addEventListener("click", (event) => {
     case "close-docs":
       setDocsOpen(false);
       input.focus();
+      break;
+    case "reactive-dashboard":
+      setReactiveDashboardOpen(!reactiveDashboard.isOpen);
+      break;
+    case "close-reactive-dashboard":
+      setReactiveDashboardOpen(false);
+      input.focus();
+      break;
+    case "refresh-reactive-dashboard":
+      reactiveDashboard.refresh();
       break;
     case "close-inspect":
       inspectDialog.close();
@@ -952,10 +1153,12 @@ numberForm.addEventListener("submit", (event) => {
 displayWelcome();
 setAutoSeparateLines(autoSeparateLines);
 restoreNumberSettings();
+reactiveDashboard.refresh();
 input.focus();
 window.addEventListener("pagehide", () => {
+  reactiveDashboard.dispose();
   repl.dispose();
 });
 
-//# debugId=950F8A2C8242E22764756E2164756E21
+//# debugId=581136011A3DE43264756E2164756E21
 //# sourceMappingURL=main.js.map

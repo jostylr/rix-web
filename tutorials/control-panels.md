@@ -31,6 +31,29 @@ $view ;
 The control receives `$$x`, the stable reactive identity. The text reads `$x`
 through its interpolation, so it is rebuilt after each committed move.
 
+## Use the RiX-Web dashboard shortcuts
+
+RiX-Web can collect reactive values into its **Dashboard** drawer without
+requiring a Fragment or ControlPanel. Every `$$` value appears as a live
+readout. Assigning a short control constructor makes that target editable:
+
+```rix edu
+$$width := 3;
+$$height := 2;
+
+widthSlider := .Slider($$width, 0:10, 1/2, "Width");
+heightSlider := .Slider($$height, 0:10, 1/2, "Height");
+
+$$area := $width * $height;
+$area ;
+```
+
+Open **Dashboard** after running the cell. `width` and `height` have exact
+sliders, while `area` is a read-only derived value showing its dependencies.
+The concise `.Slider`, `.Input`, `.Choice`, `.Toggle`, `.Range`, `.Reset`,
+`.Action`, and `.Hold` names are RiX-Web conveniences. Use the canonical
+`.Controls.*` forms when authoring portable output intended for another host.
+
 ## Lay out actions and add keyboard navigation
 
 Action controls can declare both portable grid placement and a root-scoped
