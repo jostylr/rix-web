@@ -5827,6 +5827,7 @@ function installWebControlCapabilities(systemContext, { onControl = null } = {})
 var helpGroups = [
   {
     title: "Start here",
+    description: "Learn the smallest useful exact expressions, intervals, and assignments.",
     items: [
       ["2 + 3", "Evaluate an exact expression. Integers and fractions never become floats by accident."],
       ["3 / 8", "Exact division returns the rational 3/8."],
@@ -5836,6 +5837,7 @@ var helpGroups = [
   },
   {
     title: "Names and functions",
+    description: "Create values, aliases, user functions, and system-capability calls.",
     items: [
       ["x := 3", "Create a lower-case value binding."],
       ["y = x", "Alias x's cell; in-place updates are shared."],
@@ -5845,6 +5847,7 @@ var helpGroups = [
   },
   {
     title: "Collections",
+    description: "Work with arrays, sets, maps, and indexed values.",
     items: [
       ["[1, 2, 3]", "An array; indexes begin at 1."],
       ["{| 1, 2 |}", "A set."],
@@ -5854,6 +5857,7 @@ var helpGroups = [
   },
   {
     title: "Exact symbolic work",
+    description: "Build symbolic expressions and perform exact differentiation and integration.",
     items: [
       ["{#x}", "Create the identity-symbol spec for x."],
       ["{#x# x^2 + 1 }", "Create a single-output symbolic expression."],
@@ -5863,6 +5867,7 @@ var helpGroups = [
   },
   {
     title: "Number views",
+    description: "Choose decimal, fractional, continued-fraction, scientific, and base displays.",
     items: [
       ["Numbers", "Open the number panel for decimal, exact, base, continued-fraction, and scientific presets."],
       ['*> ".[12],b,.."', "Show a bounded decimal, binary expansion, and exact mixed fraction together."],
@@ -5872,6 +5877,7 @@ var helpGroups = [
   },
   {
     title: "Intervals and graphics",
+    description: "Explore exact intervals and create portable interactive graphics.",
     items: [
       ["1/3:2/3", "Create an exact closed interval; endpoint orientation is retained."],
       ["Explore interval", "Open the exact number line, edit endpoints, inspect arithmetic provenance, and export SVG or HTML."],
@@ -5881,15 +5887,19 @@ var helpGroups = [
   },
   {
     title: "Scripts and plugins",
+    description: "Run multiline programs, manage sessions, and load browser plugins.",
     items: [
       ["Script entry", "Write several RiX statements and run them together with Ctrl/Command + Enter."],
-      ["Load", "Load a local .rix file into script entry mode."],
+      ["Save", "Download a restorable .rix-session file with commands, settings, current input, and reactive inputs."],
+      ["Load", "Restore a .rix-session file completely, or open a local .rix file in script input."],
+      ["Copy transcript", "Copy the visible command-and-result transcript to the clipboard."],
       ['.Plugin.Load("plot")', "Load an approved browser plugin into this session."],
       ["Tab", "Complete names and methods from the current RiX context without evaluating the draft."]
     ]
   },
   {
     title: "Reactive dashboard",
+    description: "Create live values, controls, formulas, and dependency-driven models.",
     items: [
       ["$$x := 2", "Declare a reactive value; the dashboard displays it live."],
       ["$x", "Read x and record a dependency inside another reactive definition."],
@@ -5900,6 +5910,7 @@ var helpGroups = [
   },
   {
     title: "Calculator commands",
+    description: "Use built-in commands for help, variables, and session clearing.",
     items: [
       [".help", "Open this reference and its quick-start guide."],
       ['.Help("interval")', "Print matching help inline in the calculator transcript."],
@@ -5912,7 +5923,7 @@ function findHelp(topic = "") {
   const query = String(topic).trim().toLowerCase();
   const groups = helpGroups.map((group) => ({
     ...group,
-    items: group.items.filter(([syntax, description]) => !query || `${group.title} ${syntax} ${description}`.toLowerCase().includes(query))
+    items: group.items.filter(([syntax, description]) => !query || `${group.title} ${group.description} ${syntax} ${description}`.toLowerCase().includes(query))
   })).filter((group) => group.items.length > 0);
   return { query, groups };
 }
@@ -6204,5 +6215,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { findHelp, createRixRepl };
 
-//# debugId=A37880DCF74955CB64756E2164756E21
-//# sourceMappingURL=chunk-app2h0ye.js.map
+//# debugId=097E016E209EAB3364756E2164756E21
+//# sourceMappingURL=chunk-zqe1rs1x.js.map

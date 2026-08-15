@@ -102,3 +102,130 @@ button { cursor: pointer; }
 
 @media (max-width: 850px) { .container.dashboard-open .app-workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(480px, 1fr) minmax(480px, 1fr); }.reactive-dashboard-panel { min-height: 480px; } }
 @media (max-width: 720px) { .app-header { min-height: 120px; }.app-header nav { max-width: calc(100vw - 118px); flex-wrap: wrap; justify-content: flex-end; }.reactive-dashboard-panel { border-left: 0; border-right: 0; border-radius: 0; }.reactive-dashboard-body { padding: .7rem; } }
+
+/* Calculator workspace redesign */
+html, body { height: 100%; min-height: 0; overflow: hidden; }
+body { height: 100dvh; }
+.container { width: 100%; height: 100dvh; min-height: 0; max-width: 1440px; overflow: hidden; display: grid; grid-template-rows: auto auto minmax(0, 1fr); }
+.app-header { position: static; min-height: 0; margin-bottom: 0; display: grid; grid-template-columns: minmax(245px, 1fr) auto; align-items: center; align-content: normal; gap: 1.25rem; text-align: left; }
+.header-copy { display: flex; align-items: center; min-width: 0; gap: 1.1rem; }
+.brand { position: static; flex: 0 0 auto; transform: none; }
+.app-header > .header-copy > p { min-width: 12rem; max-width: 29rem; margin: 0; font: 400 .84rem/1.35 system-ui, sans-serif; opacity: .85; }
+.header-navs { display: flex; align-items: center; justify-content: flex-end; min-width: 0; gap: .8rem; }
+.app-header nav { position: static; transform: none; display: flex; align-items: center; gap: .38rem; }
+.app-header nav + nav { padding-left: .8rem; border-left: 1px solid rgb(255 255 255 / .3); }
+.app-header nav > span { margin-right: .15rem; color: rgb(255 255 255 / .65); text-transform: uppercase; letter-spacing: .08em; font: 700 .56rem system-ui, sans-serif; }
+.app-header nav a, .app-header nav button { min-height: 32px; display: inline-flex; align-items: center; white-space: nowrap; }
+.app-header nav .help-action { border-color: rgb(255 255 255 / .8); background: rgb(255 255 255 / .2); font-weight: 750; }
+.app-header nav a:focus-visible, .app-header nav button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.workspace-nav { display: flex; align-items: center; justify-content: flex-end; gap: .4rem; min-width: 0; padding: .45rem 0 .6rem; }
+.workspace-nav > span { margin-right: .2rem; color: rgb(255 255 255 / .68); text-transform: uppercase; letter-spacing: .08em; font: 700 .56rem system-ui, sans-serif; }
+.workspace-nav button { min-height: 31px; border: 1px solid rgb(255 255 255 / .5); border-radius: 6px; padding: 5px 9px; background: rgb(255 255 255 / .12); color: #fff; white-space: nowrap; font: 650 .7rem system-ui, sans-serif; }
+.workspace-nav button:hover { background: rgb(255 255 255 / .24); }
+.workspace-nav .help-action { border-color: rgb(255 255 255 / .85); background: rgb(255 255 255 / .22); }
+.workspace-nav button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+
+.app-workspace { height: auto; min-height: 0; overflow: hidden; }
+.calculator-column { height: 100%; overflow: hidden; }
+.calculator { height: 100%; }
+.calculator-toolbar { display: grid; grid-template-columns: auto minmax(12rem, 1fr) auto; align-items: center; }
+.calculator-toolbar > #entry-mode-label { overflow: hidden; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.session-actions { display: flex; align-items: center; gap: .35rem; }
+.session-actions button { border: 1px solid #cbd5e1; border-radius: 5px; padding: .3rem .52rem; background: #fff; color: #475569; font: 650 .68rem system-ui, sans-serif; }
+.session-actions button:first-child { border-color: #059669; color: #047857; }
+.session-actions button:hover, .session-actions button:focus-visible { border-color: #7c3aed; outline: 0; background: #f5f3ff; color: #5b42a0; }
+.output-history { overscroll-behavior: contain; }
+
+.input-section { display: grid; grid-template-columns: auto minmax(10rem, 1fr) auto; align-items: center; gap: .7rem; padding: .8rem 1rem .85rem 1.3rem; }
+.input-section > .prompt { align-self: start; display: flex; align-items: center; height: calc(1.55em + 6px); padding: 3px 0; line-height: 1.55; transform: translateY(-5px); }
+.input-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: .42rem; }
+.input-actions button { min-height: 34px; border: 1px solid #cbd5e1; border-radius: 6px; padding: .44rem .65rem; background: #fff; color: #475569; white-space: nowrap; font: 650 .7rem system-ui, sans-serif; }
+.input-actions .run-button { border-color: #059669; background: #059669; color: #fff; }
+.input-actions .mode-button.active { border-color: #7c3aed; background: #f5f3ff; color: #6d28d9; }
+.input-actions .clear-button.danger, [data-action="clear"].danger { border-color: #dc2626; background: #fff1f2; color: #b91c1c; }
+.input-actions button:focus-visible { outline: 2px solid #7c3aed; outline-offset: 2px; }
+.calculator.script-mode .input-section { align-items: start; }
+.calculator.script-mode .input-actions { padding-top: 3px; }
+.session-status { min-height: 0; max-height: 0; overflow: hidden; padding: 0 1rem; background: #ecfdf5; color: #047857; transition: max-height .15s ease, padding .15s ease; font: 650 .68rem/1.35 system-ui, sans-serif; }
+.session-status:not(:empty) { max-height: 3rem; padding-top: .35rem; padding-bottom: .35rem; border-top: 1px solid #a7f3d0; }
+.session-status.error { background: #fff1f2; border-color: #fecdd3; color: #be123c; }
+
+.container.dashboard-open .app-workspace { grid-template-columns: minmax(0, 1.35fr) minmax(320px, .65fr); }
+.reactive-dashboard-panel { height: 100%; }
+.reactive-dashboard-body { overscroll-behavior: contain; }
+
+.help-content, #help-content { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem; margin-top: .75rem; }
+#help-content .help-intro { grid-column: 1 / -1; margin: 0 0 .15rem; }
+.help-dialog { max-height: min(92dvh, 900px); }
+.help-dialog .modal-body { max-height: calc(min(92dvh, 900px) - 100px); }
+.help-overview { grid-column: 1 / -1; margin: 0; color: #64748b; font: .78rem/1.4 system-ui, sans-serif; }
+.help-section { margin: 0; overflow: hidden; border: 1px solid #dbe2ea; border-radius: 9px; background: #fff; font-family: system-ui, sans-serif; }
+.help-section[open] { grid-column: 1 / -1; }
+.help-section > summary { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 1rem; min-height: 64px; padding: .72rem 2.4rem .72rem .85rem; cursor: pointer; list-style: none; }
+.help-section > summary::-webkit-details-marker { display: none; }
+.help-section > summary::after { content: "+"; position: absolute; right: .85rem; top: 50%; transform: translateY(-50%); color: #6d28d9; font: 700 1.15rem/1 system-ui, sans-serif; }
+.help-section[open] > summary::after { content: "−"; }
+.help-section > summary:hover, .help-section > summary:focus-visible { background: #fafaff; outline: 0; }
+.help-section > summary:focus-visible { box-shadow: inset 0 0 0 2px #8b5cf6; }
+.help-section > summary > span { display: grid; min-width: 0; gap: .18rem; }
+.help-section > summary b { color: #4c347f; font-size: .9rem; }
+.help-section > summary small { color: #64748b; font-size: .75rem; line-height: 1.4; }
+.help-section > summary > i { margin-right: .35rem; color: #94a3b8; white-space: nowrap; font-size: .65rem; font-style: normal; }
+.help-section-body { padding: .2rem .85rem .85rem; border-top: 1px solid #eef2f7; }
+.help-group { padding: 0; border-bottom: 0; }
+.help-group h3 { margin: 0; }
+.help-showcases { margin: 0; }
+.help-showcases-intro { margin: .65rem 0; }
+
+@media (max-width: 1080px) {
+  .app-header { grid-template-columns: minmax(210px, .7fr) auto; gap: .7rem; }
+  .app-header > .header-copy > p { display: none; }
+  .header-navs { gap: .45rem; }
+  .app-header nav > span { display: none; }
+  .app-header nav a, .app-header nav button { padding: 6px 8px; }
+}
+
+@media (max-width: 850px) {
+  .app-header { grid-template-columns: 1fr; gap: .65rem; }
+  .header-copy { justify-content: flex-start; }
+  .header-navs { justify-content: flex-start; overflow-x: auto; padding: 0 1px 3px; }
+  .app-header nav { flex: 0 0 auto; }
+  .container.dashboard-open .app-workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(240px, 1.15fr) minmax(220px, .85fr); }
+  .reactive-dashboard-panel { min-height: 0; }
+  .calculator-toolbar { grid-template-columns: auto 1fr; }
+  .calculator-toolbar > #entry-mode-label { text-align: right; }
+  .session-actions { grid-column: 1 / -1; justify-content: flex-end; padding-top: .15rem; }
+}
+
+@media (max-width: 720px) {
+  .container { height: 100dvh; padding: 0; }
+  .app-header { min-height: 0; margin: 0; padding: 9px 10px 8px; align-content: normal; }
+  .header-copy { min-height: 34px; }
+  .brand { position: static; transform: none; }
+  .header-navs { display: grid; grid-template-columns: minmax(0, 1fr); max-width: 100%; overflow: visible; gap: .35rem; padding-bottom: 0; }
+  .app-header nav { position: static; max-width: none; transform: none; flex-wrap: nowrap; justify-content: flex-start; }
+  .app-header nav a, .app-header nav button { min-height: 29px; padding: 4px 7px; font-size: 10px; }
+  .workspace-nav { justify-content: flex-start; padding: .35rem 10px .45rem; }
+  .workspace-nav > span { display: none; }
+  .workspace-nav button { min-height: 29px; padding: 4px 8px; font-size: 10px; }
+  #help-content { grid-template-columns: minmax(0, 1fr); }
+  .help-dialog { min-height: 100dvh; max-height: 100dvh; }
+  .help-dialog .modal-body { max-height: calc(100dvh - 100px); }
+  .calculator-toolbar { gap: .25rem .55rem; padding: 7px 10px; }
+  .calculator-toolbar > #entry-mode-label { font-size: 8px; }
+  .session-actions button { min-height: 30px; }
+  .input-section { grid-template-columns: auto minmax(0, 1fr); padding: .55rem .7rem; }
+  .input-actions { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; }
+  .input-actions button { min-width: 0; padding: .43rem .35rem; overflow: hidden; text-overflow: ellipsis; }
+  .input-section .run-button { display: block; }
+  .container.dashboard-open .mobile-keypad { display: none; }
+  .container.dashboard-open .app-workspace { grid-template-rows: minmax(205px, 1fr) minmax(205px, 1fr); }
+}
+
+@media (max-width: 460px) {
+  .external-nav a, .workspace-nav button { padding-inline: 6px; }
+  .calculator-toolbar > #entry-mode-label { display: none; }
+  .calculator-toolbar { grid-template-columns: 1fr; }
+  .session-actions { grid-column: 1; justify-content: stretch; }
+  .session-actions button { flex: 1; }
+}

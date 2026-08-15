@@ -3,6 +3,13 @@ import { mountOutputWidgets } from "../../rix/src/index.js";
 import { IntervalExplorer, isRationalIntervalValue } from "./interval-explorer.js";
 import { ReactiveDashboard } from "./reactive-dashboard.js";
 import { findShowcaseExamples, showcaseExample } from "./showcase-examples.js";
+import {
+    ClearCoordinator,
+    createSessionSnapshot,
+    modePresentation,
+    parseSession,
+    serializeSession,
+} from "./workspace-state.js";
 
 const repl = createRixRepl();
 const outputHistory = document.querySelector("#output-history");
@@ -12,13 +19,13 @@ const completionHint = document.querySelector("#completion-hint");
 const calculator = document.querySelector(".calculator");
 const scriptToggle = document.querySelector("#script-toggle");
 const lineSeparatorToggle = document.querySelector("#line-separator-toggle");
+const clearButton = document.querySelector("#clear-button");
 const scriptNote = document.querySelector("#script-note");
+const sessionStatus = document.querySelector("#session-status");
 const helpDialog = document.querySelector("#help-dialog");
 const helpSearch = document.querySelector("#help-search");
 const helpContent = document.querySelector("#help-content");
 const fileInput = document.querySelector("#file-input");
-const docsPanel = document.querySelector("#docs-panel");
-const docsToggle = document.querySelector("#docs-toggle");
 const inspectDialog = document.querySelector("#inspect-dialog");
 const inspectSource = document.querySelector("#inspect-source");
 const inspectValue = document.querySelector("#inspect-value");
@@ -44,7 +51,9 @@ let historyIndex = -1;
 let transcript = [];
 let autoSeparateLines = true;
 let completionState = null;
+let clearTimer = null;
 const outputDisposers = new Set();
+const clearCoordinator = new ClearCoordinator();
 const intervalExplorer = new IntervalExplorer({
     dialog: intervalDialog,
     evaluate: (source) => repl.run(source),
@@ -231,7 +240,7 @@ async function copySession() {
     const text = transcript.map((entry) => `> ${entry.source}\n${entry.text}`).join("\n\n");
     if (!text) {
         button.textContent = "Nothing to copy";
-        setTimeout(() => { button.textContent = "Copy session"; }, 1600);
+        setTimeout(() => { button.textContent = "Transcript"; }, 1600);
         return;
     }
     try {
@@ -249,7 +258,42 @@ async function copySession() {
         textarea.remove();
         button.textContent = copied ? "Copied" : "Copy failed";
     }
-    setTimeout(() => { button.textContent = "Copy session"; }, 1600);
+    setTimeout(() => { button.textContent = "Transcript"; }, 1600);
+}
+
+function setSessionStatus(message, { error = false } = {}) {
+    sessionStatus.textContent = message;
+    sessionStatus.classList.toggle("error", error);
+}
+
+function currentSessionSnapshot() {
+    const reactiveInputs = repl.reactiveVariables()
+        .filter(({ dependencies }) => dependencies.length === 0)
+        .map(({ name, sourceText }) => ({ name, source: sourceText }));
+    return createSessionSnapshot({
+        transcript,
+        input: input.value,
+        scriptMode,
+        autoSeparateLines,
+        numberConfig: repl.numberConfig(),
+        reactiveInputs,
+        dashboardOpen: reactiveDashboard.isOpen,
+    });
+}
+
+function downloadText(filename, text, type) {
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(new Blob([text], { type }));
+    link.href = url;
+    link.download = filename;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function saveSession() {
+    const date = new Date().toISOString().slice(0, 10);
+    downloadText(`ratcalc-${date}.rix-session`, serializeSession(currentSessionSnapshot()), "application/json");
+    setSessionStatus("Session saved. Load this .rix-session file to restore it.");
 }
 
 function restoreNumberSettings() {
@@ -278,7 +322,7 @@ function inlineHelp({ query, groups }) {
 function renderHelp(query = "") {
     const { groups } = findHelp(query);
     const examples = findShowcaseExamples(query);
-    const intro = query ? "" : `<section class="help-intro"><b>Welcome to RatCalc.</b><br />Type an exact expression and press Enter. Use <code>:=</code> for a fresh value, <code>2:5</code> for an interval, and <code>.Help(\"topic\")</code> when you want help printed directly in the transcript.</section>`;
+    const intro = query ? "" : `<p class="help-overview">Choose a section for syntax, examples, and calculator features.</p>`;
     const exampleGroups = new Map();
     for (const example of examples) {
         const entries = exampleGroups.get(example.category) || [];
@@ -286,28 +330,29 @@ function renderHelp(query = "") {
         exampleGroups.set(example.category, entries);
     }
     const showcaseSection = examples.length ? `
-        <section class="help-showcases" aria-labelledby="help-showcases-title">
-            <header><div><p>Runnable gallery</p><h3 id="help-showcases-title">Load a RiX showcase</h3></div><span>${examples.length} example${examples.length === 1 ? "" : "s"}</span></header>
-            <p class="help-showcases-intro">Choose an example to place its complete source in the calculator, then press Run. Reactive examples expose their controls in the Dashboard.</p>
-            ${[...exampleGroups].map(([category, entries]) => `
-                <section class="help-showcase-group">
-                    <h4>${escapeHtml(category)}</h4>
-                    <div class="help-showcase-grid">
-                        ${entries.map((example) => `
-                            <button type="button" class="help-showcase-card" data-showcase-example="${escapeHtml(example.id)}" aria-label="Load ${escapeHtml(example.title)}">
-                                <span class="help-showcase-meta"><i>${escapeHtml(example.complexity)}</i><i>${escapeHtml(example.output)}</i></span>
-                                <b>${escapeHtml(example.title)}</b>
-                                <small>${escapeHtml(example.summary)}</small>
-                                <code>${escapeHtml(example.source.split("\n").find((line) => line.trim())?.trim() || example.source)}</code>
-                                <span class="help-showcase-load">Load example →</span>
-                            </button>
-                        `).join("")}
-                    </div>
-                </section>
-            `).join("")}
-        </section>` : "";
+        <details class="help-section help-showcases">
+            <summary><span><b>Runnable examples</b><small>Load complete programs for exact arithmetic, reactive models, graphics, and polynomial work.</small></span><i>${examples.length} example${examples.length === 1 ? "" : "s"}</i></summary>
+            <div class="help-section-body">
+                ${[...exampleGroups].map(([category, entries]) => `
+                    <section class="help-showcase-group">
+                        <h4>${escapeHtml(category)}</h4>
+                        <div class="help-showcase-grid">
+                            ${entries.map((example) => `
+                                <button type="button" class="help-showcase-card" data-showcase-example="${escapeHtml(example.id)}" aria-label="Load ${escapeHtml(example.title)}">
+                                    <span class="help-showcase-meta"><i>${escapeHtml(example.complexity)}</i><i>${escapeHtml(example.output)}</i></span>
+                                    <b>${escapeHtml(example.title)}</b>
+                                    <small>${escapeHtml(example.summary)}</small>
+                                    <code>${escapeHtml(example.source.split("\n").find((line) => line.trim())?.trim() || example.source)}</code>
+                                    <span class="help-showcase-load">Load example →</span>
+                                </button>
+                            `).join("")}
+                        </div>
+                    </section>
+                `).join("")}
+            </div>
+        </details>` : "";
     const sections = groups.length
-        ? groups.map((group) => `<section class="help-group"><h3>${escapeHtml(group.title)}</h3>${group.items.map(([syntax, description]) => `<div class="help-item"><code>${escapeHtml(syntax)}</code><p>${escapeHtml(description)}</p></div>`).join("")}</section>`).join("")
+        ? groups.map((group) => `<details class="help-section help-group"><summary><span><b>${escapeHtml(group.title)}</b><small>${escapeHtml(group.description)}</small></span><i>${group.items.length} topic${group.items.length === 1 ? "" : "s"}</i></summary><div class="help-section-body">${group.items.map(([syntax, description]) => `<div class="help-item"><code>${escapeHtml(syntax)}</code><p>${escapeHtml(description)}</p></div>`).join("")}</div></details>`).join("")
         : examples.length ? "" : `<p class="help-intro">No matching help topic or showcase. Try “interval”, “reactive”, “polynomial”, or “graphic”.</p>`;
     helpContent.innerHTML = intro + showcaseSection + sections;
 }
@@ -327,20 +372,8 @@ function loadShowcase(id) {
     setInput(example.source);
 }
 
-function setDocsOpen(next) {
-    if (next && reactiveDashboard.isOpen) {
-        reactiveDashboard.close();
-        document.querySelector(".container").classList.remove("dashboard-open");
-    }
-    docsPanel.hidden = !next;
-    document.querySelector(".container").classList.toggle("docs-open", next);
-    docsToggle.setAttribute("aria-pressed", String(next));
-    docsToggle.textContent = next ? "Close docs" : "Docs";
-}
-
 function setReactiveDashboardOpen(next) {
     if (next) {
-        setDocsOpen(false);
         reactiveDashboard.open();
     } else {
         reactiveDashboard.close();
@@ -365,6 +398,40 @@ async function clearSession() {
     displayWelcome();
     reactiveDashboard.refresh();
     setInput("");
+    clearCoordinator.reset();
+    updateClearButton();
+    setSessionStatus("Session cleared.");
+}
+
+function updateClearButton() {
+    const armed = clearCoordinator.armed;
+    for (const button of document.querySelectorAll('[data-action="clear"]')) {
+        button.textContent = armed ? "Clear history?" : (button === clearButton ? "Clear input" : "Clear");
+        button.classList.toggle("danger", armed);
+        button.setAttribute("aria-label", armed ? "Clear calculator history and reset the session" : "Clear current input");
+    }
+}
+
+function resetClearConfirmation() {
+    if (clearTimer) clearTimeout(clearTimer);
+    clearTimer = null;
+    clearCoordinator.reset();
+    updateClearButton();
+}
+
+async function handleClear() {
+    const intent = clearCoordinator.activate(Boolean(input.value));
+    if (intent === "clear-session") {
+        if (clearTimer) clearTimeout(clearTimer);
+        clearTimer = null;
+        await clearSession();
+        return;
+    }
+    if (intent === "clear-input") setInput("");
+    updateClearButton();
+    setSessionStatus("Input cleared. Select “Clear history?” to reset the full session.");
+    if (clearTimer) clearTimeout(clearTimer);
+    clearTimer = setTimeout(resetClearConfirmation, 5000);
 }
 
 function displayWelcome() {
@@ -403,23 +470,21 @@ async function execute(source = input.value) {
 
 function setScriptMode(next) {
     scriptMode = next;
+    const presentation = modePresentation(scriptMode);
     calculator.classList.toggle("script-mode", scriptMode);
     scriptToggle.classList.toggle("active", scriptMode);
     scriptToggle.setAttribute("aria-pressed", String(scriptMode));
-    scriptToggle.textContent = `Script entry: ${scriptMode ? "on" : "off"}`;
+    scriptToggle.textContent = presentation.buttonLabel;
     scriptNote.hidden = !scriptMode;
-    document.querySelector("#entry-mode-label").textContent = scriptMode
-        ? "Script mode · Enter adds a line · Ctrl/⌘ + Enter runs"
-        : "Command mode · Enter runs · Shift+↑ edits a script";
+    document.querySelector("#entry-mode-label").textContent = presentation.status;
+    input.placeholder = `${presentation.placeholder} — .help for help`;
     setInput(input.value);
 }
 
 function setAutoSeparateLines(next) {
     autoSeparateLines = next;
     repl.setAutoSeparateLines(autoSeparateLines);
-    lineSeparatorToggle.classList.toggle("active", autoSeparateLines);
-    lineSeparatorToggle.setAttribute("aria-pressed", String(autoSeparateLines));
-    lineSeparatorToggle.textContent = `Auto-separate lines: ${autoSeparateLines ? "on" : "off"}`;
+    lineSeparatorToggle.checked = autoSeparateLines;
 }
 
 function continueCommand() {
@@ -441,12 +506,43 @@ function navigateHistory(direction) {
 
 async function loadFile(file) {
     const text = await file.text();
-    if (file.name.toLowerCase().endsWith(".js")) {
+    const lowerName = file.name.toLowerCase();
+    if (lowerName.endsWith(".rix-session")) {
+        try {
+            await restoreSession(parseSession(text));
+            setSessionStatus(`Restored ${file.name}.`);
+        } catch (error) {
+            setSessionStatus(error.message || String(error), { error: true });
+        }
+    } else if (lowerName.endsWith(".js")) {
         appendOutput(`.load ${file.name}`, { type: "result", text: "JavaScript module selected. Browser execution is intentionally held behind a future trust policy." });
     } else {
         setScriptMode(true);
         setInput(text);
     }
+}
+
+async function restoreSession(session) {
+    await clearSession();
+    setAutoSeparateLines(session.autoSeparateLines);
+    applyNumberSettings(session.numberConfig);
+    for (const entry of session.transcript) {
+        if (/^\.vars$/i.test(entry.source.trim())) {
+            showVariables(entry.source);
+            continue;
+        }
+        const response = await repl.runAsync(entry.source);
+        if (history.at(-1) !== entry.source) history.push(entry.source);
+        appendOutput(entry.source, response);
+    }
+    for (const reactive of session.reactiveInputs) {
+        const response = await repl.runAsync(`$${reactive.name} := ${reactive.source}`);
+        if (response.type === "error") throw new Error(`Could not restore reactive input ${reactive.name}: ${response.text}`);
+    }
+    reactiveDashboard.refresh();
+    setScriptMode(session.scriptMode);
+    setInput(session.input);
+    setReactiveDashboardOpen(session.dashboardOpen);
 }
 
 document.addEventListener("click", (event) => {
@@ -459,17 +555,15 @@ document.addEventListener("click", (event) => {
     case "close-number-settings": numberDialog.close(); input.focus(); break;
     case "reset-number-settings": numberInputBase.value = "z[10]"; numberDisplayProfile.value = ".."; applyNumberSettings({ input: "z[10]", display: ".." }); break;
     case "close-help": helpDialog.close(); input.focus(); break;
-    case "docs": setDocsOpen(docsPanel.hidden); break;
-    case "close-docs": setDocsOpen(false); input.focus(); break;
     case "reactive-dashboard": setReactiveDashboardOpen(!reactiveDashboard.isOpen); break;
     case "close-reactive-dashboard": setReactiveDashboardOpen(false); input.focus(); break;
     case "refresh-reactive-dashboard": reactiveDashboard.refresh(); break;
     case "close-inspect": inspectDialog.close(); input.focus(); break;
     case "close-interval": intervalExplorer.close(); input.focus(); break;
-    case "clear": void clearSession(); break;
+    case "clear": void handleClear(); break;
     case "script": setScriptMode(!scriptMode); break;
-    case "line-separators": setAutoSeparateLines(!autoSeparateLines); break;
     case "copy": void copySession(); break;
+    case "save": saveSession(); break;
     case "load": fileInput.click(); break;
     case "interval-export-svg": intervalExplorer.download("svg"); break;
     case "interval-export-html": intervalExplorer.download("html"); break;
@@ -511,7 +605,7 @@ document.addEventListener("click", (event) => {
     }
 });
 
-input.addEventListener("input", () => setInput(input.value));
+input.addEventListener("input", () => { resetClearConfirmation(); setInput(input.value); });
 input.addEventListener("scroll", () => { if (completionState) renderCompletion(); });
 input.addEventListener("keydown", (event) => {
     if (event.key === "Tab") { event.preventDefault(); if (!acceptCompletion()) beginCompletion(); return; }
@@ -546,6 +640,7 @@ helpSearch.addEventListener("input", () => renderHelp(helpSearch.value));
 fileInput.addEventListener("change", async () => { const [file] = fileInput.files; if (file) await loadFile(file); fileInput.value = ""; });
 numberForm.addEventListener("submit", (event) => {
     event.preventDefault();
+    setAutoSeparateLines(lineSeparatorToggle.checked);
     applyNumberSettings({ input: numberInputBase.value, display: numberDisplayProfile.value }, { close: true });
 });
 [helpDialog, inspectDialog, numberDialog, intervalDialog].forEach((dialog) => {

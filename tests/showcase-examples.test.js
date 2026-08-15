@@ -43,4 +43,7 @@ test("the help menu exposes one-click showcase loading", async () => {
     const main = await Bun.file(new URL("../src/main.js", import.meta.url)).text();
     expect(main).toContain('data-showcase-example="${escapeHtml(example.id)}"');
     expect(main).toContain("loadShowcase(showcase.dataset.showcaseExample)");
+    expect(main).toContain('<details class="help-section help-showcases">');
+    expect(main).toContain('<details class="help-section help-group">');
+    expect(main).toContain("group.description");
 });

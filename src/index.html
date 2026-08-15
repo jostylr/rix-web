@@ -10,28 +10,49 @@
   <body>
     <main class="container">
       <header class="app-header">
-        <a class="brand" href="./" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a>
-        <p>Exact rational arithmetic calculator with interval support powered by RiX</p>
-        <nav aria-label="RatCalc navigation"><a href="./tutorial/">Tutorials</a><a href="./showcases.html">Showcases</a><button id="reactive-dashboard-toggle" type="button" data-action="reactive-dashboard" aria-pressed="false" data-count="0">Dashboard</button><button id="docs-toggle" type="button" data-action="docs" aria-pressed="false">Docs</button><button type="button" data-action="number-settings">Numbers</button><button type="button" data-action="help">Help</button></nav>
+        <div class="header-copy">
+          <a class="brand" href="./" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a>
+          <p>Exact rational math</p>
+        </div>
+        <div class="header-navs">
+          <nav class="external-nav" aria-label="RiX resources"><span>Explore</span><a href="./tutorial/">Tutorials</a><a href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Docs</a><a href="./showcases.html">Showcases</a></nav>
+        </div>
       </header>
+
+      <nav class="workspace-nav" aria-label="Calculator tools">
+        <span>Calculator</span>
+        <button id="reactive-dashboard-toggle" type="button" data-action="reactive-dashboard" aria-pressed="false" data-count="0">Dashboard</button>
+        <button type="button" data-action="number-settings">Settings</button>
+        <button class="help-action" type="button" data-action="help">Help</button>
+      </nav>
 
       <div class="app-workspace">
         <div class="calculator-column">
           <section class="calculator" aria-label="RatCalc calculator">
             <div class="calculator-toolbar">
               <span><i></i> RiX browser session</span>
-              <span id="entry-mode-label">Command mode · Enter runs · Shift+↑ edits a script</span>
+              <span id="entry-mode-label">Calculator input · Enter runs · Shift+↑ opens script input</span>
+              <div class="session-actions" aria-label="Session actions">
+                <button type="button" data-action="save">Save</button>
+                <button type="button" data-action="load">Load</button>
+                <button type="button" data-action="copy" aria-label="Copy transcript">Transcript</button>
+              </div>
             </div>
             <div id="output-history" class="output-history" aria-live="polite"></div>
             <div id="input-section" class="input-section">
-              <span class="prompt">&gt;</span>
+              <span class="prompt" aria-hidden="true">&gt;</span>
               <label class="sr-only" for="calculator-input">RatCalc command entry</label>
               <div class="input-editor">
                 <div id="completion-ghost" class="completion-ghost" aria-hidden="true"></div>
                 <textarea id="calculator-input" class="calculator-input" rows="1" spellcheck="false" placeholder="Enter a RiX expression — .help for help"></textarea>
               </div>
-              <button class="run-button" type="button" data-action="run">Run</button>
+              <div class="input-actions" aria-label="Input actions">
+                <button class="run-button" type="button" data-action="run">Run</button>
+                <button id="script-toggle" class="mode-button" type="button" data-action="script" aria-pressed="false">Input: Calculator</button>
+                <button id="clear-button" class="clear-button" type="button" data-action="clear">Clear input</button>
+              </div>
             </div>
+            <output id="session-status" class="session-status" role="status"></output>
             <p id="completion-hint" class="completion-hint" role="status" hidden></p>
             <p id="script-note" class="script-note" hidden>Script mode: Enter adds a line; ↑ and ↓ move through the text; Ctrl/⌘ + Enter runs the script; Shift+↓ returns to command mode.</p>
             <div id="mobile-keypad" class="mobile-keypad" aria-label="Math keypad">
@@ -40,33 +61,19 @@
                 <button type="button" data-insert="4">4</button><button type="button" data-insert="5">5</button><button type="button" data-insert="6">6</button><button type="button" data-insert=" * ">×</button><button type="button" data-insert=" / ">÷</button>
                 <button type="button" data-insert="1">1</button><button type="button" data-insert="2">2</button><button type="button" data-insert="3">3</button><button type="button" data-insert=" + ">+</button><button type="button" data-insert=" - ">−</button>
                 <button type="button" data-insert="0">0</button><button type="button" data-insert=".">.</button><button type="button" data-insert=":">:</button><button type="button" data-insert="/">/</button><button type="button" data-insert="^">^</button>
-                <button type="button" data-mobile-action="backspace" aria-label="Backspace">⌫</button><button type="button" data-mobile-action="clear-input">CLR</button><button type="button" data-insert=",">,</button><button type="button" data-mobile-action="commands">Commands</button><button type="button" class="mobile-run" data-action="run">Run</button>
+                <button type="button" data-mobile-action="backspace" aria-label="Backspace">⌫</button><button type="button" data-action="clear">Clear</button><button type="button" data-insert=",">,</button><button type="button" data-mobile-action="commands">Commands</button><button type="button" class="mobile-run" data-action="run">Run</button>
               </div>
               <div id="mobile-command-panel" class="mobile-command-panel" hidden>
-                <button type="button" data-mobile-command=".help">Help</button>
                 <button type="button" data-mobile-command=".vars">Variables</button>
                 <button type="button" data-number-preset=".[20],..">Decimal + exact</button>
                 <button type="button" data-number-preset="cf">Continued fraction</button>
                 <button type="button" data-number-preset="sci[10]">Scientific</button>
                 <button type="button" data-action="reactive-dashboard">Reactive dashboard</button>
-                <button type="button" data-mobile-command=".clear">Clear session</button>
               </div>
             </div>
           </section>
-          <div class="controls" aria-label="Calculator controls">
-            <button type="button" data-action="copy">Copy session</button>
-            <button type="button" data-action="help">? Help</button>
-            <button id="script-toggle" type="button" data-action="script" aria-pressed="false">Script entry: off</button>
-            <button id="line-separator-toggle" type="button" data-action="line-separators" aria-pressed="true">Auto-separate lines: on</button>
-            <button type="button" data-action="load">Load</button>
-            <button type="button" data-action="clear">Clear</button>
-            <input id="file-input" type="file" accept=".rix,.js,text/plain,application/javascript" hidden />
-          </div>
+          <input id="file-input" type="file" accept=".rix-session,.rix,.js,application/json,text/plain,application/javascript" hidden />
         </div>
-        <aside id="docs-panel" class="docs-panel" aria-label="RiX documentation" hidden>
-          <header class="docs-panel-header"><span>RiX documentation</span><div><a href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-action="close-docs" aria-label="Close documentation">×</button></div></header>
-          <iframe src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe>
-        </aside>
         <aside id="reactive-dashboard-panel" class="reactive-dashboard-panel" aria-label="Reactive variable dashboard" hidden>
           <header class="reactive-dashboard-header">
             <div><span>Reactive dashboard</span><small id="reactive-dashboard-count">0 reactive values</small></div>
@@ -106,7 +113,7 @@
       <pre id="inspect-value" class="inspect-value"></pre>
     </dialog>
     <dialog id="number-dialog" class="number-dialog" aria-labelledby="number-title">
-      <header class="modal-header"><div><h2 id="number-title">Number notation</h2><p>These settings apply to this RiX session.</p></div><button type="button" data-action="close-number-settings" aria-label="Close number settings">×</button></header>
+      <header class="modal-header"><div><h2 id="number-title">Calculator settings</h2><p>Input, script, and number notation for this session.</p></div><button type="button" data-action="close-number-settings" aria-label="Close calculator settings">×</button></header>
       <form id="number-form" class="number-form" method="dialog">
         <label>Input base for <code>#</code> numerals
           <input id="number-input-base" name="input" list="number-base-presets" value="z[10]" spellcheck="false" />
@@ -125,6 +132,7 @@
           <button type="button" data-number-preset="x,..">Hex + exact</button>
         </div>
         <p id="number-format-help"><code>.[12],b,..</code> shows a 12-place decimal, binary, and a mixed fraction. Use <code>cf</code>, <code>sci[10]</code>, or <code>sci-period[10]</code> for specialized views.</p>
+        <label class="number-persist"><input id="line-separator-toggle" type="checkbox" checked /> Automatically separate top-level script lines</label>
         <label class="number-persist"><input id="number-persist" type="checkbox" /> Remember in this browser</label>
         <output id="number-settings-status" role="status"></output>
         <div class="number-actions"><button type="button" data-action="reset-number-settings">Defaults</button><button type="submit">Apply</button></div>

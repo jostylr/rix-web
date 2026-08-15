@@ -1,7 +1,7 @@
 import {
   createRixRepl,
   findHelp
-} from "./chunk-app2h0ye.js";
+} from "./chunk-zqe1rs1x.js";
 import {
   Integer,
   Rational,
@@ -836,6 +836,97 @@ function showcaseExample(id) {
   return showcaseExamples.find((example) => example.id === id) || null;
 }
 
+// src/workspace-state.js
+var RIX_SESSION_FORMAT = "rix-web-session";
+var RIX_SESSION_VERSION = 1;
+function requiredString(value, label) {
+  if (typeof value !== "string")
+    throw new Error(`${label} must be text`);
+  return value;
+}
+function createSessionSnapshot({
+  transcript = [],
+  input = "",
+  scriptMode = false,
+  autoSeparateLines = true,
+  numberConfig = {},
+  reactiveInputs = [],
+  dashboardOpen = false,
+  savedAt = new Date().toISOString()
+} = {}) {
+  return {
+    format: RIX_SESSION_FORMAT,
+    version: RIX_SESSION_VERSION,
+    savedAt,
+    transcript: transcript.map((entry, index) => ({
+      source: requiredString(entry?.source, `Transcript entry ${index + 1} source`),
+      text: typeof entry?.text === "string" ? entry.text : ""
+    })),
+    input: requiredString(input, "Current input"),
+    scriptMode: Boolean(scriptMode),
+    autoSeparateLines: Boolean(autoSeparateLines),
+    numberConfig: {
+      input: requiredString(numberConfig.input ?? "z[10]", "Number input notation"),
+      display: requiredString(numberConfig.display ?? "..", "Number display notation")
+    },
+    reactiveInputs: reactiveInputs.map((entry, index) => ({
+      name: requiredString(entry?.name, `Reactive input ${index + 1} name`),
+      source: requiredString(entry?.source, `Reactive input ${index + 1} source`)
+    })),
+    dashboardOpen: Boolean(dashboardOpen)
+  };
+}
+function serializeSession(snapshot) {
+  return `${JSON.stringify(createSessionSnapshot(snapshot), null, 2)}
+`;
+}
+function parseSession(text) {
+  let value;
+  try {
+    value = JSON.parse(String(text));
+  } catch {
+    throw new Error("This is not a valid RiX session file.");
+  }
+  if (!value || value.format !== RIX_SESSION_FORMAT) {
+    throw new Error("This file is not a RiX Web session.");
+  }
+  if (value.version !== RIX_SESSION_VERSION) {
+    throw new Error(`RiX session version ${value.version} is not supported.`);
+  }
+  if (!Array.isArray(value.transcript) || !Array.isArray(value.reactiveInputs ?? [])) {
+    throw new Error("The RiX session is missing its command history.");
+  }
+  return createSessionSnapshot(value);
+}
+function modePresentation(scriptMode) {
+  return scriptMode ? {
+    buttonLabel: "Input: Script",
+    status: "Script input · Enter adds a line · Ctrl/⌘ + Enter runs",
+    placeholder: "Enter a RiX script"
+  } : {
+    buttonLabel: "Input: Calculator",
+    status: "Calculator input · Enter runs · Shift+↑ opens script input",
+    placeholder: "Enter a RiX expression"
+  };
+}
+
+class ClearCoordinator {
+  constructor() {
+    this.armed = false;
+  }
+  activate(hasInput) {
+    if (this.armed) {
+      this.armed = false;
+      return "clear-session";
+    }
+    this.armed = true;
+    return hasInput ? "clear-input" : "confirm-session";
+  }
+  reset() {
+    this.armed = false;
+  }
+}
+
 // src/main.js
 var repl = createRixRepl();
 var outputHistory = document.querySelector("#output-history");
@@ -845,13 +936,13 @@ var completionHint = document.querySelector("#completion-hint");
 var calculator = document.querySelector(".calculator");
 var scriptToggle = document.querySelector("#script-toggle");
 var lineSeparatorToggle = document.querySelector("#line-separator-toggle");
+var clearButton = document.querySelector("#clear-button");
 var scriptNote = document.querySelector("#script-note");
+var sessionStatus = document.querySelector("#session-status");
 var helpDialog = document.querySelector("#help-dialog");
 var helpSearch = document.querySelector("#help-search");
 var helpContent = document.querySelector("#help-content");
 var fileInput = document.querySelector("#file-input");
-var docsPanel = document.querySelector("#docs-panel");
-var docsToggle = document.querySelector("#docs-toggle");
 var inspectDialog = document.querySelector("#inspect-dialog");
 var inspectSource = document.querySelector("#inspect-source");
 var inspectValue = document.querySelector("#inspect-value");
@@ -876,7 +967,9 @@ var historyIndex = -1;
 var transcript = [];
 var autoSeparateLines = true;
 var completionState = null;
+var clearTimer = null;
 var outputDisposers = new Set;
+var clearCoordinator = new ClearCoordinator;
 var intervalExplorer = new IntervalExplorer({
   dialog: intervalDialog,
   evaluate: (source) => repl.run(source),
@@ -1064,7 +1157,7 @@ ${entry.text}`).join(`
   if (!text) {
     button.textContent = "Nothing to copy";
     setTimeout(() => {
-      button.textContent = "Copy session";
+      button.textContent = "Transcript";
     }, 1600);
     return;
   }
@@ -1089,8 +1182,37 @@ ${entry.text}`).join(`
     button.textContent = copied ? "Copied" : "Copy failed";
   }
   setTimeout(() => {
-    button.textContent = "Copy session";
+    button.textContent = "Transcript";
   }, 1600);
+}
+function setSessionStatus(message, { error = false } = {}) {
+  sessionStatus.textContent = message;
+  sessionStatus.classList.toggle("error", error);
+}
+function currentSessionSnapshot() {
+  const reactiveInputs = repl.reactiveVariables().filter(({ dependencies }) => dependencies.length === 0).map(({ name, sourceText }) => ({ name, source: sourceText }));
+  return createSessionSnapshot({
+    transcript,
+    input: input.value,
+    scriptMode,
+    autoSeparateLines,
+    numberConfig: repl.numberConfig(),
+    reactiveInputs,
+    dashboardOpen: reactiveDashboard.isOpen
+  });
+}
+function downloadText(filename, text, type) {
+  const link = document.createElement("a");
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  link.href = url;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+function saveSession() {
+  const date = new Date().toISOString().slice(0, 10);
+  downloadText(`ratcalc-${date}.rix-session`, serializeSession(currentSessionSnapshot()), "application/json");
+  setSessionStatus("Session saved. Load this .rix-session file to restore it.");
 }
 function restoreNumberSettings() {
   try {
@@ -1114,7 +1236,7 @@ function inlineHelp({ query, groups }) {
 function renderHelp(query = "") {
   const { groups } = findHelp(query);
   const examples = findShowcaseExamples(query);
-  const intro = query ? "" : `<section class="help-intro"><b>Welcome to RatCalc.</b><br />Type an exact expression and press Enter. Use <code>:=</code> for a fresh value, <code>2:5</code> for an interval, and <code>.Help("topic")</code> when you want help printed directly in the transcript.</section>`;
+  const intro = query ? "" : `<p class="help-overview">Choose a section for syntax, examples, and calculator features.</p>`;
   const exampleGroups = new Map;
   for (const example of examples) {
     const entries = exampleGroups.get(example.category) || [];
@@ -1122,28 +1244,29 @@ function renderHelp(query = "") {
     exampleGroups.set(example.category, entries);
   }
   const showcaseSection = examples.length ? `
-        <section class="help-showcases" aria-labelledby="help-showcases-title">
-            <header><div><p>Runnable gallery</p><h3 id="help-showcases-title">Load a RiX showcase</h3></div><span>${examples.length} example${examples.length === 1 ? "" : "s"}</span></header>
-            <p class="help-showcases-intro">Choose an example to place its complete source in the calculator, then press Run. Reactive examples expose their controls in the Dashboard.</p>
-            ${[...exampleGroups].map(([category, entries]) => `
-                <section class="help-showcase-group">
-                    <h4>${escapeHtml3(category)}</h4>
-                    <div class="help-showcase-grid">
-                        ${entries.map((example) => `
-                            <button type="button" class="help-showcase-card" data-showcase-example="${escapeHtml3(example.id)}" aria-label="Load ${escapeHtml3(example.title)}">
-                                <span class="help-showcase-meta"><i>${escapeHtml3(example.complexity)}</i><i>${escapeHtml3(example.output)}</i></span>
-                                <b>${escapeHtml3(example.title)}</b>
-                                <small>${escapeHtml3(example.summary)}</small>
-                                <code>${escapeHtml3(example.source.split(`
+        <details class="help-section help-showcases">
+            <summary><span><b>Runnable examples</b><small>Load complete programs for exact arithmetic, reactive models, graphics, and polynomial work.</small></span><i>${examples.length} example${examples.length === 1 ? "" : "s"}</i></summary>
+            <div class="help-section-body">
+                ${[...exampleGroups].map(([category, entries]) => `
+                    <section class="help-showcase-group">
+                        <h4>${escapeHtml3(category)}</h4>
+                        <div class="help-showcase-grid">
+                            ${entries.map((example) => `
+                                <button type="button" class="help-showcase-card" data-showcase-example="${escapeHtml3(example.id)}" aria-label="Load ${escapeHtml3(example.title)}">
+                                    <span class="help-showcase-meta"><i>${escapeHtml3(example.complexity)}</i><i>${escapeHtml3(example.output)}</i></span>
+                                    <b>${escapeHtml3(example.title)}</b>
+                                    <small>${escapeHtml3(example.summary)}</small>
+                                    <code>${escapeHtml3(example.source.split(`
 `).find((line) => line.trim())?.trim() || example.source)}</code>
-                                <span class="help-showcase-load">Load example →</span>
-                            </button>
-                        `).join("")}
-                    </div>
-                </section>
-            `).join("")}
-        </section>` : "";
-  const sections = groups.length ? groups.map((group) => `<section class="help-group"><h3>${escapeHtml3(group.title)}</h3>${group.items.map(([syntax, description]) => `<div class="help-item"><code>${escapeHtml3(syntax)}</code><p>${escapeHtml3(description)}</p></div>`).join("")}</section>`).join("") : examples.length ? "" : `<p class="help-intro">No matching help topic or showcase. Try “interval”, “reactive”, “polynomial”, or “graphic”.</p>`;
+                                    <span class="help-showcase-load">Load example →</span>
+                                </button>
+                            `).join("")}
+                        </div>
+                    </section>
+                `).join("")}
+            </div>
+        </details>` : "";
+  const sections = groups.length ? groups.map((group) => `<details class="help-section help-group"><summary><span><b>${escapeHtml3(group.title)}</b><small>${escapeHtml3(group.description)}</small></span><i>${group.items.length} topic${group.items.length === 1 ? "" : "s"}</i></summary><div class="help-section-body">${group.items.map(([syntax, description]) => `<div class="help-item"><code>${escapeHtml3(syntax)}</code><p>${escapeHtml3(description)}</p></div>`).join("")}</div></details>`).join("") : examples.length ? "" : `<p class="help-intro">No matching help topic or showcase. Try “interval”, “reactive”, “polynomial”, or “graphic”.</p>`;
   helpContent.innerHTML = intro + showcaseSection + sections;
 }
 function openHelp(query = "") {
@@ -1161,19 +1284,8 @@ function loadShowcase(id) {
 `) || example.source.includes(";"));
   setInput(example.source);
 }
-function setDocsOpen(next) {
-  if (next && reactiveDashboard.isOpen) {
-    reactiveDashboard.close();
-    document.querySelector(".container").classList.remove("dashboard-open");
-  }
-  docsPanel.hidden = !next;
-  document.querySelector(".container").classList.toggle("docs-open", next);
-  docsToggle.setAttribute("aria-pressed", String(next));
-  docsToggle.textContent = next ? "Close docs" : "Docs";
-}
 function setReactiveDashboardOpen(next) {
   if (next) {
-    setDocsOpen(false);
     reactiveDashboard.open();
   } else {
     reactiveDashboard.close();
@@ -1197,6 +1309,41 @@ async function clearSession() {
   displayWelcome();
   reactiveDashboard.refresh();
   setInput("");
+  clearCoordinator.reset();
+  updateClearButton();
+  setSessionStatus("Session cleared.");
+}
+function updateClearButton() {
+  const armed = clearCoordinator.armed;
+  for (const button of document.querySelectorAll('[data-action="clear"]')) {
+    button.textContent = armed ? "Clear history?" : button === clearButton ? "Clear input" : "Clear";
+    button.classList.toggle("danger", armed);
+    button.setAttribute("aria-label", armed ? "Clear calculator history and reset the session" : "Clear current input");
+  }
+}
+function resetClearConfirmation() {
+  if (clearTimer)
+    clearTimeout(clearTimer);
+  clearTimer = null;
+  clearCoordinator.reset();
+  updateClearButton();
+}
+async function handleClear() {
+  const intent = clearCoordinator.activate(Boolean(input.value));
+  if (intent === "clear-session") {
+    if (clearTimer)
+      clearTimeout(clearTimer);
+    clearTimer = null;
+    await clearSession();
+    return;
+  }
+  if (intent === "clear-input")
+    setInput("");
+  updateClearButton();
+  setSessionStatus("Input cleared. Select “Clear history?” to reset the full session.");
+  if (clearTimer)
+    clearTimeout(clearTimer);
+  clearTimer = setTimeout(resetClearConfirmation, 5000);
 }
 function displayWelcome() {
   const welcome = document.createElement("section");
@@ -1239,20 +1386,20 @@ async function execute(source = input.value) {
 }
 function setScriptMode(next) {
   scriptMode = next;
+  const presentation = modePresentation(scriptMode);
   calculator.classList.toggle("script-mode", scriptMode);
   scriptToggle.classList.toggle("active", scriptMode);
   scriptToggle.setAttribute("aria-pressed", String(scriptMode));
-  scriptToggle.textContent = `Script entry: ${scriptMode ? "on" : "off"}`;
+  scriptToggle.textContent = presentation.buttonLabel;
   scriptNote.hidden = !scriptMode;
-  document.querySelector("#entry-mode-label").textContent = scriptMode ? "Script mode · Enter adds a line · Ctrl/⌘ + Enter runs" : "Command mode · Enter runs · Shift+↑ edits a script";
+  document.querySelector("#entry-mode-label").textContent = presentation.status;
+  input.placeholder = `${presentation.placeholder} — .help for help`;
   setInput(input.value);
 }
 function setAutoSeparateLines(next) {
   autoSeparateLines = next;
   repl.setAutoSeparateLines(autoSeparateLines);
-  lineSeparatorToggle.classList.toggle("active", autoSeparateLines);
-  lineSeparatorToggle.setAttribute("aria-pressed", String(autoSeparateLines));
-  lineSeparatorToggle.textContent = `Auto-separate lines: ${autoSeparateLines ? "on" : "off"}`;
+  lineSeparatorToggle.checked = autoSeparateLines;
 }
 function continueCommand() {
   const position = input.selectionStart;
@@ -1275,12 +1422,44 @@ function navigateHistory(direction) {
 }
 async function loadFile(file) {
   const text = await file.text();
-  if (file.name.toLowerCase().endsWith(".js")) {
+  const lowerName = file.name.toLowerCase();
+  if (lowerName.endsWith(".rix-session")) {
+    try {
+      await restoreSession(parseSession(text));
+      setSessionStatus(`Restored ${file.name}.`);
+    } catch (error) {
+      setSessionStatus(error.message || String(error), { error: true });
+    }
+  } else if (lowerName.endsWith(".js")) {
     appendOutput(`.load ${file.name}`, { type: "result", text: "JavaScript module selected. Browser execution is intentionally held behind a future trust policy." });
   } else {
     setScriptMode(true);
     setInput(text);
   }
+}
+async function restoreSession(session) {
+  await clearSession();
+  setAutoSeparateLines(session.autoSeparateLines);
+  applyNumberSettings(session.numberConfig);
+  for (const entry of session.transcript) {
+    if (/^\.vars$/i.test(entry.source.trim())) {
+      showVariables(entry.source);
+      continue;
+    }
+    const response = await repl.runAsync(entry.source);
+    if (history.at(-1) !== entry.source)
+      history.push(entry.source);
+    appendOutput(entry.source, response);
+  }
+  for (const reactive of session.reactiveInputs) {
+    const response = await repl.runAsync(`$${reactive.name} := ${reactive.source}`);
+    if (response.type === "error")
+      throw new Error(`Could not restore reactive input ${reactive.name}: ${response.text}`);
+  }
+  reactiveDashboard.refresh();
+  setScriptMode(session.scriptMode);
+  setInput(session.input);
+  setReactiveDashboardOpen(session.dashboardOpen);
 }
 document.addEventListener("click", (event) => {
   const control = event.target.closest("[data-action]");
@@ -1309,13 +1488,6 @@ document.addEventListener("click", (event) => {
       helpDialog.close();
       input.focus();
       break;
-    case "docs":
-      setDocsOpen(docsPanel.hidden);
-      break;
-    case "close-docs":
-      setDocsOpen(false);
-      input.focus();
-      break;
     case "reactive-dashboard":
       setReactiveDashboardOpen(!reactiveDashboard.isOpen);
       break;
@@ -1335,16 +1507,16 @@ document.addEventListener("click", (event) => {
       input.focus();
       break;
     case "clear":
-      clearSession();
+      handleClear();
       break;
     case "script":
       setScriptMode(!scriptMode);
       break;
-    case "line-separators":
-      setAutoSeparateLines(!autoSeparateLines);
-      break;
     case "copy":
       copySession();
+      break;
+    case "save":
+      saveSession();
       break;
     case "load":
       fileInput.click();
@@ -1398,7 +1570,10 @@ document.addEventListener("click", (event) => {
     execute(mobileCommand);
   }
 });
-input.addEventListener("input", () => setInput(input.value));
+input.addEventListener("input", () => {
+  resetClearConfirmation();
+  setInput(input.value);
+});
 input.addEventListener("scroll", () => {
   if (completionState)
     renderCompletion();
@@ -1470,6 +1645,7 @@ fileInput.addEventListener("change", async () => {
 });
 numberForm.addEventListener("submit", (event) => {
   event.preventDefault();
+  setAutoSeparateLines(lineSeparatorToggle.checked);
   applyNumberSettings({ input: numberInputBase.value, display: numberDisplayProfile.value }, { close: true });
 });
 [helpDialog, inspectDialog, numberDialog, intervalDialog].forEach((dialog) => {
@@ -1488,5 +1664,5 @@ window.addEventListener("pagehide", () => {
   repl.dispose();
 });
 
-//# debugId=58177212D1B5BB9064756E2164756E21
+//# debugId=6FC7C96B216C948B64756E2164756E21
 //# sourceMappingURL=main.js.map
