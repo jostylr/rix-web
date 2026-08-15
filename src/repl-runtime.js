@@ -16,7 +16,10 @@ import {
 } from "../../rix/src/index.js";
 import { normalizeReplSource } from "./repl-source.js";
 import { createBundledPluginCatalog } from "./generated/bundled-plugin-catalog.js";
-import { installWebControlCapabilities } from "./web-control-capabilities.js";
+import {
+    expandDeclarativeWebControls,
+    installWebControlCapabilities,
+} from "./web-control-capabilities.js";
 
 export const helpGroups = [
     {
@@ -87,7 +90,8 @@ export const helpGroups = [
         items: [
             ["$$x := 2", "Declare a reactive value; the dashboard displays it live."],
             ["$x", "Read x and record a dependency inside another reactive definition."],
-            ["xSlider := .Slider($$x, 0:5, 1/2, \"x\")", "Give x an exact slider in RiX-Web's dashboard."],
+            ["$$x := .Slider(2, 0:5, 1/2, \"x\")", "Declare x at 2 and give it an exact RiX-Web dashboard slider."],
+            [".Slider($$x, 0:5, 1/2, \"x\")", "Attach a dashboard slider to an existing reactive identity."],
             ["Dashboard", "Open live values, explicit controls, formulas, dependencies, and diagnostics."],
         ],
     },
@@ -174,11 +178,19 @@ function reactiveFormulaSource(node) {
 }
 
 export function createRixRepl({ autoSeparateLines = true } = {}) {
+    const registeredControls = new Map();
     const systemContext = createDefaultSystemContext({
         frozen: false,
         pluginCatalog: createBundledPluginCatalog(),
     });
-    installWebControlCapabilities(systemContext).freeze();
+    installWebControlCapabilities(systemContext, {
+        onControl({ control, create }) {
+            registeredControls.set(`${control.targetId}\u0000${control.id}`, {
+                targetId: control.targetId,
+                create,
+            });
+        },
+    }).freeze();
     const state = {
         context: new Context(),
         registry: createDefaultRegistry(),
@@ -209,7 +221,9 @@ export function createRixRepl({ autoSeparateLines = true } = {}) {
             if (topic !== null) return { type: "help", source, ...findHelp(topic) };
             try {
                 const reactiveReads = new Set();
-                const result = parseAndEvaluate(separateLines ? normalizeReplSource(source) : source, {
+                const normalizedSource = separateLines ? normalizeReplSource(source) : source;
+                const evaluationSource = expandDeclarativeWebControls(normalizedSource, tokenize);
+                const result = parseAndEvaluate(evaluationSource, {
                     ...state,
                     file: "<ratcalc>",
                     reactiveReads,
@@ -249,7 +263,9 @@ export function createRixRepl({ autoSeparateLines = true } = {}) {
             if (topic !== null) return { type: "help", source, ...findHelp(topic) };
             try {
                 const reactiveReads = new Set();
-                const result = await parseAndEvaluateAsync(separateLines ? normalizeReplSource(source) : source, {
+                const normalizedSource = separateLines ? normalizeReplSource(source) : source;
+                const evaluationSource = expandDeclarativeWebControls(normalizedSource, tokenize);
+                const result = await parseAndEvaluateAsync(evaluationSource, {
                     ...state,
                     file: "<ratcalc>",
                     reactiveReads,
@@ -283,16 +299,6 @@ export function createRixRepl({ autoSeparateLines = true } = {}) {
         },
         reactiveVariables() {
             const names = state.context.getAllNames();
-            const controls = [];
-            for (const name of names) collectControlValues(state.context.get(name), controls);
-            const controlsByTarget = new Map();
-            for (const control of controls) {
-                if (!control.targetId) continue;
-                const list = controlsByTarget.get(control.targetId) || [];
-                if (!list.some((candidate) => candidate.id === control.id)) list.push(control);
-                controlsByTarget.set(control.targetId, list);
-            }
-
             const byId = new Map();
             for (const bindingName of names) {
                 const node = state.context.get(bindingName);
@@ -305,6 +311,28 @@ export function createRixRepl({ autoSeparateLines = true } = {}) {
                 };
                 descriptor.aliases.push(bindingName);
                 byId.set(node.id, descriptor);
+            }
+
+            const controls = [];
+            for (const name of names) collectControlValues(state.context.get(name), controls);
+            for (const [key, entry] of registeredControls) {
+                if (!byId.has(entry.targetId)) {
+                    registeredControls.delete(key);
+                    continue;
+                }
+                try {
+                    controls.push(entry.create());
+                } catch {
+                    // The reactive value remains visible if a direct edit makes
+                    // it temporarily incompatible with its declared control.
+                }
+            }
+            const controlsByTarget = new Map();
+            for (const control of controls) {
+                if (!control.targetId) continue;
+                const keyed = controlsByTarget.get(control.targetId) || new Map();
+                keyed.set(control.id, control);
+                controlsByTarget.set(control.targetId, keyed);
             }
 
             return [...byId.values()].map((descriptor) => {
@@ -322,7 +350,7 @@ export function createRixRepl({ autoSeparateLines = true } = {}) {
                     dependencies: Object.freeze([...node.dependencies].sort()),
                     dependents: Object.freeze([...node.dependents].sort()),
                     diagnostics: Object.freeze((node.diagnostics || []).map(diagnosticText)),
-                    controls: Object.freeze([...(controlsByTarget.get(node.id) || [])]),
+                    controls: Object.freeze([...(controlsByTarget.get(node.id)?.values() || [])]),
                 };
             }).sort((left, right) => left.name.localeCompare(right.name));
         },
@@ -353,6 +381,7 @@ export function createRixRepl({ autoSeparateLines = true } = {}) {
         async reset() {
             await disposeAsyncResources(state.context, { kind: "session reset" });
             state.context.clear();
+            registeredControls.clear();
             initialNames = new Set(state.context.getAllNames());
             applyNumberConfig(numberConfig);
         },

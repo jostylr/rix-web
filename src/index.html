@@ -73,7 +73,7 @@
             <div><button type="button" data-action="refresh-reactive-dashboard">Refresh</button><button type="button" data-action="close-reactive-dashboard" aria-label="Close reactive dashboard">×</button></div>
           </header>
           <div class="reactive-dashboard-body">
-            <p class="reactive-dashboard-intro">Every <code>$$</code> value appears here. Derived values remain read-only; an explicitly assigned <code>.Slider</code>, <code>.Input</code>, <code>.Choice</code>, <code>.Toggle</code>, or <code>.Range</code> makes its target editable.</p>
+            <p class="reactive-dashboard-intro">Every <code>$$</code> value appears here. Declare an editable value directly with <code>$$x := .Slider(initial, ...)</code>, <code>.Input</code>, <code>.Choice</code>, <code>.Toggle</code>, or <code>.Range</code>; derived values remain read-only.</p>
             <div id="reactive-dashboard-summary" class="reactive-dashboard-summary" aria-label="Reactive variable summary"></div>
             <section id="reactive-dashboard-controls-section" class="reactive-dashboard-section" hidden>
               <h2>Controls</h2>

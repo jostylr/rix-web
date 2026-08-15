@@ -32,10 +32,8 @@ const mobileCommandPanel = document.querySelector("#mobile-command-panel");
 const reactiveDashboardPanel = document.querySelector("#reactive-dashboard-panel");
 const reactiveDashboardToggle = document.querySelector("#reactive-dashboard-toggle");
 const NUMBER_STORAGE_KEY = "ratcalc.number-config.v1";
-const REACTIVE_DASHBOARD_EXAMPLE = `$$width := 3;
-$$height := 2;
-widthSlider := .Slider($$width, 0:10, 1/2, "Width");
-heightSlider := .Slider($$height, 0:10, 1/2, "Height");
+const REACTIVE_DASHBOARD_EXAMPLE = `$$width := .Slider(3, 0:10, 1/2, "Width");
+$$height := .Slider(2, 0:10, 1/2, "Height");
 $$area := $width * $height;
 $area`;
 

@@ -35,14 +35,12 @@ through its interpolation, so it is rebuilt after each committed move.
 
 RiX-Web can collect reactive values into its **Dashboard** drawer without
 requiring a Fragment or ControlPanel. Every `$$` value appears as a live
-readout. Assigning a short control constructor makes that target editable:
+readout. A short value-control constructor can declare the initial value and
+make that reactive identity editable in one expression:
 
 ```rix edu
-$$width := 3;
-$$height := 2;
-
-widthSlider := .Slider($$width, 0:10, 1/2, "Width");
-heightSlider := .Slider($$height, 0:10, 1/2, "Height");
+$$width := .Slider(3, 0:10, 1/2, "Width");
+$$height := .Slider(2, 0:10, 1/2, "Height");
 
 $$area := $width * $height;
 $area ;
@@ -53,6 +51,18 @@ sliders, while `area` is a read-only derived value showing its dependencies.
 The concise `.Slider`, `.Input`, `.Choice`, `.Toggle`, `.Range`, `.Reset`,
 `.Action`, and `.Hold` names are RiX-Web conveniences. Use the canonical
 `.Controls.*` forms when authoring portable output intended for another host.
+The declaration forms for editable values are:
+
+- `$$x := .Slider(initial, interval, step?, label?)`
+- `$$x := .Input(initial, label?, help?, placeholder?)`
+- `$$x := .Choice(initial, options, label?)`
+- `$$x := .Toggle(initial, off, on, label?)`
+- `$$x := .Range(initialInterval, interval, step?, label?)`
+
+To attach a control after a reactive value already exists, pass its identity as
+the first argument: `.Slider($$x, 0:10, 1/2, "x")`. Reset, Action, and Hold stay
+in this attachment form because they perform an operation rather than supply a
+cell's initial value.
 
 ## Lay out actions and add keyboard navigation
 

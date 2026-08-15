@@ -5718,8 +5718,85 @@ var constructors = new Map([
   ["Action", createActionControl],
   ["Hold", createHoldControl]
 ]);
+var declarativeControls = new Map([
+  ["SLIDER", { name: "Slider", minimumArguments: 2 }],
+  ["INPUT", { name: "Input", minimumArguments: 1 }],
+  ["CHOICE", { name: "Choice", minimumArguments: 2 }],
+  ["TOGGLE", { name: "Toggle", minimumArguments: 3 }],
+  ["RANGE", { name: "Range", minimumArguments: 2 }]
+]);
+var containerOpeners2 = new Set(["(", "[", "{", "{|", "{=", "{;", "{@", "{!", "{:"]);
+var containerClosers = new Set([")", "]", "}", "|}", ";}", "@}", "!}", ":}"]);
 var WEB_CONTROL_NAMES = Object.freeze([...constructors.keys()]);
-function installWebControlCapabilities(systemContext) {
+function callArguments(tokens, openIndex, source) {
+  const commas = [];
+  let depth = 0;
+  for (let index = openIndex;index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (containerOpeners2.has(token.value)) {
+      depth += 1;
+      continue;
+    }
+    if (containerClosers.has(token.value)) {
+      depth -= 1;
+      if (depth === 0) {
+        const boundaries = [tokens[openIndex].pos[2], ...commas.map((comma) => comma.pos[2])];
+        const ends = [...commas.map((comma) => comma.pos[0]), token.pos[0]];
+        return {
+          closeIndex: index,
+          arguments: boundaries.map((start, argumentIndex) => source.slice(start, ends[argumentIndex]).trim())
+        };
+      }
+      continue;
+    }
+    if (token.value === "," && depth === 1)
+      commas.push(token);
+  }
+  return null;
+}
+function nextCodeToken(tokens, index) {
+  for (let cursor = index;cursor < tokens.length; cursor += 1) {
+    const token = tokens[cursor];
+    if (!(token.type === "String" && token.kind === "comment"))
+      return token;
+  }
+  return null;
+}
+function expandDeclarativeWebControls(source, tokenize2) {
+  let tokens;
+  try {
+    tokens = tokenize2(source);
+  } catch {
+    return source;
+  }
+  const replacements = [];
+  let depth = 0;
+  for (let index = 0;index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (depth === 0 && token.value === "$$" && tokens[index + 1]?.type === "Identifier" && tokens[index + 1]?.kind === "User" && tokens[index + 2]?.value === ":=" && tokens[index + 3]?.value === "." && tokens[index + 4]?.type === "Identifier" && declarativeControls.has(tokens[index + 4]?.value) && tokens[index + 5]?.value === "(") {
+      const declaration = declarativeControls.get(tokens[index + 4].value);
+      const call = callArguments(tokens, index + 5, source);
+      const following = call ? nextCodeToken(tokens, call.closeIndex + 1) : null;
+      if (call && [";", null].includes(following?.value ?? null) && call.arguments.length >= declaration.minimumArguments && call.arguments[0]) {
+        const name = tokens[index + 1].value;
+        const controlArguments = [`$$${name}`, ...call.arguments.slice(1)].join(", ");
+        replacements.push({
+          start: tokens[index + 3].pos[1],
+          end: tokens[call.closeIndex].pos[2],
+          value: `${call.arguments[0]}; .${declaration.name}(${controlArguments}); $${name}`
+        });
+        index = call.closeIndex;
+        continue;
+      }
+    }
+    if (containerOpeners2.has(token.value))
+      depth += 1;
+    else if (containerClosers.has(token.value))
+      depth = Math.max(0, depth - 1);
+  }
+  return replacements.sort((left, right) => right.start - left.start).reduce((result, replacement) => `${result.slice(0, replacement.start)}${replacement.value}${result.slice(replacement.end)}`, source);
+}
+function installWebControlCapabilities(systemContext, { onControl = null } = {}) {
   for (const [name, constructor] of constructors) {
     if (systemContext.has(name)) {
       throw new Error(`RiX-Web control shortcut conflicts with .${name}`);
@@ -5727,13 +5804,19 @@ function installWebControlCapabilities(systemContext) {
     systemContext.register(name, {
       pure: true,
       groups: ["Output", "Controls"],
-      doc: `RiX-Web shortcut for .Controls.${name}`,
+      doc: declarativeControls.has(name.toUpperCase()) ? `RiX-Web shortcut for .Controls.${name}; supports $$name := .${name}(initial, ...)` : `RiX-Web shortcut for .Controls.${name}`,
       impl(args, context, evaluate) {
-        return constructor(args, {
+        const runtime = {
           context,
           evaluate,
           invoke: (callable, callArgs) => callWithConcreteArgs(callable, callArgs, context, evaluate)
+        };
+        const control = constructor(args, runtime);
+        onControl?.({
+          control,
+          create: () => constructor(args, runtime)
         });
+        return control;
       }
     });
   }
@@ -5810,7 +5893,8 @@ var helpGroups = [
     items: [
       ["$$x := 2", "Declare a reactive value; the dashboard displays it live."],
       ["$x", "Read x and record a dependency inside another reactive definition."],
-      ['xSlider := .Slider($$x, 0:5, 1/2, "x")', "Give x an exact slider in RiX-Web's dashboard."],
+      ['$$x := .Slider(2, 0:5, 1/2, "x")', "Declare x at 2 and give it an exact RiX-Web dashboard slider."],
+      ['.Slider($$x, 0:5, 1/2, "x")', "Attach a dashboard slider to an existing reactive identity."],
       ["Dashboard", "Open live values, explicit controls, formulas, dependencies, and diagnostics."]
     ]
   },
@@ -5911,11 +5995,19 @@ function reactiveFormulaSource(node) {
   return body?.fn ? readableFormula(body) : null;
 }
 function createRixRepl({ autoSeparateLines = true } = {}) {
+  const registeredControls = new Map;
   const systemContext = createDefaultSystemContext({
     frozen: false,
     pluginCatalog: createBundledPluginCatalog()
   });
-  installWebControlCapabilities(systemContext).freeze();
+  installWebControlCapabilities(systemContext, {
+    onControl({ control, create }) {
+      registeredControls.set(`${control.targetId}\x00${control.id}`, {
+        targetId: control.targetId,
+        create
+      });
+    }
+  }).freeze();
   const state = {
     context: new Context,
     registry: createDefaultRegistry(),
@@ -5945,7 +6037,9 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
         return { type: "help", source, ...findHelp(topic) };
       try {
         const reactiveReads = new Set;
-        const result = parseAndEvaluate(separateLines ? normalizeReplSource(source) : source, {
+        const normalizedSource = separateLines ? normalizeReplSource(source) : source;
+        const evaluationSource = expandDeclarativeWebControls(normalizedSource, tokenize);
+        const result = parseAndEvaluate(evaluationSource, {
           ...state,
           file: "<ratcalc>",
           reactiveReads
@@ -5978,7 +6072,9 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
         return { type: "help", source, ...findHelp(topic) };
       try {
         const reactiveReads = new Set;
-        const result = await parseAndEvaluateAsync(separateLines ? normalizeReplSource(source) : source, {
+        const normalizedSource = separateLines ? normalizeReplSource(source) : source;
+        const evaluationSource = expandDeclarativeWebControls(normalizedSource, tokenize);
+        const result = await parseAndEvaluateAsync(evaluationSource, {
           ...state,
           file: "<ratcalc>",
           reactiveReads
@@ -6009,18 +6105,6 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
     },
     reactiveVariables() {
       const names = state.context.getAllNames();
-      const controls = [];
-      for (const name of names)
-        collectControlValues(state.context.get(name), controls);
-      const controlsByTarget = new Map;
-      for (const control of controls) {
-        if (!control.targetId)
-          continue;
-        const list = controlsByTarget.get(control.targetId) || [];
-        if (!list.some((candidate) => candidate.id === control.id))
-          list.push(control);
-        controlsByTarget.set(control.targetId, list);
-      }
       const byId = new Map;
       for (const bindingName of names) {
         const node = state.context.get(bindingName);
@@ -6034,6 +6118,26 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
         };
         descriptor.aliases.push(bindingName);
         byId.set(node.id, descriptor);
+      }
+      const controls = [];
+      for (const name of names)
+        collectControlValues(state.context.get(name), controls);
+      for (const [key, entry2] of registeredControls) {
+        if (!byId.has(entry2.targetId)) {
+          registeredControls.delete(key);
+          continue;
+        }
+        try {
+          controls.push(entry2.create());
+        } catch {}
+      }
+      const controlsByTarget = new Map;
+      for (const control of controls) {
+        if (!control.targetId)
+          continue;
+        const keyed = controlsByTarget.get(control.targetId) || new Map;
+        keyed.set(control.id, control);
+        controlsByTarget.set(control.targetId, keyed);
       }
       return [...byId.values()].map((descriptor) => {
         const { node } = descriptor;
@@ -6050,7 +6154,7 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
           dependencies: Object.freeze([...node.dependencies].sort()),
           dependents: Object.freeze([...node.dependents].sort()),
           diagnostics: Object.freeze((node.diagnostics || []).map(diagnosticText)),
-          controls: Object.freeze([...controlsByTarget.get(node.id) || []])
+          controls: Object.freeze([...controlsByTarget.get(node.id)?.values() || []])
         };
       }).sort((left, right) => left.name.localeCompare(right.name));
     },
@@ -6082,6 +6186,7 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
     async reset() {
       await disposeAsyncResources(state.context, { kind: "session reset" });
       state.context.clear();
+      registeredControls.clear();
       initialNames = new Set(state.context.getAllNames());
       applyNumberConfig(numberConfig);
     },
@@ -6099,5 +6204,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { findHelp, createRixRepl };
 
-//# debugId=206C0CF7302BDB4364756E2164756E21
-//# sourceMappingURL=chunk-gah3xwa7.js.map
+//# debugId=A37880DCF74955CB64756E2164756E21
+//# sourceMappingURL=chunk-f2pwt9mm.js.map

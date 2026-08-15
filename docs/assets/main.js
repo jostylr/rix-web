@@ -1,7 +1,7 @@
 import {
   createRixRepl,
   findHelp
-} from "./chunk-gah3xwa7.js";
+} from "./chunk-f2pwt9mm.js";
 import {
   Integer,
   Rational,
@@ -579,10 +579,8 @@ var mobileCommandPanel = document.querySelector("#mobile-command-panel");
 var reactiveDashboardPanel = document.querySelector("#reactive-dashboard-panel");
 var reactiveDashboardToggle = document.querySelector("#reactive-dashboard-toggle");
 var NUMBER_STORAGE_KEY = "ratcalc.number-config.v1";
-var REACTIVE_DASHBOARD_EXAMPLE = `$$width := 3;
-$$height := 2;
-widthSlider := .Slider($$width, 0:10, 1/2, "Width");
-heightSlider := .Slider($$height, 0:10, 1/2, "Height");
+var REACTIVE_DASHBOARD_EXAMPLE = `$$width := .Slider(3, 0:10, 1/2, "Width");
+$$height := .Slider(2, 0:10, 1/2, "Height");
 $$area := $width * $height;
 $area`;
 var scriptMode = false;
@@ -1160,5 +1158,5 @@ window.addEventListener("pagehide", () => {
   repl.dispose();
 });
 
-//# debugId=581136011A3DE43264756E2164756E21
+//# debugId=2B4B8104BC28E09B64756E2164756E21
 //# sourceMappingURL=main.js.map

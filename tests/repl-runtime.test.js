@@ -593,6 +593,47 @@ test("RiX-Web discovers reactive values and concise dashboard controls", () => {
     expect(amountControl.validateCandidate(repl.run("-1").value)).toBe("must be positive");
 });
 
+test("RiX-Web value controls can declare and return their reactive cells", async () => {
+    const repl = createRixRepl();
+    const declared = repl.run('$$width := .Slider(3, 0:10, 1/2, "Width")');
+    expect(declared.type).toBe("result");
+    expect(declared.text).toBe("3");
+
+    expect(repl.run(`
+        $$entry := .Input(7, "Entry");
+        $$choice := .Choice("medium", ["small", "medium", "large"], "Size");
+        $$enabled := .Toggle("on", "off", "on", "Enabled");
+        $$window := .Range(2:4, 0:10, 1, "Window");
+        $$area := $width * $entry;
+        $area
+    `).text).toBe("21");
+
+    let descriptors = repl.reactiveVariables();
+    const controlKinds = Object.fromEntries(descriptors.map(({ name, controls }) => [
+        name,
+        controls.map(({ kind }) => kind),
+    ]));
+    expect(controlKinds.width).toEqual(["control_slider"]);
+    expect(controlKinds.entry).toEqual(["control_input"]);
+    expect(controlKinds.choice).toEqual(["control_choice"]);
+    expect(controlKinds.enabled).toEqual(["control_toggle"]);
+    expect(controlKinds.window).toEqual(["control_range"]);
+    expect(controlKinds.area).toEqual([]);
+
+    expect(repl.run("$width := 4").text).toBe("4");
+    descriptors = repl.reactiveVariables();
+    expect(descriptors.find(({ name }) => name === "width").controls[0].index).toBe(8);
+    expect(descriptors.find(({ name }) => name === "area").valueText).toBe("28");
+
+    const compound = repl.run('$$compound := .Slider(3, 0:10, 1, "Compound") + 1');
+    expect(compound.type).toBe("error");
+    expect(compound.text).toContain("target must be a reactive");
+    expect(repl.reactiveVariables().some(({ name }) => name === "compound")).toBe(false);
+
+    await repl.reset();
+    expect(repl.reactiveVariables()).toEqual([]);
+});
+
 test("presentation text is separate from lossless injection source", () => {
     const repl = createRixRepl();
     repl.setNumberConfig({ display: ".[3]" });
