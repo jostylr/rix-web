@@ -25,6 +25,12 @@ The same declarative form works for `.Input`, `.Choice`, `.Toggle`, and
 `.Range`. Passing an existing identity, as in `.Slider($$width, ...)`, remains
 available when control attachment needs to be separate from declaration.
 
+The Help dialog includes a searchable, one-click showcase gallery. Its examples
+range from tiny exact-number calculations and static structured output to live
+financial and graphical models, reactive polynomial coefficients, and a cubic
+recentered by repeated synthetic division. Every gallery program is executed in
+a fresh RiX-Web session by the test suite.
+
 ## Develop and build
 
 From this directory:

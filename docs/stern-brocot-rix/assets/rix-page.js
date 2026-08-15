@@ -5966,6 +5966,12 @@
       "~"
     ]);
     constructor(characters, name, options = {}) {
+      if (options === null || typeof options !== "object" || Array.isArray(options)) {
+        throw new TypeError("Base system options must be an object");
+      }
+      if (options.allowReserved !== undefined && typeof options.allowReserved !== "boolean") {
+        throw new TypeError("allowReserved must be a boolean");
+      }
       if (typeof characters === "string") {
         this.#characters = [...characters];
       } else if (Array.isArray(characters)) {
@@ -6301,10 +6307,15 @@
       if (caseSensitive === false) {
         const lowerChars = this.#characters.map((char) => char.toLowerCase());
         const uniqueLowerChars = [...new Set(lowerChars)];
-        if (uniqueLowerChars.length !== lowerChars.length) {
+        const collapsed = uniqueLowerChars.length !== lowerChars.length;
+        if (collapsed) {
           console.warn("Case-insensitive conversion resulted in duplicate characters");
         }
-        return new BaseSystem(uniqueLowerChars.join(""), `${this.#name} (case-insensitive)`, { radix: this.#radix, digitOffset: this.#digitOffset, allowReserved: this.#allowReserved });
+        return new BaseSystem(uniqueLowerChars.join(""), `${this.#name} (case-insensitive)`, collapsed ? { allowReserved: this.#allowReserved } : {
+          radix: this.#radix,
+          digitOffset: this.#digitOffset,
+          allowReserved: this.#allowReserved
+        });
       }
       throw new Error("caseSensitive must be a boolean value");
     }
@@ -6822,6 +6833,16 @@
       if (!Number.isSafeInteger(limit) || limit < 1) {
         throw new RangeError("Base-expansion limit must be a positive safe integer");
       }
+      if (!baseSystem.supportsPositionalFractions) {
+        if (this.#denominator === 1n) {
+          return {
+            baseStr: baseSystem.fromDecimal(this.#numerator),
+            period: 0,
+            limitHit: false
+          };
+        }
+        throw new RangeError("Fractional radix expansion requires a conventional positional BaseSystem; use toBase() for an exact fraction");
+      }
       if (this.#numerator < 0n) {
         const result2 = this.negate().toRepeatingBaseWithPeriod(baseSystem, options);
         return {
@@ -6887,9 +6908,12 @@
         throw new RangeError("Period limit must be a positive safe integer");
       }
       let den = this.#denominator;
-      const baseBigInt = BigInt(baseSystem.base);
       if (den === 1n)
         return 0;
+      if (!baseSystem.supportsPositionalFractions) {
+        throw new RangeError("Period calculation requires a conventional positional BaseSystem");
+      }
+      const baseBigInt = BigInt(baseSystem.base);
       let common = this.#gcd(den, baseBigInt);
       while (common > 1n) {
         den /= common;
@@ -9046,6 +9070,12 @@
     if (copy.presentationHint && typeof copy.presentationHint === "object") {
       copy.presentationHint = Object.freeze({ ...copy.presentationHint });
     }
+    if (copy.requested && typeof copy.requested === "object") {
+      copy.requested = Object.freeze({ ...copy.requested });
+    }
+    if (copy.achieved && typeof copy.achieved === "object") {
+      copy.achieved = Object.freeze({ ...copy.achieved });
+    }
     return Object.freeze(copy);
   }
   function isPoint(interval) {
@@ -9167,6 +9197,15 @@
     #sourceId;
     #dependencies;
     constructor(candidate, enclosure, options = {}) {
+      if (options === null || typeof options !== "object" || Array.isArray(options)) {
+        throw new TypeError("Certified approximation options must be an object");
+      }
+      if (options.dependencies !== undefined && !Array.isArray(options.dependencies)) {
+        throw new TypeError("Certified approximation dependencies must be an array");
+      }
+      if (options.sourceId !== undefined && !["string", "number", "symbol"].includes(typeof options.sourceId)) {
+        throw new TypeError("Certified approximation sourceId must be a string, number, or symbol");
+      }
       const exactCandidate = exactScalar(candidate);
       if (!(enclosure instanceof RationalInterval)) {
         throw new TypeError("Certified approximation enclosure must be a RationalInterval");
@@ -9301,8 +9340,8 @@
         const provisional = provisionalCount > 0 ? candidateDigits.slice(cylinder.digits, cylinder.digits + provisionalCount) : "";
         return `${entirelyNegative ? "-" : ""}${prefix}?${provisional}`;
       }
-      const displayCandidate = displayEnclosure.shortestDecimal();
-      const candidateText = displayCandidate.toRepeatingDecimal().replace(/#0$/, "");
+      const displayCandidate = entirelyNegative ? this.#candidate.negate() : this.#candidate;
+      const candidateText = displayCandidate.toString();
       return `${entirelyNegative ? "-" : ""}${candidateText}?[=${displayEnclosure.low}:${displayEnclosure.high}]`;
     }
     toJSON() {
@@ -9311,7 +9350,8 @@
         candidate: this.#candidate,
         enclosure: this.#enclosure,
         representation: this.#representation,
-        sourceId: serializeSourceId(this.#sourceId)
+        sourceId: serializeSourceId(this.#sourceId),
+        dependencies: this.#dependencies.map(serializeSourceId).filter((dependency) => dependency !== null)
       };
     }
   }
@@ -9337,6 +9377,9 @@
   }) {
     if (!(baseSystem instanceof BaseSystem))
       throw new TypeError("baseSystem must be a BaseSystem");
+    if (!baseSystem.supportsPositionalFractions) {
+      throw new RangeError("Certified radix prefixes require a conventional positional BaseSystem");
+    }
     if (!baseSystem.isValidString(integerDigits || "0"))
       throw new Error("Invalid radix integer digits");
     if (fractionalDigits && !baseSystem.isValidString(fractionalDigits))
@@ -9378,8 +9421,8 @@
     achieved = null,
     sourceId
   }) {
-    const certified = coefficients.map((value) => BigInt(value));
-    const provisional = provisionalCoefficients.map((value) => BigInt(value));
+    const certified = coefficients.map((value) => toExactBigInt(value, "Continued-fraction coefficient"));
+    const provisional = provisionalCoefficients.map((value) => toExactBigInt(value, "Provisional continued-fraction coefficient"));
     if (certified.length === 0)
       throw new Error("Continued-fraction approximation requires a certified coefficient");
     if (certified.slice(1).some((value) => value <= 0n) || provisional.some((value) => value <= 0n)) {

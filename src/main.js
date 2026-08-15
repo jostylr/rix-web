@@ -2,6 +2,7 @@ import { createRixRepl, findHelp } from "./repl-runtime.js";
 import { mountOutputWidgets } from "../../rix/src/index.js";
 import { IntervalExplorer, isRationalIntervalValue } from "./interval-explorer.js";
 import { ReactiveDashboard } from "./reactive-dashboard.js";
+import { findShowcaseExamples, showcaseExample } from "./showcase-examples.js";
 
 const repl = createRixRepl();
 const outputHistory = document.querySelector("#output-history");
@@ -276,11 +277,39 @@ function inlineHelp({ query, groups }) {
 
 function renderHelp(query = "") {
     const { groups } = findHelp(query);
+    const examples = findShowcaseExamples(query);
     const intro = query ? "" : `<section class="help-intro"><b>Welcome to RatCalc.</b><br />Type an exact expression and press Enter. Use <code>:=</code> for a fresh value, <code>2:5</code> for an interval, and <code>.Help(\"topic\")</code> when you want help printed directly in the transcript.</section>`;
+    const exampleGroups = new Map();
+    for (const example of examples) {
+        const entries = exampleGroups.get(example.category) || [];
+        entries.push(example);
+        exampleGroups.set(example.category, entries);
+    }
+    const showcaseSection = examples.length ? `
+        <section class="help-showcases" aria-labelledby="help-showcases-title">
+            <header><div><p>Runnable gallery</p><h3 id="help-showcases-title">Load a RiX showcase</h3></div><span>${examples.length} example${examples.length === 1 ? "" : "s"}</span></header>
+            <p class="help-showcases-intro">Choose an example to place its complete source in the calculator, then press Run. Reactive examples expose their controls in the Dashboard.</p>
+            ${[...exampleGroups].map(([category, entries]) => `
+                <section class="help-showcase-group">
+                    <h4>${escapeHtml(category)}</h4>
+                    <div class="help-showcase-grid">
+                        ${entries.map((example) => `
+                            <button type="button" class="help-showcase-card" data-showcase-example="${escapeHtml(example.id)}" aria-label="Load ${escapeHtml(example.title)}">
+                                <span class="help-showcase-meta"><i>${escapeHtml(example.complexity)}</i><i>${escapeHtml(example.output)}</i></span>
+                                <b>${escapeHtml(example.title)}</b>
+                                <small>${escapeHtml(example.summary)}</small>
+                                <code>${escapeHtml(example.source.split("\n").find((line) => line.trim())?.trim() || example.source)}</code>
+                                <span class="help-showcase-load">Load example →</span>
+                            </button>
+                        `).join("")}
+                    </div>
+                </section>
+            `).join("")}
+        </section>` : "";
     const sections = groups.length
         ? groups.map((group) => `<section class="help-group"><h3>${escapeHtml(group.title)}</h3>${group.items.map(([syntax, description]) => `<div class="help-item"><code>${escapeHtml(syntax)}</code><p>${escapeHtml(description)}</p></div>`).join("")}</section>`).join("")
-        : `<p class="help-intro">No matching help topic. Try “interval”, “function”, or “assignment”.</p>`;
-    helpContent.innerHTML = intro + sections;
+        : examples.length ? "" : `<p class="help-intro">No matching help topic or showcase. Try “interval”, “reactive”, “polynomial”, or “graphic”.</p>`;
+    helpContent.innerHTML = intro + showcaseSection + sections;
 }
 
 function openHelp(query = "") {
@@ -288,6 +317,14 @@ function openHelp(query = "") {
     renderHelp(query);
     helpDialog.showModal();
     helpSearch.focus();
+}
+
+function loadShowcase(id) {
+    const example = showcaseExample(id);
+    if (!example) return;
+    helpDialog.close();
+    setScriptMode(example.source.includes("\n") || example.source.includes(";"));
+    setInput(example.source);
 }
 
 function setDocsOpen(next) {
@@ -442,6 +479,11 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("click", (event) => {
+    const showcase = event.target.closest("[data-showcase-example]");
+    if (showcase) {
+        loadShowcase(showcase.dataset.showcaseExample);
+        return;
+    }
     const preset = event.target.closest("[data-number-preset]");
     if (preset) {
         setNumberPreset(preset.dataset.numberPreset);
