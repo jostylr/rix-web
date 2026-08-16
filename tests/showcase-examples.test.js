@@ -28,7 +28,10 @@ test("the help gallery spans exact, reactive, graphical, and polynomial showcase
         "nd-hypercube-lab",
         "nd-slice-sweep",
     ]);
-    expect(showcaseExample("scene3d-camera-studio").source).toContain("PerspectiveCamera");
+    const scene3d = showcaseExample("scene3d-camera-studio").source;
+    expect(scene3d).toContain("OrbitCamera");
+    expect(scene3d).toContain("ParametricCurve");
+    expect(scene3d).toContain("snapshot[:picking]");
     expect(showcaseExample("nd-hypercube-lab").source).toContain("CoordinateProjection");
     expect(showcaseExample("nd-slice-sweep").source).toContain("SlicePoints");
 });

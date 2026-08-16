@@ -272,7 +272,7 @@ $recenteredCubic
         complexity: "Extended",
         output: "Interactive 3D snapshot",
         title: "Orbit an exact 3D scene",
-        summary: "Drive a retained mesh, rational camera orbit, lights, and lit/wireframe snapshots from exact controls.",
+        summary: "Drive a retained mesh, exact sampled curve, annotations, picking IDs, rational orbit camera, and lit/wireframe snapshots.",
         source: program(`
 .Plugin.Load("scene3d");
 
@@ -286,13 +286,12 @@ triangles := [
     [1,2,6], [1,6,5], [2,3,7], [2,7,6],
     [3,4,8], [3,8,7], [4,1,5], [4,5,8]
 ];
-cube := .scene3d.Mesh(vertices, triangles, {= color="#2563eb", width=2 });
-axes := .scene3d.Group([
-    .scene3d.Polyline([[-3,0,0],[3,0,0]], {= color="#dc2626", width=3 }),
-    .scene3d.Polyline([[0,-3,0],[0,3,0]], {= color="#16a34a", width=3 }),
-    .scene3d.Polyline([[0,0,0],[0,0,3]], {= color="#2563eb", width=3 }),
-    .scene3d.PointCloud([[0,0,0],[3,0,0],[0,3,0],[0,0,3]], {= color="#111827", radius=4 })
-]);
+cube := .scene3d.Mesh(vertices, triangles, {= color="#2563eb", width=2, id="cube", label="exact cube" });
+axes := .scene3d.Axes({= length=3, width=3, id="basis" });
+curve := .scene3d.ParametricCurve(t -> [2*t,t^2-1,1+t/2], -1:1, {=
+    samples=25, color="#7c3aed", width=3, id="trajectory", label="exact trajectory"
+});
+note := .scene3d.Annotation([2,0,3/2], "t = 1", {= color="#7c3aed", id="endpoint" });
 
 $$orbit := 1/3;
 $$spin := 1/4;
@@ -301,15 +300,15 @@ $$projection := "perspective";
 $$mode := "lit";
 
 $$view := {;
-    cameraPair := Cayley($orbit);
     spinPair := Cayley($spin);
-    position := [6*cameraPair[:c], 6*cameraPair[:s], $height];
-    camera := $projection == "perspective"
-      ?: .scene3d.PerspectiveCamera(position, [0,0,1])
-      ?_ .scene3d.OrthographicCamera(position, [0,0,1], {= scale=6 });
+    camera := .scene3d.OrbitCamera([0,0,1], {=
+        radius=6, height=$height-1, turn=$orbit, projection=$projection, scale=6
+    });
     matrix := [spinPair[:c],-spinPair[:s],0,0, spinPair[:s],spinPair[:c],0,0, 0,0,1,0, 0,0,0,1];
     scene := .scene3d.Scene([
         @axes,
+        @curve,
+        @note,
         .scene3d.Transform([@cube], {= matrix=matrix })
     ], {=
         camera=camera,
@@ -328,18 +327,20 @@ $$view := {;
             .Controls.Choice($$projection, ["perspective","orthographic"], "projection"),
             .Controls.Choice($$mode, ["lit","wireframe"], "snapshot mode")
         ]),
-        .Figure(snapshot[:value], "Exact retained geometry; approximation starts at the selected camera snapshot."),
+        .Figure(snapshot[:value], "Phase 2 axes, curve, annotation, picking identities, and exact orbit metadata remain portable."),
         .Table(["Stage","Value"], [
             ["scene", scene[:schema]],
             ["realized", scene[:realized][:schema]],
             ["projected", snapshot[:projected][:schema]],
+            ["orbit", camera[:orbit][:schema]],
+            ["trajectory records", snapshot[:picking][:trajectory][:indices]],
             ["work", snapshot[:work]]
         ])
     ])
 };
 $view
         `),
-        keywords: "scene3d 3d reactive camera orbit mesh lights lit wireframe retained exact cayley",
+        keywords: "scene3d 3d reactive camera orbit mesh curve annotation picking axes lights lit wireframe retained exact cayley",
     },
     {
         id: "nd-hypercube-lab",

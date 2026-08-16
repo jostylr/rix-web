@@ -204,6 +204,27 @@ test("the browser projects exact 4D geometry to Scene3D, Graphics, and glTF", ()
     expect(gltf.extras.rix.sourceCoordinates).toBe("right-handed Z-up");
 });
 
+test("the browser runs the first Scene3D Phase 2 retained contracts", () => {
+    const response = createRixRepl().run(`
+        .Plugin.Load("scene3d");
+        curve := .scene3d.ParametricCurve(t -> [t,t^2,0], 0:1, {=
+            samples=5, id="curve", label="parabola"
+        });
+        note := .scene3d.Annotation([1,1,0], "endpoint", {= id="endpoint" });
+        camera := .scene3d.OrbitCamera([0,0,0], {=
+            radius=4, height=2, turn=1/3, projection="orthographic", scale=4
+        });
+        scene := .scene3d.Scene([.scene3d.Axes({= id="basis" }),curve,note], {= camera=camera });
+        snapshot := .scene3d.Snapshot(scene, {= size=[320,240] });
+        [snapshot["value"],camera["orbit"]["schema"],snapshot["picking"]["curve"]["indices"].Len(),snapshot["work"]["annotations"]];
+    `);
+    expect(response.type).toBe("result");
+    expect(response.value.values[0]).toMatchObject({ type: "output", kind: "graphic" });
+    expect(response.value.values[1].value).toBe("rix.scene3d.orbit@1");
+    expect(response.value.values[2].value).toBe(4n);
+    expect(response.value.values[3].value).toBe(4n);
+});
+
 test("the web REPL returns address-aware Sheet HTML", () => {
     const repl = createRixRepl();
     const response = repl.run(".Sheet({:2x3: 1, 2, 3; 4, 5, 6})");
