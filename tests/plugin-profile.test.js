@@ -27,6 +27,7 @@ test("the checked-in standard profile is selective and imports calculator names"
     expect(profile.source).toContain(":LambertW, :Zeta, :Refine");
     expect(profile.source).toContain('.Plugin.Load("bessel")');
     expect(profile.source).not.toContain(":J0");
+    expect(profile.source).toContain(":NormalPDF, :NormalCDF, :NormalQuantile");
     expect(profile.source).not.toContain(".float[:Sin");
     expect(profile.source).toContain(":LinearSolve=:Solve");
 });

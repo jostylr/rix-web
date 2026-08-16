@@ -8,7 +8,7 @@
 .Plugin.Load("algebra"); .algebra[:Polynomial, :Coefficients];
 .Plugin.Load("linalg"); .linalg[:Rref, :Rank, :Determinant, :Inverse, :LinearSolve=:Solve];
 .Plugin.Load("solve");
-.Plugin.Load("stats"); .stats[:Count, :Mean, :Quantile, :Median, :Variance, :SampleVariance];
+.Plugin.Load("stats"); .stats[:Count, :Mean, :Quantile, :Median, :Variance, :SampleVariance, :NormalPDF, :NormalCDF, :NormalQuantile];
 .Plugin.Load("plot"); .plot[:GraphPolynomial=:Polynomial];
 .Plugin.Load("draw"); .draw[:DrawLine=:Line, :Polygon, :Label, :Box, :DrawCircle=:Circle];
 .Plugin.Load("geometry"); .geometry[:Point, :Line, :Circle, :Midpoint, :PerpendicularBisector, :Circumcircle, :Intersect];

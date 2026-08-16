@@ -463,6 +463,8 @@ test("the web REPL automatically loads its curated calculator profile", () => {
     expect(repl.run('Refine(Beta(2, 3), {= absoluteWidth=1/1000, maxWork=300 })[:status]').text).toBe("enclosed");
     expect(repl.run('Refine(Digamma(1), {= absoluteWidth=1/1000, maxWork=300 })[:status]').text).toBe("enclosed");
     expect(repl.run('Refine(.bessel.J0(0), {= absoluteWidth=1/1000, maxWork=200 })[:status]').text).toBe("enclosed");
+    expect(repl.run('Refine(.bessel.J(2, 1), {= absoluteWidth=1/1000, maxWork=500 })[:status]').text).toBe("enclosed");
+    expect(repl.run('Refine(NormalCDF(0), {= absoluteWidth=1/1000, maxWork=500 })[:status]').text).toBe("enclosed");
     expect(repl.run('.float.Sin(1)').type).toBe("result");
     expect(repl.run('.Plugin.Load("ball"); .Plugin.Load("cauchy"); .Plugin.Load("complex-viz"); .Plugin.Load("csv"); .Plugin.Load("document")').type).toBe("result");
     expect(repl.run('.complexViz.Color(.Complex.FromParts(1, 0))').text).toBe("#ef4444");
@@ -545,7 +547,8 @@ test("profile overrides can start fresh, add plugins, and restore saved lexical 
         },
     });
     expect(fresh.run("Mean([1, 2, 3])").text).toBe("2");
-    expect(fresh.run(".numerics.Exp(3, 4)").type).toBe("error");
+    expect(fresh.run(".numerics.Exp(3, 4)").text).toBe("64");
+    expect(fresh.run("Exp(3, 4)").type).toBe("error");
     await fresh.dispose();
 });
 
