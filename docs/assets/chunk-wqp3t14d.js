@@ -52,6 +52,108 @@ import {
   valueMethod
 } from "./chunk-d3ca5r0w.js";
 
+// standard-profile.rix
+var standard_profile_default = `## RiX-Web standard calculator profile.
+## Keep one directly selected plugin on each line. Dependencies load automatically.
+## Bare imports favor names expected in a scientific or graphical calculator;
+## aliases make collisions explicit. This file is executable by the RiX CLI too.
+.Plugin.Load("numerics"); .numerics[:Pow, :Sqrt, :NthRoot, :Exp, :Log, :Ln, :Log2, :Log10, :Refine];
+.Plugin.Load("float"); .float[:Sin, :Cos, :Tan, :Round, :Floor, :Ceiling];
+.Plugin.Load("algebra"); .algebra[:Polynomial, :Coefficients];
+.Plugin.Load("linalg"); .linalg[:Rref, :Rank, :Determinant, :Inverse, :LinearSolve=:Solve];
+.Plugin.Load("solve");
+.Plugin.Load("stats"); .stats[:Count, :Mean, :Quantile, :Median, :Variance, :SampleVariance];
+.Plugin.Load("plot"); .plot[:GraphPolynomial=:Polynomial];
+.Plugin.Load("draw"); .draw[:DrawLine=:Line, :Polygon, :Label, :Box, :DrawCircle=:Circle];
+.Plugin.Load("geometry"); .geometry[:Point, :Line, :Circle, :Midpoint, :PerpendicularBisector, :Circumcircle, :Intersect];
+.Plugin.Load("data");
+.Plugin.Load("radix");
+`;
+
+// src/plugin-profile.js
+var RIX_WEB_PROFILE_NAME = "standard-v1";
+var RIX_WEB_PROFILE_BEGIN = `## RIX-WEB-PROFILE-BEGIN ${RIX_WEB_PROFILE_NAME}`;
+function commaValues(values) {
+  return values.flatMap((value) => String(value).split(",")).map((value) => value.trim().toLowerCase()).filter(Boolean);
+}
+function profileEntries(source = standard_profile_default) {
+  const entries = [];
+  for (const rawLine of String(source).replace(/\r/g, "").split(`
+`)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("##"))
+      continue;
+    const match = line.match(/^\.Plugin\.Load\("([^"]+)"\)/);
+    if (!match)
+      throw new Error(`Invalid RiX-Web profile line: ${line}`);
+    entries.push({ id: match[1].toLowerCase(), source: line });
+  }
+  return entries;
+}
+var STANDARD_PLUGIN_IDS = Object.freeze(profileEntries().map(({ id }) => id));
+function pluginProfileFromUrl(input = "") {
+  const url = input instanceof URL ? input : new URL(String(input || "http://localhost/"), "http://localhost/");
+  const modes = commaValues(url.searchParams.getAll("plugins"));
+  return {
+    fresh: modes.includes("fresh"),
+    add: commaValues(url.searchParams.getAll("plugins-add")),
+    remove: commaValues(url.searchParams.getAll("plugins-remove"))
+  };
+}
+function normalizedSavedProfile(profile) {
+  if (!profile || typeof profile !== "object" || Array.isArray(profile))
+    return null;
+  if (!Array.isArray(profile.plugins) || typeof profile.source !== "string")
+    return null;
+  return {
+    name: typeof profile.name === "string" ? profile.name : "saved",
+    plugins: commaValues(profile.plugins),
+    source: profile.source.trim(),
+    warnings: []
+  };
+}
+function resolvePluginProfile(profile = {}, availablePluginIds = []) {
+  const saved = normalizedSavedProfile(profile);
+  if (saved)
+    return saved;
+  const available = new Set(Array.from(availablePluginIds, (id) => String(id).toLowerCase()));
+  const standard = profile?.fresh ? [] : profileEntries();
+  const removed = new Set(commaValues(profile?.remove || []));
+  const selected = standard.filter(({ id }) => !removed.has(id));
+  const selectedIds = new Set(selected.map(({ id }) => id));
+  const warnings = [];
+  for (const id of commaValues(profile?.add || [])) {
+    if (selectedIds.has(id))
+      continue;
+    if (available.size && !available.has(id)) {
+      warnings.push(`Unknown RiX-Web plugin '${id}' was ignored.`);
+      continue;
+    }
+    selected.push({ id, source: `.Plugin.Load(${JSON.stringify(id)});` });
+    selectedIds.add(id);
+  }
+  return {
+    name: profile?.fresh ? "fresh" : RIX_WEB_PROFILE_NAME,
+    plugins: selected.map(({ id }) => id),
+    source: selected.map(({ source }) => source).join(`
+`),
+    warnings
+  };
+}
+function markedPluginProfile(source) {
+  const match = String(source).match(/(?:^|\n)## RIX-WEB-PROFILE-BEGIN ([^\n]+)\n([\s\S]*?)\n## RIX-WEB-PROFILE-END(?=\n|$)/);
+  return match ? { name: match[1].trim(), source: match[2].trim(), matchedSource: match[0] } : null;
+}
+function stripMarkedPluginProfile(source, expectedProfileSource = null) {
+  const marked = markedPluginProfile(source);
+  if (!marked)
+    return String(source);
+  if (expectedProfileSource !== null && marked.source !== String(expectedProfileSource).trim())
+    return String(source);
+  return String(source).replace(marked.matchedSource, `
+`).replace(/^\s+/, "");
+}
+
 // src/repl-source.js
 var statementClosers = new Set([")", "]", "}", "|}", ";}", "@}", "!}", ":}"]);
 var containerOpeners = new Set(["(", "[", "{", "{|", "{=", "{;", "{@", "{!", "{:"]);
@@ -8856,13 +8958,15 @@ var helpGroups = [
   },
   {
     title: "Scripts and plugins",
-    description: "Run multiline programs, manage sessions, and load browser plugins.",
+    description: "Run multiline programs, manage sessions, and use the preloaded browser plugin profile.",
     items: [
       ["Script entry", "Write several RiX statements and run them together with Ctrl/Command + Enter."],
-      ["Save", "Download a restorable .rix-session file with commands, settings, current input, and reactive inputs."],
+      ["Save", "Download a restorable .rix-session file with its plugin profile, commands, settings, current input, and reactive inputs."],
+      ["Export .rix", "Download portable RiX source whose plugin profile and commands run with the command-line runner."],
       ["Load", "Restore a .rix-session file completely, or open a local .rix file in script input."],
       ["Copy transcript", "Copy the visible command-and-result transcript to the clipboard."],
-      ['.Plugin.Load("plot")', "Load an approved browser plugin into this session."],
+      [".Plugin.List()", "List the browser-approved catalog; the standard calculator profile loads its curated subset."],
+      ['.Plugin.Load("example-array-rix")', "Explicitly load an optional teaching entry from the Examples group."],
       ["Tab", "Complete names and methods from the current RiX context without evaluating the draft."]
     ]
   },
@@ -8974,11 +9078,11 @@ function reactiveFormulaSource(node) {
   const body = node.formula?.args?.[0];
   return body?.fn ? readableFormula(body) : null;
 }
-function createRixRepl({ autoSeparateLines = true } = {}) {
-  const registeredControls = new Map;
+function createWebSessionState(registeredControls, profileRequest, autoLoadPlugins) {
+  const pluginCatalog = createBundledPluginCatalog();
   const systemContext = createDefaultSystemContext({
     frozen: false,
-    pluginCatalog: createBundledPluginCatalog()
+    pluginCatalog
   });
   installWebControlCapabilities(systemContext, {
     onControl({ control, create }) {
@@ -8991,8 +9095,19 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
   const state = {
     context: new Context,
     registry: createDefaultRegistry(),
-    systemContext
+    systemContext,
+    pluginCatalog,
+    pluginProfile: resolvePluginProfile(autoLoadPlugins ? profileRequest : { fresh: true }, pluginCatalog.list().map(({ id }) => id))
   };
+  if (state.pluginProfile.source) {
+    parseAndEvaluate(state.pluginProfile.source, { ...state, file: "<rix-web-plugin-profile>" });
+  }
+  return state;
+}
+function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, pluginProfile = {} } = {}) {
+  const registeredControls = new Map;
+  let profileRequest = pluginProfile;
+  let state = createWebSessionState(registeredControls, profileRequest, autoLoadPlugins);
   let initialNames = new Set(state.context.getAllNames());
   let separateLines = autoSeparateLines;
   const numberConfig = { input: "z[10]", display: ".." };
@@ -9153,6 +9268,14 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
         display: state.context.getEnv("numDisplay", numberConfig.display)
       };
     },
+    pluginProfile() {
+      return {
+        name: state.pluginProfile.name,
+        plugins: [...state.pluginProfile.plugins],
+        source: state.pluginProfile.source,
+        warnings: [...state.pluginProfile.warnings]
+      };
+    },
     setNumberConfig(config) {
       return applyNumberConfig(config);
     },
@@ -9163,10 +9286,12 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
         formatValue: (value) => formatValue(value, { context: state.context, evaluate: null })
       });
     },
-    async reset() {
+    async reset(options = {}) {
       await disposeAsyncResources(state.context, { kind: "session reset" });
-      state.context.clear();
       registeredControls.clear();
+      if (options.pluginProfile)
+        profileRequest = options.pluginProfile;
+      state = createWebSessionState(registeredControls, profileRequest, autoLoadPlugins);
       initialNames = new Set(state.context.getAllNames());
       applyNumberConfig(numberConfig);
     },
@@ -9182,7 +9307,7 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
   };
 }
 
-export { findHelp, createRixRepl };
+export { pluginProfileFromUrl, stripMarkedPluginProfile, findHelp, createRixRepl };
 
-//# debugId=295FE18A0EA0856D64756E2164756E21
-//# sourceMappingURL=chunk-8vhaafts.js.map
+//# debugId=2D736FD275736CBD64756E2164756E21
+//# sourceMappingURL=chunk-wqp3t14d.js.map

@@ -16,7 +16,7 @@
 .Plugin.Info(&quot;float&quot;)
 .Plugin.Load(&quot;float&quot;)
 .Plugin(&quot;float&quot;)       # short form for Load</code></pre></section>
-<p>A discovered mount can be visible to the static checker while still refusing calls until loading is approved. JavaScript plugin files additionally require an installer that the host explicitly trusts; discovering a file never imports or runs arbitrary JavaScript. A load may choose another camelCase root for a separate session or REPL experiment:</p>
+<p>A discovered mount can be visible to the static checker while still refusing calls until loading is approved. JavaScript plugin files additionally require an installer that the host explicitly trusts; discovering a file never imports or runs arbitrary JavaScript. RiX-Web has already reviewed its bundled browser catalog and applies a curated calculator profile when a session starts; explicit loads remain useful in portable scripts and are idempotent. Teaching entries in the <code>Examples</code> group remain unloaded until requested. A load may choose another camelCase root for a separate session or REPL experiment:</p>
 <section class="comparison-code"><header>text</header><pre><code>.Plugin.Load(&quot;float&quot;, {= as = &quot;jsFloat&quot; })
 .jsFloat.Sin(x)</code></pre></section>
 <p>Because a complete RiX script is checked before its first expression runs, choose renamed mounts in a host startup configuration or a plugin-selection prelude when later source needs static checking against that name.</p>
@@ -26,7 +26,15 @@
 .float.Interval(x)     # exact rational interval containing that float
 .float.Round(x, 2)     # exact rational rounded at a requested decimal place
 .float.Sin(x)          # an optional approximate operation</code></pre></section>
-<p>Those calls are examples of a plugin contract, not promises that every RiX host exposes floating-point computation. RatCalc keeps its default session exact and does not load this optional plugin automatically.</p>
+<p>Those calls are examples of a plugin contract, not promises that every RiX host exposes floating-point computation. RiX-Web&#039;s reviewed profile includes the Float plugin, but Float construction remains explicit and never silently mixes approximate values into exact arithmetic.</p>
+<h2>RiX-Web&#039;s standard calculator profile</h2>
+<p>The checked-in <code>standard-profile.rix</code> file is the authoritative browser baseline. It loads Numerics, Float, algebra, linear algebra, solving, statistics, plotting, drawing, geometry, data, and radix tools. Its selective imports make common names such as <code>Exp</code>, <code>Log</code>, <code>Sqrt</code>, <code>Refine</code>, <code>Sin</code>, <code>Mean</code>, and <code>Determinant</code> directly callable. Collision-prone operations stay on their dotted namespaces or receive explicit aliases such as <code>DrawLine</code> and <code>GraphPolynomial</code>.</p>
+<p>The URL can replace or adjust that baseline:</p>
+<section class="comparison-code"><header>text</header><pre><code>?plugins=fresh
+?plugins=fresh&amp;plugins-add=numerics,plot
+?plugins-remove=stats,data&amp;plugins-add=document,csv</code></pre></section>
+<p><code>plugins-add</code> and <code>plugins-remove</code> accept comma-separated ids and may be repeated. Added plugins retain their dotted names; scripts can selectively import their exports when desired. Dependencies still load automatically, so removing a direct entry does not forbid a remaining plugin from requiring it.</p>
+<p>Saved <code>.rix-session</code> files retain the effective profile. <strong>Export .rix</strong> emits portable source with a CLI plugin header, the lexical imports, settings, and executed commands. The profile block has explicit begin/end comments, allowing RiX-Web to omit it when the same profile is already active.</p>
 <h2>Display names and matching</h2>
 <p>The registry preserves the declared spelling for display: <code>PascalCase</code> core names and <code>camelCase</code> host roots appear as registered. Lookup normalizes the rest of a name, so call-site casing is forgiving after the first-letter role has selected the core or host namespace. That first letter still matters: it protects the visible core/host separation.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Len([1, 2, 3]) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>

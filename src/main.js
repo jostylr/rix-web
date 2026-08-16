@@ -1,4 +1,5 @@
 import { createRixRepl, findHelp } from "./repl-runtime.js";
+import { pluginProfileFromUrl, stripMarkedPluginProfile } from "./plugin-profile.js";
 import { mountOutputWidgets } from "../../rix/src/index.js";
 import { IntervalExplorer, isRationalIntervalValue } from "./interval-explorer.js";
 import { ReactiveDashboard } from "./reactive-dashboard.js";
@@ -8,10 +9,11 @@ import {
     createSessionSnapshot,
     modePresentation,
     parseSession,
+    serializePortableSession,
     serializeSession,
 } from "./workspace-state.js";
 
-const repl = createRixRepl();
+const repl = createRixRepl({ pluginProfile: pluginProfileFromUrl(window.location.href) });
 const outputHistory = document.querySelector("#output-history");
 const input = document.querySelector("#calculator-input");
 const completionGhost = document.querySelector("#completion-ghost");
@@ -278,6 +280,7 @@ function currentSessionSnapshot() {
         numberConfig: repl.numberConfig(),
         reactiveInputs,
         dashboardOpen: reactiveDashboard.isOpen,
+        pluginProfile: repl.pluginProfile(),
     });
 }
 
@@ -294,6 +297,12 @@ function saveSession() {
     const date = new Date().toISOString().slice(0, 10);
     downloadText(`ratcalc-${date}.rix-session`, serializeSession(currentSessionSnapshot()), "application/json");
     setSessionStatus("Session saved. Load this .rix-session file to restore it.");
+}
+
+function exportPortableSession() {
+    const date = new Date().toISOString().slice(0, 10);
+    downloadText(`ratcalc-${date}.rix`, serializePortableSession(currentSessionSnapshot()), "text/plain");
+    setSessionStatus("Portable RiX source exported. Run it with the rix command-line runner.");
 }
 
 function restoreNumberSettings() {
@@ -387,10 +396,10 @@ function openInspection(source, value) {
     inspectDialog.showModal();
 }
 
-async function clearSession() {
+async function clearSession(options = {}) {
     for (const dispose of outputDisposers) dispose();
     outputDisposers.clear();
-    await repl.reset();
+    await repl.reset(options);
     history = [];
     historyIndex = -1;
     transcript = [];
@@ -518,12 +527,12 @@ async function loadFile(file) {
         appendOutput(`.load ${file.name}`, { type: "result", text: "JavaScript module selected. Browser execution is intentionally held behind a future trust policy." });
     } else {
         setScriptMode(true);
-        setInput(text);
+        setInput(stripMarkedPluginProfile(text, repl.pluginProfile().source));
     }
 }
 
 async function restoreSession(session) {
-    await clearSession();
+    await clearSession(session.pluginProfile ? { pluginProfile: session.pluginProfile } : {});
     setAutoSeparateLines(session.autoSeparateLines);
     applyNumberSettings(session.numberConfig);
     for (const entry of session.transcript) {
@@ -564,6 +573,7 @@ document.addEventListener("click", (event) => {
     case "script": setScriptMode(!scriptMode); break;
     case "copy": void copySession(); break;
     case "save": saveSession(); break;
+    case "export-rix": exportPortableSession(); break;
     case "load": fileInput.click(); break;
     case "interval-export-svg": intervalExplorer.download("svg"); break;
     case "interval-export-html": intervalExplorer.download("html"); break;
@@ -653,5 +663,8 @@ displayWelcome();
 setAutoSeparateLines(autoSeparateLines);
 restoreNumberSettings();
 reactiveDashboard.refresh();
+if (repl.pluginProfile().warnings.length) {
+    setSessionStatus(repl.pluginProfile().warnings.join(" "), { error: true });
+}
 input.focus();
 window.addEventListener("pagehide", () => { reactiveDashboard.dispose(); void repl.dispose(); });

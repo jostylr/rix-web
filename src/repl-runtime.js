@@ -16,6 +16,7 @@ import {
 } from "../../rix/src/index.js";
 import { normalizeReplSource } from "./repl-source.js";
 import { createBundledPluginCatalog } from "./generated/bundled-plugin-catalog.js";
+import { resolvePluginProfile } from "./plugin-profile.js";
 import {
     expandDeclarativeWebControls,
     installWebControlCapabilities,
@@ -87,10 +88,11 @@ export const helpGroups = [
         description: "Run multiline programs, manage sessions, and use the preloaded browser plugin profile.",
         items: [
             ["Script entry", "Write several RiX statements and run them together with Ctrl/Command + Enter."],
-            ["Save", "Download a restorable .rix-session file with commands, settings, current input, and reactive inputs."],
+            ["Save", "Download a restorable .rix-session file with its plugin profile, commands, settings, current input, and reactive inputs."],
+            ["Export .rix", "Download portable RiX source whose plugin profile and commands run with the command-line runner."],
             ["Load", "Restore a .rix-session file completely, or open a local .rix file in script input."],
             ["Copy transcript", "Copy the visible command-and-result transcript to the clipboard."],
-            [".Plugin.List()", "List the browser-approved catalog; first-party entries are loaded for every session."],
+            [".Plugin.List()", "List the browser-approved catalog; the standard calculator profile loads its curated subset."],
             ['.Plugin.Load("example-array-rix")', "Explicitly load an optional teaching entry from the Examples group."],
             ["Tab", "Complete names and methods from the current RiX context without evaluating the draft."],
         ],
@@ -189,7 +191,7 @@ function reactiveFormulaSource(node) {
     return body?.fn ? readableFormula(body) : null;
 }
 
-function createWebSessionState(registeredControls, autoLoadPlugins) {
+function createWebSessionState(registeredControls, profileRequest, autoLoadPlugins) {
     const pluginCatalog = createBundledPluginCatalog();
     const systemContext = createDefaultSystemContext({
         frozen: false,
@@ -207,23 +209,22 @@ function createWebSessionState(registeredControls, autoLoadPlugins) {
         context: new Context(),
         registry: createDefaultRegistry(),
         systemContext,
+        pluginCatalog,
+        pluginProfile: resolvePluginProfile(
+            autoLoadPlugins ? profileRequest : { fresh: true },
+            pluginCatalog.list().map(({ id }) => id),
+        ),
     };
-    if (autoLoadPlugins) {
-        const browserDefaults = pluginCatalog.list()
-            .filter((metadata) => !metadata.groups.includes("Examples"));
-        const prelude = browserDefaults
-            .map(({ id }) => `.Plugin.Load(${JSON.stringify(id)})`)
-            .join(";\n");
-        if (prelude) {
-            parseAndEvaluate(prelude, { ...state, file: "<rix-web-default-plugins>" });
-        }
+    if (state.pluginProfile.source) {
+        parseAndEvaluate(state.pluginProfile.source, { ...state, file: "<rix-web-plugin-profile>" });
     }
     return state;
 }
 
-export function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true } = {}) {
+export function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, pluginProfile = {} } = {}) {
     const registeredControls = new Map();
-    let state = createWebSessionState(registeredControls, autoLoadPlugins);
+    let profileRequest = pluginProfile;
+    let state = createWebSessionState(registeredControls, profileRequest, autoLoadPlugins);
     let initialNames = new Set(state.context.getAllNames());
     let separateLines = autoSeparateLines;
     const numberConfig = { input: "z[10]", display: ".." };
@@ -396,6 +397,14 @@ export function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true
                 display: state.context.getEnv("numDisplay", numberConfig.display),
             };
         },
+        pluginProfile() {
+            return {
+                name: state.pluginProfile.name,
+                plugins: [...state.pluginProfile.plugins],
+                source: state.pluginProfile.source,
+                warnings: [...state.pluginProfile.warnings],
+            };
+        },
         setNumberConfig(config) {
             return applyNumberConfig(config);
         },
@@ -406,10 +415,11 @@ export function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true
                 formatValue: (value) => formatValue(value, { context: state.context, evaluate: null }),
             });
         },
-        async reset() {
+        async reset(options = {}) {
             await disposeAsyncResources(state.context, { kind: "session reset" });
             registeredControls.clear();
-            state = createWebSessionState(registeredControls, autoLoadPlugins);
+            if (options.pluginProfile) profileRequest = options.pluginProfile;
+            state = createWebSessionState(registeredControls, profileRequest, autoLoadPlugins);
             initialNames = new Set(state.context.getAllNames());
             applyNumberConfig(numberConfig);
         },

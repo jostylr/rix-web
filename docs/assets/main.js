@@ -1,7 +1,9 @@
 import {
   createRixRepl,
-  findHelp
-} from "./chunk-8vhaafts.js";
+  findHelp,
+  pluginProfileFromUrl,
+  stripMarkedPluginProfile
+} from "./chunk-wqp3t14d.js";
 import {
   Integer,
   Rational,
@@ -1034,6 +1036,20 @@ function requiredString(value, label) {
     throw new Error(`${label} must be text`);
   return value;
 }
+function sessionPluginProfile(value) {
+  if (value === null || value === undefined)
+    return null;
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("Plugin profile must be an object");
+  if (!Array.isArray(value.plugins) || value.plugins.some((id) => typeof id !== "string")) {
+    throw new Error("Plugin profile plugins must be a list of names");
+  }
+  return {
+    name: requiredString(value.name ?? "saved", "Plugin profile name"),
+    plugins: [...new Set(value.plugins.map((id) => id.trim()).filter(Boolean))],
+    source: requiredString(value.source ?? "", "Plugin profile source")
+  };
+}
 function createSessionSnapshot({
   transcript = [],
   input = "",
@@ -1042,6 +1058,7 @@ function createSessionSnapshot({
   numberConfig = {},
   reactiveInputs = [],
   dashboardOpen = false,
+  pluginProfile = null,
   savedAt = new Date().toISOString()
 } = {}) {
   return {
@@ -1063,7 +1080,8 @@ function createSessionSnapshot({
       name: requiredString(entry?.name, `Reactive input ${index + 1} name`),
       source: requiredString(entry?.source, `Reactive input ${index + 1} source`)
     })),
-    dashboardOpen: Boolean(dashboardOpen)
+    dashboardOpen: Boolean(dashboardOpen),
+    pluginProfile: sessionPluginProfile(pluginProfile)
   };
 }
 function serializeSession(snapshot) {
@@ -1087,6 +1105,37 @@ function parseSession(text) {
     throw new Error("The RiX session is missing its command history.");
   }
   return createSessionSnapshot(value);
+}
+function statement(source) {
+  const text = String(source).trim();
+  return text ? `${text}${text.endsWith(";") ? "" : ";"}` : "";
+}
+function webMetaCommand(source) {
+  return /^\.(?:help|clear|vars)(?:\s|$)/i.test(String(source).trim());
+}
+function serializePortableSession(snapshot) {
+  const session = createSessionSnapshot(snapshot);
+  const profile = session.pluginProfile || { name: "fresh", plugins: [], source: "" };
+  const plugins = profile.plugins.join(", ");
+  const parts = [
+    `/**
+plugins: [${plugins}]
+operator-files: []
+**/`,
+    "## Portable session exported by RiX-Web."
+  ];
+  if (profile.source.trim()) {
+    parts.push("## A RiX-Web host that already applied this profile may remove the following marked block.", `## RIX-WEB-PROFILE-BEGIN ${profile.name}`, profile.source.trim(), "## RIX-WEB-PROFILE-END");
+  }
+  parts.push(statement(`<* ${JSON.stringify(session.numberConfig.input)}`), statement(`*> ${JSON.stringify(session.numberConfig.display)}`), ...session.transcript.filter(({ source }) => !webMetaCommand(source)).map(({ source }) => statement(source)), ...session.reactiveInputs.map(({ name, source }) => statement(`$${name} := ${source}`)));
+  if (session.input) {
+    parts.push("## Unexecuted RiX-Web draft:", ...session.input.split(`
+`).map((line) => `## ${line}`));
+  }
+  return `${parts.filter(Boolean).join(`
+
+`)}
+`;
 }
 function modePresentation(scriptMode) {
   return scriptMode ? {
@@ -1118,7 +1167,7 @@ class ClearCoordinator {
 }
 
 // src/main.js
-var repl = createRixRepl();
+var repl = createRixRepl({ pluginProfile: pluginProfileFromUrl(window.location.href) });
 var outputHistory = document.querySelector("#output-history");
 var input = document.querySelector("#calculator-input");
 var completionGhost = document.querySelector("#completion-ghost");
@@ -1388,7 +1437,8 @@ function currentSessionSnapshot() {
     autoSeparateLines,
     numberConfig: repl.numberConfig(),
     reactiveInputs,
-    dashboardOpen: reactiveDashboard.isOpen
+    dashboardOpen: reactiveDashboard.isOpen,
+    pluginProfile: repl.pluginProfile()
   });
 }
 function downloadText(filename, text, type) {
@@ -1403,6 +1453,11 @@ function saveSession() {
   const date = new Date().toISOString().slice(0, 10);
   downloadText(`ratcalc-${date}.rix-session`, serializeSession(currentSessionSnapshot()), "application/json");
   setSessionStatus("Session saved. Load this .rix-session file to restore it.");
+}
+function exportPortableSession() {
+  const date = new Date().toISOString().slice(0, 10);
+  downloadText(`ratcalc-${date}.rix`, serializePortableSession(currentSessionSnapshot()), "text/plain");
+  setSessionStatus("Portable RiX source exported. Run it with the rix command-line runner.");
 }
 function restoreNumberSettings() {
   try {
@@ -1487,11 +1542,11 @@ function openInspection(source, value) {
   inspectValue.textContent = value;
   inspectDialog.showModal();
 }
-async function clearSession() {
+async function clearSession(options = {}) {
   for (const dispose of outputDisposers)
     dispose();
   outputDisposers.clear();
-  await repl.reset();
+  await repl.reset(options);
   history = [];
   historyIndex = -1;
   transcript = [];
@@ -1624,11 +1679,11 @@ async function loadFile(file) {
     appendOutput(`.load ${file.name}`, { type: "result", text: "JavaScript module selected. Browser execution is intentionally held behind a future trust policy." });
   } else {
     setScriptMode(true);
-    setInput(text);
+    setInput(stripMarkedPluginProfile(text, repl.pluginProfile().source));
   }
 }
 async function restoreSession(session) {
-  await clearSession();
+  await clearSession(session.pluginProfile ? { pluginProfile: session.pluginProfile } : {});
   setAutoSeparateLines(session.autoSeparateLines);
   applyNumberSettings(session.numberConfig);
   for (const entry of session.transcript) {
@@ -1707,6 +1762,9 @@ document.addEventListener("click", (event) => {
       break;
     case "save":
       saveSession();
+      break;
+    case "export-rix":
+      exportPortableSession();
       break;
     case "load":
       fileInput.click();
@@ -1848,11 +1906,14 @@ displayWelcome();
 setAutoSeparateLines(autoSeparateLines);
 restoreNumberSettings();
 reactiveDashboard.refresh();
+if (repl.pluginProfile().warnings.length) {
+  setSessionStatus(repl.pluginProfile().warnings.join(" "), { error: true });
+}
 input.focus();
 window.addEventListener("pagehide", () => {
   reactiveDashboard.dispose();
   repl.dispose();
 });
 
-//# debugId=3F7F89564A34588F64756E2164756E21
+//# debugId=3BEB6D4B0D338A6064756E2164756E21
 //# sourceMappingURL=main.js.map

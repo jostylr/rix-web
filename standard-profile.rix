@@ -1,0 +1,15 @@
+## RiX-Web standard calculator profile.
+## Keep one directly selected plugin on each line. Dependencies load automatically.
+## Bare imports favor names expected in a scientific or graphical calculator;
+## aliases make collisions explicit. This file is executable by the RiX CLI too.
+.Plugin.Load("numerics"); .numerics[:Pow, :Sqrt, :NthRoot, :Exp, :Log, :Ln, :Log2, :Log10, :Refine];
+.Plugin.Load("float"); .float[:Sin, :Cos, :Tan, :Round, :Floor, :Ceiling];
+.Plugin.Load("algebra"); .algebra[:Polynomial, :Coefficients];
+.Plugin.Load("linalg"); .linalg[:Rref, :Rank, :Determinant, :Inverse, :LinearSolve=:Solve];
+.Plugin.Load("solve");
+.Plugin.Load("stats"); .stats[:Count, :Mean, :Quantile, :Median, :Variance, :SampleVariance];
+.Plugin.Load("plot"); .plot[:GraphPolynomial=:Polynomial];
+.Plugin.Load("draw"); .draw[:DrawLine=:Line, :Polygon, :Label, :Box, :DrawCircle=:Circle];
+.Plugin.Load("geometry"); .geometry[:Point, :Line, :Circle, :Midpoint, :PerpendicularBisector, :Circumcircle, :Intersect];
+.Plugin.Load("data");
+.Plugin.Load("radix");

@@ -4,6 +4,7 @@ import {
     createSessionSnapshot,
     modePresentation,
     parseSession,
+    serializePortableSession,
     serializeSession,
 } from "../src/workspace-state.js";
 import { createRixRepl } from "../src/repl-runtime.js";
@@ -17,6 +18,7 @@ test("RiX session files preserve commands, draft input, mode, settings, and dash
         numberConfig: { input: "x", display: ".[12],.." },
         reactiveInputs: [{ name: "width", source: "7/2" }],
         dashboardOpen: true,
+        pluginProfile: { name: "standard-v1", plugins: ["numerics"], source: '.Plugin.Load("numerics"); .numerics[:Exp];' },
         savedAt: "2026-08-15T12:00:00.000Z",
     });
 
@@ -28,9 +30,35 @@ test("RiX session files preserve commands, draft input, mode, settings, and dash
         numberConfig: { input: "x", display: ".[12],.." },
         reactiveInputs: [{ name: "width", source: "7/2" }],
         dashboardOpen: true,
+        pluginProfile: { name: "standard-v1", plugins: ["numerics"], source: '.Plugin.Load("numerics"); .numerics[:Exp];' },
         savedAt: "2026-08-15T12:00:00.000Z",
     }));
     expect(() => parseSession('{"format":"something-else","version":1}')).toThrow("not a RiX Web session");
+});
+
+test("portable session export embeds its profile and replays only executable RiX", () => {
+    const source = serializePortableSession({
+        transcript: [
+            { source: "x := Exp(2)", text: "..." },
+            { source: ".vars", text: "x" },
+        ],
+        input: "x + 1",
+        numberConfig: { input: "z[10]", display: ".[12],.." },
+        reactiveInputs: [{ name: "width", source: "7/2" }],
+        pluginProfile: {
+            name: "standard-v1",
+            plugins: ["numerics"],
+            source: '.Plugin.Load("numerics"); .numerics[:Exp];',
+        },
+    });
+
+    expect(source).toContain("plugins: [numerics]");
+    expect(source).toContain("## RIX-WEB-PROFILE-BEGIN standard-v1");
+    expect(source).toContain('.numerics[:Exp]');
+    expect(source).toContain("x := Exp(2);");
+    expect(source).not.toContain("\n.vars;");
+    expect(source).toContain("$width := 7/2;");
+    expect(source).toContain("## x + 1");
 });
 
 test("saved command history and reactive input snapshots rebuild calculator state", async () => {

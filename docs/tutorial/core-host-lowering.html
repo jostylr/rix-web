@@ -11,7 +11,7 @@
 .float.Interval(x)   # callable member of that host object
 .float.precision     # host value
 .Plugin.Load(&quot;...&quot;)  # core-facing request to a host plugin catalog</code></pre></section>
-<p>RatCalc deliberately does not grant plugin registration or optional math plugins to every browser session. The examples in this chapter therefore use the portable core surface; the host page explains the boundary without silently acquiring more authority.</p>
+<p>RiX-Web activates its explicitly reviewed first-party browser plugin profile for every ordinary session. That is a host policy, not a language guarantee: other RiX hosts may expose a smaller catalog or require <code>.Plugin.Load(...)</code>. The examples in this chapter therefore continue to use the portable core surface.</p>
 <h2>The route through the implementation</h2>
 <p>Think of a RiX expression as taking this route:</p>
 <section class="comparison-code"><header>text</header><pre><code>source spelling  →  parser/AST  →  lowered IR operation  →  core registry  →  value

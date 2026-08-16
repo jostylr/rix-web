@@ -4,13 +4,13 @@ RatCalc is a static browser calculator and learning site for the Rational
 Interval Expression Language. It uses the actual RiX parser and evaluator, so
 values and a workspace persist across executed commands and tutorial cells.
 
-Each RiX-Web session automatically activates the catalog's first-party,
-browser-approved plugins, including exact algebra, Numerics, plotting,
-geometry, data/document helpers, and browser renderer contracts. Their dotted
-mounts and receiver methods are therefore ready without a `.Plugin.Load(...)`
-prelude. Catalog entries in the `Examples` group remain explicit, and embedded
-or diagnostic callers can create a restricted runtime with
-`createRixRepl({ autoLoadPlugins: false })`.
+Each RiX-Web session applies the curated
+[standard calculator profile](STANDARD_PROFILE.md). Its checked-in RiX prelude
+loads common exact numerics, approximate trig, algebra, statistics, graphics,
+geometry, linear algebra, solving, tables, and radix tools, and selectively
+imports their calculator-facing names. The rest of the browser-approved catalog
+remains available through `.Plugin.Load(...)`. Embedded or diagnostic callers
+can create a restricted runtime with `createRixRepl({ autoLoadPlugins: false })`.
 
 The calculator includes responsive command/keypad controls, exact number-view
 presets (decimal, fraction, mixed, continued fraction, scientific, binary, and

@@ -6,6 +6,19 @@ function requiredString(value, label) {
     return value;
 }
 
+function sessionPluginProfile(value) {
+    if (value === null || value === undefined) return null;
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Plugin profile must be an object");
+    if (!Array.isArray(value.plugins) || value.plugins.some((id) => typeof id !== "string")) {
+        throw new Error("Plugin profile plugins must be a list of names");
+    }
+    return {
+        name: requiredString(value.name ?? "saved", "Plugin profile name"),
+        plugins: [...new Set(value.plugins.map((id) => id.trim()).filter(Boolean))],
+        source: requiredString(value.source ?? "", "Plugin profile source"),
+    };
+}
+
 export function createSessionSnapshot({
     transcript = [],
     input = "",
@@ -14,6 +27,7 @@ export function createSessionSnapshot({
     numberConfig = {},
     reactiveInputs = [],
     dashboardOpen = false,
+    pluginProfile = null,
     savedAt = new Date().toISOString(),
 } = {}) {
     return {
@@ -36,6 +50,7 @@ export function createSessionSnapshot({
             source: requiredString(entry?.source, `Reactive input ${index + 1} source`),
         })),
         dashboardOpen: Boolean(dashboardOpen),
+        pluginProfile: sessionPluginProfile(pluginProfile),
     };
 }
 
@@ -60,6 +75,44 @@ export function parseSession(text) {
         throw new Error("The RiX session is missing its command history.");
     }
     return createSessionSnapshot(value);
+}
+
+function statement(source) {
+    const text = String(source).trim();
+    return text ? `${text}${text.endsWith(";") ? "" : ";"}` : "";
+}
+
+function webMetaCommand(source) {
+    return /^\.(?:help|clear|vars)(?:\s|$)/i.test(String(source).trim());
+}
+
+/** Export executable RiX source that replays the web session under the CLI. */
+export function serializePortableSession(snapshot) {
+    const session = createSessionSnapshot(snapshot);
+    const profile = session.pluginProfile || { name: "fresh", plugins: [], source: "" };
+    const plugins = profile.plugins.join(", ");
+    const parts = [
+        `/**\nplugins: [${plugins}]\noperator-files: []\n**/`,
+        "## Portable session exported by RiX-Web.",
+    ];
+    if (profile.source.trim()) {
+        parts.push(
+            "## A RiX-Web host that already applied this profile may remove the following marked block.",
+            `## RIX-WEB-PROFILE-BEGIN ${profile.name}`,
+            profile.source.trim(),
+            "## RIX-WEB-PROFILE-END",
+        );
+    }
+    parts.push(
+        statement(`<* ${JSON.stringify(session.numberConfig.input)}`),
+        statement(`*> ${JSON.stringify(session.numberConfig.display)}`),
+        ...session.transcript.filter(({ source }) => !webMetaCommand(source)).map(({ source }) => statement(source)),
+        ...session.reactiveInputs.map(({ name, source }) => statement(`$${name} := ${source}`)),
+    );
+    if (session.input) {
+        parts.push("## Unexecuted RiX-Web draft:", ...session.input.split("\n").map((line) => `## ${line}`));
+    }
+    return `${parts.filter(Boolean).join("\n\n")}\n`;
 }
 
 export function modePresentation(scriptMode) {
