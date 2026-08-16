@@ -165,6 +165,32 @@ exact := .numerics.Exp(3, 4);  ## 64
 
 {: e[:interval], ln2[:interval], log4of3[:interval], exact };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p><code>.Log2(x)</code> and <code>.Log10(x)</code> are the corresponding base-selected conveniences. Every non-exact result remains an algorithm real: callers choose precision and work limits only when they ask to enclose or refine it.</p>
+<h2>Certified trigonometry in radians</h2>
+<p>Trigonometric functions are universal Numerics algorithms, not Float conversions. <code>Pi()</code> uses a certified Machin-formula enclosure. <code>Sin</code> and <code>Cos</code> use exact rational Taylor bounds, while the input may come from any certified real provider:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
+
+pi := .numerics.Pi();
+sine := .numerics.Refine(.numerics.Sin(pi/6), {=
+  absoluteWidth=1/10000, maxWork=400
+});
+cosine := .numerics.Refine(.numerics.Cos(pi/3), {=
+  absoluteWidth=1/10000, maxWork=400
+});
+
+{: sine[:interval], cosine[:interval] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p><code>Tan</code>, <code>Sec</code>, <code>Csc</code>, and <code>Cot</code> are arithmetic compositions of those universal reals. Their usual poles remain domain boundaries rather than being assigned a finite value.</p>
+<p>The inverse functions use monotone endpoint bounds and return radians. <code>Asin</code>/<code>Arcsin</code>, <code>Acos</code>/<code>Arccos</code>, and <code>Atan</code>/<code>Arctan</code> are synonymous spellings:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
+
+angle := .numerics.Refine(.numerics.Asin(1/2), {=
+  absoluteWidth=1/10000, maxWork=500
+});
+quarterTurn := .numerics.Refine(.numerics.Atan(1), {=
+  absoluteWidth=1/10000, maxWork=300
+});
+
+{: angle[:interval], quarterTurn[:interval] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>An inverse-sine or inverse-cosine input that is not certified inside <code>-1:1</code> returns <code>:unknown</code> with <code>:inverseTrigDomainNotCertified</code>. Numerics never silently selects a complex branch or a Float approximation.</p>
 <h2>Kantorovich certification and interval Newton</h2>
 <p><code>.numerics.Kantorovich</code> first checks the supplied initial interval and rational bounds. The derivative interval must exclude zero, <code>derivativeLower</code> may not overstate its certified magnitude, and an optional interval-valued second derivative verifies <code>secondDerivativeUpper</code>. The Kantorovich inequality then certifies an initial root enclosure. Refinement uses interval Newton and intersects every new interval with the preceding one:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="24" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);

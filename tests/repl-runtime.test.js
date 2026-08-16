@@ -12,6 +12,7 @@ import { replayTutorialSources, replayTutorialSourcesAsync, tutorialSectionCells
 import { createRixRepl } from "../src/repl-runtime.js";
 import { tutorials } from "../src/tutorial-index.js";
 import { paintCanvasPlan } from "../../rix/plugins/render-canvas/canvas-plan.js";
+import { formatCertifiedIntervalDecimal } from "../src/certified-decimal-display.js";
 
 test("the web REPL runtime keeps its RiX context between cells", () => {
     const context = new Context();
@@ -28,6 +29,54 @@ area`), options);
     expect(formatValue(result)).toBe("154");
     expect(context.getAllNames()).toContain("radius");
     expect(context.getAllNames()).toContain("area");
+});
+
+test("the web REPL automatically presents refinable function results as certified decimal balls", () => {
+    const repl = createRixRepl({
+        pluginProfile: {
+            name: "automatic-real-display-test",
+            plugins: ["numerics"],
+            source: '.Plugin.Load("numerics"); .numerics[:Exp];',
+        },
+    });
+    const response = repl.run("Exp(3)");
+
+    expect(response.type).toBe("result");
+    expect(response.value.entries.get("schema").value).toBe("rix.numerics.algorithm-real@1");
+    expect(response.text).toMatch(/^20\.\d+\[\+\-\d{1,2}\]$/);
+    const errorDigits = response.text.match(/\[\+\-(\d+)\]$/)[1];
+    expect(errorDigits.length).toBeLessThanOrEqual(2);
+
+    const displayedInterval = parseAndEvaluate(response.text, {
+        context: new Context(),
+        registry: createDefaultRegistry(),
+        systemContext: createDefaultSystemContext(),
+    });
+    const explicitEnclosure = repl.run(".numerics.Refine(Exp(3), {= absoluteWidth=1/1000, maxWork=50 })")
+        .value.entries.get("interval");
+    expect(displayedInterval.contains(explicitEnclosure)).toBe(true);
+
+    // Presentation does not replace the reusable exact-real value in session.
+    repl.run("growth := Exp(3)");
+    const explicit = repl.run(".numerics.Refine(growth, {= absoluteWidth=1/10000, maxWork=50 })");
+    expect(explicit.type).toBe("result");
+    expect(explicit.value.entries.get("schema").value).toBe("rix.numerics.enclosure@1");
+    expect(explicit.text).toContain(":");
+});
+
+test("certified decimal balls round outward with at most two error digits", () => {
+    const interval = parseAndEvaluate("1/3:2/3", {
+        context: new Context(),
+        registry: createDefaultRegistry(),
+        systemContext: createDefaultSystemContext(),
+    });
+    const displayed = formatCertifiedIntervalDecimal(interval);
+    expect(displayed).toBe("0.50[+-17]");
+    expect(parseAndEvaluate(displayed, {
+        context: new Context(),
+        registry: createDefaultRegistry(),
+        systemContext: createDefaultSystemContext(),
+    }).contains(interval)).toBe(true);
 });
 
 test("tutorial replay preserves earlier dependencies without stale removed names", () => {
@@ -403,7 +452,9 @@ test("the web REPL automatically loads its curated calculator profile", () => {
     expect(repl.run('.stats.Mean([1/3, 2/3])').text).toBe("1/2");
     expect(repl.run('Mean([1/3, 2/3])').text).toBe("1/2");
     expect(repl.run('Exp(3, 4)').text).toBe("64");
-    expect(repl.run('Sin(1)').type).toBe("result");
+    expect(repl.run('Refine(Sin(1), {= absoluteWidth=1/1000, maxWork=100 })[:status]').text).toBe("enclosed");
+    expect(repl.run('Refine(Asin(1/2), {= absoluteWidth=1/1000, maxWork=160 })[:status]').text).toBe("enclosed");
+    expect(repl.run('.float.Sin(1)').type).toBe("result");
     expect(repl.run('.Plugin.Load("ball"); .Plugin.Load("cauchy"); .Plugin.Load("complex-viz"); .Plugin.Load("csv"); .Plugin.Load("document")').type).toBe("result");
     expect(repl.run('.complexViz.Color(.Complex.FromParts(1, 0))').text).toBe("#ef4444");
     expect(repl.run('.numerics[:E=:Exp]; E(3, 4)').text).toBe("64");

@@ -21,6 +21,17 @@ import {
     expandDeclarativeWebControls,
     installWebControlCapabilities,
 } from "./web-control-capabilities.js";
+import {
+    certifiedEnclosureInterval,
+    formatCertifiedIntervalDecimal,
+    isAutomaticallyPresentableReal,
+} from "./certified-decimal-display.js";
+
+const AUTOMATIC_REAL_DISPLAY = Object.freeze({
+    absoluteWidth: "1/1000",
+    maxWork: 50,
+});
+const AUTOMATIC_REAL_VALUE_NAME = "rixwebautomaticdisplayvalue";
 
 export const helpGroups = [
     {
@@ -40,7 +51,8 @@ export const helpGroups = [
             ["x := 3", "Create a lower-case value binding."],
             ["y = x", "Alias x's cell; in-place updates are shared."],
             ["Square(x) -> x ^ 2", "Define an uppercase callable."],
-            [".SIN(x)", "Call a RiX system capability with the dot prefix."],
+            ["Refine(Sin(Pi()/6), {= absoluteWidth=1/1000 })", "Refine a certified radian-based Numerics result."],
+            [".numerics.Sin(x)", "Call the same certified operation through its explicit plugin namespace."],
         ],
     },
     {
@@ -67,6 +79,7 @@ export const helpGroups = [
         title: "Number views",
         description: "Choose decimal, fractional, continued-fraction, scientific, and base displays.",
         items: [
+            ["Exp(3)", "Refinable real results automatically show a certified decimal[+-offset] ball; the offset uses the last shown digit, with width 1/1000 and a work limit of 50."],
             ["Numbers", "Open the number panel for decimal, exact, base, continued-fraction, and scientific presets."],
             ['*> ".[12],b,.."', "Show a bounded decimal, binary expansion, and exact mixed fraction together."],
             ['*> "cf"', "Display exact numeric results as continued fractions."],
@@ -230,6 +243,25 @@ export function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true
     const numberConfig = { input: "z[10]", display: ".." };
 
     const configuredFormat = (value) => formatValue(value, { context: state.context, evaluate: null });
+    const automaticallyRefinedInterval = (value) => {
+        if (!isAutomaticallyPresentableReal(value)) return null;
+        state.context.push(new Map([[AUTOMATIC_REAL_VALUE_NAME, value]]));
+        try {
+            const enclosure = parseAndEvaluate(
+                `.numerics.Refine(${AUTOMATIC_REAL_VALUE_NAME}, {= absoluteWidth=${AUTOMATIC_REAL_DISPLAY.absoluteWidth}, maxWork=${AUTOMATIC_REAL_DISPLAY.maxWork} })`,
+                { ...state, file: "<rix-web-automatic-display>" },
+            );
+            return certifiedEnclosureInterval(enclosure);
+        } catch {
+            return null;
+        } finally {
+            state.context.pop();
+        }
+    };
+    const presentationFormat = (value) => {
+        const interval = automaticallyRefinedInterval(value);
+        return interval ? formatCertifiedIntervalDecimal(interval) : configuredFormat(value);
+    };
     const applyNumberConfig = ({ input, display } = {}) => {
         if (input !== undefined) {
             parseAndEvaluate(`<* ${JSON.stringify(String(input))}`, { ...state, file: "<ratcalc-config>" });
@@ -264,7 +296,7 @@ export function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true
                     type: "result",
                     source,
                     value,
-                    text: format(value),
+                    text: presentationFormat(value),
                     sourceText: formatValueSource(value),
                     html: isOutputValue(value) ? renderOutputHtml(value, format) : null,
                     observe: observedSource
@@ -306,7 +338,7 @@ export function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true
                     type: "result",
                     source,
                     value,
-                    text: format(value),
+                    text: presentationFormat(value),
                     sourceText: formatValueSource(value),
                     html: isOutputValue(value) ? renderOutputHtml(value, format) : null,
                     observe: observedSource
@@ -323,7 +355,7 @@ export function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true
         variables() {
             return state.context.getAllNames().filter((name) => !initialNames.has(name)).map((name) => ({
                 name,
-                value: configuredFormat(state.context.get(name)),
+                value: presentationFormat(state.context.get(name)),
             }));
         },
         reactiveVariables() {
@@ -373,7 +405,7 @@ export function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true
                     kind: node.kind,
                     state: node.state,
                     value,
-                    valueText: configuredFormat(value),
+                    valueText: presentationFormat(value),
                     sourceText: formatValueSource(value),
                     formulaSource: reactiveFormulaSource(node),
                     dependencies: Object.freeze([...node.dependencies].sort()),

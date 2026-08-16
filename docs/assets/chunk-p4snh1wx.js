@@ -50,15 +50,15 @@ import {
   typeRegistry,
   unsupportedRefinementResult,
   valueMethod
-} from "./chunk-d3ca5r0w.js";
+} from "./chunk-pn6ryp6s.js";
 
 // standard-profile.rix
 var standard_profile_default = `## RiX-Web standard calculator profile.
 ## Keep one directly selected plugin on each line. Dependencies load automatically.
 ## Bare imports favor names expected in a scientific or graphical calculator;
 ## aliases make collisions explicit. This file is executable by the RiX CLI too.
-.Plugin.Load("numerics"); .numerics[:Pow, :Sqrt, :NthRoot, :Exp, :Log, :Ln, :Log2, :Log10, :Refine];
-.Plugin.Load("float"); .float[:Sin, :Cos, :Tan, :Round, :Floor, :Ceiling];
+.Plugin.Load("numerics"); .numerics[:Pow, :Sqrt, :NthRoot, :Exp, :Log, :Ln, :Log2, :Log10, :Pi, :Sin, :Cos, :Tan, :Sec, :Csc, :Cot, :Asin, :Acos, :Atan, :Refine];
+.Plugin.Load("float"); .float[:Round, :Floor, :Ceiling];
 .Plugin.Load("algebra"); .algebra[:Polynomial, :Coefficients];
 .Plugin.Load("linalg"); .linalg[:Rref, :Rank, :Determinant, :Inverse, :LinearSolve=:Solve];
 .Plugin.Load("solve");
@@ -4328,12 +4328,12 @@ ndNamespace._proto={=
 };
 .Host.RegisterValue("nd",ndNamespace,"Pure-RiX exact n-dimensional geometry and explicit projections",["Geometry","Scene3D","Exact"]);
 `, sourcePath: "bundled:nd", kind: "rix" });
-  catalog.addMetadata({ id: "numerics", description: "Backend-neutral bounded enclosure and refinement orchestration.", kind: "rix", mount: "numerics", exports: ["Request", "WorkPolicy", "EffectiveLimits", "Enclose", "Refine", "Sample", "Capabilities", "CheckResult", "NthRoot", "Sqrt", "Pow", "Exp", "Log", "Ln", "Log2", "Log10", "Kantorovich"], groups: ["Numerics"], permissions: [], requires: ["rix.oracle@1"], provides: ["rix.numerics@1", "rix.enclosable-real-consumer@1"], schemas: ["rix.numerics.refinement-request@1", "rix.numerics.enclosure@1", "rix.numerics.algorithm-real@1"], defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:numerics" }, { source: `/**
+  catalog.addMetadata({ id: "numerics", description: "Backend-neutral bounded enclosure and refinement orchestration.", kind: "rix", mount: "numerics", exports: ["Request", "WorkPolicy", "EffectiveLimits", "Enclose", "Refine", "Sample", "Capabilities", "CheckResult", "NthRoot", "Sqrt", "Pow", "Exp", "Log", "Ln", "Log2", "Log10", "Pi", "Sin", "Cos", "Tan", "Sec", "Csc", "Cot", "Asin", "Acos", "Atan", "Arcsin", "Arccos", "Arctan", "Kantorovich"], groups: ["Numerics"], permissions: [], requires: ["rix.oracle@1"], provides: ["rix.numerics@1", "rix.enclosable-real-consumer@1"], schemas: ["rix.numerics.refinement-request@1", "rix.numerics.enclosure@1", "rix.numerics.algorithm-real@1"], defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:numerics" }, { source: `/**
 id: numerics
 description: Backend-neutral bounded enclosure and refinement orchestration.
 kind: rix
 mount: numerics
-exports: [Request, WorkPolicy, EffectiveLimits, Enclose, Refine, Sample, Capabilities, CheckResult, NthRoot, Sqrt, Pow, Exp, Log, Ln, Log2, Log10, Kantorovich]
+exports: [Request, WorkPolicy, EffectiveLimits, Enclose, Refine, Sample, Capabilities, CheckResult, NthRoot, Sqrt, Pow, Exp, Log, Ln, Log2, Log10, Pi, Sin, Cos, Tan, Sec, Csc, Cot, Asin, Acos, Atan, Arcsin, Arccos, Arctan, Kantorovich]
 groups: [Numerics]
 permissions: []
 requires: [rix.oracle@1]
@@ -4539,6 +4539,118 @@ NumericsLogRationalBounds(value, tolerance, maxIterations) -> {;
     };
 };
 
+NumericsClampUnitInterval(interval) ->
+    .Max(-1, interval.Low()):.Min(1, interval.High());
+
+NumericsTrigTaylorBounds(value, tolerance, maxIterations, kind) -> {;
+    exact = value ~!: :Rational;
+    absolute = exact.Abs();
+    cosine = kind == :cosine;
+    degree := cosine ?: 0 ?_ 1;
+    term := cosine ?: 1 ?_ exact;
+    sum := term;
+    remainder := cosine ?: absolute ?_ absolute^2 / 2;
+    interval := NumericsClampUnitInterval((sum - remainder):(sum + remainder));
+    iterations := 0;
+    {@ step=1;
+       @interval.Width() > @tolerance && @iterations < @maxIterations;
+       {;
+           @term *= -(@exact^2) / ((@degree + 1) * (@degree + 2));
+           @sum += @term;
+           @remainder *= @absolute^2 / ((@degree + 2) * (@degree + 3));
+           @degree += 2;
+           @interval = NumericsClampUnitInterval(
+               (@sum - @remainder):(@sum + @remainder)
+           );
+           @iterations += 1;
+       };
+       step += 1
+    };
+    {=
+        interval=interval,
+        ready=1,
+        goalMet=interval.Width() <= tolerance,
+        iterations=iterations
+    };
+};
+
+NumericsAtanSmallBounds(value, tolerance, maxIterations) -> {;
+    exact = value ~!: :Rational;
+    exact.Abs() <= 1/2 ?: _ ?_ .Error("Internal arctangent series argument exceeds 1/2");
+    term := exact;
+    sum := exact;
+    degree := 1;
+    next := -exact^3 / 3;
+    interval := .Min(sum, sum + next):.Max(sum, sum + next);
+    iterations := 0;
+    {@ step=1;
+       @interval.Width() > @tolerance && @iterations < @maxIterations;
+       {;
+           @term = @next;
+           @sum += @term;
+           @degree += 2;
+           @next = -@term * @exact^2 * @degree / (@degree + 2);
+           @interval = .Min(@sum, @sum + @next):.Max(@sum, @sum + @next);
+           @iterations += 1;
+       };
+       step += 1
+    };
+    {=
+        interval=interval,
+        ready=1,
+        goalMet=interval.Width() <= tolerance,
+        iterations=iterations
+    };
+};
+
+## Machin's identity: pi = 16 atan(1/5) - 4 atan(1/239).
+NumericsPiRationalBounds(tolerance, maxIterations) -> {;
+    perSeries = .Max(0, maxIterations // 2);
+    first = NumericsAtanSmallBounds(1/5, tolerance/32, perSeries);
+    second = NumericsAtanSmallBounds(1/239, tolerance/8, maxIterations - perSeries);
+    interval = 16 * first[:interval] - 4 * second[:interval];
+    {=
+        interval=interval,
+        ready=first[:ready] && second[:ready],
+        goalMet=interval.Width() <= tolerance,
+        iterations=first[:iterations] + second[:iterations]
+    };
+};
+
+NumericsAtanRationalBounds(value, tolerance, maxIterations) -> {;
+    exact = value ~!: :Rational;
+    negative = exact < 0;
+    absolute = exact.Abs();
+    halfBudget = .Max(0, maxIterations // 2);
+    absoluteResult = absolute <= 1/2
+      ?: NumericsAtanSmallBounds(absolute, tolerance, maxIterations)
+      ?_ {;
+          pi = NumericsPiRationalBounds(@tolerance, @halfBudget);
+          reduced = @absolute > 1
+            ?: 1 / @absolute
+            ?_ (@absolute - 1) / (@absolute + 1);
+          residual = NumericsAtanSmallBounds(reduced, @tolerance/2, @maxIterations - @halfBudget);
+          interval = @absolute > 1
+            ?: pi[:interval] / 2 - residual[:interval]
+            ?_ pi[:interval] / 4 + residual[:interval];
+          {=
+              interval=interval,
+              ready=pi[:ready] && residual[:ready],
+              goalMet=interval.Width() <= @tolerance,
+              iterations=pi[:iterations] + residual[:iterations]
+          };
+      };
+    resultInterval = negative
+      ?: (-absoluteResult[:interval].High()):(-absoluteResult[:interval].Low())
+      ?_ absoluteResult[:interval];
+    {=
+        interval=resultInterval,
+        ready=absoluteResult[:ready],
+        goalMet=resultInterval.Width() <= tolerance,
+        iterations=absoluteResult[:iterations]
+    };
+};
+
 NumericsElementaryResult(real, request, interval, work, goalMet, evidence) -> {;
     status = goalMet ?: :enclosed ?_ :budgetExhausted;
     approximation = .CertifiedApproximation(interval.Midpoint(), interval, {=
@@ -4630,6 +4742,240 @@ NumericsElementaryRefine(real, rawRequest, operation) -> {;
     );
 };
 
+NumericsPiRefine(real, rawRequest, operation) -> {;
+    capabilities = NumericsAlgorithmCapabilities(real);
+    request = .RefinementRequest(rawRequest, operation, capabilities);
+    maxCalls = request[:work][:maxCalls];
+    maxIterations = request[:work][:maxIterations];
+    limit = .Min(maxCalls, maxIterations);
+    bounds = NumericsPiRationalBounds(request[:absoluteWidth], limit);
+    goalMet = bounds[:goalMet];
+    NumericsElementaryResult(real, request, bounds[:interval], {=
+        calls=bounds[:iterations],
+        iterations=bounds[:iterations],
+        maxCalls=maxCalls,
+        maxIterations=maxIterations,
+        exhausted=!goalMet
+    }, goalMet, {=
+        kind=:machinFormula,
+        property=:containment,
+        identity="pi=16*atan(1/5)-4*atan(1/239)"
+    });
+};
+
+NumericsTrigRefine(real, rawRequest, operation) -> {;
+    capabilities = NumericsAlgorithmCapabilities(real);
+    request = .RefinementRequest(rawRequest, operation, capabilities);
+    requestedWidth = request[:absoluteWidth];
+    maxCalls = request[:work][:maxCalls];
+    maxIterations = request[:work][:maxIterations];
+    sourceWidth = requestedWidth / 4;
+    sourceBudget = .Max(0, maxCalls // 2);
+    sourceResult = NumericsSourceResult(real[:input], sourceWidth, sourceBudget, request[:trace]);
+    sourceCalls = NumericsCalls(sourceResult);
+    sourceInterval = sourceResult[:interval];
+    midpoint = sourceInterval.Midpoint();
+    radius = sourceInterval.Width() / 2;
+    remaining = .Max(0, .Min(maxIterations, maxCalls - sourceCalls));
+    pointBounds = NumericsTrigTaylorBounds(midpoint, requestedWidth/2, remaining, real[:kind]);
+    interval = NumericsClampUnitInterval(
+        (pointBounds[:interval].Low() - radius):(pointBounds[:interval].High() + radius)
+    );
+    iterations = pointBounds[:iterations];
+    calls = sourceCalls + iterations;
+    goalMet = interval.Width() <= requestedWidth;
+    NumericsElementaryResult(real, request, interval, {=
+        calls=calls,
+        iterations=iterations,
+        maxCalls=maxCalls,
+        maxIterations=maxIterations,
+        sourceCalls=sourceCalls,
+        exhausted=!goalMet
+    }, goalMet, {=
+        kind=:rationalTaylorWithLipschitzLift,
+        property=:containment,
+        algorithm=real[:kind],
+        source=sourceResult[:evidence]
+    });
+};
+
+NumericsAsinRationalBounds(value, tolerance, maxIterations) -> {;
+    exact = value ~!: :Rational;
+    exact >= -1 && exact <= 1 ?: _ ?_ .Error("Inverse sine requires a value from -1 through 1");
+    exact == 0
+      ?: {= interval=0:0, ready=1, goalMet=1, iterations=0 }
+      ?_ (exact.Abs() == 1
+          ?: {;
+              pi = NumericsPiRationalBounds(2*@tolerance, @maxIterations);
+              interval = @exact > 0
+                ?: pi[:interval] / 2
+                ?_ (-pi[:interval].High()/2):(-pi[:interval].Low()/2);
+              {=
+                  interval=interval,
+                  ready=pi[:ready],
+                  goalMet=interval.Width() <= @tolerance,
+                  iterations=pi[:iterations]
+              };
+          }
+          ?_ {;
+              rootBudget = .Max(0, @maxIterations // 3);
+              root = NumericsNthRoot(1 - @exact^2, 2);
+              rootResult = root.Refine({=
+                  absoluteWidth=@tolerance/8,
+                  maxWork=rootBudget,
+                  maxCalls=rootBudget,
+                  maxIterations=rootBudget
+              });
+              rootInterval = rootResult[:interval];
+              quotient = (@exact:@exact) / rootInterval;
+              remaining = .Max(0, @maxIterations - NumericsCalls(rootResult));
+              endpointBudget = .Max(0, remaining // 2);
+              lower = NumericsAtanRationalBounds(quotient.Low(), @tolerance/4, endpointBudget);
+              upper = quotient.Low() == quotient.High()
+                ?: lower
+                ?_ NumericsAtanRationalBounds(quotient.High(), @tolerance/4, remaining - endpointBudget);
+              interval = lower[:interval].Low():upper[:interval].High();
+              iterations = NumericsCalls(rootResult) + lower[:iterations]
+                + (quotient.Low() == quotient.High() ?: 0 ?_ upper[:iterations]);
+              {=
+                  interval=interval,
+                  ready=lower[:ready] && upper[:ready],
+                  goalMet=interval.Width() <= @tolerance,
+                  iterations=iterations
+              };
+          });
+};
+
+NumericsAcosRationalBounds(value, tolerance, maxIterations) -> {;
+    halfBudget = .Max(0, maxIterations // 2);
+    pi = NumericsPiRationalBounds(tolerance, halfBudget);
+    asin = NumericsAsinRationalBounds(value, tolerance/2, maxIterations - halfBudget);
+    interval = pi[:interval] / 2 - asin[:interval];
+    {=
+        interval=interval,
+        ready=pi[:ready] && asin[:ready],
+        goalMet=interval.Width() <= tolerance,
+        iterations=pi[:iterations] + asin[:iterations]
+    };
+};
+
+NumericsInversePointBounds(value, tolerance, maxIterations, kind) -> {?
+    kind == :arctangent ? NumericsAtanRationalBounds(value, tolerance, maxIterations);
+    kind == :arcsine ? NumericsAsinRationalBounds(value, tolerance, maxIterations);
+    kind == :arccosine ? NumericsAcosRationalBounds(value, tolerance, maxIterations);
+    .Error("Unknown inverse trigonometric algorithm")
+};
+
+NumericsInverseTrigRefine(real, rawRequest, operation) -> {;
+    capabilities = NumericsAlgorithmCapabilities(real);
+    request = .RefinementRequest(rawRequest, operation, capabilities);
+    requestedWidth = request[:absoluteWidth];
+    maxCalls = request[:work][:maxCalls];
+    maxIterations = request[:work][:maxIterations];
+    restricted = real[:kind] != :arctangent;
+    sourceWidth = restricted
+      ?: (requestedWidth < 1 ?: requestedWidth^2 / 16 ?_ requestedWidth / 16)
+      ?_ requestedWidth / 4;
+    sourceBudget = .Max(0, maxCalls // 3);
+    sourceResult = NumericsSourceResult(real[:input], sourceWidth, sourceBudget, request[:trace]);
+    sourceCalls = NumericsCalls(sourceResult);
+    sourceInterval = sourceResult[:interval];
+    domainResolved = restricted
+      ?: (sourceInterval.Low() >= -1 && sourceInterval.High() <= 1)
+      ?_ 1;
+    domainResolved ?: {;
+        remaining = .Max(0, .Min(@maxIterations, @maxCalls - @sourceCalls));
+        endpointBudget = .Max(0, remaining // 2);
+        decreasing = @real[:kind] == :arccosine;
+        lowerSource = decreasing ?: @sourceInterval.High() ?_ @sourceInterval.Low();
+        upperSource = decreasing ?: @sourceInterval.Low() ?_ @sourceInterval.High();
+        lower = NumericsInversePointBounds(
+            lowerSource, @requestedWidth/4, endpointBudget, @real[:kind]
+        );
+        sameEndpoint = lowerSource == upperSource;
+        upper = sameEndpoint
+          ?: lower
+          ?_ NumericsInversePointBounds(
+              upperSource, @requestedWidth/4, remaining - endpointBudget, @real[:kind]
+          );
+        interval = lower[:interval].Low():upper[:interval].High();
+        endpointIterations = lower[:iterations] + (sameEndpoint ?: 0 ?_ upper[:iterations]);
+        calls = @sourceCalls + endpointIterations;
+        goalMet = interval.Width() <= @requestedWidth;
+        NumericsElementaryResult(@real, @request, interval, {=
+            calls=calls,
+            iterations=endpointIterations,
+            maxCalls=@maxCalls,
+            maxIterations=@maxIterations,
+            sourceCalls=@sourceCalls,
+            exhausted=!goalMet
+        }, goalMet, {=
+            kind=:monotoneEndpointBounds,
+            property=:containment,
+            algorithm=@real[:kind],
+            source=@sourceResult[:evidence]
+        });
+    } ?_ NumericsUnknownAlgorithm(
+        real,
+        request,
+        real[:kind] == :arccosine ?: (0:4) ?_ ((-2):2),
+        {= calls=sourceCalls, iterations=0, maxCalls=maxCalls, exhausted=sourceCalls>=maxCalls },
+        :inverseTrigDomainNotCertified
+    );
+};
+
+NumericsPiAlgorithm() -> {;
+    real = {=
+        valueKind=:numericsAlgorithmReal,
+        schema="rix.numerics.algorithm-real@1",
+        kind=:pi,
+        evidenceLevel=:proof,
+        provenance={= plugin=:numerics, version=4, algorithm=:machinPi }
+    };
+    real._proto = {=
+        Enclose=(self, request ?= {= })->NumericsPiRefine(self, request, :enclose),
+        Refine=(self, request ?= {= })->NumericsPiRefine(self, request, :refine),
+        NumericsCapabilities=(self)->NumericsAlgorithmCapabilities(self)
+    };
+    .ImmutableValue(real);
+};
+
+NumericsTrigAlgorithm(value, kind) -> {;
+    source = .oracle.From(value);
+    real = {=
+        valueKind=:numericsAlgorithmReal,
+        schema="rix.numerics.algorithm-real@1",
+        kind=kind,
+        input=source,
+        evidenceLevel=:proof,
+        provenance={= plugin=:numerics, version=4, algorithm=kind, source=value }
+    };
+    real._proto = {=
+        Enclose=(self, request ?= {= })->NumericsTrigRefine(self, request, :enclose),
+        Refine=(self, request ?= {= })->NumericsTrigRefine(self, request, :refine),
+        NumericsCapabilities=(self)->NumericsAlgorithmCapabilities(self)
+    };
+    .ImmutableValue(real);
+};
+
+NumericsInverseTrigAlgorithm(value, kind) -> {;
+    source = .oracle.From(value);
+    real = {=
+        valueKind=:numericsAlgorithmReal,
+        schema="rix.numerics.algorithm-real@1",
+        kind=kind,
+        input=source,
+        evidenceLevel=:proof,
+        provenance={= plugin=:numerics, version=4, algorithm=kind, source=value }
+    };
+    real._proto = {=
+        Enclose=(self, request ?= {= })->NumericsInverseTrigRefine(self, request, :enclose),
+        Refine=(self, request ?= {= })->NumericsInverseTrigRefine(self, request, :refine),
+        NumericsCapabilities=(self)->NumericsAlgorithmCapabilities(self)
+    };
+    .ImmutableValue(real);
+};
+
 NumericsNaturalAlgorithm(value, kind) -> {;
     source = .oracle.From(value);
     real = {=
@@ -4677,6 +5023,24 @@ NumericsLog(value, base ?= _) ->
     base == _
       ?: NumericsNaturalLog(value)
       ?_ NumericsNaturalLog(value) / NumericsNaturalLog(base);
+
+NumericsSin(value) -> NumericsTrigAlgorithm(value, :sine);
+
+NumericsCos(value) -> NumericsTrigAlgorithm(value, :cosine);
+
+NumericsTan(value) -> NumericsSin(value) / NumericsCos(value);
+
+NumericsSec(value) -> 1 / NumericsCos(value);
+
+NumericsCsc(value) -> 1 / NumericsSin(value);
+
+NumericsCot(value) -> NumericsCos(value) / NumericsSin(value);
+
+NumericsAsin(value) -> NumericsInverseTrigAlgorithm(value, :arcsine);
+
+NumericsAcos(value) -> NumericsInverseTrigAlgorithm(value, :arccosine);
+
+NumericsAtan(value) -> NumericsInverseTrigAlgorithm(value, :arctangent);
 
 NumericsUnknownAlgorithm(real, request, interval, work, reason) -> {=
     valueKind=:enclosure,
@@ -5033,6 +5397,19 @@ numericsNamespace._proto = {=
     Ln = (self, value) -> NumericsLog(value),
     Log2 = (self, value) -> NumericsLog(value, 2),
     Log10 = (self, value) -> NumericsLog(value, 10),
+    Pi = (self) -> NumericsPiAlgorithm(),
+    Sin = (self, value) -> NumericsSin(value),
+    Cos = (self, value) -> NumericsCos(value),
+    Tan = (self, value) -> NumericsTan(value),
+    Sec = (self, value) -> NumericsSec(value),
+    Csc = (self, value) -> NumericsCsc(value),
+    Cot = (self, value) -> NumericsCot(value),
+    Asin = (self, value) -> NumericsAsin(value),
+    Acos = (self, value) -> NumericsAcos(value),
+    Atan = (self, value) -> NumericsAtan(value),
+    Arcsin = (self, value) -> NumericsAsin(value),
+    Arccos = (self, value) -> NumericsAcos(value),
+    Arctan = (self, value) -> NumericsAtan(value),
     Kantorovich = (self, function, derivative, options ?= {= }) -> NumericsKantorovich(function, derivative, options),
     Approximation = (self, result) -> result.Has("approximation") ?: result[:approximation] ?_ _,
     Capabilities = (self, value) -> value.NumericsCapabilities(),
@@ -8894,7 +9271,127 @@ function installWebControlCapabilities(systemContext, { onControl = null } = {})
   return systemContext;
 }
 
+// src/certified-decimal-display.js
+function rationalParts(value) {
+  if (value instanceof Integer)
+    return [value.value, 1n];
+  if (value instanceof Rational)
+    return [value.numerator, value.denominator];
+  throw new TypeError("Certified decimal display requires rational endpoints");
+}
+function powerOfTen(exponent) {
+  return 10n ** BigInt(exponent);
+}
+function compareFractions(leftNumerator, leftDenominator, rightNumerator, rightDenominator) {
+  const difference = leftNumerator * rightDenominator - rightNumerator * leftDenominator;
+  return difference < 0n ? -1 : difference > 0n ? 1 : 0;
+}
+function roundFraction(numerator, denominator) {
+  const negative = numerator < 0n;
+  const absolute = negative ? -numerator : numerator;
+  const rounded = (absolute * 2n + denominator) / (denominator * 2n);
+  return negative ? -rounded : rounded;
+}
+function roundedDecimalUnits(numerator, denominator, places) {
+  if (places >= 0)
+    return roundFraction(numerator * powerOfTen(places), denominator);
+  return roundFraction(numerator, denominator * powerOfTen(-places));
+}
+function decimalText(units, places) {
+  const negative = units < 0n;
+  let digits = String(negative ? -units : units);
+  if (places <= 0) {
+    digits += "0".repeat(-places);
+    return `${negative ? "-" : ""}${digits}`;
+  }
+  digits = digits.padStart(places + 1, "0");
+  const split = digits.length - places;
+  return `${negative ? "-" : ""}${digits.slice(0, split)}.${digits.slice(split)}`;
+}
+function decimalExponent(numerator, denominator) {
+  let exponent = String(numerator).length - String(denominator).length;
+  const belowCandidate = exponent >= 0 ? numerator < denominator * powerOfTen(exponent) : numerator * powerOfTen(-exponent) < denominator;
+  if (belowCandidate)
+    exponent -= 1;
+  return exponent;
+}
+function requiredErrorUnits(centerUnits, places, lowNumerator, lowDenominator, highNumerator, highDenominator) {
+  const centerNumerator = places >= 0 ? centerUnits : centerUnits * powerOfTen(-places);
+  const centerDenominator = places >= 0 ? powerOfTen(places) : 1n;
+  const lowDistanceNumerator = centerNumerator * lowDenominator - lowNumerator * centerDenominator;
+  const highDistanceNumerator = highNumerator * centerDenominator - centerNumerator * highDenominator;
+  const [distanceNumerator, distanceDenominator] = compareFractions(lowDistanceNumerator, centerDenominator * lowDenominator, highDistanceNumerator, centerDenominator * highDenominator) >= 0 ? [lowDistanceNumerator, centerDenominator * lowDenominator] : [highDistanceNumerator, centerDenominator * highDenominator];
+  const scaleNumerator = places >= 0 ? powerOfTen(places) : 1n;
+  const scaleDenominator = places >= 0 ? 1n : powerOfTen(-places);
+  const numerator = distanceNumerator * scaleNumerator;
+  const denominator = distanceDenominator * scaleDenominator;
+  return (numerator + denominator - 1n) / denominator;
+}
+function terminatingDecimal(numerator, denominator) {
+  let remaining = denominator;
+  let twos = 0;
+  let fives = 0;
+  while (remaining % 2n === 0n) {
+    remaining /= 2n;
+    twos += 1;
+  }
+  while (remaining % 5n === 0n) {
+    remaining /= 5n;
+    fives += 1;
+  }
+  if (remaining !== 1n)
+    return null;
+  const places = Math.max(twos, fives);
+  const units = numerator * 2n ** BigInt(places - twos) * 5n ** BigInt(places - fives);
+  return { units, places };
+}
+function formatCertifiedIntervalDecimal(interval) {
+  if (!(interval instanceof RationalInterval)) {
+    throw new TypeError("Certified decimal display requires a RationalInterval");
+  }
+  const [lowNumerator, lowDenominator] = rationalParts(interval.low);
+  const [highNumerator, highDenominator] = rationalParts(interval.high);
+  const midpointNumerator = lowNumerator * highDenominator + highNumerator * lowDenominator;
+  const midpointDenominator = 2n * lowDenominator * highDenominator;
+  const widthNumerator = highNumerator * lowDenominator - lowNumerator * highDenominator;
+  const widthDenominator = lowDenominator * highDenominator;
+  if (widthNumerator === 0n) {
+    const exact = terminatingDecimal(lowNumerator, lowDenominator);
+    if (exact)
+      return `${decimalText(exact.units, exact.places)}[+-0]`;
+  }
+  let places = widthNumerator === 0n ? 6 : 1 - decimalExponent(widthNumerator, 2n * widthDenominator);
+  while (true) {
+    const centerUnits = roundedDecimalUnits(midpointNumerator, midpointDenominator, places);
+    const errorUnits = requiredErrorUnits(centerUnits, places, lowNumerator, lowDenominator, highNumerator, highDenominator);
+    if (errorUnits <= 99n) {
+      return `${decimalText(centerUnits, places)}[+-${decimalText(errorUnits, places)}]`;
+    }
+    places -= 1;
+  }
+}
+function certifiedEnclosureInterval(value) {
+  if (value?.type !== "map" || !(value.entries instanceof Map))
+    return null;
+  if (value.entries.get("schema")?.value !== "rix.numerics.enclosure@1")
+    return null;
+  if (value.entries.get("certified")?.value !== 1n)
+    return null;
+  const interval = value.entries.get("interval");
+  return interval instanceof RationalInterval ? interval : null;
+}
+function isAutomaticallyPresentableReal(value) {
+  if (value?.type !== "map" || !(value.entries instanceof Map))
+    return false;
+  return value.entries.get("schema")?.value === "rix.numerics.algorithm-real@1";
+}
+
 // src/repl-runtime.js
+var AUTOMATIC_REAL_DISPLAY = Object.freeze({
+  absoluteWidth: "1/1000",
+  maxWork: 50
+});
+var AUTOMATIC_REAL_VALUE_NAME = "rixwebautomaticdisplayvalue";
 var helpGroups = [
   {
     title: "Start here",
@@ -8913,7 +9410,8 @@ var helpGroups = [
       ["x := 3", "Create a lower-case value binding."],
       ["y = x", "Alias x's cell; in-place updates are shared."],
       ["Square(x) -> x ^ 2", "Define an uppercase callable."],
-      [".SIN(x)", "Call a RiX system capability with the dot prefix."]
+      ["Refine(Sin(Pi()/6), {= absoluteWidth=1/1000 })", "Refine a certified radian-based Numerics result."],
+      [".numerics.Sin(x)", "Call the same certified operation through its explicit plugin namespace."]
     ]
   },
   {
@@ -8940,6 +9438,7 @@ var helpGroups = [
     title: "Number views",
     description: "Choose decimal, fractional, continued-fraction, scientific, and base displays.",
     items: [
+      ["Exp(3)", "Refinable real results automatically show a certified decimal[+-error] ball using width 1/1000 and a work limit of 50."],
       ["Numbers", "Open the number panel for decimal, exact, base, continued-fraction, and scientific presets."],
       ['*> ".[12],b,.."', "Show a bounded decimal, binary expansion, and exact mixed fraction together."],
       ['*> "cf"', "Display exact numeric results as continued fractions."],
@@ -9112,6 +9611,23 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
   let separateLines = autoSeparateLines;
   const numberConfig = { input: "z[10]", display: ".." };
   const configuredFormat = (value) => formatValue(value, { context: state.context, evaluate: null });
+  const automaticallyRefinedInterval = (value) => {
+    if (!isAutomaticallyPresentableReal(value))
+      return null;
+    state.context.push(new Map([[AUTOMATIC_REAL_VALUE_NAME, value]]));
+    try {
+      const enclosure = parseAndEvaluate(`.numerics.Refine(${AUTOMATIC_REAL_VALUE_NAME}, {= absoluteWidth=${AUTOMATIC_REAL_DISPLAY.absoluteWidth}, maxWork=${AUTOMATIC_REAL_DISPLAY.maxWork} })`, { ...state, file: "<rix-web-automatic-display>" });
+      return certifiedEnclosureInterval(enclosure);
+    } catch {
+      return null;
+    } finally {
+      state.context.pop();
+    }
+  };
+  const presentationFormat = (value) => {
+    const interval = automaticallyRefinedInterval(value);
+    return interval ? formatCertifiedIntervalDecimal(interval) : configuredFormat(value);
+  };
   const applyNumberConfig = ({ input, display } = {}) => {
     if (input !== undefined) {
       parseAndEvaluate(`<* ${JSON.stringify(String(input))}`, { ...state, file: "<ratcalc-config>" });
@@ -9145,7 +9661,7 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
           type: "result",
           source,
           value,
-          text: format(value),
+          text: presentationFormat(value),
           sourceText: formatValueSource(value),
           html: isOutputValue(value) ? renderOutputHtml(value, format) : null,
           observe: observedSource ? (listener) => observedSource.subscribe(() => {
@@ -9180,7 +9696,7 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
           type: "result",
           source,
           value,
-          text: format(value),
+          text: presentationFormat(value),
           sourceText: formatValueSource(value),
           html: isOutputValue(value) ? renderOutputHtml(value, format) : null,
           observe: observedSource ? (listener) => observedSource.subscribe(() => {
@@ -9195,7 +9711,7 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
     variables() {
       return state.context.getAllNames().filter((name) => !initialNames.has(name)).map((name) => ({
         name,
-        value: configuredFormat(state.context.get(name))
+        value: presentationFormat(state.context.get(name))
       }));
     },
     reactiveVariables() {
@@ -9243,7 +9759,7 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
           kind: node.kind,
           state: node.state,
           value,
-          valueText: configuredFormat(value),
+          valueText: presentationFormat(value),
           sourceText: formatValueSource(value),
           formulaSource: reactiveFormulaSource(node),
           dependencies: Object.freeze([...node.dependencies].sort()),
@@ -9309,5 +9825,5 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
 
 export { pluginProfileFromUrl, stripMarkedPluginProfile, findHelp, createRixRepl };
 
-//# debugId=2D736FD275736CBD64756E2164756E21
-//# sourceMappingURL=chunk-wqp3t14d.js.map
+//# debugId=9448023CB6DB8E3A64756E2164756E21
+//# sourceMappingURL=chunk-p4snh1wx.js.map
