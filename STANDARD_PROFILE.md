@@ -11,12 +11,12 @@ catalog. Plugin dependencies are loaded automatically.
 | Plugin | Bare names supplied by the profile |
 | --- | --- |
 | `numerics` | Roots/powers and `Hypot`; exponential/logarithmic functions; circular and hyperbolic trig including `Atan2`; angle conversion; Gamma/Beta/polygamma functions; `Erf`, `LambertW`, `Zeta`; constants `Pi` and `EulerGamma`; `Refine` |
-| `bessel` | No bare imports; use `.bessel.J0`, `.bessel.J1`, `.bessel.Y0`, and `.bessel.Y1` so the letter-and-order names stay clear. |
+| `bessel` | No bare imports; use `.bessel.J(n,x)`/`.bessel.Y(n,x)` or the order-zero/order-one conveniences so the letter-family names stay clear. |
 | `float` | `Round`, `Floor`, `Ceiling` |
 | `algebra` | `Polynomial`, `Coefficients` |
 | `linalg` | `Rref`, `Rank`, `Determinant`, `Inverse`, and `LinearSolve` (alias of `Solve`) |
 | `solve` | No bare imports; use `.solve` to avoid reserving generic names. |
-| `stats` | `Count`, `Mean`, `Quantile`, `Median`, `Variance`, `SampleVariance` |
+| `stats` | `Count`, `Mean`, `Quantile`, `Median`, `Variance`, `SampleVariance`, `NormalPDF`, `NormalCDF`, `NormalQuantile` |
 | `plot` | `GraphPolynomial` (alias of `Polynomial`) |
 | `draw` | `DrawLine`, `Polygon`, `Label`, `Box`, `DrawCircle` |
 | `geometry` | `Point`, `Line`, `Circle`, `Midpoint`, `PerpendicularBisector`, `Circumcircle`, `Intersect` |
