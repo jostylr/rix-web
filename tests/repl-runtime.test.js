@@ -433,6 +433,7 @@ test("the web REPL automatically loads its curated calculator profile", () => {
     expect(available).toContain("ball");
     expect(available).toContain("cauchy");
     expect(available).toContain("numerics");
+    expect(available).toContain("bessel");
     expect(available).toContain("oracle");
     expect(available).toContain("radix");
     expect(available).toContain("algebra");
@@ -457,6 +458,7 @@ test("the web REPL automatically loads its curated calculator profile", () => {
     expect(repl.run('Refine(Sinc(0), {= absoluteWidth=1/1000, maxWork=100 })[:status]').text).toBe("enclosed");
     expect(repl.run('Refine(Sinh(0), {= absoluteWidth=1/1000, maxWork=100 })[:status]').text).toBe("enclosed");
     expect(repl.run('Refine(Erf(0), {= absoluteWidth=1/1000, maxWork=200 })[:status]').text).toBe("enclosed");
+    expect(repl.run('Refine(.bessel.J0(0), {= absoluteWidth=1/1000, maxWork=200 })[:status]').text).toBe("enclosed");
     expect(repl.run('.float.Sin(1)').type).toBe("result");
     expect(repl.run('.Plugin.Load("ball"); .Plugin.Load("cauchy"); .Plugin.Load("complex-viz"); .Plugin.Load("csv"); .Plugin.Load("document")').type).toBe("result");
     expect(repl.run('.complexViz.Color(.Complex.FromParts(1, 0))').text).toBe("#ef4444");

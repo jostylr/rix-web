@@ -10,7 +10,8 @@ catalog. Plugin dependencies are loaded automatically.
 
 | Plugin | Bare names supplied by the profile |
 | --- | --- |
-| `numerics` | Roots/powers; exponential/logarithmic functions; circular and hyperbolic trig; angle conversion; `Gamma`, `Erf`, `LambertW`, Bessel `J0`/`J1`/`Y0`/`Y1`, `Zeta`; constants `Pi` and `EulerGamma`; `Refine` |
+| `numerics` | Roots/powers; exponential/logarithmic functions; circular and hyperbolic trig; angle conversion; `Gamma`, `Erf`, `LambertW`, `Zeta`; constants `Pi` and `EulerGamma`; `Refine` |
+| `bessel` | No bare imports; use `.bessel.J0`, `.bessel.J1`, `.bessel.Y0`, and `.bessel.Y1` so the letter-and-order names stay clear. |
 | `float` | `Round`, `Floor`, `Ceiling` |
 | `algebra` | `Polynomial`, `Coefficients` |
 | `linalg` | `Rref`, `Rank`, `Determinant`, `Inverse`, and `LinearSolve` (alias of `Solve`) |

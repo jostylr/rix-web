@@ -50,14 +50,15 @@ import {
   typeRegistry,
   unsupportedRefinementResult,
   valueMethod
-} from "./chunk-ajnaxbh2.js";
+} from "./chunk-rekffzsv.js";
 
 // standard-profile.rix
 var standard_profile_default = `## RiX-Web standard calculator profile.
 ## Keep one directly selected plugin on each line. Dependencies load automatically.
 ## Bare imports favor names expected in a scientific or graphical calculator;
 ## aliases make collisions explicit. This file is executable by the RiX CLI too.
-.Plugin.Load("numerics"); .numerics[:Pow, :Sqrt, :Cbrt, :NthRoot, :Exp, :Expm1, :Log, :Log1p, :Ln, :Log2, :Log10, :Pi, :EulerGamma, :Sin, :Cos, :Tan, :Sec, :Csc, :Cot, :Sinc, :Asin, :Acos, :Atan, :Sinh, :Cosh, :Tanh, :Sech, :Csch, :Coth, :Asinh, :Acosh, :Atanh, :Radians, :Degrees, :Gamma, :LogGamma, :Erf, :Erfc, :LambertW, :J0, :J1, :Y0, :Y1, :Zeta, :Refine];
+.Plugin.Load("numerics"); .numerics[:Pow, :Sqrt, :Cbrt, :NthRoot, :Exp, :Expm1, :Log, :Log1p, :Ln, :Log2, :Log10, :Pi, :EulerGamma, :Sin, :Cos, :Tan, :Sec, :Csc, :Cot, :Sinc, :Asin, :Acos, :Atan, :Sinh, :Cosh, :Tanh, :Sech, :Csch, :Coth, :Asinh, :Acosh, :Atanh, :Radians, :Degrees, :Gamma, :LogGamma, :Erf, :Erfc, :LambertW, :Zeta, :Refine];
+.Plugin.Load("bessel");
 .Plugin.Load("float"); .float[:Round, :Floor, :Ceiling];
 .Plugin.Load("algebra"); .algebra[:Polynomial, :Coefficients];
 .Plugin.Load("linalg"); .linalg[:Rref, :Rank, :Determinant, :Inverse, :LinearSolve=:Solve];
@@ -1477,6 +1478,37 @@ ballNamespace._proto = {=
     ["Numerics", "Exact"]
 );
 `, sourcePath: "bundled:ball", kind: "rix" });
+  catalog.addMetadata({ id: "bessel", description: "Clearly named Bessel-function namespace backed by certified universal Numerics algorithms.", kind: "rix", mount: "bessel", exports: ["J0", "J1", "Y0", "Y1"], groups: ["Numerics", "SpecialFunctions"], permissions: [], requires: ["rix.numerics@1"], provides: ["rix.bessel@1"], schemas: ["rix.numerics.algorithm-real@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:bessel" }, { source: `/**
+id: bessel
+description: Clearly named Bessel-function namespace backed by certified universal Numerics algorithms.
+kind: rix
+mount: bessel
+exports: [J0, J1, Y0, Y1]
+groups: [Numerics, SpecialFunctions]
+permissions: []
+requires: [rix.numerics@1]
+provides: [rix.bessel@1]
+schemas: [rix.numerics.algorithm-real@1]
+snapshot: false
+deterministic: true
+defaultEnabled: false
+**/
+
+besselNamespace = {= };
+besselNamespace._proto = {=
+    J0 = (self, value) -> .numerics.BesselJ0(value),
+    J1 = (self, value) -> .numerics.BesselJ1(value),
+    Y0 = (self, value) -> .numerics.BesselY0(value),
+    Y1 = (self, value) -> .numerics.BesselY1(value)
+};
+
+.Host.RegisterValue(
+    "bessel",
+    besselNamespace,
+    "Bessel functions backed by certified universal Numerics algorithms",
+    ["Numerics", "SpecialFunctions"]
+);
+`, sourcePath: "bundled:bessel", kind: "rix" });
   catalog.addMetadata({ id: "canvas", description: "Serializable Canvas 2D drawing plans for core Graphics scenes.", kind: "host", mount: "canvas", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.canvas@1"], targets: ["canvas", "application/vnd.rix.canvas+json"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:canvas" }, { sourcePath: "bundled:canvas", kind: "host" });
   catalog.registerInstaller("canvas", install7);
   catalog.addMetadata({ id: "cauchy", description: "Rational Cauchy sequences with explicit certified tail bounds and moduli.", kind: "rix", mount: "cauchy", exports: ["Sequence", "Certified", "Geometric", "Term", "TailBound", "Modulus", "Enclosure", "Record"], groups: ["Numerics", "Exact"], permissions: [], requires: ["rix.oracle@1"], provides: ["rix.cauchy@1", "rix.refinable@1", "rix.enclosable-real@1"], schemas: ["rix.cauchy.sequence@1", "rix.cauchy.real@1", "rix.cauchy.arithmetic-real@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:cauchy" }, { source: `/**
@@ -4328,12 +4360,12 @@ ndNamespace._proto={=
 };
 .Host.RegisterValue("nd",ndNamespace,"Pure-RiX exact n-dimensional geometry and explicit projections",["Geometry","Scene3D","Exact"]);
 `, sourcePath: "bundled:nd", kind: "rix" });
-  catalog.addMetadata({ id: "numerics", description: "Backend-neutral bounded enclosure and refinement orchestration.", kind: "rix", mount: "numerics", exports: ["Request", "WorkPolicy", "EffectiveLimits", "Enclose", "Refine", "Sample", "Capabilities", "CheckResult", "NthRoot", "Sqrt", "Cbrt", "Pow", "Exp", "Expm1", "Log", "Log1p", "Ln", "Log2", "Log10", "Pi", "EulerGamma", "Sin", "Cos", "Tan", "Sec", "Csc", "Cot", "Sinc", "Asin", "Acos", "Atan", "Arcsin", "Arccos", "Arctan", "Sinh", "Cosh", "Tanh", "Sech", "Csch", "Coth", "Asinh", "Acosh", "Atanh", "Arsinh", "Arcosh", "Artanh", "Radians", "Degrees", "Gamma", "LogGamma", "Erf", "Erfc", "LambertW", "J0", "J1", "Y0", "Y1", "BesselJ0", "BesselJ1", "BesselY0", "BesselY1", "Zeta", "Kantorovich"], groups: ["Numerics"], permissions: [], requires: ["rix.oracle@1"], provides: ["rix.numerics@1", "rix.enclosable-real-consumer@1"], schemas: ["rix.numerics.refinement-request@1", "rix.numerics.enclosure@1", "rix.numerics.algorithm-real@1"], defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:numerics" }, { source: `/**
+  catalog.addMetadata({ id: "numerics", description: "Backend-neutral bounded enclosure and refinement orchestration.", kind: "rix", mount: "numerics", exports: ["Request", "WorkPolicy", "EffectiveLimits", "Enclose", "Refine", "Sample", "Capabilities", "CheckResult", "NthRoot", "Sqrt", "Cbrt", "Pow", "Exp", "Expm1", "Log", "Log1p", "Ln", "Log2", "Log10", "Pi", "EulerGamma", "Sin", "Cos", "Tan", "Sec", "Csc", "Cot", "Sinc", "Asin", "Acos", "Atan", "Arcsin", "Arccos", "Arctan", "Sinh", "Cosh", "Tanh", "Sech", "Csch", "Coth", "Asinh", "Acosh", "Atanh", "Arsinh", "Arcosh", "Artanh", "Radians", "Degrees", "Gamma", "LogGamma", "Erf", "Erfc", "LambertW", "BesselJ0", "BesselJ1", "BesselY0", "BesselY1", "Zeta", "Kantorovich"], groups: ["Numerics"], permissions: [], requires: ["rix.oracle@1"], provides: ["rix.numerics@1", "rix.enclosable-real-consumer@1"], schemas: ["rix.numerics.refinement-request@1", "rix.numerics.enclosure@1", "rix.numerics.algorithm-real@1"], defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:numerics" }, { source: `/**
 id: numerics
 description: Backend-neutral bounded enclosure and refinement orchestration.
 kind: rix
 mount: numerics
-exports: [Request, WorkPolicy, EffectiveLimits, Enclose, Refine, Sample, Capabilities, CheckResult, NthRoot, Sqrt, Cbrt, Pow, Exp, Expm1, Log, Log1p, Ln, Log2, Log10, Pi, EulerGamma, Sin, Cos, Tan, Sec, Csc, Cot, Sinc, Asin, Acos, Atan, Arcsin, Arccos, Arctan, Sinh, Cosh, Tanh, Sech, Csch, Coth, Asinh, Acosh, Atanh, Arsinh, Arcosh, Artanh, Radians, Degrees, Gamma, LogGamma, Erf, Erfc, LambertW, J0, J1, Y0, Y1, BesselJ0, BesselJ1, BesselY0, BesselY1, Zeta, Kantorovich]
+exports: [Request, WorkPolicy, EffectiveLimits, Enclose, Refine, Sample, Capabilities, CheckResult, NthRoot, Sqrt, Cbrt, Pow, Exp, Expm1, Log, Log1p, Ln, Log2, Log10, Pi, EulerGamma, Sin, Cos, Tan, Sec, Csc, Cot, Sinc, Asin, Acos, Atan, Arcsin, Arccos, Arctan, Sinh, Cosh, Tanh, Sech, Csch, Coth, Asinh, Acosh, Atanh, Arsinh, Arcosh, Artanh, Radians, Degrees, Gamma, LogGamma, Erf, Erfc, LambertW, BesselJ0, BesselJ1, BesselY0, BesselY1, Zeta, Kantorovich]
 groups: [Numerics]
 permissions: []
 requires: [rix.oracle@1]
@@ -6335,12 +6367,8 @@ numericsNamespace._proto = {=
     Erf = (self, value) -> NumericsErf(value),
     Erfc = (self, value) -> 1 - NumericsErf(value),
     LambertW = (self, value, branch ?= 0) -> NumericsLambertW(value, branch),
-    J0 = (self, value) -> NumericsBesselJ0(value),
-    J1 = (self, value) -> NumericsBesselJ1(value),
     BesselJ0 = (self, value) -> NumericsBesselJ0(value),
     BesselJ1 = (self, value) -> NumericsBesselJ1(value),
-    Y0 = (self, value) -> NumericsBesselY0(value),
-    Y1 = (self, value) -> NumericsBesselY1(value),
     BesselY0 = (self, value) -> NumericsBesselY0(value),
     BesselY1 = (self, value) -> NumericsBesselY1(value),
     Zeta = (self, value) -> NumericsZeta(value),
@@ -10762,5 +10790,5 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
 
 export { pluginProfileFromUrl, stripMarkedPluginProfile, findHelp, createRixRepl };
 
-//# debugId=B0C6AC9D9CE6D3C064756E2164756E21
-//# sourceMappingURL=chunk-y3t673z1.js.map
+//# debugId=8E8FBB3EC4871F2564756E2164756E21
+//# sourceMappingURL=chunk-mnp54njq.js.map

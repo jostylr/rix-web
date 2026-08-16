@@ -5,17 +5,25 @@ import {
     STANDARD_PLUGIN_IDS,
     stripMarkedPluginProfile,
 } from "../src/plugin-profile.js";
+import { createBundledPluginCatalog } from "../src/generated/bundled-plugin-catalog.js";
 
 test("the checked-in standard profile is selective and imports calculator names", () => {
+    expect(createBundledPluginCatalog().info("bessel")).toMatchObject({
+        mount: "bessel",
+        requires: ["rix.numerics@1"],
+    });
     const profile = resolvePluginProfile({}, STANDARD_PLUGIN_IDS);
     expect(profile.plugins).toContain("numerics");
+    expect(profile.plugins).toContain("bessel");
     expect(profile.plugins).toContain("stats");
     expect(profile.plugins).not.toContain("document");
     expect(profile.source).toContain(".numerics[:Pow, :Sqrt");
     expect(profile.source).toContain(":Pi, :EulerGamma, :Sin, :Cos, :Tan");
     expect(profile.source).toContain(":Sinh, :Cosh, :Tanh");
     expect(profile.source).toContain(":Gamma, :LogGamma, :Erf, :Erfc, :LambertW");
-    expect(profile.source).toContain(":J0, :J1, :Y0, :Y1, :Zeta");
+    expect(profile.source).toContain(":LambertW, :Zeta, :Refine");
+    expect(profile.source).toContain('.Plugin.Load("bessel")');
+    expect(profile.source).not.toContain(":J0");
     expect(profile.source).not.toContain(".float[:Sin");
     expect(profile.source).toContain(":LinearSolve=:Solve");
 });

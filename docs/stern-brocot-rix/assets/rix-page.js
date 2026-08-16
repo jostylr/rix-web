@@ -39533,7 +39533,7 @@ id: numerics
 description: Backend-neutral bounded enclosure and refinement orchestration.
 kind: rix
 mount: numerics
-exports: [Request, WorkPolicy, EffectiveLimits, Enclose, Refine, Sample, Capabilities, CheckResult, NthRoot, Sqrt, Cbrt, Pow, Exp, Expm1, Log, Log1p, Ln, Log2, Log10, Pi, EulerGamma, Sin, Cos, Tan, Sec, Csc, Cot, Sinc, Asin, Acos, Atan, Arcsin, Arccos, Arctan, Sinh, Cosh, Tanh, Sech, Csch, Coth, Asinh, Acosh, Atanh, Arsinh, Arcosh, Artanh, Radians, Degrees, Gamma, LogGamma, Erf, Erfc, LambertW, J0, J1, Y0, Y1, BesselJ0, BesselJ1, BesselY0, BesselY1, Zeta, Kantorovich]
+exports: [Request, WorkPolicy, EffectiveLimits, Enclose, Refine, Sample, Capabilities, CheckResult, NthRoot, Sqrt, Cbrt, Pow, Exp, Expm1, Log, Log1p, Ln, Log2, Log10, Pi, EulerGamma, Sin, Cos, Tan, Sec, Csc, Cot, Sinc, Asin, Acos, Atan, Arcsin, Arccos, Arctan, Sinh, Cosh, Tanh, Sech, Csch, Coth, Asinh, Acosh, Atanh, Arsinh, Arcosh, Artanh, Radians, Degrees, Gamma, LogGamma, Erf, Erfc, LambertW, BesselJ0, BesselJ1, BesselY0, BesselY1, Zeta, Kantorovich]
 groups: [Numerics]
 permissions: []
 requires: [rix.oracle@1]
@@ -41535,12 +41535,8 @@ numericsNamespace._proto = {=
     Erf = (self, value) -> NumericsErf(value),
     Erfc = (self, value) -> 1 - NumericsErf(value),
     LambertW = (self, value, branch ?= 0) -> NumericsLambertW(value, branch),
-    J0 = (self, value) -> NumericsBesselJ0(value),
-    J1 = (self, value) -> NumericsBesselJ1(value),
     BesselJ0 = (self, value) -> NumericsBesselJ0(value),
     BesselJ1 = (self, value) -> NumericsBesselJ1(value),
-    Y0 = (self, value) -> NumericsBesselY0(value),
-    Y1 = (self, value) -> NumericsBesselY1(value),
     BesselY0 = (self, value) -> NumericsBesselY0(value),
     BesselY1 = (self, value) -> NumericsBesselY1(value),
     Zeta = (self, value) -> NumericsZeta(value),
@@ -41552,6 +41548,39 @@ numericsNamespace._proto = {=
 };
 
 .Host.RegisterValue("numerics", numericsNamespace, "Backend-neutral bounded enclosure and refinement orchestration", ["Numerics"]);
+`;
+
+  // rix/plugins/bessel/bessel.plugin.rix
+  var bessel_plugin_default = `/**
+id: bessel
+description: Clearly named Bessel-function namespace backed by certified universal Numerics algorithms.
+kind: rix
+mount: bessel
+exports: [J0, J1, Y0, Y1]
+groups: [Numerics, SpecialFunctions]
+permissions: []
+requires: [rix.numerics@1]
+provides: [rix.bessel@1]
+schemas: [rix.numerics.algorithm-real@1]
+snapshot: false
+deterministic: true
+defaultEnabled: false
+**/
+
+besselNamespace = {= };
+besselNamespace._proto = {=
+    J0 = (self, value) -> .numerics.BesselJ0(value),
+    J1 = (self, value) -> .numerics.BesselJ1(value),
+    Y0 = (self, value) -> .numerics.BesselY0(value),
+    Y1 = (self, value) -> .numerics.BesselY1(value)
+};
+
+.Host.RegisterValue(
+    "bessel",
+    besselNamespace,
+    "Bessel functions backed by certified universal Numerics algorithms",
+    ["Numerics", "SpecialFunctions"]
+);
 `;
 
   // rix/plugins/cauchy/cauchy.plugin.rix
@@ -51902,6 +51931,11 @@ ${lines.join(`
       metadata: readPluginHeader(numerics_plugin_default, "numerics.plugin.rix"),
       source: numerics_plugin_default,
       sourcePath: "bundled:numerics.plugin.rix"
+    },
+    {
+      metadata: readPluginHeader(bessel_plugin_default, "bessel.plugin.rix"),
+      source: bessel_plugin_default,
+      sourcePath: "bundled:bessel.plugin.rix"
     },
     {
       metadata: readPluginHeader(oracle_plugin_default, "oracle.plugin.rix"),
