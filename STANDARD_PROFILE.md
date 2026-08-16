@@ -10,7 +10,7 @@ catalog. Plugin dependencies are loaded automatically.
 
 | Plugin | Bare names supplied by the profile |
 | --- | --- |
-| `numerics` | Roots/powers; exponential/logarithmic functions; circular and hyperbolic trig; angle conversion; `Gamma`, `Erf`, `LambertW`, `Zeta`; constants `Pi` and `EulerGamma`; `Refine` |
+| `numerics` | Roots/powers and `Hypot`; exponential/logarithmic functions; circular and hyperbolic trig including `Atan2`; angle conversion; Gamma/Beta/polygamma functions; `Erf`, `LambertW`, `Zeta`; constants `Pi` and `EulerGamma`; `Refine` |
 | `bessel` | No bare imports; use `.bessel.J0`, `.bessel.J1`, `.bessel.Y0`, and `.bessel.Y1` so the letter-and-order names stay clear. |
 | `float` | `Round`, `Floor`, `Ceiling` |
 | `algebra` | `Polynomial`, `Coefficients` |

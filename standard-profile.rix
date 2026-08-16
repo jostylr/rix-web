@@ -2,7 +2,7 @@
 ## Keep one directly selected plugin on each line. Dependencies load automatically.
 ## Bare imports favor names expected in a scientific or graphical calculator;
 ## aliases make collisions explicit. This file is executable by the RiX CLI too.
-.Plugin.Load("numerics"); .numerics[:Pow, :Sqrt, :Cbrt, :NthRoot, :Exp, :Expm1, :Log, :Log1p, :Ln, :Log2, :Log10, :Pi, :EulerGamma, :Sin, :Cos, :Tan, :Sec, :Csc, :Cot, :Sinc, :Asin, :Acos, :Atan, :Sinh, :Cosh, :Tanh, :Sech, :Csch, :Coth, :Asinh, :Acosh, :Atanh, :Radians, :Degrees, :Gamma, :LogGamma, :Erf, :Erfc, :LambertW, :Zeta, :Refine];
+.Plugin.Load("numerics"); .numerics[:Pow, :Sqrt, :Cbrt, :NthRoot, :Hypot, :Exp, :Expm1, :Log, :Log1p, :Ln, :Log2, :Log10, :Pi, :EulerGamma, :Sin, :Cos, :Tan, :Sec, :Csc, :Cot, :Sinc, :Asin, :Acos, :Atan, :Atan2, :Sinh, :Cosh, :Tanh, :Sech, :Csch, :Coth, :Asinh, :Acosh, :Atanh, :Radians, :Degrees, :Gamma, :LogGamma, :Beta, :LogBeta, :Digamma, :Trigamma, :Erf, :Erfc, :LambertW, :Zeta, :Refine];
 .Plugin.Load("bessel");
 .Plugin.Load("float"); .float[:Round, :Floor, :Ceiling];
 .Plugin.Load("algebra"); .algebra[:Polynomial, :Coefficients];

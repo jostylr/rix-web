@@ -149,6 +149,20 @@ export const pluginTutorials = [
     "pluginTutorial": true
   },
   {
+    "pluginId": "bessel",
+    "pluginDirectory": "bessel",
+    "title": "Certified Bessel functions",
+    "description": "Evaluate the first cylindrical Bessel functions through a clear namespace and refine their certified intervals.",
+    "status": "implemented",
+    "order": 24,
+    "theme": "Numbers and numerics",
+    "sourcePath": "../rix/plugins/bessel/tutorial.md",
+    "number": "14h",
+    "parent": "14",
+    "file": "plugin-bessel.html",
+    "pluginTutorial": true
+  },
+  {
     "pluginId": "algebraic-real",
     "pluginDirectory": "algebraic-real",
     "title": "Certified algebraic reals in RiX",
@@ -157,7 +171,7 @@ export const pluginTutorials = [
     "order": 999,
     "theme": "Numbers and numerics",
     "sourcePath": "../rix/plugins/algebraic-real/tutorial.md",
-    "number": "14h",
+    "number": "14i",
     "parent": "14",
     "file": "plugin-algebraic-real.html",
     "pluginTutorial": true

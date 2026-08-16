@@ -18,9 +18,12 @@ test("the checked-in standard profile is selective and imports calculator names"
     expect(profile.plugins).toContain("stats");
     expect(profile.plugins).not.toContain("document");
     expect(profile.source).toContain(".numerics[:Pow, :Sqrt");
+    expect(profile.source).toContain(":NthRoot, :Hypot");
     expect(profile.source).toContain(":Pi, :EulerGamma, :Sin, :Cos, :Tan");
     expect(profile.source).toContain(":Sinh, :Cosh, :Tanh");
-    expect(profile.source).toContain(":Gamma, :LogGamma, :Erf, :Erfc, :LambertW");
+    expect(profile.source).toContain(":Atan, :Atan2");
+    expect(profile.source).toContain(":Gamma, :LogGamma, :Beta, :LogBeta, :Digamma, :Trigamma");
+    expect(profile.source).toContain(":Erf, :Erfc, :LambertW");
     expect(profile.source).toContain(":LambertW, :Zeta, :Refine");
     expect(profile.source).toContain('.Plugin.Load("bessel")');
     expect(profile.source).not.toContain(":J0");
