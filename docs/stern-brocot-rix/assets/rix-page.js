@@ -20376,153 +20376,6 @@ ${indentStr})`;
       semantic: { type: "synthetic_division", root, coefficients: values, products, bottom }
     });
   }
-  function createPolynomialPlot(coefficients, domain, options = null) {
-    const values = sequence(coefficients, "Polynomial coefficients").map((value, index) => exactNumber(value, `Polynomial coefficient ${index + 1}`));
-    if (values.length < 2)
-      throw new Error("Plot.Polynomial requires at least two coefficients");
-    const bounds = sequence(domain, "Polynomial plot domain");
-    if (bounds.length !== 2)
-      throw new Error("Polynomial plot domain must have a lower and upper bound");
-    const xMin = numericValue(bounds[0], "Polynomial plot lower bound");
-    const xMax = numericValue(bounds[1], "Polynomial plot upper bound");
-    if (!(xMin < xMax))
-      throw new Error("Polynomial plot domain must increase");
-    const optionEntries = options === null || options === undefined ? new Map : map(options, "Polynomial plot options");
-    const requestedSize = get(optionEntries, "size", null);
-    const size = requestedSize === null ? [640, 360] : sequence(requestedSize, "Polynomial plot size").map((value, index) => numericValue(value, `Polynomial plot size ${index + 1}`));
-    if (size.length !== 2 || size.some((value) => value <= 0))
-      throw new Error("Polynomial plot size must contain positive width and height");
-    const samplesValue = get(optionEntries, "samples", null);
-    const samples = samplesValue === null ? 161 : exactInteger3(samplesValue, "Polynomial plot samples");
-    if (samples < 2 || samples > 1e4)
-      throw new Error("Polynomial plot samples must be between 2 and 10000");
-    const marginValue = get(optionEntries, "margin", null);
-    const margin = marginValue === null ? 36 : numericValue(marginValue, "Polynomial plot margin");
-    if (margin < 0 || margin * 2 >= Math.min(...size))
-      throw new Error("Polynomial plot margin is too large for its size");
-    const plotStyle = (entries2, fallbackStroke, fallbackWidth) => {
-      const supplied = optionalMap(get(entries2, "style", null), "Polynomial plot style") || new Map;
-      return new Map([
-        ...supplied,
-        ["stroke", get(entries2, "stroke", get(supplied, "stroke", fallbackStroke))],
-        ["width", get(entries2, "width", get(supplied, "width", fallbackWidth))],
-        ["fill", get(supplied, "fill", { type: "string", value: "none" })]
-      ]);
-    };
-    const readSeries = (entry, index, primary = false) => {
-      const entries2 = primary ? optionEntries : map(entry, `Polynomial plot series ${index + 1}`);
-      const coefficients2 = primary ? values : sequence(get(entries2, "coefficients"), `Polynomial plot series ${index + 1} coefficients`).map((value, coefficientIndex) => exactNumber(value, `Polynomial plot series ${index + 1} coefficient ${coefficientIndex + 1}`));
-      if (coefficients2.length < 2)
-        throw new Error(`Polynomial plot series ${index + 1} requires at least two coefficients`);
-      const numbers = coefficients2.map((value, coefficientIndex) => numericValue(value, `Polynomial plot series ${index + 1} coefficient ${coefficientIndex + 1}`));
-      const data = Array.from({ length: samples }, (_, sampleIndex) => {
-        const x = xMin + (xMax - xMin) * sampleIndex / (samples - 1);
-        return [x, numbers.reduce((total, coefficient) => total * x + coefficient, 0)];
-      });
-      return {
-        data,
-        style: plotStyle(entries2, primary ? { type: "string", value: "#2563eb" } : { type: "string", value: "#b45309" }, primary ? int3(3) : int3(2)),
-        label: get(entries2, "label", null)
-      };
-    };
-    const extraSeries = get(optionEntries, "series", null);
-    const series = [readSeries(null, 0, true), ...extraSeries === null ? [] : sequence(extraSeries, "Polynomial plot series").map((entry, index) => readSeries(entry, index + 1))];
-    const readMark = (entry, index) => {
-      const entries2 = map(entry, `Polynomial plot mark ${index + 1}`);
-      const point = sequence(get(entries2, "point"), `Polynomial plot mark ${index + 1} point`);
-      if (point.length !== 2)
-        throw new Error(`Polynomial plot mark ${index + 1} point must contain x and y coordinates`);
-      return {
-        point: point.map((value, coordinate) => numericValue(value, `Polynomial plot mark ${index + 1} ${coordinate === 0 ? "x" : "y"}`)),
-        label: get(entries2, "label", null),
-        style: optionalMap(get(entries2, "style", null), `Polynomial plot mark ${index + 1} style`) || new Map([
-          ["fill", { type: "string", value: "#be123c" }],
-          ["stroke", { type: "string", value: "#fff" }],
-          ["width", int3(2)]
-        ]),
-        labelStyle: optionalMap(get(entries2, "labelStyle", null), `Polynomial plot mark ${index + 1} label style`) || new Map([["size", int3(13)]]),
-        radius: get(entries2, "radius", int3(5))
-      };
-    };
-    const marksValue = get(optionEntries, "marks", null);
-    const marks = marksValue === null ? [] : sequence(marksValue, "Polynomial plot marks").map(readMark);
-    const readTick = (entry, index) => {
-      const entries2 = map(entry, `Polynomial plot tick ${index + 1}`);
-      return {
-        x: numericValue(get(entries2, "x"), `Polynomial plot tick ${index + 1} x`),
-        label: get(entries2, "label", null),
-        style: optionalMap(get(entries2, "style", null), `Polynomial plot tick ${index + 1} style`) || new Map([["stroke", { type: "string", value: "#334155" }], ["width", int3(2)]]),
-        labelStyle: optionalMap(get(entries2, "labelStyle", null), `Polynomial plot tick ${index + 1} label style`) || new Map([["size", int3(13)], ["anchor", { type: "string", value: "middle" }]])
-      };
-    };
-    const ticksValue = get(optionEntries, "ticks", null);
-    const ticks = ticksValue === null ? [] : sequence(ticksValue, "Polynomial plot ticks").map(readTick);
-    const yDomainValue = get(optionEntries, "yDomain", null);
-    let yMin;
-    let yMax;
-    if (yDomainValue !== null) {
-      const yBounds = sequence(yDomainValue, "Polynomial plot yDomain");
-      if (yBounds.length !== 2)
-        throw new Error("Polynomial plot yDomain must have a lower and upper bound");
-      yMin = numericValue(yBounds[0], "Polynomial plot yDomain lower bound");
-      yMax = numericValue(yBounds[1], "Polynomial plot yDomain upper bound");
-      if (!(yMin < yMax))
-        throw new Error("Polynomial plot yDomain must increase");
-    } else {
-      yMin = Math.min(0, ...series.flatMap(({ data }) => data.map(([, y]) => y)), ...marks.map(({ point }) => point[1]));
-      yMax = Math.max(0, ...series.flatMap(({ data }) => data.map(([, y]) => y)), ...marks.map(({ point }) => point[1]));
-      if (yMin === yMax) {
-        yMin -= 1;
-        yMax += 1;
-      }
-      const yPadding = (yMax - yMin) * 0.08;
-      yMin -= yPadding;
-      yMax += yPadding;
-    }
-    const [width, height] = size;
-    const toPoint = ([x, y]) => [
-      margin + (x - xMin) / (xMax - xMin) * (width - margin * 2),
-      height - margin - (y - yMin) / (yMax - yMin) * (height - margin * 2)
-    ];
-    const axisStyle = new Map([
-      ["stroke", { type: "string", value: "#64748b" }],
-      ["width", int3(1)],
-      ["dash", { type: "string", value: "3 3" }],
-      ["fill", { type: "string", value: "none" }]
-    ]);
-    const children = [];
-    if (yMin <= 0 && yMax >= 0)
-      children.push(output("path", { points: [toPoint([xMin, 0]), toPoint([xMax, 0])], style: axisStyle }));
-    if (xMin <= 0 && xMax >= 0)
-      children.push(output("path", { points: [toPoint([0, yMin]), toPoint([0, yMax])], style: axisStyle }));
-    for (const seriesEntry of series)
-      children.push(output("path", { points: seriesEntry.data.map(toPoint), style: seriesEntry.style }));
-    for (const tick of ticks) {
-      const [tickX, tickY] = toPoint([tick.x, 0]);
-      children.push(output("path", { points: [[tickX, tickY - 5], [tickX, tickY + 5]], style: tick.style }));
-      if (tick.label !== null && tick.label !== undefined) {
-        children.push(output("text_mark", { position: [tickX, tickY + 20], text: tick.label, style: tick.labelStyle }));
-      }
-    }
-    for (const mark of marks) {
-      const [markX, markY] = toPoint(mark.point);
-      children.push(output("circle", { center: [markX, markY], radius: mark.radius, style: mark.style }));
-      if (mark.label !== null && mark.label !== undefined) {
-        children.push(output("text_mark", { position: [markX + 9, markY - 9], text: mark.label, style: mark.labelStyle }));
-      }
-    }
-    const labeledSeries = series.filter(({ label }) => label !== null && label !== undefined);
-    for (const [index, seriesEntry] of labeledSeries.entries()) {
-      const y = margin + 16 + index * 18;
-      children.push(output("path", { points: [[margin + 2, y - 5], [margin + 18, y - 5]], style: seriesEntry.style }));
-      children.push(output("text_mark", { position: [margin + 24, y], text: seriesEntry.label, style: new Map([["size", int3(13)]]) }));
-    }
-    return output("graphic", {
-      size: [int3(Math.round(width)), int3(Math.round(height))],
-      children,
-      metadata: new Map([["kind", { type: "string", value: "polynomial_plot" }]])
-    });
-  }
   function escapeHtml(value) {
     return String(value).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
   }
@@ -21240,21 +21093,6 @@ ${formatOutputText(slide, format)}`).join(`
       });
     }
     return { type: "map", entries: entries2, _ext: extension };
-  }
-  function createPlotOutputCollection() {
-    const polynomial = (coefficients, domain, options = null) => createPolynomialPlot(coefficients, domain, options);
-    return {
-      type: "map",
-      entries: new Map([["Polynomial", polynomial], ["POLYNOMIAL", polynomial]]),
-      _ext: new Map([
-        ["POLYNOMIAL", {
-          type: "method_builtin",
-          name: "Polynomial",
-          impl: (args) => polynomial(...args.slice(1))
-        }],
-        ["immutable", int3(1)]
-      ])
-    };
   }
 
   // rix/src/eval/format.js
@@ -27577,6 +27415,32 @@ ${indented.join(`,
           context.registerMethod(typeName, methodName, wrapped, { pluginId, mount });
         }
         return stringValue3(methodName);
+      }
+    });
+    value._ext.set("REGISTERSHAPEDCONSTRUCTOR", {
+      type: "method_builtin",
+      name: "RegisterShapedConstructor",
+      impl(args, evaluationContext, _evaluate, invoke) {
+        if (!canRegister(evaluationContext)) {
+          throw new Error(`.${title}.RegisterShapedConstructor is not permitted in this execution context`);
+        }
+        if (namespace !== "host") {
+          throw new Error(".Core.RegisterShapedConstructor is not supported");
+        }
+        const typeName = rixString2(args[1], ".Host.RegisterShapedConstructor type");
+        const callable = args[2];
+        if (!isCallableValue(callable)) {
+          throw new Error(".Host.RegisterShapedConstructor requires a receiver-free callable");
+        }
+        const key = typeName.trim().toLowerCase();
+        if (!key)
+          throw new Error("Shaped constructor type must be non-empty");
+        const registry = evaluationContext.getEnv("__typed_shaped_constructors__", new Map);
+        if (registry.has(key))
+          throw new Error(`Shaped constructor ${typeName} is already registered`);
+        registry.set(key, (components, slots, callContext, callEvaluate) => invoke(callable, [components, slots], callContext, callEvaluate));
+        evaluationContext.setEnv("__typed_shaped_constructors__", registry);
+        return stringValue3(typeName);
       }
     });
     value._ext.set("FIND", {
@@ -34385,7 +34249,9 @@ ${detail}`;
         const values = (hasMeta ? args.slice(2) : args.slice(1)).map((arg) => captureIrValue(arg, defaultMode, context, evaluate));
         const shaped = attachBuiltinProto(createShaped(shape, values.length === 0 ? null : values));
         if (Array.isArray(header.slots)) {
-          const constructTyped = context?.getEnv?.("__linalg_typed_shaped__", null);
+          const constructors = context?.getEnv?.("__typed_shaped_constructors__", null);
+          const registered = constructors?.get?.(String(header.typeName || "").toLowerCase()) || null;
+          const constructTyped = registered || context?.getEnv?.("__linalg_typed_shaped__", null);
           if (typeof constructTyped !== "function") {
             throw new Error(`/${header.typeName}: .../ requires the linalg plugin; call .Plugin.Load("linalg") first`);
           }
@@ -34395,7 +34261,18 @@ ${detail}`;
               throw new Error(`Unknown frame binding '${slot.bindingName}' in /${header.typeName}: .../`);
             return { ...slot, frame };
           });
-          return constructTyped(shaped, header, resolvedSlots, context);
+          if (!registered)
+            return constructTyped(shaped, header, resolvedSlots, context);
+          return constructTyped(shaped, {
+            type: "sequence",
+            values: resolvedSlots.map((slot) => ({
+              type: "map",
+              entries: new Map([
+                ["frame", slot.frame],
+                ["dual", slot.dual ? new Integer(1n) : null]
+              ])
+            }))
+          }, context, evaluate);
         }
         return applySemanticHeader(shaped, header, context);
       },
@@ -38481,6 +38358,12 @@ ${pad}}`;
   function inputKind(value) {
     if (value?.type === "output" && value.kind)
       return value.kind;
+    if (value?.type === "map" && value.entries instanceof Map) {
+      const portableType = value.entries.get("type")?.value ?? value.entries.get("type");
+      const portableKind = value.entries.get("kind")?.value ?? value.entries.get("kind");
+      if (portableType === "output" && typeof portableKind === "string")
+        return portableKind;
+    }
     if (value?.type)
       return value.type;
     return typeof value;
@@ -43879,6 +43762,2556 @@ complexVizNamespace._proto = {=
 .Host.RegisterValue("complexViz", complexVizNamespace, "Exact complex domain coloring as portable Graphics", ["Graphics", "Exact", "Algebra"]);
 `;
 
+  // rix/plugins/optimize/optimize.plugin.rix
+  var optimize_plugin_default = `/**
+id: optimize
+description: Pure-RiX exact linear-program models and deterministic Phase 1 simplex optimization.
+kind: rix
+mount: optimize
+exports: [LinearProgram, Solve, Evaluate, Maximize, Minimize]
+groups: [Optimization, Exact]
+permissions: []
+requires: [rix.linear-algebra@1]
+provides: [rix.optimization@1, rix.linear-program@1]
+schemas: [rix.optimize.linear-program@1, rix.optimize.result@1]
+snapshot: false
+deterministic: true
+defaultEnabled: false
+**/
+
+OptimizeOption(options, key, fallback) -> options.Has(key) ?: options[key] ?_ fallback;
+
+OptimizeExact(value, label) -> {;
+    exact = value ~!: :Rational;
+    exact == _ ?: .Error(@"@{label} must contain only exact Integers or Rationals") ?_ exact;
+};
+
+OptimizeVector(value, label ?= "Vector") -> {;
+    isArray = value ? :Array;
+    isShapedVector = value ? :Shaped ?: value.Rank() == 1 ?_ _;
+    (isArray || isShapedVector) ?: _ ?_ .Error(@"@{label} must be an Array or rank-1 Shaped value");
+    length = isArray ?: value.Len() ?_ value.Size();
+    result := [];
+    {@ index = 1; index <= @length; {;
+        @result ~= @result.Push(OptimizeExact(@value[index], @label));
+    }; index += 1 };
+    result;
+};
+
+OptimizeMatrix(value, label ?= "Matrix") -> {;
+    (value ? :Shaped) ?: _ ?_ .Error(@"@{label} must be a rank-2 Shaped or Matrix value");
+    value.Rank() == 2 ?: _ ?_ .Error(@"@{label} must have rank 2");
+    shape = value.Shape();
+    rowCount = shape[1];
+    columnCount = shape[2];
+    rowCount >= 1 && columnCount >= 1 ?: _ ?_ .Error(@"@{label} cannot be empty");
+    rows := [];
+    {@ row = 1; row <= @rowCount; {;
+        entries := [];
+        {@ column = 1; column <= @columnCount; {;
+            @entries ~= @entries.Push(OptimizeExact(@value[@row,column], @label));
+        }; column += 1 };
+        @rows ~= @rows.Push(entries);
+    }; row += 1 };
+    rows;
+};
+
+OptimizeVectorTensor(values) -> values ~!: :Shaped;
+
+OptimizeMatrixTensor(rows) -> {;
+    rowCount = rows.Len();
+    columnCount = rows[1].Len();
+    flat := [];
+    {@ row = 1; row <= @rowCount; {;
+        {@ column = 1; column <= @columnCount; {;
+            @flat ~= @flat.Push(@rows[@row][column]);
+        }; column += 1 };
+    }; row += 1 };
+    (flat ~!: :Shaped).Reshape({: rowCount, columnCount });
+};
+
+OptimizeZeros(count) -> {;
+    result := [];
+    {@ index = 1; index <= @count; {; @result ~= @result.Push(0); }; index += 1 };
+    result;
+};
+
+OptimizeIdentityRow(length, oneAt) -> {;
+    result := [];
+    {@ index = 1; index <= @length; {;
+        @result ~= @result.Push(index == @oneAt ?: 1 ?_ 0);
+    }; index += 1 };
+    result;
+};
+
+OptimizeConcat(left, right) -> {;
+    result := left.Map((value) -> value);
+    {@ index = 1; index <= @right.Len(); {; @result ~= @result.Push(@right[index]); }; index += 1 };
+    result;
+};
+
+OptimizeDot(left, right) -> {;
+    sum := 0;
+    {@ index = 1; index <= @left.Len(); {; @sum += @left[index] * @right[index]; }; index += 1 };
+    sum;
+};
+
+OptimizeSense(value) -> {;
+    isMinimum = value == :min || value == :minimize || value == "min" || value == "minimize";
+    isMaximum = value == :max || value == :maximize || value == "max" || value == "maximize";
+    (isMinimum || isMaximum) ?: _ ?_ .Error("Linear-program sense must be :max or :min");
+    isMinimum ?: :min ?_ :max;
+};
+
+OptimizeProgram(objective, matrix, bounds, options ?= {= }) -> {;
+    exactObjective = OptimizeVector(objective, "Linear-program objective");
+    exactMatrix = OptimizeMatrix(matrix, "Linear-program constraint matrix");
+    exactBounds = OptimizeVector(bounds, "Linear-program bounds");
+    exactMatrix[1].Len() == exactObjective.Len()
+      ?: _
+      ?_ .Error("Linear-program objective length must equal the matrix column count");
+    exactMatrix.Len() == exactBounds.Len()
+      ?: _
+      ?_ .Error("Linear-program bounds length must equal the matrix row count");
+    relation = OptimizeOption(options, "relation", "<=");
+    relation == "<=" ?: _ ?_ .Error("Phase 1 linear programs require A*x <= b");
+    program = {=
+        valueKind = :linearProgram,
+        schema = "rix.optimize.linear-program@1",
+        objective = OptimizeVectorTensor(exactObjective),
+        A = OptimizeMatrixTensor(exactMatrix),
+        b = OptimizeVectorTensor(exactBounds),
+        sense = OptimizeSense(OptimizeOption(options, "sense", :max)),
+        variableCount = exactObjective.Len(),
+        constraintCount = exactMatrix.Len(),
+        relation = "<=",
+        nonnegative = 1,
+        name = OptimizeOption(options, "name", _),
+        exact = 1
+    };
+    program.__type = "LinearProgram";
+    program.objective = program[:objective];
+    program.A = program[:A];
+    program.b = program[:b];
+    program.sense = program[:sense];
+    program.variableCount = program[:variableCount];
+    program.constraintCount = program[:constraintCount];
+    program.relation = program[:relation];
+    program.nonnegative = program[:nonnegative];
+    program.name = program[:name];
+    program.exact = program[:exact];
+    program._proto = {=
+        Solve = (self, solveOptions ?= {= }) -> OptimizeSolve(self, solveOptions),
+        Evaluate = (self, point) -> OptimizeEvaluate(self, point),
+        Record = (self) -> self
+    };
+    .ImmutableValue(program);
+};
+
+OptimizeRequireProgram(value) -> {;
+    valid = value ? :Map ?: value[:schema] == "rix.optimize.linear-program@1" ?_ _;
+    valid ?: value ?_ .Error("Expected an optimize LinearProgram");
+};
+
+OptimizeResult(program, fields) -> {;
+    result = {=
+        valueKind = :optimizationResult,
+        schema = "rix.optimize.result@1",
+        program = program,
+        method = :exactPrimalSimplex,
+        exact = 1
+    }.Merge(fields);
+    result.__type = "OptimizationResult";
+    result.schema = result[:schema];
+    result.program = result[:program];
+    result.method = result[:method];
+    result.exact = result[:exact];
+    result.status = result[:status];
+    result.solution = result[:solution];
+    result.objectiveValue = result[:objectiveValue];
+    result.iterations = result[:iterations];
+    result.enteringVariable = result[:enteringVariable];
+    result.tableau = result[:tableau];
+    result.diagnostics = result[:diagnostics];
+    result.slacks = result[:slacks];
+    result.feasible = result[:feasible];
+    result.basis = result[:basis];
+    result._proto = {= Record=(self)->self };
+    .ImmutableValue(result);
+};
+
+OptimizePivot(tableau, pivotRow, pivotColumn) -> {;
+    pivotValue = tableau[pivotRow][pivotColumn];
+    normalized = tableau[pivotRow].Map((value) -> value / pivotValue);
+    result := tableau.Set(pivotRow, normalized);
+    {@ row = 1; row <= @result.Len(); {;
+        row != @pivotRow && @result[row][@pivotColumn] != 0
+          ?: {;
+              factor = @result[@row][@pivotColumn];
+              replacement = @result[@row].Map((value, column) -> value - @factor * @normalized[column]);
+              @result ~= @result.Set(@row, replacement);
+          }
+          ?_ _;
+    }; row += 1 };
+    result;
+};
+
+OptimizeInitialTableau(program) -> {;
+    matrix = OptimizeMatrix(program[:A]);
+    bounds = OptimizeVector(program[:b]);
+    objective = OptimizeVector(program[:objective]);
+    constraintCount = matrix.Len();
+    rows := [];
+    {@ row = 1; row <= @constraintCount; {;
+        withSlack = OptimizeConcat(@matrix[row], OptimizeIdentityRow(@constraintCount, row));
+        @rows ~= @rows.Push(OptimizeConcat(withSlack, [@bounds[row]]));
+    }; row += 1 };
+    effective = program[:sense] == :min ?: objective.Map((value) -> -value) ?_ objective;
+    rows ~= rows.Push(OptimizeConcat(effective.Map((value) -> -value), OptimizeConcat(OptimizeZeros(constraintCount), [0])));
+    rows;
+};
+
+OptimizeFirstNegative(row, lastColumn) -> {;
+    found := 0;
+    {@ column = 1; column <= @lastColumn && @found == 0; {;
+        @row[column] < 0 ?: {; @found ~= @column; } ?_ _;
+    }; column += 1 };
+    found;
+};
+
+OptimizeLeavingRow(tableau, basis, entering, constraintCount, rhsColumn) -> {;
+    leaving := 0;
+    bestRatio := _;
+    {@ row = 1; row <= @constraintCount; {;
+        coefficient = @tableau[row][@entering];
+        coefficient > 0
+          ?: {;
+              ratio = @tableau[@row][@rhsColumn] / @coefficient;
+              better = @bestRatio == _ || ratio < @bestRatio || (ratio == @bestRatio && @basis[@row] < @basis[@leaving]);
+              better ?: {; @bestRatio ~= @ratio; @leaving ~= @row; } ?_ _;
+          }
+          ?_ _;
+    }; row += 1 };
+    leaving;
+};
+
+OptimizeSolve(value, options ?= {= }) -> {;
+    program = OptimizeRequireProgram(value);
+    maxIterations = OptimizeOption(options, "maxiterations", 10000) ~!: :Integer;
+    maxIterations >= 1 ?: _ ?_ .Error("Simplex maxIterations must be positive");
+    objective = OptimizeVector(program[:objective]);
+    matrix = OptimizeMatrix(program[:A]);
+    bounds = OptimizeVector(program[:b]);
+    bounds.All((bound) -> bound >= 0)
+      ?: _
+      ?_ .Error("Phase 1 simplex requires nonnegative b so x=0 is an initial feasible point");
+    variableCount = objective.Len();
+    constraintCount = matrix.Len();
+    totalColumns = variableCount + constraintCount;
+    rhsColumn = totalColumns + 1;
+    tableau := OptimizeInitialTableau(program);
+    basis := [];
+    {@ index = 1; index <= @constraintCount; {;
+        @basis ~= @basis.Push(@variableCount + index);
+    }; index += 1 };
+    iterations := 0;
+    status := :running;
+    entering := 0;
+    {@ step = 1; @status == :running && @iterations < @maxIterations; {;
+        objectiveRow = @tableau[@constraintCount + 1];
+        @entering ~= OptimizeFirstNegative(objectiveRow, @totalColumns);
+        @entering == 0
+          ?: {; @status ~= :optimal; }
+          ?_ {;
+              leaving = OptimizeLeavingRow(@tableau, @basis, @entering, @constraintCount, @rhsColumn);
+              leaving == 0
+                ?: {; @status ~= :unbounded; }
+                ?_ {;
+                    @tableau ~= OptimizePivot(@tableau, @leaving, @entering);
+                    @basis ~= @basis.Set(@leaving, @entering);
+                    @iterations += 1;
+                };
+          };
+    }; step += 1 };
+    status == :running ?: {; @status ~= :iterationLimit; } ?_ _;
+
+    status == :unbounded
+      ?: OptimizeResult(program, {=
+          status="unbounded",
+          solution=_,
+          objectiveValue=_,
+          iterations=iterations,
+          enteringVariable=entering,
+          tableau=OptimizeMatrixTensor(tableau),
+          diagnostics=["No leaving row exists for the selected improving direction"]
+      })
+      ?_ status == :iterationLimit
+           ?: OptimizeResult(program, {=
+               status="iterationLimit",
+               solution=_,
+               objectiveValue=_,
+               iterations=iterations,
+               tableau=OptimizeMatrixTensor(tableau),
+               diagnostics=["Simplex iteration limit reached"]
+           })
+           ?_ {;
+               solution := OptimizeZeros(@variableCount);
+               {@ row = 1; row <= @constraintCount; {;
+                   column = @basis[row];
+                   column <= @variableCount
+                     ?: {; @solution ~= @solution.Set(@column, @tableau[@row][@rhsColumn]); }
+                     ?_ _;
+               }; row += 1 };
+               slacks := [];
+               {@ row = 1; row <= @constraintCount; {;
+                   @slacks ~= @slacks.Push(@bounds[row] - OptimizeDot(@matrix[row], @solution));
+               }; row += 1 };
+               OptimizeResult(@program, {=
+                   status="optimal",
+                   solution=OptimizeVectorTensor(solution),
+                   objectiveValue=OptimizeDot(@objective, solution),
+                   slacks=OptimizeVectorTensor(slacks),
+                   feasible=slacks.All((slack)->slack >= 0),
+                   iterations=@iterations,
+                   basis=@basis,
+                   tableau=OptimizeMatrixTensor(@tableau),
+                   diagnostics=[]
+               });
+           };
+};
+
+OptimizeEvaluate(value, point) -> {;
+    program = OptimizeRequireProgram(value);
+    exactPoint = OptimizeVector(point, "Linear-program point");
+    exactPoint.Len() == program[:variableCount]
+      ?: _
+      ?_ .Error("Point dimension does not match the LinearProgram");
+    matrix = OptimizeMatrix(program[:A]);
+    bounds = OptimizeVector(program[:b]);
+    lhs = matrix.Map((row) -> OptimizeDot(row, exactPoint));
+    slacks = bounds.Map((bound, row) -> bound - lhs[row]);
+    result = {=
+        valueKind=:optimizationEvaluation,
+        objectiveValue=OptimizeDot(OptimizeVector(program[:objective]), exactPoint),
+        feasible=exactPoint.All((entry)->entry >= 0) && slacks.All((slack)->slack >= 0),
+        lhs=OptimizeVectorTensor(lhs),
+        slacks=OptimizeVectorTensor(slacks)
+    };
+    result.__type = "OptimizationEvaluation";
+    result.objectiveValue = result[:objectiveValue];
+    result.feasible = result[:feasible];
+    result.lhs = result[:lhs];
+    result.slacks = result[:slacks];
+    .ImmutableValue(result);
+};
+
+OptimizeConvenience(objective, matrix, bounds, options, sense) -> {;
+    configured = options.Merge({= sense=sense });
+    OptimizeSolve(OptimizeProgram(objective, matrix, bounds, configured), options);
+};
+
+optimizeNamespace = {= };
+optimizeNamespace._proto = {=
+    LinearProgram=(self, objective, matrix, bounds, options ?= {= })->OptimizeProgram(objective, matrix, bounds, options),
+    Solve=(self, program, options ?= {= })->OptimizeSolve(program, options),
+    Evaluate=(self, program, point)->OptimizeEvaluate(program, point),
+    Maximize=(self, objective, matrix, bounds, options ?= {= })->OptimizeConvenience(objective, matrix, bounds, options, :max),
+    Minimize=(self, objective, matrix, bounds, options ?= {= })->OptimizeConvenience(objective, matrix, bounds, options, :min)
+};
+
+.Host.RegisterValue("optimize", optimizeNamespace, "Pure-RiX exact linear programs and deterministic simplex optimization", ["Optimization", "Exact"]);
+`;
+
+  // rix/plugins/linalg/linalg.plugin.rix
+  var linalg_plugin_default = `/**
+id: linalg
+description: Pure-RiX exact dense linear algebra and coordinate-aware tensor transformations.
+kind: rix
+mount: linalg
+exports: [Rref, Rank, Determinant, Inverse, Solve, VectorSpace, Frame, Tensor, Vector, Covector, ChangeMatrix, Transform, Transform!, Components, Pair, SameTensor]
+groups: [LinearAlgebra, Exact]
+permissions: []
+provides: [rix.linear-algebra@1, rix.tensor@1]
+schemas: [rix.linalg.result@1, rix.linalg.vector-space@1, rix.linalg.frame@1, rix.linalg.tensor@1]
+snapshot: false
+deterministic: true
+defaultEnabled: false
+**/
+
+linalgState := {= nextSpaceIdentity=0, nextFrameIdentity=0, nextTensorIdentity=0 };
+linalgState._mutable=1;
+LinalgNextIdentity(kind) -> {;
+    kind==:space
+      ?: {; @linalgState[:nextspaceidentity] += 1; @linalgState[:nextspaceidentity]; }
+      ?_ (kind==:frame
+          ?: {; @linalgState[:nextframeidentity] += 1; @linalgState[:nextframeidentity]; }
+          ?_ {; @linalgState[:nexttensoridentity] += 1; @linalgState[:nexttensoridentity]; });
+};
+
+LinalgOption(options, key, fallback) -> options.Has(key) ?: options[key] ?_ fallback;
+
+LinalgExact(value, label ?= "value") -> {;
+    exact = value ~!: :Rational;
+    exact == _ ?: .Error(@"@{label} must be an exact Integer or Rational") ?_ exact;
+};
+LinalgIsZero(value) -> (value ~!: :Rational).Numerator()==0;
+
+LinalgPositiveInteger(value, label) -> {;
+    integer = value ~!: :Integer;
+    integer >= 1 ?: integer ?_ .Error(@"@{label} must be a positive Integer");
+};
+
+LinalgVectorValues(value, label ?= "vector") -> {;
+    isArray = value ? :Array;
+    isShapedVector = value ? :Shaped ?: value.Shape().Len() == 1 ?_ _;
+    (isArray || isShapedVector) ?: _ ?_ .Error(@"@{label} must be an Array or rank-1 tensor");
+    length = isArray ?: value.Len() ?_ value.Size();
+    result := [];
+    {@ index = 1; index <= @length; {;
+        @result ~= @result.Push(LinalgExact(@value[index], @"@{@label} entry @{index}"));
+    }; index += 1 };
+    result;
+};
+
+LinalgMatrixRows(value, label ?= "matrix") -> {;
+    isShapedMatrix = value ? :Shaped ?: value.Shape().Len() == 2 ?_ _;
+    isRows = value ? :Array;
+    (isShapedMatrix || isRows) ?: _ ?_ .Error(@"@{@label} must be a rank-2 tensor or Array of rows");
+    rows := [];
+    isShapedMatrix
+      ?: {;
+          shape = @value.Shape();
+          rowCount = shape[1];
+          columnCount = shape[2];
+          rowCount >= 1 && columnCount >= 1 ?: _ ?_ .Error(@"@{@label} cannot be empty");
+          {@ row = 1; row <= @rowCount; {;
+              entries := [];
+              {@ column = 1; column <= @columnCount; {;
+                  @entries ~= @entries.Push(LinalgExact(@value[@row,column], @"@{@label} entry @{@row},@{column}"));
+              }; column += 1 };
+              @rows ~= @rows.Push(entries);
+          }; row += 1 };
+      }
+      ?_ {;
+          @value.Len() >= 1 ?: _ ?_ .Error(@"@{@label} cannot be empty");
+          {@ row = 1; row <= @value.Len(); {;
+              @rows ~= @rows.Push(LinalgVectorValues(@value[row], @"@{@label} row @{row}"));
+          }; row += 1 };
+      };
+    columns = rows[1].Len();
+    columns >= 1 ?: _ ?_ .Error(@"@{label} cannot be empty");
+    rows.All((row)->row.Len()==columns) ?: rows ?_ .Error(@"@{label} rows must have equal lengths");
+};
+
+LinalgFlattenRows(rows) -> {;
+    flat := [];
+    {@ row = 1; row <= @rows.Len(); {;
+        {@ column = 1; column <= @rows[@row].Len(); {;
+            @flat ~= @flat.Push(@rows[@row][column]);
+        }; column += 1 };
+    }; row += 1 };
+    flat;
+};
+
+LinalgVectorTensor(values) -> values ~!: :Shaped;
+
+LinalgShapedFromFlat(flat, shape) -> (flat ~!: :Shaped).Reshape(shape);
+
+LinalgMatrixTensor(rows) -> {;
+    rows.Len() >= 1 && rows[1].Len() >= 1 ?: _ ?_ .Error("Matrix cannot be empty");
+    value = LinalgShapedFromFlat(LinalgFlattenRows(rows), {: rows.Len(), rows[1].Len() });
+    value.__type = "Matrix";
+    value;
+};
+
+LinalgZeros(count) -> {;
+    result := [];
+    {@ index = 1; index <= @count; {; @result ~= @result.Push(0); }; index += 1 };
+    result;
+};
+
+LinalgIdentityRows(size) -> {;
+    rows := [];
+    {@ row = 1; row <= @size; {;
+        entries := [];
+        {@ column = 1; column <= @size; {;
+            @entries ~= @entries.Push(@row == column ?: 1 ?_ 0);
+        }; column += 1 };
+        @rows ~= @rows.Push(entries);
+    }; row += 1 };
+    rows;
+};
+
+LinalgCopyRows(source) -> source.Map((row)->row.Map((value)->LinalgExact(value)));
+
+LinalgTransposeRows(rows) -> {;
+    result := [];
+    {@ column = 1; column <= @rows[1].Len(); {;
+        rowValues := [];
+        {@ row = 1; row <= @rows.Len(); {; @rowValues ~= @rowValues.Push(@rows[row][@column]); }; row += 1 };
+        @result ~= @result.Push(rowValues);
+    }; column += 1 };
+    result;
+};
+
+LinalgDot(left, right) -> {;
+    sum := 0;
+    {@ index = 1; index <= @left.Len(); {; @sum += @left[index] * @right[index]; }; index += 1 };
+    sum;
+};
+
+LinalgMultiplyRows(left, right) -> {;
+    left[1].Len() == right.Len() ?: _ ?_ .Error("Matrix multiplication dimensions must agree");
+    columns = right[1].Len();
+    result := [];
+    {@ row = 1; row <= @left.Len(); {;
+        entries := [];
+        {@ column = 1; column <= @columns; {;
+            sum := 0;
+            {@ index = 1; index <= @right.Len(); {;
+                @sum += @left[@row][index] * @right[index][@column];
+            }; index += 1 };
+            @entries ~= @entries.Push(sum);
+        }; column += 1 };
+        @result ~= @result.Push(entries);
+    }; row += 1 };
+    result;
+};
+
+LinalgMultiplyMatrixVector(rows, values) -> {;
+    rows[1].Len() == values.Len() ?: _ ?_ .Error("Matrix/vector dimensions must agree");
+    rows.Map((row)->LinalgDot(row, values));
+};
+
+LinalgFindPivot(rows, startRow, column) -> {;
+    selected := 0;
+    {@ row = @startRow; row <= @rows.Len() && @selected == 0; {;
+        LinalgIsZero(@rows[row][@column]) ?: _ ?_ {; @selected ~= @row; };
+    }; row += 1 };
+    selected;
+};
+
+LinalgRrefRows(source, coefficientColumns ?= _) -> {;
+    rows := LinalgCopyRows(source);
+    columns = coefficientColumns == _ ?: rows[1].Len() ?_ coefficientColumns;
+    pivots := [];
+    pivotRow := 1;
+    {@ column = 1; column <= @columns && @pivotRow <= @rows.Len(); {;
+        selected = LinalgFindPivot(@rows, @pivotRow, column);
+        selected != 0
+          ?: {;
+              @selected != @pivotRow
+                ?: {;
+                    swap = @rows[@pivotRow];
+                    @rows ~= @rows.Set(@pivotRow, @rows[@selected]).Set(@selected, swap);
+                }
+                ?_ _;
+              pivot = @rows[@pivotRow][@column];
+              LinalgIsZero(pivot) == _
+                ?: {;
+                    normalized = @rows[@pivotRow].Map((value)->value/@pivot);
+                    @rows ~= @rows.Set(@pivotRow, normalized);
+                    {@ row = 1; row <= @rows.Len(); {;
+                        row != @pivotRow && LinalgIsZero(@rows[row][@column]) == _
+                          ?: {;
+                              factor = @rows[@row][@column];
+                              replacement = @rows[@row].Map((value,index)->value-@factor*@normalized[index]);
+                              @rows ~= @rows.Set(@row,replacement);
+                          }
+                          ?_ _;
+                    }; row += 1 };
+                    @pivots ~= @pivots.Push(@column);
+                    @pivotRow += 1;
+                }
+                ?_ _;
+          }
+          ?_ _;
+    }; column += 1 };
+    {= rows=rows, pivots=pivots };
+};
+
+LinalgInverseRows(source) -> {;
+    source.Len() == source[1].Len() ?: _ ?_ .Error("Inverse requires a square matrix");
+    size = source.Len();
+    identity = LinalgIdentityRows(size);
+    augmented = source.Map((row,index)->row.Concat(identity[index]));
+    reduced = LinalgRrefRows(augmented,size);
+    reduced[:pivots].Len() == size ?: _ ?_ .Error("Matrix is singular");
+    reduced[:rows].Map((row)->row.Slice(size+1));
+};
+
+LinalgDeterminantRows(source) -> {;
+    source.Len() == source[1].Len() ?: _ ?_ .Error("Determinant requires a square matrix");
+    rows := LinalgCopyRows(source);
+    determinant := 1;
+    singular := 0;
+    {@ column = 1; column <= @rows.Len() && @singular == 0; {;
+        selected = LinalgFindPivot(@rows,column,column);
+        selected == 0
+          ?: {; @singular ~= 1; @determinant ~= 0; }
+          ?_ {;
+              @selected != @column
+                ?: {;
+                    swap = @rows[@column];
+                    @rows ~= @rows.Set(@column,@rows[@selected]).Set(@selected,swap);
+                    @determinant ~= -@determinant;
+                }
+                ?_ _;
+              pivot = @rows[@column][@column];
+              @determinant *= pivot;
+              {@ row = @column+1; row <= @rows.Len(); {;
+                  LinalgIsZero(@rows[row][@column]) == _
+                    ?: {;
+                        factor = @rows[@row][@column]/@pivot;
+                        replacement = @rows[@row].Map((value,index)->value-@factor*@rows[@column][index]);
+                        @rows ~= @rows.Set(@row,replacement);
+                    }
+                    ?_ _;
+              }; row += 1 };
+          };
+    }; column += 1 };
+    determinant;
+};
+
+LinalgResult(fields) -> {;
+    result = {= schema="rix.linalg.result@1", exact=1 }.Merge(fields);
+    result;
+};
+
+LinalgSolveValues(matrixValue, vectorValue) -> {;
+    matrix = LinalgMatrixRows(matrixValue,"Solve matrix");
+    vector = LinalgVectorValues(vectorValue,"Solve right-hand side");
+    matrix.Len() == vector.Len() ?: _ ?_ .Error("Solve right-hand side length must equal the matrix row count");
+    columns = matrix[1].Len();
+    augmented = matrix.Map((row,index)->row.Concat([vector[index]]));
+    fullyReduced = LinalgRrefRows(augmented);
+    reduced = {= rows=fullyReduced[:rows], pivots=fullyReduced[:pivots].Filter((column)->column<=columns) };
+    inconsistent = reduced[:rows].Any((row)->row.Slice(1,columns+1).All((value)->LinalgIsZero(value)) && LinalgIsZero(row[columns+1])==_);
+    inconsistent
+      ?: LinalgResult({=
+          status="inconsistent", solution=_, particular=_, nullspace=[],
+          rank=reduced[:pivots].Len(), rref=LinalgMatrixTensor(reduced[:rows]), pivots=reduced[:pivots]
+      })
+      ?_ {;
+          particular := LinalgZeros(@columns);
+          {@ row = 1; row <= @reduced[:pivots].Len(); {;
+              pivotColumn = @reduced[:pivots][row];
+              @particular ~= @particular.Set(pivotColumn,@reduced[:rows][row][@columns+1]);
+          }; row += 1 };
+          freeColumns := [];
+          {@ column = 1; column <= @columns; {;
+              @reduced[:pivots].Includes(column) ?: _ ?_ {; @freeColumns ~= @freeColumns.Push(@column); };
+          }; column += 1 };
+          nullspace := [];
+          {@ freeIndex = 1; freeIndex <= @freeColumns.Len(); {;
+              freeColumn = @freeColumns[freeIndex];
+              basis := LinalgZeros(@columns).Set(freeColumn,1);
+              {@ row = 1; row <= @reduced[:pivots].Len(); {;
+                  pivotColumn = @reduced[:pivots][row];
+                  @basis ~= @basis.Set(pivotColumn,-@reduced[:rows][row][@freeColumn]);
+              }; row += 1 };
+              @nullspace ~= @nullspace.Push(LinalgVectorTensor(basis));
+          }; freeIndex += 1 };
+          solution = LinalgVectorTensor(particular);
+          LinalgResult({=
+              status=freeColumns.Len()==0 ?: "unique" ?_ "underdetermined",
+              solution=solution, particular=solution, nullspace=nullspace,
+              rank=@reduced[:pivots].Len(), rref=LinalgMatrixTensor(@reduced[:rows]), pivots=@reduced[:pivots]
+          });
+      };
+};
+
+LinalgRref(value) -> LinalgMatrixTensor(LinalgRrefRows(LinalgMatrixRows(value,"Rref matrix"))[:rows]);
+LinalgRank(value) -> LinalgRrefRows(LinalgMatrixRows(value,"Rank matrix"))[:pivots].Len();
+LinalgDeterminant(value) -> LinalgDeterminantRows(LinalgMatrixRows(value,"Determinant matrix"));
+LinalgInverse(value) -> LinalgMatrixTensor(LinalgInverseRows(LinalgMatrixRows(value,"Inverse matrix")));
+LinalgSolve(first, second ?= _) -> second == _ && (first ? :Map)
+  ?: LinalgSolveValues(first[:A],first[:b])
+  ?_ LinalgSolveValues(first,second);
+
+LinalgSpaceIs(value) -> (value ? :Map) && value[:schema]=="rix.linalg.vector-space@1";
+LinalgFrameIs(value) -> (value ? :Map) && value[:schema]=="rix.linalg.frame@1";
+LinalgTensorIs(value) -> (value ? :Map) && value[:schema]=="rix.linalg.tensor@1";
+
+LinalgRequireSpace(value) -> LinalgSpaceIs(value) ?: value ?_ .Error("Expected a linalg VectorSpace");
+LinalgRequireFrame(value) -> LinalgFrameIs(value)
+  ?: value
+  ?_ (LinalgSpaceIs(value) ?: .Error("Tensor components require a Frame, not a bare VectorSpace") ?_ .Error("Expected a linalg Frame"));
+LinalgRequireTensor(value) -> LinalgTensorIs(value) ?: value ?_ .Error("Expected a coordinate-aware Vector, Covector, or Tensor");
+
+LinalgVectorSpace(first, second ?= _, options ?= {= }) -> {;
+    settings = first ? :Map ?: first ?_ options.Merge({= name=first, dimension=second });
+    name = LinalgOption(settings,"name","V");
+    dimension = LinalgPositiveInteger(LinalgOption(settings,"dimension",_),"Vector-space dimension");
+    over = LinalgOption(settings,"over",:Rational);
+    (over==:Rational || over==:rational || over=="Rational" || over=="rational")
+      ?: _ ?_ .Error("Phase 1 VectorSpace currently requires over=:Rational");
+    lineageLimit = LinalgPositiveInteger(LinalgOption(settings,"lineagelimit",30),"Tensor lineage limit");
+    value = {=
+        valueKind=:vectorSpace, schema="rix.linalg.vector-space@1",
+        identity={= valueKind=:vectorSpaceIdentity }, spaceIdentity=LinalgNextIdentity(:space), name=name, dimension=dimension,
+        over=:Rational, metadata=LinalgOption(settings,"metadata",_), definingFrame=_, lineageLimit=lineageLimit
+    };
+    value.__type="VectorSpace";
+    value.identity=value[:identity];
+    value.spaceIdentity=value[:spaceidentity];
+    value.name=value[:name]; value.dimension=value[:dimension]; value.over=value[:over];
+    value.metadata=value[:metadata]; value.definingFrame=_; value.lineageLimit=lineageLimit;
+    value;
+};
+
+LinalgFrame(spaceValue, specification ?= _, basisArgument ?= _, options ?= {= }) -> {;
+    space = LinalgRequireSpace(spaceValue);
+    settings = specification ? :Map
+      ?: specification.Merge({= space=space })
+      ?_ options.Merge({= space=space, name=specification, basis=basisArgument });
+    basisValue = LinalgOption(settings,"basis",_);
+    defining = basisValue==:defining || basisValue=="defining" || (basisValue==_ && space[:definingframe]==_);
+    defining && space[:definingframe]!=_ ?: .Error("VectorSpace already has a defining Frame") ?_ _;
+    name = LinalgOption(settings,"name",space[:definingframe]==_ ?: "defining" ?_ "frame");
+    requestedRelative = LinalgOption(settings,"relativeto",_);
+    relativeTo = defining ?: _ ?_ LinalgRequireFrame(requestedRelative==_ ?: space[:definingframe] ?_ requestedRelative);
+    defining || relativeTo[:spaceidentity] == space[:spaceidentity] ?: _ ?_ .Error("relativeTo Frame must belong to the same VectorSpace");
+    localBasis = defining ?: LinalgIdentityRows(space[:dimension]) ?_ LinalgMatrixRows(basisValue,"Frame basis");
+    localBasis.Len()==space[:dimension] && localBasis[1].Len()==space[:dimension]
+      ?: _ ?_ .Error(@"Frame basis must be @{space[:dimension]}x@{space[:dimension]}");
+    defining ?: _ ?_ LinalgInverseRows(localBasis);
+    absoluteBasis = defining ?: localBasis ?_ LinalgMultiplyRows(LinalgMatrixRows(relativeTo[:basis]),localBasis);
+    inverse = LinalgInverseRows(absoluteBasis);
+    value = {=
+        valueKind=:frame, schema="rix.linalg.frame@1", name=name, space=space,
+        spaceIdentity=space[:spaceidentity], frameIdentity=LinalgNextIdentity(:frame),
+        relativeTo=relativeTo, localBasis=LinalgMatrixTensor(localBasis),
+        basis=LinalgMatrixTensor(absoluteBasis), inverseBasis=LinalgMatrixTensor(inverse),
+        defining=defining ?: 1 ?_ _, metadata=LinalgOption(settings,"metadata",_)
+    };
+    value.__type="Frame";
+    value.name=value[:name]; value.space=space; value.spaceIdentity=value[:spaceidentity];
+    value.frameIdentity=value[:frameidentity]; value.relativeTo=relativeTo;
+    value.localBasis=value[:localbasis]; value.basis=value[:basis]; value.inverseBasis=value[:inversebasis];
+    value.defining=value[:defining]; value.metadata=value[:metadata];
+    defining ?: {; @space[:definingframe]=@value; @space.definingFrame=@value; } ?_ _;
+    value;
+};
+
+LinalgChangeRows(sourceValue,targetValue) -> {;
+    source=LinalgRequireFrame(sourceValue); target=LinalgRequireFrame(targetValue);
+    source[:spaceidentity]==target[:spaceidentity] ?: _ ?_ .Error("Frames must belong to the same VectorSpace");
+    LinalgMultiplyRows(LinalgMatrixRows(target[:inversebasis]),LinalgMatrixRows(source[:basis]));
+};
+LinalgChangeMatrix(source,target) -> LinalgMatrixTensor(LinalgChangeRows(source,target));
+
+LinalgVariance(value) -> (value==:down || value==:covariant || value=="down" || value=="covariant")
+  ?: 1
+  ?_ ((value==:up || value==:contravariant || value=="up" || value=="contravariant")
+      ?: _ ?_ .Error("Tensor variance entries must be :up/:contravariant or :down/:covariant"));
+
+LinalgSlot(frameValue,dualValue) -> {;
+    frame=LinalgRequireFrame(frameValue);
+    slot={= frame=frame, spaceIdentity=frame[:spaceidentity], frameIdentity=frame[:frameidentity], dual=dualValue ?: 1 ?_ _ };
+    slot.frame=frame; slot.spaceIdentity=slot[:spaceidentity]; slot.frameIdentity=slot[:frameidentity]; slot.dual=slot[:dual];
+    slot;
+};
+
+LinalgNormalizeSlots(components,framesValue,varianceValue ?= _) -> {;
+    rank=components.Shape().Len();
+    frames = LinalgFrameIs(framesValue)
+      ?: LinalgZeros(rank).Map((unused)->framesValue)
+      ?_ framesValue;
+    frames ? :Array ?: _ ?_ .Error("Tensor frames must be a Frame or Array of Frames");
+    frames.Len()==rank ?: _ ?_ .Error(@"Tensor components rank @{rank} does not match @{frames.Len()} slots");
+    duals = varianceValue==_ ?: LinalgZeros(rank) ?_ varianceValue.Map((entry)->LinalgVariance(entry));
+    duals.Len()==rank ?: _ ?_ .Error(@"Tensor variance must contain @{rank} entries");
+    slots := [];
+    shape=components.Shape();
+    {@ axis=1; axis<=@rank; {;
+        frame=LinalgRequireFrame(@frames[axis]);
+        @shape[axis]==frame.space[:dimension]
+          ?: _ ?_ .Error(@"Tensor axis @{axis} has size @{shape[axis]} but Frame @{frame[:name]} has dimension @{frame.space[:dimension]}");
+        @slots ~= @slots.Push(LinalgSlot(frame,@duals[axis]));
+    }; axis+=1 };
+    slots;
+};
+
+LinalgTensorType(slots) -> slots.Len()==1 ?: (slots[1].dual ?: "Covector" ?_ "Vector") ?_ "Tensor";
+
+LinalgSyncTensor(value) -> {;
+    value.components=value[:components]; value.slots=value[:slots];
+    value.frame=value[:slots].Len()==1 ?: value[:slots][1][:frame] ?_ _;
+    value.identity=value[:identity]; value.representationIdentity=value[:representationidentity];
+    value.equivalentTo=value[:equivalentto]; value.origin=value[:origin];
+    value.transform=value[:transform]; value.derivedFrom=value[:derivedfrom];
+    value;
+};
+
+LinalgRecordRepresentation(identity,value) -> {;
+    identity[:origin]==_ ?: {; @identity[:origin]=@value; } ?_ _;
+    reps := identity[:representations].Push(value);
+    reps.Len()>identity[:lineagelimit]+1
+      ?: {;
+          evicted=@reps[2];
+          @reps ~= @reps.RemoveAt(2);
+          evicted[:equivalentto]=_; evicted.equivalentTo=_;
+      }
+      ?_ _;
+    identity[:representations]=reps;
+    value;
+};
+
+LinalgTensorValue(components,slots,lineage ?= {= }) -> {;
+    typeName=LinalgTensorType(slots);
+    identityKey=lineage.Has("identitykey") ?: lineage[:identitykey] ?_ LinalgNextIdentity(:tensor);
+    identity=lineage.Has("identity")
+      ?: lineage.identity
+      ?_ {= valueKind=:tensorIdentity, origin=_, representations=[],
+            lineageLimit=slots.Map((slot)->slot[:frame][:space][:lineagelimit]).Sort()[1] };
+    value={=
+        valueKind=:coordinateTensor, schema="rix.linalg.tensor@1", components=components, slots=slots,
+        identity=identity, identityKey=identityKey, representationIdentity={= valueKind=:tensorRepresentationIdentity },
+        equivalentTo=LinalgOption(lineage,"equivalentto",_), origin=LinalgOption(lineage,"origin",identity[:origin]),
+        transform=LinalgOption(lineage,"transform",_), viewOf=LinalgOption(lineage,"viewof",_),
+        derivedFrom=LinalgOption(lineage,"derivedfrom",[])
+    };
+    value.__type=typeName; value._mutable=1;
+    value._proto={=
+        Components=(self)->self[:components],
+        Frame=(self)->self[:slots].Len()==1 ?: self[:slots][1][:frame] ?_ _,
+        Frames=(self)->self[:slots].Map((slot)->slot[:frame]),
+        Transform=(self,target)->LinalgTransform(self,target),
+        Pair=(self,other)->LinalgPair(self,other),
+        SameTensor=(self,other)->LinalgSameTensor(self,other)
+    };
+    value._proto["Transform!"]=(self,target)->LinalgTransformBang(self,target);
+    identity[:origin]==_ ?: {; @identity[:origin]=@value; @value[:origin]=@value; } ?_ _;
+    LinalgSyncTensor(value);
+    value.components=components; value.slots=slots; value.identity=identity; value.identityKey=identityKey;
+    LinalgRecordRepresentation(identity,value);
+};
+
+LinalgTensor(components,frames,variance ?= _,options ?= {= }) -> {;
+    components ? :Shaped ?: _ ?_ .Error("Vector/Tensor components must be Shaped");
+    slots=LinalgNormalizeSlots(components,frames,variance);
+    LinalgTensorValue(components,slots);
+};
+LinalgVector(components,frame,options ?= {= })->LinalgTensor(LinalgVectorTensor(LinalgVectorValues(components,"Vector components")),frame,[:up],options);
+LinalgCovector(components,frame,options ?= {= })->LinalgTensor(LinalgVectorTensor(LinalgVectorValues(components,"Covector components")),frame,[:down],options);
+
+LinalgTypedShaped(requested,components,slotRecords) -> {;
+    slots=slotRecords.Map((slot)->LinalgSlot(slot[:frame],requested==:Covector ?: 1 ?_ slot[:dual]));
+    (requested==:Vector || requested==:Covector) && slots.Len()!=1
+      ?: .Error(@"@{@requested} requires exactly one Frame annotation") ?_ _;
+    slots.Len()==components.Shape().Len()
+      ?: _ ?_ .Error(@"@{@requested} header declares @{@slots.Len()} slots for rank-@{@components.Shape().Len()} components");
+    LinalgTensorValue(components,slots);
+};
+
+LinalgStrides(shape) -> {;
+    result := [];
+    {@ axis=1; axis<=@shape.Len(); {;
+        stride := 1;
+        {@ index=@axis+1; index<=@shape.Len(); {; @stride *= @shape[index]; }; index+=1 };
+        @result ~= @result.Push(stride);
+    }; axis+=1 };
+    result;
+};
+
+LinalgTupleForLinear(linear,shape,strides) -> {;
+    remainder := linear;
+    result := [];
+    {@ axis=1; axis<=@shape.Len(); {;
+        coordinate=@remainder//@strides[axis];
+        @result ~= @result.Push(coordinate);
+        @remainder %= @strides[axis];
+    }; axis+=1 };
+    result;
+};
+
+LinalgTransformAxis(tensor,axis,matrix) -> {;
+    shape=tensor.Shape(); strides=LinalgStrides(shape); input=tensor.Flatten();
+    output := [];
+    {@ linear=0; linear<@input.Size(); {;
+        target=LinalgTupleForLinear(linear,@shape,@strides);
+        sum := 0;
+        {@ sourceIndex=0; sourceIndex<@shape[@axis]; {;
+            sourceTuple := @target.Set(@axis,sourceIndex);
+            sourceLinear := 0;
+            {@ coordinate=1; coordinate<=@sourceTuple.Len(); {;
+                @sourceLinear += @sourceTuple[coordinate]*@strides[coordinate];
+            }; coordinate+=1 };
+            @sum += @matrix[@target[@axis]+1][sourceIndex+1]*@input[sourceLinear+1];
+        }; sourceIndex+=1 };
+        @output ~= @output.Push(sum);
+    }; linear+=1 };
+    LinalgShapedFromFlat(output,shape);
+};
+
+LinalgTargetFrames(value,targetValue) -> {;
+    targets=LinalgFrameIs(targetValue) ?: value[:slots].Map((slot)->targetValue) ?_ targetValue;
+    targets ? :Array ?: _ ?_ .Error("Transform target Frames must be a Frame or Array");
+    targets.Len()==value[:slots].Len() ?: targets ?_ .Error(@"Transform requires @{value[:slots].Len()} target Frames");
+};
+
+LinalgTransformed(value,targets) -> {;
+    components := value[:components]; changes := [];
+    {@ axis=1; axis<=@value[:slots].Len(); {;
+        slot=@value[:slots][axis]; target=LinalgRequireFrame(@targets[axis]);
+        slot[:spaceidentity]==target[:spaceidentity]
+          ?: _ ?_ .Error(@"Target Frame @{target[:name]} does not belong to tensor slot @{axis}'s VectorSpace");
+        change=LinalgChangeRows(slot[:frame],target);
+        applied=slot[:dual] ?: LinalgInverseRows(LinalgTransposeRows(change)) ?_ change;
+        @components ~= LinalgTransformAxis(@components,axis,applied);
+        @changes ~= @changes.Push(LinalgMatrixTensor(applied));
+    }; axis+=1 };
+    {= components=components, changes=changes };
+};
+
+LinalgTransform(value,targetValue) -> {;
+    exact=LinalgRequireTensor(value); targets=LinalgTargetFrames(exact,targetValue);
+    transformed=LinalgTransformed(exact,targets);
+    slots=exact[:slots].Map((slot,axis)->LinalgSlot(targets[axis],slot[:dual]));
+    lineage={=
+        identity=exact[:identity], identityKey=exact[:identitykey], equivalentTo=exact, origin=exact[:identity][:origin], viewOf=exact[:viewof],
+        transform={= kind=:coordinateChange, sources=exact[:slots].Map((slot)->slot[:frame]), targets=targets, matrices=transformed[:changes] }
+    };
+    lineage.identity=exact.identity;
+    LinalgTensorValue(transformed[:components],slots,lineage);
+};
+
+LinalgSnapshot(value) -> {;
+    snapshot={=
+        valueKind=value[:valuekind], schema=value[:schema], components=value[:components], slots=value[:slots],
+        identity=value[:identity], identityKey=value[:identitykey], representationIdentity=value[:representationidentity],
+        equivalentTo=value[:equivalentto], origin=value[:origin], transform=value[:transform],
+        viewOf=value[:viewof], derivedFrom=value[:derivedfrom]
+    };
+    snapshot.__type=value.__type; snapshot._mutable=1; snapshot._proto=value._proto;
+    LinalgSyncTensor(snapshot);
+    snapshot.identity=value.identity; snapshot.identityKey=value[:identitykey]; snapshot.slots=value.slots; snapshot.components=value.components;
+};
+
+LinalgTransformBang(value,targetValue) -> {;
+    exact=LinalgRequireTensor(value); identity=exact.identity; sourceSlots=exact[:slots];
+    targets=LinalgTargetFrames(exact,targetValue); previous=LinalgSnapshot(exact);
+    identity[:representations].Len()==1
+      ?: {;
+          @identity[:origin]=@previous;
+          reps=@identity[:representations];
+          @identity[:representations]=reps.Set(1,@previous);
+      }
+      ?_ _;
+    transformed=LinalgTransformed(exact,targets);
+    exact[:components]=transformed[:components];
+    exact[:representationidentity]={= valueKind=:tensorRepresentationIdentity };
+    exact[:slots]=exact[:slots].Map((slot,axis)->LinalgSlot(targets[axis],slot[:dual]));
+    exact[:equivalentto]=previous; exact[:origin]=identity[:origin];
+    exact[:transform]={= kind=:coordinateChange, sources=sourceSlots.Map((slot)->slot[:frame]), targets=targets, matrices=transformed[:changes] };
+    LinalgSyncTensor(exact);
+    exact.identity=identity; exact.identityKey=exact[:identitykey]; exact.slots=exact[:slots]; exact.components=exact[:components];
+    LinalgRecordRepresentation(identity,exact);
+};
+
+LinalgComponents(value)->LinalgRequireTensor(value)[:components];
+LinalgSameTensor(left,right)->LinalgRequireTensor(left)[:identitykey]==LinalgRequireTensor(right)[:identitykey] ?: 1 ?_ _;
+
+LinalgPair(firstValue,secondValue) -> {;
+    first=LinalgRequireTensor(firstValue); second=LinalgRequireTensor(secondValue);
+    covector=first.__type=="Covector" ?: first ?_ second.__type=="Covector" ?: second ?_ _;
+    vector=first.__type=="Vector" ?: first ?_ second.__type=="Vector" ?: second ?_ _;
+    covector!=_ && vector!=_ && first[:slots].Len()==1 && second[:slots].Len()==1
+      ?: _ ?_ .Error("Pair requires one Vector and one Covector");
+    covector[:slots][1][:spaceidentity]==vector[:slots][1][:spaceidentity]
+      ?: _ ?_ .Error("Vector and Covector must belong to the same VectorSpace");
+    aligned=vector[:slots][1][:frameidentity]==covector[:slots][1][:frameidentity] ?: vector ?_ LinalgTransform(vector,covector[:slots][1][:frame]);
+    LinalgDot(LinalgVectorValues(covector[:components]),LinalgVectorValues(aligned[:components]));
+};
+
+LinalgCompatible(left,right) -> left[:slots].Len()==right[:slots].Len() &&
+  left[:slots].All((slot,axis)->slot[:spaceidentity]==right[:slots][axis][:spaceidentity] && slot[:dual]==right[:slots][axis][:dual]);
+
+LinalgCombine(operation,leftValue,rightValue) -> {;
+    left=LinalgRequireTensor(leftValue); right=LinalgRequireTensor(rightValue);
+    LinalgCompatible(left,right) ?: _ ?_ .Error(@"@{operation} requires tensors with the same ordered VectorSpace slots and variance");
+    aligned=left[:slots].All((slot,axis)->slot[:frameidentity]==right[:slots][axis][:frameidentity])
+      ?: right ?_ LinalgTransform(right,left[:slots].Map((slot)->slot[:frame]));
+    a=left[:components].Flatten(); b=aligned[:components].Flatten();
+    values=[];
+    values=a.Map((entry,index)->operation==:add ?: entry+b[index] ?_ entry-b[index]);
+    LinalgTensorValue(LinalgShapedFromFlat(values.Flatten(),left[:components].Shape()),left[:slots],{= derivedFrom=[left,right] });
+};
+
+LinalgScale(operation,value,scalarValue,scalarFirst ?= _) -> {;
+    tensor=LinalgRequireTensor(value); scalar=LinalgExact(scalarValue,"Tensor scalar");
+    values=tensor[:components].Map((entry)->operation==:mul ?: entry*scalar ?_ scalarFirst ?: scalar/entry ?_ entry/scalar);
+    LinalgTensorValue(values,tensor[:slots],{= derivedFrom=[tensor] });
+};
+
+.TypeKnown(:LinalgTensor) ?: _ ?_ .TypeRegister({=
+    name=:LinalgTensor, nativeType=:map, validate=(value)->LinalgTensorIs(value), proto={= },
+    installs={=
+        ADD=[{= name=:LinalgTensorAddition, priority=400, prep=(left,right)->LinalgTensorIs(left)&&LinalgTensorIs(right), impl=(left,right)->LinalgCombine(:add,left,right) }],
+        SUB=[{= name=:LinalgTensorSubtraction, priority=400, prep=(left,right)->LinalgTensorIs(left)&&LinalgTensorIs(right), impl=(left,right)->LinalgCombine(:sub,left,right) }],
+        MUL=[{= name=:LinalgTensorScaling, priority=400, prep=(left,right)->LinalgTensorIs(left)!=LinalgTensorIs(right), impl=(left,right)->LinalgTensorIs(left) ?: LinalgScale(:mul,left,right) ?_ LinalgScale(:mul,right,left,1) }],
+        DIV=[{= name=:LinalgTensorDivision, priority=400, prep=(left,right)->LinalgTensorIs(left)&&!LinalgTensorIs(right), impl=(left,right)->LinalgScale(:div,left,right) }]
+    }
+});
+.TypeInstall(:LinalgTensor);
+
+linalgNamespace={= };
+linalgNamespace._mutable=1;
+linalgNamespace._proto={=
+    Rref=(self,value)->LinalgRref(value), Rank=(self,value)->LinalgRank(value),
+    Determinant=(self,value)->LinalgDeterminant(value), Inverse=(self,value)->LinalgInverse(value),
+    Solve=(self,first,second ?= _)->second==_ ?: LinalgSolve(first) ?_ LinalgSolveValues(first,second),
+    VectorSpace=(self,first,second ?= _,options ?= {= })->LinalgVectorSpace(first,second,options),
+    Frame=(self,space,specification ?= _,basis ?= _,options ?= {= })->LinalgFrame(space,specification,basis,options),
+    Tensor=(self,components,frames,variance ?= _,options ?= {= })->LinalgTensor(components,frames,variance,options),
+    Vector=(self,components,frame,options ?= {= })->LinalgVector(components,frame,options),
+    Covector=(self,components,frame,options ?= {= })->LinalgCovector(components,frame,options),
+    ChangeMatrix=(self,source,target)->LinalgChangeMatrix(source,target),
+    Transform=(self,value,target)->LinalgTransform(value,target),
+    Components=(self,value)->LinalgComponents(value), Pair=(self,left,right)->LinalgPair(left,right),
+    SameTensor=(self,left,right)->LinalgSameTensor(left,right)
+};
+linalgNamespace._proto["Transform!"]=(self,value,target)->LinalgTransformBang(value,target);
+linalgNamespace._proto["TRANSFORM!"]=(self,value,target)->LinalgTransformBang(value,target);
+
+.Host.RegisterValue("linalg",linalgNamespace,"Pure-RiX exact dense linear algebra and coordinate-aware tensors",["LinearAlgebra","Exact"]);
+.Host.RegisterShapedConstructor("Vector",(components,slots)->LinalgTypedShaped(:Vector,components,slots));
+.Host.RegisterShapedConstructor("Covector",(components,slots)->LinalgTypedShaped(:Covector,components,slots));
+.Host.RegisterShapedConstructor("Tensor",(components,slots)->LinalgTypedShaped(:Tensor,components,slots));
+.Host.RegisterMethod("Matrix","Rref",(value)->LinalgRref(value),"linalg","linalg");
+.Host.RegisterMethod("Matrix","Rank",(value)->LinalgRank(value),"linalg","linalg");
+.Host.RegisterMethod("Matrix","Determinant",(value)->LinalgDeterminant(value),"linalg","linalg");
+.Host.RegisterMethod("Matrix","Inverse",(value)->LinalgInverse(value),"linalg","linalg");
+`;
+
+  // rix/plugins/solve/solve.plugin.rix
+  var solve_plugin_default = `/**
+id: solve
+description: Pure-RiX exact Phase 1 linear-system classification and symbolic-spec solving.
+kind: rix
+mount: solve
+exports: [Classify, Linear, System]
+groups: [Solve, Symbolic, Exact]
+permissions: []
+requires: [rix.linear-algebra@1]
+provides: [rix.system-solver@1]
+schemas: [rix.solve.system-result@1]
+snapshot: false
+deterministic: true
+defaultEnabled: false
+**/
+
+SolveOption(options,key,fallback ?= _) -> (options ? :Map) && options.Has(key) ?: options[key] ?_ fallback;
+SolveExact(value,label ?= "solve value") -> {;
+    exact=value ~!: :Rational;
+    exact==_ ?: .Error(@"@{label} must be an exact Integer or Rational") ?_ exact;
+};
+SolveIsZero(value)->(value ~!: :Rational).Numerator()==0;
+SolveZeros(count)->{;
+    result:=[];
+    {@ index=1; index<=@count; {; @result ~= @result.Push(0); }; index+=1 };
+    result;
+};
+SolveArray(values)->{;
+    result:=[];
+    {@ index=1; index<=@values.Len(); {; @result ~= @result.Push(@values[index]); }; index+=1 };
+    result;
+};
+SolveIndexOf(values,requested)->{;
+    found:=_;
+    {@ index=1; index<=@values.Len() && @found==_; {;
+        @values[index]==@requested ?: {; @found ~= @index; } ?_ _;
+    }; index+=1 };
+    found;
+};
+SolveIncludes(values,requested)->SolveIndexOf(values,requested)!=_;
+
+SolveForm(coefficients,constant)->{= coefficients=coefficients, constant=constant };
+SolveScalar(form)->form[:coefficients].All((value)->SolveIsZero(value));
+SolveAddForms(left,right,sign ?= 1)->SolveForm(
+    left[:coefficients].Map((value,index)->value+sign*right[:coefficients][index]),
+    left[:constant]+sign*right[:constant]
+);
+SolveScaleForm(form,scalar)->SolveForm(form[:coefficients].Map((value)->value*scalar),form[:constant]*scalar);
+
+SolveLiteral(node)->{;
+    node[:kind]=="number" ?: _ ?_ .Error("Expected a symbolic number node");
+    node.Has("integer") ?: SolveExact(node[:integer],"symbolic literal") ?_ SolveExact(node[:value],"symbolic literal");
+};
+
+SolveLinearForm(node,unknowns,constants)->{;
+    kind=node[:kind];
+    kind=="number"
+      ?: SolveForm(SolveZeros(unknowns.Len()),SolveLiteral(node))
+      ?_ ((kind=="identifier" || kind=="outer")
+          ?: {;
+              name=@node[:name]; index=SolveIndexOf(@unknowns,name);
+              index!=_
+                ?: SolveForm(SolveZeros(@unknowns.Len()).Set(index,1),0)
+                ?_ (@constants.Has(name)
+                    ?: SolveForm(SolveZeros(@unknowns.Len()),@constants[name])
+                    ?_ .Error(@"Linear system needs an exact value for '@{name}'"));
+          }
+          ?_ (kind=="unary"
+              ?: (node[:op]=="-"
+                  ?: SolveScaleForm(SolveLinearForm(node[:expr],unknowns,constants),-1)
+                  ?_ .Error("Unsupported unary operation in a Phase 1 linear system"))
+              ?_ (kind=="binary"
+                  ?: {;
+                      operation=@node[:op];
+                      left=SolveLinearForm(@node[:left],@unknowns,@constants);
+                      right=SolveLinearForm(@node[:right],@unknowns,@constants);
+                      operation=="+" ?: SolveAddForms(left,right) ?_
+                      operation=="-" ?: SolveAddForms(left,right,-1) ?_
+                      operation=="*" ?: (SolveScalar(left)
+                          ?: SolveScaleForm(right,left[:constant])
+                          ?_ (SolveScalar(right)
+                              ?: SolveScaleForm(left,right[:constant])
+                              ?_ .Error("Nonlinear product found in a Phase 1 linear system"))) ?_
+                      operation=="/" ?: (SolveScalar(right) && !SolveIsZero(right[:constant])
+                          ?: SolveScaleForm(left,1/right[:constant])
+                          ?_ .Error("Linear-system division requires a nonzero exact scalar denominator")) ?_
+                      operation=="^" ?: {;
+                          exponent=SolveLiteral(@node[:right]);
+                          exponent.Denominator()==1 && exponent.Numerator()==1 ?: @left ?_
+                          (exponent.Denominator()==1 && exponent.Numerator()==0
+                              ?: SolveForm(SolveZeros(@unknowns.Len()),1)
+                              ?_ .Error("Nonlinear power found in a Phase 1 linear system"));
+                      }
+                      ?_ .Error(@"Unsupported symbolic operation '@{operation}' in a Phase 1 linear system");
+                  }
+                  ?_ .Error("Unsupported symbolic node in a Phase 1 linear system"))));
+};
+
+SolveDependencies(node)->{;
+    kind=node[:kind];
+    (kind=="identifier" || kind=="outer")
+      ?: [node[:name]]
+      ?_ (kind=="unary"
+          ?: SolveDependencies(node[:expr])
+          ?_ (kind=="binary"
+              ?: SolveDependencies(node[:left]).Concat(SolveDependencies(node[:right])).Unique()
+              ?_ []));
+};
+
+SolveValues(options)->{;
+    incoming=SolveOption(options,"values",{= });
+    incoming ? :Map ?: _ ?_ .Error("solve values must be a map");
+    incoming.ReduceKeys((result,name,value)->result.Set(name,SolveExact(value,@"solve value '@{name}'")),{= });
+};
+
+SolveRoles(spec,options)->{;
+    roles=.SpecRoles(spec,SolveOption(options,"roles",{= }));
+    outputs=SolveArray(roles[:outputs].Len()>0 ?: roles[:outputs] ?_ roles[:unassigned]);
+    outputs.Len()>0 ?: _ ?_ .Error("solve.System needs output roles or unassigned symbols to solve for");
+    {= roles=roles, outputs=outputs };
+};
+
+SolveConstants(statements,unknowns,initial)->{;
+    constants:=initial;
+    pending:=[];
+    {@ index=1; index<=@statements.Len(); {;
+        statement=@statements[index];
+        statement[:kind]=="define" && !SolveIncludes(@unknowns,statement[:target])
+          ?: {; @pending ~= @pending.Push(@statement); } ?_ _;
+    }; index+=1 };
+    {@ pass=1; pass<=@statements.Len() && @pending.Len()>0; {;
+        next:=[];
+        {@ index=1; index<=@pending.Len(); {;
+            statement=@pending[index];
+            dependencies=SolveDependencies(statement[:expr]);
+            ready=dependencies.All((name)->@constants.Has(name) && !SolveIncludes(@unknowns,name));
+            ready
+              ?: {;
+                  form=SolveLinearForm(@statement[:expr],@unknowns,@constants);
+                  SolveScalar(form) ?: _ ?_ .Error("Symbolic constant definition is not scalar");
+                  @constants[@statement[:target]]=form[:constant];
+              }
+              ?_ {; @next ~= @next.Push(@statement); };
+        }; index+=1 };
+        @pending ~= next;
+    }; pass+=1 };
+    pending.Len()==0
+      ?: constants
+      ?_ .Error(@"Unresolved symbolic definitions: @{pending.Map((statement)->statement[:target]).Join(", ")}");
+};
+
+SolveSystemResult(spec,roles,outputs,equationCount,linear)->{;
+    particular=linear[:particular];
+    solution=particular==_
+      ?: _
+      ?_ {;
+          values=@particular.Flatten(); namedSolution={= };
+          {@ index=1; index<=@outputs.Len(); {; @namedSolution[@outputs[index]]=@values[index]; }; index+=1 };
+          namedSolution;
+      };
+    result={=
+        valueKind=:systemSolution, schema="rix.solve.system-result@1",
+        status=linear[:status], classification="linearEqualities", exact=1,
+        spec=spec, unknowns=outputs, solution=solution, solutionVector=particular,
+        equations=equationCount, linearResult=linear, roles=roles
+    };
+    result.__type="SystemSolution";
+    result;
+};
+
+SolveClassify(spec)->{;
+    inspected=.InspectSpec(spec);
+    statements=SolveArray(inspected[:statements]); operations:=[];
+    {@ index=1; index<=@statements.Len(); {;
+        statement=@statements[index];
+        @operations ~= @operations.Push(statement[:kind]=="define" ?: "define" ?_ statement[:expr][:op]);
+    }; index+=1 };
+    hasInequality=operations.Any((operation)->operation=="<" || operation=="<=" || operation==">" || operation==">=");
+    hasEquality=operations.Includes("==") || operations.Includes("define");
+    {= kind=hasInequality ?: "constrainedSystem" ?_ (hasEquality ?: "equalitySystem" ?_ "expression"),
+       linearCandidate=hasInequality ?: _ ?_ 1, operations=operations };
+};
+
+SolveDefinitionEquation(statement,outputs,constants)->SolveAddForms(
+    SolveLinearForm({= kind="identifier", name=statement[:target] },outputs,constants),
+    SolveLinearForm(statement[:expr],outputs,constants),-1
+);
+SolveConstraintEquation(statement,outputs,constants)->{;
+    expression=statement[:expr];
+    expression[:op]=="=="
+      ?: SolveAddForms(
+          SolveLinearForm(expression[:left],outputs,constants),
+          SolveLinearForm(expression[:right],outputs,constants),-1
+      )
+      ?_ .Error(@"Phase 1 solve.System supports exact equalities, not '@{expression[:op]}'");
+};
+SolveEquation(statement,outputs,constants)->
+    (statement[:kind]=="define" && SolveIncludes(outputs,statement[:target]))
+      ?: SolveDefinitionEquation(statement,outputs,constants)
+      ?_ ((statement[:kind]=="constraint") ?: SolveConstraintEquation(statement,outputs,constants) ?_ _);
+
+SolveSystem(spec,options ?= {= })->{;
+    inspected=.InspectSpec(spec);
+    inspected[:kind]=="systemSpec" ?: _ ?_ .Error("solve.System expects a symbolic specification");
+    roleInfo=SolveRoles(spec,options); outputs=roleInfo[:outputs]; statements=SolveArray(inspected[:statements]);
+    constants=SolveConstants(statements,outputs,SolveValues(options));
+    equations:=[];
+    {@ index=1; index<=@statements.Len(); {;
+        candidate=SolveEquation(@statements[index],@outputs,@constants);
+        candidate ? :Map ?: {; @equations ~= @equations.Push(@candidate); } ?_ _;
+    }; index+=1 };
+    equations.Len()>0 ?: _ ?_ .Error("solve.System found no equations");
+    matrix=equations.Map((equation)->equation[:coefficients]);
+    bounds=equations.Map((equation)->-equation[:constant]);
+    linear=.linalg.Solve(matrix,bounds);
+    SolveSystemResult(spec,roleInfo[:roles],outputs,equations.Len(),linear);
+};
+
+SolveLinear(matrix,bounds)->{;
+    linear=.linalg.Solve(matrix,bounds);
+    result={=
+        valueKind=:systemSolution, schema="rix.solve.system-result@1",
+        status=linear[:status], classification="linearMatrix", exact=1,
+        solution=linear[:particular], linearResult=linear
+    };
+    result.__type="SystemSolution";
+    result;
+};
+
+solveNamespace={= };
+solveNamespace._proto={=
+    Classify=(self,spec)->SolveClassify(spec),
+    Linear=(self,matrix,bounds)->SolveLinear(matrix,bounds),
+    System=(self,spec,options ?= {= })->SolveSystem(spec,options)
+};
+.Host.RegisterValue("solve",solveNamespace,"Pure-RiX exact linear-system classification and symbolic-spec solving",["Solve","Symbolic","Exact"]);
+`;
+
+  // rix/plugins/geometry/geometry.plugin.rix
+  var geometry_plugin_default = `/**
+id: geometry
+description: Pure-RiX exact ruler-and-compass geometry with explicit intersections and portable Graphics snapshots.
+kind: rix
+mount: geometry
+exports: [Point, Line, Circle, Midpoint, PerpendicularBisector, Circumcircle, Intersect, Points, Status, Draw]
+groups: [Geometry, Graphics, Exact]
+permissions: []
+provides: [rix.geometry@1, rix.geometry.intersection@1]
+schemas: [rix.geometry@1, rix.geometry.intersection@1]
+snapshot: true
+deterministic: true
+defaultEnabled: false
+**/
+
+GeometryOption(options, key, fallback ?= _) -> options.Has(key) ?: options[key] ?_ fallback;
+
+GeometryExact(value, label) -> {;
+    exact = value ~!: :Rational;
+    exact == _ ?: .Error(@"@{label} must be an exact integer or rational") ?_ exact;
+};
+
+GeometryIsZero(value) -> (value ~!: :Rational).Numerator()==0;
+
+GeometryRequire(value, kind ?= _, label ?= "geometry value") -> {;
+    valid = (value ? :Map) && value.Has("schema") && value[:schema] == "rix.geometry@1";
+    valid && (kind == _ || value[:kind] == kind)
+      ?: value
+      ?_ .Error(@"@{label} must be a geometry @{kind == _ ?: "value" ?_ kind}");
+};
+
+GeometryProvenance(operation, inputs, details ?= _) -> {=
+    operation=operation,
+    inputs=inputs,
+    details=details
+};
+
+GeometryValue(kind, fields) -> .DeepMutable({=
+    type="geometry",
+    kind=kind,
+    schema="rix.geometry@1"
+}.Merge(fields), _);
+
+GeometryPointValue(x, y, operation, inputs, metadata ?= _, style ?= _) -> GeometryValue(:point, {=
+    x=x,
+    y=y,
+    coordinates=[x, y],
+    metadata=metadata,
+    style=style,
+    provenance=[GeometryProvenance(operation, inputs)]
+});
+
+GeometryPoint(first, second ?= _, options ?= {= }) -> {;
+    settings = ((first ? :Map) && second == _) ?: first ?_ options;
+    coordinates = ((first ? :Array) && second == _)
+      ?: first
+      ?_ ((first ? :Map) && second == _)
+           ?: [GeometryOption(settings, "x"), GeometryOption(settings, "y")]
+           ?_ [first, second];
+    coordinates.Len() == 2 ?: _ ?_ .Error("geometry.Point coordinates must contain x and y");
+    x = GeometryExact(coordinates[1], "geometry.Point x");
+    y = GeometryExact(coordinates[2], "geometry.Point y");
+    GeometryPointValue(x, y, "Point", [x, y], GeometryOption(settings, "metadata"), GeometryOption(settings, "style"));
+};
+
+GeometrySamePoint(left, right) -> left[:x] == right[:x] && left[:y] == right[:y];
+
+GeometryLineValue(a, b, c, through, operation, inputs, metadata ?= _, style ?= _) -> {;
+    (GeometryIsZero(a) && GeometryIsZero(b))
+      ?: .Error(@"@{operation} cannot produce a degenerate line")
+      ?_ GeometryValue(:line, {=
+          a=a,
+          b=b,
+          c=c,
+          through=through,
+          metadata=metadata,
+          style=style,
+          provenance=[GeometryProvenance(operation, inputs)]
+      });
+};
+
+GeometryLine(first, second ?= _, options ?= {= }) -> {;
+    settings = ((first ? :Map) && second == _) ?: first ?_ options;
+    firstPoint = GeometryRequire(GeometryOption(settings, "first", first), :point, "geometry.Line first point");
+    secondPoint = GeometryRequire(GeometryOption(settings, "second", second), :point, "geometry.Line second point");
+    GeometrySamePoint(firstPoint, secondPoint) ?: .Error("geometry.Line requires two distinct points") ?_ _;
+    a = firstPoint[:y] - secondPoint[:y];
+    b = secondPoint[:x] - firstPoint[:x];
+    c = firstPoint[:x] * secondPoint[:y] - secondPoint[:x] * firstPoint[:y];
+    GeometryLineValue(a, b, c, [firstPoint, secondPoint], "Line", [firstPoint, secondPoint],
+        GeometryOption(settings, "metadata"), GeometryOption(settings, "style"));
+};
+
+GeometrySquaredDistance(first, second) -> (second[:x] - first[:x])^2 + (second[:y] - first[:y])^2;
+
+GeometryCircleValue(center, radiusSquared, through, operation, inputs, metadata ?= _, style ?= _) -> {;
+    radiusSquared > 0 ?: _ ?_ .Error(@"@{operation} requires a positive radius");
+    GeometryValue(:circle, {=
+        center=center,
+        radiusSquared=radiusSquared,
+        through=through,
+        metadata=metadata,
+        style=style,
+        provenance=[GeometryProvenance(operation, inputs)]
+    });
+};
+
+GeometryCircle(first, second ?= _, options ?= {= }) -> {;
+    settings = ((first ? :Map) && second == _) ?: first ?_ options;
+    center = GeometryRequire(GeometryOption(settings, "center", first), :point, "geometry.Circle center");
+    candidate = GeometryOption(settings, "through", second);
+    explicitRadius = GeometryOption(settings, "radius");
+    explicitSquared = GeometryOption(settings, "radiussquared");
+    specificationCount = (candidate != _ ?: 1 ?_ 0) + (explicitRadius != _ ?: 1 ?_ 0) + (explicitSquared != _ ?: 1 ?_ 0);
+    specificationCount == 1 ?: _ ?_ .Error("geometry.Circle requires exactly one through point, radius, or radiusSquared");
+    through = ((candidate ? :Map) && candidate.Has("schema"))
+      ?: GeometryRequire(candidate, :point, "geometry.Circle through point")
+      ?_ _;
+    radiusSquared = through != _
+      ?: GeometrySquaredDistance(center, through)
+      ?_ explicitSquared != _
+           ?: GeometryExact(explicitSquared, "geometry.Circle radiusSquared")
+           ?_ GeometryExact(explicitRadius != _ ?: explicitRadius ?_ candidate, "geometry.Circle radius")^2;
+    GeometryCircleValue(center, radiusSquared, through, "Circle",
+        through != _ ?: [center, through] ?_ [center, radiusSquared],
+        GeometryOption(settings, "metadata"), GeometryOption(settings, "style"));
+};
+
+GeometryMidpoint(first, second ?= _) -> {;
+    settings = ((first ? :Map) && second == _) ?: first ?_ {= first=first, second=second };
+    firstPoint = GeometryRequire(settings[:first], :point, "geometry.Midpoint first point");
+    secondPoint = GeometryRequire(settings[:second], :point, "geometry.Midpoint second point");
+    GeometryPointValue((firstPoint[:x] + secondPoint[:x]) / 2, (firstPoint[:y] + secondPoint[:y]) / 2,
+        "Midpoint", [firstPoint, secondPoint]);
+};
+
+GeometryPerpendicularBisector(first, second ?= _, options ?= {= }) -> {;
+    settings = ((first ? :Map) && second == _) ?: first ?_ options.Merge({= first=first, second=second });
+    firstPoint = GeometryRequire(settings[:first], :point, "geometry.PerpendicularBisector first point");
+    secondPoint = GeometryRequire(settings[:second], :point, "geometry.PerpendicularBisector second point");
+    GeometrySamePoint(firstPoint, secondPoint) ?: .Error("geometry.PerpendicularBisector requires two distinct points") ?_ _;
+    middle = GeometryMidpoint(firstPoint, secondPoint);
+    a = secondPoint[:x] - firstPoint[:x];
+    b = secondPoint[:y] - firstPoint[:y];
+    c = -(a * middle[:x] + b * middle[:y]);
+    GeometryLineValue(a, b, c, [middle], "PerpendicularBisector", [firstPoint, secondPoint],
+        GeometryOption(settings, "metadata"), GeometryOption(settings, "style"));
+};
+
+GeometryIntersectionValue(status, points, left, right, diagnostic ?= _) -> .DeepMutable({=
+    type="geometry_intersection",
+    kind="intersection",
+    schema="rix.geometry.intersection@1",
+    status=status,
+    points=points,
+    exact=status == "unsupported" ?: 0 ?_ 1,
+    diagnostic=diagnostic,
+    provenance=[GeometryProvenance("Intersect", [left, right], diagnostic)]
+}, _);
+
+GeometryIntersectLines(left, right) -> {;
+    determinant = left[:a] * right[:b] - right[:a] * left[:b];
+    GeometryIsZero(determinant)
+      ?: {;
+          ac = @left[:a] * @right[:c] - @right[:a] * @left[:c];
+          bc = @left[:b] * @right[:c] - @right[:b] * @left[:c];
+          (GeometryIsZero(ac) && GeometryIsZero(bc))
+            ?: GeometryIntersectionValue("coincident", [], @left, @right, "Coincident lines have infinitely many intersections")
+            ?_ GeometryIntersectionValue("parallel", [], @left, @right, "Parallel lines do not intersect");
+      }
+      ?_ {;
+          x = (@left[:b] * @right[:c] - @right[:b] * @left[:c]) / @determinant;
+          y = (@left[:c] * @right[:a] - @right[:c] * @left[:a]) / @determinant;
+          point = GeometryPointValue(x, y, "LineIntersection", [@left, @right]);
+          GeometryIntersectionValue("one", [point], @left, @right);
+      };
+};
+
+GeometryIntersect(first, second ?= _) -> {;
+    settings = ((first ? :Map) && first.Has("left") && second == _) ?: first ?_ {= left=first, right=second };
+    left = GeometryRequire(settings[:left], _, "geometry.Intersect left value");
+    right = GeometryRequire(settings[:right], _, "geometry.Intersect right value");
+    (left[:kind] == :line && right[:kind] == :line)
+      ?: GeometryIntersectLines(left, right)
+      ?_ GeometryIntersectionValue("unsupported", [], left, right,
+          @"Phase 1 geometry.Intersect supports line-line intersections, not @{left[:kind]}-@{right[:kind]}");
+};
+
+GeometryRequireIntersection(value, label) -> ((value ? :Map) && value.Has("schema") && value[:schema] == "rix.geometry.intersection@1")
+  ?: value
+  ?_ .Error(@"@{label} requires a geometry intersection result");
+
+GeometryPoints(intersection) -> GeometryRequireIntersection(intersection, "geometry.Points")[:points];
+GeometryStatus(intersection) -> GeometryRequireIntersection(intersection, "geometry.Status")[:status];
+
+GeometryCircumcircle(first, second ?= _, third ?= _, options ?= {= }) -> {;
+    settings = ((first ? :Map) && second == _)
+      ?: first
+      ?_ options.Merge({= first=first, second=second, third=third });
+    firstPoint = GeometryRequire(settings[:first], :point, "geometry.Circumcircle first point");
+    secondPoint = GeometryRequire(settings[:second], :point, "geometry.Circumcircle second point");
+    thirdPoint = GeometryRequire(settings[:third], :point, "geometry.Circumcircle third point");
+    firstBisector = GeometryPerpendicularBisector(firstPoint, secondPoint);
+    secondBisector = GeometryPerpendicularBisector(firstPoint, thirdPoint);
+    centerResult = GeometryIntersect(firstBisector, secondBisector);
+    centerResult[:status] == "one"
+      ?: _
+      ?_ .Error(@"geometry.Circumcircle requires three non-collinear points: @{centerResult[:diagnostic]}");
+    center = centerResult[:points][1];
+    GeometryCircleValue(center, GeometrySquaredDistance(center, firstPoint), firstPoint, "Circumcircle",
+        [firstPoint, secondPoint, thirdPoint, firstBisector, secondBisector, centerResult],
+        GeometryOption(settings, "metadata"), GeometryOption(settings, "style"));
+};
+
+GeometryNumericSequence(value, length, label) -> {;
+    value ? :Array ?: _ ?_ .Error(@"@{label} must be a sequence");
+    value.Len() == length ?: _ ?_ .Error(@"@{label} must contain @{length} values");
+    value.Map((item) -> GeometryExact(item, label));
+};
+
+GeometryStyle(supplied, defaults) -> supplied == _
+  ?: defaults
+  ?_ (supplied ? :Map) ?: defaults.Merge(supplied) ?_ .Error("geometry style must be a map");
+
+GeometryLineEndpoints(line, view) -> {;
+    xmin = view[1]; ymin = view[2]; xmax = view[3]; ymax = view[4];
+    a = line[:a]; b = line[:b]; c = line[:c];
+    points := [];
+    addPoint = (x, y) -> {;
+        inside = x >= @xmin && x <= @xmax && y >= @ymin && y <= @ymax;
+        duplicate = @points.Filter((point) -> point[1] == @x && point[2] == @y).Len() > 0;
+        (inside && !duplicate) ?: {; @points ~= @points.Push([@x, @y]); } ?_ _;
+    };
+    !GeometryIsZero(b) ?: {; @addPoint(@xmin, -(@a*@xmin+@c)/@b); @addPoint(@xmax, -(@a*@xmax+@c)/@b); } ?_ _;
+    !GeometryIsZero(a) ?: {; @addPoint(-(@b*@ymin+@c)/@a, @ymin); @addPoint(-(@b*@ymax+@c)/@a, @ymax); } ?_ _;
+    points.Slice(1, 3);
+};
+
+GeometryDrawableItems(value) -> {;
+    source = value ? :Array ?: value ?_ [value];
+    items := [];
+    {@ index = 1; index <= @source.Len(); {;
+        item = @source[index];
+        isIntersection = (item ? :Map) && item.Has("schema") && item[:schema] == "rix.geometry.intersection@1";
+        isGeometry = (item ? :Map) && item.Has("schema") && item[:schema] == "rix.geometry@1";
+        (isIntersection || isGeometry)
+          ?: _
+          ?_ .Error(@"geometry.Draw object @{index} must be geometry or an intersection result");
+        (isIntersection && item[:status] == "one")
+          ?: {; @items ~= @items.Concat(@item[:points]); }
+          ?_ {; @items ~= @items.Push(@item); };
+    }; index += 1 };
+    items;
+};
+
+GeometryDraw(objects, options ?= {= }) -> {;
+    settings = ((objects ? :Map) && objects.Has("objects")) ?: objects ?_ options.Merge({= objects=objects });
+    items = GeometryDrawableItems(settings[:objects]);
+    size = GeometryNumericSequence(GeometryOption(settings, "size", [640, 480]), 2, "geometry.Draw size");
+    view = GeometryNumericSequence(GeometryOption(settings, "view", [-10, -10, 10, 10]), 4, "geometry.Draw view");
+    xmin = view[1]; ymin = view[2]; xmax = view[3]; ymax = view[4];
+    (xmax > xmin && ymax > ymin) ?: _ ?_ .Error("geometry.Draw view must satisfy xmin < xmax and ymin < ymax");
+    (size[1] > 0 && size[2] > 0) ?: _ ?_ .Error("geometry.Draw size must be positive");
+    scale = .Min(size[1] / (xmax - xmin), size[2] / (ymax - ymin));
+    offsetX = (size[1] - (xmax - xmin) * scale) / 2;
+    offsetY = (size[2] - (ymax - ymin) * scale) / 2;
+    project = (point) -> [@offsetX + (point[1] - @xmin) * @scale, @size[2] - @offsetY - (point[2] - @ymin) * @scale];
+    children := [];
+    unresolved := 0;
+    {@ index = 1; index <= @items.Len(); {;
+        item = @items[index];
+        isIntersection = item[:schema] == "rix.geometry.intersection@1";
+        isIntersection
+          ?: {;
+              @unresolved += 1;
+              @children ~= @children.Push(.Graphics.Text([12, 20 + @unresolved * 18], @item[:diagnostic],
+                  {= fill="#b91c1c", size=13 }));
+          }
+          ?_ item[:kind] == :point
+               ?: {;
+                   center = [@item[:x], @item[:y]] |> @project;
+                   @children ~= @children.Push(.Graphics.Circle(center, 5,
+                       GeometryStyle(@item[:style], {= fill="#6d28d9", stroke="#ffffff", width=2 })));
+               }
+               ?_ item[:kind] == :line
+                    ?: {;
+                        endpoints = GeometryLineEndpoints(@item, @view);
+                        endpoints.Len() == 2
+                          ?: {; @children ~= @children.Push(.Graphics.Path(@endpoints.Map(@project),
+                              GeometryStyle(@item[:style], {= stroke="#2563eb", width=2, fill="none" }))); }
+                          ?_ _;
+                    }
+                    ?_ item[:kind] == :circle
+                         ?: {;
+                             center = [@item[:center][:x], @item[:center][:y]] |> @project;
+                             radius = .Sqrt(@item[:radiusSquared]) * @scale;
+                             @children ~= @children.Push(.Graphics.Circle(center, radius,
+                                 GeometryStyle(@item[:style], {= fill="none", stroke="#d97706", width=2 })));
+                         }
+                         ?_ .Error(@"geometry.Draw does not support geometry kind '@{item[:kind]}'");
+    }; index += 1 };
+    .Graphics.Graphic(size, children, {=
+        source="rix.geometry@1",
+        projection="uniform-fit",
+        unresolved=unresolved
+    });
+};
+
+geometryNamespace = {= };
+geometryNamespace._proto = {=
+    Point=(self, first, second ?= _, options ?= {= })->GeometryPoint(first, second, options),
+    Line=(self, first, second ?= _, options ?= {= })->GeometryLine(first, second, options),
+    Circle=(self, first, second ?= _, options ?= {= })->GeometryCircle(first, second, options),
+    Midpoint=(self, first, second ?= _)->GeometryMidpoint(first, second),
+    PerpendicularBisector=(self, first, second ?= _, options ?= {= })->GeometryPerpendicularBisector(first, second, options),
+    Circumcircle=(self, first, second ?= _, third ?= _, options ?= {= })->GeometryCircumcircle(first, second, third, options),
+    Intersect=(self, first, second ?= _)->GeometryIntersect(first, second),
+    Points=(self, intersection)->GeometryPoints(intersection),
+    Status=(self, intersection)->GeometryStatus(intersection),
+    Draw=(self, objects, options ?= {= })->GeometryDraw(objects, options)
+};
+.Host.RegisterValue("geometry", geometryNamespace, "Pure exact ruler-and-compass geometry and portable Graphics snapshots", ["Geometry", "Graphics", "Exact"]);
+`;
+
+  // rix/plugins/plot/plot.plugin.rix
+  var plot_plugin_default = `/**
+id: plot
+description: Pure-RiX exact polynomial sampling that lowers to portable core Graphics scenes.
+kind: rix
+mount: plot
+exports: [Polynomial]
+groups: [Plot, Graphics, Exact]
+permissions: []
+provides: [rix.plot@1]
+snapshot: true
+deterministic: true
+defaultEnabled: false
+**/
+
+PlotOption(options, key, fallback ?= _) -> options.Has(key) ?: options[key] ?_ fallback;
+
+PlotExact(value, label) -> {;
+    exact = value ~!: :Rational;
+    exact == _ ?: .Error(@"@{label} must be an exact Integer or Rational") ?_ exact;
+};
+
+PlotExactArray(values, label) -> {;
+    values ? :Array ?: _ ?_ .Error(@"@{label} must be an Array");
+    values.Map((value) -> PlotExact(value, @label));
+};
+
+PlotPositiveSamples(value) -> {;
+    samples = value ~!: :Integer;
+    (samples >= 2 && samples <= 10000)
+      ?: samples
+      ?_ .Error("Polynomial plot samples must be between 2 and 10000");
+};
+
+PlotStyle(settings, fallbackStroke, fallbackWidth) -> {;
+    supplied = PlotOption(settings, "style", {= });
+    supplied ? :Map ?: _ ?_ .Error("Polynomial plot style must be a map");
+    style = {= stroke=fallbackStroke, width=fallbackWidth, fill="none" }.Merge(supplied);
+    style = settings.Has("stroke") ?: style.Merge({= stroke=settings[:stroke] }) ?_ style;
+    style = settings.Has("width") ?: style.Merge({= width=settings[:width] }) ?_ style;
+    style;
+};
+
+PlotEvaluate(coefficients, x) -> coefficients.Reduce((total, coefficient) -> total * @x + coefficient, 0);
+
+PlotReadSeries(coefficientsValue, settings, index, samples, xMin, xMax, primary) -> {;
+    coefficients = PlotExactArray(coefficientsValue, @"Polynomial plot series @{index} coefficients");
+    coefficients.Len() >= 2 ?: _ ?_ .Error(@"Polynomial plot series @{index} requires at least two coefficients");
+    data := [];
+    {@ sampleIndex = 1; sampleIndex <= @samples; {;
+        x = @xMin + (@xMax - @xMin) * (sampleIndex - 1) / (@samples - 1);
+        @data ~= @data.Push([x, PlotEvaluate(@coefficients, x)]);
+    }; sampleIndex += 1 };
+    {=
+        data=data,
+        style=PlotStyle(settings, primary ?: "#2563eb" ?_ "#b45309", primary ?: 3 ?_ 2),
+        label=PlotOption(settings, "label")
+    };
+};
+
+PlotReadMark(entry, index) -> {;
+    entry ? :Map ?: _ ?_ .Error(@"Polynomial plot mark @{index} must be a map");
+    point = PlotOption(entry, "point");
+    point ? :Array ?: _ ?_ .Error(@"Polynomial plot mark @{index} point must be an Array");
+    point.Len() == 2 ?: _ ?_ .Error(@"Polynomial plot mark @{index} point must contain x and y coordinates");
+    {=
+        point=[PlotExact(point[1], @"Polynomial plot mark @{index} x"), PlotExact(point[2], @"Polynomial plot mark @{index} y")],
+        label=PlotOption(entry, "label"),
+        style=PlotOption(entry, "style", {= fill="#be123c", stroke="#fff", width=2 }),
+        labelStyle=PlotOption(entry, "labelstyle", {= size=13 }),
+        radius=PlotExact(PlotOption(entry, "radius", 5), @"Polynomial plot mark @{index} radius")
+    };
+};
+
+PlotReadTick(entry, index) -> {;
+    entry ? :Map ?: _ ?_ .Error(@"Polynomial plot tick @{index} must be a map");
+    {=
+        x=PlotExact(PlotOption(entry, "x"), @"Polynomial plot tick @{index} x"),
+        label=PlotOption(entry, "label"),
+        style=PlotOption(entry, "style", {= stroke="#334155", width=2 }),
+        labelStyle=PlotOption(entry, "labelstyle", {= size=13, anchor="middle" })
+    };
+};
+
+PlotFixedYBounds(value) -> {;
+    value ? :Array ?: _ ?_ .Error("Polynomial plot yDomain must be an Array");
+    value.Len() == 2 ?: _ ?_ .Error("Polynomial plot yDomain must have a lower and upper bound");
+    lower = PlotExact(value[1], "Polynomial plot yDomain lower bound");
+    upper = PlotExact(value[2], "Polynomial plot yDomain upper bound");
+    lower < upper ?: [lower, upper] ?_ .Error("Polynomial plot yDomain must increase");
+};
+
+PlotAutomaticYBounds(series, marks) -> {;
+    values := [0];
+    {@ seriesIndex = 1; seriesIndex <= @series.Len(); {;
+        points = @series[seriesIndex][:data];
+        {@ pointIndex = 1; pointIndex <= @points.Len(); {;
+            @values ~= @values.Push(@points[pointIndex][2]);
+        }; pointIndex += 1 };
+    }; seriesIndex += 1 };
+    {@ markIndex = 1; markIndex <= @marks.Len(); {;
+        @values ~= @values.Push(@marks[markIndex][:point][2]);
+    }; markIndex += 1 };
+    lower := values[1];
+    upper := values[1];
+    {@ valueIndex = 2; valueIndex <= @values.Len(); {;
+        @lower ~= @values[valueIndex] < @lower ?: @values[valueIndex] ?_ @lower;
+        @upper ~= @values[valueIndex] > @upper ?: @values[valueIndex] ?_ @upper;
+    }; valueIndex += 1 };
+    equal = lower == upper;
+    lower = equal ?: lower - 1 ?_ lower;
+    upper = equal ?: upper + 1 ?_ upper;
+    padding = (upper - lower) * 2/25;
+    [lower - padding, upper + padding];
+};
+
+PlotPolynomial(coefficientsValue, domain, options ?= {= }) -> {;
+    coefficients = PlotExactArray(coefficientsValue, "Polynomial coefficients");
+    coefficients.Len() >= 2 ?: _ ?_ .Error("Plot.Polynomial requires at least two coefficients");
+    domain ? :Array ?: _ ?_ .Error("Polynomial plot domain must be an Array");
+    domain.Len() == 2 ?: _ ?_ .Error("Polynomial plot domain must have a lower and upper bound");
+    xMin = PlotExact(domain[1], "Polynomial plot lower bound");
+    xMax = PlotExact(domain[2], "Polynomial plot upper bound");
+    xMin < xMax ?: _ ?_ .Error("Polynomial plot domain must increase");
+    options ? :Map ?: _ ?_ .Error("Polynomial plot options must be a map");
+
+    size = PlotOption(options, "size", [640, 360]);
+    size ? :Array ?: _ ?_ .Error("Polynomial plot size must be an Array");
+    size.Len() == 2 ?: _ ?_ .Error("Polynomial plot size must contain positive width and height");
+    width = PlotExact(size[1], "Polynomial plot size 1");
+    height = PlotExact(size[2], "Polynomial plot size 2");
+    (width > 0 && height > 0) ?: _ ?_ .Error("Polynomial plot size must contain positive width and height");
+    samples = PlotPositiveSamples(PlotOption(options, "samples", 161));
+    margin = PlotExact(PlotOption(options, "margin", 36), "Polynomial plot margin");
+    (margin >= 0 && margin * 2 < .Min(width, height)) ?: _ ?_ .Error("Polynomial plot margin is too large for its size");
+
+    series := [PlotReadSeries(coefficients, options, 1, samples, xMin, xMax, 1)];
+    extraSeries = PlotOption(options, "series", []);
+    extraSeries ? :Array ?: _ ?_ .Error("Polynomial plot series must be an Array");
+    {@ index = 1; index <= @extraSeries.Len(); {;
+        entry = @extraSeries[index];
+        entry ? :Map ?: _ ?_ .Error(@"Polynomial plot series @{index + 1} must be a map");
+        entry.Has("coefficients") ?: _ ?_ .Error(@"Polynomial plot series @{index + 1} requires coefficients");
+        @series ~= @series.Push(PlotReadSeries(entry[:coefficients], entry, index + 1, @samples, @xMin, @xMax, 0));
+    }; index += 1 };
+
+    marks := [];
+    markEntries = PlotOption(options, "marks", []);
+    markEntries ? :Array ?: _ ?_ .Error("Polynomial plot marks must be an Array");
+    {@ index = 1; index <= @markEntries.Len(); {;
+        @marks ~= @marks.Push(PlotReadMark(@markEntries[index], index));
+    }; index += 1 };
+
+    ticks := [];
+    tickEntries = PlotOption(options, "ticks", []);
+    tickEntries ? :Array ?: _ ?_ .Error("Polynomial plot ticks must be an Array");
+    {@ index = 1; index <= @tickEntries.Len(); {;
+        @ticks ~= @ticks.Push(PlotReadTick(@tickEntries[index], index));
+    }; index += 1 };
+
+    yBounds = options.Has("ydomain") ?: PlotFixedYBounds(options[:ydomain]) ?_ PlotAutomaticYBounds(series, marks);
+    yMin = yBounds[1];
+    yMax = yBounds[2];
+    toPoint = (point) -> [
+        @margin + (point[1] - @xMin) / (@xMax - @xMin) * (@width - @margin * 2),
+        @height - @margin - (point[2] - @yMin) / (@yMax - @yMin) * (@height - @margin * 2)
+    ];
+    axisStyle = {= stroke="#64748b", width=1, dash="3 3", fill="none" };
+    children := [];
+    (yMin <= 0 && yMax >= 0)
+      ?: {; @children ~= @children.Push(.Graphics.Path([[@xMin, 0] |> @toPoint, [@xMax, 0] |> @toPoint], @axisStyle)); }
+      ?_ _;
+    (xMin <= 0 && xMax >= 0)
+      ?: {; @children ~= @children.Push(.Graphics.Path([[0, @yMin] |> @toPoint, [0, @yMax] |> @toPoint], @axisStyle)); }
+      ?_ _;
+
+    {@ index = 1; index <= @series.Len(); {;
+        @children ~= @children.Push(.Graphics.Path(@series[index][:data].Map(@toPoint), @series[index][:style]));
+    }; index += 1 };
+    {@ index = 1; index <= @ticks.Len(); {;
+        tick = @ticks[index];
+        position = [tick[:x], 0] |> @toPoint;
+        @children ~= @children.Push(.Graphics.Path([[position[1], position[2] - 5], [position[1], position[2] + 5]], tick[:style]));
+        tick[:label] != _
+          ?: {; @children ~= @children.Push(.Graphics.Text([@position[1], @position[2] + 20], @tick[:label], @tick[:labelstyle])); }
+          ?_ _;
+    }; index += 1 };
+    {@ index = 1; index <= @marks.Len(); {;
+        mark = @marks[index];
+        position = mark[:point] |> @toPoint;
+        @children ~= @children.Push(.Graphics.Circle(position, mark[:radius], mark[:style]));
+        mark[:label] != _
+          ?: {; @children ~= @children.Push(.Graphics.Text([@position[1] + 9, @position[2] - 9], @mark[:label], @mark[:labelstyle])); }
+          ?_ _;
+    }; index += 1 };
+
+    labeled := series.Filter((entry) -> entry[:label] != _);
+    {@ index = 1; index <= @labeled.Len(); {;
+        entry = @labeled[index];
+        y = @margin + 16 + (index - 1) * 18;
+        @children ~= @children.Push(.Graphics.Path([[@margin + 2, y - 5], [@margin + 18, y - 5]], entry[:style]));
+        @children ~= @children.Push(.Graphics.Text([@margin + 24, y], entry[:label], {= size=13 }));
+    }; index += 1 };
+
+    .Graphics.Graphic([width, height], children, {= kind="polynomial_plot", schema="rix.plot@1" });
+};
+
+plotNamespace = {= };
+plotNamespace._proto = {=
+    Polynomial=(self, coefficients, domain, options ?= {= })->PlotPolynomial(coefficients, domain, options)
+};
+.Host.RegisterValue("plot", plotNamespace, "Pure exact polynomial sampling into portable Graphics", ["Plot", "Graphics", "Exact"]);
+`;
+
+  // rix/plugins/scene3d/scene3d.plugin.rix
+  var scene3d_plugin_default = `/**
+id: scene3d
+description: Pure-RiX exact retained 3D scenes, explicit realization and projection, and portable Graphics snapshots.
+kind: rix
+mount: scene3d
+exports: [Scene, Group, Transform, Mesh, Polyline, PointCloud, Material, AmbientLight, DirectionalLight, PointLight, PerspectiveCamera, OrthographicCamera, Realize, Project, Snapshot]
+groups: [Scene3D, Graphics, Exact]
+permissions: []
+provides: [rix.scene3d@1, rix.scene3d.realized@1, rix.scene3d.projected@1]
+schemas: [rix.scene3d@1, rix.scene3d.realized@1, rix.scene3d.projected@1]
+snapshot: true
+deterministic: true
+defaultEnabled: false
+**/
+
+S3Option(options, key, fallback ?= _) -> options.Has(key) ?: options[key] ?_ fallback;
+
+S3Exact(value, label) -> {;
+    exact = value ~!: :Rational;
+    exact == _ ?: .Error(@"@{label} must be an exact Integer or Rational") ?_ exact;
+};
+
+S3Integer(value, label) -> {;
+    integer = value ~!: :Integer;
+    integer == _ ?: .Error(@"@{label} must be an Integer") ?_ integer;
+};
+
+S3Vector(value, dimension, label) -> {;
+    value ? :Array ?: _ ?_ .Error(@"@{label} must be an Array");
+    value.Len() == dimension ?: _ ?_ .Error(@"@{label} must contain @{dimension} coordinates");
+    value.Map((coordinate) -> S3Exact(coordinate, @label));
+};
+
+S3Value(kind, fields) -> .DeepMutable({=
+    type=kind == :scene ?: "output" ?_ "scene3d_node",
+    kind=kind == :scene ?: "scene3d" ?_ kind,
+    schema="rix.scene3d@1"
+}.Merge(fields), _);
+
+S3IsNode(value) -> (value ? :Map) && value.Has("schema") && value[:schema] == "rix.scene3d@1" && value[:type] == "scene3d_node";
+S3RequireNode(value, label) -> S3IsNode(value) ?: value ?_ .Error(@"@{label} must be a Scene3D node");
+S3IsScene(value) -> (value ? :Map) && value.Has("schema") && value[:schema] == "rix.scene3d@1" && value[:kind] == "scene3d";
+
+S3Children(value, label) -> {;
+    value ? :Array ?: _ ?_ .Error(@"@{label} must be an Array");
+    value.Map((child) -> S3RequireNode(child, @label));
+};
+
+S3MaterialValues(material) -> ((material ? :Map) && S3IsNode(material) && material[:kind] == :material)
+  ?: material[:values]
+  ?_ {= };
+
+S3Style(settings) -> {;
+    material = S3Option(settings, "material");
+    values = S3MaterialValues(material);
+    .DeepMutable({=
+        color=S3Option(settings, "color", S3Option(values, "color", "#275dad")),
+        width=S3Exact(S3Option(settings, "width", S3Option(values, "width", 1)), "Scene3D style width"),
+        opacity=S3Exact(S3Option(settings, "opacity", S3Option(values, "opacity", 1)), "Scene3D style opacity"),
+        material=material
+    }, _);
+};
+
+S3Material(color ?= "#275dad", opacity ?= 1, width ?= 1) -> {;
+    settings = color ? :Map ?: color ?_ {= color=color, opacity=opacity, width=width };
+    S3Value(:material, {= values=.DeepMutable({=
+        color=S3Option(settings, "color", "#275dad"),
+        opacity=S3Exact(S3Option(settings, "opacity", 1), "scene3d.Material opacity"),
+        width=S3Exact(S3Option(settings, "width", 1), "scene3d.Material width")
+    }, _) });
+};
+
+S3LightColor(settings, fallback ?= "#ffffff") -> S3Option(settings, "color", fallback);
+S3LightIntensity(settings, label) -> {;
+    intensity = S3Exact(S3Option(settings, "intensity", 1), @"@{label} intensity");
+    intensity >= 0 ?: intensity ?_ .Error(@"@{label} intensity must be nonnegative");
+};
+
+S3AmbientLight(color ?= "#ffffff", intensity ?= 1) -> {;
+    settings = color ? :Map ?: color ?_ {= color=color, intensity=intensity };
+    S3Value(:ambient_light, {=
+        color=S3LightColor(settings),
+        intensity=S3LightIntensity(settings, "scene3d.AmbientLight")
+    });
+};
+
+S3DirectionalLight(direction, options ?= {= }) -> {;
+    settings = direction ? :Map ?: direction ?_ options.Merge({= direction=direction });
+    vector = S3Vector(settings[:direction], 3, "scene3d.DirectionalLight direction");
+    S3Dot(vector, vector) > 0 ?: _ ?_ .Error("scene3d.DirectionalLight direction must not be zero");
+    S3Value(:directional_light, {=
+        direction=vector,
+        color=S3LightColor(settings),
+        intensity=S3LightIntensity(settings, "scene3d.DirectionalLight")
+    });
+};
+
+S3PointLight(position, options ?= {= }) -> {;
+    settings = position ? :Map ?: position ?_ options.Merge({= position=position });
+    S3Value(:point_light, {=
+        position=S3Vector(settings[:position], 3, "scene3d.PointLight position"),
+        color=S3LightColor(settings),
+        intensity=S3LightIntensity(settings, "scene3d.PointLight")
+    });
+};
+
+S3Triangles(value, vertexCount) -> {;
+    value ? :Array ?: _ ?_ .Error("scene3d.Mesh triangles must be an Array");
+    value.Map((triangle) -> {;
+        triangle ? :Array ?: _ ?_ .Error("scene3d.Mesh triangle must be an Array");
+        triangle.Len() == 3 ?: _ ?_ .Error("scene3d.Mesh triangle must contain three indices");
+        result = triangle.Map((entry) -> S3Integer(entry, "scene3d.Mesh triangle index"));
+        result.Filter((entry) -> entry < 1 || entry > @vertexCount).Len() == 0
+          ?: result
+          ?_ .Error(@"scene3d.Mesh triangle indices must be between 1 and @{vertexCount}");
+    });
+};
+
+S3Mesh(vertices, triangles, options ?= {= }) -> {;
+    settings = vertices ? :Map ?: vertices ?_ options.Merge({= vertices=vertices, triangles=triangles });
+    points = settings[:vertices].Map((vertex) -> S3Vector(vertex, 3, "scene3d.Mesh vertex"));
+    points.Len() > 0 ?: _ ?_ .Error("scene3d.Mesh requires at least one vertex");
+    S3Value(:mesh, {=
+        vertices=points,
+        triangles=S3Triangles(settings[:triangles], points.Len()),
+        style=S3Style(settings),
+        metadata=S3Option(settings, "metadata")
+    });
+};
+
+S3Polyline(points, options ?= {= }) -> {;
+    settings = points ? :Map ?: points ?_ options.Merge({= points=points });
+    normalized = settings[:points].Map((point) -> S3Vector(point, 3, "scene3d.Polyline point"));
+    normalized.Len() >= 2 ?: _ ?_ .Error("scene3d.Polyline requires at least two points");
+    S3Value(:polyline, {=
+        points=normalized,
+        closed=S3Option(settings, "closed", 0) ?: 1 ?_ 0,
+        style=S3Style(settings),
+        metadata=S3Option(settings, "metadata")
+    });
+};
+
+S3PointCloud(points, options ?= {= }) -> {;
+    settings = points ? :Map ?: points ?_ options.Merge({= points=points });
+    normalized = settings[:points].Map((point) -> S3Vector(point, 3, "scene3d.PointCloud point"));
+    normalized.Len() > 0 ?: _ ?_ .Error("scene3d.PointCloud requires at least one point");
+    S3Value(:point_cloud, {=
+        points=normalized,
+        radius=S3Exact(S3Option(settings, "radius", 3), "scene3d.PointCloud radius"),
+        style=S3Style(settings),
+        metadata=S3Option(settings, "metadata")
+    });
+};
+
+S3Group(children, options ?= {= }) -> {;
+    settings = children ? :Map ?: children ?_ options.Merge({= children=children });
+    S3Value(:group, {= children=S3Children(settings[:children], "scene3d.Group children"), metadata=S3Option(settings, "metadata") });
+};
+
+S3Identity() -> [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+
+S3Transform(children, options ?= {= }) -> {;
+    settings = children ? :Map ?: children ?_ options.Merge({= children=children });
+    matrix := S3Option(settings, "matrix", S3Identity());
+    matrix ? :Array ?: _ ?_ .Error("scene3d.Transform matrix must be an Array");
+    matrix.Len() == 16 ?: _ ?_ .Error("scene3d.Transform matrix must contain 16 row-major values");
+    matrix ~= matrix.Map((value) -> S3Exact(value, "scene3d.Transform matrix value"));
+    translate = S3Option(settings, "translate");
+    translate != _ ?: {;
+        vector = S3Vector(@translate, 3, "scene3d.Transform translate");
+        @matrix ~= @matrix.Set(4, vector[1]).Set(8, vector[2]).Set(12, vector[3]);
+    } ?_ _;
+    scale = S3Option(settings, "scale");
+    scale != _ ?: {;
+        values = @scale ? :Array ?: S3Vector(@scale, 3, "scene3d.Transform scale") ?_ [S3Exact(@scale, "scene3d.Transform scale"), S3Exact(@scale, "scene3d.Transform scale"), S3Exact(@scale, "scene3d.Transform scale")];
+        @matrix ~= @matrix.Set(1, values[1]).Set(6, values[2]).Set(11, values[3]);
+    } ?_ _;
+    S3Value(:transform, {= children=S3Children(settings[:children], "scene3d.Transform children"), matrix=matrix, metadata=S3Option(settings, "metadata") });
+};
+
+S3Camera(projection, position, target ?= _, options ?= {= }) -> {;
+    settings = position ? :Map ?: position ?_ options.Merge({= position=position, target=target });
+    near = S3Exact(S3Option(settings, "near", 1/100), "Scene3D camera near");
+    far = S3Exact(S3Option(settings, "far", 1000), "Scene3D camera far");
+    (near > 0 && far > near) ?: _ ?_ .Error("Scene3D camera requires 0 < near < far");
+    S3Value(:camera, {=
+        projection=projection,
+        position=S3Vector(settings[:position], 3, "Scene3D camera position"),
+        target=S3Vector(settings[:target], 3, "Scene3D camera target"),
+        up=S3Vector(S3Option(settings, "up", [0,0,1]), 3, "Scene3D camera up"),
+        fov=S3Exact(S3Option(settings, "fov", 50), "Scene3D camera fov"),
+        near=near,
+        far=far,
+        scale=S3Option(settings, "scale")
+    });
+};
+
+S3PerspectiveCamera(position, target ?= _, options ?= {= }) -> S3Camera("perspective", position, target, options);
+S3OrthographicCamera(position, target ?= _, options ?= {= }) -> S3Camera("orthographic", position, target, options);
+S3DefaultCamera() -> S3PerspectiveCamera([4,4,3], [0,0,0]);
+
+S3Multiply4(left, right) -> {;
+    result := [];
+    {@ row = 1; row <= 4; {;
+        {@ column = 1; column <= 4; {;
+            value := 0;
+            {@ index = 1; index <= 4; {;
+                @value += @left[(@row-1)*4+index] * @right[(index-1)*4+@column];
+            }; index += 1 };
+            @result ~= @result.Push(value);
+        }; column += 1 };
+    }; row += 1 };
+    result;
+};
+
+S3TransformPoint(matrix, point) -> [
+    matrix[1]*point[1] + matrix[2]*point[2] + matrix[3]*point[3] + matrix[4],
+    matrix[5]*point[1] + matrix[6]*point[2] + matrix[7]*point[3] + matrix[8],
+    matrix[9]*point[1] + matrix[10]*point[2] + matrix[11]*point[3] + matrix[12]
+];
+
+S3MeshSegments(triangles) -> {;
+    segments := [];
+    seen := {= };
+    {@ index = 1; index <= @triangles.Len(); {;
+        triangle = @triangles[index];
+        pairs = [[triangle[1],triangle[2]],[triangle[2],triangle[3]],[triangle[3],triangle[1]]];
+        {@ pairIndex = 1; pairIndex <= @pairs.Len(); {;
+            pair = @pairs[pairIndex];
+            ordered = pair[1] < pair[2] ?: pair ?_ [pair[2],pair[1]];
+            key = @"@{ordered[1]}:@{ordered[2]}";
+            !(@seen.Has(key)) ?: {; @seen ~= @seen.Set(@key, 1); @segments ~= @segments.Push(@ordered); } ?_ _;
+        }; pairIndex += 1 };
+    }; index += 1 };
+    segments;
+};
+
+S3Collect(children, parent) -> {;
+    result := [];
+    {@ index = 1; index <= @children.Len(); {;
+        child = @children[index];
+        kind = child[:kind];
+        kind == :group
+          ?: {; @result ~= @result.Concat(S3Collect(@child[:children], @parent)); }
+          ?_ kind == :transform
+               ?: {; @result ~= @result.Concat(S3Collect(@child[:children], S3Multiply4(@parent, @child[:matrix]))); }
+               ?_ kind == :mesh
+                    ?: {;
+                        points = @child[:vertices].Map((point) -> S3TransformPoint(@parent, point));
+                        @result ~= @result.Push(.DeepMutable({=
+                            kind=:mesh, points=points, segments=S3MeshSegments(@child[:triangles]),
+                            triangles=@child[:triangles], style=@child[:style]
+                        }, _));
+                    }
+                    ?_ kind == :polyline
+                         ?: {;
+                             points = @child[:points].Map((point) -> S3TransformPoint(@parent, point));
+                             segments := [];
+                             {@ pointIndex = 1; pointIndex < @points.Len(); {;
+                                 @segments ~= @segments.Push([pointIndex, pointIndex+1]);
+                             }; pointIndex += 1 };
+                             (@child[:closed] && points.Len() > 2) ?: {; @segments ~= @segments.Push([@points.Len(),1]); } ?_ _;
+                             @result ~= @result.Push(.DeepMutable({= kind=:lines, points=points, segments=segments, style=@child[:style] }, _));
+                         }
+                         ?_ kind == :point_cloud
+                              ?: {; @result ~= @result.Push(.DeepMutable({=
+                                  kind=:points, points=@child[:points].Map((point) -> S3TransformPoint(@parent, point)),
+                                  radius=@child[:radius], style=@child[:style]
+                              }, _)); }
+                              ?_ ((kind == :material || kind == :camera)
+                                  ?: _
+                                  ?_ .Error(@"Unsupported Scene3D node '@{kind}'"));
+    }; index += 1 };
+    result;
+};
+
+S3Realized(children) -> .DeepMutable({=
+    type="scene3d_realized",
+    schema="rix.scene3d.realized@1",
+    coordinateSystem={= handedness="right", up="z", units="unspecified" },
+    primitives=S3Collect(children, S3Identity())
+}, _);
+
+S3Scene(children, options ?= {= }) -> {;
+    settings = children ? :Map ?: children ?_ options.Merge({= children=children });
+    normalized = S3Children(settings[:children], "scene3d.Scene children");
+    camera = S3Option(settings, "camera", S3DefaultCamera());
+    (S3IsNode(camera) && camera[:kind] == :camera) ?: _ ?_ .Error("scene3d.Scene camera must be a Scene3D camera");
+    lights = S3Option(settings, "lights", []);
+    lights ? :Array ?: _ ?_ .Error("scene3d.Scene lights must be an Array");
+    lights.Filter((light) -> !(S3IsNode(light) && [:ambient_light,:directional_light,:point_light].Filter((kind)->kind==light[:kind]).Len()>0)).Len() == 0
+      ?: _
+      ?_ .Error("scene3d.Scene lights must contain Scene3D lights");
+    S3Value(:scene, {=
+        children=normalized,
+        camera=camera,
+        lights=lights,
+        metadata=S3Option(settings, "metadata"),
+        coordinateSystem={= handedness="right", up="z", units="unspecified" },
+        realized=S3Realized(normalized)
+    });
+};
+
+S3Realize(scene) -> S3IsScene(scene) ?: scene[:realized] ?_ .Error("scene3d.Realize requires a Scene3D scene");
+
+S3Subtract(left, right) -> [left[1]-right[1],left[2]-right[2],left[3]-right[3]];
+S3Dot(left, right) -> left[1]*right[1]+left[2]*right[2]+left[3]*right[3];
+S3Cross(left, right) -> [
+    left[2]*right[3]-left[3]*right[2],
+    left[3]*right[1]-left[1]*right[3],
+    left[1]*right[2]-left[2]*right[1]
+];
+
+S3Normalize(vector, label) -> {;
+    squared = S3Dot(vector, vector);
+    squared > 0 ?: _ ?_ .Error(@"@{label} must not be zero or collinear with the view direction");
+    length = .Sqrt(squared);
+    vector.Map((coordinate) -> coordinate / @length);
+};
+
+S3Frame(camera) -> {;
+    forward = S3Normalize(S3Subtract(camera[:target],camera[:position]), "Camera view direction");
+    right = S3Normalize(S3Cross(forward,camera[:up]), "Camera up vector");
+    .DeepMutable({= position=camera[:position], forward=forward, right=right, up=S3Cross(right,forward) }, _);
+};
+
+S3CameraPoint(point, frame) -> {;
+    delta = S3Subtract(point,frame[:position]);
+    [S3Dot(delta,frame[:right]),S3Dot(delta,frame[:up]),S3Dot(delta,frame[:forward])];
+};
+
+S3ClipDepth(first, second, near, far) -> {;
+    rejected = (first[3] < near && second[3] < near) || (first[3] > far && second[3] > far);
+    rejected ?: _ ?_ {;
+        start := @first;
+        finish := @second;
+        {@ planeIndex = 1; planeIndex <= 2; {;
+            plane = planeIndex == 1 ?: @near ?_ @far;
+            startOutside = planeIndex == 1 ?: @start[3] < plane ?_ @start[3] > plane;
+            finishOutside = planeIndex == 1 ?: @finish[3] < plane ?_ @finish[3] > plane;
+            startOutside != finishOutside ?: {;
+                ratio = (@plane-@start[3])/(@finish[3]-@start[3]);
+                cut = [1,2,3].Map((coordinate) -> @start[coordinate]+(@finish[coordinate]-@start[coordinate])*@ratio);
+                @startOutside ?: {; @start ~= @cut; } ?_ {; @finish ~= @cut; };
+            } ?_ _;
+        }; planeIndex += 1 };
+        [start,finish];
+    };
+};
+
+S3BoundedApprox(value) -> {;
+    exact = value ~!: :Rational;
+    (exact*1000000000000).Round()/1000000000000;
+};
+
+S3Tan(value) -> {;
+    square = value^2;
+    denominator := 47;
+    {@ index = 23; index >= 1; {;
+        @denominator ~= S3BoundedApprox((2*index-1)-@square/@denominator);
+    }; index -= 1 };
+    S3BoundedApprox(value/denominator);
+};
+
+S3StyleMap(style, fill ?= _, color ?= _) -> fill != _
+  ?: {= fill=color == _ ?: style[:color] ?_ color, stroke=color == _ ?: style[:color] ?_ color, width=style[:width], opacity=style[:opacity] }
+  ?_ {= stroke=style[:color], fill="none", width=style[:width], opacity=style[:opacity] };
+
+S3HexDigit(character) -> {;
+    digits = {= ("0")=0,("1")=1,("2")=2,("3")=3,("4")=4,("5")=5,("6")=6,("7")=7,("8")=8,("9")=9,("a")=10,("b")=11,("c")=12,("d")=13,("e")=14,("f")=15 };
+    lower = character.Lower();
+    digits.Has(lower) ?: digits[lower] ?_ .Error("Scene3D lit snapshots require hexadecimal material colors");
+};
+
+S3Rgb(color) -> {;
+    valid = color ? :String && (color.Len()==4 || color.Len()==7) && color[1]=="#";
+    valid ?: _ ?_ .Error("Scene3D lit snapshots require hexadecimal material colors");
+    source = color.Len()==4 ?: @"#@{color[2]}@{color[2]}@{color[3]}@{color[3]}@{color[4]}@{color[4]}" ?_ color;
+    [2,4,6].Map((index) -> 16*S3HexDigit(@source[index])+S3HexDigit(@source[index+1]));
+};
+
+S3HexByte(value) -> {;
+    exact = value ~!: :Rational;
+    clamped = .Max(0,.Min(255,exact.Round()));
+    digits = "0123456789abcdef";
+    @"@{digits[clamped//16+1]}@{digits[clamped%16+1]}";
+};
+
+S3LitColor(style, triangle, lights) -> {;
+    normal = S3Normalize(S3Cross(S3Subtract(triangle[2],triangle[1]),S3Subtract(triangle[3],triangle[1])), "Scene3D triangle");
+    center = [1,2,3].Map((coordinate) -> (triangle[1][coordinate]+triangle[2][coordinate]+triangle[3][coordinate])/3);
+    illumination := [0,0,0];
+    active = lights.Len()>0 ?: lights ?_ [S3AmbientLight()];
+    {@ lightIndex = 1; lightIndex <= @active.Len(); {;
+        light = @active[lightIndex];
+        factor := light[:intensity];
+        light[:kind] == :directional_light
+          ?: {; direction=S3Normalize(@light[:direction].Map((entry)->-entry),"Directional light direction"); @factor *= .Abs(S3Dot(@normal,direction)); }
+          ?_ light[:kind] == :point_light
+               ?: {; direction=S3Normalize(S3Subtract(@light[:position],@center),"Point light position"); @factor *= .Abs(S3Dot(@normal,direction)); }
+               ?_ _;
+        lightRgb = S3Rgb(light[:color]);
+        @illumination ~= [1,2,3].Map((channel)->@illumination[channel]+@factor*@lightRgb[channel]/255);
+    }; lightIndex += 1 };
+    base = S3Rgb(style[:color]);
+    values = [1,2,3].Map((channel)->@base[channel]*.Min(1,@illumination[channel]));
+    @"#@{S3HexByte(values[1])}@{S3HexByte(values[2])}@{S3HexByte(values[3])}";
+};
+
+S3Project(scene, options ?= {= }) -> {;
+    S3IsScene(scene) ?: _ ?_ .Error("scene3d.Project requires a Scene3D scene");
+    mode = S3Option(options,"mode","wireframe");
+    (mode=="wireframe" || mode=="lit") ?: _ ?_ .Error("scene3d.Project mode must be 'wireframe' or 'lit'");
+    size = S3Vector(S3Option(options,"size",[640,480]),2,"scene3d.Project size");
+    width=size[1]; height=size[2];
+    (width>0 && height>0) ?: _ ?_ .Error("scene3d.Project size must be positive");
+    camera=S3Option(options,"camera",scene[:camera]);
+    (S3IsNode(camera)&&camera[:kind]==:camera) ?: _ ?_ .Error("scene3d.Project camera must be a Scene3D camera");
+    frame=S3Frame(camera);
+    near=camera[:near]; far=camera[:far]; aspect=width/height;
+    realized=scene[:realized];
+    primitives=realized[:primitives].Map((primitive)->primitive.Merge({=
+        worldPoints=primitive[:points], points=primitive[:points].Map((point)->S3CameraPoint(point,@frame))
+    }));
+    allPoints := [];
+    {@ primitiveIndex=1; primitiveIndex<=@primitives.Len(); {; @allPoints ~= @allPoints.Concat(@primitives[primitiveIndex][:points]); }; primitiveIndex+=1 };
+    project := _;
+    approximation := {= viewNormalization="core-rational-sqrt" };
+    camera[:projection]=="perspective"
+      ?: {;
+          fov=@camera[:fov]; (fov>0&&fov<180) ?: _ ?_ .Error("Perspective camera fov must be between 0 and 180 degrees");
+          halfRadians=fov*3141592653589793/1000000000000000/360;
+          focal=1/S3Tan(halfRadians);
+          @project ~= (point)->[(1+point[1]*@focal/(point[3]*@aspect))*@width/2,(1-point[2]*@focal/point[3])*@height/2];
+          @approximation ~= @approximation.Merge({= perspectiveTangent={= method="rational-continued-fraction", terms=24, decimalPlaces=12, pi="3141592653589793/1000000000000000" } });
+      }
+      ?_ {;
+          bounds := @allPoints.Len()>0 ?: [@allPoints[1][1],@allPoints[1][1],@allPoints[1][2],@allPoints[1][2]] ?_ [0,0,0,0];
+          {@ pointIndex=2; pointIndex<=@allPoints.Len(); {;
+              point=@allPoints[pointIndex];
+              @bounds ~= [.Min(@bounds[1],point[1]),.Max(@bounds[2],point[1]),.Min(@bounds[3],point[2]),.Max(@bounds[4],point[2])];
+          }; pointIndex+=1 };
+          centerX=(bounds[1]+bounds[2])/2; centerY=(bounds[3]+bounds[4])/2;
+          spanX=bounds[2]-bounds[1]; spanY=bounds[4]-bounds[3];
+          requested=@camera[:scale];
+          vertical=requested!=_ ?: S3Exact(requested,"Orthographic camera scale") ?_ .Max(spanY,spanX/@aspect,1)*28/25;
+          @project ~= (point)->[@width/2+(point[1]-@centerX)*@height/@vertical,@height/2-(point[2]-@centerY)*@height/@vertical];
+      };
+    projected := [];
+    segments:=0; faces:=0; pointCount:=0;
+    mode=="lit" ?: {;
+        faceValues := [];
+        {@ primitiveIndex=1; primitiveIndex<=@primitives.Len(); {;
+            primitive=@primitives[primitiveIndex];
+            primitive[:kind]==:mesh ?: {;
+                {@ triangleIndex=1; triangleIndex<=@primitive[:triangles].Len(); {;
+                    indices=@primitive[:triangles][triangleIndex];
+                    cameraPoints=indices.Map((index)->@primitive[:points][index]);
+                    visible=cameraPoints.Filter((point)->point[3]<@near||point[3]>@far).Len()==0;
+                    visible ?: {;
+                        worldPoints=@indices.Map((index)->@primitive[:worldPoints][index]);
+                        depth=(@cameraPoints[1][3]+@cameraPoints[2][3]+@cameraPoints[3][3])/3;
+                        @faceValues ~= @faceValues.Push({= kind=:face, points=@cameraPoints.Map(@project), worldPoints=worldPoints, style=@primitive[:style], depth=depth });
+                    } ?_ _;
+                }; triangleIndex+=1 };
+            } ?_ _;
+        }; primitiveIndex+=1 };
+        {@ index=2; index<=@faceValues.Len(); {;
+            cursor:=index;
+            {@ step=@index; @cursor>1 && @faceValues[@cursor-1][:depth]<@faceValues[@cursor][:depth]; {;
+                previous=@faceValues[@cursor-1]; current=@faceValues[@cursor];
+                @faceValues ~= @faceValues.Set(@cursor-1,current).Set(@cursor,previous); @cursor-=1;
+            }; step+=1 };
+        }; index+=1 };
+        @projected ~= @projected.Concat(faceValues); @faces ~= faceValues.Len();
+    } ?_ _;
+    {@ primitiveIndex=1; primitiveIndex<=@primitives.Len(); {;
+        primitive=@primitives[primitiveIndex];
+        ((primitive[:kind]==:lines)||(primitive[:kind]==:mesh&&@mode=="wireframe")) ?: {;
+            {@ segmentIndex=1; segmentIndex<=@primitive[:segments].Len(); {;
+                indices=@primitive[:segments][segmentIndex]; clipped=S3ClipDepth(@primitive[:points][indices[1]],@primitive[:points][indices[2]],@near,@far);
+                clipped!=_ ?: {; @projected ~= @projected.Push({= kind=:segment, points=@clipped.Map(@project), style=@primitive[:style] }); @segments+=1; } ?_ _;
+            }; segmentIndex+=1 };
+        } ?_ primitive[:kind]==:points ?: {;
+            {@ pointIndex=1; pointIndex<=@primitive[:points].Len(); {;
+                point=@primitive[:points][pointIndex];
+                (point[3]>=@near&&point[3]<=@far) ?: {; @projected ~= @projected.Push({= kind=:point, point=@project(@point), radius=@primitive[:radius], style=@primitive[:style] }); @pointCount+=1; } ?_ _;
+            }; pointIndex+=1 };
+        } ?_ _;
+    }; primitiveIndex+=1 };
+    .DeepMutable({=
+        type="scene3d_projected", schema="rix.scene3d.projected@1", mode=mode, size=size,
+        camera=camera, frame=frame, primitives=projected, approximation=approximation,
+        work={= primitives=realized[:primitives].Len(), segments=segments, faces=faces, points=pointCount }
+    }, _);
+};
+
+S3Snapshot(scene, options ?= {= }) -> {;
+    projected=S3Project(scene,options);
+    children := [];
+    {@ index=1; index<=@projected[:primitives].Len(); {;
+        primitive=@projected[:primitives][index];
+        primitive[:kind]==:face
+          ?: {; color=S3LitColor(@primitive[:style],@primitive[:worldPoints],@scene[:lights]); @children ~= @children.Push(.Graphics.Path(@primitive[:points],S3StyleMap(@primitive[:style],1,color))); }
+          ?_ primitive[:kind]==:segment
+               ?: {; @children ~= @children.Push(.Graphics.Path(@primitive[:points],S3StyleMap(@primitive[:style]))); }
+               ?_ primitive[:kind]==:point
+                    ?: {; @children ~= @children.Push(.Graphics.Circle(@primitive[:point],@primitive[:radius],S3StyleMap(@primitive[:style],1))); }
+                    ?_ _;
+    }; index+=1 };
+    diagnostic=(projected[:mode]=="wireframe"&&scene[:lights].Len()>0)
+      ?: [{= level="info",code="scene3d-wireframe-ignores-lights",message="Wireframe snapshots do not evaluate Scene3D lights." }]
+      ?_ [];
+    {=
+        value=.Graphics.Graphic(projected[:size],children,{= schema="rix.graphics@1",source="rix.scene3d@1",mode=projected[:mode] }),
+        resolved=1, uncertainty=[], work=projected[:work],
+        source={= schema="rix.scene3d@1",projection=projected[:camera][:projection],mode=projected[:mode],approximation=projected[:approximation] },
+        diagnostics=diagnostic, projected=projected
+    };
+};
+
+scene3dNamespace={= };
+scene3dNamespace._proto={=
+    Scene=(self,children,options ?= {= })->S3Scene(children,options),
+    Group=(self,children,options ?= {= })->S3Group(children,options),
+    Transform=(self,children,options ?= {= })->S3Transform(children,options),
+    Mesh=(self,vertices,triangles ?= _,options ?= {= })->S3Mesh(vertices,triangles,options),
+    Polyline=(self,points,options ?= {= })->S3Polyline(points,options),
+    PointCloud=(self,points,options ?= {= })->S3PointCloud(points,options),
+    Material=(self,color ?= "#275dad",opacity ?= 1,width ?= 1)->S3Material(color,opacity,width),
+    AmbientLight=(self,color ?= "#ffffff",intensity ?= 1)->S3AmbientLight(color,intensity),
+    DirectionalLight=(self,direction,options ?= {= })->S3DirectionalLight(direction,options),
+    PointLight=(self,position,options ?= {= })->S3PointLight(position,options),
+    PerspectiveCamera=(self,position,target ?= _,options ?= {= })->S3PerspectiveCamera(position,target,options),
+    OrthographicCamera=(self,position,target ?= _,options ?= {= })->S3OrthographicCamera(position,target,options),
+    Realize=(self,scene)->S3Realize(scene),
+    Project=(self,scene,options ?= {= })->S3Project(scene,options),
+    Snapshot=(self,scene,options ?= {= })->S3Snapshot(scene,options)
+};
+.Host.RegisterValue("scene3d",scene3dNamespace,"Pure-RiX exact retained 3D scenes with explicit realization and projection",["Scene3D","Graphics","Exact"]);
+`;
+
+  // rix/plugins/nd/nd.plugin.rix
+  var nd_plugin_default = `/**
+id: nd
+description: Pure-RiX exact n-dimensional geometry with affine and Cayley projection records and explicit Scene3D adaptation.
+kind: rix
+mount: nd
+exports: [Point, Polyline, Polytope, Hypercube, Projection, CoordinateProjection, CayleyRotation, Compose, Project, ToScene3D]
+groups: [Geometry, Scene3D, Exact]
+permissions: []
+requires: [rix.scene3d@1]
+provides: [rix.nd@1, rix.nd.projection@1]
+schemas: [rix.nd@1, rix.nd.projection@1]
+snapshot: true
+deterministic: true
+defaultEnabled: false
+**/
+
+NDOption(options,key,fallback ?= _)->options.Has(key) ?: options[key] ?_ fallback;
+NDExact(value,label)->{; exact=value ~!: :Rational; exact==_ ?: .Error(@"@{label} must be an exact Integer or Rational") ?_ exact; };
+NDInteger(value,label)->{; integer=value ~!: :Integer; integer==_ ?: .Error(@"@{label} must be an Integer") ?_ integer; };
+
+NDValue(kind,fields)->.DeepMutable({= type="nd_geometry",kind=kind,schema="rix.nd@1" }.Merge(fields),_);
+NDIsGeometry(value)->(value ? :Map)&&value.Has("schema")&&value[:schema]=="rix.nd@1"&&value[:type]=="nd_geometry";
+NDIsProjection(value)->(value ? :Map)&&value.Has("schema")&&value[:schema]=="rix.nd.projection@1"&&value[:type]=="nd_projection";
+
+NDProvenance(settings)->NDOption(settings,"provenance",[]);
+NDPoints(value,label,dimension ?= _)->{;
+    value ? :Array ?: _ ?_ .Error(@"@{label} must be an Array");
+    selected:=dimension;
+    result:=[];
+    {@ index=1;index<=@value.Len();{;
+        point=@value[index]; point ? :Array ?: _ ?_ .Error(@"@{label} @{index} must be an Array");
+        @selected==_ ?: {; @selected ~= @point.Len(); } ?_ _;
+        point.Len()==@selected ?: _ ?_ .Error(@"@{label} @{index} must have dimension @{@selected}");
+        @selected>=1 ?: _ ?_ .Error(@"@{label} points cannot be empty");
+        @result ~= @result.Push(point.Map((coordinate)->NDExact(coordinate,@label)));
+    };index+=1};
+    {= dimension=selected==_ ?: 0 ?_ selected, values=result };
+};
+
+NDEdges(value,vertexCount,label)->{;
+    value ? :Array ?: _ ?_ .Error(@"@{label} must be an Array");
+    value.Map((edge)->{;
+        edge ? :Array ?: _ ?_ .Error(@"@{label} edge must be an Array");
+        edge.Len()==2 ?: _ ?_ .Error(@"@{label} edge must contain two indices");
+        pair=edge.Map((entry)->NDInteger(entry,@"@{label} index"));
+        pair.Filter((entry)->entry<1||entry>@vertexCount).Len()==0 ?: pair ?_ .Error(@"@{label} indices must be between 1 and @{vertexCount}");
+    });
+};
+
+NDPoint(coordinates,options ?= {= })->{;
+    settings=coordinates ? :Map ?: coordinates ?_ options.Merge({= coordinates=coordinates });
+    values=settings[:coordinates]; values ? :Array ?: _ ?_ .Error("nd.Point coordinates must be an Array");
+    values.Len()>0 ?: _ ?_ .Error("nd.Point requires at least one coordinate");
+    NDValue(:point,{= dimension=values.Len(),coordinates=values.Map((coordinate)->NDExact(coordinate,"nd.Point coordinate")),provenance=NDProvenance(settings),metadata=NDOption(settings,"metadata") });
+};
+
+NDPolyline(points,options ?= {= })->{;
+    settings=points ? :Map ?: points ?_ options.Merge({= points=points }); normalized=NDPoints(settings[:points],"nd.Polyline point");
+    normalized[:values].Len()>=2 ?: _ ?_ .Error("nd.Polyline requires at least two points");
+    NDValue(:polyline,{= dimension=normalized[:dimension],points=normalized[:values],closed=NDOption(settings,"closed",0) ?: 1 ?_ 0,provenance=NDProvenance(settings),metadata=NDOption(settings,"metadata"),style=NDOption(settings,"style") });
+};
+
+NDPolytope(vertices,edges ?= _,options ?= {= })->{;
+    settings=vertices ? :Map ?: vertices ?_ options.Merge({= vertices=vertices,edges=edges }); normalized=NDPoints(settings[:vertices],"nd.Polytope vertex");
+    normalized[:values].Len()>0 ?: _ ?_ .Error("nd.Polytope requires vertices");
+    NDValue(:polytope,{= dimension=normalized[:dimension],vertices=normalized[:values],edges=NDEdges(settings[:edges],normalized[:values].Len(),"nd.Polytope edge"),provenance=NDProvenance(settings),metadata=NDOption(settings,"metadata"),style=NDOption(settings,"style") });
+};
+
+NDProjectionValue(matrix,offset,method,provenance ?= [])->{;
+    matrix ? :Array ?: _ ?_ .Error("nd.Projection matrix must be an Array");
+    matrix.Len()>0 ?: _ ?_ .Error("nd.Projection matrix cannot be empty");
+    rows=matrix.Map((row)->{; row ? :Array ?: _ ?_ .Error("nd.Projection matrix rows must be Arrays"); row.Map((value)->NDExact(value,"nd.Projection matrix coordinate")); });
+    source=rows[1].Len(); source>0 ?: _ ?_ .Error("nd.Projection matrix cannot be empty");
+    rows.Filter((row)->row.Len()!=@source).Len()==0 ?: _ ?_ .Error("nd.Projection matrix rows must have equal lengths");
+    offset ? :Array ?: _ ?_ .Error("nd.Projection offset must be an Array");
+    offset.Len()==rows.Len() ?: _ ?_ .Error(@"nd.Projection offset must have @{rows.Len()} coordinates");
+    .DeepMutable({= type="nd_projection",kind=:affine,schema="rix.nd.projection@1",sourceDimension=source,targetDimension=rows.Len(),matrix=rows,offset=offset.Map((value)->NDExact(value,"nd.Projection offset")),method=method,provenance=provenance },_);
+};
+
+NDProjection(matrix,offset ?= _,options ?= {= })->{;
+    settings=matrix ? :Map ?: matrix ?_ options.Merge({= matrix=matrix,offset=offset });
+    rows=settings[:matrix]; zeroOffset=rows.Map((row)->0);
+    NDProjectionValue(rows,NDOption(settings,"offset",zeroOffset),NDOption(settings,"method","affine"),NDProvenance(settings));
+};
+
+NDCoordinateProjection(sourceDimension,axes ?= _)->{;
+    settings=sourceDimension ? :Map ?: sourceDimension ?_ {= sourceDimension=sourceDimension,axes=axes };
+    source=NDInteger(settings[:sourceDimension],"nd.CoordinateProjection source dimension"); selected=settings[:axes];
+    selected ? :Array ?: _ ?_ .Error("nd.CoordinateProjection axes must be an Array");
+    normalized=selected.Map((axis)->NDInteger(axis,"nd.CoordinateProjection axis"));
+    unique=normalized.Reduce((result,axis)->result.Has(axis) ?: result ?_ result.Set(axis,1),{= });
+    (source>=1&&normalized.Len()>=1&&unique.Len()==normalized.Len()&&normalized.Filter((axis)->axis<1||axis>@source).Len()==0)
+      ?: _ ?_ .Error("nd.CoordinateProjection axes must be unique indices in the source dimension");
+    rows=normalized.Map((axis)->{; row:=[]; {@ index=1;index<=@source;{; @row ~= @row.Push(index==@axis ?: 1 ?_ 0); };index+=1}; row; });
+    NDProjectionValue(rows,normalized.Map((axis)->0),"coordinate",[{= axes=normalized }]);
+};
+
+NDIsCayleyInfinity(value)->value==.Complex[:infinity];
+
+NDCayleyRotation(dimension,axis1 ?= _,axis2 ?= _,t ?= _)->{;
+    settings=dimension ? :Map ?: dimension ?_ {= dimension=dimension,axis1=axis1,axis2=axis2,t=t };
+    size=NDInteger(settings[:dimension],"nd.CayleyRotation dimension"); first=NDInteger(settings[:axis1],"nd.CayleyRotation axis1"); second=NDInteger(settings[:axis2],"nd.CayleyRotation axis2");
+    (size>=2&&first>=1&&second>=1&&first<=size&&second<=size&&first!=second) ?: _ ?_ .Error("nd.CayleyRotation axes must be distinct indices in the dimension");
+    parameter=settings[:t];
+    infinity=NDIsCayleyInfinity(parameter);
+    cosine=infinity ?: -1 ?_ {; exact=NDExact(@parameter,"nd.CayleyRotation t"); (1-exact^2)/(1+exact^2); };
+    sine=infinity ?: 0 ?_ {; exact=NDExact(@parameter,"nd.CayleyRotation t"); 2*exact/(1+exact^2); };
+    matrix:=[];
+    {@ row=1;row<=@size;{; values:=[]; {@ column=1;column<=@size;{; @values ~= @values.Push(@row==column ?: 1 ?_ 0); };column+=1}; @matrix ~= @matrix.Push(values); };row+=1};
+    matrix ~= matrix.Set(first,matrix[first].Set(first,cosine).Set(second,-sine));
+    matrix ~= matrix.Set(second,matrix[second].Set(first,sine).Set(second,cosine));
+    offset:=[]; {@ index=1;index<=@size;{; @offset ~= @offset.Push(0); };index+=1};
+    NDProjectionValue(matrix,offset,"cayley-rotation",[{= axes=[first,second],parameter=parameter,projectiveInfinity=infinity ?: 1 ?_ 0 }]);
+};
+
+NDApply(matrix,vector,offset)->{;
+    result:=[];
+    {@ row=1;row<=@matrix.Len();{; value:=@offset[row]; {@ column=1;column<=@vector.Len();{; @value += @matrix[@row][column]*@vector[column]; };column+=1}; @result ~= @result.Push(value); };row+=1};
+    result;
+};
+
+NDMultiply(left,right)->{;
+    left[1].Len()==right.Len() ?: _ ?_ .Error("nd.Compose projection dimensions do not match");
+    result:=[];
+    {@ row=1;row<=@left.Len();{; values:=[]; {@ column=1;column<=@right[1].Len();{; value:=0; {@ index=1;index<=@right.Len();{; @value += @left[@row][index]*@right[index][@column]; };index+=1}; @values ~= @values.Push(value); };column+=1}; @result ~= @result.Push(values); };row+=1};
+    result;
+};
+
+NDCompose(after,before ?= _)->{;
+    settings=((after ? :Map)&&after.Has("after")&&before==_) ?: after ?_ {= after=after,before=before };
+    next=settings[:after]; previous=settings[:before];
+    (NDIsProjection(next)&&NDIsProjection(previous)) ?: _ ?_ .Error("nd.Compose requires two projections");
+    previous[:targetDimension]==next[:sourceDimension] ?: _ ?_ .Error("nd.Compose projection dimensions do not match");
+    NDProjectionValue(NDMultiply(next[:matrix],previous[:matrix]),NDApply(next[:matrix],previous[:offset],next[:offset]),"composition",previous[:provenance].Concat(next[:provenance]));
+};
+
+NDCoordinates(coordinates,projection,label)->{;
+    coordinates.Len()==projection[:sourceDimension] ?: _ ?_ .Error(@"@{label} dimension @{coordinates.Len()} does not match projection source dimension @{projection[:sourceDimension]}");
+    NDApply(projection[:matrix],coordinates,projection[:offset]);
+};
+
+NDProject(geometry,projection ?= _)->{;
+    settings=((geometry ? :Map)&&geometry.Has("geometry")&&projection==_) ?: geometry ?_ {= geometry=geometry,projection=projection };
+    source=settings[:geometry]; transform=settings[:projection];
+    NDIsGeometry(source) ?: _ ?_ .Error("nd.Project geometry must be n-dimensional geometry"); NDIsProjection(transform) ?: _ ?_ .Error("nd.Project requires an nd.Projection");
+    trace=source[:provenance].Push(transform);
+    source[:kind]==:point
+      ?: NDValue(:point,source.Merge({= dimension=transform[:targetDimension],coordinates=NDCoordinates(source[:coordinates],transform,"nd.Point"),provenance=trace }))
+      ?_ source[:kind]==:polyline
+           ?: NDValue(:polyline,source.Merge({= dimension=transform[:targetDimension],points=source[:points].Map((point)->NDCoordinates(point,@transform,"nd.Polyline")),provenance=trace }))
+           ?_ source[:kind]==:polytope
+                ?: NDValue(:polytope,source.Merge({= dimension=transform[:targetDimension],vertices=source[:vertices].Map((point)->NDCoordinates(point,@transform,"nd.Polytope")),provenance=trace }))
+                ?_ .Error(@"nd.Project does not support geometry kind '@{source[:kind]}'");
+};
+
+NDHypercube(dimension,size ?= 2)->{;
+    settings=dimension ? :Map ?: dimension ?_ {= dimension=dimension,size=size };
+    dimensions=NDInteger(settings[:dimension],"nd.Hypercube dimension"); (dimensions>=1&&dimensions<=10) ?: _ ?_ .Error("nd.Hypercube dimension must be between 1 and 10");
+    half=NDExact(NDOption(settings,"size",2),"nd.Hypercube size")/2;
+    vertices:=[[]]; edges:=[];
+    {@ axis=1;axis<=@dimensions;{;
+        count=@vertices.Len(); next:=[];
+        {@ index=1;index<=@count;{; @next ~= @next.Push(@vertices[index].Push(-@half)); };index+=1};
+        {@ index=1;index<=@count;{; @next ~= @next.Push(@vertices[index].Push(@half)); };index+=1};
+        copied=@edges.Map((edge)->[edge[1]+@count,edge[2]+@count]); connecting:=[];
+        {@ index=1;index<=@count;{; @connecting ~= @connecting.Push([index,index+@count]); };index+=1};
+        @edges ~= @edges.Concat(copied).Concat(connecting); @vertices ~= next;
+    };axis+=1};
+    NDPolytope(vertices,edges);
+};
+
+NDToScene3D(geometry,options ?= {= })->{;
+    settings=((geometry ? :Map)&&geometry.Has("geometry")) ?: geometry ?_ options.Merge({= geometry=geometry }); source=settings[:geometry];
+    NDIsGeometry(source) ?: _ ?_ .Error("nd.ToScene3D requires n-dimensional geometry");
+    source[:dimension]==3 ?: _ ?_ .Error(@"nd.ToScene3D requires dimension 3; explicitly project dimension @{source[:dimension]} first");
+    style=NDOption(settings,"style",NDOption(source,"style",{= })); style=style==_ ?: {= } ?_ style;
+    children:=[];
+    source[:kind]==:point
+      ?: {; @children ~= [.scene3d.PointCloud([@source[:coordinates]],@style)]; }
+      ?_ source[:kind]==:polyline
+           ?: {; @children ~= [.scene3d.Polyline(@source[:points],@style.Merge({= closed=@source[:closed] }))]; }
+           ?_ source[:kind]==:polytope
+                ?: {; @children ~= @source[:edges].Map((edge)->.scene3d.Polyline([@source[:vertices][edge[1]],@source[:vertices][edge[2]]],@style)); }
+                ?_ .Error(@"nd.ToScene3D does not support geometry kind '@{source[:kind]}'");
+    sceneOptions={= metadata={= source="rix.nd@1",projectionCount=source[:provenance].Len() } };
+    camera=NDOption(settings,"camera"); sceneOptions=camera==_ ?: sceneOptions ?_ sceneOptions.Set("camera",camera);
+    .scene3d.Scene([.scene3d.Group(children)],sceneOptions);
+};
+
+ndNamespace={= };
+ndNamespace._proto={=
+    Point=(self,coordinates,options ?= {= })->NDPoint(coordinates,options),
+    Polyline=(self,points,options ?= {= })->NDPolyline(points,options),
+    Polytope=(self,vertices,edges ?= _,options ?= {= })->NDPolytope(vertices,edges,options),
+    Hypercube=(self,dimension,size ?= 2)->NDHypercube(dimension,size),
+    Projection=(self,matrix,offset ?= _,options ?= {= })->NDProjection(matrix,offset,options),
+    CoordinateProjection=(self,sourceDimension,axes ?= _)->NDCoordinateProjection(sourceDimension,axes),
+    CayleyRotation=(self,dimension,axis1 ?= _,axis2 ?= _,t ?= _)->NDCayleyRotation(dimension,axis1,axis2,t),
+    Compose=(self,after,before ?= _)->NDCompose(after,before),
+    Project=(self,geometry,projection ?= _)->NDProject(geometry,projection),
+    ToScene3D=(self,geometry,options ?= {= })->NDToScene3D(geometry,options)
+};
+.Host.RegisterValue("nd",ndNamespace,"Pure-RiX exact n-dimensional geometry and explicit projections",["Geometry","Scene3D","Exact"]);
+`;
+
   // rix/plugins/draw/draw.plugin.rix.js
   function entriesFor(args, positional, name) {
     if (args.length === 1 && args[0]?.type === "map" && args[0].entries instanceof Map)
@@ -44889,1249 +47322,6 @@ complexVizNamespace._proto = {=
     return value;
   }
 
-  // rix/plugins/plot/plot.plugin.rix.js
-  function install3({ systemContext }) {
-    const plot = createPlotOutputCollection();
-    systemContext.registerHostValue("plot", plot, { doc: "Portable plotting helpers that produce intrinsic Graphics scenes" });
-    return plot;
-  }
-
-  // rix/plugins/scene3d/scene3d.js
-  var SCENE3D_SCHEMA = "rix.scene3d@1";
-  var int9 = (value) => new Integer(BigInt(value));
-  var str3 = (value) => ({ type: "string", value: String(value) });
-  var seq3 = (values3) => ({ type: "sequence", values: values3 });
-  var rixMap3 = (entries2) => ({ type: "map", entries: new Map(entries2) });
-  function sequence2(value, label2) {
-    if (Array.isArray(value))
-      return value;
-    if (Array.isArray(value?.values))
-      return value.values;
-    if (Array.isArray(value?.elements))
-      return value.elements;
-    throw new Error(`${label2} must be a sequence`);
-  }
-  function entriesFor2(args, positional, name) {
-    if (args.length === 1 && args[0]?.type === "map" && args[0].entries instanceof Map)
-      return args[0].entries;
-    if (args.length > positional.length)
-      throw new Error(`${name} received too many arguments`);
-    const entries2 = new Map(positional.slice(0, args.length).map((key, index) => [key, args[index]]));
-    const options = entries2.get("options");
-    if (options?.type === "map" && options.entries instanceof Map) {
-      for (const [key, value] of options.entries)
-        if (!entries2.has(key))
-          entries2.set(key, value);
-    }
-    return entries2;
-  }
-  function field(entries2, name, fallback = null) {
-    if (!(entries2 instanceof Map))
-      return fallback;
-    if (entries2.has(name))
-      return entries2.get(name);
-    const key = [...entries2.keys()].find((candidate) => String(candidate).toLowerCase() === String(name).toLowerCase());
-    return key === undefined ? fallback : entries2.get(key);
-  }
-  function numeric(value, label2) {
-    let result;
-    if (value instanceof Integer)
-      result = Number(value.value);
-    else if (value instanceof Rational)
-      result = Number(value.numerator) / Number(value.denominator);
-    else if (typeof value === "number")
-      result = value;
-    else if (typeof value === "bigint")
-      result = Number(value);
-    else
-      throw new Error(`${label2} must be numeric`);
-    if (!Number.isFinite(result))
-      throw new Error(`${label2} must be finite`);
-    return result;
-  }
-  function exact(value, label2) {
-    if (value instanceof Integer || value instanceof Rational)
-      return value;
-    throw new Error(`${label2} must be an exact integer or rational`);
-  }
-  function integer2(value, label2) {
-    if (value instanceof Integer)
-      return Number(value.value);
-    if (value instanceof Rational && value.denominator === 1n)
-      return Number(value.numerator);
-    if (typeof value === "number" && Number.isInteger(value))
-      return value;
-    throw new Error(`${label2} must be an integer`);
-  }
-  function truthy3(value, fallback = false) {
-    if (value === null || value === undefined)
-      return fallback;
-    if (value instanceof Integer)
-      return value.value !== 0n;
-    if (value instanceof Rational)
-      return value.numerator !== 0n;
-    return Boolean(value);
-  }
-  function text5(value, fallback = null) {
-    if (value?.type === "string")
-      return value.value;
-    return typeof value === "string" ? value : fallback;
-  }
-  function exactVector(value, dimension, label2) {
-    const values3 = sequence2(value, label2);
-    if (values3.length !== dimension)
-      throw new Error(`${label2} must contain ${dimension} coordinates`);
-    return Object.freeze(values3.map((item, index) => exact(item, `${label2} coordinate ${index + 1}`)));
-  }
-  function indexTriples(value, vertexCount, label2) {
-    return Object.freeze(sequence2(value, label2).map((triangle, triangleIndex) => {
-      const values3 = sequence2(triangle, `${label2} ${triangleIndex + 1}`);
-      if (values3.length !== 3)
-        throw new Error(`${label2} ${triangleIndex + 1} must contain three indices`);
-      const result = values3.map((item, index) => integer2(item, `${label2} ${triangleIndex + 1} index ${index + 1}`));
-      if (result.some((item) => item < 1 || item > vertexCount)) {
-        throw new Error(`${label2} ${triangleIndex + 1} indices must be between 1 and ${vertexCount}`);
-      }
-      return Object.freeze(result.map((item) => item - 1));
-    }));
-  }
-  function sceneValue(kind, fields = {}) {
-    return Object.freeze({
-      type: kind === "scene" ? "output" : "scene3d_node",
-      kind: kind === "scene" ? "scene3d" : kind,
-      schema: SCENE3D_SCHEMA,
-      ...fields,
-      _ext: new Map([
-        ["_type", str3(kind === "scene" ? "output" : "scene3d_node")],
-        ["kind", str3(kind === "scene" ? "scene3d" : kind)],
-        ["immutable", int9(1)]
-      ])
-    });
-  }
-  function isScene3D(value) {
-    return Boolean(value?.type === "output" && value.kind === "scene3d" && value.schema === SCENE3D_SCHEMA);
-  }
-  function isScene3DNode(value) {
-    return Boolean(value?.type === "scene3d_node" && value.schema === SCENE3D_SCHEMA);
-  }
-  function validateNode(value, label2) {
-    if (!isScene3DNode(value))
-      throw new Error(`${label2} must be a Scene3D node`);
-    return value;
-  }
-  function normalizeChildren(value, label2) {
-    return Object.freeze(sequence2(value, label2).map((child, index) => validateNode(child, `${label2} ${index + 1}`)));
-  }
-  function styleOptions(entries2) {
-    const material = field(entries2, "material");
-    const materialEntries = material?.type === "scene3d_node" && material.kind === "material" ? material.values : material?.type === "map" && material.entries instanceof Map ? material.entries : new Map;
-    const color = text5(field(entries2, "color"), text5(field(materialEntries, "color"), "#275dad"));
-    const width = field(entries2, "width", field(materialEntries, "width", int9(1)));
-    const opacity = field(entries2, "opacity", field(materialEntries, "opacity", int9(1)));
-    return Object.freeze({ color, width, opacity, material: material ?? null });
-  }
-  function createMaterial(args) {
-    const entries2 = entriesFor2(args, ["color", "opacity", "width"], "scene3d.Material");
-    const color = text5(field(entries2, "color"), "#275dad");
-    const opacity = field(entries2, "opacity", int9(1));
-    const width = field(entries2, "width", int9(1));
-    numeric(opacity, "scene3d.Material opacity");
-    numeric(width, "scene3d.Material width");
-    return sceneValue("material", { values: new Map([["color", str3(color)], ["opacity", opacity], ["width", width]]) });
-  }
-  function lightOptions(entries2, name) {
-    const color = text5(field(entries2, "color"), "#ffffff");
-    const intensity = field(entries2, "intensity", int9(1));
-    if (numeric(intensity, `${name} intensity`) < 0)
-      throw new Error(`${name} intensity must be nonnegative`);
-    if (!/^#[0-9a-f]{6}$/i.test(color) && !/^#[0-9a-f]{3}$/i.test(color)) {
-      throw new Error(`${name} color must be a three- or six-digit hexadecimal color`);
-    }
-    return { color, intensity };
-  }
-  function createAmbientLight(args) {
-    const entries2 = entriesFor2(args, ["color", "intensity"], "scene3d.AmbientLight");
-    return sceneValue("ambient_light", lightOptions(entries2, "scene3d.AmbientLight"));
-  }
-  function createDirectionalLight(args) {
-    const entries2 = entriesFor2(args, ["direction", "options"], "scene3d.DirectionalLight");
-    const direction = exactVector(field(entries2, "direction"), 3, "scene3d.DirectionalLight direction");
-    if (Math.hypot(...direction.map((value, index) => numeric(value, `scene3d.DirectionalLight direction ${index + 1}`))) < 0.000000000001) {
-      throw new Error("scene3d.DirectionalLight direction must not be zero");
-    }
-    return sceneValue("directional_light", { direction, ...lightOptions(entries2, "scene3d.DirectionalLight") });
-  }
-  function createPointLight(args) {
-    const entries2 = entriesFor2(args, ["position", "options"], "scene3d.PointLight");
-    return sceneValue("point_light", {
-      position: exactVector(field(entries2, "position"), 3, "scene3d.PointLight position"),
-      ...lightOptions(entries2, "scene3d.PointLight")
-    });
-  }
-  function createMesh(args) {
-    const entries2 = entriesFor2(args, ["vertices", "triangles", "options"], "scene3d.Mesh");
-    const vertices = Object.freeze(sequence2(field(entries2, "vertices"), "scene3d.Mesh vertices").map((vertex, index) => exactVector(vertex, 3, `scene3d.Mesh vertex ${index + 1}`)));
-    if (vertices.length === 0)
-      throw new Error("scene3d.Mesh requires at least one vertex");
-    const triangles = indexTriples(field(entries2, "triangles"), vertices.length, "scene3d.Mesh triangle");
-    return sceneValue("mesh", { vertices, triangles, style: styleOptions(entries2), metadata: field(entries2, "metadata") });
-  }
-  function createPolyline(args) {
-    const entries2 = entriesFor2(args, ["points", "options"], "scene3d.Polyline");
-    const points = Object.freeze(sequence2(field(entries2, "points"), "scene3d.Polyline points").map((point, index) => exactVector(point, 3, `scene3d.Polyline point ${index + 1}`)));
-    if (points.length < 2)
-      throw new Error("scene3d.Polyline requires at least two points");
-    return sceneValue("polyline", {
-      points,
-      closed: truthy3(field(entries2, "closed")),
-      style: styleOptions(entries2),
-      metadata: field(entries2, "metadata")
-    });
-  }
-  function createPointCloud(args) {
-    const entries2 = entriesFor2(args, ["points", "options"], "scene3d.PointCloud");
-    const points = Object.freeze(sequence2(field(entries2, "points"), "scene3d.PointCloud points").map((point, index) => exactVector(point, 3, `scene3d.PointCloud point ${index + 1}`)));
-    if (points.length === 0)
-      throw new Error("scene3d.PointCloud requires at least one point");
-    return sceneValue("point_cloud", {
-      points,
-      radius: field(entries2, "radius", int9(3)),
-      style: styleOptions(entries2),
-      metadata: field(entries2, "metadata")
-    });
-  }
-  function createGroup3D(args) {
-    const entries2 = entriesFor2(args, ["children", "options"], "scene3d.Group");
-    return sceneValue("group", { children: normalizeChildren(field(entries2, "children"), "scene3d.Group children"), metadata: field(entries2, "metadata") });
-  }
-  function identityExact() {
-    return [int9(1), int9(0), int9(0), int9(0), int9(0), int9(1), int9(0), int9(0), int9(0), int9(0), int9(1), int9(0), int9(0), int9(0), int9(0), int9(1)];
-  }
-  function createTransform3D(args) {
-    const entries2 = entriesFor2(args, ["children", "options"], "scene3d.Transform");
-    let matrix = identityExact();
-    const matrixValue = field(entries2, "matrix");
-    if (matrixValue !== null) {
-      const values3 = sequence2(matrixValue, "scene3d.Transform matrix");
-      if (values3.length !== 16)
-        throw new Error("scene3d.Transform matrix must contain 16 row-major values");
-      matrix = values3.map((value, index) => exact(value, `scene3d.Transform matrix value ${index + 1}`));
-    }
-    const translate = field(entries2, "translate");
-    if (translate !== null) {
-      const vector = exactVector(translate, 3, "scene3d.Transform translate");
-      matrix[3] = vector[0];
-      matrix[7] = vector[1];
-      matrix[11] = vector[2];
-    }
-    const scale2 = field(entries2, "scale");
-    if (scale2 !== null) {
-      const values3 = Array.isArray(scale2) || Array.isArray(scale2?.values) ? exactVector(scale2, 3, "scene3d.Transform scale") : [exact(scale2, "scene3d.Transform scale"), exact(scale2, "scene3d.Transform scale"), exact(scale2, "scene3d.Transform scale")];
-      matrix[0] = values3[0];
-      matrix[5] = values3[1];
-      matrix[10] = values3[2];
-    }
-    return sceneValue("transform", {
-      children: normalizeChildren(field(entries2, "children"), "scene3d.Transform children"),
-      matrix: Object.freeze(matrix),
-      metadata: field(entries2, "metadata")
-    });
-  }
-  function camera(args, projection) {
-    const name = projection === "perspective" ? "scene3d.PerspectiveCamera" : "scene3d.OrthographicCamera";
-    const entries2 = entriesFor2(args, ["position", "target", "options"], name);
-    return sceneValue("camera", {
-      projection,
-      position: exactVector(field(entries2, "position"), 3, `${name} position`),
-      target: exactVector(field(entries2, "target"), 3, `${name} target`),
-      up: exactVector(field(entries2, "up", seq3([int9(0), int9(0), int9(1)])), 3, `${name} up`),
-      fov: field(entries2, "fov", int9(50)),
-      near: field(entries2, "near", new Rational(1n, 100n)),
-      far: field(entries2, "far", int9(1000)),
-      scale: field(entries2, "scale")
-    });
-  }
-  var createPerspectiveCamera = (args) => camera(args, "perspective");
-  var createOrthographicCamera = (args) => camera(args, "orthographic");
-  function defaultCamera() {
-    return camera([seq3([int9(4), int9(4), int9(3)]), seq3([int9(0), int9(0), int9(0)])], "perspective");
-  }
-  function createScene3D(args) {
-    const entries2 = entriesFor2(args, ["children", "options"], "scene3d.Scene");
-    const cameraValue = field(entries2, "camera", defaultCamera());
-    if (!isScene3DNode(cameraValue) || cameraValue.kind !== "camera")
-      throw new Error("scene3d.Scene camera must be a Scene3D camera");
-    const lights = field(entries2, "lights") === null ? [] : sequence2(field(entries2, "lights"), "scene3d.Scene lights");
-    for (const [index, light] of lights.entries()) {
-      if (!isScene3DNode(light) || !["ambient_light", "directional_light", "point_light"].includes(light.kind)) {
-        throw new Error(`scene3d.Scene light ${index + 1} must be a Scene3D light`);
-      }
-    }
-    return sceneValue("scene", {
-      children: normalizeChildren(field(entries2, "children"), "scene3d.Scene children"),
-      camera: cameraValue,
-      lights: Object.freeze([...lights]),
-      metadata: field(entries2, "metadata"),
-      coordinateSystem: Object.freeze({ handedness: "right", up: "z", units: "unspecified" })
-    });
-  }
-  var identityNumber = () => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
-  function multiply4(left, right) {
-    const result = Array(16).fill(0);
-    for (let row = 0;row < 4; row += 1)
-      for (let column = 0;column < 4; column += 1) {
-        for (let index = 0;index < 4; index += 1)
-          result[row * 4 + column] += left[row * 4 + index] * right[index * 4 + column];
-      }
-    return result;
-  }
-  function transformPoint(matrix, point) {
-    const [x, y, z] = point.map((value, index) => numeric(value, `Scene3D coordinate ${index + 1}`));
-    return [
-      matrix[0] * x + matrix[1] * y + matrix[2] * z + matrix[3],
-      matrix[4] * x + matrix[5] * y + matrix[6] * z + matrix[7],
-      matrix[8] * x + matrix[9] * y + matrix[10] * z + matrix[11]
-    ];
-  }
-  function collectPrimitives(children, parentMatrix = identityNumber(), result = []) {
-    for (const child of children) {
-      if (child.kind === "group")
-        collectPrimitives(child.children, parentMatrix, result);
-      else if (child.kind === "transform") {
-        const local = child.matrix.map((value, index) => numeric(value, `Scene3D transform ${index + 1}`));
-        collectPrimitives(child.children, multiply4(parentMatrix, local), result);
-      } else if (child.kind === "mesh") {
-        const vertices = child.vertices.map((point) => transformPoint(parentMatrix, point));
-        const edges = new Map;
-        for (const [a, b, c] of child.triangles)
-          for (const pair of [[a, b], [b, c], [c, a]]) {
-            const ordered = pair[0] < pair[1] ? pair : [pair[1], pair[0]];
-            edges.set(`${ordered[0]}:${ordered[1]}`, ordered);
-          }
-        result.push({ kind: "mesh", points: vertices, segments: [...edges.values()], triangles: child.triangles, style: child.style });
-      } else if (child.kind === "polyline") {
-        const points = child.points.map((point) => transformPoint(parentMatrix, point));
-        const segments = points.slice(1).map((_, index) => [index, index + 1]);
-        if (child.closed && points.length > 2)
-          segments.push([points.length - 1, 0]);
-        result.push({ kind: "lines", points, segments, style: child.style });
-      } else if (child.kind === "point_cloud") {
-        result.push({ kind: "points", points: child.points.map((point) => transformPoint(parentMatrix, point)), radius: child.radius, style: child.style });
-      } else if (child.kind !== "material" && child.kind !== "camera") {
-        throw new Error(`Unsupported Scene3D node '${child.kind}'`);
-      }
-    }
-    return result;
-  }
-  function flattenScene3D(scene) {
-    if (!isScene3D(scene))
-      throw new Error("Expected a Scene3D scene");
-    return collectPrimitives(scene.children);
-  }
-  var subtract = (a, b) => a.map((value, index) => value - b[index]);
-  var dot = (a, b) => a.reduce((sum, value, index) => sum + value * b[index], 0);
-  var cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-  function normalize3(value, label2) {
-    const length = Math.hypot(...value);
-    if (length < 0.000000000001)
-      throw new Error(`${label2} must not be zero or collinear with the view direction`);
-    return value.map((entry) => entry / length);
-  }
-  function cameraFrame(cameraValue) {
-    const position = cameraValue.position.map((value, index) => numeric(value, `Camera position ${index + 1}`));
-    const target = cameraValue.target.map((value, index) => numeric(value, `Camera target ${index + 1}`));
-    const upHint = cameraValue.up.map((value, index) => numeric(value, `Camera up ${index + 1}`));
-    const forward = normalize3(subtract(target, position), "Camera view direction");
-    const right = normalize3(cross(forward, upHint), "Camera up vector");
-    const up = cross(right, forward);
-    return { position, forward, right, up };
-  }
-  function cameraPoint(point, frame) {
-    const delta = subtract(point, frame.position);
-    return [dot(delta, frame.right), dot(delta, frame.up), dot(delta, frame.forward)];
-  }
-  function clipDepth(a, b, near, far) {
-    let start = a;
-    let end = b;
-    if (start[2] < near && end[2] < near || start[2] > far && end[2] > far)
-      return null;
-    for (const plane of [near, far]) {
-      const below = plane === near ? (point) => point[2] < plane : (point) => point[2] > plane;
-      if (below(start) !== below(end)) {
-        const t = (plane - start[2]) / (end[2] - start[2]);
-        const cut = start.map((value, index) => value + (end[index] - value) * t);
-        if (below(start))
-          start = cut;
-        else
-          end = cut;
-      }
-    }
-    return [start, end];
-  }
-  function styleMap2(style, fill = false) {
-    return rixMap3([
-      [fill ? "fill" : "stroke", str3(style.color)],
-      [fill ? "stroke" : "fill", str3(fill ? style.color : "none")],
-      ["width", style.width],
-      ["opacity", style.opacity]
-    ]);
-  }
-  function rgb(color) {
-    if (!/^#[0-9a-f]{6}$/i.test(color) && !/^#[0-9a-f]{3}$/i.test(color)) {
-      throw new Error("Scene3D lit snapshots require hexadecimal material colors");
-    }
-    const source = color.length === 4 ? color.slice(1).split("").map((digit) => digit + digit).join("") : color.slice(1);
-    return [0, 2, 4].map((offset) => Number.parseInt(source.slice(offset, offset + 2), 16));
-  }
-  function hex(values3) {
-    return `#${values3.map((value) => Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, "0")).join("")}`;
-  }
-  function litMeshColor(style, triangle, lights) {
-    const edge1 = subtract(triangle[1], triangle[0]);
-    const edge2 = subtract(triangle[2], triangle[0]);
-    const normal = normalize3(cross(edge1, edge2), "Scene3D triangle");
-    const center = [0, 1, 2].map((index) => triangle.reduce((sum, point) => sum + point[index], 0) / 3);
-    const illumination = [0, 0, 0];
-    const activeLights = lights.length ? lights : [{ kind: "ambient_light", color: "#ffffff", intensity: int9(1) }];
-    for (const light of activeLights) {
-      let factor = numeric(light.intensity, "Scene3D light intensity");
-      if (light.kind === "directional_light") {
-        const direction = normalize3(light.direction.map((value, index) => -numeric(value, `Directional light direction ${index + 1}`)), "Directional light direction");
-        factor *= Math.abs(dot(normal, direction));
-      } else if (light.kind === "point_light") {
-        const position = light.position.map((value, index) => numeric(value, `Point light position ${index + 1}`));
-        factor *= Math.abs(dot(normal, normalize3(subtract(position, center), "Point light position")));
-      }
-      const lightRgb = rgb(light.color);
-      for (let index = 0;index < 3; index += 1)
-        illumination[index] += factor * lightRgb[index] / 255;
-    }
-    const base = rgb(style.color);
-    return hex(base.map((value, index) => value * Math.min(1, illumination[index])));
-  }
-  function snapshotScene3D(args) {
-    const entries2 = entriesFor2(args, ["scene", "options"], "scene3d.Snapshot");
-    const scene = field(entries2, "scene");
-    if (!isScene3D(scene))
-      throw new Error("scene3d.Snapshot requires a Scene3D scene");
-    const mode = text5(field(entries2, "mode"), "wireframe");
-    if (!["wireframe", "lit"].includes(mode))
-      throw new Error("scene3d.Snapshot mode must be 'wireframe' or 'lit'");
-    const sizeValue = field(entries2, "size", seq3([int9(640), int9(480)]));
-    const [width, height] = sequence2(sizeValue, "scene3d.Snapshot size").map((value, index) => numeric(value, `scene3d.Snapshot size ${index + 1}`));
-    if (width <= 0 || height <= 0)
-      throw new Error("scene3d.Snapshot size must be positive");
-    const cameraValue = field(entries2, "camera", scene.camera);
-    if (!isScene3DNode(cameraValue) || cameraValue.kind !== "camera")
-      throw new Error("scene3d.Snapshot camera must be a Scene3D camera");
-    const primitives = flattenScene3D(scene);
-    const frame = cameraFrame(cameraValue);
-    const near = numeric(cameraValue.near, "Camera near plane");
-    const far = numeric(cameraValue.far, "Camera far plane");
-    if (!(near > 0 && far > near))
-      throw new Error("Camera requires 0 < near < far");
-    const cameraPrimitives = primitives.map((primitive) => ({ ...primitive, points: primitive.points.map((point) => cameraPoint(point, frame)) }));
-    const aspect = width / height;
-    let project;
-    if (cameraValue.projection === "perspective") {
-      const fov = numeric(cameraValue.fov, "Camera field of view");
-      if (!(fov > 0 && fov < 180))
-        throw new Error("Perspective camera fov must be between 0 and 180 degrees");
-      const focal = 1 / Math.tan(fov * Math.PI / 360);
-      project = ([x, y, depth]) => [(1 + x * focal / (depth * aspect)) * width / 2, (1 - y * focal / depth) * height / 2];
-    } else {
-      const all = cameraPrimitives.flatMap((primitive) => primitive.points);
-      const centerX = all.length ? (Math.min(...all.map((point) => point[0])) + Math.max(...all.map((point) => point[0]))) / 2 : 0;
-      const centerY = all.length ? (Math.min(...all.map((point) => point[1])) + Math.max(...all.map((point) => point[1]))) / 2 : 0;
-      const requested = cameraValue.scale === null ? null : numeric(cameraValue.scale, "Orthographic camera scale");
-      const spanX = all.length ? Math.max(...all.map((point) => point[0])) - Math.min(...all.map((point) => point[0])) : 1;
-      const spanY = all.length ? Math.max(...all.map((point) => point[1])) - Math.min(...all.map((point) => point[1])) : 1;
-      const vertical = requested ?? Math.max(spanY, spanX / aspect, 1) * 1.12;
-      project = ([x, y]) => [width / 2 + (x - centerX) * height / vertical, height / 2 - (y - centerY) * height / vertical];
-    }
-    const children = [];
-    let segmentCount = 0;
-    let pointCount = 0;
-    let faceCount = 0;
-    if (mode === "lit") {
-      const faces = cameraPrimitives.flatMap((primitive) => {
-        if (primitive.kind !== "mesh")
-          return [];
-        return primitive.triangles.map((indices) => {
-          const points = indices.map((index) => primitive.points[index]);
-          return { points, style: primitive.style, depth: points.reduce((sum, point) => sum + point[2], 0) / 3 };
-        }).filter(({ points }) => points.every((point) => point[2] >= near && point[2] <= far));
-      }).sort((left, right) => right.depth - left.depth);
-      for (const face of faces) {
-        const worldPoints = face.points.map((point) => {
-          const delta = [
-            frame.right[0] * point[0] + frame.up[0] * point[1] + frame.forward[0] * point[2],
-            frame.right[1] * point[0] + frame.up[1] * point[1] + frame.forward[1] * point[2],
-            frame.right[2] * point[0] + frame.up[2] * point[1] + frame.forward[2] * point[2]
-          ];
-          return delta.map((value, index) => value + frame.position[index]);
-        });
-        children.push(createPath([face.points.map(project), styleMap2({ ...face.style, color: litMeshColor(face.style, worldPoints, scene.lights) }, true)]));
-        faceCount += 1;
-      }
-    }
-    for (const primitive of cameraPrimitives) {
-      if (primitive.kind === "lines" || primitive.kind === "mesh" && mode === "wireframe")
-        for (const [aIndex, bIndex] of primitive.segments) {
-          let endpoints = [primitive.points[aIndex], primitive.points[bIndex]];
-          endpoints = clipDepth(endpoints[0], endpoints[1], near, far);
-          if (!endpoints)
-            continue;
-          children.push(createPath([[project(endpoints[0]), project(endpoints[1])], styleMap2(primitive.style)]));
-          segmentCount += 1;
-        }
-      else if (primitive.kind === "points") {
-        const radius = numeric(primitive.radius, "PointCloud radius");
-        for (const point of primitive.points) {
-          if (point[2] < near || point[2] > far)
-            continue;
-          children.push(createCircle([project(point), radius, styleMap2(primitive.style, true)]));
-          pointCount += 1;
-        }
-      }
-    }
-    const graphic = createGraphic([[width, height], children, rixMap3([["schema", str3("rix.graphics@1")], ["source", str3(SCENE3D_SCHEMA)], ["mode", str3(mode)]])]);
-    const diagnostics = mode === "wireframe" && scene.lights.length > 0 ? [rixMap3([["level", str3("info")], ["code", str3("scene3d-wireframe-ignores-lights")], ["message", str3("Wireframe snapshots do not evaluate Scene3D lights.")]])] : [];
-    return rixMap3([
-      ["value", graphic],
-      ["resolved", int9(1)],
-      ["uncertainty", seq3([])],
-      ["work", rixMap3([["primitives", int9(primitives.length)], ["segments", int9(segmentCount)], ["faces", int9(faceCount)], ["points", int9(pointCount)]])],
-      ["source", rixMap3([["schema", str3(SCENE3D_SCHEMA)], ["projection", str3(cameraValue.projection)], ["mode", str3(mode)]])],
-      ["diagnostics", seq3(diagnostics)]
-    ]);
-  }
-
-  // rix/plugins/scene3d/scene3d.plugin.rix.js
-  var HELPERS = new Map([
-    ["Scene", createScene3D],
-    ["Group", createGroup3D],
-    ["Transform", createTransform3D],
-    ["Mesh", createMesh],
-    ["Polyline", createPolyline],
-    ["PointCloud", createPointCloud],
-    ["Material", createMaterial],
-    ["AmbientLight", createAmbientLight],
-    ["DirectionalLight", createDirectionalLight],
-    ["PointLight", createPointLight],
-    ["PerspectiveCamera", createPerspectiveCamera],
-    ["OrthographicCamera", createOrthographicCamera],
-    ["Snapshot", snapshotScene3D]
-  ]);
-  function createScene3DPluginCollection() {
-    const entries2 = new Map;
-    const extension = new Map([["immutable", new Integer(1n)]]);
-    for (const [name, helper] of HELPERS) {
-      entries2.set(name, helper);
-      entries2.set(name.toUpperCase(), helper);
-      extension.set(name.toUpperCase(), { type: "method_builtin", name, impl: (args) => helper(args.slice(1)) });
-    }
-    return { type: "map", entries: entries2, _ext: extension };
-  }
-  function install4({ systemContext }) {
-    const collection = createScene3DPluginCollection();
-    systemContext.registerHostValue("scene3d", collection, {
-      doc: "Exact retained 3D scenes and deterministic wireframe or lit snapshots",
-      groups: ["Scene3D", "Graphics"]
-    });
-    return collection;
-  }
-
-  // rix/plugins/nd/nd.js
-  var ND_SCHEMA = "rix.nd@1";
-  var PROJECTION_SCHEMA = "rix.nd.projection@1";
-  var int10 = (value) => new Integer(BigInt(value));
-  var str4 = (value) => ({ type: "string", value: String(value) });
-  var seq4 = (values3) => ({ type: "sequence", values: values3 });
-  var map2 = (entries2) => ({ type: "map", entries: new Map(entries2) });
-  var zero2 = () => new Rational(0n, 1n);
-  var one2 = () => new Rational(1n, 1n);
-  function rational2(value, label2) {
-    if (value instanceof Rational)
-      return value;
-    if (value instanceof Integer)
-      return new Rational(value.value, 1n);
-    throw new Error(`${label2} must be an exact integer or rational`);
-  }
-  function integer3(value, label2) {
-    const number = value instanceof Integer ? Number(value.value) : value instanceof Rational && value.denominator === 1n ? Number(value.numerator) : NaN;
-    if (!Number.isSafeInteger(number))
-      throw new Error(`${label2} must be an integer`);
-    return number;
-  }
-  function ndValue(kind, fields) {
-    return Object.freeze({
-      type: "nd_geometry",
-      kind,
-      schema: ND_SCHEMA,
-      ...fields,
-      _ext: new Map([["_type", str4("nd_geometry")], ["kind", str4(kind)], ["immutable", int10(1)]])
-    });
-  }
-  function isNdGeometry(value) {
-    return value?.type === "nd_geometry" && value.schema === ND_SCHEMA;
-  }
-  function points(value, label2, requiredDimension = null) {
-    let dimension = requiredDimension;
-    const result = sequence2(value, label2).map((point, pointIndex) => {
-      const coordinates = sequence2(point, `${label2} ${pointIndex + 1}`);
-      if (dimension === null)
-        dimension = coordinates.length;
-      if (coordinates.length !== dimension)
-        throw new Error(`${label2} ${pointIndex + 1} must have dimension ${dimension}`);
-      if (dimension < 1)
-        throw new Error(`${label2} points cannot be empty`);
-      return Object.freeze(coordinates.map((coordinate, index) => exact(coordinate, `${label2} ${pointIndex + 1} coordinate ${index + 1}`)));
-    });
-    return { dimension: dimension ?? 0, values: Object.freeze(result) };
-  }
-  function edgePairs(value, vertexCount, label2) {
-    return Object.freeze(sequence2(value, label2).map((edge, edgeIndex) => {
-      const pair = sequence2(edge, `${label2} ${edgeIndex + 1}`);
-      if (pair.length !== 2)
-        throw new Error(`${label2} ${edgeIndex + 1} must contain two indices`);
-      const values3 = pair.map((item, index) => integer3(item, `${label2} ${edgeIndex + 1} index ${index + 1}`));
-      if (values3.some((item) => item < 1 || item > vertexCount))
-        throw new Error(`${label2} indices must be between 1 and ${vertexCount}`);
-      return Object.freeze(values3.map((item) => item - 1));
-    }));
-  }
-  function provenance(entries2) {
-    const value = field(entries2, "provenance");
-    return value === null ? Object.freeze([]) : Object.freeze(sequence2(value, "n-dimensional provenance"));
-  }
-  function truthy4(value) {
-    if (value instanceof Integer)
-      return value.value !== 0n;
-    if (value instanceof Rational)
-      return value.numerator !== 0n;
-    return Boolean(value);
-  }
-  function createNdPoint(args) {
-    const entries2 = entriesFor2(args, ["coordinates", "options"], "nd.Point");
-    const coordinates = sequence2(field(entries2, "coordinates"), "nd.Point coordinates");
-    if (coordinates.length < 1)
-      throw new Error("nd.Point requires at least one coordinate");
-    return ndValue("point", {
-      dimension: coordinates.length,
-      coordinates: Object.freeze(coordinates.map((value, index) => exact(value, `nd.Point coordinate ${index + 1}`))),
-      provenance: provenance(entries2),
-      metadata: field(entries2, "metadata")
-    });
-  }
-  function createNdPolyline(args) {
-    const entries2 = entriesFor2(args, ["points", "options"], "nd.Polyline");
-    const normalized = points(field(entries2, "points"), "nd.Polyline point");
-    if (normalized.values.length < 2)
-      throw new Error("nd.Polyline requires at least two points");
-    return ndValue("polyline", {
-      dimension: normalized.dimension,
-      points: normalized.values,
-      closed: truthy4(field(entries2, "closed")),
-      provenance: provenance(entries2),
-      metadata: field(entries2, "metadata"),
-      style: field(entries2, "style")
-    });
-  }
-  function createNdPolytope(args) {
-    const entries2 = entriesFor2(args, ["vertices", "edges", "options"], "nd.Polytope");
-    const normalized = points(field(entries2, "vertices"), "nd.Polytope vertex");
-    if (normalized.values.length < 1)
-      throw new Error("nd.Polytope requires vertices");
-    return ndValue("polytope", {
-      dimension: normalized.dimension,
-      vertices: normalized.values,
-      edges: edgePairs(field(entries2, "edges"), normalized.values.length, "nd.Polytope edge"),
-      provenance: provenance(entries2),
-      metadata: field(entries2, "metadata"),
-      style: field(entries2, "style")
-    });
-  }
-  function projectionValue(matrix, offset, method6, provenanceValue = []) {
-    const targetDimension = matrix.length;
-    const sourceDimension = matrix[0]?.length ?? 0;
-    if (sourceDimension < 1 || targetDimension < 1)
-      throw new Error("nd.Projection matrix cannot be empty");
-    if (!matrix.every((row) => row.length === sourceDimension))
-      throw new Error("nd.Projection matrix rows must have equal lengths");
-    if (offset.length !== targetDimension)
-      throw new Error(`nd.Projection offset must have ${targetDimension} coordinates`);
-    return Object.freeze({
-      type: "nd_projection",
-      kind: "affine",
-      schema: PROJECTION_SCHEMA,
-      sourceDimension,
-      targetDimension,
-      matrix: Object.freeze(matrix.map((row) => Object.freeze(row.map((value, index) => exact(value, `nd.Projection matrix coordinate ${index + 1}`))))),
-      offset: Object.freeze(offset.map((value, index) => exact(value, `nd.Projection offset ${index + 1}`))),
-      method: method6,
-      provenance: Object.freeze(provenanceValue),
-      _ext: new Map([["_type", str4("nd_projection")], ["immutable", int10(1)]])
-    });
-  }
-  function createProjection(args) {
-    const entries2 = entriesFor2(args, ["matrix", "offset", "options"], "nd.Projection");
-    const rows = sequence2(field(entries2, "matrix"), "nd.Projection matrix").map((row, index) => sequence2(row, `nd.Projection matrix row ${index + 1}`));
-    const offsetValue = field(entries2, "offset");
-    const offset = offsetValue === null ? rows.map(() => zero2()) : sequence2(offsetValue, "nd.Projection offset");
-    return projectionValue(rows, offset, field(entries2, "method")?.value ?? "affine", provenance(entries2));
-  }
-  function coordinateProjection(args) {
-    const entries2 = entriesFor2(args, ["sourceDimension", "axes"], "nd.CoordinateProjection");
-    const sourceDimension = integer3(field(entries2, "sourceDimension"), "nd.CoordinateProjection source dimension");
-    const axes = sequence2(field(entries2, "axes"), "nd.CoordinateProjection axes").map((axis, index) => integer3(axis, `nd.CoordinateProjection axis ${index + 1}`));
-    if (sourceDimension < 1 || axes.length < 1 || new Set(axes).size !== axes.length || axes.some((axis) => axis < 1 || axis > sourceDimension)) {
-      throw new Error("nd.CoordinateProjection axes must be unique indices in the source dimension");
-    }
-    const rows = axes.map((axis) => Array.from({ length: sourceDimension }, (_, index) => index === axis - 1 ? one2() : zero2()));
-    return projectionValue(rows, axes.map(() => zero2()), "coordinate", [map2([["axes", seq4(axes.map(int10))]])]);
-  }
-  function cayleyRotation(args) {
-    const entries2 = entriesFor2(args, ["dimension", "axis1", "axis2", "t"], "nd.CayleyRotation");
-    const dimension = integer3(field(entries2, "dimension"), "nd.CayleyRotation dimension");
-    const axis1 = integer3(field(entries2, "axis1"), "nd.CayleyRotation axis1");
-    const axis2 = integer3(field(entries2, "axis2"), "nd.CayleyRotation axis2");
-    if (dimension < 2 || axis1 < 1 || axis2 < 1 || axis1 > dimension || axis2 > dimension || axis1 === axis2) {
-      throw new Error("nd.CayleyRotation axes must be distinct indices in the dimension");
-    }
-    let cosine;
-    let sine;
-    const t = field(entries2, "t");
-    if (isCayleyInfinity(t)) {
-      cosine = new Rational(-1n, 1n);
-      sine = zero2();
-    } else {
-      const parameter = rational2(t, "nd.CayleyRotation t");
-      const square = parameter.multiply(parameter);
-      const denominator = one2().add(square);
-      cosine = one2().subtract(square).divide(denominator);
-      sine = new Rational(2n, 1n).multiply(parameter).divide(denominator);
-    }
-    const matrix = Array.from({ length: dimension }, (_, row) => Array.from({ length: dimension }, (_2, column) => row === column ? one2() : zero2()));
-    matrix[axis1 - 1][axis1 - 1] = cosine;
-    matrix[axis1 - 1][axis2 - 1] = sine.negate ? sine.negate() : new Rational(-sine.numerator, sine.denominator);
-    matrix[axis2 - 1][axis1 - 1] = sine;
-    matrix[axis2 - 1][axis2 - 1] = cosine;
-    return projectionValue(matrix, Array.from({ length: dimension }, zero2), "cayley-rotation", [map2([
-      ["axes", seq4([int10(axis1), int10(axis2)])],
-      ["parameter", t]
-    ])]);
-  }
-  function multiplyMatrices(left, right) {
-    if (left[0].length !== right.length)
-      throw new Error("nd.Compose projection dimensions do not match");
-    return left.map((row) => right[0].map((_, column) => row.reduce((sum, value, index) => sum.add(rational2(value, "projection value").multiply(rational2(right[index][column], "projection value"))), zero2())));
-  }
-  function applyMatrix(matrix, vector, offset) {
-    return matrix.map((row, rowIndex) => row.reduce((sum, coefficient, index) => sum.add(rational2(coefficient, "projection coefficient").multiply(rational2(vector[index], "projected coordinate"))), rational2(offset[rowIndex], "projection offset")));
-  }
-  function composeProjections(args) {
-    const entries2 = entriesFor2(args, ["after", "before"], "nd.Compose");
-    const after = field(entries2, "after");
-    const before = field(entries2, "before");
-    if (after?.type !== "nd_projection" || before?.type !== "nd_projection")
-      throw new Error("nd.Compose requires two projections");
-    if (before.targetDimension !== after.sourceDimension)
-      throw new Error("nd.Compose projection dimensions do not match");
-    const matrix = multiplyMatrices(after.matrix, before.matrix);
-    const offset = applyMatrix(after.matrix, before.offset, after.offset);
-    return projectionValue(matrix, offset, "composition", [...before.provenance, ...after.provenance]);
-  }
-  function projectCoordinates(coordinates, projection, label2) {
-    if (coordinates.length !== projection.sourceDimension)
-      throw new Error(`${label2} dimension ${coordinates.length} does not match projection source dimension ${projection.sourceDimension}`);
-    return Object.freeze(applyMatrix(projection.matrix, coordinates, projection.offset));
-  }
-  function projectGeometry(args) {
-    const entries2 = entriesFor2(args, ["geometry", "projection"], "nd.Project");
-    const geometry = field(entries2, "geometry");
-    const projection = field(entries2, "projection");
-    if (!isNdGeometry(geometry))
-      throw new Error("nd.Project geometry must be n-dimensional geometry");
-    if (projection?.type !== "nd_projection" || projection.schema !== PROJECTION_SCHEMA)
-      throw new Error("nd.Project requires an nd.Projection");
-    const trace = [...geometry.provenance, projection];
-    if (geometry.kind === "point")
-      return ndValue("point", { ...geometry, dimension: projection.targetDimension, coordinates: projectCoordinates(geometry.coordinates, projection, "nd.Point"), provenance: Object.freeze(trace) });
-    if (geometry.kind === "polyline")
-      return ndValue("polyline", { ...geometry, dimension: projection.targetDimension, points: Object.freeze(geometry.points.map((point) => projectCoordinates(point, projection, "nd.Polyline"))), provenance: Object.freeze(trace) });
-    if (geometry.kind === "polytope")
-      return ndValue("polytope", { ...geometry, dimension: projection.targetDimension, vertices: Object.freeze(geometry.vertices.map((point) => projectCoordinates(point, projection, "nd.Polytope"))), provenance: Object.freeze(trace) });
-    throw new Error(`nd.Project does not support geometry kind '${geometry.kind}'`);
-  }
-  function hypercube(args) {
-    const entries2 = entriesFor2(args, ["dimension", "size"], "nd.Hypercube");
-    const dimension = integer3(field(entries2, "dimension"), "nd.Hypercube dimension");
-    if (dimension < 1 || dimension > 10)
-      throw new Error("nd.Hypercube dimension must be between 1 and 10");
-    const half = rational2(field(entries2, "size", int10(2)), "nd.Hypercube size").divide(new Rational(2n, 1n));
-    const negative = half.negate ? half.negate() : new Rational(-half.numerator, half.denominator);
-    const vertexCount = 2 ** dimension;
-    const vertices = Array.from({ length: vertexCount }, (_, bits) => Array.from({ length: dimension }, (_2, axis) => bits & 1 << axis ? half : negative));
-    const edges = [];
-    for (let bits = 0;bits < vertexCount; bits += 1)
-      for (let axis = 0;axis < dimension; axis += 1) {
-        const other = bits ^ 1 << axis;
-        if (bits < other)
-          edges.push([bits + 1, other + 1]);
-      }
-    return createNdPolytope([seq4(vertices.map(seq4)), seq4(edges.map((edge) => seq4(edge.map(int10))))]);
-  }
-  function styleOptions2(style) {
-    return style?.type === "map" ? style : map2([]);
-  }
-  function toScene3D(args) {
-    const entries2 = entriesFor2(args, ["geometry", "options"], "nd.ToScene3D");
-    const geometry = field(entries2, "geometry");
-    if (!isNdGeometry(geometry))
-      throw new Error("nd.ToScene3D requires n-dimensional geometry");
-    if (geometry.dimension !== 3)
-      throw new Error(`nd.ToScene3D requires dimension 3; explicitly project dimension ${geometry.dimension} first`);
-    const style = field(entries2, "style", geometry.style);
-    let children;
-    if (geometry.kind === "point")
-      children = [createPointCloud([seq4([seq4(geometry.coordinates)]), styleOptions2(style)])];
-    else if (geometry.kind === "polyline")
-      children = [createPolyline([seq4(geometry.points.map(seq4)), styleOptions2(style)])];
-    else if (geometry.kind === "polytope") {
-      children = geometry.edges.map(([a, b]) => createPolyline([seq4([seq4(geometry.vertices[a]), seq4(geometry.vertices[b])]), styleOptions2(style)]));
-    } else
-      throw new Error(`nd.ToScene3D does not support geometry kind '${geometry.kind}'`);
-    const group = createGroup3D([seq4(children)]);
-    const camera2 = field(entries2, "camera");
-    return createScene3D([camera2 === null ? map2([["children", seq4([group])], ["metadata", map2([["source", str4(ND_SCHEMA)], ["projectionCount", int10(geometry.provenance.length)]])]]) : map2([["children", seq4([group])], ["camera", camera2], ["metadata", map2([["source", str4(ND_SCHEMA)], ["projectionCount", int10(geometry.provenance.length)]])]])]);
-  }
-
-  // rix/plugins/nd/nd.plugin.rix.js
-  var HELPERS2 = new Map([
-    ["Point", createNdPoint],
-    ["Polyline", createNdPolyline],
-    ["Polytope", createNdPolytope],
-    ["Hypercube", hypercube],
-    ["Projection", createProjection],
-    ["CoordinateProjection", coordinateProjection],
-    ["CayleyRotation", cayleyRotation],
-    ["Compose", composeProjections],
-    ["Project", projectGeometry],
-    ["ToScene3D", toScene3D]
-  ]);
-  function createNdPluginCollection() {
-    const entries2 = new Map;
-    const extension = new Map([["immutable", new Integer(1n)]]);
-    for (const [name, helper] of HELPERS2) {
-      entries2.set(name, helper);
-      entries2.set(name.toUpperCase(), helper);
-      extension.set(name.toUpperCase(), { type: "method_builtin", name, impl: (args) => helper(args.slice(1)) });
-    }
-    return { type: "map", entries: entries2, _ext: extension };
-  }
-  function install5({ systemContext }) {
-    const collection = createNdPluginCollection();
-    systemContext.registerHostValue("nd", collection, {
-      doc: "Exact n-dimensional geometry and explicit projection records",
-      groups: ["Geometry", "Scene3D", "Exact"]
-    });
-    return collection;
-  }
-
-  // rix/plugins/geometry/geometry.js
-  var GEOMETRY_SCHEMA = "rix.geometry@1";
-  var INTERSECTION_SCHEMA = "rix.geometry.intersection@1";
-  var int11 = (value) => new Integer(BigInt(value));
-  var str5 = (value) => ({ type: "string", value: String(value) });
-  var seq5 = (values3) => ({ type: "sequence", values: values3 });
-  var rixMap4 = (entries2) => ({ type: "map", entries: new Map(entries2) });
-  function sequence3(value, label2) {
-    if (Array.isArray(value))
-      return value;
-    if (Array.isArray(value?.values))
-      return value.values;
-    if (Array.isArray(value?.elements))
-      return value.elements;
-    throw new Error(`${label2} must be a sequence`);
-  }
-  function entriesFor3(args, positional, name) {
-    if (args.length === 1 && args[0]?.type === "map" && args[0].entries instanceof Map)
-      return args[0].entries;
-    if (args.length > positional.length)
-      throw new Error(`${name} received too many arguments`);
-    const entries2 = new Map(positional.slice(0, args.length).map((key, index) => [key, args[index]]));
-    const options = entries2.get("options");
-    if (options?.type === "map" && options.entries instanceof Map) {
-      for (const [key, value] of options.entries)
-        if (!entries2.has(key))
-          entries2.set(key, value);
-    }
-    return entries2;
-  }
-  function field2(entries2, name, fallback = null) {
-    if (!(entries2 instanceof Map))
-      return fallback;
-    if (entries2.has(name))
-      return entries2.get(name);
-    const canonical2 = String(name).toLowerCase();
-    for (const [key, value] of entries2)
-      if (String(key).toLowerCase() === canonical2)
-        return value;
-    return fallback;
-  }
-  function rational3(value, label2) {
-    if (value instanceof Rational)
-      return value;
-    if (value instanceof Integer)
-      return new Rational(value.value, 1n);
-    throw new Error(`${label2} must be an exact integer or rational`);
-  }
-  function number(value, label2) {
-    const exact2 = rational3(value, label2);
-    const result = Number(exact2.numerator) / Number(exact2.denominator);
-    if (!Number.isFinite(result))
-      throw new Error(`${label2} is outside the snapshot renderer's finite numeric range`);
-    if (exact2.numerator !== 0n && result === 0)
-      throw new Error(`${label2} is below the snapshot renderer's finite numeric resolution`);
-    return result;
-  }
-  function geometryValue(kind, fields) {
-    return Object.freeze({
-      type: "geometry",
-      kind,
-      schema: GEOMETRY_SCHEMA,
-      ...fields,
-      _ext: new Map([
-        ["_type", str5("geometry")],
-        ["kind", str5(kind)],
-        ["immutable", int11(1)]
-      ])
-    });
-  }
-  function provenance2(operation, inputs, details = null) {
-    return Object.freeze({ operation, inputs: Object.freeze([...inputs]), details });
-  }
-  function requireGeometry(value, kind, label2) {
-    if (value?.type !== "geometry" || value.schema !== GEOMETRY_SCHEMA || kind && value.kind !== kind) {
-      throw new Error(`${label2} must be a geometry ${kind || "value"}`);
-    }
-    return value;
-  }
-  function sameExact(left, right) {
-    return left.equals(right);
-  }
-  function samePoint(left, right) {
-    return sameExact(left.x, right.x) && sameExact(left.y, right.y);
-  }
-  function negate(value) {
-    return value.negate();
-  }
-  function pointValue(x, y, operation, inputs, metadata2 = null) {
-    return geometryValue("point", {
-      x,
-      y,
-      coordinates: Object.freeze([x, y]),
-      metadata: metadata2,
-      provenance: Object.freeze([provenance2(operation, inputs)])
-    });
-  }
-  function createPoint(args) {
-    let x;
-    let y;
-    let metadata2 = null;
-    if (args.length === 1 && (Array.isArray(args[0]) || Array.isArray(args[0]?.values) || Array.isArray(args[0]?.elements))) {
-      const coordinates = sequence3(args[0], "geometry.Point coordinates");
-      if (coordinates.length !== 2)
-        throw new Error("geometry.Point coordinates must contain x and y");
-      [x, y] = coordinates;
-    } else {
-      const entries2 = entriesFor3(args, ["x", "y", "options"], "geometry.Point");
-      x = field2(entries2, "x");
-      y = field2(entries2, "y");
-      metadata2 = field2(entries2, "metadata");
-    }
-    return pointValue(rational3(x, "geometry.Point x"), rational3(y, "geometry.Point y"), "Point", [x, y], metadata2);
-  }
-  function lineFromCoefficients(a, b, c, through, operation, inputs, metadata2 = null, style = null) {
-    if (a.numerator === 0n && b.numerator === 0n)
-      throw new Error(`${operation} cannot produce a degenerate line`);
-    return geometryValue("line", {
-      a,
-      b,
-      c,
-      through: Object.freeze(through),
-      metadata: metadata2,
-      style,
-      provenance: Object.freeze([provenance2(operation, inputs)])
-    });
-  }
-  function createLine(args) {
-    const entries2 = entriesFor3(args, ["first", "second", "options"], "geometry.Line");
-    const first = requireGeometry(field2(entries2, "first"), "point", "geometry.Line first point");
-    const second = requireGeometry(field2(entries2, "second"), "point", "geometry.Line second point");
-    if (samePoint(first, second))
-      throw new Error("geometry.Line requires two distinct points");
-    const a = first.y.subtract(second.y);
-    const b = second.x.subtract(first.x);
-    const c = first.x.multiply(second.y).subtract(second.x.multiply(first.y));
-    return lineFromCoefficients(a, b, c, [first, second], "Line", [first, second], field2(entries2, "metadata"), field2(entries2, "style"));
-  }
-  function squaredDistance(first, second) {
-    const dx = second.x.subtract(first.x);
-    const dy = second.y.subtract(first.y);
-    return dx.multiply(dx).add(dy.multiply(dy));
-  }
-  function circleValue(center, radiusSquared, through, operation, inputs, metadata2 = null, style = null) {
-    if (radiusSquared.numerator <= 0n)
-      throw new Error(`${operation} requires a positive radius`);
-    return geometryValue("circle", {
-      center,
-      radiusSquared,
-      through,
-      metadata: metadata2,
-      style,
-      provenance: Object.freeze([provenance2(operation, inputs)])
-    });
-  }
-  function createGeometryCircle(args) {
-    const entries2 = entriesFor3(args, ["center", "through", "options"], "geometry.Circle");
-    const center = requireGeometry(field2(entries2, "center"), "point", "geometry.Circle center");
-    const candidate = field2(entries2, "through");
-    const explicitRadius = field2(entries2, "radius");
-    const explicitSquared = field2(entries2, "radiusSquared");
-    const specificationCount = [candidate, explicitRadius, explicitSquared].filter((value) => value !== null).length;
-    if (specificationCount !== 1) {
-      throw new Error("geometry.Circle requires exactly one through point, radius, or radiusSquared");
-    }
-    let through = null;
-    let radiusSquared;
-    if (candidate?.type === "geometry") {
-      through = requireGeometry(candidate, "point", "geometry.Circle through point");
-      radiusSquared = squaredDistance(center, through);
-    } else if (explicitSquared !== null) {
-      radiusSquared = rational3(explicitSquared, "geometry.Circle radiusSquared");
-    } else {
-      const radius = rational3(explicitRadius ?? candidate, "geometry.Circle radius");
-      radiusSquared = radius.multiply(radius);
-    }
-    return circleValue(center, radiusSquared, through, "Circle", through ? [center, through] : [center, radiusSquared], field2(entries2, "metadata"), field2(entries2, "style"));
-  }
-  function midpoint(args) {
-    const entries2 = entriesFor3(args, ["first", "second"], "geometry.Midpoint");
-    const first = requireGeometry(field2(entries2, "first"), "point", "geometry.Midpoint first point");
-    const second = requireGeometry(field2(entries2, "second"), "point", "geometry.Midpoint second point");
-    const two = new Rational(2n, 1n);
-    return pointValue(first.x.add(second.x).divide(two), first.y.add(second.y).divide(two), "Midpoint", [first, second]);
-  }
-  function perpendicularBisector(args) {
-    const entries2 = entriesFor3(args, ["first", "second", "options"], "geometry.PerpendicularBisector");
-    const first = requireGeometry(field2(entries2, "first"), "point", "geometry.PerpendicularBisector first point");
-    const second = requireGeometry(field2(entries2, "second"), "point", "geometry.PerpendicularBisector second point");
-    if (samePoint(first, second))
-      throw new Error("geometry.PerpendicularBisector requires two distinct points");
-    const middle = midpoint([first, second]);
-    const a = second.x.subtract(first.x);
-    const b = second.y.subtract(first.y);
-    const c = negate(a.multiply(middle.x).add(b.multiply(middle.y)));
-    return lineFromCoefficients(a, b, c, [middle], "PerpendicularBisector", [first, second], field2(entries2, "metadata"), field2(entries2, "style"));
-  }
-  function intersectionValue(status, points2, left, right, diagnostic) {
-    return Object.freeze({
-      type: "geometry_intersection",
-      kind: "intersection",
-      schema: INTERSECTION_SCHEMA,
-      status,
-      points: Object.freeze(points2),
-      exact: status !== "unsupported",
-      diagnostic,
-      provenance: Object.freeze([provenance2("Intersect", [left, right], diagnostic)]),
-      _ext: new Map([
-        ["_type", str5("geometry_intersection")],
-        ["kind", str5("intersection")],
-        ["status", str5(status)],
-        ["immutable", int11(1)]
-      ])
-    });
-  }
-  function intersectLines(left, right) {
-    const determinant = left.a.multiply(right.b).subtract(right.a.multiply(left.b));
-    if (determinant.numerator === 0n) {
-      const ac = left.a.multiply(right.c).subtract(right.a.multiply(left.c));
-      const bc = left.b.multiply(right.c).subtract(right.b.multiply(left.c));
-      if (ac.numerator === 0n && bc.numerator === 0n) {
-        return intersectionValue("coincident", [], left, right, "Coincident lines have infinitely many intersections");
-      }
-      return intersectionValue("parallel", [], left, right, "Parallel lines do not intersect");
-    }
-    const x = left.b.multiply(right.c).subtract(right.b.multiply(left.c)).divide(determinant);
-    const y = left.c.multiply(right.a).subtract(right.c.multiply(left.a)).divide(determinant);
-    const point = pointValue(x, y, "LineIntersection", [left, right]);
-    return intersectionValue("one", [point], left, right, null);
-  }
-  function intersect(args) {
-    const entries2 = entriesFor3(args, ["left", "right"], "geometry.Intersect");
-    const left = requireGeometry(field2(entries2, "left"), null, "geometry.Intersect left value");
-    const right = requireGeometry(field2(entries2, "right"), null, "geometry.Intersect right value");
-    if (left.kind === "line" && right.kind === "line")
-      return intersectLines(left, right);
-    return intersectionValue("unsupported", [], left, right, `Phase 1 geometry.Intersect supports line-line intersections, not ${left.kind}-${right.kind}`);
-  }
-  function intersectionPoints(args) {
-    const entries2 = entriesFor3(args, ["intersection"], "geometry.Points");
-    const value = field2(entries2, "intersection");
-    if (value?.type !== "geometry_intersection" || value.schema !== INTERSECTION_SCHEMA) {
-      throw new Error("geometry.Points requires a geometry intersection result");
-    }
-    return seq5([...value.points]);
-  }
-  function intersectionStatus(args) {
-    const entries2 = entriesFor3(args, ["intersection"], "geometry.Status");
-    const value = field2(entries2, "intersection");
-    if (value?.type !== "geometry_intersection" || value.schema !== INTERSECTION_SCHEMA) {
-      throw new Error("geometry.Status requires a geometry intersection result");
-    }
-    return str5(value.status);
-  }
-  function circumcircle(args) {
-    const entries2 = entriesFor3(args, ["first", "second", "third", "options"], "geometry.Circumcircle");
-    const first = requireGeometry(field2(entries2, "first"), "point", "geometry.Circumcircle first point");
-    const second = requireGeometry(field2(entries2, "second"), "point", "geometry.Circumcircle second point");
-    const third = requireGeometry(field2(entries2, "third"), "point", "geometry.Circumcircle third point");
-    const firstBisector = perpendicularBisector([first, second]);
-    const secondBisector = perpendicularBisector([first, third]);
-    const centerResult = intersect([firstBisector, secondBisector]);
-    if (centerResult.status !== "one") {
-      throw new Error(`geometry.Circumcircle requires three non-collinear points: ${centerResult.diagnostic}`);
-    }
-    return circleValue(centerResult.points[0], squaredDistance(centerResult.points[0], first), first, "Circumcircle", [first, second, third, firstBisector, secondBisector, centerResult], field2(entries2, "metadata"), field2(entries2, "style"));
-  }
-  function numericSequence(value, length, label2) {
-    const values3 = sequence3(value, label2);
-    if (values3.length !== length)
-      throw new Error(`${label2} must contain ${length} values`);
-    return values3.map((item, index) => number(item, `${label2} value ${index + 1}`));
-  }
-  function styleMap3(value, defaults) {
-    const supplied = value?.type === "map" && value.entries instanceof Map ? value.entries : new Map;
-    return rixMap4([...new Map([...defaults, ...supplied]).entries()]);
-  }
-  function lineEndpoints(line2, view) {
-    const [xmin, ymin, xmax, ymax] = view;
-    const a = number(line2.a, "geometry line coefficient a");
-    const b = number(line2.b, "geometry line coefficient b");
-    const c = number(line2.c, "geometry line coefficient c");
-    const points2 = [];
-    if (Math.abs(b) > Number.EPSILON) {
-      for (const x of [xmin, xmax]) {
-        const y = -(a * x + c) / b;
-        if (y >= ymin - 0.0000000001 && y <= ymax + 0.0000000001)
-          points2.push([x, y]);
-      }
-    }
-    if (Math.abs(a) > Number.EPSILON) {
-      for (const y of [ymin, ymax]) {
-        const x = -(b * y + c) / a;
-        if (x >= xmin - 0.0000000001 && x <= xmax + 0.0000000001)
-          points2.push([x, y]);
-      }
-    }
-    const unique = points2.filter((point, index) => points2.findIndex((candidate) => Math.abs(candidate[0] - point[0]) < 0.000000001 && Math.abs(candidate[1] - point[1]) < 0.000000001) === index);
-    return unique.slice(0, 2);
-  }
-  function drawableItems(value, label2) {
-    const values3 = Array.isArray(value) || Array.isArray(value?.values) || Array.isArray(value?.elements) ? sequence3(value, label2) : [value];
-    return values3.flatMap((item, index) => {
-      if (item?.type === "geometry_intersection" && item.schema === INTERSECTION_SCHEMA) {
-        return item.status === "one" ? item.points : [item];
-      }
-      if (item?.type !== "geometry" || item.schema !== GEOMETRY_SCHEMA) {
-        throw new Error(`${label2} ${index + 1} must be geometry or an intersection result`);
-      }
-      return [item];
-    });
-  }
-  function drawGeometry(args) {
-    const entries2 = entriesFor3(args, ["objects", "options"], "geometry.Draw");
-    const items = drawableItems(field2(entries2, "objects"), "geometry.Draw object");
-    const size = numericSequence(field2(entries2, "size", seq5([int11(640), int11(480)])), 2, "geometry.Draw size");
-    const view = numericSequence(field2(entries2, "view", seq5([int11(-10), int11(-10), int11(10), int11(10)])), 4, "geometry.Draw view");
-    const [xmin, ymin, xmax, ymax] = view;
-    if (!(xmax > xmin) || !(ymax > ymin))
-      throw new Error("geometry.Draw view must satisfy xmin < xmax and ymin < ymax");
-    if (!(size[0] > 0) || !(size[1] > 0))
-      throw new Error("geometry.Draw size must be positive");
-    const scale2 = Math.min(size[0] / (xmax - xmin), size[1] / (ymax - ymin));
-    const offsetX = (size[0] - (xmax - xmin) * scale2) / 2;
-    const offsetY = (size[1] - (ymax - ymin) * scale2) / 2;
-    const project = ([x, y]) => [offsetX + (x - xmin) * scale2, size[1] - offsetY - (y - ymin) * scale2];
-    const children = [];
-    let unresolved = 0;
-    for (const item of items) {
-      if (item.type === "geometry_intersection") {
-        unresolved += 1;
-        children.push(createTextMark([[12, 20 + unresolved * 18], item.diagnostic, styleMap3(null, [["fill", "#b91c1c"], ["size", 13]])]));
-      } else if (item.kind === "point") {
-        children.push(createCircle([
-          project([number(item.x, "geometry point x"), number(item.y, "geometry point y")]),
-          5,
-          styleMap3(item.style, [["fill", "#6d28d9"], ["stroke", "#ffffff"], ["width", 2]])
-        ]));
-      } else if (item.kind === "line") {
-        const endpoints = lineEndpoints(item, view);
-        if (endpoints.length === 2)
-          children.push(createPath([endpoints.map(project), styleMap3(item.style, [["stroke", "#2563eb"], ["width", 2]])]));
-      } else if (item.kind === "circle") {
-        const center = project([number(item.center.x, "geometry circle center x"), number(item.center.y, "geometry circle center y")]);
-        const radius = Math.sqrt(number(item.radiusSquared, "geometry circle radius squared")) * scale2;
-        children.push(createCircle([center, radius, styleMap3(item.style, [["fill", "none"], ["stroke", "#d97706"], ["width", 2]])]));
-      } else {
-        throw new Error(`geometry.Draw does not support geometry kind '${item.kind}'`);
-      }
-    }
-    return createGraphic([size, children, rixMap4([
-      ["source", str5(GEOMETRY_SCHEMA)],
-      ["projection", str5("uniform-fit")],
-      ["unresolved", int11(unresolved)]
-    ])]);
-  }
-
-  // rix/plugins/geometry/geometry.plugin.rix.js
-  var HELPERS3 = new Map([
-    ["Point", createPoint],
-    ["Line", createLine],
-    ["Circle", createGeometryCircle],
-    ["Midpoint", midpoint],
-    ["PerpendicularBisector", perpendicularBisector],
-    ["Circumcircle", circumcircle],
-    ["Intersect", intersect],
-    ["Points", intersectionPoints],
-    ["Status", intersectionStatus],
-    ["Draw", drawGeometry]
-  ]);
-  function createGeometryPluginCollection() {
-    const entries2 = new Map;
-    const extension = new Map([["immutable", new Integer(1n)]]);
-    for (const [name, helper] of HELPERS3) {
-      entries2.set(name, helper);
-      entries2.set(name.toUpperCase(), helper);
-      extension.set(name.toUpperCase(), {
-        type: "method_builtin",
-        name,
-        impl: (args) => helper(args.slice(1))
-      });
-    }
-    return { type: "map", entries: entries2, _ext: extension };
-  }
-  function install6({ systemContext }) {
-    const collection = createGeometryPluginCollection();
-    systemContext.registerHostValue("geometry", collection, {
-      doc: "Exact ruler-and-compass geometry and portable Graphics snapshots",
-      groups: ["Geometry", "Graphics", "Exact"]
-    });
-    return collection;
-  }
-
   // rix/plugins/data/data.js
   var stringValue6 = (value) => ({ type: "string", value: String(value) });
   var sequenceValue2 = (values3) => ({ type: "sequence", values: values3 });
@@ -46145,7 +47335,7 @@ complexVizNamespace._proto = {=
       return value;
     throw new Error(`${label2} must be a map`);
   }
-  function field3(source, name, fallback = null) {
+  function field(source, name, fallback = null) {
     const values3 = source instanceof Map ? source : source?.entries;
     if (!(values3 instanceof Map))
       return fallback;
@@ -46158,14 +47348,14 @@ complexVizNamespace._proto = {=
     }
     return fallback;
   }
-  function sequence4(value, label2) {
+  function sequence2(value, label2) {
     if (Array.isArray(value))
       return value;
     if (Array.isArray(value?.values))
       return value.values;
     throw new Error(`${label2} must be a sequence`);
   }
-  function text6(value, label2) {
+  function text5(value, label2) {
     if (value?.type === "string")
       return value.value;
     if (typeof value === "string")
@@ -46173,7 +47363,7 @@ complexVizNamespace._proto = {=
     throw new Error(`${label2} must be a string or colon-string`);
   }
   function option3(options, name, fallback = null) {
-    return options === null || options === undefined ? fallback : field3(entries2(options, "data options"), name, fallback);
+    return options === null || options === undefined ? fallback : field(entries2(options, "data options"), name, fallback);
   }
   var TYPE_NAMES = new Map([
     ["any", "Any"],
@@ -46185,7 +47375,7 @@ complexVizNamespace._proto = {=
   function columnType(value, index) {
     if (value === null || value === undefined)
       return "Any";
-    const source = text6(value, `data column ${index + 1} type`).replace(/^:/, "").toLowerCase();
+    const source = text5(value, `data column ${index + 1} type`).replace(/^:/, "").toLowerCase();
     const result = TYPE_NAMES.get(source);
     if (!result)
       throw new Error(`data column ${index + 1} type must be Any, Integer, Rational, Number, or String`);
@@ -46193,21 +47383,21 @@ complexVizNamespace._proto = {=
   }
   function normalizeColumns2(value) {
     const seen = new Set;
-    return Object.freeze(sequence4(value, "data schema").map((source, index) => {
+    return Object.freeze(sequence2(value, "data schema").map((source, index) => {
       let id;
       let label2;
       let type;
       let nullable = true;
       if (source?.type === "string" || typeof source === "string") {
-        id = text6(source, `data column ${index + 1}`);
+        id = text5(source, `data column ${index + 1}`);
         label2 = id;
         type = "Any";
       } else {
         const spec2 = entries2(source, `data column ${index + 1}`);
-        id = text6(field3(spec2, "id", field3(spec2, "name")), `data column ${index + 1} id`);
-        label2 = field3(spec2, "label") === null ? id : text6(field3(spec2, "label"), `data column ${index + 1} label`);
-        type = columnType(field3(spec2, "type"), index);
-        nullable = truthy5(field3(spec2, "nullable", new Integer(1n)));
+        id = text5(field(spec2, "id", field(spec2, "name")), `data column ${index + 1} id`);
+        label2 = field(spec2, "label") === null ? id : text5(field(spec2, "label"), `data column ${index + 1} label`);
+        type = columnType(field(spec2, "type"), index);
+        nullable = truthy3(field(spec2, "nullable", new Integer(1n)));
       }
       if (!id.trim())
         throw new Error(`data column ${index + 1} id must not be empty`);
@@ -46241,11 +47431,11 @@ complexVizNamespace._proto = {=
         throw new Error(`data row ${rowIndex + 1} contains unknown column '${key}'`);
       }
     }
-    return columns.map(({ id }) => field3(values3, id, null));
+    return columns.map(({ id }) => field(values3, id, null));
   }
   function normalizeRows(value, columns) {
-    return Object.freeze(sequence4(value, "data rows").map((source, rowIndex) => {
-      const row = source?.type === "map" || source instanceof Map ? mapRow(source, columns, rowIndex) : sequence4(source, `data row ${rowIndex + 1}`);
+    return Object.freeze(sequence2(value, "data rows").map((source, rowIndex) => {
+      const row = source?.type === "map" || source instanceof Map ? mapRow(source, columns, rowIndex) : sequence2(source, `data row ${rowIndex + 1}`);
       if (row.length !== columns.length) {
         throw new Error(`data row ${rowIndex + 1} has ${row.length} cells; expected ${columns.length}`);
       }
@@ -46293,7 +47483,7 @@ complexVizNamespace._proto = {=
     return makeRelation(columns, rows, ["relation"]);
   }
   function selectedColumnIds(value, relation, label2) {
-    const requested = sequence4(value, label2).map((entry, index) => text6(entry, `${label2} entry ${index + 1}`));
+    const requested = sequence2(value, label2).map((entry, index) => text5(entry, `${label2} entry ${index + 1}`));
     const byId = new Map(relation.columns.map((column, index) => [column.id.toLowerCase(), index]));
     const selected = requested.map((id) => {
       const index = byId.get(id.toLowerCase());
@@ -46317,7 +47507,7 @@ complexVizNamespace._proto = {=
   function rowMap(relation, row) {
     return mapValue2(relation.columns.map((column, index) => [column.id, row[index]]));
   }
-  function truthy5(value) {
+  function truthy3(value) {
     if (value === null || value === undefined || value === false)
       return false;
     if (value instanceof Integer)
@@ -46332,7 +47522,7 @@ complexVizNamespace._proto = {=
     const relation = requireRelation(args[0], "data.Filter");
     if (typeof runtime.invoke !== "function")
       throw new Error("data.Filter requires an evaluator callback");
-    const rows = relation.rows.filter((row, index) => truthy5(runtime.invoke(args[1], [rowMap(relation, row), new Integer(BigInt(index + 1)), relation], runtime.context, runtime.evaluate)));
+    const rows = relation.rows.filter((row, index) => truthy3(runtime.invoke(args[1], [rowMap(relation, row), new Integer(BigInt(index + 1)), relation], runtime.context, runtime.evaluate)));
     return makeRelation(Object.freeze([...relation.columns]), Object.freeze([...rows]), [...relation.provenance.operations, "filter"]);
   }
   function exactParts(value) {
@@ -46364,8 +47554,8 @@ complexVizNamespace._proto = {=
     const selected = selectedColumnIds(args[1], relation, "data.Sort columns");
     if (!selected.length)
       throw new Error("data.Sort requires at least one column");
-    const descending = truthy5(option3(args[2], "descending", null));
-    const missingFirst = truthy5(option3(args[2], "missingFirst", null));
+    const descending = truthy3(option3(args[2], "descending", null));
+    const missingFirst = truthy3(option3(args[2], "missingFirst", null));
     const decorated = relation.rows.map((row, index) => ({ row, index }));
     decorated.sort((left, right) => {
       for (const columnIndex of selected) {
@@ -46389,7 +47579,7 @@ complexVizNamespace._proto = {=
       throw new Error("data.TableView expects a Relation and optional options");
     const relation = requireRelation(args[0], "data.TableView");
     const captionValue = option3(args[1], "caption", null);
-    const caption = captionValue === null ? null : text6(captionValue, "data.TableView caption");
+    const caption = captionValue === null ? null : text5(captionValue, "data.TableView caption");
     return Object.freeze({
       type: "output",
       kind: "table",
@@ -46418,7 +47608,7 @@ complexVizNamespace._proto = {=
   }
 
   // rix/plugins/data/data.plugin.rix.js
-  var HELPERS4 = new Map([
+  var HELPERS = new Map([
     ["Relation", createRelation],
     ["Project", projectRelation],
     ["Filter", filterRelation],
@@ -46430,7 +47620,7 @@ complexVizNamespace._proto = {=
   function createDataPluginCollection() {
     const entries3 = new Map;
     const extension = new Map([["immutable", new Integer(1n)]]);
-    for (const [name, helper] of HELPERS4) {
+    for (const [name, helper] of HELPERS) {
       entries3.set(name, helper);
       entries3.set(name.toUpperCase(), helper);
       extension.set(name.toUpperCase(), {
@@ -46441,7 +47631,7 @@ complexVizNamespace._proto = {=
     }
     return { type: "map", entries: entries3, _ext: extension };
   }
-  function install7({ systemContext }) {
+  function install3({ systemContext }) {
     const collection = createDataPluginCollection();
     systemContext.registerHostValue("data", collection, {
       doc: "Immutable typed relations and portable Table views",
@@ -46467,7 +47657,7 @@ complexVizNamespace._proto = {=
       return value;
     throw new Error(`${label2} must be a map`);
   }
-  function field4(source, name, fallback = null) {
+  function field2(source, name, fallback = null) {
     const values3 = source instanceof Map ? source : source?.entries;
     if (!(values3 instanceof Map))
       return fallback;
@@ -46480,14 +47670,14 @@ complexVizNamespace._proto = {=
     }
     return fallback;
   }
-  function text7(value, label2) {
+  function text6(value, label2) {
     if (value?.type === "string")
       return value.value;
     if (typeof value === "string")
       return value;
     throw new Error(`${label2} must be a string or colon-string`);
   }
-  function sequence5(value, label2) {
+  function sequence3(value, label2) {
     if (Array.isArray(value))
       return value;
     if (Array.isArray(value?.values))
@@ -46495,7 +47685,7 @@ complexVizNamespace._proto = {=
     throw new Error(`${label2} must be a sequence`);
   }
   function validLabel(value, label2) {
-    const result = text7(value, label2);
+    const result = text6(value, label2);
     if (!/^[A-Za-z][A-Za-z0-9:_-]*$/.test(result)) {
       throw new Error(`${label2} must start with a letter and contain only letters, digits, colon, underscore, or hyphen`);
     }
@@ -46521,15 +47711,15 @@ complexVizNamespace._proto = {=
   function createDocumentTheme(args) {
     if (args.length > 2)
       throw new Error("document.Theme expects an optional name and options map");
-    const name = args[0] === null || args[0] === undefined ? "plain" : text7(args[0], "document.Theme name").toLowerCase();
+    const name = args[0] === null || args[0] === undefined ? "plain" : text6(args[0], "document.Theme name").toLowerCase();
     const defaults = THEMES[name];
     if (!defaults)
       throw new Error("document.Theme name must be :plain or :compact");
     const options = args[1] === null || args[1] === undefined ? new Map : entries3(args[1], "document.Theme options");
-    const accentValue = field4(options, "accent", stringValue7(defaults.accent));
-    const densityValue = field4(options, "density", stringValue7(defaults.density));
-    const accent = text7(accentValue, "document.Theme accent");
-    const density = text7(densityValue, "document.Theme density").toLowerCase();
+    const accentValue = field2(options, "accent", stringValue7(defaults.accent));
+    const densityValue = field2(options, "density", stringValue7(defaults.density));
+    const accent = text6(accentValue, "document.Theme accent");
+    const density = text6(densityValue, "document.Theme density").toLowerCase();
     if (!/^#[0-9a-f]{6}$/i.test(accent))
       throw new Error("document.Theme accent must be a six-digit hex color");
     if (!["comfortable", "compact"].includes(density)) {
@@ -46549,9 +47739,9 @@ complexVizNamespace._proto = {=
     if (value?.type === "string" || typeof value === "string")
       return createDocumentTheme([value]);
     const values3 = entries3(value, "document.Report theme");
-    if (field4(values3, "schema")?.value === "rix.document.theme@1")
+    if (field2(values3, "schema")?.value === "rix.document.theme@1")
       return value;
-    return createDocumentTheme([field4(values3, "name", stringValue7("plain")), value]);
+    return createDocumentTheme([field2(values3, "name", stringValue7("plain")), value]);
   }
   function labelDocumentValue(args) {
     if (args.length !== 2)
@@ -46571,7 +47761,7 @@ complexVizNamespace._proto = {=
     if (args.length < 1 || args.length > 2)
       throw new Error("document.Ref expects an id and optional display text");
     const id = validLabel(args[0], "document.Ref id");
-    const display = args[1] === null || args[1] === undefined ? null : text7(args[1], "document.Ref text");
+    const display = args[1] === null || args[1] === undefined ? null : text6(args[1], "document.Ref text");
     return textNode("", { documentReference: id, documentReferenceText: display });
   }
   function childOutputs(value) {
@@ -46593,40 +47783,40 @@ complexVizNamespace._proto = {=
     const numbers = new WeakMap;
     const labels = new Map;
     const ordered = [];
-    const register = (id, value, kind, number2) => {
+    const register = (id, value, kind, number) => {
       if (!id)
         return;
       validLabel(id, `${referenceKind(kind)} label`);
       if (labels.has(id))
         throw new Error(`document.Report contains duplicate label '${id}'`);
-      const entry = Object.freeze({ id, kind, number: number2, text: `${referenceKind(kind)} ${number2}` });
+      const entry = Object.freeze({ id, kind, number, text: `${referenceKind(kind)} ${number}` });
       labels.set(id, entry);
       ordered.push(entry);
-      numbers.set(value, number2);
+      numbers.set(value, number);
     };
     const visit = (value) => {
       if (!isOutputValue(value))
         return;
       if (value.kind === "heading" || value.kind === "section") {
-        const number2 = ++counts.section;
-        numbers.set(value, number2);
-        register(value.id, value, value.kind, number2);
+        const number = ++counts.section;
+        numbers.set(value, number);
+        register(value.id, value, value.kind, number);
       } else if (value.kind === "figure") {
-        const number2 = ++counts.figure;
-        numbers.set(value, number2);
-        register(value.label, value, value.kind, number2);
+        const number = ++counts.figure;
+        numbers.set(value, number);
+        register(value.label, value, value.kind, number);
       } else if (value.kind === "table") {
-        const number2 = ++counts.table;
-        numbers.set(value, number2);
-        register(value.label, value, value.kind, number2);
+        const number = ++counts.table;
+        numbers.set(value, number);
+        register(value.label, value, value.kind, number);
       }
       childOutputs(value).forEach(visit);
     };
     children.forEach(visit);
     return { labels, numbers, ordered };
   }
-  function numberedCaption(kind, number2, caption) {
-    const prefix = `${referenceKind(kind)} ${number2}.`;
+  function numberedCaption(kind, number, caption) {
+    const prefix = `${referenceKind(kind)} ${number}.`;
     return caption ? `${prefix} ${caption}` : prefix;
   }
   function resolveOutput(value, index) {
@@ -46640,19 +47830,19 @@ complexVizNamespace._proto = {=
       return createLink([stringValue7(`#${target.id}`), [textNode(content)]]);
     }
     if (value.kind === "heading") {
-      const number2 = index.numbers.get(value);
-      return clone(value, { content: [textNode(`${number2}. `), ...inlineValues(value.content).map((child) => resolveOutput(child, index))] });
+      const number = index.numbers.get(value);
+      return clone(value, { content: [textNode(`${number}. `), ...inlineValues(value.content).map((child) => resolveOutput(child, index))] });
     }
     if (value.kind === "section") {
-      const number2 = index.numbers.get(value);
+      const number = index.numbers.get(value);
       return clone(value, {
-        title: [textNode(`${number2}. `), ...inlineValues(value.title).map((child) => resolveOutput(child, index))],
+        title: [textNode(`${number}. `), ...inlineValues(value.title).map((child) => resolveOutput(child, index))],
         children: Object.freeze(value.children.map((child) => resolveOutput(child, index)))
       });
     }
     if (value.kind === "figure" || value.kind === "table") {
-      const number2 = index.numbers.get(value);
-      return clone(value, { caption: numberedCaption(value.kind, number2, value.caption) });
+      const number = index.numbers.get(value);
+      return clone(value, { caption: numberedCaption(value.kind, number, value.caption) });
     }
     if (["fragment", "list_item", "quote", "callout"].includes(value.kind)) {
       return clone(value, { children: Object.freeze(value.children.map((child) => resolveOutput(child, index))) });
@@ -46668,7 +47858,7 @@ complexVizNamespace._proto = {=
   function reportChildren(value) {
     if (isOutputValue(value) && value.kind === "fragment")
       return value.children;
-    return sequence5(value, "document.Report children");
+    return sequence3(value, "document.Report children");
   }
   function metadata2(theme, title) {
     return mapValue3([
@@ -46680,19 +47870,19 @@ complexVizNamespace._proto = {=
   function createDocumentReport(args) {
     if (args.length < 2 || args.length > 3)
       throw new Error("document.Report expects a title, children, and optional options");
-    const title = text7(args[0], "document.Report title");
+    const title = text6(args[0], "document.Report title");
     if (!title.trim())
       throw new Error("document.Report title must not be empty");
     const options = args[2] === null || args[2] === undefined ? new Map : entries3(args[2], "document.Report options");
-    const theme = normalizeTheme(field4(options, "theme"));
-    const authorValue = field4(options, "author");
-    const author = authorValue === null ? null : text7(authorValue, "document.Report author");
+    const theme = normalizeTheme(field2(options, "theme"));
+    const authorValue = field2(options, "author");
+    const author = authorValue === null ? null : text6(authorValue, "document.Report author");
     const sourceChildren = reportChildren(args[1]);
     if (!sourceChildren.every(isOutputValue))
       throw new Error("document.Report children must be portable output values");
     const index = collectReferences(sourceChildren);
     const resolved = sourceChildren.map((child) => resolveOutput(child, index));
-    const titleStyle = mapValue3([["color", field4(theme, "accent")], ["density", field4(theme, "density")]]);
+    const titleStyle = mapValue3([["color", field2(theme, "accent")], ["density", field2(theme, "density")]]);
     const heading = createHeading([new Integer(1n), stringValue7(title), null, titleStyle]);
     const byline = author === null ? [] : [createParagraph([[textNode(`By ${author}`)]])];
     const fragment = createFragment([[heading, ...byline, ...resolved], metadata2(theme, title)]);
@@ -46718,7 +47908,7 @@ complexVizNamespace._proto = {=
   }
 
   // rix/plugins/document/document.plugin.rix.js
-  var HELPERS5 = new Map([
+  var HELPERS2 = new Map([
     ["Report", createDocumentReport],
     ["Label", labelDocumentValue],
     ["Ref", createDocumentReference],
@@ -46728,7 +47918,7 @@ complexVizNamespace._proto = {=
   function createDocumentPluginCollection() {
     const entries4 = new Map;
     const extension = new Map([["immutable", new Integer(1n)]]);
-    for (const [name, helper] of HELPERS5) {
+    for (const [name, helper] of HELPERS2) {
       entries4.set(name, helper);
       entries4.set(name.toUpperCase(), helper);
       extension.set(name.toUpperCase(), {
@@ -46739,7 +47929,7 @@ complexVizNamespace._proto = {=
     }
     return { type: "map", entries: entries4, _ext: extension };
   }
-  function install8({ systemContext }) {
+  function install4({ systemContext }) {
     const collection = createDocumentPluginCollection();
     systemContext.registerHostValue("document", collection, {
       doc: "Numbered portable reports with deterministic cross-references",
@@ -46748,1291 +47938,11 @@ complexVizNamespace._proto = {=
     return collection;
   }
 
-  // rix/plugins/linalg/linalg.js
-  var LINALG_RESULT_SCHEMA = "rix.linalg.result@1";
-  var VECTOR_SPACE_SCHEMA = "rix.linalg.vector-space@1";
-  var FRAME_SCHEMA = "rix.linalg.frame@1";
-  var TENSOR_SCHEMA = "rix.linalg.tensor@1";
-  var int12 = (value) => new Integer(BigInt(value));
-  var str6 = (value) => ({ type: "string", value: String(value) });
-  var seq6 = (values3) => ({ type: "sequence", values: values3 });
-  var zero3 = () => new Rational(0n, 1n);
-  var one3 = () => new Rational(1n, 1n);
-  function exposed(value) {
-    if (typeof value === "string")
-      return str6(value);
-    if (typeof value === "number" && Number.isSafeInteger(value))
-      return int12(value);
-    if (typeof value === "boolean")
-      return value ? int12(1) : null;
-    return value;
-  }
-  function exactRational3(value, label2 = "value") {
-    if (value instanceof Rational)
-      return value;
-    if (value instanceof Integer)
-      return new Rational(value.value, 1n);
-    if (typeof value === "bigint" || Number.isSafeInteger(value))
-      return new Rational(value, 1n);
-    throw new Error(`${label2} must be an exact Integer or Rational`);
-  }
-  function integer4(value, label2) {
-    const result = value instanceof Integer ? Number(value.value) : value instanceof Rational && value.denominator === 1n ? Number(value.numerator) : Number.isSafeInteger(value) ? value : NaN;
-    if (!Number.isSafeInteger(result))
-      throw new Error(`${label2} must be an Integer`);
-    return result;
-  }
-  function text8(value, fallback = null) {
-    if (value?.type === "string")
-      return value.value;
-    if (typeof value === "string")
-      return value;
-    return fallback;
-  }
-  function isZero5(value) {
-    return exactRational3(value).numerator === 0n;
-  }
-  function copyRows(rows) {
-    return rows.map((row) => row.map((value) => exactRational3(value)));
-  }
-  function flatTensorValues(value) {
-    const values3 = [];
-    forEachShapedCell2(value, (entry) => values3.push(entry));
-    return values3;
-  }
-  function exactMatrix(value, label2 = "matrix") {
-    let rows;
-    if (isShaped(value)) {
-      if (shapedRank(value) !== 2)
-        throw new Error(`${label2} must be a rank-2 tensor`);
-      const flat = flatTensorValues(value);
-      rows = Array.from({ length: value.shape[0] }, (_, row) => flat.slice(row * value.shape[1], (row + 1) * value.shape[1]));
-    } else if (value?.type === "matrix" && Array.isArray(value.rows)) {
-      rows = value.rows.map((row) => sequence2(row, `${label2} row`));
-    } else {
-      rows = sequence2(value, label2).map((row, index) => sequence2(row, `${label2} row ${index + 1}`));
-    }
-    const columns = rows[0]?.length ?? 0;
-    if (rows.length === 0 || columns === 0)
-      throw new Error(`${label2} cannot be empty`);
-    if (!rows.every((row) => row.length === columns))
-      throw new Error(`${label2} rows must have equal lengths`);
-    return rows.map((row, rowIndex) => row.map((entry, columnIndex) => exactRational3(entry, `${label2} entry ${rowIndex + 1},${columnIndex + 1}`)));
-  }
-  function exactVector2(value, label2 = "vector") {
-    let values3;
-    if (isShaped(value)) {
-      if (shapedRank(value) !== 1)
-        throw new Error(`${label2} must be a rank-1 tensor`);
-      values3 = flatTensorValues(value);
-    } else {
-      values3 = sequence2(value, label2);
-    }
-    return values3.map((entry, index) => exactRational3(entry, `${label2} entry ${index + 1}`));
-  }
-  function matrixTensor(rows) {
-    if (rows.length === 0 || rows[0].length === 0)
-      throw new Error("Matrix cannot be empty");
-    const value = createShaped([rows.length, rows[0].length], rows.flat());
-    value._ext.set("__type", str6("Matrix"));
-    return value;
-  }
-  function vectorTensor(values3) {
-    return createShaped([values3.length], values3);
-  }
-  function identityRows(size) {
-    return Array.from({ length: size }, (_, row) => Array.from({ length: size }, (_2, column) => row === column ? one3() : zero3()));
-  }
-  function transposeRows(rows) {
-    return Array.from({ length: rows[0].length }, (_, column) => rows.map((row) => row[column]));
-  }
-  function multiplyRows(left, right) {
-    if (left[0].length !== right.length)
-      throw new Error("Matrix multiplication dimensions must agree");
-    return left.map((row) => Array.from({ length: right[0].length }, (_, column) => row.reduce((sum, value, index) => sum.add(value.multiply(right[index][column])), zero3())));
-  }
-  function rrefRows(source, coefficientColumns = source[0].length) {
-    const rows = copyRows(source);
-    const pivots = [];
-    let pivotRow = 0;
-    for (let column = 0;column < coefficientColumns && pivotRow < rows.length; column++) {
-      const selected = rows.findIndex((row, index) => index >= pivotRow && !isZero5(row[column]));
-      if (selected < 0)
-        continue;
-      [rows[pivotRow], rows[selected]] = [rows[selected], rows[pivotRow]];
-      const pivot = rows[pivotRow][column];
-      rows[pivotRow] = rows[pivotRow].map((value) => value.divide(pivot));
-      for (let row = 0;row < rows.length; row++) {
-        if (row === pivotRow || isZero5(rows[row][column]))
-          continue;
-        const factor = rows[row][column];
-        rows[row] = rows[row].map((value, index) => value.subtract(factor.multiply(rows[pivotRow][index])));
-      }
-      pivots.push(column);
-      pivotRow += 1;
-    }
-    return { rows, pivots };
-  }
-  function inverseRows(source) {
-    if (source.length !== source[0].length)
-      throw new Error("Inverse requires a square matrix");
-    const size = source.length;
-    const reduced = rrefRows(source.map((row, index) => [...row, ...identityRows(size)[index]]), size);
-    if (reduced.pivots.length !== size)
-      throw new Error("Matrix is singular");
-    return reduced.rows.map((row) => row.slice(size));
-  }
-  function determinantRows(source) {
-    if (source.length !== source[0].length)
-      throw new Error("Determinant requires a square matrix");
-    const rows = copyRows(source);
-    let determinant = one3();
-    for (let column = 0;column < rows.length; column++) {
-      const selected = rows.findIndex((row, index) => index >= column && !isZero5(row[column]));
-      if (selected < 0)
-        return zero3();
-      if (selected !== column) {
-        [rows[column], rows[selected]] = [rows[selected], rows[column]];
-        determinant = determinant.negate();
-      }
-      const pivot = rows[column][column];
-      determinant = determinant.multiply(pivot);
-      for (let row = column + 1;row < rows.length; row++) {
-        if (isZero5(rows[row][column]))
-          continue;
-        const factor = rows[row][column].divide(pivot);
-        for (let index = column;index < rows[row].length; index++) {
-          rows[row][index] = rows[row][index].subtract(factor.multiply(rows[column][index]));
-        }
-      }
-    }
-    return determinant;
-  }
-  function linalgResult(fields) {
-    const result = {
-      type: "linalg_result",
-      schema: LINALG_RESULT_SCHEMA,
-      exact: true,
-      ...fields,
-      _ext: new Map([["_type", str6("LinearSolveResult")], ["immutable", int12(1)]])
-    };
-    for (const [name, value] of Object.entries(fields))
-      result._ext.set(name, exposed(value));
-    result._ext.set("schema", str6(LINALG_RESULT_SCHEMA));
-    result._ext.set("exact", int12(1));
-    return result;
-  }
-  function solveLinearValues(matrixValue, vectorValue) {
-    const matrix = exactMatrix(matrixValue, "Solve matrix");
-    const vector = exactVector2(vectorValue, "Solve right-hand side");
-    if (matrix.length !== vector.length)
-      throw new Error("Solve right-hand side length must equal the matrix row count");
-    const columns = matrix[0].length;
-    const reduced = rrefRows(matrix.map((row, index) => [...row, vector[index]]), columns);
-    const inconsistent = reduced.rows.some((row) => row.slice(0, columns).every(isZero5) && !isZero5(row[columns]));
-    if (inconsistent) {
-      return linalgResult({
-        status: "inconsistent",
-        solution: null,
-        particular: null,
-        nullspace: seq6([]),
-        rank: reduced.pivots.length,
-        rref: matrixTensor(reduced.rows),
-        pivots: seq6(reduced.pivots.map((column) => int12(column + 1)))
-      });
-    }
-    const particular = Array.from({ length: columns }, () => zero3());
-    reduced.pivots.forEach((column, row) => {
-      particular[column] = reduced.rows[row][columns];
-    });
-    const freeColumns = Array.from({ length: columns }, (_, index) => index).filter((column) => !reduced.pivots.includes(column));
-    const nullspace = freeColumns.map((freeColumn) => {
-      const basis = Array.from({ length: columns }, () => zero3());
-      basis[freeColumn] = one3();
-      reduced.pivots.forEach((pivotColumn, row) => {
-        basis[pivotColumn] = reduced.rows[row][freeColumn].negate();
-      });
-      return vectorTensor(basis);
-    });
-    const solution = vectorTensor(particular);
-    return linalgResult({
-      status: freeColumns.length === 0 ? "unique" : "underdetermined",
-      solution,
-      particular: solution,
-      nullspace: seq6(nullspace),
-      rank: reduced.pivots.length,
-      rref: matrixTensor(reduced.rows),
-      pivots: seq6(reduced.pivots.map((column) => int12(column + 1)))
-    });
-  }
-  function rref(args) {
-    const rows = exactMatrix(args[0], "Rref matrix");
-    return matrixTensor(rrefRows(rows).rows);
-  }
-  function rank(args) {
-    const rows = exactMatrix(args[0], "Rank matrix");
-    return int12(rrefRows(rows).pivots.length);
-  }
-  function determinant(args) {
-    return determinantRows(exactMatrix(args[0], "Determinant matrix"));
-  }
-  function inverse(args) {
-    return matrixTensor(inverseRows(exactMatrix(args[0], "Inverse matrix")));
-  }
-  function solveLinear(args) {
-    if (args.length === 1 && args[0]?.type === "map") {
-      return solveLinearValues(field(args[0].entries, "A"), field(args[0].entries, "b"));
-    }
-    if (args.length !== 2)
-      throw new Error("linalg.Solve expects a matrix and right-hand side");
-    return solveLinearValues(args[0], args[1]);
-  }
-  var spaceIdentitySerial = 0;
-  var tensorIdentitySerial = 0;
-  var tensorRepresentationSerial = 0;
-  function scalarFieldName(value) {
-    const name = text8(value, value?.value ?? (value === null ? "Rational" : null));
-    if (!name || name.toLowerCase() !== "rational") {
-      throw new Error("Phase 1 VectorSpace currently requires over=:Rational");
-    }
-    return "Rational";
-  }
-  function spaceValue(name, dimension, over, metadata3 = null) {
-    const value = {
-      type: "vector_space",
-      schema: VECTOR_SPACE_SCHEMA,
-      identity: Object.freeze({ type: "vector_space_identity", serial: ++spaceIdentitySerial }),
-      name,
-      dimension,
-      over,
-      metadata: metadata3,
-      definingFrame: null,
-      _ext: new Map([
-        ["_type", str6("VectorSpace")],
-        ["immutable", int12(1)],
-        ["name", str6(name)],
-        ["dimension", int12(dimension)],
-        ["over", str6(over)],
-        ["metadata", metadata3]
-      ])
-    };
-    return value;
-  }
-  function vectorSpace(args) {
-    const entries4 = entriesFor2(args, ["name", "dimension", "options"], "linalg.VectorSpace");
-    const name = text8(field(entries4, "name"), "V");
-    const dimension = integer4(field(entries4, "dimension"), "Vector-space dimension");
-    if (dimension < 1)
-      throw new Error("Vector-space dimension must be positive");
-    return spaceValue(name, dimension, scalarFieldName(field(entries4, "over")), field(entries4, "metadata"));
-  }
-  function requireSpace(value) {
-    if (value?.type !== "vector_space" || value.schema !== VECTOR_SPACE_SCHEMA) {
-      throw new Error("Expected a linalg VectorSpace");
-    }
-    return value;
-  }
-  function requireFrame(value) {
-    if (value?.type !== "frame" || value.schema !== FRAME_SCHEMA) {
-      if (value?.type === "vector_space")
-        throw new Error("Tensor components require a Frame, not a bare VectorSpace");
-      throw new Error("Expected a linalg Frame");
-    }
-    return value;
-  }
-  function frame(args) {
-    const entries4 = args.length === 2 && args[1]?.type === "map" && args[1].entries instanceof Map ? new Map([["space", args[0]], ...args[1].entries]) : entriesFor2(args, ["space", "name", "basis", "options"], "linalg.Frame");
-    const space = requireSpace(field(entries4, "space"));
-    const name = text8(field(entries4, "name"), space.definingFrame ? "frame" : "defining");
-    const basisValue = field(entries4, "basis");
-    const defining = text8(basisValue) === "defining" || basisValue === null && space.definingFrame === null;
-    if (defining && space.definingFrame)
-      throw new Error("VectorSpace already has a defining Frame");
-    let relativeTo = field(entries4, "relativeTo");
-    let localBasis;
-    let absoluteBasis;
-    if (defining) {
-      relativeTo = null;
-      localBasis = identityRows(space.dimension);
-      absoluteBasis = localBasis;
-    } else {
-      relativeTo = requireFrame(relativeTo || space.definingFrame);
-      if (relativeTo.space !== space)
-        throw new Error("relativeTo Frame must belong to the same VectorSpace");
-      localBasis = exactMatrix(basisValue, "Frame basis");
-      if (localBasis.length !== space.dimension || localBasis[0].length !== space.dimension) {
-        throw new Error(`Frame basis must be ${space.dimension}x${space.dimension}`);
-      }
-      inverseRows(localBasis);
-      absoluteBasis = multiplyRows(exactMatrix(relativeTo.basis), localBasis);
-    }
-    const inverse2 = inverseRows(absoluteBasis);
-    const value = Object.freeze({
-      type: "frame",
-      schema: FRAME_SCHEMA,
-      name,
-      space,
-      relativeTo,
-      localBasis: matrixTensor(localBasis),
-      basis: matrixTensor(absoluteBasis),
-      inverseBasis: matrixTensor(inverse2),
-      defining,
-      metadata: field(entries4, "metadata"),
-      _ext: new Map([
-        ["_type", str6("Frame")],
-        ["immutable", int12(1)],
-        ["name", str6(name)],
-        ["space", space],
-        ["relativeTo", relativeTo],
-        ["basis", matrixTensor(absoluteBasis)],
-        ["inverseBasis", matrixTensor(inverse2)],
-        ["defining", defining ? int12(1) : null]
-      ])
-    });
-    if (defining) {
-      space.definingFrame = value;
-      space._ext.set("definingFrame", value);
-    }
-    return value;
-  }
-  function changeMatrixValues(sourceValue, targetValue) {
-    const source = requireFrame(sourceValue);
-    const target = requireFrame(targetValue);
-    if (source.space !== target.space)
-      throw new Error("Frames must belong to the same VectorSpace");
-    return multiplyRows(exactMatrix(target.inverseBasis), exactMatrix(source.basis));
-  }
-  function changeMatrix(args) {
-    return matrixTensor(changeMatrixValues(args[0], args[1]));
-  }
-  function varianceName(value) {
-    const name = text8(value, value?.value);
-    if (["up", "contravariant"].includes(name))
-      return false;
-    if (["down", "covariant"].includes(name))
-      return true;
-    throw new Error("Tensor variance entries must be :up/:contravariant or :down/:covariant");
-  }
-  function normalizeDuals(value, rankValue) {
-    const values3 = value === null || value === undefined ? Array.from({ length: rankValue }, () => false) : sequence2(value, "Tensor variance").map(varianceName);
-    if (values3.length !== rankValue)
-      throw new Error(`Tensor variance must contain ${rankValue} entries`);
-    return values3;
-  }
-  function tensorTypeName(slots) {
-    if (slots.length === 1)
-      return slots[0].dual ? "Covector" : "Vector";
-    return "Tensor";
-  }
-  function tensorMethods(typeName) {
-    return new Map([
-      ["_type", str6(typeName)],
-      ["__type", str6(typeName)],
-      ["_mutable", int12(1)],
-      ["COMPONENTS", { type: "method_builtin", name: "Components", impl: ([self]) => self.components }],
-      ["FRAME", { type: "method_builtin", name: "Frame", impl: ([self]) => self.slots.length === 1 ? self.slots[0].frame : null }],
-      ["FRAMES", { type: "method_builtin", name: "Frames", impl: ([self]) => seq6(self.slots.map((slot) => slot.frame)) }],
-      ["TRANSFORM", { type: "method_builtin", name: "Transform", impl: ([self, target], context) => transformTensor([self, target], { context }) }],
-      ["TRANSFORM!", { type: "method_builtin", name: "Transform!", impl: ([self, target], context) => transformTensorBang([self, target], { context }) }],
-      ["PAIR", { type: "method_builtin", name: "Pair", impl: ([self, other], context) => pair([self, other], { context }) }],
-      ["SAMETENSOR", { type: "method_builtin", name: "SameTensor", impl: ([self, other]) => sameTensor([self, other]) }]
-    ]);
-  }
-  function syncTensorExtension(value) {
-    value._ext.set("components", value.components);
-    value._ext.set("slots", seq6(value.slots.map((slot) => ({
-      type: "map",
-      entries: new Map([["frame", slot.frame], ["dual", slot.dual ? int12(1) : null]])
-    }))));
-    value._ext.set("frame", value.slots.length === 1 ? value.slots[0].frame : null);
-    value._ext.set("identity", value.identity);
-    value._ext.set("representationIdentity", value.representationIdentity);
-    value._ext.set("representationidentity", value.representationIdentity);
-    value._ext.set("equivalentTo", value.equivalentTo);
-    value._ext.set("equivalentto", value.equivalentTo);
-    value._ext.set("origin", value.origin);
-    value._ext.set("transform", value.transform);
-    value._ext.set("derivedFrom", seq6(value.derivedFrom));
-    value._ext.set("derivedfrom", seq6(value.derivedFrom));
-    return value;
-  }
-  function validateComponents(components, slots) {
-    if (!isShaped(components))
-      throw new Error("Vector/Tensor components must be Shaped");
-    if (shapedRank(components) !== slots.length || slots.length < 1) {
-      throw new Error(`Tensor components rank ${shapedRank(components)} does not match ${slots.length} slots`);
-    }
-    slots.forEach((slot, axis) => {
-      requireFrame(slot.frame);
-      if (components.shape[axis] !== slot.frame.space.dimension) {
-        throw new Error(`Tensor axis ${axis + 1} has size ${components.shape[axis]} but Frame ${slot.frame.name} has dimension ${slot.frame.space.dimension}`);
-      }
-    });
-  }
-  function recordRepresentation(identity, value, context) {
-    const configured = context?.getEnv?.("tensorLineageLimit", 30) ?? 30;
-    const limit = Math.max(1, integer4(configured, "tensorLineageLimit"));
-    if (!identity.origin)
-      identity.origin = value;
-    if (!identity.representations.includes(value))
-      identity.representations.push(value);
-    while (identity.representations.length > limit + 1) {
-      const evicted = identity.representations.splice(1, 1)[0];
-      if (evicted && evicted !== identity.origin)
-        evicted.equivalentTo = null;
-    }
-  }
-  function makeTensor(components, slots, lineage = {}, context = null) {
-    const normalizedSlots = slots.map((slot) => Object.freeze({ frame: requireFrame(slot.frame), dual: slot.dual === true }));
-    validateComponents(components, normalizedSlots);
-    const typeName = tensorTypeName(normalizedSlots);
-    const identity = lineage.identity || { type: "tensor_identity", serial: ++tensorIdentitySerial, origin: null, representations: [] };
-    const value = {
-      type: typeName.toLowerCase(),
-      schema: TENSOR_SCHEMA,
-      components,
-      slots: Object.freeze(normalizedSlots),
-      identity,
-      representationIdentity: Object.freeze({ type: "tensor_representation_identity", serial: ++tensorRepresentationSerial }),
-      equivalentTo: lineage.equivalentTo || null,
-      origin: lineage.origin || identity.origin || null,
-      transform: lineage.transform || null,
-      viewOf: lineage.viewOf || null,
-      derivedFrom: Object.freeze([...lineage.derivedFrom || []]),
-      _ext: tensorMethods(typeName)
-    };
-    if (!identity.origin) {
-      identity.origin = value;
-      value.origin = value;
-    } else if (!value.origin)
-      value.origin = identity.origin;
-    recordRepresentation(identity, value, context);
-    return syncTensorExtension(value);
-  }
-  function requireTensor(value) {
-    if (!["vector", "covector", "tensor"].includes(value?.type) || value.schema !== TENSOR_SCHEMA) {
-      throw new Error("Expected a coordinate-aware Vector, Covector, or Tensor");
-    }
-    return value;
-  }
-  function tensor(args, runtime = {}) {
-    const entries4 = entriesFor2(args, ["components", "frames", "variance", "options"], "linalg.Tensor");
-    const components = field(entries4, "components");
-    const framesValue = field(entries4, "frames");
-    const frames = framesValue?.type === "frame" ? Array.from({ length: shapedRank(components) }, () => framesValue) : sequence2(framesValue, "Tensor frames").map(requireFrame);
-    const duals = normalizeDuals(field(entries4, "variance"), frames.length);
-    return makeTensor(components, frames.map((frameValue, index) => ({ frame: frameValue, dual: duals[index] })), {}, runtime.context);
-  }
-  function strides(shape) {
-    return shape.map((_, axis) => shape.slice(axis + 1).reduce((product, size) => product * size, 1));
-  }
-  function tupleForLinear(linear, shape) {
-    const result = [];
-    let remainder = linear;
-    for (const stride of strides(shape)) {
-      result.push(Math.floor(remainder / stride));
-      remainder %= stride;
-    }
-    return result;
-  }
-  function transformAxis(tensor2, axis, matrix) {
-    const shape = [...tensor2.shape];
-    const input = flatTensorValues(tensor2).map((value) => exactRational3(value));
-    const output2 = new Array(input.length);
-    const sourceStrides = strides(shape);
-    for (let linear = 0;linear < output2.length; linear++) {
-      const targetTuple = tupleForLinear(linear, shape);
-      let sum = zero3();
-      for (let sourceIndex = 0;sourceIndex < shape[axis]; sourceIndex++) {
-        const sourceTuple = [...targetTuple];
-        sourceTuple[axis] = sourceIndex;
-        const sourceLinear = sourceTuple.reduce((total, coordinate, index) => total + coordinate * sourceStrides[index], 0);
-        sum = sum.add(matrix[targetTuple[axis]][sourceIndex].multiply(input[sourceLinear]));
-      }
-      output2[linear] = sum;
-    }
-    return createShaped(shape, output2);
-  }
-  function targetFrames(value, targetValue) {
-    if (targetValue?.type === "frame")
-      return value.slots.map(() => requireFrame(targetValue));
-    const targets = sequence2(targetValue, "Transform target Frames").map(requireFrame);
-    if (targets.length !== value.slots.length) {
-      throw new Error(`Transform requires ${value.slots.length} target Frames`);
-    }
-    return targets;
-  }
-  function transformedComponents(value, targets) {
-    let components = value.components;
-    const changes = [];
-    value.slots.forEach((slot, axis) => {
-      const target = targets[axis];
-      if (slot.frame.space !== target.space) {
-        throw new Error(`Target Frame ${target.name} does not belong to tensor slot ${axis + 1}'s VectorSpace`);
-      }
-      const change = changeMatrixValues(slot.frame, target);
-      const applied = slot.dual ? inverseRows(transposeRows(change)) : change;
-      components = transformAxis(components, axis, applied);
-      changes.push(matrixTensor(applied));
-    });
-    return { components, changes };
-  }
-  function transformTensor(args, runtime = {}) {
-    const value = requireTensor(args[0]);
-    const targets = targetFrames(value, args[1]);
-    const transformed2 = transformedComponents(value, targets);
-    return makeTensor(transformed2.components, value.slots.map((slot, axis) => ({
-      frame: targets[axis],
-      dual: slot.dual
-    })), {
-      identity: value.identity,
-      equivalentTo: value,
-      origin: value.identity.origin,
-      transform: {
-        kind: "coordinateChange",
-        sources: value.slots.map((slot) => slot.frame),
-        targets,
-        matrices: transformed2.changes
-      },
-      viewOf: value.viewOf
-    }, runtime.context);
-  }
-  function snapshotTensor(value) {
-    const snapshot = {
-      ...value,
-      slots: Object.freeze(value.slots.map((slot) => Object.freeze({ ...slot }))),
-      _ext: tensorMethods(tensorTypeName(value.slots))
-    };
-    return syncTensorExtension(snapshot);
-  }
-  function transformTensorBang(args, runtime = {}) {
-    const value = requireTensor(args[0]);
-    const targets = targetFrames(value, args[1]);
-    const previous = snapshotTensor(value);
-    if (value.identity.origin === value) {
-      value.identity.origin = previous;
-      const originIndex = value.identity.representations.indexOf(value);
-      if (originIndex >= 0)
-        value.identity.representations[originIndex] = previous;
-    }
-    const transformed2 = transformedComponents(value, targets);
-    value.components = transformed2.components;
-    value.representationIdentity = Object.freeze({ type: "tensor_representation_identity", serial: ++tensorRepresentationSerial });
-    value.slots = Object.freeze(value.slots.map((slot, axis) => Object.freeze({ frame: targets[axis], dual: slot.dual })));
-    value.equivalentTo = previous;
-    value.origin = value.identity.origin;
-    value.transform = {
-      kind: "coordinateChange",
-      sources: previous.slots.map((slot) => slot.frame),
-      targets,
-      matrices: transformed2.changes
-    };
-    recordRepresentation(value.identity, value, runtime.context);
-    return syncTensorExtension(value);
-  }
-  function components(args) {
-    return requireTensor(args[0]).components;
-  }
-  function sameTensor(args) {
-    return requireTensor(args[0]).identity === requireTensor(args[1]).identity ? int12(1) : null;
-  }
-  function pair(args, runtime = {}) {
-    const first = requireTensor(args[0]);
-    const second = requireTensor(args[1]);
-    const covectorValue = first.type === "covector" ? first : second.type === "covector" ? second : null;
-    const vectorValue = first.type === "vector" ? first : second.type === "vector" ? second : null;
-    if (!covectorValue || !vectorValue || first.slots.length !== 1 || second.slots.length !== 1) {
-      throw new Error("Pair requires one Vector and one Covector");
-    }
-    if (covectorValue.slots[0].frame.space !== vectorValue.slots[0].frame.space) {
-      throw new Error("Vector and Covector must belong to the same VectorSpace");
-    }
-    const alignedVector = vectorValue.slots[0].frame === covectorValue.slots[0].frame ? vectorValue : transformTensor([vectorValue, covectorValue.slots[0].frame], runtime);
-    const covectorEntries = flatTensorValues(covectorValue.components).map(exactRational3);
-    const vectorEntries = flatTensorValues(alignedVector.components).map(exactRational3);
-    return covectorEntries.reduce((sum, entry, index) => sum.add(entry.multiply(vectorEntries[index])), zero3());
-  }
-  function vector(args, runtime = {}) {
-    const entries4 = entriesFor2(args, ["components", "frame", "options"], "linalg.Vector");
-    const frameValue = requireFrame(field(entries4, "frame"));
-    const values3 = exactVector2(field(entries4, "components"), "Vector components");
-    if (values3.length !== frameValue.space.dimension)
-      throw new Error("Vector dimension does not match its Frame");
-    return makeTensor(vectorTensor(values3), [{ frame: frameValue, dual: false }], {}, runtime.context);
-  }
-  function covector(args, runtime = {}) {
-    const entries4 = entriesFor2(args, ["components", "frame", "options"], "linalg.Covector");
-    const frameValue = requireFrame(field(entries4, "frame"));
-    const values3 = exactVector2(field(entries4, "components"), "Covector components");
-    if (values3.length !== frameValue.space.dimension)
-      throw new Error("Covector dimension does not match its Frame");
-    return makeTensor(vectorTensor(values3), [{ frame: frameValue, dual: true }], {}, runtime.context);
-  }
-  function typedShaped(componentsValue, header, resolvedSlots, context = null) {
-    const requested = String(header.typeName || "").toLowerCase();
-    if (!["vector", "covector", "tensor"].includes(requested)) {
-      throw new Error(`Compact slot annotation is only valid for Vector, Covector, or Tensor, not ${header.typeName}`);
-    }
-    if ((requested === "vector" || requested === "covector") && resolvedSlots.length !== 1) {
-      throw new Error(`${header.typeName} requires exactly one Frame annotation`);
-    }
-    const slots = resolvedSlots.map((slot) => ({
-      frame: requireFrame(slot.frame),
-      dual: requested === "covector" ? true : slot.dual === true
-    }));
-    if (requested === "vector" && slots[0].dual) {
-      return makeTensor(componentsValue, slots, {}, context);
-    }
-    if (requested === "tensor" && slots.length !== shapedRank(componentsValue)) {
-      throw new Error(`Tensor header declares ${slots.length} slots for rank-${shapedRank(componentsValue)} components`);
-    }
-    return makeTensor(componentsValue, slots, {}, context);
-  }
-  function compatibleSlots(left, right) {
-    return left.slots.length === right.slots.length && left.slots.every((slot, axis) => slot.frame.space === right.slots[axis]?.frame.space && slot.dual === right.slots[axis]?.dual);
-  }
-  function combineTensorValues(name, leftValue, rightValue, runtime = {}) {
-    const left = requireTensor(leftValue);
-    const right = requireTensor(rightValue);
-    if (!compatibleSlots(left, right))
-      throw new Error(`${name} requires tensors with the same ordered VectorSpace slots and variance`);
-    const aligned = left.slots.every((slot, axis) => slot.frame === right.slots[axis].frame) ? right : transformTensor([right, seq6(left.slots.map((slot) => slot.frame))], runtime);
-    const a = flatTensorValues(left.components).map(exactRational3);
-    const b = flatTensorValues(aligned.components).map(exactRational3);
-    const values3 = a.map((entry, index) => name === "ADD" ? entry.add(b[index]) : entry.subtract(b[index]));
-    return makeTensor(createShaped(left.components.shape, values3), left.slots, {
-      derivedFrom: [left, right]
-    }, runtime.context);
-  }
-  function scaleTensorValue(name, value, scalarValue, scalarFirst, runtime = {}) {
-    const tensorValue = requireTensor(value);
-    const scalar = exactRational3(scalarValue, "Tensor scalar");
-    const values3 = flatTensorValues(tensorValue.components).map((entry) => {
-      const exactEntry = exactRational3(entry);
-      if (name === "MUL")
-        return exactEntry.multiply(scalar);
-      return scalarFirst ? scalar.divide(exactEntry) : exactEntry.divide(scalar);
-    });
-    return makeTensor(createShaped(tensorValue.components.shape, values3), tensorValue.slots, {
-      derivedFrom: [tensorValue]
-    }, runtime.context);
-  }
-  function installTensorOperators(registry) {
-    if (!registry || registry.get("ADD")?.variants?.some((variant) => variant.name === "LinalgTensorAddition"))
-      return;
-    const isTensor = (value) => ["vector", "covector", "tensor"].includes(value?.type) && value.schema === TENSOR_SCHEMA;
-    registry.installVariant("ADD", {
-      name: "LinalgTensorAddition",
-      priority: 400,
-      prep: (args) => args.length === 2 && isTensor(args[0]) && isTensor(args[1]),
-      impl: ([left, right], context) => combineTensorValues("ADD", left, right, { context })
-    });
-    registry.installVariant("SUB", {
-      name: "LinalgTensorSubtraction",
-      priority: 400,
-      prep: (args) => args.length === 2 && isTensor(args[0]) && isTensor(args[1]),
-      impl: ([left, right], context) => combineTensorValues("SUB", left, right, { context })
-    });
-    registry.installVariant("MUL", {
-      name: "LinalgTensorScaling",
-      priority: 400,
-      prep: (args) => args.length === 2 && isTensor(args[0]) !== isTensor(args[1]),
-      impl: ([left, right], context) => isTensor(left) ? scaleTensorValue("MUL", left, right, false, { context }) : scaleTensorValue("MUL", right, left, true, { context })
-    });
-    registry.installVariant("DIV", {
-      name: "LinalgTensorDivision",
-      priority: 400,
-      prep: (args) => args.length === 2 && isTensor(args[0]) && !isTensor(args[1]),
-      impl: ([left, right], context) => scaleTensorValue("DIV", left, right, false, { context })
-    });
-  }
-  var helpers = new Map([
-    ["Rref", rref],
-    ["Rank", rank],
-    ["Determinant", determinant],
-    ["Inverse", inverse],
-    ["Solve", solveLinear],
-    ["VectorSpace", vectorSpace],
-    ["Frame", frame],
-    ["Tensor", tensor],
-    ["Vector", vector],
-    ["Covector", covector],
-    ["ChangeMatrix", changeMatrix],
-    ["Transform", transformTensor],
-    ["Transform!", transformTensorBang],
-    ["Components", components],
-    ["Pair", pair],
-    ["SameTensor", sameTensor]
-  ]);
-
-  // rix/plugins/linalg/linalg.plugin.rix.js
-  function createLinalgPluginCollection() {
-    const entries4 = new Map;
-    const extension = new Map([["_mutable", new Integer(1n)]]);
-    for (const [name, helper] of helpers) {
-      entries4.set(name, helper);
-      entries4.set(name.toUpperCase(), helper);
-      extension.set(name.toUpperCase(), {
-        type: "method_builtin",
-        name,
-        impl: (args, context, evaluate, invoke) => helper(args.slice(1), { context, evaluate, invoke })
-      });
-    }
-    return { type: "map", entries: entries4, _ext: extension };
-  }
-  function install9({ systemContext, context, registry }) {
-    const collection = createLinalgPluginCollection();
-    systemContext.registerHostValue("linalg", collection, {
-      doc: "Exact dense linear algebra and coordinate-aware tensors",
-      groups: ["LinearAlgebra", "Exact"]
-    });
-    context?.setEnv?.("__linalg_typed_shaped__", typedShaped);
-    installTensorOperators(registry);
-    for (const name of ["Rref", "Rank", "Determinant", "Inverse"]) {
-      const helper = helpers.get(name);
-      systemContext.registerMethod("Matrix", name, {
-        type: "method_builtin",
-        name,
-        impl: (args, evaluationContext, evaluate, invoke) => helper(args, { context: evaluationContext, evaluate, invoke })
-      }, { pluginId: "linalg", mount: "linalg" });
-    }
-    return collection;
-  }
-
-  // rix/plugins/optimize/optimize.js
-  var LINEAR_PROGRAM_SCHEMA = "rix.optimize.linear-program@1";
-  var OPTIMIZATION_RESULT_SCHEMA = "rix.optimize.result@1";
-  var int13 = (value) => new Integer(BigInt(value));
-  var str7 = (value) => ({ type: "string", value: String(value) });
-  var seq7 = (values3) => ({ type: "sequence", values: values3 });
-  var zero4 = () => new Rational(0n, 1n);
-  var one4 = () => new Rational(1n, 1n);
-  function exposed2(value) {
-    if (typeof value === "string")
-      return str7(value);
-    if (typeof value === "number" && Number.isSafeInteger(value))
-      return int13(value);
-    if (typeof value === "boolean")
-      return value ? int13(1) : null;
-    return value;
-  }
-  function text9(value, fallback = null) {
-    if (value?.type === "string")
-      return value.value;
-    if (typeof value === "string")
-      return value;
-    return fallback;
-  }
-  function integer5(value, label2, fallback) {
-    if (value === null || value === undefined)
-      return fallback;
-    const result = value instanceof Integer ? Number(value.value) : value instanceof Rational && value.denominator === 1n ? Number(value.numerator) : Number.isSafeInteger(value) ? value : NaN;
-    if (!Number.isSafeInteger(result))
-      throw new Error(`${label2} must be an Integer`);
-    return result;
-  }
-  function isZero6(value) {
-    return value.numerator === 0n;
-  }
-  function isPositive(value) {
-    return value.numerator > 0n;
-  }
-  function isNegative2(value) {
-    return value.numerator < 0n;
-  }
-  function dot2(left, right) {
-    return left.reduce((sum, value, index) => sum.add(value.multiply(right[index])), zero4());
-  }
-  function linearProgramValue(objective, matrix, bounds, sense, name = null) {
-    const value = {
-      type: "linear_program",
-      schema: LINEAR_PROGRAM_SCHEMA,
-      objective: vectorTensor(objective),
-      A: matrixTensor(matrix),
-      b: vectorTensor(bounds),
-      sense,
-      variableCount: objective.length,
-      constraintCount: matrix.length,
-      relation: "<=",
-      nonnegative: true,
-      name,
-      exact: true,
-      _ext: new Map([
-        ["_type", str7("LinearProgram")],
-        ["immutable", int13(1)],
-        ["SOLVE", { type: "method_builtin", name: "Solve", impl: ([self, options]) => solveProgram([self, options]) }],
-        ["EVALUATE", { type: "method_builtin", name: "Evaluate", impl: ([self, point]) => evaluateProgram([self, point]) }]
-      ])
-    };
-    for (const key of ["objective", "A", "b"])
-      value._ext.set(key, value[key]);
-    value._ext.set("sense", str7(sense));
-    value._ext.set("name", name === null ? null : str7(name));
-    value._ext.set("variableCount", int13(objective.length));
-    value._ext.set("variablecount", int13(objective.length));
-    value._ext.set("constraintCount", int13(matrix.length));
-    value._ext.set("constraintcount", int13(matrix.length));
-    return Object.freeze(value);
-  }
-  function createLinearProgram(args) {
-    const entries4 = entriesFor2(args, ["objective", "A", "b", "options"], "optimize.LinearProgram");
-    const objective = exactVector2(field(entries4, "objective"), "Linear-program objective");
-    const matrix = exactMatrix(field(entries4, "A"), "Linear-program constraint matrix");
-    const bounds = exactVector2(field(entries4, "b"), "Linear-program bounds");
-    if (matrix[0].length !== objective.length)
-      throw new Error("Linear-program objective length must equal the matrix column count");
-    if (matrix.length !== bounds.length)
-      throw new Error("Linear-program bounds length must equal the matrix row count");
-    const sense = text9(field(entries4, "sense"), "max").toLowerCase();
-    if (!["max", "maximize", "min", "minimize"].includes(sense)) {
-      throw new Error("Linear-program sense must be :max or :min");
-    }
-    const relation = text9(field(entries4, "relation"), "<=");
-    if (relation !== "<=")
-      throw new Error("Phase 1 linear programs require A*x <= b");
-    return linearProgramValue(objective, matrix, bounds, sense.startsWith("min") ? "min" : "max", text9(field(entries4, "name")));
-  }
-  function requireProgram(value) {
-    if (value?.type !== "linear_program" || value.schema !== LINEAR_PROGRAM_SCHEMA) {
-      throw new Error("Expected an optimize LinearProgram");
-    }
-    return value;
-  }
-  function optimizationResult(program, fields) {
-    const result = {
-      type: "optimization_result",
-      schema: OPTIMIZATION_RESULT_SCHEMA,
-      program,
-      method: "exactPrimalSimplex",
-      exact: true,
-      ...fields,
-      _ext: new Map([["_type", str7("OptimizationResult")], ["immutable", int13(1)]])
-    };
-    result._ext.set("program", program);
-    result._ext.set("method", str7(result.method));
-    result._ext.set("exact", int13(1));
-    for (const [name, value] of Object.entries(fields)) {
-      result._ext.set(name, exposed2(value));
-      result._ext.set(name.toLowerCase(), exposed2(value));
-    }
-    return result;
-  }
-  function pivot(tableau, pivotRow, pivotColumn) {
-    const pivotValue = tableau[pivotRow][pivotColumn];
-    tableau[pivotRow] = tableau[pivotRow].map((value) => value.divide(pivotValue));
-    for (let row = 0;row < tableau.length; row++) {
-      if (row === pivotRow || isZero6(tableau[row][pivotColumn]))
-        continue;
-      const factor = tableau[row][pivotColumn];
-      tableau[row] = tableau[row].map((value, column) => value.subtract(factor.multiply(tableau[pivotRow][column])));
-    }
-  }
-  function solveProgram(args) {
-    const program = requireProgram(args[0]);
-    const options = args[1]?.type === "map" ? args[1].entries : new Map;
-    const maxIterations = integer5(field(options, "maxIterations"), "Simplex maxIterations", 1e4);
-    if (maxIterations < 1)
-      throw new Error("Simplex maxIterations must be positive");
-    const objective = exactVector2(program.objective);
-    const matrix = exactMatrix(program.A);
-    const bounds = exactVector2(program.b);
-    if (bounds.some(isNegative2)) {
-      throw new Error("Phase 1 simplex requires nonnegative b so x=0 is an initial feasible point");
-    }
-    const effectiveObjective = program.sense === "min" ? objective.map((value) => value.negate()) : objective;
-    const variableCount = objective.length;
-    const constraintCount = matrix.length;
-    const totalColumns = variableCount + constraintCount;
-    const tableau = matrix.map((row, rowIndex) => [
-      ...row,
-      ...Array.from({ length: constraintCount }, (_, column) => column === rowIndex ? one4() : zero4()),
-      bounds[rowIndex]
-    ]);
-    tableau.push([
-      ...effectiveObjective.map((value) => value.negate()),
-      ...Array.from({ length: constraintCount }, () => zero4()),
-      zero4()
-    ]);
-    const basis = Array.from({ length: constraintCount }, (_, index) => variableCount + index);
-    let iterations = 0;
-    while (iterations < maxIterations) {
-      const objectiveRow = tableau[constraintCount];
-      const entering = objectiveRow.slice(0, totalColumns).findIndex(isNegative2);
-      if (entering < 0)
-        break;
-      let leaving = -1;
-      let bestRatio = null;
-      for (let row = 0;row < constraintCount; row++) {
-        const coefficient = tableau[row][entering];
-        if (!isPositive(coefficient))
-          continue;
-        const ratio = tableau[row][totalColumns].divide(coefficient);
-        if (bestRatio === null || ratio.compareTo(bestRatio) < 0 || ratio.compareTo(bestRatio) === 0 && basis[row] < basis[leaving]) {
-          bestRatio = ratio;
-          leaving = row;
-        }
-      }
-      if (leaving < 0) {
-        return optimizationResult(program, {
-          status: "unbounded",
-          solution: null,
-          objectiveValue: null,
-          iterations,
-          enteringVariable: int13(entering + 1),
-          tableau: matrixTensor(tableau),
-          diagnostics: seq7([str7("No leaving row exists for the selected improving direction")])
-        });
-      }
-      pivot(tableau, leaving, entering);
-      basis[leaving] = entering;
-      iterations += 1;
-    }
-    if (iterations >= maxIterations && tableau[constraintCount].slice(0, totalColumns).some(isNegative2)) {
-      return optimizationResult(program, {
-        status: "iterationLimit",
-        solution: null,
-        objectiveValue: null,
-        iterations,
-        tableau: matrixTensor(tableau),
-        diagnostics: seq7([str7("Simplex iteration limit reached")])
-      });
-    }
-    const solution = Array.from({ length: variableCount }, () => zero4());
-    basis.forEach((column, row) => {
-      if (column < variableCount)
-        solution[column] = tableau[row][totalColumns];
-    });
-    const slacks = bounds.map((bound, row) => bound.subtract(matrix[row].reduce((sum, value, column) => sum.add(value.multiply(solution[column])), zero4())));
-    return optimizationResult(program, {
-      status: "optimal",
-      solution: vectorTensor(solution),
-      objectiveValue: dot2(objective, solution),
-      slacks: vectorTensor(slacks),
-      feasible: slacks.every((value) => !isNegative2(value)),
-      iterations,
-      basis: seq7(basis.map((column) => int13(column + 1))),
-      tableau: matrixTensor(tableau),
-      diagnostics: seq7([])
-    });
-  }
-  function evaluateProgram(args) {
-    const program = requireProgram(args[0]);
-    const point = exactVector2(args[1], "Linear-program point");
-    if (point.length !== program.variableCount)
-      throw new Error("Point dimension does not match the LinearProgram");
-    const matrix = exactMatrix(program.A);
-    const bounds = exactVector2(program.b);
-    const lhs = matrix.map((row) => dot2(row, point));
-    const feasible = point.every((value) => !isNegative2(value)) && lhs.every((value, row) => value.compareTo(bounds[row]) <= 0);
-    return {
-      type: "optimization_evaluation",
-      objectiveValue: dot2(exactVector2(program.objective), point),
-      feasible,
-      lhs: vectorTensor(lhs),
-      slacks: vectorTensor(bounds.map((bound, row) => bound.subtract(lhs[row])))
-    };
-  }
-  function solveConvenience(args, sense) {
-    const program = createLinearProgram([...args.slice(0, 3), {
-      type: "map",
-      entries: new Map([["sense", str7(sense)]])
-    }]);
-    return solveProgram([program, args[3]]);
-  }
-  var helpers2 = new Map([
-    ["LinearProgram", createLinearProgram],
-    ["Solve", solveProgram],
-    ["Evaluate", evaluateProgram],
-    ["Maximize", (args) => solveConvenience(args, "max")],
-    ["Minimize", (args) => solveConvenience(args, "min")]
-  ]);
-
-  // rix/plugins/optimize/optimize.plugin.rix.js
-  function createOptimizePluginCollection() {
-    const entries4 = new Map;
-    const extension = new Map([["immutable", new Integer(1n)]]);
-    for (const [name, helper] of helpers2) {
-      entries4.set(name, helper);
-      entries4.set(name.toUpperCase(), helper);
-      extension.set(name.toUpperCase(), {
-        type: "method_builtin",
-        name,
-        impl: (args, context, evaluate, invoke) => helper(args.slice(1), { context, evaluate, invoke })
-      });
-    }
-    return { type: "map", entries: entries4, _ext: extension };
-  }
-  function install10({ systemContext }) {
-    const collection = createOptimizePluginCollection();
-    systemContext.registerHostValue("optimize", collection, {
-      doc: "Exact linear programs and deterministic simplex optimization",
-      groups: ["Optimization", "Exact"]
-    });
-    return collection;
-  }
-
-  // rix/plugins/solve/solve.js
-  var SYSTEM_SOLUTION_SCHEMA = "rix.solve.system-result@1";
-  var int14 = (value) => new Integer(BigInt(value));
-  var str8 = (value) => ({ type: "string", value: String(value) });
-  var seq8 = (values3) => ({ type: "sequence", values: values3 });
-  var map3 = (entries4) => ({ type: "map", entries: new Map(entries4) });
-  var zero5 = () => new Rational(0n, 1n);
-  var one5 = () => new Rational(1n, 1n);
-  function exact2(value, label2) {
-    if (value instanceof Rational)
-      return value;
-    if (value instanceof Integer)
-      return new Rational(value.value, 1n);
-    throw new Error(`${label2} must be an exact Integer or Rational`);
-  }
-  function addForms(left, right, sign = 1) {
-    const coefficients = new Map(left.coefficients);
-    for (const [name, value] of right.coefficients) {
-      const contribution = sign === 1 ? value : value.negate();
-      coefficients.set(name, (coefficients.get(name) || zero5()).add(contribution));
-      if (coefficients.get(name).numerator === 0n)
-        coefficients.delete(name);
-    }
-    return {
-      coefficients,
-      constant: sign === 1 ? left.constant.add(right.constant) : left.constant.subtract(right.constant)
-    };
-  }
-  function scaleForm(form, scalar) {
-    return {
-      coefficients: new Map(Array.from(form.coefficients, ([name, value]) => [name, value.multiply(scalar)])),
-      constant: form.constant.multiply(scalar)
-    };
-  }
-  function isScalarForm(form) {
-    return form.coefficients.size === 0;
-  }
-  function literalValue3(node) {
-    if (node?.fn !== "LITERAL")
-      return null;
-    try {
-      return new Rational(String(node.args[0]));
-    } catch {
-      return null;
-    }
-  }
-  function linearForm(node, unknowns, constants) {
-    if (!node?.fn)
-      throw new Error("Unsupported empty symbolic expression");
-    if (node.fn === "LITERAL") {
-      const value = literalValue3(node);
-      if (!value)
-        throw new Error(`Unsupported numeric literal '${node.args[0]}'`);
-      return { coefficients: new Map, constant: value };
-    }
-    if (node.fn === "RETRIEVE" || node.fn === "OUTER_RETRIEVE") {
-      const name = node.args[0];
-      if (unknowns.has(name))
-        return { coefficients: new Map([[name, one5()]]), constant: zero5() };
-      if (constants.has(name))
-        return { coefficients: new Map, constant: constants.get(name) };
-      throw new Error(`Linear system needs an exact value for '${name}'`);
-    }
-    if (node.fn === "NEG")
-      return scaleForm(linearForm(node.args[0], unknowns, constants), new Rational(-1n, 1n));
-    if (node.fn === "ADD")
-      return addForms(linearForm(node.args[0], unknowns, constants), linearForm(node.args[1], unknowns, constants));
-    if (node.fn === "SUB")
-      return addForms(linearForm(node.args[0], unknowns, constants), linearForm(node.args[1], unknowns, constants), -1);
-    if (node.fn === "MUL") {
-      const left = linearForm(node.args[0], unknowns, constants);
-      const right = linearForm(node.args[1], unknowns, constants);
-      if (isScalarForm(left))
-        return scaleForm(right, left.constant);
-      if (isScalarForm(right))
-        return scaleForm(left, right.constant);
-      throw new Error("Nonlinear product found in a Phase 1 linear system");
-    }
-    if (node.fn === "DIV") {
-      const numerator = linearForm(node.args[0], unknowns, constants);
-      const denominator = linearForm(node.args[1], unknowns, constants);
-      if (!isScalarForm(denominator) || denominator.constant.numerator === 0n) {
-        throw new Error("Linear-system division requires a nonzero exact scalar denominator");
-      }
-      return scaleForm(numerator, denominator.constant.reciprocal());
-    }
-    if (node.fn === "POW") {
-      const exponent = literalValue3(node.args[1]);
-      if (exponent?.denominator === 1n && exponent.numerator === 1n)
-        return linearForm(node.args[0], unknowns, constants);
-      if (exponent?.denominator === 1n && exponent.numerator === 0n)
-        return { coefficients: new Map, constant: one5() };
-      throw new Error("Nonlinear power found in a Phase 1 linear system");
-    }
-    throw new Error(`Unsupported symbolic operation '${node.fn}' in a Phase 1 linear system`);
-  }
-  function valuesMap(value) {
-    if (value === null || value === undefined)
-      return new Map;
-    if (value?.type !== "map" || !(value.entries instanceof Map))
-      throw new Error("solve values must be a map");
-    return new Map(Array.from(value.entries, ([name, entry]) => [String(name), exact2(entry, `solve value '${name}'`)]));
-  }
-  function tensorVectorValues(value) {
-    const result = [];
-    forEachShapedCell2(value, (entry) => result.push(entry));
-    return result;
-  }
-  function systemResult(spec2, roles, equations, linearResult) {
-    const values3 = linearResult.particular ? tensorVectorValues(linearResult.particular) : [];
-    const solution = linearResult.particular ? map3(roles.outputs.map((name, index) => [name, values3[index]])) : null;
-    const result = {
-      type: "system_solution",
-      schema: SYSTEM_SOLUTION_SCHEMA,
-      status: linearResult.status,
-      classification: "linearEqualities",
-      exact: true,
-      spec: spec2,
-      unknowns: seq8(roles.outputs.map(str8)),
-      solution,
-      solutionVector: linearResult.particular,
-      equations,
-      linearResult,
-      _ext: new Map([["_type", str8("SystemSolution")], ["immutable", int14(1)]])
-    };
-    result._ext.set("status", str8(result.status));
-    result._ext.set("classification", str8(result.classification));
-    result._ext.set("unknowns", result.unknowns);
-    result._ext.set("solution", solution);
-    result._ext.set("solutionVector", result.solutionVector);
-    result._ext.set("solutionvector", result.solutionVector);
-    result._ext.set("linearResult", linearResult);
-    result._ext.set("linearresult", linearResult);
-    result._ext.set("equations", int14(equations));
-    return result;
-  }
-  function defineConstants(spec2, unknowns, constants) {
-    let pending = spec2.statements.filter((statement) => statement.kind === "define" && !unknowns.has(statement.target));
-    let progressed = true;
-    while (pending.length && progressed) {
-      progressed = false;
-      pending = pending.filter((statement) => {
-        try {
-          const form = linearForm(statement.expr, unknowns, constants);
-          if (!isScalarForm(form))
-            return true;
-          constants.set(statement.target, form.constant);
-          progressed = true;
-          return false;
-        } catch {
-          return true;
-        }
-      });
-    }
-    return pending;
-  }
-  function classifySystem(args) {
-    const spec2 = getAttachedSpec(args[0]);
-    if (!spec2)
-      throw new Error("solve.Classify expects a symbolic specification");
-    const operations = spec2.statements.map((statement) => statement.kind === "define" ? "define" : statement.expr?.fn || "unknown");
-    const hasInequality = operations.some((operation) => ["LT", "LTE", "GT", "GTE"].includes(operation));
-    const hasEquality = operations.includes("EQ") || operations.includes("define");
-    return map3([
-      ["kind", str8(hasInequality ? "constrainedSystem" : hasEquality ? "equalitySystem" : "expression")],
-      ["linearCandidate", hasInequality ? null : int14(1)],
-      ["operations", seq8(operations.map(str8))]
-    ]);
-  }
-  function solveSystem(args) {
-    const entries4 = entriesFor2(args, ["spec", "options"], "solve.System");
-    const spec2 = getAttachedSpec(field(entries4, "spec"));
-    if (!spec2)
-      throw new Error("solve.System expects a symbolic specification");
-    const resolved = resolveSymbolicRoles(spec2, field(entries4, "roles"));
-    const outputs = resolved.outputs.length ? resolved.outputs : resolved.unassigned;
-    if (outputs.length === 0)
-      throw new Error("solve.System needs output roles or unassigned symbols to solve for");
-    const roles = { ...resolved, outputs };
-    const unknowns = new Set(outputs);
-    const constants = valuesMap(field(entries4, "values"));
-    const unresolvedDefinitions = defineConstants(spec2, unknowns, constants);
-    const equations = [];
-    for (const statement of spec2.statements) {
-      let equation = null;
-      if (statement.kind === "define" && unknowns.has(statement.target)) {
-        equation = {
-          fn: "SUB",
-          args: [{ fn: "RETRIEVE", args: [statement.target] }, statement.expr]
-        };
-      } else if (statement.kind === "constraint") {
-        if (statement.expr?.fn !== "EQ") {
-          throw new Error(`Phase 1 solve.System supports exact equalities, not '${statement.expr?.fn || "unknown"}'`);
-        }
-        equation = { fn: "SUB", args: [statement.expr.args[0], statement.expr.args[1]] };
-      }
-      if (equation)
-        equations.push(linearForm(equation, unknowns, constants));
-    }
-    if (unresolvedDefinitions.length) {
-      throw new Error(`Unresolved symbolic definitions: ${unresolvedDefinitions.map((statement) => statement.target).join(", ")}`);
-    }
-    if (equations.length === 0)
-      throw new Error("solve.System found no equations");
-    const matrixRows = equations.map((equation) => outputs.map((name) => equation.coefficients.get(name) || zero5()));
-    const bounds = equations.map((equation) => equation.constant.negate());
-    const matrixValue = createShaped([matrixRows.length, outputs.length], matrixRows.flat());
-    const vectorValue = createShaped([bounds.length], bounds);
-    return systemResult(spec2, roles, equations.length, solveLinearValues(matrixValue, vectorValue));
-  }
-  function solveLinear2(args) {
-    const linearResult = solveLinearValues(args[0], args[1]);
-    const result = {
-      type: "system_solution",
-      schema: SYSTEM_SOLUTION_SCHEMA,
-      status: linearResult.status,
-      classification: "linearMatrix",
-      exact: true,
-      solution: linearResult.particular,
-      linearResult,
-      _ext: new Map([["_type", str8("SystemSolution")], ["immutable", int14(1)]])
-    };
-    result._ext.set("status", str8(result.status));
-    result._ext.set("classification", str8(result.classification));
-    result._ext.set("solution", result.solution);
-    result._ext.set("linearResult", linearResult);
-    result._ext.set("linearresult", linearResult);
-    return result;
-  }
-  var helpers3 = new Map([
-    ["Classify", classifySystem],
-    ["Linear", solveLinear2],
-    ["System", solveSystem]
-  ]);
-
-  // rix/plugins/solve/solve.plugin.rix.js
-  function createSolvePluginCollection() {
-    const entries4 = new Map;
-    const extension = new Map([["immutable", new Integer(1n)]]);
-    for (const [name, helper] of helpers3) {
-      entries4.set(name, helper);
-      entries4.set(name.toUpperCase(), helper);
-      extension.set(name.toUpperCase(), {
-        type: "method_builtin",
-        name,
-        impl: (args, context, evaluate, invoke) => helper(args.slice(1), { context, evaluate, invoke })
-      });
-    }
-    return { type: "map", entries: entries4, _ext: extension };
-  }
-  function install11({ systemContext }) {
-    const collection = createSolvePluginCollection();
-    systemContext.registerHostValue("solve", collection, {
-      doc: "Exact linear-system classification and symbolic-spec solving",
-      groups: ["Solve", "Symbolic", "Exact"]
-    });
-    return collection;
-  }
-
   // rix/plugins/renderers/common.js
   function outputKind(value) {
-    return value?.type === "output" ? value.kind : value?.type || typeof value;
+    const type = rixString4(field3(value, "type"));
+    const kind = rixString4(field3(value, "kind"));
+    return type === "output" ? kind : type || value?.type || typeof value;
   }
   function unwrapFigure(value) {
     return outputKind(value) === "figure" ? { value: value.content, figure: value } : { value, figure: null };
@@ -48049,7 +47959,7 @@ complexVizNamespace._proto = {=
       return value.value;
     return typeof value === "string" ? value : null;
   }
-  function sequence6(value, label2) {
+  function sequence4(value, label2) {
     if (Array.isArray(value))
       return value;
     if (Array.isArray(value?.values))
@@ -48063,7 +47973,7 @@ complexVizNamespace._proto = {=
       return value.entries;
     return null;
   }
-  function field5(value, name, fallback = null) {
+  function field3(value, name, fallback = null) {
     const entries4 = mapEntries2(value);
     if (entries4) {
       if (entries4.has(name))
@@ -48080,7 +47990,7 @@ complexVizNamespace._proto = {=
     return fallback;
   }
   function option4(options, name, fallback = null) {
-    return field5(options, name, fallback);
+    return field3(options, name, fallback);
   }
   function numberValue2(value, label2) {
     let result;
@@ -48102,13 +48012,13 @@ complexVizNamespace._proto = {=
     return Number(numberValue2(value, label2).toFixed(6)).toString();
   }
   function point(value, label2) {
-    const values3 = sequence6(value, label2);
+    const values3 = sequence4(value, label2);
     if (values3.length !== 2)
       throw new Error(`${label2} must contain two coordinates`);
     return values3.map((entry, index) => numberValue2(entry, `${label2} ${index === 0 ? "x" : "y"}`));
   }
   function styleValue2(style, name, fallback = null) {
-    return field5(style, name, fallback);
+    return field3(style, name, fallback);
   }
   function boolValue(value) {
     if (value instanceof Integer)
@@ -48209,12 +48119,12 @@ complexVizNamespace._proto = {=
     return result;
   }
   function truncate2(value, width) {
-    const text10 = String(value);
-    if (text10.length <= width)
-      return text10;
+    const text7 = String(value);
+    if (text7.length <= width)
+      return text7;
     if (width <= 1)
       return "~";
-    return `${text10.slice(0, width - 1)}~`;
+    return `${text7.slice(0, width - 1)}~`;
   }
   function constrainText(value, state, path2) {
     return String(value).split(`
@@ -48262,14 +48172,14 @@ complexVizNamespace._proto = {=
     return result;
   }
   function align(value, width, mode = "left") {
-    const text10 = truncate2(value, width);
+    const text7 = truncate2(value, width);
     if (mode === "right")
-      return text10.padStart(width);
+      return text7.padStart(width);
     if (mode === "center") {
-      const left = Math.floor((width - text10.length) / 2);
-      return `${" ".repeat(left)}${text10}${" ".repeat(width - text10.length - left)}`;
+      const left = Math.floor((width - text7.length) / 2);
+      return `${" ".repeat(left)}${text7}${" ".repeat(width - text7.length - left)}`;
     }
-    return text10.padEnd(width);
+    return text7.padEnd(width);
   }
   function renderTable(value, state, path2) {
     const headers = value.columns.map((column, index) => strictAscii(column.label, state, `${path2}.column${index + 1}`));
@@ -48289,13 +48199,13 @@ complexVizNamespace._proto = {=
 `);
   }
   function ruleNumber(rule, name) {
-    const value = field5(rule, name);
+    const value = field3(rule, name);
     if (value === null || value === undefined)
       return null;
     return numberValue2(value, `Grid rule ${name}`);
   }
   function hasGridRule(value, kind, boundary) {
-    return value.rules.some((rule) => field5(rule, "kind") === kind && ruleNumber(rule, kind === "vertical" ? "afterColumn" : "aboveRow") === boundary);
+    return value.rules.some((rule) => field3(rule, "kind") === kind && ruleNumber(rule, kind === "vertical" ? "afterColumn" : "aboveRow") === boundary);
   }
   function renderGrid(value, state, path2) {
     const rows = value.rows.map((row, rowIndex) => row.map((cell, columnIndex) => cellText2(cell, state, `${path2}.row${rowIndex + 1}.column${columnIndex + 1}`)));
@@ -48303,7 +48213,7 @@ complexVizNamespace._proto = {=
     const separators = natural.slice(1).map((_, index) => hasGridRule(value, "vertical", index + 2) ? " | " : "  ");
     const overhead = separators.reduce((sum, separator) => sum + separator.length, 0);
     const widths = shrinkWidths(natural, state.width - overhead, state, path2);
-    const styleAlign = rixString4(field5(value.style, "align")) || field5(value.style, "align") || "right";
+    const styleAlign = rixString4(field3(value.style, "align")) || field3(value.style, "align") || "right";
     const renderRow = (cells) => {
       let line2 = align(cells[0], widths[0], styleAlign);
       for (let column = 1;column < cells.length; column += 1) {
@@ -48377,11 +48287,11 @@ complexVizNamespace._proto = {=
     value.children.forEach((child, index) => {
       const childPath = `${path2}.child${index + 1}`;
       if (outputKind(child) === "path" && Array.isArray(child.points)) {
-        const points2 = child.points.map(project);
-        const twoPoint = points2.length === 2;
-        const character = twoPoint && points2[0][1] === points2[1][1] ? "-" : twoPoint && points2[0][0] === points2[1][0] ? "|" : "*";
-        for (let pointIndex = 1;pointIndex < points2.length; pointIndex += 1) {
-          drawLine(grid, points2[pointIndex - 1], points2[pointIndex], character);
+        const points = child.points.map(project);
+        const twoPoint = points.length === 2;
+        const character = twoPoint && points[0][1] === points[1][1] ? "-" : twoPoint && points[0][0] === points[1][0] ? "|" : "*";
+        for (let pointIndex = 1;pointIndex < points.length; pointIndex += 1) {
+          drawLine(grid, points[pointIndex - 1], points[pointIndex], character);
         }
       } else if (outputKind(child) === "circle" || outputKind(child) === "drag_point") {
         put(grid, ...project(child.center).reverse(), "o");
@@ -48461,7 +48371,7 @@ complexVizNamespace._proto = {=
       return renderTerminalAscii(value, { options, format });
     }
   };
-  function install12(api) {
+  function install5(api) {
     return installRendererPlugin({ ...api, definition, mount: "terminalAscii" });
   }
 
@@ -48488,40 +48398,40 @@ complexVizNamespace._proto = {=
       return { content };
     }
   };
-  function install13(api) {
+  function install6(api) {
     return installRendererPlugin({ ...api, definition: definition2 });
   }
 
   // rix/plugins/render-canvas/canvas-plan.js
   function pathData(node) {
     if (!node.commands) {
-      const points2 = node.points.map((entry, index) => point(entry, `Path point ${index + 1}`));
+      const points = node.points.map((entry, index) => point(entry, `Path point ${index + 1}`));
       const closed = boolValue(styleValue2(node.style, "closed", false));
-      return points2.map(([x, y], index) => `${index ? "L" : "M"}${stableNumber(x)} ${stableNumber(y)}`).join(" ") + (closed ? " Z" : "");
+      return points.map(([x, y], index) => `${index ? "L" : "M"}${stableNumber(x)} ${stableNumber(y)}`).join(" ") + (closed ? " Z" : "");
     }
     return node.commands.map((command, index) => {
-      const op = (rixString4(field5(command, "op")) || field5(command, "op", "")).toLowerCase();
-      const destination = () => point(field5(command, "to"), `Path command ${index + 1} destination`);
+      const op = (rixString4(field3(command, "op")) || field3(command, "op", "")).toLowerCase();
+      const destination = () => point(field3(command, "to"), `Path command ${index + 1} destination`);
       if (["move", "m", "line", "l"].includes(op)) {
         const [x, y] = destination();
         return `${op === "move" || op === "m" ? "M" : "L"}${stableNumber(x)} ${stableNumber(y)}`;
       }
       if (["quadratic", "quad", "q"].includes(op)) {
-        const [cx, cy] = point(field5(command, "control"), `Path command ${index + 1} control`);
+        const [cx, cy] = point(field3(command, "control"), `Path command ${index + 1} control`);
         const [x, y] = destination();
         return `Q${stableNumber(cx)} ${stableNumber(cy)} ${stableNumber(x)} ${stableNumber(y)}`;
       }
       if (["cubic", "curve", "c"].includes(op)) {
-        const [c1x, c1y] = point(field5(command, "control1"), `Path command ${index + 1} control1`);
-        const [c2x, c2y] = point(field5(command, "control2"), `Path command ${index + 1} control2`);
+        const [c1x, c1y] = point(field3(command, "control1"), `Path command ${index + 1} control1`);
+        const [c2x, c2y] = point(field3(command, "control2"), `Path command ${index + 1} control2`);
         const [x, y] = destination();
         return `C${stableNumber(c1x)} ${stableNumber(c1y)} ${stableNumber(c2x)} ${stableNumber(c2y)} ${stableNumber(x)} ${stableNumber(y)}`;
       }
       if (["arc", "a"].includes(op)) {
-        const [rx, ry] = point(field5(command, "radius"), `Path command ${index + 1} radius`);
-        const rotation = numberValue2(field5(command, "rotation", 0), `Path command ${index + 1} rotation`);
-        const large = boolValue(field5(command, "large", false)) ? 1 : 0;
-        const sweep = boolValue(field5(command, "sweep", false)) ? 1 : 0;
+        const [rx, ry] = point(field3(command, "radius"), `Path command ${index + 1} radius`);
+        const rotation = numberValue2(field3(command, "rotation", 0), `Path command ${index + 1} rotation`);
+        const large = boolValue(field3(command, "large", false)) ? 1 : 0;
+        const sweep = boolValue(field3(command, "sweep", false)) ? 1 : 0;
         const [x, y] = destination();
         return `A${stableNumber(rx)} ${stableNumber(ry)} ${stableNumber(rotation)} ${large} ${sweep} ${stableNumber(x)} ${stableNumber(y)}`;
       }
@@ -48638,7 +48548,7 @@ complexVizNamespace._proto = {=
       };
     }
   };
-  function install14(api) {
+  function install7(api) {
     return installRendererPlugin({ ...api, definition: definition3 });
   }
 
@@ -48661,10 +48571,10 @@ complexVizNamespace._proto = {=
     const color = rixString4(value);
     if (!color)
       return null;
-    const hex2 = color.match(/^#([0-9a-f]{6})$/i);
-    if (hex2) {
-      const number2 = Number.parseInt(hex2[1], 16);
-      return `{rgb,255:red,${number2 >> 16};green,${number2 >> 8 & 255};blue,${number2 & 255}}`;
+    const hex = color.match(/^#([0-9a-f]{6})$/i);
+    if (hex) {
+      const number = Number.parseInt(hex[1], 16);
+      return `{rgb,255:red,${number >> 16};green,${number >> 8 & 255};blue,${number & 255}}`;
     }
     return /^[A-Za-z][A-Za-z0-9]*$/.test(color) ? color : "black";
   }
@@ -48704,7 +48614,7 @@ complexVizNamespace._proto = {=
     return { ...parent, ...styleObject(own) };
   }
   function destination(command, index) {
-    return point(field5(command, "to"), `Path command ${index + 1} destination`);
+    return point(field3(command, "to"), `Path command ${index + 1} destination`);
   }
   function pathSource(node, path2) {
     if (!node.commands) {
@@ -48716,7 +48626,7 @@ complexVizNamespace._proto = {=
     let current = null;
     let subpathStart = null;
     node.commands.forEach((command, index) => {
-      const op = (rixString4(field5(command, "op")) || field5(command, "op", "")).toLowerCase();
+      const op = (rixString4(field3(command, "op")) || field3(command, "op", "")).toLowerCase();
       if (["move", "m"].includes(op)) {
         const [x, y] = destination(command, index);
         current = [x, y];
@@ -48733,7 +48643,7 @@ complexVizNamespace._proto = {=
       if (["quadratic", "quad", "q"].includes(op)) {
         if (!current)
           throw new UnsupportedRenderError(`${path2}: quadratic command has no current point`, { target: "tikz" });
-        const [cx, cy] = point(field5(command, "control"), `Path command ${index + 1} control`);
+        const [cx, cy] = point(field3(command, "control"), `Path command ${index + 1} control`);
         const [x, y] = destination(command, index);
         const control1 = [current[0] + (cx - current[0]) * 2 / 3, current[1] + (cy - current[1]) * 2 / 3];
         const control2 = [x + (cx - x) * 2 / 3, y + (cy - y) * 2 / 3];
@@ -48742,8 +48652,8 @@ complexVizNamespace._proto = {=
         return;
       }
       if (["cubic", "curve", "c"].includes(op)) {
-        const [c1x, c1y] = point(field5(command, "control1"), `Path command ${index + 1} control1`);
-        const [c2x, c2y] = point(field5(command, "control2"), `Path command ${index + 1} control2`);
+        const [c1x, c1y] = point(field3(command, "control1"), `Path command ${index + 1} control1`);
+        const [c2x, c2y] = point(field3(command, "control2"), `Path command ${index + 1} control2`);
         const [x, y] = destination(command, index);
         parts.push(` .. controls (${stableNumber(c1x)},${stableNumber(c1y)}) and (${stableNumber(c2x)},${stableNumber(c2y)}) .. (${stableNumber(x)},${stableNumber(y)})`);
         current = [x, y];
@@ -48865,7 +48775,7 @@ ${body}
   function boolOption(value) {
     return value?.value === 1n || value === true || value === 1;
   }
-  function install15(api) {
+  function install8(api) {
     return installRendererPlugin({ ...api, definition: definition4 });
   }
 
@@ -49121,8 +49031,8 @@ ${caption}
   function gridRule(value, kind, boundary) {
     const fieldName = kind === "vertical" ? "afterColumn" : "aboveRow";
     return value.rules.some((rule) => {
-      const ruleKind = rixString4(field5(rule, "kind")) || field5(rule, "kind");
-      const position = field5(rule, fieldName);
+      const ruleKind = rixString4(field3(rule, "kind")) || field3(rule, "kind");
+      const position = field3(rule, fieldName);
       return ruleKind === kind && position !== null && numberValue2(position, `Grid ${fieldName}`) === boundary;
     });
   }
@@ -49301,14 +49211,14 @@ ${makeTitle}${body.trim()}
     };
   }
   function quartoFrontMatter(options) {
-    const metadata3 = field5(options, "metadata", options);
+    const metadata3 = field3(options, "metadata", options);
     const keys = ["title", "author", "date", "format"];
     const lines = [];
     for (const key of keys) {
-      const value = field5(metadata3, key);
-      const text10 = rixString4(value) ?? (typeof value === "string" ? value : null);
-      if (text10 !== null)
-        lines.push(`${key}: ${JSON.stringify(text10)}`);
+      const value = field3(metadata3, key);
+      const text7 = rixString4(value) ?? (typeof value === "string" ? value : null);
+      if (text7 !== null)
+        lines.push(`${key}: ${JSON.stringify(text7)}`);
     }
     if (!lines.some((line2) => line2.startsWith("format:")))
       lines.push("format: html");
@@ -49333,7 +49243,7 @@ ${lines.join(`
       return renderMarkdown(value, { format, render });
     }
   };
-  function install16(api) {
+  function install9(api) {
     return installRendererPlugin({ ...api, definition: definition5 });
   }
 
@@ -49377,7 +49287,7 @@ ${lines.join(`
       };
     }
   };
-  function install17(api) {
+  function install10(api) {
     return installRendererPlugin({ ...api, definition: definition6 });
   }
 
@@ -49427,7 +49337,7 @@ ${lines.join(`
       return { ...rendered, assets, content: `${quartoFrontMatter(options)}${rendered.content}` };
     }
   };
-  function install18(api) {
+  function install11(api) {
     return installRendererPlugin({ ...api, definition: definition7 });
   }
 
@@ -49449,7 +49359,7 @@ ${lines.join(`
       });
     }
   };
-  function install19(api) {
+  function install12(api) {
     return installRendererPlugin({ ...api, definition: definition8 });
   }
 
@@ -49489,7 +49399,7 @@ ${lines.join(`
       }
     };
   }
-  function install20(api) {
+  function install13(api) {
     return installRendererPlugin({ ...api, definition: createDefinition(api.rasterizeSvg) });
   }
 
@@ -49525,17 +49435,49 @@ ${lines.join(`
       }
     };
   }
-  function install21(api) {
+  function install14(api) {
     return installRendererPlugin({ ...api, definition: createDefinition2(api.compileLatex) });
   }
 
   // rix/plugins/render-gltf/gltf-renderer.js
+  var SCENE3D_SCHEMA = "rix.scene3d@1";
+  var REALIZED_SCHEMA = "rix.scene3d.realized@1";
+  function text7(value, fallback = null) {
+    return rixString4(value) ?? (typeof value === "string" ? value : fallback);
+  }
+  function portableScene(scene) {
+    return text7(field3(scene, "type")) === "output" && text7(field3(scene, "kind")) === "scene3d" && text7(field3(scene, "schema")) === SCENE3D_SCHEMA;
+  }
+  function primitiveRecord(value, index) {
+    const points = sequence4(field3(value, "points"), `Scene3D primitive ${index + 1} points`).map((point2, pointIndex) => sequence4(point2, `Scene3D primitive ${index + 1} point ${pointIndex + 1}`).map((coordinate, coordinateIndex) => numberValue2(coordinate, `Scene3D coordinate ${coordinateIndex + 1}`)));
+    const indices = (name) => sequence4(field3(value, name, { type: "sequence", values: [] }), `Scene3D primitive ${index + 1} ${name}`).map((entry) => sequence4(entry, `Scene3D primitive ${index + 1} ${name} entry`).map((item) => numberValue2(item, `Scene3D ${name} index`) - 1));
+    const styleValue3 = field3(value, "style");
+    return {
+      kind: text7(field3(value, "kind")),
+      points,
+      segments: indices("segments"),
+      triangles: indices("triangles"),
+      radius: field3(value, "radius"),
+      style: {
+        color: text7(field3(styleValue3, "color"), "#275dad"),
+        opacity: field3(styleValue3, "opacity", 1),
+        width: field3(styleValue3, "width", 1)
+      }
+    };
+  }
+  function realizedPrimitives(scene) {
+    const realized = field3(scene, "realized");
+    if (text7(field3(realized, "schema")) !== REALIZED_SCHEMA) {
+      throw new Error(`gltf requires the public ${REALIZED_SCHEMA} realization on a Scene3D scene`);
+    }
+    return sequence4(field3(realized, "primitives"), "Scene3D realized primitives").map(primitiveRecord);
+  }
   function rgba(color, opacity = 1) {
     const match = /^#([0-9a-f]{6}|[0-9a-f]{3})$/i.exec(color || "");
     if (!match)
       return [0.153, 0.365, 0.678, opacity];
-    const hex2 = match[1].length === 3 ? [...match[1]].map((item) => item + item).join("") : match[1];
-    return [0, 2, 4].map((offset) => parseInt(hex2.slice(offset, offset + 2), 16) / 255).concat(opacity);
+    const hex = match[1].length === 3 ? [...match[1]].map((item) => item + item).join("") : match[1];
+    return [0, 2, 4].map((offset) => parseInt(hex.slice(offset, offset + 2), 16) / 255).concat(opacity);
   }
   function zUpToYUp([x, y, z]) {
     return [x, z, -y];
@@ -49579,9 +49521,9 @@ ${lines.join(`
     return bytes;
   }
   function exportSceneGltf(scene, { pretty = true } = {}) {
-    if (!isScene3D(scene))
+    if (!portableScene(scene))
       throw new Error("gltf accepts a Scene3D scene");
-    const primitives = flattenScene3D(scene);
+    const primitives = realizedPrimitives(scene);
     const chunks = [];
     const records = [];
     let approximated = false;
@@ -49623,7 +49565,7 @@ ${lines.join(`
     };
     records.forEach((record, index) => {
       const style = record.primitive.style;
-      const opacity = Number(style?.opacity?.value ?? style?.opacity?.numerator ?? style?.opacity ?? 1) / Number(style?.opacity?.denominator ?? 1);
+      const opacity = numberValue2(style?.opacity ?? 1, "Scene3D material opacity");
       const material = gltf.materials.push({
         name: `RiX material ${index + 1}`,
         pbrMetallicRoughness: { baseColorFactor: rgba(style?.color, opacity), metallicFactor: 0, roughnessFactor: 1 },
@@ -49659,7 +49601,7 @@ ${lines.join(`
       diagnostics.push(diagnostic("gltf-float32-approximation", "Exact Scene3D coordinates were rounded to glTF Float32 positions at export."));
     if (primitives.some((primitive) => primitive.kind === "lines"))
       diagnostics.push(diagnostic("gltf-line-width-portability", "glTF line primitives do not portably preserve Scene3D line widths.", "info"));
-    if (scene.lights.length)
+    if (sequence4(field3(scene, "lights"), "Scene3D lights").length)
       diagnostics.push(diagnostic("gltf-lights-not-exported", "Scene3D lights are retained by the scene but are not exported in glTF phase 1.", "info"));
     return { content: `${JSON.stringify(gltf, null, pretty ? 2 : 0)}
 `, diagnostics, metadata: { schema: "model/gltf+json", primitives: records.length } };
@@ -49679,7 +49621,7 @@ ${lines.join(`
       return exportSceneGltf(value, { pretty: options?.pretty !== false });
     }
   };
-  function install22(api) {
+  function install15(api) {
     return installRendererPlugin({ ...api, definition: definition9 });
   }
 
@@ -49789,8 +49731,8 @@ ${lines.join(`
       return String(value);
     throw new Error(`csv cells must be missing, strings, or exact numeric scalars; received ${value?.type || typeof value}`);
   }
-  function quote(text10, delimiter) {
-    const source = String(text10);
+  function quote(text8, delimiter) {
+    const source = String(text8);
     return source.includes(delimiter) || /["\r\n]/.test(source) ? `"${source.replaceAll('"', '""')}"` : source;
   }
   function renderCsv(value, { options = {}, requestedTarget = "csv" } = {}) {
@@ -49842,7 +49784,7 @@ ${lines.join(`
       return renderCsv(value, { options, requestedTarget });
     }
   };
-  function install23(api) {
+  function install16(api) {
     return installRendererPlugin({ ...api, definition: definition10 });
   }
 
@@ -49850,10 +49792,10 @@ ${lines.join(`
   function integerOption2(value, label2, fallback) {
     if (value === null || value === undefined)
       return fallback;
-    const number2 = numberValue2(value, label2);
-    if (!Number.isInteger(number2) || number2 < 0)
+    const number = numberValue2(value, label2);
+    if (!Number.isInteger(number) || number < 0)
       throw new Error(`${label2} must be a nonnegative Integer`);
-    return number2;
+    return number;
   }
   function positiveSeconds(value, label2) {
     const seconds = numberValue2(value, label2);
@@ -49890,18 +49832,18 @@ ${lines.join(`
     if (kind === "slides") {
       return value.slides.map((slide, index) => ({
         content: frameContent(slide, `Slide ${index + 1}`),
-        duration: field5(slide.metadata, "duration")
+        duration: field3(slide.metadata, "duration")
       }));
     }
     if (kind === "timeline") {
-      return value.frames.map((frame2, index) => ({
-        content: frameContent(frame2, `Timeline frame ${index + 1}`),
+      return value.frames.map((frame, index) => ({
+        content: frameContent(frame, `Timeline frame ${index + 1}`),
         duration: null
       }));
     }
     if (kind === "snapshots") {
-      return value.snapshots.map((frame2, index) => ({
-        content: frameContent(frame2, `Snapshot ${index + 1}`),
+      return value.snapshots.map((frame, index) => ({
+        content: frameContent(frame, `Snapshot ${index + 1}`),
         duration: null
       }));
     }
@@ -49910,7 +49852,7 @@ ${lines.join(`
   function frameDelays(value, frames, options) {
     const explicit = option4(options, "delays");
     if (explicit !== null) {
-      const values3 = sequence6(explicit, "GIF delays");
+      const values3 = sequence4(explicit, "GIF delays");
       if (values3.length !== frames.length)
         throw new Error("GIF delays must contain one duration per frame");
       return values3.map((entry, index) => centiseconds(positiveSeconds(entry, `GIF delay ${index + 1}`)));
@@ -49918,7 +49860,7 @@ ${lines.join(`
     const durationOption = option4(options, "duration");
     const defaultSeconds = durationOption === null ? 1 : positiveSeconds(durationOption, "GIF duration");
     const timelineSeconds = outputKind2(value) === "timeline" && value.duration !== null ? positiveSeconds(value.duration, "Timeline duration") / frames.length : null;
-    return frames.map((frame2, index) => centiseconds(frame2.duration === null ? timelineSeconds ?? defaultSeconds : positiveSeconds(frame2.duration, `Slide ${index + 1} duration`)));
+    return frames.map((frame, index) => centiseconds(frame.duration === null ? timelineSeconds ?? defaultSeconds : positiveSeconds(frame.duration, `Slide ${index + 1} duration`)));
   }
   function createDefinition3(encodeGif = null) {
     return {
@@ -49966,7 +49908,7 @@ ${lines.join(`
       }
     };
   }
-  function install24(api) {
+  function install17(api) {
     return installRendererPlugin({ ...api, definition: createDefinition3(api.encodeGif) });
   }
 
@@ -50056,71 +49998,10 @@ ${lines.join(`
       },
       install: ({ systemContext }) => install({ systemContext })
     },
-    {
-      metadata: {
-        id: "plot",
-        description: "Portable plotting helpers that produce core Graphics scenes.",
-        kind: "host",
-        mount: "plot",
-        exports: ["Polynomial"],
-        groups: ["Plot"],
-        permissions: [],
-        defaultEnabled: false
-      },
-      install: ({ systemContext }) => install3({ systemContext })
-    },
-    {
-      metadata: {
-        id: "scene3d",
-        description: "Exact retained 3D scenes with deterministic wireframe and lit Graphics snapshots.",
-        kind: "host",
-        mount: "scene3d",
-        exports: ["Scene", "Group", "Transform", "Mesh", "Polyline", "PointCloud", "Material", "AmbientLight", "DirectionalLight", "PointLight", "PerspectiveCamera", "OrthographicCamera", "Snapshot"],
-        groups: ["Scene3D", "Graphics"],
-        permissions: [],
-        provides: ["rix.scene3d@1"],
-        schemas: ["rix.scene3d@1"],
-        snapshot: true,
-        deterministic: true,
-        defaultEnabled: false
-      },
-      install: ({ systemContext }) => install4({ systemContext })
-    },
-    {
-      metadata: {
-        id: "nd",
-        description: "Exact n-dimensional geometry with explicit affine and Cayley projection records.",
-        kind: "host",
-        mount: "nd",
-        exports: ["Point", "Polyline", "Polytope", "Hypercube", "Projection", "CoordinateProjection", "CayleyRotation", "Compose", "Project", "ToScene3D"],
-        groups: ["Geometry", "Scene3D", "Exact"],
-        permissions: [],
-        requires: ["rix.scene3d@1"],
-        provides: ["rix.nd@1", "rix.nd.projection@1"],
-        schemas: ["rix.nd@1", "rix.nd.projection@1"],
-        snapshot: true,
-        deterministic: true,
-        defaultEnabled: false
-      },
-      install: ({ systemContext }) => install5({ systemContext })
-    },
-    {
-      metadata: {
-        id: "geometry",
-        description: "Exact ruler-and-compass geometry with explicit intersections and portable Graphics snapshots.",
-        kind: "host",
-        mount: "geometry",
-        exports: ["Point", "Line", "Circle", "Midpoint", "PerpendicularBisector", "Circumcircle", "Intersect", "Points", "Status", "Draw"],
-        groups: ["Geometry", "Graphics", "Exact"],
-        permissions: [],
-        provides: ["rix.geometry@1", "rix.geometry.intersection@1"],
-        schemas: ["rix.geometry@1", "rix.geometry.intersection@1"],
-        snapshot: true,
-        deterministic: true,
-        defaultEnabled: false
-      },
-      install: ({ systemContext }) => install6({ systemContext })
-    },
+    { metadata: readPluginHeader(plot_plugin_default, "plot.plugin.rix"), source: plot_plugin_default, sourcePath: "bundled:plot.plugin.rix" },
+    { metadata: readPluginHeader(scene3d_plugin_default, "scene3d.plugin.rix"), source: scene3d_plugin_default, sourcePath: "bundled:scene3d.plugin.rix" },
+    { metadata: readPluginHeader(nd_plugin_default, "nd.plugin.rix"), source: nd_plugin_default, sourcePath: "bundled:nd.plugin.rix" },
+    { metadata: readPluginHeader(geometry_plugin_default, "geometry.plugin.rix"), source: geometry_plugin_default, sourcePath: "bundled:geometry.plugin.rix" },
     {
       metadata: {
         id: "data",
@@ -50136,61 +50017,11 @@ ${lines.join(`
         deterministic: true,
         defaultEnabled: false
       },
-      install: ({ systemContext }) => install7({ systemContext })
+      install: ({ systemContext }) => install3({ systemContext })
     },
-    {
-      metadata: {
-        id: "linalg",
-        description: "Exact dense linear algebra and coordinate-aware tensor transformations.",
-        kind: "host",
-        mount: "linalg",
-        exports: ["Rref", "Rank", "Determinant", "Inverse", "Solve", "VectorSpace", "Frame", "Tensor", "Vector", "Covector", "ChangeMatrix", "Transform", "Transform!", "Components", "Pair", "SameTensor"],
-        groups: ["LinearAlgebra", "Exact"],
-        permissions: [],
-        provides: ["rix.linear-algebra@1", "rix.tensor@1"],
-        schemas: ["rix.linalg.result@1", "rix.linalg.vector-space@1", "rix.linalg.frame@1", "rix.linalg.tensor@1"],
-        snapshot: false,
-        deterministic: true,
-        defaultEnabled: false
-      },
-      install: (api) => install9(api)
-    },
-    {
-      metadata: {
-        id: "optimize",
-        description: "Exact linear-program models and deterministic Phase 1 simplex optimization.",
-        kind: "host",
-        mount: "optimize",
-        exports: ["LinearProgram", "Solve", "Evaluate", "Maximize", "Minimize"],
-        groups: ["Optimization", "Exact"],
-        permissions: [],
-        requires: ["rix.linear-algebra@1"],
-        provides: ["rix.optimization@1", "rix.linear-program@1"],
-        schemas: ["rix.optimize.linear-program@1", "rix.optimize.result@1"],
-        snapshot: false,
-        deterministic: true,
-        defaultEnabled: false
-      },
-      install: ({ systemContext }) => install10({ systemContext })
-    },
-    {
-      metadata: {
-        id: "solve",
-        description: "Exact Phase 1 linear-system classification and symbolic-spec solving.",
-        kind: "host",
-        mount: "solve",
-        exports: ["Classify", "Linear", "System"],
-        groups: ["Solve", "Symbolic", "Exact"],
-        permissions: [],
-        requires: ["rix.linear-algebra@1"],
-        provides: ["rix.system-solver@1"],
-        schemas: ["rix.solve.system-result@1"],
-        snapshot: false,
-        deterministic: true,
-        defaultEnabled: false
-      },
-      install: ({ systemContext }) => install11({ systemContext })
-    },
+    { metadata: readPluginHeader(linalg_plugin_default, "linalg.plugin.rix"), source: linalg_plugin_default, sourcePath: "bundled:linalg.plugin.rix" },
+    { metadata: readPluginHeader(optimize_plugin_default, "optimize.plugin.rix"), source: optimize_plugin_default, sourcePath: "bundled:optimize.plugin.rix" },
+    { metadata: readPluginHeader(solve_plugin_default, "solve.plugin.rix"), source: solve_plugin_default, sourcePath: "bundled:solve.plugin.rix" },
     {
       metadata: {
         id: "document",
@@ -50206,7 +50037,7 @@ ${lines.join(`
         deterministic: true,
         defaultEnabled: false
       },
-      install: ({ systemContext }) => install8({ systemContext })
+      install: ({ systemContext }) => install4({ systemContext })
     },
     {
       metadata: {
@@ -50223,22 +50054,22 @@ ${lines.join(`
         deterministic: true,
         defaultEnabled: false
       },
-      install: install12
+      install: install5
     },
     ...[
-      ["svg", "Portable SVG renderer for core Graphics scenes.", "svg", ["Render"], [], install13, "image/svg+xml", true],
-      ["canvas", "Serializable Canvas 2D drawing plans for core Graphics scenes.", "canvas", ["Render"], [], install14, "application/vnd.rix.canvas+json", true],
-      ["tikz", "Editable TikZ/PGF source renderer for core Graphics scenes.", "tikz", ["Render"], [], install15, "text/x-tikz", true],
-      ["markdown", "CommonMark-oriented renderer for portable RiX documents.", "markdown", ["Render"], [], install16, "text/markdown", true],
-      ["html", "Standalone semantic HTML renderer for portable RiX output trees.", "html", ["Render"], [], install17, "text/html", true],
-      ["quarto", "Quarto Markdown renderer with front matter and portable figure lowering.", "quarto", ["Render"], [], install18, "text/x-quarto", true],
-      ["latex", "Standalone LaTeX renderer for portable RiX documents and figures.", "latex", ["Render"], [], install19, "text/x-tex", true],
-      ["png", "PNG snapshot renderer for core Graphics through a host rasterizer.", "png", ["Render"], ["process"], install20, "image/png", true],
-      ["pdf", "PDF document and figure renderer orchestrated through LaTeX.", "pdf", ["Render"], ["process", "files"], install21, "application/pdf", false],
-      ["gltf", "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", "gltf", ["Render"], [], install22, "model/gltf+json", true],
-      ["csv", "Deterministic CSV and TSV export for portable Tables and typed data Relations.", "csv", ["Render"], [], install23, "text/csv", true, ["tsv", "text/tab-separated-values"], ["Renderers", "Data"]],
-      ["gif", "Deterministic animated GIF rendering from Slides, Timelines, or Snapshots through PNG frames.", "gif", ["Render"], ["process", "files"], install24, "image/gif", true, [], ["Renderers"], ["rix.renderer.png@1"]]
-    ].map(([id, description, mount, exports, permissions, install25, mime, deterministic, aliases = [], groups = ["Renderers"], requires = []]) => ({
+      ["svg", "Portable SVG renderer for core Graphics scenes.", "svg", ["Render"], [], install6, "image/svg+xml", true],
+      ["canvas", "Serializable Canvas 2D drawing plans for core Graphics scenes.", "canvas", ["Render"], [], install7, "application/vnd.rix.canvas+json", true],
+      ["tikz", "Editable TikZ/PGF source renderer for core Graphics scenes.", "tikz", ["Render"], [], install8, "text/x-tikz", true],
+      ["markdown", "CommonMark-oriented renderer for portable RiX documents.", "markdown", ["Render"], [], install9, "text/markdown", true],
+      ["html", "Standalone semantic HTML renderer for portable RiX output trees.", "html", ["Render"], [], install10, "text/html", true],
+      ["quarto", "Quarto Markdown renderer with front matter and portable figure lowering.", "quarto", ["Render"], [], install11, "text/x-quarto", true],
+      ["latex", "Standalone LaTeX renderer for portable RiX documents and figures.", "latex", ["Render"], [], install12, "text/x-tex", true],
+      ["png", "PNG snapshot renderer for core Graphics through a host rasterizer.", "png", ["Render"], ["process"], install13, "image/png", true],
+      ["pdf", "PDF document and figure renderer orchestrated through LaTeX.", "pdf", ["Render"], ["process", "files"], install14, "application/pdf", false],
+      ["gltf", "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", "gltf", ["Render"], [], install15, "model/gltf+json", true],
+      ["csv", "Deterministic CSV and TSV export for portable Tables and typed data Relations.", "csv", ["Render"], [], install16, "text/csv", true, ["tsv", "text/tab-separated-values"], ["Renderers", "Data"]],
+      ["gif", "Deterministic animated GIF rendering from Slides, Timelines, or Snapshots through PNG frames.", "gif", ["Render"], ["process", "files"], install17, "image/gif", true, [], ["Renderers"], ["rix.renderer.png@1"]]
+    ].map(([id, description, mount, exports, permissions, install18, mime, deterministic, aliases = [], groups = ["Renderers"], requires = []]) => ({
       metadata: {
         id,
         description,
@@ -50254,25 +50085,25 @@ ${lines.join(`
         deterministic,
         defaultEnabled: false
       },
-      install: install25
+      install: install18
     }))
   ];
   function installBundledPlugins(catalog) {
-    for (const { metadata: metadata3, install: install25, source, sourcePath } of BUNDLED_PLUGINS) {
+    for (const { metadata: metadata3, install: install18, source, sourcePath } of BUNDLED_PLUGINS) {
       if (catalog.info(metadata3.id))
         continue;
       if (source) {
         catalog.addMetadata(metadata3, { kind: "rix", source, sourcePath });
       } else {
         catalog.addMetadata(metadata3, { kind: "host" });
-        catalog.registerInstaller(metadata3.id, install25);
+        catalog.registerInstaller(metadata3.id, install18);
       }
     }
     return catalog;
   }
 
   // rix/src/eval/functions/units.js
-  function int15(value) {
+  function int9(value) {
     return new Integer(BigInt(value));
   }
   function stringValue8(value, label2) {
@@ -50342,7 +50173,7 @@ ${lines.join(`
         if (!match)
           throw new Error(`Expected integer exponent in exact expression '${source}'`);
         index += match[0].length;
-        value = powScalar(value, int15(match[0]));
+        value = powScalar(value, int9(match[0]));
       }
       return value;
     }
@@ -50370,10 +50201,10 @@ ${lines.join(`
     if (isScalar(left) && isUnitValue(right))
       return constructQuantity(left, right);
     if (isQuantity(left) && isUnitValue(right)) {
-      return multiplyQuantityValues(left, constructQuantity(int15(1), right));
+      return multiplyQuantityValues(left, constructQuantity(int9(1), right));
     }
     if (isUnitValue(left) && isQuantity(right)) {
-      return multiplyQuantityValues(constructQuantity(int15(1), left), right);
+      return multiplyQuantityValues(constructQuantity(int9(1), left), right);
     }
     return multiplyQuantityValues(left, right);
   }
@@ -50383,21 +50214,21 @@ ${lines.join(`
     if (isScalar(left) && isUnitValue(right))
       return constructQuantity(left, invertUnit(right));
     if (isUnitValue(left) && isScalar(right))
-      return constructQuantity(divideScalars(int15(1), right), left);
+      return constructQuantity(divideScalars(int9(1), right), left);
     if (isQuantity(left) && isUnitValue(right)) {
-      return divideQuantityValues(left, constructQuantity(int15(1), right));
+      return divideQuantityValues(left, constructQuantity(int9(1), right));
     }
     if (isUnitValue(left) && isQuantity(right)) {
-      return divideQuantityValues(constructQuantity(int15(1), left), right);
+      return divideQuantityValues(constructQuantity(int9(1), left), right);
     }
     return divideQuantityValues(left, right);
   }
   function resolveTargetUnit(target, context, systemContext) {
     if (isUnitValue(target))
       return target;
-    const text10 = stringValue8(target, "ConvertUnit target");
+    const text8 = stringValue8(target, "ConvertUnit target");
     const collection = activeCollection(context, systemContext, "Units", ["UNITS", "Units"]);
-    return parseUnitExpression(text10, collection);
+    return parseUnitExpression(text8, collection);
   }
   var unitExactFunctions = {
     UNIT: {
@@ -50441,7 +50272,7 @@ ${lines.join(`
     }
   };
   function boolResult3(value) {
-    return value ? int15(1) : null;
+    return value ? int9(1) : null;
   }
   function addWithOptionalWarning([left, right], context) {
     const warnings = context?.getEnv?.("warnings", runtimeDefaults.warnings) ?? runtimeDefaults.warnings;
@@ -50809,13 +50640,13 @@ ${lines.join(`
       type: "method_builtin",
       name: "Number",
       impl(args, context) {
-        const map4 = args[1]?.type === "map" ? args[1].entries : null;
-        if (!map4)
+        const map2 = args[1]?.type === "map" ? args[1].entries : null;
+        if (!map2)
           throw new Error(".Config.Number expects a map with input and/or display");
-        if (map4.has("input"))
-          coreFunctions.NUM_INPUT.impl([map4.get("input")], context);
-        if (map4.has("display"))
-          coreFunctions.NUM_DISPLAY.impl([map4.get("display")], context);
+        if (map2.has("input"))
+          coreFunctions.NUM_INPUT.impl([map2.get("input")], context);
+        if (map2.has("display"))
+          coreFunctions.NUM_DISPLAY.impl([map2.get("display")], context);
         return args[1];
       }
     });
@@ -50838,10 +50669,10 @@ ${lines.join(`
     const frozen = options.frozen !== false;
     const ctx = new SystemContext(new Map, false);
     const units = options.units || createDefaultUnitCollection();
-    const exact3 = options.exact || createDefaultExactCollection();
-    const complex = options.complex || createDefaultComplexCollection(exact3);
+    const exact = options.exact || createDefaultExactCollection();
+    const complex = options.complex || createDefaultComplexCollection(exact);
     ctx.registerValue("Units", units, { doc: "Canonical RiX unit collection" });
-    ctx.registerValue("Exact", exact3, { doc: "Canonical RiX exact-generator collection" });
+    ctx.registerValue("Exact", exact, { doc: "Canonical RiX exact-generator collection" });
     ctx.registerValue("Complex", complex, { doc: "Exact complex-number operations" });
     ctx.registerValue("Config", createNumberConfigValue(), {
       doc: "Session-scoped RiX configuration, including numeric input and display",
@@ -52067,10 +51898,10 @@ ${lines.join(`
     return invokeCallableAsync(fn, callArgs, context, registry, systemContext, state);
   }
   function asyncCapabilityString(value, label2) {
-    const text10 = rixStringValue(value);
-    if (text10 === null)
+    const text8 = rixStringValue(value);
+    if (text8 === null)
       throw new Error(`${label2} must be a string`);
-    return text10;
+    return text8;
   }
   function asyncDiagnosticString(value) {
     return { type: "string", value: String(value) };
@@ -52208,10 +52039,10 @@ ${lines.join(`
       const varsValue = await evaluateAsyncInternal(args[2], context, registry, systemContext, state);
       if (isRixArray(varsValue)) {
         trackedVars = varsValue.values.map((value) => {
-          const text10 = rixStringValue(value);
-          if (text10 === null)
+          const text8 = rixStringValue(value);
+          if (text8 === null)
             throw new Error(".Trace trackedVars must be an array of strings");
-          return text10;
+          return text8;
         });
       } else if (varsValue !== null) {
         throw new Error(".Trace trackedVars must be an array of strings");
@@ -53492,8 +53323,8 @@ ${lines.join(`
   }
   function startDetachedBlock(args, context, registry, systemContext, parentState) {
     const runtime = context.getEnv(SCRIPT_RUNTIME_ENV_KEY, null);
-    const frame2 = runtime?.frameStack?.[runtime.frameStack.length - 1] ?? null;
-    if (frame2 && !frame2.permissions.has("BACKGROUND")) {
+    const frame = runtime?.frameStack?.[runtime.frameStack.length - 1] ?? null;
+    if (frame && !frame.permissions.has("BACKGROUND")) {
       throw new Error("Background tasks are not allowed in this script context");
     }
     if (context.getEnv(REACTIVE_ACTIVE_GRAPH_ENV, null)) {
@@ -54396,16 +54227,16 @@ ${lines.join(`
   }
   var RIXCEL_FORMULA_CLIPBOARD_TYPE = "application/x-rixcel-formula";
   var RIXCEL_FORMULA_BLOCK_CLIPBOARD_TYPE = "application/x-rixcel-formula-block";
-  function parseSheetFormulaClipboard(text10, fallbackAssignmentMode = ":=") {
-    const source = String(text10 ?? "");
+  function parseSheetFormulaClipboard(text8, fallbackAssignmentMode = ":=") {
+    const source = String(text8 ?? "");
     const match = source.match(/^\s*(::=|~~=|:=|~=|=)\s*([\s\S]+)$/u);
     return Object.freeze({
       source: match ? match[2] : source,
       assignmentMode: match?.[1] ?? fallbackAssignmentMode
     });
   }
-  function parseSheetFormulaBlock(text10, fallbackAssignmentMode = ":=") {
-    const rows = String(text10 ?? "").replace(/\r\n?/gu, `
+  function parseSheetFormulaBlock(text8, fallbackAssignmentMode = ":=") {
+    const rows = String(text8 ?? "").replace(/\r\n?/gu, `
 `).split(`
 `);
     if (rows.at(-1) === "")
@@ -54994,9 +54825,9 @@ ${lines.join(`
           }
           if (result?.type === "error")
             throw new Error(result.text);
-          const exact3 = submittedCell.textContent.trim();
+          const exact = submittedCell.textContent.trim();
           if (editValue)
-            editValue.textContent = `Exact value: ${exact3}`;
+            editValue.textContent = `Exact value: ${exact}`;
           if (editStatus)
             editStatus.textContent = "Saved";
           options.onEditCommitted?.(detail, result, submittedCell, sheet);
@@ -55043,11 +54874,11 @@ ${lines.join(`
       throw new Error(`Sheet edit index must contain ${shape.length} entries`);
     }
     return index.map((value, axis) => {
-      const integer6 = Number(value);
-      if (!Number.isInteger(integer6) || integer6 < 1 || integer6 > shape[axis]) {
+      const integer2 = Number(value);
+      if (!Number.isInteger(integer2) || integer2 < 1 || integer2 > shape[axis]) {
         throw new Error(`Sheet edit index ${value} is out of range on axis ${axis + 1}`);
       }
-      return integer6;
+      return integer2;
     });
   }
 
@@ -55154,11 +54985,11 @@ ${lines.join(`
     return bindings;
   }
   function exactGraphicCoordinate(value) {
-    const number2 = Number(value);
-    if (!Number.isFinite(number2))
+    const number = Number(value);
+    if (!Number.isFinite(number))
       throw new Error("Graphic position coordinates must be finite numbers");
     const scale2 = 1000n;
-    const numerator = BigInt(Math.round(number2 * Number(scale2)));
+    const numerator = BigInt(Math.round(number * Number(scale2)));
     return numerator % scale2 === 0n ? new Integer(numerator / scale2) : new Rational(numerator, scale2);
   }
   function graphicPoint(position) {
@@ -56659,10 +56490,10 @@ ${lines.join(`
     return Number(value);
   }
   function finiteNumberFrom(value) {
-    const number2 = numberFrom(value);
-    if (Number.isNaN(number2))
+    const number = numberFrom(value);
+    if (Number.isNaN(number))
       throw new Error("Math function expected a numeric value");
-    return number2;
+    return number;
   }
   function unary(fn) {
     return (args) => fn(finiteNumberFrom(args[0]));
@@ -56685,16 +56516,16 @@ ${lines.join(`
   };
 
   // rix/plugins/float/protocol.js
-  function int16(value) {
+  function int10(value) {
     return new Integer(BigInt(value));
   }
-  function text10(value) {
+  function text8(value) {
     return { type: "string", value };
   }
-  function map4(entries4) {
+  function map2(entries4) {
     return { type: "map", entries: new Map(entries4) };
   }
-  function sequence7(values3) {
+  function sequence5(values3) {
     return { type: "sequence", values: values3 };
   }
   function entry(value, key, fallback = null) {
@@ -56729,52 +56560,52 @@ ${lines.join(`
     return binaryExponent >= 0 ? new Rational(numerator << BigInt(binaryExponent), 1n) : new Rational(numerator, 1n << BigInt(-binaryExponent));
   }
   function NumericsCapabilities() {
-    return map4([
-      ["valuekind", text10("numericsCapabilities")],
-      ["schema", text10("rix.numerics.capabilities@1")],
-      ["backend", text10("float")],
-      ["representation", text10("ieee754Binary64")],
-      ["denotation", text10("storedScalar")],
-      ["operations", sequence7([text10("sample"), text10("enclose")])],
-      ["evidencelevels", sequence7([text10("approximate")])],
+    return map2([
+      ["valuekind", text8("numericsCapabilities")],
+      ["schema", text8("rix.numerics.capabilities@1")],
+      ["backend", text8("float")],
+      ["representation", text8("ieee754Binary64")],
+      ["denotation", text8("storedScalar")],
+      ["operations", sequence5([text8("sample"), text8("enclose")])],
+      ["evidencelevels", sequence5([text8("approximate")])],
       ["certified", null],
       ["arbitraryrefinement", null],
-      ["deterministic", int16(1)],
+      ["deterministic", int10(1)],
       ["minimumwidth", Rational.zero],
-      ["storedvalueexact", int16(1)],
+      ["storedvalueexact", int10(1)],
       ["intendedrealcertified", null]
     ]);
   }
   function approximateStoredValue(value, request, operation) {
-    const exact3 = exactFloatRational(value);
+    const exact = exactFloatRational(value);
     const requestedWidth = entry(request, "absolutewidth", null);
-    const requestedWork = entry(entry(request, "work", null), "maxwork", int16(0));
-    return map4([
-      ["valuekind", text10("enclosure")],
-      ["schema", text10("rix.numerics.enclosure@1")],
-      ["status", text10("approximate")],
-      ["interval", new RationalInterval(exact3, exact3)],
+    const requestedWork = entry(entry(request, "work", null), "maxwork", int10(0));
+    return map2([
+      ["valuekind", text8("enclosure")],
+      ["schema", text8("rix.numerics.enclosure@1")],
+      ["status", text8("approximate")],
+      ["interval", new RationalInterval(exact, exact)],
       ["certified", null],
       ["goalmet", null],
       ["requestedwidth", requestedWidth],
       ["achievedwidth", Rational.zero],
-      ["evidencelevel", text10("approximate")],
-      ["backend", text10("float")],
-      ["operation", text10(operation)],
-      ["trace", sequence7([])],
-      ["work", map4([
-        ["samples", int16(1)],
+      ["evidencelevel", text8("approximate")],
+      ["backend", text8("float")],
+      ["operation", text8(operation)],
+      ["trace", sequence5([])],
+      ["work", map2([
+        ["samples", int10(1)],
         ["maxwork", requestedWork],
         ["exhausted", null]
       ])],
-      ["diagnostics", sequence7([
-        text10("storedValueOnly"),
-        text10("noErrorBoundForIntendedReal")
+      ["diagnostics", sequence5([
+        text8("storedValueOnly"),
+        text8("noErrorBoundForIntendedReal")
       ])],
-      ["source", map4([
-        ["plugin", text10("float")],
-        ["representation", text10("ieee754Binary64")],
-        ["storedvalueexact", int16(1)]
+      ["source", map2([
+        ["plugin", text8("float")],
+        ["representation", text8("ieee754Binary64")],
+        ["storedvalueexact", int10(1)]
       ])]
     ]);
   }
@@ -56810,11 +56641,11 @@ ${lines.join(`
     return Number(value);
   }
   function float(value) {
-    const number2 = numberFrom2(value);
-    if (!Number.isFinite(number2))
+    const number = numberFrom2(value);
+    if (!Number.isFinite(number))
       throw new Error("Cannot convert value to finite Float");
-    return { type: NATIVE_TYPE, value: number2, toString() {
-      return String(number2);
+    return { type: NATIVE_TYPE, value: number, toString() {
+      return String(number);
     } };
   }
   function requireFloat(value, evaluate2) {
@@ -56832,17 +56663,17 @@ ${lines.join(`
     return numerator >= 0n ? numerator / denominator : -((-numerator + denominator - 1n) / denominator);
   }
   function decimalRounded(value, places, mode) {
-    const exact3 = exactFloatRational(value);
+    const exact = exactFloatRational(value);
     const scale2 = 10n ** BigInt(places);
-    const scaled = exact3.numerator * scale2;
-    const lower2 = floorDiv3(scaled, exact3.denominator);
+    const scaled = exact.numerator * scale2;
+    const lower2 = floorDiv3(scaled, exact.denominator);
     let coefficient = lower2;
-    if (mode === "ceiling" && scaled !== lower2 * exact3.denominator)
+    if (mode === "ceiling" && scaled !== lower2 * exact.denominator)
       coefficient += 1n;
     if (mode === "round") {
-      const remainder = scaled - lower2 * exact3.denominator;
+      const remainder = scaled - lower2 * exact.denominator;
       const doubled = remainder * 2n;
-      if (doubled > exact3.denominator || doubled === exact3.denominator && (lower2 & 1n) !== 0n)
+      if (doubled > exact.denominator || doubled === exact.denominator && (lower2 & 1n) !== 0n)
         coefficient += 1n;
     }
     return new Rational(coefficient, scale2);
@@ -56952,8 +56783,8 @@ ${lines.join(`
     };
     add("Float", (args, _context, evaluate2) => requireFloat(args[1], evaluate2));
     add("Interval", (args, _context, evaluate2) => {
-      const exact3 = exactFloatRational(requireFloat(args[1], evaluate2));
-      return new RationalInterval(exact3, exact3);
+      const exact = exactFloatRational(requireFloat(args[1], evaluate2));
+      return new RationalInterval(exact, exact);
     });
     add("Round", (args, _context, evaluate2) => decimalRounded(requireFloat(args[1], evaluate2), decimalPlaces(args[2]), "round"));
     add("Floor", (args, _context, evaluate2) => decimalRounded(requireFloat(args[1], evaluate2), decimalPlaces(args[2]), "floor"));
@@ -56981,7 +56812,7 @@ ${lines.join(`
     systemContext.registerMethod("Rational", "Float", floatExtension, owner);
     return systemContext;
   }
-  var install25 = installBrowserApproxMathPlugin;
+  var install18 = installBrowserApproxMathPlugin;
 
   // rix/examples/plugins/example-array-js/array-js.plugin.rix.js
   function valuesFrom(value) {
@@ -57020,7 +56851,7 @@ ${lines.join(`
     }
     return { type: "map", entries: entries4, _ext: extension };
   }
-  function install26({ systemContext }) {
+  function install19({ systemContext }) {
     const value = collection();
     systemContext.registerHostCallableValue("arrayJs", value, {
       impl(args) {
@@ -57068,7 +56899,7 @@ defaultEnabled: false
       groups: ["ApproximateMath", "Float"],
       permissions: [],
       defaultEnabled: false
-    }, install25);
+    }, install18);
     addPlugin(catalog, {
       id: "example-array-js",
       description: "Teaching JavaScript plugin demonstrating array helpers.",
@@ -57078,7 +56909,7 @@ defaultEnabled: false
       groups: ["Examples"],
       permissions: [],
       defaultEnabled: false
-    }, install26);
+    }, install19);
     addPlugin(catalog, {
       id: "example-array-rix",
       description: "Teaching RiX plugin demonstrating array helpers.",
@@ -57092,36 +56923,36 @@ defaultEnabled: false
     addPlugin(catalog, {
       id: "scene3d",
       description: "Exact retained 3D scenes with deterministic wireframe and lit Graphics snapshots.",
-      kind: "host",
+      kind: "rix",
       mount: "scene3d",
-      exports: ["Scene", "Group", "Transform", "Mesh", "Polyline", "PointCloud", "Material", "AmbientLight", "DirectionalLight", "PointLight", "PerspectiveCamera", "OrthographicCamera", "Snapshot"],
-      groups: ["Scene3D", "Graphics"],
+      exports: ["Scene", "Group", "Transform", "Mesh", "Polyline", "PointCloud", "Material", "AmbientLight", "DirectionalLight", "PointLight", "PerspectiveCamera", "OrthographicCamera", "Realize", "Project", "Snapshot"],
+      groups: ["Scene3D", "Graphics", "Exact"],
       permissions: [],
-      provides: ["rix.scene3d@1"],
+      provides: ["rix.scene3d@1", "rix.scene3d.realized@1", "rix.scene3d.projected@1"],
       defaultEnabled: false
-    }, install4);
+    }, null, scene3d_plugin_default);
     addPlugin(catalog, {
       id: "nd",
       description: "Exact n-dimensional geometry with explicit affine and Cayley projection records.",
-      kind: "host",
+      kind: "rix",
       mount: "nd",
       exports: ["Point", "Polyline", "Polytope", "Hypercube", "Projection", "CoordinateProjection", "CayleyRotation", "Compose", "Project", "ToScene3D"],
       groups: ["Geometry", "Scene3D", "Exact"],
       permissions: [],
       requires: ["rix.scene3d@1"],
       defaultEnabled: false
-    }, install5);
+    }, null, nd_plugin_default);
     for (const [id, description, installer, permissions = []] of [
-      ["svg", "Portable SVG renderer for core Graphics scenes.", install13],
-      ["canvas", "Serializable Canvas 2D drawing plans for core Graphics scenes.", install14],
-      ["tikz", "Editable TikZ/PGF source renderer for core Graphics scenes.", install15],
-      ["markdown", "CommonMark-oriented renderer for portable RiX documents.", install16],
-      ["html", "Standalone semantic HTML renderer for portable RiX output trees.", install17],
-      ["quarto", "Quarto Markdown renderer with front matter and portable figure lowering.", install18],
-      ["latex", "Standalone LaTeX renderer for portable RiX documents and figures.", install19],
-      ["png", "PNG snapshot renderer for core Graphics through a host rasterizer.", install20, ["process"]],
-      ["pdf", "PDF document and figure renderer orchestrated through LaTeX.", install21, ["process", "files"]],
-      ["gltf", "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", install22]
+      ["svg", "Portable SVG renderer for core Graphics scenes.", install6],
+      ["canvas", "Serializable Canvas 2D drawing plans for core Graphics scenes.", install7],
+      ["tikz", "Editable TikZ/PGF source renderer for core Graphics scenes.", install8],
+      ["markdown", "CommonMark-oriented renderer for portable RiX documents.", install9],
+      ["html", "Standalone semantic HTML renderer for portable RiX output trees.", install10],
+      ["quarto", "Quarto Markdown renderer with front matter and portable figure lowering.", install11],
+      ["latex", "Standalone LaTeX renderer for portable RiX documents and figures.", install12],
+      ["png", "PNG snapshot renderer for core Graphics through a host rasterizer.", install13, ["process"]],
+      ["pdf", "PDF document and figure renderer orchestrated through LaTeX.", install14, ["process", "files"]],
+      ["gltf", "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", install15]
     ]) {
       addPlugin(catalog, {
         id,

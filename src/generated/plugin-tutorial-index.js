@@ -236,7 +236,7 @@ export const pluginTutorials = [
     "pluginId": "optimize",
     "pluginDirectory": "optimize",
     "title": "Exact linear programming",
-    "description": "Solve a bounded standard-form linear program with exact Rational simplex arithmetic.",
+    "description": "Solve a bounded standard-form linear program with pure-RiX exact Rational simplex arithmetic.",
     "status": "implemented",
     "order": 0,
     "theme": "Algebra and analysis",
