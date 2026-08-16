@@ -12,7 +12,10 @@ test("the checked-in standard profile is selective and imports calculator names"
     expect(profile.plugins).toContain("stats");
     expect(profile.plugins).not.toContain("document");
     expect(profile.source).toContain(".numerics[:Pow, :Sqrt");
-    expect(profile.source).toContain(":Pi, :Sin, :Cos, :Tan");
+    expect(profile.source).toContain(":Pi, :EulerGamma, :Sin, :Cos, :Tan");
+    expect(profile.source).toContain(":Sinh, :Cosh, :Tanh");
+    expect(profile.source).toContain(":Gamma, :LogGamma, :Erf, :Erfc, :LambertW");
+    expect(profile.source).toContain(":J0, :J1, :Y0, :Y1, :Zeta");
     expect(profile.source).not.toContain(".float[:Sin");
     expect(profile.source).toContain(":LinearSolve=:Solve");
 });

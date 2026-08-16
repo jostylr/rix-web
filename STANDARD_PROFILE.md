@@ -10,7 +10,7 @@ catalog. Plugin dependencies are loaded automatically.
 
 | Plugin | Bare names supplied by the profile |
 | --- | --- |
-| `numerics` | `Pow`, `Sqrt`, `NthRoot`, `Exp`, `Log`, `Ln`, `Log2`, `Log10`, `Pi`, `Sin`, `Cos`, `Tan`, `Sec`, `Csc`, `Cot`, `Asin`, `Acos`, `Atan`, `Refine` |
+| `numerics` | Roots/powers; exponential/logarithmic functions; circular and hyperbolic trig; angle conversion; `Gamma`, `Erf`, `LambertW`, Bessel `J0`/`J1`/`Y0`/`Y1`, `Zeta`; constants `Pi` and `EulerGamma`; `Refine` |
 | `float` | `Round`, `Floor`, `Ceiling` |
 | `algebra` | `Polynomial`, `Coefficients` |
 | `linalg` | `Rref`, `Rank`, `Determinant`, `Inverse`, and `LinearSolve` (alias of `Solve`) |
@@ -22,8 +22,8 @@ catalog. Plugin dependencies are loaded automatically.
 | `data` | No bare imports; use `.data` to avoid reserving generic names. |
 | `radix` | No bare imports; its receiver methods and `.radix` namespace are available. |
 
-`Exp`, `Log`, roots, powers, pi, and trigonometry are backend-neutral certified
-Numerics operations. Angles and inverse-trig results use radians. The Float
+These roots, elementary functions, and special functions are backend-neutral
+certified Numerics operations. Angles and inverse-trig results use radians. The Float
 plugin remains loaded for explicit binary64 conversion and rounding, but it no
 longer supplies the standard profile's bare trig names. Names with likely
 collisions are intentionally aliased.

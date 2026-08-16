@@ -2,7 +2,7 @@
 ## Keep one directly selected plugin on each line. Dependencies load automatically.
 ## Bare imports favor names expected in a scientific or graphical calculator;
 ## aliases make collisions explicit. This file is executable by the RiX CLI too.
-.Plugin.Load("numerics"); .numerics[:Pow, :Sqrt, :NthRoot, :Exp, :Log, :Ln, :Log2, :Log10, :Pi, :Sin, :Cos, :Tan, :Sec, :Csc, :Cot, :Asin, :Acos, :Atan, :Refine];
+.Plugin.Load("numerics"); .numerics[:Pow, :Sqrt, :Cbrt, :NthRoot, :Exp, :Expm1, :Log, :Log1p, :Ln, :Log2, :Log10, :Pi, :EulerGamma, :Sin, :Cos, :Tan, :Sec, :Csc, :Cot, :Sinc, :Asin, :Acos, :Atan, :Sinh, :Cosh, :Tanh, :Sech, :Csch, :Coth, :Asinh, :Acosh, :Atanh, :Radians, :Degrees, :Gamma, :LogGamma, :Erf, :Erfc, :LambertW, :J0, :J1, :Y0, :Y1, :Zeta, :Refine];
 .Plugin.Load("float"); .float[:Round, :Floor, :Ceiling];
 .Plugin.Load("algebra"); .algebra[:Polynomial, :Coefficients];
 .Plugin.Load("linalg"); .linalg[:Rref, :Rank, :Determinant, :Inverse, :LinearSolve=:Solve];

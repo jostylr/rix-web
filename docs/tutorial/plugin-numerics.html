@@ -191,6 +191,20 @@ quarterTurn := .numerics.Refine(.numerics.Atan(1), {=
 
 {: angle[:interval], quarterTurn[:interval] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>An inverse-sine or inverse-cosine input that is not certified inside <code>-1:1</code> returns <code>:unknown</code> with <code>:inverseTrigDomainNotCertified</code>. Numerics never silently selects a complex branch or a Float approximation.</p>
+<h2>Hyperbolic and special functions</h2>
+<p>The remaining scientific-calculator functions use the same refinement contract. They can be selected lexically and called without a plugin prefix:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
+.numerics[:Refine, :Sinh, :Asinh, :Sinc, :Erf, :Gamma, :LambertW, :J0, :Zeta];
+
+values := [
+  Sinh(1), Asinh(1), Sinc(0), Erf(1), Gamma(5),
+  LambertW(1), J0(1), Zeta(2)
+];
+values |&gt;&gt; ((value) -&gt; Refine(value, {=
+  absoluteWidth=1/1000, maxWork=1200
+}));</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p><code>Cbrt</code>, <code>Expm1</code>, <code>Log1p</code>, <code>Radians</code>, and <code>Degrees</code> provide the familiar calculator conveniences. Hyperbolic reciprocal functions preserve their ordinary poles, while inverse hyperbolic functions inherit the certified root and logarithm domain checks.</p>
+<p>Special functions publish their real-domain policy rather than silently crossing a branch: <code>Gamma</code>/<code>LogGamma</code> and <code>Y0</code>/<code>Y1</code> currently require positive arguments, and <code>Zeta</code> currently requires an argument greater than one. <code>LambertW(x)</code> is branch zero; <code>LambertW(x,-1)</code> is the lower real branch. Uncertified domains return structured <code>:unknown</code> results.</p>
 <h2>Kantorovich certification and interval Newton</h2>
 <p><code>.numerics.Kantorovich</code> first checks the supplied initial interval and rational bounds. The derivative interval must exclude zero, <code>derivativeLower</code> may not overstate its certified magnitude, and an optional interval-valued second derivative verifies <code>secondDerivativeUpper</code>. The Kantorovich inequality then certifies an initial root enclosure. Refinement uses interval Newton and intersects every new interval with the preceding one:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="24" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);

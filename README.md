@@ -6,7 +6,8 @@ values and a workspace persist across executed commands and tutorial cells.
 
 Each RiX-Web session applies the curated
 [standard calculator profile](STANDARD_PROFILE.md). Its checked-in RiX prelude
-loads common exact numerics, certified trig, algebra, statistics, graphics,
+loads common exact numerics, certified elementary and special functions,
+algebra, statistics, graphics,
 geometry, linear algebra, solving, tables, and radix tools, and selectively
 imports their calculator-facing names. The rest of the browser-approved catalog
 remains available through `.Plugin.Load(...)`. Embedded or diagnostic callers

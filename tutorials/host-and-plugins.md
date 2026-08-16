@@ -95,7 +95,8 @@ The checked-in `standard-profile.rix` file is the authoritative browser
 baseline. It loads Numerics, Float, algebra, linear algebra, solving,
 statistics, plotting, drawing, geometry, data, and radix tools. Its selective
 imports make common names such as `Exp`, `Log`, `Sqrt`, `Refine`, certified
-`Sin`, `Asin`, `Pi`, `Mean`, and `Determinant` directly callable. Angles use
+`Sin`, `Sinh`, `Sinc`, `Erf`, `Gamma`, `LambertW`, `Zeta`, `Pi`, `Mean`, and
+`Determinant` directly callable. Angles use
 radians; Float trig remains available explicitly below `.float`. Collision-prone operations stay
 on their dotted namespaces or receive explicit aliases such as `DrawLine` and
 `GraphPolynomial`.
