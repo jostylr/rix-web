@@ -41,10 +41,11 @@ float plugin can offer `.float.Sin(x)` while retaining data such as
 .Plugin.Load("...")  # core-facing request to a host plugin catalog
 ```
 
-RatCalc deliberately does not grant plugin registration or optional math
-plugins to every browser session. The examples in this chapter therefore use
-the portable core surface; the host page explains the boundary without
-silently acquiring more authority.
+RiX-Web activates its explicitly reviewed first-party browser plugin profile
+for every ordinary session. That is a host policy, not a language guarantee:
+other RiX hosts may expose a smaller catalog or require `.Plugin.Load(...)`.
+The examples in this chapter therefore continue to use the portable core
+surface.
 
 ## The route through the implementation
 

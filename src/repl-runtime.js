@@ -84,13 +84,14 @@ export const helpGroups = [
     },
     {
         title: "Scripts and plugins",
-        description: "Run multiline programs, manage sessions, and load browser plugins.",
+        description: "Run multiline programs, manage sessions, and use the preloaded browser plugin profile.",
         items: [
             ["Script entry", "Write several RiX statements and run them together with Ctrl/Command + Enter."],
             ["Save", "Download a restorable .rix-session file with commands, settings, current input, and reactive inputs."],
             ["Load", "Restore a .rix-session file completely, or open a local .rix file in script input."],
             ["Copy transcript", "Copy the visible command-and-result transcript to the clipboard."],
-            ['.Plugin.Load("plot")', "Load an approved browser plugin into this session."],
+            [".Plugin.List()", "List the browser-approved catalog; first-party entries are loaded for every session."],
+            ['.Plugin.Load("example-array-rix")', "Explicitly load an optional teaching entry from the Examples group."],
             ["Tab", "Complete names and methods from the current RiX context without evaluating the draft."],
         ],
     },
@@ -188,11 +189,11 @@ function reactiveFormulaSource(node) {
     return body?.fn ? readableFormula(body) : null;
 }
 
-export function createRixRepl({ autoSeparateLines = true } = {}) {
-    const registeredControls = new Map();
+function createWebSessionState(registeredControls, autoLoadPlugins) {
+    const pluginCatalog = createBundledPluginCatalog();
     const systemContext = createDefaultSystemContext({
         frozen: false,
-        pluginCatalog: createBundledPluginCatalog(),
+        pluginCatalog,
     });
     installWebControlCapabilities(systemContext, {
         onControl({ control, create }) {
@@ -207,6 +208,22 @@ export function createRixRepl({ autoSeparateLines = true } = {}) {
         registry: createDefaultRegistry(),
         systemContext,
     };
+    if (autoLoadPlugins) {
+        const browserDefaults = pluginCatalog.list()
+            .filter((metadata) => !metadata.groups.includes("Examples"));
+        const prelude = browserDefaults
+            .map(({ id }) => `.Plugin.Load(${JSON.stringify(id)})`)
+            .join(";\n");
+        if (prelude) {
+            parseAndEvaluate(prelude, { ...state, file: "<rix-web-default-plugins>" });
+        }
+    }
+    return state;
+}
+
+export function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true } = {}) {
+    const registeredControls = new Map();
+    let state = createWebSessionState(registeredControls, autoLoadPlugins);
     let initialNames = new Set(state.context.getAllNames());
     let separateLines = autoSeparateLines;
     const numberConfig = { input: "z[10]", display: ".." };
@@ -391,8 +408,8 @@ export function createRixRepl({ autoSeparateLines = true } = {}) {
         },
         async reset() {
             await disposeAsyncResources(state.context, { kind: "session reset" });
-            state.context.clear();
             registeredControls.clear();
+            state = createWebSessionState(registeredControls, autoLoadPlugins);
             initialNames = new Set(state.context.getAllNames());
             applyNumberConfig(numberConfig);
         },

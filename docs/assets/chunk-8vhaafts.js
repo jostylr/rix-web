@@ -50,7 +50,7 @@ import {
   typeRegistry,
   unsupportedRefinementResult,
   valueMethod
-} from "./chunk-vbjg11zh.js";
+} from "./chunk-d3ca5r0w.js";
 
 // src/repl-source.js
 var statementClosers = new Set([")", "]", "}", "|}", ";}", "@}", "!}", ":}"]);
@@ -178,6 +178,7 @@ function binary(fn) {
   return (args) => fn(finiteNumberFrom(args[0]), finiteNumberFrom(args[1]));
 }
 var mathFunctions = {
+  SQRT: { impl: unary(Math.sqrt), pure: true, doc: "Float square root" },
   SIN: { impl: unary(Math.sin), pure: true, doc: "Float sine" },
   COS: { impl: unary(Math.cos), pure: true, doc: "Float cosine" },
   TAN: { impl: unary(Math.tan), pure: true, doc: "Float tangent" },
@@ -3020,7 +3021,7 @@ fractionNamespace._proto = {=
 
 .Host.RegisterCallableValue("fraction", fractionNamespace, "Representation-sensitive unreduced fractions", ["Algebra", "Exact", "Symbolic"]);
 `, sourcePath: "bundled:fraction", kind: "rix" });
-  catalog.addMetadata({ id: "geometry", description: "Pure-RiX exact ruler-and-compass geometry with explicit intersections and portable Graphics snapshots.", kind: "rix", mount: "geometry", exports: ["Point", "Line", "Circle", "Midpoint", "PerpendicularBisector", "Circumcircle", "Intersect", "Points", "Status", "Draw"], groups: ["Geometry", "Graphics", "Exact"], permissions: [], provides: ["rix.geometry@1", "rix.geometry.intersection@1"], schemas: ["rix.geometry@1", "rix.geometry.intersection@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:geometry" }, { source: `/**
+  catalog.addMetadata({ id: "geometry", description: "Pure-RiX exact ruler-and-compass geometry with explicit intersections and portable Graphics snapshots.", kind: "rix", mount: "geometry", exports: ["Point", "Line", "Circle", "Midpoint", "PerpendicularBisector", "Circumcircle", "Intersect", "Points", "Status", "Draw"], groups: ["Geometry", "Graphics", "Exact"], permissions: [], requires: ["rix.numerics@1"], provides: ["rix.geometry@1", "rix.geometry.intersection@1"], schemas: ["rix.geometry@1", "rix.geometry.intersection@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:geometry" }, { source: `/**
 id: geometry
 description: Pure-RiX exact ruler-and-compass geometry with explicit intersections and portable Graphics snapshots.
 kind: rix
@@ -3028,6 +3029,7 @@ mount: geometry
 exports: [Point, Line, Circle, Midpoint, PerpendicularBisector, Circumcircle, Intersect, Points, Status, Draw]
 groups: [Geometry, Graphics, Exact]
 permissions: []
+requires: [rix.numerics@1]
 provides: [rix.geometry@1, rix.geometry.intersection@1]
 schemas: [rix.geometry@1, rix.geometry.intersection@1]
 snapshot: true
@@ -3043,6 +3045,12 @@ GeometryExact(value, label) -> {;
 };
 
 GeometryIsZero(value) -> (value ~!: :Rational).Numerator()==0;
+
+GeometryApproximateSqrt(value) ->
+    .numerics.Refine(.numerics.Sqrt(value), {=
+        absoluteWidth=1/1000000000000,
+        maxWork=80
+    })[:approximation].Candidate();
 
 GeometryRequire(value, kind ?= _, label ?= "geometry value") -> {;
     valid = (value ? :Map) && value.Has("schema") && value[:schema] == "rix.geometry@1";
@@ -3315,7 +3323,7 @@ GeometryDraw(objects, options ?= {= }) -> {;
                     ?_ item[:kind] == :circle
                          ?: {;
                              center = [@item[:center][:x], @item[:center][:y]] |> @project;
-                             radius = .Sqrt(@item[:radiusSquared]) * @scale;
+                             radius = GeometryApproximateSqrt(@item[:radiusSquared]) * @scale;
                              @children ~= @children.Push(.Graphics.Circle(center, radius,
                                  GeometryStyle(@item[:style], {= fill="none", stroke="#d97706", width=2 })));
                          }
@@ -4218,12 +4226,12 @@ ndNamespace._proto={=
 };
 .Host.RegisterValue("nd",ndNamespace,"Pure-RiX exact n-dimensional geometry and explicit projections",["Geometry","Scene3D","Exact"]);
 `, sourcePath: "bundled:nd", kind: "rix" });
-  catalog.addMetadata({ id: "numerics", description: "Backend-neutral bounded enclosure and refinement orchestration.", kind: "rix", mount: "numerics", exports: ["Request", "WorkPolicy", "EffectiveLimits", "Enclose", "Refine", "Sample", "Capabilities", "CheckResult", "NthRoot", "Sqrt", "Kantorovich"], groups: ["Numerics"], permissions: [], requires: ["rix.oracle@1"], provides: ["rix.numerics@1", "rix.enclosable-real-consumer@1"], schemas: ["rix.numerics.refinement-request@1", "rix.numerics.enclosure@1", "rix.numerics.algorithm-real@1"], defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:numerics" }, { source: `/**
+  catalog.addMetadata({ id: "numerics", description: "Backend-neutral bounded enclosure and refinement orchestration.", kind: "rix", mount: "numerics", exports: ["Request", "WorkPolicy", "EffectiveLimits", "Enclose", "Refine", "Sample", "Capabilities", "CheckResult", "NthRoot", "Sqrt", "Pow", "Exp", "Log", "Ln", "Log2", "Log10", "Kantorovich"], groups: ["Numerics"], permissions: [], requires: ["rix.oracle@1"], provides: ["rix.numerics@1", "rix.enclosable-real-consumer@1"], schemas: ["rix.numerics.refinement-request@1", "rix.numerics.enclosure@1", "rix.numerics.algorithm-real@1"], defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:numerics" }, { source: `/**
 id: numerics
 description: Backend-neutral bounded enclosure and refinement orchestration.
 kind: rix
 mount: numerics
-exports: [Request, WorkPolicy, EffectiveLimits, Enclose, Refine, Sample, Capabilities, CheckResult, NthRoot, Sqrt, Kantorovich]
+exports: [Request, WorkPolicy, EffectiveLimits, Enclose, Refine, Sample, Capabilities, CheckResult, NthRoot, Sqrt, Pow, Exp, Log, Ln, Log2, Log10, Kantorovich]
 groups: [Numerics]
 permissions: []
 requires: [rix.oracle@1]
@@ -4296,6 +4304,277 @@ NumericsSourceResult(real, requestedWidth, maxCalls, trace) ->
           maxIterations=maxCalls,
           trace=trace
       }, :refine, real.NumericsCapabilities()));
+
+NumericsExpSeriesInterval(sum, tail, scale, negative) -> {;
+    lowerPositive = sum^scale;
+    upperPositive = (sum + tail)^scale;
+    negative
+      ?: (1 / upperPositive):(1 / lowerPositive)
+      ?_ lowerPositive:upperPositive;
+};
+
+NumericsExpRationalBounds(value, tolerance, maxIterations) -> {;
+    exact = value ~!: :Rational;
+    negative = exact < 0;
+    reduced := negative ?: -exact ?_ exact;
+    scale := 1;
+    rangeIterations := 0;
+    {@ step=1;
+       @reduced > 1/2 && @rangeIterations < @maxIterations;
+       {;
+           @reduced /= 2;
+           @scale *= 2;
+           @rangeIterations += 1;
+       };
+       step += 1
+    };
+    ready = reduced <= 1/2;
+    n := 0;
+    term := 1;
+    sum := 1;
+    nextTerm := reduced;
+    tail := reduced == 0 ?: 0 ?_ nextTerm / (1 - reduced / 2);
+    interval := NumericsExpSeriesInterval(sum, tail, scale, negative);
+    seriesIterations := 0;
+    {@ step=1;
+       @ready && @interval.Width() > @tolerance
+         && @rangeIterations + @seriesIterations < @maxIterations;
+       {;
+           @n += 1;
+           @term *= @reduced / @n;
+           @sum += @term;
+           @nextTerm = @term * @reduced / (@n + 1);
+           @tail = @reduced == 0
+             ?: 0
+             ?_ @nextTerm / (1 - @reduced / (@n + 2));
+           @interval = NumericsExpSeriesInterval(@sum, @tail, @scale, @negative);
+           @seriesIterations += 1;
+       };
+       step += 1
+    };
+    {=
+        interval=interval,
+        ready=ready,
+        goalMet=ready && interval.Width() <= tolerance,
+        iterations=rangeIterations + seriesIterations,
+        rangeIterations=rangeIterations,
+        seriesIterations=seriesIterations
+    };
+};
+
+NumericsLogSeriesInterval(sum, tail, log2Sum, log2Tail, binaryPower) -> {;
+    reducedLow = 2 * sum;
+    reducedHigh = 2 * (sum + tail);
+    log2Low = 2 * log2Sum;
+    log2High = 2 * (log2Sum + log2Tail);
+    binaryPower >= 0
+      ?: (reducedLow + binaryPower * log2Low):(reducedHigh + binaryPower * log2High)
+      ?_ (reducedLow + binaryPower * log2High):(reducedHigh + binaryPower * log2Low);
+};
+
+NumericsLogTail(argument, nextDegree) ->
+    argument == 0
+      ?: 0
+      ?_ argument^nextDegree / (nextDegree * (1 - argument^2));
+
+NumericsLogRationalBounds(value, tolerance, maxIterations) -> {;
+    exact = value ~!: :Rational;
+    exact > 0 ?: _ ?_ .Error("Natural logarithm requires a positive value");
+    reduced := exact;
+    binaryPower := 0;
+    rangeIterations := 0;
+    {@ step=1;
+       (@reduced < 1 || @reduced >= 2) && @rangeIterations < @maxIterations;
+       {;
+           @reduced >= 2
+             ?: {; @reduced /= 2; @binaryPower += 1; }
+             ?_ {; @reduced *= 2; @binaryPower -= 1; };
+           @rangeIterations += 1;
+       };
+       step += 1
+    };
+    ready = reduced >= 1 && reduced < 2;
+    argument = (reduced - 1) / (reduced + 1);
+    log2Argument = 1/3;
+    degree := 1;
+    term := argument;
+    log2Term := log2Argument;
+    sum := argument;
+    log2Sum := log2Argument;
+    nextDegree := 3;
+    tail := NumericsLogTail(argument, nextDegree);
+    log2Tail := binaryPower == 0 ?: 0 ?_ NumericsLogTail(log2Argument, nextDegree);
+    interval := NumericsLogSeriesInterval(sum, tail, log2Sum, log2Tail, binaryPower);
+    seriesIterations := 0;
+    {@ step=1;
+       @ready && @interval.Width() > @tolerance
+         && @rangeIterations + @seriesIterations < @maxIterations;
+       {;
+           @nextDegree = @degree + 2;
+           @term *= @argument^2 * @degree / @nextDegree;
+           @log2Term *= @log2Argument^2 * @degree / @nextDegree;
+           @sum += @term;
+           @log2Sum += @log2Term;
+           @degree = @nextDegree;
+           @tail = NumericsLogTail(@argument, @degree + 2);
+           @log2Tail = @binaryPower == 0
+             ?: 0
+             ?_ NumericsLogTail(@log2Argument, @degree + 2);
+           @interval = NumericsLogSeriesInterval(
+               @sum, @tail, @log2Sum, @log2Tail, @binaryPower
+           );
+           @seriesIterations += 1;
+       };
+       step += 1
+    };
+    {=
+        interval=interval,
+        ready=ready,
+        goalMet=ready && interval.Width() <= tolerance,
+        iterations=rangeIterations + seriesIterations,
+        rangeIterations=rangeIterations,
+        seriesIterations=seriesIterations
+    };
+};
+
+NumericsElementaryResult(real, request, interval, work, goalMet, evidence) -> {;
+    status = goalMet ?: :enclosed ?_ :budgetExhausted;
+    approximation = .CertifiedApproximation(interval.Midpoint(), interval, {=
+        provider=:numerics,
+        algorithm=real[:kind],
+        reason=status,
+        actualized=1
+    });
+    {=
+        valueKind=:enclosure,
+        schema="rix.numerics.enclosure@1",
+        status=status,
+        interval=interval,
+        certified=1,
+        goalMet=goalMet,
+        requestedWidth=request[:absoluteWidth],
+        achievedWidth=interval.Width(),
+        approximation=approximation,
+        evidenceLevel=real[:evidenceLevel],
+        backend=:numerics,
+        operation=request[:operation],
+        trace=[],
+        work=work,
+        diagnostics=goalMet ?: [] ?_ [:workBudgetReached],
+        evidence=evidence,
+        source=real[:provenance]
+    };
+};
+
+NumericsElementaryRefine(real, rawRequest, operation) -> {;
+    capabilities = NumericsAlgorithmCapabilities(real);
+    request = .RefinementRequest(rawRequest, operation, capabilities);
+    requestedWidth = request[:absoluteWidth];
+    maxCalls = request[:work][:maxCalls];
+    maxIterations = request[:work][:maxIterations];
+    sourceWidth = requestedWidth < 1 ?: requestedWidth^2 / 16 ?_ requestedWidth / 16;
+    sourceBudget = .Max(0, maxCalls // 3);
+    sourceResult = NumericsSourceResult(real[:input], sourceWidth, sourceBudget, request[:trace]);
+    sourceCalls = NumericsCalls(sourceResult);
+    sourceInterval = sourceResult[:interval];
+    logDomain = real[:kind] == :naturalLog;
+    domainResolved = logDomain ?: sourceInterval.Low() > 0 ?_ 1;
+    domainResolved ?: {;
+        remaining = .Max(0, .Min(@maxIterations, @maxCalls - @sourceCalls));
+        endpointBudget = .Max(0, remaining // 2);
+        tolerance = @requestedWidth / 4;
+        lowerBounds = @logDomain
+          ?: NumericsLogRationalBounds(@sourceInterval.Low(), tolerance, endpointBudget)
+          ?_ NumericsExpRationalBounds(@sourceInterval.Low(), tolerance, endpointBudget);
+        sameEndpoint = @sourceInterval.Low() == @sourceInterval.High();
+        upperBounds = sameEndpoint
+          ?: lowerBounds
+          ?_ (@logDomain
+              ?: NumericsLogRationalBounds(@sourceInterval.High(), tolerance, endpointBudget)
+              ?_ NumericsExpRationalBounds(@sourceInterval.High(), tolerance, endpointBudget));
+        ready = lowerBounds[:ready] && upperBounds[:ready];
+        ready ?: {;
+            interval = @lowerBounds[:interval].Low():@upperBounds[:interval].High();
+            endpointIterations = @lowerBounds[:iterations]
+              + (@sameEndpoint ?: 0 ?_ @upperBounds[:iterations]);
+            calls = @sourceCalls + endpointIterations;
+            goalMet = interval.Width() <= @requestedWidth;
+            NumericsElementaryResult(@real, @request, interval, {=
+                calls=calls,
+                iterations=endpointIterations,
+                maxCalls=@maxCalls,
+                maxIterations=@maxIterations,
+                sourceCalls=@sourceCalls,
+                exhausted=!goalMet
+            }, goalMet, {=
+                kind=:rationalSeriesBounds,
+                property=:containment,
+                algorithm=@real[:kind],
+                source=@sourceResult[:evidence]
+            });
+        } ?_ NumericsUnknownAlgorithm(
+            @real,
+            @request,
+            @sourceInterval,
+            {= calls=@sourceCalls, iterations=0, maxCalls=@maxCalls, exhausted=1 },
+            :rangeReductionBudgetExhausted
+        );
+    } ?_ NumericsUnknownAlgorithm(
+        real,
+        request,
+        sourceInterval,
+        {= calls=sourceCalls, iterations=0, maxCalls=maxCalls, exhausted=sourceCalls>=maxCalls },
+        :logDomainNotCertified
+    );
+};
+
+NumericsNaturalAlgorithm(value, kind) -> {;
+    source = .oracle.From(value);
+    real = {=
+        valueKind=:numericsAlgorithmReal,
+        schema="rix.numerics.algorithm-real@1",
+        kind=kind,
+        input=source,
+        evidenceLevel=:proof,
+        provenance={= plugin=:numerics, version=3, algorithm=kind, source=value }
+    };
+    real._proto = {=
+        Enclose=(self, request ?= {= })->NumericsElementaryRefine(self, request, :enclose),
+        Refine=(self, request ?= {= })->NumericsElementaryRefine(self, request, :refine),
+        NumericsCapabilities=(self)->NumericsAlgorithmCapabilities(self)
+    };
+    .ImmutableValue(real);
+};
+
+NumericsPow(value, exponent) -> {;
+    rational = exponent ~!: :Rational;
+    numerator = rational.Numerator();
+    denominator = rational.Denominator();
+    denominator == 1
+      ?: value^numerator
+      ?_ {;
+          root = NumericsNthRoot(@value, @denominator);
+          @numerator == 1 ?: root ?_ root^@numerator;
+      };
+};
+
+NumericsNaturalExp(value) -> NumericsNaturalAlgorithm(value, :naturalExp);
+
+NumericsNaturalLog(value) -> NumericsNaturalAlgorithm(value, :naturalLog);
+
+NumericsExp(value, base ?= _) -> {;
+    exactExponent = value ~: :Rational;
+    base == _
+      ?: NumericsNaturalExp(value)
+      ?_ (exactExponent != _
+          ?: NumericsPow(base, exactExponent)
+          ?_ NumericsNaturalExp(value * NumericsNaturalLog(base)));
+};
+
+NumericsLog(value, base ?= _) ->
+    base == _
+      ?: NumericsNaturalLog(value)
+      ?_ NumericsNaturalLog(value) / NumericsNaturalLog(base);
 
 NumericsUnknownAlgorithm(real, request, interval, work, reason) -> {=
     valueKind=:enclosure,
@@ -4646,6 +4925,12 @@ numericsNamespace._proto = {=
     Sample = (self, value, options ?= {= }) -> ProviderOperation(value, options, :sample),
     NthRoot = (self, value, degree ?= 2, options ?= {= }) -> NumericsNthRoot(value, degree, options),
     Sqrt = (self, value, options ?= {= }) -> NumericsNthRoot(value, 2, options),
+    Pow = (self, value, exponent) -> NumericsPow(value, exponent),
+    Exp = (self, value, base ?= _) -> NumericsExp(value, base),
+    Log = (self, value, base ?= _) -> NumericsLog(value, base),
+    Ln = (self, value) -> NumericsLog(value),
+    Log2 = (self, value) -> NumericsLog(value, 2),
+    Log10 = (self, value) -> NumericsLog(value, 10),
     Kantorovich = (self, function, derivative, options ?= {= }) -> NumericsKantorovich(function, derivative, options),
     Approximation = (self, result) -> result.Has("approximation") ?: result[:approximation] ?_ _,
     Capabilities = (self, value) -> value.NumericsCapabilities(),
@@ -7076,16 +7361,17 @@ RatfunSpecConversion=(value,variable ?= _)->RatfunFromSpec(value,variable);
 .Host.RegisterMethod("structural_literal","R",RatfunConversion,"ratfun","ratfun");
 .Host.RegisterMethod("symbolic_spec","R",RatfunSpecConversion,"ratfun","ratfun");
 `, sourcePath: "bundled:ratfun", kind: "rix" });
-  catalog.addMetadata({ id: "scene3d", description: "Pure-RiX exact retained 3D scenes, explicit realization and projection, and portable Graphics snapshots.", kind: "rix", mount: "scene3d", exports: ["Scene", "Group", "Transform", "Mesh", "Polyline", "PointCloud", "Material", "AmbientLight", "DirectionalLight", "PointLight", "PerspectiveCamera", "OrthographicCamera", "Realize", "Project", "Snapshot"], groups: ["Scene3D", "Graphics", "Exact"], permissions: [], provides: ["rix.scene3d@1", "rix.scene3d.realized@1", "rix.scene3d.projected@1"], schemas: ["rix.scene3d@1", "rix.scene3d.realized@1", "rix.scene3d.projected@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:scene3d" }, { source: `/**
+  catalog.addMetadata({ id: "scene3d", description: "Pure-RiX exact retained 3D scenes, explicit realization and projection, and portable Graphics snapshots.", kind: "rix", mount: "scene3d", exports: ["Scene", "Group", "Transform", "Mesh", "Polyline", "PointCloud", "ParametricCurve", "Axes", "Annotation", "Material", "AmbientLight", "DirectionalLight", "PointLight", "PerspectiveCamera", "OrthographicCamera", "OrbitCamera", "Realize", "Project", "Snapshot"], groups: ["Scene3D", "Graphics", "Exact"], permissions: [], requires: ["rix.numerics@1"], provides: ["rix.scene3d@1", "rix.scene3d.realized@1", "rix.scene3d.projected@1", "rix.scene3d.orbit@1"], schemas: ["rix.scene3d@1", "rix.scene3d.realized@1", "rix.scene3d.projected@1", "rix.scene3d.orbit@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:scene3d" }, { source: `/**
 id: scene3d
 description: Pure-RiX exact retained 3D scenes, explicit realization and projection, and portable Graphics snapshots.
 kind: rix
 mount: scene3d
-exports: [Scene, Group, Transform, Mesh, Polyline, PointCloud, Material, AmbientLight, DirectionalLight, PointLight, PerspectiveCamera, OrthographicCamera, Realize, Project, Snapshot]
+exports: [Scene, Group, Transform, Mesh, Polyline, PointCloud, ParametricCurve, Axes, Annotation, Material, AmbientLight, DirectionalLight, PointLight, PerspectiveCamera, OrthographicCamera, OrbitCamera, Realize, Project, Snapshot]
 groups: [Scene3D, Graphics, Exact]
 permissions: []
-provides: [rix.scene3d@1, rix.scene3d.realized@1, rix.scene3d.projected@1]
-schemas: [rix.scene3d@1, rix.scene3d.realized@1, rix.scene3d.projected@1]
+requires: [rix.numerics@1]
+provides: [rix.scene3d@1, rix.scene3d.realized@1, rix.scene3d.projected@1, rix.scene3d.orbit@1]
+schemas: [rix.scene3d@1, rix.scene3d.realized@1, rix.scene3d.projected@1, rix.scene3d.orbit@1]
 snapshot: true
 deterministic: true
 defaultEnabled: false
@@ -7138,6 +7424,22 @@ S3Style(settings) -> {;
         material=material
     }, _);
 };
+
+S3OptionalString(settings, key, label) -> {;
+    value = S3Option(settings, key);
+    value == _ ?: _ ?_ ((value ? :String) && value.Len() > 0
+      ?: value
+      ?_ .Error(@"@{label} must be a nonempty String"));
+};
+
+S3Interaction(settings, label) -> {=
+    pickid=S3OptionalString(settings, "id", @"@{label} id"),
+    label=S3OptionalString(settings, "label", @"@{label} label")
+};
+
+S3LeafFields(settings, label) -> S3Interaction(settings, label).Merge({=
+    metadata=S3Option(settings, "metadata")
+});
 
 S3Material(color ?= "#275dad", opacity ?= 1, width ?= 1) -> {;
     settings = color ? :Map ?: color ?_ {= color=color, opacity=opacity, width=width };
@@ -7201,9 +7503,8 @@ S3Mesh(vertices, triangles, options ?= {= }) -> {;
     S3Value(:mesh, {=
         vertices=points,
         triangles=S3Triangles(settings[:triangles], points.Len()),
-        style=S3Style(settings),
-        metadata=S3Option(settings, "metadata")
-    });
+        style=S3Style(settings)
+    }.Merge(S3LeafFields(settings, "scene3d.Mesh")));
 };
 
 S3Polyline(points, options ?= {= }) -> {;
@@ -7212,10 +7513,9 @@ S3Polyline(points, options ?= {= }) -> {;
     normalized.Len() >= 2 ?: _ ?_ .Error("scene3d.Polyline requires at least two points");
     S3Value(:polyline, {=
         points=normalized,
-        closed=S3Option(settings, "closed", 0) ?: 1 ?_ 0,
-        style=S3Style(settings),
-        metadata=S3Option(settings, "metadata")
-    });
+        closed=S3Option(settings, "closed", 0)==1 ?: 1 ?_ 0,
+        style=S3Style(settings)
+    }.Merge(S3LeafFields(settings, "scene3d.Polyline")));
 };
 
 S3PointCloud(points, options ?= {= }) -> {;
@@ -7225,9 +7525,76 @@ S3PointCloud(points, options ?= {= }) -> {;
     S3Value(:point_cloud, {=
         points=normalized,
         radius=S3Exact(S3Option(settings, "radius", 3), "scene3d.PointCloud radius"),
-        style=S3Style(settings),
-        metadata=S3Option(settings, "metadata")
-    });
+        style=S3Style(settings)
+    }.Merge(S3LeafFields(settings, "scene3d.PointCloud")));
+};
+
+S3ParametricCurve(curve, domain, options ?= {= }) -> {;
+    settings = curve ? :Map ?: curve ?_ options.Merge({= curve=curve, domain=domain });
+    interval = settings[:domain];
+    low = S3Exact(interval.Low(), "scene3d.ParametricCurve domain low");
+    high = S3Exact(interval.High(), "scene3d.ParametricCurve domain high");
+    high > low ?: _ ?_ .Error("scene3d.ParametricCurve domain must have increasing endpoints");
+    samples = S3Integer(S3Option(settings, "samples", 33), "scene3d.ParametricCurve samples");
+    (samples >= 2 && samples <= 4096) ?: _ ?_ .Error("scene3d.ParametricCurve samples must be between 2 and 4096");
+    step = (high-low)/(samples-1);
+    points := [];
+    {@ index=1; index<=@samples; {;
+        parameter = @low+(index-1)*@step;
+        @points ~= @points.Push(S3Vector(@settings[:curve](parameter), 3, "scene3d.ParametricCurve point"));
+    }; index+=1 };
+    sourceMetadata = S3Option(settings, "metadata", {= });
+    sourceMetadata == _ ?: {; @sourceMetadata ~= {= }; } ?_ _;
+    sourceMetadata ? :Map ?: _ ?_ .Error("scene3d.ParametricCurve metadata must be a Map");
+    S3Polyline(points, settings.Merge({=
+        metadata=sourceMetadata.Merge({=
+            producer="parametric_curve", domain=low:high, samples=samples, exact=1
+        })
+    }));
+};
+
+S3Annotation(position, text, options ?= {= }) -> {;
+    settings = position ? :Map ?: position ?_ options.Merge({= position=position, text=text });
+    content = settings[:text];
+    content ? :String ?: _ ?_ .Error("scene3d.Annotation text must be a String");
+    size = S3Exact(S3Option(settings, "size", 14), "scene3d.Annotation size");
+    size > 0 ?: _ ?_ .Error("scene3d.Annotation size must be positive");
+    S3Value(:annotation, {=
+        position=S3Vector(settings[:position], 3, "scene3d.Annotation position"),
+        text=content,
+        style={=
+            color=S3Option(settings, "color", "#111827"),
+            size=size,
+            anchor=S3Option(settings, "anchor", "middle"),
+            weight=S3Option(settings, "weight")
+        }
+    }.Merge(S3LeafFields(settings, "scene3d.Annotation")));
+};
+
+S3Axes(options ?= {= }) -> {;
+    settings = options;
+    origin = S3Vector(S3Option(settings, "origin", [0,0,0]), 3, "scene3d.Axes origin");
+    length = S3Exact(S3Option(settings, "length", 1), "scene3d.Axes length");
+    length > 0 ?: _ ?_ .Error("scene3d.Axes length must be positive");
+    width = S3Exact(S3Option(settings, "width", 2), "scene3d.Axes width");
+    labels = S3Option(settings, "labels", 1)==1 ?: 1 ?_ 0;
+    prefix = S3OptionalString(settings, "id", "scene3d.Axes id");
+    names = ["x","y","z"];
+    colors = [S3Option(settings,"xColor","#dc2626"),S3Option(settings,"yColor","#16a34a"),S3Option(settings,"zColor","#2563eb")];
+    children := [];
+    {@ axis=1; axis<=3; {;
+        endpoint = [1,2,3].Map((coordinate)->@origin[coordinate]+(coordinate==@axis ?: @length ?_ 0));
+        axisId = @prefix==_ ?: _ ?_ @"@{@prefix}.@{@names[axis]}";
+        @children ~= @children.Push(S3Polyline([@origin,endpoint], {=
+            color=@colors[axis],width=@width,id=axisId,label=@"@{@names[axis]} axis"
+        }));
+        @labels ?: {;
+            @children ~= @children.Push(S3Annotation(@endpoint,@names[@axis],{=
+                color=@colors[@axis],size=S3Option(@settings,"labelSize",14),id=@axisId==_ ?: _ ?_ @"@{@axisId}.label",label=@"@{@names[@axis]} axis label"
+            }));
+        } ?_ _;
+    }; axis+=1 };
+    S3Group(children,{= metadata={= producer="axes",origin=origin,length=length } });
 };
 
 S3Group(children, options ?= {= }) -> {;
@@ -7275,6 +7642,27 @@ S3Camera(projection, position, target ?= _, options ?= {= }) -> {;
 
 S3PerspectiveCamera(position, target ?= _, options ?= {= }) -> S3Camera("perspective", position, target, options);
 S3OrthographicCamera(position, target ?= _, options ?= {= }) -> S3Camera("orthographic", position, target, options);
+S3OrbitCamera(target, options ?= {= }) -> {;
+    settings = target ? :Map ?: target ?_ options.Merge({= target=target });
+    center = S3Vector(settings[:target], 3, "scene3d.OrbitCamera target");
+    radius = S3Exact(S3Option(settings, "radius", 6), "scene3d.OrbitCamera radius");
+    height = S3Exact(S3Option(settings, "height", 3), "scene3d.OrbitCamera height");
+    radius > 0 ?: _ ?_ .Error("scene3d.OrbitCamera radius must be positive");
+    parameter = S3Option(settings, "turn", 0);
+    infinity = parameter == .Complex[:infinity];
+    cosine = infinity ?: -1 ?_ {; exact=S3Exact(@parameter,"scene3d.OrbitCamera turn"); (1-exact^2)/(1+exact^2); };
+    sine = infinity ?: 0 ?_ {; exact=S3Exact(@parameter,"scene3d.OrbitCamera turn"); 2*exact/(1+exact^2); };
+    position = [center[1]+radius*cosine,center[2]+radius*sine,center[3]+height];
+    projection = S3Option(settings, "projection", "perspective");
+    (projection=="perspective" || projection=="orthographic") ?: _ ?_ .Error("scene3d.OrbitCamera projection must be 'perspective' or 'orthographic'");
+    camera = S3Camera(projection,position,center,settings);
+    S3Value(:camera,camera.Merge({=
+        orbit=.DeepMutable({=
+            schema="rix.scene3d.orbit@1",parameterization="cayley",axis=[0,0,1],
+            target=center,radius=radius,height=height,turn=parameter,projectiveInfinity=infinity ?: 1 ?_ 0
+        },_)
+    }));
+};
 S3DefaultCamera() -> S3PerspectiveCamera([4,4,3], [0,0,0]);
 
 S3Multiply4(left, right) -> {;
@@ -7313,6 +7701,12 @@ S3MeshSegments(triangles) -> {;
     segments;
 };
 
+S3PrimitiveFields(child) -> {=
+    pickid=S3Option(child,"pickid"),
+    label=S3Option(child,"label"),
+    metadata=S3Option(child,"metadata")
+};
+
 S3Collect(children, parent) -> {;
     result := [];
     {@ index = 1; index <= @children.Len(); {;
@@ -7328,7 +7722,7 @@ S3Collect(children, parent) -> {;
                         @result ~= @result.Push(.DeepMutable({=
                             kind=:mesh, points=points, segments=S3MeshSegments(@child[:triangles]),
                             triangles=@child[:triangles], style=@child[:style]
-                        }, _));
+                        }.Merge(S3PrimitiveFields(@child)), _));
                     }
                     ?_ kind == :polyline
                          ?: {;
@@ -7337,14 +7731,19 @@ S3Collect(children, parent) -> {;
                              {@ pointIndex = 1; pointIndex < @points.Len(); {;
                                  @segments ~= @segments.Push([pointIndex, pointIndex+1]);
                              }; pointIndex += 1 };
-                             (@child[:closed] && points.Len() > 2) ?: {; @segments ~= @segments.Push([@points.Len(),1]); } ?_ _;
-                             @result ~= @result.Push(.DeepMutable({= kind=:lines, points=points, segments=segments, style=@child[:style] }, _));
+                             (@child[:closed]==1 && points.Len() > 2) ?: {; @segments ~= @segments.Push([@points.Len(),1]); } ?_ _;
+                             @result ~= @result.Push(.DeepMutable({= kind=:lines, points=points, segments=segments, style=@child[:style] }.Merge(S3PrimitiveFields(@child)), _));
                          }
                          ?_ kind == :point_cloud
                               ?: {; @result ~= @result.Push(.DeepMutable({=
                                   kind=:points, points=@child[:points].Map((point) -> S3TransformPoint(@parent, point)),
                                   radius=@child[:radius], style=@child[:style]
-                              }, _)); }
+                              }.Merge(S3PrimitiveFields(@child)), _)); }
+                              ?_ kind == :annotation
+                                   ?: {; @result ~= @result.Push(.DeepMutable({=
+                                       kind=:annotation,points=[S3TransformPoint(@parent,@child[:position])],
+                                       text=@child[:text],style=@child[:style]
+                                   }.Merge(S3PrimitiveFields(@child)),_)); }
                               ?_ ((kind == :material || kind == :camera)
                                   ?: _
                                   ?_ .Error(@"Unsupported Scene3D node '@{kind}'"));
@@ -7352,12 +7751,29 @@ S3Collect(children, parent) -> {;
     result;
 };
 
-S3Realized(children) -> .DeepMutable({=
-    type="scene3d_realized",
-    schema="rix.scene3d.realized@1",
-    coordinateSystem={= handedness="right", up="z", units="unspecified" },
-    primitives=S3Collect(children, S3Identity())
-}, _);
+S3Picking(primitives) -> {;
+    result := {= };
+    {@ index=1; index<=@primitives.Len(); {;
+        primitive = @primitives[index];
+        id = primitive[:pickid];
+        id != _ ?: {;
+            @result.Has(@id) ?: .Error(@"Duplicate Scene3D picking id '@{@id}'") ?_ _;
+            @result ~= @result.Set(@id,{= primitive=@index,kind=@primitive[:kind],label=@primitive[:label] });
+        } ?_ _;
+    }; index+=1 };
+    result;
+};
+
+S3Realized(children) -> {;
+    primitives = S3Collect(children,S3Identity());
+    .DeepMutable({=
+        type="scene3d_realized",
+        schema="rix.scene3d.realized@1",
+        coordinateSystem={= handedness="right", up="z", units="unspecified" },
+        primitives=primitives,
+        picking=S3Picking(primitives)
+    }, _);
+};
 
 S3Scene(children, options ?= {= }) -> {;
     settings = children ? :Map ?: children ?_ options.Merge({= children=children });
@@ -7389,10 +7805,16 @@ S3Cross(left, right) -> [
     left[1]*right[2]-left[2]*right[1]
 ];
 
+S3ApproximateSqrt(value) ->
+    .numerics.Refine(.numerics.Sqrt(value), {=
+        absoluteWidth=1/1000000,
+        maxWork=30
+    })[:approximation].Candidate();
+
 S3Normalize(vector, label) -> {;
     squared = S3Dot(vector, vector);
     squared > 0 ?: _ ?_ .Error(@"@{label} must not be zero or collinear with the view direction");
-    length = .Sqrt(squared);
+    length = S3ApproximateSqrt(squared);
     vector.Map((coordinate) -> coordinate / @length);
 };
 
@@ -7485,6 +7907,23 @@ S3LitColor(style, triangle, lights) -> {;
     @"#@{S3HexByte(values[1])}@{S3HexByte(values[2])}@{S3HexByte(values[3])}";
 };
 
+S3ProjectedFields(primitive, sourcePrimitive) -> {=
+    pickid=primitive[:pickid],label=primitive[:label],sourcePrimitive=sourcePrimitive
+};
+
+S3ProjectedPicking(primitives) -> {;
+    result := {= };
+    {@ index=1; index<=@primitives.Len(); {;
+        primitive = @primitives[index];
+        id = primitive[:pickid];
+        id != _ ?: {;
+            existing = @result.Has(@id) ?: @result[@id] ?_ {= indices=[],kind=@primitive[:kind],label=@primitive[:label] };
+            @result ~= @result.Set(@id,existing.Set("indices",existing[:indices].Push(@index)));
+        } ?_ _;
+    }; index+=1 };
+    result;
+};
+
 S3Project(scene, options ?= {= }) -> {;
     S3IsScene(scene) ?: _ ?_ .Error("scene3d.Project requires a Scene3D scene");
     mode = S3Option(options,"mode","wireframe");
@@ -7503,7 +7942,7 @@ S3Project(scene, options ?= {= }) -> {;
     allPoints := [];
     {@ primitiveIndex=1; primitiveIndex<=@primitives.Len(); {; @allPoints ~= @allPoints.Concat(@primitives[primitiveIndex][:points]); }; primitiveIndex+=1 };
     project := _;
-    approximation := {= viewNormalization="core-rational-sqrt" };
+    approximation := {= viewNormalization="numerics-certified-sqrt" };
     camera[:projection]=="perspective"
       ?: {;
           fov=@camera[:fov]; (fov>0&&fov<180) ?: _ ?_ .Error("Perspective camera fov must be between 0 and 180 degrees");
@@ -7525,7 +7964,7 @@ S3Project(scene, options ?= {= }) -> {;
           @project ~= (point)->[@width/2+(point[1]-@centerX)*@height/@vertical,@height/2-(point[2]-@centerY)*@height/@vertical];
       };
     projected := [];
-    segments:=0; faces:=0; pointCount:=0;
+    segments:=0; faces:=0; pointCount:=0; annotationCount:=0;
     mode=="lit" ?: {;
         faceValues := [];
         {@ primitiveIndex=1; primitiveIndex<=@primitives.Len(); {;
@@ -7538,7 +7977,7 @@ S3Project(scene, options ?= {= }) -> {;
                     visible ?: {;
                         worldPoints=@indices.Map((index)->@primitive[:worldPoints][index]);
                         depth=(@cameraPoints[1][3]+@cameraPoints[2][3]+@cameraPoints[3][3])/3;
-                        @faceValues ~= @faceValues.Push({= kind=:face, points=@cameraPoints.Map(@project), worldPoints=worldPoints, style=@primitive[:style], depth=depth });
+                        @faceValues ~= @faceValues.Push({= kind=:face, points=@cameraPoints.Map(@project), worldPoints=worldPoints, style=@primitive[:style], depth=depth }.Merge(S3ProjectedFields(@primitive,@primitiveIndex)));
                     } ?_ _;
                 }; triangleIndex+=1 };
             } ?_ _;
@@ -7557,19 +7996,26 @@ S3Project(scene, options ?= {= }) -> {;
         ((primitive[:kind]==:lines)||(primitive[:kind]==:mesh&&@mode=="wireframe")) ?: {;
             {@ segmentIndex=1; segmentIndex<=@primitive[:segments].Len(); {;
                 indices=@primitive[:segments][segmentIndex]; clipped=S3ClipDepth(@primitive[:points][indices[1]],@primitive[:points][indices[2]],@near,@far);
-                clipped!=_ ?: {; @projected ~= @projected.Push({= kind=:segment, points=@clipped.Map(@project), style=@primitive[:style] }); @segments+=1; } ?_ _;
+                clipped!=_ ?: {; @projected ~= @projected.Push({= kind=:segment, points=@clipped.Map(@project), style=@primitive[:style] }.Merge(S3ProjectedFields(@primitive,@primitiveIndex))); @segments+=1; } ?_ _;
             }; segmentIndex+=1 };
         } ?_ primitive[:kind]==:points ?: {;
             {@ pointIndex=1; pointIndex<=@primitive[:points].Len(); {;
                 point=@primitive[:points][pointIndex];
-                (point[3]>=@near&&point[3]<=@far) ?: {; @projected ~= @projected.Push({= kind=:point, point=@project(@point), radius=@primitive[:radius], style=@primitive[:style] }); @pointCount+=1; } ?_ _;
+                (point[3]>=@near&&point[3]<=@far) ?: {; @projected ~= @projected.Push({= kind=:point, point=@project(@point), radius=@primitive[:radius], style=@primitive[:style] }.Merge(S3ProjectedFields(@primitive,@primitiveIndex))); @pointCount+=1; } ?_ _;
             }; pointIndex+=1 };
+        } ?_ primitive[:kind]==:annotation ?: {;
+            point=@primitive[:points][1];
+            (point[3]>=@near&&point[3]<=@far) ?: {;
+                @projected ~= @projected.Push({= kind=:annotation,point=@project(@point),text=@primitive[:text],style=@primitive[:style] }.Merge(S3ProjectedFields(@primitive,@primitiveIndex)));
+                @annotationCount+=1;
+            } ?_ _;
         } ?_ _;
     }; primitiveIndex+=1 };
     .DeepMutable({=
         type="scene3d_projected", schema="rix.scene3d.projected@1", mode=mode, size=size,
         camera=camera, frame=frame, primitives=projected, approximation=approximation,
-        work={= primitives=realized[:primitives].Len(), segments=segments, faces=faces, points=pointCount }
+        picking=S3ProjectedPicking(projected),
+        work={= primitives=realized[:primitives].Len(), segments=segments, faces=faces, points=pointCount, annotations=annotationCount }
     }, _);
 };
 
@@ -7584,6 +8030,10 @@ S3Snapshot(scene, options ?= {= }) -> {;
                ?: {; @children ~= @children.Push(.Graphics.Path(@primitive[:points],S3StyleMap(@primitive[:style]))); }
                ?_ primitive[:kind]==:point
                     ?: {; @children ~= @children.Push(.Graphics.Circle(@primitive[:point],@primitive[:radius],S3StyleMap(@primitive[:style],1))); }
+                    ?_ primitive[:kind]==:annotation
+                         ?: {; @children ~= @children.Push(.Graphics.Text(@primitive[:point],@primitive[:text],{=
+                             fill=@primitive[:style][:color],size=@primitive[:style][:size],anchor=@primitive[:style][:anchor],weight=@primitive[:style][:weight]
+                         })); }
                     ?_ _;
     }; index+=1 };
     diagnostic=(projected[:mode]=="wireframe"&&scene[:lights].Len()>0)
@@ -7593,7 +8043,7 @@ S3Snapshot(scene, options ?= {= }) -> {;
         value=.Graphics.Graphic(projected[:size],children,{= schema="rix.graphics@1",source="rix.scene3d@1",mode=projected[:mode] }),
         resolved=1, uncertainty=[], work=projected[:work],
         source={= schema="rix.scene3d@1",projection=projected[:camera][:projection],mode=projected[:mode],approximation=projected[:approximation] },
-        diagnostics=diagnostic, projected=projected
+        diagnostics=diagnostic, picking=projected[:picking], projected=projected
     };
 };
 
@@ -7605,12 +8055,16 @@ scene3dNamespace._proto={=
     Mesh=(self,vertices,triangles ?= _,options ?= {= })->S3Mesh(vertices,triangles,options),
     Polyline=(self,points,options ?= {= })->S3Polyline(points,options),
     PointCloud=(self,points,options ?= {= })->S3PointCloud(points,options),
+    ParametricCurve=(self,curve,domain ?= _,options ?= {= })->S3ParametricCurve(curve,domain,options),
+    Axes=(self,options ?= {= })->S3Axes(options),
+    Annotation=(self,position,text ?= _,options ?= {= })->S3Annotation(position,text,options),
     Material=(self,color ?= "#275dad",opacity ?= 1,width ?= 1)->S3Material(color,opacity,width),
     AmbientLight=(self,color ?= "#ffffff",intensity ?= 1)->S3AmbientLight(color,intensity),
     DirectionalLight=(self,direction,options ?= {= })->S3DirectionalLight(direction,options),
     PointLight=(self,position,options ?= {= })->S3PointLight(position,options),
     PerspectiveCamera=(self,position,target ?= _,options ?= {= })->S3PerspectiveCamera(position,target,options),
     OrthographicCamera=(self,position,target ?= _,options ?= {= })->S3OrthographicCamera(position,target,options),
+    OrbitCamera=(self,target,options ?= {= })->S3OrbitCamera(target,options),
     Realize=(self,scene)->S3Realize(scene),
     Project=(self,scene,options ?= {= })->S3Project(scene,options),
     Snapshot=(self,scene,options ?= {= })->S3Snapshot(scene,options)
@@ -8730,5 +9184,5 @@ function createRixRepl({ autoSeparateLines = true } = {}) {
 
 export { findHelp, createRixRepl };
 
-//# debugId=46672D75406C0B4864756E2164756E21
-//# sourceMappingURL=chunk-zjf3kr2f.js.map
+//# debugId=295FE18A0EA0856D64756E2164756E21
+//# sourceMappingURL=chunk-8vhaafts.js.map

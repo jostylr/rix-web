@@ -376,7 +376,7 @@ test("the web REPL returns interactive tensor-plane controls", () => {
     expect(response.html).toContain('data-rix-coordinate-label="North / Margin / Forecast"');
 });
 
-test("the web REPL catalogs bundled plugins and loads approved JavaScript on demand", () => {
+test("the web REPL automatically loads its first-party browser plugin profile", () => {
     const repl = createRixRepl();
 
     const available = repl.run('.Plugin.List()').text;
@@ -397,10 +397,11 @@ test("the web REPL catalogs bundled plugins and loads approved JavaScript on dem
     expect(available).toContain("terminal-ascii");
     expect(available).toContain("csv");
     expect(available).toContain("gif");
-    expect(repl.run('.Plugin.Load("stats"); .stats.Mean([1/3, 2/3])').text).toBe("1/2");
-    expect(repl.run('.Plugin.Load("complex-viz"); .complexViz.Color(.Complex.FromParts(1, 0))').text).toBe("#ef4444");
-    expect(repl.run(".float(1 / 3)").type).toBe("error");
-    expect(repl.run('.Plugin.Load("float")').type).toBe("result");
+    expect(repl.run('.Plugin.Info("float").Get("loaded")').value.value).toBe(1n);
+    expect(repl.run('.Plugin.Info("example-array-js").Get("loaded")').value).toBeNull();
+    expect(repl.run('.stats.Mean([1/3, 2/3])').text).toBe("1/2");
+    expect(repl.run('.complexViz.Color(.Complex.FromParts(1, 0))').text).toBe("#ef4444");
+    expect(repl.run('.numerics[:E=:Exp]; E(3, 4)').text).toBe("64");
     expect(repl.run(".float(1 / 3)").text).toBe("0.3333333333333333");
     expect(repl.run(".float(1 / 3) * .float(3)").text).toBe("1");
     expect(repl.run(".float(1 / 2) + 2").type).toBe("error");
@@ -410,13 +411,12 @@ test("the web REPL catalogs bundled plugins and loads approved JavaScript on dem
     expect(repl.run(".Max(.float(1 / 2), 2)").type).toBe("error");
     expect(repl.run(".Max(.float(1 / 2), .float(2))").text).toBe("2");
     expect(repl.run(".float.Round(.float(1 / 3), 2)").text).toBe("33/100");
-    expect(repl.run('.Plugin.Load("ball")').type).toBe("result");
     expect(repl.run('.ball(3 / 2, 1 / 4).Interval()').text).toBe("1..1/4:1..3/4");
     expect(repl.run('.ball.Sqrt(2) < {~ 3 / 2, 1 / 1000 }').text).toBe("1");
-    expect(repl.run('.Plugin.Load("cauchy")').type).toBe("result");
     expect(repl.run('.cauchy.Geometric(1, 1 / 2).Term(3)').text).toBe("1..7/8");
-    expect(repl.run('.Plugin.Load("numerics")').type).toBe("result");
-    expect(repl.run('.Plugin.Load("oracle")').type).toBe("result");
+    const certified = repl.run('.numerics.Refine(.oracle.Rational(3 / 7), {= absoluteWidth=1/1000, maxWork=20 })');
+    expect(certified.text).toBe(formatValue(certified.value.entries.get("interval")));
+    expect(certified.sourceText).toContain("schema=rix.numerics.enclosure@1");
     expect(repl.run('.numerics.Refine(.oracle.Rational(3 / 7), {= absoluteWidth=1/1000, maxWork=20 })[:status]').text)
         .toBe("enclosed");
     expect(repl.run('.numerics.Refine(.ball.Sqrt(2), {= absoluteWidth=1/1000, maxWork=20 })[:status]').text)
@@ -425,10 +425,8 @@ test("the web REPL catalogs bundled plugins and loads approved JavaScript on dem
         .toBe("enclosed");
     expect(repl.run('.numerics.Sample(.float(1 / 3), {= maxWork=20 })[:status]').text)
         .toBe("approximate");
-    expect(repl.run('.Plugin.Load("radix")').type).toBe("result");
     expect(repl.run('(1/7).PeriodLength(10)').text).toBe("6");
 
-    expect(repl.run('.Plugin.Load("algebra")').type).toBe("result");
     const polynomial = repl.run(`
         p := .algebra.Polynomial([1,-6,11,-6]);
         .algebra.Grid(.algebra.SyntheticDivide(p,2))
@@ -436,17 +434,13 @@ test("the web REPL catalogs bundled plugins and loads approved JavaScript on dem
     expect(polynomial.type).toBe("result");
     expect(polynomial.html).toContain("rix-output-grid");
 
-    expect(repl.run(".draw.Circle([10, 10], 4)").type).toBe("error");
-    expect(repl.run('.Plugin.Load("draw")').type).toBe("result");
     expect(repl.run(".draw.Circle([10, 10], 4)").text).toContain("circle");
 
-    expect(repl.run('.Plugin.Load("plot")').type).toBe("result");
     const plot = repl.run(".plot.Polynomial([1, 0, -1], [-2, 2])");
     expect(plot.type).toBe("result");
     expect(plot.html).toContain("<svg");
     expect(plot.html).toContain("<path");
 
-    expect(repl.run('.Plugin.Load("geometry")').type).toBe("result");
     const construction = repl.run(`
         a := .geometry.Point(0,0);
         b := .geometry.Point(4,0);
@@ -456,11 +450,21 @@ test("the web REPL catalogs bundled plugins and loads approved JavaScript on dem
     expect(construction.html).toContain("<svg");
     expect(construction.html).toContain("<circle");
 
-    expect(repl.run('.Plugin.Load("data"); .Plugin.Load("csv")').type).toBe("result");
     expect(repl.run('.csv.Render(.data.Relation(["name", "value"], [["half", 1/2]])).Get("content")').text)
         .toBe("name,value\nhalf,1/2\n");
-    expect(repl.run('.Plugin.Load("document"); .document.Report("Web report", [.Heading(2, "Result", "result")])').html)
+    expect(repl.run('.document.Report("Web report", [.Heading(2, "Result", "result")])').html)
         .toContain('id="result"');
+});
+
+test("automatic browser plugins survive reset and can be disabled explicitly", async () => {
+    const repl = createRixRepl();
+    expect(repl.run(".stats.Mean([1, 2, 3])").text).toBe("2");
+    await repl.reset();
+    expect(repl.run(".stats.Mean([1, 2, 3])").text).toBe("2");
+
+    const restricted = createRixRepl({ autoLoadPlugins: false });
+    expect(restricted.run(".stats.Mean([1, 2, 3])").type).toBe("error");
+    expect(restricted.run('.Plugin.Load("stats"); .stats.Mean([1, 2, 3])').text).toBe("2");
 });
 
 test("notebook newlines leave nested and continued expressions alone", () => {

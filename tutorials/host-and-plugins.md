@@ -57,8 +57,11 @@ default camelCase mount, exports, and capability groups.
 A discovered mount can be visible to the static checker while still refusing
 calls until loading is approved. JavaScript plugin files additionally require
 an installer that the host explicitly trusts; discovering a file never imports
-or runs arbitrary JavaScript. A load may choose another camelCase root for a
-separate session or REPL experiment:
+or runs arbitrary JavaScript. RiX-Web has already reviewed its bundled browser
+catalog and activates its first-party entries when a session starts; explicit
+loads remain useful in portable scripts and are idempotent. Teaching entries in
+the `Examples` group remain unloaded until requested. A load may choose another
+camelCase root for a separate session or REPL experiment:
 
 ```text
 .Plugin.Load("float", {= as = "jsFloat" })
@@ -82,8 +85,9 @@ approximate-math plugin is the intended model:
 ```
 
 Those calls are examples of a plugin contract, not promises that every RiX
-host exposes floating-point computation. RatCalc keeps its default session
-exact and does not load this optional plugin automatically.
+host exposes floating-point computation. RiX-Web's reviewed profile includes
+the Float plugin, but Float construction remains explicit and never silently
+mixes approximate values into exact arithmetic.
 
 ## Display names and matching
 
