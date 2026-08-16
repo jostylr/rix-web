@@ -21,12 +21,23 @@ test("the help gallery spans exact, reactive, graphical, and polynomial showcase
     const recenter = showcaseExample("synthetic-recenter");
     expect(recenter.source.match(/SyntheticDivide/g)).toHaveLength(3);
     expect(recenter.source).toContain("P(h + u)");
+
+    const spatial = showcaseExamples.filter(({ category }) => category === "Spatial labs");
+    expect(spatial.map(({ id }) => id)).toEqual([
+        "scene3d-camera-studio",
+        "nd-hypercube-lab",
+        "nd-slice-sweep",
+    ]);
+    expect(showcaseExample("scene3d-camera-studio").source).toContain("PerspectiveCamera");
+    expect(showcaseExample("nd-hypercube-lab").source).toContain("CoordinateProjection");
+    expect(showcaseExample("nd-slice-sweep").source).toContain("SlicePoints");
 });
 
 test("showcase search covers descriptions, tags, and source", () => {
     expect(findShowcaseExamples("synthetic").map(({ id }) => id)).toContain("synthetic-recenter");
     expect(findShowcaseExamples("financial").map(({ id }) => id)).toContain("simple-interest");
     expect(findShowcaseExamples("Graphics.Circle").map(({ id }) => id)).toContain("reactive-circle");
+    expect(findShowcaseExamples("tesseract").map(({ id }) => id)).toContain("nd-slice-sweep");
     expect(showcaseExample("missing-example")).toBeNull();
 });
 
