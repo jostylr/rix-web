@@ -7,6 +7,18 @@ import {
 } from "../src/plugin-profile.js";
 import { createBundledPluginCatalog } from "../src/generated/bundled-plugin-catalog.js";
 
+test("the browser catalog publishes Draw, Plot, and Geometry Phase 2", () => {
+    const catalog = createBundledPluginCatalog();
+    expect(catalog.info("draw").exports).toContain("Viewport");
+    expect(catalog.info("draw").exports).toContain("Dimension");
+    expect(catalog.info("plot").exports).toEqual(expect.arrayContaining(["Function", "Parametric", "Scatter", "Bar"]));
+    expect(catalog.info("geometry")).toMatchObject({
+        requires: ["rix.numerics@1", "rix.polynomial@1"],
+        provides: expect.arrayContaining(["rix.geometry.constraint@1", "rix.geometry.refinement@1"]),
+    });
+    expect(catalog.info("geometry").exports).toEqual(expect.arrayContaining(["Conic", "Projective", "Constraint", "Refine"]));
+});
+
 test("the checked-in standard profile is selective and imports calculator names", () => {
     expect(createBundledPluginCatalog().info("bessel")).toMatchObject({
         mount: "bessel",

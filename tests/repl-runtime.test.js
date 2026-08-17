@@ -502,11 +502,15 @@ test("the web REPL automatically loads its curated calculator profile", () => {
     expect(polynomial.html).toContain("rix-output-grid");
 
     expect(repl.run(".draw.Circle([10, 10], 4)").text).toContain("circle");
+    expect(repl.run(".draw.Arrow([0, 0], [20, 10])").text).toContain("group");
 
     const plot = repl.run(".plot.Polynomial([1, 0, -1], [-2, 2])");
     expect(plot.type).toBe("result");
     expect(plot.html).toContain("<svg");
     expect(plot.html).toContain("<path");
+    const functionPlot = repl.run(".plot.Function((x)->x^2, [-2,2], {= samples=9 })");
+    expect(functionPlot.type, functionPlot.text).toBe("result");
+    expect(functionPlot.html).toContain("<path");
 
     const construction = repl.run(`
         a := .geometry.Point(0,0);
@@ -516,6 +520,8 @@ test("the web REPL automatically loads its curated calculator profile", () => {
     expect(construction.type).toBe("result");
     expect(construction.html).toContain("<svg");
     expect(construction.html).toContain("<circle");
+    expect(repl.run(".geometry.Status(.geometry.Intersect(.geometry.Line(.geometry.Point(-2,0),.geometry.Point(2,0)),.geometry.Circle(.geometry.Point(0,0),1)))").text)
+        .toBe("two");
 
     expect(repl.run('.csv.Render(.data.Relation(["name", "value"], [["half", 1/2]])).Get("content")').text)
         .toBe("name,value\nhalf,1/2\n");
