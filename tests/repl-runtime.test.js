@@ -12,6 +12,7 @@ import { replayTutorialSources, replayTutorialSourcesAsync, tutorialSectionCells
 import { createRixRepl } from "../src/repl-runtime.js";
 import { tutorials } from "../src/tutorial-index.js";
 import { paintCanvasPlan } from "../../rix/plugins/render-canvas/canvas-plan.js";
+import { paintWebGLPlan } from "../../rix/plugins/render-webgl/webgl-plan.js";
 import { formatCertifiedIntervalDecimal } from "../src/certified-decimal-display.js";
 
 test("the web REPL runtime keeps its RiX context between cells", () => {
@@ -174,6 +175,7 @@ test("the browser-safe renderer plugins produce their text and source targets", 
         ["svg", `.svg.Render(${graphic}).Get("content")`, "<svg"],
         ["terminal-ascii", `.terminalAscii.Render(.Table(["x"], [[1]])).Get("content")`, "+---+"],
         ["canvas", `.canvas.Render(${graphic}).Get("content")`, "rix.canvas-plan@1"],
+        ["webgl", `.Plugin.Load("scene3d"); .webgl.Render(.scene3d.Scene([.scene3d.Mesh([[0,0,0],[1,0,0],[0,1,0]],[[1,2,3]])])).Get("content")`, "rix.webgl-plan@1"],
         ["tikz", `.tikz.Render(${graphic}).Get("content")`, "\\begin{tikzpicture}"],
         ["markdown", `.markdown.Render(${document}).Get("content")`, "# Renderer report"],
         ["html", `.html.Render(${document}).Get("content")`, "<!doctype html>"],
@@ -251,6 +253,44 @@ test("the browser projects exact 4D geometry to Scene3D, Graphics, and glTF", ()
     const gltf = JSON.parse(response.value.values[1].value);
     expect(gltf.asset.version).toBe("2.0");
     expect(gltf.extras.rix.sourceCoordinates).toBe("right-handed Z-up");
+});
+
+test("the browser lowers Scene3D snapshots to Canvas and retained scenes to executable WebGL plans", () => {
+    const response = createRixRepl().run(`
+        .Plugin.Load("scene3d"); .Plugin.Load("canvas"); .Plugin.Load("webgl");
+        scene := .scene3d.Scene([
+            .scene3d.Mesh([[0,0,0],[1/3,0,0],[0,1,0]], [[1,2,3]], {= id="face" }),
+            .scene3d.Annotation([0,0,0], "origin", {= id="origin" })
+        ]);
+        snapshot := .scene3d.Snapshot(scene, {= size=[160,120] });
+        [.canvas.Render(snapshot).Get("content"), .webgl.Render(scene, {= width=160,height=120 }).Get("content")];
+    `);
+    expect(response.type).toBe("result");
+    const canvas = JSON.parse(response.value.values[0].value);
+    const webgl = JSON.parse(response.value.values[1].value);
+    expect(canvas.scene3d.schema).toBe("rix.scene3d.snapshot@1");
+    expect(webgl).toMatchObject({ schema: "rix.webgl-plan@1", viewport: { width: 160, height: 120 } });
+    expect(webgl.picking.face.kind).toBe("drawCall");
+    expect(webgl.annotations).toHaveLength(1);
+
+    const draws = [];
+    let resource = 0;
+    const gl = {
+        VERTEX_SHADER: 1, FRAGMENT_SHADER: 2, COMPILE_STATUS: 3, LINK_STATUS: 4,
+        ARRAY_BUFFER: 5, STATIC_DRAW: 6, FLOAT: 7, TRIANGLES: 8, LINES: 9, POINTS: 10,
+        DEPTH_TEST: 11, BLEND: 12, SRC_ALPHA: 13, ONE_MINUS_SRC_ALPHA: 14,
+        COLOR_BUFFER_BIT: 16, DEPTH_BUFFER_BIT: 32,
+        createShader: () => ({ id: resource += 1 }), shaderSource: () => {}, compileShader: () => {}, getShaderParameter: () => true,
+        createProgram: () => ({ id: resource += 1 }), attachShader: () => {}, linkProgram: () => {}, getProgramParameter: () => true, useProgram: () => {},
+        getAttribLocation: () => 0, getUniformLocation: (_program, name) => name,
+        viewport: () => {}, enable: () => {}, blendFunc: () => {}, clearColor: () => {}, clear: () => {}, uniformMatrix4fv: () => {},
+        createBuffer: () => ({ id: resource += 1 }), bindBuffer: () => {}, bufferData: () => {}, enableVertexAttribArray: () => {},
+        vertexAttribPointer: () => {}, uniform4fv: () => {}, uniform1f: () => {}, lineWidth: () => {},
+        drawArrays: (...args) => draws.push(args), deleteBuffer: () => {},
+    };
+    const painted = paintWebGLPlan(gl, webgl);
+    expect(draws).toHaveLength(1);
+    expect(painted.annotations[0].screen).toHaveLength(2);
 });
 
 test("the browser runs the first Scene3D Phase 2 retained contracts", () => {

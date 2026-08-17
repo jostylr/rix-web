@@ -611,6 +611,20 @@ export const pluginTutorials = [
     "pluginTutorial": true
   },
   {
+    "pluginId": "webgl",
+    "pluginDirectory": "render-webgl",
+    "title": "Execute a retained Scene3D scene with WebGL",
+    "description": "Lower exact retained 3D geometry to a versioned browser-safe GPU plan.",
+    "status": "implemented",
+    "order": 0,
+    "theme": "Renderers and exporters",
+    "sourcePath": "../rix/plugins/render-webgl/tutorial.md",
+    "number": "18m",
+    "parent": "18",
+    "file": "plugin-webgl.html",
+    "pluginTutorial": true
+  },
+  {
     "pluginId": "gif",
     "pluginDirectory": "render-gif",
     "title": "Prepare an animated GIF",
@@ -619,7 +633,7 @@ export const pluginTutorials = [
     "order": 90,
     "theme": "Renderers and exporters",
     "sourcePath": "../rix/plugins/render-gif/tutorial.md",
-    "number": "18m",
+    "number": "18n",
     "parent": "18",
     "file": "plugin-gif.html",
     "pluginTutorial": true
