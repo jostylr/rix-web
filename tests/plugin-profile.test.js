@@ -13,7 +13,7 @@ test("the browser catalog publishes Draw, Plot, and Geometry Phase 2", () => {
     expect(catalog.info("draw").exports).toContain("Dimension");
     expect(catalog.info("plot").exports).toEqual(expect.arrayContaining(["Function", "Parametric", "Scatter", "Bar"]));
     expect(catalog.info("geometry")).toMatchObject({
-        requires: ["rix.numerics@1", "rix.polynomial@1"],
+        requires: ["rix.numerics@1", "rix.polynomial.algorithms@1"],
         provides: expect.arrayContaining(["rix.geometry.constraint@1", "rix.geometry.refinement@1"]),
     });
     expect(catalog.info("geometry").exports).toEqual(expect.arrayContaining(["Conic", "Projective", "Constraint", "Refine"]));

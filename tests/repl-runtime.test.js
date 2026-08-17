@@ -162,6 +162,49 @@ test("the web REPL returns structured HTML for portable output values", () => {
     expect(response.text).toContain("-3");
 });
 
+test("the browser exposes exact algebra Phase 2 evidence", () => {
+    const response = createRixRepl().run(`
+        .Plugin.Load("algebra");
+        .Plugin.Load("numerics");
+        polynomial := .p\`(x-1)^2*(x+2)^3\`;
+        evidence := .algebra.FactorEvidence(polynomial);
+        centeredSource := .poly([2,-3,5,-7]);
+        centered := .algebra.CenteredExpansion(centeredSource, 2);
+        factorization := .algebra.Factorization(.poly([6,0,6]));
+        [
+            evidence["schema"],
+            evidence["verified"],
+            evidence["factors"].Len(),
+            centered["schema"],
+            centered["coefficients"],
+            .algebra.Equal(.algebra.Expand(centered.Record()), centeredSource),
+            factorization["schema"],
+            factorization["residual"].Coefficients(),
+            factorization["complete"],
+            .algebra.Equal(factorization.Expand(), factorization["polynomial"]),
+            .algebra.Resultant(.p\`x^2-2\`, .p\`x-1\`),
+            .numerics.Sign(polynomial, {= at=0 })["schema"],
+            .numerics.RootCount(polynomial, -10:10)["schema"],
+            .numerics.RootCount(polynomial, -10:10)["count"]
+        ];
+    `);
+    expect(response.type).toBe("result");
+    expect(response.value.values[0].value).toBe("rix.polynomial.factor-evidence@1");
+    expect(Number(response.value.values[1])).toBe(1);
+    expect(Number(response.value.values[2])).toBe(2);
+    expect(response.value.values[3].value).toBe("rix.algebra.centered-expansion@1");
+    expect(response.value.values[4].values.map(String)).toEqual(["7", "17", "9", "2"]);
+    expect(Number(response.value.values[5])).toBe(1);
+    expect(response.value.values[6].value).toBe("rix.algebra.factorization@1");
+    expect(response.value.values[7].values.map(String)).toEqual(["1", "0", "1"]);
+    expect(Number(response.value.values[8])).toBe(0);
+    expect(Number(response.value.values[9])).toBe(1);
+    expect(String(response.value.values[10])).toBe("-1");
+    expect(response.value.values[11].value).toBe("rix.exact.sign-witness@1");
+    expect(response.value.values[12].value).toBe("rix.exact.root-count@1");
+    expect(String(response.value.values[13])).toBe("2");
+});
+
 test("the browser-safe renderer plugins produce their text and source targets", () => {
     const graphic = `.Graphics.Graphic([120, 80], [
         .Graphics.Circle([60, 40], 24, {= fill="#0c7b7f" }),
@@ -220,6 +263,34 @@ test("the browser Canvas executor repaints a serialized plugin plan", () => {
     expect(calls.some(([name]) => name === "arc")).toBe(true);
     expect(calls.filter(([name]) => name === "fill")).toHaveLength(1);
     expect(calls.filter(([name]) => name === "stroke")).toHaveLength(1);
+});
+
+test("the browser exposes outward-safe SVG exact-coordinate metadata", () => {
+    const response = createRixRepl().run(`
+        .Plugin.Load("svg");
+        rendered := .svg.Render(.Graphics.Graphic([10,10], [
+            .Graphics.Path([[1/3,1/3],[2/3,2/3]], {= stroke="#2563eb" })
+        ]), {= precision=3, rounding="nearest" });
+        [
+            rendered.Get("metadata")["coordinateLowering"]["guarantee"],
+            rendered.Get("metadata")["coordinateLowering"]["enclosureRadius"],
+            rendered.Get("diagnostics")[1]["code"]
+        ];
+    `);
+    expect(response.type).toBe("result");
+    expect(response.value.values[0].value).toBe("outward-exact-enclosure");
+    expect(Number(response.value.values[1].value)).toBeGreaterThan(0);
+    expect(response.value.values[2].value).toBe("svg-coordinate-approximation");
+});
+
+test("the browser reports unsupported SVG scene nodes instead of dropping them", () => {
+    const response = createRixRepl().run(`
+        .Plugin.Load("svg");
+        .svg.Render(.Graphics.Graphic([10,10], [.Paragraph("not a Graphics node")]));
+    `);
+    expect(response.type).toBe("error");
+    expect(response.text).toContain("svg-unsupported-node");
+    expect(response.text).toContain("graphic[1]");
 });
 
 test("PNG and PDF expose browser contracts without pretending to have host tools", () => {
