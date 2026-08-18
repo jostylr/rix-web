@@ -193,18 +193,35 @@ quarterTurn := .numerics.Refine(.numerics.Atan(1), {=
 <p>An inverse-sine or inverse-cosine input that is not certified inside <code>-1:1</code> returns <code>:unknown</code> with <code>:inverseTrigDomainNotCertified</code>. Numerics never silently selects a complex branch or a Float approximation.</p>
 <h2>Hyperbolic and special functions</h2>
 <p>The remaining scientific-calculator functions use the same refinement contract. They can be selected lexically and called without a plugin prefix:</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
-.numerics[:Refine, :Sinh, :Asinh, :Sinc, :Erf, :Gamma, :LambertW, :J0, :Zeta];
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">.Plugin.Load(&quot;bessel&quot;);
+.numerics[:Refine, :Sinh, :Asinh, :Sinc, :Erf, :Gamma, :LambertW, :Zeta];
 
 values := [
   Sinh(1), Asinh(1), Sinc(0), Erf(1), Gamma(5),
-  LambertW(1), J0(1), Zeta(2)
+  LambertW(1), .bessel.J0(1), Zeta(2)
 ];
 values |&gt;&gt; ((value) -&gt; Refine(value, {=
   absoluteWidth=1/1000, maxWork=1200
 }));</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p><code>Cbrt</code>, <code>Expm1</code>, <code>Log1p</code>, <code>Radians</code>, and <code>Degrees</code> provide the familiar calculator conveniences. Hyperbolic reciprocal functions preserve their ordinary poles, while inverse hyperbolic functions inherit the certified root and logarithm domain checks.</p>
-<p>Special functions publish their real-domain policy rather than silently crossing a branch: <code>Gamma</code>/<code>LogGamma</code> and <code>Y0</code>/<code>Y1</code> currently require positive arguments, and <code>Zeta</code> currently requires an argument greater than one. <code>LambertW(x)</code> is branch zero; <code>LambertW(x,-1)</code> is the lower real branch. Uncertified domains return structured <code>:unknown</code> results.</p>
+<p>Special functions publish their real-domain policy rather than silently crossing a branch: <code>LogGamma</code> and the Bessel Y/K families require positive arguments. <code>Gamma</code> continues between its explicit nonpositive-integer poles, and <code>Zeta</code> continues across the real line with its pole at <code>1</code> left unresolved. <code>LambertW(x)</code> is branch zero; <code>LambertW(x,-1)</code> is the lower real branch. Uncertified domains return structured <code>:unknown</code> results.</p>
+<h2>Geometry and the Gamma family</h2>
+<p><code>Hypot</code> reuses universal arithmetic and roots. <code>Atan2</code> accepts <code>(y,x)</code>, keeps the quadrant decision certified, and uses the branch <code>-Pi() &lt; angle &lt;= Pi()</code>. The positive-real Gamma family shares the same bounded refinement contract:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="14" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
+.numerics[:Refine, :Hypot, :Atan2, :Beta, :LogBeta, :Digamma, :Trigamma];
+values := [
+  Hypot(3, 4),
+  Atan2(1, -1),
+  Beta(2, 3),
+  LogBeta(2, 3),
+  Digamma(1),
+  Trigamma(1)
+];
+values |&gt;&gt; ((value) -&gt; Refine(value, {=
+  absoluteWidth=1/1000,
+  maxWork=1200
+}));</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p><code>Atan2(0,0)</code> is undefined and therefore refines to structured <code>:unknown</code> evidence. Beta and the polygamma functions likewise report <code>:unknown</code> when their positive-real domains cannot be certified.</p>
 <h2>Kantorovich certification and interval Newton</h2>
 <p><code>.numerics.Kantorovich</code> first checks the supplied initial interval and rational bounds. The derivative interval must exclude zero, <code>derivativeLower</code> may not overstate its certified magnitude, and an optional interval-valued second derivative verifies <code>secondDerivativeUpper</code>. The Kantorovich inequality then certifies an initial root enclosure. Refinement uses interval Newton and intersects every new interval with the preceding one:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="24" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
@@ -231,4 +248,17 @@ result := .numerics.Refine(root, {=
     result[:interval], result[:work][:calls]
   ]]
 });</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>The function and derivative may accept exact points and rational intervals, which makes interval evaluation visible and inspectable. Every Newton trace step contains the materialized guess, derivative enclosure, new certified interval, error radius, and <code>actualized=1</code>; there is no retained trail of lazy arithmetic expressions between iterations.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
+<p>The function and derivative may accept exact points and rational intervals, which makes interval evaluation visible and inspectable. Every Newton trace step contains the materialized guess, derivative enclosure, new certified interval, error radius, and <code>actualized=1</code>; there is no retained trail of lazy arithmetic expressions between iterations.</p>
+<h2>Request exact sign and root-count witnesses</h2>
+<p>The same witness schema covers exact scalars, polynomial evaluations, and bounded certified refinement. Root counts retain their complete Sturm evidence.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
+.Plugin.Load(&quot;poly&quot;);
+P := .p`(x-1)^2*(x+2)^3`;
+.Table({=
+  columns=[&quot;question&quot;,&quot;answer&quot;,&quot;method&quot;],
+  rows=[
+    [&quot;sign of P(0)&quot;,.numerics.Sign(P,{= at=0 })[:sign],:exactPolynomialEvaluation],
+    [&quot;sign of sqrt(2)&quot;,.numerics.Sign(.numerics.Sqrt(2),{= absoluteWidth=1/100,maxWork=30 })[:sign],:certifiedEnclosure],
+    [&quot;distinct roots&quot;,.numerics.RootCount(P,-10:10)[:count],:sturmSequence]
+  ]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

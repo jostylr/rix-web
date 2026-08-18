@@ -20,4 +20,55 @@ division := .algebra.SyntheticDivide(P, 2);
 quotient := division.Quotient().Coefficients();
 remainder := division.Remainder().Coefficients();
 isFactor := P.IsFactor(Factor);
-division.Grid();</textarea><div class="tutorial-output" data-tutorial-output></div></section></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
+division.Grid();</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Inspect exact factor evidence</h2>
+<p>The evidence distinguishes discovered rational factors from the residual and verifies exact reconstruction rather than relying on approximate roots.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="12" spellcheck="false">.Plugin.Load(&quot;algebra&quot;);
+P := .p`(x-1)^2*(x+2)^3`;
+evidence := .algebra.FactorEvidence(P);
+.Table(
+    [&quot;property&quot;, &quot;exact value&quot;],
+    [
+        [&quot;rational roots&quot;, evidence[:rationalRoots]],
+        [&quot;factor records&quot;, evidence[:factors]],
+        [&quot;residual&quot;, evidence[:residual].Coefficients()],
+        [&quot;verified&quot;, evidence[:verified]]
+    ]
+);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Use <code>.algebra.SquareFreeDecomposition(P)</code> when multiplicity groups matter, <code>.algebra.Gcd(P, Q)</code> or <code>.algebra.Lcm(P, Q)</code> for canonical combinations, and <code>.algebra.Resultant(P, Q)</code> for an exact shared-factor test.</p>
+<h2>Keep centered and factored forms explicit</h2>
+<p>Presentation values preserve a useful form without creating a second notion of Polynomial equality. Expanding either value reconstructs from its displayed fields and verifies the exact result against the retained canonical source.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="16" spellcheck="false">.Plugin.Load(&quot;algebra&quot;);
+P := .poly([2, -3, 5, -7]);
+centered := .algebra.CenteredExpansion(P, 2);
+factored := .algebra.Factorization(.p`6*(x-1)^2*(x+2)^3*(x^2+1)`);
+.Table(
+    [&quot;property&quot;, &quot;exact value&quot;],
+    [
+        [&quot;powers of (x-2), ascending&quot;, centered.Coefficients()],
+        [&quot;centered round trip&quot;, centered.Expand().Coefficients()],
+        [&quot;factorization unit&quot;, factored.Unit()],
+        [&quot;rational factors&quot;, factored.Factors()],
+        [&quot;monic residual&quot;, factored.Residual().Coefficients()],
+        [&quot;all factors rational&quot;, factored[:complete]],
+        [&quot;factorization round trip&quot;, factored.Polynomial().Coefficients()]
+    ]
+);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p><code>Record()</code> produces a portable form accepted by <code>.algebra.Expand(record)</code>. Changing a coefficient, root, factor, multiplicity, unit, residual, basis, or completeness claim causes conversion to fail rather than silently returning the stored source.</p>
+<h2>Decompose a rational function exactly</h2>
+<p>The Algebra façade also exposes <code>.ratfun</code> Phase 2 transformations. Repeated rational poles become individual exact terms; factors not split over Q remain visible in one proper residual rather than being approximated.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="15" spellcheck="false">.Plugin.Load(&quot;algebra&quot;);
+R := .rf`(x^5+x^3+2*x+1)/((x-1)^2*(x^2+1))`;
+partial := .algebra.PartialFractions(R);
+divisor := .algebra.PoleZeroEvidence(R);
+.Table(
+    [&quot;property&quot;, &quot;exact value&quot;],
+    [
+        [&quot;coefficient domain&quot;, .algebra.CoefficientDomain(R)[:id]],
+        [&quot;polynomial part&quot;, partial.PolynomialPart().Coefficients()],
+        [&quot;linear-pole terms&quot;, partial.Terms()],
+        [&quot;proper residual&quot;, partial.Residual()],
+        [&quot;verified round trip&quot;, .algebra.Expand(partial.Record()) == R],
+        [&quot;pole evidence&quot;, divisor.Poles()]
+    ]
+);</textarea><div class="tutorial-output" data-tutorial-output></div></section></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

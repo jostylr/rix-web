@@ -820,6 +820,14 @@
       "status": "implemented"
     },
     {
+      "number": "20",
+      "file": "plugins-chaos-and-fractals.html",
+      "title": "Plugins: Chaos and fractals",
+      "description": "Optional RiX plugins grouped under Chaos and fractals.",
+      "pluginGroup": true,
+      "status": "implemented"
+    },
+    {
       "number": "14a",
       "parent": "14",
       "file": "plugin-ball.html",
@@ -885,6 +893,15 @@
     {
       "number": "14h",
       "parent": "14",
+      "file": "plugin-bessel.html",
+      "title": "Certified Bessel functions",
+      "description": "Evaluate the first cylindrical Bessel functions through a clear namespace and refine their certified intervals.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "14i",
+      "parent": "14",
       "file": "plugin-algebraic-real.html",
       "title": "Certified algebraic reals in RiX",
       "description": "Build exact real roots, inspect Sturm certificates, refine rational intervals, and compare sqrt(2) without floating point.",
@@ -903,6 +920,15 @@
     {
       "number": "15b",
       "parent": "15",
+      "file": "plugin-calculus.html",
+      "title": "Differentiate an abstract exponential and refine its values",
+      "description": "Build portable function expressions, differentiate by semantic identity, and attach a certified numerical realization.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "15c",
+      "parent": "15",
       "file": "plugin-exact-algebras.html",
       "title": "Multiply exact quaternions and octonions",
       "description": "Explore Cayley–Dickson multiplication, conjugation, norms, and inverses using a pure-RiX plugin.",
@@ -910,7 +936,7 @@
       "status": "implemented"
     },
     {
-      "number": "15c",
+      "number": "15d",
       "parent": "15",
       "file": "plugin-fracfun.html",
       "title": "Explore form-preserving functions",
@@ -919,7 +945,7 @@
       "status": "implemented"
     },
     {
-      "number": "15d",
+      "number": "15e",
       "parent": "15",
       "file": "plugin-fraction.html",
       "title": "Explore unreduced fractions",
@@ -928,7 +954,7 @@
       "status": "implemented"
     },
     {
-      "number": "15e",
+      "number": "15f",
       "parent": "15",
       "file": "plugin-linalg.html",
       "title": "Exact linear algebra and Frames",
@@ -937,7 +963,7 @@
       "status": "implemented"
     },
     {
-      "number": "15f",
+      "number": "15g",
       "parent": "15",
       "file": "plugin-optimize.html",
       "title": "Exact linear programming",
@@ -946,7 +972,7 @@
       "status": "implemented"
     },
     {
-      "number": "15g",
+      "number": "15h",
       "parent": "15",
       "file": "plugin-poly.html",
       "title": "Work with callable polynomials",
@@ -955,7 +981,7 @@
       "status": "implemented"
     },
     {
-      "number": "15h",
+      "number": "15i",
       "parent": "15",
       "file": "plugin-ratfun.html",
       "title": "Work with exact rational functions",
@@ -964,7 +990,7 @@
       "status": "implemented"
     },
     {
-      "number": "15i",
+      "number": "15j",
       "parent": "15",
       "file": "plugin-solve.html",
       "title": "Solving exact linear systems",
@@ -973,7 +999,7 @@
       "status": "implemented"
     },
     {
-      "number": "15j",
+      "number": "15k",
       "parent": "15",
       "file": "plugin-stern-brocot.html",
       "title": "Explore the exact Stern–Brocot tree",
@@ -982,16 +1008,16 @@
       "status": "implemented"
     },
     {
-      "number": "15k",
+      "number": "15l",
       "parent": "15",
       "file": "plugin-symbolic.html",
-      "title": "Load the symbolic exploration workspace",
-      "description": "Activate unreduced fractions and form-preserving functions through one meta-plugin.",
+      "title": "Explore exact forms and abstract derivatives together",
+      "description": "Activate unreduced fractions, form-preserving functions, portable Calculus expressions, and visible domain obligations through one meta-plugin.",
       "pluginGroup": false,
       "status": "implemented"
     },
     {
-      "number": "15l",
+      "number": "15m",
       "parent": "15",
       "file": "plugin-stats.html",
       "title": "Summarize exact data",
@@ -1173,6 +1199,15 @@
     {
       "number": "18m",
       "parent": "18",
+      "file": "plugin-webgl.html",
+      "title": "Execute a retained Scene3D scene with WebGL",
+      "description": "Lower exact retained 3D geometry to a versioned browser-safe GPU plan.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "18n",
+      "parent": "18",
       "file": "plugin-gif.html",
       "title": "Prepare an animated GIF",
       "description": "Turn a deterministic mathematical timeline into host-rasterized GIF frames.",
@@ -1185,6 +1220,15 @@
       "file": "plugin-complex-viz.html",
       "title": "Color an exact complex function",
       "description": "Sample zeros and poles with exact complex arithmetic and emit portable Graphics.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "20a",
+      "parent": "20",
+      "file": "plugin-fractals.html",
+      "title": "Explore deterministic chaos and escape-time fractals",
+      "description": "Keep RiX dynamics mathematical, then lower selected results to portable Graphics.",
       "pluginGroup": false,
       "status": "implemented"
     }

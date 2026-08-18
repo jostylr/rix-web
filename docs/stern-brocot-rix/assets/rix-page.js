@@ -13431,6 +13431,16 @@ ${indentStr})`;
     ["INTERSECTS", "?&"]
   ]);
   var TEXT_BINARY = new Map(Array.from(BINARY_TEXT, ([name, text]) => [text, name]));
+  var CALCULUS_OPERATOR_TO_IR = new Map([
+    ["add", "ADD"],
+    ["subtract", "SUB"],
+    ["multiply", "MUL"],
+    ["divide", "DIV"],
+    ["power", "POW"],
+    ["negate", "NEG"]
+  ]);
+  var IR_TO_CALCULUS_OPERATOR = new Map(Array.from(CALCULUS_OPERATOR_TO_IR, ([name, fn]) => [fn, name]));
+  var CALCULUS_EXPRESSION_SCHEMA = "rix.calculus.expression@1";
   var symbolicIr = (fn, ...args) => ({ fn, args });
   var ir = symbolicIr;
   var symbolicLiteral = (value) => ir("LITERAL", String(value));
@@ -13589,6 +13599,10 @@ ${indentStr})`;
     if (node.fn === "SYS_CALL") {
       return `.${node.args[0]}(${node.args.slice(1).map((arg) => renderSymbolicIr(arg)).join(", ")})`;
     }
+    if (node.fn === "SEMANTIC_APPLY") {
+      const [, name, ...args] = node.args;
+      return `${name}(${args.map((arg) => renderSymbolicIr(arg)).join(", ")})`;
+    }
     if (node.fn === "ABS")
       return `|${renderSymbolicIr(node.args[0])}|`;
     if (node.fn === "INTERVAL")
@@ -13655,6 +13669,13 @@ ${indentStr})`;
       return rixMap([["kind", rixString("unary")], ["op", rixString("-")], ["expr", serializeIr(node.args[0])]]);
     if (node.fn === "NOT")
       return rixMap([["kind", rixString("unary")], ["op", rixString("NOT")], ["expr", serializeIr(node.args[0])]]);
+    if (node.fn === "SEMANTIC_APPLY")
+      return rixMap([
+        ["kind", rixString("semanticApply")],
+        ["semanticId", rixString(node.args[0])],
+        ["name", rixString(node.args[1])],
+        ["arguments", { type: "sequence", values: node.args.slice(2).map(serializeIr) }]
+      ]);
     const op = DISPLAY_BINARY_TEXT.get(node.fn);
     if (op)
       return rixMap([["kind", rixString("binary")], ["op", rixString(op)], ["left", serializeIr(node.args[0])], ["right", serializeIr(node.args[1])]]);
@@ -13685,6 +13706,140 @@ ${indentStr})`;
       ])))],
       ["expression", inspectExpression]
     ]);
+  }
+  function calculusRecordEntry(value, key) {
+    if (value?.type !== "map" || !(value.entries instanceof Map))
+      return;
+    return value.entries.get(key) ?? value.entries.get(key.toLowerCase());
+  }
+  function calculusRecordText(value, key, label) {
+    const entry = calculusRecordEntry(value, key);
+    if (entry?.type !== "string" || !entry.value.length)
+      throw new Error(`${label} must be a nonempty string or colon-string`);
+    return entry.value;
+  }
+  function calculusRecordValues(value, key, label) {
+    const entry = calculusRecordEntry(value, key);
+    if (!entry || !["array", "sequence", "tuple"].includes(entry.type))
+      throw new Error(`${label} must be an Array or sequence`);
+    return entry.values;
+  }
+  function requireCalculusExpression(value, path = "expression") {
+    if (value?.type !== "map" || !(value.entries instanceof Map)) {
+      throw new Error(`${path} must be a ${CALCULUS_EXPRESSION_SCHEMA} map`);
+    }
+    const schema = calculusRecordEntry(value, "schema");
+    if (schema?.type !== "string" || schema.value !== CALCULUS_EXPRESSION_SCHEMA) {
+      throw new Error(`${path} must declare schema ${CALCULUS_EXPRESSION_SCHEMA}`);
+    }
+    return value;
+  }
+  function calculusExpressionToSymbolicIr(value, path = "expression") {
+    const expression = requireCalculusExpression(value, path);
+    const kind = calculusRecordText(expression, "kind", `${path}.kind`);
+    if (kind === "variable") {
+      const name = calculusRecordText(expression, "name", `${path}.name`);
+      const scopeValue = calculusRecordEntry(expression, "scope");
+      const scope = scopeValue?.type === "string" ? scopeValue.value : "local";
+      if (scope !== "local" && scope !== "outer")
+        throw new Error(`${path}.scope must be :local or :outer`);
+      return scope === "outer" ? ir("OUTER_RETRIEVE", name) : retrieve(name);
+    }
+    if (kind === "constant") {
+      const constant = calculusRecordEntry(expression, "value");
+      if (!isExactScalar(constant))
+        throw new Error(`${path}.value must be an exact Integer or Rational`);
+      return exactToIr(constant);
+    }
+    if (kind === "operator") {
+      const operation = calculusRecordText(expression, "operation", `${path}.operation`);
+      const fn = CALCULUS_OPERATOR_TO_IR.get(operation);
+      if (!fn)
+        throw new Error(`${path}.operation '${operation}' is not supported by the exact symbolic bridge`);
+      const operands = calculusRecordValues(expression, "operands", `${path}.operands`);
+      const arity = fn === "NEG" ? 1 : 2;
+      if (operands.length !== arity)
+        throw new Error(`${path}.${operation} expects ${arity} operand(s)`);
+      return ir(fn, ...operands.map((operand2, index) => calculusExpressionToSymbolicIr(operand2, `${path}.operands[${index + 1}]`)));
+    }
+    if (kind === "apply") {
+      const semanticId = calculusRecordText(expression, "semanticId", `${path}.semanticId`);
+      const name = calculusRecordText(expression, "name", `${path}.name`);
+      const args = calculusRecordValues(expression, "arguments", `${path}.arguments`);
+      return ir("SEMANTIC_APPLY", semanticId, name, ...args.map((arg, index) => calculusExpressionToSymbolicIr(arg, `${path}.arguments[${index + 1}]`)));
+    }
+    throw new Error(`${path}.kind '${kind}' is not supported by the exact symbolic bridge`);
+  }
+  function calculusExpressionRecord(kind, entries) {
+    const record = rixMap([
+      ["valuekind", rixString("calculusExpression")],
+      ["schema", rixString(CALCULUS_EXPRESSION_SCHEMA)],
+      ["kind", rixString(kind)],
+      ...entries
+    ]);
+    record._ext = new Map([
+      ["__type", rixString("CalculusExpression")],
+      ["_type", rixString("map")],
+      ["immutable", new Integer(1n)]
+    ]);
+    return record;
+  }
+  function symbolicIrToCalculusExpression(node, path = "expression") {
+    if (!node?.fn)
+      throw new Error(`${path} is not symbolic expression IR`);
+    if (node.fn === "LITERAL") {
+      const text = String(node.args[0]);
+      if (!/^-?\d+$/.test(text))
+        throw new Error(`${path} contains unsupported literal '${text}'`);
+      return calculusExpressionRecord("constant", [["value", new Integer(BigInt(text))]]);
+    }
+    if (node.fn === "RETRIEVE" || node.fn === "OUTER_RETRIEVE") {
+      return calculusExpressionRecord("variable", [
+        ["name", rixString(node.args[0])],
+        ["scope", rixString(node.fn === "OUTER_RETRIEVE" ? "outer" : "local")]
+      ]);
+    }
+    if (IR_TO_CALCULUS_OPERATOR.has(node.fn)) {
+      const operation = IR_TO_CALCULUS_OPERATOR.get(node.fn);
+      return calculusExpressionRecord("operator", [
+        ["operation", rixString(operation)],
+        ["operands", { type: "sequence", values: node.args.map((operand2, index) => symbolicIrToCalculusExpression(operand2, `${path}.${operation}[${index + 1}]`)) }]
+      ]);
+    }
+    if (node.fn === "SEMANTIC_APPLY") {
+      return calculusExpressionRecord("apply", [
+        ["semanticid", rixString(node.args[0])],
+        ["name", rixString(node.args[1])],
+        ["arguments", { type: "sequence", values: node.args.slice(2).map((arg, index) => symbolicIrToCalculusExpression(arg, `${path}.arguments[${index + 1}]`)) }]
+      ]);
+    }
+    throw new Error(`${path} contains unsupported symbolic operation '${node.fn}'`);
+  }
+  function calculusSpecInputs(value, expression) {
+    const referenced = Array.from(retrieveNames(expression)).sort();
+    if (value === null || value === undefined)
+      return referenced;
+    const inputs = roleList(value, "input");
+    const declared = new Set(inputs);
+    const missing = referenced.filter((name) => !declared.has(name));
+    if (missing.length)
+      throw new Error(`Calculus expression inputs omit free variable(s): ${missing.join(", ")}`);
+    return inputs;
+  }
+  function calculusExpressionToSpec(value, inputs = null, context = null) {
+    const expression = calculusExpressionToSymbolicIr(value);
+    return createSymbolicSpec({
+      inputs: calculusSpecInputs(inputs, expression),
+      outputMode: "expression",
+      expression,
+      origin: ".SpecFromExpression"
+    }, context);
+  }
+  function symbolicSpecToCalculusExpression(value) {
+    const spec = getAttachedSpec(value);
+    if (!isSymbolicSpec(spec))
+      throw new Error("ExpressionFromSpec expects a symbolic spec or spec-backed function");
+    return symbolicIrToCalculusExpression(expressionOf(spec));
   }
   function supportedExpression(node) {
     if (!node?.fn)
@@ -14680,7 +14835,9 @@ ${indentStr})`;
     SPECCABILITY: { impl: ([value]) => speccabilityValue(value), pure: true, doc: "Report whether a pure function can be represented by the exact symbolic subset" },
     INSPECTSPEC: { impl: ([value]) => inspectSymbolicSpec(getAttachedSpec(value) || value), pure: true, doc: "Return the structural inspection map for a symbolic spec" },
     SPECROLES: { impl: ([value, overrides = null]) => symbolicRolesValue(value, overrides), pure: true, doc: "Resolve all symbols and input/output roles, with optional role overrides" },
-    SPECFRACTIONPARTS: { impl: ([value], context) => symbolicFractionParts(value, context), pure: true, doc: "Split a symbolic top-level fraction into numerator and denominator specs" }
+    SPECFRACTIONPARTS: { impl: ([value], context) => symbolicFractionParts(value, context), pure: true, doc: "Split a symbolic top-level fraction into numerator and denominator specs" },
+    SPECFROMEXPRESSION: { impl: ([value, inputs = null], context) => calculusExpressionToSpec(value, inputs, context), pure: true, doc: "Import a public Calculus expression record as a core symbolic specification" },
+    EXPRESSIONFROMSPEC: { impl: ([value]) => symbolicSpecToCalculusExpression(value), pure: true, doc: "Export a symbolic specification through the public Calculus expression schema" }
   };
   var symbolicFunctions = {
     SYSTEM_SPEC: {
@@ -18939,6 +19096,358 @@ ${indentStr})`;
     return sheet;
   }
 
+  // rix/src/runtime/renderer-registry.js
+  var stringValue2 = (value) => ({ type: "string", value: String(value) });
+  var sequenceValue = (values) => ({ type: "sequence", values });
+  function targetName(value, label = "Render target") {
+    const result = value?.type === "string" ? value.value : value;
+    if (typeof result !== "string" || !result.trim())
+      throw new Error(`${label} must be a non-empty string or colon-string`);
+    return result.trim().toLowerCase().replace(/^\./, "");
+  }
+  function nativeOptions(value) {
+    if (value === null || value === undefined)
+      return {};
+    if (value?.type !== "map" || !(value.entries instanceof Map)) {
+      if (typeof value === "object" && !Array.isArray(value))
+        return value;
+      throw new Error("Render options must be a map");
+    }
+    return Object.fromEntries(Array.from(value.entries, ([key, entry]) => [String(key), entry]));
+  }
+  function normalizeDiagnostic(value, fallbackCode = "renderer") {
+    if (typeof value === "string")
+      return Object.freeze({ level: "warning", code: fallbackCode, message: value });
+    if (!value || typeof value !== "object")
+      return Object.freeze({ level: "warning", code: fallbackCode, message: String(value) });
+    return Object.freeze({
+      level: value.level || "warning",
+      code: value.code || fallbackCode,
+      message: String(value.message || value.code || fallbackCode),
+      ...value.path ? { path: String(value.path) } : {}
+    });
+  }
+  function normalizeAsset(asset, index) {
+    if (!asset || typeof asset !== "object")
+      throw new Error(`Render asset ${index + 1} must be an object`);
+    if (typeof asset.path !== "string" || !asset.path.trim())
+      throw new Error(`Render asset ${index + 1} requires a relative path`);
+    if (typeof asset.content !== "string" && !(asset.content instanceof Uint8Array)) {
+      throw new Error(`Render asset ${index + 1} content must be text or bytes`);
+    }
+    return Object.freeze({
+      path: asset.path,
+      mime: asset.mime || "application/octet-stream",
+      content: asset.content
+    });
+  }
+  function createRenderResult(fields) {
+    if (!fields || typeof fields !== "object")
+      throw new Error("Renderer must return a RenderResult object");
+    if (typeof fields.content !== "string" && !(fields.content instanceof Uint8Array)) {
+      throw new Error("RenderResult content must be text or Uint8Array bytes");
+    }
+    const target = targetName(fields.target, "RenderResult target");
+    return Object.freeze({
+      type: "render_result",
+      target,
+      mime: String(fields.mime || "application/octet-stream"),
+      extension: String(fields.extension || target).replace(/^\./, "").toLowerCase(),
+      content: fields.content,
+      assets: Object.freeze((fields.assets || []).map(normalizeAsset)),
+      diagnostics: Object.freeze((fields.diagnostics || []).map((item) => normalizeDiagnostic(item, `${target}.diagnostic`))),
+      deterministic: fields.deterministic !== false,
+      toolchain: fields.toolchain ? String(fields.toolchain) : null,
+      metadata: Object.freeze({ ...fields.metadata || {} })
+    });
+  }
+  function isRenderResult(value) {
+    return Boolean(value && value.type === "render_result" && (typeof value.content === "string" || value.content instanceof Uint8Array));
+  }
+
+  class UnsupportedRenderError extends Error {
+    constructor(message, { code = "unsupported-input", target = null, path = null } = {}) {
+      super(message);
+      this.name = "UnsupportedRenderError";
+      this.code = code;
+      this.target = target;
+      this.path = path;
+    }
+  }
+  function inputKind(value) {
+    if (value?.type === "output" && value.kind)
+      return value.kind;
+    if (value?.type === "map" && value.entries instanceof Map) {
+      const portableType = value.entries.get("type")?.value ?? value.entries.get("type");
+      const portableKind = value.entries.get("kind")?.value ?? value.entries.get("kind");
+      if (portableType === "output" && typeof portableKind === "string")
+        return portableKind;
+      if (typeof portableType === "string")
+        return portableType;
+    }
+    if (value?.type)
+      return value.type;
+    return typeof value;
+  }
+
+  class RendererRegistry {
+    constructor() {
+      this.renderers = new Map;
+      this.aliases = new Map;
+    }
+    register(definition) {
+      if (!definition || typeof definition.render !== "function")
+        throw new Error("Renderer definition requires render(request)");
+      const target = targetName(definition.target);
+      if (this.renderers.has(target))
+        throw new Error(`Renderer target '${target}' is already registered`);
+      const aliases = new Set([
+        target,
+        definition.mime,
+        definition.extension,
+        ...definition.aliases || []
+      ].filter(Boolean).map((item) => targetName(String(item))));
+      for (const alias of aliases) {
+        if (this.aliases.has(alias))
+          throw new Error(`Renderer alias '${alias}' is already registered`);
+      }
+      const entry = Object.freeze({
+        target,
+        mime: String(definition.mime || "application/octet-stream"),
+        extension: String(definition.extension || target).replace(/^\./, "").toLowerCase(),
+        aliases: Object.freeze([...aliases]),
+        inputKinds: Object.freeze([...definition.inputKinds || []]),
+        deterministic: definition.deterministic !== false,
+        description: String(definition.description || `${target} renderer`),
+        render: definition.render
+      });
+      this.renderers.set(target, entry);
+      for (const alias of aliases)
+        this.aliases.set(alias, target);
+      return entry;
+    }
+    unregister(targetValue) {
+      const entry = this.info(targetValue);
+      if (!entry)
+        return false;
+      this.renderers.delete(entry.target);
+      for (const alias of entry.aliases)
+        this.aliases.delete(alias);
+      return true;
+    }
+    resolve(targetValue) {
+      const requested = targetName(targetValue);
+      return this.aliases.get(requested) || (this.renderers.has(requested) ? requested : null);
+    }
+    info(targetValue) {
+      const resolved = this.resolve(targetValue);
+      return resolved ? this.renderers.get(resolved) : null;
+    }
+    list() {
+      return [...this.renderers.values()].sort((left, right) => left.target.localeCompare(right.target));
+    }
+    targetForPath(filename, { preserveAlias = false } = {}) {
+      const lower = String(filename).toLowerCase();
+      const aliases = [...this.aliases.keys()].filter((alias) => !alias.includes("/") && lower.endsWith(`.${alias}`)).sort((left, right) => right.length - left.length);
+      return aliases.length ? preserveAlias ? aliases[0] : this.resolve(aliases[0]) : null;
+    }
+    render(value, targetValue, optionsValue = null, runtime = {}) {
+      const requested = targetName(targetValue);
+      const options = nativeOptions(optionsValue);
+      const fallbacksValue = options.fallbacks ?? options.fallback ?? [];
+      const fallbacks = Array.isArray(fallbacksValue) ? fallbacksValue : Array.isArray(fallbacksValue?.values) ? fallbacksValue.values : fallbacksValue ? [fallbacksValue] : [];
+      const candidates = [requested, ...fallbacks.map((item) => targetName(item))];
+      const failures = [];
+      for (const candidate of candidates) {
+        const entry = this.info(candidate);
+        if (!entry) {
+          failures.push({ level: "warning", code: "renderer-unavailable", message: `No renderer is registered for '${candidate}'` });
+          continue;
+        }
+        if (entry.inputKinds.length && !entry.inputKinds.includes(inputKind(value))) {
+          failures.push({
+            level: "warning",
+            code: "unsupported-input",
+            message: `Renderer '${entry.target}' does not accept ${inputKind(value)} values`
+          });
+          continue;
+        }
+        try {
+          const raw = entry.render(Object.freeze({
+            value,
+            options,
+            requestedTarget: requested,
+            target: entry.target,
+            registry: this,
+            format: runtime.format || ((item) => item?.type === "string" ? item.value : String(item ?? "")),
+            render: (nestedValue, nestedTarget, nestedOptions = {}) => this.render(nestedValue, nestedTarget, { ...options, ...nestedOptions, fallback: [] }, runtime),
+            runtime
+          }));
+          const result = createRenderResult({
+            target: entry.target,
+            mime: entry.mime,
+            extension: entry.extension,
+            deterministic: entry.deterministic,
+            ...raw,
+            diagnostics: [...failures, ...raw?.diagnostics || []]
+          });
+          if (entry.target !== requested) {
+            return createRenderResult({
+              ...result,
+              diagnostics: [{
+                level: "warning",
+                code: "renderer-fallback",
+                message: `Rendered '${requested}' through fallback '${entry.target}'`
+              }, ...result.diagnostics]
+            });
+          }
+          return result;
+        } catch (error) {
+          if (!(error instanceof UnsupportedRenderError))
+            throw error;
+          failures.push({
+            level: "warning",
+            code: error.code,
+            message: error.message,
+            ...error.path ? { path: error.path } : {}
+          });
+        }
+      }
+      const detail = failures.map(({ code, message }) => `[${code}] ${message}`).join("; ");
+      throw new UnsupportedRenderError(`Cannot render ${inputKind(value)} as '${requested}'${detail ? `: ${detail}` : ""}`, {
+        code: "render-negotiation-failed",
+        target: requested,
+        path: failures.find(({ path }) => path)?.path || null
+      });
+    }
+  }
+  function diagnosticValue(diagnostic) {
+    return {
+      type: "map",
+      entries: new Map([
+        ["level", stringValue2(diagnostic.level)],
+        ["code", stringValue2(diagnostic.code)],
+        ["message", stringValue2(diagnostic.message)],
+        ...diagnostic.path ? [["path", stringValue2(diagnostic.path)]] : []
+      ])
+    };
+  }
+  function assetValue(asset) {
+    const binary2 = asset.content instanceof Uint8Array;
+    return {
+      type: "map",
+      entries: new Map([
+        ["path", stringValue2(asset.path)],
+        ["mime", stringValue2(asset.mime)],
+        ["encoding", stringValue2(binary2 ? "base64" : "utf8")],
+        ["content", stringValue2(binary2 ? bytesToBase64(asset.content) : asset.content)]
+      ])
+    };
+  }
+  function metadataValue(value, seen = new WeakSet) {
+    if (value === null || value === undefined)
+      return null;
+    if (value instanceof Integer || value?.type)
+      return value;
+    if (typeof value === "string")
+      return stringValue2(value);
+    if (typeof value === "boolean")
+      return value ? new Integer(1n) : null;
+    if (typeof value === "bigint")
+      return new Integer(value);
+    if (typeof value === "number") {
+      return Number.isSafeInteger(value) ? new Integer(BigInt(value)) : stringValue2(value);
+    }
+    if (Array.isArray(value))
+      return sequenceValue(value.map((entry) => metadataValue(entry, seen)));
+    if (typeof value === "object") {
+      if (seen.has(value))
+        return stringValue2("[circular]");
+      seen.add(value);
+      return {
+        type: "map",
+        entries: new Map(Object.entries(value).map(([key, entry]) => [key, metadataValue(entry, seen)]))
+      };
+    }
+    return stringValue2(value);
+  }
+  function renderResultValue(result) {
+    if (!isRenderResult(result))
+      throw new Error("Expected a RenderResult");
+    const binary2 = result.content instanceof Uint8Array;
+    const value = {
+      type: "map",
+      entries: new Map([
+        ["target", stringValue2(result.target)],
+        ["mime", stringValue2(result.mime)],
+        ["extension", stringValue2(result.extension)],
+        ["encoding", stringValue2(binary2 ? "base64" : "utf8")],
+        ["content", stringValue2(binary2 ? bytesToBase64(result.content) : result.content)],
+        ["assets", sequenceValue(result.assets.map(assetValue))],
+        ["diagnostics", sequenceValue(result.diagnostics.map(diagnosticValue))],
+        ["deterministic", result.deterministic ? new Integer(1n) : null],
+        ["toolchain", result.toolchain ? stringValue2(result.toolchain) : null],
+        ["metadata", metadataValue(result.metadata)]
+      ]),
+      _ext: new Map([["immutable", new Integer(1n)]])
+    };
+    Object.defineProperty(value, "_renderResult", { value: result, enumerable: false });
+    return Object.freeze(value);
+  }
+  function bytesToBase64(bytes) {
+    let binary2 = "";
+    for (let offset = 0;offset < bytes.length; offset += 32768) {
+      binary2 += String.fromCharCode(...bytes.subarray(offset, Math.min(bytes.length, offset + 32768)));
+    }
+    if (typeof btoa === "function")
+      return btoa(binary2);
+    throw new Error("This host cannot expose binary RenderResult content as base64");
+  }
+  function infoValue(entry) {
+    if (!entry)
+      return null;
+    return {
+      type: "map",
+      entries: new Map([
+        ["target", stringValue2(entry.target)],
+        ["mime", stringValue2(entry.mime)],
+        ["extension", stringValue2(entry.extension)],
+        ["description", stringValue2(entry.description)],
+        ["inputs", sequenceValue(entry.inputKinds.map(stringValue2))],
+        ["aliases", sequenceValue(entry.aliases.map(stringValue2))],
+        ["deterministic", entry.deterministic ? new Integer(1n) : null]
+      ])
+    };
+  }
+  function createRendererCollection(registry) {
+    const list = () => sequenceValue(registry.list().map(({ target }) => stringValue2(target)));
+    const info = (target) => infoValue(registry.info(target));
+    return {
+      type: "map",
+      entries: new Map([["List", list], ["Info", info]]),
+      _ext: new Map([
+        ["LIST", { type: "method_builtin", name: "List", impl: () => list() }],
+        ["INFO", { type: "method_builtin", name: "Info", impl: (args) => info(args[1]) }],
+        ["immutable", new Integer(1n)]
+      ])
+    };
+  }
+  function createRendererPluginCollection(registry, target) {
+    const render = (args, runtime = {}) => {
+      if (args.length < 1 || args.length > 2)
+        throw new Error(`${target}.Render expects a value and optional options map`);
+      return renderResultValue(registry.render(args[0], target, args[1] ?? null, runtime));
+    };
+    return {
+      type: "map",
+      entries: new Map([["Render", render]]),
+      _ext: new Map([
+        ["RENDER", { type: "method_builtin", name: "Render", impl: (args) => render(args.slice(1)) }],
+        ["immutable", new Integer(1n)]
+      ])
+    };
+  }
+
   // rix/src/runtime/output.js
   var int3 = (value) => new Integer(BigInt(value));
   var isSequence = (value) => value && ["sequence", "tuple", "set", "array"].includes(value.type);
@@ -19168,8 +19677,15 @@ ${indentStr})`;
   function numericValue(value, label) {
     if (value instanceof Integer)
       return Number(value.value);
-    if (value instanceof Rational)
-      return Number(value.numerator) / Number(value.denominator);
+    if (value instanceof Rational) {
+      if (value.numerator === 0n)
+        return 0;
+      const sign = value.numerator < 0n ? -1 : 1;
+      const numerator = value.numerator < 0n ? -value.numerator : value.numerator;
+      const numeratorShift = Math.max(0, numerator.toString(2).length - 53);
+      const denominatorShift = Math.max(0, value.denominator.toString(2).length - 53);
+      return sign * (Number(numerator >> BigInt(numeratorShift)) / Number(value.denominator >> BigInt(denominatorShift))) * 2 ** (numeratorShift - denominatorShift);
+    }
     if (typeof value === "number" && Number.isFinite(value))
       return value;
     throw new Error(`${label} must be a finite number`);
@@ -19502,7 +20018,7 @@ ${indentStr})`;
       id: asString(get(entry, "id"))
     });
   }
-  function assetValue(value, name, expectedMime = null) {
+  function assetValue2(value, name, expectedMime = null) {
     if (!isOutputValue(value) || value.kind !== "asset")
       throw new Error(`${name} requires an Asset output value`);
     if (expectedMime && !value.mime.startsWith(`${expectedMime}/`)) {
@@ -19530,7 +20046,7 @@ ${indentStr})`;
   }
   function mediaFields(entry, name, expectedMime) {
     return {
-      asset: assetValue(get(entry, "asset"), name, expectedMime),
+      asset: assetValue2(get(entry, "asset"), name, expectedMime),
       width: optionalDimension(get(entry, "width"), `${name} width`),
       height: optionalDimension(get(entry, "height"), `${name} height`),
       title: asString(get(entry, "title")),
@@ -19557,7 +20073,7 @@ ${indentStr})`;
     const poster = get(entry, "poster");
     return output("video", {
       ...mediaFields(entry, "Video", "video"),
-      poster: poster === null ? null : assetValue(poster, "Video poster", "image"),
+      poster: poster === null ? null : assetValue2(poster, "Video poster", "image"),
       transcript: get(entry, "transcript") === null ? null : inlineChildren(get(entry, "transcript"), "Video transcript")
     });
   }
@@ -20472,23 +20988,171 @@ ${indentStr})`;
       return style.get(name);
     return style.get(String(name).toLowerCase()) ?? null;
   }
-  function svgNumber(value, label) {
-    const number = numericValue(value, label);
-    if (!Number.isFinite(number))
-      throw new Error(`${label} must be finite`);
-    return Number(number.toFixed(6)).toString();
+  function svgPolicy(options = {}) {
+    const precision = options.precision ?? 6;
+    const rounding = options.rounding ?? "nearest";
+    if (!Number.isSafeInteger(precision) || precision < 0 || precision > 30) {
+      throw new Error("SVG coordinate precision must be an integer between 0 and 30");
+    }
+    if (!["nearest", "floor", "ceil", "truncate"].includes(rounding)) {
+      throw new Error("SVG coordinate rounding must be nearest, floor, ceil, or truncate");
+    }
+    return { precision, rounding, entries: [], collisions: new Map, gain: 1 };
   }
-  function svgPoint(value, index) {
+  var SVG_SHAPE_STYLE_KEYS = new Set(["stroke", "fill", "width", "strokewidth", "dash", "opacity"]);
+  var SVG_PATH_STYLE_KEYS = new Set([...SVG_SHAPE_STYLE_KEYS, "closed"]);
+  var SVG_TEXT_STYLE_KEYS = new Set([...SVG_SHAPE_STYLE_KEYS, "anchor", "size", "fontsize", "font", "weight"]);
+  function unsupportedSvg(message, path, code = "svg-unsupported-scene-feature") {
+    throw new UnsupportedRenderError(`${path}: ${message}`, { code, target: "svg", path });
+  }
+  function validateSvgStyle(style, allowed, path) {
+    if (style === null || style === undefined)
+      return;
+    if (!(style instanceof Map))
+      unsupportedSvg("style must be a Graphics style map", `${path}.style`, "svg-invalid-style");
+    for (const key of style.keys()) {
+      const canonical = String(key).toLowerCase();
+      if (!allowed.has(canonical)) {
+        unsupportedSvg(`SVG does not support Graphics style property '${key}'`, `${path}.style.${key}`, "svg-unsupported-style");
+      }
+    }
+  }
+  function finiteSvgDecimal(text4, label) {
+    if (!Number.isFinite(Number(text4))) {
+      throw new Error(`${label} is outside the finite SVG coordinate range`);
+    }
+    return text4;
+  }
+  function certifiedMagnitude(numerator, denominator, label) {
+    if (numerator === 0n)
+      return 0;
+    const magnitude = numericValue(new Rational(numerator, denominator), label);
+    if (!Number.isFinite(magnitude)) {
+      throw new Error(`${label} is outside the finite SVG coordinate range`);
+    }
+    if (magnitude === 0)
+      return Number.MIN_VALUE;
+    return magnitude * (1 + Number.EPSILON * 8) + Number.MIN_VALUE;
+  }
+  function decimalText(scaled, precision) {
+    const negative = scaled < 0n;
+    let digits = (negative ? -scaled : scaled).toString();
+    if (precision === 0)
+      return `${negative && scaled !== 0n ? "-" : ""}${digits}`;
+    digits = digits.padStart(precision + 1, "0");
+    const integer2 = digits.slice(0, -precision);
+    const fraction = digits.slice(-precision).replace(/0+$/, "");
+    return `${negative && scaled !== 0n ? "-" : ""}${integer2}${fraction ? `.${fraction}` : ""}`;
+  }
+  function roundedRational(value, policy) {
+    const negative = value.numerator < 0n;
+    const numerator = negative ? -value.numerator : value.numerator;
+    const scale = 10n ** BigInt(policy.precision);
+    const quotient = numerator * scale / value.denominator;
+    const remainder = numerator * scale % value.denominator;
+    const floor = negative ? -(quotient + (remainder === 0n ? 0n : 1n)) : quotient;
+    const ceil = negative ? -quotient : quotient + (remainder === 0n ? 0n : 1n);
+    let signed = negative ? -quotient : quotient;
+    if (policy.rounding === "floor")
+      signed = floor;
+    else if (policy.rounding === "ceil")
+      signed = ceil;
+    else if (policy.rounding === "nearest" && remainder * 2n >= value.denominator)
+      signed += negative ? -1n : 1n;
+    const errorNumerator = signed * value.denominator - value.numerator * scale;
+    const absoluteError = errorNumerator < 0n ? -errorNumerator : errorNumerator;
+    return {
+      text: decimalText(signed, policy.precision),
+      approximated: remainder !== 0n,
+      lower: decimalText(floor, policy.precision),
+      upper: decimalText(ceil, policy.precision),
+      error: certifiedMagnitude(absoluteError, value.denominator * scale, "SVG exact rounding error"),
+      scaled: signed,
+      scale
+    };
+  }
+  function intervalMidpoint(interval2) {
+    return new Rational(interval2.low.numerator * interval2.high.denominator + interval2.high.numerator * interval2.low.denominator, 2n * interval2.low.denominator * interval2.high.denominator);
+  }
+  function scaledDistance(scaled, scale, value) {
+    const difference = scaled * value.denominator - value.numerator * scale;
+    const absolute = difference < 0n ? -difference : difference;
+    return certifiedMagnitude(absolute, scale * value.denominator, "SVG certified enclosure radius");
+  }
+  function svgNumber(value, label, policy, role = "scalar") {
+    let lowered;
+    let exact;
+    let approximated = false;
+    if (value instanceof RationalInterval || value instanceof CertifiedApproximation) {
+      const interval2 = value instanceof CertifiedApproximation ? value.enclosure : value;
+      const candidateValue = value instanceof CertifiedApproximation ? value.candidate : intervalMidpoint(interval2);
+      const candidate = candidateValue instanceof Integer ? new Rational(candidateValue.value, 1n) : candidateValue;
+      const result = roundedRational(candidate, policy);
+      const lower = roundedRational(interval2.low, { ...policy, rounding: "floor" });
+      const upper = roundedRational(interval2.high, { ...policy, rounding: "ceil" });
+      exact = String(value);
+      lowered = result.text;
+      approximated = true;
+      const error = Math.max(scaledDistance(result.scaled, result.scale, interval2.low), scaledDistance(result.scaled, result.scale, interval2.high));
+      policy.entries.push({
+        path: label,
+        role,
+        exact,
+        lowered,
+        lower: lower.text,
+        upper: upper.text,
+        approximated,
+        certified: true,
+        error,
+        gain: policy.gain,
+        source: value instanceof CertifiedApproximation ? "certified-approximation" : "rational-interval",
+        presentation: value instanceof RationalInterval && !value.isAscending ? "reversed" : "ascending"
+      });
+    } else if (value instanceof Integer) {
+      exact = value.toString();
+      lowered = exact;
+      policy.entries.push({ path: label, role, exact, lowered, lower: lowered, upper: lowered, approximated: false, certified: true, error: 0, gain: policy.gain });
+    } else if (value instanceof Rational) {
+      exact = value.toString();
+      const result = roundedRational(value, policy);
+      lowered = result.text;
+      approximated = result.approximated;
+      policy.entries.push({ path: label, role, exact, lowered, lower: result.lower, upper: result.upper, approximated, certified: true, error: result.error, gain: policy.gain });
+    } else {
+      const number = numericValue(value, label);
+      if (!Number.isFinite(number))
+        throw new Error(`${label} must be finite`);
+      exact = String(number);
+      lowered = Number(number.toFixed(policy.precision)).toString();
+      approximated = Number(lowered) !== number;
+      policy.entries.push({ path: label, role, exact, lowered, lower: null, upper: null, approximated, certified: false, error: null, gain: policy.gain });
+    }
+    finiteSvgDecimal(lowered, label);
+    const recorded = policy.entries.at(-1);
+    if (recorded?.certified) {
+      finiteSvgDecimal(recorded.lower, `${label} lower enclosure`);
+      finiteSvgDecimal(recorded.upper, `${label} upper enclosure`);
+    }
+    const collisionKey = `${role}:${lowered}`;
+    const exactValues = policy.collisions.get(collisionKey) || new Set;
+    exactValues.add(exact);
+    policy.collisions.set(collisionKey, exactValues);
+    return lowered;
+  }
+  function svgPoint(value, index, policy) {
     const point = sequence(value, `Path point ${index + 1}`);
     if (point.length !== 2)
       throw new Error(`Path point ${index + 1} must contain x and y coordinates`);
-    return [svgNumber(point[0], `Path point ${index + 1} x`), svgNumber(point[1], `Path point ${index + 1} y`)];
+    return [
+      svgNumber(point[0], `Path point ${index + 1} x`, policy, "x"),
+      svgNumber(point[1], `Path point ${index + 1} y`, policy, "y")
+    ];
   }
-  function svgPair(value, label) {
+  function svgPair(value, label, policy, roles = ["x", "y"]) {
     const pair = sequence(value, label);
     if (pair.length !== 2)
       throw new Error(`${label} must contain two coordinates`);
-    return [svgNumber(pair[0], `${label} x`), svgNumber(pair[1], `${label} y`)];
+    return [svgNumber(pair[0], `${label} x`, policy, roles[0]), svgNumber(pair[1], `${label} y`, policy, roles[1])];
   }
   function sceneField(value, name) {
     if (value?.type === "map" && value.entries instanceof Map)
@@ -20502,17 +21166,17 @@ ${indentStr})`;
       return "0";
     return numericValue(value, label) === 0 ? "0" : "1";
   }
-  function svgPathData(path) {
+  function svgPathData(path, policy, scenePath) {
     if (!path.commands) {
       if (path.points.length === 0)
         return "";
-      const points = path.points.map(svgPoint);
+      const points = path.points.map((point, index) => svgPoint(point, index, policy));
       const closed = styleEntry(path.style, "closed")?.value === 1n || styleEntry(path.style, "closed") === true;
       return points.map(([x, y], index) => `${index === 0 ? "M" : "L"}${x} ${y}`).join(" ") + (closed ? " Z" : "");
     }
     return path.commands.map((command, index) => {
       const op = (asString(sceneField(command, "op")) ?? sceneField(command, "op") ?? "").toLowerCase();
-      const destination = () => svgPair(sceneField(command, "to"), `Path command ${index + 1} destination`);
+      const destination = () => svgPair(sceneField(command, "to"), `Path command ${index + 1} destination`, policy);
       if (op === "move" || op === "m") {
         const [x, y] = destination();
         return `M${x} ${y}`;
@@ -20522,19 +21186,19 @@ ${indentStr})`;
         return `L${x} ${y}`;
       }
       if (op === "quadratic" || op === "quad" || op === "q") {
-        const [cx, cy] = svgPair(sceneField(command, "control"), `Path command ${index + 1} control`);
+        const [cx, cy] = svgPair(sceneField(command, "control"), `Path command ${index + 1} control`, policy);
         const [x, y] = destination();
         return `Q${cx} ${cy} ${x} ${y}`;
       }
       if (op === "cubic" || op === "curve" || op === "c") {
-        const [c1x, c1y] = svgPair(sceneField(command, "control1"), `Path command ${index + 1} control1`);
-        const [c2x, c2y] = svgPair(sceneField(command, "control2"), `Path command ${index + 1} control2`);
+        const [c1x, c1y] = svgPair(sceneField(command, "control1"), `Path command ${index + 1} control1`, policy);
+        const [c2x, c2y] = svgPair(sceneField(command, "control2"), `Path command ${index + 1} control2`, policy);
         const [x, y] = destination();
         return `C${c1x} ${c1y} ${c2x} ${c2y} ${x} ${y}`;
       }
       if (op === "arc" || op === "a") {
-        const [rx, ry] = svgPair(sceneField(command, "radius"), `Path command ${index + 1} radius`);
-        const rotation = svgNumber(sceneField(command, "rotation") ?? int3(0), `Path command ${index + 1} rotation`);
+        const [rx, ry] = svgPair(sceneField(command, "radius"), `Path command ${index + 1} radius`, policy);
+        const rotation = svgNumber(sceneField(command, "rotation") ?? int3(0), `Path command ${index + 1} rotation`, policy, "angle");
         const large = svgFlag(sceneField(command, "large"), `Path command ${index + 1} large flag`);
         const sweep = svgFlag(sceneField(command, "sweep"), `Path command ${index + 1} sweep flag`);
         const [x, y] = destination();
@@ -20542,10 +21206,11 @@ ${indentStr})`;
       }
       if (op === "close" || op === "z")
         return "Z";
-      throw new Error(`Unsupported Path command '${op || "(missing op)"}'`);
+      const commandPath = `${scenePath}.commands[${index + 1}]`;
+      unsupportedSvg(`SVG does not support Path command '${op || "(missing op)"}'`, commandPath, "svg-unsupported-path-command");
     }).join(" ");
   }
-  function svgStyle(style, defaultFill = null) {
+  function svgStyle(style, defaultFill = null, policy) {
     const attrs = [];
     const stroke = asString(styleEntry(style, "stroke"));
     const fill = asString(styleEntry(style, "fill"));
@@ -20557,98 +21222,186 @@ ${indentStr})`;
     if (stroke)
       attrs.push(`stroke="${escapeHtml(stroke)}"`);
     if (width !== null && width !== undefined)
-      attrs.push(`stroke-width="${svgNumber(width, "Path stroke width")}"`);
+      attrs.push(`stroke-width="${svgNumber(width, "Path stroke width", policy, "width")}"`);
     if (dash)
       attrs.push(`stroke-dasharray="${escapeHtml(dash)}"`);
     if (opacity !== null && opacity !== undefined)
-      attrs.push(`opacity="${svgNumber(opacity, "Path opacity")}"`);
+      attrs.push(`opacity="${svgNumber(opacity, "Path opacity", policy, "opacity")}"`);
     return attrs.join(" ");
   }
-  function svgTransform(node) {
+  function svgTransform(node, policy) {
     const transforms = [];
+    const entryStart = policy.entries.length;
     if (node.translate !== null && node.translate !== undefined) {
-      const [x, y] = svgPair(node.translate, "Transform translate");
+      const [x, y] = svgPair(node.translate, "Transform translate", policy);
       transforms.push(`translate(${x} ${y})`);
     }
     if (node.rotate !== null && node.rotate !== undefined) {
-      const angle = svgNumber(node.rotate, "Transform rotate");
-      const origin = node.origin === null || node.origin === undefined ? null : svgPair(node.origin, "Transform origin");
+      const angle = svgNumber(node.rotate, "Transform rotate", policy, "angle");
+      const origin = node.origin === null || node.origin === undefined ? null : svgPair(node.origin, "Transform origin", policy);
       transforms.push(origin ? `rotate(${angle} ${origin[0]} ${origin[1]})` : `rotate(${angle})`);
     }
     if (node.scale !== null && node.scale !== undefined) {
-      const scale = isSequence(node.scale) || Array.isArray(node.scale) ? svgPair(node.scale, "Transform scale") : [svgNumber(node.scale, "Transform scale"), svgNumber(node.scale, "Transform scale")];
+      const scale = isSequence(node.scale) || Array.isArray(node.scale) ? svgPair(node.scale, "Transform scale", policy, ["scale", "scale"]) : [svgNumber(node.scale, "Transform scale", policy, "scale"), svgNumber(node.scale, "Transform scale", policy, "scale")];
       transforms.push(`scale(${scale[0]} ${scale[1]})`);
     }
-    return transforms.join(" ");
+    const transformEntries = policy.entries.slice(entryStart);
+    const scaleGain = Math.max(1, ...transformEntries.filter(({ role }) => role === "scale").flatMap(({ exact, lowered, lower, upper }) => [exact, lowered, lower, upper]).map(Number).filter(Number.isFinite).map(Math.abs));
+    for (const entry of transformEntries) {
+      if (entry.role !== "scale")
+        entry.gain *= scaleGain;
+    }
+    return { text: transforms.join(" "), childGain: policy.gain * scaleGain };
   }
-  function renderSvgText(node, format) {
-    const [x, y] = svgPair(node.position, "TextMark position");
+  function renderSvgText(node, format, policy) {
+    const [x, y] = svgPair(node.position, "TextMark position", policy);
     const anchor = asString(styleEntry(node.style, "anchor"));
     const size = styleEntry(node.style, "size") ?? styleEntry(node.style, "fontSize");
     const font = asString(styleEntry(node.style, "font"));
     const weight = asString(styleEntry(node.style, "weight"));
-    const attrs = [svgStyle(node.style, "currentColor")];
+    const attrs = [svgStyle(node.style, "currentColor", policy)];
     if (anchor)
       attrs.push(`text-anchor="${escapeHtml(anchor)}"`);
     if (size !== null && size !== undefined)
-      attrs.push(`font-size="${svgNumber(size, "TextMark size")}"`);
+      attrs.push(`font-size="${svgNumber(size, "TextMark size", policy, "font-size")}"`);
     if (font)
       attrs.push(`font-family="${escapeHtml(font)}"`);
     if (weight)
       attrs.push(`font-weight="${escapeHtml(weight)}"`);
     return `<text x="${x}" y="${y}" ${attrs.filter(Boolean).join(" ")}>${escapeHtml(cellText(node.text, format))}</text>`;
   }
-  function renderSvgNode(node, format, defs) {
+  function renderSvgNode(node, format, defs, policy, path) {
     if (!isOutputValue(node))
-      return "";
+      unsupportedSvg("expected a Graphics output node", path, "svg-invalid-scene-node");
     if (node.kind === "path") {
-      const d = svgPathData(node);
+      validateSvgStyle(node.style, SVG_PATH_STYLE_KEYS, path);
+      const d = svgPathData(node, policy, path);
       if (!d)
         return "";
-      return `<path d="${d}" ${svgStyle(node.style, "none")}/>`;
+      return `<path d="${d}" ${svgStyle(node.style, "none", policy)}/>`;
     }
     if (node.kind === "rectangle") {
-      const [x, y] = svgPair(node.origin, "Rectangle origin");
-      const [width, height] = svgPair(node.size, "Rectangle size");
-      return `<rect x="${x}" y="${y}" width="${width}" height="${height}" ${svgStyle(node.style, "none")}/>`;
+      validateSvgStyle(node.style, SVG_SHAPE_STYLE_KEYS, path);
+      const [x, y] = svgPair(node.origin, "Rectangle origin", policy);
+      const [width, height] = svgPair(node.size, "Rectangle size", policy, ["width", "height"]);
+      return `<rect x="${x}" y="${y}" width="${width}" height="${height}" ${svgStyle(node.style, "none", policy)}/>`;
     }
     if (node.kind === "circle") {
-      const [cx, cy] = svgPair(node.center, "Circle center");
-      return `<circle cx="${cx}" cy="${cy}" r="${svgNumber(node.radius, "Circle radius")}" ${svgStyle(node.style, "none")}/>`;
+      validateSvgStyle(node.style, SVG_SHAPE_STYLE_KEYS, path);
+      const [cx, cy] = svgPair(node.center, "Circle center", policy);
+      return `<circle cx="${cx}" cy="${cy}" r="${svgNumber(node.radius, "Circle radius", policy, "radius")}" ${svgStyle(node.style, "none", policy)}/>`;
     }
     if (node.kind === "drag_point") {
-      const [cx, cy] = svgPair(node.center, "DragPoint center");
+      validateSvgStyle(node.style, SVG_SHAPE_STYLE_KEYS, path);
+      const [cx, cy] = svgPair(node.center, "DragPoint center", policy);
       const replaced = node.replacesDependencies?.length ? ` data-rix-replaces-dependencies="${escapeHtml(node.replacesDependencies.join(","))}"` : "";
-      return `<circle class="rix-output-drag-point" cx="${cx}" cy="${cy}" r="${svgNumber(node.radius, "DragPoint radius")}" ${svgStyle(node.style, "#7c3aed")} tabindex="0" role="button" aria-label="${escapeHtml(node.label)}" data-rix-drag-target="${escapeHtml(node.targetId)}" data-rix-position="${cx},${cy}"${replaced}/>`;
+      return `<circle class="rix-output-drag-point" cx="${cx}" cy="${cy}" r="${svgNumber(node.radius, "DragPoint radius", policy, "radius")}" ${svgStyle(node.style, "#7c3aed", policy)} tabindex="0" role="button" aria-label="${escapeHtml(node.label)}" data-rix-drag-target="${escapeHtml(node.targetId)}" data-rix-position="${cx},${cy}"${replaced}/>`;
     }
     if (node.kind === "graphic_action") {
+      validateSvgStyle(node.style, SVG_SHAPE_STYLE_KEYS, path);
       const replaced = node.replacesDependencies?.length ? ` data-rix-replaces-dependencies="${escapeHtml(node.replacesDependencies.join(","))}"` : "";
-      const style = svgStyle(node.style);
-      return `<g class="rix-output-graphic-action"${style ? ` ${style}` : ""} tabindex="0" role="button" aria-label="${escapeHtml(node.label)}" data-rix-graphic-action="${escapeHtml(node.id)}" data-rix-graphic-target="${escapeHtml(node.targetId)}"${replaced}>${node.children.map((child) => renderSvgNode(child, format, defs)).join("")}</g>`;
+      const style = svgStyle(node.style, null, policy);
+      return `<g class="rix-output-graphic-action"${style ? ` ${style}` : ""} tabindex="0" role="button" aria-label="${escapeHtml(node.label)}" data-rix-graphic-action="${escapeHtml(node.id)}" data-rix-graphic-target="${escapeHtml(node.targetId)}"${replaced}>${node.children.map((child, index) => renderSvgNode(child, format, defs, policy, `${path}.graphic_action[${index + 1}]`)).join("")}</g>`;
     }
-    if (node.kind === "text_mark")
-      return renderSvgText(node, format);
-    if (node.kind === "group")
-      return `<g ${svgStyle(node.style)}>${node.children.map((child) => renderSvgNode(child, format, defs)).join("")}</g>`;
+    if (node.kind === "text_mark") {
+      validateSvgStyle(node.style, SVG_TEXT_STYLE_KEYS, path);
+      return renderSvgText(node, format, policy);
+    }
+    if (node.kind === "group") {
+      validateSvgStyle(node.style, SVG_SHAPE_STYLE_KEYS, path);
+      return `<g ${svgStyle(node.style, null, policy)}>${node.children.map((child, index) => renderSvgNode(child, format, defs, policy, `${path}.group[${index + 1}]`)).join("")}</g>`;
+    }
     if (node.kind === "transform") {
-      const transform = svgTransform(node);
-      return `<g${transform ? ` transform="${transform}"` : ""}${svgStyle(node.style) ? ` ${svgStyle(node.style)}` : ""}>${node.children.map((child) => renderSvgNode(child, format, defs)).join("")}</g>`;
+      validateSvgStyle(node.style, SVG_SHAPE_STYLE_KEYS, path);
+      const transform = svgTransform(node, policy);
+      const parentGain = policy.gain;
+      policy.gain = transform.childGain;
+      const style = svgStyle(node.style, null, policy);
+      const children = node.children.map((child, index) => renderSvgNode(child, format, defs, policy, `${path}.transform[${index + 1}]`)).join("");
+      policy.gain = parentGain;
+      return `<g${transform.text ? ` transform="${transform.text}"` : ""}${style ? ` ${style}` : ""}>${children}</g>`;
     }
     if (node.kind === "clip") {
-      const [x, y, width, height] = node.bounds.map((value, index) => svgNumber(value, `Clip bounds ${index + 1}`));
+      validateSvgStyle(node.style, SVG_SHAPE_STYLE_KEYS, path);
+      const clipRoles = ["x", "y", "width", "height"];
+      const [x, y, width, height] = node.bounds.map((value, index) => svgNumber(value, `Clip bounds ${index + 1}`, policy, clipRoles[index]));
       const id = `rix-clip-${defs.length + 1}`;
       defs.push(`<clipPath id="${id}"><rect x="${x}" y="${y}" width="${width}" height="${height}"/></clipPath>`);
-      return `<g clip-path="url(#${id})"${svgStyle(node.style) ? ` ${svgStyle(node.style)}` : ""}>${node.children.map((child) => renderSvgNode(child, format, defs)).join("")}</g>`;
+      const style = svgStyle(node.style, null, policy);
+      return `<g clip-path="url(#${id})"${style ? ` ${style}` : ""}>${node.children.map((child, index) => renderSvgNode(child, format, defs, policy, `${path}.clip[${index + 1}]`)).join("")}</g>`;
     }
-    return "";
+    unsupportedSvg(`SVG does not support Graphics node '${node.kind}'`, path, "svg-unsupported-node");
   }
-  function renderGraphicSvg(graphic, format = (item) => String(item ?? "")) {
+  function lowerGraphicSvg(graphic, format = (item) => String(item ?? ""), options = {}) {
     if (!isOutputValue(graphic) || graphic.kind !== "graphic")
       throw new Error("Expected a Graphic output value");
-    const size = graphic.size.map((value, index) => svgNumber(value, `Graphic size ${index + 1}`));
+    const policy = svgPolicy(options);
+    const size = graphic.size.map((value, index) => svgNumber(value, `Graphic size ${index + 1}`, policy, index === 0 ? "width" : "height"));
     const defs = [];
-    const children = graphic.children.map((child) => renderSvgNode(child, format, defs)).join("");
-    return `<svg class="rix-output-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size[0]} ${size[1]}" width="${size[0]}" height="${size[1]}" role="img">${defs.length ? `<defs>${defs.join("")}</defs>` : ""}${children}</svg>`;
+    const children = graphic.children.map((child, index) => renderSvgNode(child, format, defs, policy, `graphic[${index + 1}]`)).join("");
+    const collisions = [...policy.collisions.entries()].filter(([, exactValues]) => exactValues.size > 1).map(([key, exactValues]) => ({ lowered: key.slice(key.indexOf(":") + 1), role: key.slice(0, key.indexOf(":")), exact: [...exactValues] }));
+    const approximated = policy.entries.filter((entry) => entry.approximated);
+    const exactErrors = policy.entries.filter((entry) => entry.certified && entry.error > 0);
+    const viewportEntries = policy.entries.filter(({ path }) => path.startsWith("Graphic size "));
+    const viewportExtent = Math.hypot(...viewportEntries.map(({ lower, upper }) => Math.max(Math.abs(Number(lower)), Math.abs(Number(upper)))));
+    const coordinateExtent = Math.max(0, ...policy.entries.filter(({ role }) => ["x", "y", "width", "height", "radius"].includes(role)).flatMap(({ lower, upper }) => [lower, upper].map((bound) => Math.abs(Number(bound))).filter(Number.isFinite)));
+    const extent = Math.max(viewportExtent, coordinateExtent);
+    const coordinateError = Math.SQRT2 * Math.max(0, ...exactErrors.filter(({ role, path }) => ["x", "y"].includes(role) && !path.startsWith("Transform translate")).map(({ error, gain }) => error * gain));
+    const translationError = Math.SQRT2 * exactErrors.filter(({ path }) => path.startsWith("Transform translate")).reduce((sum, { error, gain }) => sum + error * gain, 0);
+    const extentError = Math.SQRT2 * Math.max(0, ...exactErrors.filter(({ role }) => ["width", "height"].includes(role)).map(({ error, gain }) => error * gain));
+    const radialError = Math.max(0, ...exactErrors.filter(({ role }) => role === "radius").map(({ error, gain }) => error * gain));
+    const directError = coordinateError + translationError + extentError + radialError;
+    const transformError = exactErrors.reduce((sum, { role, error, gain }) => role === "angle" ? sum + extent * error * gain * Math.PI / 180 : role === "scale" ? sum + extent * error * gain : sum, 0);
+    const rawRadius = directError + transformError;
+    const enclosureRadius = rawRadius === 0 ? 0 : rawRadius * (1 + Number.EPSILON * 8) + Number.MIN_VALUE;
+    const diagnostics = [];
+    if (approximated.length)
+      diagnostics.push({
+        level: "warning",
+        code: "svg-coordinate-approximation",
+        message: `${approximated.length} SVG numeric value${approximated.length === 1 ? " was" : "s were"} rounded with ${policy.rounding} at ${policy.precision} decimal places.`
+      });
+    if (collisions.length)
+      diagnostics.push({
+        level: "warning",
+        code: "svg-coordinate-collision",
+        message: `${collisions.length} distinct exact coordinate set${collisions.length === 1 ? "" : "s"} collided after SVG decimal lowering.`
+      });
+    if (enclosureRadius > 0)
+      diagnostics.push({
+        level: "info",
+        code: "svg-certified-outward-enclosure",
+        message: `Exact geometry was expanded outward by at most ${enclosureRadius} SVG user units to contain its decimal lowering.`
+      });
+    if (enclosureRadius > 0) {
+      const maxGain = Math.max(1, ...policy.entries.map(({ gain }) => gain || 1));
+      const translationExtent = policy.entries.filter(({ path }) => path.startsWith("Transform translate")).reduce((sum, { lowered, lower, upper, gain }) => sum + Math.max(Math.abs(Number(lowered)), Math.abs(Number(lower)), Math.abs(Number(upper))) * (gain || 1), 0);
+      const filterExtent = Math.SQRT2 * Math.max(extent, coordinateExtent) * maxGain + translationExtent + enclosureRadius;
+      if (!Number.isFinite(filterExtent) || !Number.isFinite(filterExtent * 2)) {
+        throw new Error("Certified SVG enclosure exceeds the finite SVG filter range");
+      }
+      const filterOrigin = -filterExtent;
+      const filterSize = filterExtent * 2;
+      defs.unshift(`<filter id="rix-exact-enclosure" filterUnits="userSpaceOnUse" x="${filterOrigin}" y="${filterOrigin}" width="${filterSize}" height="${filterSize}" color-interpolation-filters="sRGB"><feMorphology operator="dilate" radius="${enclosureRadius}"/></filter>`);
+    }
+    const renderedChildren = enclosureRadius > 0 ? `<g class="rix-exact-enclosure" filter="url(#rix-exact-enclosure)">${children}</g>` : children;
+    return {
+      content: `<svg class="rix-output-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size[0]} ${size[1]}" width="${size[0]}" height="${size[1]}" overflow="visible" role="img">${defs.length ? `<defs>${defs.join("")}</defs>` : ""}${renderedChildren}</svg>`,
+      diagnostics,
+      metadata: {
+        schema: "rix.svg.coordinate-lowering@1",
+        precision: policy.precision,
+        rounding: policy.rounding,
+        guarantee: "outward-exact-enclosure",
+        enclosureRadius,
+        approximated: approximated.length,
+        entries: policy.entries,
+        collisions
+      }
+    };
+  }
+  function renderGraphicSvg(graphic, format = (item) => String(item ?? ""), options = {}) {
+    return lowerGraphicSvg(graphic, format, options).content;
   }
   function graphicIsInteractive(graphic) {
     const visit = (node) => {
@@ -25458,7 +26211,7 @@ ${indented.join(`,
   function bool2(flag) {
     return flag ? int6(1) : null;
   }
-  function stringValue2(value) {
+  function stringValue3(value) {
     if (value?.type === "string")
       return value.value;
     if (value === null || value === undefined)
@@ -25487,8 +26240,8 @@ ${indented.join(`,
     return { [countName]: safeExactNumber(value, label) };
   }
   function localeNumberString(target, options) {
-    const decimal = stringValue2(optionValue(options, "decimal", stringObj3(".")));
-    const group = stringValue2(optionValue(options, "group", stringObj3("_")));
+    const decimal = stringValue3(optionValue(options, "decimal", stringObj3(".")));
+    const group = stringValue3(optionValue(options, "group", stringObj3("_")));
     const groupSizeValue = optionValue(options, "groupsize", new Integer(3n));
     const groupSize = safeExactNumber(groupSizeValue, "Locale group size");
     if (groupSize < 1)
@@ -25513,7 +26266,7 @@ ${indented.join(`,
     const repeat = optionValue(options, "userepeatnotation", undefined);
     return {
       ...limit === undefined ? {} : { limit: safeExactNumber(limit, "Repeating-decimal limit") },
-      ...onLimit === undefined ? {} : { onLimit: stringValue2(onLimit) },
+      ...onLimit === undefined ? {} : { onLimit: stringValue3(onLimit) },
       ...repeat === undefined ? {} : { useRepeatNotation: truthy2(repeat) }
     };
   }
@@ -25725,10 +26478,10 @@ ${indented.join(`,
     return values.slice(start - 1, end - 1);
   }
   function charsOf(value) {
-    return Array.from(stringValue2(value)).map((char) => stringObj3(char));
+    return Array.from(stringValue3(value)).map((char) => stringObj3(char));
   }
   function fromChars(chars) {
-    return stringObj3(chars.map((char) => stringValue2(char)).join(""));
+    return stringObj3(chars.map((char) => stringValue3(char)).join(""));
   }
   function compareValues(a, b) {
     const ak = valueKey2(a);
@@ -26028,7 +26781,7 @@ ${indented.join(`,
     }),
     JOIN: method4("JOIN", ([target, separator]) => {
       ensureSequence(target, "Join");
-      return stringObj3(target.values.map((value) => stringValue2(value)).join(stringValue2(separator ?? stringObj3(","))));
+      return stringObj3(target.values.map((value) => stringValue3(value)).join(stringValue3(separator ?? stringObj3(","))));
     }),
     PUSH: method4("PUSH", ([target, ...values]) => {
       ensureSequence(target, "Push");
@@ -26663,24 +27416,24 @@ ${indented.join(`,
     }),
     INCLUDES: method4("INCLUDES", ([target, needle]) => {
       ensureString(target, "Includes");
-      return bool2(target.value.includes(stringValue2(needle)));
+      return bool2(target.value.includes(stringValue3(needle)));
     }),
     STARTSWITH: method4("STARTSWITH", ([target, prefix]) => {
       ensureString(target, "StartsWith");
-      return bool2(target.value.startsWith(stringValue2(prefix)));
+      return bool2(target.value.startsWith(stringValue3(prefix)));
     }),
     ENDSWITH: method4("ENDSWITH", ([target, suffix]) => {
       ensureString(target, "EndsWith");
-      return bool2(target.value.endsWith(stringValue2(suffix)));
+      return bool2(target.value.endsWith(stringValue3(suffix)));
     }),
     INDEXOF: method4("INDEXOF", ([target, needle]) => {
       ensureString(target, "IndexOf");
-      const idx = target.value.indexOf(stringValue2(needle));
+      const idx = target.value.indexOf(stringValue3(needle));
       return idx === -1 ? null : int6(idx + 1);
     }),
     LASTINDEXOF: method4("LASTINDEXOF", ([target, needle]) => {
       ensureString(target, "LastIndexOf");
-      const idx = target.value.lastIndexOf(stringValue2(needle));
+      const idx = target.value.lastIndexOf(stringValue3(needle));
       return idx === -1 ? null : int6(idx + 1);
     }),
     SLICE: method4("SLICE", ([target, start, end]) => {
@@ -26689,11 +27442,11 @@ ${indented.join(`,
     }),
     CONCAT: method4("CONCAT", ([target, ...parts]) => {
       ensureString(target, "Concat");
-      return stringObj3([target, ...parts].map((part) => stringValue2(part)).join(""));
+      return stringObj3([target, ...parts].map((part) => stringValue3(part)).join(""));
     }),
     SPLIT: method4("SPLIT", ([target, separator]) => {
       ensureString(target, "Split");
-      const parts = separator === undefined ? Array.from(target.value) : target.value.split(stringValue2(separator));
+      const parts = separator === undefined ? Array.from(target.value) : target.value.split(stringValue3(separator));
       return { type: "sequence", values: parts.map((part) => stringObj3(part)), _ext: mutableExt2() };
     }),
     TRIM: method4("TRIM", ([target]) => {
@@ -26718,19 +27471,19 @@ ${indented.join(`,
     }),
     REPLACE: method4("REPLACE", ([target, search, replacement]) => {
       ensureString(target, "Replace");
-      return stringObj3(target.value.replace(stringValue2(search), stringValue2(replacement)));
+      return stringObj3(target.value.replace(stringValue3(search), stringValue3(replacement)));
     }),
     REPLACEALL: method4("REPLACEALL", ([target, search, replacement]) => {
       ensureString(target, "ReplaceAll");
-      return stringObj3(target.value.split(stringValue2(search)).join(stringValue2(replacement)));
+      return stringObj3(target.value.split(stringValue3(search)).join(stringValue3(replacement)));
     }),
     PADLEFT: method4("PADLEFT", ([target, length, pad]) => {
       ensureString(target, "PadLeft");
-      return stringObj3(target.value.padStart(numericIndex(length), stringValue2(pad ?? stringObj3(" "))));
+      return stringObj3(target.value.padStart(numericIndex(length), stringValue3(pad ?? stringObj3(" "))));
     }),
     PADRIGHT: method4("PADRIGHT", ([target, length, pad]) => {
       ensureString(target, "PadRight");
-      return stringObj3(target.value.padEnd(numericIndex(length), stringValue2(pad ?? stringObj3(" "))));
+      return stringObj3(target.value.padEnd(numericIndex(length), stringValue3(pad ?? stringObj3(" "))));
     }),
     REPEAT: method4("REPEAT", ([target, count]) => {
       ensureString(target, "Repeat");
@@ -26789,11 +27542,11 @@ ${indented.join(`,
     WITHSCALARDOMAIN: method4("WITHSCALARDOMAIN", ([target, domain]) => {
       ensureShaped(target, "WithScalarDomain");
       const copy = shallowCopyValue(target);
-      return validateShapedScalarDomain(copy, stringValue2(domain));
+      return validateShapedScalarDomain(copy, stringValue3(domain));
     }),
     "SETSCALARDOMAIN!": method4("SETSCALARDOMAIN!", ([target, domain]) => {
       ensureShaped(target, "SetScalarDomain!");
-      return validateShapedScalarDomain(target, stringValue2(domain));
+      return validateShapedScalarDomain(target, stringValue3(domain));
     }),
     SHAPE: method4("SHAPE", ([target]) => {
       ensureShaped(target, "Shape");
@@ -26927,8 +27680,8 @@ ${indented.join(`,
     FLOOR: method4("Floor", ([target]) => int6(target.floor())),
     CEIL: method4("Ceil", ([target]) => int6(target.ceil())),
     TRUNC: method4("Trunc", ([target]) => int6(target.trunc())),
-    ROUND: method4("Round", ([target, mode]) => int6(target.round(mode === undefined ? undefined : stringValue2(mode)))),
-    ROUNDTO: method4("RoundTo", ([target, places, mode]) => target.roundTo(safeExactNumber(places, "Decimal places"), mode === undefined ? undefined : stringValue2(mode))),
+    ROUND: method4("Round", ([target, mode]) => int6(target.round(mode === undefined ? undefined : stringValue3(mode)))),
+    ROUNDTO: method4("RoundTo", ([target, places, mode]) => target.roundTo(safeExactNumber(places, "Decimal places"), mode === undefined ? undefined : stringValue3(mode))),
     E: method4("E", ([target, exponent]) => target.E(exactBigInt(exponent, "Exponent"))),
     TOMIXEDSTRING: method4("ToMixedString", ([target]) => stringObj3(target.toMixedString())),
     TODECIMAL: method4("ToDecimal", ([target, options]) => {
@@ -26991,7 +27744,7 @@ ${indented.join(`,
     INTERSECTION: method4("Intersection", ([target, other]) => target.intersection(exactInterval(other, "Other interval"))),
     UNION: method4("Union", ([target, other]) => target.union(exactInterval(other, "Other interval"))),
     SHORTESTDECIMAL: method4("ShortestDecimal", ([target, base]) => target.shortestDecimal(base === undefined ? undefined : exactBigInt(base, "Base"))),
-    DENOMINATORINTERVAL: method4("DenominatorInterval", ([target, denominator, onEmpty]) => target.denominatorInterval(denominator === undefined || denominator === null ? undefined : exactBigInt(denominator, "Grid denominator"), onEmpty === undefined ? undefined : stringValue2(onEmpty))),
+    DENOMINATORINTERVAL: method4("DenominatorInterval", ([target, denominator, onEmpty]) => target.denominatorInterval(denominator === undefined || denominator === null ? undefined : exactBigInt(denominator, "Grid denominator"), onEmpty === undefined ? undefined : stringValue3(onEmpty))),
     RANDOM: method4("Random", ([target, parameters], _context, evaluate) => evaluate({ fn: "RANDOM", args: [target, parameters] })),
     RANDOMPARTITION: method4("RandomPartition", ([target, parameters], _context, evaluate) => evaluate({ fn: "RANDOM_PARTITION", args: [target, parameters] })),
     E: method4("E", ([target, exponent]) => target.E(exactBigInt(exponent, "Exponent"))),
@@ -27002,7 +27755,7 @@ ${indented.join(`,
       const onLimit = optionValue(options, "onlimit", undefined);
       const text4 = target.toRepeatingDecimal(options?.type === "map" ? {
         ...maxDigits === undefined ? {} : { maxDigits: safeExactNumber(maxDigits, "Maximum decimal digits") },
-        ...onLimit === undefined ? {} : { onLimit: stringValue2(onLimit) }
+        ...onLimit === undefined ? {} : { onLimit: stringValue3(onLimit) }
       } : true);
       return text4 === null ? null : stringObj3(text4);
     }),
@@ -27314,7 +28067,7 @@ ${indented.join(`,
   function capabilityNamespace(name) {
     return firstLetterIsUppercase(name) ? "core" : "host";
   }
-  function stringValue3(value) {
+  function stringValue4(value) {
     return { type: "string", value: String(value) };
   }
   function rixString2(value, label) {
@@ -27370,7 +28123,7 @@ ${indented.join(`,
         if (namespace === "host" && registryContext !== context) {
           context.registerHost(name, definition, { namespace, groups });
         }
-        return stringValue3(name);
+        return stringValue4(name);
       }
     });
     value._ext.set("REGISTERVALUE", {
@@ -27392,7 +28145,7 @@ ${indented.join(`,
             context.registerHostValue(name, registeredValue, { namespace, doc, groups });
           }
         }
-        return stringValue3(name);
+        return stringValue4(name);
       }
     });
     value._ext.set("REGISTERCALLABLEVALUE", {
@@ -27420,7 +28173,7 @@ ${indented.join(`,
             context.registerHostCallableValue(name, callableValue2, definition, { namespace, doc, groups });
           }
         }
-        return stringValue3(name);
+        return stringValue4(name);
       }
     });
     value._ext.set("REGISTERMETHOD", {
@@ -27472,7 +28225,7 @@ ${indented.join(`,
         if (registryContext !== context) {
           context.registerMethod(typeName, methodName, wrapped, { pluginId, mount });
         }
-        return stringValue3(methodName);
+        return stringValue4(methodName);
       }
     });
     value._ext.set("REGISTERSHAPEDCONSTRUCTOR", {
@@ -27498,7 +28251,7 @@ ${indented.join(`,
           throw new Error(`Shaped constructor ${typeName} is already registered`);
         registry.set(key, (components, slots, callContext, callEvaluate) => invoke(callable, [components, slots], callContext, callEvaluate));
         evaluationContext.setEnv("__typed_shaped_constructors__", registry);
-        return stringValue3(typeName);
+        return stringValue4(typeName);
       }
     });
     value._ext.set("FIND", {
@@ -27512,10 +28265,10 @@ ${indented.join(`,
         return {
           type: "map",
           entries: new Map([
-            ["name", stringValue3(entry.displayName)],
-            ["kind", stringValue3(entry.kind)],
-            ["namespace", stringValue3(entry.namespace)],
-            ["groups", { type: "sequence", values: (entry.groups || []).map(stringValue3) }]
+            ["name", stringValue4(entry.displayName)],
+            ["kind", stringValue4(entry.kind)],
+            ["namespace", stringValue4(entry.namespace)],
+            ["groups", { type: "sequence", values: (entry.groups || []).map(stringValue4) }]
           ])
         };
       }
@@ -27526,7 +28279,7 @@ ${indented.join(`,
       impl() {
         return {
           type: "sequence",
-          values: registryContext.getAllEntries({ namespace }).map((entry) => stringValue3(entry.displayName))
+          values: registryContext.getAllEntries({ namespace }).map((entry) => stringValue4(entry.displayName))
         };
       }
     });
@@ -27565,7 +28318,7 @@ ${indented.join(`,
       type: "method_builtin",
       name: "List",
       impl() {
-        return { type: "sequence", values: catalog.list().map((metadata) => stringValue3(metadata.id)) };
+        return { type: "sequence", values: catalog.list().map((metadata) => stringValue4(metadata.id)) };
       }
     });
     value._ext.set("INFO", {
@@ -29769,6 +30522,7 @@ ${indented.join(`,
           ["permissions", { type: "sequence", values: metadata.permissions.map(rixString3) }],
           ["requires", { type: "sequence", values: metadata.requires.map(rixString3) }],
           ["provides", { type: "sequence", values: metadata.provides.map(rixString3) }],
+          ["schemas", { type: "sequence", values: metadata.schemas.map(rixString3) }],
           ["targets", { type: "sequence", values: metadata.targets.map(rixString3) }],
           ["snapshot", metadata.snapshot ? { type: "integer", value: 1n } : null],
           ["deterministic", metadata.deterministic ? { type: "integer", value: 1n } : null],
@@ -33709,18 +34463,18 @@ ${indented.join(`,
   }
 
   class BreakSignal extends Error {
-    constructor(targetType, targetName, value) {
+    constructor(targetType, targetName2, value) {
       const targetParts = [];
       if (targetType)
         targetParts.push(targetType);
-      if (targetName)
-        targetParts.push(`'${targetName}'`);
+      if (targetName2)
+        targetParts.push(`'${targetName2}'`);
       const targetLabel = targetParts.length > 0 ? targetParts.join(" ") : "breakable construct";
       super(`No matching break target found for ${targetLabel}`);
       this.name = "BreakSignal";
       this.kind = "break";
       this.targetType = targetType ?? null;
-      this.targetName = targetName ?? null;
+      this.targetName = targetName2 ?? null;
       this.value = value;
     }
   }
@@ -33739,13 +34493,13 @@ ${indented.join(`,
 ${detail}`;
     return error;
   }
-  function matchesBreakTarget(signal, targetType, targetName) {
+  function matchesBreakTarget(signal, targetType, targetName2) {
     if (!isBreakSignal(signal))
       return false;
     if (signal.targetType !== null && signal.targetType !== targetType) {
       return false;
     }
-    if (signal.targetName !== null && signal.targetName !== targetName) {
+    if (signal.targetName !== null && signal.targetName !== targetName2) {
       return false;
     }
     return true;
@@ -38129,7 +38883,7 @@ ${pad}}`;
   };
 
   // rix/src/eval/functions/embedded.js
-  function stringValue4(value) {
+  function stringValue5(value) {
     return { type: "string", value: String(value) };
   }
   function stringFromValue(value, label) {
@@ -38191,7 +38945,7 @@ ${pad}}`;
   function parseInfoValue(meta = {}) {
     const entries2 = new Map;
     entries2.set("function", meta.expectedFunction ? new Integer(1n) : null);
-    entries2.set("name", meta.inferredName ? stringValue4(meta.inferredName) : null);
+    entries2.set("name", meta.inferredName ? stringValue5(meta.inferredName) : null);
     entries2.set("explicit", meta.explicitParser ? new Integer(1n) : null);
     return { type: "map", entries: entries2 };
   }
@@ -38393,10 +39147,10 @@ ${pad}}`;
       throw new Error(`Backtick parser '.${entry.displayName}' does not expose a callable .Parse method`);
     }
     const callArgs = [
-      stringValue4(body),
+      stringValue5(body),
       {
         type: "sequence",
-        values: modifiers.map((modifier) => stringValue4(typeof modifier === "string" ? modifier : `${modifier.name}(${(modifier.args || []).join(",")})`))
+        values: modifiers.map((modifier) => stringValue5(typeof modifier === "string" ? modifier : `${modifier.name}(${(modifier.args || []).join(",")})`))
       },
       parseInfoValue(meta)
     ];
@@ -38453,7 +39207,7 @@ ${pad}}`;
         const body = args[2] ?? "";
         const meta = args[3] || {};
         if (parserName === "RiX-String")
-          return stringValue4(body);
+          return stringValue5(body);
         return callRegisteredParser(parserName, body, modifiers, meta, context, evaluate, systemContext);
       },
       doc: "Dispatch a backtick body to a registered .Name.Parse parser"
@@ -38482,321 +39236,6 @@ ${pad}}`;
       };
     }
   };
-
-  // rix/src/runtime/renderer-registry.js
-  var stringValue5 = (value) => ({ type: "string", value: String(value) });
-  var sequenceValue = (values) => ({ type: "sequence", values });
-  function targetName(value, label = "Render target") {
-    const result = value?.type === "string" ? value.value : value;
-    if (typeof result !== "string" || !result.trim())
-      throw new Error(`${label} must be a non-empty string or colon-string`);
-    return result.trim().toLowerCase().replace(/^\./, "");
-  }
-  function nativeOptions(value) {
-    if (value === null || value === undefined)
-      return {};
-    if (value?.type !== "map" || !(value.entries instanceof Map)) {
-      if (typeof value === "object" && !Array.isArray(value))
-        return value;
-      throw new Error("Render options must be a map");
-    }
-    return Object.fromEntries(Array.from(value.entries, ([key, entry]) => [String(key), entry]));
-  }
-  function normalizeDiagnostic(value, fallbackCode = "renderer") {
-    if (typeof value === "string")
-      return Object.freeze({ level: "warning", code: fallbackCode, message: value });
-    if (!value || typeof value !== "object")
-      return Object.freeze({ level: "warning", code: fallbackCode, message: String(value) });
-    return Object.freeze({
-      level: value.level || "warning",
-      code: value.code || fallbackCode,
-      message: String(value.message || value.code || fallbackCode),
-      ...value.path ? { path: String(value.path) } : {}
-    });
-  }
-  function normalizeAsset(asset, index) {
-    if (!asset || typeof asset !== "object")
-      throw new Error(`Render asset ${index + 1} must be an object`);
-    if (typeof asset.path !== "string" || !asset.path.trim())
-      throw new Error(`Render asset ${index + 1} requires a relative path`);
-    if (typeof asset.content !== "string" && !(asset.content instanceof Uint8Array)) {
-      throw new Error(`Render asset ${index + 1} content must be text or bytes`);
-    }
-    return Object.freeze({
-      path: asset.path,
-      mime: asset.mime || "application/octet-stream",
-      content: asset.content
-    });
-  }
-  function createRenderResult(fields) {
-    if (!fields || typeof fields !== "object")
-      throw new Error("Renderer must return a RenderResult object");
-    if (typeof fields.content !== "string" && !(fields.content instanceof Uint8Array)) {
-      throw new Error("RenderResult content must be text or Uint8Array bytes");
-    }
-    const target = targetName(fields.target, "RenderResult target");
-    return Object.freeze({
-      type: "render_result",
-      target,
-      mime: String(fields.mime || "application/octet-stream"),
-      extension: String(fields.extension || target).replace(/^\./, "").toLowerCase(),
-      content: fields.content,
-      assets: Object.freeze((fields.assets || []).map(normalizeAsset)),
-      diagnostics: Object.freeze((fields.diagnostics || []).map((item) => normalizeDiagnostic(item, `${target}.diagnostic`))),
-      deterministic: fields.deterministic !== false,
-      toolchain: fields.toolchain ? String(fields.toolchain) : null,
-      metadata: Object.freeze({ ...fields.metadata || {} })
-    });
-  }
-  function isRenderResult(value) {
-    return Boolean(value && value.type === "render_result" && (typeof value.content === "string" || value.content instanceof Uint8Array));
-  }
-
-  class UnsupportedRenderError extends Error {
-    constructor(message, { code = "unsupported-input", target = null } = {}) {
-      super(message);
-      this.name = "UnsupportedRenderError";
-      this.code = code;
-      this.target = target;
-    }
-  }
-  function inputKind(value) {
-    if (value?.type === "output" && value.kind)
-      return value.kind;
-    if (value?.type === "map" && value.entries instanceof Map) {
-      const portableType = value.entries.get("type")?.value ?? value.entries.get("type");
-      const portableKind = value.entries.get("kind")?.value ?? value.entries.get("kind");
-      if (portableType === "output" && typeof portableKind === "string")
-        return portableKind;
-    }
-    if (value?.type)
-      return value.type;
-    return typeof value;
-  }
-
-  class RendererRegistry {
-    constructor() {
-      this.renderers = new Map;
-      this.aliases = new Map;
-    }
-    register(definition) {
-      if (!definition || typeof definition.render !== "function")
-        throw new Error("Renderer definition requires render(request)");
-      const target = targetName(definition.target);
-      if (this.renderers.has(target))
-        throw new Error(`Renderer target '${target}' is already registered`);
-      const aliases = new Set([
-        target,
-        definition.mime,
-        definition.extension,
-        ...definition.aliases || []
-      ].filter(Boolean).map((item) => targetName(String(item))));
-      for (const alias of aliases) {
-        if (this.aliases.has(alias))
-          throw new Error(`Renderer alias '${alias}' is already registered`);
-      }
-      const entry = Object.freeze({
-        target,
-        mime: String(definition.mime || "application/octet-stream"),
-        extension: String(definition.extension || target).replace(/^\./, "").toLowerCase(),
-        aliases: Object.freeze([...aliases]),
-        inputKinds: Object.freeze([...definition.inputKinds || []]),
-        deterministic: definition.deterministic !== false,
-        description: String(definition.description || `${target} renderer`),
-        render: definition.render
-      });
-      this.renderers.set(target, entry);
-      for (const alias of aliases)
-        this.aliases.set(alias, target);
-      return entry;
-    }
-    unregister(targetValue) {
-      const entry = this.info(targetValue);
-      if (!entry)
-        return false;
-      this.renderers.delete(entry.target);
-      for (const alias of entry.aliases)
-        this.aliases.delete(alias);
-      return true;
-    }
-    resolve(targetValue) {
-      const requested = targetName(targetValue);
-      return this.aliases.get(requested) || (this.renderers.has(requested) ? requested : null);
-    }
-    info(targetValue) {
-      const resolved = this.resolve(targetValue);
-      return resolved ? this.renderers.get(resolved) : null;
-    }
-    list() {
-      return [...this.renderers.values()].sort((left, right) => left.target.localeCompare(right.target));
-    }
-    targetForPath(filename, { preserveAlias = false } = {}) {
-      const lower2 = String(filename).toLowerCase();
-      const aliases = [...this.aliases.keys()].filter((alias) => !alias.includes("/") && lower2.endsWith(`.${alias}`)).sort((left, right) => right.length - left.length);
-      return aliases.length ? preserveAlias ? aliases[0] : this.resolve(aliases[0]) : null;
-    }
-    render(value, targetValue, optionsValue = null, runtime = {}) {
-      const requested = targetName(targetValue);
-      const options = nativeOptions(optionsValue);
-      const fallbacksValue = options.fallbacks ?? options.fallback ?? [];
-      const fallbacks = Array.isArray(fallbacksValue) ? fallbacksValue : Array.isArray(fallbacksValue?.values) ? fallbacksValue.values : fallbacksValue ? [fallbacksValue] : [];
-      const candidates = [requested, ...fallbacks.map((item) => targetName(item))];
-      const failures = [];
-      for (const candidate of candidates) {
-        const entry = this.info(candidate);
-        if (!entry) {
-          failures.push({ level: "warning", code: "renderer-unavailable", message: `No renderer is registered for '${candidate}'` });
-          continue;
-        }
-        if (entry.inputKinds.length && !entry.inputKinds.includes(inputKind(value))) {
-          failures.push({
-            level: "warning",
-            code: "unsupported-input",
-            message: `Renderer '${entry.target}' does not accept ${inputKind(value)} values`
-          });
-          continue;
-        }
-        try {
-          const raw = entry.render(Object.freeze({
-            value,
-            options,
-            requestedTarget: requested,
-            target: entry.target,
-            registry: this,
-            format: runtime.format || ((item) => item?.type === "string" ? item.value : String(item ?? "")),
-            render: (nestedValue, nestedTarget, nestedOptions = {}) => this.render(nestedValue, nestedTarget, { ...options, ...nestedOptions, fallback: [] }, runtime),
-            runtime
-          }));
-          const result = createRenderResult({
-            target: entry.target,
-            mime: entry.mime,
-            extension: entry.extension,
-            deterministic: entry.deterministic,
-            ...raw,
-            diagnostics: [...failures, ...raw?.diagnostics || []]
-          });
-          if (entry.target !== requested) {
-            return createRenderResult({
-              ...result,
-              diagnostics: [{
-                level: "warning",
-                code: "renderer-fallback",
-                message: `Rendered '${requested}' through fallback '${entry.target}'`
-              }, ...result.diagnostics]
-            });
-          }
-          return result;
-        } catch (error) {
-          if (!(error instanceof UnsupportedRenderError))
-            throw error;
-          failures.push({ level: "warning", code: error.code, message: error.message });
-        }
-      }
-      const detail = failures.map(({ code, message }) => `[${code}] ${message}`).join("; ");
-      throw new UnsupportedRenderError(`Cannot render ${inputKind(value)} as '${requested}'${detail ? `: ${detail}` : ""}`, {
-        code: "render-negotiation-failed",
-        target: requested
-      });
-    }
-  }
-  function diagnosticValue(diagnostic) {
-    return {
-      type: "map",
-      entries: new Map([
-        ["level", stringValue5(diagnostic.level)],
-        ["code", stringValue5(diagnostic.code)],
-        ["message", stringValue5(diagnostic.message)],
-        ...diagnostic.path ? [["path", stringValue5(diagnostic.path)]] : []
-      ])
-    };
-  }
-  function assetValue2(asset) {
-    const binary2 = asset.content instanceof Uint8Array;
-    return {
-      type: "map",
-      entries: new Map([
-        ["path", stringValue5(asset.path)],
-        ["mime", stringValue5(asset.mime)],
-        ["encoding", stringValue5(binary2 ? "base64" : "utf8")],
-        ["content", stringValue5(binary2 ? bytesToBase64(asset.content) : asset.content)]
-      ])
-    };
-  }
-  function renderResultValue(result) {
-    if (!isRenderResult(result))
-      throw new Error("Expected a RenderResult");
-    const binary2 = result.content instanceof Uint8Array;
-    const value = {
-      type: "map",
-      entries: new Map([
-        ["target", stringValue5(result.target)],
-        ["mime", stringValue5(result.mime)],
-        ["extension", stringValue5(result.extension)],
-        ["encoding", stringValue5(binary2 ? "base64" : "utf8")],
-        ["content", stringValue5(binary2 ? bytesToBase64(result.content) : result.content)],
-        ["assets", sequenceValue(result.assets.map(assetValue2))],
-        ["diagnostics", sequenceValue(result.diagnostics.map(diagnosticValue))],
-        ["deterministic", result.deterministic ? new Integer(1n) : null],
-        ["toolchain", result.toolchain ? stringValue5(result.toolchain) : null]
-      ]),
-      _ext: new Map([["immutable", new Integer(1n)]])
-    };
-    Object.defineProperty(value, "_renderResult", { value: result, enumerable: false });
-    return Object.freeze(value);
-  }
-  function bytesToBase64(bytes) {
-    let binary2 = "";
-    for (let offset = 0;offset < bytes.length; offset += 32768) {
-      binary2 += String.fromCharCode(...bytes.subarray(offset, Math.min(bytes.length, offset + 32768)));
-    }
-    if (typeof btoa === "function")
-      return btoa(binary2);
-    throw new Error("This host cannot expose binary RenderResult content as base64");
-  }
-  function infoValue(entry) {
-    if (!entry)
-      return null;
-    return {
-      type: "map",
-      entries: new Map([
-        ["target", stringValue5(entry.target)],
-        ["mime", stringValue5(entry.mime)],
-        ["extension", stringValue5(entry.extension)],
-        ["description", stringValue5(entry.description)],
-        ["inputs", sequenceValue(entry.inputKinds.map(stringValue5))],
-        ["aliases", sequenceValue(entry.aliases.map(stringValue5))],
-        ["deterministic", entry.deterministic ? new Integer(1n) : null]
-      ])
-    };
-  }
-  function createRendererCollection(registry) {
-    const list = () => sequenceValue(registry.list().map(({ target }) => stringValue5(target)));
-    const info = (target) => infoValue(registry.info(target));
-    return {
-      type: "map",
-      entries: new Map([["List", list], ["Info", info]]),
-      _ext: new Map([
-        ["LIST", { type: "method_builtin", name: "List", impl: () => list() }],
-        ["INFO", { type: "method_builtin", name: "Info", impl: (args) => info(args[1]) }],
-        ["immutable", new Integer(1n)]
-      ])
-    };
-  }
-  function createRendererPluginCollection(registry, target) {
-    const render = (args, runtime = {}) => {
-      if (args.length < 1 || args.length > 2)
-        throw new Error(`${target}.Render expects a value and optional options map`);
-      return renderResultValue(registry.render(args[0], target, args[1] ?? null, runtime));
-    };
-    return {
-      type: "map",
-      entries: new Map([["Render", render]]),
-      _ext: new Map([
-        ["RENDER", { type: "method_builtin", name: "Render", impl: (args) => render(args.slice(1)) }],
-        ["immutable", new Integer(1n)]
-      ])
-    };
-  }
 
   // rix/plugins/oracle/oracle.plugin.rix
   var oracle_plugin_default = `/**
@@ -39533,12 +39972,12 @@ id: numerics
 description: Backend-neutral bounded enclosure and refinement orchestration.
 kind: rix
 mount: numerics
-exports: [Request, WorkPolicy, EffectiveLimits, Enclose, Refine, Sample, Capabilities, CheckResult, NthRoot, Sqrt, Cbrt, Hypot, Pow, Exp, Expm1, Log, Log1p, Ln, Log2, Log10, Pi, EulerGamma, Sin, Cos, Tan, Sec, Csc, Cot, Sinc, Asin, Acos, Atan, Atan2, Arcsin, Arccos, Arctan, Sinh, Cosh, Tanh, Sech, Csch, Coth, Asinh, Acosh, Atanh, Arsinh, Arcosh, Artanh, Radians, Degrees, Gamma, LogGamma, Beta, LogBeta, Digamma, Trigamma, Erf, Erfc, LambertW, BesselJ0, BesselJ1, BesselY0, BesselY1, Zeta, Kantorovich]
+exports: [Request, WorkPolicy, EffectiveLimits, Enclose, Refine, Sample, Sign, RootCount, Capabilities, CheckResult, NthRoot, Sqrt, Cbrt, Hypot, Pow, Exp, Expm1, Log, Log1p, Ln, Log2, Log10, Pi, EulerGamma, Sin, Cos, Tan, Sec, Csc, Cot, Sinc, Asin, Acos, Atan, Atan2, Arcsin, Arccos, Arctan, Sinh, Cosh, Tanh, Sech, Csch, Coth, Asinh, Acosh, Atanh, Arsinh, Arcosh, Artanh, Radians, Degrees, Gamma, LogGamma, Beta, LogBeta, Digamma, Trigamma, Erf, Erfc, NormalPDF, NormalCDF, NormalQuantile, LambertW, BesselJ, BesselJ0, BesselJ1, BesselY, BesselY0, BesselY1, BesselI, BesselI0, BesselI1, BesselK, BesselK0, BesselK1, Zeta, Quadrature, Kantorovich]
 groups: [Numerics]
 permissions: []
 requires: [rix.oracle@1]
-provides: [rix.numerics@1, rix.enclosable-real-consumer@1]
-schemas: [rix.numerics.refinement-request@1, rix.numerics.enclosure@1, rix.numerics.algorithm-real@1]
+provides: [rix.numerics@1, rix.enclosable-real-consumer@1, rix.exact-sign-consumer@1, rix.root-count-consumer@1]
+schemas: [rix.numerics.refinement-request@1, rix.numerics.enclosure@1, rix.numerics.algorithm-real@1, rix.exact.sign-witness@1, rix.exact.root-count@1]
 defaultEnabled: false
 **/
 
@@ -39741,6 +40180,9 @@ NumericsLogRationalBounds(value, tolerance, maxIterations) -> {;
 
 NumericsClampUnitInterval(interval) ->
     .Max(-1, interval.Low()):.Min(1, interval.High());
+
+NumericsClampProbabilityInterval(interval) ->
+    .Max(0, interval.Low()):.Min(1, interval.High());
 
 NumericsTrigTaylorBounds(value, tolerance, maxIterations, kind) -> {;
     exact = value ~!: :Rational;
@@ -39961,22 +40403,27 @@ NumericsEulerGammaRationalBounds(tolerance, maxIterations) -> {;
     n := 1;
     harmonic := 1;
     iterations := 0;
-    remainderWidth := 1/2 - 1/4;
+    ## Euler-Maclaurin terms alternate with a remainder bounded by the first
+    ## omitted term (DLMF 2.10.8). Retaining terms through n^-8 leaves an
+    ## enclosure width at most 1/(132n^10), which also scales well at deep
+    ## precision.
+    remainderWidth := 1/132;
     {@ step=1;
        @remainderWidth > @tolerance/2 && @iterations < @maxIterations;
        {;
            @n += 1;
            @harmonic += 1/@n;
-           @remainderWidth = 1/(2*@n) - 1/(2*(@n+1));
+           @remainderWidth = 1/(132*@n^10);
            @iterations += 1;
        };
        step += 1
     };
     logBounds = NumericsLogRationalBounds(
-        n, tolerance/4, .Max(0, maxIterations-iterations)
+        n, tolerance/2, .Max(0, maxIterations-iterations)
     );
-    remainder = (1/(2*(n+1))):(1/(2*n));
-    interval = harmonic - logBounds[:interval] - remainder;
+    center = harmonic - logBounds[:interval] - 1/(2*n) + 1/(12*n^2)
+      - 1/(120*n^4) + 1/(252*n^6) - 1/(240*n^8);
+    interval = center.Low():(center.High()+remainderWidth);
     iterations += logBounds[:iterations];
     {=
         interval=interval,
@@ -39990,7 +40437,7 @@ NumericsBesselYRationalBounds(value, tolerance, maxIterations, kind) -> {;
     exact = value ~!: :Rational;
     exact > 0 ?: _ ?_ .Error("Bessel Y0 and Y1 currently require a positive real value");
     perPart = .Max(1, maxIterations//6);
-    partTolerance = tolerance/(8*(exact.Abs()+1));
+    partTolerance = tolerance/(4*(exact.Abs()+1));
     pi = NumericsPiRationalBounds(partTolerance, perPart);
     gamma = NumericsEulerGammaRationalBounds(partTolerance, perPart);
     logarithm = NumericsLogRationalBounds(exact/2, partTolerance, perPart);
@@ -40010,6 +40457,237 @@ NumericsBesselYRationalBounds(value, tolerance, maxIterations, kind) -> {;
       + bessel[:iterations] + core[:iterations];
     ready = pi[:ready] && gamma[:ready] && logarithm[:ready]
       && bessel[:ready] && core[:ready];
+    {=
+        interval=interval,
+        ready=ready,
+        goalMet=ready && interval.Width() <= tolerance,
+        iterations=iterations
+    };
+};
+
+NumericsBesselIntegerRationalBounds(order, value, tolerance, maxIterations, family) -> {;
+    exactOrder = order ~!: :Integer;
+    degree = exactOrder.Abs();
+    exact = value ~!: :Rational;
+    (family == :besselJ || exact > 0)
+      ?: _
+      ?_ .Error("Integer-order Bessel Y requires a positive real value");
+    zeroAtOrigin = family == :besselJ && exact == 0 && degree > 0;
+    zeroAtOrigin
+      ?: {= interval=0:0, ready=1, goalMet=1, iterations=0 }
+      ?_ {;
+          ## The final interval is checked directly, so this allocation need
+          ## not predict the often very pessimistic forward-recurrence norm.
+          partTolerance = @tolerance/(@degree+1);
+          halfBudget = .Max(0, @maxIterations//2);
+          first = @family == :besselJ
+            ?: NumericsSpecialSeriesBounds(@exact, partTolerance, halfBudget, :besselJ0)
+            ?_ NumericsBesselYRationalBounds(@exact, partTolerance, halfBudget, :besselY0);
+          second = @family == :besselJ
+            ?: NumericsSpecialSeriesBounds(@exact, partTolerance, @maxIterations-halfBudget, :besselJ1)
+            ?_ NumericsBesselYRationalBounds(@exact, partTolerance, @maxIterations-halfBudget, :besselY1);
+          previous := first[:interval];
+          current := second[:interval];
+          {@ index=1; index < @degree;
+             {;
+                 next = (2*index/(@exact:@exact))*@current - @previous;
+                 @previous = @current;
+                 @current = next;
+             };
+             index += 1
+          };
+          interval = @degree == 0 ?: first[:interval]
+            ?_ (@degree == 1 ?: second[:interval] ?_ current);
+          interval = (@exactOrder < 0 && @degree % 2 == 1)
+            ?: 0-interval
+            ?_ interval;
+          iterations = first[:iterations] + second[:iterations] + .Max(0, @degree-1);
+          ready = first[:ready] && second[:ready];
+          {=
+              interval=interval,
+              ready=ready,
+              goalMet=ready && interval.Width() <= @tolerance,
+              iterations=iterations
+          };
+      };
+};
+
+## I_n(x)=sum(k>=0) (x/2)^(2k+n)/(k!(n+k)!). Once the
+## positive-term ratio is below one, all later ratios decrease and the tail
+## is bounded by the corresponding geometric series.
+NumericsBesselIRationalBounds(order, value, tolerance, maxIterations) -> {;
+    exactOrder = order ~!: :Integer;
+    degree = exactOrder.Abs();
+    exact = value ~!: :Rational;
+    absolute = exact.Abs();
+    factorial := 1;
+    {@ factor=2; factor <= @degree;
+       {; @factorial *= factor; };
+       factor += 1
+    };
+    term := (absolute/2)^degree/factorial;
+    sum := term;
+    index := 0;
+    ratio := absolute^2/(4*(degree+1));
+    next := term*ratio;
+    decreasing := ratio < 1;
+    tail := decreasing ?: next/(1-ratio) ?_ 3^(absolute.Ceil()+1);
+    interval := sum:(sum+tail);
+    iterations := 0;
+    {@ step=1;
+       @interval.Width() > @tolerance && @iterations < @maxIterations;
+       {;
+           @term = @next;
+           @sum += @term;
+           @index += 1;
+           @ratio = @absolute^2
+             / (4*(@index+1)*(@degree+@index+1));
+           @next = @term*@ratio;
+           @decreasing = @ratio < 1;
+           @tail = @decreasing
+             ?: @next/(1-@ratio)
+             ?_ 3^(@absolute.Ceil()+1);
+           @interval = @sum:(@sum+@tail);
+           @iterations += 1;
+       };
+       step += 1
+    };
+    signed = (exact < 0 && degree % 2 == 1) ?: 0-interval ?_ interval;
+    {=
+        interval=signed,
+        ready=decreasing,
+        goalMet=decreasing && signed.Width() <= tolerance,
+        iterations=iterations
+    };
+};
+
+## Positive harmonic series occurring in the DLMF 10.31.2 formula for K0.
+NumericsBesselK0HarmonicBounds(value, tolerance, maxIterations) -> {;
+    exact = value ~!: :Rational;
+    a = exact^2/4;
+    harmonic := 1;
+    term := a;
+    sum := term;
+    index := 1;
+    nextHarmonic := 3/2;
+    next := term*a*nextHarmonic/(harmonic*(index+1)^2);
+    futureRatio := 2*a/(index+2)^2;
+    ready := futureRatio < 1;
+    tail := ready ?: next/(1-futureRatio) ?_ 3^((exact.Abs()+1).Ceil()+2);
+    interval := sum:(sum+tail);
+    iterations := 0;
+    {@ step=1;
+       @interval.Width() > @tolerance && @iterations < @maxIterations;
+       {;
+           @term = @next;
+           @sum += @term;
+           @index += 1;
+           @harmonic = @nextHarmonic;
+           @nextHarmonic += 1/(@index+1);
+           @next = @term*@a*@nextHarmonic
+             / (@harmonic*(@index+1)^2);
+           @futureRatio = 2*@a/(@index+2)^2;
+           @ready = @futureRatio < 1;
+           @tail = @ready
+             ?: @next/(1-@futureRatio)
+             ?_ 3^((@exact.Abs()+1).Ceil()+2);
+           @interval = @sum:(@sum+@tail);
+           @iterations += 1;
+       };
+       step += 1
+    };
+    {=
+        interval=interval,
+        ready=ready,
+        goalMet=ready && interval.Width() <= tolerance,
+        iterations=iterations
+    };
+};
+
+## (x/4) sum(k>=0) (H_k+H_(k+1)) a^k/(k!(k+1)!), the
+## positive harmonic series in the integer-order K1 expansion.
+NumericsBesselK1HarmonicBounds(value, tolerance, maxIterations) -> {;
+    exact = value ~!: :Rational;
+    a = exact^2/4;
+    firstHarmonic := 0;
+    secondHarmonic := 1;
+    harmonicSum := 1;
+    term := exact/4;
+    sum := term;
+    index := 0;
+    nextFirst := 1;
+    nextSecond := 3/2;
+    nextSum := 5/2;
+    next := term*a*nextSum/(harmonicSum*(index+1)*(index+2));
+    futureRatio := 3*a/((index+2)*(index+3));
+    ready := futureRatio < 1;
+    tail := ready ?: next/(1-futureRatio) ?_ 3^((exact+1).Ceil()+2);
+    interval := sum:(sum+tail);
+    iterations := 0;
+    {@ step=1;
+       @interval.Width() > @tolerance && @iterations < @maxIterations;
+       {;
+           @term = @next;
+           @sum += @term;
+           @index += 1;
+           @firstHarmonic = @nextFirst;
+           @secondHarmonic = @nextSecond;
+           @harmonicSum = @nextSum;
+           @nextFirst += 1/(@index+1);
+           @nextSecond += 1/(@index+2);
+           @nextSum = @nextFirst+@nextSecond;
+           @next = @term*@a*@nextSum
+             / (@harmonicSum*(@index+1)*(@index+2));
+           @futureRatio = 3*@a/((@index+2)*(@index+3));
+           @ready = @futureRatio < 1;
+           @tail = @ready
+             ?: @next/(1-@futureRatio)
+             ?_ 3^((@exact+1).Ceil()+2);
+           @interval = @sum:(@sum+@tail);
+           @iterations += 1;
+       };
+       step += 1
+    };
+    {=
+        interval=interval,
+        ready=ready,
+        goalMet=ready && interval.Width() <= tolerance,
+        iterations=iterations
+    };
+};
+
+NumericsBesselKRationalBounds(order, value, tolerance, maxIterations) -> {;
+    exactOrder = order ~!: :Integer;
+    degree = exactOrder.Abs();
+    exact = value ~!: :Rational;
+    exact > 0 ?: _ ?_ .Error("Integer-order Bessel K requires a positive real value");
+    perPart = .Max(0, maxIterations//6);
+    partTolerance = tolerance/(4*(degree+1)*(exact+1));
+    gamma = NumericsEulerGammaRationalBounds(partTolerance, perPart);
+    logarithm = NumericsLogRationalBounds(exact/2, partTolerance, perPart);
+    common = gamma[:interval]+logarithm[:interval];
+    i0 = NumericsBesselIRationalBounds(0, exact, partTolerance, perPart);
+    i1 = NumericsBesselIRationalBounds(1, exact, partTolerance, perPart);
+    core0 = NumericsBesselK0HarmonicBounds(exact, partTolerance, perPart);
+    core1 = NumericsBesselK1HarmonicBounds(exact, partTolerance, perPart);
+    first := 0-common*i0[:interval]+core0[:interval];
+    second := 1/(exact:exact)+common*i1[:interval]-core1[:interval];
+    previous := first;
+    current := second;
+    {@ index=1; index < @degree;
+       {;
+           next = @previous + 2*index/(@exact:@exact)*@current;
+           @previous = @current;
+           @current = next;
+       };
+       index += 1
+    };
+    interval = degree == 0 ?: first ?_ (degree == 1 ?: second ?_ current);
+    iterations = gamma[:iterations] + logarithm[:iterations]
+      + i0[:iterations] + i1[:iterations] + core0[:iterations]
+      + core1[:iterations] + .Max(0, degree-1);
+    ready = gamma[:ready] && logarithm[:ready] && i0[:ready] && i1[:ready]
+      && core0[:ready] && core1[:ready];
     {=
         interval=interval,
         ready=ready,
@@ -40099,6 +40777,35 @@ NumericsGammaRationalBounds(value, tolerance, maxIterations) -> {;
         iterations=logarithm[:iterations] + low[:iterations]
           + (logarithm[:interval].Low() == logarithm[:interval].High() ?: 0 ?_ high[:iterations])
     };
+};
+
+NumericsGammaContinuedRationalBounds(value, tolerance, maxIterations) -> {;
+    exact = value ~!: :Rational;
+    pole = exact <= 0 && exact.Denominator() == 1;
+    pole ?: .Error("Gamma has a pole at every nonpositive integer") ?_ _;
+    exact > 0
+      ?: NumericsGammaRationalBounds(exact, tolerance, maxIterations)
+      ?_ {;
+          shifts = 1-@exact.Floor();
+          product := 1;
+          {@ index=0; index < @shifts;
+             {; @product *= @exact+index; };
+             index += 1
+          };
+          positive = NumericsGammaRationalBounds(
+              @exact+shifts, @tolerance*product.Abs(),
+              .Max(0, @maxIterations-shifts)
+          );
+          interval = positive[:interval]/(product:product);
+          {=
+              interval=interval,
+              ready=positive[:ready],
+              goalMet=positive[:ready] && interval.Width() <= @tolerance,
+              iterations=positive[:iterations]+shifts,
+              sign=product > 0 ?: :positive ?_ :negative,
+              shifts=shifts
+          };
+      };
 };
 
 ## For x > 0, log(x)-1/(2x)-1/(12x^2) < digamma(x)
@@ -40378,6 +41085,502 @@ NumericsZetaRationalBounds(value, tolerance, maxIterations) -> {;
     };
 };
 
+## Euler's transformation of the Dirichlet eta series:
+## eta(s)=sum(n>=0) 2^(-n-1) sum(k=0..n)(-1)^k C(n,k)(k+1)^(-s).
+## For s>0 the inner forward differences lie in [0,1], hence the omitted
+## tail after N rows is bounded by 2^-N. This gives geometric convergence
+## throughout 0<s<1, unlike the raw alternating series near zero.
+NumericsZetaEtaRationalBounds(value, tolerance, maxIterations) -> {;
+    exact = value ~!: :Rational;
+    (exact > 0 && exact < 1)
+      ?: _
+      ?_ .Error("Eta continuation requires 0 < s < 1");
+    setupBudget = .Max(0, maxIterations//8);
+    power = NumericsPositivePowerRationalBounds(
+        2, 1-exact, tolerance/32, setupBudget
+    );
+    denominator = (1-power[:interval].High())
+      :(1-power[:interval].Low());
+    rows := 1;
+    tail := 1/(2*(0-denominator.High()));
+    {@ step=1;
+       @tail > @tolerance/4 && @rows < @maxIterations;
+       {; @rows += 1; @tail /= 2; };
+       step += 1
+    };
+    perTerm = .Max(0, (maxIterations-power[:iterations]-rows)
+      //.Max(1,rows));
+    values := [];
+    termIterations := 0;
+    ready := power[:ready];
+    {@ k=0; k < @rows && @ready;
+       {;
+           term = NumericsPositivePowerRationalBounds(
+               k+1, -@exact, @tolerance/(8*@rows), @perTerm
+           );
+           @values ~= @values.Push(term[:interval]);
+           @termIterations += term[:iterations];
+           @ready = @ready && term[:ready];
+       };
+       k += 1
+    };
+    eta := 0:0;
+    differences := values;
+    {@ n=0; n < @rows && @ready;
+       {;
+           @eta += @differences[1]/2^(n+1);
+           next := [];
+           {@ k=1; k < @differences.Len();
+              {;
+                  @next ~= @next.Push(
+                      @differences[k]-@differences[k+1]
+                  );
+              };
+              k += 1
+           };
+           @differences ~= next;
+       };
+       n += 1
+    };
+    quotient = eta/denominator;
+    interval = (quotient.Low()-tail):quotient.High();
+    iterations = power[:iterations]+rows+termIterations;
+    {=
+        interval=interval,
+        ready=ready && denominator.High() < 0,
+        goalMet=ready && denominator.High() < 0
+          && interval.Width() <= tolerance,
+        iterations=iterations,
+        rows=rows
+    };
+};
+
+NumericsZetaNegativeRationalBounds(value, tolerance, maxIterations) -> {;
+    exact = value ~!: :Rational;
+    exact < 0 ?: _ ?_ .Error("Zeta reflection requires a negative Rational");
+    perPart = .Max(0, maxIterations//7);
+    partTolerance = tolerance/256;
+    pi = NumericsPiRationalBounds(partTolerance, perPart);
+    twoPi = 2*pi[:interval];
+    lowPower = NumericsPositivePowerRationalBounds(
+        twoPi.High(), exact-1, partTolerance, perPart
+    );
+    highPower = NumericsPositivePowerRationalBounds(
+        twoPi.Low(), exact-1, partTolerance, perPart
+    );
+    powerInterval = lowPower[:interval].Low():highPower[:interval].High();
+    quotient = (exact/4).Floor();
+    reduced := exact-4*quotient;
+    reduced > 2 ?: {; @reduced -= 4; } ?_ _;
+    angle = pi[:interval]*reduced/2;
+    angleMidpoint = angle.Midpoint();
+    angleRadius = angle.Width()/2;
+    sinePoint = NumericsTrigTaylorBounds(
+        angleMidpoint, partTolerance, perPart, :sine
+    );
+    sineInterval = NumericsClampUnitInterval(
+        (sinePoint[:interval].Low()-angleRadius)
+          :(sinePoint[:interval].High()+angleRadius)
+    );
+    gammaArgument = 1-exact;
+    halfOffset = gammaArgument-1/2;
+    halfIndex = halfOffset.Denominator() == 1
+      ?: halfOffset.Numerator()
+      ?_ _;
+    gamma = halfIndex != _ && halfIndex >= 0
+      ?: {;
+          coefficient := 1;
+          {@ index=0; index < @halfIndex;
+             {; @coefficient *= index+1/2; };
+             index += 1
+          };
+          root = NumericsSqrtPiRationalBounds(
+              @partTolerance/.Max(1,coefficient.Abs()), @perPart
+          );
+          selectedInterval = coefficient*root[:interval];
+          {=
+              interval=selectedInterval,
+              ready=root[:ready],
+              goalMet=root[:ready]
+                && selectedInterval.Width() <= @partTolerance,
+              iterations=root[:iterations]
+          };
+      }
+      ?_ NumericsGammaContinuedRationalBounds(
+          gammaArgument, partTolerance, perPart
+      );
+    positiveZeta = NumericsZetaRationalBounds(
+        1-exact, partTolerance, perPart
+    );
+    interval = 2*powerInterval*sineInterval*gamma[:interval]
+      *positiveZeta[:interval];
+    iterations = pi[:iterations]+lowPower[:iterations]+highPower[:iterations]
+      +sinePoint[:iterations]+gamma[:iterations]+positiveZeta[:iterations];
+    ready = pi[:ready] && lowPower[:ready] && highPower[:ready]
+      && sinePoint[:ready] && gamma[:ready] && positiveZeta[:ready];
+    {=
+        interval=interval,
+        ready=ready,
+        goalMet=ready && interval.Width() <= tolerance,
+        iterations=iterations
+    };
+};
+
+NumericsPositiveSqrtRationalBounds(value, tolerance, maxIterations) -> {;
+    exact = value ~!: :Rational;
+    exact >= 0 ?: _ ?_ .Error("Square-root bounds require a nonnegative Rational");
+    low := 0;
+    high := .Max(1, exact);
+    iterations := 0;
+    {@ step=1;
+       @high-@low > @tolerance && @iterations < @maxIterations;
+       {;
+           midpoint = (@low+@high)/2;
+           midpoint^2 <= @exact
+             ?: {; @low = @midpoint; }
+             ?_ {; @high = @midpoint; };
+           @iterations += 1;
+       };
+       step += 1
+    };
+    interval = low:high;
+    {=
+        interval=interval,
+        ready=1,
+        goalMet=interval.Width() <= tolerance,
+        iterations=iterations
+    };
+};
+
+## phi(x)=exp(-x^2/2)/sqrt(2*pi). All component bounds are outward
+## Rational intervals, and the final interval is checked against the caller's
+## tolerance instead of relying on generic expression-tree precision routing.
+NumericsNormalPDFRationalBounds(value, tolerance, maxIterations) -> {;
+    exact = value ~!: :Rational;
+    partBudget = .Max(0, maxIterations//4);
+    partTolerance = tolerance/8;
+    pi = NumericsPiRationalBounds(partTolerance, partBudget);
+    lowerRoot = NumericsPositiveSqrtRationalBounds(
+        2*pi[:interval].Low(), partTolerance, partBudget
+    );
+    upperRoot = NumericsPositiveSqrtRationalBounds(
+        2*pi[:interval].High(), partTolerance, partBudget
+    );
+    rootInterval = lowerRoot[:interval].Low():upperRoot[:interval].High();
+    exponential = NumericsExpRationalBounds(
+        -(exact^2)/2, tolerance/4, .Max(0, maxIterations
+          - pi[:iterations] - lowerRoot[:iterations] - upperRoot[:iterations])
+    );
+    interval = exponential[:interval]/rootInterval;
+    iterations = pi[:iterations] + lowerRoot[:iterations]
+      + upperRoot[:iterations] + exponential[:iterations];
+    ready = pi[:ready] && lowerRoot[:ready] && upperRoot[:ready]
+      && exponential[:ready];
+    {=
+        interval=interval,
+        ready=ready,
+        goalMet=ready && interval.Width() <= tolerance,
+        iterations=iterations
+    };
+};
+
+NumericsNormalRootRationalBounds(tolerance, maxIterations) -> {;
+    partBudget = .Max(0, maxIterations//3);
+    pi = NumericsPiRationalBounds(tolerance/2, partBudget);
+    lowerRoot = NumericsPositiveSqrtRationalBounds(
+        2*pi[:interval].Low(), tolerance, partBudget
+    );
+    upperRoot = NumericsPositiveSqrtRationalBounds(
+        2*pi[:interval].High(), tolerance, partBudget
+    );
+    interval = lowerRoot[:interval].Low():upperRoot[:interval].High();
+    iterations = pi[:iterations] + lowerRoot[:iterations] + upperRoot[:iterations];
+    ready = pi[:ready] && lowerRoot[:ready] && upperRoot[:ready];
+    {=
+        interval=interval,
+        ready=ready,
+        goalMet=ready && interval.Width() <= 2*tolerance,
+        iterations=iterations
+    };
+};
+
+NumericsNormalPDFWithRootRationalBounds(
+    value, tolerance, maxIterations, rootInterval
+) -> {;
+    exact = value ~!: :Rational;
+    exponential = NumericsExpRationalBounds(
+        -(exact^2)/2, tolerance*rootInterval.Low()/2, maxIterations
+    );
+    interval = exponential[:interval]/rootInterval;
+    {=
+        interval=interval,
+        ready=exponential[:ready],
+        goalMet=exponential[:ready] && interval.Width() <= tolerance,
+        iterations=exponential[:iterations]
+    };
+};
+
+NumericsSqrtPiRationalBounds(tolerance, maxIterations) -> {;
+    partBudget = .Max(0, maxIterations//3);
+    pi = NumericsPiRationalBounds(tolerance/2, partBudget);
+    lowerRoot = NumericsPositiveSqrtRationalBounds(
+        pi[:interval].Low(), tolerance/2, partBudget
+    );
+    upperRoot = NumericsPositiveSqrtRationalBounds(
+        pi[:interval].High(), tolerance/2, partBudget
+    );
+    interval = lowerRoot[:interval].Low():upperRoot[:interval].High();
+    iterations = pi[:iterations] + lowerRoot[:iterations] + upperRoot[:iterations];
+    ready = pi[:ready] && lowerRoot[:ready] && upperRoot[:ready];
+    {=
+        interval=interval,
+        ready=ready,
+        goalMet=ready && interval.Width() <= tolerance,
+        iterations=iterations
+    };
+};
+
+## Phi(x) = 1/2 + S(x)/sqrt(2*pi), where
+## S(x)=sum (-1)^k*x^(2k+1)/(2^k*k!*(2k+1)).
+NumericsNormalCDFWithRootRationalBounds(
+    value, tolerance, maxIterations, rootInterval
+) -> {;
+    exact = value ~!: :Rational;
+    term := exact;
+    sum := exact;
+    index := 0;
+    next := -exact^3/6;
+    decreasing := next.Abs() <= term.Abs();
+    seriesInterval := decreasing
+      ?: NumericsAlternatingSeriesInterval(sum, next)
+      ?_ ((-2):2);
+    interval := NumericsClampProbabilityInterval(1/2 + seriesInterval/rootInterval);
+    seriesIterations := 0;
+    remaining = .Max(0, maxIterations);
+    {@ step=1;
+       @interval.Width() > @tolerance && @seriesIterations < @remaining;
+       {;
+           @term = @next;
+           @sum += @term;
+           @index += 1;
+           @next = -@term * @exact^2 * (2*@index+1)
+             / (2*(@index+1)*(2*@index+3));
+           @decreasing = @next.Abs() <= @term.Abs();
+           @seriesInterval = @decreasing
+             ?: NumericsAlternatingSeriesInterval(@sum, @next)
+             ?_ ((-2):2);
+           @interval = NumericsClampProbabilityInterval(
+               1/2 + @seriesInterval/@rootInterval
+           );
+           @seriesIterations += 1;
+       };
+       step += 1
+    };
+    iterations = seriesIterations;
+    ready = decreasing;
+    {=
+        interval=interval,
+        ready=ready,
+        goalMet=ready && interval.Width() <= tolerance,
+        iterations=iterations
+    };
+};
+
+NumericsNormalCDFRationalBounds(value, tolerance, maxIterations) -> {;
+    rootBudget = .Max(0, maxIterations//2);
+    root = NumericsNormalRootRationalBounds(tolerance/8, rootBudget);
+    series = NumericsNormalCDFWithRootRationalBounds(
+        value, tolerance, .Max(0, maxIterations-root[:iterations]), root[:interval]
+    );
+    {=
+        interval=series[:interval],
+        ready=root[:ready] && series[:ready],
+        goalMet=root[:ready] && series[:ready]
+          && series[:interval].Width() <= tolerance,
+        iterations=root[:iterations] + series[:iterations]
+    };
+};
+
+## Chebyshev's inequality gives a finite certified starting bracket for every
+## exact 0 < p < 1: P(|Z| >= r) <= 1/r^2 for a standard normal Z.
+NumericsNormalQuantilePointBounds(probability, tolerance, maxCalls, maxIterations) -> {;
+    p = probability ~!: :Rational;
+    (p > 0 && p < 1) ?: _ ?_ .Error("Normal quantile requires 0 < p < 1");
+    tail = .Min(p, 1-p);
+    radius := 1;
+    setupIterations := 0;
+    {@ step=1;
+       1/(@radius^2) >= @tail && @setupIterations < @maxIterations;
+       {; @radius *= 2; @setupIterations += 1; };
+       step += 1
+    };
+    upperHalf = p > 1/2;
+    low := upperHalf ?: 0 ?_ -radius;
+    high := upperHalf ?: radius ?_ 0;
+    ## The inverse needs Phi to absolute error proportional to phi(x) times
+    ## the requested x error. The tail factor is a conservative global lower
+    ## scale for the normal density on the Chebyshev bracket.
+    cdfTolerance := tolerance*tail/16;
+    root = NumericsNormalRootRationalBounds(
+        cdfTolerance/32, .Max(0, maxIterations//4)
+    );
+    rootInterval := root[:interval];
+    calls := root[:iterations];
+    iterations := setupIterations;
+    certified := 1/(radius^2) < tail && root[:ready];
+    ## Probe small powers of two before ordinary bisection. Chebyshev still
+    ## supplies the certified outer endpoint, while these inexpensive CDF
+    ## comparisons avoid evaluating the alternating series first at a large
+    ## midpoint such as 4 or 8.
+    probe := upperHalf ?: 1 ?_ -1;
+    probing := probe.Abs() < radius;
+    {@ step=1;
+       @probing && @iterations < @maxIterations && @calls < @maxCalls
+         && @certified;
+       {;
+           remaining = .Max(1, .Min(@maxIterations-@iterations, @maxCalls-@calls));
+           cdf = NumericsNormalCDFWithRootRationalBounds(
+               @probe, @cdfTolerance, .Min(500, remaining), @rootInterval
+           );
+           @calls += cdf[:iterations];
+           @certified = cdf[:ready];
+           below = @certified && cdf[:interval].High() < @p;
+           above = @certified && cdf[:interval].Low() > @p;
+           @upperHalf
+             ?: (below
+                 ?: {;
+                     @low = @probe;
+                     nextProbe = 2*@probe;
+                     nextProbe < @high
+                       ?: {; @probe = @nextProbe; }
+                       ?_ {; @probing = _; };
+                 }
+                 ?_ (above
+                     ?: {; @high = @probe; @probing = _; }
+                     ?_ {; @probing = _; }))
+             ?_ (above
+                 ?: {;
+                     @high = @probe;
+                     nextProbe = 2*@probe;
+                     nextProbe > @low
+                       ?: {; @probe = @nextProbe; }
+                       ?_ {; @probing = _; };
+                 }
+                 ?_ (below
+                     ?: {; @low = @probe; @probing = _; }
+                     ?_ {; @probing = _; }));
+           @iterations += 1;
+       };
+       step += 1
+    };
+    ## Certified interval Newton.  Phi'=phi, and phi decreases with |x|, so
+    ## evaluations at the nearest and farthest bracket points enclose every
+    ## derivative on the bracket. Intersecting the Newton image preserves the
+    ## root while usually replacing dozens of bisections with a few steps.
+    newtonActive := 1;
+    newtonIterations := 0;
+    {@ step=1;
+       @newtonActive && @high-@low > @tolerance
+         && @newtonIterations < 16 && @iterations < @maxIterations
+         && @calls < @maxCalls && @certified;
+       {;
+           midpoint = (@low+@high)/2;
+           far = .Max(@low.Abs(), @high.Abs());
+           near = (@low <= 0 && @high >= 0)
+             ?: 0
+             ?_ .Min(@low.Abs(), @high.Abs());
+           remaining = .Max(0, .Min(
+               @maxIterations-@iterations, @maxCalls-@calls
+           ));
+           densityBudget = .Max(0, remaining//6);
+           farDensity = NumericsNormalPDFWithRootRationalBounds(
+               far, @cdfTolerance/4, densityBudget, @rootInterval
+           );
+           nearDensity = NumericsNormalPDFWithRootRationalBounds(
+               near, @cdfTolerance/4, densityBudget, @rootInterval
+           );
+           density = farDensity[:interval].Low()
+             :nearDensity[:interval].High();
+           cdfBudget = .Max(0, remaining
+             - farDensity[:iterations] - nearDensity[:iterations]);
+           cdf = NumericsNormalCDFWithRootRationalBounds(
+               midpoint, @cdfTolerance, cdfBudget, @rootInterval
+           );
+           @calls += farDensity[:iterations] + nearDensity[:iterations]
+             + cdf[:iterations];
+           stepReady = farDensity[:ready] && nearDensity[:ready]
+             && cdf[:ready] && density.Low() > 0;
+           @certified = @certified && stepReady;
+           stepReady
+             ?: {;
+                 residual = @cdf[:interval] - (@p:@p);
+                 candidate = (@midpoint:@midpoint) - residual/@density;
+                 ## Snap outward to a request-sized rational grid. Raw
+                 ## interval-Newton quotients otherwise compound enormous
+                 ## exact denominators even though those digits cannot affect
+                 ## the requested enclosure.
+                 grid = @tolerance/16;
+                 roundedLow = (candidate.Low()/grid).Floor()*grid;
+                 roundedHigh = (candidate.High()/grid).Ceil()*grid;
+                 nextLow = .Max(@low, roundedLow);
+                 nextHigh = .Min(@high, roundedHigh);
+                 contracts = nextLow <= nextHigh
+                   && nextHigh-nextLow < @high-@low;
+                 contracts
+                   ?: {; @low = @nextLow; @high = @nextHigh; }
+                   ?_ {; @newtonActive = _; };
+             }
+             ?_ {; @newtonActive = _; };
+           @newtonIterations += 1;
+           @iterations += 1;
+       };
+       step += 1
+    };
+    {@ step=1;
+       @high-@low > @tolerance && @iterations < @maxIterations
+         && @calls < @maxCalls && @certified;
+       {;
+           midpoint = (@low+@high)/2;
+           remaining = .Max(1, .Min(@maxIterations-@iterations, @maxCalls-@calls));
+           evaluationBudget = .Min(500, remaining);
+           cdf = NumericsNormalCDFWithRootRationalBounds(
+               midpoint, @cdfTolerance, evaluationBudget, @rootInterval
+           );
+           @calls += cdf[:iterations];
+           @certified = cdf[:ready];
+           decidedLow = @certified && cdf[:interval].High() < @p;
+           decidedHigh = @certified && cdf[:interval].Low() > @p;
+           decidedLow
+             ?: {; @low = @midpoint; }
+             ?_ (decidedHigh
+                 ?: {; @high = @midpoint; }
+                 ?_ {;
+                     @cdfTolerance /= 4;
+                     rootBudget = .Max(0, .Min(
+                         @maxIterations-@iterations, @maxCalls-@calls
+                     ));
+                     tighterRoot = NumericsNormalRootRationalBounds(
+                         @cdfTolerance/8, rootBudget
+                     );
+                     @rootInterval = tighterRoot[:interval];
+                     @calls += tighterRoot[:iterations];
+                     @certified = @certified && tighterRoot[:ready];
+                 });
+           @iterations += 1;
+       };
+       step += 1
+    };
+    interval = low:high;
+    {=
+        interval=interval,
+        ready=certified,
+        goalMet=certified && interval.Width() <= tolerance,
+        calls=calls,
+        iterations=iterations,
+        setupIterations=setupIterations
+    };
+};
+
 NumericsElementaryResult(real, request, interval, work, goalMet, evidence) -> {;
     status = goalMet ?: :enclosed ?_ :budgetExhausted;
     approximation = .CertifiedApproximation(interval.Midpoint(), interval, {=
@@ -40647,18 +41850,40 @@ NumericsGammaRefine(real, rawRequest, operation) -> {;
     sourceResult = NumericsSourceResult(real[:input], sourceWidth, sourceBudget, request[:trace]);
     sourceCalls = NumericsCalls(sourceResult);
     sourceInterval = sourceResult[:interval];
-    domainResolved = sourceInterval.Low() > 0;
+    firstInteger = sourceInterval.Low().Ceil();
+    crossesPole = firstInteger <= 0 && firstInteger <= sourceInterval.High();
+    domainResolved = !crossesPole;
     domainResolved ?: {;
         midpoint = @sourceInterval.Midpoint();
         radius = @sourceInterval.Width()/2;
         remaining = .Max(0, .Min(@maxIterations, @maxCalls-@sourceCalls));
-        pointBounds = NumericsGammaRationalBounds(
+        pointBounds = NumericsGammaContinuedRationalBounds(
             midpoint, @requestedWidth/2, remaining
         );
-        gammaBound = 3^((@sourceInterval.High()^2).Ceil()+2)
-          * (1 + 1/@sourceInterval.Low());
-        derivativeBound = gammaBound * (1/@sourceInterval.Low()
-          + @sourceInterval.High().Abs() + 2);
+        shifts = @sourceInterval.Low() > 0
+          ?: 0
+          ?_ 1-@sourceInterval.Low().Floor();
+        inverseProductBound := 1;
+        reciprocalSum := 0;
+        signProduct := 1;
+        {@ index=0; index < @shifts;
+           {;
+               lowFactor = @sourceInterval.Low()+index;
+               highFactor = @sourceInterval.High()+index;
+               distance = .Min(lowFactor.Abs(), highFactor.Abs());
+               @inverseProductBound /= distance;
+               @reciprocalSum += 1/distance;
+               @midpoint+index < 0 ?: {; @signProduct = -@signProduct; } ?_ _;
+           };
+           index += 1
+        };
+        positiveLow = @sourceInterval.Low()+shifts;
+        positiveHigh = @sourceInterval.High()+shifts;
+        positiveGammaBound = 3^((positiveHigh^2).Ceil()+2)
+          * (1+1/positiveLow);
+        gammaBound = positiveGammaBound*inverseProductBound;
+        psiBound = 1/positiveLow+positiveHigh.Abs()+2+reciprocalSum;
+        derivativeBound = gammaBound*psiBound;
         interval = (pointBounds[:interval].Low()-derivativeBound*radius)
           :(pointBounds[:interval].High()+derivativeBound*radius);
         iterations = pointBounds[:iterations];
@@ -40672,9 +41897,11 @@ NumericsGammaRefine(real, rawRequest, operation) -> {;
             sourceCalls=@sourceCalls,
             exhausted=!goalMet
         }, goalMet, {=
-            kind=:stirlingThenExponentialBounds,
+            kind=:gammaRecurrenceContinuation,
             property=:containment,
             algorithm=:gamma,
+            sign=signProduct > 0 ?: :positive ?_ :negative,
+            shifts=shifts,
             source=@sourceResult[:evidence]
         });
     } ?_ NumericsUnknownAlgorithm(
@@ -40682,8 +41909,35 @@ NumericsGammaRefine(real, rawRequest, operation) -> {;
         request,
         0:.Max(1,maxCalls),
         {= calls=sourceCalls, iterations=0, maxCalls=maxCalls, exhausted=1 },
-        :gammaPositiveDomainNotCertified
+        :gammaPoleNotSeparated
     );
+};
+
+NumericsGammaPositiveHalfRefine(real, rawRequest, operation) -> {;
+    capabilities = NumericsAlgorithmCapabilities(real);
+    request = .RefinementRequest(rawRequest, operation, capabilities);
+    requestedWidth = request[:absoluteWidth];
+    maxCalls = request[:work][:maxCalls];
+    maxIterations = request[:work][:maxIterations];
+    coefficient = real[:coefficient];
+    scale = .Max(1, coefficient.Abs());
+    bounds = NumericsSqrtPiRationalBounds(
+        requestedWidth/scale, .Min(maxCalls, maxIterations)
+    );
+    interval = coefficient*bounds[:interval];
+    goalMet = bounds[:ready] && interval.Width() <= requestedWidth;
+    NumericsElementaryResult(real, request, interval, {=
+        calls=bounds[:iterations],
+        iterations=bounds[:iterations],
+        maxCalls=maxCalls,
+        maxIterations=maxIterations,
+        exhausted=!goalMet
+    }, goalMet, {=
+        kind=:gammaPositiveHalfIdentity,
+        property=:containment,
+        identity="Gamma(k+1/2)=(1/2)_k*sqrt(pi)",
+        coefficient=coefficient
+    });
 };
 
 NumericsPolygammaRefine(real, rawRequest, operation) -> {;
@@ -40990,43 +42244,125 @@ NumericsZetaRefine(real, rawRequest, operation) -> {;
     sourceResult = NumericsSourceResult(real[:input], sourceWidth, sourceBudget, request[:trace]);
     sourceCalls = NumericsCalls(sourceResult);
     sourceInterval = sourceResult[:interval];
-    domainResolved = sourceInterval.Low() > 1;
-    domainResolved ?: {;
-        remaining = .Max(0, .Min(@maxIterations, @maxCalls-@sourceCalls));
-        endpointBudget = .Max(0, remaining//2);
-        lower = NumericsZetaRationalBounds(
-            @sourceInterval.High(), @requestedWidth/4, endpointBudget
-        );
-        sameEndpoint = @sourceInterval.Low() == @sourceInterval.High();
-        upper = sameEndpoint
-          ?: lower
-          ?_ NumericsZetaRationalBounds(
-              @sourceInterval.Low(), @requestedWidth/4, remaining-endpointBudget
-          );
-        interval = lower[:interval].Low():upper[:interval].High();
-        endpointIterations = lower[:iterations] + (sameEndpoint ?: 0 ?_ upper[:iterations]);
-        calls = @sourceCalls + endpointIterations;
-        goalMet = lower[:ready] && upper[:ready] && interval.Width() <= @requestedWidth;
-        NumericsElementaryResult(@real, @request, interval, {=
-            calls=calls,
-            iterations=endpointIterations,
-            maxCalls=@maxCalls,
-            maxIterations=@maxIterations,
-            sourceCalls=@sourceCalls,
-            exhausted=!goalMet
-        }, goalMet, {=
-            kind=:eulerMaclaurinBounds,
-            property=:containment,
-            algorithm=:zeta,
-            source=@sourceResult[:evidence]
-        });
-    } ?_ NumericsUnknownAlgorithm(
-        real,
-        request,
-        1:(1 + 1/.Max(1, sourceInterval.High().Abs())),
-        {= calls=sourceCalls, iterations=0, maxCalls=maxCalls, exhausted=1 },
-        :zetaGreaterThanOneDomainNotCertified
-    );
+    greaterThanOne = sourceInterval.Low() > 1;
+    criticalStrip = sourceInterval.Low() > 0 && sourceInterval.High() < 1;
+    negativeHalfLine = sourceInterval.High() < 0;
+    (greaterThanOne || criticalStrip)
+      ?: {;
+          remaining = .Max(0, .Min(@maxIterations, @maxCalls-@sourceCalls));
+          endpointBudget = .Max(0, remaining//2);
+          lower = @greaterThanOne
+            ?: NumericsZetaRationalBounds(
+                @sourceInterval.High(), @requestedWidth/4, endpointBudget
+            )
+            ?_ NumericsZetaEtaRationalBounds(
+                @sourceInterval.High(), @requestedWidth/4, endpointBudget
+            );
+          sameEndpoint = @sourceInterval.Low() == @sourceInterval.High();
+          upper = sameEndpoint
+            ?: lower
+            ?_ (@greaterThanOne
+                ?: NumericsZetaRationalBounds(
+                    @sourceInterval.Low(), @requestedWidth/4,
+                    remaining-endpointBudget
+                )
+                ?_ NumericsZetaEtaRationalBounds(
+                    @sourceInterval.Low(), @requestedWidth/4,
+                    remaining-endpointBudget
+                ));
+          ## Zeta is strictly decreasing on each of (0,1) and (1,infinity).
+          interval = lower[:interval].Low():upper[:interval].High();
+          endpointIterations = lower[:iterations]
+            + (sameEndpoint ?: 0 ?_ upper[:iterations]);
+          calls = @sourceCalls+endpointIterations;
+          goalMet = lower[:ready] && upper[:ready]
+            && interval.Width() <= @requestedWidth;
+          NumericsElementaryResult(@real, @request, interval, {=
+              calls=calls,
+              iterations=endpointIterations,
+              maxCalls=@maxCalls,
+              maxIterations=@maxIterations,
+              sourceCalls=@sourceCalls,
+              exhausted=!goalMet
+          }, goalMet, {=
+              kind=@greaterThanOne ?: :eulerMaclaurinBounds ?_ :eulerTransformedEta,
+              property=:containment,
+              algorithm=:zeta,
+              source=@sourceResult[:evidence]
+          });
+      }
+      ?_ (negativeHalfLine
+          ?: {;
+              remaining = .Max(0, .Min(
+                  @maxIterations, @maxCalls-@sourceCalls
+              ));
+              exactSource = NumericsExactOracle(@real[:input]);
+              exactSource
+                ?: {;
+                    bounds = NumericsZetaNegativeRationalBounds(
+                        @sourceInterval.Midpoint(), @requestedWidth, @remaining
+                    );
+                    calls = @sourceCalls+bounds[:iterations];
+                    goalMet = bounds[:ready]
+                      && bounds[:interval].Width() <= @requestedWidth;
+                    NumericsElementaryResult(
+                        @real, @request, bounds[:interval], {=
+                            calls=calls,
+                            iterations=bounds[:iterations],
+                            maxCalls=@maxCalls,
+                            maxIterations=@maxIterations,
+                            sourceCalls=@sourceCalls,
+                            exhausted=!goalMet
+                        }, goalMet, {=
+                            kind=:riemannFunctionalEquation,
+                            property=:containment,
+                            identity="zeta(s)=2*(2*pi)^(s-1)*sin(pi*s/2)*Gamma(1-s)*zeta(1-s)",
+                            source=@sourceResult[:evidence]
+                        }
+                    );
+                }
+                ?_ {;
+                    input = @real[:input];
+                    pi = NumericsPiAlgorithm();
+                    reflection = 2*NumericsNaturalExp(
+                        (input-1)*NumericsNaturalLog(2*pi)
+                    )*NumericsSin(pi*input/2)*NumericsGamma(1-input)
+                      *NumericsZeta(1-input);
+                    reflectionSource = .oracle.From(reflection);
+                    reflected = NumericsSourceResult(
+                        reflectionSource, @requestedWidth, @remaining,
+                        @request[:trace]
+                    );
+                    nestedCalls = NumericsCalls(reflected);
+                    calls = @sourceCalls+nestedCalls;
+                    ready = NumericsExactOracle(reflectionSource)
+                      || reflected[:certified] == 1;
+                    goalMet = ready
+                      && reflected[:interval].Width() <= @requestedWidth;
+                    NumericsElementaryResult(
+                        @real, @request, reflected[:interval], {=
+                            calls=calls,
+                            iterations=nestedCalls,
+                            maxCalls=@maxCalls,
+                            maxIterations=@maxIterations,
+                            sourceCalls=@sourceCalls,
+                            exhausted=!goalMet
+                        }, goalMet, {=
+                            kind=:riemannFunctionalEquation,
+                            property=:containment,
+                            identity="zeta(s)=2*(2*pi)^(s-1)*sin(pi*s/2)*Gamma(1-s)*zeta(1-s)",
+                            source=@sourceResult[:evidence]
+                        }
+                    );
+                };
+          }
+          ?_ NumericsUnknownAlgorithm(
+              real,
+              request,
+              (-maxCalls):maxCalls,
+              {= calls=sourceCalls, iterations=0, maxCalls=maxCalls, exhausted=1 },
+              :zetaPoleOrContinuationRegionNotSeparated
+          ));
 };
 
 NumericsBesselYRefine(real, rawRequest, operation) -> {;
@@ -41045,8 +42381,11 @@ NumericsBesselYRefine(real, rawRequest, operation) -> {;
         midpoint = @sourceInterval.Midpoint();
         radius = @sourceInterval.Width()/2;
         remaining = .Max(0, .Min(@maxIterations, @maxCalls-@sourceCalls));
+        pointTolerance = NumericsExactOracle(@real[:input])
+          ?: @requestedWidth
+          ?_ @requestedWidth/2;
         pointBounds = NumericsBesselYRationalBounds(
-            midpoint, @requestedWidth/2, remaining, @real[:kind]
+            midpoint, pointTolerance, remaining, @real[:kind]
         );
         derivativeBound = 3^(@sourceInterval.High().Abs().Ceil()+2)
           * (@sourceInterval.High().Abs()+1)^3 * (1 + 1/@sourceInterval.Low());
@@ -41074,6 +42413,251 @@ NumericsBesselYRefine(real, rawRequest, operation) -> {;
         (-maxCalls):maxCalls,
         {= calls=sourceCalls, iterations=0, maxCalls=maxCalls, exhausted=1 },
         :besselYPositiveDomainNotCertified
+    );
+};
+
+NumericsBesselIntegerRefine(real, rawRequest, operation) -> {;
+    capabilities = NumericsAlgorithmCapabilities(real);
+    request = .RefinementRequest(rawRequest, operation, capabilities);
+    requestedWidth = request[:absoluteWidth];
+    maxCalls = request[:work][:maxCalls];
+    maxIterations = request[:work][:maxIterations];
+    sourceWidth = requestedWidth^2/256;
+    sourceBudget = .Max(0, maxCalls//3);
+    sourceResult = NumericsSourceResult(real[:input], sourceWidth, sourceBudget, request[:trace]);
+    sourceCalls = NumericsCalls(sourceResult);
+    sourceInterval = sourceResult[:interval];
+    domainResolved = NumericsExactOracle(real[:input])
+      && (real[:family] == :besselJ || sourceInterval.Low() > 0);
+    domainResolved ?: {;
+        midpoint = @sourceInterval.Midpoint();
+        radius = @sourceInterval.Width()/2;
+        remaining = .Max(0, .Min(@maxIterations, @maxCalls-@sourceCalls));
+        pointBounds = NumericsBesselIntegerRationalBounds(
+            @real[:order], midpoint, @requestedWidth, remaining, @real[:family]
+        );
+        derivativeBound = @real[:family] == :besselJ
+          ?: 1
+          ?_ 3^(@sourceInterval.High().Abs().Ceil()+@real[:order].Abs()+2)
+              * (@sourceInterval.High().Abs()+@real[:order].Abs()+1)^3
+              * (1 + 1/@sourceInterval.Low());
+        interval = (pointBounds[:interval].Low()-derivativeBound*radius)
+          :(pointBounds[:interval].High()+derivativeBound*radius);
+        iterations = pointBounds[:iterations];
+        calls = @sourceCalls + iterations;
+        goalMet = pointBounds[:ready] && interval.Width() <= @requestedWidth;
+        NumericsElementaryResult(@real, @request, interval, {=
+            calls=calls,
+            iterations=iterations,
+            maxCalls=@maxCalls,
+            maxIterations=@maxIterations,
+            sourceCalls=@sourceCalls,
+            exhausted=!goalMet
+        }, goalMet, {=
+            kind=:besselIntegerRecurrenceBounds,
+            property=:containment,
+            family=@real[:family],
+            order=@real[:order],
+            source=@sourceResult[:evidence]
+        });
+    } ?_ NumericsUnknownAlgorithm(
+        real,
+        request,
+        (-maxCalls):maxCalls,
+        {= calls=sourceCalls, iterations=0, maxCalls=maxCalls, exhausted=1 },
+        :besselYPositiveDomainNotCertified
+    );
+};
+
+NumericsModifiedBesselRefine(real, rawRequest, operation) -> {;
+    capabilities = NumericsAlgorithmCapabilities(real);
+    request = .RefinementRequest(rawRequest, operation, capabilities);
+    requestedWidth = request[:absoluteWidth];
+    maxCalls = request[:work][:maxCalls];
+    maxIterations = request[:work][:maxIterations];
+    sourceWidth = requestedWidth^2/256;
+    sourceBudget = .Max(0, maxCalls//3);
+    sourceResult = NumericsSourceResult(
+        real[:input], sourceWidth, sourceBudget, request[:trace]
+    );
+    sourceCalls = NumericsCalls(sourceResult);
+    sourceInterval = sourceResult[:interval];
+    modifiedK = real[:family] == :besselK;
+    domainResolved = modifiedK ?: sourceInterval.Low() > 0 ?_ 1;
+    domainResolved ?: {;
+        remaining = .Max(0, .Min(
+            @maxIterations, @maxCalls-@sourceCalls
+        ));
+        interval := 0:0;
+        nestedIterations := 0;
+        ready := _;
+        @modifiedK
+          ?: {;
+              endpointBudget = .Max(0, @remaining//2);
+              ## K_n is positive and strictly decreasing on x>0, so endpoint
+              ## evaluation lifts a certified source interval without a
+              ## derivative overestimate.
+              lowerValue = NumericsBesselKRationalBounds(
+                  @real[:order], @sourceInterval.High(),
+                  @requestedWidth/2, endpointBudget
+              );
+              sameEndpoint = @sourceInterval.Low() == @sourceInterval.High();
+              upperValue = sameEndpoint
+                ?: lowerValue
+                ?_ NumericsBesselKRationalBounds(
+                    @real[:order], @sourceInterval.Low(),
+                    @requestedWidth/2, @remaining-endpointBudget
+                );
+              @interval = lowerValue[:interval].Low()
+                :upperValue[:interval].High();
+              @nestedIterations = lowerValue[:iterations]
+                + (sameEndpoint ?: 0 ?_ upperValue[:iterations]);
+              @ready = lowerValue[:ready] && upperValue[:ready];
+          }
+          ?_ {;
+              midpoint = @sourceInterval.Midpoint();
+              radius = @sourceInterval.Width()/2;
+              point = NumericsBesselIRationalBounds(
+                  @real[:order], midpoint, @requestedWidth/2, @remaining
+              );
+              maximum = .Max(
+                  @sourceInterval.Low().Abs(), @sourceInterval.High().Abs()
+              );
+              ## From the integral representation, |I_n'(x)| <= exp(|x|).
+              ## Since e<3, this integer power is a simple certified majorant.
+              derivativeBound = 3^(maximum.Ceil()+1);
+              lift = derivativeBound*radius;
+              @interval = (point[:interval].Low()-lift)
+                :(point[:interval].High()+lift);
+              @nestedIterations = point[:iterations];
+              @ready = point[:ready];
+          };
+        calls = @sourceCalls+nestedIterations;
+        goalMet = ready && interval.Width() <= @requestedWidth;
+        NumericsElementaryResult(@real, @request, interval, {=
+            calls=calls,
+            iterations=nestedIterations,
+            maxCalls=@maxCalls,
+            maxIterations=@maxIterations,
+            sourceCalls=@sourceCalls,
+            exhausted=!goalMet
+        }, goalMet, {=
+            kind=@modifiedK ?: :monotoneEndpointBesselK ?_ :positiveSeriesBesselI,
+            property=:containment,
+            family=@real[:family],
+            order=@real[:order],
+            source=@sourceResult[:evidence]
+        });
+    } ?_ NumericsUnknownAlgorithm(
+        real,
+        request,
+        0:.Max(1,maxCalls),
+        {= calls=sourceCalls, iterations=0, maxCalls=maxCalls, exhausted=1 },
+        :besselKPositiveDomainNotCertified
+    );
+};
+
+NumericsNormalFunctionRefine(real, rawRequest, operation) -> {;
+    capabilities = NumericsAlgorithmCapabilities(real);
+    request = .RefinementRequest(rawRequest, operation, capabilities);
+    requestedWidth = request[:absoluteWidth];
+    maxCalls = request[:work][:maxCalls];
+    maxIterations = request[:work][:maxIterations];
+    sourceWidth = requestedWidth/4;
+    sourceBudget = .Max(0, maxCalls//3);
+    sourceResult = NumericsSourceResult(
+        real[:input], sourceWidth, sourceBudget, request[:trace]
+    );
+    sourceCalls = NumericsCalls(sourceResult);
+    sourceInterval = sourceResult[:interval];
+    midpoint = sourceInterval.Midpoint();
+    radius = sourceInterval.Width()/2;
+    remaining = .Max(0, .Min(maxIterations, maxCalls-sourceCalls));
+    pointBounds = real[:kind] == :normalPDF
+      ?: NumericsNormalPDFRationalBounds(midpoint, requestedWidth/2, remaining)
+      ?_ NumericsNormalCDFRationalBounds(midpoint, requestedWidth/2, remaining);
+    ## Both phi and Phi are globally 1-Lipschitz. This deliberately loose
+    ## bound keeps source refinement proportional to the outward request.
+    interval = NumericsClampProbabilityInterval(
+        (pointBounds[:interval].Low()-radius)
+          :(pointBounds[:interval].High()+radius)
+    );
+    iterations = pointBounds[:iterations];
+    calls = sourceCalls + iterations;
+    goalMet = pointBounds[:ready] && interval.Width() <= requestedWidth;
+    NumericsElementaryResult(real, request, interval, {=
+        calls=calls,
+        iterations=iterations,
+        maxCalls=maxCalls,
+        maxIterations=maxIterations,
+        sourceCalls=sourceCalls,
+        exhausted=!goalMet
+    }, goalMet, {=
+        kind=:directNormalRationalBounds,
+        property=:containment,
+        algorithm=real[:kind],
+        lipschitzBound=1,
+        source=sourceResult[:evidence]
+    });
+};
+
+NumericsNormalQuantileRefine(real, rawRequest, operation) -> {;
+    capabilities = NumericsAlgorithmCapabilities(real);
+    request = .RefinementRequest(rawRequest, operation, capabilities);
+    requestedWidth = request[:absoluteWidth];
+    maxCalls = request[:work][:maxCalls];
+    maxIterations = request[:work][:maxIterations];
+    sourceWidth = requestedWidth^2/64;
+    sourceBudget = .Max(0, maxCalls//5);
+    sourceResult = NumericsSourceResult(
+        real[:input], sourceWidth, sourceBudget, request[:trace]
+    );
+    sourceCalls = NumericsCalls(sourceResult);
+    sourceInterval = sourceResult[:interval];
+    domainResolved = sourceInterval.Low() > 0 && sourceInterval.High() < 1;
+    domainResolved ?: {;
+        remainingCalls = .Max(0, @maxCalls-@sourceCalls);
+        remainingIterations = .Max(0, @maxIterations-@sourceCalls);
+        endpointCalls = .Max(0, remainingCalls//2);
+        endpointIterations = .Max(0, remainingIterations//2);
+        lower = NumericsNormalQuantilePointBounds(
+            @sourceInterval.Low(), @requestedWidth/2,
+            endpointCalls, endpointIterations
+        );
+        sameEndpoint = @sourceInterval.Low() == @sourceInterval.High();
+        upper = sameEndpoint
+          ?: lower
+          ?_ NumericsNormalQuantilePointBounds(
+              @sourceInterval.High(), @requestedWidth/2,
+              remainingCalls-endpointCalls,
+              remainingIterations-endpointIterations
+          );
+        interval = lower[:interval].Low():upper[:interval].High();
+        nestedCalls = lower[:calls] + (sameEndpoint ?: 0 ?_ upper[:calls]);
+        iterations = lower[:iterations] + (sameEndpoint ?: 0 ?_ upper[:iterations]);
+        calls = @sourceCalls + nestedCalls;
+        goalMet = lower[:ready] && upper[:ready]
+          && interval.Width() <= @requestedWidth;
+        NumericsElementaryResult(@real, @request, interval, {=
+            calls=calls,
+            iterations=iterations,
+            maxCalls=@maxCalls,
+            maxIterations=@maxIterations,
+            sourceCalls=@sourceCalls,
+            exhausted=!goalMet
+        }, goalMet, {=
+            kind=:certifiedMonotoneBisection,
+            property=:containment,
+            algorithm=:normalQuantile,
+            initialBracket=:chebyshev,
+            source=@sourceResult[:evidence]
+        });
+    } ?_ NumericsUnknownAlgorithm(
+        real,
+        request,
+        (-maxCalls):maxCalls,
+        {= calls=sourceCalls, iterations=0, maxCalls=maxCalls, exhausted=1 },
+        :normalProbabilityDomainNotCertified
     );
 };
 
@@ -41324,6 +42908,30 @@ NumericsGammaAlgorithm(value) -> {;
     .ImmutableValue(real);
 };
 
+NumericsGammaPositiveHalfAlgorithm(coefficient, index) -> {;
+    real = {=
+        valueKind=:numericsAlgorithmReal,
+        schema="rix.numerics.algorithm-real@1",
+        kind=:gammaPositiveHalf,
+        coefficient=coefficient,
+        index=index,
+        evidenceLevel=:proof,
+        provenance={=
+            plugin=:numerics,
+            version=8,
+            algorithm=:gammaPositiveHalfIdentity,
+            coefficient=coefficient,
+            index=index
+        }
+    };
+    real._proto = {=
+        Enclose=(self, request ?= {= })->NumericsGammaPositiveHalfRefine(self, request, :enclose),
+        Refine=(self, request ?= {= })->NumericsGammaPositiveHalfRefine(self, request, :refine),
+        NumericsCapabilities=(self)->NumericsAlgorithmCapabilities(self)
+    };
+    .ImmutableValue(real);
+};
+
 NumericsPolygammaAlgorithm(value, kind) -> {;
     source = .oracle.From(value);
     real = {=
@@ -41437,6 +43045,111 @@ NumericsBesselYAlgorithm(value, kind) -> {;
     .ImmutableValue(real);
 };
 
+NumericsBesselIntegerAlgorithm(order, value, family) -> {;
+    exactOrder = order ~!: :Integer;
+    source = .oracle.From(value);
+    real = {=
+        valueKind=:numericsAlgorithmReal,
+        schema="rix.numerics.algorithm-real@1",
+        kind=family,
+        family=family,
+        order=exactOrder,
+        input=source,
+        evidenceLevel=:proof,
+        provenance={=
+            plugin=:numerics,
+            version=7,
+            algorithm=:besselIntegerRecurrence,
+            family=family,
+            order=exactOrder,
+            source=value
+        }
+    };
+    real._proto = {=
+        Enclose=(self, request ?= {= })->NumericsBesselIntegerRefine(self, request, :enclose),
+        Refine=(self, request ?= {= })->NumericsBesselIntegerRefine(self, request, :refine),
+        NumericsCapabilities=(self)->NumericsAlgorithmCapabilities(self)
+    };
+    .ImmutableValue(real);
+};
+
+NumericsModifiedBesselAlgorithm(order, value, family) -> {;
+    exactOrder = order ~!: :Integer;
+    source = .oracle.From(value);
+    real = {=
+        valueKind=:numericsAlgorithmReal,
+        schema="rix.numerics.algorithm-real@1",
+        kind=family,
+        family=family,
+        order=exactOrder,
+        input=source,
+        evidenceLevel=:proof,
+        provenance={=
+            plugin=:numerics,
+            version=9,
+            algorithm=family == :besselI
+              ?: :positiveSeriesBesselI
+              ?_ :harmonicSeriesBesselK,
+            family=family,
+            order=exactOrder,
+            source=value
+        }
+    };
+    real._proto = {=
+        Enclose=(self, request ?= {= })->NumericsModifiedBesselRefine(self, request, :enclose),
+        Refine=(self, request ?= {= })->NumericsModifiedBesselRefine(self, request, :refine),
+        NumericsCapabilities=(self)->NumericsAlgorithmCapabilities(self)
+    };
+    .ImmutableValue(real);
+};
+
+NumericsNormalFunctionAlgorithm(value, kind) -> {;
+    source = .oracle.From(value);
+    real = {=
+        valueKind=:numericsAlgorithmReal,
+        schema="rix.numerics.algorithm-real@1",
+        kind=kind,
+        input=source,
+        evidenceLevel=:proof,
+        provenance={=
+            plugin=:numerics,
+            version=8,
+            algorithm=:directNormalRationalBounds,
+            function=kind,
+            source=value
+        }
+    };
+    real._proto = {=
+        Enclose=(self, request ?= {= })->NumericsNormalFunctionRefine(self, request, :enclose),
+        Refine=(self, request ?= {= })->NumericsNormalFunctionRefine(self, request, :refine),
+        NumericsCapabilities=(self)->NumericsAlgorithmCapabilities(self)
+    };
+    .ImmutableValue(real);
+};
+
+NumericsNormalQuantileAlgorithm(probability) -> {;
+    source = .oracle.From(probability);
+    real = {=
+        valueKind=:numericsAlgorithmReal,
+        schema="rix.numerics.algorithm-real@1",
+        kind=:normalQuantile,
+        input=source,
+        evidenceLevel=:proof,
+        provenance={=
+            plugin=:numerics,
+            version=7,
+            algorithm=:normalQuantileBisection,
+            source=probability
+        }
+    };
+    real._proto = {=
+        Enclose=(self, request ?= {= })->NumericsNormalQuantileRefine(self, request, :enclose),
+        Refine=(self, request ?= {= })->NumericsNormalQuantileRefine(self, request, :refine),
+        NumericsCapabilities=(self)->NumericsAlgorithmCapabilities(self)
+    };
+    .ImmutableValue(real);
+};
+
 NumericsNaturalAlgorithm(value, kind) -> {;
     source = .oracle.From(value);
     real = {=
@@ -41541,17 +43254,122 @@ NumericsDegrees(value) -> value * 180 / NumericsPiAlgorithm();
 NumericsErf(value) -> 2 * NumericsSpecialSeriesAlgorithm(value, :erfCore)
   / NumericsNthRoot(NumericsPiAlgorithm(), 2);
 
+NumericsNormalPDF(value) -> NumericsNormalFunctionAlgorithm(value, :normalPDF);
+
+NumericsNormalCDF(value) -> NumericsNormalFunctionAlgorithm(value, :normalCDF);
+
+NumericsNormalQuantile(probability) -> {;
+    exact = probability ~: :Rational;
+    exact == 1/2
+      ?: .oracle.Rational(0)
+      ?_ NumericsNormalQuantileAlgorithm(probability);
+};
+
 NumericsBesselJ0(value) -> NumericsSpecialSeriesAlgorithm(value, :besselJ0);
 
 NumericsBesselJ1(value) -> NumericsSpecialSeriesAlgorithm(value, :besselJ1);
+
+NumericsBesselRecurrence(degree, value, previous, current, index ?= 1) ->
+    index >= degree
+      ?: current
+      ?_ NumericsBesselRecurrence(
+          degree, value, current, 2*index/value*current-previous, index+1
+      );
+
+NumericsBesselJ(order, value) -> {;
+    exactOrder = order ~!: :Integer;
+    negative = exactOrder < 0;
+    degree = exactOrder.Abs();
+    exactValue = value ~: :Rational;
+    result = degree == 0
+      ?: NumericsBesselJ0(value)
+      ?_ (degree == 1
+          ?: NumericsBesselJ1(value)
+          ?_ (exactValue != _
+              ?: NumericsBesselIntegerAlgorithm(degree, exactValue, :besselJ)
+              ?_ NumericsBesselRecurrence(
+                  degree, value, NumericsBesselJ0(value), NumericsBesselJ1(value)
+              )));
+    (negative && degree % 2 == 1) ?: -result ?_ result;
+};
 
 NumericsBesselY0(value) -> NumericsBesselYAlgorithm(value, :besselY0);
 
 NumericsBesselY1(value) -> NumericsBesselYAlgorithm(value, :besselY1);
 
+NumericsBesselY(order, value) -> {;
+    exactOrder = order ~!: :Integer;
+    negative = exactOrder < 0;
+    degree = exactOrder.Abs();
+    exactValue = value ~: :Rational;
+    result = degree == 0
+      ?: NumericsBesselY0(value)
+      ?_ (degree == 1
+          ?: NumericsBesselY1(value)
+          ?_ (exactValue != _
+              ?: NumericsBesselIntegerAlgorithm(degree, exactValue, :besselY)
+              ?_ NumericsBesselRecurrence(
+                  degree, value, NumericsBesselY0(value), NumericsBesselY1(value)
+              )));
+    (negative && degree % 2 == 1) ?: -result ?_ result;
+};
+
+NumericsBesselI(order, value) ->
+    NumericsModifiedBesselAlgorithm(order, value, :besselI);
+
+NumericsBesselI0(value) -> NumericsBesselI(0, value);
+
+NumericsBesselI1(value) -> NumericsBesselI(1, value);
+
+NumericsBesselK(order, value) ->
+    NumericsModifiedBesselAlgorithm(order, value, :besselK);
+
+NumericsBesselK0(value) -> NumericsBesselK(0, value);
+
+NumericsBesselK1(value) -> NumericsBesselK(1, value);
+
 NumericsLogGamma(value) -> NumericsLogGammaAlgorithm(value);
 
-NumericsGamma(value) -> NumericsGammaAlgorithm(value);
+NumericsGammaPositiveIntegerIdentity(value) -> {;
+    integer = value ~!: :Integer;
+    result := 1;
+    {@ factor=2; factor < @integer;
+       {; @result *= factor; };
+       factor += 1
+    };
+    .oracle.Rational(result);
+};
+
+NumericsGammaPositiveHalfIdentity(index) -> {;
+    count = index ~!: :Integer;
+    coefficient := 1;
+    {@ term=0; @count >= 0 && term < @count;
+       {; @coefficient *= term + 1/2; };
+       term += 1
+    };
+    {@ term=1; @count < 0 && term <= -@count;
+       {; @coefficient /= 1/2-term; };
+       term += 1
+    };
+    NumericsGammaPositiveHalfAlgorithm(coefficient, count);
+};
+
+NumericsGamma(value) -> {;
+    exactScalar = (value ? :Integer) || (value ? :Rational);
+    exact = exactScalar ?: value ~!: :Rational ?_ _;
+    exact == _
+      ?: NumericsGammaAlgorithm(value)
+      ?_ {;
+          integer = @exact.Denominator() == 1 ?: @exact.Numerator() ?_ _;
+          halfOffset = @exact-1/2;
+          halfIndex = halfOffset.Denominator() == 1 ?: halfOffset.Numerator() ?_ _;
+          (integer != _ && integer > 0)
+            ?: NumericsGammaPositiveIntegerIdentity(integer)
+            ?_ (halfIndex != _
+                ?: NumericsGammaPositiveHalfIdentity(halfIndex)
+                ?_ NumericsGammaAlgorithm(@value));
+      };
+};
 
 NumericsExactBeta(x, y) -> {;
     left = x ~: :Integer;
@@ -41607,7 +43425,49 @@ NumericsLambertW(value, branch ?= 0) -> {;
       ?_ .Error("LambertW branch must be 0 or -1");
 };
 
-NumericsZeta(value) -> NumericsZetaAlgorithm(value);
+NumericsBernoulli(number) -> {;
+    degree = number ~!: :Integer;
+    degree >= 0 ?: _ ?_ .Error("Bernoulli index must be nonnegative");
+    values := [1];
+    {@ n=1; n <= @degree;
+       {;
+           sum := 0;
+           coefficient := 1;
+           {@ k=0; k < @n;
+              {;
+                  @sum += @coefficient*@values[k+1];
+                  @coefficient = @coefficient*(@n+1-k)/(k+1);
+              };
+              k += 1
+           };
+           @values ~= @values.Push(0-sum/(n+1));
+       };
+       n += 1
+    };
+    values[degree+1];
+};
+
+NumericsZeta(value) -> {;
+    exactInteger = value ~: :Integer;
+    exactRational = value ~: :Rational;
+    exact = value == 0
+      ?: 0
+      ?_ (exactInteger != _ ?: exactInteger ~!: :Rational ?_ exactRational);
+    exact == _
+      ?: NumericsZetaAlgorithm(value)
+      ?_ (exact == 0
+          ?: .oracle.Rational(-1/2)
+          ?_ ((exact < 0 && exact.Denominator() == 1)
+              ?: {;
+                  index = 0-@exact.Numerator();
+                  bernoulli = NumericsBernoulli(index+1);
+                  sign = index % 2 == 0 ?: 1 ?_ -1;
+                  .oracle.Rational(sign*bernoulli/(index+1));
+              }
+              ?_ (exact < 0
+                  ?: NumericsZetaAlgorithm(value)
+                  ?_ NumericsZetaAlgorithm(value))));
+};
 
 NumericsUnknownAlgorithm(real, request, interval, work, reason) -> {=
     valueKind=:enclosure,
@@ -41754,6 +43614,100 @@ NumericsIntervalMinAbs(interval) ->
 
 NumericsIntervalMaxAbs(interval) -> .Max(interval.Low().Abs(), interval.High().Abs());
 
+## Certified composite-midpoint quadrature. For |f''| <= M on [a,b],
+## the absolute rule error is at most M*(b-a)^3/(24*n^2). Point values may
+## themselves be any EnclosableReal provider; their certified intervals are
+## accumulated before the analytic remainder is added.
+NumericsQuadratureRefine(real, rawRequest, operation) -> {;
+    capabilities = NumericsAlgorithmCapabilities(real);
+    request = .RefinementRequest(rawRequest, operation, capabilities);
+    requestedWidth = request[:absoluteWidth];
+    maxCalls = request[:work][:maxCalls];
+    maxIterations = request[:work][:maxIterations];
+    length = real[:upper]-real[:lower];
+    length == 0
+      ?: NumericsElementaryResult(real, request, 0:0, {=
+          calls=0,
+          iterations=0,
+          maxCalls=maxCalls,
+          maxIterations=maxIterations,
+          exhausted=_
+      }, 1, {=
+          kind=:compositeMidpointQuadrature,
+          property=:containment,
+          panels=0,
+          secondDerivativeBound=real[:secondDerivativeBound]
+      })
+      ?_ {;
+          panels := 1;
+          selectionIterations := 0;
+          analyticError := @real[:secondDerivativeBound]*@length^3/24;
+          panelLimit = .Max(1, .Min(@maxCalls, @maxIterations));
+          {@ step=1;
+             2*@analyticError > @requestedWidth/2
+               && 2*@panels <= @panelLimit;
+             {;
+                 @panels *= 2;
+                 @analyticError = @real[:secondDerivativeBound]
+                   *@length^3/(24*@panels^2);
+                 @selectionIterations += 1;
+             };
+             step += 1
+          };
+          stepWidth = @length/panels;
+          pointWidth = @requestedWidth/(4*@length);
+          nestedBudget = .Max(0, @maxCalls-panels);
+          perSampleBudget = .Max(0, nestedBudget//panels);
+          sum := 0:0;
+          calls := 0;
+          evaluated := 0;
+          sampleIterations := 0;
+          certified := 1;
+          {@ index=0; index < @panels && @calls < @maxCalls;
+             {;
+                 point = @real[:lower]+(index+1/2)*@stepWidth;
+                 sample = point |> @real[:function];
+                 source = .oracle.From(sample);
+                 sampleResult = NumericsSourceResult(
+                     source, @pointWidth, @perSampleBudget, @request[:trace]
+                 );
+                 @sum += sampleResult[:interval];
+                 nestedCalls = NumericsCalls(sampleResult);
+                 @calls += 1+nestedCalls;
+                 @evaluated += 1;
+                 @sampleIterations += nestedCalls;
+                 sampleCertified = NumericsExactOracle(source)
+                   || sampleResult[:certified] == 1;
+                 @certified = @certified && sampleCertified;
+             };
+             index += 1
+          };
+          evaluatedAll = evaluated == panels;
+          midpointInterval = stepWidth*sum;
+          oriented = @real[:orientation] > 0
+            ?: midpointInterval
+            ?_ 0-midpointInterval;
+          interval = (oriented.Low()-analyticError)
+            :(oriented.High()+analyticError);
+          goalMet = certified && evaluatedAll
+            && interval.Width() <= @requestedWidth;
+          NumericsElementaryResult(@real, @request, interval, {=
+              calls=calls,
+              iterations=selectionIterations+sampleIterations,
+              maxCalls=@maxCalls,
+              maxIterations=@maxIterations,
+              panels=panels,
+              exhausted=!goalMet
+          }, goalMet, {=
+              kind=:compositeMidpointQuadrature,
+              property=:containment,
+              panels=panels,
+              analyticError=analyticError,
+              secondDerivativeBound=@real[:secondDerivativeBound]
+          });
+      };
+};
+
 NumericsKantorovichRefine(real, rawRequest, operation) -> {;
     capabilities = NumericsAlgorithmCapabilities(real);
     request = .RefinementRequest(rawRequest, operation, capabilities);
@@ -41845,6 +43799,51 @@ NumericsKantorovichRefine(real, rawRequest, operation) -> {;
         },
         source=real[:provenance]
     };
+};
+
+NumericsQuadrature(function, lower, upper, options ?= {= }) -> {;
+    exactLower = lower ~!: :Rational;
+    exactUpper = upper ~!: :Rational;
+    derivativeBound = NumericsOption(options, "secondderivativebound", _);
+    derivativeBound == _
+      ?: .Error("Quadrature requires a certified nonnegative secondDerivativeBound")
+      ?_ _;
+    exactBound = derivativeBound ~!: :Rational;
+    exactBound >= 0
+      ?: _
+      ?_ .Error("Quadrature secondDerivativeBound must be nonnegative");
+    orientation = exactUpper >= exactLower ?: 1 ?_ -1;
+    left = orientation > 0 ?: exactLower ?_ exactUpper;
+    right = orientation > 0 ?: exactUpper ?_ exactLower;
+    real = {=
+        valueKind=:numericsAlgorithmReal,
+        schema="rix.numerics.algorithm-real@1",
+        kind=:quadrature,
+        function=function,
+        lower=left,
+        upper=right,
+        orientation=orientation,
+        secondDerivativeBound=exactBound,
+        evidenceLevel=:proof,
+        assumptions={=
+            twiceDifferentiableOnInterval=1,
+            secondDerivativeBound=:callerCertified
+        },
+        provenance={=
+            plugin=:numerics,
+            version=9,
+            algorithm=:compositeMidpointQuadrature,
+            lower=exactLower,
+            upper=exactUpper,
+            secondDerivativeBound=exactBound
+        }
+    };
+    real._proto = {=
+        Enclose=(self, request ?= {= })->NumericsQuadratureRefine(self, request, :enclose),
+        Refine=(self, request ?= {= })->NumericsQuadratureRefine(self, request, :refine),
+        NumericsCapabilities=(self)->NumericsAlgorithmCapabilities(self)
+    };
+    .ImmutableValue(real);
 };
 
 NumericsKantorovich(function, derivative, options ?= {= }) -> {;
@@ -41948,6 +43947,79 @@ ProviderOperation(value, options, operation) -> {;
     supported ?: CheckedEnclosure(result, request, capabilities) ?_ result;
 };
 
+NumericsSignLabel(value) -> value < 0 ?: :negative ?_ value > 0 ?: :positive ?_ :zero;
+
+NumericsRationalSignEvidence(value) -> {;
+    exact = value ~!: :Rational;
+    witness = {=
+        valueKind=:exactSignWitness,
+        schema="rix.exact.sign-witness@1",
+        property=:sign,
+        subjectType=:rational,
+        subject=exact,
+        at=_,
+        value=exact,
+        sign=NumericsSignLabel(exact),
+        exact=1,
+        certified=1,
+        method=:exactRationalComparison,
+        evidence={= relation="sign compared exactly with zero" }
+    };
+    witness._proto = {= Sign=(self)->self[:sign], Record=(self)->self };
+    .ImmutableValue(witness);
+};
+
+NumericsEnclosureSignEvidence(value, options) -> {;
+    result = ProviderOperation(value, options, :refine);
+    hasInterval = (result ? :Map) && result.Has("interval");
+    certified = hasInterval && result.Has("certified") && result[:certified];
+    interval = hasInterval ?: result[:interval] ?_ _;
+    sign = !certified
+      ?: :undecided
+      ?_ interval.High() < 0
+           ?: :negative
+           ?_ interval.Low() > 0
+                ?: :positive
+                ?_ (interval.Low() == 0 && interval.High() == 0) ?: :zero ?_ :undecided;
+    decided = sign != :undecided;
+    witness = {=
+        valueKind=:exactSignWitness,
+        schema="rix.exact.sign-witness@1",
+        property=:sign,
+        subjectType=:enclosableReal,
+        subject=value,
+        at=_,
+        value=_,
+        sign=sign,
+        exact=decided ?: 1 ?_ 0,
+        certified=decided ?: 1 ?_ 0,
+        status=decided ?: :decided ?_ :undecided,
+        method=:certifiedEnclosure,
+        evidence=result
+    };
+    witness._proto = {= Sign=(self)->self[:sign], Record=(self)->self };
+    .ImmutableValue(witness);
+};
+
+NumericsSign(value, options ?= {= }) -> {;
+    exact = value ~: :Rational;
+    exact != _
+      ?: NumericsRationalSignEvidence(exact)
+      ?_ (value ? :Polynomial)
+           ?: {;
+               point = NumericsOption(@options, "at", _);
+               point != _ ?: @value.SignEvidence(point) ?_ .Error("numerics.Sign needs an exact 'at' point for a Polynomial");
+           }
+           ?_ NumericsEnclosureSignEvidence(value, options);
+};
+
+NumericsRootCount(value, interval) -> {;
+    exactInterval = interval ~!: :RationalInterval;
+    (value ? :Polynomial)
+      ?: value.RootCountEvidence(exactInterval)
+      ?_ .Error("numerics.RootCount needs an exact RootCountProvider");
+};
+
 numericsNamespace = {= };
 numericsNamespace._proto = {=
     Request = (self, options ?= {= }) -> NumericsRequest(options),
@@ -41956,6 +44028,8 @@ numericsNamespace._proto = {=
     Enclose = (self, value, options ?= {= }) -> ProviderOperation(value, options, :enclose),
     Refine = (self, value, options ?= {= }) -> ProviderOperation(value, options, :refine),
     Sample = (self, value, options ?= {= }) -> ProviderOperation(value, options, :sample),
+    Sign = (self, value, options ?= {= }) -> NumericsSign(value, options),
+    RootCount = (self, value, interval) -> NumericsRootCount(value, interval),
     NthRoot = (self, value, degree ?= 2, options ?= {= }) -> NumericsNthRoot(value, degree, options),
     Sqrt = (self, value, options ?= {= }) -> NumericsNthRoot(value, 2, options),
     Cbrt = (self, value, options ?= {= }) -> NumericsNthRoot(value, 3, options),
@@ -42006,12 +44080,25 @@ numericsNamespace._proto = {=
     Trigamma = (self, value) -> NumericsTrigamma(value),
     Erf = (self, value) -> NumericsErf(value),
     Erfc = (self, value) -> 1 - NumericsErf(value),
+    NormalPDF = (self, value) -> NumericsNormalPDF(value),
+    NormalCDF = (self, value) -> NumericsNormalCDF(value),
+    NormalQuantile = (self, probability) -> NumericsNormalQuantile(probability),
     LambertW = (self, value, branch ?= 0) -> NumericsLambertW(value, branch),
+    BesselJ = (self, order, value) -> NumericsBesselJ(order, value),
     BesselJ0 = (self, value) -> NumericsBesselJ0(value),
     BesselJ1 = (self, value) -> NumericsBesselJ1(value),
+    BesselY = (self, order, value) -> NumericsBesselY(order, value),
     BesselY0 = (self, value) -> NumericsBesselY0(value),
     BesselY1 = (self, value) -> NumericsBesselY1(value),
+    BesselI = (self, order, value) -> NumericsBesselI(order, value),
+    BesselI0 = (self, value) -> NumericsBesselI0(value),
+    BesselI1 = (self, value) -> NumericsBesselI1(value),
+    BesselK = (self, order, value) -> NumericsBesselK(order, value),
+    BesselK0 = (self, value) -> NumericsBesselK0(value),
+    BesselK1 = (self, value) -> NumericsBesselK1(value),
     Zeta = (self, value) -> NumericsZeta(value),
+    Quadrature = (self, function, lower, upper, options ?= {= }) ->
+        NumericsQuadrature(function, lower, upper, options),
     Kantorovich = (self, function, derivative, options ?= {= }) -> NumericsKantorovich(function, derivative, options),
     Approximation = (self, result) -> result.Has("approximation") ?: result[:approximation] ?_ _,
     Capabilities = (self, value) -> value.NumericsCapabilities(),
@@ -42028,7 +44115,7 @@ id: bessel
 description: Clearly named Bessel-function namespace backed by certified universal Numerics algorithms.
 kind: rix
 mount: bessel
-exports: [J0, J1, Y0, Y1]
+exports: [J, J0, J1, Y, Y0, Y1, I, I0, I1, K, K0, K1]
 groups: [Numerics, SpecialFunctions]
 permissions: []
 requires: [rix.numerics@1]
@@ -42041,10 +44128,18 @@ defaultEnabled: false
 
 besselNamespace = {= };
 besselNamespace._proto = {=
+    J = (self, order, value) -> .numerics.BesselJ(order, value),
     J0 = (self, value) -> .numerics.BesselJ0(value),
     J1 = (self, value) -> .numerics.BesselJ1(value),
+    Y = (self, order, value) -> .numerics.BesselY(order, value),
     Y0 = (self, value) -> .numerics.BesselY0(value),
-    Y1 = (self, value) -> .numerics.BesselY1(value)
+    Y1 = (self, value) -> .numerics.BesselY1(value),
+    I = (self, order, value) -> .numerics.BesselI(order, value),
+    I0 = (self, value) -> .numerics.BesselI0(value),
+    I1 = (self, value) -> .numerics.BesselI1(value),
+    K = (self, order, value) -> .numerics.BesselK(order, value),
+    K0 = (self, value) -> .numerics.BesselK0(value),
+    K1 = (self, value) -> .numerics.BesselK1(value)
 };
 
 .Host.RegisterValue(
@@ -43337,12 +45432,12 @@ description: Exact real algebraic roots certified by canonical Polynomial values
 kind: rix
 mount: algebraicReal
 aliases: [ar]
-exports: [Root, Sqrt2, Polynomial, Evaluate, Derivative, SturmSequence, RootCount, IsSquareFree, Refine, Sign, CompareRational, Export, Import]
+exports: [Root, Sqrt2, Polynomial, Evaluate, Derivative, SturmSequence, RootCount, RootCountEvidence, IsSquareFree, Refine, Sign, SignEvidence, CompareRational, Export, Import]
 groups: [Numerics, Exact, Algebra]
 permissions: []
 requires: [rix.polynomial.algorithms@1, rix.oracle@1]
-provides: [rix.algebraic-real@1, rix.exact-sign@1, rix.refinable@1, rix.enclosable-real@1]
-schemas: [rix.algebraic-real@1, rix.algebraic-real.export@1, rix.algebraic-real.arithmetic-real@1, rix.polynomial@1]
+provides: [rix.algebraic-real@1, rix.exact-sign@1, rix.root-count@1, rix.refinable@1, rix.enclosable-real@1]
+schemas: [rix.algebraic-real@1, rix.algebraic-real.export@1, rix.algebraic-real.arithmetic-real@1, rix.polynomial@1, rix.exact.sign-witness@1, rix.exact.root-count@1]
 snapshot: false
 deterministic: true
 defaultEnabled: false
@@ -43515,6 +45610,30 @@ ARExactSign(real) -> {;
            };
 };
 
+ARSignEvidence(real) -> {;
+    exactReal = ARRequireReal(real);
+    witness = {=
+        valueKind=:exactSignWitness,
+        schema="rix.exact.sign-witness@1",
+        property=:sign,
+        subjectType=:algebraicReal,
+        subject=exactReal,
+        at=_,
+        value=_,
+        sign=ARExactSign(exactReal),
+        exact=1,
+        certified=1,
+        method=:sturmIsolation,
+        evidence={=
+            polynomial=exactReal[:polynomial],
+            interval=exactReal[:interval],
+            rootIndex=exactReal[:rootIndex]
+        }
+    };
+    witness._proto = {= Sign=(self)->self[:sign], Record=(self)->self };
+    .ImmutableValue(witness);
+};
+
 ARCompareRational(real, value) -> {;
     exactReal = ARRequireReal(real);
     rational = value ~!: :Rational;
@@ -43571,7 +45690,9 @@ ARAttachProtocol(real) -> {;
         RootIndex = (self) -> self[:rootIndex],
         EvaluatePolynomial = (self, point) -> self[:polynomial].Evaluate(point),
         RootCount = (self, interval) -> self[:polynomial].RootCount(interval),
+        RootCountEvidence = (self, interval) -> self[:polynomial].RootCountEvidence(interval),
         Sign = (self) -> ARExactSign(self),
+        SignEvidence = (self) -> ARSignEvidence(self),
         CompareRational = (self, value) -> ARCompareRational(self, value),
         Record = (self) -> ARRecord(self),
         Export = (self) -> ARExport(self),
@@ -43741,9 +45862,11 @@ algebraicRealNamespace._proto = {=
     Derivative = (self, coefficients) -> ARPolynomial(coefficients).Derivative(),
     SturmSequence = (self, coefficients) -> ARPolynomial(coefficients).SturmSequence(),
     RootCount = (self, coefficients, interval) -> ARPolynomial(coefficients).RootCount(interval),
+    RootCountEvidence = (self, coefficients, interval) -> ARPolynomial(coefficients).RootCountEvidence(interval),
     IsSquareFree = (self, coefficients) -> {; candidate=.poly({= coefficients=coefficients, order=:ascending, variable=:x }); candidate.IsSquareFree(); },
     Refine = (self, real, request ?= {= }) -> ARProtocolEnclosure(real, request, :refine),
     Sign = (self, real) -> ARExactSign(real),
+    SignEvidence = (self, real) -> ARSignEvidence(real),
     CompareRational = (self, real, value) -> ARCompareRational(real, value),
     Export = (self, real) -> ARExport(real),
     Import = (self, record) -> ARImport(record)
@@ -43764,11 +45887,11 @@ description: Semantic callable univariate polynomials with structural and symbol
 kind: rix
 mount: poly
 aliases: [polynomial, p]
-exports: [Polynomial, Parse, Var, Fun, Divide, SyntheticDivide, SturmSequence, RootCount]
+exports: [Polynomial, Parse, Var, Fun, Divide, SyntheticDivide, Gcd, Lcm, SquareFreeDecomposition, RationalRoots, FactorEvidence, Resultant, SignAt, SignEvidence, SturmSequence, RootCount, RootCountEvidence]
 groups: [Algebra, Exact, Symbolic]
 permissions: []
-provides: [rix.polynomial@1, rix.polynomial.algorithms@1]
-schemas: [rix.polynomial@1, rix.polynomial.division@1]
+provides: [rix.polynomial@1, rix.polynomial.algorithms@1, rix.exact-sign@1, rix.root-count@1]
+schemas: [rix.polynomial@1, rix.polynomial.division@1, rix.polynomial.square-free@1, rix.polynomial.factor-evidence@1, rix.exact.sign-witness@1, rix.exact.root-count@1]
 snapshot: false
 deterministic: true
 defaultEnabled: false
@@ -43967,8 +46090,17 @@ PolyBuild(coefficientFunction, variable, degreeBound, source, provenance, reacti
         SyntheticDiv = (self, root) -> PolySyntheticDivide(self, root),
         SyntheticDivide = (self, root) -> PolySyntheticDivide(self, root),
         IsFactor = (self, candidate) -> PolyDivide(self, candidate)[:divisorIsFactor],
+        Gcd = (self, other) -> PolyGcd(self, other),
+        Lcm = (self, other) -> PolyLcm(self, other),
+        SquareFreeDecomposition = (self) -> PolySquareFreeDecomposition(self),
+        RationalRoots = (self) -> PolyRationalRoots(self),
+        FactorEvidence = (self) -> PolyFactorEvidence(self),
+        Resultant = (self, other) -> PolyResultant(self, other),
+        SignAt = (self, point) -> PolySignAt(self, point),
+        SignEvidence = (self, point) -> PolySignEvidence(self, point),
         SturmSequence = (self) -> PolySturmSequence(self),
         RootCount = (self, interval) -> PolyRootCount(self, interval),
+        RootCountEvidence = (self, interval) -> PolyRootCountEvidence(self, interval),
         IsSquareFree = (self) -> PolyIsSquareFree(self),
         RootBound = (self) -> PolyRootBound(self),
         PrimitiveInteger = (self) -> PolyPrimitiveInteger(self)
@@ -44013,49 +46145,53 @@ PolyCoefficientsFromSource(sourceFunction, variable, degree) -> {;
 };
 
 PolyDegreePower(node, leftDegree) -> {;
-    exponentNode = node[:right];
-    valid = exponentNode[:kind] == "number" ?: exponentNode.Has("integer") ?_ _;
+    exponentNode = node[:operands][2];
+    valid = exponentNode[:kind] == "constant" && (exponentNode[:value] ? :Integer);
     valid ?: _ ?_ .Error("Polynomial powers require a nonnegative exact Integer literal exponent");
-    exponent = exponentNode[:integer];
+    exponent = exponentNode[:value];
     exponent >= 0 ?: leftDegree * exponent ?_ .Error("Polynomial powers require a nonnegative exact Integer exponent");
 };
 
 PolyDegreeMaximum(leftDegree, rightDegree) -> leftDegree > rightDegree ?: leftDegree ?_ rightDegree;
 PolyDegreeQuotient(leftDegree, rightDegree) -> rightDegree == 0 ?: leftDegree ?_ .Error("Polynomial source has a variable-dependent denominator");
 
-PolyDegreeBinary(node, variable) -> {;
-    operation = node[:op];
-    leftDegree = PolyDegreeFromNode(node[:left], variable);
-    rightDegree = PolyDegreeFromNode(node[:right], variable);
-    (operation == "+" || operation == "-")
-      ?: PolyDegreeMaximum(leftDegree, rightDegree)
-      ?_ (operation == "*"
-           ?: leftDegree + rightDegree
-           ?_ (operation == "/"
-                ?: PolyDegreeQuotient(leftDegree, rightDegree)
-                ?_ (operation == "^"
-                     ?: PolyDegreePower(node, leftDegree)
-                     ?_ .Error(@"Polynomial source uses unsupported operator @{operation}"))));
+PolyDegreeOperator(node, variable) -> {;
+    operation = node[:operation];
+    operands = node[:operands];
+    operation == "negate"
+      ?: PolyDegreeFromNode(operands[1], variable)
+      ?_ {;
+          leftDegree = PolyDegreeFromNode(@operands[1], @variable);
+          rightDegree = PolyDegreeFromNode(@operands[2], @variable);
+          (@operation == "add" || @operation == "subtract")
+            ?: PolyDegreeMaximum(leftDegree, rightDegree)
+            ?_ (@operation == "multiply"
+                 ?: leftDegree + rightDegree
+                 ?_ (@operation == "divide"
+                      ?: PolyDegreeQuotient(leftDegree, rightDegree)
+                      ?_ (@operation == "power"
+                           ?: PolyDegreePower(@node, leftDegree)
+                           ?_ .Error(@"Polynomial source uses unsupported operator @{@operation}"))));
+      };
 };
 
 PolyDegreeFromNode(node, variable) -> {;
     kind = node[:kind];
-    (kind == "number" || kind == "outer") ?: 0 ?_
-    (kind == "identifier" ?: (node[:name] == variable ?: 1 ?_ 0) ?_
-    (kind == "unary"
-      ?: (node[:op] == "-" ?: PolyDegreeFromNode(node[:expr], variable) ?_ .Error("Polynomial source uses an unsupported unary operator"))
-      ?_ (kind == "binary"
-           ?: PolyDegreeBinary(node, variable)
-           ?_ .Error(@"Polynomial source contains unsupported symbolic node @{kind}"))));
+    kind == "constant" ?: 0 ?_
+    (kind == "variable" ?: (node[:name] == variable ?: 1 ?_ 0) ?_
+    (kind == "operator"
+      ?: PolyDegreeOperator(node, variable)
+      ?_ .Error(@"Polynomial source contains unsupported symbolic node @{kind}")));
 };
 
 PolySymbolic(source, requestedVariable ?= _) -> {;
     compiled = requestedVariable == _ ?: .Poly(source) ?_ .Poly(source, requestedVariable);
-    inspection = .InspectSpec(compiled);
-    inputs = inspection[:inputs];
+    roles = .SpecRoles(compiled);
+    inputs = roles[:inputs];
     inputs.Len() == 1 ?: _ ?_ .Error("Polynomial conversion requires exactly one selected input");
     variable = inputs[1];
-    degree = PolyDegreeFromNode(inspection[:expression], variable);
+    expression = .ExpressionFromSpec(compiled);
+    degree = PolyDegreeFromNode(expression, variable);
     initial = PolyCoefficientsFromSource(compiled, variable, degree);
     provider = (unused) -> PolyCoefficientsFromSource(compiled, variable, degree);
     PolyBuild(provider, variable, degree, compiled, [:symbolicSource], 1);
@@ -44205,8 +46341,44 @@ PolySturmArrays(coefficients) -> {;
     sequence;
 };
 
-PolySturmSequence(polynomial) -> PolySturmArrays(PolyCurrentAscending(PolyRequire(polynomial)));
+PolySturmSequence(polynomial) -> {;
+    value = PolyRequire(polynomial);
+    value.Degree() == -1 ?: .Error("Zero polynomial has no finite Sturm sequence") ?_ _;
+    countingPolynomial = value.Degree() <= 0
+      ?: value
+      ?_ PolyMonic(value // PolyGcd(value, value.Derivative()));
+    PolySturmArrays(PolyCurrentAscending(countingPolynomial));
+};
 PolySign(value) -> value < 0 ?: -1 ?_ value > 0 ?: 1 ?_ 0;
+PolySignLabel(value) -> value < 0 ?: :negative ?_ value > 0 ?: :positive ?_ :zero;
+
+PolySignEvidence(polynomial, point) -> {;
+    value = PolyRequire(polynomial, "Polynomial sign subject");
+    exactPoint = PolyExact(point, "Polynomial sign point");
+    evaluated = value.Evaluate(exactPoint);
+    witness = {=
+        valueKind=:exactSignWitness,
+        schema="rix.exact.sign-witness@1",
+        property=:sign,
+        subjectType=:polynomial,
+        subject=value,
+        at=exactPoint,
+        value=evaluated,
+        sign=PolySignLabel(evaluated),
+        exact=1,
+        certified=1,
+        method=:exactPolynomialEvaluation,
+        evidence={=
+            relation="value = polynomial(at)",
+            coefficients=value.Coefficients(),
+            variable=value.Variable()
+        }
+    };
+    witness._proto = {= Sign=(self)->self[:sign], Record=(self)->self };
+    .ImmutableValue(witness);
+};
+
+PolySignAt(polynomial, point) -> PolySignEvidence(polynomial, point)[:sign];
 
 PolyVariationsAt(sequence, point) -> {;
     previous := 0;
@@ -44223,16 +46395,51 @@ PolyVariationsAt(sequence, point) -> {;
     variations;
 };
 
-PolyRootCount(polynomial, interval) -> {;
+PolyRootCountEvidence(polynomial, interval) -> {;
     value = PolyRequire(polynomial);
+    value.Degree() == -1 ?: .Error("Zero polynomial has infinitely many roots") ?_ _;
     exact = interval ~!: :RationalInterval;
-    sequence = PolySturmSequence(value);
-    PolyVariationsAt(sequence, exact.Low()) - PolyVariationsAt(sequence, exact.High());
+    countingPolynomial = value.Degree() <= 0
+      ?: value
+      ?_ PolyMonic(value // PolyGcd(value, value.Derivative()));
+    sequence = PolySturmArrays(PolyCurrentAscending(countingPolynomial));
+    low = exact.Low();
+    high = exact.High();
+    lowVariations = PolyVariationsAt(sequence, low);
+    highVariations = PolyVariationsAt(sequence, high);
+    count = lowVariations - highVariations;
+    dividesOriginal = PolyDivide(value, countingPolynomial)[:divisorIsFactor];
+    squareFree = PolyIsSquareFree(countingPolynomial);
+    evidence = {=
+        valueKind=:exactRootCount,
+        schema="rix.exact.root-count@1",
+        property=:distinctRealRoots,
+        polynomial=value,
+        countingPolynomial=countingPolynomial,
+        interval=exact,
+        endpointPolicy=:leftOpenRightClosed,
+        multiplicityPolicy=:distinct,
+        count=count,
+        exact=1,
+        certified=1,
+        method=:sturmSequence,
+        sturmSequence=sequence,
+        variations={= low=lowVariations, high=highVariations },
+        endpointValues={= low=value.Evaluate(low), high=value.Evaluate(high) },
+        verification={= dividesOriginal=dividesOriginal ?: 1 ?_ 0, squareFree=squareFree ?: 1 ?_ 0 },
+        verified=(count >= 0 && dividesOriginal && squareFree) ?: 1 ?_ 0
+    };
+    evidence._proto = {= Count=(self)->self[:count], Record=(self)->self };
+    .ImmutableValue(evidence);
 };
 
+PolyRootCount(polynomial, interval) -> PolyRootCountEvidence(polynomial, interval)[:count];
+
 PolyIsSquareFree(polynomial) -> {;
-    sequence = PolySturmSequence(polynomial);
-    sequence.Last().Len() == 1;
+    value = PolyRequire(polynomial);
+    value.Degree() == -1
+      ?: _
+      ?_ value.Degree() <= 0 ?: 1 ?_ PolyGcd(value, value.Derivative()).Degree() == 0;
 };
 
 PolyRootBound(polynomial) -> {;
@@ -44272,6 +46479,246 @@ PolyPrimitiveInteger(polynomial) -> {;
           primitive = @integers.Map((coefficient) -> coefficient // @content);
           primitive.Last() < 0 ?: primitive.Map((coefficient) -> -coefficient) ?_ primitive;
       };
+};
+
+PolyMonic(polynomial) -> {;
+    value = PolyRequire(polynomial);
+    value.Degree() == -1
+      ?: PolyFromAscending([0], value.variable, 0, _, [:monicZero])
+      ?_ PolyScale(value, PolyCurrentAscending(value).Last());
+};
+
+PolyGcd(leftValue, rightValue) -> {;
+    left = PolyRequire(leftValue, "Polynomial gcd left operand");
+    right = PolyRequire(rightValue, "Polynomial gcd right operand");
+    PolySameVariable(left, right);
+    state := [left, right];
+    {@ step = 1; @state[2].Degree() >= 0; {;
+        remainder = PolyDivide(@state[1], @state[2])[:remainder];
+        @state ~= [@state[2], remainder];
+    }; step += 1 };
+    PolyMonic(state[1]);
+};
+
+PolyLcm(leftValue, rightValue) -> {;
+    left = PolyRequire(leftValue, "Polynomial lcm left operand");
+    right = PolyRequire(rightValue, "Polynomial lcm right operand");
+    PolySameVariable(left, right);
+    ((left.Degree() == -1) || (right.Degree() == -1))
+      ?: PolyFromAscending([0], left.variable, 0, _, [:lcmZero])
+      ?_ PolyMonic((left // PolyGcd(left, right)) * right);
+};
+
+PolyIntegerLcm(left, right) -> {;
+    a = (left ~!: :Integer).Abs();
+    b = (right ~!: :Integer).Abs();
+    a == 0 || b == 0 ?: 0 ?_ (a // PolyIntegerGcd(a, b)) * b;
+};
+
+PolyIntegerDivisors(value) -> {;
+    number = (value ~!: :Integer).Abs();
+    number > 0 ?: _ ?_ .Error("Polynomial divisor enumeration requires a nonzero Integer");
+    lower := [];
+    upper := [];
+    {@ candidate = 1; candidate * candidate <= @number; {;
+        @number % candidate == 0
+          ?: {;
+              @lower ~= @lower.Push(@candidate);
+              pair = @number // @candidate;
+              pair == @candidate ?: _ ?_ {; @upper ~= @upper.Push(@pair); };
+          }
+          ?_ _;
+    }; candidate += 1 };
+    lower.Concat(upper.Reverse());
+};
+
+PolyPrimitiveScaledIntegers(polynomial) -> {;
+    coefficients = PolyCurrentAscending(PolyRequire(polynomial));
+    denominatorLcm := 1;
+    {@ index = 1; index <= @coefficients.Len(); {;
+        @denominatorLcm ~= PolyIntegerLcm(@denominatorLcm, @coefficients[index].Denominator());
+    }; index += 1 };
+    integers = coefficients.Map((coefficient) -> coefficient.Numerator() * (@denominatorLcm // coefficient.Denominator()));
+    content := 0;
+    {@ index = 1; index <= @integers.Len(); {; @content ~= PolyIntegerGcd(@content, @integers[index]); }; index += 1 };
+    content == 0 ?: integers ?_ integers.Map((coefficient) -> coefficient // content);
+};
+
+PolyRationalRoots(polynomial) -> {;
+    value = PolyRequire(polynomial);
+    degree = value.Degree();
+    degree == -1 ?: .Error("Zero polynomial has infinitely many roots") ?_ _;
+    degree == 0
+      ?: []
+      ?_ {;
+          integers = PolyPrimitiveScaledIntegers(@value);
+          firstNonzero := 1;
+          zeroRoot := 0;
+          {@ index = 1; index <= @integers.Len() && PolyIsZero(@integers[@firstNonzero]); {;
+              @zeroRoot ~= 1;
+              @firstNonzero += 1;
+          }; index += 1 };
+          constant = integers[firstNonzero].Abs();
+          leading = integers.Last().Abs();
+          numerators = PolyIntegerDivisors(constant);
+          denominators = PolyIntegerDivisors(leading);
+          candidates := zeroRoot == 1 ?: [0] ?_ [];
+          {@ numeratorIndex = 1; numeratorIndex <= @numerators.Len(); {;
+              {@ denominatorIndex = 1; denominatorIndex <= @denominators.Len(); {;
+                  candidate = @numerators[@numeratorIndex] / @denominators[denominatorIndex];
+                  @candidates ~= @candidates.Push(candidate).Push(-candidate);
+              }; denominatorIndex += 1 };
+          }; numeratorIndex += 1 };
+          candidates.Distinct().Sort().Filter((candidate) -> PolyIsZero(@value.Evaluate(candidate)));
+      };
+};
+
+PolyFactorEvidence(polynomial) -> {;
+    value = PolyRequire(polynomial);
+    value.Degree() == -1 ?: .Error("Zero polynomial has infinitely many factorizations") ?_ _;
+    roots = PolyRationalRoots(value);
+    residualState := [value];
+    factors := [];
+    {@ rootIndex = 1; rootIndex <= @roots.Len(); {;
+        root = @roots[rootIndex];
+        factor = PolyFromAscending([-root, 1], @value.variable, 1, _, [:rationalRoot]);
+        multiplicity := 0;
+        dividing := 1;
+        {@ step = 1; @dividing == 1 && @residualState[1].Degree() >= 1; {;
+            division = PolyDivide(@residualState[1], @factor);
+            division[:divisorIsFactor]
+              ?: {; @residualState ~= @residualState.Set(1, @division[:quotient]); @multiplicity += 1; }
+              ?_ {; @dividing ~= 0; };
+        }; step += 1 };
+        multiplicity > 0
+          ?: {; @factors ~= @factors.Push(.ImmutableValue({= root=@root, factor=@factor, multiplicity=@multiplicity })); }
+          ?_ _;
+    }; rootIndex += 1 };
+    reconstructionState := [residualState[1]];
+    {@ factorIndex = 1; factorIndex <= @factors.Len(); {;
+        @reconstructionState ~= @reconstructionState.Set(1, @reconstructionState[1] * (@factors[factorIndex][:factor] ^ @factors[factorIndex][:multiplicity]));
+    }; factorIndex += 1 };
+    evidence = {=
+        valueKind=:polynomialFactorEvidence,
+        schema="rix.polynomial.factor-evidence@1",
+        polynomial=value,
+        rationalRoots=roots,
+        factors=factors,
+        residual=residualState[1],
+        complete=residualState[1].Degree() <= 0 ?: 1 ?_ 0,
+        verified=reconstructionState[1] == value ?: 1 ?_ 0
+    };
+    evidence._proto = {=
+        Roots=(self)->self[:rationalRoots],
+        Factors=(self)->self[:factors],
+        Residual=(self)->self[:residual],
+        Record=(self)->self
+    };
+    .ImmutableValue(evidence);
+};
+
+PolySquareFreeDecomposition(polynomial) -> {;
+    value = PolyRequire(polynomial);
+    value.Degree() == -1 ?: .Error("Zero polynomial has no finite square-free decomposition") ?_ _;
+    coefficients = PolyCurrentAscending(value);
+    unit = coefficients.Last();
+    monic = PolyMonic(value);
+    factors := [];
+    monic.Degree() > 0
+      ?: {;
+          common = PolyGcd(@monic, @monic.Derivative());
+          squareState := [common, @monic // common];
+          multiplicity := 1;
+          {@ step = 1; @squareState[2].Degree() > 0; {;
+              shared = PolyGcd(@squareState[2], @squareState[1]);
+              factor = @squareState[2] // shared;
+              factor.Degree() > 0
+                ?: {; @factors ~= @factors.Push(.ImmutableValue({= factor=@factor, multiplicity=@multiplicity })); }
+                ?_ _;
+              @squareState ~= [@squareState[1] // shared, shared];
+              @multiplicity += 1;
+          }; step += 1 };
+      }
+      ?_ _;
+    reconstructionState := [PolyFromAscending([unit], value.variable, 0, _, [:squareFreeUnit])];
+    {@ factorIndex = 1; factorIndex <= @factors.Len(); {;
+        @reconstructionState ~= @reconstructionState.Set(1, @reconstructionState[1] * (@factors[factorIndex][:factor] ^ @factors[factorIndex][:multiplicity]));
+    }; factorIndex += 1 };
+    result = {=
+        valueKind=:polynomialSquareFreeDecomposition,
+        schema="rix.polynomial.square-free@1",
+        polynomial=value,
+        unit=unit,
+        factors=factors,
+        verified=reconstructionState[1] == value ?: 1 ?_ 0
+    };
+    result._proto = {= Factors=(self)->self[:factors], Record=(self)->self };
+    .ImmutableValue(result);
+};
+
+PolyShiftedRow(coefficients, shift, size) -> {;
+    row := PolyZeroArray(size);
+    {@ index = 1; index <= @coefficients.Len(); {;
+        @row ~= @row.Set(index + @shift, @coefficients[index]);
+    }; index += 1 };
+    row;
+};
+
+PolyBareissDeterminant(rows) -> {;
+    size = rows.Len();
+    size == 0
+      ?: 1
+      ?_ {;
+          matrix := @rows.Map((row) -> row.Map((entry) -> entry));
+          sign := 1;
+          previous := 1;
+          singular := 0;
+          {@ column = 1; column < @size && @singular == 0; {;
+              pivotRow := column;
+              {@ search = @column; @pivotRow <= @size && PolyIsZero(@matrix[@pivotRow][@column]); {;
+                  @pivotRow += 1;
+              }; search += 1 };
+              pivotRow > @size
+                ?: {; @singular ~= 1; }
+                ?_ {;
+                    @pivotRow != @column
+                      ?: {;
+                          pivotValues = @matrix[@column];
+                          @matrix ~= @matrix.Set(@column, @matrix[@pivotRow]).Set(@pivotRow, pivotValues);
+                          @sign ~= -@sign;
+                      }
+                      ?_ _;
+                    pivot = @matrix[@column][@column];
+                    {@ row = @column + 1; row <= @size; {;
+                        updated := @matrix[row];
+                        {@ target = @column + 1; target <= @size; {;
+                            next = (@pivot * @matrix[@row][target] - @matrix[@row][@column] * @matrix[@column][target]) / @previous;
+                            @updated ~= @updated.Set(target, next);
+                        }; target += 1 };
+                        updated ~= updated.Set(@column, 0);
+                        @matrix ~= @matrix.Set(row, updated);
+                    }; row += 1 };
+                    @previous ~= pivot;
+                };
+          }; column += 1 };
+          singular == 1 ?: 0 ?_ sign * matrix[@size][@size];
+      };
+};
+
+PolyResultant(leftValue, rightValue) -> {;
+    left = PolyRequire(leftValue, "Polynomial resultant left operand");
+    right = PolyRequire(rightValue, "Polynomial resultant right operand");
+    PolySameVariable(left, right);
+    ((left.Degree() == -1) || (right.Degree() == -1)) ?: .Error("Resultant is undefined for the zero polynomial") ?_ _;
+    leftCoefficients = left.Coefficients(:descending);
+    rightCoefficients = right.Coefficients(:descending);
+    leftDegree = left.Degree();
+    rightDegree = right.Degree();
+    size = leftDegree + rightDegree;
+    rows := [];
+    {@ row = 0; row < @rightDegree; {; @rows ~= @rows.Push(PolyShiftedRow(@leftCoefficients, row, @size)); }; row += 1 };
+    {@ row = 0; row < @leftDegree; {; @rows ~= @rows.Push(PolyShiftedRow(@rightCoefficients, row, @size)); }; row += 1 };
+    PolyBareissDeterminant(rows);
 };
 
 PolyDerivative(polynomial) -> {;
@@ -44337,9 +46784,18 @@ polyNamespace._proto = {=
     Polynomial = (self, source, second ?= _) -> PolyConstruct(source, second),
     Divide = (self, dividend, divisor) -> PolyDivide(dividend, divisor),
     SyntheticDivide = (self, polynomial, root) -> PolySyntheticDivide(polynomial, root),
+    Gcd = (self, left, right) -> PolyGcd(left, right),
+    Lcm = (self, left, right) -> PolyLcm(left, right),
+    SquareFreeDecomposition = (self, polynomial) -> PolySquareFreeDecomposition(polynomial),
+    RationalRoots = (self, polynomial) -> PolyRationalRoots(polynomial),
+    FactorEvidence = (self, polynomial) -> PolyFactorEvidence(polynomial),
+    Resultant = (self, left, right) -> PolyResultant(left, right),
+    SignAt = (self, polynomial, point) -> PolySignAt(polynomial, point),
+    SignEvidence = (self, polynomial, point) -> PolySignEvidence(polynomial, point),
     Derivative = (self, polynomial) -> PolyDerivative(polynomial),
     SturmSequence = (self, polynomial) -> PolySturmSequence(polynomial),
     RootCount = (self, polynomial, interval) -> PolyRootCount(polynomial, interval),
+    RootCountEvidence = (self, polynomial, interval) -> PolyRootCountEvidence(polynomial, interval),
     IsSquareFree = (self, polynomial) -> PolyIsSquareFree(polynomial),
     RootBound = (self, polynomial) -> PolyRootBound(polynomial),
     PrimitiveInteger = (self, polynomial) -> PolyPrimitiveInteger(polynomial),
@@ -44368,19 +46824,28 @@ PolyConversion = (value, variable ?= _) -> PolyConstruct(value, variable);
   // rix/plugins/algebra/algebra.plugin.rix
   var algebra_plugin_default = `/**
 id: algebra
-description: Polynomial algebra façade backed by the canonical pure-RiX poly service.
+description: Exact Polynomial and RationalFunction algorithms with checked presentations.
 kind: rix
 mount: algebra
-exports: [Polynomial, Coefficients, Record, Evaluate, Equal, Divide, SyntheticDivide, Quotient, Remainder, IsFactor, Grid]
+exports: [Polynomial, RationalFunction, CoefficientDomain, Coefficients, Record, Evaluate, Equal, Divide, SyntheticDivide, Quotient, Remainder, IsFactor, Gcd, Lcm, SquareFreeDecomposition, RationalRoots, FactorEvidence, CenteredExpansion, Factorization, Together, Factored, PartialFractions, PoleZeroEvidence, Expand, Resultant, SignAt, SignEvidence, RootCount, RootCountEvidence, Grid]
 groups: [Algebra, Exact]
 permissions: []
 requires: [rix.polynomial.algorithms@1, rix.rational-function@1]
-provides: [rix.algebra.division@1]
-schemas: [rix.algebra.division@1, rix.polynomial.division@1]
+provides: [rix.algebra.division@1, rix.algebra.centered-expansion@1, rix.algebra.factorization@1]
+schemas: [rix.algebra.division@1, rix.algebra.centered-expansion@1, rix.algebra.factorization@1, rix.algebra.transformation@1, rix.polynomial.division@1, rix.polynomial.square-free@1, rix.polynomial.factor-evidence@1, rix.rational-function.together@1, rix.rational-function.factored@1, rix.rational-function.partial-fractions@1, rix.rational-function.divisor-evidence@1, rix.exact.sign-witness@1, rix.exact.root-count@1]
 snapshot: false
 deterministic: true
 defaultEnabled: false
 **/
+
+AlgebraEvent(operation, inputs ?= [], details ?= {= }) -> .ImmutableValue({=
+    schema="rix.algebra.transformation@1",
+    plugin=:algebra,
+    version=1,
+    operation=operation,
+    inputs=inputs,
+    details=details
+});
 
 AlgebraDivision(core, method, grid ?= _) -> {;
     division = {=
@@ -44427,9 +46892,208 @@ AlgebraGrid(division) -> {;
       ?_ .Error("algebra.Grid requires a SyntheticDivide result");
 };
 
+AlgebraPresentationPolynomial(source, variable, label) -> {;
+    polynomial = source ? :Polynomial ?: source ?_ .poly(source);
+    polynomial.Variable() == variable
+      ?: polynomial
+      ?_ .Error(@"@{label} variable does not match its canonical Polynomial");
+};
+
+AlgebraRequirePresentation(value, schema, label) -> {;
+    valid = value ? :Map ?: value[:schema] == schema ?_ _;
+    valid == 1 ?: value ?_ .Error(@"Expected a @{label} presentation with schema @{schema}");
+};
+
+AlgebraCenteredRecord(value) -> {=
+    valueKind=:algebraCenteredExpansion,
+    schema="rix.algebra.centered-expansion@1",
+    exact=1,
+    polynomial=value[:polynomial].Record(),
+    variable=value[:variable],
+    center=value[:center],
+    basis=:powersOfXMinusCenter,
+    coefficientOrder=:ascending,
+    coefficients=value[:coefficients],
+    verified=value[:verified],
+    provenance=value[:provenance]
+};
+
+AlgebraExpandCentered(presentation) -> {;
+    value = AlgebraRequirePresentation(presentation, "rix.algebra.centered-expansion@1", "centered-expansion");
+    (value[:exact] == 1 && value[:verified] == 1)
+      ?: _
+      ?_ .Error("Centered-expansion presentation must claim exact verified data");
+    value[:basis] == :powersOfXMinusCenter
+      ?: _
+      ?_ .Error("Centered-expansion presentation has an unsupported basis");
+    value[:coefficientOrder] == :ascending
+      ?: _
+      ?_ .Error("Centered-expansion presentation requires ascending coefficients");
+    variable = value[:variable];
+    center = .poly([value[:center]], variable).Coefficients()[1];
+    coefficients = value[:coefficients];
+    coefficients ? :Array ?: _ ?_ .Error("Centered-expansion coefficients must be an Array");
+    coefficientPolynomial = .poly(coefficients.Reverse(), variable);
+    basisPolynomial = .poly([1, -center], variable);
+    expanded = coefficientPolynomial.Evaluate(basisPolynomial);
+    source = AlgebraPresentationPolynomial(value[:polynomial], variable, "Centered-expansion");
+    (expanded == source) == 1
+      ?: expanded
+      ?_ .Error("Centered-expansion presentation failed exact reconstruction verification");
+};
+
+AlgebraCenteredExpansion(polynomial, center) -> {;
+    source = polynomial ? :Polynomial ?: polynomial ?_ .poly(polynomial);
+    variable = source.Variable();
+    exactCenter = .poly([center], variable).Coefficients()[1];
+    shift = .poly([1, exactCenter], variable);
+    shifted = source.Evaluate(shift);
+    value = {=
+        valueKind=:algebraCenteredExpansion,
+        schema="rix.algebra.centered-expansion@1",
+        exact=1,
+        polynomial=source,
+        variable=variable,
+        center=exactCenter,
+        basis=:powersOfXMinusCenter,
+        coefficientOrder=:ascending,
+        coefficients=shifted.Coefficients(:ascending),
+        verified=1,
+        provenance=AlgebraEvent(:centeredExpansion,[source.Record()],{= center=exactCenter })
+    };
+    AlgebraExpandCentered(value);
+    value.__type = "CenteredExpansion";
+    value._proto = {=
+        Center=(self)->self[:center],
+        Coefficients=(self)->self[:coefficients],
+        Expand=(self)->AlgebraExpandCentered(self),
+        Polynomial=(self)->AlgebraExpandCentered(self),
+        Record=(self)->AlgebraCenteredRecord(self)
+    };
+    .ImmutableValue(value);
+};
+
+AlgebraFactorRecord(entry) -> {=
+    root=entry[:root],
+    factor=entry[:factor].Record(),
+    multiplicity=entry[:multiplicity]
+};
+
+AlgebraFactorizationRecord(value) -> {=
+    valueKind=:algebraFactorization,
+    schema="rix.algebra.factorization@1",
+    exact=1,
+    polynomial=value[:polynomial].Record(),
+    variable=value[:variable],
+    coefficientDomain=:rational,
+    unit=value[:unit],
+    factors=value[:factors].Map((entry)->AlgebraFactorRecord(entry)),
+    residual=value[:residual].Record(),
+    complete=value[:complete],
+    verified=value[:verified],
+    provenance=value[:provenance]
+};
+
+AlgebraExpandFactorization(presentation) -> {;
+    value = AlgebraRequirePresentation(presentation, "rix.algebra.factorization@1", "factorization");
+    (value[:exact] == 1 && value[:verified] == 1)
+      ?: _
+      ?_ .Error("Factorization presentation must claim exact verified data");
+    value[:coefficientDomain] == :rational
+      ?: _
+      ?_ .Error("Factorization presentation requires the exact rational coefficient domain");
+    variable = value[:variable];
+    unit = .poly([value[:unit]], variable).Coefficients()[1];
+    unit.Numerator() == 0 ?: .Error("Factorization presentation unit must be nonzero") ?_ _;
+    residual = AlgebraPresentationPolynomial(value[:residual], variable, "Factorization residual");
+    residual.Degree() == -1
+      ?: .Error("Factorization presentation residual must be nonzero")
+      ?_ _;
+    residual.Coefficients()[1].Numerator() == residual.Coefficients()[1].Denominator()
+      ?: _
+      ?_ .Error("Factorization presentation residual must be monic");
+    factors = value[:factors];
+    factors ? :Array ?: _ ?_ .Error("Factorization presentation factors must be an Array");
+    reconstruction := [.poly([unit], variable) * residual];
+    {@ index = 1; index <= @factors.Len(); {;
+        entry = @factors[index];
+        entry ? :Map ?: _ ?_ .Error("Factorization presentation entries must be Maps");
+        root = .poly([entry[:root]], @variable).Coefficients()[1];
+        multiplicity = entry[:multiplicity];
+        ((multiplicity ? :Integer) && multiplicity > 0)
+          ?: _
+          ?_ .Error("Factorization multiplicities must be positive exact Integers");
+        factor = AlgebraPresentationPolynomial(entry[:factor], @variable, "Factorization factor");
+        canonicalFactor = .poly([1, -root], @variable);
+        (factor == canonicalFactor) == 1
+          ?: _
+          ?_ .Error("Factorization factor does not match its claimed exact root");
+        @reconstruction ~= @reconstruction.Set(1, @reconstruction[1] * (factor ^ multiplicity));
+    }; index += 1 };
+    expectedComplete = residual.Degree() <= 0 ?: 1 ?_ 0;
+    value[:complete] == expectedComplete
+      ?: _
+      ?_ .Error("Factorization completeness claim does not match its residual");
+    source = AlgebraPresentationPolynomial(value[:polynomial], variable, "Factorization");
+    (reconstruction[1] == source) == 1
+      ?: reconstruction[1]
+      ?_ .Error("Factorization presentation failed exact reconstruction verification");
+};
+
+AlgebraFactorization(polynomial) -> {;
+    source = polynomial ? :Polynomial ?: polynomial ?_ .poly(polynomial);
+    evidence = .poly.FactorEvidence(source);
+    residual = evidence[:residual];
+    unit = residual.Coefficients()[1];
+    monicResidual = residual / unit;
+    factors = evidence[:factors].Map((entry)->.ImmutableValue({=
+        root=entry[:root],
+        factor=entry[:factor],
+        multiplicity=entry[:multiplicity]
+    }));
+    value = {=
+        valueKind=:algebraFactorization,
+        schema="rix.algebra.factorization@1",
+        exact=1,
+        polynomial=source,
+        variable=source.Variable(),
+        coefficientDomain=:rational,
+        unit=unit,
+        factors=factors,
+        residual=monicResidual,
+        complete=evidence[:complete],
+        verified=1,
+        provenance=AlgebraEvent(:rationalRootFactorization,[source.Record()],{= evidenceSchema=evidence[:schema] })
+    };
+    AlgebraExpandFactorization(value);
+    value.__type = "Factorization";
+    value._proto = {=
+        Unit=(self)->self[:unit],
+        Factors=(self)->self[:factors],
+        Residual=(self)->self[:residual],
+        Expand=(self)->AlgebraExpandFactorization(self),
+        Polynomial=(self)->AlgebraExpandFactorization(self),
+        Record=(self)->AlgebraFactorizationRecord(self)
+    };
+    .ImmutableValue(value);
+};
+
+AlgebraExpand(presentation) -> {;
+    schema = presentation ? :Map ?: presentation[:schema] ?_ _;
+    schema == "rix.algebra.centered-expansion@1"
+      ?: AlgebraExpandCentered(presentation)
+      ?_ schema == "rix.algebra.factorization@1"
+           ?: AlgebraExpandFactorization(presentation)
+           ?_ (schema == "rix.rational-function.together@1" || schema == "rix.rational-function.factored@1" || schema == "rix.rational-function.partial-fractions@1")
+                ?: .ratfun.Expand(presentation)
+                ?_ .Error("algebra.Expand expects a centered, factorized, together, factored, or partial-fraction presentation");
+};
+
 algebraNamespace = {= };
 algebraNamespace._proto = {=
     Polynomial = (self, source, second ?= _) -> .poly(source, second),
+    RationalFunction = (self, first, second ?= _) -> .ratfun.RationalFunction(first, second),
+    CoefficientDomain = (self, value ?= _) -> .ratfun.CoefficientDomain(value),
     Coefficients = (self, polynomial, order ?= :descending) -> polynomial.Coefficients(order),
     Record = (self, polynomial) -> polynomial.Record(),
     Evaluate = (self, polynomial, value) -> polynomial.Evaluate(value),
@@ -44439,13 +47103,30 @@ algebraNamespace._proto = {=
     Quotient = (self, division) -> division.Quotient(),
     Remainder = (self, division) -> division.Remainder(),
     IsFactor = (self, dividend, candidate) -> dividend.IsFactor(candidate) ?: 1 ?_ 0,
+    Gcd = (self, left, right) -> .poly.Gcd(left, right),
+    Lcm = (self, left, right) -> .poly.Lcm(left, right),
+    SquareFreeDecomposition = (self, polynomial) -> .poly.SquareFreeDecomposition(polynomial),
+    RationalRoots = (self, polynomial) -> .poly.RationalRoots(polynomial),
+    FactorEvidence = (self, polynomial) -> .poly.FactorEvidence(polynomial),
+    CenteredExpansion = (self, polynomial, center) -> AlgebraCenteredExpansion(polynomial, center),
+    Factorization = (self, polynomial) -> AlgebraFactorization(polynomial),
+    Together = (self, rationalFunction) -> .ratfun.Together(rationalFunction),
+    Factored = (self, rationalFunction) -> .ratfun.Factored(rationalFunction),
+    PartialFractions = (self, rationalFunction) -> .ratfun.PartialFractions(rationalFunction),
+    PoleZeroEvidence = (self, rationalFunction) -> .ratfun.PoleZeroEvidence(rationalFunction),
+    Expand = (self, presentation) -> AlgebraExpand(presentation),
+    Resultant = (self, left, right) -> .poly.Resultant(left, right),
+    SignAt = (self, polynomial, point) -> .poly.SignAt(polynomial, point),
+    SignEvidence = (self, polynomial, point) -> .poly.SignEvidence(polynomial, point),
+    RootCount = (self, polynomial, interval) -> .poly.RootCount(polynomial, interval),
+    RootCountEvidence = (self, polynomial, interval) -> .poly.RootCountEvidence(polynomial, interval),
     Grid = (self, division) -> AlgebraGrid(division)
 };
 
 .Host.RegisterValue(
     "algebra",
     algebraNamespace,
-    "Polynomial algebra façade backed by .poly",
+    "Exact Polynomial and RationalFunction algorithms with checked presentations",
     ["Algebra", "Exact"]
 );
 `;
@@ -45392,12 +48073,12 @@ description: Canonical callable univariate rational functions with exact cancell
 kind: rix
 mount: ratfun
 aliases: [rationalFunction, rf]
-exports: [RationalFunction, Parse, Var, Fun]
+exports: [RationalFunction, Parse, Var, Fun, CoefficientDomain, Together, Factored, PartialFractions, PoleZeroEvidence, Expand]
 groups: [Algebra, Exact, Symbolic]
 permissions: []
 requires: [rix.polynomial@1]
-provides: [rix.rational-function@1]
-schemas: [rix.rational-function@1]
+provides: [rix.rational-function@1, rix.rational-function.presentation@1, rix.rational-function.divisor-evidence@1]
+schemas: [rix.rational-function@1, rix.coefficient-domain@1, rix.algebra.transformation@1, rix.rational-function.polynomial-factor@1, rix.rational-function.together@1, rix.rational-function.factored@1, rix.rational-function.partial-fractions@1, rix.rational-function.divisor-evidence@1]
 snapshot: false
 deterministic: true
 defaultEnabled: false
@@ -45413,13 +48094,42 @@ RatfunPolynomial(value, variable) -> value ? :Polynomial ?: value ?_ .poly(value
 RatfunZero(polynomial) -> polynomial.Degree() == -1;
 RatfunOne(variable) -> .poly([1], variable);
 
+RatfunCoefficientDomain(variable ?= :x) -> .ImmutableValue({=
+    valueKind=:coefficientDomain,
+    schema="rix.coefficient-domain@1",
+    id=:Q,
+    name="exact rational field",
+    exact=1,
+    field=1,
+    characteristic=0,
+    variables=[variable],
+    polynomialArity=1,
+    canonical=1
+});
+
+RatfunSourceRecord(value) -> {;
+    exact = RatfunRequire(value);
+    {=
+        schema="rix.rational-function@1",
+        variable=exact.variable,
+        numerator=exact.numerator.Record(),
+        denominator=exact.denominator.Record(),
+        coefficientDomain=:Q,
+        provenance=exact.provenance
+    };
+};
+
+RatfunEvent(operation, inputs ?= [], details ?= {= }) -> .ImmutableValue({=
+    schema="rix.algebra.transformation@1",
+    plugin=:ratfun,
+    version=1,
+    operation=operation,
+    inputs=inputs,
+    details=details
+});
+
 RatfunGcd(left, right) -> {;
-    state := [left, right];
-    {@ step = 1; @state[2].Degree() >= 0; {;
-        remainder = @state[1] % @state[2];
-        @state ~= [@state[2], remainder];
-    }; step += 1 };
-    state[1];
+    .poly.Gcd(left, right);
 };
 
 RatfunCanonical(numeratorValue, denominatorValue, variable ?= :x) -> {;
@@ -45457,7 +48167,8 @@ RatfunPolynomialAt(polynomial, argument) -> {;
 RatfunCompose(value, argument) -> {;
     exact = RatfunRequire(value);
     promoted = RatfunPromote(argument, exact.variable);
-    RatfunPolynomialAt(exact.numerator, promoted) / RatfunPolynomialAt(exact.denominator, promoted);
+    composed = RatfunPolynomialAt(exact.numerator, promoted) / RatfunPolynomialAt(exact.denominator, promoted);
+    RatfunBuild(composed.numerator,composed.denominator,composed.variable,[RatfunEvent(:compose,[RatfunSourceRecord(exact),RatfunSourceRecord(promoted)])]);
 };
 
 RatfunEvaluate(value, argument) -> {;
@@ -45467,10 +48178,7 @@ RatfunEvaluate(value, argument) -> {;
       ?_ exact.numerator.Evaluate(argument) / exact.denominator.Evaluate(argument);
 };
 
-RatfunComposeParts(numerator, denominator, argument) -> {;
-    promoted=RatfunPromote(argument,numerator.Variable());
-    RatfunPolynomialAt(numerator,promoted)/RatfunPolynomialAt(denominator,promoted);
-};
+RatfunComposeParts(numerator, denominator, argument) -> RatfunCompose(RatfunBuild(numerator,denominator,numerator.Variable()),argument);
 
 RatfunApply(numerator, denominator, argument) -> {;
     RatfunIs(argument) || (argument ? :Polynomial)
@@ -45484,11 +48192,12 @@ RatfunRecord(value) -> {;
         valueKind = :rationalFunction,
         schema = "rix.rational-function@1",
         variable = exact.variable,
-        numerator = exact.numerator,
-        denominator = exact.denominator,
+        numerator = exact.numerator.Record(),
+        denominator = exact.denominator.Record(),
         canonical = 1,
         equalityPolicy = :canonicalReducedFractionField,
         domainPolicy = :reducedDenominatorNonzero,
+        coefficientDomain = RatfunCoefficientDomain(exact.variable),
         reactive = exact.reactive,
         provenance = exact.provenance
     };
@@ -45506,6 +48215,7 @@ RatfunBuild(numeratorValue, denominatorValue ?= 1, variable ?= :x, provenance ?=
     RationalFunctionValue.canonical = 1;
     RationalFunctionValue.equalityPolicy = :canonicalReducedFractionField;
     RationalFunctionValue.domainPolicy = :reducedDenominatorNonzero;
+    RationalFunctionValue.coefficientDomain = RatfunCoefficientDomain(numerator.Variable());
     RationalFunctionValue.reactive = numerator.reactive || denominator.reactive;
     RationalFunctionValue.provenance = provenance;
     RationalFunctionValue.__type = "RationalFunction";
@@ -45516,6 +48226,7 @@ RatfunBuild(numeratorValue, denominatorValue ?= 1, variable ?= :x, provenance ?=
         Numerator = (self) -> self.numerator,
         Denominator = (self) -> self.denominator,
         Variable = (self) -> self.variable,
+        CoefficientDomain = (self) -> self.coefficientDomain,
         Record = (self) -> RatfunRecord(self),
         Evaluate = (self, argument) -> RatfunEvaluate(self, argument),
         Compose = (self, argument) -> RatfunCompose(self, argument),
@@ -45527,7 +48238,11 @@ RatfunBuild(numeratorValue, denominatorValue ?= 1, variable ?= :x, provenance ?=
         IsPolynomial = (self) -> self.denominator.Degree() == 0 ?: 1 ?_ _,
         ToPolynomial = (self) -> self.denominator.Degree() == 0
             ?: self.numerator / self.denominator.Coefficients()[1]
-            ?_ .Error("ToPolynomial requires canonical denominator 1")
+            ?_ .Error("ToPolynomial requires canonical denominator 1"),
+        Together = (self) -> RatfunTogether(self),
+        Factored = (self) -> RatfunFactored(self),
+        PartialFractions = (self) -> RatfunPartialFractions(self),
+        PoleZeroEvidence = (self) -> RatfunPoleZeroEvidence(self)
     };
     .ImmutableValue(RationalFunctionValue);
 };
@@ -45536,31 +48251,35 @@ RatfunPromote(value, variable ?= :x) -> {;
     RatfunIs(value)
       ?: value
       ?_ (((value ? :Polynomial) || RatfunScalar(value))
-          ?: RatfunBuild(value, 1, (value ? :Polynomial ?: value.Variable() ?_ variable), [:promotion])
+          ?: RatfunBuild(value, 1, (value ? :Polynomial ?: value.Variable() ?_ variable), [RatfunEvent(:promotion,[],{= sourceType=(value ? :Polynomial) ?: :polynomial ?_ :exactScalar })])
           ?_ .Error("RationalFunction operand must be exact, Polynomial, or RationalFunction"));
 };
 
 RatfunSameVariable(left, right) -> left.variable == right.variable ?: 1 ?_ .Error("RationalFunction variables must match");
-RatfunAdd(leftValue, rightValue) -> {; left=RatfunPromote(leftValue); right=RatfunPromote(rightValue,left.variable); RatfunSameVariable(left,right); RatfunBuild(left.numerator*right.denominator+right.numerator*left.denominator,left.denominator*right.denominator,left.variable,[:add]); };
-RatfunSubtract(leftValue, rightValue) -> RatfunAdd(leftValue, -RatfunPromote(rightValue));
-RatfunMultiply(leftValue, rightValue) -> {; left=RatfunPromote(leftValue); right=RatfunPromote(rightValue,left.variable); RatfunSameVariable(left,right); RatfunBuild(left.numerator*right.numerator,left.denominator*right.denominator,left.variable,[:multiply]); };
-RatfunDivide(leftValue, rightValue) -> {; left=RatfunPromote(leftValue); right=RatfunPromote(rightValue,left.variable); RatfunSameVariable(left,right); RatfunZero(right.numerator) ?: .Error("RationalFunction division by zero") ?_ RatfunBuild(left.numerator*right.denominator,left.denominator*right.numerator,left.variable,[:divide]); };
-RatfunNegate(value) -> {; exact=RatfunPromote(value); RatfunBuild(-exact.numerator,exact.denominator,exact.variable,[:negate]); };
+RatfunAdd(leftValue, rightValue) -> {; left=RatfunPromote(leftValue); right=RatfunPromote(rightValue,left.variable); RatfunSameVariable(left,right); RatfunBuild(left.numerator*right.denominator+right.numerator*left.denominator,left.denominator*right.denominator,left.variable,[RatfunEvent(:add,[RatfunSourceRecord(left),RatfunSourceRecord(right)])]); };
+RatfunSubtract(leftValue, rightValue) -> {; left=RatfunPromote(leftValue); right=RatfunPromote(rightValue,left.variable); RatfunSameVariable(left,right); RatfunBuild(left.numerator*right.denominator-right.numerator*left.denominator,left.denominator*right.denominator,left.variable,[RatfunEvent(:subtract,[RatfunSourceRecord(left),RatfunSourceRecord(right)])]); };
+RatfunMultiply(leftValue, rightValue) -> {; left=RatfunPromote(leftValue); right=RatfunPromote(rightValue,left.variable); RatfunSameVariable(left,right); RatfunBuild(left.numerator*right.numerator,left.denominator*right.denominator,left.variable,[RatfunEvent(:multiply,[RatfunSourceRecord(left),RatfunSourceRecord(right)])]); };
+RatfunDivide(leftValue, rightValue) -> {; left=RatfunPromote(leftValue); right=RatfunPromote(rightValue,left.variable); RatfunSameVariable(left,right); RatfunZero(right.numerator) ?: .Error("RationalFunction division by zero") ?_ RatfunBuild(left.numerator*right.denominator,left.denominator*right.numerator,left.variable,[RatfunEvent(:divide,[RatfunSourceRecord(left),RatfunSourceRecord(right)])]); };
+RatfunNegate(value) -> {; exact=RatfunPromote(value); RatfunBuild(-exact.numerator,exact.denominator,exact.variable,[RatfunEvent(:negate,[RatfunSourceRecord(exact)])]); };
 RatfunPower(value, exponent) -> {;
     exact = RatfunPromote(value);
     power = exponent ~!: :Integer;
     power == 0
-      ?: RatfunBuild(1,1,exact.variable,[:power])
+      ?: RatfunBuild(1,1,exact.variable,[RatfunEvent(:power,[RatfunSourceRecord(exact)],{= exponent=power })])
       ?_ (power > 0
-          ?: RatfunBuild(exact.numerator^power,exact.denominator^power,exact.variable,[:power])
-          ?_ RatfunBuild(exact.denominator^(-power),exact.numerator^(-power),exact.variable,[:power]));
+          ?: RatfunBuild(exact.numerator^power,exact.denominator^power,exact.variable,[RatfunEvent(:power,[RatfunSourceRecord(exact)],{= exponent=power })])
+          ?_ RatfunBuild(exact.denominator^(-power),exact.numerator^(-power),exact.variable,[RatfunEvent(:power,[RatfunSourceRecord(exact)],{= exponent=power })]));
 };
-RatfunEqual(leftValue, rightValue) -> {; left=RatfunPromote(leftValue); right=RatfunPromote(rightValue,left.variable); left.variable==right.variable && left.numerator==right.numerator && left.denominator==right.denominator; };
+RatfunEqual(leftValue, rightValue) -> {;
+    left=RatfunPromote(leftValue);
+    right=RatfunPromote(rightValue,left.variable);
+    left.variable==right.variable && (left.numerator==right.numerator)==1 && (left.denominator==right.denominator)==1;
+};
 
 RatfunFromStructural(structural, variable ?= :x) -> {;
     structural.Head() == "Fraction"
-      ?: {; args=@structural.Arguments(); RatfunBuild(.poly(args[1],@variable),.poly(args[2],@variable),@variable,[:structural]); }
-      ?_ RatfunBuild(.poly(structural,variable),1,variable,[:structural]);
+      ?: {; args=@structural.Arguments(); RatfunBuild(.poly(args[1],@variable),.poly(args[2],@variable),@variable,[RatfunEvent(:constructFromStructural)]); }
+      ?_ RatfunBuild(.poly(structural,variable),1,variable,[RatfunEvent(:constructFromStructural)]);
 };
 
 RatfunPolyFromInspect(node, variable) -> {;
@@ -45590,20 +48309,664 @@ RatfunFromSpec(spec, variable ?= _) -> {;
     selected = variable == _ ?: inspected[:inputs][1] ?_ variable;
     parts = .SpecFractionParts(spec);
     parts[2] == _
-      ?: RatfunBuild(.poly(parts[1],selected),1,selected,[:symbolicSpec])
-      ?_ RatfunBuild(.poly(parts[1],selected),.poly(parts[2],selected),selected,[:symbolicSpec]);
+      ?: RatfunBuild(.poly(parts[1],selected),1,selected,[RatfunEvent(:constructFromSymbolicSpec)])
+      ?_ RatfunBuild(.poly(parts[1],selected),.poly(parts[2],selected),selected,[RatfunEvent(:constructFromSymbolicSpec)]);
 };
 
 RatfunConstruct(first, second ?= _, variable ?= :x) -> {;
     RatfunIs(first)
       ?: first
       ?_ (((first ? :Map) && first[:schema] == "rix.rational-function@1")
-          ?: RatfunBuild(first[:numerator],first[:denominator],first[:variable],[:record])
+          ?: {;
+              claimedDomain = @first[:coefficientDomain];
+              claimedDomain == _
+                ?: _
+                ?_ {;
+                    domainId = @claimedDomain ? :Map ?: @claimedDomain[:id] ?_ @claimedDomain;
+                    (domainId == :Q) == 1
+                      ?: _
+                      ?_ .Error("RationalFunction records require coefficient domain :Q");
+                };
+              RatfunBuild(@first[:numerator],@first[:denominator],@first[:variable],[RatfunEvent(:constructFromRecord,[],{= sourceProvenance=@first[:provenance] })]);
+          }
           ?_ (second == _
               ?: (((first ? :Polynomial) || RatfunScalar(first))
                   ?: RatfunBuild(first,1,variable)
                   ?_ RatfunFromStructural(first,variable))
               ?_ RatfunBuild(first,second,variable)));
+};
+
+RatfunExact(value, label) -> {;
+    value == _ ?: .Error(@"@{label} is missing") ?_ _;
+    exact = value ~!: :Rational;
+    exact == _ ?: .Error(@"@{label} must be an exact Integer or Rational") ?_ exact;
+};
+RatfunExactZero(value, label ?= "RationalFunction coefficient") -> RatfunExact(value, label).Numerator() == 0;
+
+RatfunPresentationSource(source, variable, label) -> {;
+    value = RatfunIs(source) ?: source ?_ RatfunConstruct(source);
+    value.variable == variable
+      ?: value
+      ?_ .Error(@"@{label} variable does not match its canonical RationalFunction");
+};
+
+RatfunRequirePresentation(value, schema, label) -> {;
+    valid = value ? :Map ?: value[:schema] == schema ?_ _;
+    valid == 1 ?: value ?_ .Error(@"Expected a @{label} presentation with schema @{schema}");
+};
+
+RatfunRequireQ(value, label) -> {;
+    (value[:coefficientDomain] == :Q) == 1
+      ?: _
+      ?_ .Error(@"@{label} requires coefficient domain :Q; broader coefficient fields belong to the algebraic-extension service");
+};
+
+RatfunPolynomialFactorRecord(value) -> {=
+    schema="rix.rational-function.polynomial-factor@1",
+    variable=value[:variable],
+    coefficientDomain=:Q,
+    source=value[:source].Record(),
+    zero=value[:zero],
+    unit=value[:unit],
+    factors=value[:factors].Map((entry)->{=
+        root=entry[:root],
+        multiplicity=entry[:multiplicity],
+        factor=entry[:factor].Record()
+    }),
+    residual=value[:residual].Record(),
+    complete=value[:complete],
+    verified=value[:verified]
+};
+
+RatfunExpandPolynomialFactor(presentation) -> {;
+    value = RatfunRequirePresentation(presentation, "rix.rational-function.polynomial-factor@1", "factored Polynomial");
+    RatfunRequireQ(value, "Factored Polynomial presentation");
+    value[:verified] == 1 ?: _ ?_ .Error("Factored Polynomial presentation must claim verified exact data");
+    variable = value[:variable];
+    sourceValue = value[:source];
+    source = sourceValue ? :Polynomial ?: sourceValue ?_ .poly(sourceValue);
+    source.Variable() == variable ?: _ ?_ .Error("Factored Polynomial source variable mismatch");
+    factors = value[:factors];
+    factors ? :Array ?: _ ?_ .Error("Factored Polynomial factors must be an Array");
+    zero = value[:zero] == 1;
+    unit = RatfunExact(value[:unit], "Factored Polynomial unit");
+    residualValue = value[:residual];
+    residual = residualValue ? :Polynomial ?: residualValue ?_ .poly(residualValue);
+    residual.Variable() == variable ?: _ ?_ .Error("Factored Polynomial residual variable mismatch");
+    zero
+      ?: {;
+          RatfunExactZero(@unit) ?: _ ?_ .Error("Zero Polynomial factor presentation requires unit zero");
+          @factors.Len() == 0 ?: _ ?_ .Error("Zero Polynomial factor presentation cannot have factors");
+          @residual.Degree() == 0 ?: _ ?_ .Error("Zero Polynomial factor presentation requires residual one");
+          @value[:complete] == 0 ?: _ ?_ .Error("Zero Polynomial factor presentation cannot claim complete factorization");
+          rebuilt := .poly([0], @variable);
+          (rebuilt == @source) == 1
+            ?: rebuilt
+            ?_ .Error("Factored Polynomial presentation failed exact reconstruction verification");
+      }
+      ?_ {;
+          RatfunExactZero(@unit) ?: .Error("Factored Polynomial unit must be nonzero") ?_ _;
+          @residual.Degree() == -1 ?: .Error("Factored Polynomial residual must be nonzero") ?_ _;
+          leading = @residual.Coefficients()[1];
+          leading.Numerator() == leading.Denominator()
+            ?: _
+            ?_ .Error("Factored Polynomial residual must be monic");
+          rebuiltState := [.poly([@unit], @variable) * @residual];
+          {@ index = 1; index <= @factors.Len(); {;
+              entry = @factors[index];
+              entry ? :Map ?: _ ?_ .Error("Factored Polynomial entries must be Maps");
+              root = RatfunExact(entry[:root], "Factored Polynomial root");
+              multiplicity = entry[:multiplicity];
+              ((multiplicity ? :Integer) && multiplicity > 0)
+                ?: _
+                ?_ .Error("Factored Polynomial multiplicities must be positive exact Integers");
+              factorValue = entry[:factor];
+              factor = factorValue ? :Polynomial ?: factorValue ?_ .poly(factorValue);
+              canonicalFactor = .poly([1, -root], @variable);
+              (factor == canonicalFactor) == 1
+                ?: _
+                ?_ .Error("Factored Polynomial factor does not match its claimed root");
+              @rebuiltState ~= [@rebuiltState[1] * (factor ^ multiplicity)];
+          }; index += 1 };
+          expectedComplete = @residual.Degree() <= 0 ?: 1 ?_ 0;
+          @value[:complete] == expectedComplete
+            ?: _
+            ?_ .Error("Factored Polynomial completeness claim does not match its residual");
+          (rebuiltState[1] == @source) == 1
+            ?: rebuiltState[1]
+            ?_ .Error("Factored Polynomial presentation failed exact reconstruction verification");
+      };
+};
+
+RatfunPolynomialFactor(polynomial) -> {;
+    source = polynomial ? :Polynomial ?: polynomial ?_ .poly(polynomial);
+    source.Degree() == -1
+      ?: {;
+          zeroValue = {=
+              schema="rix.rational-function.polynomial-factor@1",
+              variable=@source.Variable(),
+              coefficientDomain=:Q,
+              source=@source,
+              zero=1,
+              unit=0,
+              factors=[],
+              residual=.poly([1],@source.Variable()),
+              complete=0,
+              verified=1
+          };
+          .ImmutableValue(zeroValue);
+      }
+      ?_ {;
+          evidence = .poly.FactorEvidence(@source);
+          rawResidual = evidence[:residual];
+          unit = rawResidual.Coefficients()[1];
+          value = {=
+              schema="rix.rational-function.polynomial-factor@1",
+              variable=@source.Variable(),
+              coefficientDomain=:Q,
+              source=@source,
+              zero=0,
+              unit=unit,
+              factors=evidence[:factors].Map((entry)->.ImmutableValue({=
+                  root=entry[:root],
+                  multiplicity=entry[:multiplicity],
+                  factor=entry[:factor]
+              })),
+              residual=rawResidual / unit,
+              complete=evidence[:complete],
+              verified=evidence[:verified]
+          };
+          RatfunExpandPolynomialFactor(value);
+          .ImmutableValue(value);
+      };
+};
+
+RatfunTogetherRecord(value) -> {=
+    valueKind=:rationalTogetherPresentation,
+    schema="rix.rational-function.together@1",
+    exact=1,
+    coefficientDomain=:Q,
+    variable=value[:variable],
+    rationalFunction=RatfunSourceRecord(value[:rationalFunction]),
+    numerator=value[:numerator].Record(),
+    denominator=value[:denominator].Record(),
+    verified=value[:verified],
+    provenance=value[:provenance]
+};
+
+RatfunExpandTogether(presentation) -> {;
+    value = RatfunRequirePresentation(presentation, "rix.rational-function.together@1", "together");
+    RatfunRequireQ(value, "Together presentation");
+    (value[:exact] == 1 && value[:verified] == 1)
+      ?: _
+      ?_ .Error("Together presentation must claim exact verified data");
+    variable = value[:variable];
+    numeratorValue = value[:numerator];
+    denominatorValue = value[:denominator];
+    rebuilt = RatfunBuild(numeratorValue, denominatorValue, variable, [RatfunEvent(:expandTogether)]);
+    source = RatfunPresentationSource(value[:rationalFunction], variable, "Together presentation");
+    (rebuilt == source) == 1
+      ?: rebuilt
+      ?_ .Error("Together presentation failed exact reconstruction verification");
+};
+
+RatfunTogether(rationalFunction) -> {;
+    source = RatfunPromote(rationalFunction);
+    value = {=
+        valueKind=:rationalTogetherPresentation,
+        schema="rix.rational-function.together@1",
+        exact=1,
+        coefficientDomain=:Q,
+        variable=source.variable,
+        rationalFunction=source,
+        numerator=source.numerator,
+        denominator=source.denominator,
+        verified=1,
+        provenance=[RatfunEvent(:together,[RatfunSourceRecord(source)])]
+    };
+    RatfunExpandTogether(value);
+    value.__type="RationalTogetherPresentation";
+    value._proto={=
+        Numerator=(self)->self[:numerator],
+        Denominator=(self)->self[:denominator],
+        Expand=(self)->RatfunExpandTogether(self),
+        RationalFunction=(self)->RatfunExpandTogether(self),
+        Record=(self)->RatfunTogetherRecord(self)
+    };
+    .ImmutableValue(value);
+};
+
+RatfunFactoredRecord(value) -> {=
+    valueKind=:rationalFactoredPresentation,
+    schema="rix.rational-function.factored@1",
+    exact=1,
+    coefficientDomain=:Q,
+    variable=value[:variable],
+    rationalFunction=RatfunSourceRecord(value[:rationalFunction]),
+    numerator=RatfunPolynomialFactorRecord(value[:numerator]),
+    denominator=RatfunPolynomialFactorRecord(value[:denominator]),
+    complete=value[:complete],
+    verified=value[:verified],
+    provenance=value[:provenance]
+};
+
+RatfunExpandFactored(presentation) -> {;
+    value = RatfunRequirePresentation(presentation, "rix.rational-function.factored@1", "factored RationalFunction");
+    RatfunRequireQ(value, "Factored RationalFunction presentation");
+    (value[:exact] == 1 && value[:verified] == 1)
+      ?: _
+      ?_ .Error("Factored RationalFunction presentation must claim exact verified data");
+    variable = value[:variable];
+    numerator = RatfunExpandPolynomialFactor(value[:numerator]);
+    denominator = RatfunExpandPolynomialFactor(value[:denominator]);
+    rebuilt = RatfunBuild(numerator,denominator,variable,[RatfunEvent(:expandFactored)]);
+    source = RatfunPresentationSource(value[:rationalFunction],variable,"Factored RationalFunction presentation");
+    expectedComplete = (value[:numerator][:complete] == 1 && value[:denominator][:complete] == 1) ?: 1 ?_ 0;
+    value[:complete] == expectedComplete
+      ?: _
+      ?_ .Error("Factored RationalFunction completeness claim does not match its factors");
+    (rebuilt == source) == 1
+      ?: rebuilt
+      ?_ .Error("Factored RationalFunction presentation failed exact reconstruction verification");
+};
+
+RatfunFactored(rationalFunction) -> {;
+    source = RatfunPromote(rationalFunction);
+    numerator = RatfunPolynomialFactor(source.numerator);
+    denominator = RatfunPolynomialFactor(source.denominator);
+    value = {=
+        valueKind=:rationalFactoredPresentation,
+        schema="rix.rational-function.factored@1",
+        exact=1,
+        coefficientDomain=:Q,
+        variable=source.variable,
+        rationalFunction=source,
+        numerator=numerator,
+        denominator=denominator,
+        complete=(numerator[:complete] == 1 && denominator[:complete] == 1) ?: 1 ?_ 0,
+        verified=1,
+        provenance=[RatfunEvent(:factor,[RatfunSourceRecord(source)],{= algorithm=:rationalRootTheorem })]
+    };
+    RatfunExpandFactored(value);
+    value.__type="RationalFactoredPresentation";
+    value._proto={=
+        Numerator=(self)->self[:numerator],
+        Denominator=(self)->self[:denominator],
+        Expand=(self)->RatfunExpandFactored(self),
+        RationalFunction=(self)->RatfunExpandFactored(self),
+        Record=(self)->RatfunFactoredRecord(self)
+    };
+    .ImmutableValue(value);
+};
+
+RatfunZeros(length) -> {;
+    values := [];
+    {@ index = 1; index <= @length; {; @values ~= @values.Push(0); }; index += 1 };
+    values;
+};
+
+RatfunCoefficient(coefficients,index) -> index <= coefficients.Len() ?: coefficients[index] ?_ 0;
+RatfunMonomial(power,variable) -> .poly(RatfunZeros(power).Push(1).Reverse(),variable);
+
+RatfunMatrixCopy(rows) -> rows.Map((row)->row.Map((value)->RatfunExact(value,"Partial-fraction matrix entry")));
+
+RatfunFindPivot(rows,startRow,column) -> {;
+    selected := 0;
+    {@ row = @startRow; row <= @rows.Len() && @selected == 0; {;
+        RatfunExactZero(@rows[row][@column],"Partial-fraction pivot candidate") ?: _ ?_ {; @selected ~= @row; };
+    }; row += 1 };
+    selected;
+};
+
+RatfunRrefRows(source,coefficientColumns) -> {;
+    rows := RatfunMatrixCopy(source);
+    pivots := [];
+    pivotRow := 1;
+    {@ column = 1; column <= @coefficientColumns && @pivotRow <= @rows.Len(); {;
+        selected = RatfunFindPivot(@rows,@pivotRow,column);
+        selected != 0
+          ?: {;
+              @selected != @pivotRow
+                ?: {;
+                    swap = @rows[@pivotRow];
+                    @rows ~= @rows.Set(@pivotRow,@rows[@selected]).Set(@selected,swap);
+                }
+                ?_ _;
+              pivot = @rows[@pivotRow][@column];
+              RatfunExactZero(pivot,"Partial-fraction pivot") == _
+                ?: {;
+                    normalized = @rows[@pivotRow].Map((value)->value/@pivot);
+                    @rows ~= @rows.Set(@pivotRow,normalized);
+                    {@ row = 1; row <= @rows.Len(); {;
+                        row != @pivotRow && RatfunExactZero(@rows[row][@column],"Partial-fraction elimination entry") == _
+                          ?: {;
+                              factor = @rows[@row][@column];
+                              replacement = @rows[@row].Map((value,index)->value-@factor*@normalized[index]);
+                              @rows ~= @rows.Set(@row,replacement);
+                          }
+                          ?_ _;
+                    }; row += 1 };
+                    @pivots ~= @pivots.Push(@column);
+                    @pivotRow += 1;
+                }
+                ?_ _;
+          }
+          ?_ _;
+    }; column += 1 };
+    {= rows=rows, pivots=pivots };
+};
+
+RatfunSolveColumns(columns, rightHandSide) -> {;
+    size = columns.Len();
+    size == 0
+      ?: []
+      ?_ {;
+          coefficientArrays = @columns.Map((polynomial)->polynomial.Coefficients(:ascending));
+          matrix := [];
+          {@ matrixRow = 1; matrixRow <= @size; {;
+              values := [];
+              {@ basisIndex = 1; basisIndex <= @size; {;
+                  @values ~= @values.Push(RatfunCoefficient(@coefficientArrays[basisIndex],@matrixRow));
+              }; basisIndex += 1 };
+              @matrix ~= @matrix.Push(values);
+          }; matrixRow += 1 };
+          right = RatfunZeros(@size).Map((unused,index)->RatfunCoefficient(@rightHandSide,index));
+          augmented = matrix.Map((row,index)->row.Concat([@right[index]]));
+          reduced = RatfunRrefRows(augmented,@size);
+          reduced[:pivots].Len() == @size
+            ?: reduced[:rows].Map((row)->row[@size+1])
+            ?_ .Error("Partial-fraction coefficient system must have a unique exact solution");
+      };
+};
+
+RatfunPartialRecord(value) -> {=
+    valueKind=:rationalPartialFractions,
+    schema="rix.rational-function.partial-fractions@1",
+    exact=1,
+    coefficientDomain=:Q,
+    variable=value[:variable],
+    rationalFunction=RatfunSourceRecord(value[:rationalFunction]),
+    polynomialPart=value[:polynomialPart].Record(),
+    terms=value[:terms].Map((term)->{=
+        root=term[:root],
+        power=term[:power],
+        coefficient=term[:coefficient],
+        factor=term[:factor].Record(),
+        denominator=term[:denominator].Record()
+    }),
+    residual={=
+        numerator=value[:residual][:numerator].Record(),
+        denominator=value[:residual][:denominator].Record()
+    },
+    linearComplete=value[:linearComplete],
+    verified=value[:verified],
+    provenance=value[:provenance]
+};
+
+RatfunExpandPartial(presentation) -> {;
+    value = RatfunRequirePresentation(presentation,"rix.rational-function.partial-fractions@1","partial-fraction");
+    RatfunRequireQ(value,"Partial-fraction presentation");
+    (value[:exact] == 1 && value[:verified] == 1)
+      ?: _
+      ?_ .Error("Partial-fraction presentation must claim exact verified data");
+    variable = value[:variable];
+    source = RatfunPresentationSource(value[:rationalFunction],variable,"Partial-fraction presentation");
+    polynomialValue = value[:polynomialPart];
+    polynomialPart = polynomialValue ? :Polynomial ?: polynomialValue ?_ .poly(polynomialValue);
+    polynomialPart.Variable() == variable ?: _ ?_ .Error("Partial-fraction polynomial part variable mismatch");
+    rebuiltState := [RatfunBuild(polynomialPart,1,variable,[RatfunEvent(:expandPartialFractions)])];
+    terms = value[:terms];
+    terms ? :Array ?: _ ?_ .Error("Partial-fraction terms must be an Array");
+    {@ index = 1; index <= @terms.Len(); {;
+        term = @terms[index];
+        term ? :Map ?: _ ?_ .Error("Partial-fraction terms must be Maps");
+        root = RatfunExact(term[:root],"Partial-fraction root");
+        power = term[:power];
+        ((power ? :Integer) && power > 0)
+          ?: _
+          ?_ .Error("Partial-fraction powers must be positive exact Integers");
+        coefficient = RatfunExact(term[:coefficient],"Partial-fraction coefficient");
+        RatfunExactZero(coefficient)
+          ?: .Error("Partial-fraction terms omit zero coefficients")
+          ?_ _;
+        factorValue = term[:factor];
+        denominatorValue = term[:denominator];
+        factor = factorValue ? :Polynomial ?: factorValue ?_ .poly(factorValue);
+        denominator = denominatorValue ? :Polynomial ?: denominatorValue ?_ .poly(denominatorValue);
+        canonicalFactor = .poly([1,-root],@variable);
+        (factor == canonicalFactor) == 1
+          ?: _
+          ?_ .Error("Partial-fraction factor does not match its claimed root");
+        (denominator == (factor^power)) == 1
+          ?: _
+          ?_ .Error("Partial-fraction denominator does not match factor power");
+        @source.denominator.IsFactor(denominator) == 1
+          ?: _
+          ?_ .Error("Partial-fraction denominator is not a factor of the canonical denominator");
+        @rebuiltState ~= [@rebuiltState[1] + RatfunBuild(coefficient,denominator,@variable,[RatfunEvent(:partialFractionTerm)])];
+    }; index += 1 };
+    residual = value[:residual];
+    residual ? :Map ?: _ ?_ .Error("Partial-fraction residual must be a Map");
+    residualNumeratorValue = residual[:numerator];
+    residualDenominatorValue = residual[:denominator];
+    residualNumerator = residualNumeratorValue ? :Polynomial ?: residualNumeratorValue ?_ .poly(residualNumeratorValue);
+    residualDenominator = residualDenominatorValue ? :Polynomial ?: residualDenominatorValue ?_ .poly(residualDenominatorValue);
+    (residualNumerator.Variable() == variable && residualDenominator.Variable() == variable)
+      ?: _
+      ?_ .Error("Partial-fraction residual variable mismatch");
+    residualDenominator.Degree() == -1 ?: .Error("Partial-fraction residual denominator cannot be zero") ?_ _;
+    residualNumerator.Degree() < residualDenominator.Degree()
+      ?: _
+      ?_ .Error("Partial-fraction residual must be proper");
+    denominatorEvidence = .poly.FactorEvidence(source.denominator);
+    expectedResidual = denominatorEvidence[:residual];
+    expectedUnit = expectedResidual.Coefficients()[1];
+    expectedMonicResidual = expectedResidual / expectedUnit;
+    (residualDenominator == expectedMonicResidual) == 1
+      ?: _
+      ?_ .Error("Partial-fraction residual denominator does not match the unfactored canonical residual");
+    RatfunZero(residualNumerator)
+      ?: _
+      ?_ {; @rebuiltState ~= [@rebuiltState[1] + RatfunBuild(@residualNumerator,@residualDenominator,@variable,[RatfunEvent(:partialFractionResidual)])]; };
+    expectedLinearComplete = residualDenominator.Degree() <= 0 ?: 1 ?_ 0;
+    value[:linearComplete] == expectedLinearComplete
+      ?: _
+      ?_ .Error("Partial-fraction linear-completeness claim does not match its residual");
+    (rebuiltState[1] == source) == 1
+      ?: rebuiltState[1]
+      ?_ .Error("Partial-fraction presentation failed exact reconstruction verification");
+};
+
+RatfunPartialFractions(rationalFunction) -> {;
+    source = RatfunPromote(rationalFunction);
+    division = .poly.Divide(source.numerator,source.denominator);
+    polynomialPart = division[:quotient];
+    remainder = division[:remainder];
+    denominatorEvidence = .poly.FactorEvidence(source.denominator);
+    descriptors := [];
+    columns := [];
+    factors = denominatorEvidence[:factors];
+    {@ factorIndex = 1; factorIndex <= @factors.Len(); {;
+        entry = @factors[factorIndex];
+        {@ power = 1; power <= @entry[:multiplicity]; {;
+            powered = @entry[:factor]^power;
+            @columns ~= @columns.Push(@source.denominator // powered);
+            @descriptors ~= @descriptors.Push({=
+                kind=:linear,
+                root=@entry[:root],
+                power=power,
+                factor=@entry[:factor],
+                denominator=powered
+            });
+        }; power += 1 };
+    }; factorIndex += 1 };
+    rawResidual = denominatorEvidence[:residual];
+    residualUnit = rawResidual.Coefficients()[1];
+    residualDenominator = rawResidual / residualUnit;
+    residualDegree = residualDenominator.Degree();
+    residualDegree > 0
+      ?: {;
+          linearProduct = @source.denominator // @rawResidual;
+          {@ power = 0; power < @residualDegree; {;
+              @columns ~= @columns.Push(@linearProduct*RatfunMonomial(power,@source.variable));
+              @descriptors ~= @descriptors.Push({= kind=:residual, power=power });
+          }; power += 1 };
+      }
+      ?_ _;
+    source.denominator.Degree() == columns.Len()
+      ?: _
+      ?_ .Error("Partial-fraction basis does not span the canonical denominator degree");
+    solutions = RatfunSolveColumns(columns,remainder.Coefficients(:ascending));
+    terms := [];
+    residualCoefficients := RatfunZeros(residualDegree > 0 ?: residualDegree ?_ 1);
+    {@ index = 1; index <= @descriptors.Len(); {;
+        descriptor = @descriptors[index];
+        coefficient = @solutions[index];
+        descriptor[:kind] == :linear
+          ?: {;
+              RatfunExactZero(@coefficient)
+                ?: _
+                ?_ {;
+                    @terms ~= @terms.Push(.ImmutableValue({=
+                        root=@descriptor[:root],
+                        power=@descriptor[:power],
+                        coefficient=@coefficient,
+                        factor=@descriptor[:factor],
+                        denominator=@descriptor[:denominator]
+                    }));
+                };
+          }
+          ?_ {; @residualCoefficients ~= @residualCoefficients.Set(@descriptor[:power]+1,@coefficient); };
+    }; index += 1 };
+    residualNumerator = residualDegree > 0
+      ?: .poly(residualCoefficients.Reverse(),source.variable)
+      ?_ .poly([0],source.variable);
+    value = {=
+        valueKind=:rationalPartialFractions,
+        schema="rix.rational-function.partial-fractions@1",
+        exact=1,
+        coefficientDomain=:Q,
+        variable=source.variable,
+        rationalFunction=source,
+        polynomialPart=polynomialPart,
+        terms=terms,
+        residual={= numerator=residualNumerator, denominator=residualDenominator },
+        linearComplete=residualDegree <= 0 ?: 1 ?_ 0,
+        verified=1,
+        provenance=[RatfunEvent(:partialFractions,[RatfunSourceRecord(source)],{=
+            algorithm=:exactCoefficientSystem,
+            basisSize=columns.Len(),
+            rationalLinearFactorCount=factors.Len()
+        })]
+    };
+    RatfunExpandPartial(value);
+    value.__type="RationalPartialFractions";
+    value._proto={=
+        PolynomialPart=(self)->self[:polynomialPart],
+        Terms=(self)->self[:terms],
+        Residual=(self)->self[:residual],
+        Expand=(self)->RatfunExpandPartial(self),
+        RationalFunction=(self)->RatfunExpandPartial(self),
+        Record=(self)->RatfunPartialRecord(self)
+    };
+    .ImmutableValue(value);
+};
+
+RatfunDivisorPart(polynomial, role) -> {;
+    value = polynomial ? :Polynomial ?: polynomial ?_ .poly(polynomial);
+    value.Degree() == -1
+      ?: .ImmutableValue({=
+          role=role,
+          status=:identicallyZero,
+          entries=[],
+          residual=value,
+          complete=0,
+          verified=1
+      })
+      ?_ {;
+          evidence = .poly.FactorEvidence(@value);
+          .ImmutableValue({=
+              role=@role,
+              status=:finiteRationalFactors,
+              entries=evidence[:factors].Map((entry)->.ImmutableValue({=
+                  point=entry[:root],
+                  multiplicity=entry[:multiplicity],
+                  factor=entry[:factor]
+              })),
+              residual=evidence[:residual],
+              complete=evidence[:complete],
+              verified=evidence[:verified]
+          });
+      };
+};
+
+RatfunDivisorPartRecord(part) -> {=
+    role=part[:role],
+    status=part[:status],
+    entries=part[:entries].Map((entry)->{=
+        point=entry[:point],
+        multiplicity=entry[:multiplicity],
+        factor=entry[:factor].Record()
+    }),
+    residual=part[:residual].Record(),
+    complete=part[:complete],
+    verified=part[:verified]
+};
+
+RatfunPoleZeroRecord(value) -> {=
+    valueKind=:rationalDivisorEvidence,
+    schema="rix.rational-function.divisor-evidence@1",
+    exact=1,
+    coefficientDomain=:Q,
+    variable=value[:variable],
+    rationalFunction=RatfunSourceRecord(value[:rationalFunction]),
+    zeros=RatfunDivisorPartRecord(value[:zeros]),
+    poles=RatfunDivisorPartRecord(value[:poles]),
+    coprime=value[:coprime],
+    cancelledSourceRestrictionsPreserved=0,
+    verified=value[:verified],
+    provenance=value[:provenance]
+};
+
+RatfunPoleZeroEvidence(rationalFunction) -> {;
+    source = RatfunPromote(rationalFunction);
+    zeros = RatfunDivisorPart(source.numerator,:zero);
+    poles = RatfunDivisorPart(source.denominator,:pole);
+    common = .poly.Gcd(source.numerator,source.denominator);
+    coprime = common.Degree() == 0 ?: 1 ?_ 0;
+    verified = (zeros[:verified] == 1 && poles[:verified] == 1 && coprime == 1) ?: 1 ?_ 0;
+    value = {=
+        valueKind=:rationalDivisorEvidence,
+        schema="rix.rational-function.divisor-evidence@1",
+        exact=1,
+        coefficientDomain=:Q,
+        variable=source.variable,
+        rationalFunction=source,
+        zeros=zeros,
+        poles=poles,
+        coprime=coprime,
+        cancelledSourceRestrictionsPreserved=0,
+        verified=verified,
+        provenance=[RatfunEvent(:poleZeroEvidence,[RatfunSourceRecord(source)],{= policy=:reducedCanonicalPair })]
+    };
+    value.__type="RationalDivisorEvidence";
+    value._proto={=
+        Zeros=(self)->self[:zeros],
+        Poles=(self)->self[:poles],
+        Record=(self)->RatfunPoleZeroRecord(self)
+    };
+    .ImmutableValue(value);
+};
+
+RatfunExpand(presentation) -> {;
+    schema = presentation ? :Map ?: presentation[:schema] ?_ _;
+    schema == "rix.rational-function.together@1"
+      ?: RatfunExpandTogether(presentation)
+      ?_ schema == "rix.rational-function.factored@1"
+           ?: RatfunExpandFactored(presentation)
+           ?_ schema == "rix.rational-function.partial-fractions@1"
+                ?: RatfunExpandPartial(presentation)
+                ?_ .Error("ratfun.Expand expects a together, factored, or partial-fraction presentation");
 };
 
 RatfunModifierVariable(modifiers) -> {;
@@ -45646,6 +49009,12 @@ ratfunNamespace = (first, second ?= _) -> RatfunConstruct(first,second);
 ratfunNamespace._proto = {=
     Parse=RatfunParse,
     RationalFunction=(self,first,second ?= _)->RatfunConstruct(first,second),
+    CoefficientDomain=(self,value ?= _)->value == _ ?: RatfunCoefficientDomain() ?_ RatfunPromote(value).coefficientDomain,
+    Together=(self,value)->RatfunTogether(value),
+    Factored=(self,value)->RatfunFactored(value),
+    PartialFractions=(self,value)->RatfunPartialFractions(value),
+    PoleZeroEvidence=(self,value)->RatfunPoleZeroEvidence(value),
+    Expand=(self,presentation)->RatfunExpand(presentation),
     Var=(self)->.Error(".ratfun.Var(name) is a backtick parser modifier"),
     Fun=(self)->.Error(".ratfun.Fun is a backtick parser modifier")
 };
@@ -45662,13 +49031,13 @@ RatfunSpecConversion=(value,variable ?= _)->RatfunFromSpec(value,variable);
   // rix/plugins/symbolic/symbolic.plugin.rix
   var symbolic_plugin_default = `/**
 id: symbolic
-description: Meta-plugin loading RiX representation-sensitive Fraction and FractionFunction workspaces.
+description: Meta-plugin joining representation-sensitive FractionFunction work with portable abstract Calculus expressions.
 kind: rix
 mount: symbolic
-exports: [Fraction, FractionFunction, Services]
-groups: [Algebra, Exact, Symbolic]
+exports: [Fraction, FractionFunction, CalculusExpression, Evaluate, EvaluateResult, Differentiate, DifferentiateResult, DifferentiateN, DifferentiateNResult, Partial, PartialResult, Gradient, GradientResult, Jacobian, JacobianResult, Hessian, HessianResult, SelectedPrimitive, AntiderivativeFamily, DefiniteIntegral, Obligations, Services]
+groups: [Algebra, Calculus, Analysis, Exact, Symbolic]
 permissions: []
-requires: [rix.fraction-function@1]
+requires: [rix.fraction-function@1, rix.calculus@1]
 provides: [rix.symbolic.formal@1]
 schemas: []
 snapshot: false
@@ -45676,26 +49045,1188 @@ deterministic: true
 defaultEnabled: false
 **/
 
+SymbolicNonFractionCalculusExpression(value) ->
+    .calculus.IsExpression(value) ?: value ?_ .calculus.FromSpec(value);
+SymbolicCalculusExpression(value) ->
+    value ? :FractionFunction
+      ?: value.CalculusExpression()
+      ?_ SymbolicNonFractionCalculusExpression(value);
+SymbolicFractionObligations(value) ->
+    value.RestrictionExpressions().Reduce((result,expression)->
+        result.Push(.calculus.Obligation(:domain,:nonzero,expression,{= reason=:fractionFunctionSourceDomain })),
+        []
+    );
+SymbolicTransformationObligations(value) ->
+    .calculus.IsTransformation(value)
+      ?: value[:obligations]
+      ?_ [];
+SymbolicObligations(value) ->
+    value ? :FractionFunction
+      ?: SymbolicFractionObligations(value)
+      ?_ SymbolicTransformationObligations(value);
+SymbolicEvaluationTarget(value) ->
+    .calculus.IsTransformation(value) ?: value ?_ SymbolicCalculusExpression(value);
+SymbolicCalculusExpressions(values) ->
+    values.Map((value)->SymbolicCalculusExpression(value));
+SymbolicAppend(left, right) -> right.Reduce((result,value)->result.Push(value),left);
+SymbolicIntegralOptions(value, options) -> {;
+    options ? :Map ?: _ ?_ .Error("Symbolic integral options must be a Map");
+    inherited = SymbolicObligations(value);
+    supplied = options.Has("obligations") ?: options[:obligations] ?_ [];
+    options.Set("obligations",SymbolicAppend(inherited,supplied));
+};
+
 symbolicNamespace = {= };
 symbolicNamespace._proto = {=
     Fraction = (self, first, second ?= _) -> second == _ ?: .fraction(first) ?_ .fraction(first,second),
     FractionFunction = (self, value, variable ?= _) -> variable == _ ?: .fracfun(value) ?_ .fracfun(value,variable),
-    Services = (self) -> ["fraction","fracfun","poly","ratfun"]
+    CalculusExpression = (self, value) -> SymbolicCalculusExpression(value),
+    Evaluate = (self, value, bindings ?= {= }, options ?= {= }) ->
+        .calculus.Evaluate(SymbolicEvaluationTarget(value),bindings,options),
+    EvaluateResult = (self, value, bindings ?= {= }, options ?= {= }) ->
+        .calculus.EvaluateResult(SymbolicEvaluationTarget(value),bindings,options),
+    Differentiate = (self, value, variable) ->
+        .calculus.Differentiate(self.CalculusExpression(value),variable),
+    DifferentiateResult = (self, value, variable) ->
+        .calculus.DifferentiateResult(self.CalculusExpression(value),variable),
+    DifferentiateN = (self, value, variable, order) ->
+        .calculus.DifferentiateN(self.CalculusExpression(value),variable,order),
+    DifferentiateNResult = (self, value, variable, order) ->
+        .calculus.DifferentiateNResult(self.CalculusExpression(value),variable,order),
+    Partial = (self, value, variable) ->
+        .calculus.Partial(self.CalculusExpression(value),variable),
+    PartialResult = (self, value, variable) ->
+        .calculus.PartialResult(self.CalculusExpression(value),variable),
+    Gradient = (self, value, variables) ->
+        .calculus.Gradient(self.CalculusExpression(value),variables),
+    GradientResult = (self, value, variables) ->
+        .calculus.GradientResult(self.CalculusExpression(value),variables),
+    Jacobian = (self, values, variables) ->
+        .calculus.Jacobian(SymbolicCalculusExpressions(values),variables),
+    JacobianResult = (self, values, variables) ->
+        .calculus.JacobianResult(SymbolicCalculusExpressions(values),variables),
+    Hessian = (self, value, variables) ->
+        .calculus.Hessian(self.CalculusExpression(value),variables),
+    HessianResult = (self, value, variables) ->
+        .calculus.HessianResult(self.CalculusExpression(value),variables),
+    SelectedPrimitive = (self, integrand, variable, primitive, options ?= {= }) ->
+        .calculus.SelectedPrimitive(
+            self.CalculusExpression(integrand),
+            variable,
+            self.CalculusExpression(primitive),
+            SymbolicIntegralOptions(integrand,options)
+        ),
+    AntiderivativeFamily = (self, integrand, variable, primitive, constant ?= :C, options ?= {= }) ->
+        .calculus.AntiderivativeFamily(
+            self.CalculusExpression(integrand),
+            variable,
+            self.CalculusExpression(primitive),
+            constant,
+            SymbolicIntegralOptions(integrand,options)
+        ),
+    DefiniteIntegral = (self, integrand, variable, lower, upper, options ?= {= }) ->
+        .calculus.DefiniteIntegral(
+            self.CalculusExpression(integrand),
+            variable,
+            lower,
+            upper,
+            SymbolicIntegralOptions(integrand,options)
+        ),
+    Obligations = (self, value) -> SymbolicObligations(value),
+    Services = (self) -> ["fraction","fracfun","poly","ratfun","calculus"]
 };
 
-.Host.RegisterValue("symbolic",symbolicNamespace,"Representation-sensitive symbolic workspace",["Algebra","Exact","Symbolic"]);
+.Host.RegisterValue("symbolic",symbolicNamespace,"Representation-sensitive symbolic and abstract Calculus workspace",["Algebra","Calculus","Analysis","Exact","Symbolic"]);
+`;
+
+  // rix/plugins/calculus/calculus.plugin.rix
+  var calculus_plugin_default = `/**
+id: calculus
+description: Portable abstract functions, obligation-bearing higher differentiation, and provenance-recording evaluation through semantic-ID implementation links.
+kind: rix
+mount: calculus
+exports: [Function, Exp, Log, Sqrt, Asin, ComplexLog, Variable, Constant, Apply, Obligation, Register, Resolve, StructuralKey, Evaluate, EvaluateResult, Differentiate, DifferentiateResult, DifferentiateN, DifferentiateNResult, Partial, PartialResult, Gradient, GradientResult, Jacobian, JacobianResult, Hessian, HessianResult, SelectedPrimitive, AntiderivativeFamily, DefiniteIntegral, ToSpec, FromSpec, IsFunction, IsExpression, IsTransformation, IsIntegral]
+groups: [Calculus, Analysis, Symbolic, Exact]
+permissions: []
+provides: [rix.calculus@1, rix.abstract-function@1]
+schemas: [rix.calculus.function@1, rix.calculus.expression@1, rix.calculus.registry-entry@1, rix.calculus.obligation@1, rix.calculus.transformation@1, rix.calculus.evaluation@1, rix.calculus.derivative-collection@1, rix.calculus.integral@1]
+snapshot: false
+deterministic: true
+defaultEnabled: false
+**/
+
+CalculusOption(options, key, fallback) -> options.Has(key) ?: options[key] ?_ fallback;
+
+calculusRegistryState = {=
+    functions={= },
+    exactRules={= },
+    implementations={= },
+    domains={= },
+    branches={= },
+    evidence={= }
+};
+
+CalculusRegistryGet(section, semanticId, fallback ?= _) -> {;
+    values = @calculusRegistryState[section];
+    values.Has(semanticId) ?: values[semanticId] ?_ fallback;
+};
+
+CalculusRegistrySet(section, semanticId, value) -> {;
+    values = @calculusRegistryState[section];
+    @calculusRegistryState[section] = values.Set(semanticId,value);
+    value;
+};
+
+CalculusRegistryEvidence(semanticId, key, value) -> {;
+    evidence = CalculusRegistryGet(:evidence,semanticId,{= });
+    CalculusRegistrySet(:evidence,semanticId,evidence.Set(key,value));
+};
+
+CalculusIsExpression(value) -> value ? :CalculusExpression;
+CalculusIsFunction(value) -> value ? :MathematicalFunction;
+
+CalculusRequireExpression(value, label ?= "value") ->
+    CalculusIsExpression(value) ?: value ?_ .Error(@"@{label} must be a Calculus expression");
+
+CalculusExactScalar(value) -> (value ? :Integer) || (value ? :Rational);
+CalculusOperand(value) -> CalculusIsExpression(value) || CalculusExactScalar(value);
+
+CalculusExpression(kind, fields) -> {;
+    value = {=
+        valueKind=:calculusExpression,
+        schema="rix.calculus.expression@1",
+        kind=kind
+    }.Merge(fields);
+    value.__type = "CalculusExpression";
+    value._type = "calculus_expression";
+    value._proto = {=
+        Record=(self)->self,
+        Kind=(self)->self[:kind],
+        Operands=(self)->self.Has("operands") ?: self[:operands] ?_ [],
+        SemanticId=(self)->self.Has("semanticId") ?: self[:semanticId] ?_ _
+    };
+    .ImmutableValue(value);
+};
+
+CalculusVariable(name) -> {;
+    name ? :String ?: _ ?_ .Error("Calculus variable name must be a string or colon-string");
+    CalculusExpression(:variable, {= name=name });
+};
+
+CalculusConstant(value) -> CalculusExactScalar(value)
+    ?: CalculusExpression(:constant, {= value=value })
+    ?_ .Error("Calculus constants currently require an exact Integer or Rational");
+
+CalculusPromote(value) -> CalculusIsExpression(value) ?: value ?_ CalculusConstant(value);
+
+CalculusOperator(operation, operands) -> CalculusExpression(:operator, {=
+    operation=operation,
+    operands=operands.Map((value)->CalculusPromote(value))
+});
+
+CalculusBinary(operation, left, right) -> CalculusOperator(operation, [left,right]);
+CalculusNegate(value) -> CalculusOperator(:negate, [value]);
+
+CalculusApplication(semanticId, name, arguments) -> CalculusExpression(:apply, {=
+    semanticId=semanticId,
+    name=name,
+    arguments=arguments.Map((value)->CalculusPromote(value))
+});
+
+CalculusApply(function, argument) -> {;
+    exact = function ? :MathematicalFunction
+        ?: function
+        ?_ .Error("Calculus Apply expects a MathematicalFunction");
+    CalculusApplication(exact.semanticId, exact.name, [argument]);
+};
+
+CalculusSemanticId(value) ->
+    value ? :String
+      ?: value
+      ?_ (CalculusIsFunction(value)
+           ?: value.semanticId
+           ?_ (CalculusIsExpression(value) && value[:kind] == :apply
+                ?: value[:semanticId]
+                ?_ .Error("Calculus registry lookup expects a semantic ID, MathematicalFunction, or application expression")));
+
+CalculusFunctionMetadata(function) -> .ImmutableValue({=
+    valueKind=:calculusFunctionMetadata,
+    semanticId=function.semanticId,
+    name=function.name,
+    arity=function.arity,
+    facts=function.facts
+});
+
+CalculusRememberFunction(function) -> {;
+    semanticId = function.semanticId;
+    existing = CalculusRegistryGet(:functions,semanticId,_);
+    compatible = existing == _
+      ?: 1
+      ?_ (existing[:name] == function.name && existing[:arity] == function.arity);
+    compatible ?: _ ?_ .Error(@"Conflicting Calculus function metadata for semantic ID @{semanticId}");
+    existing == _ ?: CalculusRegistrySet(:functions,semanticId,CalculusFunctionMetadata(function)) ?_ _;
+
+    domain = {= domain=function.domain, codomain=function.codomain };
+    existingDomain = CalculusRegistryGet(:domains,semanticId,_);
+    domainCompatible = existingDomain == _
+      ?: 1
+      ?_ (existingDomain[:domain] == function.domain && existingDomain[:codomain] == function.codomain);
+    domainCompatible
+      ?: _
+      ?_ .Error(@"Conflicting Calculus domain declaration for semantic ID @{semanticId}");
+    existingDomain == _ ?: CalculusRegistrySet(:domains,semanticId,.ImmutableValue(domain)) ?_ _;
+    CalculusRegistryGet(:branches,semanticId,_) == _
+      ?: CalculusRegistrySet(:branches,semanticId,.ImmutableValue([]))
+      ?_ _;
+
+    function.implementation == _
+      ?: _
+      ?_ {;
+          CalculusRegistrySet(:implementations,@semanticId,@function.implementation);
+          CalculusRegistryEvidence(@semanticId,:implementation,@function.implementationEvidence);
+      };
+    function;
+};
+
+CalculusResolve(value) -> {;
+    semanticId = CalculusSemanticId(value);
+    metadata = CalculusRegistryGet(:functions,semanticId,_);
+    metadata == _
+      ?: .Error(@"No Calculus registry entry for semantic ID @{semanticId}")
+      ?_ .ImmutableValue({=
+          valueKind=:calculusRegistryEntry,
+          schema="rix.calculus.registry-entry@1",
+          semanticId=semanticId,
+          function=metadata,
+          exactRules=CalculusRegistryGet(:exactrules,semanticId,{= }),
+          implementation=CalculusRegistryGet(:implementations,semanticId,_),
+          domain=CalculusRegistryGet(:domains,semanticId,_),
+          branches=CalculusRegistryGet(:branches,semanticId,[]),
+          evidence=CalculusRegistryGet(:evidence,semanticId,{= })
+      });
+};
+
+CalculusRegister(function, options ?= {= }) -> {;
+    exact = function ? :MathematicalFunction
+      ?: function
+      ?_ .Error("Calculus Register expects a MathematicalFunction");
+    CalculusRememberFunction(exact);
+    semanticId = exact.semanticId;
+
+    derivative = CalculusOption(options,"derivative",_);
+    derivativeObligations = CalculusOption(options,"derivativeobligations",_);
+    derivativeObligations == _
+      ?: _
+      ?_ (derivative == _
+           ?: .Error("Calculus derivative obligations require an exact derivative rule")
+           ?_ _);
+    derivative == _
+      ?: _
+      ?_ {;
+          rules = CalculusRegistryGet(:exactrules,@semanticId,{= });
+          rules.Has("derivative")
+            ?: .Error(@"An exact derivative rule is already registered for semantic ID @{@semanticId}")
+            ?_ {;
+                installedRules = @rules.Set("derivative",@derivative);
+                installedRules = @derivativeObligations == _
+                  ?: installedRules
+                  ?_ installedRules.Set("derivativeobligations",@derivativeObligations);
+                CalculusRegistrySet(:exactrules,@semanticId,.ImmutableValue(installedRules));
+            };
+          CalculusRegistryEvidence(
+              @semanticId,
+              :derivative,
+              CalculusOption(@options,"derivativeevidence",:declaredByCaller)
+          );
+      };
+
+    branches = CalculusOption(options,"branches",_);
+    branches == _
+      ?: _
+      ?_ ((branches ? :Array)
+           ?: CalculusRegistrySet(:branches,semanticId,.ImmutableValue(branches))
+           ?_ .Error("Calculus registry branches must be an Array"));
+    options.Has("domainevidence")
+      ?: CalculusRegistryEvidence(semanticId,:domain,options[:domainEvidence])
+      ?_ _;
+    options.Has("branchevidence")
+      ?: CalculusRegistryEvidence(semanticId,:branches,options[:branchEvidence])
+      ?_ _;
+    CalculusResolve(semanticId);
+};
+
+CalculusFunctionRecord(function) -> {=
+    valueKind=:mathematicalFunction,
+    schema="rix.calculus.function@1",
+    semanticId=function.semanticId,
+    name=function.name,
+    arity=function.arity,
+    domain=function.domain,
+    codomain=function.codomain,
+    facts=function.facts,
+    hasImplementation=function.implementation == _ ?: _ ?_ 1,
+    implementationEvidence=function.implementationEvidence
+};
+
+CalculusDispatch(semanticId, name, implementation, argument) -> {;
+    resolvedImplementation = implementation == _
+      ?: CalculusRegistryGet(:implementations,semanticId,_)
+      ?_ implementation;
+    CalculusIsExpression(argument)
+      ?: CalculusApplication(semanticId, name, [argument])
+      ?_ (resolvedImplementation == _
+          ?: .Error(@"Abstract function @{name} has no attached implementation for concrete evaluation")
+          ?_ argument |> resolvedImplementation);
+};
+
+CalculusBuildFunction(semanticId, options ?= {= }) -> {;
+    semanticId ? :String ?: _ ?_ .Error("Calculus semantic function ID must be a string or colon-string");
+    name = CalculusOption(options, "name", semanticId);
+    name ? :String ?: _ ?_ .Error("Calculus function name must be a string or colon-string");
+    arity = CalculusOption(options, "arity", 1) ~!: :Integer;
+    arity == 1 ?: _ ?_ .Error("Calculus Phase 1 supports unary mathematical functions");
+    domain = CalculusOption(options, "domain", :unspecified);
+    codomain = CalculusOption(options, "codomain", :unspecified);
+    facts = CalculusOption(options, "facts", []);
+    facts ? :Array ?: _ ?_ .Error("Calculus function facts must be an Array");
+    implementation = CalculusOption(options, "implementation", _);
+    implementationEvidence = CalculusOption(options, "implementationevidence", :unspecified);
+
+    MathematicalFunctionValue = (argument) ->
+        CalculusDispatch(semanticId, name, implementation, argument);
+    MathematicalFunctionValue.schema = "rix.calculus.function@1";
+    MathematicalFunctionValue.semanticId = semanticId;
+    MathematicalFunctionValue.name = name;
+    MathematicalFunctionValue.arity = arity;
+    MathematicalFunctionValue.domain = domain;
+    MathematicalFunctionValue.codomain = codomain;
+    MathematicalFunctionValue.facts = facts;
+    MathematicalFunctionValue.implementation = implementation;
+    MathematicalFunctionValue.implementationEvidence = implementationEvidence;
+    MathematicalFunctionValue.__type = "MathematicalFunction";
+    MathematicalFunctionValue._type = "mathematical_function";
+    MathematicalFunctionValue._proto = {=
+        Record=(self)->CalculusFunctionRecord(self),
+        SemanticId=(self)->self.semanticId,
+        Facts=(self)->self.facts,
+        Expression=(self, argument)->CalculusApplication(self.semanticId,self.name,[argument]),
+        WithImplementation=(self, attached, evidence ?= :unspecified)->CalculusBuildFunction(self.semanticId,{=
+            name=self.name,
+            arity=self.arity,
+            domain=self.domain,
+            codomain=self.codomain,
+            facts=self.facts,
+            implementation=attached,
+            implementationEvidence=evidence
+        })
+    };
+    CalculusRememberFunction(.ImmutableValue(MathematicalFunctionValue));
+};
+
+CalculusExp(implementation ?= _) -> CalculusBuildFunction("rix.function.exp@1", {=
+    name=:Exp,
+    arity=1,
+    domain=:real,
+    codomain=:positiveReal,
+    facts=[{=
+        kind=:initialValueDifferentialEquation,
+        variable=:x,
+        dependent=:y,
+        equation=:derivativeEqualsSelf,
+        initialPoint=0,
+        initialValue=1
+    }],
+    implementation=implementation,
+    implementationEvidence=implementation == _ ?: :none ?_ :declaredByCaller
+});
+
+CalculusLog(implementation ?= _) -> CalculusBuildFunction("rix.function.log.real-principal@1", {=
+    name=:Log,
+    arity=1,
+    domain=:positiveReal,
+    codomain=:real,
+    facts=[{= kind=:inverseIdentity, inverseOf="rix.function.exp@1", branch=:realPrincipal }],
+    implementation=implementation,
+    implementationEvidence=implementation == _ ?: :none ?_ :declaredByCaller
+});
+
+CalculusSqrt(implementation ?= _) -> CalculusBuildFunction("rix.function.sqrt.real-principal@1", {=
+    name=:Sqrt,
+    arity=1,
+    domain=:nonnegativeReal,
+    codomain=:nonnegativeReal,
+    facts=[{= kind=:algebraicIdentity, identity=:squareEqualsArgument, branch=:nonnegativeRoot }],
+    implementation=implementation,
+    implementationEvidence=implementation == _ ?: :none ?_ :declaredByCaller
+});
+
+CalculusAsin(implementation ?= _) -> CalculusBuildFunction("rix.function.asin.real-principal@1", {=
+    name=:Asin,
+    arity=1,
+    domain=:closedUnitInterval,
+    codomain=:principalAsinRange,
+    facts=[{= kind=:inverseIdentity, inverseOf=:Sin, branch=:realPrincipal }],
+    implementation=implementation,
+    implementationEvidence=implementation == _ ?: :none ?_ :declaredByCaller
+});
+
+CalculusComplexLog(implementation ?= _) -> CalculusBuildFunction("rix.function.log.complex-principal@1", {=
+    name=:ComplexLog,
+    arity=1,
+    domain=:complexOffNonpositiveRealAxis,
+    codomain=:complex,
+    facts=[{= kind=:complexContinuation, continuationOf="rix.function.log.real-principal@1", branch=:principal }],
+    implementation=implementation,
+    implementationEvidence=implementation == _ ?: :none ?_ :declaredByCaller
+});
+
+CalculusObligation(kind, relation, expression, options ?= {= }) -> {;
+    (kind == :domain || kind == :branch)
+      ?: _
+      ?_ .Error("Calculus obligation kind must be :domain or :branch");
+    .ImmutableValue({=
+        valueKind=:calculusObligation,
+        schema="rix.calculus.obligation@1",
+        kind=kind,
+        relation=relation,
+        expression=CalculusPromote(expression),
+        semanticId=CalculusOption(options,"semanticid",_),
+        reason=CalculusOption(options,"reason",:unspecified),
+        branch=CalculusOption(options,"branch",_),
+        evidence=CalculusOption(options,"evidence",:declaredRule)
+    });
+};
+
+CalculusIntegralRecord(kind, integrand, variable, fields, options) -> {;
+    options ? :Map ?: _ ?_ .Error("Calculus integral options must be a Map");
+    exactVariable = CalculusDerivativeVariable(variable);
+    .ImmutableValue({=
+        valueKind=:calculusIntegral,
+        schema="rix.calculus.integral@1",
+        kind=kind,
+        integrand=CalculusPromote(integrand),
+        variable=exactVariable,
+        obligations=CalculusOption(options,"obligations",[]),
+        evidence=CalculusOption(options,"evidence",[])
+    }.Merge(fields));
+};
+
+CalculusSelectedPrimitive(integrand, variable, primitive, options ?= {= }) ->
+    CalculusIntegralRecord(:selectedPrimitive,integrand,variable,{=
+        primitive=CalculusPromote(primitive),
+        verification=CalculusOption(options,"verification",:unverified)
+    },options);
+
+CalculusAntiderivativeFamily(integrand, variable, primitive, constant ?= :C, options ?= {= }) -> {;
+    constant ? :String
+      ?: _
+      ?_ .Error("Calculus antiderivative-family constant must be a string or colon-string");
+    CalculusIntegralRecord(:antiderivativeFamily,integrand,variable,{=
+        representative=CalculusPromote(primitive),
+        constant=constant,
+        verification=CalculusOption(options,"verification",:unverified)
+    },options);
+};
+
+CalculusDefiniteIntegral(integrand, variable, lower, upper, options ?= {= }) ->
+    CalculusIntegralRecord(:definiteIntegral,integrand,variable,{=
+        lower=CalculusPromote(lower),
+        upper=CalculusPromote(upper)
+    },options);
+
+CalculusIsIntegral(value) ->
+    value ? :Map
+      ?: value[:schema] == "rix.calculus.integral@1"
+      ?_ _;
+
+CalculusIsTransformation(value) ->
+    CalculusIsExpression(value)
+      ?: _
+      ?_ (value ? :Map
+           ?: value[:schema] == "rix.calculus.transformation@1"
+           ?_ _);
+CalculusEvaluationState(value, links ?= [], cache ?= {= }, reused ?= []) -> {=
+    value=value,
+    links=links,
+    cache=cache,
+    reused=reused
+};
+CalculusEvaluateBinary(operation, left, right) ->
+    operation == :add ?: left+right
+      ?_ operation == :subtract ?: left-right
+      ?_ operation == :multiply ?: left*right
+      ?_ operation == :divide ?: left/right
+      ?_ operation == :power ?: left^right
+      ?_ .Error(@"Unsupported Calculus evaluation operator @{operation}");
+
+CalculusEvaluateNode(expression, bindings, cache, reuseCommon) -> {;
+    exact = CalculusRequireExpression(expression,"evaluate expression");
+    kind = exact[:kind];
+    key = kind == :apply ?: CalculusExpressionKey(exact) ?_ _;
+    cached = (reuseCommon && key != _ && cache.Has(key)) ?: 1 ?_ _;
+    cached
+      ?: CalculusEvaluationState(
+          cache[key],
+          [],
+          cache,
+          [.ImmutableValue({= kind=:commonSubexpressionReuse, key=key })]
+      )
+      ?_ {;
+    evaluated = @kind == :constant
+      ?: CalculusEvaluationState(@exact[:value],[],@cache,[])
+      ?_ @kind == :variable
+      ?: {;
+          name = @exact[:name];
+          @bindings.Has(name)
+            ?: _
+            ?_ .Error(@"Calculus evaluation has no binding for variable @{@name}");
+          value = @bindings[name];
+          CalculusIsExpression(value)
+            ?: .Error(@"Calculus evaluation binding @{@name} must be concrete")
+            ?_ CalculusEvaluationState(value,[],@cache,[]);
+      }
+      ?_ @kind == :operator
+      ?: {;
+          operation = @exact[:operation];
+          operands = @exact[:operands];
+          operation == :negate
+            ?: {;
+                inner = CalculusEvaluateNode(@operands[1],@bindings,@cache,@reuseCommon);
+                CalculusEvaluationState(-inner[:value],inner[:links],inner[:cache],inner[:reused]);
+            }
+            ?_ {;
+                left = CalculusEvaluateNode(@operands[1],@bindings,@cache,@reuseCommon);
+                right = CalculusEvaluateNode(@operands[2],@bindings,left[:cache],@reuseCommon);
+                CalculusEvaluationState(
+                    CalculusEvaluateBinary(@operation,left[:value],right[:value]),
+                    CalculusAppend(left[:links],right[:links]),
+                    right[:cache],
+                    CalculusAppend(left[:reused],right[:reused])
+                );
+            };
+      }
+      ?_ @kind == :apply
+      ?: {;
+          arguments = @exact[:arguments];
+          arguments.Len() == 1
+            ?: _
+            ?_ .Error("Calculus evaluation currently requires unary semantic applications");
+          argument = CalculusEvaluateNode(arguments[1],@bindings,@cache,@reuseCommon);
+          registry = CalculusResolve(@exact[:semanticId]);
+          implementation = registry[:implementation];
+          implementation == _
+            ?: .Error(@"No numerical implementation is linked for semantic ID @{@exact[:semanticId]}")
+            ?_ _;
+          value = argument[:value] |> implementation;
+          link = .ImmutableValue({=
+              kind=:calculusImplementationLink,
+              semanticId=@exact[:semanticId],
+              domain=registry[:domain],
+              branches=registry[:branches],
+              evidence=registry[:evidence][:implementation]
+          });
+          CalculusEvaluationState(value,argument[:links].Push(link),argument[:cache],argument[:reused]);
+      }
+      ?_ .Error(@"Unsupported Calculus expression kind @{kind}");
+    finalCache = (@reuseCommon && @key != _)
+      ?: evaluated[:cache].Set(@key,evaluated[:value])
+      ?_ evaluated[:cache];
+    CalculusEvaluationState(
+        evaluated[:value],
+        evaluated[:links],
+        finalCache,
+        evaluated[:reused]
+    );
+    };
+};
+
+CalculusEvaluateObligation(obligation, bindings, reuseCommon) -> {;
+    evaluated = CalculusEvaluateNode(obligation[:expression],bindings,{= },reuseCommon);
+    .ImmutableValue({=
+        obligation=obligation,
+        subject=evaluated[:value],
+        relation=obligation[:relation],
+        kind=obligation[:kind],
+        links=evaluated[:links],
+        status=:unresolved
+    });
+};
+
+CalculusEvaluateResult(value, bindings ?= {= }, options ?= {= }) -> {;
+    bindings ? :Map ?: _ ?_ .Error("Calculus evaluation bindings must be a Map");
+    options ? :Map ?: _ ?_ .Error("Calculus evaluation options must be a Map");
+    reuseCommon = CalculusOption(options,"reusecommonsubexpressions",1) ?: 1 ?_ _;
+    transformation = CalculusIsTransformation(value) ?: value ?_ _;
+    expression = transformation == _ ?: value ?_ transformation[:expression];
+    obligations = transformation == _ ?: [] ?_ transformation[:obligations];
+    evaluated = CalculusEvaluateNode(expression,bindings,{= },reuseCommon);
+    obligationValues = obligations.Map((obligation)->CalculusEvaluateObligation(obligation,@bindings,@reuseCommon));
+    .ImmutableValue({=
+        valueKind=:calculusEvaluation,
+        schema="rix.calculus.evaluation@1",
+        expression=expression,
+        transformation=transformation,
+        bindings=bindings,
+        value=evaluated[:value],
+        links=evaluated[:links],
+        reused=evaluated[:reused],
+        semanticEvaluations=evaluated[:links].Len(),
+        reuseCount=evaluated[:reused].Len(),
+        obligations=obligations,
+        obligationValues=obligationValues,
+        obligationsDischarged=obligations.Len() == 0 ?: 1 ?_ _
+    });
+};
+
+CalculusEvaluate(value, bindings ?= {= }, options ?= {= }) -> {;
+    result = CalculusEvaluateResult(value,bindings,options);
+    result[:obligations].Len() == 0
+      ?: result[:value]
+      ?_ .Error("Calculus evaluation has unresolved domain or branch obligations; use .calculus.EvaluateResult");
+};
+
+CalculusConstantValue(expression) ->
+    CalculusIsExpression(expression) && expression[:kind] == :constant ?: expression[:value] ?_ _;
+CalculusIsExactValue(expression, value) -> {;
+    exact = CalculusConstantValue(expression);
+    exact == _ ?: _ ?_ exact == value;
+};
+
+CalculusAddExact(left, right) ->
+    CalculusIsExactValue(left,0) ?: right
+      ?_ (CalculusIsExactValue(right,0) ?: left ?_ CalculusBinary(:add,left,right));
+CalculusSubtractExact(left, right) ->
+    CalculusIsExactValue(right,0) ?: left
+      ?_ (CalculusIsExactValue(left,0) ?: CalculusNegate(right) ?_ CalculusBinary(:subtract,left,right));
+CalculusMultiplyExact(left, right) ->
+    (CalculusIsExactValue(left,0) || CalculusIsExactValue(right,0)) ?: CalculusConstant(0)
+      ?_ (CalculusIsExactValue(left,1) ?: right
+           ?_ (CalculusIsExactValue(right,1) ?: left ?_ CalculusBinary(:multiply,left,right)));
+CalculusDivideExact(left, right) ->
+    CalculusIsExactValue(left,0) ?: CalculusConstant(0)
+      ?_ (CalculusIsExactValue(right,1) ?: left ?_ CalculusBinary(:divide,left,right));
+CalculusPowerExact(base, exponent) ->
+    exponent == 0 ?: CalculusConstant(1)
+      ?_ (exponent == 1 ?: base ?_ CalculusBinary(:power,base,CalculusConstant(exponent)));
+
+CalculusExpressionKeys(expressions) ->
+    expressions.Map((expression)->CalculusExpressionKey(expression)).Join(";");
+CalculusOperatorKey(expression) -> {;
+    children = CalculusExpressionKeys(expression[:operands]);
+    @"operator(@{expression[:operation]};@{children})";
+};
+CalculusApplicationKey(expression) -> {;
+    children = CalculusExpressionKeys(expression[:arguments]);
+    @"apply(@{expression[:semanticId]};@{children})";
+};
+CalculusExpressionKey(expression) -> {;
+    exact = CalculusRequireExpression(expression,"expression key");
+    kind = exact[:kind];
+    kind == :constant
+      ?: @"constant(@{exact[:value]})"
+      ?_ kind == :variable
+      ?: @"variable(@{exact[:name]})"
+      ?_ kind == :operator
+      ?: CalculusOperatorKey(exact)
+      ?_ kind == :apply
+      ?: CalculusApplicationKey(exact)
+      ?_ .Error(@"Unsupported Calculus expression kind @{kind}");
+};
+CalculusSameExpression(left, right) ->
+    CalculusExpressionKey(left) == CalculusExpressionKey(right);
+CalculusScaledSelfFactor(base, derivative) -> {;
+    CalculusSameExpression(base,derivative)
+      ?: CalculusConstant(1)
+      ?_ (derivative[:kind] == :operator && derivative[:operation] == :multiply
+           ?: {;
+               operands = @derivative[:operands];
+               left = operands[1];
+               right = operands[2];
+               leftScalar = CalculusConstantValue(left);
+               rightScalar = CalculusConstantValue(right);
+               (leftScalar != _ && CalculusSameExpression(@base,right))
+                 ?: left
+                 ?_ ((rightScalar != _ && CalculusSameExpression(@base,left)) ?: right ?_ _);
+           }
+           ?_ _);
+};
+
+CalculusDerivativeVariable(variable) ->
+    variable ? :String
+      ?: variable
+      ?_ (CalculusIsExpression(variable) && variable[:kind] == :variable
+           ?: variable[:name]
+           ?_ .Error("Calculus differentiation variable must be a string or variable expression"));
+
+CalculusAppend(left, right) -> right.Reduce((result,value)->result.Push(value),left);
+CalculusRuleEvidence(rule, fields ?= {= }) -> .ImmutableValue({=
+    kind=:calculusRuleApplication,
+    rule=rule
+}.Merge(fields));
+CalculusDerivativeState(expression, obligations ?= [], evidence ?= []) -> {=
+    expression=expression,
+    obligations=obligations,
+    evidence=evidence
+};
+CalculusStateWithRule(expression, obligations, evidence, rule, fields ?= {= }) ->
+    CalculusDerivativeState(
+        expression,
+        obligations,
+        evidence.Push(CalculusRuleEvidence(rule,fields))
+    );
+
+CalculusDifferentiatePower(base, exponentExpression, baseDerivative) -> {;
+    exponent = CalculusConstantValue(exponentExpression);
+    (exponent != _ && (exponent ? :Integer))
+      ?: _
+      ?_ .Error("Exact Calculus power differentiation currently requires an Integer constant exponent");
+    selfFactor = CalculusScaledSelfFactor(base,baseDerivative);
+    exponent == 0
+      ?: CalculusConstant(0)
+      ?_ (selfFactor == _
+           ?: CalculusMultiplyExact(
+                CalculusMultiplyExact(
+                    CalculusConstant(exponent),
+                    CalculusPowerExact(base,exponent-1)
+                ),
+                baseDerivative
+              )
+           ?_ CalculusMultiplyExact(
+                CalculusMultiplyExact(CalculusConstant(exponent),selfFactor),
+                CalculusPowerExact(base,exponent)
+              ));
+};
+
+CalculusDifferentiateBinary(operation, left, right, leftDerivative, rightDerivative) ->
+    operation == :add
+      ?: CalculusAddExact(leftDerivative,rightDerivative)
+      ?_ operation == :subtract
+      ?: CalculusSubtractExact(leftDerivative,rightDerivative)
+      ?_ operation == :multiply
+      ?: CalculusAddExact(
+          CalculusMultiplyExact(leftDerivative,right),
+          CalculusMultiplyExact(left,rightDerivative)
+      )
+      ?_ operation == :divide
+      ?: CalculusDivideExact(
+          CalculusSubtractExact(
+              CalculusMultiplyExact(leftDerivative,right),
+              CalculusMultiplyExact(left,rightDerivative)
+          ),
+          CalculusPowerExact(right,2)
+      )
+      ?_ operation == :power
+      ?: CalculusDifferentiatePower(left,right,leftDerivative)
+      ?_ .Error(@"Unsupported Calculus operator @{operation}");
+
+CalculusDifferentiateOperator(expression, variable) -> {;
+    operation = expression[:operation];
+    operands = expression[:operands];
+    operation == :negate
+      ?: {;
+          inner = CalculusDifferentiateNode(@operands[1],@variable);
+          CalculusStateWithRule(
+              CalculusNegate(inner[:expression]),
+              inner[:obligations],
+              inner[:evidence],
+              :negation
+          );
+      }
+      ?_ {;
+          left = @operands[1];
+          right = @operands[2];
+          leftDerivative = CalculusDifferentiateNode(left,@variable);
+          rightDerivative = CalculusDifferentiateNode(right,@variable);
+          derivative = CalculusDifferentiateBinary(
+              @operation,
+              left,
+              right,
+              leftDerivative[:expression],
+              rightDerivative[:expression]
+          );
+          obligations = CalculusAppend(leftDerivative[:obligations],rightDerivative[:obligations]);
+          obligations = @operation == :divide
+            ?: obligations.Push(CalculusObligation(:domain,:nonzero,right,{= reason=:divisionDomain }))
+            ?_ obligations;
+          exponent = @operation == :power ?: CalculusConstantValue(right) ?_ _;
+          obligations = (@operation == :power && exponent != _ && (exponent ? :Integer) && exponent < 0)
+            ?: obligations.Push(CalculusObligation(:domain,:nonzero,left,{= reason=:negativeIntegerPower }))
+            ?_ obligations;
+          evidence = CalculusAppend(leftDerivative[:evidence],rightDerivative[:evidence]);
+          reuseFactor = (@operation == :power && exponent != _ && exponent != 0)
+            ?: CalculusScaledSelfFactor(left,leftDerivative[:expression])
+            ?_ _;
+          ruleFields = reuseFactor == _
+            ?: {= }
+            ?_ {=
+                optimization=:differentialIdentityReuse,
+                relation=:scaledSelfDerivative,
+                scale=reuseFactor
+            };
+          CalculusStateWithRule(derivative,obligations,evidence,@operation,ruleFields);
+      };
+};
+
+CalculusDifferentiateApplication(expression, variable) -> {;
+    arguments = expression[:arguments];
+    arguments.Len() == 1
+      ?: _
+      ?_ .Error("Exact Calculus chain rules currently require unary semantic applications");
+    innerDerivative = CalculusDifferentiateNode(arguments[1],variable);
+    registry = CalculusResolve(expression[:semanticId]);
+    rules = registry[:exactrules];
+    obligations = innerDerivative[:obligations];
+    rules.Has("derivativeobligations")
+      ?: {;
+          declared = @expression |> @rules[:derivativeObligations];
+          declared ? :Array
+            ?: _
+            ?_ .Error("Calculus derivative obligation rules must return an Array");
+          @obligations = CalculusAppend(@obligations,declared);
+      }
+      ?_ _;
+    innerExpression = innerDerivative[:expression];
+    derivative = CalculusIsExactValue(innerExpression,0)
+      ?: innerExpression
+      ?_ {;
+          @rules.Has("derivative")
+            ?: _
+            ?_ .Error(@"No exact derivative rule is registered for semantic ID @{@expression[:semanticId]}");
+          outerDerivative = @expression |> @rules[:derivative];
+          CalculusMultiplyExact(CalculusPromote(outerDerivative),@innerExpression);
+      };
+    evidence = innerDerivative[:evidence].Push(CalculusRuleEvidence(:semanticChain,{=
+        semanticId=expression[:semanticId],
+        declaration=registry[:evidence]
+    }));
+    CalculusDerivativeState(derivative,obligations,evidence);
+};
+
+CalculusDifferentiateNode(expression, variable) -> {;
+    exact = CalculusRequireExpression(expression,"differentiate expression");
+    kind = exact[:kind];
+    kind == :constant ?: CalculusStateWithRule(CalculusConstant(0),[],[],:constant)
+      ?_ (kind == :variable
+           ?: CalculusStateWithRule(
+                CalculusConstant(exact[:name] == variable ?: 1 ?_ 0),
+                [],
+                [],
+                :variable,
+                {= name=exact[:name], differentiatedBy=variable }
+              )
+           ?_ (kind == :operator
+                ?: CalculusDifferentiateOperator(exact,variable)
+                ?_ (kind == :apply
+                     ?: CalculusDifferentiateApplication(exact,variable)
+                     ?_ .Error(@"Unsupported Calculus expression kind @{kind}"))));
+};
+
+CalculusDifferentiateResult(value, variable) -> {;
+    differentiatedBy = CalculusDerivativeVariable(variable);
+    previous = CalculusIsTransformation(value) ?: value ?_ _;
+    exact = previous == _
+      ?: CalculusRequireExpression(value,"differentiate expression")
+      ?_ previous[:expression];
+    source = previous == _ ?: exact ?_ previous[:source];
+    priorVariables = previous == _
+      ?: []
+      ?_ (previous.Has("variables") ?: previous[:variables] ?_ [previous[:variable]]);
+    priorObligations = previous == _ ?: [] ?_ previous[:obligations];
+    priorEvidence = previous == _ ?: [] ?_ previous[:evidence];
+    result = CalculusDifferentiateNode(exact,differentiatedBy);
+    variables = priorVariables.Push(differentiatedBy);
+    .ImmutableValue({=
+        valueKind=:calculusTransformation,
+        schema="rix.calculus.transformation@1",
+        operation=:differentiate,
+        variable=differentiatedBy,
+        variables=variables,
+        order=variables.Len(),
+        source=source,
+        expression=result[:expression],
+        obligations=CalculusAppend(priorObligations,result[:obligations]),
+        evidence=CalculusAppend(priorEvidence,result[:evidence])
+    });
+};
+
+CalculusDifferentiate(expression, variable) -> {;
+    result = CalculusDifferentiateResult(expression,variable);
+    result[:obligations].Len() == 0
+      ?: result[:expression]
+      ?_ .Error("Exact derivative has domain or branch obligations; use .calculus.DifferentiateResult");
+};
+
+CalculusIdentityTransformation(expression) -> .ImmutableValue({=
+    valueKind=:calculusTransformation,
+    schema="rix.calculus.transformation@1",
+    operation=:differentiate,
+    variable=_,
+    variables=[],
+    order=0,
+    source=expression,
+    expression=expression,
+    obligations=[],
+    evidence=[]
+});
+CalculusDifferentiateTimes(value, variable, remaining) ->
+    remaining == 0
+      ?: value
+      ?_ CalculusDifferentiateTimes(CalculusDifferentiateResult(value,variable),variable,remaining-1);
+CalculusDifferentiateNResult(expression, variable, order) -> {;
+    exactOrder = order ~!: :Integer;
+    exactOrder >= 0 ?: _ ?_ .Error("Calculus derivative order must be nonnegative");
+    initial = CalculusIsTransformation(expression)
+      ?: expression
+      ?_ CalculusIdentityTransformation(CalculusRequireExpression(expression,"differentiate expression"));
+    CalculusDifferentiateTimes(initial,CalculusDerivativeVariable(variable),exactOrder);
+};
+CalculusDifferentiateN(expression, variable, order) -> {;
+    result = CalculusDifferentiateNResult(expression,variable,order);
+    result[:obligations].Len() == 0
+      ?: result[:expression]
+      ?_ .Error("Exact higher derivative has domain or branch obligations; use .calculus.DifferentiateNResult");
+};
+
+CalculusDerivativeVariables(variables) -> {;
+    variables ? :Array ?: _ ?_ .Error("Calculus derivative variables must be an Array");
+    variables.Len() > 0 ?: _ ?_ .Error("Calculus derivative variables must not be empty");
+    variables.Map((variable)->CalculusDerivativeVariable(variable));
+};
+CalculusFlattenTransformations(values) -> values.Reduce((result,value)->
+    value ? :Array
+      ?: CalculusAppend(result,CalculusFlattenTransformations(value))
+      ?_ result.Push(value),
+    []
+);
+CalculusTransformationExpressions(values) -> values.Map((value)->
+    value ? :Array ?: CalculusTransformationExpressions(value) ?_ value[:expression]
+);
+CalculusDerivativeCollection(kind, variables, sources, results) -> {;
+    flat = CalculusFlattenTransformations(results);
+    obligations = flat.Reduce((all,result)->CalculusAppend(all,result[:obligations]),[]);
+    .ImmutableValue({=
+        valueKind=:calculusDerivativeCollection,
+        schema="rix.calculus.derivative-collection@1",
+        kind=kind,
+        variables=variables,
+        sources=sources,
+        results=results,
+        expressions=CalculusTransformationExpressions(results),
+        obligations=obligations
+    });
+};
+CalculusUnconditionalCollection(collection, detailedName) ->
+    collection[:obligations].Len() == 0
+      ?: collection[:expressions]
+      ?_ .Error(@"Exact derivative collection has domain or branch obligations; use .calculus.@{detailedName}");
+
+CalculusGradientResult(expression, variables) -> {;
+    exact = CalculusRequireExpression(expression,"gradient expression");
+    names = CalculusDerivativeVariables(variables);
+    results = names.Map((variable)->CalculusDifferentiateResult(@exact,variable));
+    CalculusDerivativeCollection(:gradient,names,[exact],results);
+};
+CalculusGradient(expression, variables) ->
+    CalculusUnconditionalCollection(CalculusGradientResult(expression,variables),"GradientResult");
+
+CalculusJacobianRow(expression, variables) ->
+    variables.Map((variable)->CalculusDifferentiateResult(@expression,variable));
+CalculusJacobianResult(expressions, variables) -> {;
+    expressions ? :Array ?: _ ?_ .Error("Calculus Jacobian expressions must be an Array");
+    expressions.Len() > 0 ?: _ ?_ .Error("Calculus Jacobian expressions must not be empty");
+    exact = expressions.Map((expression)->CalculusRequireExpression(expression,"Jacobian expression"));
+    names = CalculusDerivativeVariables(variables);
+    results = exact.Map((expression)->CalculusJacobianRow(expression,@names));
+    CalculusDerivativeCollection(:jacobian,names,exact,results);
+};
+CalculusJacobian(expressions, variables) ->
+    CalculusUnconditionalCollection(CalculusJacobianResult(expressions,variables),"JacobianResult");
+
+CalculusHessianEntry(expression, firstVariable, secondVariable) ->
+    CalculusDifferentiateResult(
+        CalculusDifferentiateResult(expression,firstVariable),
+        secondVariable
+    );
+CalculusHessianRow(expression, firstVariable, variables) ->
+    variables.Map((secondVariable)->CalculusHessianEntry(@expression,@firstVariable,secondVariable));
+CalculusHessianResult(expression, variables) -> {;
+    exact = CalculusRequireExpression(expression,"Hessian expression");
+    names = CalculusDerivativeVariables(variables);
+    results = names.Map((firstVariable)->CalculusHessianRow(@exact,firstVariable,@names));
+    CalculusDerivativeCollection(:hessian,names,[exact],results);
+};
+CalculusHessian(expression, variables) ->
+    CalculusUnconditionalCollection(CalculusHessianResult(expression,variables),"HessianResult");
+
+CalculusExpDerivative(application) -> application;
+CalculusReciprocalDerivative(application) -> CalculusDivideExact(CalculusConstant(1),application[:arguments][1]);
+CalculusSqrtDerivative(application) -> CalculusDivideExact(
+    CalculusConstant(1),
+    CalculusMultiplyExact(CalculusConstant(2),application)
+);
+CalculusAsinDerivative(application) -> {;
+    argument = application[:arguments][1];
+    radicand = CalculusSubtractExact(CalculusConstant(1),CalculusPowerExact(argument,2));
+    root = CalculusApplication("rix.function.sqrt.real-principal@1",:Sqrt,[radicand]);
+    CalculusDivideExact(CalculusConstant(1),root);
+};
+
+CalculusPositiveArgumentObligations(application) -> [
+    CalculusObligation(:domain,:positive,application[:arguments][1],{=
+        semanticId=application[:semanticId],
+        reason=:realDerivativeDomain
+    })
+];
+CalculusOpenUnitIntervalObligations(application) -> [
+    CalculusObligation(:domain,:insideOpenUnitInterval,application[:arguments][1],{=
+        semanticId=application[:semanticId],
+        reason=:inverseDerivativeDomain
+    })
+];
+CalculusPrincipalLogBranchObligations(application) -> [
+    CalculusObligation(:branch,:offPrincipalLogBranchCut,application[:arguments][1],{=
+        semanticId=application[:semanticId],
+        reason=:complexPrincipalBranch,
+        branch=:principal
+    })
+];
+
+calculusBuiltinExp = CalculusExp();
+CalculusRegister(calculusBuiltinExp,{=
+    derivative=CalculusExpDerivative,
+    derivativeEvidence={=
+        kind=:exactIdentity,
+        identity=:derivativeEqualsSelf,
+        source=:initialValueCharacterization
+    },
+    branches=[],
+    domainEvidence=:declaredRealDomain
+});
+
+calculusBuiltinLog = CalculusLog();
+CalculusRegister(calculusBuiltinLog,{=
+    derivative=CalculusReciprocalDerivative,
+    derivativeObligations=CalculusPositiveArgumentObligations,
+    derivativeEvidence={= kind=:exactIdentity, identity=:logDerivative, result=:reciprocal },
+    branches=[{= kind=:realBranch, name=:principal, domain=:positiveReal }],
+    domainEvidence=:realLogDomain,
+    branchEvidence=:inverseOfRealExp
+});
+
+calculusBuiltinSqrt = CalculusSqrt();
+CalculusRegister(calculusBuiltinSqrt,{=
+    derivative=CalculusSqrtDerivative,
+    derivativeObligations=CalculusPositiveArgumentObligations,
+    derivativeEvidence={= kind=:exactIdentity, identity=:principalSquareRootDerivative },
+    branches=[{= kind=:realAlgebraicBranch, name=:nonnegativeRoot }],
+    domainEvidence=:principalRealSquareRootDomain,
+    branchEvidence=:nonnegativeRootDeclaration
+});
+
+calculusBuiltinAsin = CalculusAsin();
+CalculusRegister(calculusBuiltinAsin,{=
+    derivative=CalculusAsinDerivative,
+    derivativeObligations=CalculusOpenUnitIntervalObligations,
+    derivativeEvidence={= kind=:exactIdentity, identity=:principalAsinDerivative },
+    branches=[{= kind=:realInverseBranch, name=:principal, range=:principalAsinRange }],
+    domainEvidence=:closedUnitInterval,
+    branchEvidence=:principalInverseOfSin
+});
+
+calculusBuiltinComplexLog = CalculusComplexLog();
+CalculusRegister(calculusBuiltinComplexLog,{=
+    derivative=CalculusReciprocalDerivative,
+    derivativeObligations=CalculusPrincipalLogBranchObligations,
+    derivativeEvidence={= kind=:analyticIdentity, identity=:complexLogDerivative },
+    branches=[{= kind=:complexBranch, name=:principal, branchCut=:nonpositiveRealAxis }],
+    domainEvidence=:complexPlaneWithBranchCut,
+    branchEvidence=:principalArgumentRange
+});
+
+.TypeKnown(:CalculusExpression) ?: _ ?_ .TypeRegister({=
+    name=:CalculusExpression,
+    nativeType=:map,
+    defaultTraits=[],
+    validate=(value)->value.Has("schema") && value[:schema] == "rix.calculus.expression@1",
+    proto={= },
+    installs={=
+        ADD=[{= name=:CalculusAdd, priority=250, prep=(left,right)->CalculusOperand(left)&&CalculusOperand(right)&&(CalculusIsExpression(left)||CalculusIsExpression(right)), impl=(left,right)->CalculusBinary(:add,left,right) }],
+        SUB=[{= name=:CalculusSub, priority=250, prep=(left,right)->CalculusOperand(left)&&CalculusOperand(right)&&(CalculusIsExpression(left)||CalculusIsExpression(right)), impl=(left,right)->CalculusBinary(:subtract,left,right) }],
+        MUL=[{= name=:CalculusMul, priority=250, prep=(left,right)->CalculusOperand(left)&&CalculusOperand(right)&&(CalculusIsExpression(left)||CalculusIsExpression(right)), impl=(left,right)->CalculusBinary(:multiply,left,right) }],
+        DIV=[{= name=:CalculusDiv, priority=250, prep=(left,right)->CalculusOperand(left)&&CalculusOperand(right)&&(CalculusIsExpression(left)||CalculusIsExpression(right)), impl=(left,right)->CalculusBinary(:divide,left,right) }],
+        POW=[{= name=:CalculusPow, priority=250, prep=(left,right)->CalculusOperand(left)&&CalculusOperand(right)&&(CalculusIsExpression(left)||CalculusIsExpression(right)), impl=(left,right)->CalculusBinary(:power,left,right) }],
+        NEG=[{= name=:CalculusNeg, priority=250, prep=(value)->CalculusIsExpression(value), impl=CalculusNegate }]
+    }
+});
+.TypeInstall(:CalculusExpression);
+
+.TypeKnown(:MathematicalFunction) ?: _ ?_ .TypeRegister({=
+    name=:MathematicalFunction,
+    nativeType=:function,
+    defaultTraits=[],
+    validate=(value)->value.schema == "rix.calculus.function@1",
+    proto={= },
+    installs={= }
+});
+.TypeInstall(:MathematicalFunction);
+
+calculusNamespace = {= };
+calculusNamespace._proto = {=
+    Function=(self, semanticId, options ?= {= })->CalculusBuildFunction(semanticId,options),
+    Exp=(self, implementation ?= _)->CalculusExp(implementation),
+    Log=(self, implementation ?= _)->CalculusLog(implementation),
+    Sqrt=(self, implementation ?= _)->CalculusSqrt(implementation),
+    Asin=(self, implementation ?= _)->CalculusAsin(implementation),
+    ComplexLog=(self, implementation ?= _)->CalculusComplexLog(implementation),
+    Variable=(self, name)->CalculusVariable(name),
+    Constant=(self, value)->CalculusConstant(value),
+    Apply=(self, function, argument)->CalculusApply(function,argument),
+    Obligation=(self, kind, relation, expression, options ?= {= })->CalculusObligation(kind,relation,expression,options),
+    Register=(self, function, options ?= {= })->CalculusRegister(function,options),
+    Resolve=(self, value)->CalculusResolve(value),
+    StructuralKey=(self, expression)->CalculusExpressionKey(expression),
+    Evaluate=(self, value, bindings ?= {= }, options ?= {= })->CalculusEvaluate(value,bindings,options),
+    EvaluateResult=(self, value, bindings ?= {= }, options ?= {= })->CalculusEvaluateResult(value,bindings,options),
+    Differentiate=(self, expression, variable)->CalculusDifferentiate(expression,variable),
+    DifferentiateResult=(self, expression, variable)->CalculusDifferentiateResult(expression,variable),
+    DifferentiateN=(self, expression, variable, order)->CalculusDifferentiateN(expression,variable,order),
+    DifferentiateNResult=(self, expression, variable, order)->CalculusDifferentiateNResult(expression,variable,order),
+    Partial=(self, expression, variable)->CalculusDifferentiate(expression,variable),
+    PartialResult=(self, expression, variable)->CalculusDifferentiateResult(expression,variable),
+    Gradient=(self, expression, variables)->CalculusGradient(expression,variables),
+    GradientResult=(self, expression, variables)->CalculusGradientResult(expression,variables),
+    Jacobian=(self, expressions, variables)->CalculusJacobian(expressions,variables),
+    JacobianResult=(self, expressions, variables)->CalculusJacobianResult(expressions,variables),
+    Hessian=(self, expression, variables)->CalculusHessian(expression,variables),
+    HessianResult=(self, expression, variables)->CalculusHessianResult(expression,variables),
+    SelectedPrimitive=(self, integrand, variable, primitive, options ?= {= })->
+        CalculusSelectedPrimitive(integrand,variable,primitive,options),
+    AntiderivativeFamily=(self, integrand, variable, primitive, constant ?= :C, options ?= {= })->
+        CalculusAntiderivativeFamily(integrand,variable,primitive,constant,options),
+    DefiniteIntegral=(self, integrand, variable, lower, upper, options ?= {= })->
+        CalculusDefiniteIntegral(integrand,variable,lower,upper,options),
+    ToSpec=(self, expression, inputs ?= _)->.SpecFromExpression(expression,inputs),
+    FromSpec=(self, value)->.ExpressionFromSpec(value),
+    IsFunction=(self, value)->CalculusIsFunction(value) ?: 1 ?_ _,
+    IsExpression=(self, value)->CalculusIsExpression(value) ?: 1 ?_ _,
+    IsTransformation=(self, value)->CalculusIsTransformation(value) ?: 1 ?_ _,
+    IsIntegral=(self, value)->CalculusIsIntegral(value) ?: 1 ?_ _
+};
+
+.Host.RegisterValue("calculus",calculusNamespace,"Portable abstract functions, exact derivative graphs, obligations, and linked evaluation",["Calculus","Analysis","Symbolic","Exact"]);
 `;
 
   // rix/plugins/stats/stats.plugin.rix
   var stats_plugin_default = `/**
 id: stats
-description: Exact descriptive statistics with portable summary tables, histograms, and box plots.
+description: Exact descriptive statistics plus certified normal-distribution functions and portable plots.
 kind: rix
 mount: stats
 aliases: [statistics]
-exports: [Count, Mean, Quantile, Median, Variance, SampleVariance, Summary, SummaryTable, Histogram, HistogramGraphic, BoxPlot]
+exports: [Count, Mean, Quantile, Median, Variance, SampleVariance, NormalPDF, NormalCDF, NormalQuantile, Summary, SummaryTable, Histogram, HistogramGraphic, BoxPlot]
 groups: [Statistics, Exact, Graphics]
 permissions: []
+requires: [rix.numerics@1]
 provides: [rix.statistics@1]
 schemas: [rix.stats.summary@1, rix.stats.histogram@1]
 snapshot: true
@@ -45745,6 +50276,38 @@ StatsVariance(values, sample ?= 0) -> {;
     mean = StatsSum(exact) / exact.Len();
     squared = exact.Reduce((sum, value) -> sum + (value - mean)^2, 0);
     squared / (sample == 1 ?: exact.Len() - 1 ?_ exact.Len());
+};
+
+StatsNormalScale(standardDeviation) -> {;
+    scale = standardDeviation ~!: :Rational;
+    scale > 0 ?: scale ?_ .Error("Normal standard deviation must be a positive exact Rational");
+};
+
+StatsNormalPDF(value, mean ?= _, standardDeviation ?= _) -> {;
+    defaults = mean == _ && standardDeviation == _;
+    location = mean == _ ?: 0 ?_ mean;
+    scale = StatsNormalScale(standardDeviation == _ ?: 1 ?_ standardDeviation);
+    defaults
+      ?: .numerics.NormalPDF(value)
+      ?_ .numerics.NormalPDF((value-location)/scale) / scale;
+};
+
+StatsNormalCDF(value, mean ?= _, standardDeviation ?= _) -> {;
+    defaults = mean == _ && standardDeviation == _;
+    location = mean == _ ?: 0 ?_ mean;
+    scale = StatsNormalScale(standardDeviation == _ ?: 1 ?_ standardDeviation);
+    defaults
+      ?: .numerics.NormalCDF(value)
+      ?_ .numerics.NormalCDF((value-location)/scale);
+};
+
+StatsNormalQuantile(probability, mean ?= _, standardDeviation ?= _) -> {;
+    defaults = mean == _ && standardDeviation == _;
+    location = mean == _ ?: 0 ?_ mean;
+    scale = StatsNormalScale(standardDeviation == _ ?: 1 ?_ standardDeviation);
+    defaults
+      ?: .numerics.NormalQuantile(probability)
+      ?_ location + scale*.numerics.NormalQuantile(probability);
 };
 
 StatsSummary(values) -> {;
@@ -45896,6 +50459,9 @@ statsNamespace._proto = {=
     Median=(self, values)->StatsMedian(values),
     Variance=(self, values)->StatsVariance(values),
     SampleVariance=(self, values)->StatsVariance(values, 1),
+    NormalPDF=(self, value, mean ?= _, standardDeviation ?= _)->StatsNormalPDF(value, mean, standardDeviation),
+    NormalCDF=(self, value, mean ?= _, standardDeviation ?= _)->StatsNormalCDF(value, mean, standardDeviation),
+    NormalQuantile=(self, probability, mean ?= _, standardDeviation ?= _)->StatsNormalQuantile(probability, mean, standardDeviation),
     Summary=(self, values)->StatsSummary(values),
     SummaryTable=(self, values, options ?= {= })->StatsSummaryTable(values, options),
     Histogram=(self, values, binCount ?= 5)->StatsHistogram(values, binCount),
@@ -46054,6 +50620,421 @@ complexVizNamespace._proto = {=
     Color=(self, value)->CVColor(value)
 };
 .Host.RegisterValue("complexViz", complexVizNamespace, "Exact complex domain coloring as portable Graphics", ["Graphics", "Exact", "Algebra"]);
+`;
+
+  // rix/plugins/fractals/fractals.plugin.rix
+  var fractals_plugin_default = `/**
+id: fractals
+description: Pure-RiX iteration, bifurcation, cobweb, and escape-time mathematics with portable Graphics lowering.
+kind: rix
+mount: fractals
+exports: [Orbit, Iterate, DetectPeriod, Multiplier, Stability, Logistic, Tent, Quadratic, Bifurcation, LogisticBifurcation, BifurcationGraphic, Cobweb, CobwebGraphic, Escape, EscapeGrid, Mandelbrot, Julia, EscapeGraphic, MandelbrotGraphic, JuliaGraphic]
+groups: [Chaos, Fractals, Graphics, Exact]
+permissions: []
+provides: [rix.chaos@1, rix.fractals@1]
+schemas: [rix.fractals.orbit@1, rix.fractals.period@1, rix.fractals.multiplier@1, rix.fractals.bifurcation@1, rix.fractals.bifurcation-graphic@1, rix.fractals.cobweb@1, rix.fractals.cobweb-graphic@1, rix.fractals.escape@1, rix.fractals.escape-grid@1, rix.fractals.escape-graphic@1]
+snapshot: true
+deterministic: true
+defaultEnabled: false
+**/
+
+FrOption(options, key, fallback ?= _) -> options.Has(key) ?: options[key] ?_ fallback;
+FrAbs(value) -> value < 0 ?: -value ?_ value;
+
+FrIntegerIn(value, label, minimum, maximum) -> {;
+    integer = value ~!: :Integer;
+    (integer >= minimum && integer <= maximum)
+      ?: integer
+      ?_ .Error(@"@{label} must be an Integer from @{minimum} through @{maximum}");
+};
+
+FrExact(value, label) -> {;
+    exact = value ~!: :Rational;
+    exact == _ ?: .Error(@"@{label} must be an exact Integer or Rational") ?_ exact;
+};
+
+FrInterval(value, label) -> {;
+    value ? :Array ?: _ ?_ .Error(@"@{label} must be an Array");
+    value.Len() == 2 ?: _ ?_ .Error(@"@{label} must contain a lower and upper bound");
+    lower = FrExact(value[1], @"@{label} lower bound");
+    upper = FrExact(value[2], @"@{label} upper bound");
+    lower < upper ?: [lower, upper] ?_ .Error(@"@{label} must increase");
+};
+
+FrSize(options, fallback ?= [640, 420]) -> {;
+    size = FrOption(options, "size", fallback);
+    size ? :Array ?: _ ?_ .Error("Fractal graphic size must be an Array");
+    size.Len() == 2 ?: _ ?_ .Error("Fractal graphic size must contain width and height");
+    width = FrExact(size[1], "Fractal graphic width");
+    height = FrExact(size[2], "Fractal graphic height");
+    (width > 0 && height > 0) ?: [width, height] ?_ .Error("Fractal graphic dimensions must be positive");
+};
+
+FrOrbit(fn, seed, steps, options ?= {= }) -> {;
+    count = FrIntegerIn(steps, "Orbit steps", 0, 100000);
+    retain = FrOption(options, "retain", 1);
+    values := retain == 1 ?: [seed] ?_ [];
+    current := seed;
+    {@ index = 1; index <= @count; {;
+        @current ~= @current |> @fn;
+        @retain == 1 ?: {; @values ~= @values.Push(@current); } ?_ _;
+    }; index += 1 };
+    {=
+        valueKind=:fractalOrbit,
+        schema="rix.fractals.orbit@1",
+        seed=seed,
+        steps=count,
+        final=current,
+        values=values,
+        retained=retain == 1,
+        deterministic=1
+    };
+};
+
+FrIterate(fn, seed, steps) -> FrOrbit(fn, seed, steps, {= retain=0 })[:final];
+
+FrDetectPeriod(orbitValue, maxPeriod ?= 64) -> {;
+    values = ((orbitValue ? :Map) && orbitValue.Has("values")) ?: orbitValue[:values] ?_ orbitValue;
+    values ? :Array ?: _ ?_ .Error("DetectPeriod expects an Orbit or an Array");
+    values.Len() >= 2 ?: _ ?_ .Error("DetectPeriod requires at least two retained values");
+    maximum = FrIntegerIn(maxPeriod, "Maximum period", 1, 10000);
+    usable = .Min(maximum, (values.Len() - (values.Len() % 2)) / 2);
+    found := _;
+    {@ period = 1; period <= @usable; {;
+        matches := 1;
+        {@ offset = 0; offset < @period; {;
+            @values[@values.Len() - offset] == @values[@values.Len() - @period - offset]
+              ?: _
+              ?_ {; @matches ~= 0; };
+        }; offset += 1 };
+        (@found == _ && matches == 1) ?: {; @found ~= @period; } ?_ _;
+    }; period += 1 };
+    {=
+        valueKind=:fractalPeriod,
+        schema="rix.fractals.period@1",
+        status=found == _ ?: :notDetected ?_ :detected,
+        period=found,
+        comparedTail=usable,
+        exactEquality=1
+    };
+};
+
+FrMultiplier(derivative, orbitValue, skip ?= 0) -> {;
+    values = ((orbitValue ? :Map) && orbitValue.Has("values")) ?: orbitValue[:values] ?_ orbitValue;
+    values ? :Array ?: _ ?_ .Error("Multiplier expects an Orbit or an Array");
+    omitted = FrIntegerIn(skip, "Multiplier skip", 0, values.Len());
+    product := 1;
+    {@ index = @omitted + 1; index <= @values.Len(); {;
+        @product ~= @product * (@values[index] |> @derivative);
+    }; index += 1 };
+    {=
+        valueKind=:fractalMultiplier,
+        schema="rix.fractals.multiplier@1",
+        multiplier=product,
+        factors=values.Len() - omitted,
+        stability=FrStability(product)
+    };
+};
+
+FrStability(multiplier) -> {;
+    magnitude = FrAbs(multiplier);
+    magnitude < 1 ?: :attracting ?_ magnitude == 1 ?: :neutral ?_ :repelling;
+};
+
+FrLogistic(parameter) -> (state) -> @parameter * state * (1 - state);
+FrTent(slope ?= 2) -> (state) -> state <= 1/2 ?: @slope * state ?_ @slope * (1 - state);
+FrQuadratic(parameter) -> (state) -> state^2 + @parameter;
+
+FrBifurcation(family, parameterDomain, options ?= {= }) -> {;
+    domain = FrInterval(parameterDomain, "Bifurcation parameter domain");
+    samples = FrIntegerIn(FrOption(options, "parametersamples", 201), "Bifurcation parameter samples", 2, 4000);
+    discard = FrIntegerIn(FrOption(options, "discard", 100), "Bifurcation discarded iterations", 0, 10000);
+    keep = FrIntegerIn(FrOption(options, "keep", 64), "Bifurcation retained iterations", 1, 10000);
+    seed = FrOption(options, "seed", 1/2);
+    points := [];
+    {@ sample = 1; sample <= @samples; {;
+        parameter = @domain[1] + (sample - 1) * (@domain[2] - @domain[1]) / (@samples - 1);
+        fn = parameter |> @family;
+        state := FrIterate(fn, @seed, @discard);
+        {@ index = 1; index <= @keep; {;
+            @state ~= @state |> @fn;
+            @points ~= @points.Push([@parameter, @state]);
+        }; index += 1 };
+    }; sample += 1 };
+    {=
+        valueKind=:fractalBifurcation,
+        schema="rix.fractals.bifurcation@1",
+        parameterDomain=domain,
+        parameterSamples=samples,
+        seed=seed,
+        discard=discard,
+        keep=keep,
+        points=points,
+        deterministic=1
+    };
+};
+
+FrLogisticBifurcation(parameterDomain ?= [5/2, 4], options ?= {= }) ->
+    FrBifurcation((parameter) -> FrLogistic(parameter), parameterDomain, options);
+
+FrBifurcationGraphic(result, options ?= {= }) -> {;
+    ((result ? :Map) && result[:schema] == "rix.fractals.bifurcation@1")
+      ?: _
+      ?_ .Error("BifurcationGraphic expects a Bifurcation result");
+    size = FrSize(options);
+    width = size[1];
+    height = size[2];
+    margin = FrExact(FrOption(options, "margin", 32), "Bifurcation margin");
+    (margin >= 0 && margin * 2 < .Min(width, height)) ?: _ ?_ .Error("Bifurcation margin is too large");
+    xDomain = result[:parameterDomain];
+    yDomain = FrInterval(FrOption(options, "statedomain", [0, 1]), "Bifurcation state domain");
+    radius = FrExact(FrOption(options, "radius", 1), "Bifurcation point radius");
+    style = FrOption(options, "style", {= fill="#111827", stroke="none", width=0 });
+    toPoint = (point) -> [
+        @margin + (point[1] - @xDomain[1]) / (@xDomain[2] - @xDomain[1]) * (@width - 2 * @margin),
+        @height - @margin - (point[2] - @yDomain[1]) / (@yDomain[2] - @yDomain[1]) * (@height - 2 * @margin)
+    ];
+    children = result[:points].Filter((point) -> point[2] >= @yDomain[1] && point[2] <= @yDomain[2]).Map(
+        (point) -> .Graphics.Circle(point |> @toPoint, @radius, @style)
+    );
+    .Graphics.Graphic(size, children, {=
+        kind="bifurcation_diagram",
+        schema="rix.fractals.bifurcation-graphic@1",
+        sourceSchema=result[:schema],
+        parameterDomain=xDomain,
+        stateDomain=yDomain,
+        samples=result[:parameterSamples],
+        points=children.Len(),
+        alt="Bifurcation diagram"
+    });
+};
+
+FrCobweb(fn, domainValue, seed, steps, options ?= {= }) -> {;
+    domain = FrInterval(domainValue, "Cobweb domain");
+    count = FrIntegerIn(steps, "Cobweb steps", 0, 10000);
+    samples = FrIntegerIn(FrOption(options, "samples", 129), "Cobweb function samples", 2, 10000);
+    functionPoints := [];
+    {@ sample = 1; sample <= @samples; {;
+        x = @domain[1] + (sample - 1) * (@domain[2] - @domain[1]) / (@samples - 1);
+        @functionPoints ~= @functionPoints.Push([x, x |> @fn]);
+    }; sample += 1 };
+    orbit = FrOrbit(fn, seed, count);
+    path := [[seed, 0]];
+    {@ index = 1; index <= @count; {;
+        previous = @orbit[:values][index];
+        next = @orbit[:values][index + 1];
+        @path ~= @path.Push([previous, next]);
+        @path ~= @path.Push([next, next]);
+    }; index += 1 };
+    {=
+        valueKind=:fractalCobweb,
+        schema="rix.fractals.cobweb@1",
+        domain=domain,
+        seed=seed,
+        steps=count,
+        orbit=orbit,
+        functionPoints=functionPoints,
+        cobwebPoints=path
+    };
+};
+
+FrCobwebGraphic(result, options ?= {= }) -> {;
+    ((result ? :Map) && result[:schema] == "rix.fractals.cobweb@1")
+      ?: _
+      ?_ .Error("CobwebGraphic expects a Cobweb result");
+    size = FrSize(options, [520, 520]);
+    width = size[1];
+    height = size[2];
+    margin = FrExact(FrOption(options, "margin", 28), "Cobweb margin");
+    domain = result[:domain];
+    toPoint = (point) -> [
+        @margin + (point[1] - @domain[1]) / (@domain[2] - @domain[1]) * (@width - 2 * @margin),
+        @height - @margin - (point[2] - @domain[1]) / (@domain[2] - @domain[1]) * (@height - 2 * @margin)
+    ];
+    diagonal = [[domain[1], domain[1]], [domain[2], domain[2]]].Map(toPoint);
+    functionPath = result[:functionPoints].Map(toPoint);
+    cobwebPath = result[:cobwebPoints].Map(toPoint);
+    .Graphics.Graphic(size, [
+        .Graphics.Path(diagonal, FrOption(options, "diagonalstyle", {= stroke="#94a3b8", width=1, dash="4 4", fill="none" })),
+        .Graphics.Path(functionPath, FrOption(options, "functionstyle", {= stroke="#2563eb", width=2, fill="none" })),
+        .Graphics.Path(cobwebPath, FrOption(options, "orbitstyle", {= stroke="#dc2626", width=1, fill="none" }))
+    ], {=
+        kind="cobweb_plot",
+        schema="rix.fractals.cobweb-graphic@1",
+        sourceSchema=result[:schema],
+        domain=domain,
+        steps=result[:steps],
+        alt="Cobweb plot"
+    });
+};
+
+FrEscape(step, seed, options ?= {= }) -> {;
+    maximum = FrIntegerIn(FrOption(options, "maxiterations", 100), "Maximum escape iterations", 1, 100000);
+    radius = FrExact(FrOption(options, "escaperadius", 2), "Escape radius");
+    radius > 0 ?: _ ?_ .Error("Escape radius must be positive");
+    radiusSquared = radius^2;
+    current := seed;
+    escapedAt := _;
+    {@ iteration = 1; iteration <= @maximum && @escapedAt == _; {;
+        @current ~= @current |> @step;
+        (@escapedAt == _ && .Complex.NormSquared(@current) > @radiusSquared)
+          ?: {; @escapedAt ~= @iteration; }
+          ?_ _;
+    }; iteration += 1 };
+    {=
+        valueKind=:fractalEscape,
+        schema="rix.fractals.escape@1",
+        seed=seed,
+        status=escapedAt == _ ?: :boundedByBudget ?_ :escaped,
+        iterations=escapedAt == _ ?: maximum ?_ escapedAt,
+        maxIterations=maximum,
+        escapeRadius=radius,
+        final=current,
+        certifiedEscape=escapedAt == _ ?: 0 ?_ 1
+    };
+};
+
+FrComplexDomain(value) -> {;
+    value ? :Map ?: _ ?_ .Error("Escape-grid domain must be a map");
+    {=
+        re=FrInterval(value[:re], "Escape-grid real domain"),
+        im=FrInterval(value[:im], "Escape-grid imaginary domain")
+    };
+};
+
+FrResolution(value) -> {;
+    value ? :Array ?: _ ?_ .Error("Escape-grid resolution must be an Array");
+    value.Len() == 2 ?: _ ?_ .Error("Escape-grid resolution must contain columns and rows");
+    columns = FrIntegerIn(value[1], "Escape-grid columns", 1, 1000);
+    rows = FrIntegerIn(value[2], "Escape-grid rows", 1, 1000);
+    columns * rows <= 250000 ?: [columns, rows] ?_ .Error("Escape-grid resolution may contain at most 250000 cells");
+};
+
+FrEscapeGrid(family, spec ?= {= }) -> {;
+    domain = FrComplexDomain(FrOption(spec, "domain", {= re=[-2, 1], im=[-3/2, 3/2] }));
+    resolution = FrResolution(FrOption(spec, "resolution", [160, 160]));
+    columns = resolution[1];
+    rows = resolution[2];
+    reStep = (domain[:re][2] - domain[:re][1]) / columns;
+    imStep = (domain[:im][2] - domain[:im][1]) / rows;
+    cells := [];
+    escaped := 0;
+    bounded := 0;
+    {@ row = 1; row <= @rows; {;
+        {@ column = 1; column <= @columns; {;
+            real = @domain[:re][1] + (column - 1/2) * @reStep;
+            imaginary = @domain[:im][2] - (@row - 1/2) * @imStep;
+            point = .Complex.FromParts(real, imaginary);
+            problem = point |> @family;
+            ((problem ? :Map) && problem.Has("step") && problem.Has("seed"))
+              ?: _
+              ?_ .Error("Escape-grid family must return {= seed=..., step=... }");
+            result = FrEscape(problem[:step], problem[:seed], @spec);
+            result[:status] == :escaped ?: {; @escaped += 1; } ?_ {; @bounded += 1; };
+            @cells ~= @cells.Push({=
+                row=@row,
+                column=column,
+                point=point,
+                status=result[:status],
+                iterations=result[:iterations],
+                final=result[:final],
+                certifiedEscape=result[:certifiedEscape]
+            });
+        }; column += 1 };
+    }; row += 1 };
+    {=
+        valueKind=:fractalEscapeGrid,
+        schema="rix.fractals.escape-grid@1",
+        domain=domain,
+        resolution=resolution,
+        cells=cells,
+        maxIterations=FrOption(spec, "maxiterations", 100),
+        escapeRadius=FrOption(spec, "escaperadius", 2),
+        escaped=escaped,
+        boundedByBudget=bounded,
+        sampling=:cellCenters,
+        deterministic=1
+    };
+};
+
+FrMandelbrot(spec ?= {= }) -> FrEscapeGrid(
+    (parameter) -> {= seed=.Complex.FromParts(0, 0), step=(state) -> state^2 + @parameter },
+    spec
+);
+
+FrJulia(parameter, spec ?= {= }) -> FrEscapeGrid(
+    (point) -> {= seed=point, step=(state) -> state^2 + @parameter },
+    spec
+);
+
+FrEscapeColor(cell, palette) -> {;
+    cell[:status] == :escaped
+      ?: palette[((cell[:iterations] - 1) % palette.Len()) + 1]
+      ?_ "#050816";
+};
+
+FrEscapeGraphic(result, options ?= {= }) -> {;
+    ((result ? :Map) && result[:schema] == "rix.fractals.escape-grid@1")
+      ?: _
+      ?_ .Error("EscapeGraphic expects an EscapeGrid result");
+    size = FrSize(options, [560, 560]);
+    columns = result[:resolution][1];
+    rows = result[:resolution][2];
+    cellWidth = size[1] / columns;
+    cellHeight = size[2] / rows;
+    palette = FrOption(options, "palette", ["#172554", "#1d4ed8", "#0891b2", "#22c55e", "#facc15", "#f97316", "#dc2626", "#7e22ce"]);
+    (palette ? :Array && palette.Len() > 0) ?: _ ?_ .Error("EscapeGraphic palette must be a nonempty Array");
+    children = result[:cells].Map((cell) -> {;
+        color = FrEscapeColor(cell, @palette);
+        .Graphics.Rectangle(
+            [(cell[:column] - 1) * @cellWidth, (cell[:row] - 1) * @cellHeight],
+            [@cellWidth, @cellHeight],
+            {= fill=color, stroke=color, width=0 }
+        );
+    });
+    .Graphics.Graphic(size, children, {=
+        kind="escape_time_fractal",
+        schema="rix.fractals.escape-graphic@1",
+        sourceSchema=result[:schema],
+        domain=result[:domain],
+        resolution=result[:resolution],
+        maxIterations=result[:maxIterations],
+        escapeRadius=result[:escapeRadius],
+        escaped=result[:escaped],
+        boundedByBudget=result[:boundedByBudget],
+        palette=palette,
+        interiorColor="#050816",
+        alt="Escape-time fractal"
+    });
+};
+
+FrMandelbrotGraphic(spec ?= {= }, graphicOptions ?= {= }) -> FrEscapeGraphic(FrMandelbrot(spec), graphicOptions);
+FrJuliaGraphic(parameter, spec ?= {= }, graphicOptions ?= {= }) -> FrEscapeGraphic(FrJulia(parameter, spec), graphicOptions);
+
+fractalsNamespace = {= };
+fractalsNamespace._proto = {=
+    Orbit=(self, fn, seed, steps, options ?= {= })->FrOrbit(fn, seed, steps, options),
+    Iterate=(self, fn, seed, steps)->FrIterate(fn, seed, steps),
+    DetectPeriod=(self, orbit, maxPeriod ?= 64)->FrDetectPeriod(orbit, maxPeriod),
+    Multiplier=(self, derivative, orbit, skip ?= 0)->FrMultiplier(derivative, orbit, skip),
+    Stability=(self, multiplier)->FrStability(multiplier),
+    Logistic=(self, parameter)->FrLogistic(parameter),
+    Tent=(self, slope ?= 2)->FrTent(slope),
+    Quadratic=(self, parameter)->FrQuadratic(parameter),
+    Bifurcation=(self, family, parameterDomain, options ?= {= })->FrBifurcation(family, parameterDomain, options),
+    LogisticBifurcation=(self, parameterDomain ?= [5/2, 4], options ?= {= })->FrLogisticBifurcation(parameterDomain, options),
+    BifurcationGraphic=(self, result, options ?= {= })->FrBifurcationGraphic(result, options),
+    Cobweb=(self, fn, domain, seed, steps, options ?= {= })->FrCobweb(fn, domain, seed, steps, options),
+    CobwebGraphic=(self, result, options ?= {= })->FrCobwebGraphic(result, options),
+    Escape=(self, step, seed, options ?= {= })->FrEscape(step, seed, options),
+    EscapeGrid=(self, family, spec ?= {= })->FrEscapeGrid(family, spec),
+    Mandelbrot=(self, spec ?= {= })->FrMandelbrot(spec),
+    Julia=(self, parameter, spec ?= {= })->FrJulia(parameter, spec),
+    EscapeGraphic=(self, result, options ?= {= })->FrEscapeGraphic(result, options),
+    MandelbrotGraphic=(self, spec ?= {= }, graphicOptions ?= {= })->FrMandelbrotGraphic(spec, graphicOptions),
+    JuliaGraphic=(self, parameter, spec ?= {= }, graphicOptions ?= {= })->FrJuliaGraphic(parameter, spec, graphicOptions)
+};
+.Host.RegisterValue("fractals", fractalsNamespace, "Pure-RiX chaos and fractal mathematics with portable Graphics lowering", ["Chaos", "Fractals", "Graphics", "Exact"]);
 `;
 
   // rix/plugins/optimize/optimize.plugin.rix
@@ -47321,15 +52302,15 @@ solveNamespace._proto={=
   // rix/plugins/geometry/geometry.plugin.rix
   var geometry_plugin_default = `/**
 id: geometry
-description: Pure-RiX exact ruler-and-compass geometry with explicit intersections and portable Graphics snapshots.
+description: Pure-RiX exact geometry, transformations, conics, constraints, and bounded portable Graphics refinement.
 kind: rix
 mount: geometry
-exports: [Point, Line, Circle, Midpoint, PerpendicularBisector, Circumcircle, Intersect, Points, Status, Draw]
+exports: [Point, Line, Segment, Ray, Polygon, Circle, Conic, Ellipse, Parabola, Hyperbola, Locus, Implicit, Affine, Projective, Transform, Constraint, Constraints, Midpoint, PerpendicularBisector, Circumcircle, Intersect, Points, Status, Refine, Draw]
 groups: [Geometry, Graphics, Exact]
 permissions: []
-requires: [rix.numerics@1]
-provides: [rix.geometry@1, rix.geometry.intersection@1]
-schemas: [rix.geometry@1, rix.geometry.intersection@1]
+requires: [rix.numerics@1, rix.polynomial.algorithms@1]
+provides: [rix.geometry@1, rix.geometry.intersection@1, rix.geometry.constraint@1, rix.geometry.refinement@1]
+schemas: [rix.geometry@1, rix.geometry.intersection@1, rix.geometry.constraint@1, rix.geometry.refinement@1]
 snapshot: true
 deterministic: true
 defaultEnabled: false
@@ -47343,6 +52324,22 @@ GeometryExact(value, label) -> {;
 };
 
 GeometryIsZero(value) -> (value ~!: :Rational).Numerator()==0;
+
+GeometryIntegerSqrtFloor(value) -> {;
+    n=value ~!: :Integer;
+    n>=0 ?: _ ?_ .Error("geometry square root requires a nonnegative integer");
+    n<2 ?: n ?_ {;
+        x:=@n; next:=(x+1)//2;
+        {@ step=1; @next<@x; {; @x~=@next; @next~=(@x+(@n//@x))//2; }; step+=1 };
+        x;
+    };
+};
+
+GeometryExactSqrt(value) -> {;
+    exact=value ~!: :Rational;
+    numerator=GeometryIntegerSqrtFloor(exact.Numerator()); denominator=GeometryIntegerSqrtFloor(exact.Denominator());
+    numerator^2==exact.Numerator()&&denominator^2==exact.Denominator() ?: numerator/denominator ?_ _;
+};
 
 GeometryApproximateSqrt(value) ->
     .numerics.Refine(.numerics.Sqrt(value), {=
@@ -47419,6 +52416,43 @@ GeometryLine(first, second ?= _, options ?= {= }) -> {;
         GeometryOption(settings, "metadata"), GeometryOption(settings, "style"));
 };
 
+GeometrySegment(first, second ?= _, options ?= {= }) -> {;
+    settings = ((first ? :Map) && second == _) ?: first ?_ options.Merge({= first=first, second=second });
+    firstPoint = GeometryRequire(settings[:first], :point, "geometry.Segment first point");
+    secondPoint = GeometryRequire(settings[:second], :point, "geometry.Segment second point");
+    GeometrySamePoint(firstPoint, secondPoint) ?: .Error("geometry.Segment requires distinct endpoints") ?_ _;
+    GeometryValue(:segment, {=
+        first=firstPoint, second=secondPoint, endpoints=[firstPoint,secondPoint],
+        metadata=GeometryOption(settings,"metadata"), style=GeometryOption(settings,"style"),
+        provenance=[GeometryProvenance("Segment",[firstPoint,secondPoint])]
+    });
+};
+
+GeometryRay(first, second ?= _, options ?= {= }) -> {;
+    settings = ((first ? :Map) && second == _) ?: first ?_ options.Merge({= first=first, second=second });
+    origin = GeometryRequire(GeometryOption(settings,"origin",settings[:first]), :point, "geometry.Ray origin");
+    through = GeometryRequire(GeometryOption(settings,"through",settings[:second]), :point, "geometry.Ray through point");
+    GeometrySamePoint(origin, through) ?: .Error("geometry.Ray requires distinct points") ?_ _;
+    GeometryValue(:ray, {=
+        origin=origin, through=through,
+        metadata=GeometryOption(settings,"metadata"), style=GeometryOption(settings,"style"),
+        provenance=[GeometryProvenance("Ray",[origin,through])]
+    });
+};
+
+GeometryPolygon(points, options ?= {= }) -> {;
+    settings = ((points ? :Map) && points.Has("points")) ?: points ?_ options.Merge({= points=points });
+    values = settings[:points];
+    values ? :Array ?: _ ?_ .Error("geometry.Polygon points must be an Array");
+    values.Len() >= 3 ?: _ ?_ .Error("geometry.Polygon requires at least three points");
+    vertices = values.Map((point) -> GeometryRequire(point,:point,"geometry.Polygon vertex"));
+    GeometryValue(:polygon, {=
+        points=vertices,
+        metadata=GeometryOption(settings,"metadata"), style=GeometryOption(settings,"style"),
+        provenance=[GeometryProvenance("Polygon",vertices)]
+    });
+};
+
 GeometrySquaredDistance(first, second) -> (second[:x] - first[:x])^2 + (second[:y] - first[:y])^2;
 
 GeometryCircleValue(center, radiusSquared, through, operation, inputs, metadata ?= _, style ?= _) -> {;
@@ -47454,6 +52488,224 @@ GeometryCircle(first, second ?= _, options ?= {= }) -> {;
         GeometryOption(settings, "metadata"), GeometryOption(settings, "style"));
 };
 
+GeometryConic(coefficients, options ?= {= }) -> {;
+    settings = ((coefficients ? :Map) && coefficients.Has("coefficients"))
+      ?: coefficients
+      ?_ options.Merge({= coefficients=coefficients });
+    values = settings[:coefficients];
+    values ? :Array ?: _ ?_ .Error("geometry.Conic coefficients must be an Array");
+    values.Len() == 6 ?: _ ?_ .Error("geometry.Conic requires [A,B,C,D,E,F]");
+    exact = values.Map((value) -> GeometryExact(value,"geometry.Conic coefficient"));
+    (GeometryIsZero(exact[1]) && GeometryIsZero(exact[2]) && GeometryIsZero(exact[3]))
+      ?: .Error("geometry.Conic requires a nonzero quadratic coefficient") ?_ _;
+    GeometryValue(:conic, {=
+        coefficients=exact,
+        conicKind=GeometryOption(settings,"kind",:general),
+        domain=GeometryOption(settings,"domain"),
+        metadata=GeometryOption(settings,"metadata"), style=GeometryOption(settings,"style"),
+        provenance=[GeometryProvenance("Conic",exact)]
+    });
+};
+
+GeometryEllipse(center, radii ?= _, options ?= {= }) -> {;
+    settings = ((center ? :Map) && radii == _) ?: center ?_ options.Merge({= center=center, radii=radii });
+    point = GeometryRequire(settings[:center],:point,"geometry.Ellipse center");
+    axes = settings[:radii];
+    axes ? :Array ?: _ ?_ .Error("geometry.Ellipse radii must be an Array");
+    axes.Len() == 2 ?: _ ?_ .Error("geometry.Ellipse radii must contain x and y radii");
+    rx=GeometryExact(axes[1],"geometry.Ellipse x radius"); ry=GeometryExact(axes[2],"geometry.Ellipse y radius");
+    (rx>0 && ry>0) ?: _ ?_ .Error("geometry.Ellipse radii must be positive");
+    a=ry^2; c=rx^2; h=point[:x]; k=point[:y];
+    conic=GeometryConic([a,0,c,-2*a*h,-2*c*k,a*h^2+c*k^2-rx^2*ry^2],
+        settings.Merge({= kind=:ellipse }));
+    conic.Merge({= center=point, radii=[rx,ry], provenance=[GeometryProvenance("Ellipse",[point,rx,ry])] });
+};
+
+GeometryParabola(vertex, parameter ?= _, options ?= {= }) -> {;
+    settings = ((vertex ? :Map) && parameter == _) ?: vertex ?_ options.Merge({= vertex=vertex, parameter=parameter });
+    point=GeometryRequire(settings[:vertex],:point,"geometry.Parabola vertex");
+    p=GeometryExact(settings[:parameter],"geometry.Parabola parameter");
+    GeometryIsZero(p) ?: .Error("geometry.Parabola parameter must be nonzero") ?_ _;
+    axis=GeometryOption(settings,"axis",:x); h=point[:x]; k=point[:y];
+    coefficients = axis == :x
+      ?: [0,0,1,-4*p,-2*k,k^2+4*p*h]
+      ?_ axis == :y
+           ?: [1,0,0,-2*h,-4*p,h^2+4*p*k]
+           ?_ .Error("geometry.Parabola axis must be :x or :y");
+    GeometryConic(coefficients,settings.Merge({= kind=:parabola, vertex=point, parameter=p, axis=axis }));
+};
+
+GeometryHyperbola(center, axes ?= _, options ?= {= }) -> {;
+    settings = ((center ? :Map) && axes == _) ?: center ?_ options.Merge({= center=center, axes=axes });
+    point=GeometryRequire(settings[:center],:point,"geometry.Hyperbola center");
+    values=settings[:axes];
+    values ? :Array ?: _ ?_ .Error("geometry.Hyperbola axes must be an Array");
+    values.Len()==2 ?: _ ?_ .Error("geometry.Hyperbola axes must contain two values");
+    rx=GeometryExact(values[1],"geometry.Hyperbola first axis"); ry=GeometryExact(values[2],"geometry.Hyperbola second axis");
+    (rx>0 && ry>0) ?: _ ?_ .Error("geometry.Hyperbola axes must be positive");
+    h=point[:x]; k=point[:y]; orientation=GeometryOption(settings,"axis",:x);
+    sign=orientation==:x ?: 1 ?_ orientation==:y ?: -1 ?_ .Error("geometry.Hyperbola axis must be :x or :y");
+    a=sign*ry^2; c=-sign*rx^2;
+    GeometryConic([a,0,c,-2*a*h,-2*c*k,a*h^2+c*k^2-rx^2*ry^2],settings.Merge({= kind=:hyperbola, center=point, axes=[rx,ry] }));
+};
+
+GeometryMatrix(value, rows, columns, label) -> {;
+    value ? :Array ?: _ ?_ .Error(@"@{label} must be an Array");
+    value.Len()==rows ?: _ ?_ .Error(@"@{label} must contain @{rows} rows");
+    value.Map((row) -> {;
+        row ? :Array ?: _ ?_ .Error(@"@{label} rows must be Arrays");
+        row.Len()==columns ?: _ ?_ .Error(@"@{label} rows must contain @{columns} values");
+        row.Map((entry)->GeometryExact(entry,label));
+    });
+};
+
+GeometryDeterminant3(matrix) ->
+    matrix[1][1]*(matrix[2][2]*matrix[3][3]-matrix[2][3]*matrix[3][2])
+    -matrix[1][2]*(matrix[2][1]*matrix[3][3]-matrix[2][3]*matrix[3][1])
+    +matrix[1][3]*(matrix[2][1]*matrix[3][2]-matrix[2][2]*matrix[3][1]);
+
+GeometryInverse3(matrix,label) -> {;
+    determinant=GeometryDeterminant3(matrix);
+    GeometryIsZero(determinant) ?: .Error(@"@{label} must be invertible") ?_ _;
+    [
+      [(matrix[2][2]*matrix[3][3]-matrix[2][3]*matrix[3][2])/determinant,(matrix[1][3]*matrix[3][2]-matrix[1][2]*matrix[3][3])/determinant,(matrix[1][2]*matrix[2][3]-matrix[1][3]*matrix[2][2])/determinant],
+      [(matrix[2][3]*matrix[3][1]-matrix[2][1]*matrix[3][3])/determinant,(matrix[1][1]*matrix[3][3]-matrix[1][3]*matrix[3][1])/determinant,(matrix[1][3]*matrix[2][1]-matrix[1][1]*matrix[2][3])/determinant],
+      [(matrix[2][1]*matrix[3][2]-matrix[2][2]*matrix[3][1])/determinant,(matrix[1][2]*matrix[3][1]-matrix[1][1]*matrix[3][2])/determinant,(matrix[1][1]*matrix[2][2]-matrix[1][2]*matrix[2][1])/determinant]
+    ];
+};
+
+GeometryTransformValue(kind,matrix,operation) -> GeometryValue(:transform,{=
+    transformKind=kind,
+    matrix=matrix,
+    inverse=GeometryInverse3(matrix,@"geometry.@{operation} matrix"),
+    provenance=[GeometryProvenance(operation,[matrix])]
+});
+
+GeometryAffine(matrix) -> {;
+    matrix ? :Array ?: _ ?_ .Error("geometry.Affine matrix must be an Array");
+    normalized = matrix.Len()==2
+      ?: GeometryMatrix(matrix,2,3,"geometry.Affine matrix").Push([0,0,1])
+      ?_ GeometryMatrix(matrix,3,3,"geometry.Affine matrix");
+    (normalized[3][1]==0 && normalized[3][2]==0 && normalized[3][3]==1)
+      ?: _ ?_ .Error("geometry.Affine last row must be [0,0,1]");
+    GeometryTransformValue(:affine,normalized,"Affine");
+};
+
+GeometryProjective(matrix) -> GeometryTransformValue(:projective,
+    GeometryMatrix(matrix,3,3,"geometry.Projective matrix"),"Projective");
+
+GeometryTransformPoint(point,transform,operation ?= "Transform") -> {;
+    value=GeometryRequire(point,:point,"geometry.Transform point"); matrix=transform[:matrix];
+    x=value[:x]; y=value[:y];
+    w=matrix[3][1]*x+matrix[3][2]*y+matrix[3][3];
+    GeometryIsZero(w) ?: .Error("geometry.Transform maps the point to projective infinity") ?_ _;
+    GeometryPointValue((matrix[1][1]*x+matrix[1][2]*y+matrix[1][3])/w,
+        (matrix[2][1]*x+matrix[2][2]*y+matrix[2][3])/w,operation,[value,transform],value[:metadata],value[:style]);
+};
+
+GeometryLinePoints(line) -> line[:through].Len()>=2
+  ?: line[:through].Slice(1,3)
+  ?_ !GeometryIsZero(line[:b])
+       ?: [GeometryPoint(0,-line[:c]/line[:b]),GeometryPoint(1,-(line[:a]+line[:c])/line[:b])]
+       ?_ [GeometryPoint(-line[:c]/line[:a],0),GeometryPoint(-(line[:b]+line[:c])/line[:a],1)];
+
+GeometryTransformConicAffine(conic,transform) -> {;
+    inverse=transform[:inverse];
+    p=inverse[1]; q=inverse[2]; coefficients=conic[:coefficients];
+    a=coefficients[1]; b=coefficients[2]; c=coefficients[3]; d=coefficients[4]; e=coefficients[5]; f=coefficients[6];
+    px=p[1]; py=p[2]; p0=p[3]; qx=q[1]; qy=q[2]; q0=q[3];
+    GeometryConic([
+        a*px^2+b*px*qx+c*qx^2,
+        2*a*px*py+b*(px*qy+py*qx)+2*c*qx*qy,
+        a*py^2+b*py*qy+c*qy^2,
+        2*a*px*p0+b*(px*q0+p0*qx)+2*c*qx*q0+d*px+e*qx,
+        2*a*py*p0+b*(py*q0+p0*qy)+2*c*qy*q0+d*py+e*qy,
+        a*p0^2+b*p0*q0+c*q0^2+d*p0+e*q0+f
+    ],{= kind=conic[:conicKind], style=conic[:style], metadata=conic[:metadata] });
+};
+
+GeometryTransform(value,transform) -> {;
+    object=GeometryRequire(value,_,"geometry.Transform value");
+    map=GeometryRequire(transform,:transform,"geometry.Transform transform");
+    kind=object[:kind];
+    kind==:point
+      ?: GeometryTransformPoint(object,map)
+      ?_ kind==:segment
+           ?: GeometrySegment(GeometryTransformPoint(object[:first],map),GeometryTransformPoint(object[:second],map),{= style=object[:style], metadata=object[:metadata] })
+           ?_ kind==:ray
+                ?: GeometryRay(GeometryTransformPoint(object[:origin],map),GeometryTransformPoint(object[:through],map),{= style=object[:style], metadata=object[:metadata] })
+                ?_ kind==:polygon
+                     ?: GeometryPolygon(object[:points].Map((point)->GeometryTransformPoint(point,@map)),{= style=object[:style], metadata=object[:metadata] })
+                     ?_ kind==:line
+                          ?: {;
+                              points=GeometryLinePoints(@object).Map((point)->GeometryTransformPoint(point,@map));
+                              GeometryLine(points[1],points[2],{= style=@object[:style], metadata=@object[:metadata] });
+                          }
+                          ?_ (kind==:circle || kind==:conic)
+                               ?: {;
+                                   @map[:transformKind]==:affine ?: _ ?_ .Error("projective conic transforms are not yet supported");
+                                   source=@kind==:circle
+                                     ?: GeometryConic([1,0,1,-2*@object[:center][:x],-2*@object[:center][:y],@object[:center][:x]^2+@object[:center][:y]^2-@object[:radiusSquared]],{= kind=:circle,style=@object[:style],metadata=@object[:metadata] })
+                                     ?_ @object;
+                                   GeometryTransformConicAffine(source,@map);
+                               }
+                               ?_ .Error(@"geometry.Transform does not support geometry kind '@{kind}'");
+};
+
+GeometryLocus(function,domain ?= _,options ?= {= }) -> {;
+    settings=((function ? :Map) && domain==_) ?: function ?_ options.Merge({= function=function,domain=domain });
+    range=settings[:domain];
+    range ? :Array ?: _ ?_ .Error("geometry.Locus domain must be an Array");
+    range.Len()==2 ?: _ ?_ .Error("geometry.Locus domain must have two bounds");
+    GeometryValue(:locus,{=
+        function=settings[:function], domain=[GeometryExact(range[1],"geometry.Locus domain"),GeometryExact(range[2],"geometry.Locus domain")],
+        samples=GeometryOption(settings,"samples",129), style=GeometryOption(settings,"style"), metadata=GeometryOption(settings,"metadata"),
+        provenance=[GeometryProvenance("Locus",[range])]
+    });
+};
+
+GeometryImplicit(specification) -> {;
+    specification ? :Map ?: _ ?_ .Error("geometry.Implicit requires a map");
+    coefficients=GeometryOption(specification,"coefficients");
+    function=GeometryOption(specification,"function",GeometryOption(specification,"fn"));
+    (coefficients!=_ || function!=_) ?: _ ?_ .Error("geometry.Implicit requires coefficients or a function");
+    exactCoefficients=coefficients==_ ?: _ ?_ GeometryConic(coefficients)[:coefficients];
+    domain=GeometryOption(specification,"domain",[-10,-10,10,10]);
+    GeometryNumericSequence(domain,4,"geometry.Implicit domain");
+    GeometryValue(:implicit,{=
+        coefficients=exactCoefficients, function=function, equation=GeometryOption(specification,"equation"), domain=domain,
+        style=GeometryOption(specification,"style"), metadata=GeometryOption(specification,"metadata"),
+        serializable=function==_, provenance=[GeometryProvenance("Implicit",[coefficients,GeometryOption(specification,"equation")])]
+    });
+};
+
+GeometryConstraint(kind,objects ?= _,options ?= {= }) -> {;
+    settings=((kind ? :Map) && objects==_) ?: kind ?_ options.Merge({= kind=kind,objects=objects });
+    name=settings[:kind]; values=settings[:objects];
+    values ? :Array ?: _ ?_ .Error("geometry.Constraint objects must be an Array");
+    residual = name==:onLine
+      ?: {; point=GeometryRequire(@values[1],:point,"onLine point"); line=GeometryRequire(@values[2],:line,"onLine line"); line[:a]*point[:x]+line[:b]*point[:y]+line[:c]; }
+      ?_ name==:equidistant
+           ?: GeometrySquaredDistance(GeometryRequire(values[1],:point),GeometryRequire(values[2],:point))-GeometrySquaredDistance(GeometryRequire(values[1],:point),GeometryRequire(values[3],:point))
+           ?_ name==:parallel
+                ?: {; first=GeometryRequire(@values[1],:line); second=GeometryRequire(@values[2],:line); first[:a]*second[:b]-second[:a]*first[:b]; }
+                ?_ name==:perpendicular
+                     ?: {; first=GeometryRequire(@values[1],:line); second=GeometryRequire(@values[2],:line); first[:a]*second[:a]+first[:b]*second[:b]; }
+                     ?_ .Error("geometry.Constraint supports :onLine, :equidistant, :parallel, and :perpendicular");
+    .DeepMutable({=
+        type="geometry_constraint",kind=name,schema="rix.geometry.constraint@1",objects=values,residual=residual,
+        satisfied=GeometryIsZero(residual),provenance=[GeometryProvenance("Constraint",values,name)]
+    },_);
+};
+
+GeometryConstraints(values) -> {;
+    values ? :Array ?: _ ?_ .Error("geometry.Constraints requires an Array");
+    {=
+        type="geometry_constraint_set",schema="rix.geometry.constraint@1",constraints=values,
+        satisfied=values.All((value)->value[:schema]=="rix.geometry.constraint@1" && value[:satisfied])
+    };
+};
+
 GeometryMidpoint(first, second ?= _) -> {;
     settings = ((first ? :Map) && second == _) ?: first ?_ {= first=first, second=second };
     firstPoint = GeometryRequire(settings[:first], :point, "geometry.Midpoint first point");
@@ -47475,14 +52727,15 @@ GeometryPerpendicularBisector(first, second ?= _, options ?= {= }) -> {;
         GeometryOption(settings, "metadata"), GeometryOption(settings, "style"));
 };
 
-GeometryIntersectionValue(status, points, left, right, diagnostic ?= _) -> .DeepMutable({=
+GeometryIntersectionValue(status, points, left, right, diagnostic ?= _, evidence ?= _, exactValue ?= _) -> .DeepMutable({=
     type="geometry_intersection",
     kind="intersection",
     schema="rix.geometry.intersection@1",
     status=status,
     points=points,
-    exact=status == "unsupported" ?: 0 ?_ 1,
+    exact=exactValue != _ ?: exactValue ?_ status == "unsupported" ?: 0 ?_ 1,
     diagnostic=diagnostic,
+    evidence=evidence,
     provenance=[GeometryProvenance("Intersect", [left, right], diagnostic)]
 }, _);
 
@@ -47504,14 +52757,101 @@ GeometryIntersectLines(left, right) -> {;
       };
 };
 
+GeometryConicFromCircle(circle) -> GeometryConic([
+    1,0,1,-2*circle[:center][:x],-2*circle[:center][:y],
+    circle[:center][:x]^2+circle[:center][:y]^2-circle[:radiusSquared]
+],{= kind=:circle });
+
+GeometryQuadraticSqrt(value) -> {;
+    exact=GeometryExactSqrt(value);
+    exact!=_
+      ?: {= value=exact,exact=1,enclosure=exact:exact,status=:enclosed,evidenceLevel=:proof,work={= calls=0 } }
+      ?_ {;
+          result=.numerics.Refine(.numerics.Sqrt(@value),{= absoluteWidth=1/1000000000000,maxWork=96 });
+          {=
+              value=result[:approximation].Candidate(),
+              exact=_,
+              enclosure=result[:interval],
+              status=result[:status],
+              evidenceLevel=result[:evidenceLevel],
+              work=result[:work]
+          };
+      };
+};
+
+GeometryPolynomialRootEvidence(polynomial) -> {;
+    bound = polynomial.RootBound();
+    polynomial.RootCountEvidence((-bound):bound);
+};
+
+GeometryIntersectLineConic(line,conic,left,right) -> {;
+    points=GeometryLinePoints(line); origin=points[1]; other=points[2];
+    x=origin[:x]; y=origin[:y]; dx=other[:x]-x; dy=other[:y]-y;
+    coefficients=conic[:coefficients]; a=coefficients[1]; b=coefficients[2]; c=coefficients[3]; d=coefficients[4]; e=coefficients[5]; f=coefficients[6];
+    qa=a*dx^2+b*dx*dy+c*dy^2;
+    qb=2*a*x*dx+b*(x*dy+y*dx)+2*c*y*dy+d*dx+e*dy;
+    qc=a*x^2+b*x*y+c*y^2+d*x+e*y+f;
+    equation=.poly([qa,qb,qc]);
+    GeometryIsZero(qa)
+      ?: (GeometryIsZero(qb)
+           ?: GeometryIntersectionValue("coincident",[],left,right,"The line is contained in the degenerate conic")
+           ?_ {;
+               parameter=-@qc/@qb;
+               point=GeometryPointValue(@x+parameter*@dx,@y+parameter*@dy,"LineConicIntersection",[@left,@right]);
+               rootCount=GeometryPolynomialRootEvidence(@equation);
+               GeometryIntersectionValue("one",[point],@left,@right,_,{= polynomial=@equation,rootCount=rootCount },1);
+           })
+      ?_ {;
+          discriminant=@qb^2-4*@qa*@qc;
+          discriminantSign=.numerics.Sign(discriminant);
+          rootCount=GeometryPolynomialRootEvidence(@equation);
+          discriminantSign[:sign]==:negative
+            ?: GeometryIntersectionValue("none",[],@left,@right,"The line does not meet the conic",{= polynomial=@equation,discriminant=discriminant,discriminantSign=discriminantSign,rootCount=rootCount },1)
+            ?_ (discriminantSign[:sign]==:zero
+                 ?: {;
+                     parameter=-@qb/(2*@qa);
+                     point=GeometryPointValue(@x+parameter*@dx,@y+parameter*@dy,"TangentIntersection",[@left,@right]);
+                     GeometryIntersectionValue("one",[point],@left,@right,_,{= discriminant=@discriminant,discriminantSign=@discriminantSign,polynomial=@equation,rootCount=@rootCount },1);
+                 }
+                 ?_ {;
+                     root=GeometryQuadraticSqrt(@discriminant);
+                     first=(-@qb-root[:value])/(2*@qa); second=(-@qb+root[:value])/(2*@qa);
+                     firstPoint=GeometryPointValue(@x+first*@dx,@y+first*@dy,"LineConicIntersection",[@left,@right],{= enclosure=root[:enclosure] });
+                     secondPoint=GeometryPointValue(@x+second*@dx,@y+second*@dy,"LineConicIntersection",[@left,@right],{= enclosure=root[:enclosure] });
+                     GeometryIntersectionValue("two",[firstPoint,secondPoint],@left,@right,_,root.Merge({= polynomial=@equation,discriminant=@discriminant,discriminantSign=@discriminantSign,rootCount=@rootCount }),root[:exact]);
+                 });
+      };
+};
+
+GeometryIntersectCircles(left,right) -> {;
+    first=left[:center]; second=right[:center];
+    GeometrySamePoint(first,second)
+      ?: (left[:radiusSquared]==right[:radiusSquared]
+           ?: GeometryIntersectionValue("coincident",[],left,right,"Coincident circles have infinitely many intersections")
+           ?_ GeometryIntersectionValue("none",[],left,right,"Concentric circles do not intersect"))
+      ?_ {;
+          a=2*(@second[:x]-@first[:x]); b=2*(@second[:y]-@first[:y]);
+          c=@first[:x]^2+@first[:y]^2-@left[:radiusSquared]-@second[:x]^2-@second[:y]^2+@right[:radiusSquared];
+          radical=GeometryLineValue(a,b,c,[@first,@second],"RadicalAxis",[@left,@right]);
+          result=GeometryIntersectLineConic(radical,GeometryConicFromCircle(@left),@left,@right);
+          result;
+      };
+};
+
 GeometryIntersect(first, second ?= _) -> {;
     settings = ((first ? :Map) && first.Has("left") && second == _) ?: first ?_ {= left=first, right=second };
     left = GeometryRequire(settings[:left], _, "geometry.Intersect left value");
     right = GeometryRequire(settings[:right], _, "geometry.Intersect right value");
     (left[:kind] == :line && right[:kind] == :line)
       ?: GeometryIntersectLines(left, right)
-      ?_ GeometryIntersectionValue("unsupported", [], left, right,
-          @"Phase 1 geometry.Intersect supports line-line intersections, not @{left[:kind]}-@{right[:kind]}");
+      ?_ (left[:kind]==:line && (right[:kind]==:circle || right[:kind]==:conic))
+           ?: GeometryIntersectLineConic(left,right[:kind]==:circle ?: GeometryConicFromCircle(right) ?_ right,left,right)
+           ?_ (right[:kind]==:line && (left[:kind]==:circle || left[:kind]==:conic))
+                ?: GeometryIntersectLineConic(right,left[:kind]==:circle ?: GeometryConicFromCircle(left) ?_ left,left,right)
+                ?_ (left[:kind]==:circle && right[:kind]==:circle)
+                     ?: GeometryIntersectCircles(left,right)
+                     ?_ GeometryIntersectionValue("unsupported", [], left, right,
+                         @"geometry.Intersect does not yet support @{left[:kind]}-@{right[:kind]}");
 };
 
 GeometryRequireIntersection(value, label) -> ((value ? :Map) && value.Has("schema") && value[:schema] == "rix.geometry.intersection@1")
@@ -47546,6 +52886,192 @@ GeometryNumericSequence(value, length, label) -> {;
     value.Map((item) -> GeometryExact(item, label));
 };
 
+GeometryViewRequest(source,request) -> {;
+    viewport=GeometryOption(request,"viewport");
+    sourceDomain=GeometryOption(source,"domain");
+    fallback=sourceDomain==_ ?: [-10,-10,10,10] ?_ sourceDomain;
+    requestedView=GeometryOption(request,"view");
+    view=viewport==_
+      ?: (requestedView==_ ?: fallback ?_ requestedView)
+      ?_ (viewport ? :Map
+           ?: {;
+               x=@viewport[:x]; y=@viewport[:y];
+               [x[1],y[1],x[2],y[2]];
+           }
+           ?_ viewport);
+    exact=GeometryNumericSequence(view,4,"geometry refinement viewport");
+    (exact[3]>exact[1] && exact[4]>exact[2]) ?: _ ?_ .Error("geometry refinement viewport must increase");
+    exact;
+};
+
+GeometryResolveScalar(value,request) -> {;
+    exact=value ~: :Rational;
+    exact!=_
+      ?: {= value=exact,resolved=1,evidenceLevel=:proof,status=:exact }
+      ?_ {;
+          result=.numerics.Refine(@value,{=
+              absoluteWidth=GeometryOption(@request,"tolerance",1/1000),
+              maxWork=GeometryOption(@request,"numericwork",64)
+          });
+          usable=result[:status]==:enclosed || result[:status]==:budgetExhausted || result[:status]==:approximate;
+          usable
+            ?: {= value=result[:approximation].Candidate(),resolved=result[:status]==:enclosed && result[:goalMet],evidenceLevel=result[:evidenceLevel],status=result[:status],enclosure=result[:interval] }
+            ?_ {= value=_,resolved=_,evidenceLevel=:none,status=result[:status] };
+      };
+};
+
+GeometryImplicitEvaluation(implicit,x,y,request) -> {;
+    coefficients=implicit[:coefficients];
+    raw=(coefficients ? :Array)
+      ?: coefficients[1]*x^2+coefficients[2]*x*y+coefficients[3]*y^2+coefficients[4]*x+coefficients[5]*y+coefficients[6]
+      ?_ {; F=@implicit[:function]; F(@x,@y); };
+    GeometryResolveScalar(raw,request);
+};
+
+GeometrySign(value) -> value<0 ?: -1 ?_ value>0 ?: 1 ?_ 0;
+
+GeometryCellEvidence(implicit,cell,request) -> {;
+    xmin=cell[1];ymin=cell[2];xmax=cell[3];ymax=cell[4];
+    xmid=(xmin+xmax)/2; ymid=(ymin+ymax)/2;
+    points=[
+        [xmin,ymin],[xmid,ymin],[xmax,ymin],[xmax,ymid],
+        [xmax,ymax],[xmid,ymax],[xmin,ymax],[xmin,ymid],[xmid,ymid]
+    ];
+    evaluations=points.Map((point)->GeometryImplicitEvaluation(implicit,point[1],point[2],request));
+    usable=evaluations.All((entry)->entry[:value]!=_);
+    signs=usable ?: evaluations.Map((entry)->GeometrySign(entry[:value])) ?_ [];
+    {= points=points,evaluations=evaluations,signs=signs,usable=usable };
+};
+
+GeometryEdgeCrossing(first,firstValue,second,secondValue) -> {;
+    firstValue==0
+      ?: first
+      ?_ secondValue==0
+           ?: second
+           ?_ GeometrySign(firstValue)==GeometrySign(secondValue)
+                ?: _
+                ?_ {;
+                    ratio=@firstValue/(@firstValue-@secondValue);
+                    [@first[1]+ratio*(@second[1]-@first[1]),@first[2]+ratio*(@second[2]-@first[2])];
+                };
+};
+
+GeometryCellSegments(evidence) -> {;
+    points=evidence[:points]; values=evidence[:evaluations].Map((entry)->entry[:value]);
+    crossings:=[];
+    {@ index=1; index<=8; {;
+        next=index==8 ?: 1 ?_ index+1;
+        crossing=GeometryEdgeCrossing(@points[index],@values[index],@points[next],@values[next]);
+        crossing!=_ ?: {; @crossings ~= @crossings.Push(@crossing); } ?_ _;
+    }; index+=1 };
+    crossings~=crossings.Distinct();
+    crossings.Len()<2 ?: [] ?_
+    crossings.Len()==2 ?: [[crossings[1],crossings[2]]] ?_
+    [[crossings[1],crossings[2]],[crossings[3],crossings[4]]];
+};
+
+GeometryProjectSegments(segments,view,size) -> {;
+    xmin=view[1];ymin=view[2];xmax=view[3];ymax=view[4];
+    Project=(point)->[
+        (point[1]-@xmin)/(@xmax-@xmin)*@size[1],
+        @size[2]-(point[2]-@ymin)/(@ymax-@ymin)*@size[2]
+    ];
+    segments.Map((segment)->segment.Map(Project));
+};
+
+GeometryRefineImplicit(implicit,request) -> {;
+    view=GeometryViewRequest(implicit,request);
+    size=GeometryNumericSequence(GeometryOption(request,"size",[640,480]),2,"geometry refinement size");
+    tolerance=GeometryExact(GeometryOption(request,"tolerance",(view[3]-view[1])/32),"geometry refinement tolerance");
+    tolerance>0 ?: _ ?_ .Error("geometry refinement tolerance must be positive");
+    maxWork=GeometryOption(request,"maxwork",GeometryOption(request,"maxcells",1024)) ~!: :Integer;
+    maxDepth=GeometryOption(request,"maxdepth",20) ~!: :Integer;
+    (maxWork>0 && maxDepth>=0) ?: _ ?_ .Error("geometry refinement work and depth limits must be positive");
+    xCells:=1; yCells:=1;
+    {@ step=1; (@view[3]-@view[1])/@xCells>@tolerance && @xCells<1048576; {; @xCells*=2; }; step+=1 };
+    {@ step=1; (@view[4]-@view[2])/@yCells>@tolerance && @yCells<1048576; {; @yCells*=2; }; step+=1 };
+    requestedXCells=xCells; requestedYCells=yCells;
+    {@ step=1; @xCells*@yCells>@maxWork && (@xCells>1||@yCells>1); {;
+        @xCells>=@yCells ?: {; @xCells=@xCells//2; } ?_ {; @yCells=@yCells//2; };
+    }; step+=1 };
+    cellWidth=(view[3]-view[1])/xCells; cellHeight=(view[4]-view[2])/yCells;
+    queue:=[];
+    {@ ix=0; ix<@xCells; {;
+        {@ iy=0; iy<@yCells; {;
+            xmin=@view[1]+@ix*@cellWidth; ymin=@view[2]+iy*@cellHeight;
+            @queue ~= @queue.Push([xmin,ymin,xmin+@cellWidth,ymin+@cellHeight,0]);
+        }; iy+=1 };
+    }; ix+=1 };
+    segments := []; uncertainty := []; work := 0; evaluations := 0; candidateCells := 0; leafCells := 0;
+    {@ step=1; @queue.Len()>0 && @work<@maxWork; {;
+        cell=@queue.First(); @queue=@queue.DropFirst(); @work+=1;
+        evidence=GeometryCellEvidence(@implicit,cell,@request); @evaluations+=9;
+        !evidence[:usable]
+          ?: {; @uncertainty ~= @uncertainty.Push({= cell=@cell,reason=:unresolvedEvaluation,evidence=@evidence[:evaluations] }); }
+          ?_ {;
+              signs=@evidence[:signs];
+              allPositive=signs.All((sign)->sign>0); allNegative=signs.All((sign)->sign<0);
+              empty=allPositive||allNegative;
+              !empty
+                ?: {;
+                    @candidateCells+=1; @leafCells+=1;
+                    found=GeometryCellSegments(@evidence);
+                    found.Len()>0
+                      ?: {; @segments ~= @segments.Concat(@found); }
+                      ?_ {; @uncertainty ~= @uncertainty.Push({= cell=@cell,reason=:ambiguousCell }); };
+                }
+                ?_ _;
+          };
+    }; step+=1 };
+    exhausted=queue.Len()>0;
+    exhausted ?: {; @uncertainty ~= @uncertainty.Push({= reason=:workBudget,cells=@queue }); } ?_ _;
+    resolutionMet=xCells==requestedXCells&&yCells==requestedYCells;
+    resolutionMet ?: _ ?_ {; @uncertainty ~= @uncertainty.Push({= reason=:workResolution,cellSize=[@cellWidth,@cellHeight] }); };
+    projected=GeometryProjectSegments(segments,view,size);
+    style=GeometryStyle(implicit[:style],{= stroke="#0f766e",width=2,fill="none" });
+    children=projected.Map((segment)->.Graphics.Path(segment,@style));
+    graphic=.Graphics.Graphic(size,children,{= source="rix.geometry@1",kind="implicit",resolved=!exhausted&&uncertainty.Len()==0 });
+    .DeepMutable({=
+        type="geometry_refinement",schema="rix.geometry.refinement@1",graphic=graphic,children=children,
+        resolved=!exhausted&&uncertainty.Len()==0,uncertainty=uncertainty,
+        work={= cells=work,evaluations=evaluations,candidateCells=candidateCells,leafCells=leafCells,xCells=xCells,yCells=yCells,remaining=queue.Len(),exhausted=exhausted },
+        request={= viewport=view,size=size,tolerance=tolerance,maxWork=maxWork,maxDepth=maxDepth },source=implicit
+    },_);
+};
+
+GeometryRefineLocus(locus,request) -> {;
+    view=GeometryViewRequest(locus,request); size=GeometryNumericSequence(GeometryOption(request,"size",[640,480]),2,"geometry refinement size");
+    samples=GeometryOption(request,"samples",locus[:samples]) ~!: :Integer;
+    (samples>=2 && samples<=10000) ?: _ ?_ .Error("geometry locus samples must be between 2 and 10000");
+    lower=locus[:domain][1];upper=locus[:domain][2]; F=locus[:function]; points:=[]; uncertainty:=[];
+    {@ index=1; index<=@samples; {;
+        parameter=@lower+(@upper-@lower)*(index-1)/(@samples-1); value=@F(parameter);
+        value ? :Array
+          ?: {;
+              x=GeometryResolveScalar(@value[1],@request); y=GeometryResolveScalar(@value[2],@request);
+              (x[:value]!=_&&y[:value]!=_) ?: {; @points ~= @points.Push([@x[:value],@y[:value]]); } ?_ {; @uncertainty ~= @uncertainty.Push({= parameter=@parameter,reason=:unresolvedEvaluation }); };
+          }
+          ?_ .Error("geometry.Locus function must return [x,y]");
+    }; index+=1 };
+    projected=GeometryProjectSegments([points],view,size)[1];
+    graphic=.Graphics.Graphic(size,[.Graphics.Path(projected,GeometryStyle(locus[:style],{= stroke="#7c3aed",width=2,fill="none" }))],{= source="rix.geometry@1",kind="locus" });
+    .DeepMutable({= type="geometry_refinement",schema="rix.geometry.refinement@1",graphic=graphic,children=[.Graphics.Path(projected,GeometryStyle(locus[:style],{= stroke="#7c3aed",width=2,fill="none" }))],resolved=uncertainty.Len()==0,uncertainty=uncertainty,work={= samples=samples,exhausted=_ },source=locus },_);
+};
+
+GeometryRefine(value,request ?= {= }) -> {;
+    object=GeometryRequire(value,_,"geometry.Refine value");
+    conicDomain=GeometryOption(object,"domain");
+    requestView=GeometryOption(request,"view");
+    defaultDomain=conicDomain!=_ ?: conicDomain ?_ (requestView!=_ ?: requestView ?_ [-10,-10,10,10]);
+    object[:kind]==:implicit
+      ?: GeometryRefineImplicit(object,request)
+      ?_ object[:kind]==:conic
+           ?: GeometryRefineImplicit(GeometryImplicit({= coefficients=object[:coefficients],domain=defaultDomain,style=object[:style],metadata=object[:metadata] }),request)
+           ?_ object[:kind]==:locus
+                ?: GeometryRefineLocus(object,request)
+                ?_ .Error("geometry.Refine requires an implicit, conic, or locus value");
+};
+
 GeometryStyle(supplied, defaults) -> supplied == _
   ?: defaults
   ?_ (supplied ? :Map) ?: defaults.Merge(supplied) ?_ .Error("geometry style must be a map");
@@ -47562,6 +53088,14 @@ GeometryLineEndpoints(line, view) -> {;
     !GeometryIsZero(b) ?: {; @addPoint(@xmin, -(@a*@xmin+@c)/@b); @addPoint(@xmax, -(@a*@xmax+@c)/@b); } ?_ _;
     !GeometryIsZero(a) ?: {; @addPoint(-(@b*@ymin+@c)/@a, @ymin); @addPoint(-(@b*@ymax+@c)/@a, @ymax); } ?_ _;
     points.Slice(1, 3);
+};
+
+GeometryRayEndpoints(ray,view) -> {;
+    line=GeometryLine(ray[:origin],ray[:through]); candidates=GeometryLineEndpoints(line,view);
+    dx=ray[:through][:x]-ray[:origin][:x];dy=ray[:through][:y]-ray[:origin][:y];
+    forward=candidates.Filter((point)->(point[1]-ray[:origin][:x])*dx+(point[2]-ray[:origin][:y])*dy>=0);
+    inside=ray[:origin][:x]>=view[1]&&ray[:origin][:x]<=view[3]&&ray[:origin][:y]>=view[2]&&ray[:origin][:y]<=view[4];
+    inside ?: [ray[:origin][:coordinates],forward.Last()] ?_ forward.Slice(1,3);
 };
 
 GeometryDrawableItems(value) -> {;
@@ -47610,7 +53144,7 @@ GeometryDraw(objects, options ?= {= }) -> {;
                    @children ~= @children.Push(.Graphics.Circle(center, 5,
                        GeometryStyle(@item[:style], {= fill="#6d28d9", stroke="#ffffff", width=2 })));
                }
-               ?_ item[:kind] == :line
+              ?_ item[:kind] == :line
                     ?: {;
                         endpoints = GeometryLineEndpoints(@item, @view);
                         endpoints.Len() == 2
@@ -47618,14 +53152,35 @@ GeometryDraw(objects, options ?= {= }) -> {;
                               GeometryStyle(@item[:style], {= stroke="#2563eb", width=2, fill="none" }))); }
                           ?_ _;
                     }
-                    ?_ item[:kind] == :circle
+                    ?_ item[:kind] == :segment
+                         ?: {;
+                             @children ~= @children.Push(.Graphics.Path([@item[:first][:coordinates],@item[:second][:coordinates]].Map(@project),
+                                 GeometryStyle(@item[:style],{= stroke="#2563eb",width=2,fill="none" })));
+                         }
+                         ?_ item[:kind] == :ray
+                              ?: {;
+                                  endpoints=GeometryRayEndpoints(@item,@view);
+                                  endpoints.Len()==2 ?: {; @children ~= @children.Push(.Graphics.Path(@endpoints.Map(@project),GeometryStyle(@item[:style],{= stroke="#2563eb",width=2,fill="none" }))); } ?_ _;
+                              }
+                              ?_ item[:kind] == :polygon
+                                   ?: {;
+                                       @children ~= @children.Push(.Graphics.Path(@item[:points].Map((point)->point[:coordinates]).Map(@project),
+                                           GeometryStyle(@item[:style],{= stroke="#2563eb",width=2,fill="none",closed=1 })));
+                                   }
+                                   ?_ item[:kind] == :circle
                          ?: {;
                              center = [@item[:center][:x], @item[:center][:y]] |> @project;
                              radius = GeometryApproximateSqrt(@item[:radiusSquared]) * @scale;
                              @children ~= @children.Push(.Graphics.Circle(center, radius,
                                  GeometryStyle(@item[:style], {= fill="none", stroke="#d97706", width=2 })));
                          }
-                         ?_ .Error(@"geometry.Draw does not support geometry kind '@{item[:kind]}'");
+                         ?_ (item[:kind]==:conic||item[:kind]==:implicit||item[:kind]==:locus)
+                              ?: {;
+                                  refined=GeometryRefine(@item,{= view=@view,size=@size,tolerance=(@xmax-@xmin)/16,maxWork=256 });
+                                  @children ~= @children.Concat(refined[:children]);
+                                  refined[:resolved] ?: _ ?_ {; @unresolved += @refined[:uncertainty].Len(); };
+                              }
+                              ?_ .Error(@"geometry.Draw does not support geometry kind '@{item[:kind]}'");
     }; index += 1 };
     .Graphics.Graphic(size, children, {=
         source="rix.geometry@1",
@@ -47638,27 +53193,43 @@ geometryNamespace = {= };
 geometryNamespace._proto = {=
     Point=(self, first, second ?= _, options ?= {= })->GeometryPoint(first, second, options),
     Line=(self, first, second ?= _, options ?= {= })->GeometryLine(first, second, options),
+    Segment=(self, first, second ?= _, options ?= {= })->GeometrySegment(first, second, options),
+    Ray=(self, first, second ?= _, options ?= {= })->GeometryRay(first, second, options),
+    Polygon=(self, points, options ?= {= })->GeometryPolygon(points, options),
     Circle=(self, first, second ?= _, options ?= {= })->GeometryCircle(first, second, options),
+    Conic=(self, coefficients, options ?= {= })->GeometryConic(coefficients, options),
+    Ellipse=(self, center, radii ?= _, options ?= {= })->GeometryEllipse(center, radii, options),
+    Parabola=(self, vertex, parameter ?= _, options ?= {= })->GeometryParabola(vertex, parameter, options),
+    Hyperbola=(self, center, axes ?= _, options ?= {= })->GeometryHyperbola(center, axes, options),
+    Locus=(self, function, domain ?= _, options ?= {= })->GeometryLocus(function, domain, options),
+    Implicit=(self, specification)->GeometryImplicit(specification),
+    Affine=(self, matrix)->GeometryAffine(matrix),
+    Projective=(self, matrix)->GeometryProjective(matrix),
+    Transform=(self, value, transform)->GeometryTransform(value, transform),
+    Constraint=(self, kind, objects ?= _, options ?= {= })->GeometryConstraint(kind, objects, options),
+    Constraints=(self, values)->GeometryConstraints(values),
     Midpoint=(self, first, second ?= _)->GeometryMidpoint(first, second),
     PerpendicularBisector=(self, first, second ?= _, options ?= {= })->GeometryPerpendicularBisector(first, second, options),
     Circumcircle=(self, first, second ?= _, third ?= _, options ?= {= })->GeometryCircumcircle(first, second, third, options),
     Intersect=(self, first, second ?= _)->GeometryIntersect(first, second),
     Points=(self, intersection)->GeometryPoints(intersection),
     Status=(self, intersection)->GeometryStatus(intersection),
+    Refine=(self, value, request ?= {= })->GeometryRefine(value, request),
     Draw=(self, objects, options ?= {= })->GeometryDraw(objects, options)
 };
-.Host.RegisterValue("geometry", geometryNamespace, "Pure exact ruler-and-compass geometry and portable Graphics snapshots", ["Geometry", "Graphics", "Exact"]);
+.Host.RegisterValue("geometry", geometryNamespace, "Exact geometry, transformations, conics, constraints, and bounded Graphics refinement", ["Geometry", "Graphics", "Exact"]);
 `;
 
   // rix/plugins/plot/plot.plugin.rix
   var plot_plugin_default = `/**
 id: plot
-description: Pure-RiX exact polynomial sampling that lowers to portable core Graphics scenes.
+description: Pure-RiX exact and numerics-backed 2D plotting that lowers to portable core Graphics scenes.
 kind: rix
 mount: plot
-exports: [Polynomial]
+exports: [Polynomial, Function, Parametric, Scatter, Line, Bar, Step]
 groups: [Plot, Graphics, Exact]
 permissions: []
+requires: [rix.numerics@1]
 provides: [rix.plot@1]
 snapshot: true
 deterministic: true
@@ -47857,11 +53428,241 @@ PlotPolynomial(coefficientsValue, domain, options ?= {= }) -> {;
     .Graphics.Graphic([width, height], children, {= kind="polynomial_plot", schema="rix.plot@1" });
 };
 
+PlotResolveNumber(value, label, settings) -> {;
+    exact = value ~: :Rational;
+    exact != _
+      ?: {= value=exact, resolved=1, status=:exact, evidenceLevel=:proof }
+      ?_ {;
+          request = {=
+              absoluteWidth=PlotOption(@settings, "tolerance", 1/1000000),
+              maxWork=PlotOption(@settings, "maxwork", 80)
+          };
+          result = .numerics.Refine(@value, request);
+          usable = result[:status] == :enclosed || result[:status] == :budgetExhausted || result[:status] == :approximate;
+          candidate = usable ?: result[:approximation].Candidate() ~: :Rational ?_ _;
+          candidate != _
+            ?: {=
+                value=candidate,
+                resolved=result[:status] == :enclosed && result[:goalMet],
+                status=result[:status],
+                evidenceLevel=result[:evidenceLevel]
+            }
+            ?_ {= value=_, resolved=_, status=result[:status], evidenceLevel=:none };
+      };
+};
+
+PlotScaleName(settings, axis) -> {;
+    name = PlotOption(settings, @"@{axis}scale", :linear);
+    (name == :linear || name == :log || name == :log10)
+      ?: name
+      ?_ .Error(@"plot @{axis}Scale must be :linear or :log10");
+};
+
+PlotScaleValue(value, scale, label, settings) -> scale == :linear
+  ?: PlotResolveNumber(value, label, settings)
+  ?_ {;
+      exact = @value ~: :Rational;
+      (exact != _ && exact <= 0) ?: .Error("plot values must be positive for a logarithmic scale") ?_ _;
+      PlotResolveNumber(.numerics.Log10(@value), @label, @settings);
+  };
+
+PlotReadPoint(value, index, settings, xScale, yScale, label) -> {;
+    value ? :Array ?: _ ?_ .Error(@"@{label} point @{index} must be an Array");
+    value.Len() == 2 ?: _ ?_ .Error(@"@{label} point @{index} must contain x and y");
+    x = PlotScaleValue(value[1], xScale, @"@{label} point @{index} x", settings);
+    y = PlotScaleValue(value[2], yScale, @"@{label} point @{index} y", settings);
+    {=
+        point=(x[:value] != _ && y[:value] != _) ?: [x[:value], y[:value]] ?_ _,
+        original=value,
+        resolved=x[:resolved] && y[:resolved],
+        status=(x[:value] != _ && y[:value] != _) ?: :sampled ?_ :unresolved
+    };
+};
+
+PlotReadData(values, settings, label) -> {;
+    values ? :Array ?: _ ?_ .Error(@"@{label} data must be an Array");
+    xScale = PlotScaleName(settings, "x");
+    yScale = PlotScaleName(settings, "y");
+    samples := [];
+    unresolved := 0;
+    {@ index=1; index <= @values.Len(); {;
+        sample = PlotReadPoint(@values[index], index, @settings, @xScale, @yScale, @label);
+        sample[:point] == _ ?: {; @unresolved += 1; } ?_ {; @samples ~= @samples.Push(@sample); };
+    }; index += 1 };
+    {= samples=samples, unresolved=unresolved, xScale=xScale, yScale=yScale };
+};
+
+PlotFunctionSamples(fn, domain, settings, parametric ?= _) -> {;
+    domain ? :Array ?: _ ?_ .Error("plot function domain must be an Array");
+    domain.Len() == 2 ?: _ ?_ .Error("plot function domain must have a lower and upper bound");
+    lower = PlotExact(domain[1], "plot function domain lower bound");
+    upper = PlotExact(domain[2], "plot function domain upper bound");
+    lower < upper ?: _ ?_ .Error("plot function domain must increase");
+    samples = PlotPositiveSamples(PlotOption(settings, "samples", 161));
+    values := [];
+    {@ index=1; index <= @samples; {;
+        parameter = @lower + (@upper - @lower) * (index - 1) / (@samples - 1);
+        result = @fn(parameter);
+        point = @parametric
+          ?: result
+          ?_ [parameter, result];
+        @values ~= @values.Push(point);
+    }; index += 1 };
+    values;
+};
+
+PlotBounds(samples, settings, kind, xScale, yScale) -> {;
+    samples.Len() > 0 ?: _ ?_ .Error("plot has no resolved samples");
+    xs = samples.Map((sample) -> sample[:point][1]);
+    ys = samples.Map((sample) -> sample[:point][2]);
+    kind == :bar ?: {; @ys ~= @ys.Push(0); } ?_ _;
+    xmin := xs[1]; xmax := xs[1]; ymin := ys[1]; ymax := ys[1];
+    {@ index=2; index <= @xs.Len(); {;
+        @xmin ~= @xs[index] < @xmin ?: @xs[index] ?_ @xmin;
+        @xmax ~= @xs[index] > @xmax ?: @xs[index] ?_ @xmax;
+    }; index += 1 };
+    {@ index=2; index <= @ys.Len(); {;
+        @ymin ~= @ys[index] < @ymin ?: @ys[index] ?_ @ymin;
+        @ymax ~= @ys[index] > @ymax ?: @ys[index] ?_ @ymax;
+    }; index += 1 };
+    xDomain = PlotOption(settings, "xdomain");
+    yDomain = PlotOption(settings, "ydomain");
+    xDomain != _ ?: {;
+        fixed = PlotFixedYBounds(@xDomain);
+        @xmin = PlotScaleValue(fixed[1], @xScale, "plot xDomain lower bound", @settings)[:value];
+        @xmax = PlotScaleValue(fixed[2], @xScale, "plot xDomain upper bound", @settings)[:value];
+    } ?_ _;
+    yDomain != _ ?: {;
+        fixed = PlotFixedYBounds(@yDomain);
+        @ymin = PlotScaleValue(fixed[1], @yScale, "plot yDomain lower bound", @settings)[:value];
+        @ymax = PlotScaleValue(fixed[2], @yScale, "plot yDomain upper bound", @settings)[:value];
+    } ?_ _;
+    xmin == xmax ?: {; @xmin -= 1; @xmax += 1; } ?_ _;
+    ymin == ymax ?: {; @ymin -= 1; @ymax += 1; } ?_ _;
+    xDomain == _ ?: {; padding=(@xmax-@xmin)/20; @xmin-=padding; @xmax+=padding; } ?_ _;
+    yDomain == _ ?: {; padding=(@ymax-@ymin)*2/25; @ymin-=padding; @ymax+=padding; } ?_ _;
+    {= xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax };
+};
+
+PlotGeneral(data, settings, kind) -> {;
+    settings ? :Map ?: _ ?_ .Error("plot options must be a map");
+    read = PlotReadData(data, settings, "plot");
+    samples = read[:samples];
+    unresolved := read[:unresolved];
+    bounds = PlotBounds(samples, settings, kind, read[:xScale], read[:yScale]);
+    size = PlotOption(settings, "size", [640,360]);
+    size ? :Array ?: _ ?_ .Error("plot size must be an Array");
+    size.Len() == 2 ?: _ ?_ .Error("plot size must contain width and height");
+    width = PlotExact(size[1], "plot width"); height = PlotExact(size[2], "plot height");
+    margin = PlotExact(PlotOption(settings, "margin", 42), "plot margin");
+    (width > 0 && height > 0 && margin >= 0 && margin*2 < .Min(width,height))
+      ?: _ ?_ .Error("plot size and margin do not leave a positive viewport");
+    xmin=bounds[:xmin]; xmax=bounds[:xmax]; ymin=bounds[:ymin]; ymax=bounds[:ymax];
+    toPoint = (point) -> [
+        @margin + (point[1]-@xmin)/(@xmax-@xmin)*(@width-@margin*2),
+        @height-@margin-(point[2]-@ymin)/(@ymax-@ymin)*(@height-@margin*2)
+    ];
+    children := [];
+    axisStyle = PlotOption(settings, "axisstyle", {= stroke="#64748b", width=1, fill="none" });
+    zeroX = bounds[:xmin] <= 0 && bounds[:xmax] >= 0;
+    zeroY = bounds[:ymin] <= 0 && bounds[:ymax] >= 0;
+    zeroY ?: {; @children ~= @children.Push(.Graphics.Path([[@bounds[:xmin],0]|>@toPoint, [@bounds[:xmax],0]|>@toPoint], @axisStyle)); } ?_ _;
+    zeroX ?: {; @children ~= @children.Push(.Graphics.Path([[0,@bounds[:ymin]]|>@toPoint, [0,@bounds[:ymax]]|>@toPoint], @axisStyle)); } ?_ _;
+    style = PlotStyle(settings, kind == :scatter ?: "#be123c" ?_ "#2563eb", kind == :scatter ?: 1 ?_ 2);
+    screen = samples.Map((sample) -> sample[:point]).Map(toPoint);
+    kind == :scatter
+      ?: {;
+          radius = PlotExact(PlotOption(@settings, "radius", 4), "plot scatter radius");
+          {@ index=1; index <= @screen.Len(); {;
+              @children ~= @children.Push(.Graphics.Circle(@screen[index], @radius, @style));
+          }; index += 1 };
+      }
+      ?_ kind == :bar
+           ?: {;
+               barWidth = PlotOption(@settings, "barwidth");
+               inferred = @screen.Len() > 1 ?: (@screen[2][1]-@screen[1][1]).Abs()*4/5 ?_ (@width-@margin*2)/2;
+               pixelWidth = barWidth == _ ?: inferred ?_ PlotExact(barWidth, "plot bar width");
+               baselineY = ([@bounds[:xmin], 0] |> @toPoint)[2];
+               {@ index=1; index <= @screen.Len(); {;
+                   point = @screen[index];
+                   top = .Min(point[2], @baselineY);
+                   @children ~= @children.Push(.Graphics.Rectangle([point[1]-@pixelWidth/2,top], [@pixelWidth,(point[2]-@baselineY).Abs()], @style));
+               }; index += 1 };
+           }
+           ?_ {;
+               pathPoints = @kind == :step
+                 ?: {;
+                     points := [@screen[1]];
+                     {@ index=2; index <= @screen.Len(); {;
+                         previous=@screen[index-1]; currentPoint=@screen[index];
+                         @points ~= @points.Push([currentPoint[1],previous[2]]).Push(currentPoint);
+                     }; index += 1 };
+                     points;
+                 }
+                 ?_ @screen;
+               jumpOption=PlotOption(@settings,"discontinuity");
+               jump=jumpOption!=_
+                 ?: jumpOption
+                 ?_ ((@kind==:function||@kind==:parametric) ?: (@height-@margin*2)*3/4 ?_ @height*2);
+               segments := []; current := [];
+               {@ index=1; index <= @pathPoints.Len(); {;
+                   point=@pathPoints[index];
+                   discontinuous = @current.Len()>0 && (point[2]-@current.Last()[2]).Abs() > @jump;
+                   discontinuous
+                     ?: {; @current.Len()>1 ?: {; @segments ~= @segments.Push(@current); } ?_ _; @current=[@point]; }
+                     ?_ {; @current ~= @current.Push(@point); };
+               }; index += 1 };
+               current.Len()>1 ?: {; @segments ~= @segments.Push(@current); } ?_ _;
+               {@ index=1; index <= @segments.Len(); {;
+                   @children ~= @children.Push(.Graphics.Path(@segments[index], @style));
+               }; index += 1 };
+               @unresolved += segments.Len() > 1 ?: segments.Len()-1 ?_ 0;
+           };
+    tickCount = PlotOption(settings, "tickcount", 5) ~!: :Integer;
+    (tickCount >= 2 && tickCount <= 20) ?: _ ?_ .Error("plot tickCount must be between 2 and 20");
+    tickStyle = PlotOption(settings, "tickstyle", {= fill="#334155", size=11, anchor="middle" });
+    {@ index=1; index <= @tickCount; {;
+        x = @bounds[:xmin]+(@bounds[:xmax]-@bounds[:xmin])*(index-1)/(@tickCount-1);
+        position=[x,@bounds[:ymin]]|>@toPoint;
+        @children ~= @children.Push(.Graphics.Text([position[1],@height-@margin+17], @"@{x}", @tickStyle));
+    }; index += 1 };
+    labelStyle = {= fill="#0f172a", size=13, anchor="middle" };
+    PlotOption(settings,"xlabel") != _ ?: {; @children ~= @children.Push(.Graphics.Text([@width/2,@height-5],PlotOption(@settings,"xlabel"),@labelStyle)); } ?_ _;
+    PlotOption(settings,"ylabel") != _ ?: {; @children ~= @children.Push(.Graphics.Text([12,@height/2],PlotOption(@settings,"ylabel"),@labelStyle)); } ?_ _;
+    PlotOption(settings,"title") != _ ?: {; @children ~= @children.Push(.Graphics.Text([@width/2,18],PlotOption(@settings,"title"),@labelStyle.Merge({= size=15, weight="bold" }))); } ?_ _;
+    PlotOption(settings,"label") != _ ?: {;
+        @children ~= @children.Push(.Graphics.Path([[@margin+2,@margin+8],[@margin+20,@margin+8]],@style));
+        @children ~= @children.Push(.Graphics.Text([@margin+26,@margin+13],PlotOption(@settings,"label"),{= size=13 }));
+    } ?_ _;
+    .Graphics.Graphic([width,height], children, {=
+        kind=kind,
+        schema="rix.plot@1",
+        unresolved=unresolved,
+        xScale=read[:xScale],
+        yScale=read[:yScale],
+        view={= xmin=bounds[:xmin], xmax=bounds[:xmax], ymin=bounds[:ymin], ymax=bounds[:ymax] }
+    });
+};
+
+PlotFunction(fn, domain, options ?= {= }) ->
+    PlotGeneral(PlotFunctionSamples(fn, domain, options), options.Merge({= xdomain=domain }), :function);
+
+PlotParametric(fn, domain, options ?= {= }) ->
+    PlotGeneral(PlotFunctionSamples(fn, domain, options, 1), options, :parametric);
+
+PlotDataCall(data, options, kind) -> PlotGeneral(data, options, kind);
+
 plotNamespace = {= };
 plotNamespace._proto = {=
-    Polynomial=(self, coefficients, domain, options ?= {= })->PlotPolynomial(coefficients, domain, options)
+    Polynomial=(self, coefficients, domain, options ?= {= })->PlotPolynomial(coefficients, domain, options),
+    Function=(self, fn, domain, options ?= {= })->PlotFunction(fn, domain, options),
+    Parametric=(self, fn, domain, options ?= {= })->PlotParametric(fn, domain, options),
+    Scatter=(self, data, options ?= {= })->PlotDataCall(data, options, :scatter),
+    Line=(self, data, options ?= {= })->PlotDataCall(data, options, :line),
+    Bar=(self, data, options ?= {= })->PlotDataCall(data, options, :bar),
+    Step=(self, data, options ?= {= })->PlotDataCall(data, options, :step)
 };
-.Host.RegisterValue("plot", plotNamespace, "Pure exact polynomial sampling into portable Graphics", ["Plot", "Graphics", "Exact"]);
+.Host.RegisterValue("plot", plotNamespace, "Exact and numerics-backed 2D plots lowered into portable Graphics", ["Plot", "Graphics", "Exact"]);
 `;
 
   // rix/plugins/scene3d/scene3d.plugin.rix
@@ -47870,12 +53671,12 @@ id: scene3d
 description: Pure-RiX exact retained 3D scenes, explicit realization and projection, and portable Graphics snapshots.
 kind: rix
 mount: scene3d
-exports: [Scene, Group, Transform, Mesh, Polyline, PointCloud, ParametricCurve, Axes, Annotation, Material, AmbientLight, DirectionalLight, PointLight, PerspectiveCamera, OrthographicCamera, OrbitCamera, Realize, Project, Snapshot]
+exports: [Scene, Group, Transform, Mesh, Polyline, PointCloud, ParametricCurve, ParametricSurface, Axes, Annotation, AnnotationPolicy, Interaction, Material, AmbientLight, DirectionalLight, PointLight, PerspectiveCamera, OrthographicCamera, OrbitCamera, Realize, Project, Snapshot]
 groups: [Scene3D, Graphics, Exact]
 permissions: []
 requires: [rix.numerics@1]
-provides: [rix.scene3d@1, rix.scene3d.realized@1, rix.scene3d.projected@1, rix.scene3d.orbit@1]
-schemas: [rix.scene3d@1, rix.scene3d.realized@1, rix.scene3d.projected@1, rix.scene3d.orbit@1]
+provides: [rix.scene3d@1, rix.scene3d.realized@1, rix.scene3d.projected@1, rix.scene3d.snapshot@1, rix.scene3d.orbit@1, rix.scene3d.interaction@1, rix.scene3d.annotation-policy@1, rix.scene3d.surface-sampling@1]
+schemas: [rix.scene3d@1, rix.scene3d.realized@1, rix.scene3d.projected@1, rix.scene3d.snapshot@1, rix.scene3d.orbit@1, rix.scene3d.interaction@1, rix.scene3d.annotation-policy@1, rix.scene3d.surface-sampling@1]
 snapshot: true
 deterministic: true
 defaultEnabled: false
@@ -47936,12 +53737,62 @@ S3OptionalString(settings, key, label) -> {;
       ?_ .Error(@"@{label} must be a nonempty String"));
 };
 
-S3Interaction(settings, label) -> {=
-    pickid=S3OptionalString(settings, "id", @"@{label} id"),
-    label=S3OptionalString(settings, "label", @"@{label} label")
+S3OneOf(value, choices, label) -> choices.Filter((choice) -> choice == @value).Len() > 0
+  ?: value
+  ?_ .Error(@"@{label} must be one of @{choices}");
+
+S3InteractionPolicy(options ?= {= }) -> {;
+    options ? :Map ?: _ ?_ .Error("scene3d.Interaction options must be a Map");
+    events = S3Option(options, "events", []);
+    events ? :Array ?: _ ?_ .Error("scene3d.Interaction events must be an Array");
+    events.Filter((event) -> !(event ? :String)).Len() == 0
+      ?: _
+      ?_ .Error("scene3d.Interaction events must contain Strings");
+    allowed = ["hover", "select", "activate", "drag"];
+    events.Filter((event) -> @allowed.Filter((candidate) -> candidate == @event).Len() == 0).Len() == 0
+      ?: _
+      ?_ .Error("scene3d.Interaction events must be hover, select, activate, or drag");
+    payload = S3Option(options, "payload", {= });
+    payload ? :Map ?: _ ?_ .Error("scene3d.Interaction payload must be a Map");
+    .DeepMutable({=
+        schema="rix.scene3d.interaction@1",
+        events=events,
+        cursor=S3OptionalString(options, "cursor", "scene3d.Interaction cursor"),
+        tooltip=S3OptionalString(options, "tooltip", "scene3d.Interaction tooltip"),
+        selection=S3OneOf(S3Option(options, "selection", "none"), ["none", "single", "toggle"], "scene3d.Interaction selection"),
+        payload=payload
+    }, _);
 };
 
-S3LeafFields(settings, label) -> S3Interaction(settings, label).Merge({=
+S3AnnotationPolicy(options ?= {= }) -> {;
+    options ? :Map ?: _ ?_ .Error("scene3d.AnnotationPolicy options must be a Map");
+    .DeepMutable({=
+        schema="rix.scene3d.annotation-policy@1",
+        offset=S3Vector(S3Option(options, "offset", [0,0]), 2, "scene3d.AnnotationPolicy offset"),
+        leader=S3Option(options, "leader", 0) == 1 ?: 1 ?_ 0,
+        priority=S3Integer(S3Option(options, "priority", 0), "scene3d.AnnotationPolicy priority"),
+        collision=S3OneOf(S3Option(options, "collision", "allow"), ["allow", "hide-lower-priority"], "scene3d.AnnotationPolicy collision"),
+        occlusion=S3OneOf(S3Option(options, "occlusion", "show"), ["show", "hide", "fade"], "scene3d.AnnotationPolicy occlusion")
+    }, _);
+};
+
+S3LeafInteraction(settings, label) -> {;
+    pickid = S3OptionalString(settings, "id", @"@{label} id");
+    policy = S3Option(settings, "interaction");
+    policy != _ ?: {;
+        ((@policy ? :Map) && @policy.Has("schema") && @policy[:schema] == "rix.scene3d.interaction@1")
+          ?: _
+          ?_ .Error(@"@{@label} interaction must come from scene3d.Interaction");
+        @pickid != _ ?: _ ?_ .Error(@"@{@label} requires an id when interaction is present");
+    } ?_ _;
+    {=
+        pickid=pickid,
+        label=S3OptionalString(settings, "label", @"@{label} label"),
+        interaction=policy
+    };
+};
+
+S3LeafFields(settings, label) -> S3LeafInteraction(settings, label).Merge({=
     metadata=S3Option(settings, "metadata")
 });
 
@@ -48057,15 +53908,143 @@ S3ParametricCurve(curve, domain, options ?= {= }) -> {;
     }));
 };
 
+S3SurfacePoint(settings, u, v) -> S3Vector(settings[:surface](u, v), 3, "scene3d.ParametricSurface point");
+S3PointAverage(first, second) -> [1,2,3].Map((coordinate) -> (first[coordinate] + second[coordinate]) / 2);
+S3PointAverage4(first, second, third, fourth) -> [1,2,3].Map((coordinate) ->
+    (first[coordinate] + second[coordinate] + third[coordinate] + fourth[coordinate]) / 4
+);
+S3PointError(actual, expected) -> .Max(
+    .Abs(actual[1]-expected[1]),
+    .Max(.Abs(actual[2]-expected[2]), .Abs(actual[3]-expected[3]))
+);
+
+S3SurfaceCellError(surface, u0, u1, v0, v1) -> {;
+    um = (u0+u1)/2;
+    vm = (v0+v1)/2;
+    p00 = S3SurfacePoint(surface,u0,v0);
+    p10 = S3SurfacePoint(surface,u1,v0);
+    p01 = S3SurfacePoint(surface,u0,v1);
+    p11 = S3SurfacePoint(surface,u1,v1);
+    bottom = S3PointError(S3SurfacePoint(surface,um,v0), S3PointAverage(p00,p10));
+    top = S3PointError(S3SurfacePoint(surface,um,v1), S3PointAverage(p01,p11));
+    left = S3PointError(S3SurfacePoint(surface,u0,vm), S3PointAverage(p00,p01));
+    right = S3PointError(S3SurfacePoint(surface,u1,vm), S3PointAverage(p10,p11));
+    center = S3PointError(S3SurfacePoint(surface,um,vm), S3PointAverage4(p00,p10,p01,p11));
+    .Max(.Max(bottom,top), .Max(.Max(left,right),center));
+};
+
+S3ParametricSurface(surface, uDomain, vDomain ?= _, options ?= {= }) -> {;
+    settings = surface ? :Map ?: surface ?_ options.Merge({= surface=surface, uDomain=uDomain, vDomain=vDomain });
+    uInterval = settings[:udomain];
+    vInterval = settings[:vdomain];
+    uLow = S3Exact(uInterval.Low(), "scene3d.ParametricSurface u domain low");
+    uHigh = S3Exact(uInterval.High(), "scene3d.ParametricSurface u domain high");
+    vLow = S3Exact(vInterval.Low(), "scene3d.ParametricSurface v domain low");
+    vHigh = S3Exact(vInterval.High(), "scene3d.ParametricSurface v domain high");
+    (uHigh > uLow && vHigh > vLow) ?: _ ?_ .Error("scene3d.ParametricSurface domains must have increasing endpoints");
+    tolerance = S3Exact(S3Option(settings, "tolerance", 1/100), "scene3d.ParametricSurface tolerance");
+    tolerance > 0 ?: _ ?_ .Error("scene3d.ParametricSurface tolerance must be positive");
+    maxDepth = S3Integer(S3Option(settings, "maxdepth", 5), "scene3d.ParametricSurface maxDepth");
+    (maxDepth >= 0 && maxDepth <= 8) ?: _ ?_ .Error("scene3d.ParametricSurface maxDepth must be between 0 and 8");
+    maxCells = S3Integer(S3Option(settings, "maxcells", 4096), "scene3d.ParametricSurface maxCells");
+    (maxCells >= 1 && maxCells <= 65536) ?: _ ?_ .Error("scene3d.ParametricSurface maxCells must be between 1 and 65536");
+
+    divisions := 1;
+    depth := 0;
+    evaluations := 0;
+    maxError := 0;
+    resolved := 0;
+    finished := 0;
+    {@ pass=0; pass<=@maxDepth && @finished==0; {;
+        passUStep = (@uHigh-@uLow)/@divisions;
+        passVStep = (@vHigh-@vLow)/@divisions;
+        currentMax := 0;
+        {@ vCell=0; vCell<@divisions; {;
+            {@ uCell=0; uCell<@divisions; {;
+                error = S3SurfaceCellError(
+                    @settings,
+                    @uLow+uCell*@passUStep,
+                    @uLow+(uCell+1)*@passUStep,
+                    @vLow+@vCell*@passVStep,
+                    @vLow+(@vCell+1)*@passVStep
+                );
+                @currentMax ~= .Max(@currentMax,error);
+                @evaluations += 9;
+            }; uCell+=1 };
+        }; vCell+=1 };
+        @maxError ~= currentMax;
+        @resolved ~= currentMax <= @tolerance ?: 1 ?_ 0;
+        canRefine = @resolved==0 && @depth<@maxDepth && 4*@divisions*@divisions<=@maxCells;
+        canRefine
+          ?: {; @divisions *= 2; @depth += 1; }
+          ?_ {; @finished ~= 1; };
+    }; pass+=1 };
+
+    vertices := [];
+    uStep = (uHigh-uLow)/divisions;
+    vStep = (vHigh-vLow)/divisions;
+    {@ vIndex=0; vIndex<=@divisions; {;
+        {@ uIndex=0; uIndex<=@divisions; {;
+            @vertices ~= @vertices.Push(S3SurfacePoint(
+                @settings,
+                @uLow+uIndex*@uStep,
+                @vLow+@vIndex*@vStep
+            ));
+            @evaluations += 1;
+        }; uIndex+=1 };
+    }; vIndex+=1 };
+    triangles := [];
+    rowSize = divisions+1;
+    {@ vCell=0; vCell<@divisions; {;
+        {@ uCell=0; uCell<@divisions; {;
+            lowerLeft = @vCell*@rowSize+uCell+1;
+            lowerRight = lowerLeft+1;
+            upperLeft = lowerLeft+@rowSize;
+            upperRight = upperLeft+1;
+            @triangles ~= @triangles.Push([lowerLeft,lowerRight,upperRight]);
+            @triangles ~= @triangles.Push([lowerLeft,upperRight,upperLeft]);
+        }; uCell+=1 };
+    }; vCell+=1 };
+    sourceMetadata = S3Option(settings, "metadata", {= });
+    sourceMetadata == _ ?: {; @sourceMetadata ~= {= }; } ?_ _;
+    sourceMetadata ? :Map ?: _ ?_ .Error("scene3d.ParametricSurface metadata must be a Map");
+    limitedBy = resolved==1 ?: _ ?_ depth>=maxDepth ?: "maxDepth" ?_ "maxCells";
+    sampling = .DeepMutable({=
+        schema="rix.scene3d.surface-sampling@1",
+        method="uniform-adaptive-midpoint",
+        uDomain=uLow:uHigh,
+        vDomain=vLow:vHigh,
+        tolerance=tolerance,
+        maxDepth=maxDepth,
+        maxCells=maxCells,
+        depth=depth,
+        divisions=divisions,
+        cells=divisions*divisions,
+        evaluations=evaluations,
+        maxError=maxError,
+        resolved=resolved,
+        limitedBy=limitedBy,
+        exact=1
+    }, _);
+    S3Mesh(vertices,triangles,settings.Merge({=
+        metadata=sourceMetadata.Merge({= producer="parametric_surface", sampling=sampling })
+    }));
+};
+
 S3Annotation(position, text, options ?= {= }) -> {;
     settings = position ? :Map ?: position ?_ options.Merge({= position=position, text=text });
     content = settings[:text];
     content ? :String ?: _ ?_ .Error("scene3d.Annotation text must be a String");
     size = S3Exact(S3Option(settings, "size", 14), "scene3d.Annotation size");
     size > 0 ?: _ ?_ .Error("scene3d.Annotation size must be positive");
+    policy = S3Option(settings, "policy", S3AnnotationPolicy());
+    ((policy ? :Map) && policy.Has("schema") && policy[:schema] == "rix.scene3d.annotation-policy@1")
+      ?: _
+      ?_ .Error("scene3d.Annotation policy must come from scene3d.AnnotationPolicy");
     S3Value(:annotation, {=
         position=S3Vector(settings[:position], 3, "scene3d.Annotation position"),
         text=content,
+        annotationPolicy=policy,
         style={=
             color=S3Option(settings, "color", "#111827"),
             size=size,
@@ -48208,7 +54187,9 @@ S3MeshSegments(triangles) -> {;
 S3PrimitiveFields(child) -> {=
     pickid=S3Option(child,"pickid"),
     label=S3Option(child,"label"),
-    metadata=S3Option(child,"metadata")
+    metadata=S3Option(child,"metadata"),
+    interaction=S3Option(child,"interaction"),
+    annotationPolicy=S3Option(child,"annotationpolicy")
 };
 
 S3Collect(children, parent) -> {;
@@ -48262,7 +54243,9 @@ S3Picking(primitives) -> {;
         id = primitive[:pickid];
         id != _ ?: {;
             @result.Has(@id) ?: .Error(@"Duplicate Scene3D picking id '@{@id}'") ?_ _;
-            @result ~= @result.Set(@id,{= primitive=@index,kind=@primitive[:kind],label=@primitive[:label] });
+            @result ~= @result.Set(@id,{=
+                primitive=@index,kind=@primitive[:kind],label=@primitive[:label],interaction=@primitive[:interaction]
+            });
         } ?_ _;
     }; index+=1 };
     result;
@@ -48412,7 +54395,8 @@ S3LitColor(style, triangle, lights) -> {;
 };
 
 S3ProjectedFields(primitive, sourcePrimitive) -> {=
-    pickid=primitive[:pickid],label=primitive[:label],sourcePrimitive=sourcePrimitive
+    pickid=primitive[:pickid],label=primitive[:label],sourcePrimitive=sourcePrimitive,
+    metadata=primitive[:metadata],interaction=primitive[:interaction],annotationPolicy=primitive[:annotationPolicy]
 };
 
 S3ProjectedPicking(primitives) -> {;
@@ -48422,7 +54406,10 @@ S3ProjectedPicking(primitives) -> {;
         id = primitive[:pickid];
         id != _ ?: {;
             existing = @result.Has(@id) ?: @result[@id] ?_ {= indices=[],kind=@primitive[:kind],label=@primitive[:label] };
-            @result ~= @result.Set(@id,existing.Set("indices",existing[:indices].Push(@index)));
+            @result ~= @result.Set(@id,existing.Merge({=
+                indices=existing[:indices].Push(@index),
+                interaction=@primitive[:interaction]
+            }));
         } ?_ _;
     }; index+=1 };
     result;
@@ -48510,7 +54497,11 @@ S3Project(scene, options ?= {= }) -> {;
         } ?_ primitive[:kind]==:annotation ?: {;
             point=@primitive[:points][1];
             (point[3]>=@near&&point[3]<=@far) ?: {;
-                @projected ~= @projected.Push({= kind=:annotation,point=@project(@point),text=@primitive[:text],style=@primitive[:style] }.Merge(S3ProjectedFields(@primitive,@primitiveIndex)));
+                anchorPoint=@project(@point);
+                policy=@primitive[:annotationpolicy];
+                offset=policy[:offset];
+                displayPoint=[anchorPoint[1]+offset[1],anchorPoint[2]+offset[2]];
+                @projected ~= @projected.Push({= kind=:annotation,point=displayPoint,anchorPoint=anchorPoint,text=@primitive[:text],style=@primitive[:style] }.Merge(S3ProjectedFields(@primitive,@primitiveIndex)));
                 @annotationCount+=1;
             } ?_ _;
         } ?_ _;
@@ -48535,15 +54526,24 @@ S3Snapshot(scene, options ?= {= }) -> {;
                ?_ primitive[:kind]==:point
                     ?: {; @children ~= @children.Push(.Graphics.Circle(@primitive[:point],@primitive[:radius],S3StyleMap(@primitive[:style],1))); }
                     ?_ primitive[:kind]==:annotation
-                         ?: {; @children ~= @children.Push(.Graphics.Text(@primitive[:point],@primitive[:text],{=
-                             fill=@primitive[:style][:color],size=@primitive[:style][:size],anchor=@primitive[:style][:anchor],weight=@primitive[:style][:weight]
-                         })); }
+                         ?: {;
+                             policy=@primitive[:annotationpolicy];
+                             (policy[:leader]==1 && policy[:offset]!=[0,0]) ?: {;
+                                 @children ~= @children.Push(.Graphics.Path([@primitive[:anchorpoint],@primitive[:point]],{=
+                                     stroke=@primitive[:style][:color],width=1,fill="none"
+                                 }));
+                             } ?_ _;
+                             @children ~= @children.Push(.Graphics.Text(@primitive[:point],@primitive[:text],{=
+                                 fill=@primitive[:style][:color],size=@primitive[:style][:size],anchor=@primitive[:style][:anchor],weight=@primitive[:style][:weight]
+                             }));
+                         }
                     ?_ _;
     }; index+=1 };
     diagnostic=(projected[:mode]=="wireframe"&&scene[:lights].Len()>0)
       ?: [{= level="info",code="scene3d-wireframe-ignores-lights",message="Wireframe snapshots do not evaluate Scene3D lights." }]
       ?_ [];
     {=
+        type="scene3d_snapshot", schema="rix.scene3d.snapshot@1",
         value=.Graphics.Graphic(projected[:size],children,{= schema="rix.graphics@1",source="rix.scene3d@1",mode=projected[:mode] }),
         resolved=1, uncertainty=[], work=projected[:work],
         source={= schema="rix.scene3d@1",projection=projected[:camera][:projection],mode=projected[:mode],approximation=projected[:approximation] },
@@ -48560,8 +54560,11 @@ scene3dNamespace._proto={=
     Polyline=(self,points,options ?= {= })->S3Polyline(points,options),
     PointCloud=(self,points,options ?= {= })->S3PointCloud(points,options),
     ParametricCurve=(self,curve,domain ?= _,options ?= {= })->S3ParametricCurve(curve,domain,options),
+    ParametricSurface=(self,surface,uDomain ?= _,vDomain ?= _,options ?= {= })->S3ParametricSurface(surface,uDomain,vDomain,options),
     Axes=(self,options ?= {= })->S3Axes(options),
     Annotation=(self,position,text ?= _,options ?= {= })->S3Annotation(position,text,options),
+    AnnotationPolicy=(self,options ?= {= })->S3AnnotationPolicy(options),
+    Interaction=(self,options ?= {= })->S3InteractionPolicy(options),
     Material=(self,color ?= "#275dad",opacity ?= 1,width ?= 1)->S3Material(color,opacity,width),
     AmbientLight=(self,color ?= "#ffffff",intensity ?= 1)->S3AmbientLight(color,intensity),
     DirectionalLight=(self,direction,options ?= {= })->S3DirectionalLight(direction,options),
@@ -48783,6 +54786,45 @@ ndNamespace._proto={=
 `;
 
   // rix/plugins/draw/draw.plugin.rix.js
+  var int7 = (value) => new Integer(BigInt(value));
+  var string = (value) => ({ type: "string", value: String(value) });
+  var mapValue2 = (entries2) => ({ type: "map", entries: new Map(entries2) });
+  var arrayValue = (values) => ({ type: "sequence", values });
+  function sequence2(value, label) {
+    if (Array.isArray(value))
+      return value;
+    if (value && ["array", "tuple", "sequence"].includes(value.type))
+      return value.values ?? value.elements;
+    throw new Error(`${label} must be an array or tuple`);
+  }
+  function number(value, label) {
+    if (value instanceof Integer || value instanceof Rational)
+      return value.toNumber();
+    if (typeof value === "number" && Number.isFinite(value))
+      return value;
+    throw new Error(`${label} must be a finite number`);
+  }
+  function exact(value) {
+    if (value instanceof Integer || value instanceof Rational)
+      return value;
+    if (!Number.isFinite(value))
+      throw new Error("Drawing coordinate must be finite");
+    if (Number.isInteger(value))
+      return int7(value);
+    return new Rational(Number(value.toPrecision(14)).toString());
+  }
+  function point(value, label) {
+    const coordinates = sequence2(value, label);
+    if (coordinates.length !== 2)
+      throw new Error(`${label} must contain x and y coordinates`);
+    return coordinates;
+  }
+  function pointNumbers(value, label) {
+    return point(value, label).map((coordinate, index) => number(coordinate, `${label} ${index ? "y" : "x"}`));
+  }
+  function pointsValue(points) {
+    return points.map(([x, y]) => [exact(x), exact(y)]);
+  }
   function entriesFor(args, positional, name) {
     if (args.length === 1 && args[0]?.type === "map" && args[0].entries instanceof Map)
       return args[0].entries;
@@ -48801,6 +54843,10 @@ ndNamespace._proto={=
     const entries2 = entriesFor(args, ["from", "to", "style"], "draw.Line");
     return createPath([[get2(entries2, "from"), get2(entries2, "to")], get2(entries2, "style")]);
   }
+  function polyline(args) {
+    const entries2 = entriesFor(args, ["points", "style"], "draw.Polyline");
+    return createPath([get2(entries2, "points"), get2(entries2, "style")]);
+  }
   function polygon(args) {
     const entries2 = entriesFor(args, ["points", "style"], "draw.Polygon");
     return createPath([get2(entries2, "points"), mergedStyle(get2(entries2, "style"), [["closed", true]])]);
@@ -48817,8 +54863,256 @@ ndNamespace._proto={=
     const entries2 = entriesFor(args, ["center", "radius", "style"], "draw.Circle");
     return createCircle([get2(entries2, "center"), get2(entries2, "radius"), get2(entries2, "style")]);
   }
+  function arrow(args) {
+    const entries2 = entriesFor(args, ["from", "to", "style", "options"], "draw.Arrow");
+    const from = pointNumbers(get2(entries2, "from"), "draw.Arrow from");
+    const to = pointNumbers(get2(entries2, "to"), "draw.Arrow to");
+    const dx = to[0] - from[0];
+    const dy = to[1] - from[1];
+    const length = Math.hypot(dx, dy);
+    if (length === 0)
+      throw new Error("draw.Arrow requires distinct endpoints");
+    const options = get2(entries2, "options")?.type === "map" ? get2(entries2, "options").entries : new Map;
+    const headLength = number(get2(options, "headLength", int7(10)), "draw.Arrow headLength");
+    const headWidth = number(get2(options, "headWidth", exact(headLength * 0.7)), "draw.Arrow headWidth");
+    if (headLength <= 0 || headWidth <= 0)
+      throw new Error("draw.Arrow head dimensions must be positive");
+    const ux = dx / length;
+    const uy = dy / length;
+    const base = [to[0] - ux * headLength, to[1] - uy * headLength];
+    const left = [base[0] - uy * headWidth / 2, base[1] + ux * headWidth / 2];
+    const right = [base[0] + uy * headWidth / 2, base[1] - ux * headWidth / 2];
+    const style = get2(entries2, "style");
+    const headStyle = mergedStyle(style, [
+      ["closed", true],
+      ["fill", get2(style?.entries ?? new Map, "stroke", string("#111827"))]
+    ]);
+    return createGroup([[
+      createPath([pointsValue([from, to]), style]),
+      createPath([pointsValue([to, left, right]), headStyle])
+    ]]);
+  }
+  function sampledCurve(centerValue, rxValue, ryValue, startValue, endValue, samplesValue, style, name) {
+    const [cx, cy] = pointNumbers(centerValue, `${name} center`);
+    const rx = number(rxValue, `${name} x radius`);
+    const ry = number(ryValue, `${name} y radius`);
+    const start = number(startValue, `${name} start angle`);
+    const end = number(endValue, `${name} end angle`);
+    const samples = Number(number(samplesValue, `${name} samples`));
+    if (rx <= 0 || ry <= 0)
+      throw new Error(`${name} radii must be positive`);
+    if (!Number.isInteger(samples) || samples < 2 || samples > 4096)
+      throw new Error(`${name} samples must be an integer between 2 and 4096`);
+    const radians = Math.PI / 180;
+    const points = Array.from({ length: samples + 1 }, (_item, index) => {
+      const angle = (start + (end - start) * index / samples) * radians;
+      return [cx + rx * Math.cos(angle), cy + ry * Math.sin(angle)];
+    });
+    return createPath([pointsValue(points), style]);
+  }
+  function arc(args) {
+    const entries2 = entriesFor(args, ["center", "radius", "start", "end", "style", "samples"], "draw.Arc");
+    const radius = get2(entries2, "radius");
+    return sampledCurve(get2(entries2, "center"), radius, radius, get2(entries2, "start"), get2(entries2, "end"), get2(entries2, "samples", int7(48)), get2(entries2, "style"), "draw.Arc");
+  }
+  function ellipse(args) {
+    const entries2 = entriesFor(args, ["center", "radii", "style", "samples"], "draw.Ellipse");
+    const radii = point(get2(entries2, "radii"), "draw.Ellipse radii");
+    return sampledCurve(get2(entries2, "center"), radii[0], radii[1], int7(0), int7(360), get2(entries2, "samples", int7(72)), mergedStyle(get2(entries2, "style"), [["closed", true]]), "draw.Ellipse");
+  }
+  function dimension(args) {
+    const entries2 = entriesFor(args, ["from", "to", "text", "style", "options"], "draw.Dimension");
+    const from = pointNumbers(get2(entries2, "from"), "draw.Dimension from");
+    const to = pointNumbers(get2(entries2, "to"), "draw.Dimension to");
+    const dx = to[0] - from[0];
+    const dy = to[1] - from[1];
+    const length = Math.hypot(dx, dy);
+    if (length === 0)
+      throw new Error("draw.Dimension requires distinct endpoints");
+    const options = get2(entries2, "options")?.type === "map" ? get2(entries2, "options").entries : new Map;
+    const offset = number(get2(options, "offset", int7(14)), "draw.Dimension offset");
+    const nx = -dy / length;
+    const ny = dx / length;
+    const first = [from[0] + nx * offset, from[1] + ny * offset];
+    const second = [to[0] + nx * offset, to[1] + ny * offset];
+    const style = get2(entries2, "style");
+    const textValue2 = get2(entries2, "text", string(Number(length.toPrecision(6))));
+    const arrowOptions = mapValue2([["headLength", int7(7)], ["headWidth", int7(5)]]);
+    return createGroup([[
+      createPath([pointsValue([from, first]), style]),
+      createPath([pointsValue([to, second]), style]),
+      arrow([pointsValue([first])[0], pointsValue([second])[0], style, arrowOptions]),
+      arrow([pointsValue([second])[0], pointsValue([first])[0], style, arrowOptions]),
+      createTextMark([
+        pointsValue([[(first[0] + second[0]) / 2 + nx * 6, (first[1] + second[1]) / 2 + ny * 6]])[0],
+        textValue2,
+        mapValue2([["anchor", string("middle")], ["size", int7(13)]])
+      ])
+    ]]);
+  }
+  function grid(args) {
+    const entries2 = entriesFor(args, ["origin", "size", "step", "style"], "draw.Grid");
+    const [x, y] = pointNumbers(get2(entries2, "origin"), "draw.Grid origin");
+    const [width, height] = pointNumbers(get2(entries2, "size"), "draw.Grid size");
+    const stepValue = get2(entries2, "step", int7(10));
+    const [sx, sy] = stepValue && ["array", "tuple", "sequence"].includes(stepValue.type) || Array.isArray(stepValue) ? pointNumbers(stepValue, "draw.Grid step") : [number(stepValue, "draw.Grid step"), number(stepValue, "draw.Grid step")];
+    if (width <= 0 || height <= 0 || sx <= 0 || sy <= 0)
+      throw new Error("draw.Grid size and step must be positive");
+    if (Math.ceil(width / sx) + Math.ceil(height / sy) > 1e4)
+      throw new Error("draw.Grid contains too many lines");
+    const style = get2(entries2, "style");
+    const children = [];
+    for (let offset = 0;offset <= width + 0.000000000001; offset += sx)
+      children.push(createPath([pointsValue([[x + offset, y], [x + offset, y + height]]), style]));
+    for (let offset = 0;offset <= height + 0.000000000001; offset += sy)
+      children.push(createPath([pointsValue([[x, y + offset], [x + width, y + offset]]), style]));
+    return createGroup([children]);
+  }
+  function style(args) {
+    const entries2 = entriesFor(args, ["base", "overrides"], "draw.Style");
+    const base = get2(entries2, "base", mapValue2([]));
+    const overrides = get2(entries2, "overrides", mapValue2([]));
+    if (base?.type !== "map" || overrides?.type !== "map")
+      throw new Error("draw.Style arguments must be maps");
+    return mapValue2([...base.entries, ...overrides.entries]);
+  }
+  function viewportPoint(pointValue, viewport) {
+    const entries2 = viewport?.type === "map" ? viewport.entries : viewport;
+    const domain = sequence2(get2(entries2, "domain"), "draw.Viewport domain").map((value, index) => number(value, `draw.Viewport domain ${index + 1}`));
+    const size = pointNumbers(get2(entries2, "size"), "draw.Viewport size");
+    const margin = number(get2(entries2, "margin", int7(0)), "draw.Viewport margin");
+    if (domain.length !== 4 || !(domain[2] > domain[0]) || !(domain[3] > domain[1]))
+      throw new Error("draw.Viewport domain must be [xmin,ymin,xmax,ymax]");
+    if (size.some((value) => value <= margin * 2))
+      throw new Error("draw.Viewport size must exceed twice its margin");
+    const [x, y] = pointNumbers(pointValue, "draw.Viewport point");
+    const px = margin + (x - domain[0]) / (domain[2] - domain[0]) * (size[0] - margin * 2);
+    const normalizedY = (y - domain[1]) / (domain[3] - domain[1]);
+    const py = get2(entries2, "flipY", int7(1)) === null ? margin + normalizedY * (size[1] - margin * 2) : size[1] - margin - normalizedY * (size[1] - margin * 2);
+    return arrayValue(pointsValue([[px, py]])[0]);
+  }
+  function viewport(args) {
+    const entries2 = entriesFor(args, ["domain", "size", "options"], "draw.Viewport");
+    const options = get2(entries2, "options")?.type === "map" ? get2(entries2, "options").entries : new Map;
+    const value = mapValue2([
+      ["type", string("draw_viewport")],
+      ["domain", get2(entries2, "domain")],
+      ["size", get2(entries2, "size")],
+      ["margin", get2(options, "margin", int7(0))],
+      ["flipY", get2(options, "flipY", int7(1))]
+    ]);
+    value._ext = new Map([
+      ["POINT", { type: "method_builtin", name: "Point", impl: (methodArgs) => viewportPoint(methodArgs[1], value) }],
+      ["APPLY", { type: "method_builtin", name: "Apply", impl: (methodArgs) => viewportPoint(methodArgs[1], value) }]
+    ]);
+    viewportPoint([int7(0), int7(0)], value);
+    return value;
+  }
+  function viewportPointCommand(args) {
+    const entries2 = entriesFor(args, ["point", "viewport", "size", "options"], "draw.ViewportPoint");
+    let transform = get2(entries2, "viewport");
+    if (transform?.type !== "map" || get2(transform.entries, "type")?.value !== "draw_viewport") {
+      transform = viewport([transform, get2(entries2, "size"), get2(entries2, "options")]);
+    }
+    return viewportPoint(get2(entries2, "point"), transform);
+  }
+  function boundsFor(node) {
+    if (!node || typeof node !== "object")
+      throw new Error("draw.Bounds requires a Graphics node or point collection");
+    if (node.type === "array" || node.type === "tuple" || Array.isArray(node)) {
+      const points = sequence2(node, "draw.Bounds points").map((entry, index) => pointNumbers(entry, `draw.Bounds point ${index + 1}`));
+      if (!points.length)
+        throw new Error("draw.Bounds requires at least one point");
+      return [Math.min(...points.map((p) => p[0])), Math.min(...points.map((p) => p[1])), Math.max(...points.map((p) => p[0])), Math.max(...points.map((p) => p[1]))];
+    }
+    if (node.kind === "path") {
+      if (!node.points)
+        throw new Error("draw.Bounds does not yet inspect command-based paths");
+      return boundsFor(node.points);
+    }
+    if (node.kind === "circle" || node.kind === "drag_point") {
+      const [x, y] = pointNumbers(node.center, "draw.Bounds circle center");
+      const radius = number(node.radius, "draw.Bounds circle radius");
+      return [x - radius, y - radius, x + radius, y + radius];
+    }
+    if (node.kind === "rectangle") {
+      const [x, y] = pointNumbers(node.origin, "draw.Bounds rectangle origin");
+      const [width, height] = pointNumbers(node.size, "draw.Bounds rectangle size");
+      return [Math.min(x, x + width), Math.min(y, y + height), Math.max(x, x + width), Math.max(y, y + height)];
+    }
+    if (node.kind === "text_mark") {
+      const [x, y] = pointNumbers(node.position, "draw.Bounds label position");
+      const size = number(node.style?.get("size") ?? int7(14), "draw.Bounds label size");
+      const content = node.text?.value ?? String(node.text ?? "");
+      const width = content.length * size * 0.6;
+      return [x, y - size, x + width, y + size * 0.2];
+    }
+    if (node.kind === "group" || node.kind === "graphic") {
+      const children = node.children ?? [];
+      if (!children.length)
+        throw new Error("draw.Bounds cannot bound an empty group");
+      const bounds = children.map(boundsFor);
+      return [Math.min(...bounds.map((b) => b[0])), Math.min(...bounds.map((b) => b[1])), Math.max(...bounds.map((b) => b[2])), Math.max(...bounds.map((b) => b[3]))];
+    }
+    throw new Error(`draw.Bounds does not support Graphics kind '${node.kind ?? "unknown"}'`);
+  }
+  function bounds(args) {
+    const entries2 = entriesFor(args, ["value"], "draw.Bounds");
+    const [xmin, ymin, xmax, ymax] = boundsFor(get2(entries2, "value"));
+    return mapValue2([
+      ["xmin", exact(xmin)],
+      ["ymin", exact(ymin)],
+      ["xmax", exact(xmax)],
+      ["ymax", exact(ymax)],
+      ["width", exact(xmax - xmin)],
+      ["height", exact(ymax - ymin)]
+    ]);
+  }
+  function anchor(args) {
+    const entries2 = entriesFor(args, ["value", "name", "offset"], "draw.Anchor");
+    const value = get2(entries2, "value");
+    const box2 = value?.type === "map" && value.entries.has("xmin") ? value.entries : bounds([value]).entries;
+    const xmin = number(get2(box2, "xmin"), "draw.Anchor xmin");
+    const ymin = number(get2(box2, "ymin"), "draw.Anchor ymin");
+    const xmax = number(get2(box2, "xmax"), "draw.Anchor xmax");
+    const ymax = number(get2(box2, "ymax"), "draw.Anchor ymax");
+    const name = get2(entries2, "name", string("center"))?.value ?? String(get2(entries2, "name"));
+    const positions = {
+      center: [(xmin + xmax) / 2, (ymin + ymax) / 2],
+      north: [(xmin + xmax) / 2, ymin],
+      south: [(xmin + xmax) / 2, ymax],
+      east: [xmax, (ymin + ymax) / 2],
+      west: [xmin, (ymin + ymax) / 2],
+      northeast: [xmax, ymin],
+      northwest: [xmin, ymin],
+      southeast: [xmax, ymax],
+      southwest: [xmin, ymax]
+    };
+    if (!positions[name.toLowerCase()])
+      throw new Error(`draw.Anchor unknown anchor '${name}'`);
+    const offsetValue = get2(entries2, "offset");
+    const offset = offsetValue === null ? [0, 0] : pointNumbers(offsetValue, "draw.Anchor offset");
+    return arrayValue(pointsValue([[positions[name.toLowerCase()][0] + offset[0], positions[name.toLowerCase()][1] + offset[1]]])[0]);
+  }
   function createDrawPluginCollection() {
-    const methods2 = new Map([["Line", line], ["Polygon", polygon], ["Label", label], ["Box", box], ["Circle", circle]]);
+    const methods2 = new Map([
+      ["Line", line],
+      ["Polyline", polyline],
+      ["Polygon", polygon],
+      ["Arrow", arrow],
+      ["Arc", arc],
+      ["Ellipse", ellipse],
+      ["Dimension", dimension],
+      ["Grid", grid],
+      ["Label", label],
+      ["Box", box],
+      ["Circle", circle],
+      ["Style", style],
+      ["Viewport", viewport],
+      ["ViewportPoint", viewportPointCommand],
+      ["Bounds", bounds],
+      ["Anchor", anchor]
+    ]);
     const entries2 = new Map;
     const extension = new Map([["immutable", new Integer(1n)]]);
     for (const [name, helper] of methods2) {
@@ -48840,7 +55134,7 @@ ndNamespace._proto={=
 
   // rix/plugins/poly/polynomial.js
   var POLYNOMIAL_SCHEMA = "rix.polynomial@1";
-  var int7 = (value) => new Integer(BigInt(value));
+  var int8 = (value) => new Integer(BigInt(value));
   function emptyParams() {
     return {
       positional: [],
@@ -48969,7 +55263,7 @@ ndNamespace._proto={=
         throw new Error("Pure-RiX Polynomial is missing its coefficient provider");
       if (typeof evaluate !== "function")
         throw new Error("Reading pure-RiX Polynomial coefficients requires an active evaluator");
-      const ascending = callWithConcreteArgs(metadata.coefficientFunction, [int7(0)], context, evaluate);
+      const ascending = callWithConcreteArgs(metadata.coefficientFunction, [int8(0)], context, evaluate);
       const result2 = [...values(ascending, "Polynomial coefficients")].reverse();
       if (trim)
         while (result2.length > 1 && isExactZero(result2[0]))
@@ -49012,9 +55306,9 @@ ndNamespace._proto={=
   function normalize2(valuesList, label2 = "Polynomial coefficients") {
     if (valuesList.length === 0)
       throw new Error(`${label2} cannot be empty`);
-    const exact = valuesList.map((value, index) => rational(value, `${label2} ${index + 1}`));
-    const first = exact.findIndex((value) => !isZero4(value));
-    return first < 0 ? [zero()] : exact.slice(first);
+    const exact2 = valuesList.map((value, index) => rational(value, `${label2} ${index + 1}`));
+    const first = exact2.findIndex((value) => !isZero4(value));
+    return first < 0 ? [zero()] : exact2.slice(first);
   }
   function coefficientsEqual(left, right) {
     return left.length === right.length && left.every((value, index) => value.equals(right[index]));
@@ -49221,7 +55515,7 @@ ndNamespace._proto={=
 
   // rix/plugins/fracfun/fraction-function.js
   var FRACTION_FUNCTION_SCHEMA = "rix.fraction-function@1";
-  var int8 = (value) => new Integer(BigInt(value));
+  var int9 = (value) => new Integer(BigInt(value));
   var str2 = (value) => ({ type: "string", value: String(value) });
   var seq2 = (values2) => ({ type: "sequence", values: values2 });
   var rixMap2 = (entries2) => ({ type: "map", entries: new Map(entries2) });
@@ -49460,7 +55754,7 @@ ndNamespace._proto={=
     callable._ext.set("__type", str2("FractionFunction"));
     callable._ext.set("_type", str2("fraction_function"));
     callable._ext.set("_symbolicKind", str2("FractionFunction"));
-    callable._ext.set("immutable", int8(1));
+    callable._ext.set("immutable", int9(1));
     callable._ext.set("_spec", normalizedDisplay);
     callable._spec = normalizedDisplay;
     return callable;
@@ -49542,7 +55836,7 @@ ndNamespace._proto={=
     for (const name of ["EQ", "NEQ"]) {
       binary2(name, (left, right) => isFractionFunction(left) && isFractionFunction(right), ([left, right]) => {
         const equal = left.variable === right.variable && sameIr(expressionOf(metadata(left).displaySpec), expressionOf(metadata(right).displaySpec));
-        return (name === "EQ" ? equal : !equal) ? int8(1) : null;
+        return (name === "EQ" ? equal : !equal) ? int9(1) : null;
       });
     }
     registry.installVariant("NEG", {
@@ -49622,6 +55916,9 @@ ndNamespace._proto={=
       transform: { operation: "DomainRestriction" }
     }));
   }
+  function restrictionCalculusExpressions(value) {
+    return restrictionSpecs(value).map((spec2) => symbolicSpecToCalculusExpression(spec2));
+  }
   function method5(name, impl) {
     return { type: "method_builtin", name, impl };
   }
@@ -49664,6 +55961,9 @@ ndNamespace._proto={=
     register("FractionFunction", "Form", ([value]) => metadata(requireFractionFunction(value)).displaySpec);
     register("FractionFunction", "Spec", ([value]) => metadata(requireFractionFunction(value)).displaySpec);
     register("FractionFunction", "EvaluationSpec", ([value]) => metadata(requireFractionFunction(value)).evaluationSpec);
+    register("FractionFunction", "CalculusExpression", ([value]) => symbolicSpecToCalculusExpression(metadata(requireFractionFunction(value)).displaySpec));
+    register("FractionFunction", "EvaluationCalculusExpression", ([value]) => symbolicSpecToCalculusExpression(metadata(requireFractionFunction(value)).evaluationSpec));
+    register("FractionFunction", "RestrictionExpressions", ([value]) => seq2(restrictionCalculusExpressions(value)));
     register("FractionFunction", "Variable", ([value]) => str2(requireFractionFunction(value).variable));
     register("FractionFunction", "Evaluate", ([value, argument], context, evaluate) => callWithConcreteArgs(value, [argument], context, evaluate));
     register("FractionFunction", "Compose", ([value, argument], context, evaluate) => callWithConcreteArgs(value, [argument], context, evaluate));
@@ -49679,24 +55979,25 @@ ndNamespace._proto={=
     register("FractionFunction", "Polynomial", ([value], context, evaluate) => polynomial(value, context, evaluate));
     register("FractionFunction", "P", ([value], context, evaluate) => polynomial(value, context, evaluate));
     register("FractionFunction", "CanonicalPolynomial", ([value], context, evaluate) => polynomial(value, context, evaluate));
-    register("FractionFunction", "IsPolynomial", ([value]) => metadata(requireFractionFunction(value)).canonicalPolynomial ? int8(1) : null);
+    register("FractionFunction", "IsPolynomial", ([value]) => metadata(requireFractionFunction(value)).canonicalPolynomial ? int9(1) : null);
     register("FractionFunction", "SameForm", ([value, other]) => {
       requireFractionFunction(other, "SameForm operand");
-      return value.variable === other.variable && sameIr(expressionOf(metadata(value).displaySpec), expressionOf(metadata(other).displaySpec)) ? int8(1) : null;
+      return value.variable === other.variable && sameIr(expressionOf(metadata(value).displaySpec), expressionOf(metadata(other).displaySpec)) ? int9(1) : null;
     });
     register("FractionFunction", "Equivalent", ([value, other], context, evaluate) => {
       requireFractionFunction(other, "Equivalent operand");
-      return rationalFunctionsEqual(canonical(value, context, evaluate), canonical(other, context, evaluate), context, evaluate) ? int8(1) : null;
+      return rationalFunctionsEqual(canonical(value, context, evaluate), canonical(other, context, evaluate), context, evaluate) ? int9(1) : null;
     });
     register("FractionFunction", "SameFunction", ([value, other], context, evaluate) => {
       requireFractionFunction(other, "SameFunction operand");
       const equivalent = rationalFunctionsEqual(canonical(value, context, evaluate), canonical(other, context, evaluate), context, evaluate);
-      return equivalent && restrictionsEqual(value, other) ? int8(1) : null;
+      return equivalent && restrictionsEqual(value, other) ? int9(1) : null;
     });
     register("FractionFunction", "Domain", ([value]) => rixMap2([
       ["policy", str2("original denominators != 0")],
       ["restrictions", seq2(restrictionSpecs(value))],
-      ["cancelledRestrictionsPreserved", int8(1)]
+      ["calculusRestrictions", seq2(restrictionCalculusExpressions(value))],
+      ["cancelledRestrictionsPreserved", int9(1)]
     ]));
     register("FractionFunction", "ForgetRestrictions", ([value], context, evaluate) => {
       const source = requireFractionFunction(value);
@@ -49713,8 +56014,10 @@ ndNamespace._proto={=
         ["variable", str2(source.variable)],
         ["form", info.displaySpec],
         ["evaluation", info.evaluationSpec],
-        ["canonicalAvailable", info.canonicalRationalFunction ? int8(1) : null],
-        ["polynomialAvailable", info.canonicalPolynomial ? int8(1) : null],
+        ["restrictions", seq2(restrictionSpecs(source))],
+        ["calculusRestrictions", seq2(restrictionCalculusExpressions(source))],
+        ["canonicalAvailable", info.canonicalRationalFunction ? int9(1) : null],
+        ["polynomialAvailable", info.canonicalPolynomial ? int9(1) : null],
         ["canonicalError", info.canonicalError ? str2(info.canonicalError) : null]
       ]);
     });
@@ -49769,7 +56072,7 @@ ndNamespace._proto={=
         ["FUN", modifier("Fun")],
         ["Fun", modifier("Fun")],
         ["FRACTIONFUNCTION", method5("FractionFunction", ([, ...args], context, evaluate) => createFractionFunction(args, context, evaluate))],
-        ["immutable", int8(1)]
+        ["immutable", int9(1)]
       ])
     };
   }
@@ -49795,7 +56098,7 @@ ndNamespace._proto={=
   // rix/plugins/data/data.js
   var stringValue6 = (value) => ({ type: "string", value: String(value) });
   var sequenceValue2 = (values3) => ({ type: "sequence", values: values3 });
-  function mapValue2(entries2) {
+  function mapValue3(entries2) {
     return { type: "map", entries: new Map(entries2), _ext: new Map([["immutable", new Integer(1n)]]) };
   }
   function entries2(value, label2) {
@@ -49818,7 +56121,7 @@ ndNamespace._proto={=
     }
     return fallback;
   }
-  function sequence2(value, label2) {
+  function sequence3(value, label2) {
     if (Array.isArray(value))
       return value;
     if (Array.isArray(value?.values))
@@ -49853,7 +56156,7 @@ ndNamespace._proto={=
   }
   function normalizeColumns2(value) {
     const seen = new Set;
-    return Object.freeze(sequence2(value, "data schema").map((source, index) => {
+    return Object.freeze(sequence3(value, "data schema").map((source, index) => {
       let id;
       let label2;
       let type;
@@ -49904,8 +56207,8 @@ ndNamespace._proto={=
     return columns.map(({ id }) => field(values3, id, null));
   }
   function normalizeRows(value, columns) {
-    return Object.freeze(sequence2(value, "data rows").map((source, rowIndex) => {
-      const row = source?.type === "map" || source instanceof Map ? mapRow(source, columns, rowIndex) : sequence2(source, `data row ${rowIndex + 1}`);
+    return Object.freeze(sequence3(value, "data rows").map((source, rowIndex) => {
+      const row = source?.type === "map" || source instanceof Map ? mapRow(source, columns, rowIndex) : sequence3(source, `data row ${rowIndex + 1}`);
       if (row.length !== columns.length) {
         throw new Error(`data row ${rowIndex + 1} has ${row.length} cells; expected ${columns.length}`);
       }
@@ -49953,7 +56256,7 @@ ndNamespace._proto={=
     return makeRelation(columns, rows, ["relation"]);
   }
   function selectedColumnIds(value, relation, label2) {
-    const requested = sequence2(value, label2).map((entry, index) => text5(entry, `${label2} entry ${index + 1}`));
+    const requested = sequence3(value, label2).map((entry, index) => text5(entry, `${label2} entry ${index + 1}`));
     const byId = new Map(relation.columns.map((column, index) => [column.id.toLowerCase(), index]));
     const selected = requested.map((id) => {
       const index = byId.get(id.toLowerCase());
@@ -49975,7 +56278,7 @@ ndNamespace._proto={=
     return makeRelation(Object.freeze(selected.map((index) => relation.columns[index])), Object.freeze(relation.rows.map((row) => Object.freeze(selected.map((index) => row[index])))), [...relation.provenance.operations, "project"]);
   }
   function rowMap(relation, row) {
-    return mapValue2(relation.columns.map((column, index) => [column.id, row[index]]));
+    return mapValue3(relation.columns.map((column, index) => [column.id, row[index]]));
   }
   function truthy3(value) {
     if (value === null || value === undefined || value === false)
@@ -50063,7 +56366,7 @@ ndNamespace._proto={=
     if (args.length !== 1)
       throw new Error("data.Schema expects a Relation");
     const relation = requireRelation(args[0], "data.Schema");
-    return sequenceValue2(relation.columns.map((column) => mapValue2([
+    return sequenceValue2(relation.columns.map((column) => mapValue3([
       ["id", stringValue6(column.id)],
       ["label", stringValue6(column.label)],
       ["type", stringValue6(column.type)],
@@ -50113,7 +56416,7 @@ ndNamespace._proto={=
   // rix/plugins/document/document.js
   var stringValue7 = (value) => ({ type: "string", value: String(value) });
   var sequenceValue3 = (values3) => ({ type: "sequence", values: values3 });
-  function mapValue3(values3) {
+  function mapValue4(values3) {
     return {
       type: "map",
       entries: new Map(values3),
@@ -50147,7 +56450,7 @@ ndNamespace._proto={=
       return value;
     throw new Error(`${label2} must be a string or colon-string`);
   }
-  function sequence3(value, label2) {
+  function sequence4(value, label2) {
     if (Array.isArray(value))
       return value;
     if (Array.isArray(value?.values))
@@ -50195,7 +56498,7 @@ ndNamespace._proto={=
     if (!["comfortable", "compact"].includes(density)) {
       throw new Error("document.Theme density must be :comfortable or :compact");
     }
-    return mapValue3([
+    return mapValue4([
       ["valueKind", stringValue7("documentTheme")],
       ["schema", stringValue7("rix.document.theme@1")],
       ["name", stringValue7(name)],
@@ -50253,40 +56556,40 @@ ndNamespace._proto={=
     const numbers = new WeakMap;
     const labels = new Map;
     const ordered = [];
-    const register = (id, value, kind, number) => {
+    const register = (id, value, kind, number2) => {
       if (!id)
         return;
       validLabel(id, `${referenceKind(kind)} label`);
       if (labels.has(id))
         throw new Error(`document.Report contains duplicate label '${id}'`);
-      const entry = Object.freeze({ id, kind, number, text: `${referenceKind(kind)} ${number}` });
+      const entry = Object.freeze({ id, kind, number: number2, text: `${referenceKind(kind)} ${number2}` });
       labels.set(id, entry);
       ordered.push(entry);
-      numbers.set(value, number);
+      numbers.set(value, number2);
     };
     const visit = (value) => {
       if (!isOutputValue(value))
         return;
       if (value.kind === "heading" || value.kind === "section") {
-        const number = ++counts.section;
-        numbers.set(value, number);
-        register(value.id, value, value.kind, number);
+        const number2 = ++counts.section;
+        numbers.set(value, number2);
+        register(value.id, value, value.kind, number2);
       } else if (value.kind === "figure") {
-        const number = ++counts.figure;
-        numbers.set(value, number);
-        register(value.label, value, value.kind, number);
+        const number2 = ++counts.figure;
+        numbers.set(value, number2);
+        register(value.label, value, value.kind, number2);
       } else if (value.kind === "table") {
-        const number = ++counts.table;
-        numbers.set(value, number);
-        register(value.label, value, value.kind, number);
+        const number2 = ++counts.table;
+        numbers.set(value, number2);
+        register(value.label, value, value.kind, number2);
       }
       childOutputs(value).forEach(visit);
     };
     children.forEach(visit);
     return { labels, numbers, ordered };
   }
-  function numberedCaption(kind, number, caption) {
-    const prefix = `${referenceKind(kind)} ${number}.`;
+  function numberedCaption(kind, number2, caption) {
+    const prefix = `${referenceKind(kind)} ${number2}.`;
     return caption ? `${prefix} ${caption}` : prefix;
   }
   function resolveOutput(value, index) {
@@ -50300,19 +56603,19 @@ ndNamespace._proto={=
       return createLink([stringValue7(`#${target.id}`), [textNode(content)]]);
     }
     if (value.kind === "heading") {
-      const number = index.numbers.get(value);
-      return clone(value, { content: [textNode(`${number}. `), ...inlineValues(value.content).map((child) => resolveOutput(child, index))] });
+      const number2 = index.numbers.get(value);
+      return clone(value, { content: [textNode(`${number2}. `), ...inlineValues(value.content).map((child) => resolveOutput(child, index))] });
     }
     if (value.kind === "section") {
-      const number = index.numbers.get(value);
+      const number2 = index.numbers.get(value);
       return clone(value, {
-        title: [textNode(`${number}. `), ...inlineValues(value.title).map((child) => resolveOutput(child, index))],
+        title: [textNode(`${number2}. `), ...inlineValues(value.title).map((child) => resolveOutput(child, index))],
         children: Object.freeze(value.children.map((child) => resolveOutput(child, index)))
       });
     }
     if (value.kind === "figure" || value.kind === "table") {
-      const number = index.numbers.get(value);
-      return clone(value, { caption: numberedCaption(value.kind, number, value.caption) });
+      const number2 = index.numbers.get(value);
+      return clone(value, { caption: numberedCaption(value.kind, number2, value.caption) });
     }
     if (["fragment", "list_item", "quote", "callout"].includes(value.kind)) {
       return clone(value, { children: Object.freeze(value.children.map((child) => resolveOutput(child, index))) });
@@ -50328,10 +56631,10 @@ ndNamespace._proto={=
   function reportChildren(value) {
     if (isOutputValue(value) && value.kind === "fragment")
       return value.children;
-    return sequence3(value, "document.Report children");
+    return sequence4(value, "document.Report children");
   }
   function metadata2(theme, title) {
-    return mapValue3([
+    return mapValue4([
       ["schema", stringValue7("rix.document.report@1")],
       ["title", stringValue7(title)],
       ["theme", theme]
@@ -50352,7 +56655,7 @@ ndNamespace._proto={=
       throw new Error("document.Report children must be portable output values");
     const index = collectReferences(sourceChildren);
     const resolved = sourceChildren.map((child) => resolveOutput(child, index));
-    const titleStyle = mapValue3([["color", field2(theme, "accent")], ["density", field2(theme, "density")]]);
+    const titleStyle = mapValue4([["color", field2(theme, "accent")], ["density", field2(theme, "density")]]);
     const heading = createHeading([new Integer(1n), stringValue7(title), null, titleStyle]);
     const byline = author === null ? [] : [createParagraph([[textNode(`By ${author}`)]])];
     const fragment = createFragment([[heading, ...byline, ...resolved], metadata2(theme, title)]);
@@ -50369,7 +56672,7 @@ ndNamespace._proto={=
     if (report?.documentSchema !== "rix.document.report@1" || !Array.isArray(report.documentReferences)) {
       throw new Error("document.References requires a document Report");
     }
-    return sequenceValue3(report.documentReferences.map((reference) => mapValue3([
+    return sequenceValue3(report.documentReferences.map((reference) => mapValue4([
       ["id", stringValue7(reference.id)],
       ["kind", stringValue7(referenceKind(reference.kind))],
       ["number", new Integer(BigInt(reference.number))],
@@ -50417,6 +56720,33 @@ ndNamespace._proto={=
   function unwrapFigure(value) {
     return outputKind(value) === "figure" ? { value: value.content, figure: value } : { value, figure: null };
   }
+  function unwrapGraphic(value) {
+    const { value: unwrapped, figure } = unwrapFigure(value);
+    if (outputKind(unwrapped) !== "scene3d_snapshot") {
+      return { value: unwrapped, figure, snapshot: null };
+    }
+    const graphic = field3(unwrapped, "value");
+    requireOutput(graphic, ["graphic"], "Scene3D snapshot");
+    return { value: graphic, figure, snapshot: unwrapped };
+  }
+  function plainValue(value) {
+    if (value === null || value === undefined)
+      return null;
+    if (value instanceof Integer || value instanceof Rational)
+      return String(value);
+    if (value?.type === "string")
+      return value.value;
+    if (Array.isArray(value))
+      return value.map(plainValue);
+    if (Array.isArray(value?.values))
+      return value.values.map(plainValue);
+    const entries4 = mapEntries2(value);
+    if (entries4)
+      return Object.fromEntries([...entries4].map(([key, entry]) => [String(key), plainValue(entry)]));
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean")
+      return value;
+    return null;
+  }
   function requireOutput(value, kinds, target) {
     const kind = outputKind(value);
     if (!kinds.includes(kind)) {
@@ -50429,7 +56759,7 @@ ndNamespace._proto={=
       return value.value;
     return typeof value === "string" ? value : null;
   }
-  function sequence4(value, label2) {
+  function sequence5(value, label2) {
     if (Array.isArray(value))
       return value;
     if (Array.isArray(value?.values))
@@ -50466,9 +56796,20 @@ ndNamespace._proto={=
     let result;
     if (value instanceof Integer)
       result = Number(value.value);
-    else if (value instanceof Rational)
-      result = Number(value.numerator) / Number(value.denominator);
-    else if (typeof value === "number")
+    else if (value instanceof Rational) {
+      const numerator = value.numerator;
+      if (numerator === 0n)
+        result = 0;
+      else {
+        const sign = numerator < 0n ? -1 : 1;
+        const absolute = numerator < 0n ? -numerator : numerator;
+        const numeratorBits = absolute.toString(2).length;
+        const denominatorBits = value.denominator.toString(2).length;
+        const numeratorShift = Math.max(0, numeratorBits - 53);
+        const denominatorShift = Math.max(0, denominatorBits - 53);
+        result = sign * (Number(absolute >> BigInt(numeratorShift)) / Number(value.denominator >> BigInt(denominatorShift))) * 2 ** (numeratorShift - denominatorShift);
+      }
+    } else if (typeof value === "number")
       result = value;
     else if (typeof value === "bigint")
       result = Number(value);
@@ -50481,14 +56822,14 @@ ndNamespace._proto={=
   function stableNumber(value, label2 = "coordinate") {
     return Number(numberValue2(value, label2).toFixed(6)).toString();
   }
-  function point(value, label2) {
-    const values3 = sequence4(value, label2);
+  function point2(value, label2) {
+    const values3 = sequence5(value, label2);
     if (values3.length !== 2)
       throw new Error(`${label2} must contain two coordinates`);
     return values3.map((entry, index) => numberValue2(entry, `${label2} ${index === 0 ? "x" : "y"}`));
   }
-  function styleValue2(style, name, fallback = null) {
-    return field3(style, name, fallback);
+  function styleValue2(style2, name, fallback = null) {
+    return field3(style2, name, fallback);
   }
   function boolValue(value) {
     if (value instanceof Integer)
@@ -50708,13 +57049,13 @@ ndNamespace._proto={=
     return lines.join(`
 `);
   }
-  function put(grid, row, column, character) {
-    if (row < 0 || row >= grid.length || column < 0 || column >= grid[0].length)
+  function put(grid2, row, column, character) {
+    if (row < 0 || row >= grid2.length || column < 0 || column >= grid2[0].length)
       return;
-    const previous = grid[row][column];
-    grid[row][column] = previous === " " || previous === character ? character : "+";
+    const previous = grid2[row][column];
+    grid2[row][column] = previous === " " || previous === character ? character : "+";
   }
-  function drawLine(grid, from, to, character) {
+  function drawLine(grid2, from, to, character) {
     let [x0, y0] = from;
     const [x1, y1] = to;
     const dx = Math.abs(x1 - x0);
@@ -50723,7 +57064,7 @@ ndNamespace._proto={=
     const sy = y0 < y1 ? 1 : -1;
     let error = dx + dy;
     while (true) {
-      put(grid, y0, x0, character);
+      put(grid2, y0, x0, character);
       if (x0 === x1 && y0 === y1)
         break;
       const doubled = 2 * error;
@@ -50744,9 +57085,9 @@ ndNamespace._proto={=
     const sourceHeight = numberValue2(value.size[1], "Graphic height");
     if (!(sourceWidth > 0) || !(sourceHeight > 0))
       throw new Error("Graphic size must be positive");
-    const grid = Array.from({ length: height }, () => Array(width).fill(" "));
-    const project = (point2) => {
-      const values3 = Array.isArray(point2) ? point2 : point2?.values;
+    const grid2 = Array.from({ length: height }, () => Array(width).fill(" "));
+    const project = (point3) => {
+      const values3 = Array.isArray(point3) ? point3 : point3?.values;
       if (!Array.isArray(values3) || values3.length !== 2)
         throw new Error("Graphic point must contain x and y");
       return [
@@ -50761,10 +57102,10 @@ ndNamespace._proto={=
         const twoPoint = points.length === 2;
         const character = twoPoint && points[0][1] === points[1][1] ? "-" : twoPoint && points[0][0] === points[1][0] ? "|" : "*";
         for (let pointIndex = 1;pointIndex < points.length; pointIndex += 1) {
-          drawLine(grid, points[pointIndex - 1], points[pointIndex], character);
+          drawLine(grid2, points[pointIndex - 1], points[pointIndex], character);
         }
       } else if (outputKind(child) === "circle" || outputKind(child) === "drag_point") {
-        put(grid, ...project(child.center).reverse(), "o");
+        put(grid2, ...project(child.center).reverse(), "o");
       } else if (outputKind(child) === "rectangle") {
         const origin = project(child.origin);
         const size = Array.isArray(child.size) ? child.size : child.size?.values;
@@ -50772,20 +57113,20 @@ ndNamespace._proto={=
           numberValue2(child.origin[0], "Rectangle x") + numberValue2(size[0], "Rectangle width"),
           numberValue2(child.origin[1], "Rectangle y") + numberValue2(size[1], "Rectangle height")
         ]);
-        drawLine(grid, origin, [opposite[0], origin[1]], "#");
-        drawLine(grid, [opposite[0], origin[1]], opposite, "#");
-        drawLine(grid, opposite, [origin[0], opposite[1]], "#");
-        drawLine(grid, [origin[0], opposite[1]], origin, "#");
+        drawLine(grid2, origin, [opposite[0], origin[1]], "#");
+        drawLine(grid2, [opposite[0], origin[1]], opposite, "#");
+        drawLine(grid2, opposite, [origin[0], opposite[1]], "#");
+        drawLine(grid2, [origin[0], opposite[1]], origin, "#");
       } else if (outputKind(child) === "text_mark") {
         const [column, row] = project(child.position);
         const label2 = strictAscii(textValue2(child.text, state.format), state, childPath);
-        [...label2].slice(0, width - column).forEach((character, offset) => put(grid, row, column + offset, character));
+        [...label2].slice(0, width - column).forEach((character, offset) => put(grid2, row, column + offset, character));
       } else {
         addDiagnostic(state, "terminal-graphic-node-unsupported", `Graphic node '${outputKind(child)}' is not supported by the Phase 1 ASCII rasterizer`, childPath);
-        put(grid, Math.min(height - 1, index), 0, "?");
+        put(grid2, Math.min(height - 1, index), 0, "?");
       }
     });
-    return grid.map((row) => row.join("")).join(`
+    return grid2.map((row) => row.join("")).join(`
 `);
   }
   function renderNode(value, state, path2 = "value") {
@@ -50853,19 +57194,23 @@ ndNamespace._proto={=
     aliases: ["image/svg+xml"],
     inputKinds: ["graphic", "figure"],
     deterministic: true,
-    description: "Portable SVG renderer for core Graphics scenes",
+    description: "Portable SVG renderer with outward-safe exact and certified coordinate lowering",
     render({ value, options, format }) {
       const unwrapped = unwrapFigure(value);
       requireOutput(unwrapped.value, ["graphic"], "svg");
       if (unwrapped.figure && outputKind(unwrapped.figure.content) !== "graphic") {
         requireOutput(unwrapped.figure.content, ["graphic"], "svg");
       }
-      const alt = options.alt?.type === "string" ? options.alt.value : options.alt || unwrapped.figure?.alt || null;
-      let content = renderGraphicSvg(unwrapped.value, format);
+      const alt = rixString4(option4(options, "alt")) || option4(options, "alt") || unwrapped.figure?.alt || null;
+      const rawPrecision = option4(options, "precision", 6);
+      const precision = numberValue2(rawPrecision, "SVG coordinate precision");
+      const rounding = rixString4(option4(options, "rounding", "nearest")) || option4(options, "rounding", "nearest");
+      const lowered = lowerGraphicSvg(unwrapped.value, format, { precision, rounding });
+      let { content } = lowered;
       if (alt) {
         content = content.replace(/<svg ([^>]+)>/, `<svg $1 aria-label="${escapeHtml2(alt)}"><title>${escapeHtml2(alt)}</title>`);
       }
-      return { content };
+      return { content, diagnostics: lowered.diagnostics, metadata: { coordinateLowering: lowered.metadata } };
     }
   };
   function install6(api) {
@@ -50875,30 +57220,30 @@ ndNamespace._proto={=
   // rix/plugins/render-canvas/canvas-plan.js
   function pathData(node) {
     if (!node.commands) {
-      const points = node.points.map((entry, index) => point(entry, `Path point ${index + 1}`));
+      const points = node.points.map((entry, index) => point2(entry, `Path point ${index + 1}`));
       const closed = boolValue(styleValue2(node.style, "closed", false));
       return points.map(([x, y], index) => `${index ? "L" : "M"}${stableNumber(x)} ${stableNumber(y)}`).join(" ") + (closed ? " Z" : "");
     }
     return node.commands.map((command, index) => {
       const op = (rixString4(field3(command, "op")) || field3(command, "op", "")).toLowerCase();
-      const destination = () => point(field3(command, "to"), `Path command ${index + 1} destination`);
+      const destination = () => point2(field3(command, "to"), `Path command ${index + 1} destination`);
       if (["move", "m", "line", "l"].includes(op)) {
         const [x, y] = destination();
         return `${op === "move" || op === "m" ? "M" : "L"}${stableNumber(x)} ${stableNumber(y)}`;
       }
       if (["quadratic", "quad", "q"].includes(op)) {
-        const [cx, cy] = point(field3(command, "control"), `Path command ${index + 1} control`);
+        const [cx, cy] = point2(field3(command, "control"), `Path command ${index + 1} control`);
         const [x, y] = destination();
         return `Q${stableNumber(cx)} ${stableNumber(cy)} ${stableNumber(x)} ${stableNumber(y)}`;
       }
       if (["cubic", "curve", "c"].includes(op)) {
-        const [c1x, c1y] = point(field3(command, "control1"), `Path command ${index + 1} control1`);
-        const [c2x, c2y] = point(field3(command, "control2"), `Path command ${index + 1} control2`);
+        const [c1x, c1y] = point2(field3(command, "control1"), `Path command ${index + 1} control1`);
+        const [c2x, c2y] = point2(field3(command, "control2"), `Path command ${index + 1} control2`);
         const [x, y] = destination();
         return `C${stableNumber(c1x)} ${stableNumber(c1y)} ${stableNumber(c2x)} ${stableNumber(c2y)} ${stableNumber(x)} ${stableNumber(y)}`;
       }
       if (["arc", "a"].includes(op)) {
-        const [rx, ry] = point(field3(command, "radius"), `Path command ${index + 1} radius`);
+        const [rx, ry] = point2(field3(command, "radius"), `Path command ${index + 1} radius`);
         const rotation = numberValue2(field3(command, "rotation", 0), `Path command ${index + 1} rotation`);
         const large = boolValue(field3(command, "large", false)) ? 1 : 0;
         const sweep = boolValue(field3(command, "sweep", false)) ? 1 : 0;
@@ -50910,14 +57255,14 @@ ndNamespace._proto={=
       throw new Error(`Unsupported Path command '${op || "(missing op)"}'`);
     }).join(" ");
   }
-  function canvasStyle(style, defaultFill = null) {
+  function canvasStyle(style2, defaultFill = null) {
     const result = {};
-    const stroke = rixString4(styleValue2(style, "stroke"));
-    const fillSource = rixString4(styleValue2(style, "fill"));
+    const stroke = rixString4(styleValue2(style2, "stroke"));
+    const fillSource = rixString4(styleValue2(style2, "fill"));
     const fill = fillSource || defaultFill;
-    const width = styleValue2(style, "width", styleValue2(style, "strokeWidth"));
-    const opacity = styleValue2(style, "opacity");
-    const dash = rixString4(styleValue2(style, "dash"));
+    const width = styleValue2(style2, "width", styleValue2(style2, "strokeWidth"));
+    const opacity = styleValue2(style2, "opacity");
+    const dash = rixString4(styleValue2(style2, "dash"));
     if (stroke)
       result.stroke = stroke === "none" ? null : stroke;
     if (fill)
@@ -50936,17 +57281,17 @@ ndNamespace._proto={=
   function transformCommands(node) {
     const commands = [];
     if (node.translate !== null && node.translate !== undefined)
-      commands.push(["translate", ...point(node.translate, "Transform translate")]);
+      commands.push(["translate", ...point2(node.translate, "Transform translate")]);
     if (node.rotate !== null && node.rotate !== undefined) {
       const angle = numberValue2(node.rotate, "Transform rotate") * Math.PI / 180;
       if (node.origin !== null && node.origin !== undefined) {
-        const [x, y] = point(node.origin, "Transform origin");
+        const [x, y] = point2(node.origin, "Transform origin");
         commands.push(["translate", x, y], ["rotate", angle], ["translate", -x, -y]);
       } else
         commands.push(["rotate", angle]);
     }
     if (node.scale !== null && node.scale !== undefined) {
-      const scale2 = Array.isArray(node.scale) || node.scale?.values ? point(node.scale, "Transform scale") : [numberValue2(node.scale, "Transform scale"), numberValue2(node.scale, "Transform scale")];
+      const scale2 = Array.isArray(node.scale) || node.scale?.values ? point2(node.scale, "Transform scale") : [numberValue2(node.scale, "Transform scale"), numberValue2(node.scale, "Transform scale")];
       commands.push(["scale", ...scale2]);
     }
     return commands;
@@ -50957,13 +57302,13 @@ ndNamespace._proto={=
     if (node.kind === "path")
       commands.push(["path2d", pathData(node), mergedStyle2(inheritedStyle, node.style)]);
     else if (node.kind === "rectangle")
-      commands.push(["rectangle", ...point(node.origin, `${path2} origin`), ...point(node.size, `${path2} size`), mergedStyle2(inheritedStyle, node.style)]);
+      commands.push(["rectangle", ...point2(node.origin, `${path2} origin`), ...point2(node.size, `${path2} size`), mergedStyle2(inheritedStyle, node.style)]);
     else if (node.kind === "circle" || node.kind === "drag_point") {
-      commands.push(["circle", ...point(node.center, `${path2} center`), numberValue2(node.radius, `${path2} radius`), mergedStyle2(inheritedStyle, node.style, node.kind === "drag_point" ? "#7c3aed" : null)]);
+      commands.push(["circle", ...point2(node.center, `${path2} center`), numberValue2(node.radius, `${path2} radius`), mergedStyle2(inheritedStyle, node.style, node.kind === "drag_point" ? "#7c3aed" : null)]);
       if (node.kind === "drag_point")
         diagnostics.push(diagnostic("canvas-static-drag-point", "Canvas plans render DragPoint as a static marker; host interaction must bind the target separately", "info", path2));
     } else if (node.kind === "text_mark") {
-      const [x, y] = point(node.position, `${path2} position`);
+      const [x, y] = point2(node.position, `${path2} position`);
       const size = styleValue2(node.style, "size", styleValue2(node.style, "fontSize", 16));
       commands.push(["text", x, y, textValue2(node.text, format), {
         ...mergedStyle2(inheritedStyle, node.style, "currentColor"),
@@ -51003,13 +57348,25 @@ ndNamespace._proto={=
     mime: "application/vnd.rix.canvas+json",
     extension: "canvas.json",
     aliases: ["canvas2d", "application/vnd.rix.canvas+json"],
-    inputKinds: ["graphic", "figure"],
+    inputKinds: ["graphic", "figure", "scene3d_snapshot"],
     deterministic: true,
     description: "Serializable CanvasRenderingContext2D plan for core Graphics",
     render({ value, format }) {
-      const { value: graphic } = unwrapFigure(value);
+      const { value: graphic, snapshot } = unwrapGraphic(value);
       requireOutput(graphic, ["graphic"], "canvas");
       const plan = createCanvasPlan(graphic, format);
+      if (snapshot) {
+        plan.scene3d = {
+          schema: "rix.scene3d.snapshot@1",
+          source: plainValue(field3(snapshot, "source")),
+          picking: plainValue(field3(snapshot, "picking"))
+        };
+        plan.diagnostics.push({
+          level: "info",
+          code: "scene3d-canvas-snapshot",
+          message: "Scene3D camera projection was resolved by the portable snapshot before Canvas lowering."
+        });
+      }
       return {
         content: `${JSON.stringify({ ...plan, diagnostics: undefined })}
 `,
@@ -51020,6 +57377,198 @@ ndNamespace._proto={=
   };
   function install7(api) {
     return installRendererPlugin({ ...api, definition: definition3 });
+  }
+
+  // rix/plugins/render-webgl/webgl-plan.js
+  var SCENE_SCHEMA = "rix.scene3d@1";
+  var REALIZED_SCHEMA = "rix.scene3d.realized@1";
+  function text7(value, fallback = null) {
+    return rixString4(value) ?? (typeof value === "string" ? value : fallback);
+  }
+  function vector(value, length, label2) {
+    const values3 = sequence5(value, label2);
+    if (values3.length !== length)
+      throw new Error(`${label2} must contain ${length} coordinates`);
+    return values3.map((entry, index) => numberValue2(entry, `${label2} coordinate ${index + 1}`));
+  }
+  function indices(value, label2) {
+    return sequence5(value, label2).map((entry, index) => sequence5(entry, `${label2} ${index + 1}`).map((item) => numberValue2(item, `${label2} index`) - 1));
+  }
+  function color(value, fallback = "#275dad") {
+    const source = text7(value, fallback);
+    const match = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(source || "");
+    const hex = match?.[1]?.length === 3 ? [...match[1]].map((digit) => `${digit}${digit}`).join("") : match?.[1] || fallback.slice(1);
+    return [0, 2, 4].map((offset) => parseInt(hex.slice(offset, offset + 2), 16) / 255);
+  }
+  function style2(value) {
+    const opacity = numberValue2(field3(value, "opacity", 1), "Scene3D style opacity");
+    return {
+      color: color(field3(value, "color")),
+      opacity,
+      width: numberValue2(field3(value, "width", 1), "Scene3D style width")
+    };
+  }
+  function primitive(value, index) {
+    const kind = text7(field3(value, "kind"));
+    const points = sequence5(field3(value, "points"), `Scene3D primitive ${index + 1} points`).map((point3, pointIndex) => vector(point3, 3, `Scene3D primitive ${index + 1} point ${pointIndex + 1}`));
+    return {
+      kind,
+      points,
+      segments: indices(field3(value, "segments", { type: "sequence", values: [] }), `Scene3D primitive ${index + 1} segments`),
+      triangles: indices(field3(value, "triangles", { type: "sequence", values: [] }), `Scene3D primitive ${index + 1} triangles`),
+      radius: kind === "points" ? numberValue2(field3(value, "radius", 3), "Scene3D point radius") : null,
+      text: text7(field3(value, "text")),
+      style: style2(field3(value, "style")),
+      pickId: text7(field3(value, "pickid")),
+      label: text7(field3(value, "label")),
+      interaction: plainValue(field3(value, "interaction")),
+      annotationPolicy: plainValue(field3(value, "annotationpolicy"))
+    };
+  }
+  function cameraPlan(value) {
+    return {
+      projection: text7(field3(value, "projection"), "perspective"),
+      position: vector(field3(value, "position"), 3, "Scene3D camera position"),
+      target: vector(field3(value, "target"), 3, "Scene3D camera target"),
+      up: vector(field3(value, "up"), 3, "Scene3D camera up"),
+      fov: numberValue2(field3(value, "fov", 50), "Scene3D camera fov"),
+      near: numberValue2(field3(value, "near", 0.01), "Scene3D camera near"),
+      far: numberValue2(field3(value, "far", 1000), "Scene3D camera far"),
+      scale: field3(value, "scale") == null ? null : numberValue2(field3(value, "scale"), "Scene3D camera scale"),
+      orbit: plainValue(field3(value, "orbit"))
+    };
+  }
+  function lightPlan(value, index) {
+    const kind = text7(field3(value, "kind"));
+    return {
+      kind,
+      color: color(field3(value, "color"), "#ffffff"),
+      intensity: numberValue2(field3(value, "intensity", 1), `Scene3D light ${index + 1} intensity`),
+      ...kind === "directional_light" ? { direction: vector(field3(value, "direction"), 3, "Directional light direction") } : {},
+      ...kind === "point_light" ? { position: vector(field3(value, "position"), 3, "Point light position") } : {}
+    };
+  }
+  function createWebGLPlan(scene, options = null) {
+    if (text7(field3(scene, "type")) !== "output" || text7(field3(scene, "kind")) !== "scene3d" || text7(field3(scene, "schema")) !== SCENE_SCHEMA) {
+      throw new Error("webgl accepts a Scene3D scene");
+    }
+    const realized = field3(scene, "realized");
+    if (text7(field3(realized, "schema")) !== REALIZED_SCHEMA) {
+      throw new Error(`webgl requires the public ${REALIZED_SCHEMA} realization on a Scene3D scene`);
+    }
+    const width = numberValue2(option4(options, "width", 640), "WebGL viewport width");
+    const height = numberValue2(option4(options, "height", 480), "WebGL viewport height");
+    if (width <= 0 || height <= 0)
+      throw new Error("WebGL viewport dimensions must be positive");
+    const mode = text7(option4(options, "mode", "solid"), "solid");
+    if (!["solid", "wireframe"].includes(mode))
+      throw new Error("WebGL mode must be 'solid' or 'wireframe'");
+    const primitives = sequence5(field3(realized, "primitives"), "Scene3D realized primitives").map(primitive);
+    const annotations = [];
+    const drawCalls = [];
+    const picking = {};
+    let approximated = false;
+    primitives.forEach((entry, primitiveIndex) => {
+      if (entry.points.some((point3) => point3.some((coordinate) => Math.fround(coordinate) !== coordinate)))
+        approximated = true;
+      if (entry.kind === "annotation") {
+        const annotation = {
+          primitive: primitiveIndex,
+          position: entry.points[0],
+          text: entry.text,
+          color: entry.style.color,
+          opacity: entry.style.opacity,
+          pickId: entry.pickId,
+          label: entry.label,
+          interaction: entry.interaction,
+          policy: entry.annotationPolicy
+        };
+        annotations.push(annotation);
+        if (entry.pickId)
+          picking[entry.pickId] = { kind: "annotation", index: annotations.length - 1, label: entry.label, interaction: entry.interaction };
+        return;
+      }
+      let drawMode;
+      let drawIndices;
+      if (entry.kind === "mesh") {
+        drawMode = mode === "wireframe" ? "lines" : "triangles";
+        drawIndices = (mode === "wireframe" ? entry.segments : entry.triangles).flat();
+      } else if (entry.kind === "lines") {
+        drawMode = "lines";
+        drawIndices = entry.segments.flat();
+      } else if (entry.kind === "points") {
+        drawMode = "points";
+        drawIndices = entry.points.map((_, pointIndex) => pointIndex);
+      } else
+        throw new Error(`WebGL renderer does not support Scene3D primitive '${entry.kind}'`);
+      const call = {
+        primitive: primitiveIndex,
+        mode: drawMode,
+        positions: entry.points,
+        indices: drawIndices,
+        color: [...entry.style.color, entry.style.opacity],
+        lineWidth: entry.style.width,
+        pointSize: entry.radius ?? 1,
+        pickId: entry.pickId,
+        label: entry.label,
+        interaction: entry.interaction
+      };
+      drawCalls.push(call);
+      if (entry.pickId)
+        picking[entry.pickId] = { kind: "drawCall", index: drawCalls.length - 1, label: entry.label, interaction: entry.interaction };
+    });
+    const diagnostics = [];
+    if (approximated)
+      diagnostics.push(diagnostic("webgl-float32-approximation", "Exact Scene3D coordinates are rounded to Float32 when the WebGL plan executes."));
+    if (drawCalls.some(({ mode: drawMode, lineWidth }) => drawMode === "lines" && lineWidth !== 1))
+      diagnostics.push(diagnostic("webgl-line-width-portability", "WebGL implementations may clamp Scene3D line widths to one device pixel.", "info"));
+    if (annotations.length)
+      diagnostics.push(diagnostic("webgl-annotation-overlay", "Scene3D annotations are returned as projected host overlays so text remains accessible and interactive.", "info"));
+    const lights = sequence5(field3(scene, "lights"), "Scene3D lights").map(lightPlan);
+    if (lights.length)
+      diagnostics.push(diagnostic("webgl-flat-material-baseline", "The baseline WebGL executor retains light descriptors but draws portable flat material colors.", "info"));
+    return {
+      schema: "rix.webgl-plan@1",
+      sourceSchema: SCENE_SCHEMA,
+      viewport: { width, height },
+      background: color(option4(options, "background", "#ffffff"), "#ffffff"),
+      coordinateSystem: plainValue(field3(realized, "coordinatesystem")),
+      mode,
+      camera: cameraPlan(field3(scene, "camera")),
+      lights,
+      drawCalls,
+      annotations,
+      picking,
+      diagnostics
+    };
+  }
+
+  // rix/plugins/render-webgl/webgl.plugin.rix.js
+  var definition4 = {
+    target: "webgl",
+    mime: "application/vnd.rix.webgl+json",
+    extension: "webgl.json",
+    aliases: ["application/vnd.rix.webgl+json"],
+    inputKinds: ["scene3d"],
+    deterministic: true,
+    description: "Browser-safe executable WebGL plan for retained Scene3D values",
+    render({ value, options }) {
+      requireOutput(value, ["scene3d"], "webgl");
+      const plan = createWebGLPlan(value, options);
+      return {
+        content: `${JSON.stringify({ ...plan, diagnostics: undefined })}
+`,
+        diagnostics: plan.diagnostics,
+        metadata: {
+          schema: plan.schema,
+          drawCalls: plan.drawCalls.length,
+          annotations: plan.annotations.length
+        }
+      };
+    }
+  };
+  function install8(api) {
+    return installRendererPlugin({ ...api, definition: definition4 });
   }
 
   // rix/plugins/render-tikz/tikz-renderer.js
@@ -51038,24 +57587,24 @@ ndNamespace._proto={=
     })[character]);
   }
   function tikzColor(value) {
-    const color = rixString4(value);
-    if (!color)
+    const color2 = rixString4(value);
+    if (!color2)
       return null;
-    const hex = color.match(/^#([0-9a-f]{6})$/i);
+    const hex = color2.match(/^#([0-9a-f]{6})$/i);
     if (hex) {
-      const number = Number.parseInt(hex[1], 16);
-      return `{rgb,255:red,${number >> 16};green,${number >> 8 & 255};blue,${number & 255}}`;
+      const number2 = Number.parseInt(hex[1], 16);
+      return `{rgb,255:red,${number2 >> 16};green,${number2 >> 8 & 255};blue,${number2 & 255}}`;
     }
-    return /^[A-Za-z][A-Za-z0-9]*$/.test(color) ? color : "black";
+    return /^[A-Za-z][A-Za-z0-9]*$/.test(color2) ? color2 : "black";
   }
-  function tikzStyle(style, defaultFill = null) {
+  function tikzStyle(style3, defaultFill = null) {
     const values3 = [];
-    const stroke = tikzColor(styleValue2(style, "stroke"));
-    const fillSource = rixString4(styleValue2(style, "fill"));
-    const fill = fillSource === "none" ? null : tikzColor(styleValue2(style, "fill")) || defaultFill;
-    const width = styleValue2(style, "width", styleValue2(style, "strokeWidth"));
-    const opacity = styleValue2(style, "opacity");
-    const dash = rixString4(styleValue2(style, "dash"));
+    const stroke = tikzColor(styleValue2(style3, "stroke"));
+    const fillSource = rixString4(styleValue2(style3, "fill"));
+    const fill = fillSource === "none" ? null : tikzColor(styleValue2(style3, "fill")) || defaultFill;
+    const width = styleValue2(style3, "width", styleValue2(style3, "strokeWidth"));
+    const opacity = styleValue2(style3, "opacity");
+    const dash = rixString4(styleValue2(style3, "dash"));
     if (stroke)
       values3.push(`draw=${stroke}`);
     else
@@ -51073,22 +57622,22 @@ ndNamespace._proto={=
     }
     return values3.join(",");
   }
-  function styleObject(style) {
-    if (style instanceof Map)
-      return Object.fromEntries(style);
-    if (style?.type === "map" && style.entries instanceof Map)
-      return Object.fromEntries(style.entries);
-    return style && typeof style === "object" ? style : {};
+  function styleObject(style3) {
+    if (style3 instanceof Map)
+      return Object.fromEntries(style3);
+    if (style3?.type === "map" && style3.entries instanceof Map)
+      return Object.fromEntries(style3.entries);
+    return style3 && typeof style3 === "object" ? style3 : {};
   }
   function mergedStyle3(parent, own) {
     return { ...parent, ...styleObject(own) };
   }
   function destination(command, index) {
-    return point(field3(command, "to"), `Path command ${index + 1} destination`);
+    return point2(field3(command, "to"), `Path command ${index + 1} destination`);
   }
   function pathSource(node, path2) {
     if (!node.commands) {
-      const coordinates = node.points.map((entry, index) => point(entry, `Path point ${index + 1}`));
+      const coordinates = node.points.map((entry, index) => point2(entry, `Path point ${index + 1}`));
       const suffix = boolValue(styleValue2(node.style, "closed", false)) ? " -- cycle" : "";
       return coordinates.map(([x, y], index) => `${index ? " -- " : ""}(${stableNumber(x)},${stableNumber(y)})`).join("") + suffix;
     }
@@ -51113,7 +57662,7 @@ ndNamespace._proto={=
       if (["quadratic", "quad", "q"].includes(op)) {
         if (!current)
           throw new UnsupportedRenderError(`${path2}: quadratic command has no current point`, { target: "tikz" });
-        const [cx, cy] = point(field3(command, "control"), `Path command ${index + 1} control`);
+        const [cx, cy] = point2(field3(command, "control"), `Path command ${index + 1} control`);
         const [x, y] = destination(command, index);
         const control1 = [current[0] + (cx - current[0]) * 2 / 3, current[1] + (cy - current[1]) * 2 / 3];
         const control2 = [x + (cx - x) * 2 / 3, y + (cy - y) * 2 / 3];
@@ -51122,8 +57671,8 @@ ndNamespace._proto={=
         return;
       }
       if (["cubic", "curve", "c"].includes(op)) {
-        const [c1x, c1y] = point(field3(command, "control1"), `Path command ${index + 1} control1`);
-        const [c2x, c2y] = point(field3(command, "control2"), `Path command ${index + 1} control2`);
+        const [c1x, c1y] = point2(field3(command, "control1"), `Path command ${index + 1} control1`);
+        const [c2x, c2y] = point2(field3(command, "control2"), `Path command ${index + 1} control2`);
         const [x, y] = destination(command, index);
         parts.push(` .. controls (${stableNumber(c1x)},${stableNumber(c1y)}) and (${stableNumber(c2x)},${stableNumber(c2y)}) .. (${stableNumber(x)},${stableNumber(y)})`);
         current = [x, y];
@@ -51147,19 +57696,19 @@ ndNamespace._proto={=
   function scopeOptions(node) {
     const values3 = [];
     if (node.translate !== null && node.translate !== undefined) {
-      const [x, y] = point(node.translate, "Transform translate");
+      const [x, y] = point2(node.translate, "Transform translate");
       values3.push(`shift={(${stableNumber(x)}pt,${stableNumber(y)}pt)}`);
     }
     if (node.rotate !== null && node.rotate !== undefined) {
       const angle = stableNumber(node.rotate, "Transform rotate");
       if (node.origin !== null && node.origin !== undefined) {
-        const [x, y] = point(node.origin, "Transform origin");
+        const [x, y] = point2(node.origin, "Transform origin");
         values3.push(`rotate around={${angle}:(${stableNumber(x)},${stableNumber(y)})}`);
       } else
         values3.push(`rotate=${angle}`);
     }
     if (node.scale !== null && node.scale !== undefined) {
-      const scale2 = Array.isArray(node.scale) || node.scale?.values ? point(node.scale, "Transform scale") : [numberValue2(node.scale, "Transform scale"), numberValue2(node.scale, "Transform scale")];
+      const scale2 = Array.isArray(node.scale) || node.scale?.values ? point2(node.scale, "Transform scale") : [numberValue2(node.scale, "Transform scale"), numberValue2(node.scale, "Transform scale")];
       values3.push(`xscale=${stableNumber(scale2[0])}`, `yscale=${stableNumber(scale2[1])}`);
     }
     return values3.join(",");
@@ -51171,23 +57720,23 @@ ndNamespace._proto={=
     if (node.kind === "path")
       return `\\path[${tikzStyle(resolvedStyle)}] ${pathSource(node, path2)};`;
     if (node.kind === "rectangle") {
-      const [x, y] = point(node.origin, `${path2} origin`);
-      const [width, height] = point(node.size, `${path2} size`);
+      const [x, y] = point2(node.origin, `${path2} origin`);
+      const [width, height] = point2(node.size, `${path2} size`);
       return `\\path[${tikzStyle(resolvedStyle)}] (${stableNumber(x)},${stableNumber(y)}) rectangle (${stableNumber(x + width)},${stableNumber(y + height)});`;
     }
     if (node.kind === "circle" || node.kind === "drag_point") {
-      const [x, y] = point(node.center, `${path2} center`);
+      const [x, y] = point2(node.center, `${path2} center`);
       if (node.kind === "drag_point")
         state.diagnostics.push(diagnostic("tikz-static-drag-point", "TikZ renders DragPoint as a static circle", "info", path2));
       return `\\path[${tikzStyle(resolvedStyle, node.kind === "drag_point" ? tikzColor("#7c3aed") : null)}] (${stableNumber(x)},${stableNumber(y)}) circle[radius=${stableNumber(node.radius, `${path2} radius`)}pt];`;
     }
     if (node.kind === "text_mark") {
-      const [x, y] = point(node.position, `${path2} position`);
-      const anchor = rixString4(styleValue2(resolvedStyle, "anchor"));
+      const [x, y] = point2(node.position, `${path2} position`);
+      const anchor2 = rixString4(styleValue2(resolvedStyle, "anchor"));
       const fill = tikzColor(styleValue2(resolvedStyle, "fill"));
       const size = styleValue2(resolvedStyle, "size", styleValue2(resolvedStyle, "fontSize"));
       const options = [
-        anchor === "middle" ? "anchor=center" : anchor === "end" ? "anchor=east" : "anchor=west",
+        anchor2 === "middle" ? "anchor=center" : anchor2 === "end" ? "anchor=east" : "anchor=west",
         fill ? `text=${fill}` : null,
         size ? `font=\\fontsize{${stableNumber(size, `${path2} font size`)}}{${stableNumber(numberValue2(size, `${path2} font size`) * 1.2)}}\\selectfont` : null
       ].filter(Boolean).join(",");
@@ -51197,8 +57746,8 @@ ndNamespace._proto={=
       const options = node.kind === "transform" ? scopeOptions(node) : "";
       const lines = [`\\begin{scope}${options ? `[${options}]` : ""}`];
       if (node.kind === "clip") {
-        const bounds = node.bounds.map((entry, index) => numberValue2(entry, `${path2} clip bound ${index + 1}`));
-        lines.push(`\\clip (${stableNumber(bounds[0])},${stableNumber(bounds[1])}) rectangle (${stableNumber(bounds[0] + bounds[2])},${stableNumber(bounds[1] + bounds[3])});`);
+        const bounds2 = node.bounds.map((entry, index) => numberValue2(entry, `${path2} clip bound ${index + 1}`));
+        lines.push(`\\clip (${stableNumber(bounds2[0])},${stableNumber(bounds2[1])}) rectangle (${stableNumber(bounds2[0] + bounds2[2])},${stableNumber(bounds2[1] + bounds2[3])});`);
       }
       node.children.forEach((child, index) => lines.push(renderNode2(child, state, format, `${path2}.${node.kind}[${index + 1}]`, resolvedStyle)));
       lines.push("\\end{scope}");
@@ -51228,7 +57777,7 @@ ${body}
   }
 
   // rix/plugins/render-tikz/tikz.plugin.rix.js
-  var definition4 = {
+  var definition5 = {
     target: "tikz",
     mime: "text/x-tikz",
     extension: "tikz",
@@ -51245,8 +57794,8 @@ ${body}
   function boolOption(value) {
     return value?.value === 1n || value === true || value === 1;
   }
-  function install8(api) {
-    return installRendererPlugin({ ...api, definition: definition4 });
+  function install9(api) {
+    return installRendererPlugin({ ...api, definition: definition5 });
   }
 
   // rix/plugins/renderers/document-renderers.js
@@ -51686,9 +58235,9 @@ ${makeTitle}${body.trim()}
     const lines = [];
     for (const key of keys) {
       const value = field3(metadata3, key);
-      const text7 = rixString4(value) ?? (typeof value === "string" ? value : null);
-      if (text7 !== null)
-        lines.push(`${key}: ${JSON.stringify(text7)}`);
+      const text8 = rixString4(value) ?? (typeof value === "string" ? value : null);
+      if (text8 !== null)
+        lines.push(`${key}: ${JSON.stringify(text8)}`);
     }
     if (!lines.some((line2) => line2.startsWith("format:")))
       lines.push("format: html");
@@ -51701,7 +58250,7 @@ ${lines.join(`
   }
 
   // rix/plugins/render-markdown/markdown.plugin.rix.js
-  var definition5 = {
+  var definition6 = {
     target: "markdown",
     mime: "text/markdown",
     extension: "md",
@@ -51713,8 +58262,8 @@ ${lines.join(`
       return renderMarkdown(value, { format, render });
     }
   };
-  function install9(api) {
-    return installRendererPlugin({ ...api, definition: definition5 });
+  function install10(api) {
+    return installRendererPlugin({ ...api, definition: definition6 });
   }
 
   // rix/plugins/render-html/html.plugin.rix.js
@@ -51735,7 +58284,7 @@ ${lines.join(`
     for (const snapshot of value.snapshots || [])
       staticDiagnostics(snapshot.content, diagnostics, seen);
   }
-  var definition6 = {
+  var definition7 = {
     target: "html",
     mime: "text/html",
     extension: "html",
@@ -51745,20 +58294,20 @@ ${lines.join(`
     description: "Standalone semantic HTML renderer for portable RiX output trees",
     render({ value, options, format }) {
       const title = rixString4(option4(options, "title")) || "RiX output";
-      const style = rixString4(option4(options, "style")) || DEFAULT_STYLE;
+      const style3 = rixString4(option4(options, "style")) || DEFAULT_STYLE;
       const body = renderOutputHtml(value, format);
       const diagnostics = [];
       staticDiagnostics(value, diagnostics);
       return {
         content: `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml2(title)}</title><style>${style}</style></head><body><main>${body}</main></body></html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml2(title)}</title><style>${style3}</style></head><body><main>${body}</main></body></html>
 `,
         diagnostics
       };
     }
   };
-  function install10(api) {
-    return installRendererPlugin({ ...api, definition: definition6 });
+  function install11(api) {
+    return installRendererPlugin({ ...api, definition: definition7 });
   }
 
   // rix/plugins/render-quarto/quarto.plugin.rix.js
@@ -51779,7 +58328,7 @@ ${lines.join(`
     }
     return directory.replace(/\/$/, "");
   }
-  var definition7 = {
+  var definition8 = {
     target: "quarto",
     mime: "text/x-quarto",
     extension: "qmd",
@@ -51807,12 +58356,12 @@ ${lines.join(`
       return { ...rendered, assets, content: `${quartoFrontMatter(options)}${rendered.content}` };
     }
   };
-  function install11(api) {
-    return installRendererPlugin({ ...api, definition: definition7 });
+  function install12(api) {
+    return installRendererPlugin({ ...api, definition: definition8 });
   }
 
   // rix/plugins/render-latex/latex.plugin.rix.js
-  var definition8 = {
+  var definition9 = {
     target: "latex",
     mime: "text/x-tex",
     extension: "tex",
@@ -51829,8 +58378,8 @@ ${lines.join(`
       });
     }
   };
-  function install12(api) {
-    return installRendererPlugin({ ...api, definition: definition8 });
+  function install13(api) {
+    return installRendererPlugin({ ...api, definition: definition9 });
   }
 
   // rix/plugins/render-png/png.plugin.rix.js
@@ -51840,7 +58389,7 @@ ${lines.join(`
       mime: "image/png",
       extension: "png",
       aliases: ["image/png"],
-      inputKinds: ["graphic", "figure"],
+      inputKinds: ["graphic", "figure", "scene3d_snapshot"],
       deterministic: true,
       description: "PNG snapshot renderer for core Graphics through a host rasterizer",
       render({ value, options, format }) {
@@ -51850,12 +58399,16 @@ ${lines.join(`
             target: "png"
           });
         }
-        const { value: graphic } = unwrapFigure(value);
+        const { value: graphic, snapshot } = unwrapGraphic(value);
         requireOutput(graphic, ["graphic"], "png");
         const scale2 = option4(options, "scale", 1);
         const width = option4(options, "width");
         const height = option4(options, "height");
-        const rendered = rasterizeSvg(renderGraphicSvg(graphic, format), {
+        const coordinateLowering = lowerGraphicSvg(graphic, format, {
+          precision: numberValue2(option4(options, "precision", 6), "PNG/SVG coordinate precision"),
+          rounding: rixString4(option4(options, "rounding", "nearest")) || option4(options, "rounding", "nearest")
+        });
+        const rendered = rasterizeSvg(coordinateLowering.content, {
           width: width === null ? Math.round(numberValue2(graphic.size[0], "Graphic width") * numberValue2(scale2, "PNG scale")) : numberValue2(width, "PNG width"),
           height: height === null ? Math.round(numberValue2(graphic.size[1], "Graphic height") * numberValue2(scale2, "PNG scale")) : numberValue2(height, "PNG height"),
           background: rixString4(option4(options, "background"))
@@ -51863,13 +58416,23 @@ ${lines.join(`
         return {
           content: rendered.content,
           toolchain: rendered.toolchain,
-          diagnostics: rendered.diagnostics || [],
-          metadata: { width: rendered.width, height: rendered.height }
+          diagnostics: [...coordinateLowering.diagnostics, ...rendered.diagnostics || []],
+          metadata: {
+            width: rendered.width,
+            height: rendered.height,
+            coordinateLowering: coordinateLowering.metadata,
+            ...snapshot ? {
+              scene3d: {
+                schema: "rix.scene3d.snapshot@1",
+                source: plainValue(field3(snapshot, "source"))
+              }
+            } : {}
+          }
         };
       }
     };
   }
-  function install13(api) {
+  function install14(api) {
     return installRendererPlugin({ ...api, definition: createDefinition(api.rasterizeSvg) });
   }
 
@@ -51905,33 +58468,33 @@ ${lines.join(`
       }
     };
   }
-  function install14(api) {
+  function install15(api) {
     return installRendererPlugin({ ...api, definition: createDefinition2(api.compileLatex) });
   }
 
   // rix/plugins/render-gltf/gltf-renderer.js
   var SCENE3D_SCHEMA = "rix.scene3d@1";
-  var REALIZED_SCHEMA = "rix.scene3d.realized@1";
-  function text7(value, fallback = null) {
+  var REALIZED_SCHEMA2 = "rix.scene3d.realized@1";
+  function text8(value, fallback = null) {
     return rixString4(value) ?? (typeof value === "string" ? value : fallback);
   }
   function portableScene(scene) {
-    return text7(field3(scene, "type")) === "output" && text7(field3(scene, "kind")) === "scene3d" && text7(field3(scene, "schema")) === SCENE3D_SCHEMA;
+    return text8(field3(scene, "type")) === "output" && text8(field3(scene, "kind")) === "scene3d" && text8(field3(scene, "schema")) === SCENE3D_SCHEMA;
   }
   function primitiveRecord(value, index) {
-    const points = sequence4(field3(value, "points"), `Scene3D primitive ${index + 1} points`).map((point2, pointIndex) => sequence4(point2, `Scene3D primitive ${index + 1} point ${pointIndex + 1}`).map((coordinate, coordinateIndex) => numberValue2(coordinate, `Scene3D coordinate ${coordinateIndex + 1}`)));
-    const indices = (name) => sequence4(field3(value, name, { type: "sequence", values: [] }), `Scene3D primitive ${index + 1} ${name}`).map((entry) => sequence4(entry, `Scene3D primitive ${index + 1} ${name} entry`).map((item) => numberValue2(item, `Scene3D ${name} index`) - 1));
+    const points = sequence5(field3(value, "points"), `Scene3D primitive ${index + 1} points`).map((point3, pointIndex) => sequence5(point3, `Scene3D primitive ${index + 1} point ${pointIndex + 1}`).map((coordinate, coordinateIndex) => numberValue2(coordinate, `Scene3D coordinate ${coordinateIndex + 1}`)));
+    const indices2 = (name) => sequence5(field3(value, name, { type: "sequence", values: [] }), `Scene3D primitive ${index + 1} ${name}`).map((entry) => sequence5(entry, `Scene3D primitive ${index + 1} ${name} entry`).map((item) => numberValue2(item, `Scene3D ${name} index`) - 1));
     const styleValue3 = field3(value, "style");
     return {
-      kind: text7(field3(value, "kind")),
-      pickid: text7(field3(value, "pickid")),
-      label: text7(field3(value, "label")),
+      kind: text8(field3(value, "kind")),
+      pickid: text8(field3(value, "pickid")),
+      label: text8(field3(value, "label")),
       points,
-      segments: indices("segments"),
-      triangles: indices("triangles"),
+      segments: indices2("segments"),
+      triangles: indices2("triangles"),
       radius: field3(value, "radius"),
       style: {
-        color: text7(field3(styleValue3, "color"), "#275dad"),
+        color: text8(field3(styleValue3, "color"), "#275dad"),
         opacity: field3(styleValue3, "opacity", 1),
         width: field3(styleValue3, "width", 1)
       }
@@ -51939,13 +58502,13 @@ ${lines.join(`
   }
   function realizedPrimitives(scene) {
     const realized = field3(scene, "realized");
-    if (text7(field3(realized, "schema")) !== REALIZED_SCHEMA) {
-      throw new Error(`gltf requires the public ${REALIZED_SCHEMA} realization on a Scene3D scene`);
+    if (text8(field3(realized, "schema")) !== REALIZED_SCHEMA2) {
+      throw new Error(`gltf requires the public ${REALIZED_SCHEMA2} realization on a Scene3D scene`);
     }
-    return sequence4(field3(realized, "primitives"), "Scene3D realized primitives").map(primitiveRecord);
+    return sequence5(field3(realized, "primitives"), "Scene3D realized primitives").map(primitiveRecord);
   }
-  function rgba(color, opacity = 1) {
-    const match = /^#([0-9a-f]{6}|[0-9a-f]{3})$/i.exec(color || "");
+  function rgba(color2, opacity = 1) {
+    const match = /^#([0-9a-f]{6}|[0-9a-f]{3})$/i.exec(color2 || "");
     if (!match)
       return [0.153, 0.365, 0.678, opacity];
     const hex = match[1].length === 3 ? [...match[1]].map((item) => item + item).join("") : match[1];
@@ -51996,31 +58559,31 @@ ${lines.join(`
     if (!portableScene(scene))
       throw new Error("gltf accepts a Scene3D scene");
     const primitives = realizedPrimitives(scene);
-    const annotations = primitives.filter((primitive) => primitive.kind === "annotation");
-    const exportedPrimitives = primitives.filter((primitive) => primitive.kind !== "annotation");
+    const annotations = primitives.filter((primitive2) => primitive2.kind === "annotation");
+    const exportedPrimitives = primitives.filter((primitive2) => primitive2.kind !== "annotation");
     const chunks = [];
     const records = [];
     let approximated = false;
-    for (const primitive of exportedPrimitives) {
-      const positions = primitive.points.map(zUpToYUp);
-      if (positions.some((point2) => point2.some((value) => Math.fround(value) !== value)))
+    for (const primitive2 of exportedPrimitives) {
+      const positions = primitive2.points.map(zUpToYUp);
+      if (positions.some((point3) => point3.some((value) => Math.fround(value) !== value)))
         approximated = true;
       const flatPositions = positions.flat();
-      let indices;
+      let indices2;
       let mode;
-      if (primitive.kind === "mesh") {
-        indices = primitive.triangles.flat();
+      if (primitive2.kind === "mesh") {
+        indices2 = primitive2.triangles.flat();
         mode = 4;
-      } else if (primitive.kind === "lines") {
-        indices = primitive.segments.flat();
+      } else if (primitive2.kind === "lines") {
+        indices2 = primitive2.segments.flat();
         mode = 1;
       } else {
-        indices = positions.map((_, index) => index);
+        indices2 = positions.map((_, index) => index);
         mode = 0;
       }
       const positionChunk = chunks.push(floatBytes(flatPositions)) - 1;
-      const indexChunk = chunks.push(uintBytes(indices)) - 1;
-      records.push({ primitive, positions, indices, mode, positionChunk, indexChunk });
+      const indexChunk = chunks.push(uintBytes(indices2)) - 1;
+      records.push({ primitive: primitive2, positions, indices: indices2, mode, positionChunk, indexChunk });
     }
     const encoded = encodeBuffer(chunks);
     const gltf = {
@@ -52042,17 +58605,17 @@ ${lines.join(`
       }
     };
     records.forEach((record, index) => {
-      const style = record.primitive.style;
-      const opacity = numberValue2(style?.opacity ?? 1, "Scene3D material opacity");
+      const style3 = record.primitive.style;
+      const opacity = numberValue2(style3?.opacity ?? 1, "Scene3D material opacity");
       const material = gltf.materials.push({
         name: `RiX material ${index + 1}`,
-        pbrMetallicRoughness: { baseColorFactor: rgba(style?.color, opacity), metallicFactor: 0, roughnessFactor: 1 },
+        pbrMetallicRoughness: { baseColorFactor: rgba(style3?.color, opacity), metallicFactor: 0, roughnessFactor: 1 },
         alphaMode: opacity < 1 ? "BLEND" : "OPAQUE",
         doubleSided: true
       }) - 1;
-      const xs = record.positions.map((point2) => point2[0]);
-      const ys = record.positions.map((point2) => point2[1]);
-      const zs = record.positions.map((point2) => point2[2]);
+      const xs = record.positions.map((point3) => point3[0]);
+      const ys = record.positions.map((point3) => point3[1]);
+      const zs = record.positions.map((point3) => point3[2]);
       const positionAccessor = gltf.accessors.push({
         bufferView: record.positionChunk,
         componentType: 5126,
@@ -52077,9 +58640,9 @@ ${lines.join(`
     const diagnostics = [];
     if (approximated)
       diagnostics.push(diagnostic("gltf-float32-approximation", "Exact Scene3D coordinates were rounded to glTF Float32 positions at export."));
-    if (primitives.some((primitive) => primitive.kind === "lines"))
+    if (primitives.some((primitive2) => primitive2.kind === "lines"))
       diagnostics.push(diagnostic("gltf-line-width-portability", "glTF line primitives do not portably preserve Scene3D line widths.", "info"));
-    if (sequence4(field3(scene, "lights"), "Scene3D lights").length)
+    if (sequence5(field3(scene, "lights"), "Scene3D lights").length)
       diagnostics.push(diagnostic("gltf-lights-not-exported", "Scene3D lights are retained by the scene but are not exported in glTF phase 1.", "info"));
     if (annotations.length)
       diagnostics.push(diagnostic("gltf-annotations-not-exported", `${annotations.length} Scene3D annotation${annotations.length === 1 ? " was" : "s were"} retained but not exported because core glTF 2.0 has no portable text primitive.`, "info"));
@@ -52088,7 +58651,7 @@ ${lines.join(`
   }
 
   // rix/plugins/render-gltf/gltf.plugin.rix.js
-  var definition9 = {
+  var definition10 = {
     target: "gltf",
     mime: "model/gltf+json",
     extension: "gltf",
@@ -52101,8 +58664,8 @@ ${lines.join(`
       return exportSceneGltf(value, { pretty: options?.pretty !== false });
     }
   };
-  function install15(api) {
-    return installRendererPlugin({ ...api, definition: definition9 });
+  function install16(api) {
+    return installRendererPlugin({ ...api, definition: definition10 });
   }
 
   // rix/plugins/render-csv/csv-renderer.js
@@ -52211,8 +58774,8 @@ ${lines.join(`
       return String(value);
     throw new Error(`csv cells must be missing, strings, or exact numeric scalars; received ${value?.type || typeof value}`);
   }
-  function quote(text8, delimiter) {
-    const source = String(text8);
+  function quote(text9, delimiter) {
+    const source = String(text9);
     return source.includes(delimiter) || /["\r\n]/.test(source) ? `"${source.replaceAll('"', '""')}"` : source;
   }
   function renderCsv(value, { options = {}, requestedTarget = "csv" } = {}) {
@@ -52252,7 +58815,7 @@ ${lines.join(`
   }
 
   // rix/plugins/render-csv/csv.plugin.rix.js
-  var definition10 = {
+  var definition11 = {
     target: "csv",
     mime: "text/csv",
     extension: "csv",
@@ -52264,18 +58827,18 @@ ${lines.join(`
       return renderCsv(value, { options, requestedTarget });
     }
   };
-  function install16(api) {
-    return installRendererPlugin({ ...api, definition: definition10 });
+  function install17(api) {
+    return installRendererPlugin({ ...api, definition: definition11 });
   }
 
   // rix/plugins/render-gif/gif.plugin.rix.js
   function integerOption2(value, label2, fallback) {
     if (value === null || value === undefined)
       return fallback;
-    const number = numberValue2(value, label2);
-    if (!Number.isInteger(number) || number < 0)
+    const number2 = numberValue2(value, label2);
+    if (!Number.isInteger(number2) || number2 < 0)
       throw new Error(`${label2} must be a nonnegative Integer`);
-    return number;
+    return number2;
   }
   function positiveSeconds(value, label2) {
     const seconds = numberValue2(value, label2);
@@ -52332,7 +58895,7 @@ ${lines.join(`
   function frameDelays(value, frames, options) {
     const explicit = option4(options, "delays");
     if (explicit !== null) {
-      const values3 = sequence4(explicit, "GIF delays");
+      const values3 = sequence5(explicit, "GIF delays");
       if (values3.length !== frames.length)
         throw new Error("GIF delays must contain one duration per frame");
       return values3.map((entry, index) => centiseconds(positiveSeconds(entry, `GIF delay ${index + 1}`)));
@@ -52388,7 +58951,7 @@ ${lines.join(`
       }
     };
   }
-  function install17(api) {
+  function install18(api) {
     return installRendererPlugin({ ...api, definition: createDefinition3(api.encodeGif) });
   }
 
@@ -52463,8 +59026,10 @@ ${lines.join(`
       install: install2
     },
     { metadata: readPluginHeader(symbolic_plugin_default, "symbolic.plugin.rix"), source: symbolic_plugin_default, sourcePath: "bundled:symbolic.plugin.rix" },
+    { metadata: readPluginHeader(calculus_plugin_default, "calculus.plugin.rix"), source: calculus_plugin_default, sourcePath: "bundled:calculus.plugin.rix" },
     { metadata: readPluginHeader(stats_plugin_default, "stats.plugin.rix"), source: stats_plugin_default, sourcePath: "bundled:stats.plugin.rix" },
     { metadata: readPluginHeader(complex_viz_plugin_default, "complex-viz.plugin.rix"), source: complex_viz_plugin_default, sourcePath: "bundled:complex-viz.plugin.rix" },
+    { metadata: readPluginHeader(fractals_plugin_default, "fractals.plugin.rix"), source: fractals_plugin_default, sourcePath: "bundled:fractals.plugin.rix" },
     {
       metadata: readPluginHeader(algebra_plugin_default, "algebra.plugin.rix"),
       source: algebra_plugin_default,
@@ -52476,7 +59041,24 @@ ${lines.join(`
         description: "Convenient 2D drawing helpers that produce core Graphics nodes.",
         kind: "host",
         mount: "draw",
-        exports: ["Line", "Polygon", "Label", "Box", "Circle"],
+        exports: [
+          "Line",
+          "Polyline",
+          "Polygon",
+          "Arrow",
+          "Arc",
+          "Ellipse",
+          "Dimension",
+          "Grid",
+          "Label",
+          "Box",
+          "Circle",
+          "Style",
+          "Viewport",
+          "ViewportPoint",
+          "Bounds",
+          "Anchor"
+        ],
         groups: ["Draw"],
         permissions: [],
         defaultEnabled: false
@@ -52541,20 +59123,56 @@ ${lines.join(`
       },
       install: install5
     },
+    {
+      metadata: {
+        id: "svg",
+        description: "Portable SVG renderer with outward-safe exact-coordinate lowering.",
+        kind: "host",
+        mount: "svg",
+        exports: ["Render"],
+        groups: ["Renderers"],
+        permissions: [],
+        provides: ["rix.renderer.svg@1", "rix.svg.coordinate-lowering@1"],
+        schemas: ["rix.svg.coordinate-lowering@1"],
+        targets: ["svg", "image/svg+xml"],
+        snapshot: true,
+        deterministic: true,
+        defaultEnabled: false
+      },
+      install: install6
+    },
+    {
+      metadata: {
+        id: "webgl",
+        description: "Executable WebGL drawing plans for retained Scene3D values.",
+        kind: "host",
+        mount: "webgl",
+        exports: ["Render"],
+        groups: ["Renderers", "Scene3D"],
+        permissions: [],
+        requires: ["rix.scene3d@1"],
+        provides: ["rix.renderer.webgl@1", "rix.webgl-plan@1"],
+        schemas: ["rix.webgl-plan@1"],
+        targets: ["webgl", "application/vnd.rix.webgl+json"],
+        snapshot: true,
+        deterministic: true,
+        defaultEnabled: false
+      },
+      install: install8
+    },
     ...[
-      ["svg", "Portable SVG renderer for core Graphics scenes.", "svg", ["Render"], [], install6, "image/svg+xml", true],
       ["canvas", "Serializable Canvas 2D drawing plans for core Graphics scenes.", "canvas", ["Render"], [], install7, "application/vnd.rix.canvas+json", true],
-      ["tikz", "Editable TikZ/PGF source renderer for core Graphics scenes.", "tikz", ["Render"], [], install8, "text/x-tikz", true],
-      ["markdown", "CommonMark-oriented renderer for portable RiX documents.", "markdown", ["Render"], [], install9, "text/markdown", true],
-      ["html", "Standalone semantic HTML renderer for portable RiX output trees.", "html", ["Render"], [], install10, "text/html", true],
-      ["quarto", "Quarto Markdown renderer with front matter and portable figure lowering.", "quarto", ["Render"], [], install11, "text/x-quarto", true],
-      ["latex", "Standalone LaTeX renderer for portable RiX documents and figures.", "latex", ["Render"], [], install12, "text/x-tex", true],
-      ["png", "PNG snapshot renderer for core Graphics through a host rasterizer.", "png", ["Render"], ["process"], install13, "image/png", true],
-      ["pdf", "PDF document and figure renderer orchestrated through LaTeX.", "pdf", ["Render"], ["process", "files"], install14, "application/pdf", false],
-      ["gltf", "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", "gltf", ["Render"], [], install15, "model/gltf+json", true],
-      ["csv", "Deterministic CSV and TSV export for portable Tables and typed data Relations.", "csv", ["Render"], [], install16, "text/csv", true, ["tsv", "text/tab-separated-values"], ["Renderers", "Data"]],
-      ["gif", "Deterministic animated GIF rendering from Slides, Timelines, or Snapshots through PNG frames.", "gif", ["Render"], ["process", "files"], install17, "image/gif", true, [], ["Renderers"], ["rix.renderer.png@1"]]
-    ].map(([id, description, mount, exports, permissions, install18, mime, deterministic, aliases = [], groups = ["Renderers"], requires = []]) => ({
+      ["tikz", "Editable TikZ/PGF source renderer for core Graphics scenes.", "tikz", ["Render"], [], install9, "text/x-tikz", true],
+      ["markdown", "CommonMark-oriented renderer for portable RiX documents.", "markdown", ["Render"], [], install10, "text/markdown", true],
+      ["html", "Standalone semantic HTML renderer for portable RiX output trees.", "html", ["Render"], [], install11, "text/html", true],
+      ["quarto", "Quarto Markdown renderer with front matter and portable figure lowering.", "quarto", ["Render"], [], install12, "text/x-quarto", true],
+      ["latex", "Standalone LaTeX renderer for portable RiX documents and figures.", "latex", ["Render"], [], install13, "text/x-tex", true],
+      ["png", "PNG snapshot renderer for core Graphics through a host rasterizer.", "png", ["Render"], ["process"], install14, "image/png", true],
+      ["pdf", "PDF document and figure renderer orchestrated through LaTeX.", "pdf", ["Render"], ["process", "files"], install15, "application/pdf", false],
+      ["gltf", "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", "gltf", ["Render"], [], install16, "model/gltf+json", true],
+      ["csv", "Deterministic CSV and TSV export for portable Tables and typed data Relations.", "csv", ["Render"], [], install17, "text/csv", true, ["tsv", "text/tab-separated-values"], ["Renderers", "Data"]],
+      ["gif", "Deterministic animated GIF rendering from Slides, Timelines, or Snapshots through PNG frames.", "gif", ["Render"], ["process", "files"], install18, "image/gif", true, [], ["Renderers"], ["rix.renderer.png@1"]]
+    ].map(([id, description, mount, exports, permissions, install19, mime, deterministic, aliases = [], groups = ["Renderers"], requires = []]) => ({
       metadata: {
         id,
         description,
@@ -52570,25 +59188,25 @@ ${lines.join(`
         deterministic,
         defaultEnabled: false
       },
-      install: install18
+      install: install19
     }))
   ];
   function installBundledPlugins(catalog) {
-    for (const { metadata: metadata3, install: install18, source, sourcePath } of BUNDLED_PLUGINS) {
+    for (const { metadata: metadata3, install: install19, source, sourcePath } of BUNDLED_PLUGINS) {
       if (catalog.info(metadata3.id))
         continue;
       if (source) {
         catalog.addMetadata(metadata3, { kind: "rix", source, sourcePath });
       } else {
         catalog.addMetadata(metadata3, { kind: "host" });
-        catalog.registerInstaller(metadata3.id, install18);
+        catalog.registerInstaller(metadata3.id, install19);
       }
     }
     return catalog;
   }
 
   // rix/src/eval/functions/units.js
-  function int9(value) {
+  function int10(value) {
     return new Integer(BigInt(value));
   }
   function stringValue8(value, label2) {
@@ -52658,7 +59276,7 @@ ${lines.join(`
         if (!match)
           throw new Error(`Expected integer exponent in exact expression '${source}'`);
         index += match[0].length;
-        value = powScalar(value, int9(match[0]));
+        value = powScalar(value, int10(match[0]));
       }
       return value;
     }
@@ -52686,10 +59304,10 @@ ${lines.join(`
     if (isScalar(left) && isUnitValue(right))
       return constructQuantity(left, right);
     if (isQuantity(left) && isUnitValue(right)) {
-      return multiplyQuantityValues(left, constructQuantity(int9(1), right));
+      return multiplyQuantityValues(left, constructQuantity(int10(1), right));
     }
     if (isUnitValue(left) && isQuantity(right)) {
-      return multiplyQuantityValues(constructQuantity(int9(1), left), right);
+      return multiplyQuantityValues(constructQuantity(int10(1), left), right);
     }
     return multiplyQuantityValues(left, right);
   }
@@ -52699,21 +59317,21 @@ ${lines.join(`
     if (isScalar(left) && isUnitValue(right))
       return constructQuantity(left, invertUnit(right));
     if (isUnitValue(left) && isScalar(right))
-      return constructQuantity(divideScalars(int9(1), right), left);
+      return constructQuantity(divideScalars(int10(1), right), left);
     if (isQuantity(left) && isUnitValue(right)) {
-      return divideQuantityValues(left, constructQuantity(int9(1), right));
+      return divideQuantityValues(left, constructQuantity(int10(1), right));
     }
     if (isUnitValue(left) && isQuantity(right)) {
-      return divideQuantityValues(constructQuantity(int9(1), left), right);
+      return divideQuantityValues(constructQuantity(int10(1), left), right);
     }
     return divideQuantityValues(left, right);
   }
   function resolveTargetUnit(target, context, systemContext) {
     if (isUnitValue(target))
       return target;
-    const text8 = stringValue8(target, "ConvertUnit target");
+    const text9 = stringValue8(target, "ConvertUnit target");
     const collection = activeCollection(context, systemContext, "Units", ["UNITS", "Units"]);
-    return parseUnitExpression(text8, collection);
+    return parseUnitExpression(text9, collection);
   }
   var unitExactFunctions = {
     UNIT: {
@@ -52757,7 +59375,7 @@ ${lines.join(`
     }
   };
   function boolResult3(value) {
-    return value ? int9(1) : null;
+    return value ? int10(1) : null;
   }
   function addWithOptionalWarning([left, right], context) {
     const warnings = context?.getEnv?.("warnings", runtimeDefaults.warnings) ?? runtimeDefaults.warnings;
@@ -52921,7 +59539,7 @@ ${lines.join(`
       return;
     if (name === "shaped") {
       const actual = Array.from(value.shape || []);
-      if (actual.length !== shape.length || actual.some((dimension, index) => dimension !== shape[index])) {
+      if (actual.length !== shape.length || actual.some((dimension2, index) => dimension2 !== shape[index])) {
         throw new Error(`##: check failed: expected shaped[${shape.join("x")}], received shaped[${actual.join("x")}]`);
       }
       return;
@@ -53034,11 +59652,11 @@ ${lines.join(`
     Lambda: "LAMBDA"
   };
   var LEGACY_OPERATOR_CAPABILITIES = ["EQ", "NEQ", "LT", "GT", "LTE", "GTE", "SAME_CELL"];
-  function coreOperationCapability(operation, definition11) {
+  function coreOperationCapability(operation, definition12) {
     return {
-      lazy: definition11.lazy === true,
-      pure: definition11.pure === true,
-      doc: definition11.doc || `Core operation ${operation}`,
+      lazy: definition12.lazy === true,
+      pure: definition12.pure === true,
+      doc: definition12.doc || `Core operation ${operation}`,
       impl(args, _context, evaluate) {
         return evaluate({ fn: operation, args });
       }
@@ -53153,10 +59771,10 @@ ${lines.join(`
     const frozen = options.frozen !== false;
     const ctx = new SystemContext(new Map, false);
     const units = options.units || createDefaultUnitCollection();
-    const exact = options.exact || createDefaultExactCollection();
-    const complex = options.complex || createDefaultComplexCollection(exact);
+    const exact2 = options.exact || createDefaultExactCollection();
+    const complex = options.complex || createDefaultComplexCollection(exact2);
     ctx.registerValue("Units", units, { doc: "Canonical RiX unit collection" });
-    ctx.registerValue("Exact", exact, { doc: "Canonical RiX exact-generator collection" });
+    ctx.registerValue("Exact", exact2, { doc: "Canonical RiX exact-generator collection" });
     ctx.registerValue("Complex", complex, { doc: "Exact complex-number operations" });
     ctx.registerValue("Config", createNumberConfigValue(), {
       doc: "Session-scoped RiX configuration, including numeric input and display",
@@ -53231,15 +59849,15 @@ ${lines.join(`
       ...functionFunctions
     };
     for (const [displayName, operation] of Object.entries(CORE_SYNTAX_CAPABILITIES)) {
-      const definition11 = syntaxSources[operation];
-      if (definition11) {
-        ctx.register(displayName, coreOperationCapability(operation, definition11));
+      const definition12 = syntaxSources[operation];
+      if (definition12) {
+        ctx.register(displayName, coreOperationCapability(operation, definition12));
       }
     }
     for (const operation of LEGACY_OPERATOR_CAPABILITIES) {
-      const definition11 = syntaxSources[operation];
-      if (definition11)
-        ctx.register(operation, coreOperationCapability(operation, definition11));
+      const definition12 = syntaxSources[operation];
+      if (definition12)
+        ctx.register(operation, coreOperationCapability(operation, definition12));
     }
     ctx.register("Params", { impl: parameterListCapability, doc: "Create a positional parameter descriptor from names" });
     ctx.register("Pair", { impl: mapPairCapability, doc: "Create a key/value entry for .Map" });
@@ -54385,10 +61003,10 @@ ${lines.join(`
     return invokeCallableAsync(fn, callArgs, context, registry, systemContext, state);
   }
   function asyncCapabilityString(value, label2) {
-    const text8 = rixStringValue(value);
-    if (text8 === null)
+    const text9 = rixStringValue(value);
+    if (text9 === null)
       throw new Error(`${label2} must be a string`);
-    return text8;
+    return text9;
   }
   function asyncDiagnosticString(value) {
     return { type: "string", value: String(value) };
@@ -54526,10 +61144,10 @@ ${lines.join(`
       const varsValue = await evaluateAsyncInternal(args[2], context, registry, systemContext, state);
       if (isRixArray(varsValue)) {
         trackedVars = varsValue.values.map((value) => {
-          const text8 = rixStringValue(value);
-          if (text8 === null)
+          const text9 = rixStringValue(value);
+          if (text9 === null)
             throw new Error(".Trace trackedVars must be an array of strings");
-          return text8;
+          return text9;
         });
       } else if (varsValue !== null) {
         throw new Error(".Trace trackedVars must be an array of strings");
@@ -54975,8 +61593,8 @@ ${lines.join(`
     }
   }
   async function evaluateAsyncCollectionBody(irNode, context, registry, systemContext, state) {
-    const definition11 = registry.get(irNode.fn);
-    if (!definition11)
+    const definition12 = registry.get(irNode.fn);
+    if (!definition12)
       throw new Error(`Unknown collection constructor: ${irNode.fn}`);
     const args = irNode.args;
     const hasHeader = args[0]?.header && !args[0].fn;
@@ -55039,7 +61657,7 @@ ${lines.join(`
       }
     }
     const resolvedEvaluate = (node) => node?.fn ? evaluate(node, context, registry, systemContext) : node;
-    return await definition11.impl(resolved, context, resolvedEvaluate, systemContext);
+    return await definition12.impl(resolved, context, resolvedEvaluate, systemContext);
   }
   async function evaluateAsyncCollection(irNode, context, registry, systemContext, state) {
     return withReleasedAsyncAdmission(state, () => evaluateAsyncCollectionBody(irNode, context, registry, systemContext, state));
@@ -55116,10 +61734,10 @@ ${lines.join(`
     return { fn: sourceNode.fn, header, entries: entries4, shell: { type, values: [] } };
   }
   function captureFusedSourceValue(source, entry, value, context, registry, systemContext) {
-    const definition11 = registry.get(source.fn);
+    const definition12 = registry.get(source.fn);
     const resolvedEntry = entry && !entry.fn && entry.expression ? { ...entry, expression: value } : value;
     const args = source.header ? [source.header, resolvedEntry] : [resolvedEntry];
-    const collection = definition11.impl(args, context, (node) => node?.fn ? evaluate(node, context, registry, systemContext) : node, systemContext);
+    const collection = definition12.impl(args, context, (node) => node?.fn ? evaluate(node, context, registry, systemContext) : node, systemContext);
     return collection.values[0];
   }
   async function runAsyncPipeStages(value, index, key, collection, stages, callables, context, registry, systemContext, state, explicitLocator = null) {
@@ -55490,12 +62108,12 @@ ${lines.join(`
     return { type: collection.type || "sequence", values: sorted };
   }
   async function evaluateAsyncResolvedBarrier(irNode, context, registry, systemContext, state) {
-    const definition11 = registry.get(irNode.fn);
+    const definition12 = registry.get(irNode.fn);
     const resolved = [];
     for (const arg of irNode.args) {
       resolved.push(await evaluateAsyncInternal(arg, context, registry, systemContext, state));
     }
-    return await definition11.impl(resolved, context, (value) => value, systemContext);
+    return await definition12.impl(resolved, context, (value) => value, systemContext);
   }
   function isAsyncCallableValue(value) {
     return typeof value === "function" || [
@@ -55554,8 +62172,8 @@ ${lines.join(`
     const separator = await evaluateAsyncInternal(args[1], context, registry, systemContext, state);
     const isRegex = typeof separator === "function" && separator.toString?.().startsWith("[Regex");
     if (!isAsyncCallableValue(separator) || isRegex) {
-      const definition11 = registry.get("PSPLIT");
-      return definition11.impl([collection, separator], context, (value) => value, systemContext);
+      const definition12 = registry.get("PSPLIT");
+      return definition12.impl([collection, separator], context, (value) => value, systemContext);
     }
     const { items, isString, isStringObject: isStringObject2 } = asyncBarrierLinearItems(collection, "PSPLIT");
     if (!items)
@@ -55592,8 +62210,8 @@ ${lines.join(`
       collection = materializeLazySequence(collection);
     const boundary = await evaluateAsyncInternal(args[1], context, registry, systemContext, state);
     if (!isAsyncCallableValue(boundary)) {
-      const definition11 = registry.get("PCHUNK");
-      return definition11.impl([collection, boundary], context, (value) => value, systemContext);
+      const definition12 = registry.get("PCHUNK");
+      return definition12.impl([collection, boundary], context, (value) => value, systemContext);
     }
     const { items, isString, isStringObject: isStringObject2 } = asyncBarrierLinearItems(collection, "PCHUNK");
     if (!items)
@@ -55729,7 +62347,7 @@ ${lines.join(`
       throw new Error("Unclosed @{...} interpolation in template");
     return { end: index, source: source.slice(start + 2, index - 1) };
   }
-  async function evaluateOutputTemplateAsync(definition11, args, context, registry, systemContext, state) {
+  async function evaluateOutputTemplateAsync(definition12, args, context, registry, systemContext, state) {
     const body = args[0];
     const resolved = new Map;
     let rewritten = "";
@@ -55760,12 +62378,12 @@ ${lines.join(`
       }
       return evaluate(node, context, registry, systemContext);
     };
-    return definition11.impl([rewritten], context, evaluateResolved, systemContext);
+    return definition12.impl([rewritten], context, evaluateResolved, systemContext);
   }
   function isRawBasePrefixNode(node) {
     return node?.fn === "LITERAL" && typeof node.args?.[0] === "string" && /^0[A-Za-z]$/.test(node.args[0]);
   }
-  async function evaluateBaseLazyAsync(fn, definition11, args, context, registry, systemContext, state) {
+  async function evaluateBaseLazyAsync(fn, definition12, args, context, registry, systemContext, state) {
     const resolved = new Map;
     const resolve = async (node) => {
       if (node === undefined || isRawBasePrefixNode(node))
@@ -55785,14 +62403,14 @@ ${lines.join(`
       await resolve(args[0]);
       await resolve(args[1]);
     }
-    return definition11.impl(args, context, (node) => resolved.has(node) ? resolved.get(node) : evaluate(node, context, registry, systemContext), systemContext);
+    return definition12.impl(args, context, (node) => resolved.has(node) ? resolved.get(node) : evaluate(node, context, registry, systemContext), systemContext);
   }
-  async function evaluateSelectedLazyOperandsAsync(definition11, args, operands, context, registry, systemContext, state) {
+  async function evaluateSelectedLazyOperandsAsync(definition12, args, operands, context, registry, systemContext, state) {
     const resolved = new Map;
     for (const operand2 of operands) {
       resolved.set(operand2, await evaluateAsyncInternal(operand2, context, registry, systemContext, state));
     }
-    return await definition11.impl(args, context, (node) => resolved.has(node) ? resolved.get(node) : evaluate(node, context, registry, systemContext), systemContext);
+    return await definition12.impl(args, context, (node) => resolved.has(node) ? resolved.get(node) : evaluate(node, context, registry, systemContext), systemContext);
   }
   function bracketLazyOperands(args, { assignment = false } = {}) {
     const specCount = args[1];
@@ -56274,7 +62892,7 @@ ${lines.join(`
         return uncertain ? UNDECIDED : last;
       }
       if (fn === "BREAK") {
-        const definition12 = registry.get(fn);
+        const definition13 = registry.get(fn);
         const hasMeta = args[0] && !args[0].fn;
         context.push(undefined, { isolated: true, readThrough: true });
         let value;
@@ -56283,19 +62901,19 @@ ${lines.join(`
         } finally {
           context.pop();
         }
-        return definition12.impl(hasMeta ? [args[0], value] : [value], context, (node) => node);
+        return definition13.impl(hasMeta ? [args[0], value] : [value], context, (node) => node);
       }
       if (fn === "DESTRUCTURE_ASSIGN") {
         const value = await evalAsync(args[2]);
         return coreFunctions.DESTRUCTURE_ASSIGN.impl([args[0], args[1], value], context, (node) => node?.fn ? evaluate(node, context, registry, systemContext) : node);
       }
       if (["ASSIGN", "ASSIGN_COPY", "ASSIGN_UPDATE", "ASSIGN_DEEP_COPY", "ASSIGN_DEEP_UPDATE", "OUTER_ASSIGN", "OUTER_UPDATE", "GLOBAL"].includes(fn)) {
-        const definition12 = registry.get(fn);
+        const definition13 = registry.get(fn);
         if (fn === "ASSIGN" && ["RETRIEVE", "OUTER_RETRIEVE"].includes(args[1]?.fn)) {
-          return definition12.impl(args, context, (node) => evaluate(node, context, registry, systemContext));
+          return definition13.impl(args, context, (node) => evaluate(node, context, registry, systemContext));
         }
         const value = await evalAsync(args[1]);
-        return definition12.impl([args[0], value, ...args.slice(2)], context, (node) => node);
+        return definition13.impl([args[0], value, ...args.slice(2)], context, (node) => node);
       }
       if (fn === "LAMBDA" || fn === "FUNCDEF") {
         return markLexicalAsyncCallable(evaluate(irNode, context, registry, systemContext), state);
@@ -56359,11 +62977,11 @@ ${lines.join(`
         };
         return evalAsync(replace(args[1]));
       }
-      const definition11 = registry.get(fn);
-      if (!definition11)
+      const definition12 = registry.get(fn);
+      if (!definition12)
         return await evaluate(irNode, context, registry, systemContext);
-      if (definition11.lazy) {
-        if (definition11.impl === propertyFunctions[fn]?.impl) {
+      if (definition12.lazy) {
+        if (definition12.impl === propertyFunctions[fn]?.impl) {
           let operands = null;
           if (fn === "META_SET")
             operands = [args[0], args[2]];
@@ -56376,7 +62994,7 @@ ${lines.join(`
           else if (fn === "BRACKET_SET")
             operands = bracketLazyOperands(args, { assignment: true });
           if (operands) {
-            return await evaluateSelectedLazyOperandsAsync(definition11, args, operands, context, registry, systemContext, state);
+            return await evaluateSelectedLazyOperandsAsync(definition12, args, operands, context, registry, systemContext, state);
           }
         }
         if ([
@@ -56386,30 +63004,30 @@ ${lines.join(`
           "SEMANTIC_CONVERT_STRICT",
           "TYPE_EXPORT",
           "TYPE_IMPORT"
-        ].includes(fn) && definition11.impl === coreFunctions[fn]?.impl) {
+        ].includes(fn) && definition12.impl === coreFunctions[fn]?.impl) {
           const operand2 = fn === "VALUE_OUTFIT" ? args[1] : args[0];
-          return await evaluateSelectedLazyOperandsAsync(definition11, args, [operand2], context, registry, systemContext, state);
+          return await evaluateSelectedLazyOperandsAsync(definition12, args, [operand2], context, registry, systemContext, state);
         }
-        if (fn === "MULTIFUNCTION" && definition11.impl === functionFunctions.MULTIFUNCTION.impl) {
-          const result2 = await evaluateSelectedLazyOperandsAsync(definition11, args, args, context, registry, systemContext, state);
+        if (fn === "MULTIFUNCTION" && definition12.impl === functionFunctions.MULTIFUNCTION.impl) {
+          const result2 = await evaluateSelectedLazyOperandsAsync(definition12, args, args, context, registry, systemContext, state);
           return markLexicalAsyncCallable(result2, state);
         }
-        if ((fn === "TEMPLATE_TEXT" || fn === "DOCUMENT_TEMPLATE") && definition11.impl === outputFunctions[fn]?.impl) {
-          return await evaluateOutputTemplateAsync(definition11, args, context, registry, systemContext, state);
+        if ((fn === "TEMPLATE_TEXT" || fn === "DOCUMENT_TEMPLATE") && definition12.impl === outputFunctions[fn]?.impl) {
+          return await evaluateOutputTemplateAsync(definition12, args, context, registry, systemContext, state);
         }
-        if (["DEFINEBASE", "TOBASE", "TOBASE_EXACT", "CERTIFY_FORMAT", "FROMBASE"].includes(fn) && definition11.impl === coreFunctions[fn]?.impl) {
-          return await evaluateBaseLazyAsync(fn, definition11, args, context, registry, systemContext, state);
+        if (["DEFINEBASE", "TOBASE", "TOBASE_EXACT", "CERTIFY_FORMAT", "FROMBASE"].includes(fn) && definition12.impl === coreFunctions[fn]?.impl) {
+          return await evaluateBaseLazyAsync(fn, definition12, args, context, registry, systemContext, state);
         }
-        const result = await definition11.impl(args, context, (node) => evaluate(node, context, registry, systemContext), systemContext);
+        const result = await definition12.impl(args, context, (node) => evaluate(node, context, registry, systemContext), systemContext);
         return fn === "MULTIFUNCTION" ? markLexicalAsyncCallable(result, state) : result;
       }
       const evaluatedArgs = [];
       for (const arg of args)
         evaluatedArgs.push(await evalAsync(arg));
-      if (!definition11.holeAware && evaluatedArgs.some(isHole)) {
+      if (!definition12.holeAware && evaluatedArgs.some(isHole)) {
         throw new Error(`Cannot use undefined/hole value in computation (in ${fn})`);
       }
-      return await definition11.impl(evaluatedArgs, context, (node) => evaluate(node, context, registry, systemContext), systemContext);
+      return await definition12.impl(evaluatedArgs, context, (node) => evaluate(node, context, registry, systemContext), systemContext);
     } catch (error) {
       throw annotateEvaluationError(error, irNode, context);
     }
@@ -56715,16 +63333,16 @@ ${lines.join(`
   }
   var RIXCEL_FORMULA_CLIPBOARD_TYPE = "application/x-rixcel-formula";
   var RIXCEL_FORMULA_BLOCK_CLIPBOARD_TYPE = "application/x-rixcel-formula-block";
-  function parseSheetFormulaClipboard(text8, fallbackAssignmentMode = ":=") {
-    const source = String(text8 ?? "");
+  function parseSheetFormulaClipboard(text9, fallbackAssignmentMode = ":=") {
+    const source = String(text9 ?? "");
     const match = source.match(/^\s*(::=|~~=|:=|~=|=)\s*([\s\S]+)$/u);
     return Object.freeze({
       source: match ? match[2] : source,
       assignmentMode: match?.[1] ?? fallbackAssignmentMode
     });
   }
-  function parseSheetFormulaBlock(text8, fallbackAssignmentMode = ":=") {
-    const rows = String(text8 ?? "").replace(/\r\n?/gu, `
+  function parseSheetFormulaBlock(text9, fallbackAssignmentMode = ":=") {
+    const rows = String(text9 ?? "").replace(/\r\n?/gu, `
 `).split(`
 `);
     if (rows.at(-1) === "")
@@ -57313,9 +63931,9 @@ ${lines.join(`
           }
           if (result?.type === "error")
             throw new Error(result.text);
-          const exact = submittedCell.textContent.trim();
+          const exact2 = submittedCell.textContent.trim();
           if (editValue)
-            editValue.textContent = `Exact value: ${exact}`;
+            editValue.textContent = `Exact value: ${exact2}`;
           if (editStatus)
             editStatus.textContent = "Saved";
           options.onEditCommitted?.(detail, result, submittedCell, sheet);
@@ -57473,11 +64091,11 @@ ${lines.join(`
     return bindings;
   }
   function exactGraphicCoordinate(value) {
-    const number = Number(value);
-    if (!Number.isFinite(number))
+    const number2 = Number(value);
+    if (!Number.isFinite(number2))
       throw new Error("Graphic position coordinates must be finite numbers");
     const scale2 = 1000n;
-    const numerator = BigInt(Math.round(number * Number(scale2)));
+    const numerator = BigInt(Math.round(number2 * Number(scale2)));
     return numerator % scale2 === 0n ? new Integer(numerator / scale2) : new Rational(numerator, scale2);
   }
   function graphicPoint(position) {
@@ -57602,12 +64220,12 @@ ${lines.join(`
     }
     return values3[normalized];
   }
-  function rangeValue(control, indices) {
-    if (!Array.isArray(indices) || indices.length !== 2) {
+  function rangeValue(control, indices2) {
+    if (!Array.isArray(indices2) || indices2.length !== 2) {
       throw new Error("Control range requires lower and upper indices");
     }
-    const low = sliderValue(control, indices[0]);
-    const high = sliderValue(control, indices[1]);
+    const low = sliderValue(control, indices2[0]);
+    const high = sliderValue(control, indices2[1]);
     if (low.greaterThan(high))
       throw new Error("Control range lower endpoint must not exceed its upper endpoint");
     return new RationalInterval(low, high);
@@ -58978,10 +65596,10 @@ ${lines.join(`
     return Number(value);
   }
   function finiteNumberFrom(value) {
-    const number = numberFrom(value);
-    if (Number.isNaN(number))
+    const number2 = numberFrom(value);
+    if (Number.isNaN(number2))
       throw new Error("Math function expected a numeric value");
-    return number;
+    return number2;
   }
   function unary(fn) {
     return (args) => fn(finiteNumberFrom(args[0]));
@@ -59005,16 +65623,16 @@ ${lines.join(`
   };
 
   // rix/plugins/float/protocol.js
-  function int10(value) {
+  function int11(value) {
     return new Integer(BigInt(value));
   }
-  function text8(value) {
+  function text9(value) {
     return { type: "string", value };
   }
   function map2(entries4) {
     return { type: "map", entries: new Map(entries4) };
   }
-  function sequence5(values3) {
+  function sequence6(values3) {
     return { type: "sequence", values: values3 };
   }
   function entry(value, key, fallback = null) {
@@ -59050,51 +65668,51 @@ ${lines.join(`
   }
   function NumericsCapabilities() {
     return map2([
-      ["valuekind", text8("numericsCapabilities")],
-      ["schema", text8("rix.numerics.capabilities@1")],
-      ["backend", text8("float")],
-      ["representation", text8("ieee754Binary64")],
-      ["denotation", text8("storedScalar")],
-      ["operations", sequence5([text8("sample"), text8("enclose")])],
-      ["evidencelevels", sequence5([text8("approximate")])],
+      ["valuekind", text9("numericsCapabilities")],
+      ["schema", text9("rix.numerics.capabilities@1")],
+      ["backend", text9("float")],
+      ["representation", text9("ieee754Binary64")],
+      ["denotation", text9("storedScalar")],
+      ["operations", sequence6([text9("sample"), text9("enclose")])],
+      ["evidencelevels", sequence6([text9("approximate")])],
       ["certified", null],
       ["arbitraryrefinement", null],
-      ["deterministic", int10(1)],
+      ["deterministic", int11(1)],
       ["minimumwidth", Rational.zero],
-      ["storedvalueexact", int10(1)],
+      ["storedvalueexact", int11(1)],
       ["intendedrealcertified", null]
     ]);
   }
   function approximateStoredValue(value, request, operation) {
-    const exact = exactFloatRational(value);
+    const exact2 = exactFloatRational(value);
     const requestedWidth = entry(request, "absolutewidth", null);
-    const requestedWork = entry(entry(request, "work", null), "maxwork", int10(0));
+    const requestedWork = entry(entry(request, "work", null), "maxwork", int11(0));
     return map2([
-      ["valuekind", text8("enclosure")],
-      ["schema", text8("rix.numerics.enclosure@1")],
-      ["status", text8("approximate")],
-      ["interval", new RationalInterval(exact, exact)],
+      ["valuekind", text9("enclosure")],
+      ["schema", text9("rix.numerics.enclosure@1")],
+      ["status", text9("approximate")],
+      ["interval", new RationalInterval(exact2, exact2)],
       ["certified", null],
       ["goalmet", null],
       ["requestedwidth", requestedWidth],
       ["achievedwidth", Rational.zero],
-      ["evidencelevel", text8("approximate")],
-      ["backend", text8("float")],
-      ["operation", text8(operation)],
-      ["trace", sequence5([])],
+      ["evidencelevel", text9("approximate")],
+      ["backend", text9("float")],
+      ["operation", text9(operation)],
+      ["trace", sequence6([])],
       ["work", map2([
-        ["samples", int10(1)],
+        ["samples", int11(1)],
         ["maxwork", requestedWork],
         ["exhausted", null]
       ])],
-      ["diagnostics", sequence5([
-        text8("storedValueOnly"),
-        text8("noErrorBoundForIntendedReal")
+      ["diagnostics", sequence6([
+        text9("storedValueOnly"),
+        text9("noErrorBoundForIntendedReal")
       ])],
       ["source", map2([
-        ["plugin", text8("float")],
-        ["representation", text8("ieee754Binary64")],
-        ["storedvalueexact", int10(1)]
+        ["plugin", text9("float")],
+        ["representation", text9("ieee754Binary64")],
+        ["storedvalueexact", int11(1)]
       ])]
     ]);
   }
@@ -59130,11 +65748,11 @@ ${lines.join(`
     return Number(value);
   }
   function float(value) {
-    const number = numberFrom2(value);
-    if (!Number.isFinite(number))
+    const number2 = numberFrom2(value);
+    if (!Number.isFinite(number2))
       throw new Error("Cannot convert value to finite Float");
-    return { type: NATIVE_TYPE, value: number, toString() {
-      return String(number);
+    return { type: NATIVE_TYPE, value: number2, toString() {
+      return String(number2);
     } };
   }
   function requireFloat(value, evaluate2) {
@@ -59152,17 +65770,17 @@ ${lines.join(`
     return numerator >= 0n ? numerator / denominator : -((-numerator + denominator - 1n) / denominator);
   }
   function decimalRounded(value, places, mode) {
-    const exact = exactFloatRational(value);
+    const exact2 = exactFloatRational(value);
     const scale2 = 10n ** BigInt(places);
-    const scaled = exact.numerator * scale2;
-    const lower2 = floorDiv3(scaled, exact.denominator);
+    const scaled = exact2.numerator * scale2;
+    const lower2 = floorDiv3(scaled, exact2.denominator);
     let coefficient = lower2;
-    if (mode === "ceiling" && scaled !== lower2 * exact.denominator)
+    if (mode === "ceiling" && scaled !== lower2 * exact2.denominator)
       coefficient += 1n;
     if (mode === "round") {
-      const remainder = scaled - lower2 * exact.denominator;
+      const remainder = scaled - lower2 * exact2.denominator;
       const doubled = remainder * 2n;
-      if (doubled > exact.denominator || doubled === exact.denominator && (lower2 & 1n) !== 0n)
+      if (doubled > exact2.denominator || doubled === exact2.denominator && (lower2 & 1n) !== 0n)
         coefficient += 1n;
     }
     return new Rational(coefficient, scale2);
@@ -59272,8 +65890,8 @@ ${lines.join(`
     };
     add("Float", (args, _context, evaluate2) => requireFloat(args[1], evaluate2));
     add("Interval", (args, _context, evaluate2) => {
-      const exact = exactFloatRational(requireFloat(args[1], evaluate2));
-      return new RationalInterval(exact, exact);
+      const exact2 = exactFloatRational(requireFloat(args[1], evaluate2));
+      return new RationalInterval(exact2, exact2);
     });
     add("Round", (args, _context, evaluate2) => decimalRounded(requireFloat(args[1], evaluate2), decimalPlaces(args[2]), "round"));
     add("Floor", (args, _context, evaluate2) => decimalRounded(requireFloat(args[1], evaluate2), decimalPlaces(args[2]), "floor"));
@@ -59301,7 +65919,7 @@ ${lines.join(`
     systemContext.registerMethod("Rational", "Float", floatExtension, owner);
     return systemContext;
   }
-  var install18 = installBrowserApproxMathPlugin;
+  var install19 = installBrowserApproxMathPlugin;
 
   // rix/examples/plugins/example-array-js/array-js.plugin.rix.js
   function valuesFrom(value) {
@@ -59340,7 +65958,7 @@ ${lines.join(`
     }
     return { type: "map", entries: entries4, _ext: extension };
   }
-  function install19({ systemContext }) {
+  function install20({ systemContext }) {
     const value = collection();
     systemContext.registerHostCallableValue("arrayJs", value, {
       impl(args) {
@@ -59388,7 +66006,7 @@ defaultEnabled: false
       groups: ["ApproximateMath", "Float"],
       permissions: [],
       defaultEnabled: false
-    }, install18);
+    }, install19);
     addPlugin(catalog, {
       id: "example-array-js",
       description: "Teaching JavaScript plugin demonstrating array helpers.",
@@ -59398,7 +66016,7 @@ defaultEnabled: false
       groups: ["Examples"],
       permissions: [],
       defaultEnabled: false
-    }, install19);
+    }, install20);
     addPlugin(catalog, {
       id: "example-array-rix",
       description: "Teaching RiX plugin demonstrating array helpers.",
@@ -59434,14 +66052,14 @@ defaultEnabled: false
     for (const [id, description, installer, permissions = []] of [
       ["svg", "Portable SVG renderer for core Graphics scenes.", install6],
       ["canvas", "Serializable Canvas 2D drawing plans for core Graphics scenes.", install7],
-      ["tikz", "Editable TikZ/PGF source renderer for core Graphics scenes.", install8],
-      ["markdown", "CommonMark-oriented renderer for portable RiX documents.", install9],
-      ["html", "Standalone semantic HTML renderer for portable RiX output trees.", install10],
-      ["quarto", "Quarto Markdown renderer with front matter and portable figure lowering.", install11],
-      ["latex", "Standalone LaTeX renderer for portable RiX documents and figures.", install12],
-      ["png", "PNG snapshot renderer for core Graphics through a host rasterizer.", install13, ["process"]],
-      ["pdf", "PDF document and figure renderer orchestrated through LaTeX.", install14, ["process", "files"]],
-      ["gltf", "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", install15]
+      ["tikz", "Editable TikZ/PGF source renderer for core Graphics scenes.", install9],
+      ["markdown", "CommonMark-oriented renderer for portable RiX documents.", install10],
+      ["html", "Standalone semantic HTML renderer for portable RiX output trees.", install11],
+      ["quarto", "Quarto Markdown renderer with front matter and portable figure lowering.", install12],
+      ["latex", "Standalone LaTeX renderer for portable RiX documents and figures.", install13],
+      ["png", "PNG snapshot renderer for core Graphics through a host rasterizer.", install14, ["process"]],
+      ["pdf", "PDF document and figure renderer orchestrated through LaTeX.", install15, ["process", "files"]],
+      ["gltf", "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", install16]
     ]) {
       addPlugin(catalog, {
         id,

@@ -47,6 +47,14 @@ export const pluginTutorialGroups = [
     "description": "Three-dimensional, N-dimensional, and complex-function views.",
     "pluginGroup": true,
     "theme": "Higher-dimensional visualization"
+  },
+  {
+    "number": "20",
+    "file": "plugins-chaos-and-fractals.html",
+    "title": "Plugins: Chaos and fractals",
+    "description": "Optional RiX plugins grouped under Chaos and fractals.",
+    "pluginGroup": true,
+    "theme": "Chaos and fractals"
   }
 ];
 export const pluginTutorials = [
@@ -191,6 +199,20 @@ export const pluginTutorials = [
     "pluginTutorial": true
   },
   {
+    "pluginId": "calculus",
+    "pluginDirectory": "calculus",
+    "title": "Differentiate an abstract exponential and refine its values",
+    "description": "Build portable function expressions, differentiate by semantic identity, and attach a certified numerical realization.",
+    "status": "implemented",
+    "order": 0,
+    "theme": "Algebra and analysis",
+    "sourcePath": "../rix/plugins/calculus/tutorial.md",
+    "number": "15b",
+    "parent": "15",
+    "file": "plugin-calculus.html",
+    "pluginTutorial": true
+  },
+  {
     "pluginId": "exact-algebras",
     "pluginDirectory": "exact-algebras",
     "title": "Multiply exact quaternions and octonions",
@@ -199,7 +221,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/exact-algebras/tutorial.md",
-    "number": "15b",
+    "number": "15c",
     "parent": "15",
     "file": "plugin-exact-algebras.html",
     "pluginTutorial": true
@@ -213,7 +235,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/fracfun/tutorial.md",
-    "number": "15c",
+    "number": "15d",
     "parent": "15",
     "file": "plugin-fracfun.html",
     "pluginTutorial": true
@@ -227,7 +249,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/fraction/tutorial.md",
-    "number": "15d",
+    "number": "15e",
     "parent": "15",
     "file": "plugin-fraction.html",
     "pluginTutorial": true
@@ -241,7 +263,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/linalg/tutorial.md",
-    "number": "15e",
+    "number": "15f",
     "parent": "15",
     "file": "plugin-linalg.html",
     "pluginTutorial": true
@@ -255,7 +277,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/optimize/tutorial.md",
-    "number": "15f",
+    "number": "15g",
     "parent": "15",
     "file": "plugin-optimize.html",
     "pluginTutorial": true
@@ -269,7 +291,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/poly/tutorial.md",
-    "number": "15g",
+    "number": "15h",
     "parent": "15",
     "file": "plugin-poly.html",
     "pluginTutorial": true
@@ -283,7 +305,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/ratfun/tutorial.md",
-    "number": "15h",
+    "number": "15i",
     "parent": "15",
     "file": "plugin-ratfun.html",
     "pluginTutorial": true
@@ -297,7 +319,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/solve/tutorial.md",
-    "number": "15i",
+    "number": "15j",
     "parent": "15",
     "file": "plugin-solve.html",
     "pluginTutorial": true
@@ -311,7 +333,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/stern-brocot/tutorial.md",
-    "number": "15j",
+    "number": "15k",
     "parent": "15",
     "file": "plugin-stern-brocot.html",
     "pluginTutorial": true
@@ -319,13 +341,13 @@ export const pluginTutorials = [
   {
     "pluginId": "symbolic",
     "pluginDirectory": "symbolic",
-    "title": "Load the symbolic exploration workspace",
-    "description": "Activate unreduced fractions and form-preserving functions through one meta-plugin.",
+    "title": "Explore exact forms and abstract derivatives together",
+    "description": "Activate unreduced fractions, form-preserving functions, portable Calculus expressions, and visible domain obligations through one meta-plugin.",
     "status": "implemented",
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/symbolic/tutorial.md",
-    "number": "15k",
+    "number": "15l",
     "parent": "15",
     "file": "plugin-symbolic.html",
     "pluginTutorial": true
@@ -339,7 +361,7 @@ export const pluginTutorials = [
     "order": 20,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/stats/tutorial.md",
-    "number": "15l",
+    "number": "15m",
     "parent": "15",
     "file": "plugin-stats.html",
     "pluginTutorial": true
@@ -650,6 +672,20 @@ export const pluginTutorials = [
     "number": "19a",
     "parent": "19",
     "file": "plugin-complex-viz.html",
+    "pluginTutorial": true
+  },
+  {
+    "pluginId": "fractals",
+    "pluginDirectory": "fractals",
+    "title": "Explore deterministic chaos and escape-time fractals",
+    "description": "Keep RiX dynamics mathematical, then lower selected results to portable Graphics.",
+    "status": "implemented",
+    "order": 31,
+    "theme": "Chaos and fractals",
+    "sourcePath": "../rix/plugins/fractals/tutorial.md",
+    "number": "20a",
+    "parent": "20",
+    "file": "plugin-fractals.html",
     "pluginTutorial": true
   }
 ];

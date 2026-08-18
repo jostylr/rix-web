@@ -1,7 +1,85 @@
-<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Activate unreduced fractions and form-preserving functions through one meta-plugin." /><title>Load the symbolic exploration workspace — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./plugins-algebra-and-analysis.html#lesson-start" title="Plugins: Algebra and analysis">15</a> <span aria-hidden="true">·</span> <span>k</span></p><h1>Load the symbolic exploration workspace</h1><p class="deck">Activate unreduced fractions and form-preserving functions through one meta-plugin.</p><aside class="challenge"><p class="eyebrow">Develop in RiX Notebook</p><p>Open <code>rix/plugins/symbolic/tutorial.md</code> in the macOS app to edit this lesson with live preview and plugin-aware code results. Use Reload plugins after changing project-local plugin source.</p></aside><div class="lesson-content"><p><code>.symbolic</code> loads the formal workspace while preserving the focused plugin mounts and aliases.</p>
+<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Activate unreduced fractions, form-preserving functions, portable Calculus expressions, and visible domain obligations through one meta-plugin." /><title>Explore exact forms and abstract derivatives together — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./plugins-algebra-and-analysis.html#lesson-start" title="Plugins: Algebra and analysis">15</a> <span aria-hidden="true">·</span> <span>l</span></p><h1>Explore exact forms and abstract derivatives together</h1><p class="deck">Activate unreduced fractions, form-preserving functions, portable Calculus expressions, and visible domain obligations through one meta-plugin.</p><aside class="challenge"><p class="eyebrow">Develop in RiX Notebook</p><p>Open <code>rix/plugins/symbolic/tutorial.md</code> in the macOS app to edit this lesson with live preview and plugin-aware code results. Use Reload plugins after changing project-local plugin source.</p></aside><div class="lesson-content"><p><code>.symbolic</code> loads the formal and Calculus workspaces while preserving the focused plugin mounts and aliases.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Plugin.Load(&quot;symbolic&quot;);
 fraction := .frac(6,8);
 form := .ff`(x^2-1)/(x-1)`;
 canonical := form.R();
 {: fraction, form.Form(), canonical(3), .symbolic.Services() };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>Use <code>.fraction</code> or <code>.fracfun</code> directly when only one focused surface is needed.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
+<p>Use <code>.fraction</code>, <code>.fracfun</code>, or <code>.calculus</code> directly when only one focused surface is needed.</p>
+<h2>Cross into a portable Calculus expression</h2>
+<p>FractionFunction&#039;s displayed form crosses the same public schema as a core <code>{#}</code> specification:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Plugin.Load(&quot;symbolic&quot;);
+F := .ff`(x+1)*(x-1)`;
+expression := .symbolic.CalculusExpression(F);
+fromSpec := .symbolic.CalculusExpression({#t# t^2+1});
+{: .calculus.ToSpec(expression), .calculus.ToSpec(fromSpec) };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Differentiate unconditional expressions</h2>
+<p><code>.symbolic.Differentiate</code> delegates to Calculus and returns a bare expression when no condition would be lost:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Plugin.Load(&quot;symbolic&quot;);
+x := .calculus.Variable(:x);
+Exp := .calculus.Exp();
+derivative := .symbolic.Differentiate(Exp(x^2+1), :x);
+.calculus.ToSpec(derivative);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Preserve quotient domains and function branches</h2>
+<p>Use <code>DifferentiateResult</code> whenever a formula has conditions. The result keeps the transformed expression, obligations, and rule evidence together:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="12" spellcheck="false">.Plugin.Load(&quot;symbolic&quot;);
+x := .calculus.Variable(:x);
+logResult := .symbolic.DifferentiateResult(.calculus.Log()(x^2), :x);
+form := .ff`(x^2-1)/(x-1)`;
+formResult := .symbolic.DifferentiateResult(form, :x);
+.Table({=
+  columns=[&quot;source&quot;, &quot;derivative&quot;, &quot;obligations&quot;],
+  rows=[
+    [&quot;Log(x^2)&quot;, .calculus.ToSpec(logResult[:expression]), logResult[:obligations]],
+    [form.Form(), .calculus.ToSpec(formResult[:expression]), formResult[:obligations]]
+  ]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p><code>Log</code> requires a positive real argument. The quotient requires its denominator to be nonzero. Real-principal <code>Sqrt</code> and <code>Asin</code>, and principal <code>ComplexLog</code>, use the same contract for their domain or branch requirements.</p>
+<h2>Keep cancelled holes visible</h2>
+<p>A cancelled FractionFunction has a different display form but retains its source-domain evaluation expression. Symbolic exposes both and converts the stored denominator into a Calculus obligation:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">.Plugin.Load(&quot;symbolic&quot;);
+F := .ff`(x^2-1)/(x-1)`;
+C := F.Cancel();
+{: .calculus.ToSpec(C.CalculusExpression()),
+   .calculus.ToSpec(C.EvaluationCalculusExpression()),
+   .symbolic.Obligations(C),
+   C.Domain().Get(&quot;calculusRestrictions&quot;) };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Evaluate through linked numerical implementations</h2>
+<p>The Symbolic façade can evaluate a Calculus expression or transformation while retaining the implementation links and unresolved conditions:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">.Plugin.Load(&quot;symbolic&quot;);
+.Plugin.Load(&quot;numerics&quot;);
+x := .calculus.Variable(:x);
+Exp := .calculus.Exp((value)-&gt;.numerics.Exp(value));
+Log := .calculus.Log((value)-&gt;.numerics.Ln(value));
+derivative := .symbolic.DifferentiateResult(Exp(Log(x)),:x);
+evaluation := .symbolic.EvaluateResult(derivative,{= x=2 });
+{: .calculus.ToSpec(derivative[:expression]),
+   evaluation[:links].Map((link)-&gt;link[:semanticId]),
+   evaluation[:obligationValues] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Differentiation uses exact semantic rules. Evaluation separately follows the linked providers. Seeing that an obligation&#039;s subject is <code>2</code> does not by itself mark the positivity obligation proved.</p>
+<h2>Use higher and multivariate façades</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">.Plugin.Load(&quot;symbolic&quot;);
+P := .ff`x^3+x`;
+second := .symbolic.DifferentiateN(P,:x,2);
+gradient := .symbolic.Gradient({#x,y# x^2+x*y },[:x,:y]);
+{: .calculus.ToSpec(second),
+   .symbolic.Evaluate(second,{= x=3 }),
+   gradient.Map((expression)-&gt;.calculus.ToSpec(expression)) };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p><code>Jacobian</code>, <code>Hessian</code>, and each corresponding <code>...Result</code> form follow the same variable ordering and obligation rules as the focused Calculus API.</p>
+<h2>Use the shared derivative graph and integral façades</h2>
+<p>Symbolic exposes Calculus reuse rather than introducing a second differentiator:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">.Plugin.Load(&quot;symbolic&quot;);
+x := .calculus.Variable(:x);
+Exp := .calculus.Exp((value)-&gt;value+1);
+derivative := .symbolic.DifferentiateResult(Exp(x)^2,:x);
+evaluation := .symbolic.EvaluateResult(derivative,{= x=2 });
+{: .calculus.ToSpec(derivative[:expression]),
+   derivative[:evidence], evaluation[:semanticEvaluations] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The result uses the exact differential identity <code>D Exp = Exp</code> to retain <code>2*Exp(x)^2</code>; general exponential-product normalization remains a distinct symbolic transformation.</p>
+<p>The integral façades accept Calculus expressions, core specifications, and FractionFunctions:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">.Plugin.Load(&quot;symbolic&quot;);
+F := .ff`1/x`;
+x := .calculus.Variable(:x);
+family := .symbolic.AntiderivativeFamily(F,:x,.calculus.Log()(x),:C);
+definite := .symbolic.DefiniteIntegral(F,:x,1,2);
+{: family, definite };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>FractionFunction&#039;s original nonzero-denominator obligation is copied into both integral records. These are formulation records, not automatic integration or proof results.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

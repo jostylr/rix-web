@@ -7,4 +7,23 @@
   .draw.Label([190, 115], &quot;P&quot;)
 ]);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The important boundary is invisible in the result: <code>.draw.Circle</code> simply returns <code>.Graphics.Circle</code>. This makes authored scenes portable to SVG, image, and future document renderers.</p>
-<p>Use the lower-level <code>.Graphics.Path</code>, <code>.Graphics.Text</code>, and related core constructors directly when a plugin convenience is not the best fit.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
+<p>Use the lower-level <code>.Graphics.Path</code>, <code>.Graphics.Text</code>, and related core constructors directly when a plugin convenience is not the best fit.</p>
+<h2>Draft a labeled construction</h2>
+<p>Reusable styles, a viewport transform, dimensions, and anchors compose without creating a second scene format:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="16" spellcheck="false">.Plugin.Load(&quot;draw&quot;);
+ink := .draw.Style({= stroke=&quot;#1d4ed8&quot;, width=2 }, {= fill=&quot;none&quot; });
+paper := .draw.Style({= stroke=&quot;#cbd5e1&quot;, width=1 }, {= fill=&quot;none&quot; });
+view := .draw.Viewport([-2,-1,8,5], [600,360], {= margin=36 });
+a := view.Point([0,0]);
+b := view.Point([6,0]);
+c := view.Point([2,4]);
+triangle := .draw.Polygon([a,b,c],ink);
+labelBox := .draw.Bounds(triangle);
+.Graphics.Graphic([600,360],[
+  .draw.Grid([36,36],[528,288],48,paper),
+  triangle,
+  .draw.Arrow(a,c,ink),
+  .draw.Dimension(a,b,&quot;6 units&quot;,ink,{= offset=20 }),
+  .draw.Label(.draw.Anchor(labelBox,&quot;north&quot;,[0,-10]),&quot;Exact triangle&quot;,{= anchor=&quot;middle&quot;,size=15 })
+]);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p><code>Bounds</code> uses renderer-independent drafting estimates for labels. A final renderer still owns exact font metrics.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

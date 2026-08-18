@@ -1,0 +1,214 @@
+<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Build portable function expressions, differentiate by semantic identity, and attach a certified numerical realization." /><title>Differentiate an abstract exponential and refine its values — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./plugins-algebra-and-analysis.html#lesson-start" title="Plugins: Algebra and analysis">15</a> <span aria-hidden="true">·</span> <span>b</span></p><h1>Differentiate an abstract exponential and refine its values</h1><p class="deck">Build portable function expressions, differentiate by semantic identity, and attach a certified numerical realization.</p><aside class="challenge"><p class="eyebrow">Develop in RiX Notebook</p><p>Open <code>rix/plugins/calculus/tutorial.md</code> in the macOS app to edit this lesson with live preview and plugin-aware code results. Use Reload plugins after changing project-local plugin source.</p></aside><div class="lesson-content"><h2>Construct an abstract expression</h2>
+<p>The abstract function retains its semantic identity and characterization even when it has no evaluation algorithm:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="12" spellcheck="false">.Plugin.Load(&quot;calculus&quot;);
+x := .calculus.Variable(:x);
+Exp := .calculus.Exp();
+expression := 3 * Exp(x^2 + 1);
+.Table({=
+  columns=[&quot;kind&quot;, &quot;schema&quot;, &quot;operation&quot;],
+  rows=[[
+    expression[:kind],
+    expression[:schema],
+    expression[:operation]
+  ]]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Inspect <code>Exp.Record()</code>. Its <code>facts</code> field records both <code>y&#039; = y</code> and the initial condition <code>y(0) = 1</code>; its <code>hasImplementation</code> field is null.</p>
+<h2>Cross the public specification boundary</h2>
+<p>The portable graph can become a core symbolic specification and return without losing the exponential&#039;s semantic ID:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="14" spellcheck="false">.Plugin.Load(&quot;calculus&quot;);
+x := .calculus.Variable(:x);
+Exp := .calculus.Exp();
+expression := 3 * Exp(x^2 + 1);
+specification := .calculus.ToSpec(expression, [:x]);
+restored := .calculus.FromSpec(specification);
+.Table({=
+  columns=[&quot;specification&quot;, &quot;restored kind&quot;, &quot;semantic function&quot;],
+  rows=[[
+    specification,
+    restored[:kind],
+    restored[:operands][1][:semanticId]
+  ]]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The core specification remains inert for semantic applications. Calculus can nevertheless resolve the retained semantic ID through its rule registry.</p>
+<h2>Differentiate by semantic identity</h2>
+<p><code>Exp</code> registers its exact outer derivative separately from any numerical implementation. Arithmetic and chain rules build another portable graph:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="14" spellcheck="false">.Plugin.Load(&quot;calculus&quot;);
+x := .calculus.Variable(:x);
+Exp := .calculus.Exp();
+expression := 3 * Exp(x^2 + 1);
+derivative := .calculus.Differentiate(expression, :x);
+entry := .calculus.Resolve(Exp);
+.Table({=
+  columns=[&quot;derivative&quot;, &quot;semantic ID&quot;, &quot;rule evidence&quot;],
+  rows=[[
+    .calculus.ToSpec(derivative),
+    entry[:semanticId],
+    entry[:evidence][:derivative][:identity]
+  ]]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The derivative is exact because the registry contains <code>D Exp = Exp</code> and the ordinary product, power, and chain rules apply. Finite differences or sampled values never become exact derivative evidence.</p>
+<h2>Keep domain and branch obligations with the result</h2>
+<p>Some exact formulas are conditional. Use <code>DifferentiateResult</code> to keep the derivative, the conditions under which it is valid, and its rule evidence in one transformation record:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="19" spellcheck="false">.Plugin.Load(&quot;calculus&quot;);
+x := .calculus.Variable(:x);
+logResult := .calculus.DifferentiateResult(.calculus.Log()(x^2), :x);
+sqrtResult := .calculus.DifferentiateResult(.calculus.Sqrt()(x), :x);
+asinResult := .calculus.DifferentiateResult(.calculus.Asin()(x), :x);
+complexResult := .calculus.DifferentiateResult(.calculus.ComplexLog()(x), :x);
+.Table({=
+  columns=[&quot;function&quot;, &quot;derivative&quot;, &quot;kind&quot;, &quot;required relation&quot;],
+  rows=[
+    [&quot;Log&quot;, .calculus.ToSpec(logResult[:expression]),
+      logResult[:obligations][1][:kind], logResult[:obligations][1][:relation]],
+    [&quot;Sqrt&quot;, .calculus.ToSpec(sqrtResult[:expression]),
+      sqrtResult[:obligations][1][:kind], sqrtResult[:obligations][1][:relation]],
+    [&quot;Asin&quot;, .calculus.ToSpec(asinResult[:expression]),
+      asinResult[:obligations][1][:kind], asinResult[:obligations][1][:relation]],
+    [&quot;ComplexLog&quot;, .calculus.ToSpec(complexResult[:expression]),
+      complexResult[:obligations][1][:kind], complexResult[:obligations][1][:relation]]
+  ]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The real rules retain positivity or open-interval requirements. The complex rule retains the selected principal branch and its branch cut. The convenience <code>.calculus.Differentiate(...)</code> form deliberately errors for these examples; it returns a bare expression only when the obligation list is empty.</p>
+<p>Operators participate in the same contract. This quotient result records that its original denominator must remain nonzero:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Plugin.Load(&quot;calculus&quot;);
+x := .calculus.Variable(:x);
+result := .calculus.DifferentiateResult((x+1)/(x-1), :x);
+{: .calculus.ToSpec(result[:expression]), result[:obligations] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Custom semantic rules use the same mechanism: register <code>derivative</code> and a separate <code>derivativeObligations</code> callable returning values made with <code>.calculus.Obligation(...)</code>. This keeps a formula, its preconditions, and the evidence for each in distinct registry slots.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="18" spellcheck="false">.Plugin.Load(&quot;calculus&quot;);
+PositiveOnly := .calculus.Function(&quot;example.positive-only@1&quot;, {=
+  name=:PositiveOnly,
+  domain=:positiveReal,
+  codomain=:real
+});
+.calculus.Register(PositiveOnly, {=
+  derivative=(application)-&gt;1,
+  derivativeObligations=(application)-&gt;[
+    .calculus.Obligation(:domain,:positive,application[:arguments][1], {=
+      reason=:customPositiveDomain
+    })
+  ],
+  derivativeEvidence=:definition
+});
+x := .calculus.Variable(:x);
+result := .calculus.DifferentiateResult(PositiveOnly(x^2), :x);
+{: .calculus.ToSpec(result[:expression]), result[:obligations] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Move form-preserving rational functions into Calculus</h2>
+<p>The Symbolic workspace loads Calculus and exposes the public bridge. A FractionFunction contributes both its expression and its original denominator restrictions:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="13" spellcheck="false">.Plugin.Load(&quot;symbolic&quot;);
+F := .ff`(x^2-1)/(x-1)`;
+C := F.Cancel();
+derivative := .symbolic.DifferentiateResult(F, :x);
+.Table({=
+  columns=[&quot;display form&quot;, &quot;cancelled display&quot;, &quot;source expression&quot;, &quot;source obligations&quot;],
+  rows=[[
+    .calculus.ToSpec(F.CalculusExpression()),
+    .calculus.ToSpec(C.CalculusExpression()),
+    .calculus.ToSpec(C.EvaluationCalculusExpression()),
+    .symbolic.Obligations(C)
+  ]]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Cancellation changes the displayed expression but not the source-domain hole. The public Calculus view makes that distinction available to other plugins without exposing FractionFunction&#039;s private symbolic tree representation.</p>
+<h2>Attach a certified realization</h2>
+<p>Numerics supplies an algorithm without becoming the owner of the abstract identity:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="17" spellcheck="false">.Plugin.Load(&quot;calculus&quot;);
+.Plugin.Load(&quot;numerics&quot;);
+CertifiedExp := (x) -&gt; .numerics.Exp(x);
+Exp := .calculus.Exp(CertifiedExp);
+result := .numerics.Refine(Exp(1/2), {=
+  absoluteWidth=1/1000,
+  maxWork=40
+});
+.Table({=
+  columns=[&quot;semantic function&quot;, &quot;status&quot;, &quot;certified&quot;, &quot;interval&quot;],
+  rows=[[
+    Exp.SemanticId(),
+    result[:status],
+    result[:certified],
+    result[:interval]
+  ]]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Propagate links through composition and differentiation</h2>
+<p>A composite Calculus graph does not copy numerical closures into its portable records. Instead, evaluation resolves every semantic application by ID. Exact differentiation builds a new graph first; surviving semantic applications then find the same linked providers:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="21" spellcheck="false">.Plugin.Load(&quot;calculus&quot;);
+.Plugin.Load(&quot;numerics&quot;);
+x := .calculus.Variable(:x);
+Exp := .calculus.Exp((value)-&gt;.numerics.Exp(value));
+Log := .calculus.Log((value)-&gt;.numerics.Ln(value));
+expression := Exp(Log(x));
+derivative := .calculus.DifferentiateResult(expression,:x);
+evaluation := .calculus.EvaluateResult(derivative,{= x=2 });
+refined := .numerics.Refine(evaluation[:value],{=
+  absoluteWidth=1/1000,
+  maxWork=40
+});
+.Table({=
+  columns=[&quot;exact derivative&quot;, &quot;implementation IDs&quot;, &quot;obligations&quot;, &quot;refined value&quot;],
+  rows=[[
+    .calculus.ToSpec(derivative[:expression]),
+    evaluation[:links].Map((link)-&gt;link[:semanticId]),
+    evaluation[:obligationValues],
+    refined[:interval]
+  ]]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Both <code>Log</code> and <code>Exp</code> are resolved during evaluation, and their implementation evidence appears in <code>evaluation[:links]</code>. The exact rule for <code>Log</code> still leaves the positive-argument obligation. Its subject is evaluated at <code>2</code>, but its status remains <code>unresolved</code>: numerical evaluation is not a proof engine.</p>
+<p>If an exact rule eliminates a semantic application—for example the outer <code>Log</code> in <code>D Log(x)=1/x</code>—the derivative no longer needs that implementation. Conversely, an unknown semantic function cannot be differentiated merely because it has a numerical algorithm.</p>
+<h2>Reuse differential identities without broad algebraic rewriting</h2>
+<p>The differentiator uses exact identities already registered for a semantic function to retain a smaller evaluation graph. For a base satisfying <code>f&#039; = c*f</code>, the Integer power rule can keep the base as one structural node:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="8" spellcheck="false">.Plugin.Load(&quot;calculus&quot;);
+x := .calculus.Variable(:x);
+Exp := .calculus.Exp((value)-&gt;value+1);
+result := .calculus.DifferentiateResult(Exp(x)^2,:x);
+evaluation := .calculus.EvaluateResult(result,{= x=2 });
+{: .calculus.ToSpec(result[:expression]),
+   result[:evidence],
+   evaluation[:semanticEvaluations] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The exact derivative is represented as <code>2 * Exp(x)^2</code>, and its power-rule evidence records <code>differentialIdentityReuse</code>. This is deliberately local: it uses <code>D Exp = Exp</code>, but does not invoke the separate algebraic identity <code>Exp(a)*Exp(b) = Exp(a+b)</code>.</p>
+<p>Linked evaluation also caches structurally identical semantic applications:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="14" spellcheck="false">.Plugin.Load(&quot;calculus&quot;);
+x := .calculus.Variable(:x);
+Shift := .calculus.Function(&quot;tutorial.shift@1&quot;, {=
+  name=:Shift,
+  implementation=(value)-&gt;value+1,
+  implementationEvidence=:definition
+});
+expression := Shift(x)+Shift(x);
+shared := .calculus.EvaluateResult(expression,{= x=2 });
+repeated := .calculus.EvaluateResult(expression,{= x=2 },{=
+  reuseCommonSubexpressions=_
+});
+{: shared[:value], shared[:semanticEvaluations], shared[:reuseCount],
+   repeated[:semanticEvaluations] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The default result invokes <code>Shift</code> once and records one <code>commonSubexpressionReuse</code>; the opt-out invokes it twice. Sharing assumes that linked mathematical implementations are referentially transparent. Disable it for diagnostic or intentionally stateful callables.</p>
+<h2>Compute higher and multivariate derivatives</h2>
+<p>Repeated and mixed derivatives retain the variable path and accumulate prior conditions:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="14" spellcheck="false">.Plugin.Load(&quot;calculus&quot;);
+x := .calculus.Variable(:x);
+y := .calculus.Variable(:y);
+f := x^2+x*y+y^2;
+gradient := .calculus.Gradient(f,[:x,:y]);
+jacobian := .calculus.Jacobian([x*y,x+y],[:x,:y]);
+hessian := .calculus.Hessian(f,[:x,:y]);
+higher := .calculus.DifferentiateNResult(.calculus.Log()(x),:x,2);
+{: gradient.Map((entry)-&gt;.calculus.ToSpec(entry)),
+   jacobian.Map((row)-&gt;row.Map((entry)-&gt;.calculus.ToSpec(entry))),
+   hessian.Map((row)-&gt;row.Map((entry)-&gt;.calculus.ToSpec(entry))),
+   .calculus.ToSpec(higher[:expression]),
+   higher[:variables],
+   higher[:obligations] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p><code>GradientResult</code>, <code>JacobianResult</code>, and <code>HessianResult</code> expose every component transformation plus their flattened obligations. The shorter forms used above return expression arrays only when all components are unconditional.</p>
+<h2>Keep the three meanings of an integral distinct</h2>
+<p>Phase 3 begins with inert records rather than prematurely choosing an integration algorithm:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">.Plugin.Load(&quot;calculus&quot;);
+x := .calculus.Variable(:x);
+integrand := 2*x;
+primitive := x^2;
+selected := .calculus.SelectedPrimitive(integrand,:x,primitive,{=
+  verification=:declaredIdentity,
+  evidence=[:powerRule]
+});
+family := .calculus.AntiderivativeFamily(integrand,:x,primitive,:C);
+definite := .calculus.DefiniteIntegral(integrand,:x,0,3);
+{: selected, family, definite };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>A selected primitive names one representative. An antiderivative family keeps that representative and the integration-constant symbol in separate fields. A definite integral retains its lower and upper endpoints. All three use <code>rix.calculus.integral@1</code> and carry explicit obligations and evidence. They do not yet claim that a primitive has been checked or that a definite integral has been evaluated; later exact and Numerics providers will consume these records without changing their mathematical meaning.</p>
+<p>The Calculus record and registry say which mathematical function and exact rule are meant. The Numerics result says how a value was computed and what evidence the finite work supports. Integral records now extend this same boundary; exact integration, certified quadrature, and equation specifications remain later steps.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

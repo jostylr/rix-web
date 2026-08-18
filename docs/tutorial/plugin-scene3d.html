@@ -32,6 +32,53 @@ scene := .scene3d.Scene([axes, curve, note], {= camera=camera });
 snapshot := .scene3d.Snapshot(scene, {= size=[520,360] });
 [snapshot[&quot;value&quot;], snapshot[&quot;picking&quot;], camera[&quot;orbit&quot;]];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The first array item renders as Graphics. The second is portable interaction metadata, while the third is the reusable <code>rix.scene3d.orbit@1</code> description. Pointer events themselves belong to the browser host rather than the retained scene.</p>
+<h2>Refine an exact surface within an explicit budget</h2>
+<p><code>ParametricSurface</code> begins with one cell and doubles a conforming grid while its exact midpoint-deviation test exceeds <code>tolerance</code>. The sampling record says whether the requested tolerance was met or which bound stopped the work. Interaction values remain data: a browser may interpret them without changing the retained mesh.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="44" spellcheck="false">.Plugin.Load(&quot;scene3d&quot;);
+surfaceInteraction := .scene3d.Interaction({=
+    events=[&quot;hover&quot;,&quot;select&quot;],
+    cursor=&quot;pointer&quot;,
+    tooltip=&quot;quadratic surface&quot;,
+    selection=&quot;toggle&quot;,
+    payload={= series=&quot;quadratic&quot; }
+});
+surface := .scene3d.ParametricSurface(
+    (u,v) -&gt; [2*u-1,2*v-1,u^2+v^2],
+    0:1,
+    0:1,
+    {=
+        tolerance=1/16,
+        maxDepth=4,
+        maxCells=256,
+        color=&quot;#0f766e&quot;,
+        id=&quot;surface&quot;,
+        label=&quot;quadratic surface&quot;,
+        interaction=surfaceInteraction
+    }
+);
+labelPolicy := .scene3d.AnnotationPolicy({=
+    offset=[14,-10],
+    leader=1,
+    priority=10,
+    collision=&quot;hide-lower-priority&quot;,
+    occlusion=&quot;fade&quot;
+});
+peak := .scene3d.Annotation([1,1,2], &quot;peak&quot;, {=
+    id=&quot;peak&quot;,
+    policy=labelPolicy,
+    color=&quot;#0f766e&quot;
+});
+camera := .scene3d.OrbitCamera([0,0,3/4], {=
+    radius=5,
+    height=2,
+    turn=1/3,
+    projection=&quot;orthographic&quot;,
+    scale=4
+});
+scene := .scene3d.Scene([surface,peak], {= camera=camera });
+snapshot := .scene3d.Snapshot(scene, {= size=[520,360] });
+[snapshot[&quot;value&quot;],surface[&quot;metadata&quot;][&quot;sampling&quot;],snapshot[&quot;picking&quot;]];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The leader and offset lower to core Graphics. Collision and occlusion remain declared policies in the projected record until a renderer implements them.</p>
 <h2>Add retained lights and request a lit view</h2>
 <p>Ambient, directional, and point lights remain part of the Scene3D value. The Phase 1 <code>lit</code> snapshot uses deterministic flat Lambert shading and painter&#039;s ordering; it does not claim hidden-surface or shadow certification.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="14" spellcheck="false">.Plugin.Load(&quot;scene3d&quot;);

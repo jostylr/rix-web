@@ -1,0 +1,40 @@
+<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Evaluate the first cylindrical Bessel functions through a clear namespace and refine their certified intervals." /><title>Certified Bessel functions — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./plugins-numbers-and-numerics.html#lesson-start" title="Plugins: Numbers and numerics">14</a> <span aria-hidden="true">·</span> <span>h</span></p><h1>Certified Bessel functions</h1><p class="deck">Evaluate the first cylindrical Bessel functions through a clear namespace and refine their certified intervals.</p><aside class="challenge"><p class="eyebrow">Develop in RiX Notebook</p><p>Open <code>rix/plugins/bessel/tutorial.md</code> in the macOS app to edit this lesson with live preview and plugin-aware code results. Use Reload plugins after changing project-local plugin source.</p></aside><div class="lesson-content"><h2>Keep letter-and-order names in context</h2>
+<p>The short conventional names are recognizable in a formula about Bessel functions but ambiguous in a general calculator. The plugin therefore keeps them under the <code>.bessel</code> namespace instead of installing bare <code>J0</code>, <code>J1</code>, <code>Y0</code>, and <code>Y1</code> variables.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">.Plugin.Load(&quot;bessel&quot;);
+values := [
+  .bessel.J0(0),
+  .bessel.J1(1),
+  .bessel.Y0(1),
+  .bessel.Y1(1)
+];
+values |&gt;&gt; ((value) -&gt; .numerics.Refine(value, {=
+  absoluteWidth=1/1000,
+  maxWork=1200
+}));</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Loading <code>bessel</code> automatically loads its Numerics and Oracle dependencies. All functions return certified refinable real values rather than Float samples. The Y family currently accepts positive real arguments only; an unresolved or invalid real domain produces structured <code>:unknown</code> evidence.</p>
+<h2>Use the universal implementation directly when needed</h2>
+<p>The algorithms remain part of Numerics so every certified real provider can use them. Their explicit universal names also make the relationship clear:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
+result := .numerics.Refine(.numerics.BesselJ0(1), {=
+  absoluteWidth=1/10000,
+  maxWork=400
+});
+[result[:status], result[:interval], result[:certified]];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>For ordinary calculator code, prefer <code>.bessel.J0(1)</code>. The longer Numerics names are mainly useful to code that deliberately works with the universal algorithm layer.</p>
+<h2>Select any integer order</h2>
+<p><code>J(n,x)</code> and <code>Y(n,x)</code> keep the family letter in the Bessel namespace while making the order explicit:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">.Plugin.Load(&quot;bessel&quot;);
+results := [.bessel.J(2, 1), .bessel.J(-3, 1), .bessel.Y(2, 1)];
+results.Map((value) -&gt; .numerics.Refine(value, {=
+  absoluteWidth=1/1000,
+  maxWork=7000
+}));</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Negative orders use <code>J_-n=(-1)^n J_n</code> and <code>Y_-n=(-1)^n Y_n</code>. The Y family requires a certifiably positive argument.</p>
+<h2>Modified families</h2>
+<p>The same namespace provides integer-order <code>I</code> and <code>K</code>:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">modified := [.bessel.I(2, 1), .bessel.K(2, 1)];
+modified.Map((value) -&gt; .numerics.Refine(value, {=
+  absoluteWidth=1/1000,
+  maxWork=12000
+}));</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p><code>I</code> accepts real arguments and follows integer parity. <code>K(-n,x)=K(n,x)</code> and requires <code>x&gt;0</code> on the real branch.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
