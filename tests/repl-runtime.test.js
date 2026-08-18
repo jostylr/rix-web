@@ -171,6 +171,9 @@ test("the browser exposes exact algebra Phase 2 evidence", () => {
         centeredSource := .poly([2,-3,5,-7]);
         centered := .algebra.CenteredExpansion(centeredSource, 2);
         factorization := .algebra.Factorization(.poly([6,0,6]));
+        rational := .rf\`(2*x+3)/(x^2-1)\`;
+        partial := .algebra.PartialFractions(rational);
+        divisor := .algebra.PoleZeroEvidence(rational);
         [
             evidence["schema"],
             evidence["verified"],
@@ -185,7 +188,12 @@ test("the browser exposes exact algebra Phase 2 evidence", () => {
             .algebra.Resultant(.p\`x^2-2\`, .p\`x-1\`),
             .numerics.Sign(polynomial, {= at=0 })["schema"],
             .numerics.RootCount(polynomial, -10:10)["schema"],
-            .numerics.RootCount(polynomial, -10:10)["count"]
+            .numerics.RootCount(polynomial, -10:10)["count"],
+            partial["schema"],
+            partial["terms"].Map((term)->[term["root"],term["coefficient"]]),
+            .algebra.Expand(partial.Record()) == rational,
+            divisor["schema"],
+            divisor["poles"]["entries"].Map((entry)->entry["point"])
         ];
     `);
     expect(response.type).toBe("result");
@@ -203,7 +211,12 @@ test("the browser exposes exact algebra Phase 2 evidence", () => {
     expect(response.value.values[11].value).toBe("rix.exact.sign-witness@1");
     expect(response.value.values[12].value).toBe("rix.exact.root-count@1");
     expect(String(response.value.values[13])).toBe("2");
-});
+    expect(response.value.values[14].value).toBe("rix.rational-function.partial-fractions@1");
+    expect(response.value.values[15].values.map((entry) => entry.values.map(String))).toEqual([["-1", "-1/2"], ["1", "5/2"]]);
+    expect(String(response.value.values[16])).toBe("1");
+    expect(response.value.values[17].value).toBe("rix.rational-function.divisor-evidence@1");
+    expect(response.value.values[18].values.map(String)).toEqual(["-1", "1"]);
+}, 10000);
 
 test("the browser-safe renderer plugins produce their text and source targets", () => {
     const graphic = `.Graphics.Graphic([120, 80], [
