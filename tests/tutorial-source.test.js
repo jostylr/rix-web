@@ -8,16 +8,20 @@ function tutorialBody(source) {
     return source.replace(/^---\n[\s\S]*?\n---\n?/, "");
 }
 
+function markdownOutsideFences(source) {
+    return source.replace(/^```[^\n]*\n[\s\S]*?^```[ \t]*$/gim, "");
+}
+
 test("tutorial bodies leave the page-level heading to the page template", async () => {
     const tutorialsDir = new URL("../tutorials/", import.meta.url).pathname;
     for await (const file of new Bun.Glob("*.md").scan({ cwd: tutorialsDir })) {
         const source = await Bun.file(new URL(`../tutorials/${file}`, import.meta.url)).text();
-        expect(tutorialBody(source), file).not.toMatch(/^# /m);
+        expect(markdownOutsideFences(tutorialBody(source)), file).not.toMatch(/^# /m);
     }
 
     for (const tutorial of tutorials.filter(({ pluginTutorial }) => pluginTutorial)) {
         const source = await Bun.file(new URL(tutorial.sourcePath, new URL("../", import.meta.url))).text();
-        expect(tutorialBody(source), tutorial.pluginId).not.toMatch(/^# /m);
+        expect(markdownOutsideFences(tutorialBody(source)), tutorial.pluginId).not.toMatch(/^# /m);
     }
 });
 
@@ -206,14 +210,9 @@ test("number and decision tutorials cover certified notation, output modes, and 
 
 test("plugin tutorials are generated after core lessons and grouped by theme", async () => {
     expect(tutorialByNumber("14")?.title).toBe("Plugins: Numbers and numerics");
-    expect(tutorialByNumber("14a")?.file).toBe("plugin-ball.html");
-    expect(tutorialByNumber("14b")?.file).toBe("plugin-cauchy.html");
-    expect(tutorialByNumber("14c")?.file).toBe("plugin-continued-fraction.html");
-    expect(tutorialByNumber("14d")?.file).toBe("plugin-float.html");
-    expect(tutorialByNumber("14e")?.file).toBe("plugin-numerics.html");
-    expect(tutorialByNumber("14f")?.file).toBe("plugin-oracle.html");
-    expect(tutorialByNumber("14g")?.file).toBe("plugin-radix.html");
-    expect(tutorialByNumber("14h")?.file).toBe("plugin-algebraic-real.html");
+    expect(tutorials.filter(({ parent }) => parent === "14").map(({ pluginId }) => pluginId)).toEqual([
+        "ball", "cauchy", "complex", "continued-fraction", "float", "numerics", "oracle", "radix", "bessel", "algebraic-real",
+    ]);
     expect(tutorialByNumber("15")?.title).toBe("Plugins: Algebra and analysis");
     expect(tutorialByNumber("15a")?.pluginId).toBe("algebra");
     expect(tutorials.filter(({ parent }) => parent === "15").map(({ pluginId }) => pluginId)).toContain("stats");
@@ -226,10 +225,16 @@ test("plugin tutorials are generated after core lessons and grouped by theme", a
     expect(tutorials.filter(({ parent }) => parent === "17").map(({ pluginId }) => pluginId)).toEqual(["data", "document"]);
     expect(tutorialByNumber("18")?.title).toBe("Plugins: Renderers and exporters");
     expect(tutorials.filter(({ parent }) => parent === "18").map(({ pluginId }) => pluginId)).toEqual([
-        "canvas", "csv", "gltf", "html", "latex", "markdown", "pdf", "png", "quarto", "svg", "terminal-ascii", "tikz", "gif",
+        "canvas", "csv", "gltf", "html", "latex", "markdown", "pdf", "png", "quarto", "svg", "terminal-ascii", "tikz", "webgl", "gif",
     ]);
     expect(tutorialByNumber("19")?.title).toBe("Plugins: Higher-dimensional visualization");
     expect(tutorials.filter(({ parent }) => parent === "19").map(({ pluginId }) => pluginId)).toEqual(["complex-viz"]);
+    expect(tutorialByNumber("20")?.title).toBe("Plugins: Analysis");
+    expect(tutorials.filter(({ parent }) => parent === "20").map(({ pluginId }) => pluginId)).toEqual(["analysis"]);
+    expect(tutorialByNumber("21")?.title).toBe("Plugins: Chaos and fractals");
+    expect(tutorials.filter(({ parent }) => parent === "21").map(({ pluginId }) => pluginId)).toEqual(["fractals"]);
+    expect(tutorialByNumber("22")?.title).toBe("Plugins: Probability");
+    expect(tutorials.filter(({ parent }) => parent === "22").map(({ pluginId }) => pluginId)).toEqual(["probability"]);
     const generator = await Bun.file(new URL("../scripts/generate-plugin-tutorial-index.js", import.meta.url)).text();
     expect(generator).toContain('path.join(pluginsRoot, entry.name, "tutorial.md")');
     expect(generator).toContain('"Numbers and numerics"');

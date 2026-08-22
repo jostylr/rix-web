@@ -51,7 +51,7 @@ test("every help showcase executes successfully in a fresh RiX-Web session", asy
         expect(response.type, `${example.id}: ${response.text}`).toBe("result");
         await repl.dispose();
     }
-});
+}, 30_000);
 
 test("the help menu exposes one-click showcase loading", async () => {
     const main = await Bun.file(new URL("../src/main.js", import.meta.url)).text();

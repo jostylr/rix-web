@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rix.ratmath.com/schema/range-provider.schema.json",
+  "title": "RiX Numerics range provider descriptor",
+  "description": "Portable portion of rix.numerics.range-provider@1. Runtime callables and the unforgeable host trust seal are intentionally not serialized by this schema; a trust string is descriptive, never authority by itself.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "functionId", "operations", "evidenceLevel", "trust", "provenance"],
+  "properties": {
+    "schema": { "const": "rix.numerics.range-provider@1" },
+    "functionId": { "type": "string", "minLength": 1 },
+    "operations": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "domain",
+          "directRange",
+          "derivativeRange",
+          "criticalPoints",
+          "monotonicity",
+          "globalRange",
+          "period",
+          "symmetry",
+          "singularities"
+        ]
+      }
+    },
+    "evidenceLevel": {
+      "enum": ["heuristic", "checkedEvidence", "trustedCapability"]
+    },
+    "declaredEvidenceLevel": {
+      "enum": ["heuristic", "checkedEvidence", "trustedCapability"]
+    },
+    "trust": {
+      "description": "Descriptive trust class. trustedCapability only certifies when the runtime also recognizes its non-portable host seal and exact callable binding.",
+      "enum": ["scopedUntrusted", "checkedEvidence", "trustedCapability"]
+    },
+    "provenance": { "type": "object" },
+    "facts": {
+      "description": "Optional trusted static fact family published beside the direct provider.",
+      "$ref": "function-facts.schema.json"
+    },
+    "registration": {
+      "description": "Portable audit metadata for the host registration boundary, when present.",
+      "type": "object"
+    }
+  }
+}

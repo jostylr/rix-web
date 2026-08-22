@@ -50,11 +50,27 @@ export const pluginTutorialGroups = [
   },
   {
     "number": "20",
+    "file": "plugins-analysis.html",
+    "title": "Plugins: Analysis",
+    "description": "Optional RiX plugins grouped under Analysis.",
+    "pluginGroup": true,
+    "theme": "Analysis"
+  },
+  {
+    "number": "21",
     "file": "plugins-chaos-and-fractals.html",
     "title": "Plugins: Chaos and fractals",
     "description": "Optional RiX plugins grouped under Chaos and fractals.",
     "pluginGroup": true,
     "theme": "Chaos and fractals"
+  },
+  {
+    "number": "22",
+    "file": "plugins-probability.html",
+    "title": "Plugins: Probability",
+    "description": "Optional RiX plugins grouped under Probability.",
+    "pluginGroup": true,
+    "theme": "Probability"
   }
 ];
 export const pluginTutorials = [
@@ -62,7 +78,7 @@ export const pluginTutorials = [
     "pluginId": "ball",
     "pluginDirectory": "ball",
     "title": "Certified nested real balls in RiX",
-    "description": "Use pure RiX exact midpoint-radius balls and bounded square-root refinement.",
+    "description": "Use exact real and complex Balls, nested roots, and precision-negotiated elementary functions.",
     "status": "implemented",
     "order": 0,
     "theme": "Numbers and numerics",
@@ -87,6 +103,20 @@ export const pluginTutorials = [
     "pluginTutorial": true
   },
   {
+    "pluginId": "complex",
+    "pluginDirectory": "complex",
+    "title": "Certified complex numbers over real backends",
+    "description": "Combine refinable real representations, calculate complex functions, and inspect principal-branch evidence.",
+    "status": "implemented",
+    "order": 0,
+    "theme": "Numbers and numerics",
+    "sourcePath": "../rix/plugins/complex/tutorial.md",
+    "number": "14c",
+    "parent": "14",
+    "file": "plugin-complex.html",
+    "pluginTutorial": true
+  },
+  {
     "pluginId": "continued-fraction",
     "pluginDirectory": "continued-fraction",
     "title": "Exact continued-fraction reals in RiX",
@@ -95,7 +125,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Numbers and numerics",
     "sourcePath": "../rix/plugins/continued-fraction/tutorial.md",
-    "number": "14c",
+    "number": "14d",
     "parent": "14",
     "file": "plugin-continued-fraction.html",
     "pluginTutorial": true
@@ -109,7 +139,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Numbers and numerics",
     "sourcePath": "../rix/plugins/float/tutorial.md",
-    "number": "14d",
+    "number": "14e",
     "parent": "14",
     "file": "plugin-float.html",
     "pluginTutorial": true
@@ -123,7 +153,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Numbers and numerics",
     "sourcePath": "../rix/plugins/numerics/tutorial.md",
-    "number": "14e",
+    "number": "14f",
     "parent": "14",
     "file": "plugin-numerics.html",
     "pluginTutorial": true
@@ -137,7 +167,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Numbers and numerics",
     "sourcePath": "../rix/plugins/oracle/tutorial.md",
-    "number": "14f",
+    "number": "14g",
     "parent": "14",
     "file": "plugin-oracle.html",
     "pluginTutorial": true
@@ -151,7 +181,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Numbers and numerics",
     "sourcePath": "../rix/plugins/radix/tutorial.md",
-    "number": "14g",
+    "number": "14h",
     "parent": "14",
     "file": "plugin-radix.html",
     "pluginTutorial": true
@@ -165,7 +195,7 @@ export const pluginTutorials = [
     "order": 24,
     "theme": "Numbers and numerics",
     "sourcePath": "../rix/plugins/bessel/tutorial.md",
-    "number": "14h",
+    "number": "14i",
     "parent": "14",
     "file": "plugin-bessel.html",
     "pluginTutorial": true
@@ -179,7 +209,7 @@ export const pluginTutorials = [
     "order": 999,
     "theme": "Numbers and numerics",
     "sourcePath": "../rix/plugins/algebraic-real/tutorial.md",
-    "number": "14i",
+    "number": "14j",
     "parent": "14",
     "file": "plugin-algebraic-real.html",
     "pluginTutorial": true
@@ -213,6 +243,20 @@ export const pluginTutorials = [
     "pluginTutorial": true
   },
   {
+    "pluginId": "cayley",
+    "pluginDirectory": "cayley",
+    "title": "Build Cayley–Dickson algebras over certified scalars",
+    "description": "Proposed construction, enclosure, and capability workflow for the generic Cayley layer.",
+    "status": "proposed",
+    "order": 0,
+    "theme": "Algebra and analysis",
+    "sourcePath": "../rix/plugins/cayley/tutorial.md",
+    "number": "15c",
+    "parent": "15",
+    "file": "plugin-cayley.html",
+    "pluginTutorial": true
+  },
+  {
     "pluginId": "exact-algebras",
     "pluginDirectory": "exact-algebras",
     "title": "Multiply exact quaternions and octonions",
@@ -221,7 +265,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/exact-algebras/tutorial.md",
-    "number": "15c",
+    "number": "15d",
     "parent": "15",
     "file": "plugin-exact-algebras.html",
     "pluginTutorial": true
@@ -235,7 +279,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/fracfun/tutorial.md",
-    "number": "15d",
+    "number": "15e",
     "parent": "15",
     "file": "plugin-fracfun.html",
     "pluginTutorial": true
@@ -249,7 +293,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/fraction/tutorial.md",
-    "number": "15e",
+    "number": "15f",
     "parent": "15",
     "file": "plugin-fraction.html",
     "pluginTutorial": true
@@ -263,9 +307,23 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/linalg/tutorial.md",
-    "number": "15f",
+    "number": "15g",
     "parent": "15",
     "file": "plugin-linalg.html",
+    "pluginTutorial": true
+  },
+  {
+    "pluginId": "octonion",
+    "pluginDirectory": "octonion",
+    "title": "Preserve octonion structure under certified calculation",
+    "description": "Proposed nonassociative arithmetic, enclosure, and intrinsic-function workflow.",
+    "status": "proposed",
+    "order": 0,
+    "theme": "Algebra and analysis",
+    "sourcePath": "../rix/plugins/octonion/tutorial.md",
+    "number": "15h",
+    "parent": "15",
+    "file": "plugin-octonion.html",
     "pluginTutorial": true
   },
   {
@@ -277,7 +335,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/optimize/tutorial.md",
-    "number": "15g",
+    "number": "15i",
     "parent": "15",
     "file": "plugin-optimize.html",
     "pluginTutorial": true
@@ -291,9 +349,23 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/poly/tutorial.md",
-    "number": "15h",
+    "number": "15j",
     "parent": "15",
     "file": "plugin-poly.html",
+    "pluginTutorial": true
+  },
+  {
+    "pluginId": "quaternion",
+    "pluginDirectory": "quaternion",
+    "title": "Certified quaternion arithmetic and intrinsic functions",
+    "description": "Proposed order-aware quaternion workflow over exact and refinable real components.",
+    "status": "proposed",
+    "order": 0,
+    "theme": "Algebra and analysis",
+    "sourcePath": "../rix/plugins/quaternion/tutorial.md",
+    "number": "15k",
+    "parent": "15",
+    "file": "plugin-quaternion.html",
     "pluginTutorial": true
   },
   {
@@ -305,7 +377,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/ratfun/tutorial.md",
-    "number": "15i",
+    "number": "15l",
     "parent": "15",
     "file": "plugin-ratfun.html",
     "pluginTutorial": true
@@ -319,7 +391,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/solve/tutorial.md",
-    "number": "15j",
+    "number": "15m",
     "parent": "15",
     "file": "plugin-solve.html",
     "pluginTutorial": true
@@ -333,7 +405,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/stern-brocot/tutorial.md",
-    "number": "15k",
+    "number": "15n",
     "parent": "15",
     "file": "plugin-stern-brocot.html",
     "pluginTutorial": true
@@ -347,7 +419,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/symbolic/tutorial.md",
-    "number": "15l",
+    "number": "15o",
     "parent": "15",
     "file": "plugin-symbolic.html",
     "pluginTutorial": true
@@ -355,13 +427,13 @@ export const pluginTutorials = [
   {
     "pluginId": "stats",
     "pluginDirectory": "stats",
-    "title": "Summarize exact data",
-    "description": "Compute rational descriptive statistics and turn them into portable tables and plots.",
+    "title": "Summarize and model exact data",
+    "description": "Compute exact summaries, common hypothesis tests, regressions, certified confidence records, and portable diagnostics.",
     "status": "implemented",
     "order": 20,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/stats/tutorial.md",
-    "number": "15m",
+    "number": "15p",
     "parent": "15",
     "file": "plugin-stats.html",
     "pluginTutorial": true
@@ -439,8 +511,8 @@ export const pluginTutorials = [
   {
     "pluginId": "data",
     "pluginDirectory": "data",
-    "title": "Transform an exact relation",
-    "description": "Validate, filter, sort, and present a small exact dataset.",
+    "title": "Transform and combine exact relations",
+    "description": "Validate, join, aggregate, derive, and present exact relational data.",
     "status": "implemented",
     "order": 0,
     "theme": "Data and documents",
@@ -481,8 +553,8 @@ export const pluginTutorials = [
   {
     "pluginId": "csv",
     "pluginDirectory": "render-csv",
-    "title": "Export exact rows as CSV",
-    "description": "Produce quoted CSV and TSV without decimalizing rational cells.",
+    "title": "Exact, typed CSV interchange",
+    "description": "Import typed measurements, inspect provenance, stream rows, and export without losing exact values.",
     "status": "implemented",
     "order": 0,
     "theme": "Renderers and exporters",
@@ -675,6 +747,20 @@ export const pluginTutorials = [
     "pluginTutorial": true
   },
   {
+    "pluginId": "analysis",
+    "pluginDirectory": "analysis",
+    "title": "Effective limits, series, and justified exchanges in RiX",
+    "description": "Build scalar and function sequences, inspect exact convergence witnesses, and keep limit-exchange hypotheses visible.",
+    "status": "implemented",
+    "order": 0,
+    "theme": "Analysis",
+    "sourcePath": "../rix/plugins/analysis/tutorial.md",
+    "number": "20a",
+    "parent": "20",
+    "file": "plugin-analysis.html",
+    "pluginTutorial": true
+  },
+  {
     "pluginId": "fractals",
     "pluginDirectory": "fractals",
     "title": "Explore deterministic chaos and escape-time fractals",
@@ -683,9 +769,23 @@ export const pluginTutorials = [
     "order": 31,
     "theme": "Chaos and fractals",
     "sourcePath": "../rix/plugins/fractals/tutorial.md",
-    "number": "20a",
-    "parent": "20",
+    "number": "21a",
+    "parent": "21",
     "file": "plugin-fractals.html",
+    "pluginTutorial": true
+  },
+  {
+    "pluginId": "probability",
+    "pluginDirectory": "probability",
+    "title": "Probability laws and replayable experiments",
+    "description": "Compute exact finite probabilities, use certified continuous laws, and run disclosed simulations.",
+    "status": "implemented",
+    "order": 21,
+    "theme": "Probability",
+    "sourcePath": "../rix/plugins/probability/tutorial.md",
+    "number": "22a",
+    "parent": "22",
+    "file": "plugin-probability.html",
     "pluginTutorial": true
   }
 ];

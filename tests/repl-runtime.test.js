@@ -602,6 +602,14 @@ test("the web REPL automatically loads its curated calculator profile", () => {
     expect(repl.run(".Max(.float(1 / 2), 2)").type).toBe("error");
     expect(repl.run(".Max(.float(1 / 2), .float(2))").text).toBe("2");
     expect(repl.run(".float.Round(.float(1 / 3), 2)").text).toBe("33/100");
+    expect(repl.run(".float.Binary32(1 / 10).Format()").text).toBe("binary32");
+    expect(repl.run(".float.Binary32(1).NextUp().Value()").text).toBe("1.0000001192092896");
+    expect(repl.run(".float.Binary64(1).NextUp().Value()").text).toBe("1.0000000000000002");
+    expect(repl.run("(.float.Binary32(16777216) + .float.Binary32(1)).Value()").text).toBe("16777216");
+    expect(repl.run(".float.Binary32(1) + .float.Binary64(1)").type).toBe("error");
+    expect(repl.run(".float.Binary32(10^100).Classify()[:class]").text).toBe("infinity");
+    expect(repl.run(".float.Binary32(-1/(10^100)).Classify()[:sign]").text).toBe("negative");
+    expect(repl.run("(.float.Binary64(0)/.float.Binary64(0)).Classify()[:class]").text).toBe("nan");
     expect(repl.run('.ball(3 / 2, 1 / 4).Interval()').text).toBe("1..1/4:1..3/4");
     expect(repl.run('.ball.Sqrt(2) < {~ 3 / 2, 1 / 1000 }').text).toBe("1");
     expect(repl.run('.cauchy.Geometric(1, 1 / 2).Term(3)').text).toBe("1..7/8");
@@ -609,6 +617,14 @@ test("the web REPL automatically loads its curated calculator profile", () => {
     expect(certified.text).toBe(formatValue(certified.value.entries.get("interval")));
     expect(certified.sourceText).toContain("schema=rix.numerics.enclosure@1");
     expect(repl.run('.numerics.Refine(.oracle.Rational(3 / 7), {= absoluteWidth=1/1000, maxWork=20 })[:status]').text)
+        .toBe("enclosed");
+    expect(repl.run('.oracle.Refine(.oracle.NthRoot(2, 2), {= width=1/1000, maxCalls=20 })[:status]').text)
+        .toBe("enclosed");
+    expect(repl.run('.oracle.Refine(.oracle.NthRoot(2, 2), {= width=1/1000, maxCalls=0 })[:status]').text)
+        .toBe("budgetExhausted");
+    expect(repl.run('.oracle.Refine(.oracle.Coarse((2/5):(3/5), 1/10), {= width=1/1000, maxCalls=0 })[:status]').text)
+        .toBe("resolutionFloor");
+    expect(repl.run('.oracle.Refine(.oracle.Cauchy(.cauchy.Geometric(1, 1/2)), {= width=1/1000, maxCalls=20 })[:status]').text)
         .toBe("enclosed");
     expect(repl.run('.numerics.Refine(.ball.Sqrt(2), {= absoluteWidth=1/1000, maxWork=20 })[:status]').text)
         .toBe("enclosed");
@@ -651,6 +667,103 @@ test("the web REPL automatically loads its curated calculator profile", () => {
         .toBe("name,value\nhalf,1/2\n");
     expect(repl.run('.document.Report("Web report", [.Heading(2, "Result", "result")])').html)
         .toContain('id="result"');
+});
+
+test("the embedded radix plugin includes Phase 2 formatting and work diagnostics", () => {
+    const repl = createRixRepl();
+    const formatted = repl.run(`
+        .Plugin.Load("radix");
+        alphabet := "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        [
+            61.RadixString(62, {= alphabet=alphabet }),
+            1234567.RadixString(10, {= groupSize=3 })
+        ];
+    `).value;
+    expect(formatted.values.map((item) => item.value)).toEqual(["Z", "1_234_567"]);
+
+    const exhausted = repl.run("(1/97).PeriodInfo(10, {= maxWork=3 });").value;
+    expect(exhausted.entries.get("schema").value).toBe("rix.radix.period-info@1");
+    expect(exhausted.entries.get("work").entries.get("iterations").value).toBe(3n);
+    expect(exhausted.entries.get("diagnostics").values.map((item) => item.value))
+        .toEqual(["workBudgetReached"]);
+});
+
+test("the embedded Cauchy plugin includes Phase 2 computed moduli, lazy terms, and funnels", () => {
+    const repl = createRixRepl();
+    const result = repl.run(`
+        .Plugin.Load("cauchy");
+        x := .cauchy.Geometric(1, 1/2);
+        y := .cauchy.Geometric(1, -1/2);
+        sum := x+y;
+        terms := sum.Terms(0, 4);
+        third := terms.Get(3);
+        funnel := sum.Funnel({= name=:browserFunnel });
+        fallback := x/x;
+        {=
+            kind=sum.Record()[:kind],
+            enclosed=sum.Enclosure(5).ContainsValue(8/3),
+            modulus=sum.Modulus(1/1000),
+            term=third,
+            funnelKind=funnel.Record()[:kind],
+            funnelStatus=funnel.Refine({= absoluteWidth=1/1000, maxCalls=20 })[:status],
+            fallbackKind=fallback.Record()[:valueKind]
+        };
+    `).value;
+
+    expect(result.entries.get("kind").value).toBe("computed");
+    expect(result.entries.get("enclosed").value).toBe(1n);
+    expect(result.entries.get("modulus").value).toBeGreaterThanOrEqual(0n);
+    expect(result.entries.get("term")).toBeDefined();
+    expect(result.entries.get("funnelkind").value).toBe("provider");
+    expect(result.entries.get("funnelstatus").value).toBe("enclosed");
+    expect(result.entries.get("fallbackkind").value).toBe("cauchyArithmeticReal");
+});
+
+test("the embedded Continued Fraction plugin includes Phase 2 recognition and native Gosper arithmetic", () => {
+    const repl = createRixRepl();
+    const result = repl.run(`
+        .Plugin.Load("continued-fraction");
+        root := .cf.Sqrt2();
+        shifted := root.Translate(3);
+        reciprocal := root.Reciprocal();
+        best := root.BestApproximation(10);
+        other := .cf.Periodic([1],[1,2],{= name=:sqrt3 });
+        sum := root+other;
+        unresolved := .cf.Sqrt2()-.cf.Sqrt2();
+        {=
+            rootForm=root.QuadraticForm()[:coefficients],
+            shiftedForm=shifted.QuadraticForm()[:coefficients],
+            reciprocalForm=reciprocal.QuadraticForm()[:coefficients],
+            best=best[:approximation],
+            nextDenominator=best[:nextDenominator],
+            status=best[:status],
+            reciprocalPrefix=reciprocal.Record()[:prefix],
+            gosperKind=sum.Record()[:kind],
+            gosperTransducer=sum.Record()[:transducer],
+            sumCoefficients=sum.Coefficients(4),
+            differenceCoefficients=(root-other).Coefficients(4),
+            productCoefficients=(root*other).Coefficients(4),
+            quotientCoefficients=(root/other).Coefficients(4),
+            zeroStatus=(root-root).ZeroStatus()[:status],
+            unresolvedStatus=unresolved.ZeroStatus({= maxInputTerms=8 })[:status]
+        };
+    `).value;
+
+    expect(result.entries.get("rootform").values.map(String)).toEqual(["-2", "0", "1"]);
+    expect(result.entries.get("shiftedform").values.map(String)).toEqual(["7", "-6", "1"]);
+    expect(result.entries.get("reciprocalform").values.map(String)).toEqual(["-1", "0", "2"]);
+    expect(String(result.entries.get("best"))).toBe("7/5");
+    expect(result.entries.get("nextdenominator").value).toBe(12n);
+    expect(result.entries.get("status").value).toBe("certified");
+    expect(result.entries.get("reciprocalprefix").values.map(String)).toEqual(["0", "1"]);
+    expect(result.entries.get("gosperkind").value).toBe("gosper");
+    expect(result.entries.get("gospertransducer").value).toBe("bihomographic");
+    expect(result.entries.get("sumcoefficients").values.map(String)).toEqual(["3", "6", "1", "5"]);
+    expect(result.entries.get("differencecoefficients").values.map(String)).toEqual(["-1", "1", "2", "6"]);
+    expect(result.entries.get("productcoefficients").values.map(String)).toEqual(["2", "2", "4", "2"]);
+    expect(result.entries.get("quotientcoefficients").values.map(String)).toEqual(["0", "1", "4", "2"]);
+    expect(result.entries.get("zerostatus").value).toBe("zero");
+    expect(result.entries.get("unresolvedstatus").value).toBe("unknown");
 });
 
 test("automatic browser plugins survive reset and can be disabled explicitly", async () => {
@@ -893,20 +1006,24 @@ test("every indexed tutorial has a Markdown source file", async () => {
     }
 });
 
-test("every published RiX tutorial h2 section executes in fresh state", async () => {
-    for (const tutorial of tutorials) {
-        if (tutorial.pluginGroup || tutorial.status === "proposed") continue;
+for (const tutorial of tutorials.filter(({ pluginGroup, status }) => !pluginGroup && status !== "proposed")) {
+    test(`published RiX tutorial ${tutorial.number} executes each h2 section in fresh state`, async () => {
         const source = tutorial.pluginTutorial
             ? await Bun.file(new URL(tutorial.sourcePath, new URL("../", import.meta.url))).text()
             : await Bun.file(new URL(`../tutorials/${tutorial.file.replace(/\.html$/, ".md")}`, import.meta.url)).text();
         for (const [sectionIndex, section] of source.split(/^##\s+/m).entries()) {
+            const cells = [...section.matchAll(/```rix(?:[ \t]+[^\n]*)?[ \t]*\n([\s\S]*?)\n```/g)]
+                .filter(([, code]) => !code.includes("## lint-problem"));
+            if (cells.length === 0) continue;
             const repl = createRixRepl({ autoLoadPlugins: false });
-            const cells = section.matchAll(/```rix(?:[ \t]+[^\n]*)?[ \t]*\n([\s\S]*?)\n```/g);
-            for (const [, code] of cells) {
-                if (code.includes("## lint-problem")) continue;
-                const response = await repl.runAsync(code);
-                expect(response.type, `lesson ${tutorial.number}, section ${sectionIndex}: ${response.text}`).toBe("result");
+            try {
+                for (const [, code] of cells) {
+                    const response = await repl.runAsync(code);
+                    expect(response.type, `lesson ${tutorial.number}, section ${sectionIndex}: ${response.text}`).toBe("result");
+                }
+            } finally {
+                await repl.dispose();
             }
         }
-    }
-}, 30_000);
+    }, 60_000);
+}

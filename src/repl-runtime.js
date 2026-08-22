@@ -316,9 +316,12 @@ export function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true
             // present. This also keeps existing plugin/lazy-form behavior
             // identical while the async evaluator coverage expands.
             const tokens = tokenize(source);
+            const usesAsyncTerminal = [...source.matchAll(/\.(ForEach|Reduce|Collect|First|Find|Count|Close|Retry)\s*\(/gi)]
+                .some((match) => match[1].toLowerCase() !== "collect"
+                    || !/(?:\.data|\.csv)$/i.test(source.slice(0, match.index)));
             const usesAsyncEvaluation = tokens.some((token) => token.value === "{$" || token.value === "{$$")
                 || tokens.some((token) => token.value === "|>_" || token.value === "|>!")
-                || /\.(?:ForEach|Reduce|Collect|First|Find|Count|Close|Retry)\s*\(/i.test(source);
+                || usesAsyncTerminal;
             if (!usesAsyncEvaluation) return this.run(source);
             const topic = inlineHelpRequest(source);
             if (topic !== null) return { type: "help", source, ...findHelp(topic) };
