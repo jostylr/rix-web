@@ -78,7 +78,7 @@ and inequality boundaries, discontinuity-aware cell refinement, continuous
 color interpolation, contour-label placement, dense-field performance policy,
 and browser-level visual/accessibility QA.
 
-## 4. Visual geometry workbench
+## 4. Visual geometry workbench — baseline implemented
 
 Build a construction environment over retained geometry constraints.
 
@@ -88,6 +88,22 @@ Build a construction environment over retained geometry constraints.
   readable degeneracy diagnostics.
 - Provide object tree, property inspector, undo/redo, semantic keyboard
   navigation, and import/export of a portable construction record.
+
+The baseline now exposes `.geometry.Workbench` over the retained
+`rix.geometry.construction-graph@1` model. Construction nodes render with stable
+semantic identities, while the web host adds a dependency tree, exact property
+inspection, keyboard object traversal, session undo/redo for direct movement,
+and deterministic JSON export. `DragPoint` now supports an explicit mathematical
+view-to-frame transform, so a reactive free-point tuple can move in mathematical
+coordinates while the scene remains renderer-neutral. At the kernel level,
+`ConstructionRecord` strips executable constructors into a portable record,
+`ImportConstruction` restores it with an explicit derived-constructor map, and
+`Undo`/`Redo` reversibly replay exact graph drag events.
+
+Follow-up work remains: authoring tools for creating objects from the canvas,
+constraint-solving drag modes, labels and measurements, locus animation,
+degeneracy repair suggestions, multi-object edits, persistent workbench history,
+and direct import of exported JSON in the browser host.
 
 ## 5. Timeline playback and transitions
 

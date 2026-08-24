@@ -21849,20 +21849,70 @@ ${indentStr})`;
     return output("circle", { center, radius, style: optionalMap(get(entry, "style"), "Circle style") });
   }
   function createDragPoint(args) {
-    const entry = spec(args, ["target", "radius", "style", "label"], "DragPoint");
+    const entry = spec(args, ["target", "radius", "style", "label", "coordinateSystem"], "DragPoint");
     const target = get(entry, "target");
     if (!isReactiveNode(target)) {
       throw new Error("DragPoint target must be a ReactiveGraph node");
     }
-    const center = sequence(target.get(), "DragPoint target value");
-    if (center.length !== 2) {
+    const sourceCenter = sequence(target.get(), "DragPoint target value");
+    if (sourceCenter.length !== 2) {
       throw new Error("DragPoint target value must contain x and y coordinates");
+    }
+    const suppliedCoordinates = get(entry, "coordinateSystem");
+    let coordinateSystem = null;
+    let center = sourceCenter;
+    if (suppliedCoordinates !== null && suppliedCoordinates !== undefined) {
+      const coordinates = map(suppliedCoordinates, "DragPoint coordinateSystem");
+      const view = sequence(get(coordinates, "view"), "DragPoint coordinateSystem view");
+      const suppliedFrame = get(coordinates, "frame");
+      const suppliedSize = get(coordinates, "size");
+      if (view.length !== 4 || suppliedFrame === null && suppliedSize === null) {
+        throw new Error("DragPoint coordinateSystem requires a four-coordinate view and either frame or size");
+      }
+      const numericView = view.map((value, index) => numericValue(value, `DragPoint view coordinate ${index + 1}`));
+      const [xmin, ymin, xmax, ymax] = numericView;
+      let numericFrame;
+      if (suppliedFrame !== null) {
+        const frame = sequence(suppliedFrame, "DragPoint coordinateSystem frame");
+        if (frame.length !== 4)
+          throw new Error("DragPoint coordinateSystem frame must contain four coordinates");
+        numericFrame = frame.map((value, index) => numericValue(value, `DragPoint frame coordinate ${index + 1}`));
+      } else {
+        const size = sequence(suppliedSize, "DragPoint coordinateSystem size");
+        if (size.length !== 2)
+          throw new Error("DragPoint coordinateSystem size must contain width and height");
+        const [width, height] = size.map((value, index) => numericValue(value, `DragPoint size coordinate ${index + 1}`));
+        if (!(width > 0 && height > 0 && xmax > xmin && ymax > ymin)) {
+          throw new Error("DragPoint coordinateSystem requires positive size and increasing view bounds");
+        }
+        const scale = Math.min(width / (xmax - xmin), height / (ymax - ymin));
+        const offsetX = (width - (xmax - xmin) * scale) / 2;
+        const offsetY = (height - (ymax - ymin) * scale) / 2;
+        numericFrame = [offsetX, offsetY, width - offsetX, height - offsetY];
+      }
+      const [left, top, right, bottom] = numericFrame;
+      if (!(xmax > xmin && ymax > ymin && right > left && bottom > top)) {
+        throw new Error("DragPoint coordinateSystem requires increasing view and frame bounds");
+      }
+      const x = numericValue(sourceCenter[0], "DragPoint target x coordinate");
+      const y = numericValue(sourceCenter[1], "DragPoint target y coordinate");
+      center = Object.freeze([
+        left + (x - xmin) / (xmax - xmin) * (right - left),
+        bottom - (y - ymin) / (ymax - ymin) * (bottom - top)
+      ]);
+      coordinateSystem = Object.freeze({
+        schema: "rix.graphics.coordinate-system@1",
+        view: Object.freeze([...numericView]),
+        frame: Object.freeze([...numericFrame])
+      });
     }
     return output("drag_point", {
       center: Object.freeze([...center]),
+      sourceCenter: Object.freeze([...sourceCenter]),
       radius: get(entry, "radius", int3(7)),
       style: optionalMap(get(entry, "style"), "DragPoint style"),
       label: asString(get(entry, "label")) || "Draggable point",
+      coordinateSystem,
       target,
       targetId: target.id,
       replacesDependencies: Object.freeze([...target.dependencies])
@@ -22790,8 +22840,19 @@ ${value.transcript.map((child) => formatInlineText(child, format)).join("")}` : 
     if (value.kind === "figure")
       return [formatOutputText(value.content, format), value.caption].filter(Boolean).join(`
 `);
-    if (value.kind === "graphic")
+    if (value.kind === "graphic") {
+      const workbench = value.metadata instanceof Map ? get(value.metadata, "workbench") : null;
+      if (workbench) {
+        const nodes = sequence(get(map(workbench, "Geometry workbench metadata"), "nodes", []), "Geometry workbench nodes");
+        const free = nodes.filter((node) => Boolean(get(map(node, "Geometry workbench node"), "free"))).length;
+        const constrained = nodes.filter((node) => {
+          const kind = get(map(node, "Geometry workbench node"), "kind");
+          return kind === "constraint" || kind?.value === "constraint";
+        }).length;
+        return `[Geometry workbench: ${nodes.length} objects, ${free} free, ${constrained} constraints, ${value.children.length} scene nodes]`;
+      }
       return formatPlotText(value, format) || `[Graphic: ${cellText(value.size[0], format)} × ${cellText(value.size[1], format)}, ${value.children.length} scene nodes]`;
+    }
     if (value.kind === "path")
       return value.commands ? `[Path: ${value.commands.length} commands]` : `[Path: ${value.points.length} points]`;
     if (value.kind === "slide")
@@ -70002,12 +70063,12 @@ id: geometry
 description: Pure-RiX exact geometry, transformations, conics, constraints, and bounded portable Graphics refinement.
 kind: rix
 mount: geometry
-exports: [Point, Line, Segment, Ray, Polygon, Circle, Conic, Ellipse, Parabola, Hyperbola, Locus, Implicit, Affine, Projective, Transform, Constraint, Constraints, SquaredDistance, Distance, Length, Area, CircularAngle, Angle, Centroid, Incenter, Orthocenter, AngleBisector, Perpendicular, ParallelThrough, Midpoint, PerpendicularBisector, Circumcircle, Translate, RotateQuarterTurns, Rotate, ReflectAcross, Intersect, Points, Status, UncertainPoint, UncertainBounds, TransformUncertain, ConstructionGraph, Drag, Refine, Draw]
+exports: [Point, Line, Segment, Ray, Polygon, Circle, Conic, Ellipse, Parabola, Hyperbola, Locus, Implicit, Affine, Projective, Transform, Constraint, Constraints, SquaredDistance, Distance, Length, Area, CircularAngle, Angle, Centroid, Incenter, Orthocenter, AngleBisector, Perpendicular, ParallelThrough, Midpoint, PerpendicularBisector, Circumcircle, Translate, RotateQuarterTurns, Rotate, ReflectAcross, Intersect, Points, Status, UncertainPoint, UncertainBounds, TransformUncertain, ConstructionGraph, ConstructionRecord, ImportConstruction, Drag, Undo, Redo, Refine, Draw, Workbench]
 groups: [Geometry, Graphics, Exact]
 permissions: []
 requires: [rix.numerics@1, rix.polynomial.algorithms@1, rix.algebraic-real@1]
-provides: [rix.geometry@1, rix.geometry.intersection@1, rix.geometry.constraint@1, rix.geometry.refinement@1, rix.geometry.circular-angle@1, rix.geometry.uncertain-point@1, rix.geometry.construction-graph@1]
-schemas: [rix.geometry@1, rix.geometry.intersection@1, rix.geometry.constraint@1, rix.geometry.refinement@1, rix.geometry.circular-angle@1, rix.geometry.uncertain-point@1, rix.geometry.construction-graph@1]
+provides: [rix.geometry@1, rix.geometry.intersection@1, rix.geometry.constraint@1, rix.geometry.refinement@1, rix.geometry.circular-angle@1, rix.geometry.uncertain-point@1, rix.geometry.construction-graph@1, rix.geometry.construction-record@1, rix.geometry.workbench@1]
+schemas: [rix.geometry@1, rix.geometry.intersection@1, rix.geometry.constraint@1, rix.geometry.refinement@1, rix.geometry.circular-angle@1, rix.geometry.uncertain-point@1, rix.geometry.construction-graph@1, rix.geometry.construction-record@1, rix.geometry.workbench@1]
 snapshot: true
 deterministic: true
 defaultEnabled: false
@@ -70596,7 +70657,7 @@ GeometryIntersectUncertainPoints(left,right) -> {;
            ?_ GeometryUndecidedIntersection(first,second,"The uncertain point sets may overlap; subdivision or constraint solving is required",{= firstBounds=firstBounds,secondBounds=secondBounds });
 };
 
-GeometryBuildConstructionGraph(nodes,history ?= []) -> {;
+GeometryBuildConstructionGraph(nodes,history ?= [],future ?= []) -> {;
     nodes ? :Array ?: _ ?_ .Error("geometry.ConstructionGraph nodes must be an Array");
     values:={= }; resolved:=[]; ids:=[];
     {@ index=1; index<=@nodes.Len(); {;
@@ -70612,15 +70673,58 @@ GeometryBuildConstructionGraph(nodes,history ?= []) -> {;
     }; index+=1 };
     .DeepMutable({=
         type="geometry_construction_graph",kind=:constructionGraph,schema="rix.geometry.construction-graph@1",
-        nodes=resolved,values=values,history=history,deterministic=1
+        nodes=resolved,values=values,history=history,future=future,deterministic=1
     },_);
 };
 
-GeometryConstructionGraph(nodes,options ?= {= }) -> GeometryBuildConstructionGraph(nodes,GeometryOption(options,"history",[]));
+GeometryConstructionGraph(nodes,options ?= {= }) -> GeometryBuildConstructionGraph(
+    nodes,GeometryOption(options,"history",[]),GeometryOption(options,"future",[]));
+
+GeometryRequireConstructionGraph(graph,label) -> {;
+    valid=(graph ? :Map)&&graph.Has("schema")&&graph[:schema]=="rix.geometry.construction-graph@1";
+    valid ?: graph ?_ .Error(@"@{label} requires a construction graph");
+};
+
+GeometryConstructionRecord(graph) -> {;
+    valid=GeometryRequireConstructionGraph(graph,"geometry.ConstructionRecord");
+    records=valid[:nodes].Map((node)->{;
+        value=node[:value];
+        kind=((value ? :Map)&&value.Has("kind")) ?: value[:kind] ?_ :value;
+        status=((value ? :Map)&&value.Has("status")) ?: value[:status] ?_ _;
+        diagnostic=((value ? :Map)&&value.Has("diagnostic")) ?: value[:diagnostic] ?_ _;
+        {= id=node[:id],free=node[:free],dependsOn=node[:dependsOn],kind=kind,status=status,diagnostic=diagnostic,value=value };
+    });
+    .DeepMutable({=
+        type="geometry_construction_record",kind=:constructionRecord,schema="rix.geometry.construction-record@1",
+        nodes=records,history=valid[:history],future=GeometryOption(valid,"future",[]),
+        replayRequires=records.Filter((node)->!node[:free]).Map((node)->node[:id]),deterministic=1
+    },_);
+};
+
+GeometryImportConstruction(record,constructors ?= {= }) -> {;
+    valid=(record ? :Map)&&record.Has("schema")&&record[:schema]=="rix.geometry.construction-record@1";
+    valid ?: _ ?_ .Error("geometry.ImportConstruction requires a construction record");
+    constructors ? :Map ?: _ ?_ .Error("geometry.ImportConstruction constructors must be a map");
+    nodes=record[:nodes].Map((node)->node[:free]
+      ?: {= id=node[:id],free=1,value=node[:value],dependsOn=node[:dependsOn] }
+      ?_ {;
+          id=@node[:id];
+          @constructors.Has(id) ?: _ ?_ .Error(@"geometry.ImportConstruction requires a constructor for derived node @{id}");
+          {= id=id,free=_,dependsOn=@node[:dependsOn],construct=@constructors[id] };
+      });
+    GeometryBuildConstructionGraph(nodes,GeometryOption(record,"history",[]),GeometryOption(record,"future",[]));
+};
+
+GeometryMoveConstructionNode(graph,id,target,history,future) -> {;
+    found=graph[:nodes].Filter((node)->node[:id]==id);
+    found.Len()==1 ?: _ ?_ .Error(@"geometry construction node @{id} does not exist");
+    found[1][:free] ?: _ ?_ .Error(@"geometry construction node @{id} is derived and cannot be dragged directly");
+    nodes=graph[:nodes].Map((node)->node[:id]==id ?: node.Merge({= value=@target }) ?_ node);
+    GeometryBuildConstructionGraph(nodes,history,future);
+};
 
 GeometryDrag(graph,id,target,options ?= {= }) -> {;
-    valid=(graph ? :Map)&&graph.Has("schema")&&graph[:schema]=="rix.geometry.construction-graph@1";
-    valid ?: _ ?_ .Error("geometry.Drag requires a construction graph");
+    valid=GeometryRequireConstructionGraph(graph,"geometry.Drag");
     supplied=GeometryRequire(target,:point,"geometry.Drag target");
     snap=GeometryOption(options,"snap");
     moved=snap==_
@@ -70629,12 +70733,33 @@ GeometryDrag(graph,id,target,options ?= {= }) -> {;
           grid=GeometryExact(@snap,"geometry.Drag snap"); grid>0 ?: _ ?_ .Error("geometry.Drag snap must be positive");
           GeometryPoint((@supplied[:x]/grid).Round()*grid,(@supplied[:y]/grid).Round()*grid);
       };
-    found=graph[:nodes].Filter((node)->node[:id]==id);
+    found=valid[:nodes].Filter((node)->node[:id]==id);
     found.Len()==1 ?: _ ?_ .Error(@"geometry.Drag node @{id} does not exist");
     found[1][:free] ?: _ ?_ .Error(@"geometry.Drag node @{id} is derived and cannot be dragged directly");
-    nodes=graph[:nodes].Map((node)->node[:id]==id ?: node.Merge({= value=@moved }) ?_ node);
     event={= operation=:drag,id=id,from=found[1][:value],to=moved,snap=snap };
-    GeometryBuildConstructionGraph(nodes,graph[:history].Push(event));
+    GeometryMoveConstructionNode(valid,id,moved,valid[:history].Push(event),[]);
+};
+
+GeometryUndo(graph) -> {;
+    valid=GeometryRequireConstructionGraph(graph,"geometry.Undo");
+    valid[:history].Len()==0
+      ?: valid
+      ?_ {;
+          event=@valid[:history].Last();
+          event[:operation]==:drag ?: _ ?_ .Error("geometry.Undo encountered an unsupported construction event");
+          GeometryMoveConstructionNode(@valid,event[:id],event[:from],@valid[:history].DropLast(),GeometryOption(@valid,"future",[]).Push(event));
+      };
+};
+
+GeometryRedo(graph) -> {;
+    valid=GeometryRequireConstructionGraph(graph,"geometry.Redo"); future=GeometryOption(valid,"future",[]);
+    future.Len()==0
+      ?: valid
+      ?_ {;
+          event=@future.Last();
+          event[:operation]==:drag ?: _ ?_ .Error("geometry.Redo encountered an unsupported construction event");
+          GeometryMoveConstructionNode(@valid,event[:id],event[:to],@valid[:history].Push(event),@future.DropLast());
+      };
 };
 
 GeometryCircularAngleValue(turns,cosine,sine,radians,domain,operation,inputs,orientation ?= :counterclockwise) -> .DeepMutable({=
@@ -71434,10 +71559,57 @@ GeometryDraw(objects, options ?= {= }) -> {;
                               }
                               ?_ .Error(@"geometry.Draw does not support geometry kind '@{item[:kind]}'");
     }; index += 1 };
-    .Graphics.Graphic(size, children, {=
-        source="rix.geometry@1",
-        projection="uniform-fit",
-        unresolved=unresolved
+    parts={= size=size,children=children,unresolved=unresolved };
+    GeometryOption(settings,"parts",_)
+      ?: parts
+      ?_ .Graphics.Graphic(size, children, {=
+          source="rix.geometry@1",
+          projection="uniform-fit",
+          unresolved=unresolved
+      });
+};
+
+GeometryWorkbench(graph, options ?= {= }) -> {;
+    valid=GeometryRequireConstructionGraph(graph,"geometry.Workbench");
+    size=GeometryNumericSequence(GeometryOption(options,"size",[720,480]),2,"geometry.Workbench size");
+    view=GeometryNumericSequence(GeometryOption(options,"view",[-10,-10,10,10]),4,"geometry.Workbench view");
+    handles=GeometryOption(options,"handles",[]);
+    handles ? :Array ?: _ ?_ .Error("geometry.Workbench handles must be an array of {id, graphic} maps");
+    xmin=view[1]; ymin=view[2]; xmax=view[3]; ymax=view[4];
+    (xmax>xmin&&ymax>ymin) ?: _ ?_ .Error("geometry.Workbench view must satisfy xmin < xmax and ymin < ymax");
+    (size[1]>0&&size[2]>0) ?: _ ?_ .Error("geometry.Workbench size must be positive");
+    scale=.Min(size[1]/(xmax-xmin),size[2]/(ymax-ymin));
+    offsetX=(size[1]-(xmax-xmin)*scale)/2; offsetY=(size[2]-(ymax-ymin)*scale)/2;
+    frame=[offsetX,offsetY,size[1]-offsetX,size[2]-offsetY];
+    children:=[]; unresolved:=0; interactive:=[];
+    {@ index=1; index<=@valid[:nodes].Len(); {;
+        node=@valid[:nodes][index]; value=node[:value]; id=node[:id];
+        schema=((value ? :Map)&&value.Has("schema")) ?: value[:schema] ?_ _;
+        drawable=schema=="rix.geometry@1"||schema=="rix.geometry.intersection@1";
+        drawable
+          ?: {;
+              drawing=GeometryDraw([@value],{= view=@view,size=@size,parts=1 });
+              group=.Graphics.Group({= children=drawing[:children],metadata={= id=@id,geometryNode=1 } });
+              @children ~= @children.Push(group);
+              @unresolved += drawing[:unresolved];
+          }
+          ?_ _;
+    }; index+=1 };
+    {@ index=1; index<=@handles.Len(); {;
+        entry=@handles[index];
+        entry ? :Map ?: _ ?_ .Error("geometry.Workbench handle entries must be maps");
+        entry.Has("id")&&entry.Has("graphic") ?: _ ?_ .Error("geometry.Workbench handle entries require id and graphic");
+        @children ~= @children.Push(entry[:graphic]); @interactive ~= @interactive.Push(entry[:id]);
+    }; index+=1 };
+    record=GeometryConstructionRecord(valid);
+    .Graphics.Graphic(size,children,{=
+        source="rix.geometry.workbench@1",projection="uniform-fit",unresolved=unresolved,
+        workbench={=
+            schema="rix.geometry.workbench@1",construction=record,nodes=record[:nodes],
+            view=view,frame=frame,interactive=interactive,
+            historyCount=valid[:history].Len(),redoCount=GeometryOption(valid,"future",[]).Len(),
+            deterministic=1
+        }
     });
 };
 
@@ -71486,9 +71658,14 @@ geometryNamespace._proto = {=
     UncertainBounds=(self, value)->GeometryUncertainBounds(value),
     TransformUncertain=(self, value, transform)->GeometryTransformUncertain(value,transform),
     ConstructionGraph=(self, nodes, options ?= {= })->GeometryConstructionGraph(nodes,options),
+    ConstructionRecord=(self, graph)->GeometryConstructionRecord(graph),
+    ImportConstruction=(self, record, constructors ?= {= })->GeometryImportConstruction(record,constructors),
     Drag=(self, graph, id, target, options ?= {= })->GeometryDrag(graph,id,target,options),
+    Undo=(self, graph)->GeometryUndo(graph),
+    Redo=(self, graph)->GeometryRedo(graph),
     Refine=(self, value, request ?= {= })->GeometryRefine(value, request),
-    Draw=(self, objects, options ?= {= })->GeometryDraw(objects, options)
+    Draw=(self, objects, options ?= {= })->GeometryDraw(objects, options),
+    Workbench=(self, graph, options ?= {= })->GeometryWorkbench(graph,options)
 };
 .Host.RegisterValue("geometry", geometryNamespace, "Exact geometry, transformations, conics, constraints, and bounded Graphics refinement", ["Geometry", "Graphics", "Exact"]);
 `;
@@ -72020,20 +72197,20 @@ PlotFieldSample(fn,config,settings) -> {;
             point=PlotFieldPoint(column,@row,@config);
             resolved=PlotResolveNumber(@fn(point[1],point[2]),@"field sample (@{column}, @{@row})",@settings);
             usable=resolved[:value]!=_;
-            status=usable ?: resolved[:status] ?_ :unresolved;
-            @exactCount += status==:exact ?: 1 ?_ 0;
-            @enclosedCount += (usable&&resolved[:resolved]&&status!=:exact) ?: 1 ?_ 0;
+            sampleStatus=usable ?: resolved[:status] ?_ :unresolved;
+            @exactCount += sampleStatus==:exact ?: 1 ?_ 0;
+            @enclosedCount += (usable&&resolved[:resolved]&&sampleStatus!=:exact) ?: 1 ?_ 0;
             @approximateCount += (usable&&!resolved[:resolved]) ?: 1 ?_ 0;
             @unresolvedCount += usable ?: 0 ?_ 1;
             @samples ~= @samples.Push({=
                 id=@"sample-@{column}-@{@row}",column=column,row=@row,point=point,value=resolved[:value],
-                usable=usable,resolved=resolved[:resolved],status=status,evidenceLevel=resolved[:evidenceLevel]
+                usable=usable,resolved=resolved[:resolved],status=sampleStatus,evidenceLevel=resolved[:evidenceLevel]
             });
         }; column+=1 };
     }; row+=1 };
     total=(config[:columns]+1)*(config[:rows]+1);
-    status=unresolvedCount>0 ?: :partial ?_ (approximateCount>0 ?: :approximate ?_ (exactCount==total ?: :exact ?_ :enclosed));
-    {= samples=samples,status=status,evidence={=
+    fieldStatus=unresolvedCount>0 ?: :partial ?_ (approximateCount>0 ?: :approximate ?_ (exactCount==total ?: :exact ?_ :enclosed));
+    {= samples=samples,status=fieldStatus,evidence={=
         total=total,exact=exactCount,enclosed=enclosedCount,approximate=approximateCount,unresolved=unresolvedCount
     } };
 };
@@ -72110,7 +72287,7 @@ PlotContourBuild(fn,xDomain,yDomain,settings,kind) -> {;
                 c=PlotFieldAt(@field,column+1,@row+1,@config); d=PlotFieldAt(@field,column,@row+1,@config);
                 cellId=@"@{@kind}-level-@{@levelIndex}-cell-@{column}-@{@row}";
                 usable=a[:usable]&&b[:usable]&&c[:usable]&&d[:usable];
-                usable ?: _ ?_ {; @unresolved ~= @unresolved.Push({= id=cellId,column=column,row=@row,level=@level,status=:unresolved }); };
+                usable ?: _ ?_ {; @unresolved ~= @unresolved.Push({= id=@cellId,column=@column,row=@row,level=@level,status=:unresolved }); };
                 usable ?: {;
                     intersections=[PlotEdgeIntersection(@a,@b,@level),PlotEdgeIntersection(@b,@c,@level),PlotEdgeIntersection(@c,@d,@level),PlotEdgeIntersection(@d,@a,@level)].Filter((point)->point!=_);
                     intersections.Len()==4 ?: {; @ambiguous ~= @ambiguous.Push({= id=@cellId,column=@column,row=@row,level=@level,status=:ambiguous }); } ?_ _;
@@ -86617,10 +86794,10 @@ ${execute}---
     if (!isOutputValue(node))
       return bindings;
     if (node.kind === "drag_point" && isReactiveNode(node.target)) {
-      bindings.targets.set(node.targetId, node.target);
+      bindings.targets.set(node.targetId, { target: node.target, coordinateSystem: node.coordinateSystem });
     }
     if (node.kind === "graphic_action" && isReactiveNode(node.target)) {
-      bindings.targets.set(node.targetId, node.target);
+      bindings.targets.set(node.targetId, { target: node.target, coordinateSystem: null });
       bindings.actions.set(node.id, node);
     }
     for (const child of node.children || [])
@@ -86635,13 +86812,22 @@ ${execute}---
     const numerator = BigInt(Math.round(number2 * Number(scale2)));
     return numerator % scale2 === 0n ? new Integer(numerator / scale2) : new Rational(numerator, scale2);
   }
-  function graphicPoint(position) {
+  function graphicPoint(position, coordinateSystem = null) {
     if (!Array.isArray(position) || position.length !== 2) {
       throw new Error("Graphic position must contain x and y coordinates");
     }
+    let resolved = position;
+    if (coordinateSystem) {
+      const [xmin, ymin, xmax, ymax] = coordinateSystem.view;
+      const [left, top, right, bottom] = coordinateSystem.frame;
+      resolved = [
+        xmin + (Number(position[0]) - left) / (right - left) * (xmax - xmin),
+        ymax - (Number(position[1]) - top) / (bottom - top) * (ymax - ymin)
+      ];
+    }
     return Object.freeze({
       type: "tuple",
-      values: Object.freeze(position.map(exactGraphicCoordinate))
+      values: Object.freeze(resolved.map(exactGraphicCoordinate))
     });
   }
 
@@ -86661,7 +86847,7 @@ ${execute}---
       this.revision = 0;
       this.onChange = typeof options.onChange === "function" ? options.onChange : null;
       this.disposed = false;
-      this._unsubscribes = [...new Set(this.targets.values())].map((target) => target.subscribe((sourceEvent) => {
+      this._unsubscribes = [...new Set([...this.targets.values()].map(({ target }) => target))].map((target) => target.subscribe((sourceEvent) => {
         if (this.disposed)
           return;
         this.revision += 1;
@@ -86700,10 +86886,11 @@ ${execute}---
       if (event?.type !== "graphic:position") {
         throw new Error(`Unsupported Graphic widget event: ${event?.type || "missing type"}`);
       }
-      const target = this.targets.get(String(event.targetId || ""));
-      if (!target)
+      const binding = this.targets.get(String(event.targetId || ""));
+      if (!binding)
         throw new Error(`Unknown Graphic drag target: ${event.targetId || "missing target"}`);
-      const value = graphicPoint(event.position);
+      const { target, coordinateSystem } = binding;
+      const value = graphicPoint(event.position, coordinateSystem);
       const replacedDependencies = Object.freeze([...target.dependencies]);
       target.replaceValue(value, {
         source: "widget",
@@ -87195,6 +87382,204 @@ ${execute}---
       source
     });
   }
+  function geometryWorkbench(graphic) {
+    const workbench = mapField3(graphic?.metadata, "workbench");
+    return stringValue10(mapField3(workbench, "schema")) === "rix.geometry.workbench@1" ? workbench : null;
+  }
+  function geometryHistory(state) {
+    if (!state.geometryHistory)
+      state.geometryHistory = { entries: [], cursor: 0 };
+    return state.geometryHistory;
+  }
+  function recordGeometryEdit(state, targetId, before, after) {
+    if (!Array.isArray(before) || !Array.isArray(after) || before.length !== 2 || after.length !== 2)
+      return;
+    if (before.every((value, index) => Number(value) === Number(after[index])))
+      return;
+    const history = geometryHistory(state);
+    history.entries.splice(history.cursor);
+    history.entries.push(Object.freeze({
+      targetId: String(targetId),
+      before: Object.freeze(before.map(Number)),
+      after: Object.freeze(after.map(Number))
+    }));
+    history.cursor = history.entries.length;
+  }
+  function portableGeometryValue(value, format, seen = new Set) {
+    if (value === null || value === undefined)
+      return null;
+    if (["string", "number", "boolean"].includes(typeof value))
+      return value;
+    if (typeof value === "bigint")
+      return value.toString();
+    if (seen.has(value))
+      return "[cycle]";
+    if (Array.isArray(value)) {
+      seen.add(value);
+      const result = value.map((item) => portableGeometryValue(item, format, seen));
+      seen.delete(value);
+      return result;
+    }
+    if (value?.type === "integer")
+      return { type: "integer", value: String(value.value) };
+    if (value?.numerator !== undefined && value?.denominator !== undefined) {
+      return { type: "rational", numerator: String(value.numerator), denominator: String(value.denominator) };
+    }
+    if (value?.type === "string" || value?.type === "symbol")
+      return value.value;
+    if (Array.isArray(value?.values) || Array.isArray(value?.elements)) {
+      return sequenceValue5(value).map((item) => portableGeometryValue(item, format, seen));
+    }
+    const entries4 = value instanceof Map ? value : value?.type === "map" && value.entries instanceof Map ? value.entries : null;
+    if (entries4) {
+      seen.add(value);
+      const result = {};
+      for (const [key, item] of [...entries4.entries()].sort(([left], [right]) => String(left).localeCompare(String(right)))) {
+        if (typeof item === "function" || item?.type === "function")
+          continue;
+        result[String(key)] = portableGeometryValue(item, format, seen);
+      }
+      seen.delete(value);
+      return result;
+    }
+    try {
+      return String(format(value));
+    } catch {
+      return String(value);
+    }
+  }
+  function serializeGeometryConstructionRecord(record, format = String) {
+    return JSON.stringify(portableGeometryValue(record, format), null, 2);
+  }
+  function installGeometryWorkbench(graphic, status, options, navigation) {
+    const workbench = geometryWorkbench(options.graphic);
+    const document2 = graphic.ownerDocument;
+    if (!workbench || !document2?.createElement)
+      return;
+    const nodes = sequenceValue5(mapField3(workbench, "nodes"));
+    const history = geometryHistory(options.state || (options.state = {}));
+    const panel = document2.createElement("aside");
+    panel.className = "rix-output-geometry-workbench";
+    panel.setAttribute("aria-label", "Geometry construction workbench");
+    const heading = document2.createElement("h3");
+    heading.textContent = "Construction";
+    panel.append(heading);
+    const controls = document2.createElement("div");
+    controls.className = "rix-output-geometry-controls";
+    const undo = makeButton(document2, "geometry-undo", "Undo last point movement", "Undo");
+    const redo = makeButton(document2, "geometry-redo", "Redo point movement", "Redo");
+    const exportButton = makeButton(document2, "geometry-export", "Export portable construction record", "Export");
+    controls.append(undo, redo, exportButton);
+    panel.append(controls);
+    const exported = document2.createElement("pre");
+    exported.className = "rix-output-geometry-export";
+    exported.hidden = true;
+    panel.append(exported);
+    const properties = document2.createElement("output");
+    properties.className = "rix-output-geometry-properties";
+    properties.setAttribute("aria-live", "polite");
+    properties.textContent = `${nodes.length} construction object${nodes.length === 1 ? "" : "s"}.`;
+    const tree = document2.createElement("ol");
+    tree.className = "rix-output-geometry-tree";
+    tree.setAttribute("role", "tree");
+    const treeButtons = [];
+    for (const node of nodes) {
+      const id = stringValue10(mapField3(node, "id")) || String(mapField3(node, "id") ?? "object");
+      const kind = stringValue10(mapField3(node, "kind")) || "value";
+      const dependencies = sequenceValue5(mapField3(node, "dependsOn")).map((item2) => stringValue10(item2) || String(item2));
+      const free = Boolean(mapField3(node, "free"));
+      const item = document2.createElement("li");
+      item.setAttribute("role", "treeitem");
+      item.setAttribute("aria-level", "1");
+      const button = document2.createElement("button");
+      button.type = "button";
+      button.dataset.rixGeometryObject = id;
+      button.textContent = `${id} · ${kind} · ${free ? "free" : "derived"}`;
+      const choose = (source = "workbench") => {
+        navigation?.selectById(id, source);
+        const statusValue = stringValue10(mapField3(node, "status"));
+        const diagnostic2 = stringValue10(mapField3(node, "diagnostic"));
+        const dependencyText = dependencies.length ? `depends on ${dependencies.join(", ")}` : "no dependencies";
+        const exact2 = mapField3(node, "value");
+        properties.textContent = [id, kind, free ? "free" : "derived", dependencyText, statusValue, diagnostic2, exact2 === null ? null : `exact ${exactText(exact2, options.format || String)}`].filter(Boolean).join(" · ");
+      };
+      button.addEventListener("click", () => choose());
+      button.addEventListener("keydown", (event) => {
+        const current = treeButtons.indexOf(button);
+        let next = null;
+        if (event.key === "ArrowDown")
+          next = treeButtons[(current + 1) % treeButtons.length];
+        else if (event.key === "ArrowUp")
+          next = treeButtons[(current - 1 + treeButtons.length) % treeButtons.length];
+        else if (event.key === "Home")
+          next = treeButtons[0];
+        else if (event.key === "End")
+          next = treeButtons.at(-1);
+        else if (event.key === "Enter" || event.key === " ")
+          choose("keyboard");
+        else
+          return;
+        event.preventDefault?.();
+        next?.focus?.();
+      });
+      treeButtons.push(button);
+      item.append(button);
+      if (dependencies.length) {
+        const dependency = document2.createElement("small");
+        dependency.textContent = ` ← ${dependencies.join(", ")}`;
+        item.append(dependency);
+      }
+      tree.append(item);
+    }
+    panel.append(tree, properties);
+    graphic.append(panel);
+    const refreshHistory = () => {
+      undo.disabled = history.cursor === 0;
+      redo.disabled = history.cursor >= history.entries.length;
+    };
+    const replay = (direction) => {
+      const entry2 = direction < 0 ? history.entries[history.cursor - 1] : history.entries[history.cursor];
+      if (!entry2 || typeof options.onPosition !== "function")
+        return;
+      const nextCursor = history.cursor + direction;
+      const detail = Object.freeze({
+        type: "graphic:position",
+        targetId: entry2.targetId,
+        position: direction < 0 ? entry2.before : entry2.after,
+        source: direction < 0 ? "undo" : "redo"
+      });
+      const previousCursor = history.cursor;
+      history.cursor = nextCursor;
+      let result;
+      try {
+        result = options.onPosition(detail, null, graphic);
+        if (result?.type === "error")
+          throw new Error(result.text);
+      } catch (error) {
+        history.cursor = previousCursor;
+        if (status)
+          status.textContent = error instanceof Error ? error.message : String(error);
+        return;
+      }
+      refreshHistory();
+      if (status)
+        status.textContent = direction < 0 ? "Point movement undone" : "Point movement redone";
+      dispatchGraphicEvent(graphic, "rix-geometry-history", { direction, cursor: history.cursor, targetId: entry2.targetId });
+    };
+    undo.addEventListener("click", () => replay(-1));
+    redo.addEventListener("click", () => replay(1));
+    exportButton.addEventListener("click", () => {
+      const record = mapField3(workbench, "construction");
+      const text15 = serializeGeometryConstructionRecord(record, options.format || String);
+      exported.textContent = text15;
+      exported.hidden = false;
+      document2.defaultView?.navigator?.clipboard?.writeText?.(text15).catch?.(() => {});
+      dispatchGraphicEvent(graphic, "rix-geometry-export", { schema: "rix.geometry.construction-record@1", record, text: text15 });
+      if (status)
+        status.textContent = "Portable construction record exported";
+    });
+    refreshHistory();
+  }
   function closestSemantic(element, svg) {
     for (let current = element;current && current !== svg; current = current.parentElement) {
       if (current.dataset?.rixSemanticId)
@@ -87220,7 +87605,7 @@ ${execute}---
   }
   function installNavigation(graphic, svg, status, options) {
     if (typeof svg.addEventListener !== "function")
-      return;
+      return null;
     const width = finiteNumber(options.graphic?.size?.[0] ?? svg.getAttribute?.("width"), 1);
     const height = finiteNumber(options.graphic?.size?.[1] ?? svg.getAttribute?.("height"), 1);
     const state = createGraphicViewState(width, height, options.state || {});
@@ -87308,6 +87693,14 @@ ${execute}---
       const current = selectable.findIndex((element) => element.dataset.rixSemanticId === state.selection.focus);
       const next = current < 0 ? step > 0 ? 0 : selectable.length - 1 : (current + step + selectable.length) % selectable.length;
       setSelection(selectable[next], "keyboard");
+    };
+    const selectById = (id, source = "workbench") => {
+      const element = semanticElements.find((candidate) => candidate.dataset?.rixSemanticId === String(id));
+      if (!element)
+        return false;
+      setSelection(element, source);
+      element.focus?.();
+      return true;
     };
     for (const element of semanticElements) {
       if (state.selection.ids.includes(element.dataset.rixSemanticId))
@@ -87437,6 +87830,7 @@ ${execute}---
       applyViewport();
       announceViewport("keyboard");
     });
+    return Object.freeze({ selectById, cycleSelection });
   }
   function enhanceGraphic(graphic, options) {
     if (graphic.dataset.rixGraphicEnhanced === "true")
@@ -87456,7 +87850,8 @@ ${execute}---
     const actions = [...graphic.querySelectorAll("[data-rix-graphic-action]")];
     if (!svg)
       return;
-    installNavigation(graphic, svg, status, options);
+    const navigation = installNavigation(graphic, svg, status, options);
+    installGeometryWorkbench(graphic, status, options, navigation);
     for (const action of actions) {
       if (typeof options.onAction !== "function")
         continue;
@@ -87504,6 +87899,11 @@ ${execute}---
     };
     const commit = (handle, position, source, previous) => {
       const detail = pointDetail(handle, position, source);
+      const workbenchEdit = geometryWorkbench(options.graphic) && source !== "undo" && source !== "redo";
+      const history = workbenchEdit ? geometryHistory(options.state || (options.state = {})) : null;
+      const historyBackup = history ? { entries: [...history.entries], cursor: history.cursor } : null;
+      if (workbenchEdit)
+        recordGeometryEdit(options.state, detail.targetId, previous, position);
       try {
         const result = options.onPosition(detail, handle, graphic);
         if (result?.type === "error")
@@ -87512,6 +87912,10 @@ ${execute}---
         options.onPositionCommitted?.(detail, result, handle, graphic);
         return true;
       } catch (error) {
+        if (history && historyBackup) {
+          history.entries.splice(0, history.entries.length, ...historyBackup.entries);
+          history.cursor = historyBackup.cursor;
+        }
         setPreview(handle, previous);
         if (status)
           status.textContent = error instanceof Error ? error.message : String(error);

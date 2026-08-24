@@ -11,6 +11,27 @@ construction := .geometry.Draw(
     {= view=[-1,-2,7,6], size=[560,560] }
 );
 construction;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Explore a retained construction interactively</h2>
+<p>The workbench uses the same construction graph for dependency inspection and rendering. A <code>DragPoint</code> captures the reactive identity directly and declares the mathematical view used to map pointer positions back to exact rational coordinates.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="18" spellcheck="false">.Plugin.Load(&quot;geometry&quot;);
+view := [-2,-2,6,4]; size := [640,480];
+$$a := {: 0,0};
+$$graph := .geometry.ConstructionGraph([
+  {= id=:a,free=1,value=.geometry.Point($a[1],$a[2]) },
+  {= id=:b,dependsOn=[:a],construct=(values)-&gt;
+      .geometry.Point(values[:a][:x]+3,values[:a][:y]+1) },
+  {= id=:ab,dependsOn=[:a,:b],construct=(values)-&gt;
+      .geometry.Line(values[:a],values[:b]) }
+]);
+handle := .Graphics.DragPoint({=
+  target=$$a,label=&quot;Move a&quot;,coordinateSystem={= view=view,size=size },
+  style={= fill=&quot;#7c3aed&quot;,stroke=&quot;#ffffff&quot;,width=2,hitId=&quot;a:handle&quot; }
+});
+$$workbench := .geometry.Workbench($graph,{=
+  view=view,size=size,handles=[{= id=:a,graphic=handle }]
+});
+$workbench;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>RiX Web supplies the object tree, property inspector, keyboard traversal, session movement history, and export button. The same value still renders as ordinary Graphics in static hosts.</p>
 <h2>Keep unresolved intersections visible</h2>
 <p>Parallel lines return an intersection result whose status is <code>parallel</code>. Including that result in a drawing produces a visible diagnostic rather than a fabricated point.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">.Plugin.Load(&quot;geometry&quot;);
