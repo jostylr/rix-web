@@ -20440,6 +20440,376 @@ ${indentStr})`;
     };
   }
 
+  // rix/src/tools/graphic-accessibility.js
+  var TEXT_SCHEMA = "rix.graphics.text@1";
+  var AUDIO_SCHEMA = "rix.audio-trace@1";
+  function sequenceValue2(value) {
+    if (Array.isArray(value))
+      return value;
+    if (Array.isArray(value?.values))
+      return value.values;
+    return [];
+  }
+  function mapField(value, key) {
+    if (value instanceof Map)
+      return value.get(key) ?? value.get(String(key).toLowerCase()) ?? null;
+    if (value?.type === "map" && value.entries instanceof Map)
+      return mapField(value.entries, key);
+    return value?.[key] ?? value?.[String(key).toLowerCase()] ?? null;
+  }
+  function stringValue3(value) {
+    if (typeof value === "string")
+      return value;
+    if (value?.type === "string" || value?.type === "symbol")
+      return String(value.value);
+    return null;
+  }
+  function finiteNumber(value) {
+    if (typeof value === "number" && Number.isFinite(value))
+      return value;
+    if (typeof value === "bigint")
+      return Number(value);
+    if (typeof value?.value === "number" || typeof value?.value === "bigint")
+      return Number(value.value);
+    if (typeof value?.numerator === "bigint" && typeof value?.denominator === "bigint") {
+      return Number(value.numerator) / Number(value.denominator);
+    }
+    if (typeof value === "string" && /^[-+]?\d+\/\d+$/.test(value.trim())) {
+      const [numerator, denominator] = value.split("/").map(Number);
+      return denominator === 0 ? null : numerator / denominator;
+    }
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  function valueText(value, format) {
+    try {
+      return String(format(value));
+    } catch {
+      return String(value);
+    }
+  }
+  function graphicValueExactness(value) {
+    if (value === null || value === undefined)
+      return "unresolved";
+    if (typeof value === "bigint")
+      return "exact";
+    if (typeof value === "string" && /^[-+]?(?:\d+|\d+\/\d+)$/.test(value.trim()))
+      return "exact";
+    const type = String(value?.type || value?.constructor?.name || "").toLowerCase();
+    if (type.includes("interval") || type.includes("enclosure") || type.includes("certified"))
+      return "certified-enclosure";
+    if (type === "integer" || type === "rational" || type.includes("biginteger"))
+      return "exact";
+    if (typeof value?.numerator === "bigint" && typeof value?.denominator === "bigint")
+      return "exact";
+    if (typeof value === "number" || type.includes("decimal") || type.includes("float"))
+      return "approximate";
+    if (type.includes("conject"))
+      return "conjectural";
+    return finiteNumber(value) === null ? "unresolved" : "approximate";
+  }
+  function combinedExactness(values) {
+    const statuses = values.map(graphicValueExactness);
+    for (const status of ["unresolved", "conjectural", "approximate", "certified-enclosure"]) {
+      if (statuses.includes(status))
+        return status;
+    }
+    return "exact";
+  }
+  function semanticId(node, path) {
+    return stringValue3(mapField(node?.style, "hitId")) || stringValue3(mapField(node?.style, "id")) || stringValue3(mapField(node?.metadata, "id")) || node?.id || node?.targetId || path.replace(/[^A-Za-z0-9:_.-]+/g, "-");
+  }
+  function describeNode(node, format) {
+    const point = (value) => {
+      const values = sequenceValue2(value);
+      return values.length >= 2 ? `(${valueText(values[0], format)}, ${valueText(values[1], format)})` : "unknown";
+    };
+    if (node.kind === "path")
+      return `Path with ${(node.commands || node.points || []).length} retained ${node.commands ? "commands" : "points"}`;
+    if (node.kind === "rectangle")
+      return `Rectangle at ${point(node.origin)}, size ${point(node.size)}`;
+    if (node.kind === "circle")
+      return `Circle centered at ${point(node.center)}, radius ${valueText(node.radius, format)}`;
+    if (node.kind === "drag_point")
+      return `${node.label || "Draggable point"} at ${point(node.center)}`;
+    if (node.kind === "text_mark")
+      return `Text ${valueText(node.text, format)} at ${point(node.position)}`;
+    if (node.kind === "graphic_action")
+      return `${node.label || "Graphic action"}, action ${node.id}`;
+    if (node.kind === "group" || node.kind === "transform" || node.kind === "clip") {
+      return `${node.kind.replace("_", " ")} containing ${(node.children || []).length} objects`;
+    }
+    return `Graphic ${node.kind || "object"}`;
+  }
+  function sceneObjects(graphic, format) {
+    const objects = [];
+    const visit = (node, path, group = null) => {
+      if (!node || node.type !== "output")
+        return;
+      const id = String(semanticId(node, path));
+      objects.push(Object.freeze({
+        id,
+        role: node.kind || "object",
+        group,
+        label: node.label ? valueText(node.label, format) : null,
+        description: describeNode(node, format)
+      }));
+      for (const [index, child] of (node.children || []).entries()) {
+        visit(child, `${path}.${node.kind}[${index + 1}]`, id);
+      }
+    };
+    for (const [index, child] of (graphic?.children || []).entries())
+      visit(child, `graphic[${index + 1}]`);
+    return Object.freeze(objects);
+  }
+  function sampleEvents(samples) {
+    if (!samples.length)
+      return Object.freeze([]);
+    const events = [
+      Object.freeze({ type: "domain-boundary", boundary: "start", sampleIndex: 0, exactness: samples[0].exactness, label: `Domain starts at x ${samples[0].xText}` }),
+      Object.freeze({ type: "domain-boundary", boundary: "end", sampleIndex: samples.length - 1, exactness: samples.at(-1).exactness, label: `Domain ends at x ${samples.at(-1).xText}` })
+    ];
+    for (let index = 0;index < samples.length; index += 1) {
+      const current = samples[index];
+      if (current.y === 0) {
+        const exact = current.exactness === "exact";
+        events.push(Object.freeze({
+          type: exact ? "axis-crossing" : "sampled-axis-crossing",
+          sampleIndex: index,
+          exactness: current.exactness,
+          label: exact ? `Exact retained point on the horizontal axis at x ${current.xText}` : `Stored approximate sample lies on the horizontal axis near x ${current.xText}; this is not a certified root`
+        }));
+      } else if (index > 0 && samples[index - 1].y * current.y < 0) {
+        events.push(Object.freeze({
+          type: "sampled-axis-crossing",
+          sampleIndex: index,
+          exactness: "approximate",
+          label: `Sampled sign change between x ${samples[index - 1].xText} and ${current.xText}; this is not a certified root`
+        }));
+      }
+      if (index > 0 && index < samples.length - 1) {
+        const before = samples[index - 1].y;
+        const after = samples[index + 1].y;
+        if (current.y > before && current.y > after || current.y < before && current.y < after) {
+          events.push(Object.freeze({
+            type: "sampled-extremum",
+            sampleIndex: index,
+            exactness: "approximate",
+            label: `Sampled local ${current.y > before ? "maximum" : "minimum"} near (${current.xText}, ${current.yText}); this is not a certified extremum`
+          }));
+        }
+      }
+    }
+    return Object.freeze(events.sort((first, second) => first.sampleIndex - second.sampleIndex));
+  }
+  function seriesPlans(plot, format) {
+    return Object.freeze(sequenceValue2(mapField(plot, "series")).map((entry, seriesIndex) => {
+      const lowered = sequenceValue2(mapField(entry, "data"));
+      const original = sequenceValue2(mapField(entry, "originalData"));
+      const samples = lowered.map((pointValue, index) => {
+        const point = sequenceValue2(pointValue);
+        const retained = sequenceValue2(original[index]);
+        if (point.length < 2)
+          return null;
+        const x = finiteNumber(point[0]);
+        const y = finiteNumber(point[1]);
+        if (x === null || y === null)
+          return null;
+        const source = retained.length >= 2 ? retained : point;
+        return Object.freeze({
+          index,
+          x,
+          y,
+          xText: valueText(source[0], format),
+          yText: valueText(source[1], format),
+          exactness: combinedExactness(source.slice(0, 2))
+        });
+      }).filter(Boolean);
+      const label = stringValue3(mapField(entry, "label")) || `Series ${seriesIndex + 1}`;
+      const normalizedExactness = samples.some((sample) => sample.exactness === "unresolved") ? "unresolved" : samples.some((sample) => sample.exactness === "conjectural") ? "conjectural" : samples.some((sample) => sample.exactness === "approximate") ? "approximate" : samples.some((sample) => sample.exactness === "certified-enclosure") ? "certified-enclosure" : "exact";
+      return Object.freeze({
+        id: stringValue3(mapField(entry, "id")) || `series-${seriesIndex + 1}`,
+        kind: stringValue3(mapField(entry, "kind")) || "series",
+        label,
+        exactness: normalizedExactness,
+        samples: Object.freeze(samples),
+        events: sampleEvents(samples),
+        summary: `${label}: ${samples.length} stored sample${samples.length === 1 ? "" : "s"}; ${normalizedExactness.replace("-", " ")} values`
+      });
+    }));
+  }
+  function rangeRecord(view, axis, format) {
+    const minimum = mapField(view, `${axis}min`);
+    const maximum = mapField(view, `${axis}max`);
+    if (minimum === null || maximum === null)
+      return null;
+    return Object.freeze({
+      minimum: finiteNumber(minimum),
+      maximum: finiteNumber(maximum),
+      minimumText: valueText(minimum, format),
+      maximumText: valueText(maximum, format),
+      exactness: combinedExactness([minimum, maximum])
+    });
+  }
+  function regionDescriptions(value, format, noun) {
+    return Object.freeze(sequenceValue2(value).map((region, index) => {
+      const bounds = sequenceValue2(mapField(region, "bounds"));
+      return bounds.length ? `${noun} ${index + 1}: ${bounds.map((bound) => valueText(bound, format)).join(", ")}` : `${noun} ${index + 1}: ${valueText(region, format)}`;
+    }));
+  }
+  function retainedMarkEvents(plot, series, format) {
+    return Object.freeze(sequenceValue2(mapField(plot, "marks")).map((entry, index) => {
+      const point = sequenceValue2(mapField(entry, "point"));
+      if (point.length < 2)
+        return null;
+      const x = finiteNumber(point[0]);
+      const y = finiteNumber(point[1]);
+      const reference = series[0];
+      let sampleIndex = 0;
+      if (reference?.samples.length && x !== null) {
+        sampleIndex = reference.samples.reduce((best, sample, candidate) => Math.abs(sample.x - x) < Math.abs(reference.samples[best].x - x) ? candidate : best, 0);
+      }
+      const label = stringValue3(mapField(entry, "label")) || `Mark ${index + 1}`;
+      const exactness = combinedExactness(point.slice(0, 2));
+      return Object.freeze({
+        type: "selected-mark",
+        sampleIndex,
+        seriesId: reference?.id || null,
+        exactness,
+        label: `${label} at (${valueText(point[0], format)}, ${valueText(point[1], format)}); ${exactness.replace("-", " ")}`
+      });
+    }).filter(Boolean));
+  }
+  function retainedIntersectionEvents(series) {
+    const events = [];
+    for (let firstIndex = 0;firstIndex < series.length; firstIndex += 1) {
+      for (let secondIndex = firstIndex + 1;secondIndex < series.length; secondIndex += 1) {
+        const first = series[firstIndex];
+        const second = series[secondIndex];
+        const count = Math.min(first.samples.length, second.samples.length);
+        let previous = null;
+        for (let index = 0;index < count; index += 1) {
+          const left = first.samples[index];
+          const right = second.samples[index];
+          if (Math.abs(left.x - right.x) > Number.EPSILON * Math.max(1, Math.abs(left.x), Math.abs(right.x)))
+            continue;
+          const difference = left.y - right.y;
+          const exact = difference === 0 && left.exactness === "exact" && right.exactness === "exact";
+          const sampled = difference === 0 && previous?.difference !== 0 || previous && previous.difference * difference < 0;
+          if (sampled) {
+            events.push(Object.freeze({
+              type: exact ? "intersection" : "sampled-intersection",
+              sampleIndex: index,
+              seriesId: first.id,
+              relatedSeriesId: second.id,
+              exactness: exact ? "exact" : "approximate",
+              label: exact ? `Exact retained intersection of ${first.label} and ${second.label} at (${left.xText}, ${left.yText})` : `Sampled intersection evidence for ${first.label} and ${second.label} near x ${left.xText}; this is not a certified intersection`
+            }));
+          }
+          previous = { difference };
+        }
+      }
+    }
+    return Object.freeze(events);
+  }
+  function createGraphicsTextPlan(graphic, format = String) {
+    const plot = mapField(graphic?.metadata, "plot");
+    const kind = (stringValue3(mapField(plot, "kind")) || stringValue3(mapField(graphic?.metadata, "kind")) || "mathematical").replaceAll("_", " ");
+    const title = stringValue3(mapField(plot, "title")) || `${kind[0]?.toUpperCase() || "M"}${kind.slice(1)} graphic`;
+    const view = mapField(plot, "view") || mapField(graphic?.metadata, "view");
+    const x = view ? rangeRecord(view, "x", format) : null;
+    const y = view ? rangeRecord(view, "y", format) : null;
+    const series = plot ? seriesPlans(plot, format) : Object.freeze([]);
+    const objects = sceneObjects(graphic, format);
+    const unresolved = plot ? regionDescriptions(mapField(plot, "unresolvedRegions"), format, "Unresolved region") : Object.freeze([]);
+    const ambiguous = plot ? regionDescriptions(mapField(plot, "ambiguousRegions"), format, "Sampled boundary region") : Object.freeze([]);
+    const marks = plot ? retainedMarkEvents(plot, series, format) : Object.freeze([]);
+    const intersections = retainedIntersectionEvents(series);
+    const pointsOfInterest = Object.freeze([...series.flatMap((entry) => entry.events), ...marks, ...intersections]);
+    const domainSummary = x && y ? ` Domain x ${x.minimumText} to ${x.maximumText}; range y ${y.minimumText} to ${y.maximumText}.` : "";
+    const summary = `${title}. ${series.length ? `${series.length} series and ` : ""}${objects.length} retained scene object${objects.length === 1 ? "" : "s"}.${domainSummary} ${unresolved.length} unresolved region${unresolved.length === 1 ? "" : "s"}.`;
+    const axes = Object.freeze([
+      x && Object.freeze({ axis: "x", label: stringValue3(mapField(plot, "xLabel")) || "x", scale: stringValue3(mapField(graphic?.metadata, "xScale")) || "linear", range: x }),
+      y && Object.freeze({ axis: "y", label: stringValue3(mapField(plot, "yLabel")) || "y", scale: stringValue3(mapField(graphic?.metadata, "yScale")) || "linear", range: y })
+    ].filter(Boolean));
+    return Object.freeze({
+      schema: TEXT_SCHEMA,
+      title,
+      kind,
+      summary,
+      domain: Object.freeze({ x, y }),
+      axes,
+      series,
+      objects,
+      pointsOfInterest,
+      marks,
+      intersections,
+      uncertainty: ambiguous,
+      unresolved
+    });
+  }
+  var WAVEFORMS = ["sine", "triangle", "square", "sawtooth"];
+  function createAudioTracePlan(graphic, format = String) {
+    const textPlan = createGraphicsTextPlan(graphic, format);
+    const series = Object.freeze(textPlan.series.filter((entry) => entry.samples.length > 0).map((entry, index) => Object.freeze({
+      ...entry,
+      waveform: WAVEFORMS[index % WAVEFORMS.length],
+      stereoPosition: textPlan.series.length === 1 ? 0 : -1 + 2 * index / Math.max(1, textPlan.series.length - 1)
+    })));
+    const allY = series.flatMap((entry) => entry.samples.map((sample) => sample.y));
+    const yMinimum = textPlan.domain.y?.minimum ?? (allY.length ? Math.min(...allY) : null);
+    const yMaximum = textPlan.domain.y?.maximum ?? (allY.length ? Math.max(...allY) : null);
+    const supported = series.length > 0 && yMinimum !== null && yMaximum !== null;
+    return Object.freeze({
+      schema: AUDIO_SCHEMA,
+      title: textPlan.title,
+      supported,
+      reason: supported ? null : "Audio trace requires retained two-dimensional series samples",
+      domain: textPlan.domain.x,
+      range: yMinimum === null ? null : Object.freeze({ minimum: yMinimum, maximum: yMaximum }),
+      defaults: Object.freeze({ tempo: 12, speed: 1, waveform: "series", direction: "forward", stereo: true, frequency: Object.freeze({ minimum: 220, maximum: 880 }) }),
+      series,
+      events: Object.freeze([
+        ...series.flatMap((entry) => entry.events.map((event) => Object.freeze({ ...event, seriesId: entry.id, seriesLabel: entry.label }))),
+        ...textPlan.marks,
+        ...textPlan.intersections
+      ]),
+      diagnostics: Object.freeze(supported ? [] : [textPlan.summary, "The complete structured text projection remains available."])
+    });
+  }
+  function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
+  }
+  function sampleRows(series) {
+    const samples = series.samples;
+    if (samples.length <= 32)
+      return samples;
+    const indexes = new Set([0, samples.length - 1]);
+    for (let index = 1;index < 15; index += 1)
+      indexes.add(Math.round(index * (samples.length - 1) / 15));
+    return [...indexes].sort((a, b) => a - b).map((index) => samples[index]);
+  }
+  function renderGraphicAccessibilityHtml(graphic, format = String) {
+    const textPlan = createGraphicsTextPlan(graphic, format);
+    const audioPlan = createAudioTracePlan(graphic, format);
+    const axes = textPlan.axes.length ? `<dl class="rix-output-graphic-text-axes">${textPlan.axes.map((axis) => `<div><dt>${escapeHtml(axis.label)} axis</dt><dd>${escapeHtml(axis.scale)}; ${escapeHtml(axis.range.minimumText)} to ${escapeHtml(axis.range.maximumText)}; ${escapeHtml(axis.range.exactness.replace("-", " "))}</dd></div>`).join("")}</dl>` : "";
+    const series = textPlan.series.map((entry) => {
+      const rows = sampleRows(entry);
+      const omitted = entry.samples.length - rows.length;
+      return `<details class="rix-output-graphic-series"><summary>${escapeHtml(entry.summary)}</summary><table><caption>${escapeHtml(entry.label)} retained data${omitted ? `; ${omitted} intermediate samples omitted from this concise view` : ""}</caption><thead><tr><th scope="col">Sample</th><th scope="col">x</th><th scope="col">y</th><th scope="col">Status</th></tr></thead><tbody>${rows.map((sample) => `<tr><th scope="row">${sample.index + 1}</th><td>${escapeHtml(sample.xText)}</td><td>${escapeHtml(sample.yText)}</td><td>${escapeHtml(sample.exactness.replace("-", " "))}</td></tr>`).join("")}</tbody></table>${entry.events.length ? `<ul>${entry.events.map((event) => `<li>${escapeHtml(event.label)}</li>`).join("")}</ul>` : ""}</details>`;
+    }).join("");
+    const regions = [...textPlan.unresolved, ...textPlan.uncertainty];
+    const semanticPoints = [...textPlan.marks, ...textPlan.intersections];
+    const objects = `<details class="rix-output-graphic-objects"><summary>${textPlan.objects.length} semantic object${textPlan.objects.length === 1 ? "" : "s"}</summary><ol>${textPlan.objects.map((object) => `<li data-rix-graphics-text-object="${escapeHtml(object.id)}"${object.group ? ` data-rix-graphics-text-group="${escapeHtml(object.group)}"` : ""}><strong>${escapeHtml(object.label || object.role.replaceAll("_", " "))}</strong>: ${escapeHtml(object.description)}</li>`).join("")}</ol></details>`;
+    const text4 = `<details class="rix-output-graphic-text" data-rix-graphics-text-schema="${TEXT_SCHEMA}"><summary>Text alternative: ${escapeHtml(textPlan.title)}</summary><p>${escapeHtml(textPlan.summary)}</p>${axes}${series}${semanticPoints.length ? `<section><h4>Semantic points of interest</h4><ul>${semanticPoints.map((event) => `<li>${escapeHtml(event.label)}</li>`).join("")}</ul></section>` : ""}${regions.length ? `<section><h4>Uncertainty and unresolved areas</h4><ul>${regions.map((region) => `<li>${escapeHtml(region)}</li>`).join("")}</ul></section>` : ""}${objects}</details>`;
+    if (!audioPlan.supported)
+      return text4;
+    const longest = Math.max(...audioPlan.series.map((entry) => entry.samples.length));
+    const seriesOptions = `${audioPlan.series.map((entry, index) => `<option value="${index}">${escapeHtml(entry.label)}</option>`).join("")}${audioPlan.series.length > 1 ? '<option value="overview">Overview (sequential)</option>' : ""}`;
+    const audio = `<section class="rix-output-audio-trace" data-rix-audio-trace-schema="${AUDIO_SCHEMA}" tabindex="0" aria-label="Audio trace controls for ${escapeHtml(audioPlan.title)}"><div class="rix-output-audio-toolbar" role="toolbar" aria-label="Audio trace transport"><button type="button" data-rix-audio-action="play" aria-label="Play audio trace">Play</button><button type="button" data-rix-audio-action="previous" aria-label="Previous sample">Previous</button><button type="button" data-rix-audio-action="next" aria-label="Next sample">Next</button><button type="button" data-rix-audio-action="mute" aria-pressed="false">Mute</button></div><div class="rix-output-audio-options"><label>Series <select data-rix-audio-series>${seriesOptions}</select></label><label>Seek <input data-rix-audio-seek type="range" min="0" max="${longest - 1}" value="0"></label><label>Domain start <input data-rix-audio-start type="number" min="1" max="${longest}" value="1"></label><label>Domain end <input data-rix-audio-end type="number" min="1" max="${longest}" value="${longest}"></label><label>Speed <select data-rix-audio-speed><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label><label>Waveform <select data-rix-audio-waveform><option value="series">Per series</option>${WAVEFORMS.map((waveform) => `<option value="${waveform}">${waveform}</option>`).join("")}</select></label><label>Direction <select data-rix-audio-direction><option value="forward">Forward</option><option value="reverse">Reverse</option></select></label><label><input data-rix-audio-stereo type="checkbox" checked> Stereo position</label></div><output class="rix-output-audio-status" data-rix-audio-status aria-live="polite">Audio trace ready. No audio plays until Play is pressed.</output><small>Keyboard: Space play/pause, Left/Right step, Home/End seek, M mute.</small></section>`;
+    return `${text4}${audio}`;
+  }
+
   // rix/src/runtime/output.js
   var int3 = (value) => new Integer(BigInt(value));
   var isSequence = (value) => value && ["sequence", "tuple", "set", "array"].includes(value.type);
@@ -21432,13 +21802,13 @@ ${indentStr})`;
     const width = asString(styleValue(style, "width"));
     const attributes = [];
     if (variant && ["primary", "danger", "quiet"].includes(variant)) {
-      attributes.push(` data-rix-control-variant="${escapeHtml(variant)}"`);
+      attributes.push(` data-rix-control-variant="${escapeHtml2(variant)}"`);
     }
     if (density && ["compact", "comfortable"].includes(density)) {
-      attributes.push(` data-rix-control-density="${escapeHtml(density)}"`);
+      attributes.push(` data-rix-control-density="${escapeHtml2(density)}"`);
     }
     if (width && ["auto", "compact", "full"].includes(width)) {
-      attributes.push(` data-rix-control-width="${escapeHtml(width)}"`);
+      attributes.push(` data-rix-control-width="${escapeHtml2(width)}"`);
     }
     for (const name of ["row", "column"]) {
       const raw = styleValue(style, name);
@@ -21464,7 +21834,7 @@ ${indentStr})`;
     for (const [name, allowed] of Object.entries(PORTABLE_BLOCK_STYLE_VALUES)) {
       const value = asString(styleValue(style, name));
       if (value && allowed.has(value))
-        attributes.push(` data-rix-${name}="${escapeHtml(value)}"`);
+        attributes.push(` data-rix-${name}="${escapeHtml2(value)}"`);
     }
     const rawColumns = styleValue(style, "columns");
     if (rawColumns !== null && rawColumns !== undefined) {
@@ -22038,7 +22408,7 @@ ${indentStr})`;
       semantic: { type: "synthetic_division", root, coefficients: values, products, bottom }
     });
   }
-  function escapeHtml(value) {
+  function escapeHtml2(value) {
     return String(value).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
   }
   function cellText(value, format) {
@@ -22058,7 +22428,7 @@ ${indentStr})`;
     return "";
   }
   function controlMessages(control) {
-    return `${control.validation ? `<small class="rix-output-control-validation" role="alert">${escapeHtml(control.validation)}</small>` : ""}${control.help ? `<small>${escapeHtml(control.help)}</small>` : ""}`;
+    return `${control.validation ? `<small class="rix-output-control-validation" role="alert">${escapeHtml2(control.validation)}</small>` : ""}${control.help ? `<small>${escapeHtml2(control.help)}</small>` : ""}`;
   }
   function ruleField(rule, name) {
     if (rule?.type === "map" && rule.entries instanceof Map)
@@ -22372,7 +22742,7 @@ ${indentStr})`;
       const to = asString(styleEntry(spec2, "to")) || "#000000";
       const angleValue = styleEntry(spec2, "angle") ?? int3(0);
       const angle = svgNumber(angleValue, `${path} gradient angle`, policy, "angle");
-      return registerSvgDefinition(defs, policy, "gradient", spec2, (id) => `<linearGradient id="${id}" gradientTransform="rotate(${angle} .5 .5)"><stop offset="0" stop-color="${escapeHtml(from)}"/><stop offset="1" stop-color="${escapeHtml(to)}"/></linearGradient>`);
+      return registerSvgDefinition(defs, policy, "gradient", spec2, (id) => `<linearGradient id="${id}" gradientTransform="rotate(${angle} .5 .5)"><stop offset="0" stop-color="${escapeHtml2(from)}"/><stop offset="1" stop-color="${escapeHtml2(to)}"/></linearGradient>`);
     }
     if (pattern !== null) {
       const spec2 = svgMap(pattern, `${path}.style.pattern`);
@@ -22383,8 +22753,8 @@ ${indentStr})`;
       const background = asString(styleEntry(spec2, "background")) || "none";
       const size = svgNumber(styleEntry(spec2, "size") ?? int3(8), `${path} pattern size`, policy, "width");
       return registerSvgDefinition(defs, policy, "pattern", spec2, (id) => {
-        const backdrop = background === "none" ? "" : `<rect width="${size}" height="${size}" fill="${escapeHtml(background)}"/>`;
-        const mark = kind === "dots" ? `<circle cx="${Number(size) / 2}" cy="${Number(size) / 2}" r="${Math.max(0.5, Number(size) / 8)}" fill="${escapeHtml(foreground)}"/>` : kind === "stripes" ? `<path d="M0 ${size} L${size} 0" stroke="${escapeHtml(foreground)}"/>` : `<path d="M0 0 H${size} M0 0 V${size}" stroke="${escapeHtml(foreground)}"/>`;
+        const backdrop = background === "none" ? "" : `<rect width="${size}" height="${size}" fill="${escapeHtml2(background)}"/>`;
+        const mark = kind === "dots" ? `<circle cx="${Number(size) / 2}" cy="${Number(size) / 2}" r="${Math.max(0.5, Number(size) / 8)}" fill="${escapeHtml2(foreground)}"/>` : kind === "stripes" ? `<path d="M0 ${size} L${size} 0" stroke="${escapeHtml2(foreground)}"/>` : `<path d="M0 0 H${size} M0 0 V${size}" stroke="${escapeHtml2(foreground)}"/>`;
         return `<pattern id="${id}" width="${size}" height="${size}" patternUnits="userSpaceOnUse">${backdrop}${mark}</pattern>`;
       });
     }
@@ -22420,13 +22790,13 @@ ${indentStr})`;
     if (paint)
       attrs.push(`fill="url(#${paint})"`);
     else if (fill || defaultFill !== null)
-      attrs.push(`fill="${escapeHtml(fill || defaultFill)}"`);
+      attrs.push(`fill="${escapeHtml2(fill || defaultFill)}"`);
     if (stroke)
-      attrs.push(`stroke="${escapeHtml(stroke)}"`);
+      attrs.push(`stroke="${escapeHtml2(stroke)}"`);
     if (width !== null && width !== undefined)
       attrs.push(`stroke-width="${svgNumber(width, "Path stroke width", policy, "width")}"`);
     if (dash)
-      attrs.push(`stroke-dasharray="${escapeHtml(dash)}"`);
+      attrs.push(`stroke-dasharray="${escapeHtml2(dash)}"`);
     if (opacity !== null && opacity !== undefined)
       attrs.push(`opacity="${svgNumber(opacity, "Path opacity", policy, "opacity")}"`);
     const id = asString(styleEntry(style, "id"));
@@ -22434,10 +22804,10 @@ ${indentStr})`;
     if (id) {
       if (!/^[A-Za-z][A-Za-z0-9:_.-]*$/.test(id))
         throw new Error(`${path} style id is not a valid stable SVG id`);
-      attrs.push(`id="${escapeHtml(id)}"`);
+      attrs.push(`id="${escapeHtml2(id)}"`);
     }
     if (className)
-      attrs.push(`class="${escapeHtml(className)}"`);
+      attrs.push(`class="${escapeHtml2(className)}"`);
     if (defs && style instanceof Map) {
       const maskId = svgMaskDefinition(style, defs, policy, path);
       if (maskId)
@@ -22451,7 +22821,7 @@ ${indentStr})`;
     return explicit || path.replace(/[^A-Za-z0-9:_.-]+/g, "-");
   }
   function svgSemanticAttributes(node, path) {
-    return `data-rix-scene-path="${escapeHtml(path)}" data-rix-semantic-id="${escapeHtml(svgSemanticId(node, path))}"`;
+    return `data-rix-scene-path="${escapeHtml2(path)}" data-rix-semantic-id="${escapeHtml2(svgSemanticId(node, path))}"`;
   }
   function svgTransform(node, policy) {
     const transforms = [];
@@ -22485,21 +22855,21 @@ ${indentStr})`;
     const weight = asString(styleEntry(node.style, "weight"));
     const attrs = [svgStyle(node.style, "currentColor", policy, defs, path)];
     if (anchor)
-      attrs.push(`text-anchor="${escapeHtml(anchor)}"`);
+      attrs.push(`text-anchor="${escapeHtml2(anchor)}"`);
     if (size !== null && size !== undefined)
       attrs.push(`font-size="${svgNumber(size, "TextMark size", policy, "font-size")}"`);
     if (font) {
       policy.fonts.add(font);
       if (policy.fontPolicy === "system")
-        attrs.push(`font-family="${escapeHtml(font)}"`);
+        attrs.push(`font-family="${escapeHtml2(font)}"`);
       else if (policy.fontPolicy === "generic") {
         const generic = /mono/i.test(font) ? "monospace" : /serif/i.test(font) && !/sans/i.test(font) ? "serif" : "sans-serif";
         attrs.push(`font-family="${generic}"`);
       }
     }
     if (weight)
-      attrs.push(`font-weight="${escapeHtml(weight)}"`);
-    return `<text x="${x}" y="${y}" ${svgSemanticAttributes(node, path)} ${attrs.filter(Boolean).join(" ")}>${escapeHtml(cellText(node.text, format))}</text>`;
+      attrs.push(`font-weight="${escapeHtml2(weight)}"`);
+    return `<text x="${x}" y="${y}" ${svgSemanticAttributes(node, path)} ${attrs.filter(Boolean).join(" ")}>${escapeHtml2(cellText(node.text, format))}</text>`;
   }
   function renderSvgNode(node, format, defs, policy, path) {
     if (!isOutputValue(node))
@@ -22534,14 +22904,14 @@ ${indentStr})`;
     if (node.kind === "drag_point") {
       validateSvgStyle(node.style, SVG_SHAPE_STYLE_KEYS, path);
       const [cx, cy] = svgPair(node.center, "DragPoint center", policy);
-      const replaced = node.replacesDependencies?.length ? ` data-rix-replaces-dependencies="${escapeHtml(node.replacesDependencies.join(","))}"` : "";
-      return `<circle class="rix-output-drag-point" cx="${cx}" cy="${cy}" r="${svgNumber(node.radius, "DragPoint radius", policy, "radius")}" ${svgSemanticAttributes(node, path)} ${svgStyle(node.style, "#7c3aed", policy, defs, path)} tabindex="0" role="button" aria-label="${escapeHtml(node.label)}" data-rix-drag-target="${escapeHtml(node.targetId)}" data-rix-position="${cx},${cy}"${replaced}/>`;
+      const replaced = node.replacesDependencies?.length ? ` data-rix-replaces-dependencies="${escapeHtml2(node.replacesDependencies.join(","))}"` : "";
+      return `<circle class="rix-output-drag-point" cx="${cx}" cy="${cy}" r="${svgNumber(node.radius, "DragPoint radius", policy, "radius")}" ${svgSemanticAttributes(node, path)} ${svgStyle(node.style, "#7c3aed", policy, defs, path)} tabindex="0" role="button" aria-label="${escapeHtml2(node.label)}" data-rix-drag-target="${escapeHtml2(node.targetId)}" data-rix-position="${cx},${cy}"${replaced}/>`;
     }
     if (node.kind === "graphic_action") {
       validateSvgStyle(node.style, SVG_SHAPE_STYLE_KEYS, path);
-      const replaced = node.replacesDependencies?.length ? ` data-rix-replaces-dependencies="${escapeHtml(node.replacesDependencies.join(","))}"` : "";
+      const replaced = node.replacesDependencies?.length ? ` data-rix-replaces-dependencies="${escapeHtml2(node.replacesDependencies.join(","))}"` : "";
       const style = svgStyle(node.style, null, policy, defs, path);
-      return `<g class="rix-output-graphic-action" ${svgSemanticAttributes(node, path)}${style ? ` ${style}` : ""} tabindex="0" role="button" aria-label="${escapeHtml(node.label)}" data-rix-graphic-action="${escapeHtml(node.id)}" data-rix-graphic-target="${escapeHtml(node.targetId)}"${replaced}>${node.children.map((child, index) => renderSvgNode(child, format, defs, policy, `${path}.graphic_action[${index + 1}]`)).join("")}</g>`;
+      return `<g class="rix-output-graphic-action" ${svgSemanticAttributes(node, path)}${style ? ` ${style}` : ""} tabindex="0" role="button" aria-label="${escapeHtml2(node.label)}" data-rix-graphic-action="${escapeHtml2(node.id)}" data-rix-graphic-target="${escapeHtml2(node.targetId)}"${replaced}>${node.children.map((child, index) => renderSvgNode(child, format, defs, policy, `${path}.graphic_action[${index + 1}]`)).join("")}</g>`;
     }
     if (node.kind === "text_mark") {
       validateSvgStyle(node.style, SVG_TEXT_STYLE_KEYS, path);
@@ -22631,8 +23001,9 @@ ${indentStr})`;
       defs.unshift(`<filter id="rix-exact-enclosure" filterUnits="userSpaceOnUse" x="${filterOrigin}" y="${filterOrigin}" width="${filterSize}" height="${filterSize}" color-interpolation-filters="sRGB"><feMorphology operator="dilate" radius="${enclosureRadius}"/></filter>`);
     }
     const renderedChildren = enclosureRadius > 0 ? `<g class="rix-exact-enclosure" filter="url(#rix-exact-enclosure)">${children}</g>` : children;
+    const accessibleSummary = createGraphicsTextPlan(graphic, format).summary;
     return {
-      content: `<svg class="rix-output-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size[0]} ${size[1]}" width="${size[0]}" height="${size[1]}" overflow="visible" role="img" tabindex="0" aria-label="Mathematical graphic. ${escapeHtml(formatOutputText(graphic, format))}. Use arrow keys to pan, plus and minus to zoom, and Home to reset the view.">${defs.length ? `<defs>${defs.join("")}</defs>` : ""}${renderedChildren}</svg>`,
+      content: `<svg class="rix-output-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size[0]} ${size[1]}" width="${size[0]}" height="${size[1]}" overflow="visible" role="img" data-rix-graphic-summary="${escapeHtml2(formatOutputText(graphic, format))}" tabindex="0" aria-label="${escapeHtml2(accessibleSummary)} Use arrow keys to pan, plus and minus to zoom, and Home to reset the view.">${defs.length ? `<defs>${defs.join("")}</defs>` : ""}${renderedChildren}</svg>`,
       diagnostics,
       metadata: {
         schema: "rix.svg.coordinate-lowering@1",
@@ -22924,29 +23295,29 @@ ${formatOutputText(slide, format)}`).join(`
   }
   function renderInlineHtml(value, format) {
     if (!isOutputValue(value))
-      return escapeHtml(cellText(value, format));
+      return escapeHtml2(cellText(value, format));
     if (value.kind === "text")
-      return `<span class="rix-output-text">${escapeHtml(cellText(value.value, format))}</span>`;
+      return `<span class="rix-output-text">${escapeHtml2(cellText(value.value, format))}</span>`;
     if (value.kind === "emphasis")
       return `<em class="rix-output-emphasis">${value.children.map((child) => renderInlineHtml(child, format)).join("")}</em>`;
     if (value.kind === "strong")
       return `<strong class="rix-output-strong">${value.children.map((child) => renderInlineHtml(child, format)).join("")}</strong>`;
     if (value.kind === "code")
-      return `<code class="rix-output-code">${escapeHtml(value.code)}</code>`;
+      return `<code class="rix-output-code">${escapeHtml2(value.code)}</code>`;
     if (value.kind === "math")
-      return `<span class="rix-output-math" data-rix-math-notation="${escapeHtml(value.notation)}"${value.alt ? ` aria-label="${escapeHtml(value.alt)}"` : ""}>${escapeHtml(value.source)}</span>`;
+      return `<span class="rix-output-math" data-rix-math-notation="${escapeHtml2(value.notation)}"${value.alt ? ` aria-label="${escapeHtml2(value.alt)}"` : ""}>${escapeHtml2(value.source)}</span>`;
     if (value.kind === "link") {
       const href = safeHtmlUrl(value.href);
       const label = value.children.map((child) => renderInlineHtml(child, format)).join("");
-      return href ? `<a class="rix-output-link" href="${escapeHtml(href)}"${value.title ? ` title="${escapeHtml(value.title)}"` : ""}>${label}</a>` : `<span class="rix-output-link-invalid" title="Unsupported link scheme">${label}</span>`;
+      return href ? `<a class="rix-output-link" href="${escapeHtml2(href)}"${value.title ? ` title="${escapeHtml2(value.title)}"` : ""}>${label}</a>` : `<span class="rix-output-link-invalid" title="Unsupported link scheme">${label}</span>`;
     }
     if (value.kind === "image") {
       const src = safeHtmlUrl(value.asset.ref, { media: true });
-      return src ? `<img class="rix-output-image" src="${escapeHtml(src)}" alt="${escapeHtml(value.alt)}"${value.title ? ` title="${escapeHtml(value.title)}"` : ""}${mediaDimensions(value)} loading="lazy">` : `<span class="rix-output-image-unavailable" role="img" aria-label="${escapeHtml(value.alt)}">[Image unavailable: ${escapeHtml(value.asset.ref)}]</span>`;
+      return src ? `<img class="rix-output-image" src="${escapeHtml2(src)}" alt="${escapeHtml2(value.alt)}"${value.title ? ` title="${escapeHtml2(value.title)}"` : ""}${mediaDimensions(value)} loading="lazy">` : `<span class="rix-output-image-unavailable" role="img" aria-label="${escapeHtml2(value.alt)}">[Image unavailable: ${escapeHtml2(value.asset.ref)}]</span>`;
     }
     if (value.kind === "line_break")
       return "<br>";
-    return escapeHtml(formatOutputText(value, format));
+    return escapeHtml2(formatOutputText(value, format));
   }
   function renderInlineSequence(values, format) {
     return values.map((value) => renderInlineHtml(value, format)).join("");
@@ -22958,24 +23329,24 @@ ${formatOutputText(slide, format)}`).join(`
     return `${value.width ? ` width="${value.width}"` : ""}${value.height ? ` height="${value.height}"` : ""}`;
   }
   function renderOutputHtml(value, format = (item) => String(item ?? "")) {
-    const text4 = (item) => escapeHtml(isOutputValue(item) ? formatOutputText(item, format) : cellText(item, format));
+    const text4 = (item) => escapeHtml2(isOutputValue(item) ? formatOutputText(item, format) : cellText(item, format));
     if (!isOutputValue(value))
       return `<pre>${text4(value)}</pre>`;
     if (outputValueKind(value) === "scene3d") {
       const schema = value?.entries instanceof Map ? asString(get(value.entries, "schema")) : value.schema;
-      return `<section class="rix-output-scene3d" data-rix-scene3d-schema="${escapeHtml(schema || "rix.scene3d@1")}"><div class="rix-output-scene3d-toolbar" role="toolbar" aria-label="3D scene controls"><button type="button" data-rix-scene3d-action="previous" title="Previous selectable object">Previous</button><button type="button" data-rix-scene3d-action="next" title="Next selectable object">Next</button><span class="rix-output-scene3d-toolbar-group" aria-label="Orbit"><button type="button" data-rix-scene3d-action="orbit-left" aria-label="Orbit left">←</button><button type="button" data-rix-scene3d-action="orbit-up" aria-label="Orbit up">↑</button><button type="button" data-rix-scene3d-action="orbit-down" aria-label="Orbit down">↓</button><button type="button" data-rix-scene3d-action="orbit-right" aria-label="Orbit right">→</button></span><button type="button" data-rix-scene3d-action="dolly-in" aria-label="Dolly in">+</button><button type="button" data-rix-scene3d-action="dolly-out" aria-label="Dolly out">−</button><button type="button" data-rix-scene3d-action="projection">Projection</button><button type="button" data-rix-scene3d-action="reset">Reset camera</button></div><div class="rix-output-scene3d-surface"><canvas data-rix-scene3d-canvas width="640" height="480" tabindex="0" role="img" aria-label="Interactive 3D mathematical scene. Drag to orbit, Shift-drag to truck, use the wheel to dolly, arrows to orbit, Shift-arrows to truck, plus or minus to dolly, P to switch projection, brackets to select objects, and Home to reset.">Interactive 3D scene. WebGL or the SVG fallback is required.</canvas><div class="rix-output-scene3d-annotations" aria-label="3D scene annotations"></div></div><output class="rix-output-scene3d-inspector" aria-live="polite">Scene3D background</output><output class="rix-output-scene3d-status" aria-live="polite">Preparing 3D viewport…</output></section>`;
+      return `<section class="rix-output-scene3d" data-rix-scene3d-schema="${escapeHtml2(schema || "rix.scene3d@1")}"><div class="rix-output-scene3d-toolbar" role="toolbar" aria-label="3D scene controls"><button type="button" data-rix-scene3d-action="previous" title="Previous selectable object">Previous</button><button type="button" data-rix-scene3d-action="next" title="Next selectable object">Next</button><span class="rix-output-scene3d-toolbar-group" aria-label="Orbit"><button type="button" data-rix-scene3d-action="orbit-left" aria-label="Orbit left">←</button><button type="button" data-rix-scene3d-action="orbit-up" aria-label="Orbit up">↑</button><button type="button" data-rix-scene3d-action="orbit-down" aria-label="Orbit down">↓</button><button type="button" data-rix-scene3d-action="orbit-right" aria-label="Orbit right">→</button></span><button type="button" data-rix-scene3d-action="dolly-in" aria-label="Dolly in">+</button><button type="button" data-rix-scene3d-action="dolly-out" aria-label="Dolly out">−</button><button type="button" data-rix-scene3d-action="projection">Projection</button><button type="button" data-rix-scene3d-action="reset">Reset camera</button></div><div class="rix-output-scene3d-surface"><canvas data-rix-scene3d-canvas width="640" height="480" tabindex="0" role="img" aria-label="Interactive 3D mathematical scene. Drag to orbit, Shift-drag to truck, use the wheel to dolly, arrows to orbit, Shift-arrows to truck, plus or minus to dolly, P to switch projection, brackets to select objects, and Home to reset.">Interactive 3D scene. WebGL or the SVG fallback is required.</canvas><div class="rix-output-scene3d-annotations" aria-label="3D scene annotations"></div></div><output class="rix-output-scene3d-inspector" aria-live="polite">Scene3D background</output><output class="rix-output-scene3d-status" aria-live="polite">Preparing 3D viewport…</output></section>`;
     }
     if (value.kind === "live_view") {
-      return `<section class="rix-output-live-view" data-rix-live-view="${escapeHtml(value.id)}" data-rix-live-revision="${value.revision}">${renderOutputHtml(value.current, format)}</section>`;
+      return `<section class="rix-output-live-view" data-rix-live-view="${escapeHtml2(value.id)}" data-rix-live-revision="${value.revision}">${renderOutputHtml(value.current, format)}</section>`;
     }
     if (isInlineOutput(value))
       return renderInlineHtml(value, format);
     if (value.kind === "paragraph")
       return `<p class="rix-output-paragraph">${renderInlineSequence(value.children, format)}</p>`;
     if (value.kind === "heading")
-      return `<h${value.level} class="rix-output-heading"${value.id ? ` id="${escapeHtml(value.id)}"` : ""}>${Array.isArray(value.content) ? renderInlineSequence(value.content, format) : renderInlineHtml(value.content, format)}</h${value.level}>`;
+      return `<h${value.level} class="rix-output-heading"${value.id ? ` id="${escapeHtml2(value.id)}"` : ""}>${Array.isArray(value.content) ? renderInlineSequence(value.content, format) : renderInlineHtml(value.content, format)}</h${value.level}>`;
     if (value.kind === "section")
-      return `<section class="rix-output-section" data-rix-section-level="${value.level}"${portableBlockStyleAttributes(value.style)}${value.id ? ` id="${escapeHtml(value.id)}"` : ""}><h${value.level}>${renderInlineSequence(value.title, format)}</h${value.level}>${value.children.map((child) => renderOutputHtml(child, format)).join("")}</section>`;
+      return `<section class="rix-output-section" data-rix-section-level="${value.level}"${portableBlockStyleAttributes(value.style)}${value.id ? ` id="${escapeHtml2(value.id)}"` : ""}><h${value.level}>${renderInlineSequence(value.title, format)}</h${value.level}>${value.children.map((child) => renderOutputHtml(child, format)).join("")}</section>`;
     if (value.kind === "list") {
       const tag = value.ordered ? "ol" : "ul";
       return `<${tag} class="rix-output-list"${value.ordered && value.start !== null ? ` start="${value.start}"` : ""}${value.tight ? ' data-rix-list-tight="true"' : ""}>${value.items.map((item) => renderOutputHtml(item, format)).join("")}</${tag}>`;
@@ -22983,40 +23354,40 @@ ${formatOutputText(slide, format)}`).join(`
     if (value.kind === "list_item")
       return `<li class="rix-output-list-item">${value.children.map((child) => renderOutputHtml(child, format)).join("")}</li>`;
     if (value.kind === "quote")
-      return `<blockquote class="rix-output-quote"${value.id ? ` id="${escapeHtml(value.id)}"` : ""}${value.cite ? ` cite="${escapeHtml(value.cite)}"` : ""}>${value.children.map((child) => renderOutputHtml(child, format)).join("")}${value.attribution ? `<footer>— ${renderInlineSequence(value.attribution, format)}</footer>` : ""}</blockquote>`;
+      return `<blockquote class="rix-output-quote"${value.id ? ` id="${escapeHtml2(value.id)}"` : ""}${value.cite ? ` cite="${escapeHtml2(value.cite)}"` : ""}>${value.children.map((child) => renderOutputHtml(child, format)).join("")}${value.attribution ? `<footer>— ${renderInlineSequence(value.attribution, format)}</footer>` : ""}</blockquote>`;
     if (value.kind === "callout")
-      return `<aside class="rix-output-callout rix-output-callout-${escapeHtml(value.variant)}" data-rix-callout="${escapeHtml(value.variant)}"${value.id ? ` id="${escapeHtml(value.id)}"` : ""}${value.variant === "warning" || value.variant === "caution" ? ' role="note"' : ""}>${value.title ? `<h${Math.min(6, 3)}>${renderInlineSequence(value.title, format)}</h3>` : ""}${value.children.map((child) => renderOutputHtml(child, format)).join("")}</aside>`;
+      return `<aside class="rix-output-callout rix-output-callout-${escapeHtml2(value.variant)}" data-rix-callout="${escapeHtml2(value.variant)}"${value.id ? ` id="${escapeHtml2(value.id)}"` : ""}${value.variant === "warning" || value.variant === "caution" ? ' role="note"' : ""}>${value.title ? `<h${Math.min(6, 3)}>${renderInlineSequence(value.title, format)}</h3>` : ""}${value.children.map((child) => renderOutputHtml(child, format)).join("")}</aside>`;
     if (value.kind === "code_block") {
-      const code = `<pre class="rix-output-code-block"${value.id ? ` id="${escapeHtml(value.id)}"` : ""}${value.lineNumbers ? ' data-rix-line-numbers="true"' : ""}><code data-language="${escapeHtml(value.language)}">${escapeHtml(value.code)}</code></pre>`;
+      const code = `<pre class="rix-output-code-block"${value.id ? ` id="${escapeHtml2(value.id)}"` : ""}${value.lineNumbers ? ' data-rix-line-numbers="true"' : ""}><code data-language="${escapeHtml2(value.language)}">${escapeHtml2(value.code)}</code></pre>`;
       return value.caption ? `<figure class="rix-output-code-figure">${code}<figcaption>${renderInlineSequence(value.caption, format)}</figcaption></figure>` : code;
     }
     if (value.kind === "math_block")
-      return `<div class="rix-output-math-block"${value.id ? ` id="${escapeHtml(value.id)}"` : ""} data-rix-math-notation="${escapeHtml(value.notation)}"${value.alt ? ` aria-label="${escapeHtml(value.alt)}"` : ""}>${escapeHtml(value.source)}${value.label ? `<span class="rix-output-math-label">${escapeHtml(value.label)}</span>` : ""}</div>`;
+      return `<div class="rix-output-math-block"${value.id ? ` id="${escapeHtml2(value.id)}"` : ""} data-rix-math-notation="${escapeHtml2(value.notation)}"${value.alt ? ` aria-label="${escapeHtml2(value.alt)}"` : ""}>${escapeHtml2(value.source)}${value.label ? `<span class="rix-output-math-label">${escapeHtml2(value.label)}</span>` : ""}</div>`;
     if (value.kind === "asset") {
       const href = safeHtmlUrl(value.ref, { media: true });
-      return href ? `<a class="rix-output-asset" href="${escapeHtml(href)}" data-rix-mime="${escapeHtml(value.mime)}">${escapeHtml(value.filename || value.ref)}</a>` : `<span class="rix-output-asset" data-rix-mime="${escapeHtml(value.mime)}">${escapeHtml(value.filename || value.ref)}</span>`;
+      return href ? `<a class="rix-output-asset" href="${escapeHtml2(href)}" data-rix-mime="${escapeHtml2(value.mime)}">${escapeHtml2(value.filename || value.ref)}</a>` : `<span class="rix-output-asset" data-rix-mime="${escapeHtml2(value.mime)}">${escapeHtml2(value.filename || value.ref)}</span>`;
     }
     if (value.kind === "image") {
       const src = safeHtmlUrl(value.asset.ref, { media: true });
-      const image = src ? `<img class="rix-output-image" src="${escapeHtml(src)}" alt="${escapeHtml(value.alt)}"${value.title ? ` title="${escapeHtml(value.title)}"` : ""}${mediaDimensions(value)} loading="lazy">` : `<span class="rix-output-image-unavailable" role="img" aria-label="${escapeHtml(value.alt)}">[Image unavailable: ${escapeHtml(value.asset.ref)}]</span>`;
-      return value.caption ? `<figure class="rix-output-image-figure"${value.id ? ` id="${escapeHtml(value.id)}"` : ""}>${image}${mediaCaption(value, format)}</figure>` : image;
+      const image = src ? `<img class="rix-output-image" src="${escapeHtml2(src)}" alt="${escapeHtml2(value.alt)}"${value.title ? ` title="${escapeHtml2(value.title)}"` : ""}${mediaDimensions(value)} loading="lazy">` : `<span class="rix-output-image-unavailable" role="img" aria-label="${escapeHtml2(value.alt)}">[Image unavailable: ${escapeHtml2(value.asset.ref)}]</span>`;
+      return value.caption ? `<figure class="rix-output-image-figure"${value.id ? ` id="${escapeHtml2(value.id)}"` : ""}>${image}${mediaCaption(value, format)}</figure>` : image;
     }
     if (value.kind === "audio" || value.kind === "video") {
       const src = safeHtmlUrl(value.asset.ref, { media: true });
       const tag = value.kind;
       const poster = value.kind === "video" && value.poster ? safeHtmlUrl(value.poster.ref, { media: true }) : null;
-      const media = src ? `<${tag} class="rix-output-${tag}" controls${mediaDimensions(value)}${poster ? ` poster="${escapeHtml(poster)}"` : ""}><source src="${escapeHtml(src)}" type="${escapeHtml(value.asset.mime)}"><a href="${escapeHtml(src)}">${escapeHtml(value.title || value.asset.ref)}</a></${tag}>` : `<span class="rix-output-${tag}-unavailable">[${tag}: ${escapeHtml(value.asset.ref)}]</span>`;
+      const media = src ? `<${tag} class="rix-output-${tag}" controls${mediaDimensions(value)}${poster ? ` poster="${escapeHtml2(poster)}"` : ""}><source src="${escapeHtml2(src)}" type="${escapeHtml2(value.asset.mime)}"><a href="${escapeHtml2(src)}">${escapeHtml2(value.title || value.asset.ref)}</a></${tag}>` : `<span class="rix-output-${tag}-unavailable">[${tag}: ${escapeHtml2(value.asset.ref)}]</span>`;
       const transcript = value.transcript ? `<details class="rix-output-${tag}-transcript"><summary>Transcript</summary><p>${renderInlineSequence(value.transcript, format)}</p></details>` : "";
-      const content = `${value.title ? `<h3>${escapeHtml(value.title)}</h3>` : ""}${media}${transcript}${mediaCaption(value, format)}`;
-      return value.caption ? `<figure class="rix-output-${tag}-figure"${value.id ? ` id="${escapeHtml(value.id)}"` : ""}>${content}</figure>` : `<section class="rix-output-${tag}-asset"${value.id ? ` id="${escapeHtml(value.id)}"` : ""}>${content}</section>`;
+      const content = `${value.title ? `<h3>${escapeHtml2(value.title)}</h3>` : ""}${media}${transcript}${mediaCaption(value, format)}`;
+      return value.caption ? `<figure class="rix-output-${tag}-figure"${value.id ? ` id="${escapeHtml2(value.id)}"` : ""}>${content}</figure>` : `<section class="rix-output-${tag}-asset"${value.id ? ` id="${escapeHtml2(value.id)}"` : ""}>${content}</section>`;
     }
     if (value.kind === "fragment")
       return `<section class="rix-output-fragment"${portableBlockStyleAttributes(value.style)}>${value.children.map((child) => renderOutputHtml(child, format)).join("")}</section>`;
     if (value.kind === "snapshots") {
-      return `<section class="rix-output-snapshots">${value.title ? `<h2>${escapeHtml(value.title)}</h2>` : ""}<div class="rix-output-snapshot-list">${value.snapshots.map((snapshot) => {
+      return `<section class="rix-output-snapshots">${value.title ? `<h2>${escapeHtml2(value.title)}</h2>` : ""}<div class="rix-output-snapshot-list">${value.snapshots.map((snapshot) => {
         const origin = snapshot.origin.entries;
         return `<article class="rix-output-snapshot" data-rix-snapshot-entry="${exactInteger4(origin.get("entry"), "Snapshot origin entry")}" data-rix-snapshot-state="${exactInteger4(origin.get("state"), "Snapshot origin state")}" data-rix-snapshot-ordinal="${exactInteger4(origin.get("ordinal"), "Snapshot origin ordinal")}">${renderOutputHtml(snapshot.content, format)}</article>`;
-      }).join("")}</div>${value.caption ? `<p class="rix-output-snapshots-caption">${escapeHtml(value.caption)}</p>` : ""}</section>`;
+      }).join("")}</div>${value.caption ? `<p class="rix-output-snapshots-caption">${escapeHtml2(value.caption)}</p>` : ""}</section>`;
     }
     if (value.kind === "timeline") {
       const transition = value.transition || { schema: "rix.timeline-transition@1", mode: "discrete", properties: [] };
@@ -23027,60 +23398,60 @@ ${formatOutputText(slide, format)}`).join(`
         const ordinal = exactInteger4(origin.get("ordinal"), "Timeline origin ordinal");
         return `<article class="rix-output-timeline-frame" data-rix-timeline-frame="${index + 1}" data-rix-timeline-entry="${entry}" data-rix-timeline-state="${state}" data-rix-timeline-ordinal="${ordinal}" aria-label="Frame ${index + 1} of ${value.frames.length}"${index === 0 ? ' data-rix-timeline-current="true"' : ' hidden aria-hidden="true"'}>${renderOutputHtml(frame.content, format)}</article>`;
       }).join("");
-      const textTrack = value.frames.map((frame, index) => `<li data-rix-timeline-text-frame="${index + 1}"${index === 0 ? ' aria-current="true"' : ""}><b>Frame ${index + 1} · exact state ${escapeHtml(cellText(frame.state, format))}</b><pre>${escapeHtml(formatOutputText(frame.content, format))}</pre></li>`).join("");
-      const duration = value.duration === null ? "host default" : `${escapeHtml(cellText(value.duration, format))} seconds total`;
-      return `<section class="rix-output-timeline" data-rix-timeline-length="${value.frames.length}" data-rix-timeline-transition="${escapeHtml(transition.mode)}" data-rix-timeline-transition-schema="${escapeHtml(transition.schema)}" tabindex="0" role="region" aria-label="${escapeHtml(value.title || "Mathematical timeline")}">${value.title ? `<h2>${escapeHtml(value.title)}</h2>` : ""}<p class="rix-output-timeline-meta">${value.frames.length} exact frames · ${duration} · ${escapeHtml(value.easing)} easing · ${escapeHtml(transition.mode)} changes</p><div class="rix-output-timeline-toolbar" role="toolbar" aria-label="Timeline playback controls"><button type="button" data-rix-timeline-action="previous" aria-label="Previous frame">←</button><button type="button" data-rix-timeline-action="play" aria-pressed="false">Play</button><button type="button" data-rix-timeline-action="next" aria-label="Next frame">→</button><label>Frame <input type="range" min="1" max="${value.frames.length}" step="1" value="1" data-rix-timeline-scrubber aria-label="Timeline frame"></label><label>Speed <select data-rix-timeline-speed aria-label="Playback speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label><label><input type="checkbox" data-rix-timeline-loop> Loop</label><label>Start <input type="number" min="1" max="${value.frames.length}" step="1" value="1" data-rix-timeline-range-start></label><label>End <input type="number" min="1" max="${value.frames.length}" step="1" value="${value.frames.length}" data-rix-timeline-range-end></label><label><input type="checkbox" data-rix-timeline-compare> Compare previous</label></div><div class="rix-output-timeline-stage" data-rix-timeline-stage>${frameArticles}</div><output class="rix-output-timeline-status" data-rix-timeline-status aria-live="polite">Frame 1 of ${value.frames.length} · exact state ${escapeHtml(cellText(value.frames[0].state, format))}</output><details class="rix-output-timeline-inspector"><summary>Exact current frame</summary><dl><dt>State</dt><dd data-rix-timeline-exact-state>${escapeHtml(cellText(value.frames[0].state, format))}</dd><dt>Origin</dt><dd data-rix-timeline-exact-origin>entry ${exactInteger4(value.frames[0].origin.entries.get("entry"), "Timeline origin entry")}, state ${exactInteger4(value.frames[0].origin.entries.get("state"), "Timeline origin state")}, ordinal ${exactInteger4(value.frames[0].origin.entries.get("ordinal"), "Timeline origin ordinal")}</dd></dl><pre data-rix-timeline-exact-text>${escapeHtml(formatOutputText(value.frames[0].content, format))}</pre></details><details class="rix-output-timeline-text-track"><summary>Complete text track (${value.frames.length} frames)</summary><ol>${textTrack}</ol></details><p class="rix-output-timeline-help">Keyboard: Space play/pause; Left/Right step; Home/End jump; L loop.</p></section>`;
+      const textTrack = value.frames.map((frame, index) => `<li data-rix-timeline-text-frame="${index + 1}"${index === 0 ? ' aria-current="true"' : ""}><b>Frame ${index + 1} · exact state ${escapeHtml2(cellText(frame.state, format))}</b><pre>${escapeHtml2(formatOutputText(frame.content, format))}</pre></li>`).join("");
+      const duration = value.duration === null ? "host default" : `${escapeHtml2(cellText(value.duration, format))} seconds total`;
+      return `<section class="rix-output-timeline" data-rix-timeline-length="${value.frames.length}" data-rix-timeline-transition="${escapeHtml2(transition.mode)}" data-rix-timeline-transition-schema="${escapeHtml2(transition.schema)}" tabindex="0" role="region" aria-label="${escapeHtml2(value.title || "Mathematical timeline")}">${value.title ? `<h2>${escapeHtml2(value.title)}</h2>` : ""}<p class="rix-output-timeline-meta">${value.frames.length} exact frames · ${duration} · ${escapeHtml2(value.easing)} easing · ${escapeHtml2(transition.mode)} changes</p><div class="rix-output-timeline-toolbar" role="toolbar" aria-label="Timeline playback controls"><button type="button" data-rix-timeline-action="previous" aria-label="Previous frame">←</button><button type="button" data-rix-timeline-action="play" aria-pressed="false">Play</button><button type="button" data-rix-timeline-action="next" aria-label="Next frame">→</button><label>Frame <input type="range" min="1" max="${value.frames.length}" step="1" value="1" data-rix-timeline-scrubber aria-label="Timeline frame"></label><label>Speed <select data-rix-timeline-speed aria-label="Playback speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label><label><input type="checkbox" data-rix-timeline-loop> Loop</label><label>Start <input type="number" min="1" max="${value.frames.length}" step="1" value="1" data-rix-timeline-range-start></label><label>End <input type="number" min="1" max="${value.frames.length}" step="1" value="${value.frames.length}" data-rix-timeline-range-end></label><label><input type="checkbox" data-rix-timeline-compare> Compare previous</label></div><div class="rix-output-timeline-stage" data-rix-timeline-stage>${frameArticles}</div><output class="rix-output-timeline-status" data-rix-timeline-status aria-live="polite">Frame 1 of ${value.frames.length} · exact state ${escapeHtml2(cellText(value.frames[0].state, format))}</output><details class="rix-output-timeline-inspector"><summary>Exact current frame</summary><dl><dt>State</dt><dd data-rix-timeline-exact-state>${escapeHtml2(cellText(value.frames[0].state, format))}</dd><dt>Origin</dt><dd data-rix-timeline-exact-origin>entry ${exactInteger4(value.frames[0].origin.entries.get("entry"), "Timeline origin entry")}, state ${exactInteger4(value.frames[0].origin.entries.get("state"), "Timeline origin state")}, ordinal ${exactInteger4(value.frames[0].origin.entries.get("ordinal"), "Timeline origin ordinal")}</dd></dl><pre data-rix-timeline-exact-text>${escapeHtml2(formatOutputText(value.frames[0].content, format))}</pre></details><details class="rix-output-timeline-text-track"><summary>Complete text track (${value.frames.length} frames)</summary><ol>${textTrack}</ol></details><p class="rix-output-timeline-help">Keyboard: Space play/pause; Left/Right step; Home/End jump; L loop.</p></section>`;
     }
     if (value.kind === "timeline_render")
-      return `<section class="rix-output-timeline-render" data-rix-timeline-frame="${value.frame}" data-rix-timeline-length="${value.timeline.frames.length}">${value.title ? `<h2>${escapeHtml(value.title)}</h2>` : ""}${renderOutputHtml(value.content, format)}<p class="rix-output-timeline-caption">Frame ${value.frame} of ${value.timeline.frames.length}</p></section>`;
+      return `<section class="rix-output-timeline-render" data-rix-timeline-frame="${value.frame}" data-rix-timeline-length="${value.timeline.frames.length}">${value.title ? `<h2>${escapeHtml2(value.title)}</h2>` : ""}${renderOutputHtml(value.content, format)}<p class="rix-output-timeline-caption">Frame ${value.frame} of ${value.timeline.frames.length}</p></section>`;
     if (value.kind === "control_slider") {
-      const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml(value.replacesDependencies.join(","))}"` : "";
-      return `<label class="rix-output-control rix-output-control-slider" data-rix-control-kind="slider" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><input type="range" min="0" max="${value.steps}" step="1" value="${value.index}" data-rix-control-input aria-label="${escapeHtml(value.label)}"${controlInputAttributes(value)}><output data-rix-control-value>${text4(controlField(value, "value"))}</output><small class="rix-output-control-scale">${text4(controlField(value, "low"))} … ${text4(controlField(value, "high"))} · step ${text4(controlField(value, "step"))}</small>${controlMessages(value)}</label>`;
+      const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml2(value.replacesDependencies.join(","))}"` : "";
+      return `<label class="rix-output-control rix-output-control-slider" data-rix-control-kind="slider" data-rix-control-id="${escapeHtml2(value.id)}" data-rix-control-target="${escapeHtml2(value.targetId)}"${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml2(value.label)}</span><input type="range" min="0" max="${value.steps}" step="1" value="${value.index}" data-rix-control-input aria-label="${escapeHtml2(value.label)}"${controlInputAttributes(value)}><output data-rix-control-value>${text4(controlField(value, "value"))}</output><small class="rix-output-control-scale">${text4(controlField(value, "low"))} … ${text4(controlField(value, "high"))} · step ${text4(controlField(value, "step"))}</small>${controlMessages(value)}</label>`;
     }
     if (value.kind === "control_input") {
-      const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml(value.replacesDependencies.join(","))}"` : "";
-      return `<label class="rix-output-control rix-output-control-input" data-rix-control-kind="input" data-rix-control-input-mode="${escapeHtml(value.inputMode || "expression")}" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><span class="rix-output-control-input-row"><input type="text" value="${text4(controlField(value, "value"))}" placeholder="${escapeHtml(value.placeholder)}" data-rix-control-input aria-label="${escapeHtml(value.label)}"${controlInputAttributes(value, { text: true })}><button type="button" data-rix-control-commit${controlInputAttributes(value)}>Set</button></span><output data-rix-control-value>${text4(controlField(value, "value"))}</output>${controlMessages(value)}</label>`;
+      const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml2(value.replacesDependencies.join(","))}"` : "";
+      return `<label class="rix-output-control rix-output-control-input" data-rix-control-kind="input" data-rix-control-input-mode="${escapeHtml2(value.inputMode || "expression")}" data-rix-control-id="${escapeHtml2(value.id)}" data-rix-control-target="${escapeHtml2(value.targetId)}"${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml2(value.label)}</span><span class="rix-output-control-input-row"><input type="text" value="${text4(controlField(value, "value"))}" placeholder="${escapeHtml2(value.placeholder)}" data-rix-control-input aria-label="${escapeHtml2(value.label)}"${controlInputAttributes(value, { text: true })}><button type="button" data-rix-control-commit${controlInputAttributes(value)}>Set</button></span><output data-rix-control-value>${text4(controlField(value, "value"))}</output>${controlMessages(value)}</label>`;
     }
     if (value.kind === "control_choice") {
-      const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml(value.replacesDependencies.join(","))}"` : "";
-      const options = value.options.map((option, index) => `<option value="${index}"${index === value.index ? " selected" : ""}>${escapeHtml(cellText(value.displayOptions[index], format))}</option>`).join("");
-      return `<label class="rix-output-control rix-output-control-choice" data-rix-control-kind="choice" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><select data-rix-control-input aria-label="${escapeHtml(value.label)}"${controlInputAttributes(value)}>${options}</select><output data-rix-control-value>${text4(controlField(value, "value"))}</output>${controlMessages(value)}</label>`;
+      const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml2(value.replacesDependencies.join(","))}"` : "";
+      const options = value.options.map((option, index) => `<option value="${index}"${index === value.index ? " selected" : ""}>${escapeHtml2(cellText(value.displayOptions[index], format))}</option>`).join("");
+      return `<label class="rix-output-control rix-output-control-choice" data-rix-control-kind="choice" data-rix-control-id="${escapeHtml2(value.id)}" data-rix-control-target="${escapeHtml2(value.targetId)}"${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml2(value.label)}</span><select data-rix-control-input aria-label="${escapeHtml2(value.label)}"${controlInputAttributes(value)}>${options}</select><output data-rix-control-value>${text4(controlField(value, "value"))}</output>${controlMessages(value)}</label>`;
     }
     if (value.kind === "control_toggle") {
-      const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml(value.replacesDependencies.join(","))}"` : "";
-      return `<label class="rix-output-control rix-output-control-toggle" data-rix-control-kind="toggle" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><input type="checkbox"${value.index === 1 ? " checked" : ""} data-rix-control-input aria-label="${escapeHtml(value.label)}"${controlInputAttributes(value)}><output data-rix-control-value>${text4(controlField(value, "value"))}</output><small class="rix-output-control-scale">${text4(controlField(value, "off"))} ↔ ${text4(controlField(value, "on"))}</small>${controlMessages(value)}</label>`;
+      const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml2(value.replacesDependencies.join(","))}"` : "";
+      return `<label class="rix-output-control rix-output-control-toggle" data-rix-control-kind="toggle" data-rix-control-id="${escapeHtml2(value.id)}" data-rix-control-target="${escapeHtml2(value.targetId)}"${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml2(value.label)}</span><input type="checkbox"${value.index === 1 ? " checked" : ""} data-rix-control-input aria-label="${escapeHtml2(value.label)}"${controlInputAttributes(value)}><output data-rix-control-value>${text4(controlField(value, "value"))}</output><small class="rix-output-control-scale">${text4(controlField(value, "off"))} ↔ ${text4(controlField(value, "on"))}</small>${controlMessages(value)}</label>`;
     }
     if (value.kind === "control_range") {
-      const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml(value.replacesDependencies.join(","))}"` : "";
+      const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml2(value.replacesDependencies.join(","))}"` : "";
       const current = value.formatKeys.includes("value") ? text4(controlField(value, "value")) : `${text4(controlField(value, "start"))} … ${text4(controlField(value, "end"))}`;
-      return `<fieldset class="rix-output-control rix-output-control-range" data-rix-control-kind="range" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><legend class="rix-output-control-label">${escapeHtml(value.label)}</legend><span class="rix-output-control-range-inputs"><input type="range" min="0" max="${value.steps}" step="1" value="${value.indices[0]}" data-rix-control-input data-rix-control-endpoint="low" aria-label="${escapeHtml(value.label)} lower endpoint"${controlInputAttributes(value)}><input type="range" min="0" max="${value.steps}" step="1" value="${value.indices[1]}" data-rix-control-input data-rix-control-endpoint="high" aria-label="${escapeHtml(value.label)} upper endpoint"${controlInputAttributes(value)}></span><output data-rix-control-value>${current}</output><small class="rix-output-control-scale">${text4(controlField(value, "low"))} … ${text4(controlField(value, "high"))} · step ${text4(controlField(value, "step"))}</small>${controlMessages(value)}</fieldset>`;
+      return `<fieldset class="rix-output-control rix-output-control-range" data-rix-control-kind="range" data-rix-control-id="${escapeHtml2(value.id)}" data-rix-control-target="${escapeHtml2(value.targetId)}"${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><legend class="rix-output-control-label">${escapeHtml2(value.label)}</legend><span class="rix-output-control-range-inputs"><input type="range" min="0" max="${value.steps}" step="1" value="${value.indices[0]}" data-rix-control-input data-rix-control-endpoint="low" aria-label="${escapeHtml2(value.label)} lower endpoint"${controlInputAttributes(value)}><input type="range" min="0" max="${value.steps}" step="1" value="${value.indices[1]}" data-rix-control-input data-rix-control-endpoint="high" aria-label="${escapeHtml2(value.label)} upper endpoint"${controlInputAttributes(value)}></span><output data-rix-control-value>${current}</output><small class="rix-output-control-scale">${text4(controlField(value, "low"))} … ${text4(controlField(value, "high"))} · step ${text4(controlField(value, "step"))}</small>${controlMessages(value)}</fieldset>`;
     }
     if (value.kind === "control_reset") {
-      const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml(value.replacesDependencies.join(","))}"` : "";
-      return `<div class="rix-output-control rix-output-control-reset" data-rix-control-kind="reset" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><button type="button" data-rix-control-input aria-label="${escapeHtml(value.label)}"${controlInputAttributes(value)}>Reset to ${text4(controlField(value, "initial"))}</button><output data-rix-control-value>${text4(controlField(value, "value"))}</output>${controlMessages(value)}</div>`;
+      const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml2(value.replacesDependencies.join(","))}"` : "";
+      return `<div class="rix-output-control rix-output-control-reset" data-rix-control-kind="reset" data-rix-control-id="${escapeHtml2(value.id)}" data-rix-control-target="${escapeHtml2(value.targetId)}"${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml2(value.label)}</span><button type="button" data-rix-control-input aria-label="${escapeHtml2(value.label)}"${controlInputAttributes(value)}>Reset to ${text4(controlField(value, "initial"))}</button><output data-rix-control-value>${text4(controlField(value, "value"))}</output>${controlMessages(value)}</div>`;
     }
     if (value.kind === "control_action") {
-      const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml(value.replacesDependencies.join(","))}"` : "";
-      const shortcut = value.shortcut ? ` data-rix-control-shortcut="${escapeHtml(value.shortcut)}"` : "";
-      return `<div class="rix-output-control rix-output-control-action" data-rix-control-kind="action" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}"${shortcut}${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><button type="button" data-rix-control-input aria-label="${escapeHtml(value.label)}"${value.shortcut ? ` aria-keyshortcuts="${escapeHtml(value.shortcut)}"` : ""}${controlInputAttributes(value)}>${escapeHtml(value.label)}</button>${controlMessages(value)}</div>`;
+      const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml2(value.replacesDependencies.join(","))}"` : "";
+      const shortcut = value.shortcut ? ` data-rix-control-shortcut="${escapeHtml2(value.shortcut)}"` : "";
+      return `<div class="rix-output-control rix-output-control-action" data-rix-control-kind="action" data-rix-control-id="${escapeHtml2(value.id)}" data-rix-control-target="${escapeHtml2(value.targetId)}"${shortcut}${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml2(value.label)}</span><button type="button" data-rix-control-input aria-label="${escapeHtml2(value.label)}"${value.shortcut ? ` aria-keyshortcuts="${escapeHtml2(value.shortcut)}"` : ""}${controlInputAttributes(value)}>${escapeHtml2(value.label)}</button>${controlMessages(value)}</div>`;
     }
     if (value.kind === "control_hold") {
-      const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml(value.replacesDependencies.join(","))}"` : "";
-      return `<div class="rix-output-control rix-output-control-hold" data-rix-control-kind="hold" data-rix-control-id="${escapeHtml(value.id)}" data-rix-control-target="${escapeHtml(value.targetId)}" data-rix-control-hold="${escapeHtml(value.key)}" data-rix-control-hold-state="${value.index === 1 ? "held" : "released"}" aria-keyshortcuts="${escapeHtml(value.key)}"${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml(value.label)}</span><kbd>${escapeHtml(value.key)}</kbd><output data-rix-control-value>${value.index === 1 ? "Held" : "Released"}</output><button type="button" hidden data-rix-control-input data-rix-control-hold-press aria-label="Press ${escapeHtml(value.label)}"${controlInputAttributes(value)}>Press</button><button type="button" hidden data-rix-control-hold-release aria-label="Release ${escapeHtml(value.label)}"${controlInputAttributes(value)}>Release</button>${controlMessages(value)}</div>`;
+      const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml2(value.replacesDependencies.join(","))}"` : "";
+      return `<div class="rix-output-control rix-output-control-hold" data-rix-control-kind="hold" data-rix-control-id="${escapeHtml2(value.id)}" data-rix-control-target="${escapeHtml2(value.targetId)}" data-rix-control-hold="${escapeHtml2(value.key)}" data-rix-control-hold-state="${value.index === 1 ? "held" : "released"}" aria-keyshortcuts="${escapeHtml2(value.key)}"${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml2(value.label)}</span><kbd>${escapeHtml2(value.key)}</kbd><output data-rix-control-value>${value.index === 1 ? "Held" : "Released"}</output><button type="button" hidden data-rix-control-input data-rix-control-hold-press aria-label="Press ${escapeHtml2(value.label)}"${controlInputAttributes(value)}>Press</button><button type="button" hidden data-rix-control-hold-release aria-label="Release ${escapeHtml2(value.label)}"${controlInputAttributes(value)}>Release</button>${controlMessages(value)}</div>`;
     }
     if (value.kind === "control_panel") {
-      const actions = value.mode === "staged" ? `<div class="rix-output-control-actions"><button type="button" data-rix-control-submit disabled>${escapeHtml(value.submitLabel)}</button><button type="button" data-rix-control-discard disabled>${escapeHtml(value.discardLabel)}</button></div>` : "";
-      return `<section class="rix-output-control-panel" data-rix-interactive="${value.interactive === false ? "false" : "true"}" data-rix-control-mode="${escapeHtml(value.mode || "immediate")}"${portableBlockStyleAttributes(value.style)}>${value.title ? `<h3>${escapeHtml(value.title)}</h3>` : ""}${value.description ? `<p>${escapeHtml(value.description)}</p>` : ""}<div class="rix-output-control-list">${value.controls.map((control) => renderOutputHtml({ ...control, style: resolvedControlStyle(value.style, control) }, format)).join("")}</div>${actions}<output class="rix-output-control-status" aria-live="polite"></output></section>`;
+      const actions = value.mode === "staged" ? `<div class="rix-output-control-actions"><button type="button" data-rix-control-submit disabled>${escapeHtml2(value.submitLabel)}</button><button type="button" data-rix-control-discard disabled>${escapeHtml2(value.discardLabel)}</button></div>` : "";
+      return `<section class="rix-output-control-panel" data-rix-interactive="${value.interactive === false ? "false" : "true"}" data-rix-control-mode="${escapeHtml2(value.mode || "immediate")}"${portableBlockStyleAttributes(value.style)}>${value.title ? `<h3>${escapeHtml2(value.title)}</h3>` : ""}${value.description ? `<p>${escapeHtml2(value.description)}</p>` : ""}<div class="rix-output-control-list">${value.controls.map((control) => renderOutputHtml({ ...control, style: resolvedControlStyle(value.style, control) }, format)).join("")}</div>${actions}<output class="rix-output-control-status" aria-live="polite"></output></section>`;
     }
     if (value.kind === "table")
-      return `<table class="rix-output-table"${portableBlockStyleAttributes(value.options)}${value.label ? ` id="${escapeHtml(value.label)}"` : ""}>${value.caption ? `<caption>${escapeHtml(value.caption)}</caption>` : ""}<thead><tr>${value.columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}</tr></thead><tbody>${value.rows.map((row) => `<tr>${row.map((cell) => `<td>${text4(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+      return `<table class="rix-output-table"${portableBlockStyleAttributes(value.options)}${value.label ? ` id="${escapeHtml2(value.label)}"` : ""}>${value.caption ? `<caption>${escapeHtml2(value.caption)}</caption>` : ""}<thead><tr>${value.columns.map((column) => `<th>${escapeHtml2(column.label)}</th>`).join("")}</tr></thead><tbody>${value.rows.map((row) => `<tr>${row.map((cell) => `<td>${text4(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
     if (value.kind === "grid")
       return `<table class="rix-output-grid"><tbody>${value.rows.map((row, rowIndex) => `<tr${hasRule(value, "horizontal", rowIndex + 1) ? ' class="rix-grid-rule-top"' : ""}>${row.map((cell, column) => `<td${hasRule(value, "vertical", column + 1) ? ' class="rix-grid-rule-left"' : ""}>${text4(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
     if (value.kind === "sheet") {
       const summary = `${value.addressBase} · shape ${value.shape.join("×")}`;
       const axisSummary = value.columnAxis ? `Rows: ${value.rowAxis.name} · Columns: ${value.columnAxis.name}` : `Rows: ${value.rowAxis.name}`;
-      const controls = value.hiddenAxes.length === 0 ? "" : `<div class="rix-output-sheet-plane-controls" aria-label="Shaped plane">${value.hiddenAxes.map(({ axis, name, length, selected, labels }) => `<label><span>${escapeHtml(name)} · axis ${axis}</span><select data-rix-sheet-axis="${axis}" aria-label="${escapeHtml(name)} axis ${axis}">${Array.from({ length }, (_item, index) => `<option value="${index + 1}"${selected === index + 1 ? " selected" : ""}>${escapeHtml(labels?.[index] ?? String(index + 1))}</option>`).join("")}</select></label>`).join("")}</div>`;
-      const headerAttributes = (axis, coordinate, fallback) => value.formulaBacked ? ` class="rix-sheet-header-editable" tabindex="0" data-rix-header-axis="${axis}" data-rix-header-coordinate="${coordinate}" data-rix-header-label="${escapeHtml(value.axisLabels[axis - 1]?.[coordinate - 1] ?? "")}" data-rix-header-fallback="${escapeHtml(fallback)}"` : "";
+      const controls = value.hiddenAxes.length === 0 ? "" : `<div class="rix-output-sheet-plane-controls" aria-label="Shaped plane">${value.hiddenAxes.map(({ axis, name, length, selected, labels }) => `<label><span>${escapeHtml2(name)} · axis ${axis}</span><select data-rix-sheet-axis="${axis}" aria-label="${escapeHtml2(name)} axis ${axis}">${Array.from({ length }, (_item, index) => `<option value="${index + 1}"${selected === index + 1 ? " selected" : ""}>${escapeHtml2(labels?.[index] ?? String(index + 1))}</option>`).join("")}</select></label>`).join("")}</div>`;
+      const headerAttributes = (axis, coordinate, fallback) => value.formulaBacked ? ` class="rix-sheet-header-editable" tabindex="0" data-rix-header-axis="${axis}" data-rix-header-coordinate="${coordinate}" data-rix-header-label="${escapeHtml2(value.axisLabels[axis - 1]?.[coordinate - 1] ?? "")}" data-rix-header-fallback="${escapeHtml2(fallback)}"` : "";
       const renderSheetCell = (cell, rowIndex, columnIndex) => {
         const diagnostic = cell.diagnostics[0] ?? null;
         const cellValue = cell.blank ? "" : cell.value === null ? "_" : text4(cell.value);
@@ -23091,25 +23462,25 @@ ${formatOutputText(slide, format)}`).join(`
           cell.dependencies.length > 0 ? `depends on ${cell.dependencies.map((dependency) => `${value.addressBase}[${dependency}]`).join(", ")}` : null,
           diagnostic ? `${cell.diagnosticKind ?? "runtime"} error: ${diagnostic}` : null
         ].filter(Boolean).join(" · ");
-        const diagnosticAttributes = diagnostic === null ? "" : ` data-rix-state="error" data-rix-diagnostic-kind="${escapeHtml(cell.diagnosticKind ?? "runtime")}" data-rix-diagnostics="${escapeHtml(JSON.stringify(cell.diagnostics))}"${cell.diagnosticSource === null ? "" : ` data-rix-diagnostic-source="${escapeHtml(cell.diagnosticSource)}"`} aria-invalid="true"`;
-        return `<td data-rix-row="${rowIndex + 1}" data-rix-column="${columnIndex + 1}" data-rix-index="${cell.index.join(",")}" data-rix-address="${escapeHtml(cell.address)}" data-rix-display-address="${escapeHtml(cell.displayAddress)}"${cell.blank ? ' data-rix-blank="true"' : ""}${cell.coordinateLabel === null ? "" : ` data-rix-coordinate-labels="${escapeHtml(JSON.stringify(cell.coordinateLabels))}" data-rix-coordinate-label="${escapeHtml(cell.coordinateLabel)}"`}${cell.formulaSource === null ? "" : ` data-rix-formula-source="${escapeHtml(cell.formulaSource)}"`}${cell.slotId === null ? "" : ` data-rix-slot-id="${escapeHtml(cell.slotId)}"`}${cell.assignmentMode === null ? "" : ` data-rix-assignment-mode="${escapeHtml(cell.assignmentMode)}"`}${cell.dependencies.length === 0 ? "" : ` data-rix-dependencies="${escapeHtml(JSON.stringify(cell.dependencies))}"`}${diagnosticAttributes} title="${escapeHtml(title)}">${cellValue}</td>`;
+        const diagnosticAttributes = diagnostic === null ? "" : ` data-rix-state="error" data-rix-diagnostic-kind="${escapeHtml2(cell.diagnosticKind ?? "runtime")}" data-rix-diagnostics="${escapeHtml2(JSON.stringify(cell.diagnostics))}"${cell.diagnosticSource === null ? "" : ` data-rix-diagnostic-source="${escapeHtml2(cell.diagnosticSource)}"`} aria-invalid="true"`;
+        return `<td data-rix-row="${rowIndex + 1}" data-rix-column="${columnIndex + 1}" data-rix-index="${cell.index.join(",")}" data-rix-address="${escapeHtml2(cell.address)}" data-rix-display-address="${escapeHtml2(cell.displayAddress)}"${cell.blank ? ' data-rix-blank="true"' : ""}${cell.coordinateLabel === null ? "" : ` data-rix-coordinate-labels="${escapeHtml2(JSON.stringify(cell.coordinateLabels))}" data-rix-coordinate-label="${escapeHtml2(cell.coordinateLabel)}"`}${cell.formulaSource === null ? "" : ` data-rix-formula-source="${escapeHtml2(cell.formulaSource)}"`}${cell.slotId === null ? "" : ` data-rix-slot-id="${escapeHtml2(cell.slotId)}"`}${cell.assignmentMode === null ? "" : ` data-rix-assignment-mode="${escapeHtml2(cell.assignmentMode)}"`}${cell.dependencies.length === 0 ? "" : ` data-rix-dependencies="${escapeHtml2(JSON.stringify(cell.dependencies))}"`}${diagnosticAttributes} title="${escapeHtml2(title)}">${cellValue}</td>`;
       };
-      const bodies = value.planes.map((plane) => `<tbody data-rix-plane-key="${escapeHtml(plane.key)}" data-rix-slice="${plane.slice.map((item) => item ?? "").join(",")}"${plane.key === value.selectedPlaneKey ? "" : " hidden"}>${plane.cells.map((row, rowIndex) => {
+      const bodies = value.planes.map((plane) => `<tbody data-rix-plane-key="${escapeHtml2(plane.key)}" data-rix-slice="${plane.slice.map((item) => item ?? "").join(",")}"${plane.key === value.selectedPlaneKey ? "" : " hidden"}>${plane.cells.map((row, rowIndex) => {
         const rowCoordinate = value.window?.rowStart + rowIndex || rowIndex + 1;
-        return `<tr><th scope="row" data-rix-row="${rowIndex + 1}"${headerAttributes(value.rowAxis.axis, rowCoordinate, String(rowCoordinate))}${value.axisLabels[value.rowAxis.axis - 1] ? ` title="${escapeHtml(value.rowAxis.name)} ${rowCoordinate}"` : ""}>${escapeHtml(value.rowHeaders[rowIndex])}</th>${row.map((cell, columnIndex) => renderSheetCell(cell, rowIndex, columnIndex)).join("")}</tr>`;
+        return `<tr><th scope="row" data-rix-row="${rowIndex + 1}"${headerAttributes(value.rowAxis.axis, rowCoordinate, String(rowCoordinate))}${value.axisLabels[value.rowAxis.axis - 1] ? ` title="${escapeHtml2(value.rowAxis.name)} ${rowCoordinate}"` : ""}>${escapeHtml2(value.rowHeaders[rowIndex])}</th>${row.map((cell, columnIndex) => renderSheetCell(cell, rowIndex, columnIndex)).join("")}</tr>`;
       }).join("")}</tbody>`).join("");
-      const liveAttributes = value.editable ? ` data-rix-editable="true" data-rix-edit-mode="${value.editMode}"${value.bindingId ? ` data-rix-binding-id="${escapeHtml(value.bindingId)}"` : ""}` : "";
-      const assignmentControl = value.editMode === "formula" ? `<label class="rix-output-sheet-assignment"><span>Assignment</span><select data-rix-edit-assignment-mode aria-label="Formula assignment mode">${FORMULA_SHEET_ASSIGNMENT_MODES.map((mode) => `<option value="${escapeHtml(mode)}"${mode === ":=" ? " selected" : ""}>${escapeHtml(mode)}</option>`).join("")}</select></label>` : "";
+      const liveAttributes = value.editable ? ` data-rix-editable="true" data-rix-edit-mode="${value.editMode}"${value.bindingId ? ` data-rix-binding-id="${escapeHtml2(value.bindingId)}"` : ""}` : "";
+      const assignmentControl = value.editMode === "formula" ? `<label class="rix-output-sheet-assignment"><span>Assignment</span><select data-rix-edit-assignment-mode aria-label="Formula assignment mode">${FORMULA_SHEET_ASSIGNMENT_MODES.map((mode) => `<option value="${escapeHtml2(mode)}"${mode === ":=" ? " selected" : ""}>${escapeHtml2(mode)}</option>`).join("")}</select></label>` : "";
       const editor = value.editable ? `<form class="rix-output-sheet-editor" hidden><label class="rix-output-sheet-formula"><span data-rix-edit-label>Choose a cell to edit</span><input data-rix-edit-source aria-label="${value.editMode === "formula" ? "RiX formula" : "RiX value"}" autocomplete="off" spellcheck="false"></label>${assignmentControl}<button type="submit">${value.editMode === "formula" ? "Set formula" : "Set"}</button><output data-rix-edit-value aria-live="polite"></output><output data-rix-edit-status aria-live="polite"></output></form>` : "";
       const formulaAttributes = value.formulaBacked ? ` data-rix-formula-sheet="true" data-rix-formula-epoch="${value.formulaSheet.epoch}"` : "";
       const windowAttributes = value.window ? ` data-rix-window-row-start="${value.window.rowStart}" data-rix-window-row-count="${value.window.rowCount}" data-rix-window-row-total="${value.window.totalRowCount}" data-rix-window-column-start="${value.window.columnStart}" data-rix-window-column-count="${value.window.columnCount}" data-rix-window-column-total="${value.window.totalColumnCount}"` : "";
-      return `<section class="rix-output-sheet" data-rix-rank="${value.rank}" data-rix-selected-plane="${escapeHtml(value.selectedPlaneKey)}"${windowAttributes}${liveAttributes}${formulaAttributes}>${value.title ? `<h3 class="rix-output-sheet-title">${escapeHtml(value.title)}</h3>` : ""}<div class="rix-output-sheet-location" aria-live="polite" data-rix-summary="${escapeHtml(summary)}">${escapeHtml(summary)}</div>${value.showAxisSummary ? `<div class="rix-output-sheet-axis-summary">${escapeHtml(axisSummary)}</div>` : ""}${controls}${editor}<table><thead><tr><th class="rix-output-sheet-corner" scope="col">${escapeHtml(value.addressBase)}</th>${value.columnHeaders.map((header, column) => {
+      return `<section class="rix-output-sheet" data-rix-rank="${value.rank}" data-rix-selected-plane="${escapeHtml2(value.selectedPlaneKey)}"${windowAttributes}${liveAttributes}${formulaAttributes}>${value.title ? `<h3 class="rix-output-sheet-title">${escapeHtml2(value.title)}</h3>` : ""}<div class="rix-output-sheet-location" aria-live="polite" data-rix-summary="${escapeHtml2(summary)}">${escapeHtml2(summary)}</div>${value.showAxisSummary ? `<div class="rix-output-sheet-axis-summary">${escapeHtml2(axisSummary)}</div>` : ""}${controls}${editor}<table><thead><tr><th class="rix-output-sheet-corner" scope="col">${escapeHtml2(value.addressBase)}</th>${value.columnHeaders.map((header, column) => {
         const columnCoordinate = value.window?.columnStart + column || column + 1;
-        return `<th scope="col" data-rix-column="${column + 1}"${value.columnAxis ? headerAttributes(value.columnAxis.axis, columnCoordinate, sheetColumnLabel(columnCoordinate, value.columnLabelMode)) : ""}${value.columnAxis && value.axisLabels[value.columnAxis.axis - 1] ? ` title="${escapeHtml(value.columnAxis.name)} ${columnCoordinate}"` : ""}>${escapeHtml(header)}</th>`;
+        return `<th scope="col" data-rix-column="${column + 1}"${value.columnAxis ? headerAttributes(value.columnAxis.axis, columnCoordinate, sheetColumnLabel(columnCoordinate, value.columnLabelMode)) : ""}${value.columnAxis && value.axisLabels[value.columnAxis.axis - 1] ? ` title="${escapeHtml2(value.columnAxis.name)} ${columnCoordinate}"` : ""}>${escapeHtml2(header)}</th>`;
       }).join("")}</tr></thead>${bodies}</table></section>`;
     }
     if (value.kind === "figure")
-      return `<figure class="rix-output-figure"${portableBlockStyleAttributes(value.style)}${value.label ? ` id="${escapeHtml(value.label)}"` : ""}>${renderOutputHtml(value.content, format)}${value.caption ? `<figcaption>${escapeHtml(value.caption)}</figcaption>` : ""}</figure>`;
+      return `<figure class="rix-output-figure"${portableBlockStyleAttributes(value.style)}${value.label ? ` id="${escapeHtml2(value.label)}"` : ""}>${renderOutputHtml(value.content, format)}${value.caption ? `<figcaption>${escapeHtml2(value.caption)}</figcaption>` : ""}</figure>`;
     if (value.kind === "graphic") {
       const interactive = graphicIsInteractive(value);
       const replacesDependencies = interactive && value.children.some(function hasReplacement(node) {
@@ -23119,13 +23490,13 @@ ${formatOutputText(slide, format)}`).join(`
         return isOutputValue(node) && (node.kind === "drag_point" || (node.children || []).some(containsDragPoint));
       });
       const interactionStatus = replacesDependencies ? hasDragPoint ? "Dragging will replace this point’s current reactive dependencies." : "Using this scene action will replace its target’s current reactive dependencies." : hasDragPoint ? "Drag the highlighted point or use its arrow keys." : "Choose a highlighted scene node to navigate.";
-      return `<div class="rix-output-graphic"${interactive ? ' data-rix-interactive="true"' : ""}>${renderGraphicSvg(value, format)}${interactive ? `<output class="rix-output-graphic-status" aria-live="polite">${interactionStatus}</output>` : ""}</div>`;
+      return `<div class="rix-output-graphic"${interactive ? ' data-rix-interactive="true"' : ""}>${renderGraphicSvg(value, format)}${interactive ? `<output class="rix-output-graphic-status" aria-live="polite">${interactionStatus}</output>` : ""}${renderGraphicAccessibilityHtml(value, format)}</div>`;
     }
     if (value.kind === "slide")
-      return `<section class="rix-output-slide">${value.title ? `<h2>${escapeHtml(value.title)}</h2>` : ""}${renderOutputHtml(value.content, format)}</section>`;
+      return `<section class="rix-output-slide">${value.title ? `<h2>${escapeHtml2(value.title)}</h2>` : ""}${renderOutputHtml(value.content, format)}</section>`;
     if (value.kind === "slides")
       return `<section class="rix-output-slides">${value.slides.map((slide) => renderOutputHtml(slide, format)).join("")}</section>`;
-    return `<pre>${escapeHtml(formatOutputText(value, format))}</pre>`;
+    return `<pre>${escapeHtml2(formatOutputText(value, format))}</pre>`;
   }
   function createAlgebraOutputCollection() {
     const syntheticDivision = (root, coefficients) => createSyntheticDivision(root, coefficients);
@@ -24607,9 +24978,9 @@ ${indented.join(`,
       return `operator(${operation};${children})`;
     }
     if (kind === "apply") {
-      const semanticId = textValue(mapValue(expression, "semanticid"));
+      const semanticId2 = textValue(mapValue(expression, "semanticid"));
       const children = expressionChildren(expression, "arguments").map(calculusGraphStructuralKey).join(";");
-      return `apply(${semanticId};${children})`;
+      return `apply(${semanticId2};${children})`;
     }
     throw new Error(`Unsupported Calculus expression kind ${String(kind)}`);
   }
@@ -24643,13 +25014,13 @@ ${indented.join(`,
       ["operands", sequence3(operands)]
     ]);
   }
-  function graphApplication(semanticId, name, argumentsValue) {
+  function graphApplication(semanticId2, name, argumentsValue) {
     return map3([
       ["valueKind", text6("calculusExpression")],
       ["schema", text6("rix.calculus.expression@1")],
       ["kind", text6("apply")],
-      ["semanticId", text6(semanticId)],
-      ["name", text6(name ?? semanticId)],
+      ["semanticId", text6(semanticId2)],
+      ["name", text6(name ?? semanticId2)],
       ["arguments", sequence3(argumentsValue)]
     ]);
   }
@@ -24996,26 +25367,26 @@ ${indented.join(`,
     "rix.function.asin.real-principal@1": "asin",
     "rix.function.log.complex-principal@1": "reciprocal"
   });
-  function graphSemanticObligation(kind, relation, expression, semanticId, reason, fields = {}) {
-    return Object.freeze({ kind, relation, expression, semanticId, reason, ...fields });
+  function graphSemanticObligation(kind, relation, expression, semanticId2, reason, fields = {}) {
+    return Object.freeze({ kind, relation, expression, semanticId: semanticId2, reason, ...fields });
   }
-  function semanticDerivativeObligations(semanticId, argument) {
-    if (semanticId === "rix.function.log.real-principal@1" || semanticId === "rix.function.sqrt.real-principal@1") {
-      return [graphSemanticObligation("domain", "positive", argument, semanticId, "realDerivativeDomain")];
+  function semanticDerivativeObligations(semanticId2, argument) {
+    if (semanticId2 === "rix.function.log.real-principal@1" || semanticId2 === "rix.function.sqrt.real-principal@1") {
+      return [graphSemanticObligation("domain", "positive", argument, semanticId2, "realDerivativeDomain")];
     }
-    if (semanticId === "rix.function.asin.real-principal@1") {
-      return [graphSemanticObligation("domain", "insideOpenUnitInterval", argument, semanticId, "inverseDerivativeDomain")];
+    if (semanticId2 === "rix.function.asin.real-principal@1") {
+      return [graphSemanticObligation("domain", "insideOpenUnitInterval", argument, semanticId2, "inverseDerivativeDomain")];
     }
-    if (semanticId === "rix.function.log.complex-principal@1") {
-      return [graphSemanticObligation("branch", "offPrincipalLogBranchCut", argument, semanticId, "complexPrincipalBranch", { branch: "principal" })];
+    if (semanticId2 === "rix.function.log.complex-principal@1") {
+      return [graphSemanticObligation("branch", "offPrincipalLogBranchCut", argument, semanticId2, "complexPrincipalBranch", { branch: "principal" })];
     }
     return [];
   }
   function differentiateTrustedSemanticApplication(expression, variable) {
-    const semanticId = textValue(mapValue(expression, "semanticid"));
-    const rule = TRUSTED_SEMANTIC_DERIVATIVES[semanticId];
+    const semanticId2 = textValue(mapValue(expression, "semanticid"));
+    const rule = TRUSTED_SEMANTIC_DERIVATIVES[semanticId2];
     if (!rule)
-      throw new Error(`untrustedSemanticDerivative:${String(semanticId)}`);
+      throw new Error(`untrustedSemanticDerivative:${String(semanticId2)}`);
     const argumentsValue = expressionChildren(expression, "arguments");
     if (argumentsValue.length !== 1)
       throw new Error("semanticDerivativeRequiresUnaryApplication");
@@ -25023,7 +25394,7 @@ ${indented.join(`,
     const inner = differentiatePrimitiveNode(argument, variable);
     const obligations = [
       ...inner.obligations,
-      ...semanticDerivativeObligations(semanticId, argument)
+      ...semanticDerivativeObligations(semanticId2, argument)
     ];
     if (exactGraphValue(inner.expression, 0)) {
       return { expression: inner.expression, obligations };
@@ -30687,7 +31058,7 @@ ${indented.join(`,
   function bool3(flag) {
     return flag ? int6(1) : null;
   }
-  function stringValue3(value) {
+  function stringValue4(value) {
     if (value?.type === "string")
       return value.value;
     if (value === null || value === undefined)
@@ -30716,8 +31087,8 @@ ${indented.join(`,
     return { [countName]: safeExactNumber(value, label) };
   }
   function localeNumberString(target, options) {
-    const decimal = stringValue3(optionValue(options, "decimal", stringObj3(".")));
-    const group = stringValue3(optionValue(options, "group", stringObj3("_")));
+    const decimal = stringValue4(optionValue(options, "decimal", stringObj3(".")));
+    const group = stringValue4(optionValue(options, "group", stringObj3("_")));
     const groupSizeValue = optionValue(options, "groupsize", new Integer(3n));
     const groupSize = safeExactNumber(groupSizeValue, "Locale group size");
     if (groupSize < 1)
@@ -30742,7 +31113,7 @@ ${indented.join(`,
     const repeat = optionValue(options, "userepeatnotation", undefined);
     return {
       ...limit === undefined ? {} : { limit: safeExactNumber(limit, "Repeating-decimal limit") },
-      ...onLimit === undefined ? {} : { onLimit: stringValue3(onLimit) },
+      ...onLimit === undefined ? {} : { onLimit: stringValue4(onLimit) },
       ...repeat === undefined ? {} : { useRepeatNotation: truthy2(repeat) }
     };
   }
@@ -30961,10 +31332,10 @@ ${indented.join(`,
     return values2.slice(start - 1, end - 1);
   }
   function charsOf(value) {
-    return Array.from(stringValue3(value)).map((char) => stringObj3(char));
+    return Array.from(stringValue4(value)).map((char) => stringObj3(char));
   }
   function fromChars(chars) {
-    return stringObj3(chars.map((char) => stringValue3(char)).join(""));
+    return stringObj3(chars.map((char) => stringValue4(char)).join(""));
   }
   function compareValues(a, b) {
     const ak = valueKey2(a);
@@ -31264,7 +31635,7 @@ ${indented.join(`,
     }),
     JOIN: method4("JOIN", ([target, separator]) => {
       ensureSequence(target, "Join");
-      return stringObj3(target.values.map((value) => stringValue3(value)).join(stringValue3(separator ?? stringObj3(","))));
+      return stringObj3(target.values.map((value) => stringValue4(value)).join(stringValue4(separator ?? stringObj3(","))));
     }),
     PUSH: method4("PUSH", ([target, ...values2]) => {
       ensureSequence(target, "Push");
@@ -31899,24 +32270,24 @@ ${indented.join(`,
     }),
     INCLUDES: method4("INCLUDES", ([target, needle]) => {
       ensureString(target, "Includes");
-      return bool3(target.value.includes(stringValue3(needle)));
+      return bool3(target.value.includes(stringValue4(needle)));
     }),
     STARTSWITH: method4("STARTSWITH", ([target, prefix]) => {
       ensureString(target, "StartsWith");
-      return bool3(target.value.startsWith(stringValue3(prefix)));
+      return bool3(target.value.startsWith(stringValue4(prefix)));
     }),
     ENDSWITH: method4("ENDSWITH", ([target, suffix]) => {
       ensureString(target, "EndsWith");
-      return bool3(target.value.endsWith(stringValue3(suffix)));
+      return bool3(target.value.endsWith(stringValue4(suffix)));
     }),
     INDEXOF: method4("INDEXOF", ([target, needle]) => {
       ensureString(target, "IndexOf");
-      const idx = target.value.indexOf(stringValue3(needle));
+      const idx = target.value.indexOf(stringValue4(needle));
       return idx === -1 ? null : int6(idx + 1);
     }),
     LASTINDEXOF: method4("LASTINDEXOF", ([target, needle]) => {
       ensureString(target, "LastIndexOf");
-      const idx = target.value.lastIndexOf(stringValue3(needle));
+      const idx = target.value.lastIndexOf(stringValue4(needle));
       return idx === -1 ? null : int6(idx + 1);
     }),
     SLICE: method4("SLICE", ([target, start, end]) => {
@@ -31925,11 +32296,11 @@ ${indented.join(`,
     }),
     CONCAT: method4("CONCAT", ([target, ...parts]) => {
       ensureString(target, "Concat");
-      return stringObj3([target, ...parts].map((part) => stringValue3(part)).join(""));
+      return stringObj3([target, ...parts].map((part) => stringValue4(part)).join(""));
     }),
     SPLIT: method4("SPLIT", ([target, separator]) => {
       ensureString(target, "Split");
-      const parts = separator === undefined ? Array.from(target.value) : target.value.split(stringValue3(separator));
+      const parts = separator === undefined ? Array.from(target.value) : target.value.split(stringValue4(separator));
       return { type: "sequence", values: parts.map((part) => stringObj3(part)), _ext: mutableExt2() };
     }),
     TRIM: method4("TRIM", ([target]) => {
@@ -31954,19 +32325,19 @@ ${indented.join(`,
     }),
     REPLACE: method4("REPLACE", ([target, search, replacement]) => {
       ensureString(target, "Replace");
-      return stringObj3(target.value.replace(stringValue3(search), stringValue3(replacement)));
+      return stringObj3(target.value.replace(stringValue4(search), stringValue4(replacement)));
     }),
     REPLACEALL: method4("REPLACEALL", ([target, search, replacement]) => {
       ensureString(target, "ReplaceAll");
-      return stringObj3(target.value.split(stringValue3(search)).join(stringValue3(replacement)));
+      return stringObj3(target.value.split(stringValue4(search)).join(stringValue4(replacement)));
     }),
     PADLEFT: method4("PADLEFT", ([target, length, pad]) => {
       ensureString(target, "PadLeft");
-      return stringObj3(target.value.padStart(numericIndex(length), stringValue3(pad ?? stringObj3(" "))));
+      return stringObj3(target.value.padStart(numericIndex(length), stringValue4(pad ?? stringObj3(" "))));
     }),
     PADRIGHT: method4("PADRIGHT", ([target, length, pad]) => {
       ensureString(target, "PadRight");
-      return stringObj3(target.value.padEnd(numericIndex(length), stringValue3(pad ?? stringObj3(" "))));
+      return stringObj3(target.value.padEnd(numericIndex(length), stringValue4(pad ?? stringObj3(" "))));
     }),
     REPEAT: method4("REPEAT", ([target, count]) => {
       ensureString(target, "Repeat");
@@ -32025,11 +32396,11 @@ ${indented.join(`,
     WITHSCALARDOMAIN: method4("WITHSCALARDOMAIN", ([target, domain]) => {
       ensureShaped(target, "WithScalarDomain");
       const copy = shallowCopyValue(target);
-      return validateShapedScalarDomain(copy, stringValue3(domain));
+      return validateShapedScalarDomain(copy, stringValue4(domain));
     }),
     "SETSCALARDOMAIN!": method4("SETSCALARDOMAIN!", ([target, domain]) => {
       ensureShaped(target, "SetScalarDomain!");
-      return validateShapedScalarDomain(target, stringValue3(domain));
+      return validateShapedScalarDomain(target, stringValue4(domain));
     }),
     SHAPE: method4("SHAPE", ([target]) => {
       ensureShaped(target, "Shape");
@@ -32163,8 +32534,8 @@ ${indented.join(`,
     FLOOR: method4("Floor", ([target]) => int6(target.floor())),
     CEIL: method4("Ceil", ([target]) => int6(target.ceil())),
     TRUNC: method4("Trunc", ([target]) => int6(target.trunc())),
-    ROUND: method4("Round", ([target, mode]) => int6(target.round(mode === undefined ? undefined : stringValue3(mode)))),
-    ROUNDTO: method4("RoundTo", ([target, places, mode]) => target.roundTo(safeExactNumber(places, "Decimal places"), mode === undefined ? undefined : stringValue3(mode))),
+    ROUND: method4("Round", ([target, mode]) => int6(target.round(mode === undefined ? undefined : stringValue4(mode)))),
+    ROUNDTO: method4("RoundTo", ([target, places, mode]) => target.roundTo(safeExactNumber(places, "Decimal places"), mode === undefined ? undefined : stringValue4(mode))),
     E: method4("E", ([target, exponent]) => target.E(exactBigInt(exponent, "Exponent"))),
     TOMIXEDSTRING: method4("ToMixedString", ([target]) => stringObj3(target.toMixedString())),
     TODECIMAL: method4("ToDecimal", ([target, options]) => {
@@ -32237,7 +32608,7 @@ ${indented.join(`,
       return exactSequence([attachBuiltinProto(RationalIntervalSet.fromInterval(target))]);
     }),
     SHORTESTDECIMAL: method4("ShortestDecimal", ([target, base]) => target.shortestDecimal(base === undefined ? undefined : exactBigInt(base, "Base"))),
-    DENOMINATORINTERVAL: method4("DenominatorInterval", ([target, denominator, onEmpty]) => target.denominatorInterval(denominator === undefined || denominator === null ? undefined : exactBigInt(denominator, "Grid denominator"), onEmpty === undefined ? undefined : stringValue3(onEmpty))),
+    DENOMINATORINTERVAL: method4("DenominatorInterval", ([target, denominator, onEmpty]) => target.denominatorInterval(denominator === undefined || denominator === null ? undefined : exactBigInt(denominator, "Grid denominator"), onEmpty === undefined ? undefined : stringValue4(onEmpty))),
     RANDOM: method4("Random", ([target, parameters], _context, evaluate) => evaluate({ fn: "RANDOM", args: [target, parameters] })),
     RANDOMPARTITION: method4("RandomPartition", ([target, parameters], _context, evaluate) => evaluate({ fn: "RANDOM_PARTITION", args: [target, parameters] })),
     E: method4("E", ([target, exponent]) => target.E(exactBigInt(exponent, "Exponent"))),
@@ -32248,7 +32619,7 @@ ${indented.join(`,
       const onLimit = optionValue(options, "onlimit", undefined);
       const text8 = target.toRepeatingDecimal(options?.type === "map" ? {
         ...maxDigits === undefined ? {} : { maxDigits: safeExactNumber(maxDigits, "Maximum decimal digits") },
-        ...onLimit === undefined ? {} : { onLimit: stringValue3(onLimit) }
+        ...onLimit === undefined ? {} : { onLimit: stringValue4(onLimit) }
       } : true);
       return text8 === null ? null : stringObj3(text8);
     }),
@@ -32616,7 +32987,7 @@ ${indented.join(`,
   function capabilityNamespace(name) {
     return firstLetterIsUppercase(name) ? "core" : "host";
   }
-  function stringValue4(value) {
+  function stringValue5(value) {
     return { type: "string", value: String(value) };
   }
   function rixString2(value, label) {
@@ -32682,17 +33053,17 @@ ${indented.join(`,
     const registration = {
       type: "map",
       entries: new Map([
-        ["authority", stringValue4(owner?.pluginId ? "pluginCapability" : "trustedSession")],
-        ...owner?.pluginId ? [["pluginid", stringValue4(owner.pluginId)]] : [],
-        ...owner?.mount ? [["mount", stringValue4(owner.mount)]] : []
+        ["authority", stringValue5(owner?.pluginId ? "pluginCapability" : "trustedSession")],
+        ...owner?.pluginId ? [["pluginid", stringValue5(owner.pluginId)]] : [],
+        ...owner?.mount ? [["mount", stringValue5(owner.mount)]] : []
       ])
     };
     const entries2 = new Map(provider.entries);
-    entries2.set("schema", stringValue4("rix.numerics.range-provider@1"));
+    entries2.set("schema", stringValue5("rix.numerics.range-provider@1"));
     entries2.set("functionid", functionId);
     entries2.set("directrange", directRange);
-    entries2.set("evidencelevel", stringValue4("trustedCapability"));
-    entries2.set("trust", stringValue4("trustedCapability"));
+    entries2.set("evidencelevel", stringValue5("trustedCapability"));
+    entries2.set("trust", stringValue5("trustedCapability"));
     entries2.set("provenance", provenance);
     entries2.set("registration", registration);
     const descriptor = {
@@ -32746,7 +33117,7 @@ ${indented.join(`,
         if (namespace === "host" && registryContext !== context) {
           context.registerHost(name, definition, { namespace, groups });
         }
-        return stringValue4(name);
+        return stringValue5(name);
       }
     });
     value._ext.set("REGISTERVALUE", {
@@ -32768,7 +33139,7 @@ ${indented.join(`,
             context.registerHostValue(name, registeredValue, { namespace, doc, groups });
           }
         }
-        return stringValue4(name);
+        return stringValue5(name);
       }
     });
     value._ext.set("REGISTERCALLABLEVALUE", {
@@ -32796,7 +33167,7 @@ ${indented.join(`,
             context.registerHostCallableValue(name, callableValue2, definition, { namespace, doc, groups });
           }
         }
-        return stringValue4(name);
+        return stringValue5(name);
       }
     });
     value._ext.set("REGISTERMETHOD", {
@@ -32848,7 +33219,7 @@ ${indented.join(`,
         if (registryContext !== context) {
           context.registerMethod(typeName, methodName, wrapped, { pluginId, mount });
         }
-        return stringValue4(methodName);
+        return stringValue5(methodName);
       }
     });
     value._ext.set("REGISTERSHAPEDCONSTRUCTOR", {
@@ -32874,7 +33245,7 @@ ${indented.join(`,
           throw new Error(`Shaped constructor ${typeName} is already registered`);
         registry.set(key, (components, slots, callContext, callEvaluate) => invoke(callable, [components, slots], callContext, callEvaluate));
         evaluationContext.setEnv("__typed_shaped_constructors__", registry);
-        return stringValue4(typeName);
+        return stringValue5(typeName);
       }
     });
     if (namespace === "host") {
@@ -32922,10 +33293,10 @@ ${indented.join(`,
         return {
           type: "map",
           entries: new Map([
-            ["name", stringValue4(entry.displayName)],
-            ["kind", stringValue4(entry.kind)],
-            ["namespace", stringValue4(entry.namespace)],
-            ["groups", { type: "sequence", values: (entry.groups || []).map(stringValue4) }]
+            ["name", stringValue5(entry.displayName)],
+            ["kind", stringValue5(entry.kind)],
+            ["namespace", stringValue5(entry.namespace)],
+            ["groups", { type: "sequence", values: (entry.groups || []).map(stringValue5) }]
           ])
         };
       }
@@ -32936,7 +33307,7 @@ ${indented.join(`,
       impl() {
         return {
           type: "sequence",
-          values: registryContext.getAllEntries({ namespace }).map((entry) => stringValue4(entry.displayName))
+          values: registryContext.getAllEntries({ namespace }).map((entry) => stringValue5(entry.displayName))
         };
       }
     });
@@ -32975,7 +33346,7 @@ ${indented.join(`,
       type: "method_builtin",
       name: "List",
       impl() {
-        return { type: "sequence", values: catalog.list().map((metadata) => stringValue4(metadata.id)) };
+        return { type: "sequence", values: catalog.list().map((metadata) => stringValue5(metadata.id)) };
       }
     });
     value._ext.set("INFO", {
@@ -43659,7 +44030,7 @@ ${pad}}`;
   };
 
   // rix/src/eval/functions/embedded.js
-  function stringValue5(value) {
+  function stringValue6(value) {
     return { type: "string", value: String(value) };
   }
   function stringFromValue(value, label) {
@@ -43721,7 +44092,7 @@ ${pad}}`;
   function parseInfoValue(meta = {}) {
     const entries2 = new Map;
     entries2.set("function", meta.expectedFunction ? new Integer(1n) : null);
-    entries2.set("name", meta.inferredName ? stringValue5(meta.inferredName) : null);
+    entries2.set("name", meta.inferredName ? stringValue6(meta.inferredName) : null);
     entries2.set("explicit", meta.explicitParser ? new Integer(1n) : null);
     return { type: "map", entries: entries2 };
   }
@@ -43772,7 +44143,7 @@ ${pad}}`;
     }
     return createStructuralFunction(value, context, inferredName, explicitParameters?.names ?? null);
   }
-  function mapField(map5, name) {
+  function mapField2(map5, name) {
     if (map5?.type !== "map" || !(map5.entries instanceof Map)) {
       throw new Error(".SArith.Configure declarations must be maps");
     }
@@ -43780,11 +44151,11 @@ ${pad}}`;
   }
   function operatorDeclaration(value, context, evaluate, invoke) {
     const text8 = (name, fallback = null) => {
-      const field = mapField(value, name);
+      const field = mapField2(value, name);
       return field === undefined ? fallback : stringFromValue(field, `.SArith.Configure ${name}`);
     };
-    const precedence2 = mapField(value, "precedence");
-    const apply = mapField(value, "apply");
+    const precedence2 = mapField2(value, "precedence");
+    const apply = mapField2(value, "apply");
     return {
       symbol: text8("symbol"),
       head: text8("head"),
@@ -43955,10 +44326,10 @@ ${pad}}`;
       throw new Error(`Backtick parser '.${entry.displayName}' does not expose a callable .Parse method`);
     }
     const callArgs = [
-      stringValue5(body),
+      stringValue6(body),
       {
         type: "sequence",
-        values: modifiers.map((modifier) => stringValue5(typeof modifier === "string" ? modifier : `${modifier.name}(${(modifier.args || []).join(",")})`))
+        values: modifiers.map((modifier) => stringValue6(typeof modifier === "string" ? modifier : `${modifier.name}(${(modifier.args || []).join(",")})`))
       },
       parseInfoValue(meta)
     ];
@@ -44015,7 +44386,7 @@ ${pad}}`;
         const body = args[2] ?? "";
         const meta = args[3] || {};
         if (parserName === "RiX-String")
-          return stringValue5(body);
+          return stringValue6(body);
         return callRegisteredParser(parserName, body, modifiers, meta, context, evaluate, systemContext);
       },
       doc: "Dispatch a backtick body to a registered .Name.Parse parser"
@@ -75248,7 +75619,7 @@ ndNamespace._proto={=
       _ext: new Map([["immutable", int11(1)], ...methods2])
     };
   }
-  function mapField2(value, name, fallback = null) {
+  function mapField3(value, name, fallback = null) {
     if (value?.type !== "map" || !(value.entries instanceof Map))
       return fallback;
     if (value.entries.has(name))
@@ -75722,7 +76093,7 @@ ndNamespace._proto={=
         ["schema", str2("rix.fraction-function.square-free-pair@1")],
         ["valueKind", str2("fractionFunctionSquareFreePair")],
         ["exact", int11(1)],
-        ["verified", exactTruth(mapField2(numeratorPresentation, "verified")) && exactTruth(mapField2(denominatorPresentation, "verified")) ? int11(1) : null],
+        ["verified", exactTruth(mapField3(numeratorPresentation, "verified")) && exactTruth(mapField3(denominatorPresentation, "verified")) ? int11(1) : null],
         ["numerator", numeratorPresentation],
         ["denominator", denominatorPresentation]
       ]);
@@ -75754,7 +76125,7 @@ ndNamespace._proto={=
     const source = requireFractionFunction(value);
     const exact2 = canonical(source, context, evaluate);
     const payload = canonicalPresentation(source, kind, context, evaluate);
-    const verified = mapField2(payload, "verified");
+    const verified = mapField3(payload, "verified");
     const result = immutableMap([
       ["schema", str2(FRACTION_FUNCTION_PRESENTATION_SCHEMA)],
       ["valueKind", str2("fractionFunctionPresentation")],
@@ -75788,7 +76159,7 @@ ndNamespace._proto={=
         ["restriction", spec2],
         ["polynomial", polynomial2],
         ["factorEvidence", evidence],
-        ["verified", exactTruth(mapField2(evidence, "verified")) ? int11(1) : null]
+        ["verified", exactTruth(mapField3(evidence, "verified")) ? int11(1) : null]
       ]);
     });
   }
@@ -75798,24 +76169,24 @@ ndNamespace._proto={=
     const cancelled2 = invokeReceiver(pair.numerator, "Gcd", [pair.denominator], context, evaluate);
     const cancelledEvidence = invokeReceiver(cancelled2, "FactorEvidence", [], context, evaluate);
     const canonicalEvidence = invokeReceiver(canonical(source, context, evaluate), "PoleZeroEvidence", [], context, evaluate);
-    const polePart = mapField2(canonicalEvidence, "poles");
-    const poleEntries = mapField2(polePart, "entries")?.values || [];
-    const cancelledEntries = mapField2(cancelledEvidence, "factors")?.values || [];
-    const holes = cancelledEntries.filter((entry2) => !poleEntries.some((pole) => exactValuesEqual(mapField2(entry2, "root"), mapField2(pole, "point")))).map((entry2) => immutableMap([
-      ["point", mapField2(entry2, "root")],
-      ["multiplicity", mapField2(entry2, "multiplicity")],
-      ["cancelledFactor", mapField2(entry2, "factor")],
+    const polePart = mapField3(canonicalEvidence, "poles");
+    const poleEntries = mapField3(polePart, "entries")?.values || [];
+    const cancelledEntries = mapField3(cancelledEvidence, "factors")?.values || [];
+    const holes = cancelledEntries.filter((entry2) => !poleEntries.some((pole) => exactValuesEqual(mapField3(entry2, "root"), mapField3(pole, "point")))).map((entry2) => immutableMap([
+      ["point", mapField3(entry2, "root")],
+      ["multiplicity", mapField3(entry2, "multiplicity")],
+      ["cancelledFactor", mapField3(entry2, "factor")],
       ["canonicalPole", null],
       ["classification", str2("removableHole")],
       ["verified", int11(1)]
     ]));
-    const complete = exactTruth(mapField2(cancelledEvidence, "complete")) && exactTruth(mapField2(polePart, "complete"));
+    const complete = exactTruth(mapField3(cancelledEvidence, "complete")) && exactTruth(mapField3(polePart, "complete"));
     const restrictions = restrictionFactorEvidence(source, context, evaluate);
     const result = immutableMap([
       ["schema", str2(FRACTION_FUNCTION_HOLE_EVIDENCE_SCHEMA)],
       ["valueKind", str2("fractionFunctionRemovableHoleEvidence")],
       ["exact", int11(1)],
-      ["verified", exactTruth(mapField2(cancelledEvidence, "verified")) && exactTruth(mapField2(canonicalEvidence, "verified")) ? int11(1) : null],
+      ["verified", exactTruth(mapField3(cancelledEvidence, "verified")) && exactTruth(mapField3(canonicalEvidence, "verified")) ? int11(1) : null],
       ["complete", complete ? int11(1) : null],
       ["sourceDomainPreserved", int11(1)],
       ["source", source],
@@ -75843,19 +76214,19 @@ ndNamespace._proto={=
       ["schema", str2(FRACTION_FUNCTION_DIVISOR_EVIDENCE_SCHEMA)],
       ["valueKind", str2("fractionFunctionDivisorEvidence")],
       ["exact", int11(1)],
-      ["verified", exactTruth(mapField2(canonicalEvidence, "verified")) && exactTruth(mapField2(holes, "verified")) ? int11(1) : null],
+      ["verified", exactTruth(mapField3(canonicalEvidence, "verified")) && exactTruth(mapField3(holes, "verified")) ? int11(1) : null],
       ["sourceDomainPreserved", int11(1)],
       ["source", source],
-      ["zeros", mapField2(canonicalEvidence, "zeros")],
-      ["poles", mapField2(canonicalEvidence, "poles")],
-      ["removableHoles", mapField2(holes, "holes")],
+      ["zeros", mapField3(canonicalEvidence, "zeros")],
+      ["poles", mapField3(canonicalEvidence, "poles")],
+      ["removableHoles", mapField3(holes, "holes")],
       ["canonicalEvidence", canonicalEvidence],
       ["holeEvidence", holes],
       ["domain", domainRecord2(source)]
     ], [
-      ["ZEROS", method6("Zeros", () => mapField2(canonicalEvidence, "zeros"))],
-      ["POLES", method6("Poles", () => mapField2(canonicalEvidence, "poles"))],
-      ["REMOVABLEHOLES", method6("RemovableHoles", () => mapField2(holes, "holes"))],
+      ["ZEROS", method6("Zeros", () => mapField3(canonicalEvidence, "zeros"))],
+      ["POLES", method6("Poles", () => mapField3(canonicalEvidence, "poles"))],
+      ["REMOVABLEHOLES", method6("RemovableHoles", () => mapField3(holes, "holes"))],
       ["SOURCE", method6("Source", () => source)],
       ["DOMAIN", method6("Domain", () => domainRecord2(source))],
       ["RECORD", method6("Record", () => result)]
@@ -76066,8 +76437,8 @@ ndNamespace._proto={=
   }
 
   // rix/plugins/data/data.js
-  var stringValue6 = (value) => ({ type: "string", value: String(value) });
-  var sequenceValue2 = (values4) => ({ type: "sequence", values: values4 });
+  var stringValue7 = (value) => ({ type: "string", value: String(value) });
+  var sequenceValue3 = (values4) => ({ type: "sequence", values: values4 });
   function mapValue5(entries2) {
     return { type: "map", entries: new Map(entries2), _ext: new Map([["immutable", new Integer(1n)]]) };
   }
@@ -76200,7 +76571,7 @@ ndNamespace._proto={=
   }
   function relationExtensions() {
     return new Map([
-      ["_type", stringValue6("data_relation")],
+      ["_type", stringValue7("data_relation")],
       ["immutable", new Integer(1n)]
     ]);
   }
@@ -76456,11 +76827,11 @@ ndNamespace._proto={=
         nullable: left.columns[leftIndex].nullable || right.columns[rightIndex].nullable
       }
     ]));
-    const kind = operationName2(option3(args[3], "type", stringValue6("inner")), "data.Join type");
+    const kind = operationName2(option3(args[3], "type", stringValue7("inner")), "data.Join type");
     if (!["inner", "left", "right", "full"].includes(kind)) {
       throw new Error("data.Join type must be inner, left, right, or full");
     }
-    const suffix = text10(option3(args[3], "suffix", stringValue6("_right")), "data.Join suffix");
+    const suffix = text10(option3(args[3], "suffix", stringValue7("_right")), "data.Join suffix");
     const missingMatches = truthy3(option3(args[3], "missingMatches", null));
     const rightKeys = new Set(pairs.map(([, index]) => index));
     const used = new Set(left.columns.map((column) => column.id.toLowerCase()));
@@ -76582,7 +76953,7 @@ ndNamespace._proto={=
         rowIndices: Object.freeze(group.rowIndices),
         rows: Object.freeze(group.rows)
       }))),
-      _ext: new Map([["_type", stringValue6("data_groups")], ["immutable", new Integer(1n)]])
+      _ext: new Map([["_type", stringValue7("data_groups")], ["immutable", new Integer(1n)]])
     });
   }
   function requireGroups(value) {
@@ -76612,8 +76983,8 @@ ndNamespace._proto={=
     if (op !== "count" && sourceIndex === null)
       throw new Error(`data.Aggregate ${op} requires a column`);
     const defaultId = sourceIndex === null ? "count" : `${op}_${groups.relation.columns[sourceIndex].id}`;
-    const id = text10(field(spec2, "id", stringValue6(defaultId)), `data.Aggregate specification ${index + 1} id`);
-    const missing = operationName2(field(spec2, "missing", stringValue6("skip")), `data.Aggregate specification ${index + 1} missing policy`);
+    const id = text10(field(spec2, "id", stringValue7(defaultId)), `data.Aggregate specification ${index + 1} id`);
+    const missing = operationName2(field(spec2, "missing", stringValue7("skip")), `data.Aggregate specification ${index + 1} missing policy`);
     if (!["skip", "propagate", "error"].includes(missing))
       throw new Error("data.Aggregate missing policy must be skip, propagate, or error");
     const sourceType = sourceIndex === null ? "Integer" : groups.relation.columns[sourceIndex].type;
@@ -76701,8 +77072,8 @@ ndNamespace._proto={=
       }
       group.count += 1;
     }
-    const countId = text10(option3(args[2], "count", stringValue6("count")), "data.Frequency count column");
-    const proportionId = text10(option3(args[2], "proportion", stringValue6("proportion")), "data.Frequency proportion column");
+    const countId = text10(option3(args[2], "count", stringValue7("count")), "data.Frequency count column");
+    const proportionId = text10(option3(args[2], "proportion", stringValue7("proportion")), "data.Frequency proportion column");
     const includeProportion = truthy3(option3(args[2], "includeProportion", new Integer(1n)));
     const baseColumns = selected.map((index) => relation.columns[index]);
     const columns = [
@@ -76728,7 +77099,7 @@ ndNamespace._proto={=
     const columnIndexValue = columnIndex(relation, args[2], "data.Contingency column column");
     if (rowIndex === columnIndexValue)
       throw new Error("data.Contingency row and column variables must differ");
-    const missing = operationName2(option3(args[3], "missing", stringValue6("drop")), "data.Contingency missing policy");
+    const missing = operationName2(option3(args[3], "missing", stringValue7("drop")), "data.Contingency missing policy");
     if (!["drop", "error"].includes(missing))
       throw new Error("data.Contingency missing policy must be drop or error");
     const rowLevels = [];
@@ -76763,15 +77134,15 @@ ndNamespace._proto={=
     const rowTotals = countValues.map((row) => row.reduce((sum, value) => sum.add(value), new Integer(0n)));
     const columnTotals = columnLevels.map((_, column) => countValues.reduce((sum, row) => sum.add(row[column]), new Integer(0n)));
     return mapValue5([
-      ["valuekind", stringValue6("dataContingency")],
-      ["schema", stringValue6("rix.data.contingency@1")],
-      ["rowvariable", stringValue6(relation.columns[rowIndex].id)],
-      ["columnvariable", stringValue6(relation.columns[columnIndexValue].id)],
-      ["rowlevels", sequenceValue2(rowLevels)],
-      ["columnlevels", sequenceValue2(columnLevels)],
-      ["counts", sequenceValue2(countValues.map((row) => sequenceValue2(row)))],
-      ["rowtotals", sequenceValue2(rowTotals)],
-      ["columntotals", sequenceValue2(columnTotals)],
+      ["valuekind", stringValue7("dataContingency")],
+      ["schema", stringValue7("rix.data.contingency@1")],
+      ["rowvariable", stringValue7(relation.columns[rowIndex].id)],
+      ["columnvariable", stringValue7(relation.columns[columnIndexValue].id)],
+      ["rowlevels", sequenceValue3(rowLevels)],
+      ["columnlevels", sequenceValue3(columnLevels)],
+      ["counts", sequenceValue3(countValues.map((row) => sequenceValue3(row)))],
+      ["rowtotals", sequenceValue3(rowTotals)],
+      ["columntotals", sequenceValue3(columnTotals)],
       ["total", new Integer(BigInt(kept.length))],
       ["exact", new Integer(1n)]
     ]);
@@ -76782,13 +77153,13 @@ ndNamespace._proto={=
     const relation = requireRelation(args[0], "data.Calculate");
     if (typeof runtime.invoke !== "function")
       throw new Error("data.Calculate requires an evaluator callback");
-    const columns = normalizeColumns2(sequenceValue2([args[1]]));
+    const columns = normalizeColumns2(sequenceValue3([args[1]]));
     const column = columns[0];
     if (relation.columns.some(({ id }) => id.toLowerCase() === column.id.toLowerCase())) {
       throw new Error(`data.Calculate column '${column.id}' already exists`);
     }
     const values4 = relation.rows.map((row, index) => runtime.invoke(args[2], [rowMap(relation, row), new Integer(BigInt(index + 1)), relation], runtime.context, runtime.evaluate));
-    const rows = normalizeRows(sequenceValue2(relation.rows.map((row, index) => sequenceValue2([...row, values4[index]]))), Object.freeze([...relation.columns, column]));
+    const rows = normalizeRows(sequenceValue3(relation.rows.map((row, index) => sequenceValue3([...row, values4[index]]))), Object.freeze([...relation.columns, column]));
     return makeRelation(Object.freeze([...relation.columns, column]), rows, [...relation.provenance.operations, "calculate"]);
   }
   function missingRelation(args) {
@@ -76823,7 +77194,7 @@ ndNamespace._proto={=
         return replacements ? field(replacements, relation.columns[index].id, null) : args[3];
       }));
     }
-    const normalized = normalizeRows(sequenceValue2(rows.map((row) => sequenceValue2(row))), relation.columns);
+    const normalized = normalizeRows(sequenceValue3(rows.map((row) => sequenceValue3(row))), relation.columns);
     return makeRelation(Object.freeze([...relation.columns]), normalized, [...relation.provenance.operations, `missing:${policy}`]);
   }
   function createRowSource(args) {
@@ -76842,7 +77213,7 @@ ndNamespace._proto={=
       columns,
       producer: args[1],
       maxRows: Number(maxRowsValue.value),
-      _ext: new Map([["_type", stringValue6("data_row_source")], ["immutable", new Integer(1n)]])
+      _ext: new Map([["_type", stringValue7("data_row_source")], ["immutable", new Integer(1n)]])
     });
   }
   function collectRowSource(args, runtime = {}) {
@@ -76867,7 +77238,7 @@ ndNamespace._proto={=
         break;
       rows.push(row);
     }
-    return makeRelation(source.columns, normalizeRows(sequenceValue2(rows), source.columns), ["rowSource", `collect:${rows.length}`]);
+    return makeRelation(source.columns, normalizeRows(sequenceValue3(rows), source.columns), ["rowSource", `collect:${rows.length}`]);
   }
   function relationTableView(args) {
     if (args.length < 1 || args.length > 2)
@@ -76888,10 +77259,10 @@ ndNamespace._proto={=
     if (args.length !== 1)
       throw new Error("data.Schema expects a Relation");
     const relation = requireRelation(args[0], "data.Schema");
-    return sequenceValue2(relation.columns.map((column) => mapValue5([
-      ["id", stringValue6(column.id)],
-      ["label", stringValue6(column.label)],
-      ["type", stringValue6(column.type)],
+    return sequenceValue3(relation.columns.map((column) => mapValue5([
+      ["id", stringValue7(column.id)],
+      ["label", stringValue7(column.label)],
+      ["type", stringValue7(column.type)],
       ["nullable", column.nullable ? new Integer(1n) : null]
     ])));
   }
@@ -76899,7 +77270,7 @@ ndNamespace._proto={=
     if (args.length !== 1)
       throw new Error("data.Rows expects a Relation");
     const relation = requireRelation(args[0], "data.Rows");
-    return sequenceValue2(relation.rows.map((row) => rowMap(relation, row)));
+    return sequenceValue3(relation.rows.map((row) => rowMap(relation, row)));
   }
 
   // rix/plugins/data/data.plugin.rix.js
@@ -76947,8 +77318,8 @@ ndNamespace._proto={=
   }
 
   // rix/plugins/document/document.js
-  var stringValue7 = (value) => ({ type: "string", value: String(value) });
-  var sequenceValue3 = (values4) => ({ type: "sequence", values: values4 });
+  var stringValue8 = (value) => ({ type: "string", value: String(value) });
+  var sequenceValue4 = (values4) => ({ type: "sequence", values: values4 });
   function mapValue6(values4) {
     return {
       type: "map",
@@ -77017,7 +77388,7 @@ ndNamespace._proto={=
     return Object.freeze({ ...value, ...fields });
   }
   function textNode(value, fields = {}) {
-    return clone(createText([stringValue7(value)]), fields);
+    return clone(createText([stringValue8(value)]), fields);
   }
   function inlineValues(value) {
     if (Array.isArray(value))
@@ -77038,8 +77409,8 @@ ndNamespace._proto={=
     if (!defaults)
       throw new Error("document.Theme name must be :plain or :compact");
     const options = args[1] === null || args[1] === undefined ? new Map : entries3(args[1], "document.Theme options");
-    const accentValue = field2(options, "accent", stringValue7(defaults.accent));
-    const densityValue = field2(options, "density", stringValue7(defaults.density));
+    const accentValue = field2(options, "accent", stringValue8(defaults.accent));
+    const densityValue = field2(options, "density", stringValue8(defaults.density));
     const accent = text11(accentValue, "document.Theme accent");
     const density = text11(densityValue, "document.Theme density").toLowerCase();
     if (!/^#[0-9a-f]{6}$/i.test(accent))
@@ -77048,11 +77419,11 @@ ndNamespace._proto={=
       throw new Error("document.Theme density must be :comfortable or :compact");
     }
     return mapValue6([
-      ["valueKind", stringValue7("documentTheme")],
-      ["schema", stringValue7("rix.document.theme@1")],
-      ["name", stringValue7(name)],
-      ["accent", stringValue7(accent.toLowerCase())],
-      ["density", stringValue7(density)]
+      ["valueKind", stringValue8("documentTheme")],
+      ["schema", stringValue8("rix.document.theme@1")],
+      ["name", stringValue8(name)],
+      ["accent", stringValue8(accent.toLowerCase())],
+      ["density", stringValue8(density)]
     ]);
   }
   var NUMBER_STYLES = new Set(["decimal", "roman", "alpha"]);
@@ -77060,21 +77431,21 @@ ndNamespace._proto={=
     if (args.length > 1)
       throw new Error("document.Numbering expects an optional options map");
     const options = args[0] === null || args[0] === undefined ? new Map : entries3(args[0], "document.Numbering options");
-    const style2 = text11(field2(options, "style", stringValue7("decimal")), "document.Numbering style").toLowerCase();
+    const style2 = text11(field2(options, "style", stringValue8("decimal")), "document.Numbering style").toLowerCase();
     if (!NUMBER_STYLES.has(style2))
       throw new Error("document.Numbering style must be :decimal, :roman, or :alpha");
-    const citationStyle = text11(field2(options, "citationStyle", stringValue7("numeric")), "document.Numbering citationStyle").toLowerCase();
+    const citationStyle = text11(field2(options, "citationStyle", stringValue8("numeric")), "document.Numbering citationStyle").toLowerCase();
     if (!["numeric", "author-year"].includes(citationStyle)) {
       throw new Error("document.Numbering citationStyle must be :numeric or :author-year");
     }
     return mapValue6([
-      ["valueKind", stringValue7("documentNumbering")],
-      ["schema", stringValue7("rix.document.numbering@1")],
-      ["style", stringValue7(style2)],
+      ["valueKind", stringValue8("documentNumbering")],
+      ["schema", stringValue8("rix.document.numbering@1")],
+      ["style", stringValue8(style2)],
       ["sectionStart", new Integer(BigInt(exactPositiveInteger(field2(options, "sectionStart"), "document.Numbering sectionStart")))],
       ["figureStart", new Integer(BigInt(exactPositiveInteger(field2(options, "figureStart"), "document.Numbering figureStart")))],
       ["tableStart", new Integer(BigInt(exactPositiveInteger(field2(options, "tableStart"), "document.Numbering tableStart")))],
-      ["citationStyle", stringValue7(citationStyle)],
+      ["citationStyle", stringValue8(citationStyle)],
       ["numberSections", new Integer(booleanValue(field2(options, "numberSections"), true) ? 1n : 0n)]
     ]);
   }
@@ -77090,9 +77461,9 @@ ndNamespace._proto={=
     const source = entries3(value, `document.Bibliography entry ${index}`);
     const key = validLabel(field2(source, "key"), `document.Bibliography entry ${index} key`);
     const title = text11(field2(source, "title"), `document.Bibliography entry ${index} title`);
-    const authorValue = field2(source, "author", stringValue7("Unknown author"));
+    const authorValue = field2(source, "author", stringValue8("Unknown author"));
     const author = text11(authorValue, `document.Bibliography entry ${index} author`);
-    const yearValue = field2(source, "year", stringValue7("n.d."));
+    const yearValue = field2(source, "year", stringValue8("n.d."));
     const year = yearValue instanceof Integer ? String(yearValue.value) : text11(yearValue, `document.Bibliography entry ${index} year`);
     const urlValue = field2(source, "url");
     const url = urlValue === null ? null : text11(urlValue, `document.Bibliography entry ${index} url`);
@@ -77110,17 +77481,17 @@ ndNamespace._proto={=
       seen.add(record.key);
     }
     const options = args[1] === null || args[1] === undefined ? new Map : entries3(args[1], "document.Bibliography options");
-    const title = text11(field2(options, "title", stringValue7("References")), "document.Bibliography title");
+    const title = text11(field2(options, "title", stringValue8("References")), "document.Bibliography title");
     return mapValue6([
-      ["valueKind", stringValue7("documentBibliography")],
-      ["schema", stringValue7("rix.document.bibliography@1")],
-      ["title", stringValue7(title)],
-      ["entries", sequenceValue3(records.map((record) => mapValue6([
-        ["key", stringValue7(record.key)],
-        ["title", stringValue7(record.title)],
-        ["author", stringValue7(record.author)],
-        ["year", stringValue7(record.year)],
-        ["url", record.url === null ? null : stringValue7(record.url)],
+      ["valueKind", stringValue8("documentBibliography")],
+      ["schema", stringValue8("rix.document.bibliography@1")],
+      ["title", stringValue8(title)],
+      ["entries", sequenceValue4(records.map((record) => mapValue6([
+        ["key", stringValue8(record.key)],
+        ["title", stringValue8(record.title)],
+        ["author", stringValue8(record.author)],
+        ["year", stringValue8(record.year)],
+        ["url", record.url === null ? null : stringValue8(record.url)],
         ["number", new Integer(BigInt(record.number))]
       ])))]
     ]);
@@ -77165,20 +77536,20 @@ ndNamespace._proto={=
       const path = text11(field2(record, "path"), `document.AssetManifest entry ${index + 1} path`);
       if (path.startsWith("/") || path.includes(".."))
         throw new Error("document.AssetManifest paths must be safe relative paths");
-      const mimeValue = field2(record, "mime", stringValue7("application/octet-stream"));
-      const altValue = field2(record, "alt", stringValue7(""));
+      const mimeValue = field2(record, "mime", stringValue8("application/octet-stream"));
+      const altValue = field2(record, "alt", stringValue8(""));
       return mapValue6([
-        ["id", stringValue7(id)],
-        ["path", stringValue7(path)],
-        ["mime", stringValue7(text11(mimeValue, "document.AssetManifest mime"))],
-        ["alt", stringValue7(text11(altValue, "document.AssetManifest alt"))],
+        ["id", stringValue8(id)],
+        ["path", stringValue8(path)],
+        ["mime", stringValue8(text11(mimeValue, "document.AssetManifest mime"))],
+        ["alt", stringValue8(text11(altValue, "document.AssetManifest alt"))],
         ["checksum", field2(record, "checksum")]
       ]);
     });
     return mapValue6([
-      ["valueKind", stringValue7("documentAssetManifest")],
-      ["schema", stringValue7("rix.document.assets@1")],
-      ["assets", sequenceValue3(assets)]
+      ["valueKind", stringValue8("documentAssetManifest")],
+      ["schema", stringValue8("rix.document.assets@1")],
+      ["assets", sequenceValue4(assets)]
     ]);
   }
   function documentAsset(args) {
@@ -77223,11 +77594,11 @@ ndNamespace._proto={=
     const defaults = args[1] === null || args[1] === undefined ? mapValue6([]) : args[1];
     entries3(defaults, "document.Template defaults");
     return mapValue6([
-      ["valueKind", stringValue7("documentTemplate")],
-      ["schema", stringValue7("rix.document.template@1")],
-      ["name", stringValue7(name)],
+      ["valueKind", stringValue8("documentTemplate")],
+      ["schema", stringValue8("rix.document.template@1")],
+      ["name", stringValue8(name)],
       ["defaults", defaults],
-      ["required", sequenceValue3([stringValue7("title"), stringValue7("children")])]
+      ["required", sequenceValue4([stringValue8("title"), stringValue8("children")])]
     ]);
   }
   function applyDocumentTemplate(args) {
@@ -77259,7 +77630,7 @@ ndNamespace._proto={=
     const values4 = entries3(value, "document.Report theme");
     if (field2(values4, "schema")?.value === "rix.document.theme@1")
       return value;
-    return createDocumentTheme([field2(values4, "name", stringValue7("plain")), value]);
+    return createDocumentTheme([field2(values4, "name", stringValue8("plain")), value]);
   }
   function labelDocumentValue(args) {
     if (args.length !== 2)
@@ -77390,7 +77761,7 @@ ndNamespace._proto={=
       if (!target)
         throw new Error(`document.Report cannot resolve reference '${value.documentReference}'`);
       const content = value.documentReferenceText || target.text;
-      return createLink([stringValue7(`#${target.id}`), [textNode(content)]]);
+      return createLink([stringValue8(`#${target.id}`), [textNode(content)]]);
     }
     if (value.kind === "heading") {
       const number2 = index.numbers.get(value);
@@ -77454,7 +77825,7 @@ ndNamespace._proto={=
     if (bibliography === null)
       return [];
     const title = field2(bibliography, "title")?.value || "References";
-    const heading = clone(createHeading([new Integer(1n), stringValue7(title), stringValue7("references"), null]), {
+    const heading = clone(createHeading([new Integer(1n), stringValue8(title), stringValue8("references"), null]), {
       id: "references",
       documentBibliographyHeading: true
     });
@@ -77474,8 +77845,8 @@ ndNamespace._proto={=
   }
   function metadata2(theme, title, numbering, assets, bibliography, template) {
     return mapValue6([
-      ["schema", stringValue7("rix.document.report@1")],
-      ["title", stringValue7(title)],
+      ["schema", stringValue8("rix.document.report@1")],
+      ["title", stringValue8(title)],
       ["theme", theme],
       ["numbering", numbering],
       ["assets", assets],
@@ -77511,7 +77882,7 @@ ndNamespace._proto={=
     const citations = citationIndex(bibliography, numbering);
     const resolved = sourceChildren.map((child) => resolveOutput(child, index, citations));
     const titleStyle = mapValue6([["color", field2(theme, "accent")], ["density", field2(theme, "density")]]);
-    const heading = createHeading([new Integer(1n), stringValue7(title), null, titleStyle]);
+    const heading = createHeading([new Integer(1n), stringValue8(title), null, titleStyle]);
     const byline = author === null ? [] : [createParagraph([[textNode(`By ${author}`)]])];
     const bibliographyChildren = bibliographyOutputs(bibliography);
     const fragment = createFragment([[
@@ -77543,12 +77914,12 @@ ndNamespace._proto={=
     if (report?.documentSchema !== "rix.document.report@1" || !Array.isArray(report.documentReferences)) {
       throw new Error("document.References requires a document Report");
     }
-    return sequenceValue3(report.documentReferences.map((reference) => mapValue6([
-      ["id", stringValue7(reference.id)],
-      ["kind", stringValue7(referenceKind(reference.kind))],
+    return sequenceValue4(report.documentReferences.map((reference) => mapValue6([
+      ["id", stringValue8(reference.id)],
+      ["kind", stringValue8(referenceKind(reference.kind))],
       ["number", new Integer(BigInt(reference.number))],
-      ["displayNumber", stringValue7(reference.display)],
-      ["text", stringValue7(reference.text)]
+      ["displayNumber", stringValue8(reference.display)],
+      ["text", stringValue8(reference.text)]
     ])));
   }
 
@@ -77723,7 +78094,7 @@ ndNamespace._proto={=
   function textValue4(value, format) {
     return rixString4(value) ?? format(value);
   }
-  function escapeHtml2(value) {
+  function escapeHtml3(value) {
     return String(value).replace(/[&<>"']/g, (character) => ({
       "&": "&amp;",
       "<": "&lt;",
@@ -78243,9 +78614,9 @@ ${renderNode(slide.content, state, `${path}.slide${index + 1}.content`)}`;
       const viewport2 = createViewport(options, numberValue2(unwrapped.value.size[0], "SVG width"), numberValue2(unwrapped.value.size[1], "SVG height"));
       const selection = createSelection(options);
       let { content } = lowered;
-      content = content.replace("<svg ", `<svg data-rix-viewport="${viewport2.schema}" data-rix-selection="${escapeHtml2(selection.ids.join(","))}" `);
+      content = content.replace("<svg ", `<svg data-rix-viewport="${viewport2.schema}" data-rix-selection="${escapeHtml3(selection.ids.join(","))}" `);
       if (alt) {
-        content = content.replace(/<svg ([^>]+)>/, `<svg $1 aria-label="${escapeHtml2(alt)}"><title>${escapeHtml2(alt)}</title>`);
+        content = content.replace(/<svg ([^>]+)>/, `<svg $1 aria-label="${escapeHtml3(alt)}"><title>${escapeHtml3(alt)}</title>`);
       }
       return { content, diagnostics: lowered.diagnostics, metadata: { coordinateLowering: lowered.metadata, viewport: viewport2, selection } };
     }
@@ -78255,7 +78626,7 @@ ${renderNode(slide.content, state, `${path}.slide${index + 1}.content`)}`;
   }
 
   // rix/plugins/render-canvas/canvas-plan.js
-  function semanticId(node, path) {
+  function semanticId2(node, path) {
     return rixString4(styleValue2(node.style, "hitId")) || rixString4(styleValue2(node.style, "id")) || rixString4(field3(node.metadata, "id")) || node.id || node.targetId || path.replace(/[^A-Za-z0-9:_.-]+/g, "-");
   }
   function boundsOfPoints(points) {
@@ -78281,7 +78652,7 @@ ${renderNode(slide.content, state, `${path}.slide${index + 1}.content`)}`;
   function recordHit(interaction, node, path, bounds2, role, label2 = null) {
     if (!bounds2)
       return;
-    const id = semanticId(node, path);
+    const id = semanticId2(node, path);
     const region = Object.freeze({ id, semanticId: id, role, label: label2 || id, bounds: Object.freeze(bounds2) });
     interaction.hitRegions.push(region);
     interaction.accessibility.push(Object.freeze({ id, role, label: region.label, bounds: region.bounds }));
@@ -78368,18 +78739,18 @@ ${renderNode(slide.content, state, `${path}.slide${index + 1}.content`)}`;
     if (!node || node.type !== "output")
       throw new Error(`${path} contains a non-Graphics scene node`);
     if (node.kind === "path") {
-      const style2 = { ...mergedStyle2(inheritedStyle, node.style), hitId: semanticId(node, path) };
+      const style2 = { ...mergedStyle2(inheritedStyle, node.style), hitId: semanticId2(node, path) };
       commands.push(["path2d", pathData(node), style2]);
       recordHit(interaction, node, path, pathBounds(node), "graphics-symbol");
     } else if (node.kind === "rectangle") {
       const origin = point3(node.origin, `${path} origin`);
       const size = point3(node.size, `${path} size`);
-      commands.push(["rectangle", ...origin, ...size, { ...mergedStyle2(inheritedStyle, node.style), hitId: semanticId(node, path) }]);
+      commands.push(["rectangle", ...origin, ...size, { ...mergedStyle2(inheritedStyle, node.style), hitId: semanticId2(node, path) }]);
       recordHit(interaction, node, path, { x: origin[0], y: origin[1], width: size[0], height: size[1] }, "graphics-symbol");
     } else if (node.kind === "circle" || node.kind === "drag_point") {
       const center = point3(node.center, `${path} center`);
       const radius = numberValue2(node.radius, `${path} radius`);
-      commands.push(["circle", ...center, radius, { ...mergedStyle2(inheritedStyle, node.style, node.kind === "drag_point" ? "#7c3aed" : null), hitId: semanticId(node, path) }]);
+      commands.push(["circle", ...center, radius, { ...mergedStyle2(inheritedStyle, node.style, node.kind === "drag_point" ? "#7c3aed" : null), hitId: semanticId2(node, path) }]);
       recordHit(interaction, node, path, { x: center[0] - radius, y: center[1] - radius, width: radius * 2, height: radius * 2 }, node.kind === "drag_point" ? "slider" : "graphics-symbol", node.label);
       if (node.kind === "drag_point")
         diagnostics.push(diagnostic("canvas-static-drag-point", "Canvas plans render DragPoint as a static marker; host interaction must bind the target separately", "info", path));
@@ -78393,7 +78764,7 @@ ${renderNode(slide.content, state, `${path}.slide${index + 1}.content`)}`;
         size: numberValue2(size, `${path} font size`),
         weight: rixString4(styleValue2(node.style, "weight")) || "normal",
         anchor: rixString4(styleValue2(node.style, "anchor")) || "start",
-        hitId: semanticId(node, path)
+        hitId: semanticId2(node, path)
       }]);
       recordHit(interaction, node, path, { x, y: y - numberValue2(size, `${path} font size`), width: Math.max(1, content.length * numberValue2(size, `${path} font size`) * 0.6), height: numberValue2(size, `${path} font size`) }, "text", content);
     } else if (["group", "transform", "clip", "graphic_action"].includes(node.kind)) {
@@ -78406,7 +78777,7 @@ ${renderNode(slide.content, state, `${path}.slide${index + 1}.content`)}`;
       node.children.forEach((child, index) => visit(child, commands, diagnostics, format, interaction, `${path}.${node.kind}[${index + 1}]`, childStyle));
       commands.push(["restore"]);
       if (node.kind === "graphic_action") {
-        interaction.accessibility.push(Object.freeze({ id: semanticId(node, path), role: "button", label: node.label || "Graphic action", bounds: null }));
+        interaction.accessibility.push(Object.freeze({ id: semanticId2(node, path), role: "button", label: node.label || "Graphic action", bounds: null }));
       }
     } else
       throw new Error(`Canvas renderer does not support Graphics node '${node.kind}'`);
@@ -79994,10 +80365,10 @@ ${lines.join(`
       const themedStyle = `:root{--rix-accent:${accent}}${style3}`;
       if (stylePolicy === "external")
         state.assets[state.assets.length - 1].content = themedStyle;
-      const styleTag = stylePolicy === "inline" ? `<style>${themedStyle}</style>` : stylePolicy === "external" ? `<link rel="stylesheet" href="${escapeHtml2(styleHref)}">` : "";
+      const styleTag = stylePolicy === "inline" ? `<style>${themedStyle}</style>` : stylePolicy === "external" ? `<link rel="stylesheet" href="${escapeHtml3(styleHref)}">` : "";
       return {
         content: `<!doctype html>
-<html lang="en" data-rix-theme="${escapeHtml2(theme)}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml2(title)}</title>${styleTag}</head><body><main>${body}</main></body></html>
+<html lang="en" data-rix-theme="${escapeHtml3(theme)}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml3(title)}</title>${styleTag}</head><body><main>${body}</main></body></html>
 `,
         diagnostics,
         assets: state.assets,
@@ -80622,8 +80993,8 @@ ${execute}---
   }
 
   // rix/plugins/render-csv/csv-import.js
-  var stringValue8 = (value) => ({ type: "string", value: String(value) });
-  var sequenceValue4 = (values4) => ({ type: "sequence", values: values4 });
+  var stringValue9 = (value) => ({ type: "string", value: String(value) });
+  var sequenceValue5 = (values4) => ({ type: "sequence", values: values4 });
   var mapValue7 = (entries4) => ({
     type: "map",
     entries: new Map(entries4),
@@ -80697,15 +81068,15 @@ ${execute}---
     return delimiter;
   }
   function localePolicy(options, delimiter) {
-    const locale = text14(field4(options, "locale", stringValue8("invariant")), "csv locale").toLowerCase();
+    const locale = text14(field4(options, "locale", stringValue9("invariant")), "csv locale").toLowerCase();
     const known = LOCALES[locale];
     if (!known)
       throw new Error("csv locale must be invariant, en-US, de-DE, or fr-FR");
-    const decimal = text14(field4(options, "decimal", stringValue8("canonical")), "csv decimal policy").toLowerCase();
+    const decimal = text14(field4(options, "decimal", stringValue9("canonical")), "csv decimal policy").toLowerCase();
     if (!["canonical", "locale"].includes(decimal))
       throw new Error("csv decimal policy must be canonical or locale");
-    const decimalMark = decimal === "canonical" ? "." : text14(field4(options, "decimalMark", stringValue8(known.decimalMark)), "csv decimal mark");
-    const groupMark = decimal === "canonical" ? "" : text14(field4(options, "groupMark", stringValue8(known.groupMark)), "csv group mark");
+    const decimalMark = decimal === "canonical" ? "." : text14(field4(options, "decimalMark", stringValue9(known.decimalMark)), "csv decimal mark");
+    const groupMark = decimal === "canonical" ? "" : text14(field4(options, "groupMark", stringValue9(known.groupMark)), "csv group mark");
     if ([...decimalMark].length !== 1 || /[\r\n\d+-]/.test(decimalMark)) {
       throw new Error("csv decimal mark must be one nonnumeric character");
     }
@@ -80720,7 +81091,7 @@ ${execute}---
     return Object.freeze({ locale, decimal, decimalMark, groupMark });
   }
   function commentPrefix(options) {
-    const value = field4(options, "comment", stringValue8("#"));
+    const value = field4(options, "comment", stringValue9("#"));
     if (value === null)
       return null;
     const prefix = text14(value, "csv comment prefix");
@@ -80838,16 +81209,16 @@ ${execute}---
     return Object.freeze({ records: Object.freeze(records), comments: Object.freeze(comments) });
   }
   function schemaMap(columns) {
-    return sequenceValue4(columns.map((column) => mapValue7([
-      ["id", stringValue8(column.id)],
-      ["label", stringValue8(column.label)],
-      ["type", stringValue8(column.type)],
+    return sequenceValue5(columns.map((column) => mapValue7([
+      ["id", stringValue9(column.id)],
+      ["label", stringValue9(column.label)],
+      ["type", stringValue9(column.type)],
       ["nullable", column.nullable ? new Integer(1n) : null]
     ])));
   }
   function inferredSchema(header) {
     const used = new Set;
-    return sequenceValue4(header.map((label2, index) => {
+    return sequenceValue5(header.map((label2, index) => {
       const base = label2.trim() || `column${index + 1}`;
       let id = base;
       let suffix = 2;
@@ -80855,15 +81226,15 @@ ${execute}---
         id = `${base}_${suffix++}`;
       used.add(id.toLowerCase());
       return mapValue7([
-        ["id", stringValue8(id)],
-        ["label", stringValue8(label2 || id)],
-        ["type", stringValue8("String")],
+        ["id", stringValue9(id)],
+        ["label", stringValue9(label2 || id)],
+        ["type", stringValue9("String")],
         ["nullable", new Integer(1n)]
       ]);
     }));
   }
   function missingTokens(options) {
-    const value = field4(options, "missing", stringValue8(""));
+    const value = field4(options, "missing", stringValue9(""));
     const values4 = value?.type === "sequence" || Array.isArray(value) ? sequence11(value, "csv missing tokens") : [value];
     return new Set(values4.map((entry2, index) => text14(entry2, `csv missing token ${index + 1}`)));
   }
@@ -80917,7 +81288,7 @@ ${execute}---
       return null;
     }
     if (column.type === "String" || column.type === "Any")
-      return stringValue8(source);
+      return stringValue9(source);
     if (column.type === "Integer") {
       const value = exactValue(source, policy, label2);
       if (!(value instanceof Integer))
@@ -80980,12 +81351,12 @@ ${execute}---
       throw new Error("csv import requires a header or an explicit schema");
     const headerFields = header && parsed.records.length ? parsed.records[0].fields : null;
     const schema = requestedSchema || inferredSchema(headerFields);
-    const empty = createRelation([schema, sequenceValue4([])]);
+    const empty = createRelation([schema, sequenceValue5([])]);
     const records = parsed.records.slice(header ? 1 : 0);
     if (!header && !requestedSchema)
       throw new Error("csv import without a header requires an explicit schema");
     if (headerFields && requestedSchema) {
-      const headerPolicy = text14(field4(options, "headerPolicy", stringValue8("labels")), "csv header policy").toLowerCase();
+      const headerPolicy = text14(field4(options, "headerPolicy", stringValue9("labels")), "csv header policy").toLowerCase();
       if (!["labels", "ids", "ignore"].includes(headerPolicy))
         throw new Error("csv header policy must be labels, ids, or ignore");
       const expected = empty.columns.map((column) => headerPolicy === "ids" ? column.id : column.label);
@@ -81015,7 +81386,7 @@ ${execute}---
       rowCount: records.length,
       columnCount: empty.columns.length
     });
-    const convert = (record, index) => sequenceValue4(record.fields.map((cell, columnIndex2) => typedCell(cell, empty.columns[columnIndex2], policy, missing, index + 1)));
+    const convert = (record, index) => sequenceValue5(record.fields.map((cell, columnIndex2) => typedCell(cell, empty.columns[columnIndex2], policy, missing, index + 1)));
     return { schema: schemaMap(empty.columns), columns: empty.columns, records, convert, sidecar };
   }
   function attachSidecar(value, sidecar) {
@@ -81030,7 +81401,7 @@ ${execute}---
   }
   function parseCsv(args) {
     const prepared = prepareImport(args);
-    const rows = sequenceValue4(prepared.records.map(prepared.convert));
+    const rows = sequenceValue5(prepared.records.map(prepared.convert));
     return attachSidecar(createRelation([prepared.schema, rows]), prepared.sidecar);
   }
   function parseCsvStream(args) {
@@ -81050,7 +81421,7 @@ ${execute}---
       producer,
       maxRows: prepared.records.length,
       csvSidecar: prepared.sidecar,
-      _ext: new Map([["_type", stringValue8("data_row_source")], ["immutable", new Integer(1n)]])
+      _ext: new Map([["_type", stringValue9("data_row_source")], ["immutable", new Integer(1n)]])
     });
   }
   function csvSidecar(args) {
@@ -81060,15 +81431,15 @@ ${execute}---
     if (!sidecar || sidecar.schema !== "rix.csv.sidecar@1")
       throw new Error("csv.Sidecar requires a csv imported relation or row source");
     return mapValue7([
-      ["schema", stringValue8(sidecar.schema)],
-      ["comments", sequenceValue4(sidecar.comments.map((comment) => mapValue7([
-        ["text", stringValue8(comment.text)],
+      ["schema", stringValue9(sidecar.schema)],
+      ["comments", sequenceValue5(sidecar.comments.map((comment) => mapValue7([
+        ["text", stringValue9(comment.text)],
         ["line", new Integer(BigInt(comment.line))]
       ])))],
-      ["metadata", mapValue7(Object.entries(sidecar.metadata).map(([key, value]) => [key, stringValue8(value)]))],
+      ["metadata", mapValue7(Object.entries(sidecar.metadata).map(([key, value]) => [key, stringValue9(value)]))],
       ["dialect", mapValue7(Object.entries(sidecar.dialect).map(([key, value]) => [
         key,
-        typeof value === "boolean" ? value ? new Integer(1n) : null : stringValue8(value)
+        typeof value === "boolean" ? value ? new Integer(1n) : null : stringValue9(value)
       ]))],
       ["rowCount", new Integer(BigInt(sidecar.rowCount))],
       ["columnCount", new Integer(BigInt(sidecar.columnCount))]
@@ -81917,7 +82288,7 @@ ${execute}---
   function int12(value) {
     return new Integer(BigInt(value));
   }
-  function stringValue9(value, label2) {
+  function stringValue10(value, label2) {
     if (typeof value === "string")
       return value;
     if (value?.type === "string")
@@ -82037,7 +82408,7 @@ ${execute}---
   function resolveTargetUnit(target, context, systemContext) {
     if (isUnitValue(target))
       return target;
-    const text15 = stringValue9(target, "ConvertUnit target");
+    const text15 = stringValue10(target, "ConvertUnit target");
     const collection = activeCollection(context, systemContext, "Units", ["UNITS", "Units"]);
     return parseUnitExpression(text15, collection);
   }
@@ -87195,7 +87566,7 @@ ${execute}---
   // rix/src/tools/graphic-view.js
   var MIN_ZOOM = 1 / 8;
   var MAX_ZOOM = 64;
-  function finiteNumber(value, fallback = 0) {
+  function finiteNumber2(value, fallback = 0) {
     if (typeof value === "number" && Number.isFinite(value))
       return value;
     if (typeof value === "bigint")
@@ -87212,29 +87583,29 @@ ${execute}---
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : fallback;
   }
-  function sequenceValue5(value) {
+  function sequenceValue6(value) {
     if (Array.isArray(value))
       return value;
     if (Array.isArray(value?.values))
       return value.values;
     return [];
   }
-  function stringValue10(value) {
+  function stringValue11(value) {
     if (typeof value === "string")
       return value;
     if (value?.type === "string" || value?.type === "symbol")
       return value.value;
     return null;
   }
-  function mapField3(value, key) {
+  function mapField4(value, key) {
     if (value instanceof Map)
       return value.get(key) ?? value.get(String(key).toLowerCase()) ?? null;
     if (value?.type === "map" && value.entries instanceof Map)
-      return mapField3(value.entries, key);
+      return mapField4(value.entries, key);
     return value?.[key] ?? value?.[String(key).toLowerCase()] ?? null;
   }
-  function semanticId2(node, path) {
-    return stringValue10(mapField3(node?.style, "hitId")) || stringValue10(mapField3(node?.style, "id")) || stringValue10(mapField3(node?.metadata, "id")) || node?.id || node?.targetId || path.replace(/[^A-Za-z0-9:_.-]+/g, "-");
+  function semanticId3(node, path) {
+    return stringValue11(mapField4(node?.style, "hitId")) || stringValue11(mapField4(node?.style, "id")) || stringValue11(mapField4(node?.metadata, "id")) || node?.id || node?.targetId || path.replace(/[^A-Za-z0-9:_.-]+/g, "-");
   }
   function exactText(value, format) {
     try {
@@ -87244,7 +87615,7 @@ ${execute}---
     }
   }
   function exactPoint(value, format) {
-    const point4 = sequenceValue5(value);
+    const point4 = sequenceValue6(value);
     return point4.length >= 2 ? `(${exactText(point4[0], format)}, ${exactText(point4[1], format)})` : "(unknown)";
   }
   function nearestPoint(points, scenePoint) {
@@ -87253,11 +87624,11 @@ ${execute}---
     let best = null;
     let bestDistance = Infinity;
     for (const point4 of points) {
-      const values4 = sequenceValue5(point4);
+      const values4 = sequenceValue6(point4);
       if (values4.length < 2)
         continue;
-      const dx = finiteNumber(values4[0], Infinity) - scenePoint[0];
-      const dy = finiteNumber(values4[1], Infinity) - scenePoint[1];
+      const dx = finiteNumber2(values4[0], Infinity) - scenePoint[0];
+      const dy = finiteNumber2(values4[1], Infinity) - scenePoint[1];
       const distance = dx * dx + dy * dy;
       if (distance < bestDistance) {
         best = point4;
@@ -87299,7 +87670,7 @@ ${execute}---
     const visit2 = (node, path) => {
       if (!node || node.type !== "output")
         return;
-      nodes.set(semanticId2(node, path), node);
+      nodes.set(semanticId3(node, path), node);
       for (const [index, child] of (node.children || []).entries())
         visit2(child, `${path}.${node.kind}[${index + 1}]`);
     };
@@ -87308,41 +87679,41 @@ ${execute}---
     return nodes;
   }
   function plotInspection(graphic, scenePoint, format) {
-    const plot = mapField3(graphic?.metadata, "plot");
-    const frame = mapField3(plot, "frame");
-    const view = mapField3(plot, "view");
+    const plot = mapField4(graphic?.metadata, "plot");
+    const frame = mapField4(plot, "frame");
+    const view = mapField4(plot, "view");
     if (!plot || !frame || !view || !scenePoint)
       return null;
-    const left = finiteNumber(mapField3(frame, "left"));
-    const right = finiteNumber(mapField3(frame, "right"));
-    const top = finiteNumber(mapField3(frame, "top"));
-    const bottom = finiteNumber(mapField3(frame, "bottom"));
+    const left = finiteNumber2(mapField4(frame, "left"));
+    const right = finiteNumber2(mapField4(frame, "right"));
+    const top = finiteNumber2(mapField4(frame, "top"));
+    const bottom = finiteNumber2(mapField4(frame, "bottom"));
     if (!(right > left && bottom > top))
       return null;
-    const xmin = finiteNumber(mapField3(view, "xmin"));
-    const xmax = finiteNumber(mapField3(view, "xmax"));
-    const ymin = finiteNumber(mapField3(view, "ymin"));
-    const ymax = finiteNumber(mapField3(view, "ymax"));
+    const xmin = finiteNumber2(mapField4(view, "xmin"));
+    const xmax = finiteNumber2(mapField4(view, "xmax"));
+    const ymin = finiteNumber2(mapField4(view, "ymin"));
+    const ymax = finiteNumber2(mapField4(view, "ymax"));
     const x = xmin + (scenePoint[0] - left) / (right - left) * (xmax - xmin);
     const y = ymax - (scenePoint[1] - top) / (bottom - top) * (ymax - ymin);
-    const xScale = stringValue10(mapField3(graphic.metadata, "xScale")) || "linear";
-    const yScale = stringValue10(mapField3(graphic.metadata, "yScale")) || "linear";
+    const xScale = stringValue11(mapField4(graphic.metadata, "xScale")) || "linear";
+    const yScale = stringValue11(mapField4(graphic.metadata, "yScale")) || "linear";
     const axisLabel = (axis, scale2, value) => `${scale2 === "linear" ? axis : `${scale2}(${axis})`} ≈ ${Number(value.toPrecision(7))}`;
     let nearest = null;
     let nearestDistance = Infinity;
-    for (const series of sequenceValue5(mapField3(plot, "series"))) {
-      const data = sequenceValue5(mapField3(series, "data"));
-      const original = sequenceValue5(mapField3(series, "originalData"));
+    for (const series of sequenceValue6(mapField4(plot, "series"))) {
+      const data = sequenceValue6(mapField4(series, "data"));
+      const original = sequenceValue6(mapField4(series, "originalData"));
       for (let index = 0;index < data.length; index += 1) {
-        const point4 = sequenceValue5(data[index]);
+        const point4 = sequenceValue6(data[index]);
         if (point4.length < 2)
           continue;
-        const sx = left + (finiteNumber(point4[0]) - xmin) / (xmax - xmin) * (right - left);
-        const sy = bottom - (finiteNumber(point4[1]) - ymin) / (ymax - ymin) * (bottom - top);
+        const sx = left + (finiteNumber2(point4[0]) - xmin) / (xmax - xmin) * (right - left);
+        const sy = bottom - (finiteNumber2(point4[1]) - ymin) / (ymax - ymin) * (bottom - top);
         const distance = (sx - scenePoint[0]) ** 2 + (sy - scenePoint[1]) ** 2;
         if (distance < nearestDistance) {
           nearestDistance = distance;
-          nearest = { point: original[index] || data[index], label: stringValue10(mapField3(series, "label")) };
+          nearest = { point: original[index] || data[index], label: stringValue11(mapField4(series, "label")) };
         }
       }
     }
@@ -87365,8 +87736,8 @@ ${execute}---
     ]);
   }
   function createGraphicViewState(width, height, target = {}) {
-    const resolvedWidth = finiteNumber(width, 1);
-    const resolvedHeight = finiteNumber(height, 1);
+    const resolvedWidth = finiteNumber2(width, 1);
+    const resolvedHeight = finiteNumber2(height, 1);
     if (!(resolvedWidth > 0 && resolvedHeight > 0))
       throw new Error("Graphic viewport dimensions must be positive");
     const previous = target.viewport;
@@ -87374,7 +87745,7 @@ ${execute}---
       schema: "rix.viewport@1",
       origin: Array.isArray(previous?.origin) ? [...previous.origin] : [0, 0],
       pan: Array.isArray(previous?.pan) ? [...previous.pan] : [0, 0],
-      zoom: Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, finiteNumber(previous?.zoom, 1))),
+      zoom: Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, finiteNumber2(previous?.zoom, 1))),
       width: resolvedWidth,
       height: resolvedHeight
     };
@@ -87392,15 +87763,15 @@ ${execute}---
     });
   }
   function panGraphicViewport(state, deltaX, deltaY) {
-    state.viewport.pan[0] += finiteNumber(deltaX);
-    state.viewport.pan[1] += finiteNumber(deltaY);
+    state.viewport.pan[0] += finiteNumber2(deltaX);
+    state.viewport.pan[1] += finiteNumber2(deltaY);
     return state;
   }
   function zoomGraphicViewport(state, factor, anchor2 = null) {
     const viewport2 = state.viewport;
     const point4 = anchor2 || [viewport2.width / 2, viewport2.height / 2];
     const oldZoom = viewport2.zoom;
-    const nextZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, oldZoom * finiteNumber(factor, 1)));
+    const nextZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, oldZoom * finiteNumber2(factor, 1)));
     const sceneX = (point4[0] - viewport2.pan[0]) / oldZoom + viewport2.origin[0];
     const sceneY = (point4[1] - viewport2.pan[1]) / oldZoom + viewport2.origin[1];
     viewport2.zoom = nextZoom;
@@ -87439,8 +87810,8 @@ ${execute}---
     });
   }
   function geometryWorkbench(graphic) {
-    const workbench = mapField3(graphic?.metadata, "workbench");
-    return stringValue10(mapField3(workbench, "schema")) === "rix.geometry.workbench@1" ? workbench : null;
+    const workbench = mapField4(graphic?.metadata, "workbench");
+    return stringValue11(mapField4(workbench, "schema")) === "rix.geometry.workbench@1" ? workbench : null;
   }
   function geometryHistory(state) {
     if (!state.geometryHistory)
@@ -87484,7 +87855,7 @@ ${execute}---
     if (value?.type === "string" || value?.type === "symbol")
       return value.value;
     if (Array.isArray(value?.values) || Array.isArray(value?.elements)) {
-      return sequenceValue5(value).map((item) => portableGeometryValue(item, format, seen));
+      return sequenceValue6(value).map((item) => portableGeometryValue(item, format, seen));
     }
     const entries4 = value instanceof Map ? value : value?.type === "map" && value.entries instanceof Map ? value.entries : null;
     if (entries4) {
@@ -87512,7 +87883,7 @@ ${execute}---
     const document2 = graphic.ownerDocument;
     if (!workbench || !document2?.createElement)
       return;
-    const nodes = sequenceValue5(mapField3(workbench, "nodes"));
+    const nodes = sequenceValue6(mapField4(workbench, "nodes"));
     const history = geometryHistory(options.state || (options.state = {}));
     const panel = document2.createElement("aside");
     panel.className = "rix-output-geometry-workbench";
@@ -87540,10 +87911,10 @@ ${execute}---
     tree.setAttribute("role", "tree");
     const treeButtons = [];
     for (const node of nodes) {
-      const id = stringValue10(mapField3(node, "id")) || String(mapField3(node, "id") ?? "object");
-      const kind = stringValue10(mapField3(node, "kind")) || "value";
-      const dependencies = sequenceValue5(mapField3(node, "dependsOn")).map((item2) => stringValue10(item2) || String(item2));
-      const free = Boolean(mapField3(node, "free"));
+      const id = stringValue11(mapField4(node, "id")) || String(mapField4(node, "id") ?? "object");
+      const kind = stringValue11(mapField4(node, "kind")) || "value";
+      const dependencies = sequenceValue6(mapField4(node, "dependsOn")).map((item2) => stringValue11(item2) || String(item2));
+      const free = Boolean(mapField4(node, "free"));
       const item = document2.createElement("li");
       item.setAttribute("role", "treeitem");
       item.setAttribute("aria-level", "1");
@@ -87553,10 +87924,10 @@ ${execute}---
       button.textContent = `${id} · ${kind} · ${free ? "free" : "derived"}`;
       const choose = (source = "workbench") => {
         navigation?.selectById(id, source);
-        const statusValue = stringValue10(mapField3(node, "status"));
-        const diagnostic2 = stringValue10(mapField3(node, "diagnostic"));
+        const statusValue = stringValue11(mapField4(node, "status"));
+        const diagnostic2 = stringValue11(mapField4(node, "diagnostic"));
         const dependencyText = dependencies.length ? `depends on ${dependencies.join(", ")}` : "no dependencies";
-        const exact2 = mapField3(node, "value");
+        const exact2 = mapField4(node, "value");
         properties.textContent = [id, kind, free ? "free" : "derived", dependencyText, statusValue, diagnostic2, exact2 === null ? null : `exact ${exactText(exact2, options.format || String)}`].filter(Boolean).join(" · ");
       };
       button.addEventListener("click", () => choose());
@@ -87625,7 +87996,7 @@ ${execute}---
     undo.addEventListener("click", () => replay(-1));
     redo.addEventListener("click", () => replay(1));
     exportButton.addEventListener("click", () => {
-      const record = mapField3(workbench, "construction");
+      const record = mapField4(workbench, "construction");
       const text15 = serializeGeometryConstructionRecord(record, options.format || String);
       exported.textContent = text15;
       exported.hidden = false;
@@ -87662,8 +88033,8 @@ ${execute}---
   function installNavigation(graphic, svg, status, options) {
     if (typeof svg.addEventListener !== "function")
       return null;
-    const width = finiteNumber(options.graphic?.size?.[0] ?? svg.getAttribute?.("width"), 1);
-    const height = finiteNumber(options.graphic?.size?.[1] ?? svg.getAttribute?.("height"), 1);
+    const width = finiteNumber2(options.graphic?.size?.[0] ?? svg.getAttribute?.("width"), 1);
+    const height = finiteNumber2(options.graphic?.size?.[1] ?? svg.getAttribute?.("height"), 1);
     const state = createGraphicViewState(width, height, options.state || {});
     if (!options.state)
       options.state = state;
@@ -87849,7 +88220,7 @@ ${execute}---
         (event.clientX - rect.left) / rect.width * state.viewport.width,
         (event.clientY - rect.top) / rect.height * state.viewport.height
       ];
-      zoomGraphicViewport(state, Math.exp(-finiteNumber(event.deltaY) * 0.002), anchor2);
+      zoomGraphicViewport(state, Math.exp(-finiteNumber2(event.deltaY) * 0.002), anchor2);
       applyViewport();
       clearTimeout(wheelAnnouncement);
       wheelAnnouncement = setTimeout(() => announceViewport("pointer"), 180);
@@ -88056,24 +88427,344 @@ ${execute}---
       enhanceGraphic(graphic, options);
     return root;
   }
+  // rix/src/tools/audio-trace-view.js
+  function clamp(value, minimum, maximum) {
+    return Math.min(maximum, Math.max(minimum, Number(value)));
+  }
+  function audioTraceFrequency(value, range, frequency = { minimum: 220, maximum: 880 }) {
+    const low = Number(frequency.minimum);
+    const high = Number(frequency.maximum);
+    const span = Number(range?.maximum) - Number(range?.minimum);
+    const unit = span > 0 ? clamp((Number(value) - Number(range.minimum)) / span, 0, 1) : 0.5;
+    return low * (high / low) ** unit;
+  }
+  function createAudioTraceState(plan, target = {}) {
+    target.schema = "rix.audio-trace-state@1";
+    target.seriesIndex = clamp(target.seriesIndex ?? 0, 0, Math.max(0, plan.series.length - 1));
+    target.overview = Boolean(target.overview);
+    target.sampleIndex = Math.max(0, Number(target.sampleIndex) || 0);
+    target.startIndex = Math.max(0, Number(target.startIndex) || 0);
+    target.endIndex = Number.isFinite(Number(target.endIndex)) ? Number(target.endIndex) : Math.max(0, (plan.series[target.seriesIndex]?.samples.length || 1) - 1);
+    target.speed = [0.5, 1, 2, 4].includes(Number(target.speed)) ? Number(target.speed) : plan.defaults.speed;
+    target.waveform = target.waveform || plan.defaults.waveform;
+    target.direction = target.direction === "reverse" ? "reverse" : "forward";
+    target.stereo = target.stereo !== false;
+    target.muted = Boolean(target.muted);
+    target.playing = false;
+    return target;
+  }
+  function activeSeries(plan, state) {
+    return plan.series[state.seriesIndex];
+  }
+  function normalizeRange(plan, state) {
+    const last = Math.max(0, (activeSeries(plan, state)?.samples.length || 1) - 1);
+    state.startIndex = clamp(state.startIndex, 0, last);
+    state.endIndex = clamp(state.endIndex, state.startIndex, last);
+    state.sampleIndex = clamp(state.sampleIndex, state.startIndex, state.endIndex);
+    return last;
+  }
+  function stepAudioTrace(plan, state, amount = 1) {
+    normalizeRange(plan, state);
+    state.sampleIndex = clamp(state.sampleIndex + Number(amount), state.startIndex, state.endIndex);
+    return activeSeries(plan, state)?.samples[state.sampleIndex] || null;
+  }
+  function eventAt(plan, series, index) {
+    return plan.events.filter((event) => event.sampleIndex === index && (!event.seriesId || event.seriesId === series?.id));
+  }
+  function cueFrequency(event) {
+    if (event.exactness === "exact")
+      return 1320;
+    if (event.exactness === "certified-enclosure")
+      return 1100;
+    if (event.exactness === "unresolved")
+      return 150;
+    if (event.type === "sampled-extremum")
+      return 990;
+    if (event.type.includes("axis-crossing"))
+      return 660;
+    return 440;
+  }
+  function roots(root) {
+    const values4 = [];
+    if (root?.matches?.(".rix-output-audio-trace"))
+      values4.push(root);
+    if (root?.querySelectorAll)
+      values4.push(...root.querySelectorAll(".rix-output-audio-trace"));
+    return values4;
+  }
+  function enhance(root, options) {
+    if (root.dataset.rixAudioEnhanced === "true")
+      return () => {};
+    root.dataset.rixAudioEnhanced = "true";
+    const plan = options.plan;
+    if (!plan?.supported)
+      return () => {};
+    const state = createAudioTraceState(plan, options.state || {});
+    const query = (selector2) => root.querySelector(selector2);
+    const play = query('[data-rix-audio-action="play"]');
+    const previous = query('[data-rix-audio-action="previous"]');
+    const next = query('[data-rix-audio-action="next"]');
+    const mute = query('[data-rix-audio-action="mute"]');
+    const seriesSelect = query("[data-rix-audio-series]");
+    const seek = query("[data-rix-audio-seek]");
+    const start = query("[data-rix-audio-start]");
+    const end = query("[data-rix-audio-end]");
+    const speed = query("[data-rix-audio-speed]");
+    const waveform = query("[data-rix-audio-waveform]");
+    const direction = query("[data-rix-audio-direction]");
+    const stereo = query("[data-rix-audio-stereo]");
+    const status = query("[data-rix-audio-status]");
+    const listeners = [];
+    let timer = null;
+    let context = null;
+    let oscillator = null;
+    let gain = null;
+    let panner = null;
+    const listen = (element, name, handler) => {
+      element?.addEventListener?.(name, handler);
+      if (element)
+        listeners.push(() => element.removeEventListener?.(name, handler));
+    };
+    const setStatus = (text15) => {
+      if (status)
+        status.textContent = text15;
+    };
+    const current = () => activeSeries(plan, state)?.samples[state.sampleIndex] || null;
+    const waveformName = () => state.waveform === "series" ? activeSeries(plan, state)?.waveform || "sine" : state.waveform;
+    const sync = () => {
+      const last = normalizeRange(plan, state);
+      if (seek) {
+        seek.max = String(last);
+        seek.value = String(state.sampleIndex);
+      }
+      if (start) {
+        start.max = String(last + 1);
+        start.value = String(state.startIndex + 1);
+      }
+      if (end) {
+        end.max = String(last + 1);
+        end.value = String(state.endIndex + 1);
+      }
+      if (play)
+        play.textContent = state.playing ? "Pause" : "Play";
+      mute?.setAttribute?.("aria-pressed", String(state.muted));
+      if (mute)
+        mute.textContent = state.muted ? "Unmute" : "Mute";
+    };
+    const ensureAudio = async () => {
+      if (context)
+        return true;
+      const Window = root.ownerDocument?.defaultView || globalThis;
+      const AudioContext = options.audioContextFactory || Window.AudioContext || Window.webkitAudioContext;
+      if (typeof AudioContext !== "function") {
+        setStatus("Audio is unavailable in this browser. The complete text alternative remains available.");
+        return false;
+      }
+      context = options.audioContextFactory ? AudioContext() : new AudioContext;
+      await context.resume?.();
+      oscillator = context.createOscillator();
+      gain = context.createGain();
+      panner = typeof context.createStereoPanner === "function" ? context.createStereoPanner() : null;
+      oscillator.connect(gain);
+      if (panner) {
+        gain.connect(panner);
+        panner.connect(context.destination);
+      } else
+        gain.connect(context.destination);
+      gain.gain.value = 0;
+      oscillator.start();
+      return true;
+    };
+    const cue = (events) => {
+      if (!events.length || !context || state.muted || typeof context.createOscillator !== "function")
+        return;
+      const tone = context.createOscillator();
+      const volume = context.createGain();
+      tone.frequency.value = cueFrequency(events[0]);
+      tone.type = events[0].exactness === "unresolved" ? "sawtooth" : "sine";
+      volume.gain.setValueAtTime?.(0.035, context.currentTime);
+      volume.gain.exponentialRampToValueAtTime?.(0.0001, context.currentTime + 0.06);
+      tone.connect(volume);
+      volume.connect(context.destination);
+      tone.start();
+      tone.stop(context.currentTime + 0.065);
+    };
+    const renderSample = () => {
+      sync();
+      const series = activeSeries(plan, state);
+      const sample = current();
+      if (!series || !sample)
+        return;
+      const frequency = audioTraceFrequency(sample.y, plan.range, plan.defaults.frequency);
+      if (oscillator) {
+        oscillator.type = waveformName();
+        oscillator.frequency.setValueAtTime?.(frequency, context.currentTime);
+      }
+      if (gain)
+        gain.gain.setValueAtTime?.(state.muted || !state.playing ? 0 : 0.08, context.currentTime);
+      if (panner)
+        panner.pan.setValueAtTime?.(state.stereo ? series.stereoPosition : 0, context.currentTime);
+      const events = eventAt(plan, series, state.sampleIndex);
+      cue(events);
+      setStatus(`${series.label}, sample ${state.sampleIndex + 1} of ${series.samples.length}: x ${sample.xText}, y ${sample.yText}; ${sample.exactness.replace("-", " ")}${events.length ? `. ${events.map((event) => event.label).join(" ")}` : ""}`);
+    };
+    const pause = () => {
+      state.playing = false;
+      clearTimeout(timer);
+      timer = null;
+      if (gain && context)
+        gain.gain.setValueAtTime?.(0, context.currentTime);
+      sync();
+    };
+    const advance = () => {
+      if (!state.playing)
+        return;
+      const delta = state.direction === "reverse" ? -1 : 1;
+      const boundary = delta > 0 ? state.endIndex : state.startIndex;
+      if (state.sampleIndex === boundary) {
+        if (state.overview && (delta > 0 && state.seriesIndex < plan.series.length - 1 || delta < 0 && state.seriesIndex > 0)) {
+          state.seriesIndex += delta;
+          normalizeRange(plan, state);
+          state.sampleIndex = delta > 0 ? state.startIndex : state.endIndex;
+        } else {
+          pause();
+          setStatus(`Audio trace finished. ${status?.textContent || ""}`);
+          return;
+        }
+      } else
+        state.sampleIndex += delta;
+      renderSample();
+      timer = setTimeout(advance, 1000 / (plan.defaults.tempo * state.speed));
+    };
+    const togglePlay = async () => {
+      if (state.playing) {
+        pause();
+        setStatus(`Audio trace paused. ${status?.textContent || ""}`);
+        return;
+      }
+      if (!await ensureAudio())
+        return;
+      state.playing = true;
+      if (state.direction === "forward" && state.sampleIndex >= state.endIndex)
+        state.sampleIndex = state.startIndex;
+      if (state.direction === "reverse" && state.sampleIndex <= state.startIndex)
+        state.sampleIndex = state.endIndex;
+      renderSample();
+      timer = setTimeout(advance, 1000 / (plan.defaults.tempo * state.speed));
+    };
+    const chooseSeries = () => {
+      state.overview = seriesSelect?.value === "overview";
+      state.seriesIndex = state.overview ? 0 : clamp(seriesSelect?.value, 0, plan.series.length - 1);
+      state.startIndex = 0;
+      state.endIndex = activeSeries(plan, state).samples.length - 1;
+      state.sampleIndex = state.direction === "reverse" ? state.endIndex : state.startIndex;
+      renderSample();
+    };
+    listen(play, "click", togglePlay);
+    listen(previous, "click", () => {
+      pause();
+      stepAudioTrace(plan, state, -1);
+      renderSample();
+    });
+    listen(next, "click", () => {
+      pause();
+      stepAudioTrace(plan, state, 1);
+      renderSample();
+    });
+    listen(mute, "click", () => {
+      state.muted = !state.muted;
+      renderSample();
+    });
+    listen(seriesSelect, "change", chooseSeries);
+    listen(seek, "input", () => {
+      state.sampleIndex = Number(seek.value);
+      renderSample();
+    });
+    listen(start, "change", () => {
+      state.startIndex = Number(start.value) - 1;
+      normalizeRange(plan, state);
+      renderSample();
+    });
+    listen(end, "change", () => {
+      state.endIndex = Number(end.value) - 1;
+      normalizeRange(plan, state);
+      renderSample();
+    });
+    listen(speed, "change", () => {
+      state.speed = Number(speed.value);
+    });
+    listen(waveform, "change", () => {
+      state.waveform = waveform.value;
+      renderSample();
+    });
+    listen(direction, "change", () => {
+      state.direction = direction.value;
+    });
+    listen(stereo, "change", () => {
+      state.stereo = stereo.checked;
+      renderSample();
+    });
+    listen(root, "keydown", (event) => {
+      if (["INPUT", "SELECT", "BUTTON"].includes(event.target?.tagName) && event.key !== "Escape")
+        return;
+      if (event.key === " ")
+        togglePlay();
+      else if (event.key === "ArrowLeft") {
+        pause();
+        stepAudioTrace(plan, state, -1);
+        renderSample();
+      } else if (event.key === "ArrowRight") {
+        pause();
+        stepAudioTrace(plan, state, 1);
+        renderSample();
+      } else if (event.key === "Home") {
+        pause();
+        state.sampleIndex = state.startIndex;
+        renderSample();
+      } else if (event.key === "End") {
+        pause();
+        state.sampleIndex = state.endIndex;
+        renderSample();
+      } else if (event.key.toLowerCase() === "m") {
+        state.muted = !state.muted;
+        renderSample();
+      } else
+        return;
+      event.preventDefault?.();
+    });
+    sync();
+    return () => {
+      pause();
+      for (const remove of listeners)
+        remove();
+      try {
+        oscillator?.stop();
+      } catch {}
+      context?.close?.();
+    };
+  }
+  function enhanceAudioTraceView(root, options = {}) {
+    const disposers = roots(root).map((trace) => enhance(trace, options));
+    return () => disposers.forEach((dispose) => dispose());
+  }
   // rix/src/tools/scene3d-view.js
   var MIN_PITCH = -Math.PI / 2 + 0.015;
   var MAX_PITCH = Math.PI / 2 - 0.015;
-  function sequenceValue6(value) {
+  function sequenceValue7(value) {
     if (Array.isArray(value))
       return value;
     if (Array.isArray(value?.values))
       return value.values;
     return [];
   }
-  function stringValue11(value) {
+  function stringValue12(value) {
     if (typeof value === "string")
       return value;
     if (value?.type === "string" || value?.type === "symbol")
       return value.value;
     return null;
   }
-  function mapField4(value, key) {
+  function mapField5(value, key) {
     if (value instanceof Map) {
       if (value.has(key))
         return value.get(key);
@@ -88081,7 +88772,7 @@ ${execute}---
       return match === undefined ? null : value.get(match);
     }
     if (value?.type === "map" && value.entries instanceof Map)
-      return mapField4(value.entries, key);
+      return mapField5(value.entries, key);
     if (value && typeof value === "object") {
       if (Object.hasOwn(value, key))
         return value[key];
@@ -88301,20 +88992,20 @@ ${execute}---
     }
   }
   function exactPoint2(value, format) {
-    return `(${sequenceValue6(value).map((coordinate) => exactText2(coordinate, format)).join(", ")})`;
+    return `(${sequenceValue7(value).map((coordinate) => exactText2(coordinate, format)).join(", ")})`;
   }
   function describeScene3DSelection(scene, pickId, format = String) {
-    const primitives = sequenceValue6(mapField4(mapField4(scene, "realized"), "primitives"));
-    const primitive2 = primitives.find((candidate) => stringValue11(mapField4(candidate, "pickid")) === pickId);
+    const primitives = sequenceValue7(mapField5(mapField5(scene, "realized"), "primitives"));
+    const primitive2 = primitives.find((candidate) => stringValue12(mapField5(candidate, "pickid")) === pickId);
     if (!primitive2)
       return pickId ? `Scene3D object ${pickId}` : "Scene3D background";
-    const kind = stringValue11(mapField4(primitive2, "kind")) || "object";
-    const label2 = stringValue11(mapField4(primitive2, "label")) || pickId;
-    const points = sequenceValue6(mapField4(primitive2, "points"));
+    const kind = stringValue12(mapField5(primitive2, "kind")) || "object";
+    const label2 = stringValue12(mapField5(primitive2, "label")) || pickId;
+    const points = sequenceValue7(mapField5(primitive2, "points"));
     const coordinates = points.length <= 4 ? points.map((point4) => exactPoint2(point4, format)).join("; ") : `${points.slice(0, 3).map((point4) => exactPoint2(point4, format)).join("; ")}; …`;
     return `${label2} · ${kind} · ${points.length} exact world point${points.length === 1 ? "" : "s"}${coordinates ? ` · ${coordinates}` : ""}`;
   }
-  function escapeHtml3(value) {
+  function escapeHtml4(value) {
     return String(value).replace(/[&<>"']/g, (character) => ({
       "&": "&amp;",
       "<": "&lt;",
@@ -88335,7 +89026,7 @@ ${execute}---
           const triangle = call.indices.slice(index, index + 3).map((item) => points[item]);
           if (triangle.some((item) => !item.screen))
             continue;
-          body.push(`<polygon points="${triangle.map((item) => item.screen.join(",")).join(" ")}" fill="${color2}" fill-opacity="${call.color[3]}"${call.pickId ? ` data-rix-semantic-id="${escapeHtml3(call.pickId)}"` : ""}/>`);
+          body.push(`<polygon points="${triangle.map((item) => item.screen.join(",")).join(" ")}" fill="${color2}" fill-opacity="${call.color[3]}"${call.pickId ? ` data-rix-semantic-id="${escapeHtml4(call.pickId)}"` : ""}/>`);
         }
       } else if (call.mode === "lines") {
         for (let index = 0;index + 1 < call.indices.length; index += 2) {
@@ -88357,17 +89048,17 @@ ${execute}---
       const point4 = project(annotation.position);
       if (!point4.visible)
         continue;
-      body.push(`<text x="${point4.screen[0]}" y="${point4.screen[1]}" fill="rgb(${annotation.color.map((value) => Math.round(value * 255)).join(" ")})">${escapeHtml3(annotation.text || annotation.label || "")}</text>`);
+      body.push(`<text x="${point4.screen[0]}" y="${point4.screen[1]}" fill="rgb(${annotation.color.map((value) => Math.round(value * 255)).join(" ")})">${escapeHtml4(annotation.text || annotation.label || "")}</text>`);
     }
     return `<svg xmlns="http://www.w3.org/2000/svg" class="rix-output-scene3d-fallback" viewBox="0 0 ${width} ${height}" role="img" aria-label="Static Scene3D fallback"><rect width="100%" height="100%" fill="rgb(${plan.background.map((value) => Math.round(value * 255)).join(" ")})"/>${body.join("")}</svg>`;
   }
   function scene3DRoots(root) {
-    const roots = [];
+    const roots2 = [];
     if (root?.matches?.(".rix-output-scene3d"))
-      roots.push(root);
+      roots2.push(root);
     if (root?.querySelectorAll)
-      roots.push(...root.querySelectorAll(".rix-output-scene3d"));
-    return roots;
+      roots2.push(...root.querySelectorAll(".rix-output-scene3d"));
+    return roots2;
   }
   function dispatchSceneEvent(root, detail) {
     const EventConstructor = root.ownerDocument?.defaultView?.CustomEvent;
@@ -88641,12 +89332,12 @@ ${execute}---
   function panelRoots(root) {
     if (!root)
       return [];
-    const roots = [];
+    const roots2 = [];
     if (root.matches?.(".rix-output-control-panel"))
-      roots.push(root);
+      roots2.push(root);
     if (root.querySelectorAll)
-      roots.push(...root.querySelectorAll(".rix-output-control-panel"));
-    return roots;
+      roots2.push(...root.querySelectorAll(".rix-output-control-panel"));
+    return roots2;
   }
   function dispatchControlEvent(panel, detail) {
     const EventConstructor = panel.ownerDocument?.defaultView?.CustomEvent;
@@ -89000,7 +89691,7 @@ ${execute}---
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : fallback;
   }
-  function clamp(value, low, high) {
+  function clamp2(value, low, high) {
     return Math.min(high, Math.max(low, Math.round(finiteExact(value, low))));
   }
   function safeEasing(value) {
@@ -89017,12 +89708,12 @@ ${execute}---
     const length = timeline.frames.length;
     const oldStart = target.range?.start ?? 1;
     const oldEnd = target.range?.end ?? length;
-    const start = clamp(oldStart, 1, length);
-    const end = clamp(oldEnd, start, length);
+    const start = clamp2(oldStart, 1, length);
+    const end = clamp2(oldEnd, start, length);
     target.schema = "rix.timeline-view@1";
     target.length = length;
     target.range = { start, end };
-    target.frame = clamp(target.frame ?? start, start, end);
+    target.frame = clamp2(target.frame ?? start, start, end);
     target.speed = [0.25, 0.5, 1, 2, 4].includes(Number(target.speed)) ? Number(target.speed) : 1;
     target.loop = Boolean(target.loop);
     target.compare = Boolean(target.compare);
@@ -89036,7 +89727,7 @@ ${execute}---
     return Math.max(16, totalSeconds * 1000 / timeline.frames.length / state.speed);
   }
   function setTimelineFrame(state, frame) {
-    state.frame = clamp(frame, state.range.start, state.range.end);
+    state.frame = clamp2(frame, state.range.start, state.range.end);
     return state;
   }
   function stepTimelineFrame(state, delta) {
@@ -89244,12 +89935,12 @@ ${execute}---
         state.compare = Boolean(target.checked);
         renderState(false);
       } else if (target.matches?.("[data-rix-timeline-range-start]")) {
-        state.range.start = clamp(target.value, 1, state.range.end);
-        state.frame = clamp(state.frame, state.range.start, state.range.end);
+        state.range.start = clamp2(target.value, 1, state.range.end);
+        state.frame = clamp2(state.frame, state.range.start, state.range.end);
         renderState(false);
       } else if (target.matches?.("[data-rix-timeline-range-end]")) {
-        state.range.end = clamp(target.value, state.range.start, state.length);
-        state.frame = clamp(state.frame, state.range.start, state.range.end);
+        state.range.end = clamp2(target.value, state.range.start, state.length);
+        state.frame = clamp2(state.frame, state.range.start, state.range.end);
         renderState(false);
       } else
         return;
@@ -89366,44 +90057,44 @@ ${execute}---
     return timelines;
   }
   function renderedSheetRoots(root) {
-    const roots = [];
+    const roots2 = [];
     if (root?.matches?.(".rix-output-sheet"))
-      roots.push(root);
+      roots2.push(root);
     if (root?.querySelectorAll)
-      roots.push(...root.querySelectorAll(".rix-output-sheet"));
-    return roots;
+      roots2.push(...root.querySelectorAll(".rix-output-sheet"));
+    return roots2;
   }
   function renderedGraphicRoots(root) {
-    const roots = [];
+    const roots2 = [];
     if (root?.matches?.(".rix-output-graphic"))
-      roots.push(root);
+      roots2.push(root);
     if (root?.querySelectorAll)
-      roots.push(...root.querySelectorAll(".rix-output-graphic"));
-    return roots;
+      roots2.push(...root.querySelectorAll(".rix-output-graphic"));
+    return roots2;
   }
   function renderedScene3DRoots(root) {
-    const roots = [];
+    const roots2 = [];
     if (root?.matches?.(".rix-output-scene3d"))
-      roots.push(root);
+      roots2.push(root);
     if (root?.querySelectorAll)
-      roots.push(...root.querySelectorAll(".rix-output-scene3d"));
-    return roots;
+      roots2.push(...root.querySelectorAll(".rix-output-scene3d"));
+    return roots2;
   }
   function renderedControlPanelRoots(root) {
-    const roots = [];
+    const roots2 = [];
     if (root?.matches?.(".rix-output-control-panel"))
-      roots.push(root);
+      roots2.push(root);
     if (root?.querySelectorAll)
-      roots.push(...root.querySelectorAll(".rix-output-control-panel"));
-    return roots;
+      roots2.push(...root.querySelectorAll(".rix-output-control-panel"));
+    return roots2;
   }
   function renderedTimelineRoots(root) {
-    const roots = [];
+    const roots2 = [];
     if (root?.matches?.(".rix-output-timeline"))
-      roots.push(root);
+      roots2.push(root);
     if (root?.querySelectorAll)
-      roots.push(...root.querySelectorAll(".rix-output-timeline"));
-    return roots;
+      roots2.push(...root.querySelectorAll(".rix-output-timeline"));
+    return roots2;
   }
   function editedAddress(widget, index) {
     return `${widget.addressBase}[${index.join(",")}]`;
@@ -89474,6 +90165,7 @@ ${execute}---
     let disposed = false;
     let currentValue = value;
     const graphicViewStates = [];
+    const audioTraceStates = [];
     const scene3DViewStates = [];
     const timelineViewStates = [];
     disposers.push(enhanceControlShortcuts(root));
@@ -89498,9 +90190,9 @@ ${execute}---
         widgetDisposers.push(dispose);
       }
       const sheetValues = collectSheets(outputValue);
-      const roots = renderedSheetRoots(container);
+      const roots2 = renderedSheetRoots(container);
       for (const [index, sheet] of sheetValues.entries()) {
-        const sheetRoot = roots[index];
+        const sheetRoot = roots2[index];
         if (!sheetRoot)
           continue;
         const widgetSession = sheet.editable ? createWidgetSession(sheet) : null;
@@ -89684,6 +90376,11 @@ ${execute}---
           } : null,
           onActionCommitted: options.onGraphicAction
         });
+        widgetDisposers.push(enhanceAudioTraceView(graphicRoot, {
+          plan: createAudioTracePlan(graphic, format),
+          state: audioTraceStates[index] || (audioTraceStates[index] = {}),
+          audioContextFactory: options.audioContextFactory
+        }));
       }
       const sceneValues = collectScene3D(outputValue);
       const sceneRoots = renderedScene3DRoots(container);

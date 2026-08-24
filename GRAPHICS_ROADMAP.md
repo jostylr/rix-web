@@ -133,7 +133,7 @@ comparison; variable per-frame timing; named timeline markers; recording and
 export controls; persistent transport preferences; and richer transition
 diagnostics when a semantic object changes kind or disappears.
 
-## 6. Sonification and comprehensive textual alternatives
+## 6. Sonification and comprehensive textual alternatives — baseline implemented
 
 Make audio and structured language first-class projections of the same semantic
 scene, not captions generated from final pixels.
@@ -175,6 +175,23 @@ scene, not captions generated from final pixels.
    research 3D/nD mappings only after the core interaction is usable.
 5. Test with blind and low-vision users, screen readers, keyboard-only input,
    hearing differences, reduced motion, and muted/unsupported audio contexts.
+
+The baseline now derives deterministic `rix.graphics.text@1` and
+`rix.audio-trace@1` plans from retained plot and scene metadata. Every 2D
+Graphic has a structured text disclosure with axes, exactness status, concise
+sample tables, semantic objects, points of interest, and unresolved regions.
+Sampled sign changes and extrema are explicitly described as non-certified.
+For retained 2D series, RiX Web adds a no-autoplay Web Audio trace with
+play/pause, stepping, seek, domain range, direction, speed, waveform, stereo,
+mute, series solo, and sequential overview controls, all reachable by keyboard.
+The audio host performs no evaluator I/O and leaves the full text alternative
+available when Web Audio is absent or muted.
+
+Follow-up work remains: certified discontinuity/intersection/extremum event
+records from math plugins; user-authored cue palettes and frequency/tempo
+ranges; richer geometry sonification and relationship/dependency drill-down;
+3D and nD research; persistent preferences; screen-reader/browser matrices;
+and moderated testing with blind, low-vision, and hearing-diverse users.
 
 The success criterion is equivalent mathematical access across visual, textual,
 and audio views—not identical sensory output.
