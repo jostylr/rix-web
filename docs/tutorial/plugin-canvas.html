@@ -6,7 +6,19 @@ scene := .Graphics.Graphic([180, 100], [
 ]);
 .canvas.Render(scene).Get(&quot;content&quot;);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The plan preserves the scene dimensions and reports unsupported nodes through diagnostics. Use <code>.Out(&quot;diagram.canvas.json&quot;, scene)</code> to save it with the CLI.</p>
-<ul><li>Browser: complete plan generation and optional host painting.</li><li>CLI: no external tools.</li><li>Options: none in the version 1 plan.</li></ul>
+<ul><li>Browser: complete plan generation and optional host painting.</li><li>CLI: no external tools.</li><li>Options: <code>pixelRatio</code>, <code>viewport</code>, <code>selection</code>, and portable <code>assets</code>.</li></ul>
+<h2>Preserve interaction semantics</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">interactivePlan := .canvas.Render(.Graphics.Graphic([100,60], [
+    .Graphics.Rectangle([10,10],[30,20], {= fill=&quot;#2563eb&quot;, id=&quot;box&quot; }),
+    .Graphics.Text([50,50], &quot;measurement&quot;, {= id=&quot;label&quot; })
+]), {=
+    pixelRatio=2,
+    viewport={= origin=[10,5], pan=[4,6], zoom=2 },
+    selection={= ids=[&quot;box&quot;], focus=&quot;box&quot; },
+    assets=[{= id=&quot;texture&quot;, path=&quot;images/texture.png&quot;, mime=&quot;image/png&quot; }]
+});
+interactivePlan.Get(&quot;metadata&quot;);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The serialized plan includes hit-test bounds and an accessibility text/object tree. A browser uses the exported host helpers for pointer inversion, hit testing, loading declared images, and repainting only the listed dirty regions.</p>
 <h2>Repaint without rebuilding semantics</h2>
 <p>For animation or reactive views, retain the semantic Graphic and generate a fresh plan only when its inputs change. A browser may then replay the commands against the same canvas; repainting does not parse RiX or mutate the Graphic.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">.Plugin.Load(&quot;canvas&quot;);

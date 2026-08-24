@@ -23,4 +23,38 @@ report := .document.Report(&quot;Exact polynomial report&quot;, [intro, values, 
 report;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The report is still a core Fragment. Load any document renderer to export the same numbered links and captions.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Plugin.Load(&quot;markdown&quot;);
-.markdown.Render(report).Get(&quot;content&quot;);</textarea><div class="tutorial-output" data-tutorial-output></div></section></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
+.markdown.Render(report).Get(&quot;content&quot;);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Reuse a course-report template</h2>
+<p>The template stores presentation defaults while the report supplies its title and children. Bibliography and asset values remain portable data; declaring an asset does not read it.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="24" spellcheck="false">bib := .document.Bibliography([
+    {= key=&quot;knuth84&quot;, author=&quot;Donald Knuth&quot;, year=1984,
+       title=&quot;Literate Programming&quot; }
+]);
+assets := .document.AssetManifest([
+    {= id=&quot;logo&quot;, path=&quot;images/logo.svg&quot;, mime=&quot;image/svg+xml&quot;,
+       alt=&quot;Course logo&quot;, checksum=&quot;sha256:abc&quot; }
+]);
+numbers := .document.Numbering({=
+    style=:roman, tableStart=3, citationStyle=&quot;author-year&quot;
+});
+course := .document.Template(&quot;course-report&quot;, {=
+    author=&quot;Ada&quot;, theme=:compact, bibliography=bib, assets=assets,
+    numbering=numbers,
+    header=.document.Header(.Paragraph(&quot;Exact mathematics&quot;)),
+    footer=.document.Footer(.Paragraph(&quot;Generated with RiX&quot;))
+});
+discussion := .Paragraph([
+    .Text(&quot;Compare &quot;), .document.Citation(&quot;knuth84&quot;), .Text(&quot;.&quot;)
+]);
+templated := .document.ApplyTemplate(course, {=
+    title=&quot;Evidence report&quot;, children=[discussion, values]
+});
+[.document.Asset(assets, &quot;logo&quot;), .document.References(templated), templated];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Isolate target-specific source</h2>
+<p>Raw target text is explicit and has a portable fallback. Generic HTML and text views see only the fallback; a matching renderer may opt into the raw content under its own policy.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">latexOnly := .document.TargetMarkup(
+    :latex,
+    &quot;\\newcommand{\\CourseName}{Exact Mathematics}&quot;,
+    &quot;[LaTeX preamble omitted]&quot;
+);
+latexOnly;</textarea><div class="tutorial-output" data-tutorial-output></div></section></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

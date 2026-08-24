@@ -821,9 +821,25 @@
     },
     {
       "number": "20",
+      "file": "plugins-analysis.html",
+      "title": "Plugins: Analysis",
+      "description": "Optional RiX plugins grouped under Analysis.",
+      "pluginGroup": true,
+      "status": "implemented"
+    },
+    {
+      "number": "21",
       "file": "plugins-chaos-and-fractals.html",
       "title": "Plugins: Chaos and fractals",
       "description": "Optional RiX plugins grouped under Chaos and fractals.",
+      "pluginGroup": true,
+      "status": "implemented"
+    },
+    {
+      "number": "22",
+      "file": "plugins-probability.html",
+      "title": "Plugins: Probability",
+      "description": "Optional RiX plugins grouped under Probability.",
       "pluginGroup": true,
       "status": "implemented"
     },
@@ -832,7 +848,7 @@
       "parent": "14",
       "file": "plugin-ball.html",
       "title": "Certified nested real balls in RiX",
-      "description": "Use pure RiX exact midpoint-radius balls and bounded square-root refinement.",
+      "description": "Use exact real and complex Balls, nested roots, and precision-negotiated elementary functions.",
       "pluginGroup": false,
       "status": "implemented"
     },
@@ -848,6 +864,15 @@
     {
       "number": "14c",
       "parent": "14",
+      "file": "plugin-complex.html",
+      "title": "Certified complex numbers over real backends",
+      "description": "Combine refinable real representations, calculate complex functions, and inspect principal-branch evidence.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "14d",
+      "parent": "14",
       "file": "plugin-continued-fraction.html",
       "title": "Exact continued-fraction reals in RiX",
       "description": "Explore finite values, lazy coefficient rules, convergent cylinders, and bounded refinement.",
@@ -855,7 +880,7 @@
       "status": "implemented"
     },
     {
-      "number": "14d",
+      "number": "14e",
       "parent": "14",
       "file": "plugin-float.html",
       "title": "Optional Float math",
@@ -864,7 +889,7 @@
       "status": "implemented"
     },
     {
-      "number": "14e",
+      "number": "14f",
       "parent": "14",
       "file": "plugin-numerics.html",
       "title": "Universal certified arithmetic and root finding",
@@ -873,7 +898,7 @@
       "status": "implemented"
     },
     {
-      "number": "14f",
+      "number": "14g",
       "parent": "14",
       "file": "plugin-oracle.html",
       "title": "Rational betweenness oracles",
@@ -882,7 +907,7 @@
       "status": "implemented"
     },
     {
-      "number": "14g",
+      "number": "14h",
       "parent": "14",
       "file": "plugin-radix.html",
       "title": "Inspect an exact repeating expansion",
@@ -891,7 +916,7 @@
       "status": "implemented"
     },
     {
-      "number": "14h",
+      "number": "14i",
       "parent": "14",
       "file": "plugin-bessel.html",
       "title": "Certified Bessel functions",
@@ -900,7 +925,7 @@
       "status": "implemented"
     },
     {
-      "number": "14i",
+      "number": "14j",
       "parent": "14",
       "file": "plugin-algebraic-real.html",
       "title": "Certified algebraic reals in RiX",
@@ -929,6 +954,15 @@
     {
       "number": "15c",
       "parent": "15",
+      "file": "plugin-cayley.html",
+      "title": "Build Cayley–Dickson algebras over certified scalars",
+      "description": "Construct, enclose, adapt, and verify generic Cayley values.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "15d",
+      "parent": "15",
       "file": "plugin-exact-algebras.html",
       "title": "Multiply exact quaternions and octonions",
       "description": "Explore Cayley–Dickson multiplication, conjugation, norms, and inverses using a pure-RiX plugin.",
@@ -936,7 +970,7 @@
       "status": "implemented"
     },
     {
-      "number": "15d",
+      "number": "15e",
       "parent": "15",
       "file": "plugin-fracfun.html",
       "title": "Explore form-preserving functions",
@@ -945,7 +979,7 @@
       "status": "implemented"
     },
     {
-      "number": "15e",
+      "number": "15f",
       "parent": "15",
       "file": "plugin-fraction.html",
       "title": "Explore unreduced fractions",
@@ -954,7 +988,7 @@
       "status": "implemented"
     },
     {
-      "number": "15f",
+      "number": "15g",
       "parent": "15",
       "file": "plugin-linalg.html",
       "title": "Exact linear algebra and Frames",
@@ -963,7 +997,16 @@
       "status": "implemented"
     },
     {
-      "number": "15g",
+      "number": "15h",
+      "parent": "15",
+      "file": "plugin-octonion.html",
+      "title": "Preserve octonion structure under exact and intrinsic calculation",
+      "description": "Run exact identity fixtures, certified refinement, and one-variable functions.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "15i",
       "parent": "15",
       "file": "plugin-optimize.html",
       "title": "Exact linear programming",
@@ -972,7 +1015,7 @@
       "status": "implemented"
     },
     {
-      "number": "15h",
+      "number": "15j",
       "parent": "15",
       "file": "plugin-poly.html",
       "title": "Work with callable polynomials",
@@ -981,7 +1024,16 @@
       "status": "implemented"
     },
     {
-      "number": "15i",
+      "number": "15k",
+      "parent": "15",
+      "file": "plugin-quaternion.html",
+      "title": "Exact arithmetic and intrinsic quaternion functions",
+      "description": "Explore multiplication order, certified boxes, and branch families.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "15l",
       "parent": "15",
       "file": "plugin-ratfun.html",
       "title": "Work with exact rational functions",
@@ -990,7 +1042,7 @@
       "status": "implemented"
     },
     {
-      "number": "15j",
+      "number": "15m",
       "parent": "15",
       "file": "plugin-solve.html",
       "title": "Solving exact linear systems",
@@ -999,7 +1051,7 @@
       "status": "implemented"
     },
     {
-      "number": "15k",
+      "number": "15n",
       "parent": "15",
       "file": "plugin-stern-brocot.html",
       "title": "Explore the exact Stern–Brocot tree",
@@ -1008,7 +1060,7 @@
       "status": "implemented"
     },
     {
-      "number": "15l",
+      "number": "15o",
       "parent": "15",
       "file": "plugin-symbolic.html",
       "title": "Explore exact forms and abstract derivatives together",
@@ -1017,11 +1069,11 @@
       "status": "implemented"
     },
     {
-      "number": "15m",
+      "number": "15p",
       "parent": "15",
       "file": "plugin-stats.html",
-      "title": "Summarize exact data",
-      "description": "Compute rational descriptive statistics and turn them into portable tables and plots.",
+      "title": "Summarize and model exact data",
+      "description": "Compute exact summaries, common hypothesis tests, regressions, certified confidence records, and portable diagnostics.",
       "pluginGroup": false,
       "status": "implemented"
     },
@@ -1074,8 +1126,8 @@
       "number": "17a",
       "parent": "17",
       "file": "plugin-data.html",
-      "title": "Transform an exact relation",
-      "description": "Validate, filter, sort, and present a small exact dataset.",
+      "title": "Transform and combine exact relations",
+      "description": "Validate, join, aggregate, derive, and present exact relational data.",
       "pluginGroup": false,
       "status": "implemented"
     },
@@ -1101,8 +1153,8 @@
       "number": "18b",
       "parent": "18",
       "file": "plugin-csv.html",
-      "title": "Export exact rows as CSV",
-      "description": "Produce quoted CSV and TSV without decimalizing rational cells.",
+      "title": "Exact, typed CSV interchange",
+      "description": "Import typed measurements, inspect provenance, stream rows, and export without losing exact values.",
       "pluginGroup": false,
       "status": "implemented"
     },
@@ -1226,9 +1278,27 @@
     {
       "number": "20a",
       "parent": "20",
+      "file": "plugin-analysis.html",
+      "title": "Effective limits, series, and justified exchanges in RiX",
+      "description": "Build scalar and function sequences, inspect exact convergence witnesses, and keep limit-exchange hypotheses visible.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "21a",
+      "parent": "21",
       "file": "plugin-fractals.html",
       "title": "Explore deterministic chaos and escape-time fractals",
       "description": "Keep RiX dynamics mathematical, then lower selected results to portable Graphics.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "22a",
+      "parent": "22",
+      "file": "plugin-probability.html",
+      "title": "Probability laws and replayable experiments",
+      "description": "Compute exact finite probabilities, use certified continuous laws, and run disclosed simulations.",
       "pluginGroup": false,
       "status": "implemented"
     }

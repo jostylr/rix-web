@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Solve rational matrix systems and change tensor coordinates without losing tensor identity." /><title>Exact linear algebra and Frames — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./plugins-algebra-and-analysis.html#lesson-start" title="Plugins: Algebra and analysis">15</a> <span aria-hidden="true">·</span> <span>f</span></p><h1>Exact linear algebra and Frames</h1><p class="deck">Solve rational matrix systems and change tensor coordinates without losing tensor identity.</p><aside class="challenge"><p class="eyebrow">Develop in RiX Notebook</p><p>Open <code>rix/plugins/linalg/tutorial.md</code> in the macOS app to edit this lesson with live preview and plugin-aware code results. Use Reload plugins after changing project-local plugin source.</p></aside><div class="lesson-content"><section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Plugin.Load(&quot;linalg&quot;);
+<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Solve rational matrix systems and change tensor coordinates without losing tensor identity." /><title>Exact linear algebra and Frames — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./plugins-algebra-and-analysis.html#lesson-start" title="Plugins: Algebra and analysis">15</a> <span aria-hidden="true">·</span> <span>g</span></p><h1>Exact linear algebra and Frames</h1><p class="deck">Solve rational matrix systems and change tensor coordinates without losing tensor identity.</p><aside class="challenge"><p class="eyebrow">Develop in RiX Notebook</p><p>Open <code>rix/plugins/linalg/tutorial.md</code> in the macOS app to edit this lesson with live preview and plugin-aware code results. Use Reload plugins after changing project-local plugin source.</p></aside><div class="lesson-content"><section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Plugin.Load(&quot;linalg&quot;);
 A := {:2x2: /Matrix/ 2, 1; 1, -1};
 solution := .linalg.Solve(A, [5, 1]);
 solution.solution;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
@@ -7,4 +7,105 @@ standard := .linalg.Frame(vspace, {= name=&quot;standard&quot;, basis=:defining 
 skew := .linalg.Frame(vspace, {= name=&quot;skew&quot;, relativeTo=standard, basis=[1, 1; 0, 1] });
 v := {:2: /Vector: Standard/ 2, 3};
 inSkew := .linalg.Transform(v, skew);
-{: .linalg.Components(inSkew), .linalg.SameTensor(v, inSkew) };</textarea><div class="tutorial-output" data-tutorial-output></div></section></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
+{: .linalg.Components(inSkew), .linalg.SameTensor(v, inSkew) };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Inspect fraction-free elimination</h2>
+<p>Bareiss elimination keeps exact pivot and row-swap evidence. The stored stages make the recurrence visible without replacing the source matrix.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">.Plugin.Load(&quot;linalg&quot;);
+A := [0,2,1; 2,3,4; 4,1,5];
+work := .linalg.Bareiss(A);
+{=
+    echelon=work[:echelon],
+    pivots=work[:pivots],
+    swaps=work[:rowswaps],
+    stages=work[:stages],
+    determinant=work[:determinant],
+    verified=work.Verify()
+};</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Reuse one exact factorization</h2>
+<p>The permutation is part of the mathematical record: <code>P A = L U</code>. Solving two right-hand sides does not repeat elimination.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">.Plugin.Load(&quot;linalg&quot;);
+A := [0,2; 3,4];
+factor := .linalg.LU(A);
+{=
+    first=factor.Solve([2,7]),
+    second=factor.Solve([4,11]),
+    inverse=factor.Inverse(),
+    determinant=factor.Determinant(),
+    verified=factor.Verify()
+};</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Use <code>.linalg.LDU(A)</code> when the separated diagonal is useful. It satisfies <code>P A = L D U</code>, and its final <code>U</code> has unit diagonal.</p>
+<h2>Compute QR without leaving the Rational domain</h2>
+<p>This matrix has orthogonalization norms <code>5</code> and <code>3</code>, so both reduced factors remain exact:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="9" spellcheck="false">.Plugin.Load(&quot;linalg&quot;);
+A := {:2x2: /Matrix/ 3,0;4,5};
+qr := A.QR();
+{=
+    status=qr[:status],
+    q=qr.Q(),
+    r=qr.R(),
+    verified=qr.Verify()
+};</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>An input that needs <code>sqrt(2)</code> returns a diagnostic rather than approximate entries or a hidden coefficient-domain change:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">needsRoot := .linalg.QR([1,0;1,1]);
+{=
+    status=needsRoot[:status],
+    column=needsRoot[:column],
+    squaredNorm=needsRoot[:squarednorm],
+    requiredExtension=needsRoot[:requiredextension]
+};</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Check <code>:status</code> before using <code>Q()</code> or <code>R()</code>. Successful results use <code>:decomposed</code>; other current statuses are <code>:unsupportedCoefficientExtension</code>, <code>:rankDeficient</code>, and <code>:requiresTallOrSquareMatrix</code>.</p>
+<h2>Compute the fundamental subspaces</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="12" spellcheck="false">.Plugin.Load(&quot;linalg&quot;);
+A := [1,2,3; 2,4,6];
+rows := .linalg.RowSpace(A);
+columns := .linalg.ColumnSpace(A);
+nulls := .linalg.NullSpace(A);
+{=
+    rowBasis=rows.Basis(),
+    columnBasis=columns.Basis(),
+    nullBasis=nulls.Basis(),
+    dimensions=[rows[:dimension],columns[:dimension],nulls[:dimension]],
+    verified=[rows.Verify(),columns.Verify(),nulls.Verify()]
+};</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>For this matrix the dimensions are <code>1</code>, <code>1</code>, and <code>2</code>. Each result keeps its original source matrix and exact pivot evidence.</p>
+<h2>Move vectors and covectors through a linear map</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="15" spellcheck="false">.Plugin.Load(&quot;linalg&quot;);
+V := .linalg.VectorSpace(&quot;V&quot;,2); W := .linalg.VectorSpace(&quot;W&quot;,3);
+e := .linalg.Frame(V,&quot;e&quot;,:defining); g := .linalg.Frame(W,&quot;g&quot;,:defining);
+A := .linalg.LinearMap(V,W,{:3x2: 1,0;0,1;1,1},{=
+  sourceFrame=e,targetFrame=g,name=&quot;A&quot;
+});
+x := .linalg.Vector([1,2],e);
+alpha := .linalg.Covector([1,1,1],g);
+
+{=
+  pushed=A.Pushforward(x),
+  pulled=A.Pullback(alpha),
+  dual=A.Dual(),
+  verified=A.Verify()
+};</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Pushforward uses <code>A</code>; pullback uses its exact transpose. <code>Compose</code> checks the middle abstract space and inserts a Frame change when needed. A square map&#039;s <code>Inverse</code> swaps domain and codomain and exactly inverts the matrix.</p>
+<h2>Tensor products and contractions</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">.Plugin.Load(&quot;linalg&quot;);
+V := .linalg.VectorSpace(&quot;V&quot;,2);
+e := .linalg.Frame(V,&quot;e&quot;,:defining);
+x := .linalg.Vector([1,2],e);
+alpha := .linalg.Covector([3,4],e);
+outer := x.TensorProduct(alpha);
+{: outer.components,outer.Contract(1,2) };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The contraction is <code>3 + 8 = 11</code>. It is accepted because one slot is primal, one is dual, and both belong to <code>V</code>. Incompatible variance or spaces are an error instead of an implicit identification.</p>
+<h2>Give a Polynomial a linked Vector view</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="13" spellcheck="false">.Plugin.Load(&quot;linalg&quot;);
+P3 := .linalg.PolynomialSpace(3,:x);
+p := .p`x^2+2*x+3`;
+view := P3.Realize(p);
+rebuilt := view.Reconstruct();
+
+{:
+  p.__type,
+  view[:vector].components,
+  rebuilt==p,
+  .linalg.Serialize(view),
+  .linalg.Serialize(view[:vector])
+};</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The coefficients are <code>[3,2,1,0]</code> in the monomial Frame, but <code>p</code> remains a callable Polynomial with Polynomial arithmetic. Serialized records contain stable IDs and data rather than the cyclic in-memory lineage graph.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

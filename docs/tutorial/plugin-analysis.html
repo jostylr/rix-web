@@ -1,0 +1,160 @@
+<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Build scalar and function sequences, inspect exact convergence witnesses, and keep limit-exchange hypotheses visible." /><title>Effective limits, series, and justified exchanges in RiX — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./plugins-analysis.html#lesson-start" title="Plugins: Analysis">20</a> <span aria-hidden="true">·</span> <span>a</span></p><h1>Effective limits, series, and justified exchanges in RiX</h1><p class="deck">Build scalar and function sequences, inspect exact convergence witnesses, and keep limit-exchange hypotheses visible.</p><aside class="challenge"><p class="eyebrow">Develop in RiX Notebook</p><p>Open <code>rix/plugins/analysis/tutorial.md</code> in the macOS app to edit this lesson with live preview and plugin-aware code results. Use Reload plugins after changing project-local plugin source.</p></aside><div class="lesson-content"><p>The <code>analysis</code> plugin starts with the distinction that matters most in a first real-analysis course: looking at many terms is useful exploration, but it is not a proof about every later term or every point of a domain.</p>
+<h2>Build a sequence of functions</h2>
+<p>Each term is an ordinary <code>.calculus</code> abstract function. Loading <code>.analysis</code> loads that capability dependency automatically.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="17" spellcheck="false">.Plugin.Load(&quot;analysis&quot;);
+make := (n)-&gt;.calculus.Function(@&quot;tutorial.fn.@{n}@1&quot;, {=
+  name=@&quot;f_@{n}&quot;,
+  domain=(-1):1,
+  codomain=:Rational,
+  implementation=(x)-&gt;x/(n+1),
+  implementationEvidence=:exactRationalFormula
+});
+sequence := .analysis.FunctionSequence(make, {=
+  name=:shrinkingLines,
+  domain=(-1):1,
+  codomain=:Rational
+});
+.Table({=
+  columns=[&quot;n&quot;,&quot;f_n(1)&quot;],
+  rows=[0,1,2,3].Map((n)-&gt;[n,sequence.Term(n)(1)])
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The table evaluates four exact functions. <code>sequence.Record()</code> shows the index ray, common domain/codomain, and whether effective tail information exists.</p>
+<h2>Consume terms lazily</h2>
+<p><code>Terms</code> returns the shared native lazy-sequence representation, not a special Analysis-only iterator.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="9" spellcheck="false">.Plugin.Load(&quot;analysis&quot;);
+make := (n)-&gt;.calculus.Function(@&quot;tutorial.lazy.@{n}@1&quot;, {=
+  implementation=(x)-&gt;x+n,
+  implementationEvidence=:definition
+});
+sequence := .analysis.FunctionSequence(make);
+window := sequence.Terms(2,3);
+functions := window.Materialize();
+functions.Map((function)-&gt;function.SemanticId());</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Use a finite <code>count</code> before <code>Materialize</code>. An unbounded <code>Terms()</code> stream is intended for finite indexing and incremental algorithms.</p>
+<h2>State the mode explicitly</h2>
+<p>The same sequence can appear in several different mathematical claims. The mode is never inferred from a plot or a list of values.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">.Plugin.Load(&quot;analysis&quot;);
+series := .analysis.GeometricSeries(1/2);
+claims := [:pointwise,:uniform,:almostEverywhere,:inMeasure,:norm].Map((mode)-&gt;series.Claim(mode));
+.Table({=
+  columns=[&quot;mode&quot;,&quot;status&quot;,&quot;reason&quot;],
+  rows=claims.Map((claim)-&gt;{;
+    result := claim.Check({= epsilon=1/100 });
+    [claim[:mode],result[:status],result[:reason]]
+  })
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Phase 1 has one proof kernel, for the geometric series in uniform mode. The other four rows remain <code>:unknown</code>; the records do not blur their meanings.</p>
+<h2>Inspect the exact uniform certificate</h2>
+<p>For <code>r=1/2</code>, the domain is exactly <code>-1/2:1/2</code>, and <code>r^(n+1)/(1-r)</code> is a global remainder bound.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="14" spellcheck="false">.Plugin.Load(&quot;analysis&quot;);
+series := .analysis.GeometricSeries(1/2,{= name=:binaryGeometric });
+result := series.Check(:uniform,{= epsilon=1/1000,maxWork=20 });
+.Table({=
+  columns=[&quot;quantity&quot;,&quot;exact value&quot;],
+  rows=[
+    [&quot;S_2(1/2)&quot;,series.Term(2)(1/2)],
+    [&quot;S(1/2)&quot;,series.Limit()(1/2)],
+    [&quot;tail after n=3&quot;,series.TailBound(3)],
+    [&quot;chosen N&quot;,result[:witness][:index]],
+    [&quot;tail at N&quot;,result[:witness][:tailBound]],
+    [&quot;status&quot;,result[:status]]
+  ]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Try <code>radius=9/10</code> with the same epsilon. The certified domain gets wider and the required index grows. <code>maxWork</code> makes that search bounded; exhausting it returns <code>:unknown</code> with the best work record rather than a false conclusion.</p>
+<h2>Do not promote a sample grid</h2>
+<p>A supplied tail callback can express an assumption or feed an exploration, but the general Phase 1 checker does not certify arbitrary RiX code as a global theorem.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="24" spellcheck="false">.Plugin.Load(&quot;analysis&quot;);
+zero := .calculus.Function(&quot;tutorial.zero@1&quot;, {=
+  implementation=(x)-&gt;0,
+  implementationEvidence=:definition
+});
+make := (n)-&gt;.calculus.Function(@&quot;tutorial.sample.@{n}@1&quot;, {=
+  implementation=(x)-&gt;x/(n+1),
+  implementationEvidence=:definition
+});
+declared := .analysis.TailEvidence(
+  :uniform,
+  (n)-&gt;1/(n+1),
+  (epsilon)-&gt;1000,
+  {= limit=zero,property=:claimedUniformTail }
+);
+sequence := .analysis.FunctionSequence(make,{=
+  limit=zero,
+  tailEvidence=declared,
+  domain=(-1):1,
+  codomain=:Rational
+});
+result := sequence.Claim(:uniform,_,{= samples=[-1,-1/2,0,1/2,1] }).Check({= epsilon=1/100 });
+result[:status];
+result[:diagnostics];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The result is <code>:unknown</code>, with both <code>:finiteSamplesIgnored</code> and <code>:unverifiedTailProperty</code> diagnostics. This is the intended result: a theorem provider can later discharge that assumption, but sampling alone cannot.</p>
+<h2>Explore visually</h2>
+<p>Run [the geometric function-series exploration](../../explorations/analysis/geometric-function-series.md) to change the exact radius and requested error, compare partial sums, and see the certified remainder decrease without confusing the graph with the proof.</p>
+<h2>Sum an infinite series with an exact tail</h2>
+<p>The scalar geometric kernel keeps the term, partial sum, infinite sum, and remainder in exact Rational arithmetic.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="17" spellcheck="false">.Plugin.Load(&quot;analysis&quot;);
+series := .analysis.GeometricScalarSeries(1,1/2,{= name=:binarySeries });
+limit := series.Check({= epsilon=1/1000,maxWork=20 });
+cauchy := series.Cauchy({= epsilon=1/1000,maxWork=20 });
+.Table({=
+  columns=[&quot;quantity&quot;,&quot;exact value&quot;],
+  rows=[
+    [&quot;term a_3&quot;,series.Term(3)],
+    [&quot;partial sum S_3&quot;,series.PartialSum(3)],
+    [&quot;infinite sum&quot;,series.Sum()],
+    [&quot;effective index&quot;,limit[:witness][:index]],
+    [&quot;tail at that index&quot;,limit[:witness][:tailBound]],
+    [&quot;Cauchy pair bound&quot;,cauchy[:witness][:pairBound]],
+    [&quot;limsup&quot;,series.Limsup()[:value]],
+    [&quot;liminf&quot;,series.Liminf()[:value]]
+  ]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p><code>Limsup</code> and <code>Liminf</code> agree here because an effective convergence proof is available. An arbitrary sampled sequence does not get that conclusion.</p>
+<h2>Move through the Cauchy and Numerics protocols</h2>
+<p>The adapters are optional. Loading <code>.analysis</code> alone does not select a real representation.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="14" spellcheck="false">.Plugin.Load(&quot;cauchy&quot;);
+.Plugin.Load(&quot;analysis&quot;);
+.Plugin.Load(&quot;numerics&quot;);
+series := .analysis.GeometricScalarSeries(1,1/2);
+real := series.ToCauchy({= name=:twoByGeometricSeries });
+sequence := .analysis.FromCauchy(real);
+checked := sequence.Check({= epsilon=1/1000 });
+enclosure := .analysis.RefineLimit(checked,{= targetWidth=1/100 });
+{:
+  .cauchy.Term(real,3),
+  .cauchy.TailBound(real,3),
+  checked[:status],
+  enclosure[:interval]
+};</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The checked limit points to the Cauchy real rather than copying it. Numerics then negotiates refinement with that value&#039;s own protocol.</p>
+<h2>Ask whether a limit exchange is justified</h2>
+<p>The continuity theorem for a uniform limit needs continuous terms. The geometric partial sums are polynomials, so the plugin can discharge both hypotheses. The differentiation theorem needs different evidence and remains unknown.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="12" spellcheck="false">.Plugin.Load(&quot;analysis&quot;);
+series := .analysis.GeometricSeries(1/2);
+limit := .analysis.Limit(series,_,{= mode=:uniform }).Check({= epsilon=1/1000,maxWork=20 });
+continuity := .analysis.Exchange(:continuity,limit).Check();
+differentiation := .analysis.Exchange(:differentiation,limit).Check();
+.Table({=
+  columns=[&quot;operation&quot;,&quot;status&quot;,&quot;remaining obligations&quot;],
+  rows=[
+    [:continuity,continuity[:status],continuity[:obligations]],
+    [:differentiation,differentiation[:status],differentiation[:obligations]]
+  ]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Passing an option such as <code>differentiableTerms=1</code> records a caller assumption. It does not silently turn that assumption into proof authority.</p>
+<h2>Build exact integral specifications, then refine numerically</h2>
+<p>On a closed subinterval of its certified domain, the uniform geometric limit can be exchanged with integration. Analysis owns the theorem record; Calculus owns the inert integrals; Numerics owns quadrature.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="13" spellcheck="false">.Plugin.Load(&quot;analysis&quot;);
+.Plugin.Load(&quot;numerics&quot;);
+series := .analysis.GeometricSeries(1/2);
+exchange := .analysis.IntegralExchange(series,-1/2,1/2,{= epsilon=1/1000 });
+termIntegral := exchange.TermIntegral(2);
+limitIntegral := exchange.LimitIntegral();
+enclosure := exchange.Numerical({= secondDerivativeBound=16 }).Refine({= targetWidth=1/1000,maxIterations=10000 });
+{:
+  exchange[:status],
+  termIntegral[:schema],
+  limitIntegral[:schema],
+  enclosure[:interval]
+};</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The second-derivative bound is deliberately explicit. Analysis does not infer a certified global bound from a few evaluations.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

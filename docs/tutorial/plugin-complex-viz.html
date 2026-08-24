@@ -17,4 +17,21 @@ f := .complexViz.RationalFunction((z) -&gt; z^2 - 1, (z) -&gt; z);
     resolution=[15, 15],
     size=[360, 360]
 });</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>The exact octant/three-band convention is stable across SVG and Canvas. It is intentionally discrete; a future continuous phase map will be an explicit approximate rendering policy.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
+<p>The exact octant/three-band convention is stable across SVG and Canvas.</p>
+<h2>Color a certified enclosure</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Plugin.Load(&quot;complex-viz&quot;);
+enclosure := .complex.FromParts(1,1).Refine({= absoluteWidth=1/1000,maxWork=100 });
+{: .complexViz.Color(enclosure),
+   .complexViz.CayleyColor(.Complex.FromParts(3,4)) };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>If an enclosure spans more than one documented color cell, <code>Color</code> returns the unresolved gray. It never selects a color from only the midpoint.</p>
+<h2>Build Scene3D views</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="9" spellcheck="false">.Plugin.Load(&quot;complex-viz&quot;);
+surface := .complexViz.Surface({=
+  fn=(z)-&gt;z^2,height=:magnitudeSquared,
+  domain={= re=[-1,1],im=[-1,1] },resolution=[7,7]
+});
+sphere := .complexViz.RiemannSphere([
+  .Complex.FromParts(0,0),.Complex.FromParts(1,0),.Complex.FromParts(0,1)
+],{= branchcut=:nonpositiveRealAxis });
+{: surface[:metadata],sphere[:metadata] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The surface retains vertex colors plus branch/unresolved metadata. The sphere uses exact rational inverse-stereographic coordinates until a renderer chooses its numeric lowering.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

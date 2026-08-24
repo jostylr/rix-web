@@ -50,13 +50,13 @@ and accessibility behavior belong here. Generated files under `docs/` and
 
 ## Mathematical graphic interaction and accessibility
 
-- [ ] Implement the shared RiX viewport/selection protocol with pan, zoom,
+- [x] Implement the shared RiX viewport/selection protocol with pan, zoom,
   reset, focus, and semantic selection. Pointer, touch, and keyboard paths must
   operate on the same selected mathematical identities.
 - [ ] Generalize the interval explorer's accessible names, focus indication,
   and textual/table alternative into a shared protocol for every interactive
   mathematical graphic.
-- [ ] Announce exact selected values and meaningful state changes without
+- [x] Announce exact selected values and meaningful state changes without
   flooding assistive technology during continuous pan, zoom, or drag updates.
 - [ ] Test keyboard-only and screen-reader workflows, reduced motion, high
   zoom, responsive layouts, and selection persistence across reactive rerenders.

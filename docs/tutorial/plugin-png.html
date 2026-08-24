@@ -5,6 +5,36 @@ scene := .Graphics.Graphic([180, 100], [
     .Graphics.Circle([90, 50], 32, {= fill=&quot;#0c7b7f&quot; })
 ]);
 [.Renderer.Info(&quot;png&quot;).Get(&quot;mime&quot;), scene];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>Use <code>.png.Render(scene, {= scale=2, background=&quot;white&quot; })</code> in a capable host, or <code>.Out(&quot;diagram.png&quot;, scene)</code> with the CLI.</p>
-<ul><li>Browser: contract discovery and portable input preview only.</li><li>CLI: requires <code>rsvg-convert</code> or ImageMagick&#039;s <code>magick</code>.</li><li>Options: <code>scale</code>, <code>width</code>, <code>height</code>, and <code>background</code>.</li></ul>
+<p>Use <code>.png.Render(scene, {= scale=2, dpi=144, background=&quot;white&quot; })</code> in a capable host, or <code>.Out(&quot;diagram.png&quot;, scene)</code> with the CLI.</p>
+<ul><li>Browser: contract discovery and portable input preview only.</li><li>CLI: requires <code>rsvg-convert</code> or ImageMagick&#039;s <code>magick</code>.</li><li>Size options: <code>scale</code>, <code>dpi</code>, <code>width</code>, and <code>height</code>.</li><li>Color options: <code>background</code>, <code>colorProfile=&quot;srgb&quot;|&quot;native&quot;|&quot;none&quot;</code>, and</li></ul>
+<p><code>antialiasing=&quot;on&quot;|&quot;off&quot;</code>.</p>
+<ul><li>Asset options: a scalar <code>metadata</code> map, <code>region=[x,y,width,height]</code>, and a</li></ul>
+<p>document <code>figure</code> index or label.</p>
+<h2>Prepare a reproducible asset policy</h2>
+<p>This cell is browser-safe because it constructs and displays the policy rather than attempting host process execution:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="12" spellcheck="false">scene := .Graphics.Graphic([180, 100], [
+    .Graphics.Circle([90, 50], 32, {= fill=&quot;#0c7b7f&quot; })
+]);
+policy := {=
+    dpi=300,
+    background=&quot;white&quot;,
+    colorProfile=&quot;srgb&quot;,
+    antialiasing=&quot;on&quot;,
+    metadata={= Title=&quot;Circle construction&quot;,Author=&quot;RiX&quot; },
+    region=[40,10,100,80]
+};
+[scene,policy];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>At 300 DPI with the default scale, that 100-by-80 logical region becomes 313-by-250 pixels after outward-independent nearest integer sizing. Supplying only <code>width</code> or only <code>height</code> preserves the crop&#039;s aspect ratio.</p>
+<h2>Select a Figure from a document</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">scene := .Graphics.Graphic([180, 100], [
+    .Graphics.Circle([90, 50], 32, {= fill=&quot;#0c7b7f&quot; })
+]);
+report := .Fragment([
+    .Figure(scene,&quot;Whole scene&quot;,&quot;whole&quot;,&quot;A teal circle&quot;),
+    .Figure(.Graphics.Graphic([80,60],[
+        .Graphics.Circle([40,30],20,{= fill=&quot;#be123c&quot; })
+    ]),&quot;Detail&quot;,&quot;detail&quot;,&quot;A red detail circle&quot;)
+]);
+[report,&quot;&quot;&quot;CLI: .png.Render(report,{= figure=&quot;detail&quot;,dpi=144 })&quot;&quot;&quot;];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>A capable host can rasterize either Figure without flattening the whole document. The PNG result retains the selected label, caption, alternative text, source dimensions, and normalized byte policy.</p>
 <p>The repository&#039;s <code>polynomial-transparency.rix</code> fixture overlays a half-opacity annotation on a quadratic curve. Host tests render that same SVG through librsvg and ImageMagick and compare the visible result with a tolerant metric, so toolchain upgrades need not preserve incidental PNG bytes.</p></div><section class="api-links"><h2>Reference</h2><ul><li><a href="https://docs.rix.ratmath.com/eval/renderer-guide.html" data-doc-reference target="_blank" rel="noreferrer">Renderer plugin reference ↗</a></li></ul></section><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

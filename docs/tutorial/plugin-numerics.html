@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Refine every certified real through one protocol, compose unlike representations through Oracle, and run actualized root algorithms." /><title>Universal certified arithmetic and root finding — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./plugins-numbers-and-numerics.html#lesson-start" title="Plugins: Numbers and numerics">14</a> <span aria-hidden="true">·</span> <span>e</span></p><h1>Universal certified arithmetic and root finding</h1><p class="deck">Refine every certified real through one protocol, compose unlike representations through Oracle, and run actualized root algorithms.</p><aside class="challenge"><p class="eyebrow">Develop in RiX Notebook</p><p>Open <code>rix/plugins/numerics/tutorial.md</code> in the macOS app to edit this lesson with live preview and plugin-aware code results. Use Reload plugins after changing project-local plugin source.</p></aside><div class="lesson-content"><p>Load Numerics and a certified real backend. Numerics only calls methods on the value; it does not know which plugin constructed it:</p>
+<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Refine every certified real through one protocol, compose unlike representations through Oracle, and run actualized root algorithms." /><title>Universal certified arithmetic and root finding — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./plugins-numbers-and-numerics.html#lesson-start" title="Plugins: Numbers and numerics">14</a> <span aria-hidden="true">·</span> <span>f</span></p><h1>Universal certified arithmetic and root finding</h1><p class="deck">Refine every certified real through one protocol, compose unlike representations through Oracle, and run actualized root algorithms.</p><aside class="challenge"><p class="eyebrow">Develop in RiX Notebook</p><p>Open <code>rix/plugins/numerics/tutorial.md</code> in the macOS app to edit this lesson with live preview and plugin-aware code results. Use Reload plugins after changing project-local plugin source.</p></aside><div class="lesson-content"><p>Load Numerics and a certified real backend. Numerics only calls methods on the value; it does not know which plugin constructed it:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="20" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
 .Plugin.Load(&quot;oracle&quot;);
 
@@ -44,6 +44,68 @@ sample := .numerics.Sample(
 
 real := .oracle.Rational(5 / 8);
 .numerics.Capabilities(real);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Relative accuracy, reuse, and generic algorithms</h2>
+<p>Absolute and relative accuracy can be requested together. Here one percent of a reference magnitude of ten is <code>1/10</code>, which is tighter than <code>1/8</code>; addition splits that target into two exact <code>1/20</code> operand budgets:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="17" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
+
+budget := .numerics.ErrorBudget({=
+  absoluteWidth=1/8,
+  relativeWidth=1/100,
+  reference=10
+});
+propagation := .numerics.PropagateError(:add, budget, {= operands=2 });
+
+.Table({=
+  columns=[&quot;effective target&quot;, &quot;left budget&quot;, &quot;right budget&quot;],
+  rows=[[
+    budget[:effectiveWidth],
+    propagation[:operandBudgets][1][:effectiveWidth],
+    propagation[:operandBudgets][2][:effectiveWidth]
+  ]]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>An immutable refinement history makes cache behavior inspectable. In this example the first result is already narrower than <code>1/100</code>, so both later calls reuse it and retain the original proof record:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="8" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
+
+h0 := .numerics.RefinementHistory(.numerics.Sqrt(2));
+h1 := h0.Refine({= absoluteWidth=1/10, maxWork=30 });
+h2 := h1.Refine({= absoluteWidth=1/100, maxWork=30 });
+h3 := h2.Refine({= absoluteWidth=1/10, maxWork=30 });
+
+{: h3[:providerCalls], h3[:cacheHits], h3[:entries] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The generic algorithms keep their evidence boundary visible:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="18" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
+.Plugin.Load(&quot;algebraic-real&quot;);
+
+polynomial := .p`x^2-2`;
+proved := .numerics.IsolateRoot(polynomial, 1:2, {=
+  absoluteWidth=1/100,
+  maxWork=20
+});
+assumed := .numerics.IsolateRoot((x)-&gt;x^2-2, 1:2, {=
+  absoluteWidth=1/100,
+  maxWork=20
+});
+comparison := .numerics.Compare(
+  .numerics.Sqrt(2), 3/2,
+  {= absoluteWidth=1/100, maxWork=40 }
+);
+
+{: proved, assumed, comparison };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p><code>proved</code> uses the Polynomial root-count protocol and is certified. <code>assumed</code> only observes an exact sign crossing and records continuity as a caller obligation. Likewise, finite adaptive samples are observations, and the one-dimensional optimizer requires the caller to justify its Lipschitz bound:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="14" spellcheck="false">sample := .numerics.AdaptiveSample((x)-&gt;x^2, 0:1, {=
+  tolerance=1/100,
+  maxWork=32
+});
+minimum := .numerics.Optimize((x)-&gt;x^2, (-1):1, {=
+  lipschitz=2,
+  maxWork=16
+});
+
+pi := .numerics.Constant(:pi);
+piBound := .numerics.Refine(pi, {= absoluteWidth=1/1000, maxWork=100 });
+why := .numerics.ExplainSelection(pi, :refine);
+
+{: sample, minimum, piBound, why };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The three entry points make distinct requests. A provider may support only a subset; unsupported work is returned as a structured result rather than being silently treated as another operation:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
 .Plugin.Load(&quot;float&quot;);
@@ -58,6 +120,33 @@ x &lt; {~ 1 / 2, 1 / 1000 };              ## true, certified
 x ? {~ (2 / 5):(1 / 2), 1 / 1000 };    ## true, certified membership
 x &lt; {~ 1 / 2, 1 / 1000, {= maxCalls=0 } }; ## undecided: budgetExhausted</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Here epsilon requests enclosure width; it does not enlarge the target. An uncertified provider, including Float when interpreted as an intended real, produces a diagnostic undecided result rather than proving a relation.</p>
+<h2>Certified ranges for uncertain measurements</h2>
+<p>A <code>RationalInterval</code> supplied to a supported elementary function denotes every input in that closed interval.  The multifunction returns a set-valued image; <code>Range</code> then proves one rational interval containing every output:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
+
+image := .numerics.Sin(99/100:101/100);
+result := image.Range({=
+  endpointTolerance=1/1000000,
+  maxWork=240,
+  maxSubintervals=8
+});
+
+{: result[:status], result[:interval], result[:domainStatus] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The endpoint tolerance controls numerical uncertainty in the outer bounds; it does not shrink the uncertainty in the measurement.  Monotonicity, symmetry, Taylor/Lipschitz bounds, and certified trigonometric landmarks provide the proofs.  Generic exact interval callbacks can use subdivision, including a callback that directly returns another supported interval image:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="13" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
+
+dependent := .numerics.Range((x)-&gt;x-x, 1:2, {=
+  maxSubintervals=16,
+  maxWork=160
+});
+wave := .numerics.Range((x)-&gt;.numerics.Sin(x), 1:2, {=
+  endpointTolerance=1/10000,
+  maxSubintervals=8,
+  maxWork=320
+});
+
+{: dependent[:interval], wave[:interval] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>See [interval-ranges-tutorial.md](interval-ranges-tutorial.md) for measurement examples, pole/domain handling, hyperbolic and statistical ranges, and result interpretation.  [range-certification.md](range-certification.md) describes the certified knowledge most useful for arbitrary user functions.</p>
 <h2>Arithmetic across real representations</h2>
 <p>Every refinable singleton-real provider advertises the same semantic contract: it denotes one real, returns certified rational enclosures, and can refine those enclosures arbitrarily. Finite balls are deliberately different: they denote a set, not a hidden singleton.</p>
 <p>Arithmetic within one family retains that family. Exact Rationals are embedded as exact leaves, so adding one does not upgrade the result to another real type:</p>
@@ -98,7 +187,7 @@ answer := .numerics.Refine(mixed, {=
   ]]
 });</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Oracle conversion accepts only refinable singletons. <code>.oracle.From</code> therefore rejects a finite <code>.ball(midpoint, radius)</code>. Use a nested ball recipe when the value is meant to identify one real.</p>
-<p>Float is also outside implicit promotion. A Float is a stored binary64 scalar, not a refinable certificate for an intended real, so both operands must be converted explicitly:</p>
+<p>Float is also outside implicit promotion. A Float is a stored binary32 or binary64 scalar, not a refinable certificate for an intended real, so both operands must be converted explicitly:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Plugin.Load(&quot;float&quot;);
 
 explicit := .float(1/2) + .float(1/3);
@@ -208,7 +297,7 @@ values |&gt;&gt; ((value) -&gt; Refine(value, {=
 <h2>Geometry and the Gamma family</h2>
 <p><code>Hypot</code> reuses universal arithmetic and roots. <code>Atan2</code> accepts <code>(y,x)</code>, keeps the quadrant decision certified, and uses the branch <code>-Pi() &lt; angle &lt;= Pi()</code>. The positive-real Gamma family shares the same bounded refinement contract:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="14" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
-.numerics[:Refine, :Hypot, :Atan2, :Beta, :LogBeta, :Digamma, :Trigamma];
+.numerics[:RefineGamma=:Refine, :Hypot, :Atan2, :Beta, :LogBeta, :Digamma, :Trigamma];
 values := [
   Hypot(3, 4),
   Atan2(1, -1),
@@ -217,7 +306,7 @@ values := [
   Digamma(1),
   Trigamma(1)
 ];
-values |&gt;&gt; ((value) -&gt; Refine(value, {=
+values |&gt;&gt; ((value) -&gt; RefineGamma(value, {=
   absoluteWidth=1/1000,
   maxWork=1200
 }));</textarea><div class="tutorial-output" data-tutorial-output></div></section>

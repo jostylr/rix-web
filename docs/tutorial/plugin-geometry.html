@@ -31,6 +31,37 @@ moved := .geometry.Transform(triangle,shiftAndScale);
 base := .geometry.Line(a,b);
 onBase := .geometry.Constraint(:onLine,[.geometry.Point(2,0),base]);
 .geometry.Draw([triangle,moved],{= view=[-1,-1,8,8],size=[560,560] });</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Measure and rotate without binary floats</h2>
+<p>Named measurements preserve the geometry kernel&#039;s exact/certified split. Arbitrary rotations accept radians, degrees, or fractions of a turn.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="13" spellcheck="false">.Plugin.Load(&quot;geometry&quot;);
+origin := .geometry.Point(0,0);
+p := .geometry.Point(4,0);
+segment := .geometry.Segment(origin,p);
+length := .numerics.Refine(.geometry.Length(segment),{=
+  absoluteWidth=1/1000,maxWork=32
+});
+rotation := .geometry.Rotate(origin,1/6,:turns);
+image := .geometry.Transform(p,rotation);
+.Fragment([
+  .Table([&quot;quantity&quot;,&quot;value&quot;],[[&quot;squared length&quot;,.geometry.SquaredDistance(origin,p)],[&quot;length candidate&quot;,length[:approximation].Candidate()]]),
+  .geometry.Draw([p,image],{= view=[-1,-1,5,5],size=[360,360] })
+]);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Quarter turns are rational affine maps. Rational fractions of a turn carry exact algebraic coordinates; arbitrary radians carry certified-real coordinates and can be refined or drawn.</p>
+<h2>Explore the algebraic lane</h2>
+<p>A compass construction may leave rational coordinates without leaving exact mathematics. The diagonal through a rational circle meets it at coordinates involving <code>sqrt(2)</code>. Exact polynomial certificates decide the intersection topology and retain exact algebraic points.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">.Plugin.Load(&quot;geometry&quot;);
+circle := .geometry.Circle(.geometry.Point(0,0),2);
+diagonal := .geometry.Line(.geometry.Point(-2,-2),.geometry.Point(2,2));
+meeting := .geometry.Intersect(diagonal,circle);
+eighthTurn := .geometry.CircularAngle(1/8,:turns);
+{=
+  intersectionStatus=meeting[:status],
+  coordinateDomain=meeting[:points][1][:coordinateDomain],
+  angleTurns=eighthTurn[:turns],
+  angleDomain=eighthTurn[:coordinateDomain]
+};</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>A rational turn is exact circular data. Its sine and cosine are algebraic because they are coordinates of a root of unity. The nonzero radian magnitude <code>2*pi*p/q</code> is transcendental, so the plugin does not mislabel it as an algebraic real. A rational number supplied directly in radians is generally not a rational turn and stays on the general certified lane.</p>
+<p>Algebraic coefficients make intersection equality, sign, and multiplicity decidable. With arbitrary certified-real coefficients, interval refinement can prove separation from zero but cannot always prove exact zero. Those intersections explicitly return <code>undecided</code> with evidence when their budget is exhausted.</p>
 <h2>Inspect certified intersection decisions</h2>
 <p>Line-conic intersections retain both the exact discriminant sign and the Sturm root-count certificate used to classify the result.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="9" spellcheck="false">.Plugin.Load(&quot;geometry&quot;);

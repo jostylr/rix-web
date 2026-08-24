@@ -1,5 +1,5 @@
-<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Produce quoted CSV and TSV without decimalizing rational cells." /><title>Export exact rows as CSV — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./plugins-renderers-and-exporters.html#lesson-start" title="Plugins: Renderers and exporters">18</a> <span aria-hidden="true">·</span> <span>b</span></p><h1>Export exact rows as CSV</h1><p class="deck">Produce quoted CSV and TSV without decimalizing rational cells.</p><aside class="challenge"><p class="eyebrow">Develop in RiX Notebook</p><p>Open <code>rix/plugins/render-csv/tutorial.md</code> in the macOS app to edit this lesson with live preview and plugin-aware code results. Use Reload plugins after changing project-local plugin source.</p></aside><div class="lesson-content"><h2>Quote text and preserve exact values</h2>
-<p>CSV quotes fields containing commas, quotes, or line breaks. Rationals keep their exact numerator and denominator, and missing cells remain empty.</p>
+<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Import typed measurements, inspect provenance, stream rows, and export without losing exact values." /><title>Exact, typed CSV interchange — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./plugins-renderers-and-exporters.html#lesson-start" title="Plugins: Renderers and exporters">18</a> <span aria-hidden="true">·</span> <span>b</span></p><h1>Exact, typed CSV interchange</h1><p class="deck">Import typed measurements, inspect provenance, stream rows, and export without losing exact values.</p><aside class="challenge"><p class="eyebrow">Develop in RiX Notebook</p><p>Open <code>rix/plugins/render-csv/tutorial.md</code> in the macOS app to edit this lesson with live preview and plugin-aware code results. Use Reload plugins after changing project-local plugin source.</p></aside><div class="lesson-content"><h2>Quote text and preserve exact values</h2>
+<p>CSV quotes fields containing commas, quotes, or line breaks. Canonical mode keeps exact numerator/denominator text and missing cells remain empty.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">.Plugin.Load(&quot;csv&quot;);
 table := .Table([&quot;label&quot;, &quot;value&quot;, &quot;note&quot;], [
     [&quot;&quot;&quot;comma, quote &quot;yes&quot;&quot;&quot;&quot;, 3/2, &quot;ordinary&quot;],
@@ -7,6 +7,74 @@ table := .Table([&quot;label&quot;, &quot;value&quot;, &quot;note&quot;], [
 lines&quot;&quot;&quot;]
 ]);
 .csv.Render(table).Get(&quot;content&quot;);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>Use the <code>tsv</code> target alias for tabs, or choose CRLF records explicitly when a consumer requires them.</p>
+<p>TSV selects tabs automatically. CRLF is always an explicit choice.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Render(table, &quot;tsv&quot;).Get(&quot;content&quot;);
-.csv.Render(table, {= newline=:crlf }).Get(&quot;content&quot;);</textarea><div class="tutorial-output" data-tutorial-output></div></section></div><section class="api-links"><h2>Reference</h2><ul><li><a href="https://docs.rix.ratmath.com/eval/renderer-guide.html" data-doc-reference target="_blank" rel="noreferrer">Renderer plugin reference ↗</a></li></ul></section><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
+.csv.Render(table, {= newline=:crlf }).Get(&quot;content&quot;);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Import typed measurements</h2>
+<p>The schema makes conversion auditable: identifiers stay text, masses become exact rationals, and measurement bounds become rational intervals. The locale policy is part of the call, not hidden machine configuration.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="19" spellcheck="false">.Plugin.Load(&quot;csv&quot;);
+.Plugin.Load(&quot;data&quot;);
+schema := [
+    {= id=&quot;sample&quot;, type=:String, nullable=0 },
+    {= id=&quot;mass&quot;, type=:Rational },
+    {= id=&quot;bounds&quot;, type=:Interval }
+];
+source := &quot;&quot;&quot;# instrument: scale-7
+# unit: kg
+sample;mass;bounds
+A;1,25;1,2:1,3
+B;;2:2
+&quot;&quot;&quot;;
+measurements := .csv.Parse(source, schema, {=
+    delimiter=:semicolon,
+    decimal=:locale,
+    locale=&quot;de-DE&quot;
+});
+.data.Rows(measurements);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The result contains <code>5/4</code>, the interval <code>6/5:13/10</code>, and a missing mass—not binary floating approximations. Inspect the retained comments and indexed <code>key: value</code> metadata:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.csv.Sidecar(measurements);
+.csv.Sidecar(measurements).Get(&quot;metadata&quot;);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Pull a bounded stream</h2>
+<p>Use the shared RowSource protocol when downstream work needs only a prefix or should avoid constructing a second full Relation. Typed conversion happens as each row is pulled.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="18" spellcheck="false">.Plugin.Load(&quot;csv&quot;);
+.Plugin.Load(&quot;data&quot;);
+schema := [
+    {= id=&quot;sample&quot;, type=:String, nullable=0 },
+    {= id=&quot;mass&quot;, type=:Rational },
+    {= id=&quot;bounds&quot;, type=:Interval }
+];
+source := &quot;&quot;&quot;sample;mass;bounds
+A;1,25;1,2:1,3
+B;;2:2
+&quot;&quot;&quot;;
+stream := .csv.ParseStream(source, schema, {=
+    delimiter=:semicolon,
+    decimal=:locale,
+    locale=&quot;de-DE&quot;
+});
+.data.Rows(.csv.Collect(stream, 1));
+.Render(stream, :csv, {= limit=1 }).Get(&quot;content&quot;);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Choose decimal output consciously</h2>
+<p>Locale mode can represent <code>3/2</code> exactly as <code>1,5</code>. It refuses <code>1/3</code>, because a finite decimal would not equal the known exact value. Canonical mode remains the lossless fallback.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">.Plugin.Load(&quot;csv&quot;);
+.csv.Render(.Table([&quot;value&quot;], [[3/2], [10005]]), {=
+    delimiter=:semicolon,
+    decimal=:locale,
+    locale=&quot;de-DE&quot;,
+    grouping=1
+}).Get(&quot;content&quot;);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<section class="comparison-code"><header>text</header><pre><code>.Plugin.Load(&quot;csv&quot;);
+.csv.Render(.Table([&quot;value&quot;], [[1/3]]), {= decimal=:locale });</code></pre></section>
+<h2>Make exceptional nesting visible</h2>
+<p>CSV is flat. The default error names the exact nested cell. If a consumer expects JSON-in-CSV, opt in; exact nested numbers receive lossless tags and the RenderResult records a diagnostic.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">.Plugin.Load(&quot;csv&quot;);
+flattened := .csv.Render(
+    .Table([&quot;payload&quot;], [[{= estimate=1/3, flags=[&quot;exact&quot;, &quot;reviewed&quot;] }]]),
+    {=
+        flatten=:json,
+        metadata={= source=&quot;tutorial&quot; },
+        comments=[&quot;nested payload is intentional&quot;]
+    }
+);
+flattened.Get(&quot;content&quot;);
+flattened.Get(&quot;diagnostics&quot;);</textarea><div class="tutorial-output" data-tutorial-output></div></section></div><section class="api-links"><h2>Reference</h2><ul><li><a href="https://docs.rix.ratmath.com/eval/renderer-guide.html" data-doc-reference target="_blank" rel="noreferrer">Renderer plugin reference ↗</a></li></ul></section><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

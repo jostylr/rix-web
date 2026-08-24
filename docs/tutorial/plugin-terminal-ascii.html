@@ -8,4 +8,33 @@ division := .Algebra.SyntheticDivision(1, [2, -6, 2, -1]);
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Plugin.Load(&quot;plot&quot;);
 .Plugin.Load(&quot;terminal-ascii&quot;);
 plot := .plot.Polynomial([1, 0, -1], [-2, 2], {= size=[320,180], samples=81 });
-.terminalAscii.Render(plot, {= width=60, height=16 }).Get(&quot;content&quot;);</textarea><div class="tutorial-output" data-tutorial-output></div></section></div><section class="api-links"><h2>Reference</h2><ul><li><a href="https://docs.rix.ratmath.com/eval/renderer-guide.html" data-doc-reference target="_blank" rel="noreferrer">Renderer plugin reference ↗</a></li></ul></section><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
+.terminalAscii.Render(plot, {= width=60, height=16 }).Get(&quot;content&quot;);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Wrap and paginate a narrow report</h2>
+<p>Truncation remains the deterministic default. Opt into word wrapping and a page height when the terminal should retain all text:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="18" spellcheck="false">.Plugin.Load(&quot;terminal-ascii&quot;);
+report := .Table(
+  [
+    {= id=&quot;step&quot;, label=&quot;Step&quot; },
+    {= id=&quot;explanation&quot;, label=&quot;Explanation&quot; }
+  ],
+  [
+    [1, &quot;Keep the exact input and state the transformation.&quot;],
+    [2, &quot;Show the verified result without replacing it by a Float.&quot;]
+  ],
+  {= caption=&quot;Exact workflow&quot; }
+);
+rendered := .terminalAscii.Render(report, {=
+  width=32,
+  wrap=:word,
+  pageHeight=10
+});
+{: rendered.Get(&quot;content&quot;), rendered.Get(&quot;metadata&quot;) };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Every page includes its own <code>--- page i/n ---</code> marker and stays within ten lines. The exact table cells are formatted only at this final renderer boundary.</p>
+<h2>Render a portable slide deck</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">.Plugin.Load(&quot;terminal-ascii&quot;);
+deck := .Slides([
+  .Slide(.Paragraph(&quot;The source value remains exact.&quot;), &quot;Source&quot;),
+  .Slide(.Paragraph(&quot;The ASCII view is deterministic.&quot;), &quot;View&quot;)
+], &quot;Exact arithmetic&quot;);
+.terminalAscii.Render(deck, {= width=40, wrap=:word }).Get(&quot;content&quot;);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Slides use printable ASCII headings only. A richer Unicode/color terminal mode remains a separate future capability.</p></div><section class="api-links"><h2>Reference</h2><ul><li><a href="https://docs.rix.ratmath.com/eval/renderer-guide.html" data-doc-reference target="_blank" rel="noreferrer">Renderer plugin reference ↗</a></li></ul></section><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

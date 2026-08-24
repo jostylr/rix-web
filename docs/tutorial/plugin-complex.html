@@ -1,0 +1,107 @@
+<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Combine refinable real representations, calculate complex functions, and inspect principal-branch evidence." /><title>Certified complex numbers over real backends — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./plugins-numbers-and-numerics.html#lesson-start" title="Plugins: Numbers and numerics">14</a> <span aria-hidden="true">·</span> <span>c</span></p><h1>Certified complex numbers over real backends</h1><p class="deck">Combine refinable real representations, calculate complex functions, and inspect principal-branch evidence.</p><aside class="challenge"><p class="eyebrow">Develop in RiX Notebook</p><p>Open <code>rix/plugins/complex/tutorial.md</code> in the macOS app to edit this lesson with live preview and plugin-aware code results. Use Reload plugins after changing project-local plugin source.</p></aside><div class="lesson-content"><h2>Construct one complex number</h2>
+<p>The lowercase <code>complex</code> plugin represents one complex number using two certified singleton real components. Exact Rationals work directly:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">.Plugin.Load(&quot;complex&quot;);
+z := .complex.FromParts(1, 2);
+.Table({=
+  columns = [&quot;value kind&quot;, &quot;real&quot;, &quot;imaginary&quot;, &quot;norm squared&quot;],
+  rows = [[z.Record()[:valueKind], z.Real(), z.Imaginary(), z.NormSquared()]]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Arithmetic follows the usual Cartesian formulas and embeds real Rationals on the real axis:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="12" spellcheck="false">.Plugin.Load(&quot;complex&quot;);
+z := .complex(1, 2);
+w := .complex(3, -1);
+.Table({=
+  columns = [&quot;operation&quot;, &quot;real&quot;, &quot;imaginary&quot;],
+  rows = [
+    [&quot;z + w&quot;, (z+w).Real(), (z+w).Imaginary()],
+    [&quot;z * w&quot;, (z*w).Real(), (z*w).Imaginary()],
+    [&quot;z / w&quot;, (z/w).Real(), (z/w).Imaginary()],
+    [&quot;z + 4&quot;, (z+4).Real(), (z+4).Imaginary()]
+  ]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Mix certified real representations</h2>
+<p>Components need not use the same backend. Here an isolating algebraic real and a continued-fraction real retain their own refinement procedures:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="14" spellcheck="false">.Plugin.Load(&quot;complex&quot;);
+.Plugin.Load(&quot;algebraic-real&quot;);
+.Plugin.Load(&quot;continued-fraction&quot;);
+mixed := .complex.FromParts(.ar.Sqrt2(), .cf.Sqrt2());
+box := mixed.Refine({= absoluteWidth=1/1000, maxWork=400 });
+.Table({=
+  columns = [&quot;status&quot;, &quot;real interval&quot;, &quot;imaginary interval&quot;, &quot;calls&quot;],
+  rows = [[
+    box[:status],
+    box[:realInterval],
+    box[:imaginaryInterval],
+    box[:work][:calls]
+  ]]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Both returned intervals enclose the same mathematical <code>sqrt(2)</code>. A finite <code>.ball(midpoint,radius)</code> is intentionally rejected here because it denotes a set, not one refinable real.</p>
+<h2>Refine arithmetic and entire functions</h2>
+<p>Elementary complex functions build recipes from the certified real Numerics algorithms. Refining the result gives another containing rectangle:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="14" spellcheck="false">.Plugin.Load(&quot;complex&quot;);
+z := .complex(1, 1/2);
+values := [
+  [&quot;exp&quot;, .complex.Exp(z)],
+  [&quot;sin&quot;, .complex.Sin(z)],
+  [&quot;cos&quot;, .complex.Cos(z)]
+];
+.Table({=
+  columns = [&quot;function&quot;, &quot;real enclosure&quot;, &quot;imaginary enclosure&quot;, &quot;status&quot;],
+  rows = values.Map((row) -&gt; {;
+    result := row[2].Refine({= absoluteWidth=1/1000, maxWork=800 });
+    [row[1], result[:realInterval], result[:imaginaryInterval], result[:status]];
+  })
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Inspect zero separation before division</h2>
+<p>Origin containment is a certification question. Exact inputs decide immediately, while a coarse refinable input can remain unknown until given a tighter request:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">.Plugin.Load(&quot;complex&quot;);
+zero := .complex(0, 0).ZeroStatus();
+away := .complex(1, 1/10).ZeroStatus();
+.Table({=
+  columns = [&quot;input&quot;, &quot;status&quot;, &quot;certified&quot;],
+  rows = [
+    [&quot;0&quot;, zero[:status], zero[:certified]],
+    [&quot;1+i/10&quot;, away[:status], away[:certified]]
+  ]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Exact division by zero is rejected. A quotient over refinable components keeps zero separation as a deferred certified obligation in its component recipes.</p>
+<h2>Keep branch outcomes visible</h2>
+<p>The convenience functions use the principal convention <code>-pi &lt; argument &lt;= pi</code>. The result forms additionally preserve cut and origin classification:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="14" spellcheck="false">.Plugin.Load(&quot;complex&quot;);
+ordinary := .complex.LogResult(.complex(1, 1));
+onCut := .complex.LogResult(.complex(-2, 0));
+atOrigin := .complex.LogResult(.complex(0, 0));
+sqrtCut := .complex.SqrtResult(.complex(-2, 0));
+.Table({=
+  columns = [&quot;case&quot;, &quot;status&quot;, &quot;has value&quot;, &quot;diagnostic&quot;],
+  rows = [
+    [&quot;log(1+i)&quot;, ordinary[:status], ordinary[:value] != _, ordinary[:diagnostic]],
+    [&quot;log(-2)&quot;, onCut[:status], onCut[:value] != _, onCut[:diagnostic]],
+    [&quot;log(0)&quot;, atOrigin[:status], atOrigin[:value] != _, atOrigin[:diagnostic]],
+    [&quot;sqrt(-2)&quot;, sqrtCut[:status], sqrtCut[:value] != _, sqrtCut[:diagnostic]]
+  ]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The boundary values are conventional principal values, but their <code>:branchBoundary</code> status warns analytic transformations that no open neighborhood avoids the cut.</p>
+<h2>Enclose images of complex sets</h2>
+<p>Regions denote sets rather than hidden singleton values. A centered disc uses the direct validated analytic kernel, while a rectangle uses outward interval ranges:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="12" spellcheck="false">.Plugin.Load(&quot;complex&quot;);
+disc := .complex.Disc(.complex(0,0),1/10);
+box := .complex.Rectangle((-1):1,(-1):1);
+discImage := disc.Image(:exp,{= absoluteWidth=1/10000,maxWork=1000 });
+boxImage := box.Image(:sin,{= absoluteWidth=1/10000,maxWork=1000 });
+.Table({=
+  columns=[&quot;input&quot;,&quot;output geometry&quot;,&quot;algorithm&quot;,&quot;outward&quot;],
+  rows=[
+    [&quot;disc&quot;,discImage[:geometry],discImage[:evidence][:algorithm],discImage[:evidence][:outward]],
+    [&quot;rectangle&quot;,boxImage[:geometry],boxImage[:evidence][:algorithm],boxImage[:evidence][:outward]]
+  ]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Subdivide uncertainty without hiding it</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">.Plugin.Load(&quot;complex&quot;);
+region := .complex.Rectangle((-1):1,(-1):1);
+analysis := region.AnalyzeBoundary(:logBranch,{=
+  maxDepth=4,maxCells=40,absoluteWidth=1/1000,maxWork=500
+});
+{: analysis[:status],analysis[:resolved].Len(),analysis[:hits].Len(),
+   analysis[:unresolved].Len(),analysis[:work] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Any cells left by the work/depth budget remain in <code>unresolved</code>, still carrying their certified outward rectangles.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

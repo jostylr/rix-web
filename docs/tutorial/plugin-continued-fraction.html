@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Explore finite values, lazy coefficient rules, convergent cylinders, and bounded refinement." /><title>Exact continued-fraction reals in RiX — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./plugins-numbers-and-numerics.html#lesson-start" title="Plugins: Numbers and numerics">14</a> <span aria-hidden="true">·</span> <span>c</span></p><h1>Exact continued-fraction reals in RiX</h1><p class="deck">Explore finite values, lazy coefficient rules, convergent cylinders, and bounded refinement.</p><aside class="challenge"><p class="eyebrow">Develop in RiX Notebook</p><p>Open <code>rix/plugins/continued-fraction/tutorial.md</code> in the macOS app to edit this lesson with live preview and plugin-aware code results. Use Reload plugins after changing project-local plugin source.</p></aside><div class="lesson-content"><p>This plugin is written entirely in RiX. The same coefficient rules and exact refinement code run in the CLI, RiX Web, and RiX Notebook without a JavaScript plugin permission boundary.</p>
+<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Explore finite values, lazy coefficient rules, convergent cylinders, and bounded refinement." /><title>Exact continued-fraction reals in RiX — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./plugins-numbers-and-numerics.html#lesson-start" title="Plugins: Numbers and numerics">14</a> <span aria-hidden="true">·</span> <span>d</span></p><h1>Exact continued-fraction reals in RiX</h1><p class="deck">Explore finite values, lazy coefficient rules, convergent cylinders, and bounded refinement.</p><aside class="challenge"><p class="eyebrow">Develop in RiX Notebook</p><p>Open <code>rix/plugins/continued-fraction/tutorial.md</code> in the macOS app to edit this lesson with live preview and plugin-aware code results. Use Reload plugins after changing project-local plugin source.</p></aside><div class="lesson-content"><p>This plugin is written entirely in RiX. The same coefficient rules and exact refinement code run in the CLI, RiX Web, and RiX Notebook without a JavaScript plugin permission boundary.</p>
 <h2>Finite continued fractions</h2>
 <p>A finite coefficient sequence is an exact Rational presentation. RiX&#039;s native continued-fraction literals interoperate through the callable plugin root:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">.Plugin.Load(&quot;continued-fraction&quot;);
@@ -58,17 +58,83 @@ result := .numerics.Refine(root, {=
 });
 root &lt; {~ 3/2, 1/1000 };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Try changing <code>maxWork</code> to <code>0</code>, <code>1</code>, and <code>2</code>. The comparison remains undecided until the available convergent cylinder separates the two neighborhoods.</p>
+<h2>Extract a certified function stream</h2>
+<p>Any certified arbitrarily refinable singleton real can be exposed as a native regular-CF stream. The source continues to provide enclosing evidence; the extractor decides permanent coefficients with exact RationalInterval floors:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
+.Plugin.Load(&quot;continued-fraction&quot;);
+e := .cf.FromRefinable(.numerics.Exp(1));
+ln2 := .cf.FromRefinable(.numerics.Ln(2));
+.Table({=
+  columns=[&quot;function&quot;,&quot;coefficients&quot;,&quot;five-term cylinder&quot;],
+  rows=[
+    [&quot;exp(1)&quot;,e.Coefficients(8),e.Enclosure(5)],
+    [&quot;ln(2)&quot;,ln2.Coefficients(6),ln2.Enclosure(5)]
+  ]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p><code>CoefficientResult(index,{=trace=1})</code> shows each requested source enclosure, its image under the accumulated Möbius form, the two endpoint floors, and each accepted output. <code>maxRefinements</code>, <code>sourceMaxWork</code>, and <code>initialSourceWidth</code> bound the transaction.</p>
+<p>The method is also an accelerated Farey walk. Repeated moves toward one Farey parent form a run; the run length is the next continued-fraction coefficient. Testing individual mediants exposes intermediate brackets, while a stable floor determines the complete run length at once. Both schedules stall at the same exact rational boundaries unless equality can be proved.</p>
+<h2>Roots choose the strongest available representation</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="12" spellcheck="false">.Plugin.Load(&quot;continued-fraction&quot;);
+periodic := .cf.Sqrt(2/3);
+exact := .cf.NthRoot(27,3);
+general := .cf.NthRoot(2,3);
+.Table({=
+  columns=[&quot;root&quot;,&quot;kind&quot;,&quot;coefficients or value&quot;],
+  rows=[
+    [&quot;sqrt(2/3)&quot;,periodic.Record()[:kind],periodic.Coefficients(8)],
+    [&quot;cuberoot(27)&quot;,exact.Record()[:kind],exact.Value()],
+    [&quot;cuberoot(2)&quot;,general.Record()[:kind],general.Coefficients(6)]
+  ]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Perfect powers are finite, nonsquare rational square roots are periodic, and other roots use certified function extraction. Calling <code>FromRefinable(.numerics.Sqrt(4))</code> deliberately bypasses the exact shortcut and illustrates why an interval-only provider can remain stuck around the Integer boundary <code>2</code>; <code>.cf.Sqrt(4)</code> proves the finite result immediately.</p>
 <h2>Arithmetic of continued-fraction reals</h2>
-<p>Coefficient transducers remain available for future specialized algorithms. The complete field surface works now through a certified recipe while keeping the <code>ContinuedFractionReal</code> semantic family:</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">.Plugin.Load(&quot;continued-fraction&quot;);
+<p>Native continued-fraction operands use exact Gosper homographic and bihomographic coefficient transducers by default. The certified recipe remains attached as the numerical enclosure witness:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="14" spellcheck="false">.Plugin.Load(&quot;continued-fraction&quot;);
 .Plugin.Load(&quot;numerics&quot;);
 x := .cf.Sqrt2();
-values := [x+x, x-x, x*x, x/x, -x, .Abs(x), x^2, x+1/3];
+y := .cf.Periodic([1], [1,2]);
+values := [x+y, x-y, x*y, x/y];
 .Table({=
-  columns=[&quot;type&quot;, &quot;interval&quot;],
+  columns=[&quot;operation&quot;, &quot;transducer&quot;, &quot;coefficients&quot;, &quot;interval&quot;],
   rows=values.Map((value) -&gt; [
-    value.__type,
+    value.Record()[:operation],
+    value.Record()[:transducer],
+    value.Coefficients(6),
     .numerics.Refine(value, {= absoluteWidth=1/1000, maxWork=120 })[:interval]
   ])
 });</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p><code>x+1/3</code> stays in the continued-fraction family because the Rational is an exact embeddable value. Combining <code>x</code> with a Cauchy or algebraic real instead chooses their common certified Oracle target.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
+<p>Every emitted term follows from agreeing exact corner floors of Gosper&#039;s bihomographic form. <code>CoefficientResult(n,{=maxInputTerms=...,trace=1})</code> exposes the bounded decision and its input/output transactions. It may report <code>budgetExhausted</code> when a coefficient is not yet forced; <code>Coefficient(n)</code> never substitutes a guess.</p>
+<p>Finite arithmetic is folded exactly. Identity-aware shortcuts prove <code>x-x=0</code> and nonzero <code>x/x=1</code>, while separately constructed equal streams retain bounded uncertainty because matching prefixes do not prove correlation. Use <code>ZeroStatus()</code> to distinguish exact zero, certified nonzero, and unknown. Combining a continued fraction with a Cauchy or algebraic real still chooses their common certified Oracle target.</p>
+<p>For a transaction-by-transaction explanation and all four demonstrations, see the [Gosper arithmetic exploration](../../explorations/continued-fractions/gosper-arithmetic.md).</p>
+<h2>Recognize the periodic quadratic equation</h2>
+<p>An explicitly periodic stream determines an exact Möbius fixed point. The plugin eliminates that repeating tail and returns a primitive quadratic form without using floating-point recognition:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="15" spellcheck="false">.Plugin.Load(&quot;continued-fraction&quot;);
+root := .cf.Sqrt2();
+shifted := root.Translate(3);
+reciprocal := root.Reciprocal();
+rootForm := root.QuadraticForm();
+shiftedForm := shifted.QuadraticForm();
+reciprocalForm := reciprocal.QuadraticForm();
+.Table({=
+  columns=[&quot;value&quot;, &quot;prefix&quot;, &quot;quadratic coefficients&quot;, &quot;discriminant&quot;],
+  rows=[
+    [&quot;sqrt(2)&quot;, root.Record()[:prefix], rootForm[:coefficients], rootForm[:discriminant]],
+    [&quot;sqrt(2)+3&quot;, shifted.Record()[:prefix], shiftedForm[:coefficients], shiftedForm[:discriminant]],
+    [&quot;1/sqrt(2)&quot;, reciprocal.Record()[:prefix], reciprocalForm[:coefficients], reciprocalForm[:discriminant]]
+  ]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The three equations are <code>x^2-2=0</code>, <code>x^2-6x+7=0</code>, and <code>2x^2-1=0</code>. The returned source cylinder still encloses the represented root; no decimal root choice is guessed.</p>
+<h2>Query a denominator-bounded best approximation</h2>
+<p>The second-kind query minimizes the exact scaled error <code>|q*x-p|</code> through the requested denominator bound. It reads one further convergent to certify that the next denominator is outside the search range:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">.Plugin.Load(&quot;continued-fraction&quot;);
+root := .cf.Sqrt2();
+best := root.BestApproximation(10);
+limited := root.BestApproximation(100, {= maxCoefficients=2 });
+.Table({=
+  columns=[&quot;request&quot;, &quot;status&quot;, &quot;approximation&quot;, &quot;next denominator&quot;, &quot;diagnostics&quot;],
+  rows=[
+    [10, best[:status], best[:approximation], best[:nextDenominator], best[:diagnostics]],
+    [100, limited[:status], limited[:approximation], limited[:nextDenominator], limited[:diagnostics]]
+  ]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The first row certifies <code>7/5</code> because the next convergent has denominator <code>12</code>. The second row keeps <code>3/2</code>, but reports budget exhaustion instead of claiming that two observed coefficients settle every denominator through <code>100</code>.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
