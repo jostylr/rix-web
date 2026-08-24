@@ -27,7 +27,7 @@ Ship one `rix.viewport@1` / `rix.selection@1` interaction layer for every SVG
 Follow-up QA remains: browser automation for multitouch gestures, screen-reader
 passes, and usability tuning for very dense plots.
 
-## 2. Real Scene3D viewport
+## 2. Real Scene3D viewport — baseline implemented
 
 Mount the existing WebGL plan as an actual orbitable, zoomable, selectable
 viewport instead of rebuilding only a 2D snapshot.
@@ -39,6 +39,18 @@ viewport instead of rebuilding only a 2D snapshot.
   inspection; retain the portable SVG snapshot as a fallback and export.
 - Test context loss, reduced motion, high-DPI rendering, and deterministic
   snapshot parity.
+
+The baseline now mounts a returned `.scene3d.Scene` directly through the shared
+output widget host. It provides pointer and keyboard orbit/truck/dolly, bounded
+camera distances, reset and projection switching, stable `pickid` selection,
+DOM annotation overlays, exact retained world-coordinate inspection, high-DPI
+canvas sizing, and persistent camera/selection state across reactive rerenders.
+Missing and lost WebGL contexts display a deterministic SVG projection derived
+from the same `rix.webgl-plan@1` camera and draw calls.
+
+Follow-up QA remains: multitouch camera gestures, GPU color-buffer picking for
+very dense scenes, deeper annotation collision/occlusion policy, screen-reader
+passes, and pixel-level parity fixtures across browser WebGL implementations.
 
 ## 3. Broader plot families
 

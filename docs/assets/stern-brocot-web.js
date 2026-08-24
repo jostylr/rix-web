@@ -9,7 +9,7 @@ import {
   createDefaultSystemContext,
   formatValue,
   parseAndEvaluate
-} from "./chunk-jh928jcj.js";
+} from "./chunk-wac40s0a.js";
 
 // ../packages/reals/src/index.js
 var LN2_CF = [0, 1, 2, 3, 1, 6, 3, 1, 1, 2, 1, 1, 6, 1, 6, 1, 1, 4, 1, 2, 4, 1, 1, 1, 1, 1, 1, 1, 3, 1, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];

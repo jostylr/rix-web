@@ -377,6 +377,20 @@ test("the browser lowers Scene3D snapshots to Canvas and retained scenes to exec
     expect(painted.annotations[0].screen).toHaveLength(2);
 });
 
+test("a retained Scene3D result mounts the interactive browser viewport", () => {
+    const response = createRixRepl().run(`
+        .Plugin.Load("scene3d");
+        .scene3d.Scene([
+            .scene3d.Mesh([[0,0,0],[1,0,0],[0,1,0]], [[1,2,3]], {= id="face" })
+        ]);
+    `);
+    expect(response.type).toBe("result");
+    expect(response.text).toBe("[Scene3D: 1 retained primitive]");
+    expect(response.html).toContain('class="rix-output-scene3d"');
+    expect(response.html).toContain("data-rix-scene3d-canvas");
+    expect(response.html).toContain('data-rix-scene3d-action="reset"');
+});
+
 test("the browser runs the first Scene3D Phase 2 retained contracts", () => {
     const response = createRixRepl().run(`
         .Plugin.Load("scene3d");

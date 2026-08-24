@@ -6,9 +6,11 @@ import {
     complete,
     formatValue,
     formatValueSource,
+    formatOutputText,
     irToText,
     isReactiveNode,
     isOutputValue,
+    outputValueKind,
     parseAndEvaluate,
     parseAndEvaluateAsync,
     renderOutputHtml,
@@ -260,7 +262,10 @@ export function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true
     };
     const presentationFormat = (value) => {
         const interval = automaticallyRefinedInterval(value);
-        return interval ? formatCertifiedIntervalDecimal(interval) : configuredFormat(value);
+        if (interval) return formatCertifiedIntervalDecimal(interval);
+        return outputValueKind(value) === "scene3d"
+            ? formatOutputText(value, configuredFormat)
+            : configuredFormat(value);
     };
     const applyNumberConfig = ({ input, display } = {}) => {
         if (input !== undefined) {

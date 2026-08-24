@@ -24953,8 +24953,17 @@ function normalizeColumns(value) {
     return { id, label: asString(get(entry, "label")) || id, align: asString(get(entry, "align")), format: get(entry, "format") };
   });
 }
+function outputValueKind(value) {
+  if (value?.type === "output" && typeof value.kind === "string")
+    return value.kind;
+  if (value?.type !== "map" || !(value.entries instanceof Map))
+    return null;
+  const type = asString(get(value.entries, "type"));
+  const kind = asString(get(value.entries, "kind"));
+  return type === "output" && kind === "scene3d" ? kind : null;
+}
 function isOutputValue(value) {
-  return Boolean(value && value.type === "output" && typeof value.kind === "string");
+  return outputValueKind(value) !== null;
 }
 var INLINE_OUTPUT_KINDS = new Set([
   "text",
@@ -26875,6 +26884,14 @@ function formatBlockChildren(children, format) {
 function formatOutputText(value, format) {
   if (!isOutputValue(value))
     return format(value);
+  if (outputValueKind(value) === "scene3d") {
+    const entries2 = value?.entries instanceof Map ? value.entries : null;
+    const realized = entries2 ? get(entries2, "realized") : value.realized;
+    const realizedEntries = realized?.entries instanceof Map ? realized.entries : null;
+    const primitives = realizedEntries ? get(realizedEntries, "primitives") : realized?.primitives;
+    const primitiveCount = sequence4(primitives || [], "Scene3D realized primitives").length;
+    return `[Scene3D: ${primitiveCount} retained primitive${primitiveCount === 1 ? "" : "s"}]`;
+  }
   if (value.kind === "live_view")
     return formatOutputText(value.current, format);
   if (value.kind === "text")
@@ -27064,6 +27081,10 @@ function renderOutputHtml(value, format = (item) => String(item ?? "")) {
   const text8 = (item) => escapeHtml(isOutputValue(item) ? formatOutputText(item, format) : cellText(item, format));
   if (!isOutputValue(value))
     return `<pre>${text8(value)}</pre>`;
+  if (outputValueKind(value) === "scene3d") {
+    const schema = value?.entries instanceof Map ? asString(get(value.entries, "schema")) : value.schema;
+    return `<section class="rix-output-scene3d" data-rix-scene3d-schema="${escapeHtml(schema || "rix.scene3d@1")}"><div class="rix-output-scene3d-toolbar" role="toolbar" aria-label="3D scene controls"><button type="button" data-rix-scene3d-action="previous" title="Previous selectable object">Previous</button><button type="button" data-rix-scene3d-action="next" title="Next selectable object">Next</button><span class="rix-output-scene3d-toolbar-group" aria-label="Orbit"><button type="button" data-rix-scene3d-action="orbit-left" aria-label="Orbit left">←</button><button type="button" data-rix-scene3d-action="orbit-up" aria-label="Orbit up">↑</button><button type="button" data-rix-scene3d-action="orbit-down" aria-label="Orbit down">↓</button><button type="button" data-rix-scene3d-action="orbit-right" aria-label="Orbit right">→</button></span><button type="button" data-rix-scene3d-action="dolly-in" aria-label="Dolly in">+</button><button type="button" data-rix-scene3d-action="dolly-out" aria-label="Dolly out">−</button><button type="button" data-rix-scene3d-action="projection">Projection</button><button type="button" data-rix-scene3d-action="reset">Reset camera</button></div><div class="rix-output-scene3d-surface"><canvas data-rix-scene3d-canvas width="640" height="480" tabindex="0" role="img" aria-label="Interactive 3D mathematical scene. Drag to orbit, Shift-drag to truck, use the wheel to dolly, arrows to orbit, Shift-arrows to truck, plus or minus to dolly, P to switch projection, brackets to select objects, and Home to reset.">Interactive 3D scene. WebGL or the SVG fallback is required.</canvas><div class="rix-output-scene3d-annotations" aria-label="3D scene annotations"></div></div><output class="rix-output-scene3d-inspector" aria-live="polite">Scene3D background</output><output class="rix-output-scene3d-status" aria-live="polite">Preparing 3D viewport…</output></section>`;
+  }
   if (value.kind === "live_view") {
     return `<section class="rix-output-live-view" data-rix-live-view="${escapeHtml(value.id)}" data-rix-live-revision="${value.revision}">${renderOutputHtml(value.current, format)}</section>`;
   }
@@ -78094,6 +78115,187 @@ function createWebGLPlan(scene, options = null) {
     diagnostics
   };
 }
+function subtract(left, right) {
+  return left.map((value, index) => value - right[index]);
+}
+function dot(left, right) {
+  return left.reduce((sum, value, index) => sum + value * right[index], 0);
+}
+function cross(left, right) {
+  return [left[1] * right[2] - left[2] * right[1], left[2] * right[0] - left[0] * right[2], left[0] * right[1] - left[1] * right[0]];
+}
+function normalize3(value) {
+  const length = Math.hypot(...value);
+  if (!length)
+    throw new Error("WebGL camera vectors must not be degenerate");
+  return value.map((entry2) => entry2 / length);
+}
+function multiply4(left, right) {
+  const result = new Array(16).fill(0);
+  for (let column = 0;column < 4; column += 1) {
+    for (let row = 0;row < 4; row += 1) {
+      for (let index = 0;index < 4; index += 1)
+        result[column * 4 + row] += left[index * 4 + row] * right[column * 4 + index];
+    }
+  }
+  return result;
+}
+function lookAt(eye, target, up) {
+  const z = normalize3(subtract(eye, target));
+  const x = normalize3(cross(up, z));
+  const y = cross(z, x);
+  return [
+    x[0],
+    y[0],
+    z[0],
+    0,
+    x[1],
+    y[1],
+    z[1],
+    0,
+    x[2],
+    y[2],
+    z[2],
+    0,
+    -dot(x, eye),
+    -dot(y, eye),
+    -dot(z, eye),
+    1
+  ];
+}
+function projection(camera, aspect, drawCalls) {
+  if (camera.projection === "perspective") {
+    const f = 1 / Math.tan(camera.fov * Math.PI / 360);
+    return [
+      f / aspect,
+      0,
+      0,
+      0,
+      0,
+      f,
+      0,
+      0,
+      0,
+      0,
+      (camera.far + camera.near) / (camera.near - camera.far),
+      -1,
+      0,
+      0,
+      2 * camera.far * camera.near / (camera.near - camera.far),
+      0
+    ];
+  }
+  const points = drawCalls.flatMap(({ positions }) => positions);
+  const radius = points.length ? Math.max(1, ...points.map((point4) => Math.hypot(...subtract(point4, camera.target)))) : 1;
+  const vertical = camera.scale || radius * 2.2;
+  const horizontal = vertical * aspect;
+  return [
+    2 / horizontal,
+    0,
+    0,
+    0,
+    0,
+    2 / vertical,
+    0,
+    0,
+    0,
+    0,
+    -2 / (camera.far - camera.near),
+    0,
+    0,
+    0,
+    -(camera.far + camera.near) / (camera.far - camera.near),
+    1
+  ];
+}
+function webGLPlanMatrix(plan) {
+  if (plan?.schema !== "rix.webgl-plan@1")
+    throw new Error("Unsupported WebGL plan schema");
+  const { width, height } = plan.viewport;
+  if (!(width > 0 && height > 0))
+    throw new Error("WebGL plan viewport dimensions must be positive");
+  const view = lookAt(plan.camera.position, plan.camera.target, plan.camera.up);
+  return multiply4(projection(plan.camera, width / height, plan.drawCalls), view);
+}
+function shader(gl, type, source) {
+  const value = gl.createShader(type);
+  gl.shaderSource(value, source);
+  gl.compileShader(value);
+  if (gl.getShaderParameter && !gl.getShaderParameter(value, gl.COMPILE_STATUS)) {
+    throw new Error(`WebGL shader compilation failed: ${gl.getShaderInfoLog(value) || "unknown error"}`);
+  }
+  return value;
+}
+function transformPoint(matrix, point4) {
+  const source = [...point4, 1];
+  const result = [0, 0, 0, 0];
+  for (let row = 0;row < 4; row += 1) {
+    for (let column = 0;column < 4; column += 1)
+      result[row] += matrix[column * 4 + row] * source[column];
+  }
+  return result;
+}
+function paintWebGLPlan(gl, plan) {
+  if (!gl || typeof gl.createBuffer !== "function")
+    throw new Error("WebGL plan requires a WebGL rendering context");
+  if (plan?.schema !== "rix.webgl-plan@1")
+    throw new Error("Unsupported WebGL plan schema");
+  const vertex = shader(gl, gl.VERTEX_SHADER, "attribute vec3 a_position; uniform mat4 u_mvp; uniform float u_point_size; void main(){gl_Position=u_mvp*vec4(a_position,1.0);gl_PointSize=u_point_size;}");
+  const fragment = shader(gl, gl.FRAGMENT_SHADER, "precision mediump float; uniform vec4 u_color; void main(){gl_FragColor=u_color;}");
+  const program = gl.createProgram();
+  gl.attachShader(program, vertex);
+  gl.attachShader(program, fragment);
+  gl.linkProgram(program);
+  if (gl.getProgramParameter && !gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    throw new Error(`WebGL program linking failed: ${gl.getProgramInfoLog(program) || "unknown error"}`);
+  }
+  gl.useProgram(program);
+  const positionLocation = gl.getAttribLocation(program, "a_position");
+  const matrixLocation = gl.getUniformLocation(program, "u_mvp");
+  const colorLocation = gl.getUniformLocation(program, "u_color");
+  const pointSizeLocation = gl.getUniformLocation(program, "u_point_size");
+  const { width, height } = plan.viewport;
+  const matrix = webGLPlanMatrix(plan);
+  gl.viewport(0, 0, width, height);
+  gl.enable(gl.DEPTH_TEST);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.clearColor(...plan.background, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.uniformMatrix4fv(matrixLocation, false, new Float32Array(matrix));
+  for (const call of plan.drawCalls) {
+    const vertices = call.indices.flatMap((index) => call.positions[index]);
+    const buffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(positionLocation);
+    gl.vertexAttribPointer(positionLocation, 3, gl.FLOAT, false, 0, 0);
+    gl.uniform4fv(colorLocation, new Float32Array(call.color));
+    gl.uniform1f(pointSizeLocation, call.pointSize);
+    if (call.mode === "lines" && gl.lineWidth)
+      gl.lineWidth(call.lineWidth);
+    gl.drawArrays(call.mode === "triangles" ? gl.TRIANGLES : call.mode === "lines" ? gl.LINES : gl.POINTS, 0, call.indices.length);
+    if (gl.deleteBuffer)
+      gl.deleteBuffer(buffer);
+  }
+  const annotations = plan.annotations.map((annotation) => {
+    const clip = transformPoint(matrix, annotation.position);
+    const visible = clip[3] > 0 && Math.abs(clip[0]) <= clip[3] && Math.abs(clip[1]) <= clip[3] && Math.abs(clip[2]) <= clip[3];
+    return {
+      ...annotation,
+      visible,
+      screen: clip[3] === 0 ? null : [width * (clip[0] / clip[3] + 1) / 2, height * (1 - clip[1] / clip[3]) / 2],
+      depth: clip[3] === 0 ? null : clip[2] / clip[3]
+    };
+  });
+  if (gl.deleteProgram)
+    gl.deleteProgram(program);
+  if (gl.deleteShader) {
+    gl.deleteShader(vertex);
+    gl.deleteShader(fragment);
+  }
+  return { context: gl, picking: plan.picking, annotations, matrix };
+}
 
 // ../rix/plugins/render-webgl/webgl.plugin.rix.js
 var definition4 = {
@@ -87666,6 +87868,588 @@ function enhanceGraphicViews(root, options = {}) {
   return root;
 }
 
+// ../rix/src/tools/scene3d-view.js
+var MIN_PITCH = -Math.PI / 2 + 0.015;
+var MAX_PITCH = Math.PI / 2 - 0.015;
+function sequenceValue6(value) {
+  if (Array.isArray(value))
+    return value;
+  if (Array.isArray(value?.values))
+    return value.values;
+  return [];
+}
+function stringValue11(value) {
+  if (typeof value === "string")
+    return value;
+  if (value?.type === "string" || value?.type === "symbol")
+    return value.value;
+  return null;
+}
+function mapField4(value, key) {
+  if (value instanceof Map) {
+    if (value.has(key))
+      return value.get(key);
+    const match = [...value.keys()].find((candidate) => String(candidate).toLowerCase() === String(key).toLowerCase());
+    return match === undefined ? null : value.get(match);
+  }
+  if (value?.type === "map" && value.entries instanceof Map)
+    return mapField4(value.entries, key);
+  if (value && typeof value === "object") {
+    if (Object.hasOwn(value, key))
+      return value[key];
+    const match = Object.keys(value).find((candidate) => candidate.toLowerCase() === String(key).toLowerCase());
+    return match === undefined ? null : value[match];
+  }
+  return null;
+}
+function cloneCamera(camera) {
+  return {
+    ...camera,
+    position: [...camera.position],
+    target: [...camera.target],
+    up: [...camera.up],
+    orbit: camera.orbit && typeof camera.orbit === "object" ? { ...camera.orbit } : camera.orbit
+  };
+}
+function subtract2(left, right) {
+  return left.map((value, index) => value - right[index]);
+}
+function add2(left, right) {
+  return left.map((value, index) => value + right[index]);
+}
+function scale2(value, factor) {
+  return value.map((entry2) => entry2 * factor);
+}
+function cross2(left, right) {
+  return [
+    left[1] * right[2] - left[2] * right[1],
+    left[2] * right[0] - left[0] * right[2],
+    left[0] * right[1] - left[1] * right[0]
+  ];
+}
+function normalize4(value, fallback = [1, 0, 0]) {
+  const length = Math.hypot(...value);
+  return length > 0.000000000001 ? value.map((entry2) => entry2 / length) : [...fallback];
+}
+function sceneBounds(plan) {
+  const points = plan.drawCalls.flatMap((call) => call.positions);
+  if (!points.length)
+    return { center: [0, 0, 0], radius: 1 };
+  const low = [...points[0]];
+  const high = [...points[0]];
+  for (const point4 of points.slice(1)) {
+    for (let axis = 0;axis < 3; axis += 1) {
+      low[axis] = Math.min(low[axis], point4[axis]);
+      high[axis] = Math.max(high[axis], point4[axis]);
+    }
+  }
+  const center = low.map((value, axis) => (value + high[axis]) / 2);
+  return {
+    center,
+    radius: Math.max(0.000001, ...points.map((point4) => Math.hypot(...subtract2(point4, center))))
+  };
+}
+function createScene3DViewState(plan, target = {}) {
+  if (plan?.schema !== "rix.webgl-plan@1")
+    throw new Error("Scene3D view requires a rix.webgl-plan@1 plan");
+  const bounds2 = sceneBounds(plan);
+  if (!target.initialCamera)
+    target.initialCamera = cloneCamera(plan.camera);
+  if (!target.camera)
+    target.camera = cloneCamera(target.initialCamera);
+  target.bounds = bounds2;
+  const distance = Math.hypot(...subtract2(target.camera.position, target.camera.target));
+  target.policy = {
+    minDistance: Math.max(target.camera.near * 1.25, bounds2.radius / 1000, 0.000001),
+    maxDistance: Math.max(bounds2.radius * 1000, distance * 32, 1)
+  };
+  const selectable = new Set(Object.keys(plan.picking || {}));
+  const ids = Array.isArray(target.selection?.ids) ? [...new Set(target.selection.ids.map(String))].filter((id) => selectable.has(id)) : [];
+  target.selection = { schema: "rix.selection@1", ids, focus: target.selection?.focus ?? ids[0] ?? null };
+  target.viewport = {
+    schema: "rix.viewport3d@1",
+    width: plan.viewport.width,
+    height: plan.viewport.height,
+    projection: target.camera.projection
+  };
+  return target;
+}
+function orbitScene3DCamera(state, yawDelta, pitchDelta) {
+  const offset = subtract2(state.camera.position, state.camera.target);
+  const radius = Math.max(state.policy.minDistance, Math.hypot(...offset));
+  const yaw = Math.atan2(offset[1], offset[0]) + Number(yawDelta || 0);
+  const pitch = Math.min(MAX_PITCH, Math.max(MIN_PITCH, Math.asin(offset[2] / radius) + Number(pitchDelta || 0)));
+  const horizontal = radius * Math.cos(pitch);
+  state.camera.position = add2(state.camera.target, [
+    horizontal * Math.cos(yaw),
+    horizontal * Math.sin(yaw),
+    radius * Math.sin(pitch)
+  ]);
+  return state;
+}
+function truckScene3DCamera(state, horizontal, vertical) {
+  const forward = normalize4(subtract2(state.camera.target, state.camera.position), [0, 0, -1]);
+  const right = normalize4(cross2(forward, state.camera.up), [1, 0, 0]);
+  const up = normalize4(cross2(right, forward), [0, 0, 1]);
+  const delta = add2(scale2(right, Number(horizontal || 0)), scale2(up, Number(vertical || 0)));
+  state.camera.position = add2(state.camera.position, delta);
+  state.camera.target = add2(state.camera.target, delta);
+  return state;
+}
+function dollyScene3DCamera(state, factor) {
+  const offset = subtract2(state.camera.position, state.camera.target);
+  const oldDistance = Math.max(0.000000000001, Math.hypot(...offset));
+  const distance = Math.min(state.policy.maxDistance, Math.max(state.policy.minDistance, oldDistance * Number(factor || 1)));
+  state.camera.position = add2(state.camera.target, scale2(offset, distance / oldDistance));
+  if (state.camera.projection === "orthographic") {
+    const currentScale = Number(state.camera.scale || state.bounds.radius * 2.2);
+    state.camera.scale = Math.max(state.bounds.radius / 1000, currentScale * (distance / oldDistance));
+  }
+  return state;
+}
+function resetScene3DCamera(state) {
+  state.camera = cloneCamera(state.initialCamera);
+  state.viewport.projection = state.camera.projection;
+  return state;
+}
+function toggleScene3DProjection(state) {
+  if (state.camera.projection === "perspective") {
+    state.camera.projection = "orthographic";
+    state.camera.scale = Math.max(state.bounds.radius * 2.2, 0.000001);
+  } else {
+    state.camera.projection = "perspective";
+  }
+  state.viewport.projection = state.camera.projection;
+  return state;
+}
+function projectScene3DPoint(matrix, point4, viewport2) {
+  const source = [...point4, 1];
+  const clip = [0, 0, 0, 0];
+  for (let row = 0;row < 4; row += 1) {
+    for (let column = 0;column < 4; column += 1)
+      clip[row] += matrix[column * 4 + row] * source[column];
+  }
+  if (!(clip[3] > 0))
+    return { visible: false, screen: null, depth: Infinity };
+  const ndc = clip.slice(0, 3).map((value) => value / clip[3]);
+  return {
+    visible: ndc.every((value) => Math.abs(value) <= 1),
+    screen: [viewport2.width * (ndc[0] + 1) / 2, viewport2.height * (1 - ndc[1]) / 2],
+    depth: ndc[2]
+  };
+}
+function segmentDistance(point4, start, end) {
+  const dx = end[0] - start[0];
+  const dy = end[1] - start[1];
+  const length = dx * dx + dy * dy;
+  const amount = length ? Math.max(0, Math.min(1, ((point4[0] - start[0]) * dx + (point4[1] - start[1]) * dy) / length)) : 0;
+  return Math.hypot(point4[0] - start[0] - amount * dx, point4[1] - start[1] - amount * dy);
+}
+function triangleContains(point4, first, second, third) {
+  const sign = (a, b, c) => (a[0] - c[0]) * (b[1] - c[1]) - (b[0] - c[0]) * (a[1] - c[1]);
+  const values4 = [sign(point4, first, second), sign(point4, second, third), sign(point4, third, first)];
+  return !(values4.some((value) => value < 0) && values4.some((value) => value > 0));
+}
+function pickScene3DPlan(plan, matrix, screenPoint, tolerance = 8) {
+  let best = null;
+  const consider = (call, depth, distance = 0) => {
+    if (!call.pickId)
+      return;
+    if (!best || depth < best.depth || depth === best.depth && distance < best.distance) {
+      best = { pickId: call.pickId, primitive: call.primitive, depth, distance, call };
+    }
+  };
+  for (const call of plan.drawCalls) {
+    if (!call.pickId)
+      continue;
+    const points = call.positions.map((point4) => projectScene3DPoint(matrix, point4, plan.viewport));
+    if (call.mode === "points") {
+      for (const index of call.indices) {
+        const item = points[index];
+        if (!item.visible)
+          continue;
+        const distance = Math.hypot(screenPoint[0] - item.screen[0], screenPoint[1] - item.screen[1]);
+        if (distance <= Math.max(tolerance, call.pointSize / 2))
+          consider(call, item.depth, distance);
+      }
+    } else if (call.mode === "lines") {
+      for (let index = 0;index + 1 < call.indices.length; index += 2) {
+        const first = points[call.indices[index]];
+        const second = points[call.indices[index + 1]];
+        if (!first.screen || !second.screen)
+          continue;
+        const distance = segmentDistance(screenPoint, first.screen, second.screen);
+        if (distance <= Math.max(tolerance, call.lineWidth / 2))
+          consider(call, Math.min(first.depth, second.depth), distance);
+      }
+    } else {
+      for (let index = 0;index + 2 < call.indices.length; index += 3) {
+        const triangle = call.indices.slice(index, index + 3).map((item) => points[item]);
+        if (triangle.some((item) => !item.screen))
+          continue;
+        if (triangleContains(screenPoint, ...triangle.map((item) => item.screen))) {
+          consider(call, triangle.reduce((sum, item) => sum + item.depth, 0) / 3);
+        }
+      }
+    }
+  }
+  for (const annotation of plan.annotations) {
+    if (!annotation.pickId)
+      continue;
+    const item = projectScene3DPoint(matrix, annotation.position, plan.viewport);
+    if (!item.visible)
+      continue;
+    const distance = Math.hypot(screenPoint[0] - item.screen[0], screenPoint[1] - item.screen[1]);
+    if (distance <= tolerance * 1.5)
+      consider({ ...annotation, primitive: annotation.primitive }, item.depth, distance);
+  }
+  return best;
+}
+function exactText2(value, format) {
+  try {
+    return String(format(value));
+  } catch {
+    return String(value);
+  }
+}
+function exactPoint2(value, format) {
+  return `(${sequenceValue6(value).map((coordinate) => exactText2(coordinate, format)).join(", ")})`;
+}
+function describeScene3DSelection(scene, pickId, format = String) {
+  const primitives = sequenceValue6(mapField4(mapField4(scene, "realized"), "primitives"));
+  const primitive2 = primitives.find((candidate) => stringValue11(mapField4(candidate, "pickid")) === pickId);
+  if (!primitive2)
+    return pickId ? `Scene3D object ${pickId}` : "Scene3D background";
+  const kind = stringValue11(mapField4(primitive2, "kind")) || "object";
+  const label2 = stringValue11(mapField4(primitive2, "label")) || pickId;
+  const points = sequenceValue6(mapField4(primitive2, "points"));
+  const coordinates = points.length <= 4 ? points.map((point4) => exactPoint2(point4, format)).join("; ") : `${points.slice(0, 3).map((point4) => exactPoint2(point4, format)).join("; ")}; …`;
+  return `${label2} · ${kind} · ${points.length} exact world point${points.length === 1 ? "" : "s"}${coordinates ? ` · ${coordinates}` : ""}`;
+}
+function escapeHtml3(value) {
+  return String(value).replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  })[character]);
+}
+function renderScene3DSvgFallback(plan, matrix = webGLPlanMatrix(plan)) {
+  const { width, height } = plan.viewport;
+  const project = (point4) => projectScene3DPoint(matrix, point4, plan.viewport);
+  const body = [];
+  for (const call of plan.drawCalls) {
+    const points = call.positions.map(project);
+    const color2 = `rgb(${call.color.slice(0, 3).map((value) => Math.round(value * 255)).join(" ")})`;
+    if (call.mode === "triangles") {
+      for (let index = 0;index + 2 < call.indices.length; index += 3) {
+        const triangle = call.indices.slice(index, index + 3).map((item) => points[item]);
+        if (triangle.some((item) => !item.screen))
+          continue;
+        body.push(`<polygon points="${triangle.map((item) => item.screen.join(",")).join(" ")}" fill="${color2}" fill-opacity="${call.color[3]}"${call.pickId ? ` data-rix-semantic-id="${escapeHtml3(call.pickId)}"` : ""}/>`);
+      }
+    } else if (call.mode === "lines") {
+      for (let index = 0;index + 1 < call.indices.length; index += 2) {
+        const pair2 = call.indices.slice(index, index + 2).map((item) => points[item]);
+        if (pair2.some((item) => !item.screen))
+          continue;
+        body.push(`<line x1="${pair2[0].screen[0]}" y1="${pair2[0].screen[1]}" x2="${pair2[1].screen[0]}" y2="${pair2[1].screen[1]}" stroke="${color2}" stroke-opacity="${call.color[3]}" stroke-width="${call.lineWidth}"/>`);
+      }
+    } else {
+      for (const index of call.indices) {
+        const point4 = points[index];
+        if (!point4.visible)
+          continue;
+        body.push(`<circle cx="${point4.screen[0]}" cy="${point4.screen[1]}" r="${Math.max(1, call.pointSize / 2)}" fill="${color2}" fill-opacity="${call.color[3]}"/>`);
+      }
+    }
+  }
+  for (const annotation of plan.annotations) {
+    const point4 = project(annotation.position);
+    if (!point4.visible)
+      continue;
+    body.push(`<text x="${point4.screen[0]}" y="${point4.screen[1]}" fill="rgb(${annotation.color.map((value) => Math.round(value * 255)).join(" ")})">${escapeHtml3(annotation.text || annotation.label || "")}</text>`);
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" class="rix-output-scene3d-fallback" viewBox="0 0 ${width} ${height}" role="img" aria-label="Static Scene3D fallback"><rect width="100%" height="100%" fill="rgb(${plan.background.map((value) => Math.round(value * 255)).join(" ")})"/>${body.join("")}</svg>`;
+}
+function scene3DRoots(root) {
+  const roots = [];
+  if (root?.matches?.(".rix-output-scene3d"))
+    roots.push(root);
+  if (root?.querySelectorAll)
+    roots.push(...root.querySelectorAll(".rix-output-scene3d"));
+  return roots;
+}
+function dispatchSceneEvent(root, detail) {
+  const EventConstructor = root.ownerDocument?.defaultView?.CustomEvent;
+  if (typeof EventConstructor === "function")
+    root.dispatchEvent(new EventConstructor("rix:scene3d-selection", { bubbles: true, detail }));
+}
+function enhanceScene3DViews(root, options = {}) {
+  const disposers = scene3DRoots(root).map((container) => {
+    const scene = options.scene;
+    const format = options.format || String;
+    const canvas = container.querySelector?.("canvas[data-rix-scene3d-canvas]");
+    const surface = container.querySelector?.(".rix-output-scene3d-surface");
+    const overlay = container.querySelector?.(".rix-output-scene3d-annotations");
+    const inspector = container.querySelector?.(".rix-output-scene3d-inspector");
+    const status = container.querySelector?.(".rix-output-scene3d-status");
+    if (!canvas || !surface)
+      return () => {};
+    const plan = createWebGLPlan(scene, { width: 640, height: 480 });
+    const state = createScene3DViewState(plan, options.state || {});
+    let gl = null;
+    let matrix = null;
+    let pointer = null;
+    let fallback = null;
+    let disposed = false;
+    const listeners = [];
+    const listen = (target, name, listener, settings) => {
+      target?.addEventListener?.(name, listener, settings);
+      listeners.push(() => target?.removeEventListener?.(name, listener, settings));
+    };
+    const setStatus = (message) => {
+      if (status)
+        status.textContent = message;
+    };
+    const syncPlan = () => {
+      plan.camera = cloneCamera(state.camera);
+      const rect = canvas.getBoundingClientRect?.() || { width: 640, height: 480 };
+      const logicalWidth = Math.max(1, Number(rect.width) || 640);
+      const logicalHeight = Math.max(1, Number(rect.height) || logicalWidth * 0.75);
+      const ratio = Math.min(4, Math.max(1, Number(container.ownerDocument?.defaultView?.devicePixelRatio) || 1));
+      const width = Math.round(logicalWidth * ratio);
+      const height = Math.round(logicalHeight * ratio);
+      if (canvas.width !== width)
+        canvas.width = width;
+      if (canvas.height !== height)
+        canvas.height = height;
+      plan.viewport = { width, height };
+      state.viewport.width = logicalWidth;
+      state.viewport.height = logicalHeight;
+      return ratio;
+    };
+    const showFallback = (message) => {
+      const ratio = syncPlan();
+      matrix = webGLPlanMatrix(plan);
+      fallback?.remove?.();
+      const holder = container.ownerDocument?.createElement?.("div");
+      if (holder) {
+        holder.innerHTML = renderScene3DSvgFallback(plan, matrix);
+        fallback = holder.firstElementChild;
+        if (fallback)
+          surface.appendChild(fallback);
+      }
+      canvas.hidden = true;
+      if (overlay)
+        overlay.hidden = true;
+      setStatus(`${message} Static SVG fallback shown at ${Math.round(ratio * 100)}% pixel density.`);
+    };
+    const select = (pickId, source) => {
+      state.selection.ids = pickId ? [pickId] : [];
+      state.selection.focus = pickId || null;
+      const exact2 = describeScene3DSelection(scene, pickId, format);
+      if (inspector)
+        inspector.textContent = exact2;
+      const interaction = pickId ? plan.picking[pickId]?.interaction ?? null : null;
+      const detail = Object.freeze({ type: "scene3d:selection", selection: { ...state.selection, ids: [...state.selection.ids] }, pickId, exact: exact2, interaction, source });
+      options.onSelection?.(detail);
+      dispatchSceneEvent(container, detail);
+    };
+    const renderAnnotations = (annotations, ratio) => {
+      if (!overlay)
+        return;
+      overlay.hidden = false;
+      overlay.replaceChildren?.();
+      for (const annotation of annotations) {
+        if (!annotation.visible || !annotation.screen)
+          continue;
+        const label2 = container.ownerDocument.createElement("button");
+        label2.type = "button";
+        label2.className = "rix-output-scene3d-annotation";
+        label2.textContent = annotation.text || annotation.label || annotation.pickId || "annotation";
+        label2.style.left = `${annotation.screen[0] / ratio}px`;
+        label2.style.top = `${annotation.screen[1] / ratio}px`;
+        if (annotation.pickId) {
+          label2.dataset.rixSemanticId = annotation.pickId;
+          label2.addEventListener("click", (event) => {
+            event.stopPropagation();
+            select(annotation.pickId, "annotation");
+          });
+        } else
+          label2.disabled = true;
+        overlay.appendChild(label2);
+      }
+    };
+    const repaint = () => {
+      if (disposed)
+        return;
+      const ratio = syncPlan();
+      matrix = webGLPlanMatrix(plan);
+      fallback?.remove?.();
+      fallback = null;
+      if (!gl) {
+        try {
+          gl = canvas.getContext?.("webgl2", { antialias: true, alpha: false }) || canvas.getContext?.("webgl", { antialias: true, alpha: false });
+        } catch {
+          gl = null;
+        }
+      }
+      if (!gl) {
+        showFallback("WebGL is unavailable.");
+        return;
+      }
+      canvas.hidden = false;
+      const result = paintWebGLPlan(gl, plan);
+      matrix = result.matrix;
+      renderAnnotations(result.annotations, ratio);
+      setStatus(`${state.camera.projection} projection · drag to orbit · Shift-drag to truck · wheel to dolly`);
+      options.onViewport?.({ type: "scene3d:viewport", viewport: { ...state.viewport }, camera: cloneCamera(state.camera) });
+    };
+    const logicalPoint = (event) => {
+      const rect = canvas.getBoundingClientRect();
+      const ratioX = plan.viewport.width / Math.max(1, rect.width);
+      const ratioY = plan.viewport.height / Math.max(1, rect.height);
+      return [(event.clientX - rect.left) * ratioX, (event.clientY - rect.top) * ratioY];
+    };
+    const cameraStep = () => Math.max(state.bounds.radius, Math.hypot(...subtract2(state.camera.position, state.camera.target))) * 0.06;
+    const action = (name, source = "toolbar") => {
+      if (name === "orbit-left")
+        orbitScene3DCamera(state, -0.12, 0);
+      else if (name === "orbit-right")
+        orbitScene3DCamera(state, 0.12, 0);
+      else if (name === "orbit-up")
+        orbitScene3DCamera(state, 0, 0.1);
+      else if (name === "orbit-down")
+        orbitScene3DCamera(state, 0, -0.1);
+      else if (name === "dolly-in")
+        dollyScene3DCamera(state, 0.82);
+      else if (name === "dolly-out")
+        dollyScene3DCamera(state, 1.22);
+      else if (name === "projection")
+        toggleScene3DProjection(state);
+      else if (name === "reset")
+        resetScene3DCamera(state);
+      else if (name === "previous" || name === "next") {
+        const ids = Object.keys(plan.picking);
+        if (ids.length) {
+          const current = ids.indexOf(state.selection.focus);
+          const delta = name === "next" ? 1 : -1;
+          select(ids[(current + delta + ids.length) % ids.length], source);
+        }
+        return;
+      }
+      repaint();
+    };
+    for (const button of container.querySelectorAll?.("[data-rix-scene3d-action]") || []) {
+      listen(button, "click", (event) => {
+        event.stopPropagation();
+        action(button.dataset.rixScene3dAction);
+      });
+    }
+    listen(canvas, "contextmenu", (event) => event.preventDefault());
+    listen(canvas, "click", (event) => event.stopPropagation());
+    listen(canvas, "pointerdown", (event) => {
+      pointer = { id: event.pointerId, x: event.clientX, y: event.clientY, lastX: event.clientX, lastY: event.clientY, moved: false, truck: event.shiftKey || event.button === 2 };
+      canvas.setPointerCapture?.(event.pointerId);
+      event.preventDefault();
+    });
+    listen(canvas, "pointermove", (event) => {
+      if (!pointer || event.pointerId !== pointer.id)
+        return;
+      const dx = event.clientX - pointer.lastX;
+      const dy = event.clientY - pointer.lastY;
+      pointer.lastX = event.clientX;
+      pointer.lastY = event.clientY;
+      pointer.moved ||= Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) > 4;
+      if (pointer.truck) {
+        const step = cameraStep() * 0.01;
+        truckScene3DCamera(state, -dx * step, dy * step);
+      } else
+        orbitScene3DCamera(state, -dx * 0.008, -dy * 0.008);
+      repaint();
+    });
+    listen(canvas, "pointerup", (event) => {
+      if (!pointer || event.pointerId !== pointer.id)
+        return;
+      if (!pointer.moved && matrix)
+        select(pickScene3DPlan(plan, matrix, logicalPoint(event))?.pickId || null, "pointer");
+      canvas.releasePointerCapture?.(event.pointerId);
+      pointer = null;
+    });
+    listen(canvas, "pointercancel", () => {
+      pointer = null;
+    });
+    listen(canvas, "wheel", (event) => {
+      event.preventDefault();
+      dollyScene3DCamera(state, Math.exp(Math.max(-500, Math.min(500, event.deltaY)) * 0.0015));
+      repaint();
+    }, { passive: false });
+    listen(canvas, "dblclick", (event) => {
+      event.preventDefault();
+      resetScene3DCamera(state);
+      repaint();
+    });
+    listen(canvas, "keydown", (event) => {
+      let handled = true;
+      if (event.key === "ArrowLeft")
+        event.shiftKey ? truckScene3DCamera(state, -cameraStep(), 0) : orbitScene3DCamera(state, -0.1, 0);
+      else if (event.key === "ArrowRight")
+        event.shiftKey ? truckScene3DCamera(state, cameraStep(), 0) : orbitScene3DCamera(state, 0.1, 0);
+      else if (event.key === "ArrowUp")
+        event.shiftKey ? truckScene3DCamera(state, 0, cameraStep()) : orbitScene3DCamera(state, 0, 0.08);
+      else if (event.key === "ArrowDown")
+        event.shiftKey ? truckScene3DCamera(state, 0, -cameraStep()) : orbitScene3DCamera(state, 0, -0.08);
+      else if (event.key === "+" || event.key === "=")
+        dollyScene3DCamera(state, 0.82);
+      else if (event.key === "-" || event.key === "_")
+        dollyScene3DCamera(state, 1.22);
+      else if (event.key === "Home")
+        resetScene3DCamera(state);
+      else if (event.key.toLowerCase() === "p")
+        toggleScene3DProjection(state);
+      else if (event.key === "]") {
+        action("next", "keyboard");
+        return;
+      } else if (event.key === "[") {
+        action("previous", "keyboard");
+        return;
+      } else
+        handled = false;
+      if (handled) {
+        event.preventDefault();
+        repaint();
+      }
+    });
+    listen(canvas, "webglcontextlost", (event) => {
+      event.preventDefault();
+      gl = null;
+      showFallback("WebGL context was lost.");
+    });
+    listen(canvas, "webglcontextrestored", () => {
+      gl = null;
+      repaint();
+    });
+    const ResizeObserverConstructor = container.ownerDocument?.defaultView?.ResizeObserver;
+    const resizeObserver = typeof ResizeObserverConstructor === "function" ? new ResizeObserverConstructor(() => repaint()) : null;
+    resizeObserver?.observe(surface);
+    repaint();
+    if (state.selection.focus)
+      select(state.selection.focus, "restore");
+    return () => {
+      disposed = true;
+      resizeObserver?.disconnect();
+      for (const dispose of listeners.splice(0))
+        dispose();
+    };
+  });
+  return () => {
+    for (const dispose of disposers)
+      dispose();
+  };
+}
+
 // ../rix/src/tools/control-panel-view.js
 function panelRoots(root) {
   if (!root)
@@ -88146,9 +88930,9 @@ function exactGraphicCoordinate(value) {
   const number2 = Number(value);
   if (!Number.isFinite(number2))
     throw new Error("Graphic position coordinates must be finite numbers");
-  const scale2 = 1000n;
-  const numerator = BigInt(Math.round(number2 * Number(scale2)));
-  return numerator % scale2 === 0n ? new Integer(numerator / scale2) : new Rational(numerator, scale2);
+  const scale3 = 1000n;
+  const numerator = BigInt(Math.round(number2 * Number(scale3)));
+  return numerator % scale3 === 0n ? new Integer(numerator / scale3) : new Rational(numerator, scale3);
 }
 function graphicPoint(position) {
   if (!Array.isArray(position) || position.length !== 2) {
@@ -88501,6 +89285,16 @@ function collectGraphics(value, graphics = []) {
       collectGraphics(child, graphics);
   return graphics;
 }
+function collectScene3D(value, scenes = []) {
+  if (!isOutputValue(value))
+    return scenes;
+  if (outputValueKind(value) === "scene3d")
+    scenes.push(value);
+  else
+    for (const child of childOutputs2(value))
+      collectScene3D(child, scenes);
+  return scenes;
+}
 function collectControlPanels(value, panels = []) {
   if (!isOutputValue(value))
     return panels;
@@ -88525,6 +89319,14 @@ function renderedGraphicRoots(root) {
     roots.push(root);
   if (root?.querySelectorAll)
     roots.push(...root.querySelectorAll(".rix-output-graphic"));
+  return roots;
+}
+function renderedScene3DRoots(root) {
+  const roots = [];
+  if (root?.matches?.(".rix-output-scene3d"))
+    roots.push(root);
+  if (root?.querySelectorAll)
+    roots.push(...root.querySelectorAll(".rix-output-scene3d"));
   return roots;
 }
 function renderedControlPanelRoots(root) {
@@ -88604,6 +89406,7 @@ function mountOutputWidgets(root, value, options = {}) {
   let disposed = false;
   let currentValue = value;
   const graphicViewStates = [];
+  const scene3DViewStates = [];
   disposers.push(enhanceControlShortcuts(root));
   function disposeWidgets() {
     for (const dispose of widgetDisposers.splice(0))
@@ -88798,6 +89601,21 @@ function mountOutputWidgets(root, value, options = {}) {
         } : null,
         onActionCommitted: options.onGraphicAction
       });
+    }
+    const sceneValues = collectScene3D(outputValue);
+    const sceneRoots = renderedScene3DRoots(container);
+    for (const [index, scene] of sceneValues.entries()) {
+      const sceneRoot = sceneRoots[index];
+      if (!sceneRoot)
+        continue;
+      const dispose = enhanceScene3DViews(sceneRoot, {
+        scene,
+        format,
+        state: scene3DViewStates[index] || (scene3DViewStates[index] = {}),
+        onSelection: options.onScene3DSelection,
+        onViewport: options.onScene3DViewport
+      });
+      widgetDisposers.push(dispose);
     }
     const panelValues = collectControlPanels(outputValue);
     const panelRoots2 = renderedControlPanelRoots(container);
@@ -89285,7 +90103,7 @@ var STATIC_SYSTEM_CATALOG = Object.freeze([
   ["TYPEOF", "Return the runtime kind of a value"],
   ["WARN", "Emit a warning diagnostic"]
 ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
-export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateAsync, lintRix, mountOutputWidgets };
+export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, outputValueKind, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, formatOutputText, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateAsync, lintRix, mountOutputWidgets };
 
-//# debugId=79287F41027C91C164756E2164756E21
-//# sourceMappingURL=chunk-jh928jcj.js.map
+//# debugId=F1391F0AE7E24F1664756E2164756E21
+//# sourceMappingURL=chunk-wac40s0a.js.map

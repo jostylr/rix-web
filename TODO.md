@@ -53,6 +53,9 @@ and accessibility behavior belong here. Generated files under `docs/` and
 - [x] Implement the shared RiX viewport/selection protocol with pan, zoom,
   reset, focus, and semantic selection. Pointer, touch, and keyboard paths must
   operate on the same selected mathematical identities.
+- [x] Mount retained Scene3D values as high-DPI WebGL views with orbit, truck,
+  dolly, projection switching, stable-id selection, exact inspection, and an
+  SVG fallback for unavailable or lost contexts.
 - [ ] Generalize the interval explorer's accessible names, focus indication,
   and textual/table alternative into a shared protocol for every interactive
   mathematical graphic.

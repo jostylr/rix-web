@@ -17,6 +17,7 @@ import {
   createSliderControl,
   createToggleControl,
   disposeAsyncResources,
+  formatOutputText,
   formatValue,
   formatValueSource,
   install,
@@ -41,11 +42,12 @@ import {
   irToText,
   isOutputValue,
   isReactiveNode,
+  outputValueKind,
   parseAndEvaluate,
   parseAndEvaluateAsync,
   renderOutputHtml,
   tokenize
-} from "./chunk-jh928jcj.js";
+} from "./chunk-wac40s0a.js";
 
 // standard-profile.rix
 var standard_profile_default = `## RiX-Web standard calculator profile.
@@ -29517,7 +29519,9 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
   };
   const presentationFormat = (value) => {
     const interval = automaticallyRefinedInterval(value);
-    return interval ? formatCertifiedIntervalDecimal(interval) : configuredFormat(value);
+    if (interval)
+      return formatCertifiedIntervalDecimal(interval);
+    return outputValueKind(value) === "scene3d" ? formatOutputText(value, configuredFormat) : configuredFormat(value);
   };
   const applyNumberConfig = ({ input, display } = {}) => {
     if (input !== undefined) {
@@ -29717,5 +29721,5 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
 
 export { pluginProfileFromUrl, stripMarkedPluginProfile, findHelp, createRixRepl };
 
-//# debugId=383F42877F8428B964756E2164756E21
-//# sourceMappingURL=chunk-6nadvkg9.js.map
+//# debugId=6E8CBB0D3660090B64756E2164756E21
+//# sourceMappingURL=chunk-4468g0e4.js.map
