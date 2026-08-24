@@ -105,7 +105,7 @@ constraint-solving drag modes, labels and measurements, locus animation,
 degeneracy repair suggestions, multi-object edits, persistent workbench history,
 and direct import of exported JSON in the browser host.
 
-## 5. Timeline playback and transitions
+## 5. Timeline playback and transitions — baseline implemented
 
 Turn retained `Timeline` values into playback, scrubbing, and comparison tools.
 
@@ -114,6 +114,24 @@ Turn retained `Timeline` values into playback, scrubbing, and comparison tools.
   whose schema declares a safe transition and otherwise use discrete changes.
 - Preserve exact frame values in the inspector and text track even when pixels
   are interpolated. Honor reduced-motion preferences.
+
+The baseline now renders retained `.Timeline.Sequence` values directly as an
+interactive web transport with play/pause, stepping, scrubbing, speed, loop,
+playback-range, comparison, and keyboard controls. All materialized frame DOM
+remains available to the host, while the current-frame inspector and complete
+text track expose exact states, provenance, and semantic output. Adjacent
+frames are matched through stable `data-rix-semantic-id` values. The portable
+`rix.timeline-transition@1` policy is discrete by default and currently
+declares only frame opacity safe for an explicit crossfade; unsupported
+property declarations fail instead of silently interpolating mathematical
+values. Reduced-motion preference suppresses crossfades without removing
+user-directed discrete playback.
+
+Follow-up work remains: schema-declared interpolation for individual geometry,
+plot, camera, and annotation properties; onion-skin and arbitrary-frame
+comparison; variable per-frame timing; named timeline markers; recording and
+export controls; persistent transport preferences; and richer transition
+diagnostics when a semantic object changes kind or disappears.
 
 ## 6. Sonification and comprehensive textual alternatives
 

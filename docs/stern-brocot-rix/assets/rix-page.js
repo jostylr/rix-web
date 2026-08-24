@@ -20523,6 +20523,46 @@ ${indentStr})`;
       return value;
     throw new Error(`${label} must be an exact integer or rational`);
   }
+  function positiveExactNumber(value, label) {
+    const exact = exactNumber(value, label);
+    const numerator = exact instanceof Integer ? exact.value : exact.numerator;
+    if (numerator <= 0n)
+      throw new Error(`${label} must be positive`);
+    return exact;
+  }
+  function timelineTransition(value) {
+    const fallback = Object.freeze({
+      schema: "rix.timeline-transition@1",
+      mode: "discrete",
+      duration: null,
+      properties: Object.freeze([])
+    });
+    if (value === null || value === undefined)
+      return fallback;
+    const fields = value?.type === "map" ? map(value, "Timeline.Sequence transition") : null;
+    const mode = (asString(fields ? get(fields, "mode") : value) || "discrete").toLowerCase();
+    if (!new Set(["discrete", "crossfade"]).has(mode)) {
+      throw new Error("Timeline.Sequence transition mode must be discrete or crossfade");
+    }
+    const propertiesValue = fields ? get(fields, "properties") : null;
+    const properties = propertiesValue === null || propertiesValue === undefined ? mode === "crossfade" ? ["opacity"] : [] : sequence(propertiesValue, "Timeline.Sequence transition properties").map((entry) => {
+      const name = (asString(entry) || "").toLowerCase();
+      if (name !== "opacity") {
+        throw new Error(`Timeline.Sequence transition property '${name || String(entry)}' is not declared safe by rix.timeline-transition@1`);
+      }
+      return name;
+    });
+    if (mode === "discrete" && properties.length > 0) {
+      throw new Error("Timeline.Sequence discrete transitions cannot declare interpolated properties");
+    }
+    const durationValue = fields ? get(fields, "duration") : null;
+    return Object.freeze({
+      schema: "rix.timeline-transition@1",
+      mode,
+      duration: durationValue === null || durationValue === undefined ? null : positiveExactNumber(durationValue, "Timeline.Sequence transition duration"),
+      properties: Object.freeze([...new Set(properties)])
+    });
+  }
   function exactRational(value, label) {
     if (value instanceof Rational)
       return value;
@@ -20836,8 +20876,9 @@ ${indentStr})`;
     const duration = get(entry, "duration");
     return output("timeline", {
       frames,
-      duration: duration === null || duration === undefined ? null : exactNumber(duration, "Timeline.Sequence duration"),
+      duration: duration === null || duration === undefined ? null : positiveExactNumber(duration, "Timeline.Sequence duration"),
       easing: asString(get(entry, "easing")) || "linear",
+      transition: timelineTransition(get(entry, "transition")),
       title: asString(get(entry, "title"))
     });
   }
@@ -22778,8 +22819,12 @@ ${value.transcript.map((child) => formatInlineText(child, format)).join("")}` : 
 
 `);
     }
-    if (value.kind === "timeline")
-      return `[Timeline: ${value.frames.length} frames]`;
+    if (value.kind === "timeline") {
+      return [value.title || `Timeline: ${value.frames.length} frames`, ...value.frames.map((frame, index) => `Frame ${index + 1} of ${value.frames.length} · exact state ${cellText(frame.state, format)}
+${formatOutputText(frame.content, format)}`)].join(`
+
+`);
+    }
     if (value.kind === "timeline_render")
       return [value.title, formatOutputText(value.content, format)].filter(Boolean).join(`
 
@@ -22973,8 +23018,19 @@ ${formatOutputText(slide, format)}`).join(`
         return `<article class="rix-output-snapshot" data-rix-snapshot-entry="${exactInteger4(origin.get("entry"), "Snapshot origin entry")}" data-rix-snapshot-state="${exactInteger4(origin.get("state"), "Snapshot origin state")}" data-rix-snapshot-ordinal="${exactInteger4(origin.get("ordinal"), "Snapshot origin ordinal")}">${renderOutputHtml(snapshot.content, format)}</article>`;
       }).join("")}</div>${value.caption ? `<p class="rix-output-snapshots-caption">${escapeHtml(value.caption)}</p>` : ""}</section>`;
     }
-    if (value.kind === "timeline")
-      return `<section class="rix-output-timeline"><p>${escapeHtml(value.title || "Timeline")} · ${value.frames.length} frames</p></section>`;
+    if (value.kind === "timeline") {
+      const transition = value.transition || { schema: "rix.timeline-transition@1", mode: "discrete", properties: [] };
+      const frameArticles = value.frames.map((frame, index) => {
+        const origin = frame.origin.entries;
+        const entry = exactInteger4(origin.get("entry"), "Timeline origin entry");
+        const state = exactInteger4(origin.get("state"), "Timeline origin state");
+        const ordinal = exactInteger4(origin.get("ordinal"), "Timeline origin ordinal");
+        return `<article class="rix-output-timeline-frame" data-rix-timeline-frame="${index + 1}" data-rix-timeline-entry="${entry}" data-rix-timeline-state="${state}" data-rix-timeline-ordinal="${ordinal}" aria-label="Frame ${index + 1} of ${value.frames.length}"${index === 0 ? ' data-rix-timeline-current="true"' : ' hidden aria-hidden="true"'}>${renderOutputHtml(frame.content, format)}</article>`;
+      }).join("");
+      const textTrack = value.frames.map((frame, index) => `<li data-rix-timeline-text-frame="${index + 1}"${index === 0 ? ' aria-current="true"' : ""}><b>Frame ${index + 1} · exact state ${escapeHtml(cellText(frame.state, format))}</b><pre>${escapeHtml(formatOutputText(frame.content, format))}</pre></li>`).join("");
+      const duration = value.duration === null ? "host default" : `${escapeHtml(cellText(value.duration, format))} seconds total`;
+      return `<section class="rix-output-timeline" data-rix-timeline-length="${value.frames.length}" data-rix-timeline-transition="${escapeHtml(transition.mode)}" data-rix-timeline-transition-schema="${escapeHtml(transition.schema)}" tabindex="0" role="region" aria-label="${escapeHtml(value.title || "Mathematical timeline")}">${value.title ? `<h2>${escapeHtml(value.title)}</h2>` : ""}<p class="rix-output-timeline-meta">${value.frames.length} exact frames · ${duration} · ${escapeHtml(value.easing)} easing · ${escapeHtml(transition.mode)} changes</p><div class="rix-output-timeline-toolbar" role="toolbar" aria-label="Timeline playback controls"><button type="button" data-rix-timeline-action="previous" aria-label="Previous frame">←</button><button type="button" data-rix-timeline-action="play" aria-pressed="false">Play</button><button type="button" data-rix-timeline-action="next" aria-label="Next frame">→</button><label>Frame <input type="range" min="1" max="${value.frames.length}" step="1" value="1" data-rix-timeline-scrubber aria-label="Timeline frame"></label><label>Speed <select data-rix-timeline-speed aria-label="Playback speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label><label><input type="checkbox" data-rix-timeline-loop> Loop</label><label>Start <input type="number" min="1" max="${value.frames.length}" step="1" value="1" data-rix-timeline-range-start></label><label>End <input type="number" min="1" max="${value.frames.length}" step="1" value="${value.frames.length}" data-rix-timeline-range-end></label><label><input type="checkbox" data-rix-timeline-compare> Compare previous</label></div><div class="rix-output-timeline-stage" data-rix-timeline-stage>${frameArticles}</div><output class="rix-output-timeline-status" data-rix-timeline-status aria-live="polite">Frame 1 of ${value.frames.length} · exact state ${escapeHtml(cellText(value.frames[0].state, format))}</output><details class="rix-output-timeline-inspector"><summary>Exact current frame</summary><dl><dt>State</dt><dd data-rix-timeline-exact-state>${escapeHtml(cellText(value.frames[0].state, format))}</dd><dt>Origin</dt><dd data-rix-timeline-exact-origin>entry ${exactInteger4(value.frames[0].origin.entries.get("entry"), "Timeline origin entry")}, state ${exactInteger4(value.frames[0].origin.entries.get("state"), "Timeline origin state")}, ordinal ${exactInteger4(value.frames[0].origin.entries.get("ordinal"), "Timeline origin ordinal")}</dd></dl><pre data-rix-timeline-exact-text>${escapeHtml(formatOutputText(value.frames[0].content, format))}</pre></details><details class="rix-output-timeline-text-track"><summary>Complete text track (${value.frames.length} frames)</summary><ol>${textTrack}</ol></details><p class="rix-output-timeline-help">Keyboard: Space play/pause; Left/Right step; Home/End jump; L loop.</p></section>`;
+    }
     if (value.kind === "timeline_render")
       return `<section class="rix-output-timeline-render" data-rix-timeline-frame="${value.frame}" data-rix-timeline-length="${value.timeline.frames.length}">${value.title ? `<h2>${escapeHtml(value.title)}</h2>` : ""}${renderOutputHtml(value.content, format)}<p class="rix-output-timeline-caption">Frame ${value.frame} of ${value.timeline.frames.length}</p></section>`;
     if (value.kind === "control_slider") {
@@ -88930,6 +88986,318 @@ ${execute}---
       shortcutRouters.delete(document2);
     };
   }
+  // rix/src/tools/timeline-view.js
+  function finiteExact(value, fallback = 0) {
+    if (typeof value === "number" && Number.isFinite(value))
+      return value;
+    if (typeof value === "bigint")
+      return Number(value);
+    if (typeof value?.value === "bigint" || typeof value?.value === "number")
+      return Number(value.value);
+    if (typeof value?.numerator === "bigint" && typeof value?.denominator === "bigint") {
+      return Number(value.numerator) / Number(value.denominator);
+    }
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+  function clamp(value, low, high) {
+    return Math.min(high, Math.max(low, Math.round(finiteExact(value, low))));
+  }
+  function safeEasing(value) {
+    const easing = String(value || "linear").toLowerCase();
+    return new Set(["linear", "ease", "ease-in", "ease-out", "ease-in-out"]).has(easing) ? easing : "linear";
+  }
+  function reducedMotionPreference() {
+    return Boolean(globalThis.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches);
+  }
+  function createTimelineViewState(timeline, target = {}, options = {}) {
+    if (timeline?.kind !== "timeline" || !Array.isArray(timeline.frames) || timeline.frames.length === 0) {
+      throw new Error("Timeline view requires a non-empty Timeline.Sequence value");
+    }
+    const length = timeline.frames.length;
+    const oldStart = target.range?.start ?? 1;
+    const oldEnd = target.range?.end ?? length;
+    const start = clamp(oldStart, 1, length);
+    const end = clamp(oldEnd, start, length);
+    target.schema = "rix.timeline-view@1";
+    target.length = length;
+    target.range = { start, end };
+    target.frame = clamp(target.frame ?? start, start, end);
+    target.speed = [0.25, 0.5, 1, 2, 4].includes(Number(target.speed)) ? Number(target.speed) : 1;
+    target.loop = Boolean(target.loop);
+    target.compare = Boolean(target.compare);
+    target.playing = Boolean(target.playing);
+    target.reducedMotion = options.reducedMotion ?? target.reducedMotion ?? reducedMotionPreference();
+    target.transition = timeline.transition?.schema === "rix.timeline-transition@1" ? timeline.transition : { schema: "rix.timeline-transition@1", mode: "discrete", duration: null, properties: [] };
+    return target;
+  }
+  function timelineFrameInterval(state, timeline) {
+    const totalSeconds = timeline.duration === null || timeline.duration === undefined ? timeline.frames.length : finiteExact(timeline.duration, timeline.frames.length);
+    return Math.max(16, totalSeconds * 1000 / timeline.frames.length / state.speed);
+  }
+  function setTimelineFrame(state, frame) {
+    state.frame = clamp(frame, state.range.start, state.range.end);
+    return state;
+  }
+  function stepTimelineFrame(state, delta) {
+    const direction = Math.sign(finiteExact(delta, 1)) || 1;
+    const next = state.frame + direction;
+    if (next > state.range.end) {
+      if (!state.loop)
+        return false;
+      state.frame = state.range.start;
+    } else if (next < state.range.start) {
+      if (!state.loop)
+        return false;
+      state.frame = state.range.end;
+    } else {
+      state.frame = next;
+    }
+    return true;
+  }
+  function exactText3(value, format) {
+    try {
+      return String(format(value));
+    } catch {
+      return String(value);
+    }
+  }
+  function originText(frame) {
+    const entries4 = frame?.origin?.entries;
+    if (!(entries4 instanceof Map))
+      return "unavailable";
+    const integer2 = (key) => finiteExact(entries4.get(key), 0);
+    const label2 = entries4.get("label");
+    return `entry ${integer2("entry")}, state ${integer2("state")}, ordinal ${integer2("ordinal")}${label2 ? `, label ${exactText3(label2, String)}` : ""}`;
+  }
+  function identitySet(frameRoot) {
+    return new Set([...frameRoot?.querySelectorAll?.("[data-rix-semantic-id]") || []].map((node) => node.dataset.rixSemanticId).filter(Boolean));
+  }
+  function matchedIdentities(left, right) {
+    const first = identitySet(left);
+    const second = identitySet(right);
+    return [...first].filter((id) => second.has(id));
+  }
+  function enhanceTimelineView(root, options = {}) {
+    const timeline = options.timeline;
+    const format = options.format || String;
+    const state = createTimelineViewState(timeline, options.state || {}, options);
+    const frames = [...root.querySelectorAll("[data-rix-timeline-frame]")];
+    const textFrames = [...root.querySelectorAll("[data-rix-timeline-text-frame]")];
+    const status = root.querySelector("[data-rix-timeline-status]");
+    const exactState = root.querySelector("[data-rix-timeline-exact-state]");
+    const exactOrigin = root.querySelector("[data-rix-timeline-exact-origin]");
+    const exactTextOutput = root.querySelector("[data-rix-timeline-exact-text]");
+    const playButton = root.querySelector('[data-rix-timeline-action="play"]');
+    const scrubber = root.querySelector("[data-rix-timeline-scrubber]");
+    const speed = root.querySelector("[data-rix-timeline-speed]");
+    const loop = root.querySelector("[data-rix-timeline-loop]");
+    const start = root.querySelector("[data-rix-timeline-range-start]");
+    const end = root.querySelector("[data-rix-timeline-range-end]");
+    const compare3 = root.querySelector("[data-rix-timeline-compare]");
+    const schedule = options.schedule || ((callback, delay) => setTimeout(callback, delay));
+    const cancel = options.cancel || ((handle) => clearTimeout(handle));
+    let timer = null;
+    let disposed = false;
+    root.dataset.rixReducedMotion = String(state.reducedMotion);
+    function pause(announce = true) {
+      state.playing = false;
+      if (timer !== null)
+        cancel(timer);
+      timer = null;
+      if (playButton) {
+        playButton.textContent = "Play";
+        playButton.setAttribute("aria-pressed", "false");
+      }
+      if (announce)
+        renderState(false);
+    }
+    function scheduleNext() {
+      if (!state.playing || disposed)
+        return;
+      timer = schedule(() => {
+        timer = null;
+        if (!stepTimelineFrame(state, 1)) {
+          pause();
+          return;
+        }
+        renderState(true);
+        scheduleNext();
+      }, timelineFrameInterval(state, timeline));
+    }
+    function play() {
+      if (state.playing) {
+        pause();
+        return;
+      }
+      if (state.frame === state.range.end && !state.loop)
+        state.frame = state.range.start;
+      state.playing = true;
+      if (playButton) {
+        playButton.textContent = "Pause";
+        playButton.setAttribute("aria-pressed", "true");
+      }
+      renderState(false);
+      scheduleNext();
+    }
+    function renderState(transitioned = false) {
+      const currentIndex = state.frame - 1;
+      const previousIndex = currentIndex > 0 ? currentIndex - 1 : state.loop ? state.length - 1 : null;
+      const currentRoot = frames[currentIndex];
+      const previousRoot = previousIndex === null ? null : frames[previousIndex];
+      const compared = state.compare && previousRoot && previousRoot !== currentRoot;
+      for (const [frameIndex, frameRoot] of frames.entries()) {
+        const current = frameIndex === currentIndex;
+        const comparison = compared && frameIndex === previousIndex;
+        frameRoot.hidden = !(current || comparison);
+        frameRoot.toggleAttribute("aria-hidden", !(current || comparison));
+        frameRoot.toggleAttribute("data-rix-timeline-current", current);
+        frameRoot.toggleAttribute("data-rix-timeline-comparison", Boolean(comparison));
+      }
+      for (const [frameIndex, item] of textFrames.entries()) {
+        item.toggleAttribute("aria-current", frameIndex === currentIndex);
+      }
+      const frame = timeline.frames[currentIndex];
+      const matched = matchedIdentities(previousRoot, currentRoot);
+      root.dataset.rixTimelineFrame = String(state.frame);
+      root.dataset.rixTimelineMatches = String(matched.length);
+      root.dataset.rixTimelineComparing = String(Boolean(compared));
+      if (scrubber)
+        scrubber.value = String(state.frame);
+      if (speed)
+        speed.value = String(state.speed);
+      if (loop)
+        loop.checked = state.loop;
+      if (start)
+        start.value = String(state.range.start);
+      if (end)
+        end.value = String(state.range.end);
+      if (compare3)
+        compare3.checked = state.compare;
+      const stateText = exactText3(frame.state, format);
+      if (exactState)
+        exactState.textContent = stateText;
+      if (exactOrigin)
+        exactOrigin.textContent = originText(frame);
+      if (exactTextOutput)
+        exactTextOutput.textContent = formatOutputText(frame.content, format);
+      const identityText = matched.length === 0 ? "no semantic objects matched from the previous frame" : `${matched.length} semantic object${matched.length === 1 ? "" : "s"} matched from the previous frame`;
+      const changeText = state.transition.mode === "crossfade" && !state.reducedMotion ? "declared opacity crossfade; exact values remain discrete" : "discrete exact values";
+      if (status)
+        status.textContent = `Frame ${state.frame} of ${state.length} · exact state ${stateText} · ${identityText} · ${changeText}${state.playing ? " · playing" : " · paused"}`;
+      if (transitioned && currentRoot?.animate && state.transition.mode === "crossfade" && !state.reducedMotion && !compared) {
+        const duration = state.transition.duration === null ? Math.min(250, timelineFrameInterval(state, timeline) / 3) : finiteExact(state.transition.duration, 0.2) * 1000;
+        currentRoot.animate([{ opacity: 0 }, { opacity: 1 }], {
+          duration,
+          easing: safeEasing(timeline.easing)
+        });
+      }
+      options.onFrame?.({ frame: state.frame, snapshot: frame, state, matchedIdentities: matched });
+    }
+    function changeFrame(frame) {
+      pause(false);
+      setTimelineFrame(state, frame);
+      renderState(true);
+    }
+    function onClick(event) {
+      const action = event.target?.closest?.("[data-rix-timeline-action]")?.dataset.rixTimelineAction;
+      const interactive = event.target?.closest?.(".rix-output-timeline-toolbar, .rix-output-timeline-inspector, .rix-output-timeline-text-track");
+      if (interactive)
+        event.stopPropagation?.();
+      if (!action)
+        return;
+      event.preventDefault?.();
+      if (action === "play")
+        play();
+      else if (action === "previous") {
+        pause(false);
+        if (!stepTimelineFrame(state, -1))
+          state.frame = state.range.start;
+        renderState(true);
+      } else if (action === "next") {
+        pause(false);
+        if (!stepTimelineFrame(state, 1))
+          state.frame = state.range.end;
+        renderState(true);
+      }
+    }
+    function onInput(event) {
+      const target = event.target;
+      if (!target)
+        return;
+      if (target.matches?.("[data-rix-timeline-scrubber]"))
+        changeFrame(target.value);
+      else if (target.matches?.("[data-rix-timeline-speed]")) {
+        const nextSpeed = Number(target.value);
+        state.speed = [0.25, 0.5, 1, 2, 4].includes(nextSpeed) ? nextSpeed : 1;
+        if (state.playing) {
+          if (timer !== null)
+            cancel(timer);
+          timer = null;
+          scheduleNext();
+        }
+        renderState(false);
+      } else if (target.matches?.("[data-rix-timeline-loop]")) {
+        state.loop = Boolean(target.checked);
+        renderState(false);
+      } else if (target.matches?.("[data-rix-timeline-compare]")) {
+        state.compare = Boolean(target.checked);
+        renderState(false);
+      } else if (target.matches?.("[data-rix-timeline-range-start]")) {
+        state.range.start = clamp(target.value, 1, state.range.end);
+        state.frame = clamp(state.frame, state.range.start, state.range.end);
+        renderState(false);
+      } else if (target.matches?.("[data-rix-timeline-range-end]")) {
+        state.range.end = clamp(target.value, state.range.start, state.length);
+        state.frame = clamp(state.frame, state.range.start, state.range.end);
+        renderState(false);
+      } else
+        return;
+      event.stopPropagation?.();
+    }
+    function onKeyDown(event) {
+      if (event.defaultPrevented)
+        return;
+      if (["INPUT", "SELECT", "BUTTON", "TEXTAREA"].includes(event.target?.tagName))
+        return;
+      let handled = true;
+      if (event.key === " " || event.key === "Spacebar")
+        play();
+      else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        pause(false);
+        const direction = event.key === "ArrowLeft" ? -1 : 1;
+        if (!stepTimelineFrame(state, direction)) {
+          state.frame = direction < 0 ? state.range.start : state.range.end;
+        }
+        renderState(true);
+      } else if (event.key === "Home")
+        changeFrame(state.range.start);
+      else if (event.key === "End")
+        changeFrame(state.range.end);
+      else if (String(event.key).toLowerCase() === "l") {
+        state.loop = !state.loop;
+        renderState(false);
+      } else
+        handled = false;
+      if (handled) {
+        event.preventDefault?.();
+        event.stopPropagation?.();
+      }
+    }
+    root.addEventListener("click", onClick);
+    root.addEventListener("input", onInput);
+    root.addEventListener("change", onInput);
+    root.addEventListener("keydown", onKeyDown);
+    renderState(false);
+    return () => {
+      disposed = true;
+      pause(false);
+      root.removeEventListener("click", onClick);
+      root.removeEventListener("input", onInput);
+      root.removeEventListener("change", onInput);
+      root.removeEventListener("keydown", onKeyDown);
+    };
+  }
   // rix/src/tools/output-widgets.js
   function childOutputs2(value) {
     if (!isOutputValue(value))
@@ -88938,6 +89306,8 @@ ${execute}---
       return value.children;
     if (value.kind === "snapshots")
       return value.snapshots.map((snapshot) => snapshot.content);
+    if (value.kind === "timeline")
+      return value.frames.map((frame) => frame.content);
     if (value.kind === "timeline_render")
       return [value.content];
     if (value.kind === "figure" || value.kind === "slide")
@@ -88986,6 +89356,15 @@ ${execute}---
         collectControlPanels(child, panels);
     return panels;
   }
+  function collectTimelines(value, timelines = []) {
+    if (!isOutputValue(value))
+      return timelines;
+    if (value.kind === "timeline")
+      timelines.push(value);
+    for (const child of childOutputs2(value))
+      collectTimelines(child, timelines);
+    return timelines;
+  }
   function renderedSheetRoots(root) {
     const roots = [];
     if (root?.matches?.(".rix-output-sheet"))
@@ -89016,6 +89395,14 @@ ${execute}---
       roots.push(root);
     if (root?.querySelectorAll)
       roots.push(...root.querySelectorAll(".rix-output-control-panel"));
+    return roots;
+  }
+  function renderedTimelineRoots(root) {
+    const roots = [];
+    if (root?.matches?.(".rix-output-timeline"))
+      roots.push(root);
+    if (root?.querySelectorAll)
+      roots.push(...root.querySelectorAll(".rix-output-timeline"));
     return roots;
   }
   function editedAddress(widget, index) {
@@ -89088,6 +89475,7 @@ ${execute}---
     let currentValue = value;
     const graphicViewStates = [];
     const scene3DViewStates = [];
+    const timelineViewStates = [];
     disposers.push(enhanceControlShortcuts(root));
     function disposeWidgets() {
       for (const dispose of widgetDisposers.splice(0))
@@ -89095,6 +89483,20 @@ ${execute}---
     }
     function mountWidgets(container, outputValue) {
       disposeWidgets();
+      const timelineValues = collectTimelines(outputValue);
+      const timelineRoots = renderedTimelineRoots(container);
+      for (const [index, timeline] of timelineValues.entries()) {
+        const timelineRoot = timelineRoots[index];
+        if (!timelineRoot)
+          continue;
+        const dispose = enhanceTimelineView(timelineRoot, {
+          timeline,
+          format,
+          state: timelineViewStates[index] || (timelineViewStates[index] = {}),
+          onFrame: options.onTimelineFrame
+        });
+        widgetDisposers.push(dispose);
+      }
       const sheetValues = collectSheets(outputValue);
       const roots = renderedSheetRoots(container);
       for (const [index, sheet] of sheetValues.entries()) {
