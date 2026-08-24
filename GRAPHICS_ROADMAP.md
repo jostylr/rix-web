@@ -52,7 +52,7 @@ Follow-up QA remains: multitouch camera gestures, GPU color-buffer picking for
 very dense scenes, deeper annotation collision/occlusion policy, screen-reader
 passes, and pixel-level parity fixtures across browser WebGL implementations.
 
-## 3. Broader plot families
+## 3. Broader plot families — baseline implemented
 
 Add polar, implicit, inequality, contour, heat-map, and vector-field plots as
 semantic plot schemas that lower through `Graphics`, not host-only drawing code.
@@ -62,6 +62,21 @@ semantic plot schemas that lower through `Graphics`, not host-only drawing code.
 - Prefer certified subdivision for implicit boundaries and discontinuities.
 - Make every family render through SVG/Canvas/TikZ where meaningful and expose a
   deterministic textual alternative.
+
+The baseline now provides `.plot.Polar`, `.plot.Implicit`, `.plot.Inequality`,
+`.plot.Contour`, `.plot.HeatMap`, and `.plot.VectorField`. Scalar-field families
+share a bounded exact-domain grid sampler and retain sampling policy,
+exact/enclosed/approximate/unresolved evidence counts, unresolved and ambiguous
+cell records, legends, discrete color scales, and stable `hitId` values in
+`rix.plot@1` metadata. They lower to ordinary Graphics paths and rectangles, so
+SVG, Canvas, and TikZ consume the same retained scene. Plot-aware deterministic
+text summaries now supply kind, domain, grid, uncertainty, and evidence status
+and are included in SVG accessible names.
+
+Follow-up work remains: adaptive/certified interval subdivision for implicit
+and inequality boundaries, discontinuity-aware cell refinement, continuous
+color interpolation, contour-label placement, dense-field performance policy,
+and browser-level visual/accessibility QA.
 
 ## 4. Visual geometry workbench
 
