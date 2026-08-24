@@ -110,10 +110,12 @@ test("structured output has focused table, document, graphic, drawing, sheet, in
     expect(tutorialByNumber("12f")?.file).toBe("interactive-graphics.html");
     expect(tutorialByNumber("12g")?.file).toBe("control-panels.html");
     expect(tutorialByNumber("12h")?.file).toBe("reactive-scenes-and-snapshots.html");
+    expect(tutorialByNumber("12i")?.file).toBe("graphics-interaction-guide.html");
     const drawing = await Bun.file(new URL("../tutorials/drawing-with-draw.md", import.meta.url)).text();
     const sheets = await Bun.file(new URL("../tutorials/sheets-and-tensor-views.md", import.meta.url)).text();
     const interactive = await Bun.file(new URL("../tutorials/interactive-graphics.md", import.meta.url)).text();
     const controls = await Bun.file(new URL("../tutorials/control-panels.md", import.meta.url)).text();
+    const graphicsGuide = await Bun.file(new URL("../tutorials/graphics-interaction-guide.md", import.meta.url)).text();
     expect(drawing).toContain(".Graphics.Transform");
     expect(drawing).toContain(".Graphics.Clip");
     expect(sheets).toContain("grid[2,3]");
@@ -143,6 +145,11 @@ test("structured output has focused table, document, graphic, drawing, sheet, in
     expect(controls).toContain(".Controls.Choice");
     expect(controls).toContain(".Controls.Toggle");
     expect(controls).toContain(".Controls.Range");
+    expect(graphicsGuide).toContain("Pinch with two fingers");
+    expect(graphicsGuide).toContain("Mathematical object");
+    expect(graphicsGuide).toContain("Overview (sequential)");
+    expect(graphicsGuide).toContain("not a certified");
+    expect(graphicsGuide).toContain(".Timeline.Sequence");
     expect(controls).toContain(".Controls.Reset");
     expect(controls).toContain("format={=");
     expect(controls).toContain('x _> ".~"');

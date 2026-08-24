@@ -27,6 +27,21 @@ Ship one `rix.viewport@1` / `rix.selection@1` interaction layer for every SVG
 Follow-up QA remains: browser automation for multitouch gestures, screen-reader
 passes, and usability tuning for very dense plots.
 
+The first post-baseline interaction pass now adds two-pointer pinch zoom and
+simultaneous centroid panning through the same bounded `rix.viewport@1` state.
+Every enhanced Graphic exposes a direct semantic-object picker plus a retained
+object-type filter, making dense plots navigable without cycling through every
+unrelated mark. Bracket shortcuts provide object traversal and Shift-brackets
+jump by ten. The SVG now explicitly references its exact inspector and polite
+live status, while the static text-object list tracks the current semantic
+selection. These controls and all six graphics baselines are documented in the
+RiX Web **Graphics interaction guide**.
+
+Further Priority 1 work remains: automated real-device gesture matrices,
+screen-reader testing with blind users, spatial navigation between neighboring
+objects, search within very large semantic catalogs, configurable hit
+tolerances, and persistent per-user navigation preferences.
+
 ## 2. Real Scene3D viewport — baseline implemented
 
 Mount the existing WebGL plan as an actual orbitable, zoomable, selectable

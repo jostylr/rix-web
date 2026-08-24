@@ -719,6 +719,15 @@
       "status": "implemented"
     },
     {
+      "number": "12i",
+      "parent": "12",
+      "file": "graphics-interaction-guide.html",
+      "title": "Graphics interaction guide",
+      "description": "Use every 2D, 3D, geometry, timeline, text, and audio control in RiX Web.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
       "number": "13",
       "file": "core-host-lowering.html",
       "title": "Core, host, and lowering",

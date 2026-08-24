@@ -87566,6 +87566,7 @@ ${execute}---
   // rix/src/tools/graphic-view.js
   var MIN_ZOOM = 1 / 8;
   var MAX_ZOOM = 64;
+  var graphicViewSequence = 0;
   function finiteNumber2(value, fallback = 0) {
     if (typeof value === "number" && Number.isFinite(value))
       return value;
@@ -87678,6 +87679,14 @@ ${execute}---
       visit2(child, `graphic[${index + 1}]`);
     return nodes;
   }
+  function graphicSelectionCatalog(graphic, format = String) {
+    const nodes = indexGraphicNodes(graphic);
+    return Object.freeze([...nodes.entries()].filter(([, node]) => node.kind === "drag_point" || node.kind === "graphic_action" || !(node.children || []).length).map(([id, node]) => Object.freeze({
+      id: String(id),
+      role: String(node.kind || "object"),
+      label: describeGraphicNode(node, format)
+    })));
+  }
   function plotInspection(graphic, scenePoint, format) {
     const plot = mapField4(graphic?.metadata, "plot");
     const frame = mapField4(plot, "frame");
@@ -87751,6 +87760,10 @@ ${execute}---
     };
     const ids = Array.isArray(target.selection?.ids) ? [...new Set(target.selection.ids.map(String))] : [];
     target.selection = { schema: "rix.selection@1", ids, focus: target.selection?.focus ?? ids[0] ?? null };
+    target.navigation = {
+      schema: "rix.graphic-navigation@1",
+      scope: typeof target.navigation?.scope === "string" ? target.navigation.scope : "all"
+    };
     return target;
   }
   function graphicViewBox(state) {
@@ -87784,6 +87797,50 @@ ${execute}---
     state.viewport.pan = [0, 0];
     state.viewport.zoom = 1;
     return state;
+  }
+  function gesturePointer(pointers, id) {
+    return pointers.find((pointer) => String(pointer.id) === String(id));
+  }
+  function updateGraphicGesture(state, previousPointers, nextPointers, rect) {
+    const previous = Array.from(previousPointers || []);
+    const next = Array.from(nextPointers || []);
+    const width = Number(rect?.width);
+    const height = Number(rect?.height);
+    if (!(width > 0) || !(height > 0))
+      throw new Error("Graphic gesture requires non-empty bounds");
+    const common = previous.filter((pointer) => gesturePointer(next, pointer.id));
+    if (!common.length)
+      return Object.freeze({ type: "none", changed: false });
+    if (common.length >= 2) {
+      const before2 = common.slice(0, 2);
+      const after2 = before2.map((pointer) => gesturePointer(next, pointer.id));
+      const midpoint2 = (points) => [
+        (Number(points[0].x) + Number(points[1].x)) / 2,
+        (Number(points[0].y) + Number(points[1].y)) / 2
+      ];
+      const distance = (points) => Math.hypot(Number(points[1].x) - Number(points[0].x), Number(points[1].y) - Number(points[0].y));
+      const oldMidpoint = midpoint2(before2);
+      const newMidpoint = midpoint2(after2);
+      const oldDistance = distance(before2);
+      const newDistance = distance(after2);
+      const anchor2 = [
+        (oldMidpoint[0] - Number(rect.left || 0)) / width * state.viewport.width,
+        (oldMidpoint[1] - Number(rect.top || 0)) / height * state.viewport.height
+      ];
+      if (oldDistance > 0 && newDistance > 0)
+        zoomGraphicViewport(state, newDistance / oldDistance, anchor2);
+      panGraphicViewport(state, (newMidpoint[0] - oldMidpoint[0]) * state.viewport.width / width, (newMidpoint[1] - oldMidpoint[1]) * state.viewport.height / height);
+      return Object.freeze({
+        type: "pinch",
+        changed: oldDistance !== newDistance || oldMidpoint[0] !== newMidpoint[0] || oldMidpoint[1] !== newMidpoint[1]
+      });
+    }
+    const before = common[0];
+    const after = gesturePointer(next, before.id);
+    const deltaX = Number(after.x) - Number(before.x);
+    const deltaY = Number(after.y) - Number(before.y);
+    panGraphicViewport(state, deltaX * state.viewport.width / width, deltaY * state.viewport.height / height);
+    return Object.freeze({ type: "pan", changed: deltaX !== 0 || deltaY !== 0 });
   }
   function graphicRoots(root) {
     if (!root)
@@ -88030,6 +88087,17 @@ ${execute}---
     button.textContent = text15;
     return button;
   }
+  function makeSelectControl(document2, labelText, dataName) {
+    const label2 = document2.createElement("label");
+    label2.className = "rix-output-graphic-toolbar-select";
+    const text15 = document2.createElement("span");
+    text15.textContent = labelText;
+    const select = document2.createElement("select");
+    select.dataset[dataName] = "true";
+    select.setAttribute("aria-label", labelText);
+    label2.append(text15, select);
+    return { label: label2, select };
+  }
   function installNavigation(graphic, svg, status, options) {
     if (typeof svg.addEventListener !== "function")
       return null;
@@ -88055,6 +88123,9 @@ ${execute}---
         ["reset", "Reset pan and zoom", "Reset"]
       ])
         toolbar.append(makeButton(document2, ...spec2));
+      const scopeControl = makeSelectControl(document2, "Object type", "rixGraphicSelectionScope");
+      const objectControl = makeSelectControl(document2, "Mathematical object", "rixGraphicObjectSelect");
+      toolbar.append(scopeControl.label, objectControl.label);
       graphic.insertBefore?.(toolbar, svg);
     }
     if (document2?.createElement && !inspector) {
@@ -88064,8 +88135,66 @@ ${execute}---
       inspector.textContent = "Pointer coordinates and exact selected values appear here.";
       graphic.append?.(inspector);
     }
+    const viewId = svg.id || `rix-graphic-${++graphicViewSequence}`;
+    svg.id = viewId;
+    if (inspector)
+      inspector.id ||= `${viewId}-inspector`;
+    if (status)
+      status.id ||= `${viewId}-status`;
+    const descriptions = [inspector?.id, status?.id].filter(Boolean).join(" ");
+    if (descriptions)
+      svg.setAttribute("aria-describedby", descriptions);
+    svg.setAttribute("aria-keyshortcuts", "ArrowLeft ArrowRight ArrowUp ArrowDown + - Home [ ]");
+    toolbar?.setAttribute?.("aria-controls", viewId);
     const semanticElements = [...svg.querySelectorAll?.("[data-rix-semantic-id]") || []];
     const selectable = semanticElements.filter((element) => element.dataset?.rixDragTarget || element.dataset?.rixGraphicAction || !element.querySelector?.("[data-rix-semantic-id]"));
+    const catalog = new Map(graphicSelectionCatalog(options.graphic, options.format || String).map((entry2) => [entry2.id, entry2]));
+    const scopeSelect = toolbar?.querySelector?.("[data-rix-graphic-selection-scope]") || null;
+    const objectSelect = toolbar?.querySelector?.("[data-rix-graphic-object-select]") || null;
+    const scopedSelectable = () => selectable.filter((element) => {
+      const scope = state.navigation.scope;
+      return scope === "all" || catalog.get(element.dataset.rixSemanticId)?.role === scope;
+    });
+    const appendOption = (select, value, text15) => {
+      if (!select || !document2?.createElement)
+        return;
+      const option6 = document2.createElement("option");
+      option6.value = value;
+      option6.textContent = text15;
+      select.append(option6);
+    };
+    if (scopeSelect && !scopeSelect.options?.length) {
+      appendOption(scopeSelect, "all", `All objects (${selectable.length})`);
+      const roles = new Map;
+      for (const element of selectable) {
+        const role = catalog.get(element.dataset.rixSemanticId)?.role || "object";
+        roles.set(role, (roles.get(role) || 0) + 1);
+      }
+      for (const [role, count] of [...roles.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+        appendOption(scopeSelect, role, `${role.replaceAll("_", " ")} (${count})`);
+      }
+      if (![...roles.keys(), "all"].includes(state.navigation.scope))
+        state.navigation.scope = "all";
+      scopeSelect.value = state.navigation.scope;
+    }
+    const refreshObjectOptions = () => {
+      if (!objectSelect)
+        return;
+      objectSelect.replaceChildren?.();
+      const values4 = scopedSelectable();
+      if (!values4.length)
+        appendOption(objectSelect, "", "No objects in this type");
+      for (const [index, element] of values4.entries()) {
+        const id = element.dataset.rixSemanticId;
+        const entry2 = catalog.get(id);
+        appendOption(objectSelect, id, `${index + 1}. ${entry2?.label || id}`);
+      }
+      objectSelect.disabled = values4.length === 0;
+      if (values4.some((element) => element.dataset.rixSemanticId === state.selection.focus)) {
+        objectSelect.value = state.selection.focus;
+      }
+    };
+    refreshObjectOptions();
     const viewBoxText = () => {
       const box2 = graphicViewBox(state);
       return `${box2.x} ${box2.y} ${box2.width} ${box2.height}`;
@@ -88099,6 +88228,11 @@ ${execute}---
         element.classList?.add("rix-output-semantic-selected");
       state.selection.ids = id ? [id] : [];
       state.selection.focus = id;
+      if (objectSelect && scopedSelectable().some((candidate) => candidate.dataset.rixSemanticId === id))
+        objectSelect.value = id;
+      for (const textObject of graphic.querySelectorAll?.("[data-rix-graphics-text-object]") || []) {
+        textObject.toggleAttribute?.("aria-current", textObject.dataset.rixGraphicsTextObject === id);
+      }
       const exact2 = element ? describe(element, scenePoint) : "Selection cleared";
       const plot = plotInspection(options.graphic, scenePoint, options.format || String);
       const message = plot ? `${exact2} · ${plot}` : exact2;
@@ -88115,18 +88249,20 @@ ${execute}---
       options.onSelection?.(detail, element, graphic);
     };
     const cycleSelection = (step) => {
-      if (!selectable.length)
+      const values4 = scopedSelectable();
+      if (!values4.length)
         return;
-      const current = selectable.findIndex((element) => element.dataset.rixSemanticId === state.selection.focus);
-      const next = current < 0 ? step > 0 ? 0 : selectable.length - 1 : (current + step + selectable.length) % selectable.length;
-      setSelection(selectable[next], "keyboard");
+      const current = values4.findIndex((element) => element.dataset.rixSemanticId === state.selection.focus);
+      const next = current < 0 ? step > 0 ? 0 : values4.length - 1 : (current + step + values4.length) % values4.length;
+      setSelection(values4[next], "keyboard");
     };
-    const selectById = (id, source = "workbench") => {
+    const selectById = (id, source = "workbench", focus = true) => {
       const element = semanticElements.find((candidate) => candidate.dataset?.rixSemanticId === String(id));
       if (!element)
         return false;
       setSelection(element, source);
-      element.focus?.();
+      if (focus)
+        element.focus?.();
       return true;
     };
     for (const element of semanticElements) {
@@ -88134,6 +88270,14 @@ ${execute}---
         element.classList?.add("rix-output-semantic-selected");
     }
     applyViewport();
+    scopeSelect?.addEventListener?.("change", () => {
+      state.navigation.scope = scopeSelect.value || "all";
+      refreshObjectOptions();
+      const count = scopedSelectable().length;
+      if (status)
+        status.textContent = `${count} ${state.navigation.scope === "all" ? "mathematical" : state.navigation.scope.replaceAll("_", " ")} object${count === 1 ? "" : "s"} available`;
+    });
+    objectSelect?.addEventListener?.("change", () => selectById(objectSelect.value, "keyboard", false));
     toolbar?.addEventListener?.("click", (event) => {
       const command = event.target?.dataset?.rixGraphicViewCommand;
       if (!command)
@@ -88151,27 +88295,43 @@ ${execute}---
       applyViewport();
       announceViewport("keyboard");
     });
-    let pointer = null;
+    const pointers = new Map;
+    let gestureChanged = false;
     const pointerPoint = (event) => graphicPointFromClient(svg.getBoundingClientRect(), graphicViewBox(state), { x: event.clientX, y: event.clientY });
     svg.addEventListener("pointerdown", (event) => {
       if (interactiveElement(event.target, svg))
         return;
       event.preventDefault?.();
-      pointer = { id: event.pointerId, x: event.clientX, y: event.clientY, moved: false, target: closestSemantic(event.target, svg) };
+      pointers.set(event.pointerId, {
+        id: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+        startX: event.clientX,
+        startY: event.clientY,
+        moved: false,
+        target: closestSemantic(event.target, svg)
+      });
+      if (pointers.size > 1) {
+        gestureChanged = true;
+        for (const pointer of pointers.values())
+          pointer.moved = true;
+      }
       svg.setPointerCapture?.(event.pointerId);
       svg.classList?.add("rix-output-svg-panning");
     });
     svg.addEventListener("pointermove", (event) => {
-      if (pointer?.id === event.pointerId) {
+      if (pointers.has(event.pointerId)) {
+        const previous = [...pointers.values()].map((pointer2) => ({ ...pointer2 }));
+        const pointer = pointers.get(event.pointerId);
         const dx = event.clientX - pointer.x;
         const dy = event.clientY - pointer.y;
-        if (Math.hypot(dx, dy) > 3)
+        if (Math.hypot(event.clientX - pointer.startX, event.clientY - pointer.startY) > 3 || pointers.size > 1)
           pointer.moved = true;
         if (pointer.moved) {
-          const rect = svg.getBoundingClientRect();
-          panGraphicViewport(state, dx * state.viewport.width / rect.width, dy * state.viewport.height / rect.height);
           pointer.x = event.clientX;
           pointer.y = event.clientY;
+          const result = updateGraphicGesture(state, previous, [...pointers.values()], svg.getBoundingClientRect());
+          gestureChanged ||= result.changed;
           applyViewport();
           event.preventDefault?.();
         }
@@ -88189,24 +88349,27 @@ ${execute}---
       }
     });
     const finishPointer = (event, cancelled2 = false) => {
-      if (pointer?.id !== event.pointerId)
+      if (!pointers.has(event.pointerId))
         return;
-      const completed = pointer;
-      pointer = null;
-      svg.classList?.remove("rix-output-svg-panning");
+      const completed = pointers.get(event.pointerId);
+      const wasOnlyPointer = pointers.size === 1;
+      pointers.delete(event.pointerId);
+      if (!pointers.size)
+        svg.classList?.remove("rix-output-svg-panning");
       if (svg.hasPointerCapture?.(event.pointerId))
         svg.releasePointerCapture(event.pointerId);
-      if (cancelled2)
-        return;
-      if (completed.moved)
-        announceViewport("pointer");
-      else
+      if (!cancelled2 && wasOnlyPointer && !gestureChanged && !completed.moved)
         setSelection(completed.target, "pointer", pointerPoint(event));
+      if (!pointers.size) {
+        if (!cancelled2 && (gestureChanged || completed.moved))
+          announceViewport("pointer");
+        gestureChanged = false;
+      }
     };
     svg.addEventListener("pointerup", (event) => finishPointer(event));
     svg.addEventListener("pointercancel", (event) => finishPointer(event, true));
     svg.addEventListener("pointerleave", () => {
-      if (pointer)
+      if (pointers.size)
         return;
       clearClasses("rix-output-semantic-hover");
       if (inspector)
@@ -88251,7 +88414,15 @@ ${execute}---
         zoomGraphicViewport(state, 1 / 1.5);
       else if (event.key === "Home")
         resetGraphicViewport(state);
-      else
+      else if (event.key === "[") {
+        event.preventDefault?.();
+        cycleSelection(event.shiftKey ? -10 : -1);
+        return;
+      } else if (event.key === "]") {
+        event.preventDefault?.();
+        cycleSelection(event.shiftKey ? 10 : 1);
+        return;
+      } else
         return;
       event.preventDefault?.();
       applyViewport();
@@ -88270,7 +88441,7 @@ ${execute}---
       status = document2.createElement("output");
       status.className = "rix-output-graphic-status";
       status.setAttribute("aria-live", "polite");
-      status.textContent = "Graphic ready. Drag to pan; use the toolbar or keyboard to explore.";
+      status.textContent = "Graphic ready. Drag to pan, pinch to zoom, or use the toolbar and keyboard to explore.";
       graphic.append?.(status);
     }
     const handles = [...graphic.querySelectorAll("[data-rix-drag-target]")];
