@@ -138,10 +138,21 @@ coordinates while the scene remains renderer-neutral. At the kernel level,
 `ImportConstruction` restores it with an explicit derived-constructor map, and
 `Undo`/`Redo` reversibly replay exact graph drag events.
 
-Follow-up work remains: authoring tools for creating objects from the canvas,
-constraint-solving drag modes, labels and measurements, locus animation,
-degeneracy repair suggestions, multi-object edits, persistent workbench history,
-and direct import of exported JSON in the browser host.
+The first post-baseline authoring pass adds exact free-point creation from the
+canvas. A positioned `Graphics.Action` maps pointer or keyboard cursor positions
+through `rix.graphics.coordinate-system@1`, converts them to exact rational RiX
+tuples, and invokes the same retained callback protocol as other scene actions.
+`geometry.AddPoint` allocates stable ids, applies an exact snap grid, enforces a
+node budget, and records reversible `:create` events. The authoring workbench
+exposes a keyboard-focusable Point tool and routes Undo/Redo through that kernel
+history, so the dependency tree, inspector, export, and static Graphic all see
+the newly created construction nodes rather than host-only marks.
+
+Further Priority 4 work remains: canvas tools for dependency-bearing lines,
+circles, intersections, transformations, labels, and measurements;
+constraint-solving drag modes; locus animation; degeneracy repair suggestions;
+multi-object edits; persistent workbench history; and direct import of exported
+JSON in the browser host.
 
 ## 5. Timeline playback and transitions — baseline implemented
 

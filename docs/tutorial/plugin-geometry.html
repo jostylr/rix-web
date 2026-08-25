@@ -32,6 +32,30 @@ $$workbench := .geometry.Workbench($graph,{=
 });
 $workbench;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>RiX Web supplies the object tree, property inspector, keyboard traversal, session movement history, and export button. The same value still renders as ordinary Graphics in static hosts.</p>
+<h2>Add exact free points from the canvas</h2>
+<p>Positioned <code>Graphics.Action</code> nodes translate a pointer or keyboard cursor through the declared mathematical coordinate system before invoking their RiX callback. The point tool below appends a retained free node; its companion actions replay the same exact create history.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="21" spellcheck="false">.Plugin.Load(&quot;geometry&quot;);
+view := [-4,-3,4,3]; size := [640,480];
+$$graph := .geometry.ConstructionGraph([]);
+actions := [
+  .Graphics.Action({=
+    id=&quot;geometry-author-point&quot;,target=$$graph,
+    action=(current,position)-&gt;.geometry.AddPoint(
+      current,.geometry.Point(position[1],position[2]),{= snap=1/4,maxNodes=32 }
+    ),
+    label=&quot;Add an exact free point&quot;,coordinateSystem={= view=view,size=size },
+    children=[.Graphics.Rectangle([0,0],size,{= fill=&quot;transparent&quot;,stroke=&quot;none&quot; })]
+  }),
+  .Graphics.Action({= id=&quot;geometry-author-undo&quot;,target=$$graph,
+    action=current-&gt;.geometry.Undo(current),children=[] }),
+  .Graphics.Action({= id=&quot;geometry-author-redo&quot;,target=$$graph,
+    action=current-&gt;.geometry.Redo(current),children=[] })
+];
+$$workbench := .geometry.AuthoringWorkbench($graph,actions,{=
+  view=view,size=size,snap=1/4,maxNodes=32
+});
+$workbench;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Click empty canvas space to place <code>p1</code>, <code>p2</code>, and so on. Select <strong>Point tool</strong> to focus its surface; arrows move the cursor, Shift-arrows move ten pixels, and Enter or Space places the point. <code>snap</code> is applied in mathematical coordinates, and <code>maxNodes</code> is a strict construction bound.</p>
 <h2>Keep unresolved intersections visible</h2>
 <p>Parallel lines return an intersection result whose status is <code>parallel</code>. Including that result in a drawing produces a visible diagnostic rather than a fabricated point.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">.Plugin.Load(&quot;geometry&quot;);

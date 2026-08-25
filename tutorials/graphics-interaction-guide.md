@@ -152,6 +152,41 @@ portable `rix.geometry.construction-record@1` JSON. Dependencies and unresolved
 or degenerate constructions remain visible rather than becoming guessed
 coordinates.
 
+The first canvas-authoring tool creates exact free points. Its positioned
+action receives a rational mathematical coordinate, not a browser pixel. The
+undo and redo actions operate on the same retained graph history.
+
+```rix edu
+.Plugin.Load("geometry");
+view := [-4,-3,4,3]; size := [640,480];
+$$graph := .geometry.ConstructionGraph([]);
+actions := [
+  .Graphics.Action({=
+    id="geometry-author-point",target=$$graph,
+    action=(current,position)->.geometry.AddPoint(
+      current,.geometry.Point(position[1],position[2]),{= snap=1/4,maxNodes=32 }
+    ),
+    label="Add an exact free point",coordinateSystem={= view=view,size=size },
+    children=[.Graphics.Rectangle([0,0],size,{= fill="transparent",stroke="none" })]
+  }),
+  .Graphics.Action({= id="geometry-author-undo",target=$$graph,
+    action=current->.geometry.Undo(current),children=[] }),
+  .Graphics.Action({= id="geometry-author-redo",target=$$graph,
+    action=current->.geometry.Redo(current),children=[] })
+];
+$$authoring := .geometry.AuthoringWorkbench($graph,actions,{=
+  view=view,size=size,snap=1/4,maxNodes=32
+});
+$authoring;
+```
+
+Click empty canvas space to add stable `p1`, `p2`, ... construction nodes. The
+exact `snap` is applied after pixel-to-view conversion, `maxNodes` bounds the
+construction, and a new placement clears the redo branch. Choose **Point
+tool** to focus the surface; arrows move its cursor, Shift-arrows move by ten
+pixels, and Enter or Space places a point. The workbench Undo/Redo controls
+replay the retained `:create` events, so export contains the same history.
+
 ## Play and compare a Timeline
 
 Return the Timeline itself to get the browser transport.

@@ -153,6 +153,10 @@ test("structured output has focused table, document, graphic, drawing, sheet, in
     expect(graphicsGuide).toContain("refineDepth=2");
     expect(graphicsGuide).toContain("certifyIntervals=1");
     expect(graphicsGuide).toContain("Interpolated boundary segments remain explicitly sampled");
+    expect(graphicsGuide).toContain(".geometry.AuthoringWorkbench");
+    expect(graphicsGuide).toContain(".geometry.AddPoint");
+    expect(graphicsGuide).toContain("geometry-author-point");
+    expect(graphicsGuide).toContain("replay the retained `:create` events");
     expect(graphicsGuide).toContain("Overview (sequential)");
     expect(graphicsGuide).toContain("not a certified");
     expect(graphicsGuide).toContain(".Timeline.Sequence");

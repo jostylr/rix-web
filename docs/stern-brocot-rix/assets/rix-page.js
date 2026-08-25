@@ -22302,6 +22302,59 @@ ${indentStr})`;
       throw new Error("Circle requires a radius");
     return output("circle", { center, radius, style: optionalMap(get(entry, "style"), "Circle style") });
   }
+  function normalizeGraphicCoordinateSystem(suppliedCoordinates, name) {
+    if (suppliedCoordinates === null || suppliedCoordinates === undefined)
+      return null;
+    const coordinates = map(suppliedCoordinates, `${name} coordinateSystem`);
+    const view = sequence(get(coordinates, "view"), `${name} coordinateSystem view`);
+    const suppliedFrame = get(coordinates, "frame");
+    const suppliedSize = get(coordinates, "size");
+    if (view.length !== 4 || suppliedFrame === null && suppliedSize === null) {
+      throw new Error(`${name} coordinateSystem requires a four-coordinate view and either frame or size`);
+    }
+    const numericView = view.map((value, index) => numericValue(value, `${name} view coordinate ${index + 1}`));
+    const [xmin, ymin, xmax, ymax] = numericView;
+    let numericFrame;
+    if (suppliedFrame !== null) {
+      const frame = sequence(suppliedFrame, `${name} coordinateSystem frame`);
+      if (frame.length !== 4)
+        throw new Error(`${name} coordinateSystem frame must contain four coordinates`);
+      numericFrame = frame.map((value, index) => numericValue(value, `${name} frame coordinate ${index + 1}`));
+    } else {
+      const size = sequence(suppliedSize, `${name} coordinateSystem size`);
+      if (size.length !== 2)
+        throw new Error(`${name} coordinateSystem size must contain width and height`);
+      const [width, height] = size.map((value, index) => numericValue(value, `${name} size coordinate ${index + 1}`));
+      if (!(width > 0 && height > 0 && xmax > xmin && ymax > ymin)) {
+        throw new Error(`${name} coordinateSystem requires positive size and increasing view bounds`);
+      }
+      const scale = Math.min(width / (xmax - xmin), height / (ymax - ymin));
+      const offsetX = (width - (xmax - xmin) * scale) / 2;
+      const offsetY = (height - (ymax - ymin) * scale) / 2;
+      numericFrame = [offsetX, offsetY, width - offsetX, height - offsetY];
+    }
+    const [left, top, right, bottom] = numericFrame;
+    if (!(xmax > xmin && ymax > ymin && right > left && bottom > top)) {
+      throw new Error(`${name} coordinateSystem requires increasing view and frame bounds`);
+    }
+    return Object.freeze({
+      schema: "rix.graphics.coordinate-system@1",
+      view: Object.freeze([...numericView]),
+      frame: Object.freeze([...numericFrame])
+    });
+  }
+  function coordinateSystemPoint(sourceCenter, coordinateSystem, name) {
+    if (!coordinateSystem)
+      return sourceCenter;
+    const [xmin, ymin, xmax, ymax] = coordinateSystem.view;
+    const [left, top, right, bottom] = coordinateSystem.frame;
+    const x = numericValue(sourceCenter[0], `${name} target x coordinate`);
+    const y = numericValue(sourceCenter[1], `${name} target y coordinate`);
+    return Object.freeze([
+      left + (x - xmin) / (xmax - xmin) * (right - left),
+      bottom - (y - ymin) / (ymax - ymin) * (bottom - top)
+    ]);
+  }
   function createDragPoint(args) {
     const entry = spec(args, ["target", "radius", "style", "label", "coordinateSystem"], "DragPoint");
     const target = get(entry, "target");
@@ -22312,54 +22365,8 @@ ${indentStr})`;
     if (sourceCenter.length !== 2) {
       throw new Error("DragPoint target value must contain x and y coordinates");
     }
-    const suppliedCoordinates = get(entry, "coordinateSystem");
-    let coordinateSystem = null;
-    let center = sourceCenter;
-    if (suppliedCoordinates !== null && suppliedCoordinates !== undefined) {
-      const coordinates = map(suppliedCoordinates, "DragPoint coordinateSystem");
-      const view = sequence(get(coordinates, "view"), "DragPoint coordinateSystem view");
-      const suppliedFrame = get(coordinates, "frame");
-      const suppliedSize = get(coordinates, "size");
-      if (view.length !== 4 || suppliedFrame === null && suppliedSize === null) {
-        throw new Error("DragPoint coordinateSystem requires a four-coordinate view and either frame or size");
-      }
-      const numericView = view.map((value, index) => numericValue(value, `DragPoint view coordinate ${index + 1}`));
-      const [xmin, ymin, xmax, ymax] = numericView;
-      let numericFrame;
-      if (suppliedFrame !== null) {
-        const frame = sequence(suppliedFrame, "DragPoint coordinateSystem frame");
-        if (frame.length !== 4)
-          throw new Error("DragPoint coordinateSystem frame must contain four coordinates");
-        numericFrame = frame.map((value, index) => numericValue(value, `DragPoint frame coordinate ${index + 1}`));
-      } else {
-        const size = sequence(suppliedSize, "DragPoint coordinateSystem size");
-        if (size.length !== 2)
-          throw new Error("DragPoint coordinateSystem size must contain width and height");
-        const [width, height] = size.map((value, index) => numericValue(value, `DragPoint size coordinate ${index + 1}`));
-        if (!(width > 0 && height > 0 && xmax > xmin && ymax > ymin)) {
-          throw new Error("DragPoint coordinateSystem requires positive size and increasing view bounds");
-        }
-        const scale = Math.min(width / (xmax - xmin), height / (ymax - ymin));
-        const offsetX = (width - (xmax - xmin) * scale) / 2;
-        const offsetY = (height - (ymax - ymin) * scale) / 2;
-        numericFrame = [offsetX, offsetY, width - offsetX, height - offsetY];
-      }
-      const [left, top, right, bottom] = numericFrame;
-      if (!(xmax > xmin && ymax > ymin && right > left && bottom > top)) {
-        throw new Error("DragPoint coordinateSystem requires increasing view and frame bounds");
-      }
-      const x = numericValue(sourceCenter[0], "DragPoint target x coordinate");
-      const y = numericValue(sourceCenter[1], "DragPoint target y coordinate");
-      center = Object.freeze([
-        left + (x - xmin) / (xmax - xmin) * (right - left),
-        bottom - (y - ymin) / (ymax - ymin) * (bottom - top)
-      ]);
-      coordinateSystem = Object.freeze({
-        schema: "rix.graphics.coordinate-system@1",
-        view: Object.freeze([...numericView]),
-        frame: Object.freeze([...numericFrame])
-      });
-    }
+    const coordinateSystem = normalizeGraphicCoordinateSystem(get(entry, "coordinateSystem"), "DragPoint");
+    const center = coordinateSystemPoint(sourceCenter, coordinateSystem, "DragPoint");
     return output("drag_point", {
       center: Object.freeze([...center]),
       sourceCenter: Object.freeze([...sourceCenter]),
@@ -22373,11 +22380,12 @@ ${indentStr})`;
     });
   }
   function createGraphicAction(args, runtime = null) {
-    const entry = spec(args, ["target", "action", "children", "label"], "Graphics.Action");
+    const entry = spec(args, ["target", "action", "children", "label", "coordinateSystem"], "Graphics.Action");
     const target = reactiveTarget(entry, "Graphics.Action");
     const action = get(entry, "action");
     if (action === null || action === undefined)
       throw new Error("Graphics.Action requires an action callable");
+    const coordinateSystem = normalizeGraphicCoordinateSystem(get(entry, "coordinateSystem"), "Graphics.Action");
     return output("graphic_action", {
       id: asString(get(entry, "id")) || `${target.id}:graphic-action`,
       label: asString(get(entry, "label")) || "Graphic action",
@@ -22386,7 +22394,8 @@ ${indentStr})`;
       target,
       targetId: target.id,
       action,
-      run: () => invokeControlCallable(action, [target.get()], runtime, "Graphics.Action action"),
+      coordinateSystem,
+      run: (position = null) => invokeControlCallable(action, coordinateSystem ? [target.get(), position] : [target.get()], runtime, "Graphics.Action action"),
       replacesDependencies: Object.freeze([...target.dependencies])
     });
   }
@@ -22953,8 +22962,9 @@ ${indentStr})`;
     if (node.kind === "graphic_action") {
       validateSvgStyle(node.style, SVG_SHAPE_STYLE_KEYS, path);
       const replaced = node.replacesDependencies?.length ? ` data-rix-replaces-dependencies="${escapeHtml2(node.replacesDependencies.join(","))}"` : "";
+      const positioned = node.coordinateSystem ? ` data-rix-graphic-positioned="true" data-rix-position="${(node.coordinateSystem.frame[0] + node.coordinateSystem.frame[2]) / 2},${(node.coordinateSystem.frame[1] + node.coordinateSystem.frame[3]) / 2}" aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Enter Space"` : "";
       const style = svgStyle(node.style, null, policy, defs, path);
-      return `<g class="rix-output-graphic-action" ${svgSemanticAttributes(node, path)}${style ? ` ${style}` : ""} tabindex="0" role="button" aria-label="${escapeHtml2(node.label)}" data-rix-graphic-action="${escapeHtml2(node.id)}" data-rix-graphic-target="${escapeHtml2(node.targetId)}"${replaced}>${node.children.map((child, index) => renderSvgNode(child, format, defs, policy, `${path}.graphic_action[${index + 1}]`)).join("")}</g>`;
+      return `<g class="rix-output-graphic-action" ${svgSemanticAttributes(node, path)}${style ? ` ${style}` : ""} tabindex="0" role="button" aria-label="${escapeHtml2(node.label)}" data-rix-graphic-action="${escapeHtml2(node.id)}" data-rix-graphic-target="${escapeHtml2(node.targetId)}"${positioned}${replaced}>${node.children.map((child, index) => renderSvgNode(child, format, defs, policy, `${path}.graphic_action[${index + 1}]`)).join("")}</g>`;
     }
     if (node.kind === "text_mark") {
       validateSvgStyle(node.style, SVG_TEXT_STYLE_KEYS, path);
@@ -70552,12 +70562,12 @@ id: geometry
 description: Pure-RiX exact geometry, transformations, conics, constraints, and bounded portable Graphics refinement.
 kind: rix
 mount: geometry
-exports: [Point, Line, Segment, Ray, Polygon, Circle, Conic, Ellipse, Parabola, Hyperbola, Locus, Implicit, Affine, Projective, Transform, Constraint, Constraints, SquaredDistance, Distance, Length, Area, CircularAngle, Angle, Centroid, Incenter, Orthocenter, AngleBisector, Perpendicular, ParallelThrough, Midpoint, PerpendicularBisector, Circumcircle, Translate, RotateQuarterTurns, Rotate, ReflectAcross, Intersect, Points, Status, UncertainPoint, UncertainBounds, TransformUncertain, ConstructionGraph, ConstructionRecord, ImportConstruction, Drag, Undo, Redo, Refine, Draw, Workbench]
+exports: [Point, Line, Segment, Ray, Polygon, Circle, Conic, Ellipse, Parabola, Hyperbola, Locus, Implicit, Affine, Projective, Transform, Constraint, Constraints, SquaredDistance, Distance, Length, Area, CircularAngle, Angle, Centroid, Incenter, Orthocenter, AngleBisector, Perpendicular, ParallelThrough, Midpoint, PerpendicularBisector, Circumcircle, Translate, RotateQuarterTurns, Rotate, ReflectAcross, Intersect, Points, Status, UncertainPoint, UncertainBounds, TransformUncertain, ConstructionGraph, ConstructionRecord, ImportConstruction, AddPoint, Drag, Undo, Redo, Refine, Draw, Workbench, AuthoringWorkbench]
 groups: [Geometry, Graphics, Exact]
 permissions: []
 requires: [rix.numerics@1, rix.polynomial.algorithms@1, rix.algebraic-real@1]
-provides: [rix.geometry@1, rix.geometry.intersection@1, rix.geometry.constraint@1, rix.geometry.refinement@1, rix.geometry.circular-angle@1, rix.geometry.uncertain-point@1, rix.geometry.construction-graph@1, rix.geometry.construction-record@1, rix.geometry.workbench@1]
-schemas: [rix.geometry@1, rix.geometry.intersection@1, rix.geometry.constraint@1, rix.geometry.refinement@1, rix.geometry.circular-angle@1, rix.geometry.uncertain-point@1, rix.geometry.construction-graph@1, rix.geometry.construction-record@1, rix.geometry.workbench@1]
+provides: [rix.geometry@1, rix.geometry.intersection@1, rix.geometry.constraint@1, rix.geometry.refinement@1, rix.geometry.circular-angle@1, rix.geometry.uncertain-point@1, rix.geometry.construction-graph@1, rix.geometry.construction-record@1, rix.geometry.workbench@1, rix.geometry.authoring-policy@1]
+schemas: [rix.geometry@1, rix.geometry.intersection@1, rix.geometry.constraint@1, rix.geometry.refinement@1, rix.geometry.circular-angle@1, rix.geometry.uncertain-point@1, rix.geometry.construction-graph@1, rix.geometry.construction-record@1, rix.geometry.workbench@1, rix.geometry.authoring-policy@1]
 snapshot: true
 deterministic: true
 defaultEnabled: false
@@ -71204,6 +71214,40 @@ GeometryImportConstruction(record,constructors ?= {= }) -> {;
     GeometryBuildConstructionGraph(nodes,GeometryOption(record,"history",[]),GeometryOption(record,"future",[]));
 };
 
+GeometryAuthoringLimit(options) -> {;
+    limit=GeometryOption(options,"maxnodes",1000) ~!: :Integer;
+    (limit>=1&&limit<=10000) ?: limit ?_ .Error("geometry authoring maxNodes must be between 1 and 10000");
+};
+
+GeometryAuthoringPoint(graph,target,options ?= {= }) -> {;
+    valid=GeometryRequireConstructionGraph(graph,"geometry.AddPoint");
+    options ? :Map ?: _ ?_ .Error("geometry.AddPoint options must be a map");
+    limit=GeometryAuthoringLimit(options);
+    valid[:nodes].Len()<limit ?: _ ?_ .Error(@"geometry.AddPoint reached its maxNodes limit of @{limit}");
+    supplied=GeometryRequire(target,:point,"geometry.AddPoint target");
+    snap=GeometryOption(options,"snap");
+    point=snap==_
+      ?: supplied
+      ?_ {;
+          grid=GeometryExact(@snap,"geometry.AddPoint snap"); grid>0 ?: _ ?_ .Error("geometry.AddPoint snap must be positive");
+          GeometryPoint((@supplied[:x]/grid).Round()*grid,(@supplied[:y]/grid).Round()*grid);
+      };
+    prefix=GeometryOption(options,"idprefix","p");
+    prefix ? :String ?: _ ?_ .Error("geometry.AddPoint idPrefix must be a String");
+    id:=GeometryOption(options,"id");
+    {@ candidate=1; candidate<=@limit&&@id==_; {;
+        proposed=@"@{@prefix}@{candidate}";
+        @valid[:nodes].Any((node)->node[:id]==@proposed) ?: _ ?_ {; @id~=@proposed; };
+    }; candidate+=1 };
+    id!=_ ?: _ ?_ .Error("geometry.AddPoint could not allocate a stable point id");
+    valid[:nodes].Any((node)->node[:id]==@id) ?: .Error(@"geometry.AddPoint duplicate node id @{id}") ?_ _;
+    node={= id=id,free=1,value=point,dependson=[] };
+    event={= operation=:create,tool=:point,id=id,node=node,at=point,snap=snap };
+    GeometryBuildConstructionGraph(valid[:nodes].Push(node),valid[:history].Push(event),[]);
+};
+
+GeometryAddPoint(graph,target,options ?= {= }) -> GeometryAuthoringPoint(graph,target,options);
+
 GeometryMoveConstructionNode(graph,id,target,history,future) -> {;
     found=graph[:nodes].Filter((node)->node[:id]==id);
     found.Len()==1 ?: _ ?_ .Error(@"geometry construction node @{id} does not exist");
@@ -71235,8 +71279,15 @@ GeometryUndo(graph) -> {;
       ?: valid
       ?_ {;
           event=@valid[:history].Last();
-          event[:operation]==:drag ?: _ ?_ .Error("geometry.Undo encountered an unsupported construction event");
-          GeometryMoveConstructionNode(@valid,event[:id],event[:from],@valid[:history].DropLast(),GeometryOption(@valid,"future",[]).Push(event));
+          operation=event[:operation]; future=GeometryOption(@valid,"future",[]).Push(event); history=@valid[:history].DropLast();
+          operation==:drag
+            ?: GeometryMoveConstructionNode(@valid,event[:id],event[:from],history,future)
+            ?_ operation==:create
+                 ?: {;
+                     @valid[:nodes].Last()[:id]==@event[:id] ?: _ ?_ .Error("geometry.Undo can only remove the most recently created construction node");
+                     GeometryBuildConstructionGraph(@valid[:nodes].DropLast(),@history,@future);
+                 }
+                 ?_ .Error("geometry.Undo encountered an unsupported construction event");
       };
 };
 
@@ -71246,8 +71297,12 @@ GeometryRedo(graph) -> {;
       ?: valid
       ?_ {;
           event=@future.Last();
-          event[:operation]==:drag ?: _ ?_ .Error("geometry.Redo encountered an unsupported construction event");
-          GeometryMoveConstructionNode(@valid,event[:id],event[:to],@valid[:history].Push(event),@future.DropLast());
+          operation=event[:operation]; history=@valid[:history].Push(event); remaining=@future.DropLast();
+          operation==:drag
+            ?: GeometryMoveConstructionNode(@valid,event[:id],event[:to],history,remaining)
+            ?_ operation==:create
+                 ?: GeometryBuildConstructionGraph(@valid[:nodes].Push(event[:node]),history,remaining)
+                 ?_ .Error("geometry.Redo encountered an unsupported construction event");
       };
 };
 
@@ -72070,7 +72125,9 @@ GeometryWorkbench(graph, options ?= {= }) -> {;
     scale=.Min(size[1]/(xmax-xmin),size[2]/(ymax-ymin));
     offsetX=(size[1]-(xmax-xmin)*scale)/2; offsetY=(size[2]-(ymax-ymin)*scale)/2;
     frame=[offsetX,offsetY,size[1]-offsetX,size[2]-offsetY];
-    children:=[]; unresolved:=0; interactive:=[];
+    surface=GeometryOption(options,"surface",[]);
+    surface ? :Array ?: _ ?_ .Error("geometry.Workbench surface must be an array of Graphics nodes");
+    children:=surface; unresolved:=0; interactive:=[];
     {@ index=1; index<=@valid[:nodes].Len(); {;
         node=@valid[:nodes][index]; value=node[:value]; id=node[:id];
         schema=((value ? :Map)&&value.Has("schema")) ?: value[:schema] ?_ _;
@@ -72097,9 +72154,43 @@ GeometryWorkbench(graph, options ?= {= }) -> {;
             schema="rix.geometry.workbench@1",construction=record,nodes=record[:nodes],
             view=view,frame=frame,interactive=interactive,
             historyCount=valid[:history].Len(),redoCount=GeometryOption(valid,"future",[]).Len(),
+            authoring=GeometryOption(options,"authoring"),
             deterministic=1
         }
     });
+};
+
+GeometryAuthoringWorkbench(graph,actions,options ?= {= }) -> {;
+    valid=GeometryRequireConstructionGraph(graph,"geometry.AuthoringWorkbench");
+    options ? :Map ?: _ ?_ .Error("geometry.AuthoringWorkbench options must be a map");
+    actions ? :Array ?: _ ?_ .Error("geometry.AuthoringWorkbench actions must be [point, undo, redo] Graphics actions");
+    actions.Len()==3 ?: _ ?_ .Error("geometry.AuthoringWorkbench requires point, undo, and redo Graphics actions");
+    size=GeometryNumericSequence(GeometryOption(options,"size",[720,480]),2,"geometry.AuthoringWorkbench size");
+    view=GeometryNumericSequence(GeometryOption(options,"view",[-10,-10,10,10]),4,"geometry.AuthoringWorkbench view");
+    xmin=view[1]; ymin=view[2]; xmax=view[3]; ymax=view[4];
+    (xmax>xmin&&ymax>ymin) ?: _ ?_ .Error("geometry.AuthoringWorkbench view must satisfy xmin < xmax and ymin < ymax");
+    (size[1]>0&&size[2]>0) ?: _ ?_ .Error("geometry.AuthoringWorkbench size must be positive");
+    scale=.Min(size[1]/(xmax-xmin),size[2]/(ymax-ymin));
+    offsetX=(size[1]-(xmax-xmin)*scale)/2; offsetY=(size[2]-(ymax-ymin)*scale)/2;
+    frame=[offsetX,offsetY,size[1]-offsetX,size[2]-offsetY];
+    maxNodes=GeometryAuthoringLimit(options);
+    snap=GeometryOption(options,"snap");
+    snap==_ ?: _ ?_ {; grid=GeometryExact(@snap,"geometry.AuthoringWorkbench snap"); grid>0 ?: _ ?_ .Error("geometry.AuthoringWorkbench snap must be positive"); };
+    idPrefix=GeometryOption(options,"idprefix","p");
+    idPrefix ? :String ?: _ ?_ .Error("geometry.AuthoringWorkbench idPrefix must be a String");
+    actionPrefix=GeometryOption(options,"actionprefix","geometry-author");
+    actionPrefix ? :String ?: _ ?_ .Error("geometry.AuthoringWorkbench actionPrefix must be a String");
+    surfaceActionId=@"@{actionPrefix}-point"; undoActionId=@"@{actionPrefix}-undo"; redoActionId=@"@{actionPrefix}-redo";
+    coordinateSystem={= view=view,frame=frame };
+    policy={=
+        schema="rix.geometry.authoring-policy@1",tool=:point,tools=[:point],
+        maxNodes=maxNodes,snap=snap,idPrefix=idPrefix,coordinateSystem=coordinateSystem,
+        surfaceActionId=surfaceActionId,undoActionId=undoActionId,redoActionId=redoActionId,
+        exactCoordinates=1,deterministicIds=1
+    };
+    GeometryWorkbench(valid,options.Merge({=
+        surface=actions,authoring=policy,size=size,view=view
+    }));
 };
 
 geometryNamespace = {= };
@@ -72149,12 +72240,14 @@ geometryNamespace._proto = {=
     ConstructionGraph=(self, nodes, options ?= {= })->GeometryConstructionGraph(nodes,options),
     ConstructionRecord=(self, graph)->GeometryConstructionRecord(graph),
     ImportConstruction=(self, record, constructors ?= {= })->GeometryImportConstruction(record,constructors),
+    AddPoint=(self, graph, target, options ?= {= })->GeometryAddPoint(graph,target,options),
     Drag=(self, graph, id, target, options ?= {= })->GeometryDrag(graph,id,target,options),
     Undo=(self, graph)->GeometryUndo(graph),
     Redo=(self, graph)->GeometryRedo(graph),
     Refine=(self, value, request ?= {= })->GeometryRefine(value, request),
     Draw=(self, objects, options ?= {= })->GeometryDraw(objects, options),
-    Workbench=(self, graph, options ?= {= })->GeometryWorkbench(graph,options)
+    Workbench=(self, graph, options ?= {= })->GeometryWorkbench(graph,options),
+    AuthoringWorkbench=(self, graph, actions, options ?= {= })->GeometryAuthoringWorkbench(graph,actions,options)
 };
 .Host.RegisterValue("geometry", geometryNamespace, "Exact geometry, transformations, conics, constraints, and bounded Graphics refinement", ["Geometry", "Graphics", "Exact"]);
 `;
@@ -87520,7 +87613,8 @@ ${execute}---
         if (event.targetId && String(event.targetId) !== action.targetId) {
           throw new Error("Graphic action and target IDs do not match");
         }
-        const value2 = action.run();
+        const point4 = action.coordinateSystem ? graphicPoint(event.position, action.coordinateSystem) : null;
+        const value2 = action.run(point4);
         const replacedDependencies2 = Object.freeze([...action.target.dependencies]);
         action.target.replaceValue(value2, {
           source: "widget",
@@ -88158,13 +88252,15 @@ ${execute}---
   function serializeGeometryConstructionRecord(record, format = String) {
     return JSON.stringify(portableGeometryValue(record, format), null, 2);
   }
-  function installGeometryWorkbench(graphic, status, options, navigation) {
+  function installGeometryWorkbench(graphic, status, options, navigation, actionActivators = new Map) {
     const workbench = geometryWorkbench(options.graphic);
     const document2 = graphic.ownerDocument;
     if (!workbench || !document2?.createElement)
       return;
     const nodes = sequenceValue6(mapField4(workbench, "nodes"));
     const history = geometryHistory(options.state || (options.state = {}));
+    const authoring = mapField4(workbench, "authoring");
+    const authoringEnabled = stringValue11(mapField4(authoring, "schema")) === "rix.geometry.authoring-policy@1";
     const panel = document2.createElement("aside");
     panel.className = "rix-output-geometry-workbench";
     panel.setAttribute("aria-label", "Geometry construction workbench");
@@ -88177,6 +88273,18 @@ ${execute}---
     const redo = makeButton(document2, "geometry-redo", "Redo point movement", "Redo");
     const exportButton = makeButton(document2, "geometry-export", "Export portable construction record", "Export");
     controls.append(undo, redo, exportButton);
+    if (authoringEnabled) {
+      const pointTool = makeButton(document2, "geometry-point-tool", "Focus the exact free-point authoring surface", "Point tool");
+      pointTool.setAttribute("aria-pressed", "true");
+      pointTool.addEventListener("click", () => {
+        const actionId = stringValue11(mapField4(authoring, "surfaceActionId"));
+        const surface = [...graphic.querySelectorAll("[data-rix-graphic-action]")].find((candidate) => candidate.dataset.rixGraphicAction === actionId);
+        surface?.focus?.();
+        if (status)
+          status.textContent = "Point tool active. Click empty canvas space, or move the keyboard cursor with arrows and press Enter.";
+      });
+      controls.prepend(pointTool);
+    }
     panel.append(controls);
     const exported = document2.createElement("pre");
     exported.className = "rix-output-geometry-export";
@@ -88241,10 +88349,16 @@ ${execute}---
     panel.append(tree, properties);
     graphic.append(panel);
     const refreshHistory = () => {
-      undo.disabled = history.cursor === 0;
-      redo.disabled = history.cursor >= history.entries.length;
+      undo.disabled = authoringEnabled ? finiteNumber2(mapField4(workbench, "historyCount"), 0) === 0 : history.cursor === 0;
+      redo.disabled = authoringEnabled ? finiteNumber2(mapField4(workbench, "redoCount"), 0) === 0 : history.cursor >= history.entries.length;
     };
     const replay = (direction) => {
+      if (authoringEnabled) {
+        const key = direction < 0 ? "undoActionId" : "redoActionId";
+        const actionId = stringValue11(mapField4(authoring, key));
+        actionActivators.get(actionId)?.(direction < 0 ? "undo" : "redo");
+        return;
+      }
       const entry2 = direction < 0 ? history.entries[history.cursor - 1] : history.entries[history.cursor];
       if (!entry2 || typeof options.onPosition !== "function")
         return;
@@ -88672,16 +88786,19 @@ ${execute}---
     if (!svg)
       return;
     const navigation = installNavigation(graphic, svg, status, options);
-    installGeometryWorkbench(graphic, status, options, navigation);
+    const actionActivators = new Map;
     for (const action of actions) {
       if (typeof options.onAction !== "function")
         continue;
-      const activate = (source) => {
+      const positioned = action.dataset.rixGraphicPositioned === "true";
+      const current = () => String(action.dataset.rixPosition || "0,0").split(",").map(Number);
+      const activate = (source, position = positioned ? current() : null) => {
         const detail = Object.freeze({
           type: "graphic:action",
           actionId: action.dataset.rixGraphicAction,
           targetId: action.dataset.rixGraphicTarget,
-          source
+          source,
+          ...positioned ? { position: Object.freeze(position.map(Number)) } : {}
         });
         try {
           const result = options.onAction(detail, action, graphic);
@@ -88696,12 +88813,39 @@ ${execute}---
             status.textContent = error instanceof Error ? error.message : String(error);
         }
       };
+      actionActivators.set(action.dataset.rixGraphicAction, activate);
       action.addEventListener("click", (event) => {
         event.preventDefault?.();
         event.stopPropagation?.();
-        activate("pointer");
+        const position = positioned ? graphicPointFromClient(svg.getBoundingClientRect(), svg.viewBox?.baseVal || graphicViewBox(options.state), { x: event.clientX, y: event.clientY }) : null;
+        if (positioned)
+          action.dataset.rixPosition = position.join(",");
+        activate("pointer", position);
       });
       action.addEventListener("keydown", (event) => {
+        if (positioned && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
+          const delta = event.shiftKey ? 10 : 1;
+          const position = current();
+          if (event.key === "ArrowLeft")
+            position[0] -= delta;
+          else if (event.key === "ArrowRight")
+            position[0] += delta;
+          else if (event.key === "ArrowUp")
+            position[1] -= delta;
+          else
+            position[1] += delta;
+          const box2 = svg.viewBox?.baseVal || graphicViewBox(options.state);
+          const next = [
+            Math.min(Math.max(position[0], box2.x), box2.x + box2.width),
+            Math.min(Math.max(position[1], box2.y), box2.y + box2.height)
+          ];
+          action.dataset.rixPosition = next.join(",");
+          event.preventDefault?.();
+          event.stopPropagation?.();
+          if (status)
+            status.textContent = `Point-tool cursor ${next.map((value) => Number(value.toFixed(2))).join(", ")}. Press Enter to create.`;
+          return;
+        }
         if (event.key !== "Enter" && event.key !== " ")
           return;
         event.preventDefault?.();
@@ -88709,6 +88853,7 @@ ${execute}---
         activate("keyboard");
       });
     }
+    installGeometryWorkbench(graphic, status, options, navigation, actionActivators);
     if (handles.length === 0 || typeof options.onPosition !== "function")
       return;
     const setPreview = (handle, position) => {
