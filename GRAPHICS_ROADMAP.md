@@ -110,11 +110,13 @@ interpolation remains labeled as sample evidence rather than being promoted to
 a certified crossing. Text and accessible HTML projections report the same
 distinction and work record.
 
-Further Priority 3 work remains: discontinuity-aware refinement, proof of
-boundary existence under explicit continuity contracts, shared sample caching
-across sibling cells and contour levels, continuous color interpolation,
-contour-label placement, broader dense-field performance policy, and expanded
-browser visual/accessibility fixtures.
+The consolidated post-baseline pass adds a shared exact-point cache across
+sibling cells and contour levels, caller-declared continuity with separate IVT
+edge-existence proof, heuristic steep-cell/discontinuity warnings, bounded
+deterministic contour labels, and value-driven HSL heat-map color. The metadata
+keeps existence proof, sampled segment location, and heuristic warnings as
+different evidence fields. Remaining work is chiefly host-level scale testing:
+broader dense-field policy and expanded browser visual/accessibility fixtures.
 
 ## 4. Visual geometry workbench — baseline implemented
 
@@ -148,11 +150,14 @@ exposes a keyboard-focusable Point tool and routes Undo/Redo through that kernel
 history, so the dependency tree, inspector, export, and static Graphic all see
 the newly created construction nodes rather than host-only marks.
 
-Further Priority 4 work remains: canvas tools for dependency-bearing lines,
-circles, intersections, transformations, labels, and measurements;
-constraint-solving drag modes; locus animation; degeneracy repair suggestions;
-multi-object edits; persistent workbench history; and direct import of exported
-JSON in the browser host.
+The consolidated post-baseline kernel adds stable dependency-bearing line,
+circle, intersection, transformation, and measurement tools; exact line
+projection/rejection drag; atomic multi-point edits with undo/redo; and
+structured non-mutating degeneracy repair suggestions. Construction records
+retain history while imports continue to require explicit derived constructors,
+avoiding unsafe callback serialization. Remaining host work is a selection UI
+for those tools, locus animation, persistent browser storage, and a direct JSON
+import flow that obtains the required constructor map explicitly.
 
 ## 5. Timeline playback and transitions — baseline implemented
 
@@ -170,17 +175,19 @@ playback-range, comparison, and keyboard controls. All materialized frame DOM
 remains available to the host, while the current-frame inspector and complete
 text track expose exact states, provenance, and semantic output. Adjacent
 frames are matched through stable `data-rix-semantic-id` values. The portable
-`rix.timeline-transition@1` policy is discrete by default and currently
-declares only frame opacity safe for an explicit crossfade; unsupported
+`rix.timeline-transition@1` policy is discrete by default and declares opacity,
+position, fill, and stroke safe as presentation-only transitions; unsupported
 property declarations fail instead of silently interpolating mathematical
 values. Reduced-motion preference suppresses crossfades without removing
 user-directed discrete playback.
 
-Follow-up work remains: schema-declared interpolation for individual geometry,
-plot, camera, and annotation properties; onion-skin and arbitrary-frame
-comparison; variable per-frame timing; named timeline markers; recording and
-export controls; persistent transport preferences; and richer transition
-diagnostics when a semantic object changes kind or disappears.
+The post-baseline pass adds onion-skin and arbitrary-frame comparison, exact
+per-frame timing, named markers, deterministic exact-frame recording/export,
+keyed transport preferences, and diagnostics for semantic objects that appear,
+disappear, or change kind. Exact retained values always change discretely;
+position/fill/stroke interpolation is computed only between matching semantic
+DOM objects. Remaining research is schema coverage for richer plot, camera, and
+annotation properties plus real media capture beyond deterministic JSON.
 
 ## 6. Sonification and comprehensive textual alternatives — baseline implemented
 

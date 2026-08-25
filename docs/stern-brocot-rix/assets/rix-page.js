@@ -20958,9 +20958,10 @@ ${indentStr})`;
       throw new Error("Timeline.Sequence transition mode must be discrete or crossfade");
     }
     const propertiesValue = fields ? get(fields, "properties") : null;
+    const safeProperties = new Set(["opacity", "position", "fill", "stroke"]);
     const properties = propertiesValue === null || propertiesValue === undefined ? mode === "crossfade" ? ["opacity"] : [] : sequence(propertiesValue, "Timeline.Sequence transition properties").map((entry) => {
       const name = (asString(entry) || "").toLowerCase();
-      if (name !== "opacity") {
+      if (!safeProperties.has(name)) {
         throw new Error(`Timeline.Sequence transition property '${name || String(entry)}' is not declared safe by rix.timeline-transition@1`);
       }
       return name;
@@ -20975,6 +20976,31 @@ ${indentStr})`;
       duration: durationValue === null || durationValue === undefined ? null : positiveExactNumber(durationValue, "Timeline.Sequence transition duration"),
       properties: Object.freeze([...new Set(properties)])
     });
+  }
+  function timelineFrameDurations(value, count) {
+    if (value === null || value === undefined)
+      return null;
+    const durations = sequence(value, "Timeline.Sequence frameDurations");
+    if (durations.length !== count) {
+      throw new Error(`Timeline.Sequence frameDurations must contain exactly ${count} entries`);
+    }
+    return Object.freeze(durations.map((duration, index) => positiveExactNumber(duration, `Timeline.Sequence frameDurations entry ${index + 1}`)));
+  }
+  function timelineMarkers(value, count) {
+    if (value === null || value === undefined)
+      return Object.freeze([]);
+    const labels = new Set;
+    return Object.freeze(sequence(value, "Timeline.Sequence markers").map((marker, index) => {
+      const fields = map(marker, `Timeline.Sequence marker ${index + 1}`);
+      const frame = exactPositiveIndex(get(fields, "frame"), `Timeline.Sequence marker ${index + 1} frame`);
+      if (frame > count)
+        throw new Error(`Timeline.Sequence marker ${index + 1} frame is outside 1…${count}`);
+      const label = requiredString(get(fields, "label"), `Timeline.Sequence marker ${index + 1} label`);
+      if (labels.has(label))
+        throw new Error(`Timeline.Sequence marker label '${label}' is duplicated`);
+      labels.add(label);
+      return Object.freeze({ frame, label });
+    }));
   }
   function exactRational(value, label) {
     if (value instanceof Rational)
@@ -21287,9 +21313,16 @@ ${indentStr})`;
     if (frames.length === 0)
       throw new Error("Timeline.Sequence requires at least one rendered frame");
     const duration = get(entry, "duration");
+    const frameDurations = timelineFrameDurations(get(entry, "frameDurations"), frames.length);
+    if (frameDurations && duration !== null && duration !== undefined) {
+      throw new Error("Timeline.Sequence accepts either duration or frameDurations, not both");
+    }
     return output("timeline", {
       frames,
       duration: duration === null || duration === undefined ? null : positiveExactNumber(duration, "Timeline.Sequence duration"),
+      frameDurations,
+      markers: timelineMarkers(get(entry, "markers"), frames.length),
+      preferencesKey: asString(get(entry, "preferencesKey")),
       easing: asString(get(entry, "easing")) || "linear",
       transition: timelineTransition(get(entry, "transition")),
       title: asString(get(entry, "title"))
@@ -23170,7 +23203,14 @@ ${indentStr})`;
         const classifications = records.reduce((total, entry) => total + number(get(entry, "certifiedExcludedCells")) + number(get(entry, "certifiedInsideCells")) + number(get(entry, "certifiedOutsideCells")), 0);
         const candidates = records.reduce((total, entry) => total + number(get(entry, "enclosureCandidateCells")), 0);
         const stops = records.reduce((total, entry) => total + number(get(entry, "budgetStops")), 0);
+        const evaluations = records.reduce((total, entry) => total + number(get(entry, "pointEvaluations")), 0);
+        const cacheHits = records.reduce((total, entry) => total + number(get(entry, "cacheHits")), 0);
+        const uniquePoints = Math.max(...records.map((entry) => number(get(entry, "uniquePointSamples"))));
+        const discontinuitySuspicions = records.reduce((total, entry) => total + number(get(entry, "suspectedDiscontinuityCells")), 0);
         parts.push(`adaptive depth ${reached}/${maximum}, ${refined} subdivisions, ${leaves} leaf cells, ${stops} budget stops`);
+        parts.push(`${evaluations} new point evaluations, ${cacheHits} shared-cache hits, ${uniquePoints} unique retained points`);
+        if (discontinuitySuspicions)
+          parts.push(`${discontinuitySuspicions} steep sampled cells flagged as possible discontinuities (heuristic evidence)`);
         if (intervals)
           parts.push(`${intervals} certified interval enclosures, ${classifications} whole-cell classifications, ${candidates} enclosure candidates; crossings remain sampled`);
       }
@@ -23183,6 +23223,12 @@ ${indentStr})`;
       const ambiguous = sequence(ambiguousValue, "plot ambiguous regions").length;
       if (ambiguous)
         parts.push(`${ambiguous} sampled boundary region${ambiguous === 1 ? "" : "s"}`);
+    }
+    const plotRecords = get(plot, "records");
+    if (plotRecords && isSequence(plotRecords)) {
+      const edgeProofs = sequence(plotRecords, "plot records").filter((record) => asString(get(record?.entries instanceof Map ? record.entries : record, "edgeExistenceEvidence")) === "proof").length;
+      if (edgeProofs)
+        parts.push(`${edgeProofs} sampled contour segments have continuity-based edge-existence proof; segment locations remain sampled`);
     }
     const status = asString(get(plot, "status"));
     if (status)
@@ -23468,11 +23514,14 @@ ${formatOutputText(slide, format)}`).join(`
         const entry = exactInteger4(origin.get("entry"), "Timeline origin entry");
         const state = exactInteger4(origin.get("state"), "Timeline origin state");
         const ordinal = exactInteger4(origin.get("ordinal"), "Timeline origin ordinal");
-        return `<article class="rix-output-timeline-frame" data-rix-timeline-frame="${index + 1}" data-rix-timeline-entry="${entry}" data-rix-timeline-state="${state}" data-rix-timeline-ordinal="${ordinal}" aria-label="Frame ${index + 1} of ${value.frames.length}"${index === 0 ? ' data-rix-timeline-current="true"' : ' hidden aria-hidden="true"'}>${renderOutputHtml(frame.content, format)}</article>`;
+        const marker = value.markers?.find((candidate) => candidate.frame === index + 1);
+        const frameDuration = value.frameDurations?.[index];
+        return `<article class="rix-output-timeline-frame" data-rix-timeline-frame="${index + 1}" data-rix-timeline-entry="${entry}" data-rix-timeline-state="${state}" data-rix-timeline-ordinal="${ordinal}"${marker ? ` data-rix-timeline-marker="${escapeHtml2(marker.label)}"` : ""}${frameDuration ? ` data-rix-timeline-duration="${escapeHtml2(cellText(frameDuration, format))}"` : ""} aria-label="Frame ${index + 1} of ${value.frames.length}${marker ? `, marker ${escapeHtml2(marker.label)}` : ""}"${index === 0 ? ' data-rix-timeline-current="true"' : ' hidden aria-hidden="true"'}>${renderOutputHtml(frame.content, format)}</article>`;
       }).join("");
-      const textTrack = value.frames.map((frame, index) => `<li data-rix-timeline-text-frame="${index + 1}"${index === 0 ? ' aria-current="true"' : ""}><b>Frame ${index + 1} · exact state ${escapeHtml2(cellText(frame.state, format))}</b><pre>${escapeHtml2(formatOutputText(frame.content, format))}</pre></li>`).join("");
-      const duration = value.duration === null ? "host default" : `${escapeHtml2(cellText(value.duration, format))} seconds total`;
-      return `<section class="rix-output-timeline" data-rix-timeline-length="${value.frames.length}" data-rix-timeline-transition="${escapeHtml2(transition.mode)}" data-rix-timeline-transition-schema="${escapeHtml2(transition.schema)}" tabindex="0" role="region" aria-label="${escapeHtml2(value.title || "Mathematical timeline")}">${value.title ? `<h2>${escapeHtml2(value.title)}</h2>` : ""}<p class="rix-output-timeline-meta">${value.frames.length} exact frames · ${duration} · ${escapeHtml2(value.easing)} easing · ${escapeHtml2(transition.mode)} changes</p><div class="rix-output-timeline-toolbar" role="toolbar" aria-label="Timeline playback controls"><button type="button" data-rix-timeline-action="previous" aria-label="Previous frame">←</button><button type="button" data-rix-timeline-action="play" aria-pressed="false">Play</button><button type="button" data-rix-timeline-action="next" aria-label="Next frame">→</button><label>Frame <input type="range" min="1" max="${value.frames.length}" step="1" value="1" data-rix-timeline-scrubber aria-label="Timeline frame"></label><label>Speed <select data-rix-timeline-speed aria-label="Playback speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label><label><input type="checkbox" data-rix-timeline-loop> Loop</label><label>Start <input type="number" min="1" max="${value.frames.length}" step="1" value="1" data-rix-timeline-range-start></label><label>End <input type="number" min="1" max="${value.frames.length}" step="1" value="${value.frames.length}" data-rix-timeline-range-end></label><label><input type="checkbox" data-rix-timeline-compare> Compare previous</label></div><div class="rix-output-timeline-stage" data-rix-timeline-stage>${frameArticles}</div><output class="rix-output-timeline-status" data-rix-timeline-status aria-live="polite">Frame 1 of ${value.frames.length} · exact state ${escapeHtml2(cellText(value.frames[0].state, format))}</output><details class="rix-output-timeline-inspector"><summary>Exact current frame</summary><dl><dt>State</dt><dd data-rix-timeline-exact-state>${escapeHtml2(cellText(value.frames[0].state, format))}</dd><dt>Origin</dt><dd data-rix-timeline-exact-origin>entry ${exactInteger4(value.frames[0].origin.entries.get("entry"), "Timeline origin entry")}, state ${exactInteger4(value.frames[0].origin.entries.get("state"), "Timeline origin state")}, ordinal ${exactInteger4(value.frames[0].origin.entries.get("ordinal"), "Timeline origin ordinal")}</dd></dl><pre data-rix-timeline-exact-text>${escapeHtml2(formatOutputText(value.frames[0].content, format))}</pre></details><details class="rix-output-timeline-text-track"><summary>Complete text track (${value.frames.length} frames)</summary><ol>${textTrack}</ol></details><p class="rix-output-timeline-help">Keyboard: Space play/pause; Left/Right step; Home/End jump; L loop.</p></section>`;
+      const textTrack = value.frames.map((frame, index) => `<li data-rix-timeline-text-frame="${index + 1}"${index === 0 ? ' aria-current="true"' : ""}><b>Frame ${index + 1}${value.markers?.find((marker) => marker.frame === index + 1) ? ` · marker ${escapeHtml2(value.markers.find((marker) => marker.frame === index + 1).label)}` : ""} · exact state ${escapeHtml2(cellText(frame.state, format))}</b><pre>${escapeHtml2(formatOutputText(frame.content, format))}</pre></li>`).join("");
+      const duration = value.frameDurations ? "variable exact frame timing" : value.duration === null ? "host default" : `${escapeHtml2(cellText(value.duration, format))} seconds total`;
+      const markerOptions = (value.markers || []).map((marker) => `<option value="${marker.frame}">${escapeHtml2(marker.label)} · frame ${marker.frame}</option>`).join("");
+      return `<section class="rix-output-timeline" data-rix-timeline-length="${value.frames.length}" data-rix-timeline-transition="${escapeHtml2(transition.mode)}" data-rix-timeline-transition-schema="${escapeHtml2(transition.schema)}"${value.preferencesKey ? ` data-rix-timeline-preferences-key="${escapeHtml2(value.preferencesKey)}"` : ""} tabindex="0" role="region" aria-label="${escapeHtml2(value.title || "Mathematical timeline")}">${value.title ? `<h2>${escapeHtml2(value.title)}</h2>` : ""}<p class="rix-output-timeline-meta">${value.frames.length} exact frames · ${duration} · ${escapeHtml2(value.easing)} easing · ${escapeHtml2(transition.mode)} changes</p><div class="rix-output-timeline-toolbar" role="toolbar" aria-label="Timeline playback controls"><button type="button" data-rix-timeline-action="previous" aria-label="Previous frame">←</button><button type="button" data-rix-timeline-action="play" aria-pressed="false">Play</button><button type="button" data-rix-timeline-action="next" aria-label="Next frame">→</button><label>Frame <input type="range" min="1" max="${value.frames.length}" step="1" value="1" data-rix-timeline-scrubber aria-label="Timeline frame"></label><label>Speed <select data-rix-timeline-speed aria-label="Playback speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label><label><input type="checkbox" data-rix-timeline-loop> Loop</label><label>Start <input type="number" min="1" max="${value.frames.length}" step="1" value="1" data-rix-timeline-range-start></label><label>End <input type="number" min="1" max="${value.frames.length}" step="1" value="${value.frames.length}" data-rix-timeline-range-end></label><label>Compare <select data-rix-timeline-compare><option value="none">None</option><option value="previous">Previous</option><option value="frame">Chosen frame</option><option value="onion">Onion skin</option></select></label><label>Comparison frame <input type="number" min="1" max="${value.frames.length}" step="1" value="1" data-rix-timeline-compare-frame></label>${markerOptions ? `<label>Marker <select data-rix-timeline-marker><option value="">Choose…</option>${markerOptions}</select></label>` : ""}<button type="button" data-rix-timeline-action="record">Record frame</button><button type="button" data-rix-timeline-action="export">Export recording</button><button type="button" data-rix-timeline-action="clear-recording">Clear recording</button></div><div class="rix-output-timeline-stage" data-rix-timeline-stage>${frameArticles}</div><output class="rix-output-timeline-status" data-rix-timeline-status aria-live="polite">Frame 1 of ${value.frames.length} · exact state ${escapeHtml2(cellText(value.frames[0].state, format))}</output><pre class="rix-output-timeline-export" data-rix-timeline-export hidden></pre><details class="rix-output-timeline-diagnostics"><summary>Transition diagnostics</summary><ul data-rix-timeline-diagnostics></ul></details><details class="rix-output-timeline-inspector"><summary>Exact current frame</summary><dl><dt>State</dt><dd data-rix-timeline-exact-state>${escapeHtml2(cellText(value.frames[0].state, format))}</dd><dt>Origin</dt><dd data-rix-timeline-exact-origin>entry ${exactInteger4(value.frames[0].origin.entries.get("entry"), "Timeline origin entry")}, state ${exactInteger4(value.frames[0].origin.entries.get("state"), "Timeline origin state")}, ordinal ${exactInteger4(value.frames[0].origin.entries.get("ordinal"), "Timeline origin ordinal")}</dd></dl><pre data-rix-timeline-exact-text>${escapeHtml2(formatOutputText(value.frames[0].content, format))}</pre></details><details class="rix-output-timeline-text-track"><summary>Complete text track (${value.frames.length} frames)</summary><ol>${textTrack}</ol></details><p class="rix-output-timeline-help">Keyboard: Space play/pause; Left/Right step; Home/End jump; L loop; M next marker; R record exact frame.</p></section>`;
     }
     if (value.kind === "timeline_render")
       return `<section class="rix-output-timeline-render" data-rix-timeline-frame="${value.frame}" data-rix-timeline-length="${value.timeline.frames.length}">${value.title ? `<h2>${escapeHtml2(value.title)}</h2>` : ""}${renderOutputHtml(value.content, format)}<p class="rix-output-timeline-caption">Frame ${value.frame} of ${value.timeline.frames.length}</p></section>`;
@@ -70562,7 +70611,7 @@ id: geometry
 description: Pure-RiX exact geometry, transformations, conics, constraints, and bounded portable Graphics refinement.
 kind: rix
 mount: geometry
-exports: [Point, Line, Segment, Ray, Polygon, Circle, Conic, Ellipse, Parabola, Hyperbola, Locus, Implicit, Affine, Projective, Transform, Constraint, Constraints, SquaredDistance, Distance, Length, Area, CircularAngle, Angle, Centroid, Incenter, Orthocenter, AngleBisector, Perpendicular, ParallelThrough, Midpoint, PerpendicularBisector, Circumcircle, Translate, RotateQuarterTurns, Rotate, ReflectAcross, Intersect, Points, Status, UncertainPoint, UncertainBounds, TransformUncertain, ConstructionGraph, ConstructionRecord, ImportConstruction, AddPoint, Drag, Undo, Redo, Refine, Draw, Workbench, AuthoringWorkbench]
+exports: [Point, Line, Segment, Ray, Polygon, Circle, Conic, Ellipse, Parabola, Hyperbola, Locus, Implicit, Affine, Projective, Transform, Constraint, Constraints, SquaredDistance, Distance, Length, Area, CircularAngle, Angle, Centroid, Incenter, Orthocenter, AngleBisector, Perpendicular, ParallelThrough, Midpoint, PerpendicularBisector, Circumcircle, Translate, RotateQuarterTurns, Rotate, ReflectAcross, Intersect, Points, Status, UncertainPoint, UncertainBounds, TransformUncertain, ConstructionGraph, ConstructionRecord, ImportConstruction, AddPoint, AddLine, AddCircle, AddIntersection, AddTransform, AddMeasurement, Drag, DragMany, ConstrainedDrag, RepairSuggestions, Undo, Redo, Refine, Draw, Workbench, AuthoringWorkbench]
 groups: [Geometry, Graphics, Exact]
 permissions: []
 requires: [rix.numerics@1, rix.polynomial.algorithms@1, rix.algebraic-real@1]
@@ -71189,8 +71238,9 @@ GeometryConstructionRecord(graph) -> {;
     records=valid[:nodes].Map((node)->{;
         value=node[:value];
         kind=((value ? :Map)&&value.Has("kind")) ?: value[:kind] ?_ :value;
-        status=((value ? :Map)&&value.Has("status")) ?: value[:status] ?_ _;
-        diagnostic=((value ? :Map)&&value.Has("diagnostic")) ?: value[:diagnostic] ?_ _;
+        structured=value ? :Map;
+        status=structured ?: (value.Has("status") ?: value[:status] ?_ _) ?_ _;
+        diagnostic=structured ?: (value.Has("diagnostic") ?: value[:diagnostic] ?_ _) ?_ _;
         {= id=node[:id],free=node[:free],dependsOn=node[:dependsOn],kind=kind,status=status,diagnostic=diagnostic,value=value };
     });
     .DeepMutable({=
@@ -71248,6 +71298,59 @@ GeometryAuthoringPoint(graph,target,options ?= {= }) -> {;
 
 GeometryAddPoint(graph,target,options ?= {= }) -> GeometryAuthoringPoint(graph,target,options);
 
+GeometryAllocateConstructionId(graph,options,prefix,label) -> {;
+    limit=GeometryAuthoringLimit(options); graph[:nodes].Len()<limit ?: _ ?_ .Error(@"@{label} reached its maxNodes limit of @{limit}");
+    id:=GeometryOption(options,"id");
+    {@ candidate=1; candidate<=@limit&&@id==_; {;
+        proposed=@"@{@prefix}@{candidate}";
+        @graph[:nodes].Any((node)->node[:id]==@proposed) ?: _ ?_ {; @id~=@proposed; };
+    }; candidate+=1 };
+    id!=_ ?: _ ?_ .Error(@"@{label} could not allocate a stable id");
+    graph[:nodes].Any((node)->node[:id]==@id) ?: .Error(@"@{label} duplicate node id @{id}") ?_ _;
+    id;
+};
+
+GeometryAddDerived(graph,dependencies,tool,Build,options ?= {= }) -> {;
+    valid=GeometryRequireConstructionGraph(graph,@"geometry.Add@{tool}");
+    options ? :Map ?: _ ?_ .Error(@"geometry.Add@{tool} options must be a map");
+    dependencies ? :Array ?: _ ?_ .Error(@"geometry.Add@{tool} dependencies must be an Array");
+    dependencies.Len()>0 ?: _ ?_ .Error(@"geometry.Add@{tool} requires dependencies");
+    dependencies.Distinct().Len()==dependencies.Len() ?: _ ?_ .Error(@"geometry.Add@{tool} dependencies must be distinct");
+    dependencies.All((dependency)->@valid[:nodes].Any((node)->node[:id]==dependency))
+      ?: _ ?_ .Error(@"geometry.Add@{tool} has a missing dependency");
+    prefix=GeometryOption(options,"idprefix",tool==:line ?: "l" ?_ tool==:circle ?: "c" ?_ tool==:intersection ?: "i" ?_ tool==:transform ?: "t" ?_ "m");
+    prefix ? :String ?: _ ?_ .Error(@"geometry.Add@{tool} idPrefix must be a String");
+    id=GeometryAllocateConstructionId(valid,options,prefix,@"geometry.Add@{tool}");
+    node={= id=id,free=_,dependson=dependencies,construct=Build,tool=tool };
+    event={= operation=:create,tool=tool,id=id,node=node,dependsOn=dependencies };
+    GeometryBuildConstructionGraph(valid[:nodes].Push(node),valid[:history].Push(event),[]);
+};
+
+GeometryAddLine(graph,firstId,secondId,options ?= {= }) -> {;
+    Build=(values)->GeometryLine(values[@firstId],values[@secondId]);
+    GeometryAddDerived(graph,[firstId,secondId],:line,Build,options);
+};
+
+GeometryAddCircle(graph,centerId,throughId,options ?= {= }) -> {;
+    Build=(values)->GeometryCircle(values[@centerId],values[@throughId]);
+    GeometryAddDerived(graph,[centerId,throughId],:circle,Build,options);
+};
+
+GeometryAddIntersection(graph,leftId,rightId,options ?= {= }) -> {;
+    Build=(values)->GeometryIntersect(values[@leftId],values[@rightId]);
+    GeometryAddDerived(graph,[leftId,rightId],:intersection,Build,options);
+};
+
+GeometryAddTransform(graph,sourceId,transform,options ?= {= }) -> {;
+    Build=(values)->GeometryTransform(values[@sourceId],@transform);
+    GeometryAddDerived(graph,[sourceId],:transform,Build,options);
+};
+
+GeometryAddMeasurement(graph,firstId,secondId,options ?= {= }) -> {;
+    Build=(values)->GeometryDistance(values[@firstId],values[@secondId]);
+    GeometryAddDerived(graph,[firstId,secondId],:measurement,Build,options);
+};
+
 GeometryMoveConstructionNode(graph,id,target,history,future) -> {;
     found=graph[:nodes].Filter((node)->node[:id]==id);
     found.Len()==1 ?: _ ?_ .Error(@"geometry construction node @{id} does not exist");
@@ -71273,6 +71376,73 @@ GeometryDrag(graph,id,target,options ?= {= }) -> {;
     GeometryMoveConstructionNode(valid,id,moved,valid[:history].Push(event),[]);
 };
 
+GeometryDragMany(graph,moves,options ?= {= }) -> {;
+    valid=GeometryRequireConstructionGraph(graph,"geometry.DragMany");
+    moves ? :Array ?: _ ?_ .Error("geometry.DragMany moves must be an Array of {id, target} maps");
+    moves.Len()>0 ?: _ ?_ .Error("geometry.DragMany requires at least one move");
+    ids=moves.Map((move)->move[:id]); ids.Distinct().Len()==ids.Len() ?: _ ?_ .Error("geometry.DragMany node ids must be distinct");
+    replacements:={= }; records:=[];
+    {@ index=1; index<=@moves.Len(); {;
+        move=@moves[index]; move ? :Map ?: _ ?_ .Error("geometry.DragMany move entries must be maps");
+        found=@valid[:nodes].Filter((node)->node[:id]==move[:id]);
+        found.Len()==1 ?: _ ?_ .Error(@"geometry.DragMany node @{move[:id]} does not exist");
+        found[1][:free] ?: _ ?_ .Error(@"geometry.DragMany node @{move[:id]} is derived and cannot be dragged directly");
+        target=GeometryRequire(move[:target],:point,@"geometry.DragMany target for @{move[:id]}");
+        @replacements ~= @replacements.Set(move[:id],target);
+        @records ~= @records.Push({= id=move[:id],from=found[1][:value],to=target });
+    }; index+=1 };
+    nodes=valid[:nodes].Map((node)->@replacements.Has(node[:id]) ?: node.Merge({= value=@replacements[node[:id]] }) ?_ node);
+    event={= operation=:drag_many,moves=records };
+    GeometryBuildConstructionGraph(nodes,valid[:history].Push(event),[]);
+};
+
+GeometryConstrainedDrag(graph,id,target,options ?= {= }) -> {;
+    valid=GeometryRequireConstructionGraph(graph,"geometry.ConstrainedDrag");
+    supplied=GeometryRequire(target,:point,"geometry.ConstrainedDrag target");
+    constraintId=GeometryOption(options,"constraint");
+    constraintId!=_ ?: _ ?_ .Error("geometry.ConstrainedDrag requires a constraint node id");
+    found=valid[:nodes].Filter((node)->node[:id]==constraintId);
+    found.Len()==1 ?: _ ?_ .Error(@"geometry.ConstrainedDrag constraint node @{constraintId} does not exist");
+    line=GeometryRequire(found[1][:value],:line,"geometry.ConstrainedDrag constraint");
+    residual=line[:a]*supplied[:x]+line[:b]*supplied[:y]+line[:c]; denominator=line[:a]^2+line[:b]^2;
+    mode=GeometryOption(options,"mode",:project);
+    (mode==:project||mode==:reject) ?: _ ?_ .Error("geometry.ConstrainedDrag mode must be :project or :reject");
+    moved=mode==:reject
+      ?: (GeometryIsZero(residual) ?: supplied ?_ .Error("geometry.ConstrainedDrag target violates the line constraint"))
+      ?_ GeometryPoint(supplied[:x]-line[:a]*residual/denominator,supplied[:y]-line[:b]*residual/denominator);
+    GeometryDrag(valid,id,moved,options);
+};
+
+GeometryRepairSuggestions(graph) -> {;
+    valid=GeometryRequireConstructionGraph(graph,"geometry.RepairSuggestions"); suggestions:=[];
+    {@ index=1; index<=@valid[:nodes].Len(); {;
+        node=@valid[:nodes][index]; value=node[:value]; status:=_; diagnostic:=_;
+        GeometryOption(node,"tool")==:intersection ?: {;
+            @status ~= @value[:status]; @diagnostic ~= GeometryOption(@value,"diagnostic");
+        } ?_ _;
+        problematic=status=="none"||status=="parallel"||status=="coincident"||status=="undecided"||status=="unsupported";
+        problematic ?: {; @suggestions ~= @suggestions.Push({=
+            node=@node[:id],status=@status,diagnostic=@diagnostic,automatic=_,
+            actions=[
+                {= kind=:inspect_dependencies,dependsOn=@node[:dependsOn] },
+                {= kind=:move_free_dependency,label="Move a free dependency and recompute" },
+                {= kind=:undo,label="Undo the most recent construction edit" }
+            ]
+        }); } ?_ _;
+    }; index+=1 };
+    {= schema="rix.geometry.repair-suggestions@1",suggestions=suggestions,automatic=_,deterministic=1 };
+};
+
+GeometryApplyMoveRecords(graph,moves,direction,history,future) -> {;
+    replacements:={= };
+    {@ index=1; index<=@moves.Len(); {;
+        move=@moves[index]; value=@direction==:undo ?: move[:from] ?_ move[:to];
+        @replacements ~= @replacements.Set(move[:id],value);
+    }; index+=1 };
+    nodes=graph[:nodes].Map((node)->@replacements.Has(node[:id]) ?: node.Merge({= value=@replacements[node[:id]] }) ?_ node);
+    GeometryBuildConstructionGraph(nodes,history,future);
+};
+
 GeometryUndo(graph) -> {;
     valid=GeometryRequireConstructionGraph(graph,"geometry.Undo");
     valid[:history].Len()==0
@@ -71282,6 +71452,8 @@ GeometryUndo(graph) -> {;
           operation=event[:operation]; future=GeometryOption(@valid,"future",[]).Push(event); history=@valid[:history].DropLast();
           operation==:drag
             ?: GeometryMoveConstructionNode(@valid,event[:id],event[:from],history,future)
+            ?_ operation==:drag_many
+                 ?: GeometryApplyMoveRecords(@valid,event[:moves],:undo,history,future)
             ?_ operation==:create
                  ?: {;
                      @valid[:nodes].Last()[:id]==@event[:id] ?: _ ?_ .Error("geometry.Undo can only remove the most recently created construction node");
@@ -71300,6 +71472,8 @@ GeometryRedo(graph) -> {;
           operation=event[:operation]; history=@valid[:history].Push(event); remaining=@future.DropLast();
           operation==:drag
             ?: GeometryMoveConstructionNode(@valid,event[:id],event[:to],history,remaining)
+            ?_ operation==:drag_many
+                 ?: GeometryApplyMoveRecords(@valid,event[:moves],:redo,history,remaining)
             ?_ operation==:create
                  ?: GeometryBuildConstructionGraph(@valid[:nodes].Push(event[:node]),history,remaining)
                  ?_ .Error("geometry.Redo encountered an unsupported construction event");
@@ -72241,7 +72415,15 @@ geometryNamespace._proto = {=
     ConstructionRecord=(self, graph)->GeometryConstructionRecord(graph),
     ImportConstruction=(self, record, constructors ?= {= })->GeometryImportConstruction(record,constructors),
     AddPoint=(self, graph, target, options ?= {= })->GeometryAddPoint(graph,target,options),
+    AddLine=(self, graph, firstId, secondId, options ?= {= })->GeometryAddLine(graph,firstId,secondId,options),
+    AddCircle=(self, graph, centerId, throughId, options ?= {= })->GeometryAddCircle(graph,centerId,throughId,options),
+    AddIntersection=(self, graph, leftId, rightId, options ?= {= })->GeometryAddIntersection(graph,leftId,rightId,options),
+    AddTransform=(self, graph, sourceId, transform, options ?= {= })->GeometryAddTransform(graph,sourceId,transform,options),
+    AddMeasurement=(self, graph, firstId, secondId, options ?= {= })->GeometryAddMeasurement(graph,firstId,secondId,options),
     Drag=(self, graph, id, target, options ?= {= })->GeometryDrag(graph,id,target,options),
+    DragMany=(self, graph, moves, options ?= {= })->GeometryDragMany(graph,moves,options),
+    ConstrainedDrag=(self, graph, id, target, options ?= {= })->GeometryConstrainedDrag(graph,id,target,options),
+    RepairSuggestions=(self, graph)->GeometryRepairSuggestions(graph),
     Undo=(self, graph)->GeometryUndo(graph),
     Redo=(self, graph)->GeometryRedo(graph),
     Refine=(self, value, request ?= {= })->GeometryRefine(value, request),
@@ -72854,6 +73036,15 @@ PlotEdgeIntersection(first,second,level) -> {;
     };
 };
 
+PlotEdgeCrossing(first,second,level,continuity) -> {;
+    point=PlotEdgeIntersection(first,second,level);
+    point==_ ?: _ ?_ {=
+        point=point,
+        existenceEvidence=(continuity==:continuous&&first[:status]==:exact&&second[:status]==:exact) ?: :proof ?_ :sample,
+        existenceBasis=(continuity==:continuous&&first[:status]==:exact&&second[:status]==:exact) ?: :intermediate_value_theorem ?_ :sampled_sign_change
+    };
+};
+
 PlotRefinementInteger(settings,key,fallback,minimum,maximum,label) -> {;
     value=PlotOption(settings,key,fallback) ~!: :Integer;
     (value>=minimum&&value<=maximum) ?: value ?_ .Error(@"@{label} must be between @{minimum} and @{maximum}");
@@ -72866,32 +73057,58 @@ PlotAdaptivePolicy(config,settings) -> {;
     budget>=baseCells ?: _ ?_ .Error(@"field plot refinementBudget must be at least the base grid cell count (@{baseCells})");
     certify=PlotOption(settings,"certifyintervals",_);
     (certify==_||certify==0||certify==1) ?: _ ?_ .Error("field plot certifyIntervals must be 1 or null");
+    continuity=PlotOption(settings,"continuity",:unknown);
+    (continuity==:unknown||continuity==:continuous) ?: _ ?_ .Error("field plot continuity must be :unknown or :continuous");
+    discontinuityThreshold=PlotOption(settings,"discontinuitythreshold",_);
+    discontinuityThreshold==_ ?: _ ?_ {;
+        @discontinuityThreshold ~= PlotExact(@discontinuityThreshold,"field plot discontinuityThreshold");
+        @discontinuityThreshold>0 ?: _ ?_ .Error("field plot discontinuityThreshold must be positive");
+    };
     {=
         schema="rix.plot.refinement-policy@1",method=:adaptive_quadtree,maxDepth=depth,
         requestedBudget=budget,effectiveBudget=budget,
-        certifyIntervals=certify==1
+        certifyIntervals=certify==1,continuity=continuity,discontinuityThreshold=discontinuityThreshold
     };
 };
 
 PlotAdaptivePoint(fn,point,settings,label) -> {;
-    resolved=PlotResolveNumber(@fn(point[1],point[2]),label,settings);
+    Field=fn; resolved=PlotResolveNumber(Field(point[1],point[2]),label,settings);
     {= point=point,value=resolved[:value],usable=resolved[:value]!=_,resolved=resolved[:resolved],status=resolved[:status],evidenceLevel=resolved[:evidenceLevel] };
 };
 
-PlotAdaptiveCellSample(fn,cell,settings,centerRequired) -> {;
+PlotAdaptivePointKey(point) -> @"@{point[1]}|@{point[2]}";
+
+PlotAdaptivePointCached(fn,point,settings,label,cache) -> {;
+    key=PlotAdaptivePointKey(point);
+    cache.Has(key)
+      ?: {= sample=cache[key],cache=cache,cacheHit=1,pointEvaluation=0 }
+      ?_ {; sample=PlotAdaptivePoint(@fn,@point,@settings,@label); {= sample=sample,cache=@cache.Set(@key,sample),cacheHit=0,pointEvaluation=1 }; };
+};
+
+PlotAdaptiveCellSample(fn,cell,settings,centerRequired,initialCache ?= {= }) -> {;
     xmin=cell[:xmin]; xmax=cell[:xmax]; ymin=cell[:ymin]; ymax=cell[:ymax];
     xmid=(xmin+xmax)/2; ymid=(ymin+ymax)/2;
     retained=cell.Has("corners")&&cell[:corners]!=_;
-    corners=retained ?: cell[:corners] ?_ [
-        PlotAdaptivePoint(fn,[xmin,ymin],settings,@"@{cell[:id]} lower-left"),
-        PlotAdaptivePoint(fn,[xmax,ymin],settings,@"@{cell[:id]} lower-right"),
-        PlotAdaptivePoint(fn,[xmax,ymax],settings,@"@{cell[:id]} upper-right"),
-        PlotAdaptivePoint(fn,[xmin,ymax],settings,@"@{cell[:id]} upper-left")
-    ];
+    points=[[xmin,ymin],[xmax,ymin],[xmax,ymax],[xmin,ymax]]; cache:=initialCache; corners:=[]; cacheHits:=0; pointEvaluations:=0;
+    retained ?: {;
+        {@ seed=1; seed<=4; {; @cache ~= @cache.Set(PlotAdaptivePointKey(@points[seed]),@cell[:corners][seed]); }; seed+=1 };
+        @corners ~= @cell[:corners];
+    } ?_ {;
+        {@ corner=1; corner<=4; {;
+            fetched=PlotAdaptivePointCached(@fn,@points[corner],@settings,@"@{@cell[:id]} corner @{corner}",@cache);
+            @cache ~= fetched[:cache]; @cacheHits += fetched[:cacheHit]; @pointEvaluations += fetched[:pointEvaluation];
+            @corners ~= @corners.Push(fetched[:sample]);
+        }; corner+=1 };
+    };
+    center={= usable=_,value=_,status=:not_sampled,evidenceLevel=:none };
+    centerRequired ?: {;
+        fetchedCenter=PlotAdaptivePointCached(@fn,[@xmid,@ymid],@settings,@"@{@cell[:id]} center",@cache);
+        @cache ~= fetchedCenter[:cache]; @cacheHits += fetchedCenter[:cacheHit]; @pointEvaluations += fetchedCenter[:pointEvaluation];
+        @center ~= fetchedCenter[:sample];
+    } ?_ _;
     {=
         corners=corners,
-        center=centerRequired ?: PlotAdaptivePoint(fn,[xmid,ymid],settings,@"@{cell[:id]} center") ?_ {= usable=_,value=_,status=:not_sampled,evidenceLevel=:none },
-        pointEvaluations=(retained ?: 0 ?_ 4)+(centerRequired ?: 1 ?_ 0)
+        center=center,cache=cache,cacheHits=cacheHits,pointEvaluations=pointEvaluations
     };
 };
 
@@ -72926,7 +73143,7 @@ PlotAdaptiveSubcells(cell) -> {;
     ];
 };
 
-PlotAdaptiveFieldCells(fn,config,settings,level,relation,field ?= _) -> {;
+PlotAdaptiveFieldCells(fn,config,settings,level,relation,field ?= _,initialCache ?= {= }) -> {;
     policy=PlotAdaptivePolicy(config,settings); queue := []; leaves := [];
     {@ row=1; row<=@config[:rows]; {;
         {@ column=1; column<=@config[:columns]; {;
@@ -72941,13 +73158,14 @@ PlotAdaptiveFieldCells(fn,config,settings,level,relation,field ?= _) -> {;
             });
         }; column+=1 };
     }; row+=1 };
-    refined:=0; budgetStops:=0; maxDepthReached:=0; processed:=0; pointEvaluations:=0;
+    refined:=0; budgetStops:=0; maxDepthReached:=0; processed:=0; pointEvaluations:=0; cacheHits:=0; cache:=initialCache;
+    suspectedDiscontinuities:=0; maximumSampleRange:=0;
     certifiedExcluded:=0; certifiedInside:=0; certifiedOutside:=0; enclosureCandidates:=0;
     {@ work=0; @queue.Len()>0; {;
         cell=@queue.First(); @queue ~= @queue.DropFirst();
         centerRequired=@policy[:maxDepth]>0||@policy[:certifyIntervals];
-        sample=PlotAdaptiveCellSample(@fn,cell,@settings,centerRequired); interval=PlotAdaptiveInterval(@fn,cell,@level,@relation,@policy);
-        @pointEvaluations += sample[:pointEvaluations];
+        sample=PlotAdaptiveCellSample(@fn,cell,@settings,centerRequired,@cache); @cache ~= sample[:cache]; interval=PlotAdaptiveInterval(@fn,cell,@level,@relation,@policy);
+        @pointEvaluations += sample[:pointEvaluations]; @cacheHits += sample[:cacheHits];
         @certifiedExcluded += interval[:status]==:certified_excluded ?: 1 ?_ 0;
         @certifiedInside += interval[:status]==:certified_inside ?: 1 ?_ 0;
         @certifiedOutside += interval[:status]==:certified_outside ?: 1 ?_ 0;
@@ -72956,10 +73174,20 @@ PlotAdaptiveFieldCells(fn,config,settings,level,relation,field ?= _) -> {;
         flags=usable ?: sample[:corners].Map((entry)->PlotRelation(entry[:value],@level,@relation==:level ?: :le ?_ @relation)) ?_ [];
         count=usable ?: flags.Filter((flag)->flag).Len() ?_ 0;
         centerFlag=(usable&&centerRequired) ?: PlotRelation(sample[:center][:value],@level,@relation==:level ?: :le ?_ @relation) ?_ (count==4 ?: 1 ?_ _);
+        sampledValues=usable ?: sample[:corners].Map((entry)->entry[:value]).Concat(centerRequired ?: [sample[:center][:value]] ?_ []) ?_ [];
+        sampleMinimum:=usable ?: sampledValues[1] ?_ _; sampleMaximum:=sampleMinimum;
+        {@ valueIndex=2; valueIndex<=@sampledValues.Len(); {;
+            @sampleMinimum ~= @sampledValues[valueIndex]<@sampleMinimum ?: @sampledValues[valueIndex] ?_ @sampleMinimum;
+            @sampleMaximum ~= @sampledValues[valueIndex]>@sampleMaximum ?: @sampledValues[valueIndex] ?_ @sampleMaximum;
+        }; valueIndex+=1 };
+        sampleRange=usable ?: sampleMaximum-sampleMinimum ?_ _;
+        @maximumSampleRange ~= usable&&sampleRange>@maximumSampleRange ?: sampleRange ?_ @maximumSampleRange;
+        suspectedDiscontinuity=usable&&@policy[:discontinuityThreshold]!=_&&sampleRange>@policy[:discontinuityThreshold];
+        @suspectedDiscontinuities += suspectedDiscontinuity ?: 1 ?_ 0;
         sampledBoundary=usable&&(count>0&&count<4);
         centerDisagrees=usable&&centerRequired&&((count==0&&centerFlag)||(count==4&&!centerFlag));
         intervalUncertain=interval[:status]==:enclosed_candidate||interval[:status]==:enclosed_boundary;
-        needsRefinement=!usable||sampledBoundary||centerDisagrees||intervalUncertain;
+        needsRefinement=!usable||sampledBoundary||centerDisagrees||intervalUncertain||suspectedDiscontinuity;
         capacity=@processed+@queue.Len()+5<=@policy[:effectiveBudget];
         split=needsRefinement&&cell[:depth]<@policy[:maxDepth]&&capacity;
         split
@@ -72969,16 +73197,18 @@ PlotAdaptiveFieldCells(fn,config,settings,level,relation,field ?= _) -> {;
               @maxDepthReached ~= .Max(@maxDepthReached,@cell[:depth]);
               @leaves ~= @leaves.Push(@cell.Merge({=
                   sample=@sample,interval=@interval,usable=@usable,flags=@flags,count=@count,centerFlag=@centerFlag,
-                  sampledBoundary=@sampledBoundary,centerDisagrees=@centerDisagrees,needsRefinement=@needsRefinement
+                  sampledBoundary=@sampledBoundary,centerDisagrees=@centerDisagrees,suspectedDiscontinuity=@suspectedDiscontinuity,
+                  sampleRange=@sampleRange,needsRefinement=@needsRefinement
               }));
           };
         @processed += 1;
     }; work+=1 };
     {=
-        cells=leaves,
+        cells=leaves,cache=cache,
         refinement=policy.Merge({=
             processedCells=processed,leafCells=leaves.Len(),refinedCells=refined,budgetStops=budgetStops,
-            maxDepthReached=maxDepthReached,pointEvaluations=pointEvaluations,
+            maxDepthReached=maxDepthReached,pointEvaluations=pointEvaluations,cacheHits=cacheHits,
+            uniquePointSamples=cache.Len(),suspectedDiscontinuityCells=suspectedDiscontinuities,maximumSampleRange=maximumSampleRange,
             intervalEvaluations=policy[:certifyIntervals] ?: processed ?_ 0,
             certifiedExcludedCells=certifiedExcluded,certifiedInsideCells=certifiedInside,
             certifiedOutsideCells=certifiedOutside,enclosureCandidateCells=enclosureCandidates
@@ -72993,10 +73223,13 @@ PlotContourBuild(fn,xDomain,yDomain,settings,kind) -> {;
     colors=PlotOption(settings,"colors",["#2563eb","#b45309","#7c3aed","#0f766e","#be123c"]);
     colors ? :Array ?: _ ?_ .Error("contour plot colors must be an Array");
     colors.Len()>0 ?: _ ?_ .Error("contour plot colors must not be empty");
-    children := []; series := []; records := []; unresolved := []; ambiguous := []; refinements := [];
+    labelContours=PlotOption(settings,"labelcontours",0);
+    (labelContours==0||labelContours==1) ?: _ ?_ .Error("contour plot labelContours must be 0 or 1");
+    labelLimit=PlotRefinementInteger(settings,"contourlabellimit",levels.Len(),0,100,"contour plot contourLabelLimit");
+    children := []; series := []; records := []; unresolved := []; ambiguous := []; refinements := []; cache:={= }; labelsPlaced:=0;
     {@ levelIndex=1; levelIndex<=@levels.Len(); {;
         level=@levels[levelIndex]; color=@colors[((levelIndex-1)%@colors.Len())+1];
-        adaptive=PlotAdaptiveFieldCells(@fn,@config,@settings,level,:level,@field);
+        adaptive=PlotAdaptiveFieldCells(@fn,@config,@settings,level,:level,@field,@cache); @cache ~= adaptive[:cache];
         @refinements ~= @refinements.Push(adaptive[:refinement].Merge({= level=level }));
         {@ cellIndex=1; cellIndex<=@adaptive[:cells].Len(); {;
             cell=@adaptive[:cells][cellIndex]; corners=cell[:sample][:corners];
@@ -73007,25 +73240,42 @@ PlotContourBuild(fn,xDomain,yDomain,settings,kind) -> {;
                 bounds=[@cell[:xmin],@cell[:xmax],@cell[:ymin],@cell[:ymax]]
             }); };
             usable ?: {;
-                intersections=[PlotEdgeIntersection(@a,@b,@level),PlotEdgeIntersection(@b,@c,@level),PlotEdgeIntersection(@c,@d,@level),PlotEdgeIntersection(@d,@a,@level)].Filter((point)->point!=_);
+                intersections=[
+                    PlotEdgeCrossing(@a,@b,@level,@adaptive[:refinement][:continuity]),
+                    PlotEdgeCrossing(@b,@c,@level,@adaptive[:refinement][:continuity]),
+                    PlotEdgeCrossing(@c,@d,@level,@adaptive[:refinement][:continuity]),
+                    PlotEdgeCrossing(@d,@a,@level,@adaptive[:refinement][:continuity])
+                ].Filter((crossing)->crossing!=_);
                 intervalStatus=@cell[:interval][:status];
-                (intersections.Len()==4||@cell[:centerDisagrees]||(intervalStatus==:enclosed_candidate&&intersections.Len()==0))
+                (intersections.Len()==4||@cell[:centerDisagrees]||@cell[:suspectedDiscontinuity]||(intervalStatus==:enclosed_candidate&&intersections.Len()==0))
                   ?: {; @ambiguous ~= @ambiguous.Push({=
                       id=@cellId,column=@cell[:column],row=@cell[:row],level=@level,depth=@cell[:depth],
-                      status=@intervalStatus==:enclosed_candidate ?: :certified_enclosure_candidate ?_ :sampled_ambiguous,
+                      status=@cell[:suspectedDiscontinuity] ?: :suspected_discontinuity ?_ (@intervalStatus==:enclosed_candidate ?: :certified_enclosure_candidate ?_ :sampled_ambiguous),
+                      evidenceLevel=@cell[:suspectedDiscontinuity] ?: :sample ?_ (@intervalStatus==:enclosed_candidate ?: :proof ?_ :sample),
+                      sampleRange=@cell[:sampleRange],
                       interval=@cell[:interval][:interval],bounds=[@cell[:xmin],@cell[:xmax],@cell[:ymin],@cell[:ymax]]
                   }); } ?_ _;
                 pairCount=intersections.Len()//2;
                 {@ pair=1; pair<=@pairCount; {;
-                    points=[@intersections[pair*2-1],@intersections[pair*2]];
+                    crossingPair=[@intersections[pair*2-1],@intersections[pair*2]];
+                    points=crossingPair.Map((crossing)->crossing[:point]);
                     segmentId=@"@{@cellId}-segment-@{pair}";
                     style=PlotStyle(@settings,@color,2).Merge({= hitId=segmentId });
                     @children ~= @children.Push(.Graphics.Path(points.Map((point)->PlotProject(point,@config)),style));
                     @series ~= @series.Push({= kind=:contour,data=points,style=style,label=_ ,level=@level,id=segmentId });
+                    existenceEvidence=crossingPair.All((crossing)->crossing[:existenceEvidence]==:proof) ?: :proof ?_ :sample;
                     @records ~= @records.Push({=
                         id=segmentId,cell=@cellId,level=@level,points=points,depth=@cell[:depth],
-                        status=:sampled_boundary,intervalEvidence=@intervalStatus,evidenceLevel=:sample
+                        status=:sampled_boundary,intervalEvidence=@intervalStatus,evidenceLevel=:sample,
+                        locatedSegmentEvidence=:sample,edgeExistenceEvidence=existenceEvidence,
+                        edgeExistenceBasis=crossingPair.Map((crossing)->crossing[:existenceBasis])
                     });
+                    (@labelContours==1&&pair==1&&@labelsPlaced<@labelLimit) ?: {;
+                        projected=@points.Map((point)->PlotProject(point,@config));
+                        labelPoint=[(projected[1][1]+projected[2][1])/2,(projected[1][2]+projected[2][2])/2];
+                        @children ~= @children.Push(.Graphics.Text(labelPoint,@"@{@level}",{= fill=@color,size=11,anchor="middle",hitId=@"@{@segmentId}-label" }));
+                        @labelsPlaced += 1;
+                    } ?_ _;
                 }; pair+=1 };
             } ?_ _;
         }; cellIndex+=1 };
@@ -73033,7 +73283,7 @@ PlotContourBuild(fn,xDomain,yDomain,settings,kind) -> {;
     legend=levels.Map((level,index)->{= label=@"level @{level}",value=level,color=colors[((index-1)%colors.Len())+1] });
     PlotFieldGraphic(kind,config,settings,children,{=
         series=series,records=records,unresolvedRegions=unresolved,ambiguousRegions=ambiguous,legend=legend,
-        evidence=field[:evidence],status=field[:status],rendering=:series,refinement=refinements,
+        evidence=field[:evidence].Merge({= sharedPointSamples=cache.Len(),contourLabels=labelsPlaced }),status=field[:status],rendering=:series,refinement=refinements,
         sampling={=
             method=:adaptive_marching_squares,grid={= columns=config[:columns],rows=config[:rows] },
             certification=PlotOption(settings,"certifyintervals",_)==1 ?: :interval_exclusion_plus_sampled_crossings ?_ :sampled_signs
@@ -73100,11 +73350,20 @@ PlotPaletteIndex(value,minimum,maximum,count) -> minimum==maximum ?: (count+1)//
     .Max(1,.Min(@count,index));
 };
 
+PlotContinuousColor(value,minimum,maximum,hues) -> {;
+    hue=minimum==maximum ?: (hues[1]+hues[2])/2 ?_ hues[1]+(value-minimum)/(maximum-minimum)*(hues[2]-hues[1]);
+    @"hsl(@{hue//1}, 80%, 50%)";
+};
+
 PlotHeatMap(fn,xDomain,yDomain,settings ?= {= }) -> {;
     config=PlotFieldConfig(xDomain,yDomain,settings); field=PlotFieldSample(fn,config,settings);
     palette=PlotOption(settings,"colors",["#312e81","#2563eb","#06b6d4","#f8fafc","#facc15","#f97316","#be123c"]);
     palette ? :Array ?: _ ?_ .Error("heat-map colors must be an Array");
     palette.Len()>=2 ?: _ ?_ .Error("heat-map colors must contain at least two colors");
+    colorMode=PlotOption(settings,"colormode",:discrete);
+    (colorMode==:discrete||colorMode==:continuous) ?: _ ?_ .Error("heat-map colorMode must be :discrete or :continuous");
+    hues=PlotExactArray(PlotOption(settings,"huerange",[240,0]),"heat-map hueRange");
+    hues.Len()==2 ?: _ ?_ .Error("heat-map hueRange must contain two exact hue values");
     values=field[:samples].Filter((sample)->sample[:usable]).Map((sample)->sample[:value]);
     values.Len()>0 ?: _ ?_ .Error("heat-map has no resolved samples");
     minimum:=values[1]; maximum:=values[1];
@@ -73118,7 +73377,8 @@ PlotHeatMap(fn,xDomain,yDomain,settings ?= {= }) -> {;
             c=PlotFieldAt(@field,column+1,@row+1,@config); d=PlotFieldAt(@field,column,@row+1,@config);
             id=@"heatmap-cell-@{column}-@{@row}"; usable=a[:usable]&&b[:usable]&&c[:usable]&&d[:usable];
             usable ?: {;
-                value=(@a[:value]+@b[:value]+@c[:value]+@d[:value])/4; paletteIndex=PlotPaletteIndex(value,@minimum,@maximum,@palette.Len()); color=@palette[paletteIndex];
+                value=(@a[:value]+@b[:value]+@c[:value]+@d[:value])/4; paletteIndex=PlotPaletteIndex(value,@minimum,@maximum,@palette.Len());
+                color=@colorMode==:continuous ?: PlotContinuousColor(value,@minimum,@maximum,@hues) ?_ @palette[paletteIndex];
                 lower=PlotFieldPoint(@column,@row,@config); upper=PlotFieldPoint(@column+1,@row+1,@config);
                 origin=PlotProject([lower[1],upper[2]],@config); end=PlotProject([upper[1],lower[2]],@config);
                 @children ~= @children.Push(.Graphics.Rectangle(origin,[end[1]-origin[1],end[2]-origin[2]],{= fill=color,stroke=color,width=0,hitId=@id }));
@@ -73133,7 +73393,7 @@ PlotHeatMap(fn,xDomain,yDomain,settings ?= {= }) -> {;
     PlotFieldGraphic(:heatmap,config,settings,children,{=
         records=records,unresolvedRegions=unresolved,evidence=field[:evidence],status=field[:status],
         legend=[{= label="minimum",value=minimum,color=palette[1] },{= label="maximum",value=maximum,color=palette.Last() }],
-        colorScale={= kind=:discrete,minimum=minimum,maximum=maximum,colors=palette },
+        colorScale={= kind=colorMode,minimum=minimum,maximum=maximum,colors=palette,hueRange=hues,quantization=colorMode==:continuous ?: :one_degree ?_ :palette },
         sampling={= method=:cell_corner_mean,certification=:sampled_values }
     });
 };
@@ -90487,13 +90747,19 @@ ${execute}---
     target.frame = clamp2(target.frame ?? start, start, end);
     target.speed = [0.25, 0.5, 1, 2, 4].includes(Number(target.speed)) ? Number(target.speed) : 1;
     target.loop = Boolean(target.loop);
-    target.compare = Boolean(target.compare);
+    target.compareMode = ["none", "previous", "frame", "onion"].includes(target.compareMode) ? target.compareMode : target.compare ? "previous" : "none";
+    target.compareFrame = clamp2(target.compareFrame ?? 1, 1, length);
+    target.recording = Array.isArray(target.recording) ? target.recording.filter((frame) => Number.isInteger(frame) && frame >= 1 && frame <= length) : [];
     target.playing = Boolean(target.playing);
     target.reducedMotion = options.reducedMotion ?? target.reducedMotion ?? reducedMotionPreference();
     target.transition = timeline.transition?.schema === "rix.timeline-transition@1" ? timeline.transition : { schema: "rix.timeline-transition@1", mode: "discrete", duration: null, properties: [] };
     return target;
   }
   function timelineFrameInterval(state, timeline) {
+    const perFrame = timeline.frameDurations?.[state.frame - 1];
+    if (perFrame !== null && perFrame !== undefined) {
+      return Math.max(16, finiteExact(perFrame, 1) * 1000 / state.speed);
+    }
     const totalSeconds = timeline.duration === null || timeline.duration === undefined ? timeline.frames.length : finiteExact(timeline.duration, timeline.frames.length);
     return Math.max(16, totalSeconds * 1000 / timeline.frames.length / state.speed);
   }
@@ -90540,10 +90806,76 @@ ${execute}---
     const second = identitySet(right);
     return [...first].filter((id) => second.has(id));
   }
+  function semanticElements(root) {
+    return new Map([...root?.querySelectorAll?.("[data-rix-semantic-id]") || []].map((node) => [node.dataset.rixSemanticId, node]).filter(([id]) => Boolean(id)));
+  }
+  function timelineTransitionDiagnostics(previousRoot, currentRoot, properties = []) {
+    const previous = semanticElements(previousRoot);
+    const current = semanticElements(currentRoot);
+    const records = [];
+    for (const [id, node] of previous) {
+      const next = current.get(id);
+      if (!next)
+        records.push({ id, status: "disappeared", previousKind: node.tagName?.toLowerCase?.() || "object", currentKind: null });
+      else if (node.tagName !== next.tagName)
+        records.push({ id, status: "kind_changed", previousKind: node.tagName?.toLowerCase?.(), currentKind: next.tagName?.toLowerCase?.() });
+      else
+        records.push({ id, status: "matched", previousKind: node.tagName?.toLowerCase?.(), currentKind: next.tagName?.toLowerCase?.(), properties: [...properties] });
+    }
+    for (const [id, node] of current) {
+      if (!previous.has(id))
+        records.push({ id, status: "appeared", previousKind: null, currentKind: node.tagName?.toLowerCase?.() || "object" });
+    }
+    return Object.freeze(records.map(Object.freeze));
+  }
+  function animateSemanticTransitions(previousRoot, currentRoot, state, duration, easing) {
+    if (!previousRoot || !currentRoot || state.reducedMotion)
+      return;
+    const previous = semanticElements(previousRoot);
+    const current = semanticElements(currentRoot);
+    const properties = new Set(state.transition.properties || []);
+    for (const [id, node] of current) {
+      const before = previous.get(id);
+      if (!before || before.tagName !== node.tagName || typeof node.animate !== "function")
+        continue;
+      const from = {};
+      const to = {};
+      if (properties.has("position")) {
+        const first = before.getBoundingClientRect?.();
+        const second = node.getBoundingClientRect?.();
+        if (first && second) {
+          from.transform = `translate(${first.left - second.left}px, ${first.top - second.top}px)`;
+          to.transform = "translate(0px, 0px)";
+        }
+      }
+      const beforeStyle = globalThis.getComputedStyle?.(before);
+      const afterStyle = globalThis.getComputedStyle?.(node);
+      if (properties.has("fill") && beforeStyle && afterStyle) {
+        from.fill = beforeStyle.fill;
+        to.fill = afterStyle.fill;
+      }
+      if (properties.has("stroke") && beforeStyle && afterStyle) {
+        from.stroke = beforeStyle.stroke;
+        to.stroke = afterStyle.stroke;
+      }
+      if (Object.keys(from).length)
+        node.animate([from, to], { duration, easing });
+    }
+  }
   function enhanceTimelineView(root, options = {}) {
     const timeline = options.timeline;
     const format = options.format || String;
-    const state = createTimelineViewState(timeline, options.state || {}, options);
+    const storage = options.storage || globalThis.localStorage;
+    const stateTarget = options.state || {};
+    if (timeline.preferencesKey && !stateTarget.preferencesLoaded) {
+      try {
+        const saved = JSON.parse(storage?.getItem?.(`rix.timeline:${timeline.preferencesKey}`) || "null");
+        if (saved?.schema === "rix.timeline-preferences@1")
+          Object.assign(stateTarget, saved);
+      } catch {}
+      stateTarget.preferencesLoaded = true;
+    }
+    const state = createTimelineViewState(timeline, stateTarget, options);
     const frames = [...root.querySelectorAll("[data-rix-timeline-frame]")];
     const textFrames = [...root.querySelectorAll("[data-rix-timeline-text-frame]")];
     const status = root.querySelector("[data-rix-timeline-status]");
@@ -90557,11 +90889,30 @@ ${execute}---
     const start = root.querySelector("[data-rix-timeline-range-start]");
     const end = root.querySelector("[data-rix-timeline-range-end]");
     const compare3 = root.querySelector("[data-rix-timeline-compare]");
+    const compareFrame = root.querySelector("[data-rix-timeline-compare-frame]");
+    const marker = root.querySelector("select[data-rix-timeline-marker]");
+    const exported = root.querySelector("[data-rix-timeline-export]");
+    const diagnostics = root.querySelector("[data-rix-timeline-diagnostics]");
     const schedule = options.schedule || ((callback, delay) => setTimeout(callback, delay));
     const cancel = options.cancel || ((handle) => clearTimeout(handle));
     let timer = null;
     let disposed = false;
     root.dataset.rixReducedMotion = String(state.reducedMotion);
+    function savePreferences() {
+      if (!timeline.preferencesKey)
+        return;
+      const value = {
+        schema: "rix.timeline-preferences@1",
+        speed: state.speed,
+        loop: state.loop,
+        range: { ...state.range },
+        compareMode: state.compareMode,
+        compareFrame: state.compareFrame
+      };
+      try {
+        storage?.setItem?.(`rix.timeline:${timeline.preferencesKey}`, JSON.stringify(value));
+      } catch {}
+    }
     function pause(announce = true) {
       state.playing = false;
       if (timer !== null)
@@ -90607,23 +90958,37 @@ ${execute}---
       const previousIndex = currentIndex > 0 ? currentIndex - 1 : state.loop ? state.length - 1 : null;
       const currentRoot = frames[currentIndex];
       const previousRoot = previousIndex === null ? null : frames[previousIndex];
-      const compared = state.compare && previousRoot && previousRoot !== currentRoot;
+      const comparisonIndices = new Set;
+      if (state.compareMode === "previous" && previousIndex !== null)
+        comparisonIndices.add(previousIndex);
+      else if (state.compareMode === "frame")
+        comparisonIndices.add(state.compareFrame - 1);
+      else if (state.compareMode === "onion") {
+        if (currentIndex > 0)
+          comparisonIndices.add(currentIndex - 1);
+        if (currentIndex + 1 < state.length)
+          comparisonIndices.add(currentIndex + 1);
+      }
+      comparisonIndices.delete(currentIndex);
       for (const [frameIndex, frameRoot] of frames.entries()) {
         const current = frameIndex === currentIndex;
-        const comparison = compared && frameIndex === previousIndex;
+        const comparison = comparisonIndices.has(frameIndex);
         frameRoot.hidden = !(current || comparison);
         frameRoot.toggleAttribute("aria-hidden", !(current || comparison));
         frameRoot.toggleAttribute("data-rix-timeline-current", current);
         frameRoot.toggleAttribute("data-rix-timeline-comparison", Boolean(comparison));
+        frameRoot.toggleAttribute("data-rix-timeline-onion", state.compareMode === "onion" && comparison);
       }
       for (const [frameIndex, item] of textFrames.entries()) {
         item.toggleAttribute("aria-current", frameIndex === currentIndex);
       }
       const frame = timeline.frames[currentIndex];
       const matched = matchedIdentities(previousRoot, currentRoot);
+      const transitionRecords = timelineTransitionDiagnostics(previousRoot, currentRoot, state.transition.properties);
       root.dataset.rixTimelineFrame = String(state.frame);
       root.dataset.rixTimelineMatches = String(matched.length);
-      root.dataset.rixTimelineComparing = String(Boolean(compared));
+      root.dataset.rixTimelineComparing = String(comparisonIndices.size > 0);
+      root.dataset.rixTimelineComparisonMode = state.compareMode;
       if (scrubber)
         scrubber.value = String(state.frame);
       if (speed)
@@ -90635,7 +91000,9 @@ ${execute}---
       if (end)
         end.value = String(state.range.end);
       if (compare3)
-        compare3.checked = state.compare;
+        compare3.value = state.compareMode;
+      if (compareFrame)
+        compareFrame.value = String(state.compareFrame);
       const stateText = exactText3(frame.state, format);
       if (exactState)
         exactState.textContent = stateText;
@@ -90644,22 +91011,80 @@ ${execute}---
       if (exactTextOutput)
         exactTextOutput.textContent = formatOutputText(frame.content, format);
       const identityText = matched.length === 0 ? "no semantic objects matched from the previous frame" : `${matched.length} semantic object${matched.length === 1 ? "" : "s"} matched from the previous frame`;
-      const changeText = state.transition.mode === "crossfade" && !state.reducedMotion ? "declared opacity crossfade; exact values remain discrete" : "discrete exact values";
+      const mismatches = transitionRecords.filter((record) => record.status !== "matched");
+      const changeText = state.transition.mode === "crossfade" && !state.reducedMotion ? `declared ${state.transition.properties.join(", ") || "opacity"} transition; exact values remain discrete` : "discrete exact values";
+      const markerLabel = timeline.markers?.find((entry2) => entry2.frame === state.frame)?.label;
+      if (marker)
+        marker.value = markerLabel ? String(state.frame) : "";
       if (status)
-        status.textContent = `Frame ${state.frame} of ${state.length} · exact state ${stateText} · ${identityText} · ${changeText}${state.playing ? " · playing" : " · paused"}`;
-      if (transitioned && currentRoot?.animate && state.transition.mode === "crossfade" && !state.reducedMotion && !compared) {
-        const duration = state.transition.duration === null ? Math.min(250, timelineFrameInterval(state, timeline) / 3) : finiteExact(state.transition.duration, 0.2) * 1000;
-        currentRoot.animate([{ opacity: 0 }, { opacity: 1 }], {
-          duration,
-          easing: safeEasing(timeline.easing)
-        });
+        status.textContent = `Frame ${state.frame} of ${state.length}${markerLabel ? ` · marker ${markerLabel}` : ""} · exact state ${stateText} · ${identityText} · ${mismatches.length} transition mismatch${mismatches.length === 1 ? "" : "es"} · ${state.recording.length} recorded · ${changeText}${state.playing ? " · playing" : " · paused"}`;
+      if (diagnostics) {
+        diagnostics.textContent = transitionRecords.length ? transitionRecords.map((record) => `${record.id}: ${record.status.replaceAll("_", " ")}${record.previousKind || record.currentKind ? ` (${record.previousKind || "none"} → ${record.currentKind || "none"})` : ""}`).join(`
+`) : "No previous frame is available.";
       }
-      options.onFrame?.({ frame: state.frame, snapshot: frame, state, matchedIdentities: matched });
+      if (transitioned && currentRoot?.animate && state.transition.mode === "crossfade" && !state.reducedMotion && comparisonIndices.size === 0) {
+        const duration = state.transition.duration === null ? Math.min(250, timelineFrameInterval(state, timeline) / 3) : finiteExact(state.transition.duration, 0.2) * 1000;
+        const easing = safeEasing(timeline.easing);
+        if (state.transition.properties.includes("opacity"))
+          currentRoot.animate([{ opacity: 0 }, { opacity: 1 }], { duration, easing });
+        animateSemanticTransitions(previousRoot, currentRoot, state, duration, easing);
+      }
+      savePreferences();
+      options.onFrame?.({ frame: state.frame, snapshot: frame, state, matchedIdentities: matched, diagnostics: transitionRecords });
     }
     function changeFrame(frame) {
       pause(false);
       setTimelineFrame(state, frame);
       renderState(true);
+    }
+    function recordCurrentFrame() {
+      if (!state.recording.includes(state.frame)) {
+        state.recording.push(state.frame);
+        state.recording.sort((left, right) => left - right);
+      }
+      renderState(false);
+    }
+    function recordingValue() {
+      return {
+        schema: "rix.timeline-recording@1",
+        title: timeline.title || null,
+        sourceLength: timeline.frames.length,
+        frames: state.recording.map((frameNumber) => {
+          const snapshot = timeline.frames[frameNumber - 1];
+          return {
+            frame: frameNumber,
+            marker: timeline.markers?.find((entry2) => entry2.frame === frameNumber)?.label || null,
+            state: exactText3(snapshot.state, format),
+            origin: originText(snapshot),
+            text: formatOutputText(snapshot.content, format)
+          };
+        })
+      };
+    }
+    function exportRecording() {
+      const value = recordingValue();
+      const json = JSON.stringify(value, null, 2);
+      if (exported) {
+        exported.hidden = false;
+        exported.textContent = json;
+      }
+      try {
+        globalThis.navigator?.clipboard?.writeText?.(json);
+      } catch {}
+      const EventType = globalThis.CustomEvent;
+      if (EventType && root.dispatchEvent)
+        root.dispatchEvent(new EventType("rix-timeline-export", { detail: value, bubbles: true }));
+      options.onExport?.(value);
+      renderState(false);
+      return value;
+    }
+    function nextMarker() {
+      const markers = timeline.markers || [];
+      if (markers.length === 0)
+        return false;
+      const next = markers.find((entry2) => entry2.frame > state.frame) || markers[0];
+      changeFrame(next.frame);
+      return true;
     }
     function onClick(event) {
       const action = event.target?.closest?.("[data-rix-timeline-action]")?.dataset.rixTimelineAction;
@@ -90681,6 +91106,17 @@ ${execute}---
         if (!stepTimelineFrame(state, 1))
           state.frame = state.range.end;
         renderState(true);
+      } else if (action === "record")
+        recordCurrentFrame();
+      else if (action === "export")
+        exportRecording();
+      else if (action === "clear-recording") {
+        state.recording = [];
+        if (exported) {
+          exported.hidden = true;
+          exported.textContent = "";
+        }
+        renderState(false);
       }
     }
     function onInput(event) {
@@ -90703,8 +91139,16 @@ ${execute}---
         state.loop = Boolean(target.checked);
         renderState(false);
       } else if (target.matches?.("[data-rix-timeline-compare]")) {
-        state.compare = Boolean(target.checked);
+        state.compareMode = ["none", "previous", "frame", "onion"].includes(target.value) ? target.value : "none";
         renderState(false);
+      } else if (target.matches?.("[data-rix-timeline-compare-frame]")) {
+        state.compareFrame = clamp2(target.value, 1, state.length);
+        renderState(false);
+      } else if (target.matches?.("select[data-rix-timeline-marker]")) {
+        if (target.value !== "")
+          changeFrame(target.value);
+        else
+          renderState(false);
       } else if (target.matches?.("[data-rix-timeline-range-start]")) {
         state.range.start = clamp2(target.value, 1, state.range.end);
         state.frame = clamp2(state.frame, state.range.start, state.range.end);
@@ -90739,6 +91183,10 @@ ${execute}---
       else if (String(event.key).toLowerCase() === "l") {
         state.loop = !state.loop;
         renderState(false);
+      } else if (String(event.key).toLowerCase() === "m") {
+        handled = nextMarker();
+      } else if (String(event.key).toLowerCase() === "r") {
+        recordCurrentFrame();
       } else
         handled = false;
       if (handled) {

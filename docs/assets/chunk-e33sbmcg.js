@@ -47,7 +47,7 @@ import {
   parseAndEvaluateAsync,
   renderOutputHtml,
   tokenize
-} from "./chunk-0gjm8fq2.js";
+} from "./chunk-maqwxtsa.js";
 
 // standard-profile.rix
 var standard_profile_default = `## RiX-Web standard calculator profile.
@@ -9321,12 +9321,12 @@ fractionNamespace._proto = {=
 
 .Host.RegisterCallableValue("fraction", fractionNamespace, "Representation-sensitive unreduced fractions", ["Algebra", "Exact", "Symbolic"]);
 `, sourcePath: "bundled:fraction", kind: "rix" });
-  catalog.addMetadata({ id: "geometry", description: "Pure-RiX exact geometry, transformations, conics, constraints, and bounded portable Graphics refinement.", kind: "rix", mount: "geometry", exports: ["Point", "Line", "Segment", "Ray", "Polygon", "Circle", "Conic", "Ellipse", "Parabola", "Hyperbola", "Locus", "Implicit", "Affine", "Projective", "Transform", "Constraint", "Constraints", "SquaredDistance", "Distance", "Length", "Area", "CircularAngle", "Angle", "Centroid", "Incenter", "Orthocenter", "AngleBisector", "Perpendicular", "ParallelThrough", "Midpoint", "PerpendicularBisector", "Circumcircle", "Translate", "RotateQuarterTurns", "Rotate", "ReflectAcross", "Intersect", "Points", "Status", "UncertainPoint", "UncertainBounds", "TransformUncertain", "ConstructionGraph", "ConstructionRecord", "ImportConstruction", "AddPoint", "Drag", "Undo", "Redo", "Refine", "Draw", "Workbench", "AuthoringWorkbench"], groups: ["Geometry", "Graphics", "Exact"], permissions: [], requires: ["rix.numerics@1", "rix.polynomial.algorithms@1", "rix.algebraic-real@1"], provides: ["rix.geometry@1", "rix.geometry.intersection@1", "rix.geometry.constraint@1", "rix.geometry.refinement@1", "rix.geometry.circular-angle@1", "rix.geometry.uncertain-point@1", "rix.geometry.construction-graph@1", "rix.geometry.construction-record@1", "rix.geometry.workbench@1", "rix.geometry.authoring-policy@1"], schemas: ["rix.geometry@1", "rix.geometry.intersection@1", "rix.geometry.constraint@1", "rix.geometry.refinement@1", "rix.geometry.circular-angle@1", "rix.geometry.uncertain-point@1", "rix.geometry.construction-graph@1", "rix.geometry.construction-record@1", "rix.geometry.workbench@1", "rix.geometry.authoring-policy@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:geometry" }, { source: `/**
+  catalog.addMetadata({ id: "geometry", description: "Pure-RiX exact geometry, transformations, conics, constraints, and bounded portable Graphics refinement.", kind: "rix", mount: "geometry", exports: ["Point", "Line", "Segment", "Ray", "Polygon", "Circle", "Conic", "Ellipse", "Parabola", "Hyperbola", "Locus", "Implicit", "Affine", "Projective", "Transform", "Constraint", "Constraints", "SquaredDistance", "Distance", "Length", "Area", "CircularAngle", "Angle", "Centroid", "Incenter", "Orthocenter", "AngleBisector", "Perpendicular", "ParallelThrough", "Midpoint", "PerpendicularBisector", "Circumcircle", "Translate", "RotateQuarterTurns", "Rotate", "ReflectAcross", "Intersect", "Points", "Status", "UncertainPoint", "UncertainBounds", "TransformUncertain", "ConstructionGraph", "ConstructionRecord", "ImportConstruction", "AddPoint", "AddLine", "AddCircle", "AddIntersection", "AddTransform", "AddMeasurement", "Drag", "DragMany", "ConstrainedDrag", "RepairSuggestions", "Undo", "Redo", "Refine", "Draw", "Workbench", "AuthoringWorkbench"], groups: ["Geometry", "Graphics", "Exact"], permissions: [], requires: ["rix.numerics@1", "rix.polynomial.algorithms@1", "rix.algebraic-real@1"], provides: ["rix.geometry@1", "rix.geometry.intersection@1", "rix.geometry.constraint@1", "rix.geometry.refinement@1", "rix.geometry.circular-angle@1", "rix.geometry.uncertain-point@1", "rix.geometry.construction-graph@1", "rix.geometry.construction-record@1", "rix.geometry.workbench@1", "rix.geometry.authoring-policy@1"], schemas: ["rix.geometry@1", "rix.geometry.intersection@1", "rix.geometry.constraint@1", "rix.geometry.refinement@1", "rix.geometry.circular-angle@1", "rix.geometry.uncertain-point@1", "rix.geometry.construction-graph@1", "rix.geometry.construction-record@1", "rix.geometry.workbench@1", "rix.geometry.authoring-policy@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:geometry" }, { source: `/**
 id: geometry
 description: Pure-RiX exact geometry, transformations, conics, constraints, and bounded portable Graphics refinement.
 kind: rix
 mount: geometry
-exports: [Point, Line, Segment, Ray, Polygon, Circle, Conic, Ellipse, Parabola, Hyperbola, Locus, Implicit, Affine, Projective, Transform, Constraint, Constraints, SquaredDistance, Distance, Length, Area, CircularAngle, Angle, Centroid, Incenter, Orthocenter, AngleBisector, Perpendicular, ParallelThrough, Midpoint, PerpendicularBisector, Circumcircle, Translate, RotateQuarterTurns, Rotate, ReflectAcross, Intersect, Points, Status, UncertainPoint, UncertainBounds, TransformUncertain, ConstructionGraph, ConstructionRecord, ImportConstruction, AddPoint, Drag, Undo, Redo, Refine, Draw, Workbench, AuthoringWorkbench]
+exports: [Point, Line, Segment, Ray, Polygon, Circle, Conic, Ellipse, Parabola, Hyperbola, Locus, Implicit, Affine, Projective, Transform, Constraint, Constraints, SquaredDistance, Distance, Length, Area, CircularAngle, Angle, Centroid, Incenter, Orthocenter, AngleBisector, Perpendicular, ParallelThrough, Midpoint, PerpendicularBisector, Circumcircle, Translate, RotateQuarterTurns, Rotate, ReflectAcross, Intersect, Points, Status, UncertainPoint, UncertainBounds, TransformUncertain, ConstructionGraph, ConstructionRecord, ImportConstruction, AddPoint, AddLine, AddCircle, AddIntersection, AddTransform, AddMeasurement, Drag, DragMany, ConstrainedDrag, RepairSuggestions, Undo, Redo, Refine, Draw, Workbench, AuthoringWorkbench]
 groups: [Geometry, Graphics, Exact]
 permissions: []
 requires: [rix.numerics@1, rix.polynomial.algorithms@1, rix.algebraic-real@1]
@@ -9953,8 +9953,9 @@ GeometryConstructionRecord(graph) -> {;
     records=valid[:nodes].Map((node)->{;
         value=node[:value];
         kind=((value ? :Map)&&value.Has("kind")) ?: value[:kind] ?_ :value;
-        status=((value ? :Map)&&value.Has("status")) ?: value[:status] ?_ _;
-        diagnostic=((value ? :Map)&&value.Has("diagnostic")) ?: value[:diagnostic] ?_ _;
+        structured=value ? :Map;
+        status=structured ?: (value.Has("status") ?: value[:status] ?_ _) ?_ _;
+        diagnostic=structured ?: (value.Has("diagnostic") ?: value[:diagnostic] ?_ _) ?_ _;
         {= id=node[:id],free=node[:free],dependsOn=node[:dependsOn],kind=kind,status=status,diagnostic=diagnostic,value=value };
     });
     .DeepMutable({=
@@ -10012,6 +10013,59 @@ GeometryAuthoringPoint(graph,target,options ?= {= }) -> {;
 
 GeometryAddPoint(graph,target,options ?= {= }) -> GeometryAuthoringPoint(graph,target,options);
 
+GeometryAllocateConstructionId(graph,options,prefix,label) -> {;
+    limit=GeometryAuthoringLimit(options); graph[:nodes].Len()<limit ?: _ ?_ .Error(@"@{label} reached its maxNodes limit of @{limit}");
+    id:=GeometryOption(options,"id");
+    {@ candidate=1; candidate<=@limit&&@id==_; {;
+        proposed=@"@{@prefix}@{candidate}";
+        @graph[:nodes].Any((node)->node[:id]==@proposed) ?: _ ?_ {; @id~=@proposed; };
+    }; candidate+=1 };
+    id!=_ ?: _ ?_ .Error(@"@{label} could not allocate a stable id");
+    graph[:nodes].Any((node)->node[:id]==@id) ?: .Error(@"@{label} duplicate node id @{id}") ?_ _;
+    id;
+};
+
+GeometryAddDerived(graph,dependencies,tool,Build,options ?= {= }) -> {;
+    valid=GeometryRequireConstructionGraph(graph,@"geometry.Add@{tool}");
+    options ? :Map ?: _ ?_ .Error(@"geometry.Add@{tool} options must be a map");
+    dependencies ? :Array ?: _ ?_ .Error(@"geometry.Add@{tool} dependencies must be an Array");
+    dependencies.Len()>0 ?: _ ?_ .Error(@"geometry.Add@{tool} requires dependencies");
+    dependencies.Distinct().Len()==dependencies.Len() ?: _ ?_ .Error(@"geometry.Add@{tool} dependencies must be distinct");
+    dependencies.All((dependency)->@valid[:nodes].Any((node)->node[:id]==dependency))
+      ?: _ ?_ .Error(@"geometry.Add@{tool} has a missing dependency");
+    prefix=GeometryOption(options,"idprefix",tool==:line ?: "l" ?_ tool==:circle ?: "c" ?_ tool==:intersection ?: "i" ?_ tool==:transform ?: "t" ?_ "m");
+    prefix ? :String ?: _ ?_ .Error(@"geometry.Add@{tool} idPrefix must be a String");
+    id=GeometryAllocateConstructionId(valid,options,prefix,@"geometry.Add@{tool}");
+    node={= id=id,free=_,dependson=dependencies,construct=Build,tool=tool };
+    event={= operation=:create,tool=tool,id=id,node=node,dependsOn=dependencies };
+    GeometryBuildConstructionGraph(valid[:nodes].Push(node),valid[:history].Push(event),[]);
+};
+
+GeometryAddLine(graph,firstId,secondId,options ?= {= }) -> {;
+    Build=(values)->GeometryLine(values[@firstId],values[@secondId]);
+    GeometryAddDerived(graph,[firstId,secondId],:line,Build,options);
+};
+
+GeometryAddCircle(graph,centerId,throughId,options ?= {= }) -> {;
+    Build=(values)->GeometryCircle(values[@centerId],values[@throughId]);
+    GeometryAddDerived(graph,[centerId,throughId],:circle,Build,options);
+};
+
+GeometryAddIntersection(graph,leftId,rightId,options ?= {= }) -> {;
+    Build=(values)->GeometryIntersect(values[@leftId],values[@rightId]);
+    GeometryAddDerived(graph,[leftId,rightId],:intersection,Build,options);
+};
+
+GeometryAddTransform(graph,sourceId,transform,options ?= {= }) -> {;
+    Build=(values)->GeometryTransform(values[@sourceId],@transform);
+    GeometryAddDerived(graph,[sourceId],:transform,Build,options);
+};
+
+GeometryAddMeasurement(graph,firstId,secondId,options ?= {= }) -> {;
+    Build=(values)->GeometryDistance(values[@firstId],values[@secondId]);
+    GeometryAddDerived(graph,[firstId,secondId],:measurement,Build,options);
+};
+
 GeometryMoveConstructionNode(graph,id,target,history,future) -> {;
     found=graph[:nodes].Filter((node)->node[:id]==id);
     found.Len()==1 ?: _ ?_ .Error(@"geometry construction node @{id} does not exist");
@@ -10037,6 +10091,73 @@ GeometryDrag(graph,id,target,options ?= {= }) -> {;
     GeometryMoveConstructionNode(valid,id,moved,valid[:history].Push(event),[]);
 };
 
+GeometryDragMany(graph,moves,options ?= {= }) -> {;
+    valid=GeometryRequireConstructionGraph(graph,"geometry.DragMany");
+    moves ? :Array ?: _ ?_ .Error("geometry.DragMany moves must be an Array of {id, target} maps");
+    moves.Len()>0 ?: _ ?_ .Error("geometry.DragMany requires at least one move");
+    ids=moves.Map((move)->move[:id]); ids.Distinct().Len()==ids.Len() ?: _ ?_ .Error("geometry.DragMany node ids must be distinct");
+    replacements:={= }; records:=[];
+    {@ index=1; index<=@moves.Len(); {;
+        move=@moves[index]; move ? :Map ?: _ ?_ .Error("geometry.DragMany move entries must be maps");
+        found=@valid[:nodes].Filter((node)->node[:id]==move[:id]);
+        found.Len()==1 ?: _ ?_ .Error(@"geometry.DragMany node @{move[:id]} does not exist");
+        found[1][:free] ?: _ ?_ .Error(@"geometry.DragMany node @{move[:id]} is derived and cannot be dragged directly");
+        target=GeometryRequire(move[:target],:point,@"geometry.DragMany target for @{move[:id]}");
+        @replacements ~= @replacements.Set(move[:id],target);
+        @records ~= @records.Push({= id=move[:id],from=found[1][:value],to=target });
+    }; index+=1 };
+    nodes=valid[:nodes].Map((node)->@replacements.Has(node[:id]) ?: node.Merge({= value=@replacements[node[:id]] }) ?_ node);
+    event={= operation=:drag_many,moves=records };
+    GeometryBuildConstructionGraph(nodes,valid[:history].Push(event),[]);
+};
+
+GeometryConstrainedDrag(graph,id,target,options ?= {= }) -> {;
+    valid=GeometryRequireConstructionGraph(graph,"geometry.ConstrainedDrag");
+    supplied=GeometryRequire(target,:point,"geometry.ConstrainedDrag target");
+    constraintId=GeometryOption(options,"constraint");
+    constraintId!=_ ?: _ ?_ .Error("geometry.ConstrainedDrag requires a constraint node id");
+    found=valid[:nodes].Filter((node)->node[:id]==constraintId);
+    found.Len()==1 ?: _ ?_ .Error(@"geometry.ConstrainedDrag constraint node @{constraintId} does not exist");
+    line=GeometryRequire(found[1][:value],:line,"geometry.ConstrainedDrag constraint");
+    residual=line[:a]*supplied[:x]+line[:b]*supplied[:y]+line[:c]; denominator=line[:a]^2+line[:b]^2;
+    mode=GeometryOption(options,"mode",:project);
+    (mode==:project||mode==:reject) ?: _ ?_ .Error("geometry.ConstrainedDrag mode must be :project or :reject");
+    moved=mode==:reject
+      ?: (GeometryIsZero(residual) ?: supplied ?_ .Error("geometry.ConstrainedDrag target violates the line constraint"))
+      ?_ GeometryPoint(supplied[:x]-line[:a]*residual/denominator,supplied[:y]-line[:b]*residual/denominator);
+    GeometryDrag(valid,id,moved,options);
+};
+
+GeometryRepairSuggestions(graph) -> {;
+    valid=GeometryRequireConstructionGraph(graph,"geometry.RepairSuggestions"); suggestions:=[];
+    {@ index=1; index<=@valid[:nodes].Len(); {;
+        node=@valid[:nodes][index]; value=node[:value]; status:=_; diagnostic:=_;
+        GeometryOption(node,"tool")==:intersection ?: {;
+            @status ~= @value[:status]; @diagnostic ~= GeometryOption(@value,"diagnostic");
+        } ?_ _;
+        problematic=status=="none"||status=="parallel"||status=="coincident"||status=="undecided"||status=="unsupported";
+        problematic ?: {; @suggestions ~= @suggestions.Push({=
+            node=@node[:id],status=@status,diagnostic=@diagnostic,automatic=_,
+            actions=[
+                {= kind=:inspect_dependencies,dependsOn=@node[:dependsOn] },
+                {= kind=:move_free_dependency,label="Move a free dependency and recompute" },
+                {= kind=:undo,label="Undo the most recent construction edit" }
+            ]
+        }); } ?_ _;
+    }; index+=1 };
+    {= schema="rix.geometry.repair-suggestions@1",suggestions=suggestions,automatic=_,deterministic=1 };
+};
+
+GeometryApplyMoveRecords(graph,moves,direction,history,future) -> {;
+    replacements:={= };
+    {@ index=1; index<=@moves.Len(); {;
+        move=@moves[index]; value=@direction==:undo ?: move[:from] ?_ move[:to];
+        @replacements ~= @replacements.Set(move[:id],value);
+    }; index+=1 };
+    nodes=graph[:nodes].Map((node)->@replacements.Has(node[:id]) ?: node.Merge({= value=@replacements[node[:id]] }) ?_ node);
+    GeometryBuildConstructionGraph(nodes,history,future);
+};
+
 GeometryUndo(graph) -> {;
     valid=GeometryRequireConstructionGraph(graph,"geometry.Undo");
     valid[:history].Len()==0
@@ -10046,6 +10167,8 @@ GeometryUndo(graph) -> {;
           operation=event[:operation]; future=GeometryOption(@valid,"future",[]).Push(event); history=@valid[:history].DropLast();
           operation==:drag
             ?: GeometryMoveConstructionNode(@valid,event[:id],event[:from],history,future)
+            ?_ operation==:drag_many
+                 ?: GeometryApplyMoveRecords(@valid,event[:moves],:undo,history,future)
             ?_ operation==:create
                  ?: {;
                      @valid[:nodes].Last()[:id]==@event[:id] ?: _ ?_ .Error("geometry.Undo can only remove the most recently created construction node");
@@ -10064,6 +10187,8 @@ GeometryRedo(graph) -> {;
           operation=event[:operation]; history=@valid[:history].Push(event); remaining=@future.DropLast();
           operation==:drag
             ?: GeometryMoveConstructionNode(@valid,event[:id],event[:to],history,remaining)
+            ?_ operation==:drag_many
+                 ?: GeometryApplyMoveRecords(@valid,event[:moves],:redo,history,remaining)
             ?_ operation==:create
                  ?: GeometryBuildConstructionGraph(@valid[:nodes].Push(event[:node]),history,remaining)
                  ?_ .Error("geometry.Redo encountered an unsupported construction event");
@@ -11005,7 +11130,15 @@ geometryNamespace._proto = {=
     ConstructionRecord=(self, graph)->GeometryConstructionRecord(graph),
     ImportConstruction=(self, record, constructors ?= {= })->GeometryImportConstruction(record,constructors),
     AddPoint=(self, graph, target, options ?= {= })->GeometryAddPoint(graph,target,options),
+    AddLine=(self, graph, firstId, secondId, options ?= {= })->GeometryAddLine(graph,firstId,secondId,options),
+    AddCircle=(self, graph, centerId, throughId, options ?= {= })->GeometryAddCircle(graph,centerId,throughId,options),
+    AddIntersection=(self, graph, leftId, rightId, options ?= {= })->GeometryAddIntersection(graph,leftId,rightId,options),
+    AddTransform=(self, graph, sourceId, transform, options ?= {= })->GeometryAddTransform(graph,sourceId,transform,options),
+    AddMeasurement=(self, graph, firstId, secondId, options ?= {= })->GeometryAddMeasurement(graph,firstId,secondId,options),
     Drag=(self, graph, id, target, options ?= {= })->GeometryDrag(graph,id,target,options),
+    DragMany=(self, graph, moves, options ?= {= })->GeometryDragMany(graph,moves,options),
+    ConstrainedDrag=(self, graph, id, target, options ?= {= })->GeometryConstrainedDrag(graph,id,target,options),
+    RepairSuggestions=(self, graph)->GeometryRepairSuggestions(graph),
     Undo=(self, graph)->GeometryUndo(graph),
     Redo=(self, graph)->GeometryRedo(graph),
     Refine=(self, value, request ?= {= })->GeometryRefine(value, request),
@@ -21987,6 +22120,15 @@ PlotEdgeIntersection(first,second,level) -> {;
     };
 };
 
+PlotEdgeCrossing(first,second,level,continuity) -> {;
+    point=PlotEdgeIntersection(first,second,level);
+    point==_ ?: _ ?_ {=
+        point=point,
+        existenceEvidence=(continuity==:continuous&&first[:status]==:exact&&second[:status]==:exact) ?: :proof ?_ :sample,
+        existenceBasis=(continuity==:continuous&&first[:status]==:exact&&second[:status]==:exact) ?: :intermediate_value_theorem ?_ :sampled_sign_change
+    };
+};
+
 PlotRefinementInteger(settings,key,fallback,minimum,maximum,label) -> {;
     value=PlotOption(settings,key,fallback) ~!: :Integer;
     (value>=minimum&&value<=maximum) ?: value ?_ .Error(@"@{label} must be between @{minimum} and @{maximum}");
@@ -21999,32 +22141,58 @@ PlotAdaptivePolicy(config,settings) -> {;
     budget>=baseCells ?: _ ?_ .Error(@"field plot refinementBudget must be at least the base grid cell count (@{baseCells})");
     certify=PlotOption(settings,"certifyintervals",_);
     (certify==_||certify==0||certify==1) ?: _ ?_ .Error("field plot certifyIntervals must be 1 or null");
+    continuity=PlotOption(settings,"continuity",:unknown);
+    (continuity==:unknown||continuity==:continuous) ?: _ ?_ .Error("field plot continuity must be :unknown or :continuous");
+    discontinuityThreshold=PlotOption(settings,"discontinuitythreshold",_);
+    discontinuityThreshold==_ ?: _ ?_ {;
+        @discontinuityThreshold ~= PlotExact(@discontinuityThreshold,"field plot discontinuityThreshold");
+        @discontinuityThreshold>0 ?: _ ?_ .Error("field plot discontinuityThreshold must be positive");
+    };
     {=
         schema="rix.plot.refinement-policy@1",method=:adaptive_quadtree,maxDepth=depth,
         requestedBudget=budget,effectiveBudget=budget,
-        certifyIntervals=certify==1
+        certifyIntervals=certify==1,continuity=continuity,discontinuityThreshold=discontinuityThreshold
     };
 };
 
 PlotAdaptivePoint(fn,point,settings,label) -> {;
-    resolved=PlotResolveNumber(@fn(point[1],point[2]),label,settings);
+    Field=fn; resolved=PlotResolveNumber(Field(point[1],point[2]),label,settings);
     {= point=point,value=resolved[:value],usable=resolved[:value]!=_,resolved=resolved[:resolved],status=resolved[:status],evidenceLevel=resolved[:evidenceLevel] };
 };
 
-PlotAdaptiveCellSample(fn,cell,settings,centerRequired) -> {;
+PlotAdaptivePointKey(point) -> @"@{point[1]}|@{point[2]}";
+
+PlotAdaptivePointCached(fn,point,settings,label,cache) -> {;
+    key=PlotAdaptivePointKey(point);
+    cache.Has(key)
+      ?: {= sample=cache[key],cache=cache,cacheHit=1,pointEvaluation=0 }
+      ?_ {; sample=PlotAdaptivePoint(@fn,@point,@settings,@label); {= sample=sample,cache=@cache.Set(@key,sample),cacheHit=0,pointEvaluation=1 }; };
+};
+
+PlotAdaptiveCellSample(fn,cell,settings,centerRequired,initialCache ?= {= }) -> {;
     xmin=cell[:xmin]; xmax=cell[:xmax]; ymin=cell[:ymin]; ymax=cell[:ymax];
     xmid=(xmin+xmax)/2; ymid=(ymin+ymax)/2;
     retained=cell.Has("corners")&&cell[:corners]!=_;
-    corners=retained ?: cell[:corners] ?_ [
-        PlotAdaptivePoint(fn,[xmin,ymin],settings,@"@{cell[:id]} lower-left"),
-        PlotAdaptivePoint(fn,[xmax,ymin],settings,@"@{cell[:id]} lower-right"),
-        PlotAdaptivePoint(fn,[xmax,ymax],settings,@"@{cell[:id]} upper-right"),
-        PlotAdaptivePoint(fn,[xmin,ymax],settings,@"@{cell[:id]} upper-left")
-    ];
+    points=[[xmin,ymin],[xmax,ymin],[xmax,ymax],[xmin,ymax]]; cache:=initialCache; corners:=[]; cacheHits:=0; pointEvaluations:=0;
+    retained ?: {;
+        {@ seed=1; seed<=4; {; @cache ~= @cache.Set(PlotAdaptivePointKey(@points[seed]),@cell[:corners][seed]); }; seed+=1 };
+        @corners ~= @cell[:corners];
+    } ?_ {;
+        {@ corner=1; corner<=4; {;
+            fetched=PlotAdaptivePointCached(@fn,@points[corner],@settings,@"@{@cell[:id]} corner @{corner}",@cache);
+            @cache ~= fetched[:cache]; @cacheHits += fetched[:cacheHit]; @pointEvaluations += fetched[:pointEvaluation];
+            @corners ~= @corners.Push(fetched[:sample]);
+        }; corner+=1 };
+    };
+    center={= usable=_,value=_,status=:not_sampled,evidenceLevel=:none };
+    centerRequired ?: {;
+        fetchedCenter=PlotAdaptivePointCached(@fn,[@xmid,@ymid],@settings,@"@{@cell[:id]} center",@cache);
+        @cache ~= fetchedCenter[:cache]; @cacheHits += fetchedCenter[:cacheHit]; @pointEvaluations += fetchedCenter[:pointEvaluation];
+        @center ~= fetchedCenter[:sample];
+    } ?_ _;
     {=
         corners=corners,
-        center=centerRequired ?: PlotAdaptivePoint(fn,[xmid,ymid],settings,@"@{cell[:id]} center") ?_ {= usable=_,value=_,status=:not_sampled,evidenceLevel=:none },
-        pointEvaluations=(retained ?: 0 ?_ 4)+(centerRequired ?: 1 ?_ 0)
+        center=center,cache=cache,cacheHits=cacheHits,pointEvaluations=pointEvaluations
     };
 };
 
@@ -22059,7 +22227,7 @@ PlotAdaptiveSubcells(cell) -> {;
     ];
 };
 
-PlotAdaptiveFieldCells(fn,config,settings,level,relation,field ?= _) -> {;
+PlotAdaptiveFieldCells(fn,config,settings,level,relation,field ?= _,initialCache ?= {= }) -> {;
     policy=PlotAdaptivePolicy(config,settings); queue := []; leaves := [];
     {@ row=1; row<=@config[:rows]; {;
         {@ column=1; column<=@config[:columns]; {;
@@ -22074,13 +22242,14 @@ PlotAdaptiveFieldCells(fn,config,settings,level,relation,field ?= _) -> {;
             });
         }; column+=1 };
     }; row+=1 };
-    refined:=0; budgetStops:=0; maxDepthReached:=0; processed:=0; pointEvaluations:=0;
+    refined:=0; budgetStops:=0; maxDepthReached:=0; processed:=0; pointEvaluations:=0; cacheHits:=0; cache:=initialCache;
+    suspectedDiscontinuities:=0; maximumSampleRange:=0;
     certifiedExcluded:=0; certifiedInside:=0; certifiedOutside:=0; enclosureCandidates:=0;
     {@ work=0; @queue.Len()>0; {;
         cell=@queue.First(); @queue ~= @queue.DropFirst();
         centerRequired=@policy[:maxDepth]>0||@policy[:certifyIntervals];
-        sample=PlotAdaptiveCellSample(@fn,cell,@settings,centerRequired); interval=PlotAdaptiveInterval(@fn,cell,@level,@relation,@policy);
-        @pointEvaluations += sample[:pointEvaluations];
+        sample=PlotAdaptiveCellSample(@fn,cell,@settings,centerRequired,@cache); @cache ~= sample[:cache]; interval=PlotAdaptiveInterval(@fn,cell,@level,@relation,@policy);
+        @pointEvaluations += sample[:pointEvaluations]; @cacheHits += sample[:cacheHits];
         @certifiedExcluded += interval[:status]==:certified_excluded ?: 1 ?_ 0;
         @certifiedInside += interval[:status]==:certified_inside ?: 1 ?_ 0;
         @certifiedOutside += interval[:status]==:certified_outside ?: 1 ?_ 0;
@@ -22089,10 +22258,20 @@ PlotAdaptiveFieldCells(fn,config,settings,level,relation,field ?= _) -> {;
         flags=usable ?: sample[:corners].Map((entry)->PlotRelation(entry[:value],@level,@relation==:level ?: :le ?_ @relation)) ?_ [];
         count=usable ?: flags.Filter((flag)->flag).Len() ?_ 0;
         centerFlag=(usable&&centerRequired) ?: PlotRelation(sample[:center][:value],@level,@relation==:level ?: :le ?_ @relation) ?_ (count==4 ?: 1 ?_ _);
+        sampledValues=usable ?: sample[:corners].Map((entry)->entry[:value]).Concat(centerRequired ?: [sample[:center][:value]] ?_ []) ?_ [];
+        sampleMinimum:=usable ?: sampledValues[1] ?_ _; sampleMaximum:=sampleMinimum;
+        {@ valueIndex=2; valueIndex<=@sampledValues.Len(); {;
+            @sampleMinimum ~= @sampledValues[valueIndex]<@sampleMinimum ?: @sampledValues[valueIndex] ?_ @sampleMinimum;
+            @sampleMaximum ~= @sampledValues[valueIndex]>@sampleMaximum ?: @sampledValues[valueIndex] ?_ @sampleMaximum;
+        }; valueIndex+=1 };
+        sampleRange=usable ?: sampleMaximum-sampleMinimum ?_ _;
+        @maximumSampleRange ~= usable&&sampleRange>@maximumSampleRange ?: sampleRange ?_ @maximumSampleRange;
+        suspectedDiscontinuity=usable&&@policy[:discontinuityThreshold]!=_&&sampleRange>@policy[:discontinuityThreshold];
+        @suspectedDiscontinuities += suspectedDiscontinuity ?: 1 ?_ 0;
         sampledBoundary=usable&&(count>0&&count<4);
         centerDisagrees=usable&&centerRequired&&((count==0&&centerFlag)||(count==4&&!centerFlag));
         intervalUncertain=interval[:status]==:enclosed_candidate||interval[:status]==:enclosed_boundary;
-        needsRefinement=!usable||sampledBoundary||centerDisagrees||intervalUncertain;
+        needsRefinement=!usable||sampledBoundary||centerDisagrees||intervalUncertain||suspectedDiscontinuity;
         capacity=@processed+@queue.Len()+5<=@policy[:effectiveBudget];
         split=needsRefinement&&cell[:depth]<@policy[:maxDepth]&&capacity;
         split
@@ -22102,16 +22281,18 @@ PlotAdaptiveFieldCells(fn,config,settings,level,relation,field ?= _) -> {;
               @maxDepthReached ~= .Max(@maxDepthReached,@cell[:depth]);
               @leaves ~= @leaves.Push(@cell.Merge({=
                   sample=@sample,interval=@interval,usable=@usable,flags=@flags,count=@count,centerFlag=@centerFlag,
-                  sampledBoundary=@sampledBoundary,centerDisagrees=@centerDisagrees,needsRefinement=@needsRefinement
+                  sampledBoundary=@sampledBoundary,centerDisagrees=@centerDisagrees,suspectedDiscontinuity=@suspectedDiscontinuity,
+                  sampleRange=@sampleRange,needsRefinement=@needsRefinement
               }));
           };
         @processed += 1;
     }; work+=1 };
     {=
-        cells=leaves,
+        cells=leaves,cache=cache,
         refinement=policy.Merge({=
             processedCells=processed,leafCells=leaves.Len(),refinedCells=refined,budgetStops=budgetStops,
-            maxDepthReached=maxDepthReached,pointEvaluations=pointEvaluations,
+            maxDepthReached=maxDepthReached,pointEvaluations=pointEvaluations,cacheHits=cacheHits,
+            uniquePointSamples=cache.Len(),suspectedDiscontinuityCells=suspectedDiscontinuities,maximumSampleRange=maximumSampleRange,
             intervalEvaluations=policy[:certifyIntervals] ?: processed ?_ 0,
             certifiedExcludedCells=certifiedExcluded,certifiedInsideCells=certifiedInside,
             certifiedOutsideCells=certifiedOutside,enclosureCandidateCells=enclosureCandidates
@@ -22126,10 +22307,13 @@ PlotContourBuild(fn,xDomain,yDomain,settings,kind) -> {;
     colors=PlotOption(settings,"colors",["#2563eb","#b45309","#7c3aed","#0f766e","#be123c"]);
     colors ? :Array ?: _ ?_ .Error("contour plot colors must be an Array");
     colors.Len()>0 ?: _ ?_ .Error("contour plot colors must not be empty");
-    children := []; series := []; records := []; unresolved := []; ambiguous := []; refinements := [];
+    labelContours=PlotOption(settings,"labelcontours",0);
+    (labelContours==0||labelContours==1) ?: _ ?_ .Error("contour plot labelContours must be 0 or 1");
+    labelLimit=PlotRefinementInteger(settings,"contourlabellimit",levels.Len(),0,100,"contour plot contourLabelLimit");
+    children := []; series := []; records := []; unresolved := []; ambiguous := []; refinements := []; cache:={= }; labelsPlaced:=0;
     {@ levelIndex=1; levelIndex<=@levels.Len(); {;
         level=@levels[levelIndex]; color=@colors[((levelIndex-1)%@colors.Len())+1];
-        adaptive=PlotAdaptiveFieldCells(@fn,@config,@settings,level,:level,@field);
+        adaptive=PlotAdaptiveFieldCells(@fn,@config,@settings,level,:level,@field,@cache); @cache ~= adaptive[:cache];
         @refinements ~= @refinements.Push(adaptive[:refinement].Merge({= level=level }));
         {@ cellIndex=1; cellIndex<=@adaptive[:cells].Len(); {;
             cell=@adaptive[:cells][cellIndex]; corners=cell[:sample][:corners];
@@ -22140,25 +22324,42 @@ PlotContourBuild(fn,xDomain,yDomain,settings,kind) -> {;
                 bounds=[@cell[:xmin],@cell[:xmax],@cell[:ymin],@cell[:ymax]]
             }); };
             usable ?: {;
-                intersections=[PlotEdgeIntersection(@a,@b,@level),PlotEdgeIntersection(@b,@c,@level),PlotEdgeIntersection(@c,@d,@level),PlotEdgeIntersection(@d,@a,@level)].Filter((point)->point!=_);
+                intersections=[
+                    PlotEdgeCrossing(@a,@b,@level,@adaptive[:refinement][:continuity]),
+                    PlotEdgeCrossing(@b,@c,@level,@adaptive[:refinement][:continuity]),
+                    PlotEdgeCrossing(@c,@d,@level,@adaptive[:refinement][:continuity]),
+                    PlotEdgeCrossing(@d,@a,@level,@adaptive[:refinement][:continuity])
+                ].Filter((crossing)->crossing!=_);
                 intervalStatus=@cell[:interval][:status];
-                (intersections.Len()==4||@cell[:centerDisagrees]||(intervalStatus==:enclosed_candidate&&intersections.Len()==0))
+                (intersections.Len()==4||@cell[:centerDisagrees]||@cell[:suspectedDiscontinuity]||(intervalStatus==:enclosed_candidate&&intersections.Len()==0))
                   ?: {; @ambiguous ~= @ambiguous.Push({=
                       id=@cellId,column=@cell[:column],row=@cell[:row],level=@level,depth=@cell[:depth],
-                      status=@intervalStatus==:enclosed_candidate ?: :certified_enclosure_candidate ?_ :sampled_ambiguous,
+                      status=@cell[:suspectedDiscontinuity] ?: :suspected_discontinuity ?_ (@intervalStatus==:enclosed_candidate ?: :certified_enclosure_candidate ?_ :sampled_ambiguous),
+                      evidenceLevel=@cell[:suspectedDiscontinuity] ?: :sample ?_ (@intervalStatus==:enclosed_candidate ?: :proof ?_ :sample),
+                      sampleRange=@cell[:sampleRange],
                       interval=@cell[:interval][:interval],bounds=[@cell[:xmin],@cell[:xmax],@cell[:ymin],@cell[:ymax]]
                   }); } ?_ _;
                 pairCount=intersections.Len()//2;
                 {@ pair=1; pair<=@pairCount; {;
-                    points=[@intersections[pair*2-1],@intersections[pair*2]];
+                    crossingPair=[@intersections[pair*2-1],@intersections[pair*2]];
+                    points=crossingPair.Map((crossing)->crossing[:point]);
                     segmentId=@"@{@cellId}-segment-@{pair}";
                     style=PlotStyle(@settings,@color,2).Merge({= hitId=segmentId });
                     @children ~= @children.Push(.Graphics.Path(points.Map((point)->PlotProject(point,@config)),style));
                     @series ~= @series.Push({= kind=:contour,data=points,style=style,label=_ ,level=@level,id=segmentId });
+                    existenceEvidence=crossingPair.All((crossing)->crossing[:existenceEvidence]==:proof) ?: :proof ?_ :sample;
                     @records ~= @records.Push({=
                         id=segmentId,cell=@cellId,level=@level,points=points,depth=@cell[:depth],
-                        status=:sampled_boundary,intervalEvidence=@intervalStatus,evidenceLevel=:sample
+                        status=:sampled_boundary,intervalEvidence=@intervalStatus,evidenceLevel=:sample,
+                        locatedSegmentEvidence=:sample,edgeExistenceEvidence=existenceEvidence,
+                        edgeExistenceBasis=crossingPair.Map((crossing)->crossing[:existenceBasis])
                     });
+                    (@labelContours==1&&pair==1&&@labelsPlaced<@labelLimit) ?: {;
+                        projected=@points.Map((point)->PlotProject(point,@config));
+                        labelPoint=[(projected[1][1]+projected[2][1])/2,(projected[1][2]+projected[2][2])/2];
+                        @children ~= @children.Push(.Graphics.Text(labelPoint,@"@{@level}",{= fill=@color,size=11,anchor="middle",hitId=@"@{@segmentId}-label" }));
+                        @labelsPlaced += 1;
+                    } ?_ _;
                 }; pair+=1 };
             } ?_ _;
         }; cellIndex+=1 };
@@ -22166,7 +22367,7 @@ PlotContourBuild(fn,xDomain,yDomain,settings,kind) -> {;
     legend=levels.Map((level,index)->{= label=@"level @{level}",value=level,color=colors[((index-1)%colors.Len())+1] });
     PlotFieldGraphic(kind,config,settings,children,{=
         series=series,records=records,unresolvedRegions=unresolved,ambiguousRegions=ambiguous,legend=legend,
-        evidence=field[:evidence],status=field[:status],rendering=:series,refinement=refinements,
+        evidence=field[:evidence].Merge({= sharedPointSamples=cache.Len(),contourLabels=labelsPlaced }),status=field[:status],rendering=:series,refinement=refinements,
         sampling={=
             method=:adaptive_marching_squares,grid={= columns=config[:columns],rows=config[:rows] },
             certification=PlotOption(settings,"certifyintervals",_)==1 ?: :interval_exclusion_plus_sampled_crossings ?_ :sampled_signs
@@ -22233,11 +22434,20 @@ PlotPaletteIndex(value,minimum,maximum,count) -> minimum==maximum ?: (count+1)//
     .Max(1,.Min(@count,index));
 };
 
+PlotContinuousColor(value,minimum,maximum,hues) -> {;
+    hue=minimum==maximum ?: (hues[1]+hues[2])/2 ?_ hues[1]+(value-minimum)/(maximum-minimum)*(hues[2]-hues[1]);
+    @"hsl(@{hue//1}, 80%, 50%)";
+};
+
 PlotHeatMap(fn,xDomain,yDomain,settings ?= {= }) -> {;
     config=PlotFieldConfig(xDomain,yDomain,settings); field=PlotFieldSample(fn,config,settings);
     palette=PlotOption(settings,"colors",["#312e81","#2563eb","#06b6d4","#f8fafc","#facc15","#f97316","#be123c"]);
     palette ? :Array ?: _ ?_ .Error("heat-map colors must be an Array");
     palette.Len()>=2 ?: _ ?_ .Error("heat-map colors must contain at least two colors");
+    colorMode=PlotOption(settings,"colormode",:discrete);
+    (colorMode==:discrete||colorMode==:continuous) ?: _ ?_ .Error("heat-map colorMode must be :discrete or :continuous");
+    hues=PlotExactArray(PlotOption(settings,"huerange",[240,0]),"heat-map hueRange");
+    hues.Len()==2 ?: _ ?_ .Error("heat-map hueRange must contain two exact hue values");
     values=field[:samples].Filter((sample)->sample[:usable]).Map((sample)->sample[:value]);
     values.Len()>0 ?: _ ?_ .Error("heat-map has no resolved samples");
     minimum:=values[1]; maximum:=values[1];
@@ -22251,7 +22461,8 @@ PlotHeatMap(fn,xDomain,yDomain,settings ?= {= }) -> {;
             c=PlotFieldAt(@field,column+1,@row+1,@config); d=PlotFieldAt(@field,column,@row+1,@config);
             id=@"heatmap-cell-@{column}-@{@row}"; usable=a[:usable]&&b[:usable]&&c[:usable]&&d[:usable];
             usable ?: {;
-                value=(@a[:value]+@b[:value]+@c[:value]+@d[:value])/4; paletteIndex=PlotPaletteIndex(value,@minimum,@maximum,@palette.Len()); color=@palette[paletteIndex];
+                value=(@a[:value]+@b[:value]+@c[:value]+@d[:value])/4; paletteIndex=PlotPaletteIndex(value,@minimum,@maximum,@palette.Len());
+                color=@colorMode==:continuous ?: PlotContinuousColor(value,@minimum,@maximum,@hues) ?_ @palette[paletteIndex];
                 lower=PlotFieldPoint(@column,@row,@config); upper=PlotFieldPoint(@column+1,@row+1,@config);
                 origin=PlotProject([lower[1],upper[2]],@config); end=PlotProject([upper[1],lower[2]],@config);
                 @children ~= @children.Push(.Graphics.Rectangle(origin,[end[1]-origin[1],end[2]-origin[2]],{= fill=color,stroke=color,width=0,hitId=@id }));
@@ -22266,7 +22477,7 @@ PlotHeatMap(fn,xDomain,yDomain,settings ?= {= }) -> {;
     PlotFieldGraphic(:heatmap,config,settings,children,{=
         records=records,unresolvedRegions=unresolved,evidence=field[:evidence],status=field[:status],
         legend=[{= label="minimum",value=minimum,color=palette[1] },{= label="maximum",value=maximum,color=palette.Last() }],
-        colorScale={= kind=:discrete,minimum=minimum,maximum=maximum,colors=palette },
+        colorScale={= kind=colorMode,minimum=minimum,maximum=maximum,colors=palette,hueRange=hues,quantization=colorMode==:continuous ?: :one_degree ?_ :palette },
         sampling={= method=:cell_corner_mean,certification=:sampled_values }
     });
 };
@@ -30387,5 +30598,5 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
 
 export { pluginProfileFromUrl, stripMarkedPluginProfile, findHelp, createRixRepl };
 
-//# debugId=72156DC8424BAA9064756E2164756E21
-//# sourceMappingURL=chunk-en5ccgwz.js.map
+//# debugId=475251E03DBF17A164756E2164756E21
+//# sourceMappingURL=chunk-e33sbmcg.js.map

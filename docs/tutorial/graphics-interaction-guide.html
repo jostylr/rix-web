@@ -73,7 +73,7 @@ camera := .scene3d.OrbitCamera([0,0,1/2], {= radius=5, height=2, turn=1/3 });
     )
 ]) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p><code>Inequality</code> adds <code>relation=:le</code>, <code>:lt</code>, <code>:ge</code>, or <code>:gt</code>. <code>Contour</code> accepts one or more <code>levels</code>. Scalar-field metadata records the exact domain, bounded sampling grid, evidence status, stable hit identities, ambiguous cells, and unresolved regions. A visible sampled boundary is never silently presented as a proof.</p>
-<p>For <code>Implicit</code>, <code>Contour</code>, and <code>Inequality</code>, <code>refineDepth</code> requests zero to six quadtree levels and <code>refinementBudget</code> limits total processed cells to at most 50,000; an explicit budget must at least cover the base grid. Refinement concentrates rational samples around mixed cells and also detects a center whose classification differs from all four corners. <code>certifyIntervals=1</code> additionally evaluates each cell as an exact rational box; the function must support interval inputs. This can certify that an implicit level is excluded from a whole cell, or that an entire inequality cell is inside or outside. Interpolated boundary segments remain explicitly sampled. Open <strong>Text alternative</strong> to read processed/leaf/subdivision counts, maximum depth, budget stops, point evaluations, and certified interval evaluations.</p>
+<p>For <code>Implicit</code>, <code>Contour</code>, and <code>Inequality</code>, <code>refineDepth</code> requests zero to six quadtree levels and <code>refinementBudget</code> limits total processed cells to at most 50,000; an explicit budget must at least cover the base grid. Refinement concentrates rational samples around mixed cells and also detects a center whose classification differs from all four corners. <code>certifyIntervals=1</code> additionally evaluates each cell as an exact rational box; the function must support interval inputs. This can certify that an implicit level is excluded from a whole cell, or that an entire inequality cell is inside or outside. Interpolated boundary segments remain explicitly sampled. Open <strong>Text alternative</strong> to read processed/leaf/subdivision counts, maximum depth, budget stops, point evaluations, shared-cache hits, unique points, and certified interval evaluations. <code>continuity=:continuous</code> lets an exact sampled sign change prove boundary existence on an edge by the intermediate value theorem, but the interpolated point and drawn segment remain sampled. <code>discontinuityThreshold</code> adds a heuristic steep-cell warning and refinement trigger; it is not a discontinuity proof. Contours accept <code>labelContours=1</code> and <code>contourLabelLimit</code>. Heat maps accept <code>colorMode=:continuous</code> and <code>hueRange=[240,0]</code> for value-driven HSL color.</p>
 <h2>Work with a geometry construction</h2>
 <p>The geometry workbench is a Graphic plus a retained construction graph.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">.Plugin.Load(&quot;geometry&quot;);
@@ -107,9 +107,10 @@ $$authoring := .geometry.AuthoringWorkbench($graph,actions,{=
 });
 $authoring;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Click empty canvas space to add stable <code>p1</code>, <code>p2</code>, ... construction nodes. The exact <code>snap</code> is applied after pixel-to-view conversion, <code>maxNodes</code> bounds the construction, and a new placement clears the redo branch. Choose <strong>Point tool</strong> to focus the surface; arrows move its cursor, Shift-arrows move by ten pixels, and Enter or Space places a point. The workbench Undo/Redo controls replay the retained <code>:create</code> events, so export contains the same history.</p>
+<p>For programmatic or host-bound tools, the same graph supports <code>AddLine</code>, <code>AddCircle</code>, <code>AddIntersection</code>, <code>AddTransform</code>, and <code>AddMeasurement</code>. <code>ConstrainedDrag</code> projects exactly onto a retained line (or rejects invalid motion), <code>DragMany</code> makes one atomic multi-point history event, and <code>RepairSuggestions</code> reports non-destructive advice for degenerate intersections. The web toolbar currently binds point placement; these additional kernel tools are ready for selection-driven host controls. Imported derived records still require the explicit constructor map listed by <code>replayRequires</code>.</p>
 <h2>Play and compare a Timeline</h2>
 <p>Return the Timeline itself to get the browser transport.</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">Frame(x, origin) -&gt; .Graphics.Graphic([300,120], [
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="14" spellcheck="false">Frame(x, origin) -&gt; .Graphics.Graphic([300,120], [
     .Graphics.Path([[20,60],[280,60]], {= stroke=&quot;#cbd5e1&quot; }),
     .Graphics.Circle([150+40*x,60], 10, {= fill=&quot;#7c3aed&quot;, hitId=&quot;moving-point&quot; }),
     .Graphics.Text([15,20], @&quot;exact state @{x}&quot;, {= size=13 })
@@ -117,15 +118,24 @@ $authoring;</textarea><div class="tutorial-output" data-tutorial-output></div></
 
 .Timeline.Sequence({=
     title=&quot;Exact motion&quot;,
-    duration=4,
+    frameDurations=[1/2,1/2,1,1/2,1/2],
+    markers=[{= frame=1,label=&quot;start&quot; },{= frame=3,label=&quot;center&quot; },{= frame=5,label=&quot;finish&quot; }],
+    preferencesKey=&quot;exact-motion-guide&quot;,
+    transition={= mode=:crossfade,duration=1/5,properties=[:opacity,:position,:fill,:stroke] },
     entries=[{: Frame, [-2,-1,0,1,2]}]
 }) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <ul><li>Play or pause, step, scrub, change speed, loop, and restrict playback with</li></ul>
 <p>the start and end fields.</p>
-<ul><li><strong>Compare previous</strong> displays the prior frame beside the current one.</li><li>Focus the timeline: Space plays or pauses, arrows step, Home and End seek to</li></ul>
-<p>the active range, and L toggles looping.</p>
+<ul><li><strong>Compare</strong> can show the previous frame, any chosen frame, or onion-skin</li></ul>
+<p>neighbors. Named markers provide direct navigation.</p>
+<ul><li>Exact per-frame durations may replace a single total <code>duration</code>. A</li></ul>
+<p><code>preferencesKey</code> persists speed, loop, range, and comparison choices.</p>
+<ul><li><strong>Record frame</strong> collects exact retained snapshots; <strong>Export recording</strong></li></ul>
+<p>emits deterministic <code>rix.timeline-recording@1</code> JSON, and Clear resets it.</p>
+<ul><li>Focus the timeline: Space plays or pauses, arrows step, Home and End seek to</li></ul>
+<p>the active range, L toggles looping, M advances to the next marker, and R records the current exact frame.</p>
 <ul><li>The exact-state inspector and full text track remain discrete even when a</li></ul>
-<p>safe visual crossfade is declared. Reduced-motion preference disables that crossfade without disabling stepping or playback.</p>
+<p>safe opacity, position, fill, or stroke presentation transition is declared. Diagnostics report appeared, disappeared, and kind-changed semantic objects. Reduced-motion preference disables animation without disabling stepping or playback.</p>
 <h2>Read or hear the mathematical alternative</h2>
 <p>Every 2D Graphic includes a closed <strong>Text alternative</strong> disclosure. Open it for the title, axes, domain and range, series summaries, exactness labels, concise sample tables, semantic objects, marks, uncertainty, and unresolved regions. Dense series show representative rows while retaining their complete semantic plan. Finite data stays tabular.</p>
 <p>Plots with retained two-dimensional series also show an <strong>Audio trace</strong>:</p>

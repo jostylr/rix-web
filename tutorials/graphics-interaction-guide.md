@@ -129,7 +129,14 @@ the function must support interval inputs. This can certify that an implicit
 level is excluded from a whole cell, or that an entire inequality cell is
 inside or outside. Interpolated boundary segments remain explicitly sampled.
 Open **Text alternative** to read processed/leaf/subdivision counts, maximum
-depth, budget stops, point evaluations, and certified interval evaluations.
+depth, budget stops, point evaluations, shared-cache hits, unique points, and
+certified interval evaluations. `continuity=:continuous` lets an exact sampled
+sign change prove boundary existence on an edge by the intermediate value
+theorem, but the interpolated point and drawn segment remain sampled.
+`discontinuityThreshold` adds a heuristic steep-cell warning and refinement
+trigger; it is not a discontinuity proof. Contours accept `labelContours=1`
+and `contourLabelLimit`. Heat maps accept `colorMode=:continuous` and
+`hueRange=[240,0]` for value-driven HSL color.
 
 ## Work with a geometry construction
 
@@ -187,6 +194,15 @@ tool** to focus the surface; arrows move its cursor, Shift-arrows move by ten
 pixels, and Enter or Space places a point. The workbench Undo/Redo controls
 replay the retained `:create` events, so export contains the same history.
 
+For programmatic or host-bound tools, the same graph supports `AddLine`,
+`AddCircle`, `AddIntersection`, `AddTransform`, and `AddMeasurement`.
+`ConstrainedDrag` projects exactly onto a retained line (or rejects invalid
+motion), `DragMany` makes one atomic multi-point history event, and
+`RepairSuggestions` reports non-destructive advice for degenerate intersections.
+The web toolbar currently binds point placement; these additional kernel tools
+are ready for selection-driven host controls. Imported derived records still
+require the explicit constructor map listed by `replayRequires`.
+
 ## Play and compare a Timeline
 
 Return the Timeline itself to get the browser transport.
@@ -200,19 +216,30 @@ Frame(x, origin) -> .Graphics.Graphic([300,120], [
 
 .Timeline.Sequence({=
     title="Exact motion",
-    duration=4,
+    frameDurations=[1/2,1/2,1,1/2,1/2],
+    markers=[{= frame=1,label="start" },{= frame=3,label="center" },{= frame=5,label="finish" }],
+    preferencesKey="exact-motion-guide",
+    transition={= mode=:crossfade,duration=1/5,properties=[:opacity,:position,:fill,:stroke] },
     entries=[{: Frame, [-2,-1,0,1,2]}]
 }) ;
 ```
 
 - Play or pause, step, scrub, change speed, loop, and restrict playback with
   the start and end fields.
-- **Compare previous** displays the prior frame beside the current one.
+- **Compare** can show the previous frame, any chosen frame, or onion-skin
+  neighbors. Named markers provide direct navigation.
+- Exact per-frame durations may replace a single total `duration`. A
+  `preferencesKey` persists speed, loop, range, and comparison choices.
+- **Record frame** collects exact retained snapshots; **Export recording**
+  emits deterministic `rix.timeline-recording@1` JSON, and Clear resets it.
 - Focus the timeline: Space plays or pauses, arrows step, Home and End seek to
-  the active range, and L toggles looping.
+  the active range, L toggles looping, M advances to the next marker, and R
+  records the current exact frame.
 - The exact-state inspector and full text track remain discrete even when a
-  safe visual crossfade is declared. Reduced-motion preference disables that
-  crossfade without disabling stepping or playback.
+  safe opacity, position, fill, or stroke presentation transition is declared.
+  Diagnostics report appeared, disappeared, and kind-changed semantic objects.
+  Reduced-motion preference disables animation without disabling stepping or
+  playback.
 
 ## Read or hear the mathematical alternative
 
