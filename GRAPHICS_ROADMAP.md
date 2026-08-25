@@ -98,10 +98,23 @@ SVG, Canvas, and TikZ consume the same retained scene. Plot-aware deterministic
 text summaries now supply kind, domain, grid, uncertainty, and evidence status
 and are included in SVG accessible names.
 
-Follow-up work remains: adaptive/certified interval subdivision for implicit
-and inequality boundaries, discontinuity-aware cell refinement, continuous
-color interpolation, contour-label placement, dense-field performance policy,
-and browser-level visual/accessibility QA.
+The first post-baseline field pass adds bounded adaptive quadtree refinement to
+implicit, contour, and inequality plots. `refineDepth` and
+`refinementBudget` bound the work, while retained
+`rix.plot.refinement-policy@1` records expose processed cells, leaves,
+subdivisions, depth reached, point and interval evaluations, and budget stops.
+Center samples detect features missed by four same-sign corners. For
+interval-compatible functions, `certifyIntervals=1` proves whole-cell implicit
+exclusion and inequality inside/outside classification. Sampled edge
+interpolation remains labeled as sample evidence rather than being promoted to
+a certified crossing. Text and accessible HTML projections report the same
+distinction and work record.
+
+Further Priority 3 work remains: discontinuity-aware refinement, proof of
+boundary existence under explicit continuity contracts, shared sample caching
+across sibling cells and contour levels, continuous color interpolation,
+contour-label placement, broader dense-field performance policy, and expanded
+browser visual/accessibility fixtures.
 
 ## 4. Visual geometry workbench — baseline implemented
 

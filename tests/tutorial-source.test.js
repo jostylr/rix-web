@@ -150,6 +150,9 @@ test("structured output has focused table, document, graphic, drawing, sheet, in
     expect(graphicsGuide).toContain("3D object");
     expect(graphicsGuide).toContain("two fingers together to truck");
     expect(graphicsGuide).toContain("displaced label");
+    expect(graphicsGuide).toContain("refineDepth=2");
+    expect(graphicsGuide).toContain("certifyIntervals=1");
+    expect(graphicsGuide).toContain("Interpolated boundary segments remain explicitly sampled");
     expect(graphicsGuide).toContain("Overview (sequential)");
     expect(graphicsGuide).toContain("not a certified");
     expect(graphicsGuide).toContain(".Timeline.Sequence");

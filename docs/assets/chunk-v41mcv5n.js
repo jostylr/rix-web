@@ -24918,6 +24918,47 @@ function regionDescriptions(value, format, noun) {
     return bounds.length ? `${noun} ${index + 1}: ${bounds.map((bound) => valueText(bound, format)).join(", ")}` : `${noun} ${index + 1}: ${valueText(region, format)}`;
   }));
 }
+function refinementPlans(plot, format) {
+  const raw = mapField(plot, "refinement");
+  const entries2 = sequenceValue2(raw).length ? sequenceValue2(raw) : raw ? [raw] : [];
+  return Object.freeze(entries2.map((entry, index) => {
+    const level = mapField(entry, "level");
+    const maxDepth = finiteNumber(mapField(entry, "maxDepth")) ?? 0;
+    const reached = finiteNumber(mapField(entry, "maxDepthReached")) ?? 0;
+    const processed = finiteNumber(mapField(entry, "processedCells")) ?? 0;
+    const leaves = finiteNumber(mapField(entry, "leafCells")) ?? 0;
+    const refined = finiteNumber(mapField(entry, "refinedCells")) ?? 0;
+    const pointEvaluations = finiteNumber(mapField(entry, "pointEvaluations")) ?? 0;
+    const intervalEvaluations = finiteNumber(mapField(entry, "intervalEvaluations")) ?? 0;
+    const certifiedExcluded = finiteNumber(mapField(entry, "certifiedExcludedCells")) ?? 0;
+    const certifiedInside = finiteNumber(mapField(entry, "certifiedInsideCells")) ?? 0;
+    const certifiedOutside = finiteNumber(mapField(entry, "certifiedOutsideCells")) ?? 0;
+    const enclosureCandidates = finiteNumber(mapField(entry, "enclosureCandidateCells")) ?? 0;
+    const certifiedClassifications = certifiedExcluded + certifiedInside + certifiedOutside;
+    const budgetStops = finiteNumber(mapField(entry, "budgetStops")) ?? 0;
+    const prefix = level === null || level === undefined ? "Adaptive refinement" : `Adaptive refinement for level ${valueText(level, format)}`;
+    const certification = intervalEvaluations > 0 ? ` ${intervalEvaluations} certified interval enclosure evaluation${intervalEvaluations === 1 ? "" : "s"}; ${certifiedClassifications} proved whole-cell exclusion or classification and ${enclosureCandidates} remained enclosure candidate${enclosureCandidates === 1 ? "" : "s"}; drawn crossings remain sampled.` : " No interval certification was requested; classifications remain sampled.";
+    return Object.freeze({
+      id: `refinement-${index + 1}`,
+      level: level === null || level === undefined ? null : valueText(level, format),
+      maxDepth,
+      reached,
+      processed,
+      leaves,
+      refined,
+      pointEvaluations,
+      intervalEvaluations,
+      certifiedExcluded,
+      certifiedInside,
+      certifiedOutside,
+      certifiedClassifications,
+      enclosureCandidates,
+      budgetStops,
+      certifiedIntervals: intervalEvaluations > 0,
+      summary: `${prefix}: depth ${reached} of ${maxDepth}; ${processed} processed cells, ${leaves} leaves, ${refined} subdivisions, ${budgetStops} budget stops; ${pointEvaluations} rational point evaluations.${certification}`
+    });
+  }).filter((entry) => entry.maxDepth > 0 || entry.intervalEvaluations > 0 || entry.refined > 0 || entry.budgetStops > 0));
+}
 function retainedMarkEvents(plot, series, format) {
   return Object.freeze(sequenceValue2(mapField(plot, "marks")).map((entry, index) => {
     const point2 = sequenceValue2(mapField(entry, "point"));
@@ -24984,11 +25025,12 @@ function createGraphicsTextPlan(graphic, format = String) {
   const objects = sceneObjects(graphic, format);
   const unresolved = plot ? regionDescriptions(mapField(plot, "unresolvedRegions"), format, "Unresolved region") : Object.freeze([]);
   const ambiguous = plot ? regionDescriptions(mapField(plot, "ambiguousRegions"), format, "Sampled boundary region") : Object.freeze([]);
+  const refinement = plot ? refinementPlans(plot, format) : Object.freeze([]);
   const marks = plot ? retainedMarkEvents(plot, series, format) : Object.freeze([]);
   const intersections = retainedIntersectionEvents(series);
   const pointsOfInterest = Object.freeze([...series.flatMap((entry) => entry.events), ...marks, ...intersections]);
   const domainSummary = x && y ? ` Domain x ${x.minimumText} to ${x.maximumText}; range y ${y.minimumText} to ${y.maximumText}.` : "";
-  const summary = `${title}. ${series.length ? `${series.length} series and ` : ""}${objects.length} retained scene object${objects.length === 1 ? "" : "s"}.${domainSummary} ${unresolved.length} unresolved region${unresolved.length === 1 ? "" : "s"}.`;
+  const summary = `${title}. ${series.length ? `${series.length} series and ` : ""}${objects.length} retained scene object${objects.length === 1 ? "" : "s"}.${domainSummary} ${unresolved.length} unresolved region${unresolved.length === 1 ? "" : "s"}.${refinement.length ? ` ${refinement.map((entry) => entry.summary).join(" ")}` : ""}`;
   const axes = Object.freeze([
     x && Object.freeze({ axis: "x", label: stringValue4(mapField(plot, "xLabel")) || "x", scale: stringValue4(mapField(graphic?.metadata, "xScale")) || "linear", range: x }),
     y && Object.freeze({ axis: "y", label: stringValue4(mapField(plot, "yLabel")) || "y", scale: stringValue4(mapField(graphic?.metadata, "yScale")) || "linear", range: y })
@@ -25005,6 +25047,7 @@ function createGraphicsTextPlan(graphic, format = String) {
     pointsOfInterest,
     marks,
     intersections,
+    refinement,
     uncertainty: ambiguous,
     unresolved
   });
@@ -25062,7 +25105,7 @@ function renderGraphicAccessibilityHtml(graphic, format = String) {
   const regions = [...textPlan.unresolved, ...textPlan.uncertainty];
   const semanticPoints = [...textPlan.marks, ...textPlan.intersections];
   const objects = `<details class="rix-output-graphic-objects"><summary>${textPlan.objects.length} semantic object${textPlan.objects.length === 1 ? "" : "s"}</summary><ol>${textPlan.objects.map((object) => `<li data-rix-graphics-text-object="${escapeHtml(object.id)}"${object.group ? ` data-rix-graphics-text-group="${escapeHtml(object.group)}"` : ""}><strong>${escapeHtml(object.label || object.role.replaceAll("_", " "))}</strong>: ${escapeHtml(object.description)}</li>`).join("")}</ol></details>`;
-  const text8 = `<details class="rix-output-graphic-text" data-rix-graphics-text-schema="${TEXT_SCHEMA}"><summary>Text alternative: ${escapeHtml(textPlan.title)}</summary><p>${escapeHtml(textPlan.summary)}</p>${axes}${series}${semanticPoints.length ? `<section><h4>Semantic points of interest</h4><ul>${semanticPoints.map((event) => `<li>${escapeHtml(event.label)}</li>`).join("")}</ul></section>` : ""}${regions.length ? `<section><h4>Uncertainty and unresolved areas</h4><ul>${regions.map((region) => `<li>${escapeHtml(region)}</li>`).join("")}</ul></section>` : ""}${objects}</details>`;
+  const text8 = `<details class="rix-output-graphic-text" data-rix-graphics-text-schema="${TEXT_SCHEMA}"><summary>Text alternative: ${escapeHtml(textPlan.title)}</summary><p>${escapeHtml(textPlan.summary)}</p>${axes}${series}${textPlan.refinement.length ? `<section><h4>Adaptive refinement evidence</h4><ul>${textPlan.refinement.map((entry) => `<li>${escapeHtml(entry.summary)}</li>`).join("")}</ul></section>` : ""}${semanticPoints.length ? `<section><h4>Semantic points of interest</h4><ul>${semanticPoints.map((event) => `<li>${escapeHtml(event.label)}</li>`).join("")}</ul></section>` : ""}${regions.length ? `<section><h4>Uncertainty and unresolved areas</h4><ul>${regions.map((region) => `<li>${escapeHtml(region)}</li>`).join("")}</ul></section>` : ""}${objects}</details>`;
   if (!audioPlan.supported)
     return text8;
   const longest = Math.max(...audioPlan.series.map((entry) => entry.samples.length));
@@ -27364,6 +27407,25 @@ function formatPlotText(graphic, format) {
   const grid = gridValue?.entries instanceof Map ? gridValue.entries : null;
   if (grid)
     parts.push(`grid ${cellText(get(grid, "columns"), format)} × ${cellText(get(grid, "rows"), format)}`);
+  const refinementValue = get(plot, "refinement");
+  const refinementEntries = refinementValue && isSequence(refinementValue) ? sequence4(refinementValue, "plot refinement") : refinementValue?.entries instanceof Map ? [refinementValue] : [];
+  if (refinementEntries.length) {
+    const records = refinementEntries.map((entry) => entry?.entries instanceof Map ? entry.entries : entry).filter((entry) => Number(get(entry, "maxDepth")?.value ?? get(entry, "maxDepth") ?? 0) > 0 || Number(get(entry, "intervalEvaluations")?.value ?? get(entry, "intervalEvaluations") ?? 0) > 0 || Number(get(entry, "refinedCells")?.value ?? get(entry, "refinedCells") ?? 0) > 0 || Number(get(entry, "budgetStops")?.value ?? get(entry, "budgetStops") ?? 0) > 0);
+    if (records.length) {
+      const number = (value) => Number(value?.value ?? value ?? 0);
+      const reached = Math.max(...records.map((entry) => number(get(entry, "maxDepthReached"))));
+      const maximum = Math.max(...records.map((entry) => number(get(entry, "maxDepth"))));
+      const refined = records.reduce((total, entry) => total + number(get(entry, "refinedCells")), 0);
+      const leaves = records.reduce((total, entry) => total + number(get(entry, "leafCells")), 0);
+      const intervals = records.reduce((total, entry) => total + number(get(entry, "intervalEvaluations")), 0);
+      const classifications = records.reduce((total, entry) => total + number(get(entry, "certifiedExcludedCells")) + number(get(entry, "certifiedInsideCells")) + number(get(entry, "certifiedOutsideCells")), 0);
+      const candidates = records.reduce((total, entry) => total + number(get(entry, "enclosureCandidateCells")), 0);
+      const stops = records.reduce((total, entry) => total + number(get(entry, "budgetStops")), 0);
+      parts.push(`adaptive depth ${reached}/${maximum}, ${refined} subdivisions, ${leaves} leaf cells, ${stops} budget stops`);
+      if (intervals)
+        parts.push(`${intervals} certified interval enclosures, ${classifications} whole-cell classifications, ${candidates} enclosure candidates; crossings remain sampled`);
+    }
+  }
   const unresolvedValue = get(plot, "unresolvedRegions");
   const unresolved = unresolvedValue && isSequence(unresolvedValue) ? sequence4(unresolvedValue, "plot unresolved regions").length : graphic.metadata.has("unresolved") ? cellText(graphic.metadata.get("unresolved"), format) : 0;
   parts.push(`${unresolved} unresolved region${String(unresolved) === "1" ? "" : "s"}`);
@@ -72118,7 +72180,7 @@ exports: [Polynomial, Function, Parametric, Scatter, Line, Bar, Step, Polar, Imp
 groups: [Plot, Graphics, Exact]
 permissions: []
 requires: [rix.numerics@1]
-provides: [rix.plot@1]
+provides: [rix.plot@1, rix.plot.refinement-policy@1]
 snapshot: true
 deterministic: true
 defaultEnabled: false
@@ -72689,6 +72751,7 @@ PlotFieldGraphic(kind,config,settings,children,details) -> {;
             kind=kind,view={= xmin=config[:xmin],xmax=config[:xmax],ymin=config[:ymin],ymax=config[:ymax] },
             frame={= left=config[:margin],right=config[:width]-config[:margin],top=config[:margin],bottom=config[:height]-config[:margin] },
             grid={= columns=config[:columns],rows=config[:rows] },sampling=PlotOption(details,"sampling",{= method=:uniform_grid }),
+            refinement=PlotOption(details,"refinement",_),
             evidence=PlotOption(details,"evidence",{= }),status=PlotOption(details,"status",:sampled),
             unresolvedRegions=unresolved,ambiguousRegions=PlotOption(details,"ambiguousregions",[]),
             legend=PlotOption(details,"legend",[]),colorScale=PlotOption(details,"colorscale",_),
@@ -72709,6 +72772,138 @@ PlotEdgeIntersection(first,second,level) -> {;
     };
 };
 
+PlotRefinementInteger(settings,key,fallback,minimum,maximum,label) -> {;
+    value=PlotOption(settings,key,fallback) ~!: :Integer;
+    (value>=minimum&&value<=maximum) ?: value ?_ .Error(@"@{label} must be between @{minimum} and @{maximum}");
+};
+
+PlotAdaptivePolicy(config,settings) -> {;
+    depth=PlotRefinementInteger(settings,"refinedepth",0,0,6,"field plot refineDepth");
+    baseCells=config[:columns]*config[:rows]; suppliedBudget=PlotOption(settings,"refinementbudget",_);
+    budget=suppliedBudget==_ ?: .Max(baseCells,4096) ?_ PlotRefinementInteger(settings,"refinementbudget",4096,1,50000,"field plot refinementBudget");
+    budget>=baseCells ?: _ ?_ .Error(@"field plot refinementBudget must be at least the base grid cell count (@{baseCells})");
+    certify=PlotOption(settings,"certifyintervals",_);
+    (certify==_||certify==0||certify==1) ?: _ ?_ .Error("field plot certifyIntervals must be 1 or null");
+    {=
+        schema="rix.plot.refinement-policy@1",method=:adaptive_quadtree,maxDepth=depth,
+        requestedBudget=budget,effectiveBudget=budget,
+        certifyIntervals=certify==1
+    };
+};
+
+PlotAdaptivePoint(fn,point,settings,label) -> {;
+    resolved=PlotResolveNumber(@fn(point[1],point[2]),label,settings);
+    {= point=point,value=resolved[:value],usable=resolved[:value]!=_,resolved=resolved[:resolved],status=resolved[:status],evidenceLevel=resolved[:evidenceLevel] };
+};
+
+PlotAdaptiveCellSample(fn,cell,settings,centerRequired) -> {;
+    xmin=cell[:xmin]; xmax=cell[:xmax]; ymin=cell[:ymin]; ymax=cell[:ymax];
+    xmid=(xmin+xmax)/2; ymid=(ymin+ymax)/2;
+    retained=cell.Has("corners")&&cell[:corners]!=_;
+    corners=retained ?: cell[:corners] ?_ [
+        PlotAdaptivePoint(fn,[xmin,ymin],settings,@"@{cell[:id]} lower-left"),
+        PlotAdaptivePoint(fn,[xmax,ymin],settings,@"@{cell[:id]} lower-right"),
+        PlotAdaptivePoint(fn,[xmax,ymax],settings,@"@{cell[:id]} upper-right"),
+        PlotAdaptivePoint(fn,[xmin,ymax],settings,@"@{cell[:id]} upper-left")
+    ];
+    {=
+        corners=corners,
+        center=centerRequired ?: PlotAdaptivePoint(fn,[xmid,ymid],settings,@"@{cell[:id]} center") ?_ {= usable=_,value=_,status=:not_sampled,evidenceLevel=:none },
+        pointEvaluations=(retained ?: 0 ?_ 4)+(centerRequired ?: 1 ?_ 0)
+    };
+};
+
+PlotIntervalRelationStatus(interval,level,relation) -> relation==:level
+  ?: ((interval.High()<level||interval.Low()>level) ?: :certified_excluded ?_ :enclosed_candidate)
+  ?_ relation==:le
+      ?: (interval.High()<=level ?: :certified_inside ?_ (interval.Low()>level ?: :certified_outside ?_ :enclosed_boundary))
+  ?_ relation==:lt
+      ?: (interval.High()<level ?: :certified_inside ?_ (interval.Low()>=level ?: :certified_outside ?_ :enclosed_boundary))
+  ?_ relation==:ge
+      ?: (interval.Low()>=level ?: :certified_inside ?_ (interval.High()<level ?: :certified_outside ?_ :enclosed_boundary))
+  ?_ relation==:gt
+      ?: (interval.Low()>level ?: :certified_inside ?_ (interval.High()<=level ?: :certified_outside ?_ :enclosed_boundary))
+  ?_ .Error("unsupported adaptive field relation");
+
+PlotAdaptiveInterval(fn,cell,level,relation,policy) -> policy[:certifyIntervals]
+  ?: {;
+      image=@fn(@cell[:xmin]:@cell[:xmax],@cell[:ymin]:@cell[:ymax]);
+      image ? :RationalInterval
+        ?: {= interval=image,status=PlotIntervalRelationStatus(image,@level,@relation),evidenceLevel=:proof }
+        ?_ .Error("certifyIntervals requires the field function to return a RationalInterval over interval inputs");
+  }
+  ?_ {= interval=_,status=:not_requested,evidenceLevel=:none };
+
+PlotAdaptiveSubcells(cell) -> {;
+    xmid=(cell[:xmin]+cell[:xmax])/2; ymid=(cell[:ymin]+cell[:ymax])/2; next=cell[:depth]+1;
+    [
+        {= id=@"@{cell[:id]}.1",xmin=cell[:xmin],xmax=xmid,ymin=cell[:ymin],ymax=ymid,depth=next },
+        {= id=@"@{cell[:id]}.2",xmin=xmid,xmax=cell[:xmax],ymin=cell[:ymin],ymax=ymid,depth=next },
+        {= id=@"@{cell[:id]}.3",xmin=xmid,xmax=cell[:xmax],ymin=ymid,ymax=cell[:ymax],depth=next },
+        {= id=@"@{cell[:id]}.4",xmin=cell[:xmin],xmax=xmid,ymin=ymid,ymax=cell[:ymax],depth=next }
+    ];
+};
+
+PlotAdaptiveFieldCells(fn,config,settings,level,relation,field ?= _) -> {;
+    policy=PlotAdaptivePolicy(config,settings); queue := []; leaves := [];
+    {@ row=1; row<=@config[:rows]; {;
+        {@ column=1; column<=@config[:columns]; {;
+            lower=PlotFieldPoint(column,@row,@config); upper=PlotFieldPoint(column+1,@row+1,@config);
+            corners=@field==_ ?: _ ?_ [
+                PlotFieldAt(@field,column,@row,@config),PlotFieldAt(@field,column+1,@row,@config),
+                PlotFieldAt(@field,column+1,@row+1,@config),PlotFieldAt(@field,column,@row+1,@config)
+            ];
+            @queue ~= @queue.Push({=
+                id=@"adaptive-cell-@{column}-@{@row}",column=column,row=@row,
+                xmin=lower[1],xmax=upper[1],ymin=lower[2],ymax=upper[2],depth=0,corners=corners
+            });
+        }; column+=1 };
+    }; row+=1 };
+    refined:=0; budgetStops:=0; maxDepthReached:=0; processed:=0; pointEvaluations:=0;
+    certifiedExcluded:=0; certifiedInside:=0; certifiedOutside:=0; enclosureCandidates:=0;
+    {@ work=0; @queue.Len()>0; {;
+        cell=@queue.First(); @queue ~= @queue.DropFirst();
+        centerRequired=@policy[:maxDepth]>0||@policy[:certifyIntervals];
+        sample=PlotAdaptiveCellSample(@fn,cell,@settings,centerRequired); interval=PlotAdaptiveInterval(@fn,cell,@level,@relation,@policy);
+        @pointEvaluations += sample[:pointEvaluations];
+        @certifiedExcluded += interval[:status]==:certified_excluded ?: 1 ?_ 0;
+        @certifiedInside += interval[:status]==:certified_inside ?: 1 ?_ 0;
+        @certifiedOutside += interval[:status]==:certified_outside ?: 1 ?_ 0;
+        @enclosureCandidates += (interval[:status]==:enclosed_candidate||interval[:status]==:enclosed_boundary) ?: 1 ?_ 0;
+        usable=sample[:corners].All((entry)->entry[:usable])&&(!centerRequired||sample[:center][:usable]);
+        flags=usable ?: sample[:corners].Map((entry)->PlotRelation(entry[:value],@level,@relation==:level ?: :le ?_ @relation)) ?_ [];
+        count=usable ?: flags.Filter((flag)->flag).Len() ?_ 0;
+        centerFlag=(usable&&centerRequired) ?: PlotRelation(sample[:center][:value],@level,@relation==:level ?: :le ?_ @relation) ?_ (count==4 ?: 1 ?_ _);
+        sampledBoundary=usable&&(count>0&&count<4);
+        centerDisagrees=usable&&centerRequired&&((count==0&&centerFlag)||(count==4&&!centerFlag));
+        intervalUncertain=interval[:status]==:enclosed_candidate||interval[:status]==:enclosed_boundary;
+        needsRefinement=!usable||sampledBoundary||centerDisagrees||intervalUncertain;
+        capacity=@processed+@queue.Len()+5<=@policy[:effectiveBudget];
+        split=needsRefinement&&cell[:depth]<@policy[:maxDepth]&&capacity;
+        split
+          ?: {; @queue ~= @queue.Concat(PlotAdaptiveSubcells(@cell)); @refined += 1; }
+          ?_ {;
+              @budgetStops += (@needsRefinement&&@cell[:depth]<@policy[:maxDepth]&&!@capacity) ?: 1 ?_ 0;
+              @maxDepthReached ~= .Max(@maxDepthReached,@cell[:depth]);
+              @leaves ~= @leaves.Push(@cell.Merge({=
+                  sample=@sample,interval=@interval,usable=@usable,flags=@flags,count=@count,centerFlag=@centerFlag,
+                  sampledBoundary=@sampledBoundary,centerDisagrees=@centerDisagrees,needsRefinement=@needsRefinement
+              }));
+          };
+        @processed += 1;
+    }; work+=1 };
+    {=
+        cells=leaves,
+        refinement=policy.Merge({=
+            processedCells=processed,leafCells=leaves.Len(),refinedCells=refined,budgetStops=budgetStops,
+            maxDepthReached=maxDepthReached,pointEvaluations=pointEvaluations,
+            intervalEvaluations=policy[:certifyIntervals] ?: processed ?_ 0,
+            certifiedExcludedCells=certifiedExcluded,certifiedInsideCells=certifiedInside,
+            certifiedOutsideCells=certifiedOutside,enclosureCandidateCells=enclosureCandidates
+        })
+    };
+};
+
 PlotContourBuild(fn,xDomain,yDomain,settings,kind) -> {;
     config=PlotFieldConfig(xDomain,yDomain,settings); field=PlotFieldSample(fn,config,settings);
     levels=kind==:implicit ?: [PlotExact(PlotOption(settings,"level",0),"implicit plot level")] ?_ PlotExactArray(PlotOption(settings,"levels",[0]),"contour levels");
@@ -72716,37 +72911,51 @@ PlotContourBuild(fn,xDomain,yDomain,settings,kind) -> {;
     colors=PlotOption(settings,"colors",["#2563eb","#b45309","#7c3aed","#0f766e","#be123c"]);
     colors ? :Array ?: _ ?_ .Error("contour plot colors must be an Array");
     colors.Len()>0 ?: _ ?_ .Error("contour plot colors must not be empty");
-    children := []; series := []; records := []; unresolved := []; ambiguous := [];
+    children := []; series := []; records := []; unresolved := []; ambiguous := []; refinements := [];
     {@ levelIndex=1; levelIndex<=@levels.Len(); {;
         level=@levels[levelIndex]; color=@colors[((levelIndex-1)%@colors.Len())+1];
-        {@ row=1; row<=@config[:rows]; {;
-            {@ column=1; column<=@config[:columns]; {;
-                a=PlotFieldAt(@field,column,@row,@config); b=PlotFieldAt(@field,column+1,@row,@config);
-                c=PlotFieldAt(@field,column+1,@row+1,@config); d=PlotFieldAt(@field,column,@row+1,@config);
-                cellId=@"@{@kind}-level-@{@levelIndex}-cell-@{column}-@{@row}";
-                usable=a[:usable]&&b[:usable]&&c[:usable]&&d[:usable];
-                usable ?: _ ?_ {; @unresolved ~= @unresolved.Push({= id=@cellId,column=@column,row=@row,level=@level,status=:unresolved }); };
-                usable ?: {;
-                    intersections=[PlotEdgeIntersection(@a,@b,@level),PlotEdgeIntersection(@b,@c,@level),PlotEdgeIntersection(@c,@d,@level),PlotEdgeIntersection(@d,@a,@level)].Filter((point)->point!=_);
-                    intersections.Len()==4 ?: {; @ambiguous ~= @ambiguous.Push({= id=@cellId,column=@column,row=@row,level=@level,status=:ambiguous }); } ?_ _;
-                    pairCount=intersections.Len()//2;
-                    {@ pair=1; pair<=@pairCount; {;
-                        points=[@intersections[pair*2-1],@intersections[pair*2]];
-                        segmentId=@"@{@cellId}-segment-@{pair}";
-                        style=PlotStyle(@settings,@color,2).Merge({= hitId=segmentId });
-                        @children ~= @children.Push(.Graphics.Path(points.Map((point)->PlotProject(point,@config)),style));
-                        @series ~= @series.Push({= kind=:contour,data=points,style=style,label=_ ,level=@level,id=segmentId });
-                        @records ~= @records.Push({= id=segmentId,cell=@cellId,level=@level,points=points,status=:sampled_boundary });
-                    }; pair+=1 };
-                } ?_ _;
-            }; column+=1 };
-        }; row+=1 };
+        adaptive=PlotAdaptiveFieldCells(@fn,@config,@settings,level,:level,@field);
+        @refinements ~= @refinements.Push(adaptive[:refinement].Merge({= level=level }));
+        {@ cellIndex=1; cellIndex<=@adaptive[:cells].Len(); {;
+            cell=@adaptive[:cells][cellIndex]; corners=cell[:sample][:corners];
+            a=corners[1]; b=corners[2]; c=corners[3]; d=corners[4];
+            cellId=@"@{@kind}-level-@{@levelIndex}-@{cell[:id]}"; usable=cell[:usable];
+            usable ?: _ ?_ {; @unresolved ~= @unresolved.Push({=
+                id=@cellId,column=@cell[:column],row=@cell[:row],level=@level,depth=@cell[:depth],status=:unresolved,
+                bounds=[@cell[:xmin],@cell[:xmax],@cell[:ymin],@cell[:ymax]]
+            }); };
+            usable ?: {;
+                intersections=[PlotEdgeIntersection(@a,@b,@level),PlotEdgeIntersection(@b,@c,@level),PlotEdgeIntersection(@c,@d,@level),PlotEdgeIntersection(@d,@a,@level)].Filter((point)->point!=_);
+                intervalStatus=@cell[:interval][:status];
+                (intersections.Len()==4||@cell[:centerDisagrees]||(intervalStatus==:enclosed_candidate&&intersections.Len()==0))
+                  ?: {; @ambiguous ~= @ambiguous.Push({=
+                      id=@cellId,column=@cell[:column],row=@cell[:row],level=@level,depth=@cell[:depth],
+                      status=@intervalStatus==:enclosed_candidate ?: :certified_enclosure_candidate ?_ :sampled_ambiguous,
+                      interval=@cell[:interval][:interval],bounds=[@cell[:xmin],@cell[:xmax],@cell[:ymin],@cell[:ymax]]
+                  }); } ?_ _;
+                pairCount=intersections.Len()//2;
+                {@ pair=1; pair<=@pairCount; {;
+                    points=[@intersections[pair*2-1],@intersections[pair*2]];
+                    segmentId=@"@{@cellId}-segment-@{pair}";
+                    style=PlotStyle(@settings,@color,2).Merge({= hitId=segmentId });
+                    @children ~= @children.Push(.Graphics.Path(points.Map((point)->PlotProject(point,@config)),style));
+                    @series ~= @series.Push({= kind=:contour,data=points,style=style,label=_ ,level=@level,id=segmentId });
+                    @records ~= @records.Push({=
+                        id=segmentId,cell=@cellId,level=@level,points=points,depth=@cell[:depth],
+                        status=:sampled_boundary,intervalEvidence=@intervalStatus,evidenceLevel=:sample
+                    });
+                }; pair+=1 };
+            } ?_ _;
+        }; cellIndex+=1 };
     }; levelIndex+=1 };
     legend=levels.Map((level,index)->{= label=@"level @{level}",value=level,color=colors[((index-1)%colors.Len())+1] });
     PlotFieldGraphic(kind,config,settings,children,{=
         series=series,records=records,unresolvedRegions=unresolved,ambiguousRegions=ambiguous,legend=legend,
-        evidence=field[:evidence],status=field[:status],rendering=:series,
-        sampling={= method=:marching_squares,grid={= columns=config[:columns],rows=config[:rows] },certification=:sampled_signs }
+        evidence=field[:evidence],status=field[:status],rendering=:series,refinement=refinements,
+        sampling={=
+            method=:adaptive_marching_squares,grid={= columns=config[:columns],rows=config[:rows] },
+            certification=PlotOption(settings,"certifyintervals",_)==1 ?: :interval_exclusion_plus_sampled_crossings ?_ :sampled_signs
+        }
     });
 };
 
@@ -72761,32 +72970,46 @@ PlotInequality(fn,xDomain,yDomain,settings ?= {= }) -> {;
     level=PlotExact(PlotOption(settings,"level",0),"inequality level"); relation=PlotOption(settings,"relation",:le);
     fill=PlotOption(settings,"fill","#93c5fd"); boundaryFill=PlotOption(settings,"boundaryfill","#dbeafe");
     children := []; records := []; unresolved := []; ambiguous := [];
-    {@ row=1; row<=@config[:rows]; {;
-        {@ column=1; column<=@config[:columns]; {;
-            a=PlotFieldAt(@field,column,@row,@config); b=PlotFieldAt(@field,column+1,@row,@config);
-            c=PlotFieldAt(@field,column+1,@row+1,@config); d=PlotFieldAt(@field,column,@row+1,@config);
-            id=@"inequality-cell-@{column}-@{@row}"; usable=a[:usable]&&b[:usable]&&c[:usable]&&d[:usable];
-            status=:unresolved; inside=_;
-            usable ?: {;
-                flags=[PlotRelation(@a[:value],@level,@relation),PlotRelation(@b[:value],@level,@relation),PlotRelation(@c[:value],@level,@relation),PlotRelation(@d[:value],@level,@relation)];
-                count=flags.Filter((flag)->flag).Len();
-                @status=count==4 ?: :sampled_inside ?_ (count==0 ?: :sampled_outside ?_ :sampled_boundary);
-                @inside=count>0;
-                @status==:sampled_boundary ?: {; @ambiguous ~= @ambiguous.Push({= id=@id,column=@column,row=@row,status=@status }); } ?_ _;
-            } ?_ {; @unresolved ~= @unresolved.Push({= id=@id,column=@column,row=@row,status=:unresolved }); };
-            @records ~= @records.Push({= id=id,column=column,row=@row,status=status });
-            inside ?: {;
-                lower=PlotFieldPoint(@column,@row,@config); upper=PlotFieldPoint(@column+1,@row+1,@config);
-                origin=PlotProject([lower[1],upper[2]],@config); end=PlotProject([upper[1],lower[2]],@config);
-                color=@status==:sampled_inside ?: @fill ?_ @boundaryFill;
-                @children ~= @children.Push(.Graphics.Rectangle(origin,[end[1]-origin[1],end[2]-origin[2]],{= fill=color,stroke=color,width=0,hitId=@id }));
-            } ?_ _;
-        }; column+=1 };
-    }; row+=1 };
+    adaptive=PlotAdaptiveFieldCells(fn,config,settings,level,relation,field);
+    {@ cellIndex=1; cellIndex<=@adaptive[:cells].Len(); {;
+        cell=@adaptive[:cells][cellIndex]; id=@"inequality-@{cell[:id]}"; usable=cell[:usable];
+        intervalStatus=cell[:interval][:status]; count=cell[:count]; centerFlag=cell[:centerFlag];
+        status=:unresolved; inside=_; evidenceLevel=:none;
+        usable ?: {;
+            certified=@intervalStatus==:certified_inside||@intervalStatus==:certified_outside;
+            @status=certified
+              ?: @intervalStatus
+              ?_ ((@count==4&&@centerFlag) ?: :sampled_inside ?_ ((@count==0&&!@centerFlag) ?: :sampled_outside ?_ :sampled_boundary));
+            @inside=@status==:certified_inside||@status==:sampled_inside||@status==:sampled_boundary;
+            @evidenceLevel=certified ?: :proof ?_ :sample;
+            (@status==:sampled_boundary||@intervalStatus==:enclosed_boundary)
+              ?: {; @ambiguous ~= @ambiguous.Push({=
+                  id=@id,column=@cell[:column],row=@cell[:row],depth=@cell[:depth],
+                  status=@intervalStatus==:enclosed_boundary ?: :certified_enclosure_candidate ?_ @status,
+                  interval=@cell[:interval][:interval],bounds=[@cell[:xmin],@cell[:xmax],@cell[:ymin],@cell[:ymax]]
+              }); } ?_ _;
+        } ?_ {; @unresolved ~= @unresolved.Push({=
+            id=@id,column=@cell[:column],row=@cell[:row],depth=@cell[:depth],status=:unresolved,
+            bounds=[@cell[:xmin],@cell[:xmax],@cell[:ymin],@cell[:ymax]]
+        }); };
+        @records ~= @records.Push({=
+            id=id,column=cell[:column],row=cell[:row],depth=cell[:depth],status=status,
+            bounds=[cell[:xmin],cell[:xmax],cell[:ymin],cell[:ymax]],interval=cell[:interval][:interval],evidenceLevel=evidenceLevel
+        });
+        inside ?: {;
+            origin=PlotProject([@cell[:xmin],@cell[:ymax]],@config); end=PlotProject([@cell[:xmax],@cell[:ymin]],@config);
+            color=@status==:certified_inside||@status==:sampled_inside ?: @fill ?_ @boundaryFill;
+            @children ~= @children.Push(.Graphics.Rectangle(origin,[end[1]-origin[1],end[2]-origin[2]],{= fill=color,stroke=color,width=0,hitId=@id }));
+        } ?_ _;
+    }; cellIndex+=1 };
     PlotFieldGraphic(:inequality,config,settings,children,{=
         records=records,unresolvedRegions=unresolved,ambiguousRegions=ambiguous,evidence=field[:evidence],status=field[:status],
+        refinement=adaptive[:refinement],
         legend=[{= label=@"f(x,y) @{relation} @{level}",value=level,color=fill }],
-        sampling={= method=:corner_classification,certification=:sampled_signs }
+        sampling={=
+            method=:adaptive_corner_classification,
+            certification=PlotOption(settings,"certifyintervals",_)==1 ?: :interval_cell_classification ?_ :sampled_signs
+        }
     });
 };
 
@@ -92358,5 +92581,5 @@ var STATIC_SYSTEM_CATALOG = Object.freeze([
 ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
 export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, outputValueKind, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, formatOutputText, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateAsync, lintRix, mountOutputWidgets };
 
-//# debugId=FF251D6906892B5D64756E2164756E21
-//# sourceMappingURL=chunk-tarzezv3.js.map
+//# debugId=FC01163F8C49AFB964756E2164756E21
+//# sourceMappingURL=chunk-v41mcv5n.js.map

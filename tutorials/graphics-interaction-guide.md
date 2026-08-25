@@ -90,8 +90,17 @@ navigation, exact inspection, text alternative, and renderer choices.
         "Polar curve"
     ),
     .Figure(
-        .plot.Implicit((x,y) -> x^2+y^2-1, [-2,2], [-2,2], {= grid=[12,8] }),
-        "Implicit boundary"
+        .plot.Implicit((x,y) -> x^2+y^2-1, [-2,2], [-2,2], {=
+            grid=[6,4], refineDepth=2, refinementBudget=2000, certifyIntervals=1
+        }),
+        "Adaptively refined implicit boundary"
+    ),
+    .Figure(
+        .plot.Inequality((x,y) -> x+y, [-2,2], [-2,2], {=
+            grid=[6,4], relation=:le, refineDepth=2,
+            refinementBudget=2000, certifyIntervals=1
+        }),
+        "Certified whole-cell inequality classification"
     ),
     .Figure(
         .plot.HeatMap((x,y) -> x-y, [-2,2], [-2,2], {= grid=[10,6] }),
@@ -109,6 +118,18 @@ one or more `levels`. Scalar-field metadata records the exact domain, bounded
 sampling grid, evidence status, stable hit identities, ambiguous cells, and
 unresolved regions. A visible sampled boundary is never silently presented as
 a proof.
+
+For `Implicit`, `Contour`, and `Inequality`, `refineDepth` requests zero to six
+quadtree levels and `refinementBudget` limits total processed cells to at most
+50,000; an explicit budget must at least cover the base grid. Refinement
+concentrates rational samples around mixed cells and
+also detects a center whose classification differs from all four corners.
+`certifyIntervals=1` additionally evaluates each cell as an exact rational box;
+the function must support interval inputs. This can certify that an implicit
+level is excluded from a whole cell, or that an entire inequality cell is
+inside or outside. Interpolated boundary segments remain explicitly sampled.
+Open **Text alternative** to read processed/leaf/subdivision counts, maximum
+depth, budget stops, point evaluations, and certified interval evaluations.
 
 ## Work with a geometry construction
 
