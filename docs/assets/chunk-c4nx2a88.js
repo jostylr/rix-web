@@ -25014,6 +25014,51 @@ function retainedIntersectionEvents(series) {
   }
   return Object.freeze(events);
 }
+function retainedFieldEvidenceEvents(plot, format) {
+  return Object.freeze(sequenceValue2(mapField(plot, "records")).map((record, index) => {
+    const id = stringValue4(mapField(record, "id")) || `field-record-${index + 1}`;
+    const status = stringValue4(mapField(record, "status")) || "unknown";
+    const evidence = stringValue4(mapField(record, "evidenceLevel")) || "none";
+    const edgeEvidence = stringValue4(mapField(record, "edgeExistenceEvidence"));
+    const bounds = sequenceValue2(mapField(record, "bounds"));
+    const level = mapField(record, "level");
+    if (edgeEvidence === "proof") {
+      return Object.freeze({
+        type: "certified-boundary-existence",
+        id,
+        exactness: "exact",
+        label: `Boundary ${id}: continuity and exact endpoint signs prove that level ${valueText(level, format)} occurs on both retained cell edges by the intermediate value theorem; the drawn segment location remains sampled`
+      });
+    }
+    if (evidence === "proof") {
+      const region = bounds.length ? ` over ${bounds.map((bound) => valueText(bound, format)).join(", ")}` : "";
+      return Object.freeze({
+        type: "certified-region",
+        id,
+        exactness: "certified-enclosure",
+        label: `${id}: ${status.replaceAll("_", " ")} is certified for the retained region${region}`
+      });
+    }
+    return null;
+  }).filter(Boolean));
+}
+function constructionRelations(graphic, format) {
+  const workbench = mapField(graphic?.metadata, "workbench");
+  const construction = mapField(workbench, "construction");
+  return Object.freeze(sequenceValue2(mapField(construction, "nodes")).map((node, index) => {
+    const id = stringValue4(mapField(node, "id")) || `construction-${index + 1}`;
+    const dependencies = Object.freeze(sequenceValue2(mapField(node, "dependsOn")).map((dependency) => valueText(dependency, format)));
+    const kind = stringValue4(mapField(node, "kind")) || (mapField(node, "free") ? "free point" : "derived object");
+    const status = stringValue4(mapField(node, "status")) || "resolved";
+    return Object.freeze({
+      id,
+      kind,
+      status,
+      dependencies,
+      summary: dependencies.length ? `${id}: ${kind.replaceAll("_", " ")}; depends on ${dependencies.join(", ")}; ${status.replaceAll("_", " ")}` : `${id}: ${kind.replaceAll("_", " ")}; no construction dependencies; ${status.replaceAll("_", " ")}`
+    });
+  }));
+}
 function createGraphicsTextPlan(graphic, format = String) {
   const plot = mapField(graphic?.metadata, "plot");
   const kind = (stringValue4(mapField(plot, "kind")) || stringValue4(mapField(graphic?.metadata, "kind")) || "mathematical").replaceAll("_", " ");
@@ -25028,7 +25073,9 @@ function createGraphicsTextPlan(graphic, format = String) {
   const refinement = plot ? refinementPlans(plot, format) : Object.freeze([]);
   const marks = plot ? retainedMarkEvents(plot, series, format) : Object.freeze([]);
   const intersections = retainedIntersectionEvents(series);
-  const pointsOfInterest = Object.freeze([...series.flatMap((entry) => entry.events), ...marks, ...intersections]);
+  const fieldEvidence = plot ? retainedFieldEvidenceEvents(plot, format) : Object.freeze([]);
+  const relations = constructionRelations(graphic, format);
+  const pointsOfInterest = Object.freeze([...series.flatMap((entry) => entry.events), ...marks, ...intersections, ...fieldEvidence]);
   const domainSummary = x && y ? ` Domain x ${x.minimumText} to ${x.maximumText}; range y ${y.minimumText} to ${y.maximumText}.` : "";
   const summary = `${title}. ${series.length ? `${series.length} series and ` : ""}${objects.length} retained scene object${objects.length === 1 ? "" : "s"}.${domainSummary} ${unresolved.length} unresolved region${unresolved.length === 1 ? "" : "s"}.${refinement.length ? ` ${refinement.map((entry) => entry.summary).join(" ")}` : ""}`;
   const axes = Object.freeze([
@@ -25047,6 +25094,8 @@ function createGraphicsTextPlan(graphic, format = String) {
     pointsOfInterest,
     marks,
     intersections,
+    fieldEvidence,
+    relations,
     refinement,
     uncertainty: ambiguous,
     unresolved
@@ -25064,6 +25113,20 @@ function createAudioTracePlan(graphic, format = String) {
   const yMinimum = textPlan.domain.y?.minimum ?? (allY.length ? Math.min(...allY) : null);
   const yMaximum = textPlan.domain.y?.maximum ?? (allY.length ? Math.max(...allY) : null);
   const supported = series.length > 0 && yMinimum !== null && yMaximum !== null;
+  const plot = mapField(graphic?.metadata, "plot");
+  const settings = mapField(plot, "audio");
+  const frequencyValues = sequenceValue2(mapField(settings, "frequency"));
+  const frequencyMinimum = finiteNumber(frequencyValues[0]);
+  const frequencyMaximum = finiteNumber(frequencyValues[1]);
+  const frequency = frequencyMinimum !== null && frequencyMaximum !== null && frequencyMinimum >= 20 && frequencyMaximum > frequencyMinimum && frequencyMaximum <= 20000 ? Object.freeze({ minimum: frequencyMinimum, maximum: frequencyMaximum }) : Object.freeze({ minimum: 220, maximum: 880 });
+  const requestedTempo = finiteNumber(mapField(settings, "tempo"));
+  const tempo = requestedTempo !== null ? Math.min(60, Math.max(1, requestedTempo)) : 12;
+  const defaultCuePalette = { exact: 1320, certifiedEnclosure: 1100, approximate: 660, unresolved: 150, conjectural: 330, general: 440 };
+  const requestedPalette = mapField(settings, "cuePalette");
+  const cuePalette = Object.freeze(Object.fromEntries(Object.entries(defaultCuePalette).map(([key, fallback]) => {
+    const requested = finiteNumber(mapField(requestedPalette, key));
+    return [key, requested !== null && requested >= 20 && requested <= 20000 ? requested : fallback];
+  })));
   return Object.freeze({
     schema: AUDIO_SCHEMA,
     title: textPlan.title,
@@ -25071,7 +25134,8 @@ function createAudioTracePlan(graphic, format = String) {
     reason: supported ? null : "Audio trace requires retained two-dimensional series samples",
     domain: textPlan.domain.x,
     range: yMinimum === null ? null : Object.freeze({ minimum: yMinimum, maximum: yMaximum }),
-    defaults: Object.freeze({ tempo: 12, speed: 1, waveform: "series", direction: "forward", stereo: true, frequency: Object.freeze({ minimum: 220, maximum: 880 }) }),
+    preferencesKey: stringValue4(mapField(plot, "preferencesKey")),
+    defaults: Object.freeze({ tempo, speed: 1, waveform: "series", direction: "forward", stereo: true, frequency, cuePalette }),
     series,
     events: Object.freeze([
       ...series.flatMap((entry) => entry.events.map((event) => Object.freeze({ ...event, seriesId: entry.id, seriesLabel: entry.label }))),
@@ -25103,14 +25167,14 @@ function renderGraphicAccessibilityHtml(graphic, format = String) {
     return `<details class="rix-output-graphic-series"><summary>${escapeHtml(entry.summary)}</summary><table><caption>${escapeHtml(entry.label)} retained data${omitted ? `; ${omitted} intermediate samples omitted from this concise view` : ""}</caption><thead><tr><th scope="col">Sample</th><th scope="col">x</th><th scope="col">y</th><th scope="col">Status</th></tr></thead><tbody>${rows.map((sample) => `<tr><th scope="row">${sample.index + 1}</th><td>${escapeHtml(sample.xText)}</td><td>${escapeHtml(sample.yText)}</td><td>${escapeHtml(sample.exactness.replace("-", " "))}</td></tr>`).join("")}</tbody></table>${entry.events.length ? `<ul>${entry.events.map((event) => `<li>${escapeHtml(event.label)}</li>`).join("")}</ul>` : ""}</details>`;
   }).join("");
   const regions = [...textPlan.unresolved, ...textPlan.uncertainty];
-  const semanticPoints = [...textPlan.marks, ...textPlan.intersections];
+  const semanticPoints = [...textPlan.marks, ...textPlan.intersections, ...textPlan.fieldEvidence];
   const objects = `<details class="rix-output-graphic-objects"><summary>${textPlan.objects.length} semantic object${textPlan.objects.length === 1 ? "" : "s"}</summary><ol>${textPlan.objects.map((object) => `<li data-rix-graphics-text-object="${escapeHtml(object.id)}"${object.group ? ` data-rix-graphics-text-group="${escapeHtml(object.group)}"` : ""}><strong>${escapeHtml(object.label || object.role.replaceAll("_", " "))}</strong>: ${escapeHtml(object.description)}</li>`).join("")}</ol></details>`;
-  const text8 = `<details class="rix-output-graphic-text" data-rix-graphics-text-schema="${TEXT_SCHEMA}"><summary>Text alternative: ${escapeHtml(textPlan.title)}</summary><p>${escapeHtml(textPlan.summary)}</p>${axes}${series}${textPlan.refinement.length ? `<section><h4>Adaptive refinement evidence</h4><ul>${textPlan.refinement.map((entry) => `<li>${escapeHtml(entry.summary)}</li>`).join("")}</ul></section>` : ""}${semanticPoints.length ? `<section><h4>Semantic points of interest</h4><ul>${semanticPoints.map((event) => `<li>${escapeHtml(event.label)}</li>`).join("")}</ul></section>` : ""}${regions.length ? `<section><h4>Uncertainty and unresolved areas</h4><ul>${regions.map((region) => `<li>${escapeHtml(region)}</li>`).join("")}</ul></section>` : ""}${objects}</details>`;
+  const text8 = `<details class="rix-output-graphic-text" data-rix-graphics-text-schema="${TEXT_SCHEMA}"><summary>Text alternative: ${escapeHtml(textPlan.title)}</summary><p>${escapeHtml(textPlan.summary)}</p>${axes}${series}${textPlan.refinement.length ? `<section><h4>Adaptive refinement evidence</h4><ul>${textPlan.refinement.map((entry) => `<li>${escapeHtml(entry.summary)}</li>`).join("")}</ul></section>` : ""}${semanticPoints.length ? `<section><h4>Semantic points of interest</h4><ul>${semanticPoints.map((event) => `<li>${escapeHtml(event.label)}</li>`).join("")}</ul></section>` : ""}${textPlan.relations.length ? `<section><h4>Construction dependencies</h4><ol>${textPlan.relations.map((relation) => `<li data-rix-graphics-relation="${escapeHtml(relation.id)}">${escapeHtml(relation.summary)}</li>`).join("")}</ol></section>` : ""}${regions.length ? `<section><h4>Uncertainty and unresolved areas</h4><ul>${regions.map((region) => `<li>${escapeHtml(region)}</li>`).join("")}</ul></section>` : ""}${objects}</details>`;
   if (!audioPlan.supported)
     return text8;
   const longest = Math.max(...audioPlan.series.map((entry) => entry.samples.length));
   const seriesOptions = `${audioPlan.series.map((entry, index) => `<option value="${index}">${escapeHtml(entry.label)}</option>`).join("")}${audioPlan.series.length > 1 ? '<option value="overview">Overview (sequential)</option>' : ""}`;
-  const audio = `<section class="rix-output-audio-trace" data-rix-audio-trace-schema="${AUDIO_SCHEMA}" tabindex="0" aria-label="Audio trace controls for ${escapeHtml(audioPlan.title)}"><div class="rix-output-audio-toolbar" role="toolbar" aria-label="Audio trace transport"><button type="button" data-rix-audio-action="play" aria-label="Play audio trace">Play</button><button type="button" data-rix-audio-action="previous" aria-label="Previous sample">Previous</button><button type="button" data-rix-audio-action="next" aria-label="Next sample">Next</button><button type="button" data-rix-audio-action="mute" aria-pressed="false">Mute</button></div><div class="rix-output-audio-options"><label>Series <select data-rix-audio-series>${seriesOptions}</select></label><label>Seek <input data-rix-audio-seek type="range" min="0" max="${longest - 1}" value="0"></label><label>Domain start <input data-rix-audio-start type="number" min="1" max="${longest}" value="1"></label><label>Domain end <input data-rix-audio-end type="number" min="1" max="${longest}" value="${longest}"></label><label>Speed <select data-rix-audio-speed><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label><label>Waveform <select data-rix-audio-waveform><option value="series">Per series</option>${WAVEFORMS.map((waveform) => `<option value="${waveform}">${waveform}</option>`).join("")}</select></label><label>Direction <select data-rix-audio-direction><option value="forward">Forward</option><option value="reverse">Reverse</option></select></label><label><input data-rix-audio-stereo type="checkbox" checked> Stereo position</label></div><output class="rix-output-audio-status" data-rix-audio-status aria-live="polite">Audio trace ready. No audio plays until Play is pressed.</output><small>Keyboard: Space play/pause, Left/Right step, Home/End seek, M mute.</small></section>`;
+  const audio = `<section class="rix-output-audio-trace" data-rix-audio-trace-schema="${AUDIO_SCHEMA}"${audioPlan.preferencesKey ? ` data-rix-audio-preferences-key="${escapeHtml(audioPlan.preferencesKey)}"` : ""} tabindex="0" aria-label="Audio trace controls for ${escapeHtml(audioPlan.title)}"><div class="rix-output-audio-toolbar" role="toolbar" aria-label="Audio trace transport"><button type="button" data-rix-audio-action="play" aria-label="Play audio trace">Play</button><button type="button" data-rix-audio-action="previous" aria-label="Previous sample">Previous</button><button type="button" data-rix-audio-action="next" aria-label="Next sample">Next</button><button type="button" data-rix-audio-action="mute" aria-pressed="false">Mute</button></div><div class="rix-output-audio-options"><label>Series <select data-rix-audio-series>${seriesOptions}</select></label><label>Seek <input data-rix-audio-seek type="range" min="0" max="${longest - 1}" value="0"></label><label>Domain start <input data-rix-audio-start type="number" min="1" max="${longest}" value="1"></label><label>Domain end <input data-rix-audio-end type="number" min="1" max="${longest}" value="${longest}"></label><label>Speed <select data-rix-audio-speed><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label><label>Tempo <input data-rix-audio-tempo type="number" min="1" max="60" step="1" value="${audioPlan.defaults.tempo}"></label><label>Low pitch (Hz) <input data-rix-audio-frequency-min type="number" min="20" max="19999" value="${audioPlan.defaults.frequency.minimum}"></label><label>High pitch (Hz) <input data-rix-audio-frequency-max type="number" min="21" max="20000" value="${audioPlan.defaults.frequency.maximum}"></label><label>Cues <select data-rix-audio-cues><option value="detailed">Detailed</option><option value="minimal">Minimal</option><option value="off">Off</option></select></label><label>Waveform <select data-rix-audio-waveform><option value="series">Per series</option>${WAVEFORMS.map((waveform) => `<option value="${waveform}">${waveform}</option>`).join("")}</select></label><label>Direction <select data-rix-audio-direction><option value="forward">Forward</option><option value="reverse">Reverse</option></select></label><label><input data-rix-audio-stereo type="checkbox" checked> Stereo position</label></div><output class="rix-output-audio-status" data-rix-audio-status aria-live="polite">Audio trace ready. No audio plays until Play is pressed.</output><small>Keyboard: Space play/pause, Left/Right step, Home/End seek, M mute.</small></section>`;
   return `${text8}${audio}`;
 }
 
@@ -72897,6 +72961,8 @@ PlotGeneral(data, settings, kind) -> {;
             status=unresolved==0 ?: :sampled ?_ :partial,
             rendering=:series,
             tickCount=tickCount,
+            preferencesKey=PlotOption(settings,"preferenceskey"),
+            audio=PlotOption(settings,"audio",{= }),
             title=PlotOption(settings,"title"),
             xLabel=PlotOption(settings,"xlabel"),
             yLabel=PlotOption(settings,"ylabel")
@@ -73031,6 +73097,7 @@ PlotFieldGraphic(kind,config,settings,children,details) -> {;
             unresolvedRegions=unresolved,ambiguousRegions=PlotOption(details,"ambiguousregions",[]),
             legend=PlotOption(details,"legend",[]),colorScale=PlotOption(details,"colorscale",_),
             records=PlotOption(details,"records",[]),series=series,rendering=PlotOption(details,"rendering",:graphics),
+            preferencesKey=PlotOption(settings,"preferenceskey"),audio=PlotOption(settings,"audio",{= }),
             title=PlotOption(settings,"title"),xLabel=PlotOption(settings,"xlabel"),yLabel=PlotOption(settings,"ylabel")
         }
     });
@@ -88748,6 +88815,7 @@ function enhanceSheetViews(root, options = {}) {
 // ../rix/src/tools/graphic-view.js
 var MIN_ZOOM = 1 / 8;
 var MAX_ZOOM = 64;
+var HIT_TOLERANCES = [4, 8, 16, 24];
 var graphicViewSequence = 0;
 function finiteNumber2(value, fallback = 0) {
   if (typeof value === "number" && Number.isFinite(value))
@@ -88820,6 +88888,31 @@ function nearestPoint(points, scenePoint) {
   }
   return best;
 }
+function graphicNodeAnchor(node) {
+  const point4 = (value) => {
+    const values4 = sequenceValue6(value);
+    return values4.length >= 2 ? [finiteNumber2(values4[0]), finiteNumber2(values4[1])] : null;
+  };
+  if (!node)
+    return null;
+  if (node.kind === "circle" || node.kind === "drag_point")
+    return point4(node.center);
+  if (node.kind === "text_mark")
+    return point4(node.position);
+  if (node.kind === "rectangle") {
+    const origin = point4(node.origin);
+    const size = point4(node.size);
+    return origin && size ? [origin[0] + size[0] / 2, origin[1] + size[1] / 2] : null;
+  }
+  const points = sequenceValue6(node.points).map(point4).filter(Boolean);
+  if (points.length) {
+    return [
+      points.reduce((sum, entry2) => sum + entry2[0], 0) / points.length,
+      points.reduce((sum, entry2) => sum + entry2[1], 0) / points.length
+    ];
+  }
+  return null;
+}
 function describeGraphicNode(node, format = String, scenePoint = null) {
   if (!node)
     return "Graphic background";
@@ -88866,8 +88959,37 @@ function graphicSelectionCatalog(graphic, format = String) {
   return Object.freeze([...nodes.entries()].filter(([, node]) => node.kind === "drag_point" || node.kind === "graphic_action" || !(node.children || []).length).map(([id, node]) => Object.freeze({
     id: String(id),
     role: String(node.kind || "object"),
-    label: describeGraphicNode(node, format)
+    label: describeGraphicNode(node, format),
+    anchor: graphicNodeAnchor(node)
   })));
+}
+function filterGraphicSelectionCatalog(catalog, scope = "all", query = "") {
+  const needle = String(query || "").trim().toLocaleLowerCase();
+  return Object.freeze(Array.from(catalog || []).filter((entry2) => (scope === "all" || entry2.role === scope) && (!needle || `${entry2.id} ${entry2.role} ${entry2.label}`.toLocaleLowerCase().includes(needle))));
+}
+function graphicSpatialTarget(catalog, currentId, direction) {
+  const vector2 = {
+    left: [-1, 0],
+    right: [1, 0],
+    up: [0, -1],
+    down: [0, 1]
+  }[direction];
+  if (!vector2)
+    throw new Error("Graphic spatial navigation direction must be left, right, up, or down");
+  const entries4 = Array.from(catalog || []).filter((entry2) => Array.isArray(entry2.anchor));
+  if (!entries4.length)
+    return null;
+  const current = entries4.find((entry2) => entry2.id === currentId);
+  if (!current) {
+    return [...entries4].sort((left, right) => left.anchor[0] * vector2[0] + left.anchor[1] * vector2[1] - (right.anchor[0] * vector2[0] + right.anchor[1] * vector2[1]) || left.id.localeCompare(right.id))[0] || null;
+  }
+  return entries4.filter((entry2) => entry2 !== current).map((entry2) => {
+    const dx = entry2.anchor[0] - current.anchor[0];
+    const dy = entry2.anchor[1] - current.anchor[1];
+    const forward = dx * vector2[0] + dy * vector2[1];
+    const sideways = Math.abs(dx * vector2[1] - dy * vector2[0]);
+    return { entry: entry2, forward, score: forward + sideways * 4 };
+  }).filter((candidate) => candidate.forward > 0.000000001).sort((left, right) => left.score - right.score || left.forward - right.forward || left.entry.id.localeCompare(right.entry.id))[0]?.entry || null;
 }
 function plotInspection(graphic, scenePoint, format) {
   const plot = mapField4(graphic?.metadata, "plot");
@@ -88944,7 +89066,9 @@ function createGraphicViewState(width, height, target = {}) {
   target.selection = { schema: "rix.selection@1", ids, focus: target.selection?.focus ?? ids[0] ?? null };
   target.navigation = {
     schema: "rix.graphic-navigation@1",
-    scope: typeof target.navigation?.scope === "string" ? target.navigation.scope : "all"
+    scope: typeof target.navigation?.scope === "string" ? target.navigation.scope : "all",
+    query: typeof target.navigation?.query === "string" ? target.navigation.query : "",
+    hitTolerance: HIT_TOLERANCES.includes(Number(target.navigation?.hitTolerance)) ? Number(target.navigation.hitTolerance) : 8
   };
   return target;
 }
@@ -89300,6 +89424,39 @@ function makeSelectControl(document, labelText, dataName) {
   label2.append(text15, select);
   return { label: label2, select };
 }
+function graphicPreferencesKey(graphic) {
+  const metadata3 = graphic?.metadata;
+  const plot = mapField4(metadata3, "plot");
+  return stringValue11(mapField4(metadata3, "preferencesKey")) || stringValue11(mapField4(plot, "preferencesKey"));
+}
+function graphicPreferencesStorage(graphic, options) {
+  return options.storage || graphic.ownerDocument?.defaultView?.localStorage || null;
+}
+function loadGraphicPreferences(graphic, state, options) {
+  const key = graphicPreferencesKey(options.graphic);
+  const storage = key ? graphicPreferencesStorage(graphic, options) : null;
+  if (!key || !storage || state.preferencesLoaded)
+    return { key, storage };
+  state.preferencesLoaded = true;
+  try {
+    const saved = JSON.parse(storage.getItem(`rix.graphics:${key}`) || "null");
+    if (saved?.viewport) {
+      state.viewport.pan = sequenceValue6(saved.viewport.pan).slice(0, 2).map((value) => finiteNumber2(value));
+      if (state.viewport.pan.length !== 2)
+        state.viewport.pan = [0, 0];
+      state.viewport.zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, finiteNumber2(saved.viewport.zoom, 1)));
+    }
+    if (saved?.navigation) {
+      state.navigation.scope = typeof saved.navigation.scope === "string" ? saved.navigation.scope : state.navigation.scope;
+      state.navigation.query = typeof saved.navigation.query === "string" ? saved.navigation.query : state.navigation.query;
+      if (HIT_TOLERANCES.includes(Number(saved.navigation.hitTolerance)))
+        state.navigation.hitTolerance = Number(saved.navigation.hitTolerance);
+    }
+    if (typeof saved?.selection === "string")
+      state.selection = { schema: "rix.selection@1", ids: [saved.selection], focus: saved.selection };
+  } catch {}
+  return { key, storage };
+}
 function installNavigation(graphic, svg, status, options) {
   if (typeof svg.addEventListener !== "function")
     return null;
@@ -89308,6 +89465,18 @@ function installNavigation(graphic, svg, status, options) {
   const state = createGraphicViewState(width, height, options.state || {});
   if (!options.state)
     options.state = state;
+  const preferences = loadGraphicPreferences(graphic, state, options);
+  const savePreferences = () => {
+    if (!preferences.key || !preferences.storage)
+      return;
+    try {
+      preferences.storage.setItem(`rix.graphics:${preferences.key}`, JSON.stringify({
+        viewport: { pan: [...state.viewport.pan], zoom: state.viewport.zoom },
+        selection: state.selection.focus,
+        navigation: { ...state.navigation }
+      }));
+    } catch {}
+  };
   const nodes = indexGraphicNodes(options.graphic);
   const document = graphic.ownerDocument;
   let inspector = graphic.querySelector?.(".rix-output-graphic-inspector") || null;
@@ -89327,7 +89496,23 @@ function installNavigation(graphic, svg, status, options) {
       toolbar.append(makeButton(document, ...spec2));
     const scopeControl = makeSelectControl(document, "Object type", "rixGraphicSelectionScope");
     const objectControl = makeSelectControl(document, "Mathematical object", "rixGraphicObjectSelect");
-    toolbar.append(scopeControl.label, objectControl.label);
+    const searchLabel = document.createElement("label");
+    searchLabel.className = "rix-output-graphic-toolbar-search";
+    const searchText = document.createElement("span");
+    searchText.textContent = "Find object";
+    const search = document.createElement("input");
+    search.type = "search";
+    search.dataset.rixGraphicSearch = "true";
+    search.setAttribute("aria-label", "Find mathematical object");
+    searchLabel.append(searchText, search);
+    const toleranceControl = makeSelectControl(document, "Hit area", "rixGraphicHitTolerance");
+    for (const [value, label2] of [[4, "Precise"], [8, "Standard"], [16, "Large"], [24, "Extra large"]]) {
+      const option6 = document.createElement("option");
+      option6.value = String(value);
+      option6.textContent = label2;
+      toleranceControl.select.append(option6);
+    }
+    toolbar.append(scopeControl.label, searchLabel, objectControl.label, toleranceControl.label);
     graphic.insertBefore?.(toolbar, svg);
   }
   if (document?.createElement && !inspector) {
@@ -89346,16 +89531,20 @@ function installNavigation(graphic, svg, status, options) {
   const descriptions = [inspector?.id, status?.id].filter(Boolean).join(" ");
   if (descriptions)
     svg.setAttribute("aria-describedby", descriptions);
-  svg.setAttribute("aria-keyshortcuts", "ArrowLeft ArrowRight ArrowUp ArrowDown + - Home [ ]");
+  svg.setAttribute("aria-keyshortcuts", "ArrowLeft ArrowRight ArrowUp ArrowDown Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown + - Home [ ] /");
   toolbar?.setAttribute?.("aria-controls", viewId);
   const semanticElements = [...svg.querySelectorAll?.("[data-rix-semantic-id]") || []];
   const selectable = semanticElements.filter((element) => element.dataset?.rixDragTarget || element.dataset?.rixGraphicAction || !element.querySelector?.("[data-rix-semantic-id]"));
   const catalog = new Map(graphicSelectionCatalog(options.graphic, options.format || String).map((entry2) => [entry2.id, entry2]));
   const scopeSelect = toolbar?.querySelector?.("[data-rix-graphic-selection-scope]") || null;
   const objectSelect = toolbar?.querySelector?.("[data-rix-graphic-object-select]") || null;
+  const searchInput = toolbar?.querySelector?.("[data-rix-graphic-search]") || null;
+  const toleranceSelect = toolbar?.querySelector?.("[data-rix-graphic-hit-tolerance]") || null;
   const scopedSelectable = () => selectable.filter((element) => {
     const scope = state.navigation.scope;
-    return scope === "all" || catalog.get(element.dataset.rixSemanticId)?.role === scope;
+    const entry2 = catalog.get(element.dataset.rixSemanticId);
+    const needle = state.navigation.query.trim().toLocaleLowerCase();
+    return (scope === "all" || entry2?.role === scope) && (!needle || `${entry2?.id || ""} ${entry2?.role || ""} ${entry2?.label || ""}`.toLocaleLowerCase().includes(needle));
   });
   const appendOption = (select, value, text15) => {
     if (!select || !document?.createElement)
@@ -89379,6 +89568,10 @@ function installNavigation(graphic, svg, status, options) {
       state.navigation.scope = "all";
     scopeSelect.value = state.navigation.scope;
   }
+  if (searchInput)
+    searchInput.value = state.navigation.query;
+  if (toleranceSelect)
+    toleranceSelect.value = String(state.navigation.hitTolerance);
   const refreshObjectOptions = () => {
     if (!objectSelect)
       return;
@@ -89417,6 +89610,7 @@ function installNavigation(graphic, svg, status, options) {
       status.textContent = `Graphic view at ${Math.round(state.viewport.zoom * 100)}% zoom`;
     dispatchGraphicEvent(graphic, "rix-graphic-viewport", detail);
     options.onViewport?.(detail, graphic);
+    savePreferences();
   };
   const clearClasses = (name) => semanticElements.forEach((element) => element.classList?.remove(name));
   const describe = (element, scenePoint = null) => {
@@ -89449,6 +89643,7 @@ function installNavigation(graphic, svg, status, options) {
     }, exact: message, source });
     dispatchGraphicEvent(graphic, "rix-graphic-selection", detail);
     options.onSelection?.(detail, element, graphic);
+    savePreferences();
   };
   const cycleSelection = (step) => {
     const values4 = scopedSelectable();
@@ -89457,6 +89652,12 @@ function installNavigation(graphic, svg, status, options) {
     const current = values4.findIndex((element) => element.dataset.rixSemanticId === state.selection.focus);
     const next = current < 0 ? step > 0 ? 0 : values4.length - 1 : (current + step + values4.length) % values4.length;
     setSelection(values4[next], "keyboard");
+  };
+  const spatialSelection = (direction) => {
+    const entries4 = filterGraphicSelectionCatalog([...catalog.values()], state.navigation.scope, state.navigation.query);
+    const target = graphicSpatialTarget(entries4, state.selection.focus, direction);
+    if (target)
+      selectById(target.id, "spatial-keyboard");
   };
   const selectById = (id, source = "workbench", focus = true) => {
     const element = semanticElements.find((candidate) => candidate.dataset?.rixSemanticId === String(id));
@@ -89478,6 +89679,21 @@ function installNavigation(graphic, svg, status, options) {
     const count = scopedSelectable().length;
     if (status)
       status.textContent = `${count} ${state.navigation.scope === "all" ? "mathematical" : state.navigation.scope.replaceAll("_", " ")} object${count === 1 ? "" : "s"} available`;
+    savePreferences();
+  });
+  searchInput?.addEventListener?.("input", () => {
+    state.navigation.query = searchInput.value || "";
+    refreshObjectOptions();
+    const count = scopedSelectable().length;
+    if (status)
+      status.textContent = `${count} mathematical object${count === 1 ? "" : "s"} match “${state.navigation.query}”`;
+    savePreferences();
+  });
+  toleranceSelect?.addEventListener?.("change", () => {
+    state.navigation.hitTolerance = HIT_TOLERANCES.includes(Number(toleranceSelect.value)) ? Number(toleranceSelect.value) : 8;
+    if (status)
+      status.textContent = `Pointer hit area set to ${state.navigation.hitTolerance} pixels`;
+    savePreferences();
   });
   objectSelect?.addEventListener?.("change", () => selectById(objectSelect.value, "keyboard", false));
   toolbar?.addEventListener?.("click", (event) => {
@@ -89560,8 +89776,22 @@ function installNavigation(graphic, svg, status, options) {
       svg.classList?.remove("rix-output-svg-panning");
     if (svg.hasPointerCapture?.(event.pointerId))
       svg.releasePointerCapture(event.pointerId);
-    if (!cancelled2 && wasOnlyPointer && !gestureChanged && !completed.moved)
-      setSelection(completed.target, "pointer", pointerPoint(event));
+    if (!cancelled2 && wasOnlyPointer && !gestureChanged && !completed.moved) {
+      let target = completed.target;
+      if (!target) {
+        const candidates = scopedSelectable().map((element) => {
+          const bounds2 = element.getBoundingClientRect?.();
+          if (!bounds2)
+            return null;
+          const dx = Math.max(bounds2.left - event.clientX, 0, event.clientX - bounds2.right);
+          const dy = Math.max(bounds2.top - event.clientY, 0, event.clientY - bounds2.bottom);
+          return { element, distance: Math.hypot(dx, dy) };
+        }).filter(Boolean).sort((left, right) => left.distance - right.distance);
+        if (candidates[0]?.distance <= state.navigation.hitTolerance)
+          target = candidates[0].element;
+      }
+      setSelection(target, "pointer", pointerPoint(event));
+    }
     if (!pointers.size) {
       if (!cancelled2 && (gestureChanged || completed.moved))
         announceViewport("pointer");
@@ -89601,6 +89831,16 @@ function installNavigation(graphic, svg, status, options) {
   svg.addEventListener("keydown", (event) => {
     if (event.defaultPrevented)
       return;
+    if (event.key === "/" && searchInput) {
+      event.preventDefault?.();
+      searchInput.focus?.();
+      return;
+    }
+    if (event.altKey && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
+      event.preventDefault?.();
+      spatialSelection(event.key.replace("Arrow", "").toLocaleLowerCase());
+      return;
+    }
     const amount = event.shiftKey ? 0.25 : 0.1;
     if (event.key === "ArrowLeft")
       panGraphicViewport(state, state.viewport.width * amount, 0);
@@ -89630,7 +89870,7 @@ function installNavigation(graphic, svg, status, options) {
     applyViewport();
     announceViewport("keyboard");
   });
-  return Object.freeze({ selectById, cycleSelection });
+  return Object.freeze({ selectById, cycleSelection, spatialSelection });
 }
 function enhanceGraphic(graphic, options) {
   if (graphic.dataset.rixGraphicEnhanced === "true")
@@ -89851,6 +90091,11 @@ function createAudioTraceState(plan, target = {}) {
   target.startIndex = Math.max(0, Number(target.startIndex) || 0);
   target.endIndex = Number.isFinite(Number(target.endIndex)) ? Number(target.endIndex) : Math.max(0, (plan.series[target.seriesIndex]?.samples.length || 1) - 1);
   target.speed = [0.5, 1, 2, 4].includes(Number(target.speed)) ? Number(target.speed) : plan.defaults.speed;
+  target.tempo = clamp(target.tempo ?? plan.defaults.tempo, 1, 60);
+  const minimum = clamp(target.frequency?.minimum ?? plan.defaults.frequency.minimum, 20, 19999);
+  const maximum = clamp(target.frequency?.maximum ?? plan.defaults.frequency.maximum, minimum + 1, 20000);
+  target.frequency = { minimum, maximum };
+  target.cues = ["detailed", "minimal", "off"].includes(target.cues) ? target.cues : "detailed";
   target.waveform = target.waveform || plan.defaults.waveform;
   target.direction = target.direction === "reverse" ? "reverse" : "forward";
   target.stereo = target.stereo !== false;
@@ -89876,18 +90121,18 @@ function stepAudioTrace(plan, state, amount = 1) {
 function eventAt(plan, series, index) {
   return plan.events.filter((event) => event.sampleIndex === index && (!event.seriesId || event.seriesId === series?.id));
 }
-function cueFrequency(event) {
+function audioTraceCueFrequency(event, palette = {}) {
   if (event.exactness === "exact")
-    return 1320;
+    return Number(palette.exact ?? 1320);
   if (event.exactness === "certified-enclosure")
-    return 1100;
+    return Number(palette.certifiedEnclosure ?? 1100);
   if (event.exactness === "unresolved")
-    return 150;
-  if (event.type === "sampled-extremum")
-    return 990;
-  if (event.type.includes("axis-crossing"))
-    return 660;
-  return 440;
+    return Number(palette.unresolved ?? 150);
+  if (event.exactness === "conjectural")
+    return Number(palette.conjectural ?? 330);
+  if (event.exactness === "approximate" || event.type === "sampled-extremum" || event.type.includes("axis-crossing"))
+    return Number(palette.approximate ?? 660);
+  return Number(palette.general ?? 440);
 }
 function roots(root) {
   const values4 = [];
@@ -89915,6 +90160,10 @@ function enhance(root, options) {
   const start = query("[data-rix-audio-start]");
   const end = query("[data-rix-audio-end]");
   const speed = query("[data-rix-audio-speed]");
+  const tempo = query("[data-rix-audio-tempo]");
+  const frequencyMinimum = query("[data-rix-audio-frequency-min]");
+  const frequencyMaximum = query("[data-rix-audio-frequency-max]");
+  const cues = query("[data-rix-audio-cues]");
   const waveform = query("[data-rix-audio-waveform]");
   const direction = query("[data-rix-audio-direction]");
   const stereo = query("[data-rix-audio-stereo]");
@@ -89925,6 +90174,36 @@ function enhance(root, options) {
   let oscillator = null;
   let gain = null;
   let panner = null;
+  const preferenceKey = plan.preferencesKey || root.dataset.rixAudioPreferencesKey || null;
+  const storage = options.storage || root.ownerDocument?.defaultView?.localStorage || null;
+  if (preferenceKey && storage && !state.preferencesLoaded) {
+    state.preferencesLoaded = true;
+    try {
+      const saved = JSON.parse(storage.getItem(`rix.audio:${preferenceKey}`) || "null");
+      if (saved && typeof saved === "object")
+        createAudioTraceState(plan, Object.assign(state, saved, { playing: false }));
+    } catch {}
+  }
+  const savePreferences = () => {
+    if (!preferenceKey || !storage)
+      return;
+    try {
+      storage.setItem(`rix.audio:${preferenceKey}`, JSON.stringify({
+        seriesIndex: state.seriesIndex,
+        overview: state.overview,
+        startIndex: state.startIndex,
+        endIndex: state.endIndex,
+        speed: state.speed,
+        tempo: state.tempo,
+        frequency: { ...state.frequency },
+        waveform: state.waveform,
+        direction: state.direction,
+        stereo: state.stereo,
+        muted: state.muted,
+        cues: state.cues
+      }));
+    } catch {}
+  };
   const listen = (element, name, handler) => {
     element?.addEventListener?.(name, handler);
     if (element)
@@ -89955,6 +90234,22 @@ function enhance(root, options) {
     mute?.setAttribute?.("aria-pressed", String(state.muted));
     if (mute)
       mute.textContent = state.muted ? "Unmute" : "Mute";
+    if (speed)
+      speed.value = String(state.speed);
+    if (tempo)
+      tempo.value = String(state.tempo);
+    if (frequencyMinimum)
+      frequencyMinimum.value = String(state.frequency.minimum);
+    if (frequencyMaximum)
+      frequencyMaximum.value = String(state.frequency.maximum);
+    if (cues)
+      cues.value = state.cues;
+    if (waveform)
+      waveform.value = state.waveform;
+    if (direction)
+      direction.value = state.direction;
+    if (stereo)
+      stereo.checked = state.stereo;
   };
   const ensureAudio = async () => {
     if (context)
@@ -89981,12 +90276,13 @@ function enhance(root, options) {
     return true;
   };
   const cue = (events) => {
-    if (!events.length || !context || state.muted || typeof context.createOscillator !== "function")
+    const audible = state.cues === "off" ? [] : state.cues === "minimal" ? events.filter((event) => event.type === "domain-boundary" || event.type.includes("axis-crossing")) : events;
+    if (!audible.length || !context || state.muted || typeof context.createOscillator !== "function")
       return;
     const tone = context.createOscillator();
     const volume = context.createGain();
-    tone.frequency.value = cueFrequency(events[0]);
-    tone.type = events[0].exactness === "unresolved" ? "sawtooth" : "sine";
+    tone.frequency.value = audioTraceCueFrequency(audible[0], plan.defaults.cuePalette);
+    tone.type = audible[0].exactness === "unresolved" ? "sawtooth" : "sine";
     volume.gain.setValueAtTime?.(0.035, context.currentTime);
     volume.gain.exponentialRampToValueAtTime?.(0.0001, context.currentTime + 0.06);
     tone.connect(volume);
@@ -90000,7 +90296,7 @@ function enhance(root, options) {
     const sample = current();
     if (!series || !sample)
       return;
-    const frequency = audioTraceFrequency(sample.y, plan.range, plan.defaults.frequency);
+    const frequency = audioTraceFrequency(sample.y, plan.range, state.frequency);
     if (oscillator) {
       oscillator.type = waveformName();
       oscillator.frequency.setValueAtTime?.(frequency, context.currentTime);
@@ -90039,7 +90335,7 @@ function enhance(root, options) {
     } else
       state.sampleIndex += delta;
     renderSample();
-    timer = setTimeout(advance, 1000 / (plan.defaults.tempo * state.speed));
+    timer = setTimeout(advance, 1000 / (state.tempo * state.speed));
   };
   const togglePlay = async () => {
     if (state.playing) {
@@ -90055,7 +90351,7 @@ function enhance(root, options) {
     if (state.direction === "reverse" && state.sampleIndex <= state.startIndex)
       state.sampleIndex = state.endIndex;
     renderSample();
-    timer = setTimeout(advance, 1000 / (plan.defaults.tempo * state.speed));
+    timer = setTimeout(advance, 1000 / (state.tempo * state.speed));
   };
   const chooseSeries = () => {
     state.overview = seriesSelect?.value === "overview";
@@ -90079,8 +90375,12 @@ function enhance(root, options) {
   listen(mute, "click", () => {
     state.muted = !state.muted;
     renderSample();
+    savePreferences();
   });
-  listen(seriesSelect, "change", chooseSeries);
+  listen(seriesSelect, "change", () => {
+    chooseSeries();
+    savePreferences();
+  });
   listen(seek, "input", () => {
     state.sampleIndex = Number(seek.value);
     renderSample();
@@ -90089,25 +90389,67 @@ function enhance(root, options) {
     state.startIndex = Number(start.value) - 1;
     normalizeRange(plan, state);
     renderSample();
+    savePreferences();
   });
   listen(end, "change", () => {
     state.endIndex = Number(end.value) - 1;
     normalizeRange(plan, state);
     renderSample();
+    savePreferences();
   });
   listen(speed, "change", () => {
     state.speed = Number(speed.value);
+    savePreferences();
+  });
+  listen(tempo, "input", () => {
+    const value = Number(tempo.value);
+    if (Number.isFinite(value) && value >= 1 && value <= 60) {
+      state.tempo = value;
+      savePreferences();
+    }
+  });
+  listen(tempo, "change", () => {
+    state.tempo = clamp(tempo.value, 1, 60);
+    sync();
+    savePreferences();
+  });
+  const inputFrequency = () => {
+    const minimum = Number(frequencyMinimum?.value);
+    const maximum = Number(frequencyMaximum?.value);
+    if (Number.isFinite(minimum) && Number.isFinite(maximum) && minimum >= 20 && maximum > minimum && maximum <= 20000) {
+      state.frequency = { minimum, maximum };
+      savePreferences();
+    }
+  };
+  listen(frequencyMinimum, "input", inputFrequency);
+  listen(frequencyMaximum, "input", inputFrequency);
+  const changeFrequency = () => {
+    const minimum = clamp(frequencyMinimum?.value, 20, 19999);
+    const maximum = clamp(frequencyMaximum?.value, minimum + 1, 20000);
+    state.frequency = { minimum, maximum };
+    sync();
+    renderSample();
+    savePreferences();
+  };
+  listen(frequencyMinimum, "change", changeFrequency);
+  listen(frequencyMaximum, "change", changeFrequency);
+  listen(cues, "change", () => {
+    state.cues = cues.value;
+    savePreferences();
   });
   listen(waveform, "change", () => {
     state.waveform = waveform.value;
     renderSample();
+    savePreferences();
   });
   listen(direction, "change", () => {
     state.direction = direction.value;
+    savePreferences();
   });
   listen(stereo, "change", () => {
     state.stereo = stereo.checked;
     renderSample();
+    savePreferences();
   });
   listen(root, "keydown", (event) => {
     if (["INPUT", "SELECT", "BUTTON"].includes(event.target?.tagName) && event.key !== "Escape")
@@ -90156,6 +90498,7 @@ function enhanceAudioTraceView(root, options = {}) {
 // ../rix/src/tools/scene3d-view.js
 var MIN_PITCH = -Math.PI / 2 + 0.015;
 var MAX_PITCH = Math.PI / 2 - 0.015;
+var PICK_TOLERANCES = [4, 8, 16, 24];
 var scene3DViewSequence = 0;
 function sequenceValue7(value) {
   if (Array.isArray(value))
@@ -90260,7 +90603,9 @@ function createScene3DViewState(plan, target = {}) {
   target.selection = { schema: "rix.selection@1", ids, focus: target.selection?.focus ?? ids[0] ?? null };
   target.navigation = {
     schema: "rix.scene3d-navigation@1",
-    scope: typeof target.navigation?.scope === "string" ? target.navigation.scope : "all"
+    scope: typeof target.navigation?.scope === "string" ? target.navigation.scope : "all",
+    query: typeof target.navigation?.query === "string" ? target.navigation.query : "",
+    pickTolerance: PICK_TOLERANCES.includes(Number(target.navigation?.pickTolerance)) ? Number(target.navigation.pickTolerance) : 8
   };
   target.viewport = {
     schema: "rix.viewport3d@1",
@@ -90531,6 +90876,36 @@ function layoutScene3DAnnotations(annotations, viewport2, settings = {}) {
     return Object.freeze({ ...annotation, screen: placement.screen, displaced: placement.displaced, crowded: placement.crowded });
   });
 }
+function resolveScene3DAnnotationOcclusion(plan, matrix, annotations, epsilon = 0.00001) {
+  const triangles = [];
+  for (const call of plan?.drawCalls || []) {
+    if (call.mode !== "triangles")
+      continue;
+    const points = call.positions.map((point4) => projectScene3DPoint(matrix, point4, plan.viewport));
+    for (let index = 0;index + 2 < call.indices.length; index += 3) {
+      const triangle = call.indices.slice(index, index + 3).map((item) => points[item]);
+      if (triangle.some((item) => !item.screen))
+        continue;
+      triangles.push({
+        primitive: call.primitive,
+        points: triangle.map((item) => item.screen),
+        depth: triangle.reduce((sum, item) => sum + item.depth, 0) / 3
+      });
+    }
+  }
+  return Object.freeze(Array.from(annotations || []).map((annotation) => {
+    const policy = annotation.policy?.occlusion || "show";
+    if (policy === "show" || !annotation.visible || !annotation.screen || annotation.depth === null) {
+      return Object.freeze({ ...annotation, occluded: false });
+    }
+    const occluded = triangles.some((triangle) => triangle.primitive !== annotation.primitive && triangle.depth < annotation.depth - Number(epsilon) && triangleContains(annotation.screen, ...triangle.points));
+    return Object.freeze({
+      ...annotation,
+      occluded,
+      visible: occluded && policy === "hide" ? false : annotation.visible
+    });
+  }));
+}
 function escapeHtml4(value) {
   return String(value).replace(/[&<>"']/g, (character) => ({
     "&": "&amp;",
@@ -90591,6 +90966,32 @@ function dispatchSceneEvent(root, detail) {
   if (typeof EventConstructor === "function")
     root.dispatchEvent(new EventConstructor("rix:scene3d-selection", { bubbles: true, detail }));
 }
+function scene3DPreferencesKey(scene) {
+  return stringValue12(mapField5(mapField5(scene, "metadata"), "preferencesKey"));
+}
+function loadScene3DPreferences(container, scene, state, options) {
+  const key = scene3DPreferencesKey(scene);
+  const storage = options.storage || container.ownerDocument?.defaultView?.localStorage || null;
+  if (!key || !storage || state.preferencesLoaded)
+    return { key, storage };
+  state.preferencesLoaded = true;
+  try {
+    const saved = JSON.parse(storage.getItem(`rix.scene3d:${key}`) || "null");
+    if (saved?.camera && sequenceValue7(saved.camera.position).length === 3 && sequenceValue7(saved.camera.target).length === 3) {
+      state.camera = cloneCamera({ ...state.camera, ...saved.camera });
+      state.viewport.projection = state.camera.projection;
+    }
+    if (saved?.navigation) {
+      state.navigation.scope = typeof saved.navigation.scope === "string" ? saved.navigation.scope : state.navigation.scope;
+      state.navigation.query = typeof saved.navigation.query === "string" ? saved.navigation.query : state.navigation.query;
+      if (PICK_TOLERANCES.includes(Number(saved.navigation.pickTolerance)))
+        state.navigation.pickTolerance = Number(saved.navigation.pickTolerance);
+    }
+    if (typeof saved?.selection === "string")
+      state.selection = { schema: "rix.selection@1", ids: [saved.selection], focus: saved.selection };
+  } catch {}
+  return { key, storage };
+}
 function enhanceScene3DViews(root, options = {}) {
   const disposers = scene3DRoots(root).map((container) => {
     const scene = options.scene;
@@ -90605,6 +91006,18 @@ function enhanceScene3DViews(root, options = {}) {
       return () => {};
     const plan = createWebGLPlan(scene, { width: 640, height: 480 });
     const state = createScene3DViewState(plan, options.state || {});
+    const preferences = loadScene3DPreferences(container, scene, state, options);
+    const savePreferences = () => {
+      if (!preferences.key || !preferences.storage)
+        return;
+      try {
+        preferences.storage.setItem(`rix.scene3d:${preferences.key}`, JSON.stringify({
+          camera: cloneCamera(state.camera),
+          selection: state.selection.focus,
+          navigation: { ...state.navigation }
+        }));
+      } catch {}
+    };
     const catalog = scene3DSelectionCatalog(scene, plan, format);
     const catalogById = new Map(catalog.map((entry2) => [entry2.id, entry2]));
     const document = container.ownerDocument;
@@ -90624,6 +91037,23 @@ function enhanceScene3DViews(root, options = {}) {
     };
     const scopeSelect = toolbar?.querySelector?.("[data-rix-scene3d-selection-scope]") || makeSelect("Object type", "rixScene3dSelectionScope");
     const objectSelect = toolbar?.querySelector?.("[data-rix-scene3d-object-select]") || makeSelect("3D object", "rixScene3dObjectSelect");
+    const searchInput = (() => {
+      const existing = toolbar?.querySelector?.("[data-rix-scene3d-search]");
+      if (existing || !document?.createElement)
+        return existing;
+      const label2 = document.createElement("label");
+      label2.className = "rix-output-scene3d-toolbar-search";
+      const text15 = document.createElement("span");
+      text15.textContent = "Find object";
+      const input = document.createElement("input");
+      input.type = "search";
+      input.dataset.rixScene3dSearch = "true";
+      input.setAttribute("aria-label", "Find 3D object");
+      label2.append(text15, input);
+      toolbar?.append(label2);
+      return input;
+    })();
+    const toleranceSelect = toolbar?.querySelector?.("[data-rix-scene3d-pick-tolerance]") || makeSelect("Pick area", "rixScene3dPickTolerance");
     const appendOption = (select2, value, text15) => {
       if (!select2 || !document?.createElement)
         return;
@@ -90645,7 +91075,18 @@ function enhanceScene3DViews(root, options = {}) {
         state.navigation.scope = "all";
       scopeSelect.value = state.navigation.scope;
     }
-    const scopedCatalog = () => catalog.filter((entry2) => state.navigation.scope === "all" || entry2.role === state.navigation.scope);
+    if (searchInput)
+      searchInput.value = state.navigation.query;
+    if (toleranceSelect) {
+      toleranceSelect.replaceChildren?.();
+      for (const [value, label2] of [[4, "Precise"], [8, "Standard"], [16, "Large"], [24, "Extra large"]])
+        appendOption(toleranceSelect, String(value), label2);
+      toleranceSelect.value = String(state.navigation.pickTolerance);
+    }
+    const scopedCatalog = () => {
+      const needle = state.navigation.query.trim().toLocaleLowerCase();
+      return catalog.filter((entry2) => (state.navigation.scope === "all" || entry2.role === state.navigation.scope) && (!needle || `${entry2.id} ${entry2.role} ${entry2.label}`.toLocaleLowerCase().includes(needle)));
+    };
     const refreshObjectOptions = () => {
       if (!objectSelect)
         return;
@@ -90670,7 +91111,7 @@ function enhanceScene3DViews(root, options = {}) {
     const descriptions = [inspector?.id, status?.id].filter(Boolean).join(" ");
     if (descriptions)
       canvas.setAttribute("aria-describedby", descriptions);
-    canvas.setAttribute("aria-keyshortcuts", "ArrowLeft ArrowRight ArrowUp ArrowDown + - Home P [ ]");
+    canvas.setAttribute("aria-keyshortcuts", "ArrowLeft ArrowRight ArrowUp ArrowDown + - Home P [ ] /");
     toolbar?.setAttribute?.("aria-controls", viewId);
     let gl = null;
     let matrix = null;
@@ -90736,6 +91177,7 @@ function enhanceScene3DViews(root, options = {}) {
       const detail = Object.freeze({ type: "scene3d:selection", selection: { ...state.selection, ids: [...state.selection.ids] }, pickId, exact: exact2, interaction, source });
       options.onSelection?.(detail);
       dispatchSceneEvent(container, detail);
+      savePreferences();
     };
     const renderAnnotations = (annotations, ratio) => {
       if (!overlay)
@@ -90760,6 +91202,9 @@ function enhanceScene3DViews(root, options = {}) {
         label2.style.top = `${annotation.screen[1]}px`;
         label2.toggleAttribute("data-rix-annotation-displaced", annotation.displaced);
         label2.toggleAttribute("data-rix-annotation-crowded", annotation.crowded);
+        label2.toggleAttribute("data-rix-annotation-occluded", annotation.occluded);
+        if (annotation.occluded && annotation.policy?.occlusion === "fade")
+          label2.style.opacity = "0.28";
         if (annotation.pickId) {
           label2.dataset.rixSemanticId = annotation.pickId;
           label2.setAttribute("aria-label", catalogById.get(annotation.pickId)?.label || label2.textContent);
@@ -90794,9 +91239,10 @@ function enhanceScene3DViews(root, options = {}) {
       canvas.hidden = false;
       const result = paintWebGLPlan(gl, plan);
       matrix = result.matrix;
-      renderAnnotations(result.annotations, ratio);
+      renderAnnotations(resolveScene3DAnnotationOcclusion(plan, matrix, result.annotations), ratio);
       setStatus(`${state.camera.projection} projection · drag to orbit · pinch to dolly and truck · Shift-drag to truck · wheel to dolly`);
       options.onViewport?.({ type: "scene3d:viewport", viewport: { ...state.viewport }, camera: cloneCamera(state.camera) });
+      savePreferences();
     };
     const logicalPoint = (event) => {
       const rect = canvas.getBoundingClientRect();
@@ -90838,6 +91284,19 @@ function enhanceScene3DViews(root, options = {}) {
       refreshObjectOptions();
       const count = scopedCatalog().length;
       setStatus(`${count} ${state.navigation.scope === "all" ? "selectable" : state.navigation.scope.replaceAll("_", " ")} object${count === 1 ? "" : "s"} available`);
+      savePreferences();
+    });
+    listen(searchInput, "input", () => {
+      state.navigation.query = searchInput.value || "";
+      refreshObjectOptions();
+      const count = scopedCatalog().length;
+      setStatus(`${count} 3D object${count === 1 ? "" : "s"} match “${state.navigation.query}”`);
+      savePreferences();
+    });
+    listen(toleranceSelect, "change", () => {
+      state.navigation.pickTolerance = PICK_TOLERANCES.includes(Number(toleranceSelect.value)) ? Number(toleranceSelect.value) : 8;
+      setStatus(`3D pick area set to ${state.navigation.pickTolerance} pixels`);
+      savePreferences();
     });
     listen(objectSelect, "change", () => select(objectSelect.value || null, "keyboard"));
     for (const button of container.querySelectorAll?.("[data-rix-scene3d-action]") || []) {
@@ -90886,7 +91345,7 @@ function enhanceScene3DViews(root, options = {}) {
       const wasOnlyPointer = pointers.size === 1;
       pointers.delete(event.pointerId);
       if (wasOnlyPointer && !gestureChanged && !completed.moved && matrix) {
-        select(pickScene3DPlan(plan, matrix, logicalPoint(event))?.pickId || null, "pointer");
+        select(pickScene3DPlan(plan, matrix, logicalPoint(event), state.navigation.pickTolerance)?.pickId || null, "pointer");
       }
       if (canvas.hasPointerCapture?.(event.pointerId))
         canvas.releasePointerCapture?.(event.pointerId);
@@ -90910,6 +91369,11 @@ function enhanceScene3DViews(root, options = {}) {
     });
     listen(canvas, "keydown", (event) => {
       let handled = true;
+      if (event.key === "/" && searchInput) {
+        event.preventDefault();
+        searchInput.focus?.();
+        return;
+      }
       if (event.key === "ArrowLeft")
         event.shiftKey ? truckScene3DCamera(state, -cameraStep(), 0) : orbitScene3DCamera(state, -0.1, 0);
       else if (event.key === "ArrowRight")
@@ -93174,5 +93638,5 @@ var STATIC_SYSTEM_CATALOG = Object.freeze([
 ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
 export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, outputValueKind, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, formatOutputText, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateAsync, lintRix, mountOutputWidgets };
 
-//# debugId=33A73951E3D10A3C64756E2164756E21
-//# sourceMappingURL=chunk-maqwxtsa.js.map
+//# debugId=57A2C4E7188147A764756E2164756E21
+//# sourceMappingURL=chunk-c4nx2a88.js.map

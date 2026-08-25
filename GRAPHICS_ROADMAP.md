@@ -38,9 +38,15 @@ selection. These controls and all six graphics baselines are documented in the
 RiX Web **Graphics interaction guide**.
 
 Further Priority 1 work remains: automated real-device gesture matrices,
-screen-reader testing with blind users, spatial navigation between neighboring
-objects, search within very large semantic catalogs, configurable hit
-tolerances, and persistent per-user navigation preferences.
+screen-reader testing with blind users, and usability measurement on very large
+semantic catalogs.
+
+The consolidated post-baseline pass adds retained-anchor spatial navigation
+with Alt-arrow keys, `/` focus for semantic-object search, live filtered direct
+selection, four pointer hit-area policies, and optional per-user persistence of
+viewport, selection, filter, search, and tolerance under `preferencesKey`.
+Search and spatial traversal operate on exact semantic identities rather than
+SVG paint order.
 
 ## 2. Real Scene3D viewport — baseline implemented
 
@@ -73,9 +79,15 @@ passive inspector noisy. Projected labels use deterministic nearby placements,
 with visible displaced and crowded states when annotations collide.
 
 Further Priority 2 work remains: GPU color-buffer picking for very dense
-scenes, depth-buffer-aware annotation occlusion, real-device gesture matrices,
-screen-reader testing with blind users, persistent navigation preferences, and
-pixel-level parity fixtures across browser WebGL implementations.
+scenes, real-device gesture matrices, screen-reader testing with blind users,
+and pixel-level parity fixtures across browser WebGL implementations.
+
+The consolidated post-baseline pass makes retained annotation `occlusion`
+policies operational: mesh depth can show, fade, or hide a projected label
+without discarding its exact semantic record. The 3D toolbar now searches the
+semantic catalog and offers four CPU pick-area tolerances. Scene metadata may
+set `preferencesKey` to persist camera, projection, selection, type filter,
+search, and pick tolerance.
 
 ## 3. Broader plot families — baseline implemented
 
@@ -244,10 +256,18 @@ The audio host performs no evaluator I/O and leaves the full text alternative
 available when Web Audio is absent or muted.
 
 Follow-up work remains: certified discontinuity/intersection/extremum event
-records from math plugins; user-authored cue palettes and frequency/tempo
-ranges; richer geometry sonification and relationship/dependency drill-down;
-3D and nD research; persistent preferences; screen-reader/browser matrices;
-and moderated testing with blind, low-vision, and hearing-diverse users.
+records from additional math plugins; richer geometry audio mappings; 3D and
+nD research; screen-reader/browser matrices; and moderated testing with blind,
+low-vision, and hearing-diverse users.
+
+The consolidated post-baseline pass consumes proof-bearing scalar-field
+records without overstating sampled segment locations, and adds construction
+dependency relations to `rix.graphics.text@1`. Plot `audio` options can declare
+tempo, pitch range, and an exactness cue palette. The browser exposes detailed,
+minimal, or disabled cues plus live tempo and pitch controls, while
+`preferencesKey` persists transport, timbre, stereo, mute, cue, range, and
+frequency choices. These preferences remain a host projection and never cause
+evaluator I/O.
 
 The success criterion is equivalent mathematical access across visual, textual,
 and audio views—not identical sensory output.

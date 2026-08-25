@@ -47,7 +47,7 @@ import {
   parseAndEvaluateAsync,
   renderOutputHtml,
   tokenize
-} from "./chunk-maqwxtsa.js";
+} from "./chunk-c4nx2a88.js";
 
 // standard-profile.rix
 var standard_profile_default = `## RiX-Web standard calculator profile.
@@ -21970,6 +21970,8 @@ PlotGeneral(data, settings, kind) -> {;
             status=unresolved==0 ?: :sampled ?_ :partial,
             rendering=:series,
             tickCount=tickCount,
+            preferencesKey=PlotOption(settings,"preferenceskey"),
+            audio=PlotOption(settings,"audio",{= }),
             title=PlotOption(settings,"title"),
             xLabel=PlotOption(settings,"xlabel"),
             yLabel=PlotOption(settings,"ylabel")
@@ -22104,6 +22106,7 @@ PlotFieldGraphic(kind,config,settings,children,details) -> {;
             unresolvedRegions=unresolved,ambiguousRegions=PlotOption(details,"ambiguousregions",[]),
             legend=PlotOption(details,"legend",[]),colorScale=PlotOption(details,"colorscale",_),
             records=PlotOption(details,"records",[]),series=series,rendering=PlotOption(details,"rendering",:graphics),
+            preferencesKey=PlotOption(settings,"preferenceskey"),audio=PlotOption(settings,"audio",{= }),
             title=PlotOption(settings,"title"),xLabel=PlotOption(settings,"xlabel"),yLabel=PlotOption(settings,"ylabel")
         }
     });
@@ -30598,5 +30601,5 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
 
 export { pluginProfileFromUrl, stripMarkedPluginProfile, findHelp, createRixRepl };
 
-//# debugId=475251E03DBF17A164756E2164756E21
-//# sourceMappingURL=chunk-e33sbmcg.js.map
+//# debugId=4D146387CD06E03564756E2164756E21
+//# sourceMappingURL=chunk-2rs17fjn.js.map

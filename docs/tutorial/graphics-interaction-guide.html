@@ -1,11 +1,15 @@
 <!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Use every 2D, 3D, geometry, timeline, text, and audio control in RiX Web." /><title>Graphics interaction guide — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./structured-output.html#lesson-start" title="Structured output">12</a> <span aria-hidden="true">·</span> <span>i</span></p><h1>Graphics interaction guide</h1><p class="deck">Use every 2D, 3D, geometry, timeline, text, and audio control in RiX Web.</p><div class="lesson-content"><p>RiX graphics stay as retained mathematical values. RiX Web projects those values into visual, interactive, textual, and audio views. This guide collects the controls added across the graphics roadmap in one place.</p>
 <h2>Navigate and inspect every 2D Graphic</h2>
 <p>Run this plot, then interact with the Graphic rather than the source cell.</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">.Plugin.Load(&quot;plot&quot;);
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">.Plugin.Load(&quot;plot&quot;);
 .plot.Function(
     x -&gt; x^3 - x,
     [-3,3],
-    {= samples=41, title=&quot;Cubic inspection&quot;, xLabel=&quot;x&quot;, yLabel=&quot;y&quot; }
+    {=
+      samples=41, title=&quot;Cubic inspection&quot;, xLabel=&quot;x&quot;, yLabel=&quot;y&quot;,
+      preferencesKey=&quot;cubic-inspection&quot;,
+      audio={= tempo=14,frequency=[180,1200],cuePalette={= exact=1400,approximate=700 } }
+    }
 ) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Pointer and touch controls:</p>
 <ul><li>Drag empty graph space with one pointer to pan.</li><li>Pinch with two fingers to zoom around the gesture midpoint. Moving both</li></ul>
@@ -21,27 +25,33 @@
 <p>object. Hold Shift to jump by ten objects.</p>
 <ul><li><strong>Object type</strong> filters navigation to paths, rectangles, circles, text, or</li></ul>
 <p>interactive handles. <strong>Mathematical object</strong> jumps directly to an exact semantic object, which is especially useful for dense field plots.</p>
+<ul><li><strong>Find object</strong>, or <code>/</code> from the focused SVG, searches exact identities,</li></ul>
+<p>roles, and descriptions. Alt-arrow selects the nearest retained object in a spatial direction. <strong>Hit area</strong> changes empty-space near-hit tolerance without changing the underlying geometry.</p>
 <ul><li>The inspector reports approximate pointer coordinates but exact retained</li></ul>
 <p>coordinates for a selected object or stored plot sample.</p>
-<p>The selected identity, zoom, pan, object filter, and exact inspector survive a reactive redraw. The SVG is linked to its inspector and live status so a screen reader receives selection and viewport changes without hearing every hover.</p>
+<p>The selected identity, zoom, pan, object filter, and exact inspector survive a reactive redraw. With <code>preferencesKey</code>, the viewport, selection, search, filter, and hit area also survive a later browser session. The SVG is linked to its inspector and live status so a screen reader receives selection and viewport changes without hearing every hover.</p>
 <h2>Explore retained Scene3D views</h2>
 <p>A returned Scene3D value mounts an interactive WebGL viewport. If WebGL is missing or lost, the same retained plan supplies a deterministic SVG fallback.</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="8" spellcheck="false">.Plugin.Load(&quot;scene3d&quot;);
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">.Plugin.Load(&quot;scene3d&quot;);
 axes := .scene3d.Axes({= length=2, id=&quot;basis&quot; });
 cloud := .scene3d.PointCloud(
     [[0,0,0],[1,0,1],[0,1,1],[-1,0,1],[0,-1,1]],
     {= radius=1/12, color=&quot;#7c3aed&quot;, id=&quot;samples&quot;, label=&quot;exact samples&quot; }
 );
 camera := .scene3d.OrbitCamera([0,0,1/2], {= radius=5, height=2, turn=1/3 });
-.scene3d.Scene([axes,cloud], {= camera=camera }) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+.scene3d.Scene([axes,cloud], {=
+  camera=camera, metadata={= preferencesKey=&quot;exact-camera-guide&quot; }
+}) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <ul><li>Drag to orbit. Shift-drag or right-drag to truck the camera. With touch, move</li></ul>
 <p>two fingers together to truck and change their spacing to dolly. The wheel dollies; double-click resets.</p>
 <ul><li>Arrow keys orbit; Shift-arrow keys truck. Plus and minus dolly, P changes</li></ul>
 <p>projection, Home resets, and brackets select retained objects.</p>
 <ul><li>The toolbar exposes the same operations. Use <strong>Object type</strong> to restrict</li></ul>
 <p>traversal and <strong>3D object</strong> to go directly to any retained <code>pickid</code>; its option text and inspector report retained exact world coordinates.</p>
+<ul><li><strong>Find object</strong> searches retained IDs and descriptions; <strong>Pick area</strong> adjusts</li></ul>
+<p>CPU hit tolerance. The scene <code>preferencesKey</code> persists camera, projection, selection, filter, search, and tolerance.</p>
 <ul><li>Projected annotation buttons are displaced deterministically when possible</li></ul>
-<p>instead of stacking at the same screen position. A dashed border identifies a displaced label; a highlighted crowded label means no free nearby slot was available.</p>
+<p>instead of stacking at the same screen position. A dashed border identifies a displaced label; a highlighted crowded label means no free nearby slot was available. An annotation policy with <code>occlusion=&quot;hide&quot;</code> or <code>&quot;fade&quot;</code> compares the retained anchor with projected mesh depth; <code>&quot;show&quot;</code> remains the default.</p>
 <h2>Try the broader plot families</h2>
 <p>Every plot family lowers to ordinary Graphics and therefore receives the same navigation, exact inspection, text alternative, and renderer choices.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="28" spellcheck="false">.Plugin.Load(&quot;plot&quot;);
@@ -74,6 +84,7 @@ camera := .scene3d.OrbitCamera([0,0,1/2], {= radius=5, height=2, turn=1/3 });
 ]) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p><code>Inequality</code> adds <code>relation=:le</code>, <code>:lt</code>, <code>:ge</code>, or <code>:gt</code>. <code>Contour</code> accepts one or more <code>levels</code>. Scalar-field metadata records the exact domain, bounded sampling grid, evidence status, stable hit identities, ambiguous cells, and unresolved regions. A visible sampled boundary is never silently presented as a proof.</p>
 <p>For <code>Implicit</code>, <code>Contour</code>, and <code>Inequality</code>, <code>refineDepth</code> requests zero to six quadtree levels and <code>refinementBudget</code> limits total processed cells to at most 50,000; an explicit budget must at least cover the base grid. Refinement concentrates rational samples around mixed cells and also detects a center whose classification differs from all four corners. <code>certifyIntervals=1</code> additionally evaluates each cell as an exact rational box; the function must support interval inputs. This can certify that an implicit level is excluded from a whole cell, or that an entire inequality cell is inside or outside. Interpolated boundary segments remain explicitly sampled. Open <strong>Text alternative</strong> to read processed/leaf/subdivision counts, maximum depth, budget stops, point evaluations, shared-cache hits, unique points, and certified interval evaluations. <code>continuity=:continuous</code> lets an exact sampled sign change prove boundary existence on an edge by the intermediate value theorem, but the interpolated point and drawn segment remain sampled. <code>discontinuityThreshold</code> adds a heuristic steep-cell warning and refinement trigger; it is not a discontinuity proof. Contours accept <code>labelContours=1</code> and <code>contourLabelLimit</code>. Heat maps accept <code>colorMode=:continuous</code> and <code>hueRange=[240,0]</code> for value-driven HSL color.</p>
+<p>Proof-bearing field records appear in the same text projection. For example, an exact sign change plus <code>continuity=:continuous</code> is described as proof that a level exists on the relevant edges while still labeling the drawn segment as a sampled location.</p>
 <h2>Work with a geometry construction</h2>
 <p>The geometry workbench is a Graphic plus a retained construction graph.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">.Plugin.Load(&quot;geometry&quot;);
@@ -83,7 +94,7 @@ c := .geometry.Point(2,4);
 circle := .geometry.Circumcircle(a,b,c);
 bisector := .geometry.PerpendicularBisector(a,b);
 .geometry.Draw([circle,bisector,a,b,c], {= view=[-1,-2,7,6], size=[560,480] }) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>For <code>.geometry.Workbench(graph, options)</code>, RiX Web adds an object tree and exact property inspector. Select tree entries with pointer or keyboard, move declared free-point handles, undo and redo session moves, and export the portable <code>rix.geometry.construction-record@1</code> JSON. Dependencies and unresolved or degenerate constructions remain visible rather than becoming guessed coordinates.</p>
+<p>For <code>.geometry.Workbench(graph, options)</code>, RiX Web adds an object tree and exact property inspector. Select tree entries with pointer or keyboard, move declared free-point handles, undo and redo session moves, and export the portable <code>rix.geometry.construction-record@1</code> JSON. Dependencies and unresolved or degenerate constructions remain visible rather than becoming guessed coordinates. The text alternative includes an ordered construction-dependency section with each node&#039;s retained status.</p>
 <p>The first canvas-authoring tool creates exact free points. Its positioned action receives a rational mathematical coordinate, not a browser pixel. The undo and redo actions operate on the same retained graph history.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="21" spellcheck="false">.Plugin.Load(&quot;geometry&quot;);
 view := [-4,-3,4,3]; size := [640,480];
@@ -143,11 +154,14 @@ $authoring;</textarea><div class="tutorial-output" data-tutorial-output></div></
 <p>series into an unintelligible chord.</p>
 <ul><li>Restrict the sample domain, choose forward or reverse direction, and select</li></ul>
 <p>0.5, 1, 2, or 4 times speed.</p>
+<ul><li>Set trace tempo and low/high pitch directly. <strong>Cues</strong> chooses detailed,</li></ul>
+<p>minimal boundary/crossing cues, or no event tones while leaving speech and text intact.</p>
 <ul><li>Choose per-series timbres or sine, triangle, square, or sawtooth. Stereo</li></ul>
 <p>position may be disabled, and Mute keeps every textual control usable.</p>
 <ul><li>Focus the audio panel: Space plays or pauses, arrows step, Home and End seek,</li></ul>
 <p>and M toggles mute.</p>
 <p>Horizontal traversal controls time, vertical value controls pitch, and stereo position follows the series. Restrained cues announce domain boundaries, retained marks, intersections, axis crossings, and sampled extrema. Labels say whether evidence is exact, a certified enclosure, approximate, unresolved, or conjectural. A sampled sign change explicitly says that it is not a certified root. Audio never starts automatically, and unsupported audio leaves the full text alternative intact.</p>
+<p>Plot option <code>audio={= tempo=..., frequency=[low,high], cuePalette={= ... } }</code> sets renderer-neutral defaults. Cue palette keys are <code>exact</code>, <code>certifiedEnclosure</code>, <code>approximate</code>, <code>unresolved</code>, <code>conjectural</code>, and <code>general</code>. When <code>preferencesKey</code> is present, RiX Web separately persists the audio series, range, speed, tempo, pitch, cues, timbre, direction, stereo, and mute choices.</p>
 <aside class="challenge"><p class="eyebrow">Challenge</p><h3>Build an accessible trace</h3><p>Plot <code>x^2 - 2</code> on <code>[-2,2]</code> with at least 33 samples and a title. Navigate its objects, open its text alternative, and use both stepping and playback in the audio trace.</p><section class="tutorial-cell"><header><span>Your RiX answer</span><button type="button" data-tutorial-run>Run answer</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false" placeholder="# Write your RiX solution here">.Plugin.Load(&quot;plot&quot;);
 .plot.Function(x -&gt; x^2 - 2, [-2,2], {=
     samples=33, title=&quot;Square root evidence&quot;, xLabel=&quot;x&quot;, yLabel=&quot;x squared minus 2&quot;
