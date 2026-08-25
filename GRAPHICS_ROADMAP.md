@@ -63,9 +63,19 @@ canvas sizing, and persistent camera/selection state across reactive rerenders.
 Missing and lost WebGL contexts display a deterministic SVG projection derived
 from the same `rix.webgl-plan@1` camera and draw calls.
 
-Follow-up QA remains: multitouch camera gestures, GPU color-buffer picking for
-very dense scenes, deeper annotation collision/occlusion policy, screen-reader
-passes, and pixel-level parity fixtures across browser WebGL implementations.
+The first post-baseline interaction pass adds two-pointer camera gestures:
+pinch distance controls bounded dolly while centroid movement trucks through
+the camera plane. Dense scenes now expose a direct exact-object picker and a
+retained primitive-type filter; previous/next traversal respects the filter.
+The canvas explicitly references its inspector and polite status, publishes its
+keyboard shortcuts, and announces committed exact selection without making the
+passive inspector noisy. Projected labels use deterministic nearby placements,
+with visible displaced and crowded states when annotations collide.
+
+Further Priority 2 work remains: GPU color-buffer picking for very dense
+scenes, depth-buffer-aware annotation occlusion, real-device gesture matrices,
+screen-reader testing with blind users, persistent navigation preferences, and
+pixel-level parity fixtures across browser WebGL implementations.
 
 ## 3. Broader plot families — baseline implemented
 

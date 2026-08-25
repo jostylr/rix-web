@@ -34,12 +34,14 @@ cloud := .scene3d.PointCloud(
 );
 camera := .scene3d.OrbitCamera([0,0,1/2], {= radius=5, height=2, turn=1/3 });
 .scene3d.Scene([axes,cloud], {= camera=camera }) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<ul><li>Drag to orbit. Shift-drag or right-drag to truck the camera. The wheel</li></ul>
-<p>dollies; double-click resets.</p>
+<ul><li>Drag to orbit. Shift-drag or right-drag to truck the camera. With touch, move</li></ul>
+<p>two fingers together to truck and change their spacing to dolly. The wheel dollies; double-click resets.</p>
 <ul><li>Arrow keys orbit; Shift-arrow keys truck. Plus and minus dolly, P changes</li></ul>
 <p>projection, Home resets, and brackets select retained objects.</p>
-<ul><li>The toolbar exposes the same operations. Selection uses stable <code>pickid</code></li></ul>
-<p>records and the inspector reports retained exact world coordinates.</p>
+<ul><li>The toolbar exposes the same operations. Use <strong>Object type</strong> to restrict</li></ul>
+<p>traversal and <strong>3D object</strong> to go directly to any retained <code>pickid</code>; its option text and inspector report retained exact world coordinates.</p>
+<ul><li>Projected annotation buttons are displaced deterministically when possible</li></ul>
+<p>instead of stacking at the same screen position. A dashed border identifies a displaced label; a highlighted crowded label means no free nearby slot was available.</p>
 <h2>Try the broader plot families</h2>
 <p>Every plot family lowers to ordinary Graphics and therefore receives the same navigation, exact inspection, text alternative, and renderer choices.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="19" spellcheck="false">.Plugin.Load(&quot;plot&quot;);

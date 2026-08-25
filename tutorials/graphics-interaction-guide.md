@@ -64,12 +64,18 @@ camera := .scene3d.OrbitCamera([0,0,1/2], {= radius=5, height=2, turn=1/3 });
 .scene3d.Scene([axes,cloud], {= camera=camera }) ;
 ```
 
-- Drag to orbit. Shift-drag or right-drag to truck the camera. The wheel
+- Drag to orbit. Shift-drag or right-drag to truck the camera. With touch, move
+  two fingers together to truck and change their spacing to dolly. The wheel
   dollies; double-click resets.
 - Arrow keys orbit; Shift-arrow keys truck. Plus and minus dolly, P changes
   projection, Home resets, and brackets select retained objects.
-- The toolbar exposes the same operations. Selection uses stable `pickid`
-  records and the inspector reports retained exact world coordinates.
+- The toolbar exposes the same operations. Use **Object type** to restrict
+  traversal and **3D object** to go directly to any retained `pickid`; its
+  option text and inspector report retained exact world coordinates.
+- Projected annotation buttons are displaced deterministically when possible
+  instead of stacking at the same screen position. A dashed border identifies
+  a displaced label; a highlighted crowded label means no free nearby slot was
+  available.
 
 ## Try the broader plot families
 

@@ -27595,7 +27595,7 @@ function renderOutputHtml(value, format = (item) => String(item ?? "")) {
     return `<pre>${text8(value)}</pre>`;
   if (outputValueKind(value) === "scene3d") {
     const schema = value?.entries instanceof Map ? asString(get(value.entries, "schema")) : value.schema;
-    return `<section class="rix-output-scene3d" data-rix-scene3d-schema="${escapeHtml2(schema || "rix.scene3d@1")}"><div class="rix-output-scene3d-toolbar" role="toolbar" aria-label="3D scene controls"><button type="button" data-rix-scene3d-action="previous" title="Previous selectable object">Previous</button><button type="button" data-rix-scene3d-action="next" title="Next selectable object">Next</button><span class="rix-output-scene3d-toolbar-group" aria-label="Orbit"><button type="button" data-rix-scene3d-action="orbit-left" aria-label="Orbit left">←</button><button type="button" data-rix-scene3d-action="orbit-up" aria-label="Orbit up">↑</button><button type="button" data-rix-scene3d-action="orbit-down" aria-label="Orbit down">↓</button><button type="button" data-rix-scene3d-action="orbit-right" aria-label="Orbit right">→</button></span><button type="button" data-rix-scene3d-action="dolly-in" aria-label="Dolly in">+</button><button type="button" data-rix-scene3d-action="dolly-out" aria-label="Dolly out">−</button><button type="button" data-rix-scene3d-action="projection">Projection</button><button type="button" data-rix-scene3d-action="reset">Reset camera</button></div><div class="rix-output-scene3d-surface"><canvas data-rix-scene3d-canvas width="640" height="480" tabindex="0" role="img" aria-label="Interactive 3D mathematical scene. Drag to orbit, Shift-drag to truck, use the wheel to dolly, arrows to orbit, Shift-arrows to truck, plus or minus to dolly, P to switch projection, brackets to select objects, and Home to reset.">Interactive 3D scene. WebGL or the SVG fallback is required.</canvas><div class="rix-output-scene3d-annotations" aria-label="3D scene annotations"></div></div><output class="rix-output-scene3d-inspector" aria-live="polite">Scene3D background</output><output class="rix-output-scene3d-status" aria-live="polite">Preparing 3D viewport…</output></section>`;
+    return `<section class="rix-output-scene3d" data-rix-scene3d-schema="${escapeHtml2(schema || "rix.scene3d@1")}"><div class="rix-output-scene3d-toolbar" role="toolbar" aria-label="3D scene controls"><button type="button" data-rix-scene3d-action="previous" title="Previous selectable object">Previous</button><button type="button" data-rix-scene3d-action="next" title="Next selectable object">Next</button><span class="rix-output-scene3d-toolbar-group" aria-label="Orbit"><button type="button" data-rix-scene3d-action="orbit-left" aria-label="Orbit left">←</button><button type="button" data-rix-scene3d-action="orbit-up" aria-label="Orbit up">↑</button><button type="button" data-rix-scene3d-action="orbit-down" aria-label="Orbit down">↓</button><button type="button" data-rix-scene3d-action="orbit-right" aria-label="Orbit right">→</button></span><button type="button" data-rix-scene3d-action="dolly-in" aria-label="Dolly in">+</button><button type="button" data-rix-scene3d-action="dolly-out" aria-label="Dolly out">−</button><button type="button" data-rix-scene3d-action="projection">Projection</button><button type="button" data-rix-scene3d-action="reset">Reset camera</button></div><div class="rix-output-scene3d-surface"><canvas data-rix-scene3d-canvas width="640" height="480" tabindex="0" role="img" aria-label="Interactive 3D mathematical scene. Drag to orbit; pinch to dolly and truck; Shift-drag to truck; use the wheel to dolly; arrows to orbit; Shift-arrows to truck; plus or minus to dolly; P to switch projection; brackets to select objects; and Home to reset.">Interactive 3D scene. WebGL or the SVG fallback is required.</canvas><div class="rix-output-scene3d-annotations" aria-label="3D scene annotations"></div></div><output class="rix-output-scene3d-inspector" aria-live="polite">Scene3D background</output><output class="rix-output-scene3d-status" aria-live="polite">Preparing 3D viewport…</output></section>`;
   }
   if (value.kind === "live_view") {
     return `<section class="rix-output-live-view" data-rix-live-view="${escapeHtml2(value.id)}" data-rix-live-revision="${value.revision}">${renderOutputHtml(value.current, format)}</section>`;
@@ -89529,6 +89529,7 @@ function enhanceAudioTraceView(root, options = {}) {
 // ../rix/src/tools/scene3d-view.js
 var MIN_PITCH = -Math.PI / 2 + 0.015;
 var MAX_PITCH = Math.PI / 2 - 0.015;
+var scene3DViewSequence = 0;
 function sequenceValue7(value) {
   if (Array.isArray(value))
     return value;
@@ -89607,6 +89608,12 @@ function sceneBounds(plan) {
     radius: Math.max(0.000001, ...points.map((point4) => Math.hypot(...subtract2(point4, center))))
   };
 }
+function realizedScenePrimitives(scene) {
+  return sequenceValue7(mapField5(mapField5(scene, "realized"), "primitives"));
+}
+function scenePrimitiveByPickId(scene, pickId) {
+  return realizedScenePrimitives(scene).find((candidate) => stringValue12(mapField5(candidate, "pickid")) === String(pickId));
+}
 function createScene3DViewState(plan, target = {}) {
   if (plan?.schema !== "rix.webgl-plan@1")
     throw new Error("Scene3D view requires a rix.webgl-plan@1 plan");
@@ -89624,6 +89631,10 @@ function createScene3DViewState(plan, target = {}) {
   const selectable = new Set(Object.keys(plan.picking || {}));
   const ids = Array.isArray(target.selection?.ids) ? [...new Set(target.selection.ids.map(String))].filter((id) => selectable.has(id)) : [];
   target.selection = { schema: "rix.selection@1", ids, focus: target.selection?.focus ?? ids[0] ?? null };
+  target.navigation = {
+    schema: "rix.scene3d-navigation@1",
+    scope: typeof target.navigation?.scope === "string" ? target.navigation.scope : "all"
+  };
   target.viewport = {
     schema: "rix.viewport3d@1",
     width: plan.viewport.width,
@@ -89679,6 +89690,55 @@ function toggleScene3DProjection(state) {
   }
   state.viewport.projection = state.camera.projection;
   return state;
+}
+function gesturePointer2(pointers, id) {
+  return pointers.find((pointer) => String(pointer.id) === String(id));
+}
+function scene3DCameraStep(state) {
+  return Math.max(state.bounds.radius, Math.hypot(...subtract2(state.camera.position, state.camera.target))) * 0.06;
+}
+function updateScene3DGesture(state, previousPointers, nextPointers, rect) {
+  const previous = Array.from(previousPointers || []);
+  const next = Array.from(nextPointers || []);
+  const width = Number(rect?.width);
+  const height = Number(rect?.height);
+  if (!(width > 0) || !(height > 0))
+    throw new Error("Scene3D gesture requires non-empty bounds");
+  const common = previous.filter((pointer) => gesturePointer2(next, pointer.id));
+  if (!common.length)
+    return Object.freeze({ type: "none", changed: false });
+  if (common.length >= 2) {
+    const before2 = common.slice(0, 2);
+    const after2 = before2.map((pointer) => gesturePointer2(next, pointer.id));
+    const midpoint2 = (points) => [
+      (Number(points[0].x) + Number(points[1].x)) / 2,
+      (Number(points[0].y) + Number(points[1].y)) / 2
+    ];
+    const distance = (points) => Math.hypot(Number(points[1].x) - Number(points[0].x), Number(points[1].y) - Number(points[0].y));
+    const oldMidpoint = midpoint2(before2);
+    const newMidpoint = midpoint2(after2);
+    const oldDistance = distance(before2);
+    const newDistance = distance(after2);
+    if (oldDistance > 0 && newDistance > 0)
+      dollyScene3DCamera(state, oldDistance / newDistance);
+    const step = scene3DCameraStep(state) * 2 / Math.max(1, Math.min(width, height));
+    truckScene3DCamera(state, -(newMidpoint[0] - oldMidpoint[0]) * step, (newMidpoint[1] - oldMidpoint[1]) * step);
+    return Object.freeze({
+      type: "pinch",
+      changed: oldDistance !== newDistance || oldMidpoint[0] !== newMidpoint[0] || oldMidpoint[1] !== newMidpoint[1]
+    });
+  }
+  const before = common[0];
+  const after = gesturePointer2(next, before.id);
+  const deltaX = Number(after.x) - Number(before.x);
+  const deltaY = Number(after.y) - Number(before.y);
+  if (before.truck || after.truck) {
+    const step = scene3DCameraStep(state) * 0.01;
+    truckScene3DCamera(state, -deltaX * step, deltaY * step);
+    return Object.freeze({ type: "truck", changed: deltaX !== 0 || deltaY !== 0 });
+  }
+  orbitScene3DCamera(state, -deltaX * 0.008, -deltaY * 0.008);
+  return Object.freeze({ type: "orbit", changed: deltaX !== 0 || deltaY !== 0 });
 }
 function projectScene3DPoint(matrix, point4, viewport2) {
   const source = [...point4, 1];
@@ -89774,8 +89834,7 @@ function exactPoint2(value, format) {
   return `(${sequenceValue7(value).map((coordinate) => exactText2(coordinate, format)).join(", ")})`;
 }
 function describeScene3DSelection(scene, pickId, format = String) {
-  const primitives = sequenceValue7(mapField5(mapField5(scene, "realized"), "primitives"));
-  const primitive2 = primitives.find((candidate) => stringValue12(mapField5(candidate, "pickid")) === pickId);
+  const primitive2 = scenePrimitiveByPickId(scene, pickId);
   if (!primitive2)
     return pickId ? `Scene3D object ${pickId}` : "Scene3D background";
   const kind = stringValue12(mapField5(primitive2, "kind")) || "object";
@@ -89783,6 +89842,67 @@ function describeScene3DSelection(scene, pickId, format = String) {
   const points = sequenceValue7(mapField5(primitive2, "points"));
   const coordinates = points.length <= 4 ? points.map((point4) => exactPoint2(point4, format)).join("; ") : `${points.slice(0, 3).map((point4) => exactPoint2(point4, format)).join("; ")}; …`;
   return `${label2} · ${kind} · ${points.length} exact world point${points.length === 1 ? "" : "s"}${coordinates ? ` · ${coordinates}` : ""}`;
+}
+function scene3DSelectionCatalog(scene, plan, format = String) {
+  return Object.freeze(Object.keys(plan?.picking || {}).map((id) => {
+    const primitive2 = scenePrimitiveByPickId(scene, id);
+    const role = stringValue12(mapField5(primitive2, "kind")) || plan.picking[id]?.kind || "object";
+    return Object.freeze({
+      id,
+      role,
+      label: describeScene3DSelection(scene, id, format)
+    });
+  }));
+}
+function annotationRectangle(screen, text15, options) {
+  const width = Math.min(options.maxWidth, Math.max(options.minWidth, String(text15 || "").length * options.characterWidth + 12));
+  const height = options.height;
+  return {
+    left: screen[0] - width / 2,
+    right: screen[0] + width / 2,
+    top: screen[1] - height / 2,
+    bottom: screen[1] + height / 2
+  };
+}
+function rectanglesOverlap(left, right, gap) {
+  return !(left.right + gap <= right.left || right.right + gap <= left.left || left.bottom + gap <= right.top || right.bottom + gap <= left.top);
+}
+function layoutScene3DAnnotations(annotations, viewport2, settings = {}) {
+  const options = {
+    characterWidth: Number(settings.characterWidth || 7),
+    gap: Number(settings.gap || 4),
+    height: Number(settings.height || 22),
+    maxWidth: Number(settings.maxWidth || 160),
+    minWidth: Number(settings.minWidth || 42),
+    offset: Number(settings.offset || 30)
+  };
+  const width = Math.max(1, Number(viewport2?.width) || 1);
+  const height = Math.max(1, Number(viewport2?.height) || 1);
+  const candidates = [[0, 0], [0, -1], [0, 1], [1, 0], [-1, 0], [1, -1], [-1, -1], [1, 1], [-1, 1]];
+  const occupied = [];
+  return annotations.map((annotation) => {
+    if (!annotation.visible || !annotation.screen)
+      return Object.freeze({ ...annotation, displaced: false, crowded: false });
+    const text15 = annotation.text || annotation.label || annotation.pickId || "annotation";
+    let placement = null;
+    for (const [horizontal, vertical] of candidates) {
+      const screen = [
+        Math.min(width, Math.max(0, annotation.screen[0] + horizontal * options.offset)),
+        Math.min(height, Math.max(0, annotation.screen[1] + vertical * options.offset))
+      ];
+      const rectangle = annotationRectangle(screen, text15, options);
+      if (!occupied.some((item) => rectanglesOverlap(rectangle, item, options.gap))) {
+        placement = { screen, rectangle, displaced: horizontal !== 0 || vertical !== 0, crowded: false };
+        break;
+      }
+    }
+    if (!placement) {
+      const screen = [...annotation.screen];
+      placement = { screen, rectangle: annotationRectangle(screen, text15, options), displaced: false, crowded: true };
+    }
+    occupied.push(placement.rectangle);
+    return Object.freeze({ ...annotation, screen: placement.screen, displaced: placement.displaced, crowded: placement.crowded });
+  });
 }
 function escapeHtml4(value) {
   return String(value).replace(/[&<>"']/g, (character) => ({
@@ -89853,13 +89973,82 @@ function enhanceScene3DViews(root, options = {}) {
     const overlay = container.querySelector?.(".rix-output-scene3d-annotations");
     const inspector = container.querySelector?.(".rix-output-scene3d-inspector");
     const status = container.querySelector?.(".rix-output-scene3d-status");
+    const toolbar = container.querySelector?.(".rix-output-scene3d-toolbar");
     if (!canvas || !surface)
       return () => {};
     const plan = createWebGLPlan(scene, { width: 640, height: 480 });
     const state = createScene3DViewState(plan, options.state || {});
+    const catalog = scene3DSelectionCatalog(scene, plan, format);
+    const catalogById = new Map(catalog.map((entry2) => [entry2.id, entry2]));
+    const document = container.ownerDocument;
+    const makeSelect = (labelText, dataName) => {
+      if (!document?.createElement)
+        return null;
+      const label2 = document.createElement("label");
+      label2.className = "rix-output-scene3d-toolbar-select";
+      const text15 = document.createElement("span");
+      text15.textContent = labelText;
+      const select2 = document.createElement("select");
+      select2.dataset[dataName] = "true";
+      select2.setAttribute("aria-label", labelText);
+      label2.append(text15, select2);
+      toolbar?.append(label2);
+      return select2;
+    };
+    const scopeSelect = toolbar?.querySelector?.("[data-rix-scene3d-selection-scope]") || makeSelect("Object type", "rixScene3dSelectionScope");
+    const objectSelect = toolbar?.querySelector?.("[data-rix-scene3d-object-select]") || makeSelect("3D object", "rixScene3dObjectSelect");
+    const appendOption = (select2, value, text15) => {
+      if (!select2 || !document?.createElement)
+        return;
+      const option6 = document.createElement("option");
+      option6.value = value;
+      option6.textContent = text15;
+      select2.append(option6);
+    };
+    if (scopeSelect) {
+      scopeSelect.replaceChildren?.();
+      appendOption(scopeSelect, "all", `All objects (${catalog.length})`);
+      const roles = new Map;
+      for (const entry2 of catalog)
+        roles.set(entry2.role, (roles.get(entry2.role) || 0) + 1);
+      for (const [role, count] of [...roles.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+        appendOption(scopeSelect, role, `${role.replaceAll("_", " ")} (${count})`);
+      }
+      if (![...roles.keys(), "all"].includes(state.navigation.scope))
+        state.navigation.scope = "all";
+      scopeSelect.value = state.navigation.scope;
+    }
+    const scopedCatalog = () => catalog.filter((entry2) => state.navigation.scope === "all" || entry2.role === state.navigation.scope);
+    const refreshObjectOptions = () => {
+      if (!objectSelect)
+        return;
+      objectSelect.replaceChildren?.();
+      const entries4 = scopedCatalog();
+      if (!entries4.length)
+        appendOption(objectSelect, "", "No objects in this type");
+      for (const [index, entry2] of entries4.entries())
+        appendOption(objectSelect, entry2.id, `${index + 1}. ${entry2.label}`);
+      objectSelect.disabled = entries4.length === 0;
+      if (entries4.some((entry2) => entry2.id === state.selection.focus))
+        objectSelect.value = state.selection.focus;
+    };
+    refreshObjectOptions();
+    const viewId = canvas.id || `rix-scene3d-${++scene3DViewSequence}`;
+    canvas.id = viewId;
+    if (inspector)
+      inspector.id ||= `${viewId}-inspector`;
+    if (status)
+      status.id ||= `${viewId}-status`;
+    inspector?.setAttribute?.("aria-live", "off");
+    const descriptions = [inspector?.id, status?.id].filter(Boolean).join(" ");
+    if (descriptions)
+      canvas.setAttribute("aria-describedby", descriptions);
+    canvas.setAttribute("aria-keyshortcuts", "ArrowLeft ArrowRight ArrowUp ArrowDown + - Home P [ ]");
+    toolbar?.setAttribute?.("aria-controls", viewId);
     let gl = null;
     let matrix = null;
-    let pointer = null;
+    const pointers = new Map;
+    let gestureChanged = false;
     let fallback = null;
     let disposed = false;
     const listeners = [];
@@ -89910,6 +90099,12 @@ function enhanceScene3DViews(root, options = {}) {
       const exact2 = describeScene3DSelection(scene, pickId, format);
       if (inspector)
         inspector.textContent = exact2;
+      setStatus(exact2);
+      if (objectSelect && scopedCatalog().some((entry2) => entry2.id === pickId))
+        objectSelect.value = pickId;
+      for (const annotation of overlay?.querySelectorAll?.("[data-rix-semantic-id]") || []) {
+        annotation.toggleAttribute?.("aria-current", annotation.dataset.rixSemanticId === pickId);
+      }
       const interaction = pickId ? plan.picking[pickId]?.interaction ?? null : null;
       const detail = Object.freeze({ type: "scene3d:selection", selection: { ...state.selection, ids: [...state.selection.ids] }, pickId, exact: exact2, interaction, source });
       options.onSelection?.(detail);
@@ -89920,17 +90115,28 @@ function enhanceScene3DViews(root, options = {}) {
         return;
       overlay.hidden = false;
       overlay.replaceChildren?.();
-      for (const annotation of annotations) {
+      const logical = annotations.map((annotation) => ({
+        ...annotation,
+        screen: annotation.screen ? annotation.screen.map((coordinate) => coordinate / ratio) : null
+      }));
+      for (const annotation of layoutScene3DAnnotations(logical, {
+        width: plan.viewport.width / ratio,
+        height: plan.viewport.height / ratio
+      })) {
         if (!annotation.visible || !annotation.screen)
           continue;
         const label2 = container.ownerDocument.createElement("button");
         label2.type = "button";
         label2.className = "rix-output-scene3d-annotation";
         label2.textContent = annotation.text || annotation.label || annotation.pickId || "annotation";
-        label2.style.left = `${annotation.screen[0] / ratio}px`;
-        label2.style.top = `${annotation.screen[1] / ratio}px`;
+        label2.style.left = `${annotation.screen[0]}px`;
+        label2.style.top = `${annotation.screen[1]}px`;
+        label2.toggleAttribute("data-rix-annotation-displaced", annotation.displaced);
+        label2.toggleAttribute("data-rix-annotation-crowded", annotation.crowded);
         if (annotation.pickId) {
           label2.dataset.rixSemanticId = annotation.pickId;
+          label2.setAttribute("aria-label", catalogById.get(annotation.pickId)?.label || label2.textContent);
+          label2.toggleAttribute("aria-current", state.selection.focus === annotation.pickId);
           label2.addEventListener("click", (event) => {
             event.stopPropagation();
             select(annotation.pickId, "annotation");
@@ -89962,7 +90168,7 @@ function enhanceScene3DViews(root, options = {}) {
       const result = paintWebGLPlan(gl, plan);
       matrix = result.matrix;
       renderAnnotations(result.annotations, ratio);
-      setStatus(`${state.camera.projection} projection · drag to orbit · Shift-drag to truck · wheel to dolly`);
+      setStatus(`${state.camera.projection} projection · drag to orbit · pinch to dolly and truck · Shift-drag to truck · wheel to dolly`);
       options.onViewport?.({ type: "scene3d:viewport", viewport: { ...state.viewport }, camera: cloneCamera(state.camera) });
     };
     const logicalPoint = (event) => {
@@ -89971,7 +90177,7 @@ function enhanceScene3DViews(root, options = {}) {
       const ratioY = plan.viewport.height / Math.max(1, rect.height);
       return [(event.clientX - rect.left) * ratioX, (event.clientY - rect.top) * ratioY];
     };
-    const cameraStep = () => Math.max(state.bounds.radius, Math.hypot(...subtract2(state.camera.position, state.camera.target))) * 0.06;
+    const cameraStep = () => scene3DCameraStep(state);
     const action = (name, source = "toolbar") => {
       if (name === "orbit-left")
         orbitScene3DCamera(state, -0.12, 0);
@@ -89990,7 +90196,7 @@ function enhanceScene3DViews(root, options = {}) {
       else if (name === "reset")
         resetScene3DCamera(state);
       else if (name === "previous" || name === "next") {
-        const ids = Object.keys(plan.picking);
+        const ids = scopedCatalog().map((entry2) => entry2.id);
         if (ids.length) {
           const current = ids.indexOf(state.selection.focus);
           const delta = name === "next" ? 1 : -1;
@@ -90000,6 +90206,13 @@ function enhanceScene3DViews(root, options = {}) {
       }
       repaint();
     };
+    listen(scopeSelect, "change", () => {
+      state.navigation.scope = scopeSelect.value || "all";
+      refreshObjectOptions();
+      const count = scopedCatalog().length;
+      setStatus(`${count} ${state.navigation.scope === "all" ? "selectable" : state.navigation.scope.replaceAll("_", " ")} object${count === 1 ? "" : "s"} available`);
+    });
+    listen(objectSelect, "change", () => select(objectSelect.value || null, "keyboard"));
     for (const button of container.querySelectorAll?.("[data-rix-scene3d-action]") || []) {
       listen(button, "click", (event) => {
         event.stopPropagation();
@@ -90009,35 +90222,54 @@ function enhanceScene3DViews(root, options = {}) {
     listen(canvas, "contextmenu", (event) => event.preventDefault());
     listen(canvas, "click", (event) => event.stopPropagation());
     listen(canvas, "pointerdown", (event) => {
-      pointer = { id: event.pointerId, x: event.clientX, y: event.clientY, lastX: event.clientX, lastY: event.clientY, moved: false, truck: event.shiftKey || event.button === 2 };
+      pointers.set(event.pointerId, {
+        id: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+        startX: event.clientX,
+        startY: event.clientY,
+        moved: false,
+        truck: event.shiftKey || event.button === 2
+      });
+      if (pointers.size > 1) {
+        gestureChanged = true;
+        for (const pointer of pointers.values())
+          pointer.moved = true;
+      }
       canvas.setPointerCapture?.(event.pointerId);
       event.preventDefault();
     });
     listen(canvas, "pointermove", (event) => {
-      if (!pointer || event.pointerId !== pointer.id)
+      if (!pointers.has(event.pointerId))
         return;
-      const dx = event.clientX - pointer.lastX;
-      const dy = event.clientY - pointer.lastY;
-      pointer.lastX = event.clientX;
-      pointer.lastY = event.clientY;
-      pointer.moved ||= Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) > 4;
-      if (pointer.truck) {
-        const step = cameraStep() * 0.01;
-        truckScene3DCamera(state, -dx * step, dy * step);
-      } else
-        orbitScene3DCamera(state, -dx * 0.008, -dy * 0.008);
+      const previous = [...pointers.values()].map((pointer2) => ({ ...pointer2 }));
+      const pointer = pointers.get(event.pointerId);
+      pointer.x = event.clientX;
+      pointer.y = event.clientY;
+      pointer.moved ||= Math.hypot(event.clientX - pointer.startX, event.clientY - pointer.startY) > 4 || pointers.size > 1;
+      const result = updateScene3DGesture(state, previous, [...pointers.values()], canvas.getBoundingClientRect());
+      gestureChanged ||= result.changed;
       repaint();
+      event.preventDefault();
     });
     listen(canvas, "pointerup", (event) => {
-      if (!pointer || event.pointerId !== pointer.id)
+      if (!pointers.has(event.pointerId))
         return;
-      if (!pointer.moved && matrix)
+      const completed = pointers.get(event.pointerId);
+      const wasOnlyPointer = pointers.size === 1;
+      pointers.delete(event.pointerId);
+      if (wasOnlyPointer && !gestureChanged && !completed.moved && matrix) {
         select(pickScene3DPlan(plan, matrix, logicalPoint(event))?.pickId || null, "pointer");
-      canvas.releasePointerCapture?.(event.pointerId);
-      pointer = null;
+      }
+      if (canvas.hasPointerCapture?.(event.pointerId))
+        canvas.releasePointerCapture?.(event.pointerId);
+      if (!pointers.size)
+        gestureChanged = false;
     });
-    listen(canvas, "pointercancel", () => {
-      pointer = null;
+    listen(canvas, "pointercancel", (event) => {
+      pointers.delete(event.pointerId);
+      if (!pointers.size)
+        gestureChanged = false;
     });
     listen(canvas, "wheel", (event) => {
       event.preventDefault();
@@ -92126,5 +92358,5 @@ var STATIC_SYSTEM_CATALOG = Object.freeze([
 ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
 export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, outputValueKind, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, formatOutputText, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateAsync, lintRix, mountOutputWidgets };
 
-//# debugId=8D211816D4891DAC64756E2164756E21
-//# sourceMappingURL=chunk-hw1q6b2n.js.map
+//# debugId=FF251D6906892B5D64756E2164756E21
+//# sourceMappingURL=chunk-tarzezv3.js.map

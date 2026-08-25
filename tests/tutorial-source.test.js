@@ -147,6 +147,9 @@ test("structured output has focused table, document, graphic, drawing, sheet, in
     expect(controls).toContain(".Controls.Range");
     expect(graphicsGuide).toContain("Pinch with two fingers");
     expect(graphicsGuide).toContain("Mathematical object");
+    expect(graphicsGuide).toContain("3D object");
+    expect(graphicsGuide).toContain("two fingers together to truck");
+    expect(graphicsGuide).toContain("displaced label");
     expect(graphicsGuide).toContain("Overview (sequential)");
     expect(graphicsGuide).toContain("not a certified");
     expect(graphicsGuide).toContain(".Timeline.Sequence");
