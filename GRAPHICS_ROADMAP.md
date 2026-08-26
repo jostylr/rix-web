@@ -27,12 +27,14 @@ Acceptance requires that every kernel authoring operation has a browser tool,
 the same action is reachable without a pointer, degeneracy remains visible,
 and a saved construction reopens with stable ids and history.
 
-The first implementation slice is complete: `AuthoringWorkbench` now declares
-Point, Line, and Circle tool contracts; RiX Web exposes all three in its toolbar;
-Line and Circle consume two point identities from the accessible construction
-tree through a semantic `Graphics.Action` payload; and the resulting exact
-construction participates in the existing reactive redraw and undo/redo path.
-Intersection, transform, measurement, and constrained-motion tools remain next.
+The first two implementation slices are complete: `AuthoringWorkbench` now
+declares Point, Line, Circle, Intersection, and Distance tool contracts, and RiX
+Web builds its accessible toolbar from those semantic specifications. Selection
+arity, accepted object kinds, and operand roles travel with each tool;
+Intersection retains unresolved/degenerate results, while Distance retains its
+exact or certified value in the construction tree. Every action participates in
+the existing reactive redraw and undo/redo path. Transform and
+constrained-motion tools remain next.
 
 ### New priority 2. Automatic semantic points of interest
 

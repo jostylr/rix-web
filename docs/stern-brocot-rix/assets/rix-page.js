@@ -71308,8 +71308,9 @@ GeometryConstructionRecord(graph) -> {;
     valid=GeometryRequireConstructionGraph(graph,"geometry.ConstructionRecord");
     records=valid[:nodes].Map((node)->{;
         value=node[:value];
-        kind=((value ? :Map)&&value.Has("kind")) ?: value[:kind] ?_ :value;
-        structured=value ? :Map;
+        tool=GeometryOption(node,"tool",_);
+        kind=tool!=_ ?: tool ?_ ((value ? :Map)&&value.Has("kind")) ?: value[:kind] ?_ :value;
+        structured=tool==:measurement ?: 0 ?_ value ? :Map;
         status=structured ?: (value.Has("status") ?: value[:status] ?_ _) ?_ _;
         diagnostic=structured ?: (value.Has("diagnostic") ?: value[:diagnostic] ?_ _) ?_ _;
         {= id=node[:id],free=node[:free],dependsOn=node[:dependsOn],kind=kind,status=status,diagnostic=diagnostic,value=value };
@@ -72374,8 +72375,8 @@ GeometryWorkbench(graph, options ?= {= }) -> {;
     surface ? :Array ?: _ ?_ .Error("geometry.Workbench surface must be an array of Graphics nodes");
     children:=surface; unresolved:=0; interactive:=[];
     {@ index=1; index<=@valid[:nodes].Len(); {;
-        node=@valid[:nodes][index]; value=node[:value]; id=node[:id];
-        schema=((value ? :Map)&&value.Has("schema")) ?: value[:schema] ?_ _;
+        node=@valid[:nodes][index]; value=node[:value]; id=node[:id]; tool=GeometryOption(node,"tool",_);
+        schema=tool==:measurement ?: _ ?_ ((value ? :Map)&&value.Has("schema")) ?: value[:schema] ?_ _;
         drawable=schema=="rix.geometry@1"||schema=="rix.geometry.intersection@1";
         drawable
           ?: {;
@@ -72408,9 +72409,10 @@ GeometryWorkbench(graph, options ?= {= }) -> {;
 GeometryAuthoringWorkbench(graph,actions,options ?= {= }) -> {;
     valid=GeometryRequireConstructionGraph(graph,"geometry.AuthoringWorkbench");
     options ? :Map ?: _ ?_ .Error("geometry.AuthoringWorkbench options must be a map");
-    actions ? :Array ?: _ ?_ .Error("geometry.AuthoringWorkbench actions must be [point, undo, redo] or [point, line, circle, undo, redo] Graphics actions");
+    actions ? :Array ?: _ ?_ .Error("geometry.AuthoringWorkbench actions must be a supported ordered Graphics action set");
     expandedActions=actions.Len()==5;
-    (actions.Len()==3||expandedActions) ?: _ ?_ .Error("geometry.AuthoringWorkbench requires three baseline actions or five point/line/circle actions");
+    selectionActions=actions.Len()==7;
+    (actions.Len()==3||expandedActions||selectionActions) ?: _ ?_ .Error("geometry.AuthoringWorkbench actions must be [point, undo, redo], [point, line, circle, undo, redo], or [point, line, circle, intersection, measurement, undo, redo]");
     size=GeometryNumericSequence(GeometryOption(options,"size",[720,480]),2,"geometry.AuthoringWorkbench size");
     view=GeometryNumericSequence(GeometryOption(options,"view",[-10,-10,10,10]),4,"geometry.AuthoringWorkbench view");
     xmin=view[1]; ymin=view[2]; xmax=view[3]; ymax=view[4];
@@ -72427,18 +72429,24 @@ GeometryAuthoringWorkbench(graph,actions,options ?= {= }) -> {;
     actionPrefix=GeometryOption(options,"actionprefix","geometry-author");
     actionPrefix ? :String ?: _ ?_ .Error("geometry.AuthoringWorkbench actionPrefix must be a String");
     surfaceActionId=@"@{actionPrefix}-point"; lineActionId=@"@{actionPrefix}-line"; circleActionId=@"@{actionPrefix}-circle";
+    intersectionActionId=@"@{actionPrefix}-intersection"; measurementActionId=@"@{actionPrefix}-measurement";
     undoActionId=@"@{actionPrefix}-undo"; redoActionId=@"@{actionPrefix}-redo";
     coordinateSystem={= view=view,frame=frame };
-    tools=expandedActions ?: [:point,:line,:circle] ?_ [:point];
-    toolSpecs=expandedActions ?: [
-        {= tool=:point,actionId=surfaceActionId,selectionKind=:canvas,selectionCount=1 },
-        {= tool=:line,actionId=lineActionId,selectionKind=:point,selectionCount=2 },
-        {= tool=:circle,actionId=circleActionId,selectionKind=:point,selectionCount=2 }
-    ] ?_ [{= tool=:point,actionId=surfaceActionId,selectionKind=:canvas,selectionCount=1 }];
+    tools=selectionActions ?: [:point,:line,:circle,:intersection,:measurement]
+      ?_ expandedActions ?: [:point,:line,:circle] ?_ [:point];
+    pointSpec={= tool=:point,label="Point",actionId=surfaceActionId,selectionKind=:canvas,selectionCount=1 };
+    lineSpec={= tool=:line,label="Line",actionId=lineActionId,selectionKind=:object,selectionKinds=[:point],selectionCount=2,operandLabels=["first point","second point"] };
+    circleSpec={= tool=:circle,label="Circle",actionId=circleActionId,selectionKind=:object,selectionKinds=[:point],selectionCount=2,operandLabels=["center","through-point"] };
+    toolSpecs=selectionActions ?: [
+        pointSpec,lineSpec,circleSpec,
+        {= tool=:intersection,label="Intersection",actionId=intersectionActionId,selectionKind=:object,selectionKinds=[:line,:circle,:conic],selectionCount=2,operandLabels=["first curve","second curve"] },
+        {= tool=:measurement,label="Distance",actionId=measurementActionId,selectionKind=:object,selectionKinds=[:point],selectionCount=2,operandLabels=["first point","second point"] }
+    ] ?_ expandedActions ?: [pointSpec,lineSpec,circleSpec] ?_ [pointSpec];
     policy={=
         schema="rix.geometry.authoring-policy@1",tool=:point,tools=tools,toolSpecs=toolSpecs,
         maxNodes=maxNodes,snap=snap,idPrefix=idPrefix,coordinateSystem=coordinateSystem,
         surfaceActionId=surfaceActionId,lineActionId=lineActionId,circleActionId=circleActionId,
+        intersectionActionId=intersectionActionId,measurementActionId=measurementActionId,
         undoActionId=undoActionId,redoActionId=redoActionId,
         exactCoordinates=1,deterministicIds=1
     };
@@ -88678,9 +88686,12 @@ ${execute}---
     const authoring = mapField4(workbench, "authoring");
     const authoringEnabled = stringValue11(mapField4(authoring, "schema")) === "rix.geometry.authoring-policy@1";
     const availableTools = new Set(sequenceValue6(mapField4(authoring, "tools")).map((tool) => stringValue11(tool)));
+    const authoringSpecs = sequenceValue6(mapField4(authoring, "toolSpecs"));
+    const specsByTool = new Map(authoringSpecs.map((spec2) => [stringValue11(mapField4(spec2, "tool")), spec2]));
     let activeTool = "point";
-    let selectedPointIds = [];
+    let selectedObjectIds = [];
     const toolButtons = new Map;
+    const treeButtons = [];
     const panel = document2.createElement("aside");
     panel.className = "rix-output-geometry-workbench";
     panel.setAttribute("aria-label", "Geometry construction workbench");
@@ -88694,32 +88705,36 @@ ${execute}---
     const exportButton = makeButton(document2, "geometry-export", "Export portable construction record", "Export");
     controls.append(undo, redo, exportButton);
     if (authoringEnabled) {
-      const pointTool = makeButton(document2, "geometry-point-tool", "Focus the exact free-point authoring surface", "Point tool");
       const activateTool = (tool) => {
         activeTool = tool;
-        selectedPointIds = [];
+        selectedObjectIds = [];
+        for (const candidate of treeButtons)
+          candidate.setAttribute("aria-pressed", "false");
         for (const [name, button] of toolButtons)
           button.setAttribute("aria-pressed", name === tool ? "true" : "false");
-        if (tool === "point") {
-          const actionId = stringValue11(mapField4(authoring, "surfaceActionId"));
+        const spec2 = specsByTool.get(tool);
+        const selectionKind = stringValue11(mapField4(spec2, "selectionKind"));
+        const label2 = stringValue11(mapField4(spec2, "label")) || tool;
+        if (selectionKind === "canvas") {
+          const actionId = stringValue11(mapField4(spec2, "actionId"));
           const surface = [...graphic.querySelectorAll("[data-rix-graphic-action]")].find((candidate) => candidate.dataset.rixGraphicAction === actionId);
           surface?.focus?.();
           if (status)
             status.textContent = "Point tool active. Click empty canvas space, or move the keyboard cursor with arrows and press Enter.";
         } else if (status) {
-          status.textContent = `${tool === "line" ? "Line" : "Circle"} tool active. Select two distinct points in the construction tree.`;
+          const operands = sequenceValue6(mapField4(spec2, "operandLabels")).map((item) => stringValue11(item));
+          status.textContent = `${label2} tool active. Select ${operands[0] || "the first object"} in the construction tree.`;
         }
       };
-      toolButtons.set("point", pointTool);
-      pointTool.addEventListener("click", () => activateTool("point"));
-      const authoringButtons = [pointTool];
-      for (const [tool, label2, title] of [
-        ["line", "Line tool", "Create an exact line through two selected points"],
-        ["circle", "Circle tool", "Create an exact circle from a selected center and through-point"]
-      ]) {
-        if (!availableTools.has(tool))
+      const authoringButtons = [];
+      for (const tool of availableTools) {
+        const spec2 = specsByTool.get(tool);
+        if (!spec2)
           continue;
-        const button = makeButton(document2, `geometry-${tool}-tool`, title, label2);
+        const label2 = stringValue11(mapField4(spec2, "label")) || `${tool[0]?.toUpperCase() || ""}${tool.slice(1)}`;
+        const selectionKinds = sequenceValue6(mapField4(spec2, "selectionKinds")).map((kind) => stringValue11(kind));
+        const title = tool === "point" ? "Focus the exact free-point authoring surface" : `Create an exact ${label2.toLowerCase()} from selected ${selectionKinds.join(" or ")} objects`;
+        const button = makeButton(document2, `geometry-${tool}-tool`, title, `${label2} tool`);
         toolButtons.set(tool, button);
         button.addEventListener("click", () => activateTool(tool));
         authoringButtons.push(button);
@@ -88739,7 +88754,6 @@ ${execute}---
     const tree = document2.createElement("ol");
     tree.className = "rix-output-geometry-tree";
     tree.setAttribute("role", "tree");
-    const treeButtons = [];
     for (const node of nodes) {
       const id = stringValue11(mapField4(node, "id")) || String(mapField4(node, "id") ?? "object");
       const kind = stringValue11(mapField4(node, "kind")) || "value";
@@ -88750,6 +88764,7 @@ ${execute}---
       item.setAttribute("aria-level", "1");
       const button = document2.createElement("button");
       button.type = "button";
+      button.setAttribute("aria-pressed", "false");
       button.dataset.rixGeometryObject = id;
       button.textContent = `${id} · ${kind} · ${free ? "free" : "derived"}`;
       const choose = (source = "workbench") => {
@@ -88760,28 +88775,33 @@ ${execute}---
         const exact2 = mapField4(node, "value");
         properties.textContent = [id, kind, free ? "free" : "derived", dependencyText, statusValue, diagnostic2, exact2 === null ? null : `exact ${exactText(exact2, options.format || String)}`].filter(Boolean).join(" · ");
         if (authoringEnabled && activeTool !== "point") {
-          if (kind !== "point") {
+          const spec2 = specsByTool.get(activeTool);
+          const label2 = stringValue11(mapField4(spec2, "label")) || activeTool;
+          const acceptedKinds = sequenceValue6(mapField4(spec2, "selectionKinds")).map((entry2) => stringValue11(entry2));
+          const operandLabels = sequenceValue6(mapField4(spec2, "operandLabels")).map((entry2) => stringValue11(entry2));
+          const selectionCount = finiteNumber2(mapField4(spec2, "selectionCount"), 0);
+          if (!acceptedKinds.includes(kind)) {
             if (status)
-              status.textContent = `${activeTool === "line" ? "Line" : "Circle"} tool requires point objects.`;
+              status.textContent = `${label2} tool requires ${acceptedKinds.join(" or ")} objects; ${id} is ${kind}.`;
             return;
           }
-          if (selectedPointIds.includes(id)) {
-            selectedPointIds = selectedPointIds.filter((selected) => selected !== id);
+          if (selectedObjectIds.includes(id)) {
+            selectedObjectIds = selectedObjectIds.filter((selected) => selected !== id);
           } else {
-            selectedPointIds.push(id);
+            selectedObjectIds.push(id);
           }
-          button.setAttribute("aria-selected", selectedPointIds.includes(id) ? "true" : "false");
-          if (selectedPointIds.length < 2) {
+          button.setAttribute("aria-pressed", selectedObjectIds.includes(id) ? "true" : "false");
+          if (selectedObjectIds.length < selectionCount) {
+            const nextOperand = operandLabels[selectedObjectIds.length] || `object ${selectedObjectIds.length + 1}`;
             if (status)
-              status.textContent = `${id} selected. Choose one more point for the ${activeTool} tool.`;
+              status.textContent = selectedObjectIds.length ? `${id} selected. Choose ${nextOperand} for the ${label2.toLowerCase()} tool.` : `${id} deselected. Choose ${operandLabels[0] || "the first object"} for the ${label2.toLowerCase()} tool.`;
             return;
           }
-          const key = activeTool === "line" ? "lineActionId" : "circleActionId";
-          const actionId = stringValue11(mapField4(authoring, key));
-          const selection = Object.freeze(selectedPointIds.slice(0, 2));
-          selectedPointIds = [];
+          const actionId = stringValue11(mapField4(spec2, "actionId"));
+          const selection = Object.freeze(selectedObjectIds.slice(0, selectionCount));
+          selectedObjectIds = [];
           for (const candidate of treeButtons)
-            candidate.setAttribute("aria-selected", "false");
+            candidate.setAttribute("aria-pressed", "false");
           actionActivators.get(actionId)?.(source, null, selection);
         }
       };

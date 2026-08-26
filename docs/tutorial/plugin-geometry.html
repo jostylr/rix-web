@@ -1,140 +1,148 @@
 <!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Build a perpendicular bisector and circumcircle, then render the exact construction through portable Graphics." /><title>Construct an exact circumcircle — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./plugins-graphics-and-geometry.html#lesson-start" title="Plugins: Graphics and geometry">16</a> <span aria-hidden="true">·</span> <span>b</span></p><h1>Construct an exact circumcircle</h1><p class="deck">Build a perpendicular bisector and circumcircle, then render the exact construction through portable Graphics.</p><aside class="challenge"><p class="eyebrow">Develop in RiX Notebook</p><p>Open <code>rix/plugins/geometry/tutorial.md</code> in the macOS app to edit this lesson with live preview and plugin-aware code results. Use Reload plugins after changing project-local plugin source.</p></aside><div class="lesson-content"><h2>Build a ruler-and-compass construction</h2>
 <p>The mathematical points, lines, and circle retain rational coordinates and construction provenance. <code>Draw</code> is an explicit snapshot step that lowers those values to the same core Graphic understood by SVG and Canvas.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">.Plugin.Load(&quot;geometry&quot;);
-a := .geometry.Point(0, 0);
-b := .geometry.Point(6, 0);
-c := .geometry.Point(2, 4);
-abBisector := .geometry.PerpendicularBisector(a, b);
-circumcircle := .geometry.Circumcircle(a, b, c);
-construction := .geometry.Draw(
-    [abBisector, circumcircle, a, b, c],
+a1 := .geometry.Point(0, 0);
+b1 := .geometry.Point(6, 0);
+c1 := .geometry.Point(2, 4);
+abBisector1 := .geometry.PerpendicularBisector(a1, b1);
+circumcircle1 := .geometry.Circumcircle(a1, b1, c1);
+construction1 := .geometry.Draw(
+    [abBisector1, circumcircle1, a1, b1, c1],
     {= view=[-1,-2,7,6], size=[560,560] }
 );
-construction;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+construction1;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>Explore a retained construction interactively</h2>
 <p>The workbench uses the same construction graph for dependency inspection and rendering. A <code>DragPoint</code> captures the reactive identity directly and declares the mathematical view used to map pointer positions back to exact rational coordinates.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="18" spellcheck="false">.Plugin.Load(&quot;geometry&quot;);
-view := [-2,-2,6,4]; size := [640,480];
-$$a := {: 0,0};
-$$graph := .geometry.ConstructionGraph([
-  {= id=:a,free=1,value=.geometry.Point($a[1],$a[2]) },
+view2 := [-2,-2,6,4]; size2 := [640,480];
+$$a2 := {: 0,0};
+$$graph2 := .geometry.ConstructionGraph([
+  {= id=:a,free=1,value=.geometry.Point($a2[1],$a2[2]) },
   {= id=:b,dependsOn=[:a],construct=(values)-&gt;
       .geometry.Point(values[:a][:x]+3,values[:a][:y]+1) },
   {= id=:ab,dependsOn=[:a,:b],construct=(values)-&gt;
       .geometry.Line(values[:a],values[:b]) }
 ]);
-handle := .Graphics.DragPoint({=
-  target=$$a,label=&quot;Move a&quot;,coordinateSystem={= view=view,size=size },
+handle2 := .Graphics.DragPoint({=
+  target=$$a2,label=&quot;Move a&quot;,coordinateSystem={= view=view2,size=size2 },
   style={= fill=&quot;#7c3aed&quot;,stroke=&quot;#ffffff&quot;,width=2,hitId=&quot;a:handle&quot; }
 });
-$$workbench := .geometry.Workbench($graph,{=
-  view=view,size=size,handles=[{= id=:a,graphic=handle }]
+$$workbench2 := .geometry.Workbench($graph2,{=
+  view=view2,size=size2,handles=[{= id=:a,graphic=handle2 }]
 });
-$workbench;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+$workbench2;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>RiX Web supplies the object tree, property inspector, keyboard traversal, session movement history, and export button. The same value still renders as ordinary Graphics in static hosts.</p>
 <h2>Add exact free points from the canvas</h2>
 <p>Positioned <code>Graphics.Action</code> nodes translate a pointer or keyboard cursor through the declared mathematical coordinate system before invoking their RiX callback. The point tool below appends a retained free node; its companion actions replay the same exact create history.</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="21" spellcheck="false">.Plugin.Load(&quot;geometry&quot;);
-view := [-4,-3,4,3]; size := [640,480];
-$$graph := .geometry.ConstructionGraph([]);
-actions := [
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="29" spellcheck="false">.Plugin.Load(&quot;geometry&quot;);
+view3 := [-4,-3,4,3]; size3 := [640,480];
+$$graph3 := .geometry.ConstructionGraph([]);
+actions3 := [
   .Graphics.Action({=
-    id=&quot;geometry-author-point&quot;,target=$$graph,
+    id=&quot;geometry-author-point&quot;,target=$$graph3,
     action=(current,position)-&gt;.geometry.AddPoint(
       current,.geometry.Point(position[1],position[2]),{= snap=1/4,maxNodes=32 }
     ),
-    label=&quot;Add an exact free point&quot;,coordinateSystem={= view=view,size=size },
-    children=[.Graphics.Rectangle([0,0],size,{= fill=&quot;transparent&quot;,stroke=&quot;none&quot; })]
+    label=&quot;Add an exact free point&quot;,coordinateSystem={= view=view3,size=size3 },
+    children=[.Graphics.Rectangle([0,0],size3,{= fill=&quot;transparent&quot;,stroke=&quot;none&quot; })]
   }),
-  .Graphics.Action({= id=&quot;geometry-author-undo&quot;,target=$$graph,
+  .Graphics.Action({= id=&quot;geometry-author-line&quot;,target=$$graph3,
+    action=(current,ids)-&gt;.geometry.AddLine(current,ids[1],ids[2]),children=[] }),
+  .Graphics.Action({= id=&quot;geometry-author-circle&quot;,target=$$graph3,
+    action=(current,ids)-&gt;.geometry.AddCircle(current,ids[1],ids[2]),children=[] }),
+  .Graphics.Action({= id=&quot;geometry-author-intersection&quot;,target=$$graph3,
+    action=(current,ids)-&gt;.geometry.AddIntersection(current,ids[1],ids[2]),children=[] }),
+  .Graphics.Action({= id=&quot;geometry-author-measurement&quot;,target=$$graph3,
+    action=(current,ids)-&gt;.geometry.AddMeasurement(current,ids[1],ids[2]),children=[] }),
+  .Graphics.Action({= id=&quot;geometry-author-undo&quot;,target=$$graph3,
     action=current-&gt;.geometry.Undo(current),children=[] }),
-  .Graphics.Action({= id=&quot;geometry-author-redo&quot;,target=$$graph,
+  .Graphics.Action({= id=&quot;geometry-author-redo&quot;,target=$$graph3,
     action=current-&gt;.geometry.Redo(current),children=[] })
 ];
-$$workbench := .geometry.AuthoringWorkbench($graph,actions,{=
-  view=view,size=size,snap=1/4,maxNodes=32
+$$workbench3 := .geometry.AuthoringWorkbench($graph3,actions3,{=
+  view=view3,size=size3,snap=1/4,maxNodes=32
 });
-$workbench;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>Click empty canvas space to place <code>p1</code>, <code>p2</code>, and so on. Select <strong>Point tool</strong> to focus its surface; arrows move the cursor, Shift-arrows move ten pixels, and Enter or Space places the point. <code>snap</code> is applied in mathematical coordinates, and <code>maxNodes</code> is a strict construction bound.</p>
+$workbench3;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Click empty canvas space to place <code>p1</code>, <code>p2</code>, and so on. Select <strong>Point tool</strong> to focus its surface; arrows move the cursor, Shift-arrows move ten pixels, and Enter or Space places the point. Select <strong>Line tool</strong> or <strong>Circle tool</strong>, then choose two distinct points in the construction tree. For a circle, choose its center first and its through-point second. <strong>Intersection tool</strong> accepts two lines, circles, or conics; <strong>Distance tool</strong> accepts two points. <code>snap</code> is applied in mathematical coordinates, and <code>maxNodes</code> is a strict construction bound.</p>
 <h2>Keep unresolved intersections visible</h2>
 <p>Parallel lines return an intersection result whose status is <code>parallel</code>. Including that result in a drawing produces a visible diagnostic rather than a fabricated point.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">.Plugin.Load(&quot;geometry&quot;);
-first := .geometry.Line(.geometry.Point(0, 0), .geometry.Point(4, 0));
-second := .geometry.Line(.geometry.Point(0, 2), .geometry.Point(4, 2));
-unresolved := .geometry.Intersect(first, second);
-status := .geometry.Status(unresolved);
-.geometry.Draw([first, second, unresolved], {= view=[-1,-1,5,3], size=[600,400] });</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+first4 := .geometry.Line(.geometry.Point(0, 0), .geometry.Point(4, 0));
+second4 := .geometry.Line(.geometry.Point(0, 2), .geometry.Point(4, 2));
+unresolved4 := .geometry.Intersect(first4, second4);
+status4 := .geometry.Status(unresolved4);
+.geometry.Draw([first4, second4, unresolved4], {= view=[-1,-1,5,3], size=[600,400] });</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>Transform a polygon and check a constraint</h2>
 <p>Transforms preserve exact coordinates. Constraints retain their exact residual instead of turning a drawing into a Boolean-only result.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">.Plugin.Load(&quot;geometry&quot;);
-a := .geometry.Point(0,0);
-b := .geometry.Point(4,0);
-c := .geometry.Point(1,3);
-triangle := .geometry.Polygon([a,b,c]);
-shiftAndScale := .geometry.Affine([[3/2,0,1],[0,3/2,2]]);
-moved := .geometry.Transform(triangle,shiftAndScale);
-base := .geometry.Line(a,b);
-onBase := .geometry.Constraint(:onLine,[.geometry.Point(2,0),base]);
-.geometry.Draw([triangle,moved],{= view=[-1,-1,8,8],size=[560,560] });</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+a5 := .geometry.Point(0,0);
+b5 := .geometry.Point(4,0);
+c5 := .geometry.Point(1,3);
+triangle5 := .geometry.Polygon([a5,b5,c5]);
+shiftAndScale5 := .geometry.Affine([[3/2,0,1],[0,3/2,2]]);
+moved5 := .geometry.Transform(triangle5,shiftAndScale5);
+base5 := .geometry.Line(a5,b5);
+onBase5 := .geometry.Constraint(:onLine,[.geometry.Point(2,0),base5]);
+.geometry.Draw([triangle5,moved5],{= view=[-1,-1,8,8],size=[560,560] });</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>Measure and rotate without binary floats</h2>
 <p>Named measurements preserve the geometry kernel&#039;s exact/certified split. Arbitrary rotations accept radians, degrees, or fractions of a turn.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="13" spellcheck="false">.Plugin.Load(&quot;geometry&quot;);
-origin := .geometry.Point(0,0);
-p := .geometry.Point(4,0);
-segment := .geometry.Segment(origin,p);
-length := .numerics.Refine(.geometry.Length(segment),{=
+origin6 := .geometry.Point(0,0);
+p6 := .geometry.Point(4,0);
+segment6 := .geometry.Segment(origin6,p6);
+length6 := .numerics.Refine(.geometry.Length(segment6),{=
   absoluteWidth=1/1000,maxWork=32
 });
-rotation := .geometry.Rotate(origin,1/6,:turns);
-image := .geometry.Transform(p,rotation);
+rotation6 := .geometry.Rotate(origin6,1/6,:turns);
+image6 := .geometry.Transform(p6,rotation6);
 .Fragment([
-  .Table([&quot;quantity&quot;,&quot;value&quot;],[[&quot;squared length&quot;,.geometry.SquaredDistance(origin,p)],[&quot;length candidate&quot;,length[:approximation].Candidate()]]),
-  .geometry.Draw([p,image],{= view=[-1,-1,5,5],size=[360,360] })
+  .Table([&quot;quantity&quot;,&quot;value&quot;],[[&quot;squared length&quot;,.geometry.SquaredDistance(origin6,p6)],[&quot;length candidate&quot;,length6[:approximation].Candidate()]]),
+  .geometry.Draw([p6,image6],{= view=[-1,-1,5,5],size=[360,360] })
 ]);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Quarter turns are rational affine maps. Rational fractions of a turn carry exact algebraic coordinates; arbitrary radians carry certified-real coordinates and can be refined or drawn.</p>
 <h2>Explore the algebraic lane</h2>
 <p>A compass construction may leave rational coordinates without leaving exact mathematics. The diagonal through a rational circle meets it at coordinates involving <code>sqrt(2)</code>. Exact polynomial certificates decide the intersection topology and retain exact algebraic points.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">.Plugin.Load(&quot;geometry&quot;);
-circle := .geometry.Circle(.geometry.Point(0,0),2);
-diagonal := .geometry.Line(.geometry.Point(-2,-2),.geometry.Point(2,2));
-meeting := .geometry.Intersect(diagonal,circle);
-eighthTurn := .geometry.CircularAngle(1/8,:turns);
+circle7 := .geometry.Circle(.geometry.Point(0,0),2);
+diagonal7 := .geometry.Line(.geometry.Point(-2,-2),.geometry.Point(2,2));
+meeting7 := .geometry.Intersect(diagonal7,circle7);
+eighthTurn7 := .geometry.CircularAngle(1/8,:turns);
 {=
-  intersectionStatus=meeting[:status],
-  coordinateDomain=meeting[:points][1][:coordinateDomain],
-  angleTurns=eighthTurn[:turns],
-  angleDomain=eighthTurn[:coordinateDomain]
+  intersectionStatus=meeting7[:status],
+  coordinateDomain=meeting7[:points][1][:coordinateDomain],
+  angleTurns=eighthTurn7[:turns],
+  angleDomain=eighthTurn7[:coordinateDomain]
 };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>A rational turn is exact circular data. Its sine and cosine are algebraic because they are coordinates of a root of unity. The nonzero radian magnitude <code>2*pi*p/q</code> is transcendental, so the plugin does not mislabel it as an algebraic real. A rational number supplied directly in radians is generally not a rational turn and stays on the general certified lane.</p>
 <p>Algebraic coefficients make intersection equality, sign, and multiplicity decidable. With arbitrary certified-real coefficients, interval refinement can prove separation from zero but cannot always prove exact zero. Those intersections explicitly return <code>undecided</code> with evidence when their budget is exhausted.</p>
 <h2>Inspect certified intersection decisions</h2>
 <p>Line-conic intersections retain both the exact discriminant sign and the Sturm root-count certificate used to classify the result.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="9" spellcheck="false">.Plugin.Load(&quot;geometry&quot;);
-circle := .geometry.Circle(.geometry.Point(0,0),1);
-line := .geometry.Line(.geometry.Point(-2,2),.geometry.Point(2,2));
-intersection := .geometry.Intersect(line,circle);
+circle8 := .geometry.Circle(.geometry.Point(0,0),1);
+line8 := .geometry.Line(.geometry.Point(-2,2),.geometry.Point(2,2));
+intersection8 := .geometry.Intersect(line8,circle8);
 {=
-  status=intersection[:status],
-  discriminantSign=intersection[:evidence][:discriminantSign],
-  rootCount=intersection[:evidence][:rootCount]
+  status=intersection8[:status],
+  discriminantSign=intersection8[:evidence][:discriminantSign],
+  rootCount=intersection8[:evidence][:rootCount]
 };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>Refine an implicit conic with bounded work</h2>
 <p>The implicit value stays mathematical and serializable. <code>Refine</code> creates one portable snapshot for the requested viewport while retaining work and uncertainty records.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="18" spellcheck="false">.Plugin.Load(&quot;geometry&quot;);
-ellipse := .geometry.Implicit({=
+ellipse9 := .geometry.Implicit({=
   coefficients=[1,0,4,0,0,-4],
   domain=[-3,-2,3,2],
   style={= stroke=&quot;#0f766e&quot;,width=2 }
 });
-result := .geometry.Refine(ellipse,{=
+result9 := .geometry.Refine(ellipse9,{=
   viewport={= x=[-3,3],y=[-2,2] },
   size=[600,400],
   tolerance=1/8,
   maxWork=1200
 });
 .Fragment([
-  .Figure(result[:graphic],&quot;Bounded implicit ellipse&quot;),
+  .Figure(result9[:graphic],&quot;Bounded implicit ellipse&quot;),
   .Table({= columns=[&quot;resolved&quot;,&quot;uncertain cells&quot;,&quot;work&quot;],rows=[[
-    result[:resolved],result[:uncertainty].Len(),result[:work][:cells]
+    result9[:resolved],result9[:uncertainty].Len(),result9[:work][:cells]
   ]] })
 ]);</textarea><div class="tutorial-output" data-tutorial-output></div></section></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
