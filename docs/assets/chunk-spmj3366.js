@@ -47,7 +47,7 @@ import {
   parseAndEvaluateAsync,
   renderOutputHtml,
   tokenize
-} from "./chunk-k1yh5y9x.js";
+} from "./chunk-j2k7bsmm.js";
 
 // standard-profile.rix
 var standard_profile_default = `## RiX-Web standard calculator profile.
@@ -11056,7 +11056,8 @@ GeometryAuthoringWorkbench(graph,actions,options ?= {= }) -> {;
     actions ? :Array ?: _ ?_ .Error("geometry.AuthoringWorkbench actions must be a supported ordered Graphics action set");
     expandedActions=actions.Len()==5;
     selectionActions=actions.Len()==7;
-    (actions.Len()==3||expandedActions||selectionActions) ?: _ ?_ .Error("geometry.AuthoringWorkbench actions must be [point, undo, redo], [point, line, circle, undo, redo], or [point, line, circle, intersection, measurement, undo, redo]");
+    transformActions=actions.Len()==8;
+    (actions.Len()==3||expandedActions||selectionActions||transformActions) ?: _ ?_ .Error("geometry.AuthoringWorkbench actions must be [point, undo, redo], [point, line, circle, undo, redo], [point, line, circle, intersection, measurement, undo, redo], or [point, line, circle, intersection, measurement, transform, undo, redo]");
     size=GeometryNumericSequence(GeometryOption(options,"size",[720,480]),2,"geometry.AuthoringWorkbench size");
     view=GeometryNumericSequence(GeometryOption(options,"view",[-10,-10,10,10]),4,"geometry.AuthoringWorkbench view");
     xmin=view[1]; ymin=view[2]; xmax=view[3]; ymax=view[4];
@@ -11074,23 +11075,32 @@ GeometryAuthoringWorkbench(graph,actions,options ?= {= }) -> {;
     actionPrefix ? :String ?: _ ?_ .Error("geometry.AuthoringWorkbench actionPrefix must be a String");
     surfaceActionId=@"@{actionPrefix}-point"; lineActionId=@"@{actionPrefix}-line"; circleActionId=@"@{actionPrefix}-circle";
     intersectionActionId=@"@{actionPrefix}-intersection"; measurementActionId=@"@{actionPrefix}-measurement";
+    transformActionId=@"@{actionPrefix}-transform";
     undoActionId=@"@{actionPrefix}-undo"; redoActionId=@"@{actionPrefix}-redo";
     coordinateSystem={= view=view,frame=frame };
-    tools=selectionActions ?: [:point,:line,:circle,:intersection,:measurement]
+    tools=transformActions ?: [:point,:line,:circle,:intersection,:measurement,:transform]
+      ?_ selectionActions ?: [:point,:line,:circle,:intersection,:measurement]
       ?_ expandedActions ?: [:point,:line,:circle] ?_ [:point];
     pointSpec={= tool=:point,label="Point",actionId=surfaceActionId,selectionKind=:canvas,selectionCount=1 };
     lineSpec={= tool=:line,label="Line",actionId=lineActionId,selectionKind=:object,selectionKinds=[:point],selectionCount=2,operandLabels=["first point","second point"] };
     circleSpec={= tool=:circle,label="Circle",actionId=circleActionId,selectionKind=:object,selectionKinds=[:point],selectionCount=2,operandLabels=["center","through-point"] };
-    toolSpecs=selectionActions ?: [
+    selectionSpecs=[
         pointSpec,lineSpec,circleSpec,
         {= tool=:intersection,label="Intersection",actionId=intersectionActionId,selectionKind=:object,selectionKinds=[:line,:circle,:conic],selectionCount=2,operandLabels=["first curve","second curve"] },
         {= tool=:measurement,label="Distance",actionId=measurementActionId,selectionKind=:object,selectionKinds=[:point],selectionCount=2,operandLabels=["first point","second point"] }
-    ] ?_ expandedActions ?: [pointSpec,lineSpec,circleSpec] ?_ [pointSpec];
+    ];
+    transformLabel=GeometryOption(options,"transformlabel","Transform");
+    transformLabel ? :String ?: _ ?_ .Error("geometry.AuthoringWorkbench transformLabel must be a String");
+    toolSpecs=transformActions ?: selectionSpecs.Push({=
+        tool=:transform,label=transformLabel,actionId=transformActionId,selectionKind=:object,
+        selectionKinds=[:point,:line,:segment,:ray,:polygon,:circle,:conic],selectionCount=1,operandLabels=["object"]
+    }) ?_ selectionActions ?: selectionSpecs ?_ expandedActions ?: [pointSpec,lineSpec,circleSpec] ?_ [pointSpec];
     policy={=
         schema="rix.geometry.authoring-policy@1",tool=:point,tools=tools,toolSpecs=toolSpecs,
         maxNodes=maxNodes,snap=snap,idPrefix=idPrefix,coordinateSystem=coordinateSystem,
         surfaceActionId=surfaceActionId,lineActionId=lineActionId,circleActionId=circleActionId,
         intersectionActionId=intersectionActionId,measurementActionId=measurementActionId,
+        transformActionId=transformActionId,
         undoActionId=undoActionId,redoActionId=redoActionId,
         exactCoordinates=1,deterministicIds=1
     };
@@ -21536,16 +21546,17 @@ oracleNamespace._proto = {=
 `, sourcePath: "bundled:oracle", kind: "rix" });
   catalog.addMetadata({ id: "pdf", description: "PDF document and figure renderer orchestrated through LaTeX.", kind: "host", mount: "pdf", exports: ["Render"], groups: ["Renderers"], permissions: ["process", "files"], provides: ["rix.renderer.pdf@1", "rix.renderer.pdf@2"], schemas: ["rix.pdf.render@2"], targets: ["pdf", "application/pdf"], snapshot: true, deterministic: false, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], operatorFiles: [], ignore: false, sourcePath: "bundled:pdf" }, { sourcePath: "bundled:pdf", kind: "host" });
   catalog.registerInstaller("pdf", install16);
-  catalog.addMetadata({ id: "plot", description: "Pure-RiX exact and numerics-backed 2D plotting that lowers to portable core Graphics scenes.", kind: "rix", mount: "plot", exports: ["Polynomial", "Function", "Parametric", "Scatter", "Line", "Bar", "Step", "Polar", "Implicit", "Inequality", "Contour", "HeatMap", "VectorField"], groups: ["Plot", "Graphics", "Exact"], permissions: [], requires: ["rix.numerics@1"], provides: ["rix.plot@1", "rix.plot.refinement-policy@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], schemas: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:plot" }, { source: `/**
+  catalog.addMetadata({ id: "plot", description: "Pure-RiX exact and numerics-backed 2D plotting that lowers to portable core Graphics scenes.", kind: "rix", mount: "plot", exports: ["Polynomial", "PolynomialPOI", "Function", "Parametric", "Scatter", "Line", "Bar", "Step", "Polar", "Implicit", "Inequality", "Contour", "HeatMap", "VectorField"], groups: ["Plot", "Graphics", "Exact"], permissions: [], requires: ["rix.numerics@1"], provides: ["rix.plot@1", "rix.plot.poi@1", "rix.plot.refinement-policy@1"], schemas: ["rix.plot@1", "rix.plot.poi@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:plot" }, { source: `/**
 id: plot
 description: Pure-RiX exact and numerics-backed 2D plotting that lowers to portable core Graphics scenes.
 kind: rix
 mount: plot
-exports: [Polynomial, Function, Parametric, Scatter, Line, Bar, Step, Polar, Implicit, Inequality, Contour, HeatMap, VectorField]
+exports: [Polynomial, PolynomialPOI, Function, Parametric, Scatter, Line, Bar, Step, Polar, Implicit, Inequality, Contour, HeatMap, VectorField]
 groups: [Plot, Graphics, Exact]
 permissions: []
 requires: [rix.numerics@1]
-provides: [rix.plot@1, rix.plot.refinement-policy@1]
+provides: [rix.plot@1, rix.plot.poi@1, rix.plot.refinement-policy@1]
+schemas: [rix.plot@1, rix.plot.poi@1]
 snapshot: true
 deterministic: true
 defaultEnabled: false
@@ -21580,6 +21591,64 @@ PlotStyle(settings, fallbackStroke, fallbackWidth) -> {;
 };
 
 PlotEvaluate(coefficients, x) -> coefficients.Reduce((total, coefficient) -> total * @x + coefficient, 0);
+
+PlotIntegerSqrtFloor(value) -> {;
+    n=value ~!: :Integer;
+    n>=0 ?: _ ?_ .Error("plot square root requires a nonnegative integer");
+    n<2 ?: n ?_ {;
+        x:=@n; next:=(x+1)//2;
+        {@ step=1; @next<@x; {; @x~=@next; @next~=(@x+(@n//@x))//2; }; step+=1 };
+        x;
+    };
+};
+
+PlotExactSqrt(value) -> {;
+    exact=value ~!: :Rational;
+    exact<0 ?: _ ?_ {;
+        numerator=PlotIntegerSqrtFloor(@exact.Numerator()); denominator=PlotIntegerSqrtFloor(@exact.Denominator());
+        numerator^2==@exact.Numerator()&&denominator^2==@exact.Denominator() ?: numerator/denominator ?_ _;
+    };
+};
+
+PlotPOI(kind,point,label,evidence ?= {= }) -> .DeepMutable({=
+    schema="rix.plot.poi@1",kind=kind,status=:exact,evidenceLevel=:proof,
+    point=point,label=label,evidence=evidence
+},_);
+
+PlotPolynomialPOI(coefficientsValue,domain,options ?= {= }) -> {;
+    coefficients=PlotExactArray(coefficientsValue,"Polynomial POI coefficients");
+    coefficients.Len()>=2 ?: _ ?_ .Error("plot.PolynomialPOI requires at least two coefficients");
+    domain ? :Array ?: _ ?_ .Error("Polynomial POI domain must be an Array");
+    domain.Len()==2 ?: _ ?_ .Error("Polynomial POI domain must have a lower and upper bound");
+    xMin=PlotExact(domain[1],"Polynomial POI lower bound"); xMax=PlotExact(domain[2],"Polynomial POI upper bound");
+    xMin<xMax ?: _ ?_ .Error("Polynomial POI domain must increase");
+    result:=[];
+    (xMin<=0&&xMax>=0) ?: {;
+        y=PlotEvaluate(@coefficients,0);
+        @result ~= @result.Push(PlotPOI(:y_intercept,[0,y],@"y-intercept (0, @{y})",{= identity=:evaluation,x=0 }));
+    } ?_ _;
+    coefficients.Len()==2 ?: {;
+        a=@coefficients[1]; b=@coefficients[2];
+        a!=0 ?: {; root=-@b/@a; (root>=@xMin&&root<=@xMax) ?: {;
+            @result ~= @result.Push(PlotPOI(:root,[@root,0],@"root x = @{@root}",{= identity=:linear_formula }));
+        } ?_ _; } ?_ _;
+    } ?_ coefficients.Len()==3 ?: {;
+        a=@coefficients[1]; b=@coefficients[2]; c=@coefficients[3];
+        a!=0 ?: {;
+            vertexX=-@b/(2*@a); vertexY=PlotEvaluate(@coefficients,vertexX);
+            (vertexX>=@xMin&&vertexX<=@xMax) ?: {;
+                @result ~= @result.Push(PlotPOI(:extremum,[@vertexX,@vertexY],@"vertex (@{@vertexX}, @{@vertexY})",{= identity=:quadratic_vertex,classification=@a>0 ?: :minimum ?_ :maximum }));
+            } ?_ _;
+            discriminant=@b^2-4*@a*@c; squareRoot=PlotExactSqrt(discriminant);
+            squareRoot!=_ ?: {;
+                first=(-@b-@squareRoot)/(2*@a); second=(-@b+@squareRoot)/(2*@a);
+                (first>=@xMin&&first<=@xMax) ?: {; @result ~= @result.Push(PlotPOI(:root,[@first,0],@"root x = @{@first}",{= identity=:quadratic_formula,discriminant=@discriminant })); } ?_ _;
+                (second!=first&&second>=@xMin&&second<=@xMax) ?: {; @result ~= @result.Push(PlotPOI(:root,[@second,0],@"root x = @{@second}",{= identity=:quadratic_formula,discriminant=@discriminant })); } ?_ _;
+            } ?_ _;
+        } ?_ _;
+    } ?_ _;
+    result;
+};
 
 PlotReadSeries(coefficientsValue, settings, index, samples, xMin, xMax, primary) -> {;
     coefficients = PlotExactArray(coefficientsValue, @"Polynomial plot series @{index} coefficients");
@@ -21688,6 +21757,15 @@ PlotPolynomial(coefficientsValue, domain, options ?= {= }) -> {;
     {@ index = 1; index <= @markEntries.Len(); {;
         @marks ~= @marks.Push(PlotReadMark(@markEntries[index], index));
     }; index += 1 };
+    pointsOfInterest=PlotOption(options,"pointsofinterest",0)==1 ?: PlotPolynomialPOI(coefficients,domain,options) ?_ [];
+    {@ index=1; index<=@pointsOfInterest.Len(); {;
+        poi=@pointsOfInterest[index];
+        @marks ~= @marks.Push({=
+            point=poi[:point],label=poi[:label],radius=PlotExact(PlotOption(@options,"poiradius",5),"Polynomial POI radius"),
+            style=PlotOption(@options,"poistyle",{= fill="#7c3aed",stroke="#fff",width=2 }),
+            labelStyle=PlotOption(@options,"poilabelstyle",{= size=13 })
+        });
+    }; index+=1 };
 
     ticks := [];
     tickEntries = PlotOption(options, "ticks", []);
@@ -21750,6 +21828,7 @@ PlotPolynomial(coefficientsValue, domain, options ?= {= }) -> {;
             series=series,
             ticks=ticks,
             marks=marks,
+            pointsOfInterest=pointsOfInterest,
             title=PlotOption(options,"title"),
             xLabel=PlotOption(options,"xlabel"),
             yLabel=PlotOption(options,"ylabel")
@@ -22542,6 +22621,7 @@ PlotDataCall(data, options, kind) -> PlotGeneral(data, options, kind);
 plotNamespace = {= };
 plotNamespace._proto = {=
     Polynomial=(self, coefficients, domain, options ?= {= })->PlotPolynomial(coefficients, domain, options),
+    PolynomialPOI=(self, coefficients, domain, options ?= {= })->PlotPolynomialPOI(coefficients, domain, options),
     Function=(self, fn, domain, options ?= {= })->PlotFunction(fn, domain, options),
     Parametric=(self, fn, domain, options ?= {= })->PlotParametric(fn, domain, options),
     Scatter=(self, data, options ?= {= })->PlotDataCall(data, options, :scatter),
@@ -26298,17 +26378,17 @@ RatfunSpecConversion=(value,variable ?= _)->RatfunFromSpec(value,variable);
 .Host.RegisterMethod("structural_literal","R",RatfunConversion,"ratfun","ratfun");
 .Host.RegisterMethod("symbolic_spec","R",RatfunSpecConversion,"ratfun","ratfun");
 `, sourcePath: "bundled:ratfun", kind: "rix" });
-  catalog.addMetadata({ id: "scene3d", description: "Pure-RiX exact retained 3D scenes, explicit realization and projection, and portable Graphics snapshots.", kind: "rix", mount: "scene3d", exports: ["Scene", "Group", "Transform", "Mesh", "Polyline", "PointCloud", "ParametricCurve", "ParametricSurface", "Axes", "Annotation", "AnnotationPolicy", "Interaction", "Material", "AmbientLight", "DirectionalLight", "PointLight", "PerspectiveCamera", "OrthographicCamera", "OrbitCamera", "Realize", "Project", "Snapshot"], groups: ["Scene3D", "Graphics", "Exact"], permissions: [], requires: ["rix.numerics@1"], provides: ["rix.scene3d@1", "rix.scene3d.realized@1", "rix.scene3d.projected@1", "rix.scene3d.snapshot@1", "rix.scene3d.orbit@1", "rix.scene3d.interaction@1", "rix.scene3d.annotation-policy@1", "rix.scene3d.surface-sampling@1"], schemas: ["rix.scene3d@1", "rix.scene3d.realized@1", "rix.scene3d.projected@1", "rix.scene3d.snapshot@1", "rix.scene3d.orbit@1", "rix.scene3d.interaction@1", "rix.scene3d.annotation-policy@1", "rix.scene3d.surface-sampling@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:scene3d" }, { source: `/**
+  catalog.addMetadata({ id: "scene3d", description: "Pure-RiX exact retained 3D scenes, explicit realization and projection, and portable Graphics snapshots.", kind: "rix", mount: "scene3d", exports: ["Scene", "Group", "Transform", "ClipPlane", "Clip", "Mesh", "Polyline", "PointCloud", "ParametricCurve", "ParametricSurface", "Axes", "Annotation", "AnnotationPolicy", "Interaction", "Material", "AmbientLight", "DirectionalLight", "PointLight", "PerspectiveCamera", "OrthographicCamera", "OrbitCamera", "Realize", "Project", "Snapshot"], groups: ["Scene3D", "Graphics", "Exact"], permissions: [], requires: ["rix.numerics@1"], provides: ["rix.scene3d@1", "rix.scene3d.realized@1", "rix.scene3d.projected@1", "rix.scene3d.snapshot@1", "rix.scene3d.orbit@1", "rix.scene3d.interaction@1", "rix.scene3d.annotation-policy@1", "rix.scene3d.surface-sampling@1", "rix.scene3d.clip-plane@1", "rix.scene3d.material@1"], schemas: ["rix.scene3d@1", "rix.scene3d.realized@1", "rix.scene3d.projected@1", "rix.scene3d.snapshot@1", "rix.scene3d.orbit@1", "rix.scene3d.interaction@1", "rix.scene3d.annotation-policy@1", "rix.scene3d.surface-sampling@1", "rix.scene3d.clip-plane@1", "rix.scene3d.material@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:scene3d" }, { source: `/**
 id: scene3d
 description: Pure-RiX exact retained 3D scenes, explicit realization and projection, and portable Graphics snapshots.
 kind: rix
 mount: scene3d
-exports: [Scene, Group, Transform, Mesh, Polyline, PointCloud, ParametricCurve, ParametricSurface, Axes, Annotation, AnnotationPolicy, Interaction, Material, AmbientLight, DirectionalLight, PointLight, PerspectiveCamera, OrthographicCamera, OrbitCamera, Realize, Project, Snapshot]
+exports: [Scene, Group, Transform, ClipPlane, Clip, Mesh, Polyline, PointCloud, ParametricCurve, ParametricSurface, Axes, Annotation, AnnotationPolicy, Interaction, Material, AmbientLight, DirectionalLight, PointLight, PerspectiveCamera, OrthographicCamera, OrbitCamera, Realize, Project, Snapshot]
 groups: [Scene3D, Graphics, Exact]
 permissions: []
 requires: [rix.numerics@1]
-provides: [rix.scene3d@1, rix.scene3d.realized@1, rix.scene3d.projected@1, rix.scene3d.snapshot@1, rix.scene3d.orbit@1, rix.scene3d.interaction@1, rix.scene3d.annotation-policy@1, rix.scene3d.surface-sampling@1]
-schemas: [rix.scene3d@1, rix.scene3d.realized@1, rix.scene3d.projected@1, rix.scene3d.snapshot@1, rix.scene3d.orbit@1, rix.scene3d.interaction@1, rix.scene3d.annotation-policy@1, rix.scene3d.surface-sampling@1]
+provides: [rix.scene3d@1, rix.scene3d.realized@1, rix.scene3d.projected@1, rix.scene3d.snapshot@1, rix.scene3d.orbit@1, rix.scene3d.interaction@1, rix.scene3d.annotation-policy@1, rix.scene3d.surface-sampling@1, rix.scene3d.clip-plane@1, rix.scene3d.material@1]
+schemas: [rix.scene3d@1, rix.scene3d.realized@1, rix.scene3d.projected@1, rix.scene3d.snapshot@1, rix.scene3d.orbit@1, rix.scene3d.interaction@1, rix.scene3d.annotation-policy@1, rix.scene3d.surface-sampling@1, rix.scene3d.clip-plane@1, rix.scene3d.material@1]
 snapshot: true
 deterministic: true
 defaultEnabled: false
@@ -26354,10 +26434,16 @@ S3MaterialValues(material) -> ((material ? :Map) && S3IsNode(material) && materi
 S3Style(settings) -> {;
     material = S3Option(settings, "material");
     values = S3MaterialValues(material);
+    roughness=S3Exact(S3Option(settings, "roughness", S3Option(values, "roughness", 1)), "Scene3D style roughness");
+    metallic=S3Exact(S3Option(settings, "metallic", S3Option(values, "metallic", 0)), "Scene3D style metallic");
+    (roughness>=0&&roughness<=1&&metallic>=0&&metallic<=1) ?: _ ?_ .Error("Scene3D style roughness and metallic must be between zero and one");
     .DeepMutable({=
         color=S3Option(settings, "color", S3Option(values, "color", "#275dad")),
         width=S3Exact(S3Option(settings, "width", S3Option(values, "width", 1)), "Scene3D style width"),
         opacity=S3Exact(S3Option(settings, "opacity", S3Option(values, "opacity", 1)), "Scene3D style opacity"),
+        roughness=roughness,
+        metallic=metallic,
+        emissive=S3Option(settings, "emissive", S3Option(values, "emissive")),
         material=material
     }, _);
 };
@@ -26430,10 +26516,14 @@ S3LeafFields(settings, label) -> S3LeafInteraction(settings, label).Merge({=
 
 S3Material(color ?= "#275dad", opacity ?= 1, width ?= 1) -> {;
     settings = color ? :Map ?: color ?_ {= color=color, opacity=opacity, width=width };
-    S3Value(:material, {= values=.DeepMutable({=
+    roughness=S3Exact(S3Option(settings, "roughness", 1), "scene3d.Material roughness");
+    metallic=S3Exact(S3Option(settings, "metallic", 0), "scene3d.Material metallic");
+    (roughness>=0&&roughness<=1&&metallic>=0&&metallic<=1) ?: _ ?_ .Error("scene3d.Material roughness and metallic must be between zero and one");
+    S3Value(:material, {= materialSchema="rix.scene3d.material@1",values=.DeepMutable({=
         color=S3Option(settings, "color", "#275dad"),
         opacity=S3Exact(S3Option(settings, "opacity", 1), "scene3d.Material opacity"),
-        width=S3Exact(S3Option(settings, "width", 1), "scene3d.Material width")
+        width=S3Exact(S3Option(settings, "width", 1), "scene3d.Material width"),
+        roughness=roughness,metallic=metallic,emissive=S3Option(settings,"emissive")
     }, _) });
 };
 
@@ -26717,6 +26807,29 @@ S3Group(children, options ?= {= }) -> {;
     S3Value(:group, {= children=S3Children(settings[:children], "scene3d.Group children"), metadata=S3Option(settings, "metadata") });
 };
 
+S3ClipPlane(normal, offset ?= 0) -> {;
+    settings=normal ? :Map ?: normal ?_ {= normal=normal,offset=offset };
+    vector=S3Vector(settings[:normal],3,"scene3d.ClipPlane normal");
+    S3Dot(vector,vector)>0 ?: _ ?_ .Error("scene3d.ClipPlane normal must not be zero");
+    S3Value(:clip_plane,{=
+        clipSchema="rix.scene3d.clip-plane@1",normal=vector,
+        offset=S3Exact(S3Option(settings,"offset",0),"scene3d.ClipPlane offset"),
+        label=S3OptionalString(settings,"label","scene3d.ClipPlane label")
+    });
+};
+
+S3Clip(children, planes, options ?= {= }) -> {;
+    settings=children ? :Map ?: children ?_ options.Merge({= children=children,planes=planes });
+    normalizedPlanes=S3Option(settings,"planes",[]);
+    normalizedPlanes ? :Array ?: _ ?_ .Error("scene3d.Clip planes must be an Array");
+    normalizedPlanes.Filter((plane)->!(S3IsNode(plane)&&plane[:kind]==:clip_plane)).Len()==0
+      ?: _ ?_ .Error("scene3d.Clip planes must come from scene3d.ClipPlane");
+    S3Value(:clip,{=
+        children=S3Children(settings[:children],"scene3d.Clip children"),planes=normalizedPlanes,
+        metadata=S3Option(settings,"metadata")
+    });
+};
+
 S3Identity() -> [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
 
 S3Transform(children, options ?= {= }) -> {;
@@ -26816,30 +26929,32 @@ S3MeshSegments(triangles) -> {;
     segments;
 };
 
-S3PrimitiveFields(child) -> {=
+S3PrimitiveFields(child,clipPlanes ?= []) -> {=
     pickid=S3Option(child,"pickid"),
     label=S3Option(child,"label"),
     metadata=S3Option(child,"metadata"),
     interaction=S3Option(child,"interaction"),
-    annotationPolicy=S3Option(child,"annotationpolicy")
+    annotationPolicy=S3Option(child,"annotationpolicy"),clipPlanes=clipPlanes
 };
 
-S3Collect(children, parent) -> {;
+S3Collect(children, parent, clipPlanes ?= []) -> {;
     result := [];
     {@ index = 1; index <= @children.Len(); {;
         child = @children[index];
         kind = child[:kind];
         kind == :group
-          ?: {; @result ~= @result.Concat(S3Collect(@child[:children], @parent)); }
+          ?: {; @result ~= @result.Concat(S3Collect(@child[:children], @parent, @clipPlanes)); }
           ?_ kind == :transform
-               ?: {; @result ~= @result.Concat(S3Collect(@child[:children], S3Multiply4(@parent, @child[:matrix]))); }
+               ?: {; @result ~= @result.Concat(S3Collect(@child[:children], S3Multiply4(@parent, @child[:matrix]), @clipPlanes)); }
+               ?_ kind == :clip
+                    ?: {; @result ~= @result.Concat(S3Collect(@child[:children],@parent,@clipPlanes.Concat(@child[:planes]))); }
                ?_ kind == :mesh
                     ?: {;
                         points = @child[:vertices].Map((point) -> S3TransformPoint(@parent, point));
                         @result ~= @result.Push(.DeepMutable({=
                             kind=:mesh, points=points, segments=S3MeshSegments(@child[:triangles]),
                             triangles=@child[:triangles], style=@child[:style]
-                        }.Merge(S3PrimitiveFields(@child)), _));
+                        }.Merge(S3PrimitiveFields(@child,@clipPlanes)), _));
                     }
                     ?_ kind == :polyline
                          ?: {;
@@ -26849,19 +26964,19 @@ S3Collect(children, parent) -> {;
                                  @segments ~= @segments.Push([pointIndex, pointIndex+1]);
                              }; pointIndex += 1 };
                              (@child[:closed]==1 && points.Len() > 2) ?: {; @segments ~= @segments.Push([@points.Len(),1]); } ?_ _;
-                             @result ~= @result.Push(.DeepMutable({= kind=:lines, points=points, segments=segments, style=@child[:style] }.Merge(S3PrimitiveFields(@child)), _));
+                             @result ~= @result.Push(.DeepMutable({= kind=:lines, points=points, segments=segments, style=@child[:style] }.Merge(S3PrimitiveFields(@child,@clipPlanes)), _));
                          }
                          ?_ kind == :point_cloud
                               ?: {; @result ~= @result.Push(.DeepMutable({=
                                   kind=:points, points=@child[:points].Map((point) -> S3TransformPoint(@parent, point)),
                                   radius=@child[:radius], style=@child[:style]
-                              }.Merge(S3PrimitiveFields(@child)), _)); }
+                              }.Merge(S3PrimitiveFields(@child,@clipPlanes)), _)); }
                               ?_ kind == :annotation
                                    ?: {; @result ~= @result.Push(.DeepMutable({=
                                        kind=:annotation,points=[S3TransformPoint(@parent,@child[:position])],
                                        text=@child[:text],style=@child[:style]
-                                   }.Merge(S3PrimitiveFields(@child)),_)); }
-                              ?_ ((kind == :material || kind == :camera)
+                                   }.Merge(S3PrimitiveFields(@child,@clipPlanes)),_)); }
+                              ?_ ((kind == :material || kind == :camera || kind == :clip_plane)
                                   ?: _
                                   ?_ .Error(@"Unsupported Scene3D node '@{kind}'"));
     }; index += 1 };
@@ -26884,7 +26999,7 @@ S3Picking(primitives) -> {;
 };
 
 S3Realized(children) -> {;
-    primitives = S3Collect(children,S3Identity());
+    primitives = S3Collect(children,S3Identity(),[]);
     .DeepMutable({=
         type="scene3d_realized",
         schema="rix.scene3d.realized@1",
@@ -27188,6 +27303,8 @@ scene3dNamespace._proto={=
     Scene=(self,children,options ?= {= })->S3Scene(children,options),
     Group=(self,children,options ?= {= })->S3Group(children,options),
     Transform=(self,children,options ?= {= })->S3Transform(children,options),
+    ClipPlane=(self,normal,offset ?= 0)->S3ClipPlane(normal,offset),
+    Clip=(self,children,planes,options ?= {= })->S3Clip(children,planes,options),
     Mesh=(self,vertices,triangles ?= _,options ?= {= })->S3Mesh(vertices,triangles,options),
     Polyline=(self,points,options ?= {= })->S3Polyline(points,options),
     PointCloud=(self,points,options ?= {= })->S3PointCloud(points,options),
@@ -30618,5 +30735,5 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
 
 export { pluginProfileFromUrl, stripMarkedPluginProfile, findHelp, createRixRepl };
 
-//# debugId=7FC6B00A7477C22F64756E2164756E21
-//# sourceMappingURL=chunk-6gznj7tt.js.map
+//# debugId=41E9B831F6D823A364756E2164756E21
+//# sourceMappingURL=chunk-spmj3366.js.map

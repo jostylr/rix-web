@@ -25327,6 +25327,62 @@ function timelineMarkers(value, count) {
     return Object.freeze({ frame, label });
   }));
 }
+function createTimelineTrack(args) {
+  const entry = spec(args, ["kind", "keyframes"], "Timeline.Track");
+  const kind = (asString(get(entry, "kind")) || "").toLowerCase();
+  if (!new Set(["camera", "caption", "narration", "state"]).has(kind)) {
+    throw new Error("Timeline.Track kind must be camera, caption, narration, or state");
+  }
+  const seen = new Set;
+  const keyframes = sequence4(get(entry, "keyframes"), "Timeline.Track keyframes").map((keyframe, index) => {
+    const fields = map4(keyframe, `Timeline.Track keyframe ${index + 1}`);
+    const frame = exactPositiveIndex(get(fields, "frame"), `Timeline.Track keyframe ${index + 1} frame`);
+    if (seen.has(frame))
+      throw new Error(`Timeline.Track has duplicate keyframe ${frame}`);
+    seen.add(frame);
+    const value = get(fields, "value");
+    if (value === null || value === undefined)
+      throw new Error(`Timeline.Track keyframe ${index + 1} requires a value`);
+    if ((kind === "caption" || kind === "narration") && asString(value) === null) {
+      throw new Error(`Timeline.Track ${kind} keyframe values must be Strings`);
+    }
+    return Object.freeze({ frame, value, label: asString(get(fields, "label")) });
+  }).sort((left, right) => left.frame - right.frame);
+  if (!keyframes.length)
+    throw new Error("Timeline.Track requires at least one keyframe");
+  const interpolation = (asString(get(entry, "interpolation")) || "step").toLowerCase();
+  if (!new Set(["step", "linear", "cubic"]).has(interpolation)) {
+    throw new Error("Timeline.Track interpolation must be step, linear, or cubic");
+  }
+  if ((kind === "caption" || kind === "narration") && interpolation !== "step") {
+    throw new Error(`Timeline.Track ${kind} interpolation must be step`);
+  }
+  return output("timeline_track", {
+    schema: "rix.timeline-track@1",
+    id: requiredString(get(entry, "id"), "Timeline.Track id"),
+    trackKind: kind,
+    interpolation,
+    keyframes: Object.freeze(keyframes),
+    title: asString(get(entry, "title"))
+  });
+}
+function timelineTracks(value, count) {
+  if (value === null || value === undefined)
+    return Object.freeze([]);
+  const ids = new Set;
+  return Object.freeze(sequence4(value, "Timeline.Sequence tracks").map((track, index) => {
+    if (!isOutputValue(track) || track.kind !== "timeline_track" || track.schema !== "rix.timeline-track@1") {
+      throw new Error(`Timeline.Sequence track ${index + 1} must come from Timeline.Track`);
+    }
+    if (ids.has(track.id))
+      throw new Error(`Timeline.Sequence track id '${track.id}' is duplicated`);
+    ids.add(track.id);
+    if (track.keyframes.some((keyframe) => keyframe.frame > count)) {
+      throw new Error(`Timeline.Sequence track '${track.id}' has a keyframe outside 1…${count}`);
+    }
+    return track;
+  }));
+}
 function exactRational4(value, label) {
   if (value instanceof Rational)
     return value;
@@ -25647,6 +25703,7 @@ function createTimelineSequence(args, runtime = null) {
     duration: duration === null || duration === undefined ? null : positiveExactNumber(duration, "Timeline.Sequence duration"),
     frameDurations,
     markers: timelineMarkers(get(entry, "markers"), frames.length),
+    tracks: timelineTracks(get(entry, "tracks"), frames.length),
     preferencesKey: asString(get(entry, "preferencesKey")),
     easing: asString(get(entry, "easing")) || "linear",
     transition: timelineTransition(get(entry, "transition")),
@@ -27641,7 +27698,8 @@ ${value.transcript.map((child) => formatInlineText(child, format)).join("")}` : 
 `);
   }
   if (value.kind === "timeline") {
-    return [value.title || `Timeline: ${value.frames.length} frames`, ...value.frames.map((frame, index) => `Frame ${index + 1} of ${value.frames.length} · exact state ${cellText(frame.state, format)}
+    const tracks = (value.tracks || []).map((track) => `Track ${track.id} (${track.trackKind}, ${track.interpolation}): ${track.keyframes.map((keyframe) => `frame ${keyframe.frame} = ${cellText(keyframe.value, format)}`).join("; ")}`);
+    return [value.title || `Timeline: ${value.frames.length} frames`, ...tracks, ...value.frames.map((frame, index) => `Frame ${index + 1} of ${value.frames.length} · exact state ${cellText(frame.state, format)}
 ${formatOutputText(frame.content, format)}`)].join(`
 
 `);
@@ -27853,7 +27911,8 @@ function renderOutputHtml(value, format = (item) => String(item ?? "")) {
     const textTrack = value.frames.map((frame, index) => `<li data-rix-timeline-text-frame="${index + 1}"${index === 0 ? ' aria-current="true"' : ""}><b>Frame ${index + 1}${value.markers?.find((marker) => marker.frame === index + 1) ? ` · marker ${escapeHtml2(value.markers.find((marker) => marker.frame === index + 1).label)}` : ""} · exact state ${escapeHtml2(cellText(frame.state, format))}</b><pre>${escapeHtml2(formatOutputText(frame.content, format))}</pre></li>`).join("");
     const duration = value.frameDurations ? "variable exact frame timing" : value.duration === null ? "host default" : `${escapeHtml2(cellText(value.duration, format))} seconds total`;
     const markerOptions = (value.markers || []).map((marker) => `<option value="${marker.frame}">${escapeHtml2(marker.label)} · frame ${marker.frame}</option>`).join("");
-    return `<section class="rix-output-timeline" data-rix-timeline-length="${value.frames.length}" data-rix-timeline-transition="${escapeHtml2(transition.mode)}" data-rix-timeline-transition-schema="${escapeHtml2(transition.schema)}"${value.preferencesKey ? ` data-rix-timeline-preferences-key="${escapeHtml2(value.preferencesKey)}"` : ""} tabindex="0" role="region" aria-label="${escapeHtml2(value.title || "Mathematical timeline")}">${value.title ? `<h2>${escapeHtml2(value.title)}</h2>` : ""}<p class="rix-output-timeline-meta">${value.frames.length} exact frames · ${duration} · ${escapeHtml2(value.easing)} easing · ${escapeHtml2(transition.mode)} changes</p><div class="rix-output-timeline-toolbar" role="toolbar" aria-label="Timeline playback controls"><button type="button" data-rix-timeline-action="previous" aria-label="Previous frame">←</button><button type="button" data-rix-timeline-action="play" aria-pressed="false">Play</button><button type="button" data-rix-timeline-action="next" aria-label="Next frame">→</button><label>Frame <input type="range" min="1" max="${value.frames.length}" step="1" value="1" data-rix-timeline-scrubber aria-label="Timeline frame"></label><label>Speed <select data-rix-timeline-speed aria-label="Playback speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label><label><input type="checkbox" data-rix-timeline-loop> Loop</label><label>Start <input type="number" min="1" max="${value.frames.length}" step="1" value="1" data-rix-timeline-range-start></label><label>End <input type="number" min="1" max="${value.frames.length}" step="1" value="${value.frames.length}" data-rix-timeline-range-end></label><label>Compare <select data-rix-timeline-compare><option value="none">None</option><option value="previous">Previous</option><option value="frame">Chosen frame</option><option value="onion">Onion skin</option></select></label><label>Comparison frame <input type="number" min="1" max="${value.frames.length}" step="1" value="1" data-rix-timeline-compare-frame></label>${markerOptions ? `<label>Marker <select data-rix-timeline-marker><option value="">Choose…</option>${markerOptions}</select></label>` : ""}<button type="button" data-rix-timeline-action="record">Record frame</button><button type="button" data-rix-timeline-action="export">Export recording</button><button type="button" data-rix-timeline-action="clear-recording">Clear recording</button></div><div class="rix-output-timeline-stage" data-rix-timeline-stage>${frameArticles}</div><output class="rix-output-timeline-status" data-rix-timeline-status aria-live="polite">Frame 1 of ${value.frames.length} · exact state ${escapeHtml2(cellText(value.frames[0].state, format))}</output><pre class="rix-output-timeline-export" data-rix-timeline-export hidden></pre><details class="rix-output-timeline-diagnostics"><summary>Transition diagnostics</summary><ul data-rix-timeline-diagnostics></ul></details><details class="rix-output-timeline-inspector"><summary>Exact current frame</summary><dl><dt>State</dt><dd data-rix-timeline-exact-state>${escapeHtml2(cellText(value.frames[0].state, format))}</dd><dt>Origin</dt><dd data-rix-timeline-exact-origin>entry ${exactInteger4(value.frames[0].origin.entries.get("entry"), "Timeline origin entry")}, state ${exactInteger4(value.frames[0].origin.entries.get("state"), "Timeline origin state")}, ordinal ${exactInteger4(value.frames[0].origin.entries.get("ordinal"), "Timeline origin ordinal")}</dd></dl><pre data-rix-timeline-exact-text>${escapeHtml2(formatOutputText(value.frames[0].content, format))}</pre></details><details class="rix-output-timeline-text-track"><summary>Complete text track (${value.frames.length} frames)</summary><ol>${textTrack}</ol></details><p class="rix-output-timeline-help">Keyboard: Space play/pause; Left/Right step; Home/End jump; L loop; M next marker; R record exact frame.</p></section>`;
+    const semanticTracks = (value.tracks || []).map((track) => `<section class="rix-output-timeline-semantic-track" data-rix-timeline-track="${escapeHtml2(track.id)}" data-rix-timeline-track-kind="${escapeHtml2(track.trackKind)}"><b>${escapeHtml2(track.title || track.id)} · ${escapeHtml2(track.trackKind)} · ${escapeHtml2(track.interpolation)}</b>${track.keyframes.map((keyframe, index) => `<output data-rix-timeline-track-keyframe="${keyframe.frame}"${index === 0 && keyframe.frame <= 1 ? "" : " hidden"}>${escapeHtml2(cellText(keyframe.value, format))}</output>`).join("")}</section>`).join("");
+    return `<section class="rix-output-timeline" data-rix-timeline-length="${value.frames.length}" data-rix-timeline-track-count="${(value.tracks || []).length}" data-rix-timeline-transition="${escapeHtml2(transition.mode)}" data-rix-timeline-transition-schema="${escapeHtml2(transition.schema)}"${value.preferencesKey ? ` data-rix-timeline-preferences-key="${escapeHtml2(value.preferencesKey)}"` : ""} tabindex="0" role="region" aria-label="${escapeHtml2(value.title || "Mathematical timeline")}">${value.title ? `<h2>${escapeHtml2(value.title)}</h2>` : ""}<p class="rix-output-timeline-meta">${value.frames.length} exact frames · ${(value.tracks || []).length} semantic tracks · ${duration} · ${escapeHtml2(value.easing)} easing · ${escapeHtml2(transition.mode)} changes</p><div class="rix-output-timeline-toolbar" role="toolbar" aria-label="Timeline playback controls"><button type="button" data-rix-timeline-action="previous" aria-label="Previous frame">←</button><button type="button" data-rix-timeline-action="play" aria-pressed="false">Play</button><button type="button" data-rix-timeline-action="next" aria-label="Next frame">→</button><label>Frame <input type="range" min="1" max="${value.frames.length}" step="1" value="1" data-rix-timeline-scrubber aria-label="Timeline frame"></label><label>Speed <select data-rix-timeline-speed aria-label="Playback speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label><label><input type="checkbox" data-rix-timeline-loop> Loop</label><label>Start <input type="number" min="1" max="${value.frames.length}" step="1" value="1" data-rix-timeline-range-start></label><label>End <input type="number" min="1" max="${value.frames.length}" step="1" value="${value.frames.length}" data-rix-timeline-range-end></label><label>Compare <select data-rix-timeline-compare><option value="none">None</option><option value="previous">Previous</option><option value="frame">Chosen frame</option><option value="onion">Onion skin</option></select></label><label>Comparison frame <input type="number" min="1" max="${value.frames.length}" step="1" value="1" data-rix-timeline-compare-frame></label>${markerOptions ? `<label>Marker <select data-rix-timeline-marker><option value="">Choose…</option>${markerOptions}</select></label>` : ""}<button type="button" data-rix-timeline-action="record">Record frame</button><button type="button" data-rix-timeline-action="export">Export recording</button><button type="button" data-rix-timeline-action="clear-recording">Clear recording</button></div><div class="rix-output-timeline-stage" data-rix-timeline-stage>${frameArticles}</div>${semanticTracks ? `<div class="rix-output-timeline-semantic-tracks" aria-live="polite">${semanticTracks}</div>` : ""}<output class="rix-output-timeline-status" data-rix-timeline-status aria-live="polite">Frame 1 of ${value.frames.length} · exact state ${escapeHtml2(cellText(value.frames[0].state, format))}</output><pre class="rix-output-timeline-export" data-rix-timeline-export hidden></pre><details class="rix-output-timeline-diagnostics"><summary>Transition diagnostics</summary><ul data-rix-timeline-diagnostics></ul></details><details class="rix-output-timeline-inspector"><summary>Exact current frame</summary><dl><dt>State</dt><dd data-rix-timeline-exact-state>${escapeHtml2(cellText(value.frames[0].state, format))}</dd><dt>Origin</dt><dd data-rix-timeline-exact-origin>entry ${exactInteger4(value.frames[0].origin.entries.get("entry"), "Timeline origin entry")}, state ${exactInteger4(value.frames[0].origin.entries.get("state"), "Timeline origin state")}, ordinal ${exactInteger4(value.frames[0].origin.entries.get("ordinal"), "Timeline origin ordinal")}</dd></dl><pre data-rix-timeline-exact-text>${escapeHtml2(formatOutputText(value.frames[0].content, format))}</pre></details><details class="rix-output-timeline-text-track"><summary>Complete text track (${value.frames.length} frames)</summary><ol>${textTrack}</ol></details><p class="rix-output-timeline-help">Keyboard: Space play/pause; Left/Right step; Home/End jump; L loop; M next marker; R record exact frame.</p></section>`;
   }
   if (value.kind === "timeline_render")
     return `<section class="rix-output-timeline-render" data-rix-timeline-frame="${value.frame}" data-rix-timeline-length="${value.timeline.frames.length}">${value.title ? `<h2>${escapeHtml2(value.title)}</h2>` : ""}${renderOutputHtml(value.content, format)}<p class="rix-output-timeline-caption">Frame ${value.frame} of ${value.timeline.frames.length}</p></section>`;
@@ -27999,6 +28058,7 @@ function createGraphicsOutputCollection() {
 }
 function createTimelineOutputCollection() {
   const methods = new Map([
+    ["Track", createTimelineTrack],
     ["Sequence", createTimelineSequence],
     ["Render", createTimelineRender]
   ]);
@@ -72423,7 +72483,8 @@ GeometryAuthoringWorkbench(graph,actions,options ?= {= }) -> {;
     actions ? :Array ?: _ ?_ .Error("geometry.AuthoringWorkbench actions must be a supported ordered Graphics action set");
     expandedActions=actions.Len()==5;
     selectionActions=actions.Len()==7;
-    (actions.Len()==3||expandedActions||selectionActions) ?: _ ?_ .Error("geometry.AuthoringWorkbench actions must be [point, undo, redo], [point, line, circle, undo, redo], or [point, line, circle, intersection, measurement, undo, redo]");
+    transformActions=actions.Len()==8;
+    (actions.Len()==3||expandedActions||selectionActions||transformActions) ?: _ ?_ .Error("geometry.AuthoringWorkbench actions must be [point, undo, redo], [point, line, circle, undo, redo], [point, line, circle, intersection, measurement, undo, redo], or [point, line, circle, intersection, measurement, transform, undo, redo]");
     size=GeometryNumericSequence(GeometryOption(options,"size",[720,480]),2,"geometry.AuthoringWorkbench size");
     view=GeometryNumericSequence(GeometryOption(options,"view",[-10,-10,10,10]),4,"geometry.AuthoringWorkbench view");
     xmin=view[1]; ymin=view[2]; xmax=view[3]; ymax=view[4];
@@ -72441,23 +72502,32 @@ GeometryAuthoringWorkbench(graph,actions,options ?= {= }) -> {;
     actionPrefix ? :String ?: _ ?_ .Error("geometry.AuthoringWorkbench actionPrefix must be a String");
     surfaceActionId=@"@{actionPrefix}-point"; lineActionId=@"@{actionPrefix}-line"; circleActionId=@"@{actionPrefix}-circle";
     intersectionActionId=@"@{actionPrefix}-intersection"; measurementActionId=@"@{actionPrefix}-measurement";
+    transformActionId=@"@{actionPrefix}-transform";
     undoActionId=@"@{actionPrefix}-undo"; redoActionId=@"@{actionPrefix}-redo";
     coordinateSystem={= view=view,frame=frame };
-    tools=selectionActions ?: [:point,:line,:circle,:intersection,:measurement]
+    tools=transformActions ?: [:point,:line,:circle,:intersection,:measurement,:transform]
+      ?_ selectionActions ?: [:point,:line,:circle,:intersection,:measurement]
       ?_ expandedActions ?: [:point,:line,:circle] ?_ [:point];
     pointSpec={= tool=:point,label="Point",actionId=surfaceActionId,selectionKind=:canvas,selectionCount=1 };
     lineSpec={= tool=:line,label="Line",actionId=lineActionId,selectionKind=:object,selectionKinds=[:point],selectionCount=2,operandLabels=["first point","second point"] };
     circleSpec={= tool=:circle,label="Circle",actionId=circleActionId,selectionKind=:object,selectionKinds=[:point],selectionCount=2,operandLabels=["center","through-point"] };
-    toolSpecs=selectionActions ?: [
+    selectionSpecs=[
         pointSpec,lineSpec,circleSpec,
         {= tool=:intersection,label="Intersection",actionId=intersectionActionId,selectionKind=:object,selectionKinds=[:line,:circle,:conic],selectionCount=2,operandLabels=["first curve","second curve"] },
         {= tool=:measurement,label="Distance",actionId=measurementActionId,selectionKind=:object,selectionKinds=[:point],selectionCount=2,operandLabels=["first point","second point"] }
-    ] ?_ expandedActions ?: [pointSpec,lineSpec,circleSpec] ?_ [pointSpec];
+    ];
+    transformLabel=GeometryOption(options,"transformlabel","Transform");
+    transformLabel ? :String ?: _ ?_ .Error("geometry.AuthoringWorkbench transformLabel must be a String");
+    toolSpecs=transformActions ?: selectionSpecs.Push({=
+        tool=:transform,label=transformLabel,actionId=transformActionId,selectionKind=:object,
+        selectionKinds=[:point,:line,:segment,:ray,:polygon,:circle,:conic],selectionCount=1,operandLabels=["object"]
+    }) ?_ selectionActions ?: selectionSpecs ?_ expandedActions ?: [pointSpec,lineSpec,circleSpec] ?_ [pointSpec];
     policy={=
         schema="rix.geometry.authoring-policy@1",tool=:point,tools=tools,toolSpecs=toolSpecs,
         maxNodes=maxNodes,snap=snap,idPrefix=idPrefix,coordinateSystem=coordinateSystem,
         surfaceActionId=surfaceActionId,lineActionId=lineActionId,circleActionId=circleActionId,
         intersectionActionId=intersectionActionId,measurementActionId=measurementActionId,
+        transformActionId=transformActionId,
         undoActionId=undoActionId,redoActionId=redoActionId,
         exactCoordinates=1,deterministicIds=1
     };
@@ -72539,11 +72609,12 @@ id: plot
 description: Pure-RiX exact and numerics-backed 2D plotting that lowers to portable core Graphics scenes.
 kind: rix
 mount: plot
-exports: [Polynomial, Function, Parametric, Scatter, Line, Bar, Step, Polar, Implicit, Inequality, Contour, HeatMap, VectorField]
+exports: [Polynomial, PolynomialPOI, Function, Parametric, Scatter, Line, Bar, Step, Polar, Implicit, Inequality, Contour, HeatMap, VectorField]
 groups: [Plot, Graphics, Exact]
 permissions: []
 requires: [rix.numerics@1]
-provides: [rix.plot@1, rix.plot.refinement-policy@1]
+provides: [rix.plot@1, rix.plot.poi@1, rix.plot.refinement-policy@1]
+schemas: [rix.plot@1, rix.plot.poi@1]
 snapshot: true
 deterministic: true
 defaultEnabled: false
@@ -72578,6 +72649,64 @@ PlotStyle(settings, fallbackStroke, fallbackWidth) -> {;
 };
 
 PlotEvaluate(coefficients, x) -> coefficients.Reduce((total, coefficient) -> total * @x + coefficient, 0);
+
+PlotIntegerSqrtFloor(value) -> {;
+    n=value ~!: :Integer;
+    n>=0 ?: _ ?_ .Error("plot square root requires a nonnegative integer");
+    n<2 ?: n ?_ {;
+        x:=@n; next:=(x+1)//2;
+        {@ step=1; @next<@x; {; @x~=@next; @next~=(@x+(@n//@x))//2; }; step+=1 };
+        x;
+    };
+};
+
+PlotExactSqrt(value) -> {;
+    exact=value ~!: :Rational;
+    exact<0 ?: _ ?_ {;
+        numerator=PlotIntegerSqrtFloor(@exact.Numerator()); denominator=PlotIntegerSqrtFloor(@exact.Denominator());
+        numerator^2==@exact.Numerator()&&denominator^2==@exact.Denominator() ?: numerator/denominator ?_ _;
+    };
+};
+
+PlotPOI(kind,point,label,evidence ?= {= }) -> .DeepMutable({=
+    schema="rix.plot.poi@1",kind=kind,status=:exact,evidenceLevel=:proof,
+    point=point,label=label,evidence=evidence
+},_);
+
+PlotPolynomialPOI(coefficientsValue,domain,options ?= {= }) -> {;
+    coefficients=PlotExactArray(coefficientsValue,"Polynomial POI coefficients");
+    coefficients.Len()>=2 ?: _ ?_ .Error("plot.PolynomialPOI requires at least two coefficients");
+    domain ? :Array ?: _ ?_ .Error("Polynomial POI domain must be an Array");
+    domain.Len()==2 ?: _ ?_ .Error("Polynomial POI domain must have a lower and upper bound");
+    xMin=PlotExact(domain[1],"Polynomial POI lower bound"); xMax=PlotExact(domain[2],"Polynomial POI upper bound");
+    xMin<xMax ?: _ ?_ .Error("Polynomial POI domain must increase");
+    result:=[];
+    (xMin<=0&&xMax>=0) ?: {;
+        y=PlotEvaluate(@coefficients,0);
+        @result ~= @result.Push(PlotPOI(:y_intercept,[0,y],@"y-intercept (0, @{y})",{= identity=:evaluation,x=0 }));
+    } ?_ _;
+    coefficients.Len()==2 ?: {;
+        a=@coefficients[1]; b=@coefficients[2];
+        a!=0 ?: {; root=-@b/@a; (root>=@xMin&&root<=@xMax) ?: {;
+            @result ~= @result.Push(PlotPOI(:root,[@root,0],@"root x = @{@root}",{= identity=:linear_formula }));
+        } ?_ _; } ?_ _;
+    } ?_ coefficients.Len()==3 ?: {;
+        a=@coefficients[1]; b=@coefficients[2]; c=@coefficients[3];
+        a!=0 ?: {;
+            vertexX=-@b/(2*@a); vertexY=PlotEvaluate(@coefficients,vertexX);
+            (vertexX>=@xMin&&vertexX<=@xMax) ?: {;
+                @result ~= @result.Push(PlotPOI(:extremum,[@vertexX,@vertexY],@"vertex (@{@vertexX}, @{@vertexY})",{= identity=:quadratic_vertex,classification=@a>0 ?: :minimum ?_ :maximum }));
+            } ?_ _;
+            discriminant=@b^2-4*@a*@c; squareRoot=PlotExactSqrt(discriminant);
+            squareRoot!=_ ?: {;
+                first=(-@b-@squareRoot)/(2*@a); second=(-@b+@squareRoot)/(2*@a);
+                (first>=@xMin&&first<=@xMax) ?: {; @result ~= @result.Push(PlotPOI(:root,[@first,0],@"root x = @{@first}",{= identity=:quadratic_formula,discriminant=@discriminant })); } ?_ _;
+                (second!=first&&second>=@xMin&&second<=@xMax) ?: {; @result ~= @result.Push(PlotPOI(:root,[@second,0],@"root x = @{@second}",{= identity=:quadratic_formula,discriminant=@discriminant })); } ?_ _;
+            } ?_ _;
+        } ?_ _;
+    } ?_ _;
+    result;
+};
 
 PlotReadSeries(coefficientsValue, settings, index, samples, xMin, xMax, primary) -> {;
     coefficients = PlotExactArray(coefficientsValue, @"Polynomial plot series @{index} coefficients");
@@ -72686,6 +72815,15 @@ PlotPolynomial(coefficientsValue, domain, options ?= {= }) -> {;
     {@ index = 1; index <= @markEntries.Len(); {;
         @marks ~= @marks.Push(PlotReadMark(@markEntries[index], index));
     }; index += 1 };
+    pointsOfInterest=PlotOption(options,"pointsofinterest",0)==1 ?: PlotPolynomialPOI(coefficients,domain,options) ?_ [];
+    {@ index=1; index<=@pointsOfInterest.Len(); {;
+        poi=@pointsOfInterest[index];
+        @marks ~= @marks.Push({=
+            point=poi[:point],label=poi[:label],radius=PlotExact(PlotOption(@options,"poiradius",5),"Polynomial POI radius"),
+            style=PlotOption(@options,"poistyle",{= fill="#7c3aed",stroke="#fff",width=2 }),
+            labelStyle=PlotOption(@options,"poilabelstyle",{= size=13 })
+        });
+    }; index+=1 };
 
     ticks := [];
     tickEntries = PlotOption(options, "ticks", []);
@@ -72748,6 +72886,7 @@ PlotPolynomial(coefficientsValue, domain, options ?= {= }) -> {;
             series=series,
             ticks=ticks,
             marks=marks,
+            pointsOfInterest=pointsOfInterest,
             title=PlotOption(options,"title"),
             xLabel=PlotOption(options,"xlabel"),
             yLabel=PlotOption(options,"ylabel")
@@ -73540,6 +73679,7 @@ PlotDataCall(data, options, kind) -> PlotGeneral(data, options, kind);
 plotNamespace = {= };
 plotNamespace._proto = {=
     Polynomial=(self, coefficients, domain, options ?= {= })->PlotPolynomial(coefficients, domain, options),
+    PolynomialPOI=(self, coefficients, domain, options ?= {= })->PlotPolynomialPOI(coefficients, domain, options),
     Function=(self, fn, domain, options ?= {= })->PlotFunction(fn, domain, options),
     Parametric=(self, fn, domain, options ?= {= })->PlotParametric(fn, domain, options),
     Scatter=(self, data, options ?= {= })->PlotDataCall(data, options, :scatter),
@@ -73562,12 +73702,12 @@ id: scene3d
 description: Pure-RiX exact retained 3D scenes, explicit realization and projection, and portable Graphics snapshots.
 kind: rix
 mount: scene3d
-exports: [Scene, Group, Transform, Mesh, Polyline, PointCloud, ParametricCurve, ParametricSurface, Axes, Annotation, AnnotationPolicy, Interaction, Material, AmbientLight, DirectionalLight, PointLight, PerspectiveCamera, OrthographicCamera, OrbitCamera, Realize, Project, Snapshot]
+exports: [Scene, Group, Transform, ClipPlane, Clip, Mesh, Polyline, PointCloud, ParametricCurve, ParametricSurface, Axes, Annotation, AnnotationPolicy, Interaction, Material, AmbientLight, DirectionalLight, PointLight, PerspectiveCamera, OrthographicCamera, OrbitCamera, Realize, Project, Snapshot]
 groups: [Scene3D, Graphics, Exact]
 permissions: []
 requires: [rix.numerics@1]
-provides: [rix.scene3d@1, rix.scene3d.realized@1, rix.scene3d.projected@1, rix.scene3d.snapshot@1, rix.scene3d.orbit@1, rix.scene3d.interaction@1, rix.scene3d.annotation-policy@1, rix.scene3d.surface-sampling@1]
-schemas: [rix.scene3d@1, rix.scene3d.realized@1, rix.scene3d.projected@1, rix.scene3d.snapshot@1, rix.scene3d.orbit@1, rix.scene3d.interaction@1, rix.scene3d.annotation-policy@1, rix.scene3d.surface-sampling@1]
+provides: [rix.scene3d@1, rix.scene3d.realized@1, rix.scene3d.projected@1, rix.scene3d.snapshot@1, rix.scene3d.orbit@1, rix.scene3d.interaction@1, rix.scene3d.annotation-policy@1, rix.scene3d.surface-sampling@1, rix.scene3d.clip-plane@1, rix.scene3d.material@1]
+schemas: [rix.scene3d@1, rix.scene3d.realized@1, rix.scene3d.projected@1, rix.scene3d.snapshot@1, rix.scene3d.orbit@1, rix.scene3d.interaction@1, rix.scene3d.annotation-policy@1, rix.scene3d.surface-sampling@1, rix.scene3d.clip-plane@1, rix.scene3d.material@1]
 snapshot: true
 deterministic: true
 defaultEnabled: false
@@ -73613,10 +73753,16 @@ S3MaterialValues(material) -> ((material ? :Map) && S3IsNode(material) && materi
 S3Style(settings) -> {;
     material = S3Option(settings, "material");
     values = S3MaterialValues(material);
+    roughness=S3Exact(S3Option(settings, "roughness", S3Option(values, "roughness", 1)), "Scene3D style roughness");
+    metallic=S3Exact(S3Option(settings, "metallic", S3Option(values, "metallic", 0)), "Scene3D style metallic");
+    (roughness>=0&&roughness<=1&&metallic>=0&&metallic<=1) ?: _ ?_ .Error("Scene3D style roughness and metallic must be between zero and one");
     .DeepMutable({=
         color=S3Option(settings, "color", S3Option(values, "color", "#275dad")),
         width=S3Exact(S3Option(settings, "width", S3Option(values, "width", 1)), "Scene3D style width"),
         opacity=S3Exact(S3Option(settings, "opacity", S3Option(values, "opacity", 1)), "Scene3D style opacity"),
+        roughness=roughness,
+        metallic=metallic,
+        emissive=S3Option(settings, "emissive", S3Option(values, "emissive")),
         material=material
     }, _);
 };
@@ -73689,10 +73835,14 @@ S3LeafFields(settings, label) -> S3LeafInteraction(settings, label).Merge({=
 
 S3Material(color ?= "#275dad", opacity ?= 1, width ?= 1) -> {;
     settings = color ? :Map ?: color ?_ {= color=color, opacity=opacity, width=width };
-    S3Value(:material, {= values=.DeepMutable({=
+    roughness=S3Exact(S3Option(settings, "roughness", 1), "scene3d.Material roughness");
+    metallic=S3Exact(S3Option(settings, "metallic", 0), "scene3d.Material metallic");
+    (roughness>=0&&roughness<=1&&metallic>=0&&metallic<=1) ?: _ ?_ .Error("scene3d.Material roughness and metallic must be between zero and one");
+    S3Value(:material, {= materialSchema="rix.scene3d.material@1",values=.DeepMutable({=
         color=S3Option(settings, "color", "#275dad"),
         opacity=S3Exact(S3Option(settings, "opacity", 1), "scene3d.Material opacity"),
-        width=S3Exact(S3Option(settings, "width", 1), "scene3d.Material width")
+        width=S3Exact(S3Option(settings, "width", 1), "scene3d.Material width"),
+        roughness=roughness,metallic=metallic,emissive=S3Option(settings,"emissive")
     }, _) });
 };
 
@@ -73976,6 +74126,29 @@ S3Group(children, options ?= {= }) -> {;
     S3Value(:group, {= children=S3Children(settings[:children], "scene3d.Group children"), metadata=S3Option(settings, "metadata") });
 };
 
+S3ClipPlane(normal, offset ?= 0) -> {;
+    settings=normal ? :Map ?: normal ?_ {= normal=normal,offset=offset };
+    vector=S3Vector(settings[:normal],3,"scene3d.ClipPlane normal");
+    S3Dot(vector,vector)>0 ?: _ ?_ .Error("scene3d.ClipPlane normal must not be zero");
+    S3Value(:clip_plane,{=
+        clipSchema="rix.scene3d.clip-plane@1",normal=vector,
+        offset=S3Exact(S3Option(settings,"offset",0),"scene3d.ClipPlane offset"),
+        label=S3OptionalString(settings,"label","scene3d.ClipPlane label")
+    });
+};
+
+S3Clip(children, planes, options ?= {= }) -> {;
+    settings=children ? :Map ?: children ?_ options.Merge({= children=children,planes=planes });
+    normalizedPlanes=S3Option(settings,"planes",[]);
+    normalizedPlanes ? :Array ?: _ ?_ .Error("scene3d.Clip planes must be an Array");
+    normalizedPlanes.Filter((plane)->!(S3IsNode(plane)&&plane[:kind]==:clip_plane)).Len()==0
+      ?: _ ?_ .Error("scene3d.Clip planes must come from scene3d.ClipPlane");
+    S3Value(:clip,{=
+        children=S3Children(settings[:children],"scene3d.Clip children"),planes=normalizedPlanes,
+        metadata=S3Option(settings,"metadata")
+    });
+};
+
 S3Identity() -> [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
 
 S3Transform(children, options ?= {= }) -> {;
@@ -74075,30 +74248,32 @@ S3MeshSegments(triangles) -> {;
     segments;
 };
 
-S3PrimitiveFields(child) -> {=
+S3PrimitiveFields(child,clipPlanes ?= []) -> {=
     pickid=S3Option(child,"pickid"),
     label=S3Option(child,"label"),
     metadata=S3Option(child,"metadata"),
     interaction=S3Option(child,"interaction"),
-    annotationPolicy=S3Option(child,"annotationpolicy")
+    annotationPolicy=S3Option(child,"annotationpolicy"),clipPlanes=clipPlanes
 };
 
-S3Collect(children, parent) -> {;
+S3Collect(children, parent, clipPlanes ?= []) -> {;
     result := [];
     {@ index = 1; index <= @children.Len(); {;
         child = @children[index];
         kind = child[:kind];
         kind == :group
-          ?: {; @result ~= @result.Concat(S3Collect(@child[:children], @parent)); }
+          ?: {; @result ~= @result.Concat(S3Collect(@child[:children], @parent, @clipPlanes)); }
           ?_ kind == :transform
-               ?: {; @result ~= @result.Concat(S3Collect(@child[:children], S3Multiply4(@parent, @child[:matrix]))); }
+               ?: {; @result ~= @result.Concat(S3Collect(@child[:children], S3Multiply4(@parent, @child[:matrix]), @clipPlanes)); }
+               ?_ kind == :clip
+                    ?: {; @result ~= @result.Concat(S3Collect(@child[:children],@parent,@clipPlanes.Concat(@child[:planes]))); }
                ?_ kind == :mesh
                     ?: {;
                         points = @child[:vertices].Map((point) -> S3TransformPoint(@parent, point));
                         @result ~= @result.Push(.DeepMutable({=
                             kind=:mesh, points=points, segments=S3MeshSegments(@child[:triangles]),
                             triangles=@child[:triangles], style=@child[:style]
-                        }.Merge(S3PrimitiveFields(@child)), _));
+                        }.Merge(S3PrimitiveFields(@child,@clipPlanes)), _));
                     }
                     ?_ kind == :polyline
                          ?: {;
@@ -74108,19 +74283,19 @@ S3Collect(children, parent) -> {;
                                  @segments ~= @segments.Push([pointIndex, pointIndex+1]);
                              }; pointIndex += 1 };
                              (@child[:closed]==1 && points.Len() > 2) ?: {; @segments ~= @segments.Push([@points.Len(),1]); } ?_ _;
-                             @result ~= @result.Push(.DeepMutable({= kind=:lines, points=points, segments=segments, style=@child[:style] }.Merge(S3PrimitiveFields(@child)), _));
+                             @result ~= @result.Push(.DeepMutable({= kind=:lines, points=points, segments=segments, style=@child[:style] }.Merge(S3PrimitiveFields(@child,@clipPlanes)), _));
                          }
                          ?_ kind == :point_cloud
                               ?: {; @result ~= @result.Push(.DeepMutable({=
                                   kind=:points, points=@child[:points].Map((point) -> S3TransformPoint(@parent, point)),
                                   radius=@child[:radius], style=@child[:style]
-                              }.Merge(S3PrimitiveFields(@child)), _)); }
+                              }.Merge(S3PrimitiveFields(@child,@clipPlanes)), _)); }
                               ?_ kind == :annotation
                                    ?: {; @result ~= @result.Push(.DeepMutable({=
                                        kind=:annotation,points=[S3TransformPoint(@parent,@child[:position])],
                                        text=@child[:text],style=@child[:style]
-                                   }.Merge(S3PrimitiveFields(@child)),_)); }
-                              ?_ ((kind == :material || kind == :camera)
+                                   }.Merge(S3PrimitiveFields(@child,@clipPlanes)),_)); }
+                              ?_ ((kind == :material || kind == :camera || kind == :clip_plane)
                                   ?: _
                                   ?_ .Error(@"Unsupported Scene3D node '@{kind}'"));
     }; index += 1 };
@@ -74143,7 +74318,7 @@ S3Picking(primitives) -> {;
 };
 
 S3Realized(children) -> {;
-    primitives = S3Collect(children,S3Identity());
+    primitives = S3Collect(children,S3Identity(),[]);
     .DeepMutable({=
         type="scene3d_realized",
         schema="rix.scene3d.realized@1",
@@ -74447,6 +74622,8 @@ scene3dNamespace._proto={=
     Scene=(self,children,options ?= {= })->S3Scene(children,options),
     Group=(self,children,options ?= {= })->S3Group(children,options),
     Transform=(self,children,options ?= {= })->S3Transform(children,options),
+    ClipPlane=(self,normal,offset ?= 0)->S3ClipPlane(normal,offset),
+    Clip=(self,children,planes,options ?= {= })->S3Clip(children,planes,options),
     Mesh=(self,vertices,triangles ?= _,options ?= {= })->S3Mesh(vertices,triangles,options),
     Polyline=(self,points,options ?= {= })->S3Polyline(points,options),
     PointCloud=(self,points,options ?= {= })->S3PointCloud(points,options),
@@ -79590,7 +79767,18 @@ function style2(value) {
   return {
     color: color(field3(value, "color")),
     opacity,
-    width: numberValue2(field3(value, "width", 1), "Scene3D style width")
+    width: numberValue2(field3(value, "width", 1), "Scene3D style width"),
+    roughness: numberValue2(field3(value, "roughness", 1), "Scene3D material roughness"),
+    metallic: numberValue2(field3(value, "metallic", 0), "Scene3D material metallic"),
+    emissive: text12(field3(value, "emissive"))
+  };
+}
+function clipPlane(value, index) {
+  return {
+    schema: text12(field3(value, "clipschema"), "rix.scene3d.clip-plane@1"),
+    normal: vector(field3(value, "normal"), 3, `Scene3D clip plane ${index + 1} normal`),
+    offset: numberValue2(field3(value, "offset", 0), `Scene3D clip plane ${index + 1} offset`),
+    label: text12(field3(value, "label"))
   };
 }
 function primitive(value, index) {
@@ -79607,7 +79795,8 @@ function primitive(value, index) {
     pickId: text12(field3(value, "pickid")),
     label: text12(field3(value, "label")),
     interaction: plainValue(field3(value, "interaction")),
-    annotationPolicy: plainValue(field3(value, "annotationpolicy"))
+    annotationPolicy: plainValue(field3(value, "annotationpolicy")),
+    clipPlanes: sequence10(field3(value, "clipplanes", { type: "sequence", values: [] }), `Scene3D primitive ${index + 1} clip planes`).map(clipPlane)
   };
 }
 function cameraPlan(value) {
@@ -79696,7 +79885,14 @@ function createWebGLPlan(scene, options = null) {
       pointSize: entry2.radius ?? 1,
       pickId: entry2.pickId,
       label: entry2.label,
-      interaction: entry2.interaction
+      interaction: entry2.interaction,
+      material: {
+        schema: "rix.scene3d.material@1",
+        roughness: entry2.style.roughness,
+        metallic: entry2.style.metallic,
+        emissive: entry2.style.emissive
+      },
+      clipPlanes: entry2.clipPlanes
     };
     drawCalls.push(call);
     if (entry2.pickId)
@@ -79709,6 +79905,10 @@ function createWebGLPlan(scene, options = null) {
     diagnostics.push(diagnostic("webgl-line-width-portability", "WebGL implementations may clamp Scene3D line widths to one device pixel.", "info"));
   if (annotations.length)
     diagnostics.push(diagnostic("webgl-annotation-overlay", "Scene3D annotations are returned as projected host overlays so text remains accessible and interactive.", "info"));
+  if (drawCalls.some(({ clipPlanes }) => clipPlanes.length > 0))
+    diagnostics.push(diagnostic("webgl-retained-clip-planes", "Scene3D clip planes are retained on draw calls; the portable flat executor reports but does not geometrically split crossing primitives.", "info"));
+  if (drawCalls.some(({ material }) => material.roughness !== 1 || material.metallic !== 0 || material.emissive))
+    diagnostics.push(diagnostic("webgl-retained-advanced-material", "Advanced material parameters are retained for capable hosts; the portable executor uses flat color and opacity.", "info"));
   const lights = sequence10(field3(scene, "lights"), "Scene3D lights").map(lightPlan);
   if (lights.length)
     diagnostics.push(diagnostic("webgl-flat-material-baseline", "The baseline WebGL executor retains light descriptors but draws portable flat material colors.", "info"));
@@ -89015,6 +89215,71 @@ function graphicSpatialTarget(catalog, currentId, direction) {
     return { entry: entry2, forward, score: forward + sideways * 4 };
   }).filter((candidate) => candidate.forward > 0.000000001).sort((left, right) => left.score - right.score || left.forward - right.forward || left.entry.id.localeCompare(right.entry.id))[0]?.entry || null;
 }
+function createGraphicHitIndex(entries4, cellSize = 64) {
+  const size = Number(cellSize);
+  if (!(size > 0) || !Number.isFinite(size))
+    throw new Error("Graphic hit-index cell size must be positive");
+  const normalized = [];
+  const buckets = new Map;
+  const overflow = [];
+  for (const [order, entry2] of Array.from(entries4 || []).entries()) {
+    const bounds2 = entry2?.bounds;
+    if (!bounds2)
+      continue;
+    const left = Number(bounds2.left);
+    const right = Number(bounds2.right);
+    const top = Number(bounds2.top);
+    const bottom = Number(bounds2.bottom);
+    if (![left, right, top, bottom].every(Number.isFinite) || right < left || bottom < top)
+      continue;
+    const item = Object.freeze({ ...entry2, bounds: Object.freeze({ left, right, top, bottom }), order });
+    const index = normalized.push(item) - 1;
+    const firstX = Math.floor(left / size);
+    const lastX = Math.floor(right / size);
+    const firstY = Math.floor(top / size);
+    const lastY = Math.floor(bottom / size);
+    if ((lastX - firstX + 1) * (lastY - firstY + 1) > 4096) {
+      overflow.push(index);
+      continue;
+    }
+    for (let x = firstX;x <= lastX; x += 1) {
+      for (let y = firstY;y <= lastY; y += 1) {
+        const key = `${x}:${y}`;
+        if (!buckets.has(key))
+          buckets.set(key, []);
+        buckets.get(key).push(index);
+      }
+    }
+  }
+  return Object.freeze({ schema: "rix.graphics.hit-index@1", cellSize: size, entries: Object.freeze(normalized), buckets, overflow: Object.freeze(overflow) });
+}
+function queryGraphicHitIndex(index, point4, tolerance = 0) {
+  if (index?.schema !== "rix.graphics.hit-index@1")
+    throw new Error("Graphic hit query requires a Graphic hit index");
+  const x = Number(point4?.[0]);
+  const y = Number(point4?.[1]);
+  const radius = Number(tolerance);
+  if (![x, y, radius].every(Number.isFinite) || radius < 0)
+    throw new Error("Graphic hit query requires finite coordinates and a nonnegative tolerance");
+  const candidates = new Set(index.overflow || []);
+  for (let column = Math.floor((x - radius) / index.cellSize);column <= Math.floor((x + radius) / index.cellSize); column += 1) {
+    for (let row = Math.floor((y - radius) / index.cellSize);row <= Math.floor((y + radius) / index.cellSize); row += 1) {
+      for (const entry2 of index.buckets.get(`${column}:${row}`) || [])
+        candidates.add(entry2);
+    }
+  }
+  let best = null;
+  for (const entryIndex of candidates) {
+    const entry2 = index.entries[entryIndex];
+    const dx = Math.max(entry2.bounds.left - x, 0, x - entry2.bounds.right);
+    const dy = Math.max(entry2.bounds.top - y, 0, y - entry2.bounds.bottom);
+    const distance = Math.hypot(dx, dy);
+    if (distance <= radius && (!best || distance < best.distance || distance === best.distance && entry2.order < best.entry.order)) {
+      best = { entry: entry2, distance };
+    }
+  }
+  return best ? Object.freeze(best) : null;
+}
 function plotInspection(graphic, scenePoint, format) {
   const plot = mapField4(graphic?.metadata, "plot");
   const frame = mapField4(plot, "frame");
@@ -89681,8 +89946,21 @@ function installNavigation(graphic, svg, status, options) {
     const box2 = graphicViewBox(state);
     return `${box2.x} ${box2.y} ${box2.width} ${box2.height}`;
   };
+  let hitIndex = null;
+  const invalidateHitIndex = () => {
+    hitIndex = null;
+  };
+  const indexedHitTarget = (x, y) => {
+    if (!hitIndex)
+      hitIndex = createGraphicHitIndex(scopedSelectable().map((element) => ({
+        element,
+        bounds: element.getBoundingClientRect?.()
+      })), Math.max(32, state.navigation.hitTolerance * 4));
+    return queryGraphicHitIndex(hitIndex, [x, y], state.navigation.hitTolerance)?.entry?.element || null;
+  };
   const applyViewport = () => {
     svg.setAttribute("viewBox", viewBoxText());
+    invalidateHitIndex();
     graphic.dataset.rixGraphicZoom = String(state.viewport.zoom);
     if (inspector && !inspector.dataset.rixPointerActive)
       inspector.textContent = `Zoom ${Math.round(state.viewport.zoom * 100)}%`;
@@ -89762,6 +90040,7 @@ function installNavigation(graphic, svg, status, options) {
   applyViewport();
   scopeSelect?.addEventListener?.("change", () => {
     state.navigation.scope = scopeSelect.value || "all";
+    invalidateHitIndex();
     refreshObjectOptions();
     const count = scopedSelectable().length;
     if (status)
@@ -89770,6 +90049,7 @@ function installNavigation(graphic, svg, status, options) {
   });
   searchInput?.addEventListener?.("input", () => {
     state.navigation.query = searchInput.value || "";
+    invalidateHitIndex();
     refreshObjectOptions();
     const count = scopedSelectable().length;
     if (status)
@@ -89778,6 +90058,7 @@ function installNavigation(graphic, svg, status, options) {
   });
   toleranceSelect?.addEventListener?.("change", () => {
     state.navigation.hitTolerance = HIT_TOLERANCES.includes(Number(toleranceSelect.value)) ? Number(toleranceSelect.value) : 8;
+    invalidateHitIndex();
     if (status)
       status.textContent = `Pointer hit area set to ${state.navigation.hitTolerance} pixels`;
     savePreferences();
@@ -89865,18 +90146,8 @@ function installNavigation(graphic, svg, status, options) {
       svg.releasePointerCapture(event.pointerId);
     if (!cancelled2 && wasOnlyPointer && !gestureChanged && !completed.moved) {
       let target = completed.target;
-      if (!target) {
-        const candidates = scopedSelectable().map((element) => {
-          const bounds2 = element.getBoundingClientRect?.();
-          if (!bounds2)
-            return null;
-          const dx = Math.max(bounds2.left - event.clientX, 0, event.clientX - bounds2.right);
-          const dy = Math.max(bounds2.top - event.clientY, 0, event.clientY - bounds2.bottom);
-          return { element, distance: Math.hypot(dx, dy) };
-        }).filter(Boolean).sort((left, right) => left.distance - right.distance);
-        if (candidates[0]?.distance <= state.navigation.hitTolerance)
-          target = candidates[0].element;
-      }
+      if (!target)
+        target = indexedHitTarget(event.clientX, event.clientY);
       setSelection(target, "pointer", pointerPoint(event));
     }
     if (!pointers.size) {
@@ -91689,6 +91960,7 @@ function enhanceTimelineView(root, options = {}) {
   const state = createTimelineViewState(timeline, stateTarget, options);
   const frames = [...root.querySelectorAll("[data-rix-timeline-frame]")];
   const textFrames = [...root.querySelectorAll("[data-rix-timeline-text-frame]")];
+  const semanticTracks = [...root.querySelectorAll("[data-rix-timeline-track]")];
   const status = root.querySelector("[data-rix-timeline-status]");
   const exactState = root.querySelector("[data-rix-timeline-exact-state]");
   const exactOrigin = root.querySelector("[data-rix-timeline-exact-origin]");
@@ -91792,6 +92064,18 @@ function enhanceTimelineView(root, options = {}) {
     }
     for (const [frameIndex, item] of textFrames.entries()) {
       item.toggleAttribute("aria-current", frameIndex === currentIndex);
+    }
+    for (const track of semanticTracks) {
+      const keyframes = [...track.querySelectorAll("[data-rix-timeline-track-keyframe]")];
+      let active = null;
+      for (const keyframe of keyframes) {
+        if (Number(keyframe.dataset.rixTimelineTrackKeyframe) <= state.frame)
+          active = keyframe;
+      }
+      for (const keyframe of keyframes) {
+        keyframe.hidden = keyframe !== active;
+        keyframe.toggleAttribute("aria-current", keyframe === active);
+      }
     }
     const frame = timeline.frames[currentIndex];
     const matched = matchedIdentities(previousRoot, currentRoot);
@@ -93742,5 +94026,5 @@ var STATIC_SYSTEM_CATALOG = Object.freeze([
 ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
 export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, outputValueKind, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, formatOutputText, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateAsync, lintRix, mountOutputWidgets };
 
-//# debugId=10ADC52CDE48C6F764756E2164756E21
-//# sourceMappingURL=chunk-k1yh5y9x.js.map
+//# debugId=FF24341385D168C864756E2164756E21
+//# sourceMappingURL=chunk-j2k7bsmm.js.map

@@ -27,14 +27,16 @@ Acceptance requires that every kernel authoring operation has a browser tool,
 the same action is reachable without a pointer, degeneracy remains visible,
 and a saved construction reopens with stable ids and history.
 
-The first two implementation slices are complete: `AuthoringWorkbench` now
+The first three implementation slices are complete: `AuthoringWorkbench` now
 declares Point, Line, Circle, Intersection, and Distance tool contracts, and RiX
 Web builds its accessible toolbar from those semantic specifications. Selection
 arity, accepted object kinds, and operand roles travel with each tool;
 Intersection retains unresolved/degenerate results, while Distance retains its
 exact or certified value in the construction tree. Every action participates in
-the existing reactive redraw and undo/redo path. Transform and
-constrained-motion tools remain next.
+the existing reactive redraw and undo/redo path. A sixth, source-defined
+Transform contract now accepts any drawable retained geometry and applies an
+exact `AddTransform` callback (with a caller-provided toolbar label). Direct
+constrained-motion authoring, persistent browser storage, and JSON import remain.
 
 ### New priority 2. Automatic semantic points of interest
 
@@ -47,6 +49,14 @@ navigation, text alternatives, and audio cues consume the same records.
 Acceptance requires bounded work policies, stable identities across redraws,
 explicit non-proof for sampled candidates, and opt-in label-density policies.
 
+The first semantic-POI slice is complete for polynomials. The opt-in
+`pointsOfInterest=1` policy and direct `.plot.PolynomialPOI` API produce
+`rix.plot.poi@1` records for the exact y-intercept, a linear root, and quadratic
+vertex and rational roots when the discriminant has an exact rational square
+root. Each record carries proof evidence and feeds the same visible marks and
+metadata. Higher-degree isolation, pairwise series intersections, holes,
+certified brackets, stable cross-redraw ids, and label-density policy remain.
+
 ### New priority 3. Dense graphics and Scene3D performance
 
 Add scale-aware rendering thresholds, spatial indexes for retained 2D
@@ -57,6 +67,13 @@ large 3D scenes. Exact source values remain outside the Float/GPU boundary.
 Acceptance requires reproducible benchmark scenes, bounded memory/work
 records, responsive cancellation, high-DPI fixtures, and parity checks between
 interactive projections and deterministic SVG snapshots.
+
+The first dense-selection slice replaces the fallback SVG click path's
+per-click full-catalog distance sort with `rix.graphics.hit-index@1`, a reusable
+screen-space bucket index. Queries inspect only nearby buckets, preserve stable
+paint-order tie breaking, and rebuild after viewport, filter, search, or
+tolerance changes. Renderer thresholds, workers, incremental scene diffs,
+benchmarks, and GPU picking remain.
 
 ### New priority 4. Advanced 3D mathematical visualization
 
@@ -69,6 +86,14 @@ Acceptance requires interactive and snapshot behavior from the same retained
 scene, portable glTF diagnostics, bounded adaptive extraction, and semantic
 annotation/picking records after clipping.
 
+The first advanced retained-3D slice adds exact `ClipPlane` and nested `Clip`
+nodes plus `rix.scene3d.material@1` roughness, metallic, and emissive intent.
+Realization propagates clip planes to affected primitives, and WebGL draw plans
+retain both policies. The portable flat executor emits explicit diagnostics
+instead of pretending to split crossing primitives or shade advanced
+materials. Geometric clipping, implicit/volume extraction, textures, shadows,
+and glTF lowering remain.
+
 ### New priority 5. Semantic animation and media production
 
 Grow Timeline from playback into a mathematical transformation language:
@@ -79,6 +104,14 @@ tracks. Add MP4 and WebM host renderers alongside GIF and exact JSON recording.
 Acceptance requires stable semantic matching diagnostics, discrete exact state
 under presentation interpolation, reduced-motion behavior, deterministic frame
 manifests, and captions/text tracks that remain useful without the video.
+
+The first semantic-track slice adds `rix.timeline-track@1` camera, caption,
+narration, and state tracks with stable ids, ordered exact keyframes, bounded
+frame validation, and declared step/linear/cubic interpolation. Timeline HTML
+publishes the retained tracks, and the host selects the active caption or
+narration keyframe while exact frames remain discrete. Path following,
+formula-part transforms, construction-step helpers, and MP4/WebM rendering
+remain.
 
 ## Foundation 1. Shared 2D navigation and inspection — baseline implemented
 
