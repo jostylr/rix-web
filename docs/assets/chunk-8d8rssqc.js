@@ -26753,7 +26753,14 @@ function createGraphicAction(args, runtime = null) {
     targetId: target.id,
     action,
     coordinateSystem,
-    run: (position = null) => invokeControlCallable(action, coordinateSystem ? [target.get(), position] : [target.get()], runtime, "Graphics.Action action"),
+    run: (position = null, payload = null) => {
+      const actionArgs = [target.get()];
+      if (coordinateSystem)
+        actionArgs.push(position);
+      if (payload !== null && payload !== undefined)
+        actionArgs.push(payload);
+      return invokeControlCallable(action, actionArgs, runtime, "Graphics.Action action");
+    },
     replacesDependencies: Object.freeze([...target.dependencies])
   });
 }
@@ -72412,8 +72419,9 @@ GeometryWorkbench(graph, options ?= {= }) -> {;
 GeometryAuthoringWorkbench(graph,actions,options ?= {= }) -> {;
     valid=GeometryRequireConstructionGraph(graph,"geometry.AuthoringWorkbench");
     options ? :Map ?: _ ?_ .Error("geometry.AuthoringWorkbench options must be a map");
-    actions ? :Array ?: _ ?_ .Error("geometry.AuthoringWorkbench actions must be [point, undo, redo] Graphics actions");
-    actions.Len()==3 ?: _ ?_ .Error("geometry.AuthoringWorkbench requires point, undo, and redo Graphics actions");
+    actions ? :Array ?: _ ?_ .Error("geometry.AuthoringWorkbench actions must be [point, undo, redo] or [point, line, circle, undo, redo] Graphics actions");
+    expandedActions=actions.Len()==5;
+    (actions.Len()==3||expandedActions) ?: _ ?_ .Error("geometry.AuthoringWorkbench requires three baseline actions or five point/line/circle actions");
     size=GeometryNumericSequence(GeometryOption(options,"size",[720,480]),2,"geometry.AuthoringWorkbench size");
     view=GeometryNumericSequence(GeometryOption(options,"view",[-10,-10,10,10]),4,"geometry.AuthoringWorkbench view");
     xmin=view[1]; ymin=view[2]; xmax=view[3]; ymax=view[4];
@@ -72429,12 +72437,20 @@ GeometryAuthoringWorkbench(graph,actions,options ?= {= }) -> {;
     idPrefix ? :String ?: _ ?_ .Error("geometry.AuthoringWorkbench idPrefix must be a String");
     actionPrefix=GeometryOption(options,"actionprefix","geometry-author");
     actionPrefix ? :String ?: _ ?_ .Error("geometry.AuthoringWorkbench actionPrefix must be a String");
-    surfaceActionId=@"@{actionPrefix}-point"; undoActionId=@"@{actionPrefix}-undo"; redoActionId=@"@{actionPrefix}-redo";
+    surfaceActionId=@"@{actionPrefix}-point"; lineActionId=@"@{actionPrefix}-line"; circleActionId=@"@{actionPrefix}-circle";
+    undoActionId=@"@{actionPrefix}-undo"; redoActionId=@"@{actionPrefix}-redo";
     coordinateSystem={= view=view,frame=frame };
+    tools=expandedActions ?: [:point,:line,:circle] ?_ [:point];
+    toolSpecs=expandedActions ?: [
+        {= tool=:point,actionId=surfaceActionId,selectionKind=:canvas,selectionCount=1 },
+        {= tool=:line,actionId=lineActionId,selectionKind=:point,selectionCount=2 },
+        {= tool=:circle,actionId=circleActionId,selectionKind=:point,selectionCount=2 }
+    ] ?_ [{= tool=:point,actionId=surfaceActionId,selectionKind=:canvas,selectionCount=1 }];
     policy={=
-        schema="rix.geometry.authoring-policy@1",tool=:point,tools=[:point],
+        schema="rix.geometry.authoring-policy@1",tool=:point,tools=tools,toolSpecs=toolSpecs,
         maxNodes=maxNodes,snap=snap,idPrefix=idPrefix,coordinateSystem=coordinateSystem,
-        surfaceActionId=surfaceActionId,undoActionId=undoActionId,redoActionId=redoActionId,
+        surfaceActionId=surfaceActionId,lineActionId=lineActionId,circleActionId=circleActionId,
+        undoActionId=undoActionId,redoActionId=redoActionId,
         exactCoordinates=1,deterministicIds=1
     };
     GeometryWorkbench(valid,options.Merge({=
@@ -89250,6 +89266,10 @@ function installGeometryWorkbench(graphic, status, options, navigation, actionAc
   const history = geometryHistory(options.state || (options.state = {}));
   const authoring = mapField4(workbench, "authoring");
   const authoringEnabled = stringValue11(mapField4(authoring, "schema")) === "rix.geometry.authoring-policy@1";
+  const availableTools = new Set(sequenceValue6(mapField4(authoring, "tools")).map((tool) => stringValue11(tool)));
+  let activeTool = "point";
+  let selectedPointIds = [];
+  const toolButtons = new Map;
   const panel = document.createElement("aside");
   panel.className = "rix-output-geometry-workbench";
   panel.setAttribute("aria-label", "Geometry construction workbench");
@@ -89264,15 +89284,37 @@ function installGeometryWorkbench(graphic, status, options, navigation, actionAc
   controls.append(undo, redo, exportButton);
   if (authoringEnabled) {
     const pointTool = makeButton(document, "geometry-point-tool", "Focus the exact free-point authoring surface", "Point tool");
-    pointTool.setAttribute("aria-pressed", "true");
-    pointTool.addEventListener("click", () => {
-      const actionId = stringValue11(mapField4(authoring, "surfaceActionId"));
-      const surface = [...graphic.querySelectorAll("[data-rix-graphic-action]")].find((candidate) => candidate.dataset.rixGraphicAction === actionId);
-      surface?.focus?.();
-      if (status)
-        status.textContent = "Point tool active. Click empty canvas space, or move the keyboard cursor with arrows and press Enter.";
-    });
-    controls.prepend(pointTool);
+    const activateTool = (tool) => {
+      activeTool = tool;
+      selectedPointIds = [];
+      for (const [name, button] of toolButtons)
+        button.setAttribute("aria-pressed", name === tool ? "true" : "false");
+      if (tool === "point") {
+        const actionId = stringValue11(mapField4(authoring, "surfaceActionId"));
+        const surface = [...graphic.querySelectorAll("[data-rix-graphic-action]")].find((candidate) => candidate.dataset.rixGraphicAction === actionId);
+        surface?.focus?.();
+        if (status)
+          status.textContent = "Point tool active. Click empty canvas space, or move the keyboard cursor with arrows and press Enter.";
+      } else if (status) {
+        status.textContent = `${tool === "line" ? "Line" : "Circle"} tool active. Select two distinct points in the construction tree.`;
+      }
+    };
+    toolButtons.set("point", pointTool);
+    pointTool.addEventListener("click", () => activateTool("point"));
+    const authoringButtons = [pointTool];
+    for (const [tool, label2, title] of [
+      ["line", "Line tool", "Create an exact line through two selected points"],
+      ["circle", "Circle tool", "Create an exact circle from a selected center and through-point"]
+    ]) {
+      if (!availableTools.has(tool))
+        continue;
+      const button = makeButton(document, `geometry-${tool}-tool`, title, label2);
+      toolButtons.set(tool, button);
+      button.addEventListener("click", () => activateTool(tool));
+      authoringButtons.push(button);
+    }
+    controls.prepend(...authoringButtons);
+    activateTool("point");
   }
   panel.append(controls);
   const exported = document.createElement("pre");
@@ -89306,6 +89348,31 @@ function installGeometryWorkbench(graphic, status, options, navigation, actionAc
       const dependencyText = dependencies.length ? `depends on ${dependencies.join(", ")}` : "no dependencies";
       const exact2 = mapField4(node, "value");
       properties.textContent = [id, kind, free ? "free" : "derived", dependencyText, statusValue, diagnostic2, exact2 === null ? null : `exact ${exactText(exact2, options.format || String)}`].filter(Boolean).join(" · ");
+      if (authoringEnabled && activeTool !== "point") {
+        if (kind !== "point") {
+          if (status)
+            status.textContent = `${activeTool === "line" ? "Line" : "Circle"} tool requires point objects.`;
+          return;
+        }
+        if (selectedPointIds.includes(id)) {
+          selectedPointIds = selectedPointIds.filter((selected) => selected !== id);
+        } else {
+          selectedPointIds.push(id);
+        }
+        button.setAttribute("aria-selected", selectedPointIds.includes(id) ? "true" : "false");
+        if (selectedPointIds.length < 2) {
+          if (status)
+            status.textContent = `${id} selected. Choose one more point for the ${activeTool} tool.`;
+          return;
+        }
+        const key = activeTool === "line" ? "lineActionId" : "circleActionId";
+        const actionId = stringValue11(mapField4(authoring, key));
+        const selection = Object.freeze(selectedPointIds.slice(0, 2));
+        selectedPointIds = [];
+        for (const candidate of treeButtons)
+          candidate.setAttribute("aria-selected", "false");
+        actionActivators.get(actionId)?.(source, null, selection);
+      }
     };
     button.addEventListener("click", () => choose());
     button.addEventListener("keydown", (event) => {
@@ -89897,13 +89964,14 @@ function enhanceGraphic(graphic, options) {
       continue;
     const positioned = action.dataset.rixGraphicPositioned === "true";
     const current = () => String(action.dataset.rixPosition || "0,0").split(",").map(Number);
-    const activate = (source, position = positioned ? current() : null) => {
+    const activate = (source, position = positioned ? current() : null, payload = null) => {
       const detail = Object.freeze({
         type: "graphic:action",
         actionId: action.dataset.rixGraphicAction,
         targetId: action.dataset.rixGraphicTarget,
         source,
-        ...positioned ? { position: Object.freeze(position.map(Number)) } : {}
+        ...positioned ? { position: Object.freeze(position.map(Number)) } : {},
+        ...payload === null ? {} : { payload }
       });
       try {
         const result = options.onAction(detail, action, graphic);
@@ -92283,6 +92351,20 @@ function enhanceControlShortcuts(root) {
 }
 
 // ../rix/src/tools/widget-session.js
+function graphicActionPayload(value, label2 = "Graphic action payload") {
+  if (value === null || value === undefined)
+    return null;
+  if (value?.type)
+    return value;
+  if (typeof value === "string")
+    return { type: "string", value };
+  if (typeof value === "number" && Number.isSafeInteger(value))
+    return new Integer(BigInt(value));
+  if (Array.isArray(value)) {
+    return { type: "sequence", values: value.map((item, index) => graphicActionPayload(item, `${label2}[${index}]`)) };
+  }
+  throw new Error(`${label2} must contain only RiX values, strings, safe integers, or arrays`);
+}
 function sheetSource(widget) {
   if (!isOutputValue(widget) || widget.kind !== "sheet") {
     throw new Error("WidgetSession currently requires a Sheet output value");
@@ -92475,7 +92557,8 @@ class GraphicWidgetSession {
         throw new Error("Graphic action and target IDs do not match");
       }
       const point4 = action.coordinateSystem ? graphicPoint(event.position, action.coordinateSystem) : null;
-      const value2 = action.run(point4);
+      const payload = graphicActionPayload(event.payload);
+      const value2 = action.run(point4, payload);
       const replacedDependencies2 = Object.freeze([...action.target.dependencies]);
       action.target.replaceValue(value2, {
         source: "widget",
@@ -92484,6 +92567,7 @@ class GraphicWidgetSession {
         actionId: action.id,
         targetId: action.targetId,
         inputSource: event.source ?? null,
+        payload,
         replacedDependencies: replacedDependencies2
       });
       return value2;
@@ -93638,5 +93722,5 @@ var STATIC_SYSTEM_CATALOG = Object.freeze([
 ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
 export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, outputValueKind, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, formatOutputText, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateAsync, lintRix, mountOutputWidgets };
 
-//# debugId=57A2C4E7188147A764756E2164756E21
-//# sourceMappingURL=chunk-c4nx2a88.js.map
+//# debugId=77982DFDF53FDB4F64756E2164756E21
+//# sourceMappingURL=chunk-8d8rssqc.js.map

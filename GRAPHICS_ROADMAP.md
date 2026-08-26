@@ -5,7 +5,80 @@ clone of a single graphing calculator. A `Graphic` or `Scene3D` remains the
 source of truth; SVG, Canvas, WebGL, TikZ, text, and audio are projections of
 that retained mathematical object.
 
-## 1. Shared 2D navigation and inspection — baseline implemented
+## Next program: five product priorities
+
+The original six priorities below established the retained interaction,
+plotting, geometry, timeline, and accessibility foundations. The next program
+turns the five largest comparative gaps into the active product priorities.
+The companion RiX Notebook project at
+`rix-nb/examples/graphics-priorities/` supplies five executable studies for
+each priority and is the acceptance corpus shared by browser and notebook
+hosts.
+
+### New priority 1. Complete visual geometry authoring
+
+Expose the existing exact construction kernel through a selection-driven
+toolbar for points, lines, circles, intersections, transforms, measurements,
+and constrained motion. Tool state, required operands, invalid selections,
+undo/redo, keyboard operation, dependency inspection, and JSON export must all
+refer to the retained construction graph rather than host-only marks.
+
+Acceptance requires that every kernel authoring operation has a browser tool,
+the same action is reachable without a pointer, degeneracy remains visible,
+and a saved construction reopens with stable ids and history.
+
+The first implementation slice is complete: `AuthoringWorkbench` now declares
+Point, Line, and Circle tool contracts; RiX Web exposes all three in its toolbar;
+Line and Circle consume two point identities from the accessible construction
+tree through a semantic `Graphics.Action` payload; and the resulting exact
+construction participates in the existing reactive redraw and undo/redo path.
+Intersection, transform, measurement, and constrained-motion tools remain next.
+
+### New priority 2. Automatic semantic points of interest
+
+Produce retained roots, intercepts, pairwise intersections, extrema, holes,
+suspected discontinuities, and certified boundary-existence events where the
+available math services justify them. Each event must state whether it is
+exact, certified, sampled, heuristic, or unresolved. Visual labels, direct
+navigation, text alternatives, and audio cues consume the same records.
+
+Acceptance requires bounded work policies, stable identities across redraws,
+explicit non-proof for sampled candidates, and opt-in label-density policies.
+
+### New priority 3. Dense graphics and Scene3D performance
+
+Add scale-aware rendering thresholds, spatial indexes for retained 2D
+catalogs, worker-owned sampling where appropriate, incremental scene updates,
+Canvas/WebGL projections for dense marks, and GPU color-buffer picking for
+large 3D scenes. Exact source values remain outside the Float/GPU boundary.
+
+Acceptance requires reproducible benchmark scenes, bounded memory/work
+records, responsive cancellation, high-DPI fixtures, and parity checks between
+interactive projections and deterministic SVG snapshots.
+
+### New priority 4. Advanced 3D mathematical visualization
+
+Extend Scene3D with implicit surfaces, clip and slice planes, volume data,
+value-driven materials, textures, stronger lighting, shadows, and explicit
+hidden-surface policies. Every approximation records its sampling and lowering
+policy; unsupported certification must remain visible rather than implied.
+
+Acceptance requires interactive and snapshot behavior from the same retained
+scene, portable glTF diagnostics, bounded adaptive extraction, and semantic
+annotation/picking records after clipping.
+
+### New priority 5. Semantic animation and media production
+
+Grow Timeline from playback into a mathematical transformation language:
+keyframes, camera tracks, path following, formula-part matching, construction
+steps, declared-safe geometry transforms, and deterministic narration/caption
+tracks. Add MP4 and WebM host renderers alongside GIF and exact JSON recording.
+
+Acceptance requires stable semantic matching diagnostics, discrete exact state
+under presentation interpolation, reduced-motion behavior, deterministic frame
+manifests, and captions/text tracks that remain useful without the video.
+
+## Foundation 1. Shared 2D navigation and inspection — baseline implemented
 
 Ship one `rix.viewport@1` / `rix.selection@1` interaction layer for every SVG
 `Graphic` mounted in RiX Web.
@@ -48,7 +121,7 @@ viewport, selection, filter, search, and tolerance under `preferencesKey`.
 Search and spatial traversal operate on exact semantic identities rather than
 SVG paint order.
 
-## 2. Real Scene3D viewport — baseline implemented
+## Foundation 2. Real Scene3D viewport — baseline implemented
 
 Mount the existing WebGL plan as an actual orbitable, zoomable, selectable
 viewport instead of rebuilding only a 2D snapshot.
@@ -89,7 +162,7 @@ semantic catalog and offers four CPU pick-area tolerances. Scene metadata may
 set `preferencesKey` to persist camera, projection, selection, type filter,
 search, and pick tolerance.
 
-## 3. Broader plot families — baseline implemented
+## Foundation 3. Broader plot families — baseline implemented
 
 Add polar, implicit, inequality, contour, heat-map, and vector-field plots as
 semantic plot schemas that lower through `Graphics`, not host-only drawing code.
@@ -130,7 +203,7 @@ keeps existence proof, sampled segment location, and heuristic warnings as
 different evidence fields. Remaining work is chiefly host-level scale testing:
 broader dense-field policy and expanded browser visual/accessibility fixtures.
 
-## 4. Visual geometry workbench — baseline implemented
+## Foundation 4. Visual geometry workbench — baseline implemented
 
 Build a construction environment over retained geometry constraints.
 
@@ -171,7 +244,7 @@ avoiding unsafe callback serialization. Remaining host work is a selection UI
 for those tools, locus animation, persistent browser storage, and a direct JSON
 import flow that obtains the required constructor map explicitly.
 
-## 5. Timeline playback and transitions — baseline implemented
+## Foundation 5. Timeline playback and transitions — baseline implemented
 
 Turn retained `Timeline` values into playback, scrubbing, and comparison tools.
 
@@ -201,7 +274,7 @@ position/fill/stroke interpolation is computed only between matching semantic
 DOM objects. Remaining research is schema coverage for richer plot, camera, and
 annotation properties plus real media capture beyond deterministic JSON.
 
-## 6. Sonification and comprehensive textual alternatives — baseline implemented
+## Foundation 6. Sonification and comprehensive textual alternatives — baseline implemented
 
 Make audio and structured language first-class projections of the same semantic
 scene, not captions generated from final pixels.
