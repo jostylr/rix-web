@@ -47,7 +47,7 @@ import {
   parseAndEvaluateAsync,
   renderOutputHtml,
   tokenize
-} from "./chunk-j2k7bsmm.js";
+} from "./chunk-01q29cj3.js";
 
 // standard-profile.rix
 var standard_profile_default = `## RiX-Web standard calculator profile.
@@ -11057,7 +11057,8 @@ GeometryAuthoringWorkbench(graph,actions,options ?= {= }) -> {;
     expandedActions=actions.Len()==5;
     selectionActions=actions.Len()==7;
     transformActions=actions.Len()==8;
-    (actions.Len()==3||expandedActions||selectionActions||transformActions) ?: _ ?_ .Error("geometry.AuthoringWorkbench actions must be [point, undo, redo], [point, line, circle, undo, redo], [point, line, circle, intersection, measurement, undo, redo], or [point, line, circle, intersection, measurement, transform, undo, redo]");
+    constrainedActions=actions.Len()==9;
+    (actions.Len()==3||expandedActions||selectionActions||transformActions||constrainedActions) ?: _ ?_ .Error("geometry.AuthoringWorkbench actions must end with undo and redo and contain the supported Point through Constrained Move tool prefix");
     size=GeometryNumericSequence(GeometryOption(options,"size",[720,480]),2,"geometry.AuthoringWorkbench size");
     view=GeometryNumericSequence(GeometryOption(options,"view",[-10,-10,10,10]),4,"geometry.AuthoringWorkbench view");
     xmin=view[1]; ymin=view[2]; xmax=view[3]; ymax=view[4];
@@ -11076,9 +11077,11 @@ GeometryAuthoringWorkbench(graph,actions,options ?= {= }) -> {;
     surfaceActionId=@"@{actionPrefix}-point"; lineActionId=@"@{actionPrefix}-line"; circleActionId=@"@{actionPrefix}-circle";
     intersectionActionId=@"@{actionPrefix}-intersection"; measurementActionId=@"@{actionPrefix}-measurement";
     transformActionId=@"@{actionPrefix}-transform";
+    constrainedActionId=@"@{actionPrefix}-constrained-move";
     undoActionId=@"@{actionPrefix}-undo"; redoActionId=@"@{actionPrefix}-redo";
     coordinateSystem={= view=view,frame=frame };
-    tools=transformActions ?: [:point,:line,:circle,:intersection,:measurement,:transform]
+    tools=constrainedActions ?: [:point,:line,:circle,:intersection,:measurement,:transform,:constrainedMove]
+      ?_ transformActions ?: [:point,:line,:circle,:intersection,:measurement,:transform]
       ?_ selectionActions ?: [:point,:line,:circle,:intersection,:measurement]
       ?_ expandedActions ?: [:point,:line,:circle] ?_ [:point];
     pointSpec={= tool=:point,label="Point",actionId=surfaceActionId,selectionKind=:canvas,selectionCount=1 };
@@ -11091,16 +11094,23 @@ GeometryAuthoringWorkbench(graph,actions,options ?= {= }) -> {;
     ];
     transformLabel=GeometryOption(options,"transformlabel","Transform");
     transformLabel ? :String ?: _ ?_ .Error("geometry.AuthoringWorkbench transformLabel must be a String");
-    toolSpecs=transformActions ?: selectionSpecs.Push({=
+    transformSpec={=
         tool=:transform,label=transformLabel,actionId=transformActionId,selectionKind=:object,
         selectionKinds=[:point,:line,:segment,:ray,:polygon,:circle,:conic],selectionCount=1,operandLabels=["object"]
-    }) ?_ selectionActions ?: selectionSpecs ?_ expandedActions ?: [pointSpec,lineSpec,circleSpec] ?_ [pointSpec];
+    };
+    transformSpecs=selectionSpecs.Push(transformSpec);
+    toolSpecs=constrainedActions ?: transformSpecs.Push({=
+        tool=:constrainedMove,label="Constrained move",actionId=constrainedActionId,selectionKind=:objectThenCanvas,
+        selectionKinds=[:point,:line],operandKinds=[[:point],[:line]],selectionCount=2,
+        operandLabels=["free point","line constraint"]
+    }) ?_ transformActions ?: transformSpecs ?_ selectionActions ?: selectionSpecs ?_ expandedActions ?: [pointSpec,lineSpec,circleSpec] ?_ [pointSpec];
     policy={=
         schema="rix.geometry.authoring-policy@1",tool=:point,tools=tools,toolSpecs=toolSpecs,
         maxNodes=maxNodes,snap=snap,idPrefix=idPrefix,coordinateSystem=coordinateSystem,
         surfaceActionId=surfaceActionId,lineActionId=lineActionId,circleActionId=circleActionId,
         intersectionActionId=intersectionActionId,measurementActionId=measurementActionId,
         transformActionId=transformActionId,
+        constrainedActionId=constrainedActionId,
         undoActionId=undoActionId,redoActionId=redoActionId,
         exactCoordinates=1,deterministicIds=1
     };
@@ -21610,10 +21620,55 @@ PlotExactSqrt(value) -> {;
     };
 };
 
-PlotPOI(kind,point,label,evidence ?= {= }) -> .DeepMutable({=
-    schema="rix.plot.poi@1",kind=kind,status=:exact,evidenceLevel=:proof,
+PlotPOIRecord(kind,point,label,status,evidenceLevel,evidence ?= {= }) -> .DeepMutable({=
+    schema="rix.plot.poi@1",kind=kind,status=status,evidenceLevel=evidenceLevel,
     point=point,label=label,evidence=evidence
 },_);
+
+PlotPOI(kind,point,label,evidence ?= {= }) -> PlotPOIRecord(kind,point,label,:exact,:proof,evidence);
+
+PlotPolynomialSamplePOI(coefficients,xMin,xMax,samples,existing) -> {;
+    data:=[];
+    {@ index=1; index<=@samples; {;
+        x=@xMin+(@xMax-@xMin)*(index-1)/(@samples-1);
+        @data ~= @data.Push([x,PlotEvaluate(@coefficients,x)]);
+    }; index+=1 };
+    result:=[];
+    {@ index=1; index<=@data.Len(); {;
+        point=@data[index]; x=point[1]; y=point[2];
+        duplicate=@existing.Concat(@result).Any((poi)->poi[:kind]==:root&&poi[:point][1]==@x);
+        (y==0&&!duplicate) ?: {;
+            @result ~= @result.Push(PlotPOI(:root,[@x,0],@"sample-exact root x = @{@x}",{=
+                identity=:exact_sample,continuity=:polynomial,sampleIndex=@index,samples=@samples
+            }));
+        } ?_ _;
+        index>1 ?: {;
+            previous=@data[@index-1];
+            bracketed=(previous[2]<0&&@y>0)||(previous[2]>0&&@y<0);
+            known=@existing.Concat(@result).Any((poi)->poi[:kind]==:root&&poi[:point][1]>@previous[1]&&poi[:point][1]<@x);
+            (bracketed&&!known) ?: {;
+                midpoint=(@previous[1]+@x)/2;
+                @result ~= @result.Push(PlotPOIRecord(:root,[midpoint,PlotEvaluate(@coefficients,midpoint)],
+                    @"certified root bracket [@{@previous[1]}, @{@x}]",:certifiedBracket,:existence,{=
+                        identity=:intermediate_value_theorem,continuity=:polynomial,
+                        xInterval=[@previous[1],@x],values=[@previous[2],@y],samples=@samples
+                    }));
+            } ?_ _;
+        } ?_ _;
+        (index>1&&index<@data.Len()) ?: {;
+            previousY=@data[@index-1][2]; nextY=@data[@index+1][2];
+            classification=(@y<previousY&&@y<nextY) ?: :minimum
+              ?_ (@y>previousY&&@y>nextY) ?: :maximum ?_ _;
+            classification!=_ ?: {;
+                @result ~= @result.Push(PlotPOIRecord(:extremum,[@x,@y],@"sampled @{@classification} candidate (@{@x}, @{@y})",
+                    :sampledCandidate,:sample,{=
+                        identity=:neighbor_comparison,classification=@classification,sampleIndex=@index,samples=@samples
+                    }));
+            } ?_ _;
+        } ?_ _;
+    }; index+=1 };
+    result;
+};
 
 PlotPolynomialPOI(coefficientsValue,domain,options ?= {= }) -> {;
     coefficients=PlotExactArray(coefficientsValue,"Polynomial POI coefficients");
@@ -21647,8 +21702,26 @@ PlotPolynomialPOI(coefficientsValue,domain,options ?= {= }) -> {;
             } ?_ _;
         } ?_ _;
     } ?_ _;
-    result;
+    samples=PlotPositiveSamples(PlotOption(options,"samples",161));
+    coefficients.Len()>3 ?: {; @result ~= @result.Concat(PlotPolynomialSamplePOI(@coefficients,@xMin,@xMax,@samples,@result)); } ?_ _;
+    result.Map((poi,index)->poi.Merge({= id=@"poi-@{poi[:kind]}-@{index}" }));
 };
+
+PlotPOILabelPolicy(options) -> {;
+    policy=PlotOption(options,"poilabels",:all);
+    (policy==:all||policy==:none||policy==:exact||policy==:roots)
+      ?: policy
+      ?_ .Error("Polynomial plot poiLabels must be :all, :none, :exact, or :roots");
+};
+
+PlotPOIMaxLabels(options) -> {;
+    maximum=PlotOption(options,"poimaxlabels",10000) ~!: :Integer;
+    (maximum>=0&&maximum<=10000) ?: maximum ?_ .Error("Polynomial plot poiMaxLabels must be between 0 and 10000");
+};
+
+PlotPOIShowLabel(poi,policy,shown,maximum) -> shown<maximum && (
+    policy==:all || (policy==:exact&&poi[:status]==:exact) || (policy==:roots&&poi[:kind]==:root)
+);
 
 PlotReadSeries(coefficientsValue, settings, index, samples, xMin, xMax, primary) -> {;
     coefficients = PlotExactArray(coefficientsValue, @"Polynomial plot series @{index} coefficients");
@@ -21758,10 +21831,13 @@ PlotPolynomial(coefficientsValue, domain, options ?= {= }) -> {;
         @marks ~= @marks.Push(PlotReadMark(@markEntries[index], index));
     }; index += 1 };
     pointsOfInterest=PlotOption(options,"pointsofinterest",0)==1 ?: PlotPolynomialPOI(coefficients,domain,options) ?_ [];
+    poiLabelPolicy=PlotPOILabelPolicy(options); poiMaxLabels=PlotPOIMaxLabels(options); shownPOILabels:=0;
     {@ index=1; index<=@pointsOfInterest.Len(); {;
         poi=@pointsOfInterest[index];
+        showLabel=PlotPOIShowLabel(poi,@poiLabelPolicy,@shownPOILabels,@poiMaxLabels);
+        @shownPOILabels += showLabel ?: 1 ?_ 0;
         @marks ~= @marks.Push({=
-            point=poi[:point],label=poi[:label],radius=PlotExact(PlotOption(@options,"poiradius",5),"Polynomial POI radius"),
+            point=poi[:point],label=showLabel ?: poi[:label] ?_ _,radius=PlotExact(PlotOption(@options,"poiradius",5),"Polynomial POI radius"),
             style=PlotOption(@options,"poistyle",{= fill="#7c3aed",stroke="#fff",width=2 }),
             labelStyle=PlotOption(@options,"poilabelstyle",{= size=13 })
         });
@@ -21829,6 +21905,8 @@ PlotPolynomial(coefficientsValue, domain, options ?= {= }) -> {;
             ticks=ticks,
             marks=marks,
             pointsOfInterest=pointsOfInterest,
+            poiLabelPolicy=poiLabelPolicy,
+            poiLabelsShown=shownPOILabels,
             title=PlotOption(options,"title"),
             xLabel=PlotOption(options,"xlabel"),
             yLabel=PlotOption(options,"ylabel")
@@ -26983,6 +27061,119 @@ S3Collect(children, parent, clipPlanes ?= []) -> {;
     result;
 };
 
+S3ClipSide(point,plane) -> S3Dot(plane[:normal],point)+plane[:offset];
+
+S3ClipIntersection(first,second,firstSide,secondSide) -> {;
+    ratio=firstSide/(firstSide-secondSide);
+    [1,2,3].Map((coordinate)->first[coordinate]+(second[coordinate]-first[coordinate])*@ratio);
+};
+
+S3SamePoint3(first,second) -> [1,2,3].All((coordinate)->first[coordinate]==second[coordinate]);
+
+S3ClipSegmentPlanes(first,second,planes) -> {;
+    segment:=[first,second];
+    {@ planeIndex=1; planeIndex<=@planes.Len()&&@segment!=_; {;
+        plane=@planes[planeIndex]; start=@segment[1]; finish=@segment[2];
+        startSide=S3ClipSide(start,plane); finishSide=S3ClipSide(finish,plane);
+        startInside=startSide>=0; finishInside=finishSide>=0;
+        (!startInside&&!finishInside)
+          ?: {; @segment~=_; }
+          ?_ startInside&&finishInside
+               ?: _
+               ?_ {;
+                   cut=S3ClipIntersection(@start,@finish,@startSide,@finishSide);
+                   @segment ~= @startInside ?: [@start,cut] ?_ [cut,@finish];
+               };
+    }; planeIndex+=1 };
+    segment;
+};
+
+S3ClipPolygonPlane(points,plane) -> {;
+    result:=[];
+    points.Len()>0 ?: {;
+        previous:=@points.Last(); previousSide:=S3ClipSide(previous,@plane); previousInside:=previousSide>=0;
+        {@ index=1; index<=@points.Len(); {;
+            current=@points[index]; currentSide=S3ClipSide(current,@plane); currentInside=currentSide>=0;
+            currentInside
+              ?: {;
+                  !@previousInside ?: {;
+                      @result ~= @result.Push(S3ClipIntersection(@previous,@current,@previousSide,@currentSide));
+                  } ?_ _;
+                  @result ~= @result.Push(@current);
+              }
+              ?_ @previousInside ?: {;
+                  @result ~= @result.Push(S3ClipIntersection(@previous,@current,@previousSide,@currentSide));
+              } ?_ _;
+            @previous~=current; @previousSide~=currentSide; @previousInside~=currentInside;
+        }; index+=1 };
+    } ?_ _;
+    (result.Len()>1&&S3SamePoint3(result[1],result.Last())) ?: result.Slice(1,result.Len()) ?_ result;
+};
+
+S3ClipPolygonPlanes(points,planes) -> {;
+    result:=points;
+    {@ index=1; index<=@planes.Len()&&@result.Len()>0; {;
+        @result ~= S3ClipPolygonPlane(@result,@planes[index]);
+    }; index+=1 };
+    result;
+};
+
+S3ClipPrimitive(primitive) -> {;
+    planes=primitive[:clipplanes];
+    planes.Len()==0
+      ?: primitive
+      ?_ primitive[:kind]==:points
+           ?: {;
+               points=@primitive[:points].Filter((point)->@planes.All((plane)->S3ClipSide(point,plane)>=0));
+               @primitive.Merge({= points=points,clipRealization={=
+                   schema="rix.scene3d.clip-realization@1",method=:point_filter,inputPoints=@primitive[:points].Len(),outputPoints=points.Len()
+               } });
+           }
+           ?_ primitive[:kind]==:annotation
+                ?: {;
+                    kept=@planes.All((plane)->S3ClipSide(@primitive[:points][1],plane)>=0);
+                    @primitive.Merge({= points=kept ?: @primitive[:points] ?_ [],clipRealization={=
+                        schema="rix.scene3d.clip-realization@1",method=:point_filter,inputPoints=1,outputPoints=kept ?: 1 ?_ 0
+                    } });
+                }
+                ?_ primitive[:kind]==:lines
+                     ?: {;
+                         points:=[]; segments:=[];
+                         {@ index=1; index<=@primitive[:segments].Len(); {;
+                             pair=@primitive[:segments][index]; clipped=S3ClipSegmentPlanes(@primitive[:points][pair[1]],@primitive[:points][pair[2]],@planes);
+                             clipped!=_ ?: {;
+                                 first=@points.Len()+1; @points ~= @points.Concat(@clipped); @segments ~= @segments.Push([first,first+1]);
+                             } ?_ _;
+                         }; index+=1 };
+                         @primitive.Merge({= points=points,segments=segments,clipRealization={=
+                             schema="rix.scene3d.clip-realization@1",method=:segment_halfspace,
+                             inputSegments=@primitive[:segments].Len(),outputSegments=segments.Len(),inputPoints=@primitive[:points].Len(),outputPoints=points.Len()
+                         } });
+                     }
+                     ?_ primitive[:kind]==:mesh
+                          ?: {;
+                              points:=[]; triangles:=[];
+                              {@ index=1; index<=@primitive[:triangles].Len(); {;
+                                  triangle=@primitive[:triangles][index]; polygon=S3ClipPolygonPlanes(
+                                      [@primitive[:points][triangle[1]],@primitive[:points][triangle[2]],@primitive[:points][triangle[3]]],@planes
+                                  );
+                                  polygon.Len()>=3 ?: {;
+                                      first=@points.Len()+1; @points ~= @points.Concat(@polygon);
+                                      {@ corner=2; corner<@polygon.Len(); {;
+                                          @triangles ~= @triangles.Push([@first,@first+corner-1,@first+corner]);
+                                      }; corner+=1 };
+                                  } ?_ _;
+                              }; index+=1 };
+                              @primitive.Merge({= points=points,triangles=triangles,segments=S3MeshSegments(triangles),clipRealization={=
+                                  schema="rix.scene3d.clip-realization@1",method=:triangle_halfspace,
+                                  inputTriangles=@primitive[:triangles].Len(),outputTriangles=triangles.Len(),inputPoints=@primitive[:points].Len(),outputPoints=points.Len()
+                              } });
+                          }
+                          ?_ primitive;
+};
+
+S3ApplyClipPlanes(primitives) -> primitives.Map((primitive)->S3ClipPrimitive(primitive)).Filter((primitive)->primitive[:points].Len()>0);
+
 S3Picking(primitives) -> {;
     result := {= };
     {@ index=1; index<=@primitives.Len(); {;
@@ -26999,13 +27190,21 @@ S3Picking(primitives) -> {;
 };
 
 S3Realized(children) -> {;
-    primitives = S3Collect(children,S3Identity(),[]);
+    collected = S3Collect(children,S3Identity(),[]);
+    primitives = S3ApplyClipPlanes(collected);
+    clipped=collected.Filter((primitive)->primitive[:clipplanes].Len()>0);
     .DeepMutable({=
         type="scene3d_realized",
         schema="rix.scene3d.realized@1",
         coordinateSystem={= handedness="right", up="z", units="unspecified" },
         primitives=primitives,
-        picking=S3Picking(primitives)
+        picking=S3Picking(primitives),
+        clipping={=
+            schema="rix.scene3d.clip-work@1",method=:exact_halfspace,
+            inputPrimitives=collected.Len(),outputPrimitives=primitives.Len(),clippedPrimitives=clipped.Len(),
+            inputPoints=collected.Reduce((total,primitive)->total+primitive[:points].Len(),0),
+            outputPoints=primitives.Reduce((total,primitive)->total+primitive[:points].Len(),0)
+        }
     }, _);
 };
 
@@ -30735,5 +30934,5 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
 
 export { pluginProfileFromUrl, stripMarkedPluginProfile, findHelp, createRixRepl };
 
-//# debugId=41E9B831F6D823A364756E2164756E21
-//# sourceMappingURL=chunk-spmj3366.js.map
+//# debugId=49873BD790AAE2FD64756E2164756E21
+//# sourceMappingURL=chunk-1adm5mv7.js.map

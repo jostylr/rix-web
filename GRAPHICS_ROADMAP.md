@@ -27,16 +27,21 @@ Acceptance requires that every kernel authoring operation has a browser tool,
 the same action is reachable without a pointer, degeneracy remains visible,
 and a saved construction reopens with stable ids and history.
 
-The first three implementation slices are complete: `AuthoringWorkbench` now
+The authoring contract is now complete for the declared tool set:
+`AuthoringWorkbench` now
 declares Point, Line, Circle, Intersection, and Distance tool contracts, and RiX
 Web builds its accessible toolbar from those semantic specifications. Selection
 arity, accepted object kinds, and operand roles travel with each tool;
 Intersection retains unresolved/degenerate results, while Distance retains its
 exact or certified value in the construction tree. Every action participates in
 the existing reactive redraw and undo/redo path. A sixth, source-defined
-Transform contract now accepts any drawable retained geometry and applies an
-exact `AddTransform` callback (with a caller-provided toolbar label). Direct
-constrained-motion authoring, persistent browser storage, and JSON import remain.
+Transform contract accepts any drawable retained geometry and applies an exact
+`AddTransform` callback (with a caller-provided toolbar label). Constrained Move
+uses a two-stage point/line selection followed by a pointer or keyboard target;
+the exact kernel projects onto the retained line and records normal undo/redo
+history. Persistent browser storage and a browser JSON-import chooser remain
+host integration work; portable export and explicit-constructor import already
+exist in the kernel.
 
 ### New priority 2. Automatic semantic points of interest
 
@@ -49,13 +54,15 @@ navigation, text alternatives, and audio cues consume the same records.
 Acceptance requires bounded work policies, stable identities across redraws,
 explicit non-proof for sampled candidates, and opt-in label-density policies.
 
-The first semantic-POI slice is complete for polynomials. The opt-in
+The polynomial semantic-POI pass is complete at its bounded sampling contract. The opt-in
 `pointsOfInterest=1` policy and direct `.plot.PolynomialPOI` API produce
 `rix.plot.poi@1` records for the exact y-intercept, a linear root, and quadratic
 vertex and rational roots when the discriminant has an exact rational square
-root. Each record carries proof evidence and feeds the same visible marks and
-metadata. Higher-degree isolation, pairwise series intersections, holes,
-certified brackets, stable cross-redraw ids, and label-density policy remain.
+root. Higher-degree polynomials add exact sampled roots, continuity-backed sign
+change brackets, and explicitly non-proof sampled extremum candidates. Every
+record has a stable deterministic id; `poiLabels` and `poiMaxLabels` control
+visible density without deleting semantic records. Pairwise series
+intersections, holes, and full algebraic root isolation remain.
 
 ### New priority 3. Dense graphics and Scene3D performance
 
@@ -68,12 +75,15 @@ Acceptance requires reproducible benchmark scenes, bounded memory/work
 records, responsive cancellation, high-DPI fixtures, and parity checks between
 interactive projections and deterministic SVG snapshots.
 
-The first dense-selection slice replaces the fallback SVG click path's
+The bounded dense-selection contract now replaces the fallback SVG click path's
 per-click full-catalog distance sort with `rix.graphics.hit-index@1`, a reusable
 screen-space bucket index. Queries inspect only nearby buckets, preserve stable
 paint-order tie breaking, and rebuild after viewport, filter, search, or
-tolerance changes. Renderer thresholds, workers, incremental scene diffs,
-benchmarks, and GPU picking remain.
+tolerance changes. `rix.graphics.density-policy@1` publishes stable SVG,
+Canvas, and WebGL thresholds plus complete/virtualized semantic-navigation
+guidance. Index construction and successful queries report bounded work.
+Workers, incremental scene diffs, reproducible browser benchmarks, and GPU
+picking remain.
 
 ### New priority 4. Advanced 3D mathematical visualization
 
@@ -86,12 +96,13 @@ Acceptance requires interactive and snapshot behavior from the same retained
 scene, portable glTF diagnostics, bounded adaptive extraction, and semantic
 annotation/picking records after clipping.
 
-The first advanced retained-3D slice adds exact `ClipPlane` and nested `Clip`
+The retained-3D clipping slice adds exact `ClipPlane` and nested `Clip`
 nodes plus `rix.scene3d.material@1` roughness, metallic, and emissive intent.
-Realization propagates clip planes to affected primitives, and WebGL draw plans
-retain both policies. The portable flat executor emits explicit diagnostics
-instead of pretending to split crossing primitives or shade advanced
-materials. Geometric clipping, implicit/volume extraction, textures, shadows,
+Realization applies those half-spaces exactly: point clouds are filtered, line
+segments are cut, and crossing mesh polygons are split and retriangulated.
+Work records accompany the realization, while WebGL draw plans retain the
+defining planes and material policies. The portable flat executor emits
+explicit shading diagnostics. Implicit/volume extraction, textures, shadows,
 and glTF lowering remain.
 
 ### New priority 5. Semantic animation and media production
@@ -105,13 +116,14 @@ Acceptance requires stable semantic matching diagnostics, discrete exact state
 under presentation interpolation, reduced-motion behavior, deterministic frame
 manifests, and captions/text tracks that remain useful without the video.
 
-The first semantic-track slice adds `rix.timeline-track@1` camera, caption,
-narration, and state tracks with stable ids, ordered exact keyframes, bounded
-frame validation, and declared step/linear/cubic interpolation. Timeline HTML
-publishes the retained tracks, and the host selects the active caption or
-narration keyframe while exact frames remain discrete. Path following,
-formula-part transforms, construction-step helpers, and MP4/WebM rendering
-remain.
+The semantic-track contract now includes camera, caption, narration, state,
+path, construction, and formula tracks with stable ids, optional targets,
+ordered exact keyframes, bounded frame validation, and declared
+step/linear/cubic interpolation. Timeline HTML publishes the retained tracks,
+and `.Timeline.Manifest` produces a deterministic per-frame schedule containing
+exact timing, origins, markers, and each active track's source frame. Capable
+hosts can consume path/formula/construction intent while exact frames remain
+discrete. Formula-part correspondence algorithms and MP4/WebM rendering remain.
 
 ## Foundation 1. Shared 2D navigation and inspection — baseline implemented
 
@@ -275,9 +287,10 @@ circle, intersection, transformation, and measurement tools; exact line
 projection/rejection drag; atomic multi-point edits with undo/redo; and
 structured non-mutating degeneracy repair suggestions. Construction records
 retain history while imports continue to require explicit derived constructors,
-avoiding unsafe callback serialization. Remaining host work is a selection UI
-for those tools, locus animation, persistent browser storage, and a direct JSON
-import flow that obtains the required constructor map explicitly.
+avoiding unsafe callback serialization. The host now builds selection UI from
+the retained operand specifications, including the two-stage constrained-move
+tool. Remaining host work is locus animation, persistent browser storage, and a
+direct JSON import flow that obtains the required constructor map explicitly.
 
 ## Foundation 5. Timeline playback and transitions — baseline implemented
 
@@ -306,8 +319,10 @@ per-frame timing, named markers, deterministic exact-frame recording/export,
 keyed transport preferences, and diagnostics for semantic objects that appear,
 disappear, or change kind. Exact retained values always change discretely;
 position/fill/stroke interpolation is computed only between matching semantic
-DOM objects. Remaining research is schema coverage for richer plot, camera, and
-annotation properties plus real media capture beyond deterministic JSON.
+DOM objects. Camera, path, construction, formula, caption, narration, and state
+tracks plus deterministic frame manifests now cover the retained production
+schedule. Remaining research is richer formula-part correspondence and
+annotation transitions plus real media capture beyond deterministic JSON.
 
 ## Foundation 6. Sonification and comprehensive textual alternatives — baseline implemented
 

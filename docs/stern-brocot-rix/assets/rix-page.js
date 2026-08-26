@@ -21069,8 +21069,9 @@ ${indentStr})`;
   function createTimelineTrack(args) {
     const entry = spec(args, ["kind", "keyframes"], "Timeline.Track");
     const kind = (asString(get(entry, "kind")) || "").toLowerCase();
-    if (!new Set(["camera", "caption", "narration", "state"]).has(kind)) {
-      throw new Error("Timeline.Track kind must be camera, caption, narration, or state");
+    const supportedKinds = new Set(["camera", "caption", "narration", "state", "path", "construction", "formula"]);
+    if (!supportedKinds.has(kind)) {
+      throw new Error("Timeline.Track kind must be camera, caption, narration, state, path, construction, or formula");
     }
     const seen = new Set;
     const keyframes = sequence(get(entry, "keyframes"), "Timeline.Track keyframes").map((keyframe, index) => {
@@ -21082,7 +21083,7 @@ ${indentStr})`;
       const value = get(fields, "value");
       if (value === null || value === undefined)
         throw new Error(`Timeline.Track keyframe ${index + 1} requires a value`);
-      if ((kind === "caption" || kind === "narration") && asString(value) === null) {
+      if ((kind === "caption" || kind === "narration" || kind === "formula") && asString(value) === null) {
         throw new Error(`Timeline.Track ${kind} keyframe values must be Strings`);
       }
       return Object.freeze({ frame, value, label: asString(get(fields, "label")) });
@@ -21093,7 +21094,7 @@ ${indentStr})`;
     if (!new Set(["step", "linear", "cubic"]).has(interpolation)) {
       throw new Error("Timeline.Track interpolation must be step, linear, or cubic");
     }
-    if ((kind === "caption" || kind === "narration") && interpolation !== "step") {
+    if (new Set(["caption", "narration", "construction", "formula"]).has(kind) && interpolation !== "step") {
       throw new Error(`Timeline.Track ${kind} interpolation must be step`);
     }
     return output("timeline_track", {
@@ -21102,7 +21103,8 @@ ${indentStr})`;
       trackKind: kind,
       interpolation,
       keyframes: Object.freeze(keyframes),
-      title: asString(get(entry, "title"))
+      title: asString(get(entry, "title")),
+      target: asString(get(entry, "target"))
     });
   }
   function timelineTracks(value, count) {
@@ -21447,6 +21449,55 @@ ${indentStr})`;
       easing: asString(get(entry, "easing")) || "linear",
       transition: timelineTransition(get(entry, "transition")),
       title: asString(get(entry, "title"))
+    });
+  }
+  function timelineManifestFrameDuration(timeline, index) {
+    if (timeline.frameDurations)
+      return timeline.frameDurations[index];
+    if (timeline.duration === null || timeline.duration === undefined)
+      return null;
+    const divisor = new Rational(BigInt(timeline.frames.length), 1n);
+    const duration = timeline.duration instanceof Integer ? new Rational(timeline.duration.value, 1n) : timeline.duration;
+    return duration.divide(divisor);
+  }
+  function createTimelineManifest(args) {
+    const entry = spec(args, ["timeline"], "Timeline.Manifest");
+    const timeline = get(entry, "timeline");
+    if (!isOutputValue(timeline) || timeline.kind !== "timeline") {
+      throw new Error("Timeline.Manifest requires a Timeline.Sequence value");
+    }
+    const width = String(timeline.frames.length).length;
+    const frames = Object.freeze(timeline.frames.map((snapshot, index) => {
+      const frame = index + 1;
+      const marker = timeline.markers?.find((candidate) => candidate.frame === frame) || null;
+      const tracks = Object.freeze((timeline.tracks || []).map((track) => {
+        const keyframe = track.keyframes.filter((candidate) => candidate.frame <= frame).at(-1) || null;
+        return Object.freeze({
+          id: track.id,
+          kind: track.trackKind,
+          target: track.target,
+          interpolation: track.interpolation,
+          sourceFrame: keyframe?.frame ?? null,
+          value: keyframe?.value ?? null,
+          label: keyframe?.label ?? null
+        });
+      }));
+      return Object.freeze({
+        id: `frame-${String(frame).padStart(width, "0")}`,
+        frame,
+        state: snapshot.state,
+        origin: snapshot.origin,
+        marker: marker?.label ?? null,
+        duration: timelineManifestFrameDuration(timeline, index),
+        tracks
+      });
+    }));
+    return output("timeline_manifest", {
+      schema: "rix.timeline-manifest@1",
+      title: timeline.title,
+      frameCount: frames.length,
+      timing: timeline.frameDurations ? "per-frame" : timeline.duration ? "uniform-total" : "host-default",
+      frames
     });
   }
   function createTimelineRender(args) {
@@ -23443,6 +23494,13 @@ ${formatOutputText(frame.content, format)}`)].join(`
 
 `);
     }
+    if (value.kind === "timeline_manifest") {
+      return [value.title || `Timeline manifest: ${value.frameCount} frames`, ...value.frames.map((frame) => {
+        const tracks = frame.tracks.filter((track) => track.sourceFrame !== null).map((track) => `${track.id}=${cellText(track.value, format)} (from ${track.sourceFrame})`).join("; ");
+        return `${frame.id}${frame.marker ? ` · ${frame.marker}` : ""}${tracks ? ` · ${tracks}` : ""}`;
+      })].join(`
+`);
+    }
     if (value.kind === "timeline_render")
       return [value.title, formatOutputText(value.content, format)].filter(Boolean).join(`
 
@@ -23653,6 +23711,8 @@ ${formatOutputText(slide, format)}`).join(`
       const semanticTracks = (value.tracks || []).map((track) => `<section class="rix-output-timeline-semantic-track" data-rix-timeline-track="${escapeHtml2(track.id)}" data-rix-timeline-track-kind="${escapeHtml2(track.trackKind)}"><b>${escapeHtml2(track.title || track.id)} · ${escapeHtml2(track.trackKind)} · ${escapeHtml2(track.interpolation)}</b>${track.keyframes.map((keyframe, index) => `<output data-rix-timeline-track-keyframe="${keyframe.frame}"${index === 0 && keyframe.frame <= 1 ? "" : " hidden"}>${escapeHtml2(cellText(keyframe.value, format))}</output>`).join("")}</section>`).join("");
       return `<section class="rix-output-timeline" data-rix-timeline-length="${value.frames.length}" data-rix-timeline-track-count="${(value.tracks || []).length}" data-rix-timeline-transition="${escapeHtml2(transition.mode)}" data-rix-timeline-transition-schema="${escapeHtml2(transition.schema)}"${value.preferencesKey ? ` data-rix-timeline-preferences-key="${escapeHtml2(value.preferencesKey)}"` : ""} tabindex="0" role="region" aria-label="${escapeHtml2(value.title || "Mathematical timeline")}">${value.title ? `<h2>${escapeHtml2(value.title)}</h2>` : ""}<p class="rix-output-timeline-meta">${value.frames.length} exact frames · ${(value.tracks || []).length} semantic tracks · ${duration} · ${escapeHtml2(value.easing)} easing · ${escapeHtml2(transition.mode)} changes</p><div class="rix-output-timeline-toolbar" role="toolbar" aria-label="Timeline playback controls"><button type="button" data-rix-timeline-action="previous" aria-label="Previous frame">←</button><button type="button" data-rix-timeline-action="play" aria-pressed="false">Play</button><button type="button" data-rix-timeline-action="next" aria-label="Next frame">→</button><label>Frame <input type="range" min="1" max="${value.frames.length}" step="1" value="1" data-rix-timeline-scrubber aria-label="Timeline frame"></label><label>Speed <select data-rix-timeline-speed aria-label="Playback speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label><label><input type="checkbox" data-rix-timeline-loop> Loop</label><label>Start <input type="number" min="1" max="${value.frames.length}" step="1" value="1" data-rix-timeline-range-start></label><label>End <input type="number" min="1" max="${value.frames.length}" step="1" value="${value.frames.length}" data-rix-timeline-range-end></label><label>Compare <select data-rix-timeline-compare><option value="none">None</option><option value="previous">Previous</option><option value="frame">Chosen frame</option><option value="onion">Onion skin</option></select></label><label>Comparison frame <input type="number" min="1" max="${value.frames.length}" step="1" value="1" data-rix-timeline-compare-frame></label>${markerOptions ? `<label>Marker <select data-rix-timeline-marker><option value="">Choose…</option>${markerOptions}</select></label>` : ""}<button type="button" data-rix-timeline-action="record">Record frame</button><button type="button" data-rix-timeline-action="export">Export recording</button><button type="button" data-rix-timeline-action="clear-recording">Clear recording</button></div><div class="rix-output-timeline-stage" data-rix-timeline-stage>${frameArticles}</div>${semanticTracks ? `<div class="rix-output-timeline-semantic-tracks" aria-live="polite">${semanticTracks}</div>` : ""}<output class="rix-output-timeline-status" data-rix-timeline-status aria-live="polite">Frame 1 of ${value.frames.length} · exact state ${escapeHtml2(cellText(value.frames[0].state, format))}</output><pre class="rix-output-timeline-export" data-rix-timeline-export hidden></pre><details class="rix-output-timeline-diagnostics"><summary>Transition diagnostics</summary><ul data-rix-timeline-diagnostics></ul></details><details class="rix-output-timeline-inspector"><summary>Exact current frame</summary><dl><dt>State</dt><dd data-rix-timeline-exact-state>${escapeHtml2(cellText(value.frames[0].state, format))}</dd><dt>Origin</dt><dd data-rix-timeline-exact-origin>entry ${exactInteger4(value.frames[0].origin.entries.get("entry"), "Timeline origin entry")}, state ${exactInteger4(value.frames[0].origin.entries.get("state"), "Timeline origin state")}, ordinal ${exactInteger4(value.frames[0].origin.entries.get("ordinal"), "Timeline origin ordinal")}</dd></dl><pre data-rix-timeline-exact-text>${escapeHtml2(formatOutputText(value.frames[0].content, format))}</pre></details><details class="rix-output-timeline-text-track"><summary>Complete text track (${value.frames.length} frames)</summary><ol>${textTrack}</ol></details><p class="rix-output-timeline-help">Keyboard: Space play/pause; Left/Right step; Home/End jump; L loop; M next marker; R record exact frame.</p></section>`;
     }
+    if (value.kind === "timeline_manifest")
+      return `<pre class="rix-output-timeline-manifest" data-rix-timeline-manifest="${escapeHtml2(value.schema)}">${escapeHtml2(formatOutputText(value, format))}</pre>`;
     if (value.kind === "timeline_render")
       return `<section class="rix-output-timeline-render" data-rix-timeline-frame="${value.frame}" data-rix-timeline-length="${value.timeline.frames.length}">${value.title ? `<h2>${escapeHtml2(value.title)}</h2>` : ""}${renderOutputHtml(value.content, format)}<p class="rix-output-timeline-caption">Frame ${value.frame} of ${value.timeline.frames.length}</p></section>`;
     if (value.kind === "control_slider") {
@@ -23799,6 +23859,7 @@ ${formatOutputText(slide, format)}`).join(`
     const methods = new Map([
       ["Track", createTimelineTrack],
       ["Sequence", createTimelineSequence],
+      ["Manifest", createTimelineManifest],
       ["Render", createTimelineRender]
     ]);
     const entries2 = new Map;
@@ -72473,7 +72534,8 @@ GeometryAuthoringWorkbench(graph,actions,options ?= {= }) -> {;
     expandedActions=actions.Len()==5;
     selectionActions=actions.Len()==7;
     transformActions=actions.Len()==8;
-    (actions.Len()==3||expandedActions||selectionActions||transformActions) ?: _ ?_ .Error("geometry.AuthoringWorkbench actions must be [point, undo, redo], [point, line, circle, undo, redo], [point, line, circle, intersection, measurement, undo, redo], or [point, line, circle, intersection, measurement, transform, undo, redo]");
+    constrainedActions=actions.Len()==9;
+    (actions.Len()==3||expandedActions||selectionActions||transformActions||constrainedActions) ?: _ ?_ .Error("geometry.AuthoringWorkbench actions must end with undo and redo and contain the supported Point through Constrained Move tool prefix");
     size=GeometryNumericSequence(GeometryOption(options,"size",[720,480]),2,"geometry.AuthoringWorkbench size");
     view=GeometryNumericSequence(GeometryOption(options,"view",[-10,-10,10,10]),4,"geometry.AuthoringWorkbench view");
     xmin=view[1]; ymin=view[2]; xmax=view[3]; ymax=view[4];
@@ -72492,9 +72554,11 @@ GeometryAuthoringWorkbench(graph,actions,options ?= {= }) -> {;
     surfaceActionId=@"@{actionPrefix}-point"; lineActionId=@"@{actionPrefix}-line"; circleActionId=@"@{actionPrefix}-circle";
     intersectionActionId=@"@{actionPrefix}-intersection"; measurementActionId=@"@{actionPrefix}-measurement";
     transformActionId=@"@{actionPrefix}-transform";
+    constrainedActionId=@"@{actionPrefix}-constrained-move";
     undoActionId=@"@{actionPrefix}-undo"; redoActionId=@"@{actionPrefix}-redo";
     coordinateSystem={= view=view,frame=frame };
-    tools=transformActions ?: [:point,:line,:circle,:intersection,:measurement,:transform]
+    tools=constrainedActions ?: [:point,:line,:circle,:intersection,:measurement,:transform,:constrainedMove]
+      ?_ transformActions ?: [:point,:line,:circle,:intersection,:measurement,:transform]
       ?_ selectionActions ?: [:point,:line,:circle,:intersection,:measurement]
       ?_ expandedActions ?: [:point,:line,:circle] ?_ [:point];
     pointSpec={= tool=:point,label="Point",actionId=surfaceActionId,selectionKind=:canvas,selectionCount=1 };
@@ -72507,16 +72571,23 @@ GeometryAuthoringWorkbench(graph,actions,options ?= {= }) -> {;
     ];
     transformLabel=GeometryOption(options,"transformlabel","Transform");
     transformLabel ? :String ?: _ ?_ .Error("geometry.AuthoringWorkbench transformLabel must be a String");
-    toolSpecs=transformActions ?: selectionSpecs.Push({=
+    transformSpec={=
         tool=:transform,label=transformLabel,actionId=transformActionId,selectionKind=:object,
         selectionKinds=[:point,:line,:segment,:ray,:polygon,:circle,:conic],selectionCount=1,operandLabels=["object"]
-    }) ?_ selectionActions ?: selectionSpecs ?_ expandedActions ?: [pointSpec,lineSpec,circleSpec] ?_ [pointSpec];
+    };
+    transformSpecs=selectionSpecs.Push(transformSpec);
+    toolSpecs=constrainedActions ?: transformSpecs.Push({=
+        tool=:constrainedMove,label="Constrained move",actionId=constrainedActionId,selectionKind=:objectThenCanvas,
+        selectionKinds=[:point,:line],operandKinds=[[:point],[:line]],selectionCount=2,
+        operandLabels=["free point","line constraint"]
+    }) ?_ transformActions ?: transformSpecs ?_ selectionActions ?: selectionSpecs ?_ expandedActions ?: [pointSpec,lineSpec,circleSpec] ?_ [pointSpec];
     policy={=
         schema="rix.geometry.authoring-policy@1",tool=:point,tools=tools,toolSpecs=toolSpecs,
         maxNodes=maxNodes,snap=snap,idPrefix=idPrefix,coordinateSystem=coordinateSystem,
         surfaceActionId=surfaceActionId,lineActionId=lineActionId,circleActionId=circleActionId,
         intersectionActionId=intersectionActionId,measurementActionId=measurementActionId,
         transformActionId=transformActionId,
+        constrainedActionId=constrainedActionId,
         undoActionId=undoActionId,redoActionId=redoActionId,
         exactCoordinates=1,deterministicIds=1
     };
@@ -72657,10 +72728,55 @@ PlotExactSqrt(value) -> {;
     };
 };
 
-PlotPOI(kind,point,label,evidence ?= {= }) -> .DeepMutable({=
-    schema="rix.plot.poi@1",kind=kind,status=:exact,evidenceLevel=:proof,
+PlotPOIRecord(kind,point,label,status,evidenceLevel,evidence ?= {= }) -> .DeepMutable({=
+    schema="rix.plot.poi@1",kind=kind,status=status,evidenceLevel=evidenceLevel,
     point=point,label=label,evidence=evidence
 },_);
+
+PlotPOI(kind,point,label,evidence ?= {= }) -> PlotPOIRecord(kind,point,label,:exact,:proof,evidence);
+
+PlotPolynomialSamplePOI(coefficients,xMin,xMax,samples,existing) -> {;
+    data:=[];
+    {@ index=1; index<=@samples; {;
+        x=@xMin+(@xMax-@xMin)*(index-1)/(@samples-1);
+        @data ~= @data.Push([x,PlotEvaluate(@coefficients,x)]);
+    }; index+=1 };
+    result:=[];
+    {@ index=1; index<=@data.Len(); {;
+        point=@data[index]; x=point[1]; y=point[2];
+        duplicate=@existing.Concat(@result).Any((poi)->poi[:kind]==:root&&poi[:point][1]==@x);
+        (y==0&&!duplicate) ?: {;
+            @result ~= @result.Push(PlotPOI(:root,[@x,0],@"sample-exact root x = @{@x}",{=
+                identity=:exact_sample,continuity=:polynomial,sampleIndex=@index,samples=@samples
+            }));
+        } ?_ _;
+        index>1 ?: {;
+            previous=@data[@index-1];
+            bracketed=(previous[2]<0&&@y>0)||(previous[2]>0&&@y<0);
+            known=@existing.Concat(@result).Any((poi)->poi[:kind]==:root&&poi[:point][1]>@previous[1]&&poi[:point][1]<@x);
+            (bracketed&&!known) ?: {;
+                midpoint=(@previous[1]+@x)/2;
+                @result ~= @result.Push(PlotPOIRecord(:root,[midpoint,PlotEvaluate(@coefficients,midpoint)],
+                    @"certified root bracket [@{@previous[1]}, @{@x}]",:certifiedBracket,:existence,{=
+                        identity=:intermediate_value_theorem,continuity=:polynomial,
+                        xInterval=[@previous[1],@x],values=[@previous[2],@y],samples=@samples
+                    }));
+            } ?_ _;
+        } ?_ _;
+        (index>1&&index<@data.Len()) ?: {;
+            previousY=@data[@index-1][2]; nextY=@data[@index+1][2];
+            classification=(@y<previousY&&@y<nextY) ?: :minimum
+              ?_ (@y>previousY&&@y>nextY) ?: :maximum ?_ _;
+            classification!=_ ?: {;
+                @result ~= @result.Push(PlotPOIRecord(:extremum,[@x,@y],@"sampled @{@classification} candidate (@{@x}, @{@y})",
+                    :sampledCandidate,:sample,{=
+                        identity=:neighbor_comparison,classification=@classification,sampleIndex=@index,samples=@samples
+                    }));
+            } ?_ _;
+        } ?_ _;
+    }; index+=1 };
+    result;
+};
 
 PlotPolynomialPOI(coefficientsValue,domain,options ?= {= }) -> {;
     coefficients=PlotExactArray(coefficientsValue,"Polynomial POI coefficients");
@@ -72694,8 +72810,26 @@ PlotPolynomialPOI(coefficientsValue,domain,options ?= {= }) -> {;
             } ?_ _;
         } ?_ _;
     } ?_ _;
-    result;
+    samples=PlotPositiveSamples(PlotOption(options,"samples",161));
+    coefficients.Len()>3 ?: {; @result ~= @result.Concat(PlotPolynomialSamplePOI(@coefficients,@xMin,@xMax,@samples,@result)); } ?_ _;
+    result.Map((poi,index)->poi.Merge({= id=@"poi-@{poi[:kind]}-@{index}" }));
 };
+
+PlotPOILabelPolicy(options) -> {;
+    policy=PlotOption(options,"poilabels",:all);
+    (policy==:all||policy==:none||policy==:exact||policy==:roots)
+      ?: policy
+      ?_ .Error("Polynomial plot poiLabels must be :all, :none, :exact, or :roots");
+};
+
+PlotPOIMaxLabels(options) -> {;
+    maximum=PlotOption(options,"poimaxlabels",10000) ~!: :Integer;
+    (maximum>=0&&maximum<=10000) ?: maximum ?_ .Error("Polynomial plot poiMaxLabels must be between 0 and 10000");
+};
+
+PlotPOIShowLabel(poi,policy,shown,maximum) -> shown<maximum && (
+    policy==:all || (policy==:exact&&poi[:status]==:exact) || (policy==:roots&&poi[:kind]==:root)
+);
 
 PlotReadSeries(coefficientsValue, settings, index, samples, xMin, xMax, primary) -> {;
     coefficients = PlotExactArray(coefficientsValue, @"Polynomial plot series @{index} coefficients");
@@ -72805,10 +72939,13 @@ PlotPolynomial(coefficientsValue, domain, options ?= {= }) -> {;
         @marks ~= @marks.Push(PlotReadMark(@markEntries[index], index));
     }; index += 1 };
     pointsOfInterest=PlotOption(options,"pointsofinterest",0)==1 ?: PlotPolynomialPOI(coefficients,domain,options) ?_ [];
+    poiLabelPolicy=PlotPOILabelPolicy(options); poiMaxLabels=PlotPOIMaxLabels(options); shownPOILabels:=0;
     {@ index=1; index<=@pointsOfInterest.Len(); {;
         poi=@pointsOfInterest[index];
+        showLabel=PlotPOIShowLabel(poi,@poiLabelPolicy,@shownPOILabels,@poiMaxLabels);
+        @shownPOILabels += showLabel ?: 1 ?_ 0;
         @marks ~= @marks.Push({=
-            point=poi[:point],label=poi[:label],radius=PlotExact(PlotOption(@options,"poiradius",5),"Polynomial POI radius"),
+            point=poi[:point],label=showLabel ?: poi[:label] ?_ _,radius=PlotExact(PlotOption(@options,"poiradius",5),"Polynomial POI radius"),
             style=PlotOption(@options,"poistyle",{= fill="#7c3aed",stroke="#fff",width=2 }),
             labelStyle=PlotOption(@options,"poilabelstyle",{= size=13 })
         });
@@ -72876,6 +73013,8 @@ PlotPolynomial(coefficientsValue, domain, options ?= {= }) -> {;
             ticks=ticks,
             marks=marks,
             pointsOfInterest=pointsOfInterest,
+            poiLabelPolicy=poiLabelPolicy,
+            poiLabelsShown=shownPOILabels,
             title=PlotOption(options,"title"),
             xLabel=PlotOption(options,"xlabel"),
             yLabel=PlotOption(options,"ylabel")
@@ -74291,6 +74430,119 @@ S3Collect(children, parent, clipPlanes ?= []) -> {;
     result;
 };
 
+S3ClipSide(point,plane) -> S3Dot(plane[:normal],point)+plane[:offset];
+
+S3ClipIntersection(first,second,firstSide,secondSide) -> {;
+    ratio=firstSide/(firstSide-secondSide);
+    [1,2,3].Map((coordinate)->first[coordinate]+(second[coordinate]-first[coordinate])*@ratio);
+};
+
+S3SamePoint3(first,second) -> [1,2,3].All((coordinate)->first[coordinate]==second[coordinate]);
+
+S3ClipSegmentPlanes(first,second,planes) -> {;
+    segment:=[first,second];
+    {@ planeIndex=1; planeIndex<=@planes.Len()&&@segment!=_; {;
+        plane=@planes[planeIndex]; start=@segment[1]; finish=@segment[2];
+        startSide=S3ClipSide(start,plane); finishSide=S3ClipSide(finish,plane);
+        startInside=startSide>=0; finishInside=finishSide>=0;
+        (!startInside&&!finishInside)
+          ?: {; @segment~=_; }
+          ?_ startInside&&finishInside
+               ?: _
+               ?_ {;
+                   cut=S3ClipIntersection(@start,@finish,@startSide,@finishSide);
+                   @segment ~= @startInside ?: [@start,cut] ?_ [cut,@finish];
+               };
+    }; planeIndex+=1 };
+    segment;
+};
+
+S3ClipPolygonPlane(points,plane) -> {;
+    result:=[];
+    points.Len()>0 ?: {;
+        previous:=@points.Last(); previousSide:=S3ClipSide(previous,@plane); previousInside:=previousSide>=0;
+        {@ index=1; index<=@points.Len(); {;
+            current=@points[index]; currentSide=S3ClipSide(current,@plane); currentInside=currentSide>=0;
+            currentInside
+              ?: {;
+                  !@previousInside ?: {;
+                      @result ~= @result.Push(S3ClipIntersection(@previous,@current,@previousSide,@currentSide));
+                  } ?_ _;
+                  @result ~= @result.Push(@current);
+              }
+              ?_ @previousInside ?: {;
+                  @result ~= @result.Push(S3ClipIntersection(@previous,@current,@previousSide,@currentSide));
+              } ?_ _;
+            @previous~=current; @previousSide~=currentSide; @previousInside~=currentInside;
+        }; index+=1 };
+    } ?_ _;
+    (result.Len()>1&&S3SamePoint3(result[1],result.Last())) ?: result.Slice(1,result.Len()) ?_ result;
+};
+
+S3ClipPolygonPlanes(points,planes) -> {;
+    result:=points;
+    {@ index=1; index<=@planes.Len()&&@result.Len()>0; {;
+        @result ~= S3ClipPolygonPlane(@result,@planes[index]);
+    }; index+=1 };
+    result;
+};
+
+S3ClipPrimitive(primitive) -> {;
+    planes=primitive[:clipplanes];
+    planes.Len()==0
+      ?: primitive
+      ?_ primitive[:kind]==:points
+           ?: {;
+               points=@primitive[:points].Filter((point)->@planes.All((plane)->S3ClipSide(point,plane)>=0));
+               @primitive.Merge({= points=points,clipRealization={=
+                   schema="rix.scene3d.clip-realization@1",method=:point_filter,inputPoints=@primitive[:points].Len(),outputPoints=points.Len()
+               } });
+           }
+           ?_ primitive[:kind]==:annotation
+                ?: {;
+                    kept=@planes.All((plane)->S3ClipSide(@primitive[:points][1],plane)>=0);
+                    @primitive.Merge({= points=kept ?: @primitive[:points] ?_ [],clipRealization={=
+                        schema="rix.scene3d.clip-realization@1",method=:point_filter,inputPoints=1,outputPoints=kept ?: 1 ?_ 0
+                    } });
+                }
+                ?_ primitive[:kind]==:lines
+                     ?: {;
+                         points:=[]; segments:=[];
+                         {@ index=1; index<=@primitive[:segments].Len(); {;
+                             pair=@primitive[:segments][index]; clipped=S3ClipSegmentPlanes(@primitive[:points][pair[1]],@primitive[:points][pair[2]],@planes);
+                             clipped!=_ ?: {;
+                                 first=@points.Len()+1; @points ~= @points.Concat(@clipped); @segments ~= @segments.Push([first,first+1]);
+                             } ?_ _;
+                         }; index+=1 };
+                         @primitive.Merge({= points=points,segments=segments,clipRealization={=
+                             schema="rix.scene3d.clip-realization@1",method=:segment_halfspace,
+                             inputSegments=@primitive[:segments].Len(),outputSegments=segments.Len(),inputPoints=@primitive[:points].Len(),outputPoints=points.Len()
+                         } });
+                     }
+                     ?_ primitive[:kind]==:mesh
+                          ?: {;
+                              points:=[]; triangles:=[];
+                              {@ index=1; index<=@primitive[:triangles].Len(); {;
+                                  triangle=@primitive[:triangles][index]; polygon=S3ClipPolygonPlanes(
+                                      [@primitive[:points][triangle[1]],@primitive[:points][triangle[2]],@primitive[:points][triangle[3]]],@planes
+                                  );
+                                  polygon.Len()>=3 ?: {;
+                                      first=@points.Len()+1; @points ~= @points.Concat(@polygon);
+                                      {@ corner=2; corner<@polygon.Len(); {;
+                                          @triangles ~= @triangles.Push([@first,@first+corner-1,@first+corner]);
+                                      }; corner+=1 };
+                                  } ?_ _;
+                              }; index+=1 };
+                              @primitive.Merge({= points=points,triangles=triangles,segments=S3MeshSegments(triangles),clipRealization={=
+                                  schema="rix.scene3d.clip-realization@1",method=:triangle_halfspace,
+                                  inputTriangles=@primitive[:triangles].Len(),outputTriangles=triangles.Len(),inputPoints=@primitive[:points].Len(),outputPoints=points.Len()
+                              } });
+                          }
+                          ?_ primitive;
+};
+
+S3ApplyClipPlanes(primitives) -> primitives.Map((primitive)->S3ClipPrimitive(primitive)).Filter((primitive)->primitive[:points].Len()>0);
+
 S3Picking(primitives) -> {;
     result := {= };
     {@ index=1; index<=@primitives.Len(); {;
@@ -74307,13 +74559,21 @@ S3Picking(primitives) -> {;
 };
 
 S3Realized(children) -> {;
-    primitives = S3Collect(children,S3Identity(),[]);
+    collected = S3Collect(children,S3Identity(),[]);
+    primitives = S3ApplyClipPlanes(collected);
+    clipped=collected.Filter((primitive)->primitive[:clipplanes].Len()>0);
     .DeepMutable({=
         type="scene3d_realized",
         schema="rix.scene3d.realized@1",
         coordinateSystem={= handedness="right", up="z", units="unspecified" },
         primitives=primitives,
-        picking=S3Picking(primitives)
+        picking=S3Picking(primitives),
+        clipping={=
+            schema="rix.scene3d.clip-work@1",method=:exact_halfspace,
+            inputPrimitives=collected.Len(),outputPrimitives=primitives.Len(),clippedPrimitives=clipped.Len(),
+            inputPoints=collected.Reduce((total,primitive)->total+primitive[:points].Len(),0),
+            outputPoints=primitives.Reduce((total,primitive)->total+primitive[:points].Len(),0)
+        }
     }, _);
 };
 
@@ -79895,7 +80155,7 @@ ${renderNode(slide.content, state, `${path}.slide${index + 1}.content`)}`;
     if (annotations.length)
       diagnostics.push(diagnostic("webgl-annotation-overlay", "Scene3D annotations are returned as projected host overlays so text remains accessible and interactive.", "info"));
     if (drawCalls.some(({ clipPlanes }) => clipPlanes.length > 0))
-      diagnostics.push(diagnostic("webgl-retained-clip-planes", "Scene3D clip planes are retained on draw calls; the portable flat executor reports but does not geometrically split crossing primitives.", "info"));
+      diagnostics.push(diagnostic("webgl-retained-clip-planes", "Scene3D realization exactly clips supported points, lines, and meshes; the defining planes remain on draw calls for capable hosts.", "info"));
     if (drawCalls.some(({ material }) => material.roughness !== 1 || material.metallic !== 0 || material.emissive))
       diagnostics.push(diagnostic("webgl-retained-advanced-material", "Advanced material parameters are retained for capable hosts; the portable executor uses flat color and opacity.", "info"));
     const lights = sequence10(field3(scene, "lights"), "Scene3D lights").map(lightPlan);
@@ -88626,6 +88886,40 @@ ${execute}---
       return { entry: entry2, forward, score: forward + sideways * 4 };
     }).filter((candidate) => candidate.forward > 0.000000001).sort((left, right) => left.score - right.score || left.forward - right.forward || left.entry.id.localeCompare(right.entry.id))[0]?.entry || null;
   }
+  function createGraphicDensityPlan(catalogOrCount, options = {}) {
+    const count = Array.isArray(catalogOrCount) ? catalogOrCount.length : Number(catalogOrCount);
+    const semanticLimit = Number(options.semanticLimit ?? 2000);
+    const svgLimit = Number(options.svgLimit ?? 5000);
+    const canvasLimit = Number(options.canvasLimit ?? 50000);
+    const cellSize = Number(options.cellSize ?? 64);
+    const pageSize = Number(options.pageSize ?? 500);
+    if (![count, semanticLimit, svgLimit, canvasLimit].every(Number.isSafeInteger) || count < 0 || semanticLimit < 1 || svgLimit < semanticLimit || canvasLimit < svgLimit) {
+      throw new Error("Graphic density thresholds must be ordered nonnegative safe integers");
+    }
+    if (!(cellSize > 0) || !Number.isFinite(cellSize))
+      throw new Error("Graphic density cell size must be positive");
+    if (!Number.isSafeInteger(pageSize) || pageSize < 1)
+      throw new Error("Graphic density page size must be a positive safe integer");
+    const preferredProjection = count <= svgLimit ? "svg" : count <= canvasLimit ? "canvas" : "webgl";
+    const semanticMode = count <= semanticLimit ? "complete" : "virtualized";
+    return Object.freeze({
+      schema: "rix.graphics.density-policy@1",
+      sourceCount: count,
+      thresholds: Object.freeze({ semanticLimit, svgLimit, canvasLimit }),
+      preferredProjection,
+      semanticMode,
+      navigation: Object.freeze({
+        indexed: true,
+        cellSize,
+        pageSize: Math.min(semanticLimit, pageSize)
+      }),
+      reasons: Object.freeze([
+        `source-count:${count}`,
+        `projection:${preferredProjection}`,
+        `semantic-navigation:${semanticMode}`
+      ])
+    });
+  }
   function createGraphicHitIndex(entries4, cellSize = 64) {
     const size = Number(cellSize);
     if (!(size > 0) || !Number.isFinite(size))
@@ -88633,7 +88927,9 @@ ${execute}---
     const normalized = [];
     const buckets = new Map;
     const overflow = [];
-    for (const [order, entry2] of Array.from(entries4 || []).entries()) {
+    let bucketReferences = 0;
+    const source = Array.from(entries4 || []);
+    for (const [order, entry2] of source.entries()) {
       const bounds2 = entry2?.bounds;
       if (!bounds2)
         continue;
@@ -88659,10 +88955,28 @@ ${execute}---
           if (!buckets.has(key))
             buckets.set(key, []);
           buckets.get(key).push(index);
+          bucketReferences += 1;
         }
       }
     }
-    return Object.freeze({ schema: "rix.graphics.hit-index@1", cellSize: size, entries: Object.freeze(normalized), buckets, overflow: Object.freeze(overflow) });
+    const maximumBucketLoad = [...buckets.values()].reduce((maximum, bucket) => Math.max(maximum, bucket.length), 0);
+    return Object.freeze({
+      schema: "rix.graphics.hit-index@1",
+      cellSize: size,
+      entries: Object.freeze(normalized),
+      buckets,
+      overflow: Object.freeze(overflow),
+      work: Object.freeze({
+        schema: "rix.graphics.hit-index-work@1",
+        sourceEntries: source.length,
+        indexedEntries: normalized.length,
+        bucketCount: buckets.size,
+        bucketReferences,
+        overflowEntries: overflow.length,
+        maximumBucketLoad,
+        maximumCellsPerEntry: 4096
+      })
+    });
   }
   function queryGraphicHitIndex(index, point4, tolerance = 0) {
     if (index?.schema !== "rix.graphics.hit-index@1")
@@ -88673,8 +88987,10 @@ ${execute}---
     if (![x, y, radius].every(Number.isFinite) || radius < 0)
       throw new Error("Graphic hit query requires finite coordinates and a nonnegative tolerance");
     const candidates = new Set(index.overflow || []);
+    let visitedBuckets = 0;
     for (let column = Math.floor((x - radius) / index.cellSize);column <= Math.floor((x + radius) / index.cellSize); column += 1) {
       for (let row = Math.floor((y - radius) / index.cellSize);row <= Math.floor((y + radius) / index.cellSize); row += 1) {
+        visitedBuckets += 1;
         for (const entry2 of index.buckets.get(`${column}:${row}`) || [])
           candidates.add(entry2);
       }
@@ -88689,7 +89005,10 @@ ${execute}---
         best = { entry: entry2, distance };
       }
     }
-    return best ? Object.freeze(best) : null;
+    return best ? Object.freeze({
+      ...best,
+      work: Object.freeze({ examinedEntries: candidates.size, visitedBuckets })
+    }) : null;
   }
   function plotInspection(graphic, scenePoint, format) {
     const plot = mapField4(graphic?.metadata, "plot");
@@ -88941,7 +89260,7 @@ ${execute}---
   function serializeGeometryConstructionRecord(record, format = String) {
     return JSON.stringify(portableGeometryValue(record, format), null, 2);
   }
-  function installGeometryWorkbench(graphic, status, options, navigation, actionActivators = new Map) {
+  function installGeometryWorkbench(graphic, status, options, navigation, actionActivators = new Map, pendingActionPayloads = new Map) {
     const workbench = geometryWorkbench(options.graphic);
     const document2 = graphic.ownerDocument;
     if (!workbench || !document2?.createElement)
@@ -89043,11 +89362,14 @@ ${execute}---
           const spec2 = specsByTool.get(activeTool);
           const label2 = stringValue11(mapField4(spec2, "label")) || activeTool;
           const acceptedKinds = sequenceValue6(mapField4(spec2, "selectionKinds")).map((entry2) => stringValue11(entry2));
+          const operandKinds = sequenceValue6(mapField4(spec2, "operandKinds"));
           const operandLabels = sequenceValue6(mapField4(spec2, "operandLabels")).map((entry2) => stringValue11(entry2));
           const selectionCount = finiteNumber2(mapField4(spec2, "selectionCount"), 0);
-          if (!acceptedKinds.includes(kind)) {
+          const operandAcceptedKinds = sequenceValue6(operandKinds[selectedObjectIds.length]).map((entry2) => stringValue11(entry2));
+          const kindsForOperand = operandAcceptedKinds.length ? operandAcceptedKinds : acceptedKinds;
+          if (!kindsForOperand.includes(kind)) {
             if (status)
-              status.textContent = `${label2} tool requires ${acceptedKinds.join(" or ")} objects; ${id} is ${kind}.`;
+              status.textContent = `${label2} tool requires ${kindsForOperand.join(" or ")} for ${operandLabels[selectedObjectIds.length] || "this operand"}; ${id} is ${kind}.`;
             return;
           }
           if (selectedObjectIds.includes(id)) {
@@ -89067,7 +89389,15 @@ ${execute}---
           selectedObjectIds = [];
           for (const candidate of treeButtons)
             candidate.setAttribute("aria-pressed", "false");
-          actionActivators.get(actionId)?.(source, null, selection);
+          if (stringValue11(mapField4(spec2, "selectionKind")) === "objectThenCanvas") {
+            pendingActionPayloads.set(actionId, selection);
+            const action = [...graphic.querySelectorAll("[data-rix-graphic-action]")].find((candidate) => candidate.dataset.rixGraphicAction === actionId);
+            action?.focus?.();
+            if (status)
+              status.textContent = `${label2} operands selected. Click the target position, or move the keyboard cursor with arrows and press Enter.`;
+          } else {
+            actionActivators.get(actionId)?.(source, null, selection);
+          }
         }
       };
       button.addEventListener("click", () => choose());
@@ -89151,6 +89481,20 @@ ${execute}---
       if (status)
         status.textContent = "Portable construction record exported";
     });
+    const svg = graphic.querySelector("svg.rix-output-svg");
+    svg?.addEventListener?.("click", (event) => {
+      const spec2 = specsByTool.get(activeTool);
+      if (stringValue11(mapField4(spec2, "selectionKind")) !== "objectThenCanvas")
+        return;
+      const actionId = stringValue11(mapField4(spec2, "actionId"));
+      const payload = pendingActionPayloads.get(actionId);
+      if (!payload)
+        return;
+      event.preventDefault?.();
+      event.stopImmediatePropagation?.();
+      const position = graphicPointFromClient(svg.getBoundingClientRect(), svg.viewBox?.baseVal || graphicViewBox(options.state), { x: event.clientX, y: event.clientY });
+      actionActivators.get(actionId)?.("pointer", position, payload);
+    }, true);
     refreshHistory();
   }
   function closestSemantic(element, svg) {
@@ -89298,6 +89642,10 @@ ${execute}---
     toolbar?.setAttribute?.("aria-controls", viewId);
     const semanticElements = [...svg.querySelectorAll?.("[data-rix-semantic-id]") || []];
     const selectable = semanticElements.filter((element) => element.dataset?.rixDragTarget || element.dataset?.rixGraphicAction || !element.querySelector?.("[data-rix-semantic-id]"));
+    const densityPlan = createGraphicDensityPlan(selectable.length);
+    graphic.dataset.rixGraphicDensityProjection = densityPlan.preferredProjection;
+    graphic.dataset.rixGraphicSemanticMode = densityPlan.semanticMode;
+    graphic.dataset.rixGraphicSourceCount = String(densityPlan.sourceCount);
     const catalog = new Map(graphicSelectionCatalog(options.graphic, options.format || String).map((entry2) => [entry2.id, entry2]));
     const scopeSelect = toolbar?.querySelector?.("[data-rix-graphic-selection-scope]") || null;
     const objectSelect = toolbar?.querySelector?.("[data-rix-graphic-object-select]") || null;
@@ -89661,19 +90009,21 @@ ${execute}---
       return;
     const navigation = installNavigation(graphic, svg, status, options);
     const actionActivators = new Map;
+    const pendingActionPayloads = new Map;
     for (const action of actions) {
       if (typeof options.onAction !== "function")
         continue;
       const positioned = action.dataset.rixGraphicPositioned === "true";
       const current = () => String(action.dataset.rixPosition || "0,0").split(",").map(Number);
       const activate = (source, position = positioned ? current() : null, payload = null) => {
+        const retainedPayload = payload ?? pendingActionPayloads.get(action.dataset.rixGraphicAction) ?? null;
         const detail = Object.freeze({
           type: "graphic:action",
           actionId: action.dataset.rixGraphicAction,
           targetId: action.dataset.rixGraphicTarget,
           source,
           ...positioned ? { position: Object.freeze(position.map(Number)) } : {},
-          ...payload === null ? {} : { payload }
+          ...retainedPayload === null ? {} : { payload: retainedPayload }
         });
         try {
           const result = options.onAction(detail, action, graphic);
@@ -89683,6 +90033,7 @@ ${execute}---
             status.textContent = `${action.getAttribute("aria-label") || "Scene action"} selected`;
           dispatchGraphicEvent(graphic, "rix-graphic-action", { ...detail, revision: result?.revision ?? null });
           options.onActionCommitted?.(detail, result, action, graphic);
+          pendingActionPayloads.delete(action.dataset.rixGraphicAction);
         } catch (error) {
           if (status)
             status.textContent = error instanceof Error ? error.message : String(error);
@@ -89728,7 +90079,7 @@ ${execute}---
         activate("keyboard");
       });
     }
-    installGeometryWorkbench(graphic, status, options, navigation, actionActivators);
+    installGeometryWorkbench(graphic, status, options, navigation, actionActivators, pendingActionPayloads);
     if (handles.length === 0 || typeof options.onPosition !== "function")
       return;
     const setPreview = (handle, position) => {
