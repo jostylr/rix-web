@@ -3,16 +3,17 @@ import {
   findHelp,
   pluginProfileFromUrl,
   stripMarkedPluginProfile
-} from "./chunk-1adm5mv7.js";
+} from "./chunk-v1274xzd.js";
 import {
   Integer,
   Rational,
   RationalInterval,
   createControlPanel,
+  createGeometryAuthoringProgram,
   mountOutputWidgets,
   parse,
   renderOutputHtml
-} from "./chunk-01q29cj3.js";
+} from "./chunk-b3dthdv7.js";
 
 // src/interval-explorer.js
 var SVG_NS = "http://www.w3.org/2000/svg";
@@ -1028,6 +1029,57 @@ function showcaseExample(id) {
   return showcaseExamples.find((example) => example.id === id) || null;
 }
 
+// src/geometry-board.js
+function createNewGeometryBoard(sequence = 1) {
+  const suffix = Number.isInteger(sequence) && sequence > 0 ? sequence : 1;
+  const namesPrefix = `geometryboard${suffix}`;
+  const actionPrefix = `geometry-author-${suffix}`;
+  return Object.freeze({
+    pointActionId: `${actionPrefix}-point`,
+    source: `.Plugin.Load("geometry");
+${namesPrefix}seed := .geometry.ConstructionGraph([]);
+${createGeometryAuthoringProgram("", {
+      graphName: `${namesPrefix}seed`,
+      namesPrefix,
+      actionPrefix,
+      view: [-5, -4, 5, 4],
+      size: [720, 520],
+      snap: "1/4",
+      maxNodes: 1000
+    })}`
+  });
+}
+var NEW_GEOMETRY_BOARD_SOURCE = createNewGeometryBoard().source;
+
+// src/interactive-output.js
+var INTERACTIVE_OUTPUT_SELECTOR = [
+  "a",
+  "button",
+  "input",
+  "select",
+  "textarea",
+  "summary",
+  "details",
+  "canvas",
+  "svg",
+  "[contenteditable=true]",
+  "[role=button]",
+  "[role=link]",
+  "[tabindex]",
+  "[data-rix-drag-target]",
+  "[data-rix-graphic-action]",
+  "[data-rix-geometry-object]"
+].join(",");
+function isInteractiveOutputEvent(event, outputEntry) {
+  const target = event?.target;
+  if (!target || typeof target.closest !== "function")
+    return false;
+  const interactive = target.closest(INTERACTIVE_OUTPUT_SELECTOR);
+  if (!interactive)
+    return false;
+  return typeof outputEntry?.contains !== "function" || outputEntry.contains(interactive);
+}
+
 // src/workspace-state.js
 var RIX_SESSION_FORMAT = "rix-web-session";
 var RIX_SESSION_VERSION = 1;
@@ -1207,6 +1259,7 @@ var transcript = [];
 var autoSeparateLines = true;
 var completionState = null;
 var clearTimer = null;
+var geometryBoardSequence = 0;
 var outputDisposers = new Set;
 var clearCoordinator = new ClearCoordinator;
 var intervalExplorer = new IntervalExplorer({
@@ -1323,13 +1376,20 @@ function appendOutput(source, response) {
     if (response.html) {
       outputLine.classList.add("rich-output");
       outputLine.innerHTML = response.html;
-      outputLine.addEventListener("click", () => openInspection(source, response.text));
-      const dispose = mountOutputWidgets(outputLine, response.value, {
+      outputLine.addEventListener("click", (event) => {
+        if (!isInteractiveOutputEvent(event, outputLine))
+          openInspection(source, response.text);
+      });
+      const disposeWidgets = mountOutputWidgets(outputLine, response.value, {
         format: repl.formatValue,
         observe: response.observe ? (listener) => response.observe((next) => listener(next.value)) : null,
         onActivate: ({ address }) => insertInputText(address),
         evaluateEdit: (editSource, { mode }) => repl.run(mode === "formula" ? `@{ ${editSource} }` : editSource)
       });
+      const dispose = () => {
+        disposeWidgets();
+        response.dispose?.();
+      };
       outputDisposers.add(dispose);
     } else {
       outputLine.innerHTML = response.type === "error" ? escapeHtml3(preview) : `${escapeHtml3(preview)}<span class="inject-icon" title="Use this value">→</span>`;
@@ -1629,6 +1689,16 @@ async function execute(source = input.value) {
   reactiveDashboard.refresh();
   setInput("");
 }
+async function openNewGeometryBoard() {
+  const names = new Set(repl.variables().map(({ name }) => name.toLowerCase()));
+  do
+    geometryBoardSequence += 1;
+  while (names.has(`geometryboard${geometryBoardSequence}seed`) || names.has(`geometryboard${geometryBoardSequence}graph`));
+  const board = createNewGeometryBoard(geometryBoardSequence);
+  setScriptMode(true);
+  await execute(board.source);
+  [...outputHistory.querySelectorAll(`[data-rix-graphic-action="${board.pointActionId}"]`)].at(-1)?.focus?.();
+}
 function setScriptMode(next) {
   scriptMode = next;
   const presentation = modePresentation(scriptMode);
@@ -1735,6 +1805,9 @@ document.addEventListener("click", (event) => {
       break;
     case "reactive-dashboard":
       setReactiveDashboardOpen(!reactiveDashboard.isOpen);
+      break;
+    case "new-geometry-board":
+      openNewGeometryBoard();
       break;
     case "close-reactive-dashboard":
       setReactiveDashboardOpen(false);
@@ -1915,5 +1988,5 @@ window.addEventListener("pagehide", () => {
   repl.dispose();
 });
 
-//# debugId=3BEB6D4B0D338A6064756E2164756E21
+//# debugId=7C8C6E64707C6BC164756E2164756E21
 //# sourceMappingURL=main.js.map

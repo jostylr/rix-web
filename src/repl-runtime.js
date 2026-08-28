@@ -12,7 +12,8 @@ import {
     isOutputValue,
     outputValueKind,
     parseAndEvaluate,
-    parseAndEvaluateAsync,
+    parseAndEvaluateObserved,
+    parseAndEvaluateObservedAsync,
     renderOutputHtml,
     tokenize,
 } from "../../rix/src/index.js";
@@ -149,12 +150,6 @@ function inlineHelpRequest(source) {
     return match ? (match[1] ?? match[2] ?? match[3] ?? "").trim() : null;
 }
 
-function currentReactiveValue(source) {
-    if (source?.type === "reactive_node" && typeof source.peek === "function") return source.peek();
-    if (source?.type === "formula_sheet") return source;
-    return undefined;
-}
-
 function collectControlValues(value, controls, seen = new Set()) {
     if (!value || typeof value !== "object" || seen.has(value)) return;
     seen.add(value);
@@ -286,17 +281,13 @@ export function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true
             const topic = inlineHelpRequest(source);
             if (topic !== null) return { type: "help", source, ...findHelp(topic) };
             try {
-                const reactiveReads = new Set();
                 const normalizedSource = separateLines ? normalizeReplSource(source) : source;
                 const evaluationSource = expandDeclarativeWebControls(normalizedSource, tokenize);
-                const result = parseAndEvaluate(evaluationSource, {
+                const observed = parseAndEvaluateObserved(evaluationSource, {
                     ...state,
                     file: "<ratcalc>",
-                    reactiveReads,
                 });
                 const format = configuredFormat;
-                const observedSource = [...reactiveReads]
-                    .find((candidate) => currentReactiveValue(candidate) === result);
                 const makeResponse = (value) => ({
                     type: "result",
                     source,
@@ -304,13 +295,12 @@ export function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true
                     text: presentationFormat(value),
                     sourceText: formatValueSource(value),
                     html: isOutputValue(value) ? renderOutputHtml(value, format) : null,
-                    observe: observedSource
-                        ? (listener) => observedSource.subscribe(() => {
-                            listener(makeResponse(currentReactiveValue(observedSource)));
-                        })
+                    observe: observed.observe
+                        ? (listener) => observed.observe((nextValue, event) => listener(makeResponse(nextValue), event))
                         : null,
+                    dispose: observed.dispose,
                 });
-                return makeResponse(result);
+                return makeResponse(observed.value);
             } catch (error) {
                 return { type: "error", source, text: error.message || String(error) };
             }
@@ -331,17 +321,13 @@ export function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true
             const topic = inlineHelpRequest(source);
             if (topic !== null) return { type: "help", source, ...findHelp(topic) };
             try {
-                const reactiveReads = new Set();
                 const normalizedSource = separateLines ? normalizeReplSource(source) : source;
                 const evaluationSource = expandDeclarativeWebControls(normalizedSource, tokenize);
-                const result = await parseAndEvaluateAsync(evaluationSource, {
+                const observed = await parseAndEvaluateObservedAsync(evaluationSource, {
                     ...state,
                     file: "<ratcalc>",
-                    reactiveReads,
                 });
                 const format = configuredFormat;
-                const observedSource = [...reactiveReads]
-                    .find((candidate) => currentReactiveValue(candidate) === result);
                 const makeResponse = (value) => ({
                     type: "result",
                     source,
@@ -349,13 +335,12 @@ export function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true
                     text: presentationFormat(value),
                     sourceText: formatValueSource(value),
                     html: isOutputValue(value) ? renderOutputHtml(value, format) : null,
-                    observe: observedSource
-                        ? (listener) => observedSource.subscribe(() => {
-                            listener(makeResponse(currentReactiveValue(observedSource)));
-                        })
+                    observe: observed.observe
+                        ? (listener) => observed.observe((nextValue, event) => listener(makeResponse(nextValue), event))
                         : null,
+                    dispose: observed.dispose,
                 });
-                return makeResponse(result);
+                return makeResponse(observed.value);
             } catch (error) {
                 return { type: "error", source, text: error.message || String(error) };
             }

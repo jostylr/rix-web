@@ -44,10 +44,11 @@ import {
   isReactiveNode,
   outputValueKind,
   parseAndEvaluate,
-  parseAndEvaluateAsync,
+  parseAndEvaluateObserved,
+  parseAndEvaluateObservedAsync,
   renderOutputHtml,
   tokenize
-} from "./chunk-01q29cj3.js";
+} from "./chunk-b3dthdv7.js";
 
 // standard-profile.rix
 var standard_profile_default = `## RiX-Web standard calculator profile.
@@ -9344,7 +9345,7 @@ GeometryExact(value, label) -> {;
     exact == _ ?: .Error(@"@{label} must be an exact integer or rational") ?_ exact;
 };
 
-GeometryIsAlgebraic(value) -> value ? :AlgebraicReal;
+GeometryIsAlgebraic(value) -> (value ? :AlgebraicReal)||((value ? :Map)&&value[:schema]=="rix.algebraic-real@1");
 
 GeometryExactScalar(value,label) -> {;
     rational=value ~: :Rational;
@@ -9957,13 +9958,30 @@ GeometryConstructionRecord(graph) -> {;
         structured=tool==:measurement ?: 0 ?_ value ? :Map;
         status=structured ?: (value.Has("status") ?: value[:status] ?_ _) ?_ _;
         diagnostic=structured ?: (value.Has("diagnostic") ?: value[:diagnostic] ?_ _) ?_ _;
-        {= id=node[:id],free=node[:free],dependsOn=node[:dependsOn],kind=kind,status=status,diagnostic=diagnostic,value=value };
+        {= id=node[:id],free=node[:free],dependsOn=node[:dependsOn],kind=kind,status=status,diagnostic=diagnostic,
+            recipe=GeometryOption(node,"recipe",_),value=value };
     });
     .DeepMutable({=
         type="geometry_construction_record",kind=:constructionRecord,schema="rix.geometry.construction-record@1",
         nodes=records,history=valid[:history],future=GeometryOption(valid,"future",[]),
-        replayRequires=records.Filter((node)->!node[:free]).Map((node)->node[:id]),deterministic=1
+        replayRequires=records.Filter((node)->!node[:free]&&node[:recipe]==_).Map((node)->node[:id]),deterministic=1
     },_);
+};
+
+GeometryConstructRecipe(recipe,values) -> {;
+    recipe ? :Map ?: _ ?_ .Error("geometry construction recipe must be a map");
+    tool=recipe[:tool]; arguments=GeometryOption(recipe,"arguments",[]);
+    tool==:line
+      ?: GeometryLine(values[arguments[1]],values[arguments[2]])
+      ?_ tool==:circle
+           ?: GeometryCircle(values[arguments[1]],values[arguments[2]])
+      ?_ tool==:intersection
+           ?: GeometryIntersect(values[arguments[1]],values[arguments[2]])
+      ?_ tool==:measurement
+           ?: GeometryDistance(values[arguments[1]],values[arguments[2]])
+      ?_ tool==:transform
+           ?: GeometryTransform(values[arguments[1]],recipe[:transform])
+           ?_ .Error(@"geometry construction recipe has unsupported tool @{tool}");
 };
 
 GeometryImportConstruction(record,constructors ?= {= }) -> {;
@@ -9971,11 +9989,16 @@ GeometryImportConstruction(record,constructors ?= {= }) -> {;
     valid ?: _ ?_ .Error("geometry.ImportConstruction requires a construction record");
     constructors ? :Map ?: _ ?_ .Error("geometry.ImportConstruction constructors must be a map");
     nodes=record[:nodes].Map((node)->node[:free]
-      ?: {= id=node[:id],free=1,value=node[:value],dependsOn=node[:dependsOn] }
+      ?: {= id=node[:id],free=1,value=node[:value],dependsOn=node[:dependsOn],recipe=GeometryOption(node,"recipe",_) }
       ?_ {;
           id=@node[:id];
-          @constructors.Has(id) ?: _ ?_ .Error(@"geometry.ImportConstruction requires a constructor for derived node @{id}");
-          {= id=id,free=_,dependsOn=@node[:dependsOn],construct=@constructors[id] };
+          recipe=GeometryOption(@node,"recipe",_);
+          recipe!=_
+            ?: {= id=id,free=_,dependsOn=@node[:dependsOn],recipe=recipe,tool=recipe[:tool],construct=(values)->GeometryConstructRecipe(@recipe,values) }
+            ?_ {;
+                @constructors.Has(@id) ?: _ ?_ .Error(@"geometry.ImportConstruction requires a constructor for derived node @{@id}");
+                {= id=@id,free=_,dependsOn=@node[:dependsOn],construct=@constructors[@id] };
+            };
       });
     GeometryBuildConstructionGraph(nodes,GeometryOption(record,"history",[]),GeometryOption(record,"future",[]));
 };
@@ -10007,7 +10030,7 @@ GeometryAuthoringPoint(graph,target,options ?= {= }) -> {;
     }; candidate+=1 };
     id!=_ ?: _ ?_ .Error("geometry.AddPoint could not allocate a stable point id");
     valid[:nodes].Any((node)->node[:id]==@id) ?: .Error(@"geometry.AddPoint duplicate node id @{id}") ?_ _;
-    node={= id=id,free=1,value=point,dependson=[] };
+    node={= id=id,free=1,value=point,dependson=[],recipe={= tool=:point,target=point,snap=snap } };
     event={= operation=:create,tool=:point,id=id,node=node,at=point,snap=snap };
     GeometryBuildConstructionGraph(valid[:nodes].Push(node),valid[:history].Push(event),[]);
 };
@@ -10026,7 +10049,7 @@ GeometryAllocateConstructionId(graph,options,prefix,label) -> {;
     id;
 };
 
-GeometryAddDerived(graph,dependencies,tool,Build,options ?= {= }) -> {;
+GeometryAddDerived(graph,dependencies,tool,Build,options ?= {= },recipe ?= _) -> {;
     valid=GeometryRequireConstructionGraph(graph,@"geometry.Add@{tool}");
     options ? :Map ?: _ ?_ .Error(@"geometry.Add@{tool} options must be a map");
     dependencies ? :Array ?: _ ?_ .Error(@"geometry.Add@{tool} dependencies must be an Array");
@@ -10037,7 +10060,8 @@ GeometryAddDerived(graph,dependencies,tool,Build,options ?= {= }) -> {;
     prefix=GeometryOption(options,"idprefix",tool==:line ?: "l" ?_ tool==:circle ?: "c" ?_ tool==:intersection ?: "i" ?_ tool==:transform ?: "t" ?_ "m");
     prefix ? :String ?: _ ?_ .Error(@"geometry.Add@{tool} idPrefix must be a String");
     id=GeometryAllocateConstructionId(valid,options,prefix,@"geometry.Add@{tool}");
-    node={= id=id,free=_,dependson=dependencies,construct=Build,tool=tool };
+    retainedRecipe=recipe==_ ?: {= tool=tool,arguments=dependencies } ?_ recipe;
+    node={= id=id,free=_,dependson=dependencies,construct=Build,tool=tool,recipe=retainedRecipe };
     event={= operation=:create,tool=tool,id=id,node=node,dependsOn=dependencies };
     GeometryBuildConstructionGraph(valid[:nodes].Push(node),valid[:history].Push(event),[]);
 };
@@ -10059,7 +10083,7 @@ GeometryAddIntersection(graph,leftId,rightId,options ?= {= }) -> {;
 
 GeometryAddTransform(graph,sourceId,transform,options ?= {= }) -> {;
     Build=(values)->GeometryTransform(values[@sourceId],@transform);
-    GeometryAddDerived(graph,[sourceId],:transform,Build,options);
+    GeometryAddDerived(graph,[sourceId],:transform,Build,options,{= tool=:transform,arguments=[sourceId],transform=transform });
 };
 
 GeometryAddMeasurement(graph,firstId,secondId,options ?= {= }) -> {;
@@ -10126,7 +10150,14 @@ GeometryConstrainedDrag(graph,id,target,options ?= {= }) -> {;
     moved=mode==:reject
       ?: (GeometryIsZero(residual) ?: supplied ?_ .Error("geometry.ConstrainedDrag target violates the line constraint"))
       ?_ GeometryPoint(supplied[:x]-line[:a]*residual/denominator,supplied[:y]-line[:b]*residual/denominator);
-    GeometryDrag(valid,id,moved,options);
+    pointNode=valid[:nodes].Filter((node)->node[:id]==id);
+    pointNode.Len()==1 ?: _ ?_ .Error(@"geometry.ConstrainedDrag node @{id} does not exist");
+    pointNode[1][:free] ?: _ ?_ .Error(@"geometry.ConstrainedDrag node @{id} is derived and cannot be dragged directly");
+    event={=
+        operation=:constrained_drag,id=id,from=pointNode[1][:value],to=moved,target=supplied,
+        constraint=constraintId,mode=mode,snap=GeometryOption(options,"snap")
+    };
+    GeometryMoveConstructionNode(valid,id,moved,valid[:history].Push(event),[]);
 };
 
 GeometryRepairSuggestions(graph) -> {;
@@ -10166,7 +10197,7 @@ GeometryUndo(graph) -> {;
       ?_ {;
           event=@valid[:history].Last();
           operation=event[:operation]; future=GeometryOption(@valid,"future",[]).Push(event); history=@valid[:history].DropLast();
-          operation==:drag
+          (operation==:drag||operation==:constrained_drag)
             ?: GeometryMoveConstructionNode(@valid,event[:id],event[:from],history,future)
             ?_ operation==:drag_many
                  ?: GeometryApplyMoveRecords(@valid,event[:moves],:undo,history,future)
@@ -10186,7 +10217,7 @@ GeometryRedo(graph) -> {;
       ?_ {;
           event=@future.Last();
           operation=event[:operation]; history=@valid[:history].Push(event); remaining=@future.DropLast();
-          operation==:drag
+          (operation==:drag||operation==:constrained_drag)
             ?: GeometryMoveConstructionNode(@valid,event[:id],event[:to],history,remaining)
             ?_ operation==:drag_many
                  ?: GeometryApplyMoveRecords(@valid,event[:moves],:redo,history,remaining)
@@ -30609,13 +30640,6 @@ function inlineHelpRequest(source) {
   const match = source.trim().match(/^\.Help\s*\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*))?\s*\)\s*;?$/);
   return match ? (match[1] ?? match[2] ?? match[3] ?? "").trim() : null;
 }
-function currentReactiveValue(source) {
-  if (source?.type === "reactive_node" && typeof source.peek === "function")
-    return source.peek();
-  if (source?.type === "formula_sheet")
-    return source;
-  return;
-}
 function collectControlValues(value, controls, seen = new Set) {
   if (!value || typeof value !== "object" || seen.has(value))
     return;
@@ -30755,16 +30779,13 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
       if (topic !== null)
         return { type: "help", source, ...findHelp(topic) };
       try {
-        const reactiveReads = new Set;
         const normalizedSource = separateLines ? normalizeReplSource(source) : source;
         const evaluationSource = expandDeclarativeWebControls(normalizedSource, tokenize);
-        const result = parseAndEvaluate(evaluationSource, {
+        const observed = parseAndEvaluateObserved(evaluationSource, {
           ...state,
-          file: "<ratcalc>",
-          reactiveReads
+          file: "<ratcalc>"
         });
         const format = configuredFormat;
-        const observedSource = [...reactiveReads].find((candidate) => currentReactiveValue(candidate) === result);
         const makeResponse = (value) => ({
           type: "result",
           source,
@@ -30772,11 +30793,10 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
           text: presentationFormat(value),
           sourceText: formatValueSource(value),
           html: isOutputValue(value) ? renderOutputHtml(value, format) : null,
-          observe: observedSource ? (listener) => observedSource.subscribe(() => {
-            listener(makeResponse(currentReactiveValue(observedSource)));
-          }) : null
+          observe: observed.observe ? (listener) => observed.observe((nextValue, event) => listener(makeResponse(nextValue), event)) : null,
+          dispose: observed.dispose
         });
-        return makeResponse(result);
+        return makeResponse(observed.value);
       } catch (error) {
         return { type: "error", source, text: error.message || String(error) };
       }
@@ -30791,16 +30811,13 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
       if (topic !== null)
         return { type: "help", source, ...findHelp(topic) };
       try {
-        const reactiveReads = new Set;
         const normalizedSource = separateLines ? normalizeReplSource(source) : source;
         const evaluationSource = expandDeclarativeWebControls(normalizedSource, tokenize);
-        const result = await parseAndEvaluateAsync(evaluationSource, {
+        const observed = await parseAndEvaluateObservedAsync(evaluationSource, {
           ...state,
-          file: "<ratcalc>",
-          reactiveReads
+          file: "<ratcalc>"
         });
         const format = configuredFormat;
-        const observedSource = [...reactiveReads].find((candidate) => currentReactiveValue(candidate) === result);
         const makeResponse = (value) => ({
           type: "result",
           source,
@@ -30808,11 +30825,10 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
           text: presentationFormat(value),
           sourceText: formatValueSource(value),
           html: isOutputValue(value) ? renderOutputHtml(value, format) : null,
-          observe: observedSource ? (listener) => observedSource.subscribe(() => {
-            listener(makeResponse(currentReactiveValue(observedSource)));
-          }) : null
+          observe: observed.observe ? (listener) => observed.observe((nextValue, event) => listener(makeResponse(nextValue), event)) : null,
+          dispose: observed.dispose
         });
-        return makeResponse(result);
+        return makeResponse(observed.value);
       } catch (error) {
         return { type: "error", source, text: error.message || String(error) };
       }
@@ -30934,5 +30950,5 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
 
 export { pluginProfileFromUrl, stripMarkedPluginProfile, findHelp, createRixRepl };
 
-//# debugId=49873BD790AAE2FD64756E2164756E21
-//# sourceMappingURL=chunk-1adm5mv7.js.map
+//# debugId=5EE124F86E8C4FD664756E2164756E21
+//# sourceMappingURL=chunk-v1274xzd.js.map

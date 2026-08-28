@@ -4,6 +4,8 @@ import { mountOutputWidgets } from "../../rix/src/index.js";
 import { IntervalExplorer, isRationalIntervalValue } from "./interval-explorer.js";
 import { ReactiveDashboard } from "./reactive-dashboard.js";
 import { findShowcaseExamples, showcaseExample } from "./showcase-examples.js";
+import { createNewGeometryBoard } from "./geometry-board.js";
+import { isInteractiveOutputEvent } from "./interactive-output.js";
 import {
     ClearCoordinator,
     createSessionSnapshot,
@@ -54,6 +56,7 @@ let transcript = [];
 let autoSeparateLines = true;
 let completionState = null;
 let clearTimer = null;
+let geometryBoardSequence = 0;
 const outputDisposers = new Set();
 const clearCoordinator = new ClearCoordinator();
 const intervalExplorer = new IntervalExplorer({
@@ -167,8 +170,10 @@ function appendOutput(source, response) {
         if (response.html) {
             outputLine.classList.add("rich-output");
             outputLine.innerHTML = response.html;
-            outputLine.addEventListener("click", () => openInspection(source, response.text));
-            const dispose = mountOutputWidgets(outputLine, response.value, {
+            outputLine.addEventListener("click", (event) => {
+                if (!isInteractiveOutputEvent(event, outputLine)) openInspection(source, response.text);
+            });
+            const disposeWidgets = mountOutputWidgets(outputLine, response.value, {
                 format: repl.formatValue,
                 observe: response.observe
                     ? (listener) => response.observe((next) => listener(next.value))
@@ -178,6 +183,10 @@ function appendOutput(source, response) {
                     ? `@{ ${editSource} }`
                     : editSource),
             });
+            const dispose = () => {
+                disposeWidgets();
+                response.dispose?.();
+            };
             outputDisposers.add(dispose);
         } else {
             outputLine.innerHTML = response.type === "error"
@@ -477,6 +486,16 @@ async function execute(source = input.value) {
     setInput("");
 }
 
+async function openNewGeometryBoard() {
+    const names = new Set(repl.variables().map(({ name }) => name.toLowerCase()));
+    do geometryBoardSequence += 1;
+    while (names.has(`geometryboard${geometryBoardSequence}seed`) || names.has(`geometryboard${geometryBoardSequence}graph`));
+    const board = createNewGeometryBoard(geometryBoardSequence);
+    setScriptMode(true);
+    await execute(board.source);
+    [...outputHistory.querySelectorAll(`[data-rix-graphic-action="${board.pointActionId}"]`)].at(-1)?.focus?.();
+}
+
 function setScriptMode(next) {
     scriptMode = next;
     const presentation = modePresentation(scriptMode);
@@ -565,6 +584,7 @@ document.addEventListener("click", (event) => {
     case "reset-number-settings": numberInputBase.value = "z[10]"; numberDisplayProfile.value = ".."; applyNumberSettings({ input: "z[10]", display: ".." }); break;
     case "close-help": helpDialog.close(); input.focus(); break;
     case "reactive-dashboard": setReactiveDashboardOpen(!reactiveDashboard.isOpen); break;
+    case "new-geometry-board": void openNewGeometryBoard(); break;
     case "close-reactive-dashboard": setReactiveDashboardOpen(false); input.focus(); break;
     case "refresh-reactive-dashboard": reactiveDashboard.refresh(); break;
     case "close-inspect": inspectDialog.close(); input.focus(); break;

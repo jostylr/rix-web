@@ -27,6 +27,14 @@ editable inputs. RiX-Web provides concise `.Slider`, `.Input`, `.Choice`,
 `.Toggle`, `.Range`, `.Reset`, `.Action`, and `.Hold` shortcuts; the portable
 language forms remain available under `.Controls`.
 
+The workspace menu's **New geometry board** command opens a live construction
+workbench with point, line, circle, intersection, measurement, translation,
+constrained-move, undo, and redo tools. Every invocation uses independent RiX
+bindings, so multiple boards can remain live in the same session. Construction
+records and canonical reconstruction source can both be exported from the
+workbench; source export fails closed if a custom derived node has no portable
+recipe.
+
 The value controls can declare an input and its dashboard UI together. For
 example, `$$width := .Slider(3, 0:10, 1/2, "Width")` creates `width` with the
 exact initial value `3`, returns that value, and registers its labelled slider.

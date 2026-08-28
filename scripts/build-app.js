@@ -7,6 +7,7 @@ await import("./generate-plugin-tutorial-index.js");
 const root = path.resolve(import.meta.dir, "..");
 const source = path.join(root, "src");
 const output = path.join(root, "docs");
+const outputWidgetStyles = path.resolve(root, "../rix/styles/output-widgets.css");
 
 const assets = path.join(output, "assets");
 await mkdir(assets, { recursive: true });
@@ -16,7 +17,10 @@ for (const name of await readdir(assets)) {
 await Bun.write(path.join(output, "index.html"), await readFile(path.join(source, "index.html")));
 await Bun.write(path.join(output, "showcases.html"), await readFile(path.join(source, "showcases.html")));
 await Bun.write(path.join(output, ".nojekyll"), "");
-await Bun.write(path.join(output, "assets", "app.css"), await readFile(path.join(source, "app.css")));
+await Bun.write(
+    path.join(output, "assets", "app.css"),
+    `${await readFile(outputWidgetStyles, "utf8")}\n${await readFile(path.join(source, "app.css"), "utf8")}`,
+);
 await Bun.write(path.join(output, "assets", "showcases.css"), await readFile(path.join(source, "showcases.css")));
 await Bun.write(path.join(output, "stern-brocot.html"), await readFile(path.join(source, "stern-brocot.html")));
 await Bun.write(path.join(output, "assets", "stern-brocot.css"), await readFile(path.join(source, "stern-brocot.css")));

@@ -24223,6 +24223,16 @@ ${formatOutputText(slide, format)}`).join(`
     const pieces = String(profile || "..").split(",").map((part) => part.trim()).filter(Boolean);
     return pieces.map((part) => `${profileNumber(value.start, part, context)}:${profileNumber(value.end, part, context)}`).join(" · ");
   }
+  function formatValueSource(value) {
+    if (value instanceof Integer)
+      return value.toString();
+    if (value instanceof Rational) {
+      return value.denominator === 1n ? value.numerator.toString() : `${value.numerator}/${value.denominator}`;
+    }
+    if (value?.type === "string")
+      return JSON.stringify(value.value);
+    return formatValue(value, { numberDisplay: "..", certifiedEnclosureDisplay: false });
+  }
   function formatWithCycleGuard(value, activeValues, format) {
     if (activeValues.has(value))
       return FORMAT_CYCLE_MARKER;
@@ -70821,7 +70831,7 @@ GeometryExact(value, label) -> {;
     exact == _ ?: .Error(@"@{label} must be an exact integer or rational") ?_ exact;
 };
 
-GeometryIsAlgebraic(value) -> value ? :AlgebraicReal;
+GeometryIsAlgebraic(value) -> (value ? :AlgebraicReal)||((value ? :Map)&&value[:schema]=="rix.algebraic-real@1");
 
 GeometryExactScalar(value,label) -> {;
     rational=value ~: :Rational;
@@ -71434,13 +71444,30 @@ GeometryConstructionRecord(graph) -> {;
         structured=tool==:measurement ?: 0 ?_ value ? :Map;
         status=structured ?: (value.Has("status") ?: value[:status] ?_ _) ?_ _;
         diagnostic=structured ?: (value.Has("diagnostic") ?: value[:diagnostic] ?_ _) ?_ _;
-        {= id=node[:id],free=node[:free],dependsOn=node[:dependsOn],kind=kind,status=status,diagnostic=diagnostic,value=value };
+        {= id=node[:id],free=node[:free],dependsOn=node[:dependsOn],kind=kind,status=status,diagnostic=diagnostic,
+            recipe=GeometryOption(node,"recipe",_),value=value };
     });
     .DeepMutable({=
         type="geometry_construction_record",kind=:constructionRecord,schema="rix.geometry.construction-record@1",
         nodes=records,history=valid[:history],future=GeometryOption(valid,"future",[]),
-        replayRequires=records.Filter((node)->!node[:free]).Map((node)->node[:id]),deterministic=1
+        replayRequires=records.Filter((node)->!node[:free]&&node[:recipe]==_).Map((node)->node[:id]),deterministic=1
     },_);
+};
+
+GeometryConstructRecipe(recipe,values) -> {;
+    recipe ? :Map ?: _ ?_ .Error("geometry construction recipe must be a map");
+    tool=recipe[:tool]; arguments=GeometryOption(recipe,"arguments",[]);
+    tool==:line
+      ?: GeometryLine(values[arguments[1]],values[arguments[2]])
+      ?_ tool==:circle
+           ?: GeometryCircle(values[arguments[1]],values[arguments[2]])
+      ?_ tool==:intersection
+           ?: GeometryIntersect(values[arguments[1]],values[arguments[2]])
+      ?_ tool==:measurement
+           ?: GeometryDistance(values[arguments[1]],values[arguments[2]])
+      ?_ tool==:transform
+           ?: GeometryTransform(values[arguments[1]],recipe[:transform])
+           ?_ .Error(@"geometry construction recipe has unsupported tool @{tool}");
 };
 
 GeometryImportConstruction(record,constructors ?= {= }) -> {;
@@ -71448,11 +71475,16 @@ GeometryImportConstruction(record,constructors ?= {= }) -> {;
     valid ?: _ ?_ .Error("geometry.ImportConstruction requires a construction record");
     constructors ? :Map ?: _ ?_ .Error("geometry.ImportConstruction constructors must be a map");
     nodes=record[:nodes].Map((node)->node[:free]
-      ?: {= id=node[:id],free=1,value=node[:value],dependsOn=node[:dependsOn] }
+      ?: {= id=node[:id],free=1,value=node[:value],dependsOn=node[:dependsOn],recipe=GeometryOption(node,"recipe",_) }
       ?_ {;
           id=@node[:id];
-          @constructors.Has(id) ?: _ ?_ .Error(@"geometry.ImportConstruction requires a constructor for derived node @{id}");
-          {= id=id,free=_,dependsOn=@node[:dependsOn],construct=@constructors[id] };
+          recipe=GeometryOption(@node,"recipe",_);
+          recipe!=_
+            ?: {= id=id,free=_,dependsOn=@node[:dependsOn],recipe=recipe,tool=recipe[:tool],construct=(values)->GeometryConstructRecipe(@recipe,values) }
+            ?_ {;
+                @constructors.Has(@id) ?: _ ?_ .Error(@"geometry.ImportConstruction requires a constructor for derived node @{@id}");
+                {= id=@id,free=_,dependsOn=@node[:dependsOn],construct=@constructors[@id] };
+            };
       });
     GeometryBuildConstructionGraph(nodes,GeometryOption(record,"history",[]),GeometryOption(record,"future",[]));
 };
@@ -71484,7 +71516,7 @@ GeometryAuthoringPoint(graph,target,options ?= {= }) -> {;
     }; candidate+=1 };
     id!=_ ?: _ ?_ .Error("geometry.AddPoint could not allocate a stable point id");
     valid[:nodes].Any((node)->node[:id]==@id) ?: .Error(@"geometry.AddPoint duplicate node id @{id}") ?_ _;
-    node={= id=id,free=1,value=point,dependson=[] };
+    node={= id=id,free=1,value=point,dependson=[],recipe={= tool=:point,target=point,snap=snap } };
     event={= operation=:create,tool=:point,id=id,node=node,at=point,snap=snap };
     GeometryBuildConstructionGraph(valid[:nodes].Push(node),valid[:history].Push(event),[]);
 };
@@ -71503,7 +71535,7 @@ GeometryAllocateConstructionId(graph,options,prefix,label) -> {;
     id;
 };
 
-GeometryAddDerived(graph,dependencies,tool,Build,options ?= {= }) -> {;
+GeometryAddDerived(graph,dependencies,tool,Build,options ?= {= },recipe ?= _) -> {;
     valid=GeometryRequireConstructionGraph(graph,@"geometry.Add@{tool}");
     options ? :Map ?: _ ?_ .Error(@"geometry.Add@{tool} options must be a map");
     dependencies ? :Array ?: _ ?_ .Error(@"geometry.Add@{tool} dependencies must be an Array");
@@ -71514,7 +71546,8 @@ GeometryAddDerived(graph,dependencies,tool,Build,options ?= {= }) -> {;
     prefix=GeometryOption(options,"idprefix",tool==:line ?: "l" ?_ tool==:circle ?: "c" ?_ tool==:intersection ?: "i" ?_ tool==:transform ?: "t" ?_ "m");
     prefix ? :String ?: _ ?_ .Error(@"geometry.Add@{tool} idPrefix must be a String");
     id=GeometryAllocateConstructionId(valid,options,prefix,@"geometry.Add@{tool}");
-    node={= id=id,free=_,dependson=dependencies,construct=Build,tool=tool };
+    retainedRecipe=recipe==_ ?: {= tool=tool,arguments=dependencies } ?_ recipe;
+    node={= id=id,free=_,dependson=dependencies,construct=Build,tool=tool,recipe=retainedRecipe };
     event={= operation=:create,tool=tool,id=id,node=node,dependsOn=dependencies };
     GeometryBuildConstructionGraph(valid[:nodes].Push(node),valid[:history].Push(event),[]);
 };
@@ -71536,7 +71569,7 @@ GeometryAddIntersection(graph,leftId,rightId,options ?= {= }) -> {;
 
 GeometryAddTransform(graph,sourceId,transform,options ?= {= }) -> {;
     Build=(values)->GeometryTransform(values[@sourceId],@transform);
-    GeometryAddDerived(graph,[sourceId],:transform,Build,options);
+    GeometryAddDerived(graph,[sourceId],:transform,Build,options,{= tool=:transform,arguments=[sourceId],transform=transform });
 };
 
 GeometryAddMeasurement(graph,firstId,secondId,options ?= {= }) -> {;
@@ -71603,7 +71636,14 @@ GeometryConstrainedDrag(graph,id,target,options ?= {= }) -> {;
     moved=mode==:reject
       ?: (GeometryIsZero(residual) ?: supplied ?_ .Error("geometry.ConstrainedDrag target violates the line constraint"))
       ?_ GeometryPoint(supplied[:x]-line[:a]*residual/denominator,supplied[:y]-line[:b]*residual/denominator);
-    GeometryDrag(valid,id,moved,options);
+    pointNode=valid[:nodes].Filter((node)->node[:id]==id);
+    pointNode.Len()==1 ?: _ ?_ .Error(@"geometry.ConstrainedDrag node @{id} does not exist");
+    pointNode[1][:free] ?: _ ?_ .Error(@"geometry.ConstrainedDrag node @{id} is derived and cannot be dragged directly");
+    event={=
+        operation=:constrained_drag,id=id,from=pointNode[1][:value],to=moved,target=supplied,
+        constraint=constraintId,mode=mode,snap=GeometryOption(options,"snap")
+    };
+    GeometryMoveConstructionNode(valid,id,moved,valid[:history].Push(event),[]);
 };
 
 GeometryRepairSuggestions(graph) -> {;
@@ -71643,7 +71683,7 @@ GeometryUndo(graph) -> {;
       ?_ {;
           event=@valid[:history].Last();
           operation=event[:operation]; future=GeometryOption(@valid,"future",[]).Push(event); history=@valid[:history].DropLast();
-          operation==:drag
+          (operation==:drag||operation==:constrained_drag)
             ?: GeometryMoveConstructionNode(@valid,event[:id],event[:from],history,future)
             ?_ operation==:drag_many
                  ?: GeometryApplyMoveRecords(@valid,event[:moves],:undo,history,future)
@@ -71663,7 +71703,7 @@ GeometryRedo(graph) -> {;
       ?_ {;
           event=@future.Last();
           operation=event[:operation]; history=@valid[:history].Push(event); remaining=@future.DropLast();
-          operation==:drag
+          (operation==:drag||operation==:constrained_drag)
             ?: GeometryMoveConstructionNode(@valid,event[:id],event[:to],history,remaining)
             ?_ operation==:drag_many
                  ?: GeometryApplyMoveRecords(@valid,event[:moves],:redo,history,remaining)
@@ -88707,6 +88747,286 @@ ${execute}---
     }
     return new WidgetSession(widget, options);
   }
+  // rix/src/tools/geometry-construction-codec.js
+  var GEOMETRY_CONSTRUCTION_RECORD_SCHEMA = "rix.geometry.construction-record@1";
+  var GEOMETRY_CONSTRUCTION_SOURCE_SCHEMA = "rix.geometry.construction-source@1";
+  function entries4(value) {
+    if (value instanceof Map)
+      return value;
+    if (value?.type === "map" && value.entries instanceof Map)
+      return value.entries;
+    return null;
+  }
+  function field5(value, key) {
+    const map6 = entries4(value);
+    if (map6)
+      return map6.get(key) ?? map6.get(key.toLowerCase()) ?? null;
+    return value?.[key] ?? value?.[key.toLowerCase()] ?? null;
+  }
+  function sequence13(value) {
+    if (Array.isArray(value))
+      return value;
+    if (Array.isArray(value?.values))
+      return value.values;
+    if (Array.isArray(value?.elements))
+      return value.elements;
+    return [];
+  }
+  function text15(value) {
+    if (typeof value === "string")
+      return value;
+    if (value?.type === "string" || value?.type === "symbol")
+      return value.value;
+    return value == null ? "" : String(value);
+  }
+  function sourceValue(value) {
+    if (value?.type === "integer" && typeof value.value === "string")
+      return value.value;
+    if (value?.type === "rational" && value.numerator !== undefined) {
+      return String(value.denominator) === "1" ? String(value.numerator) : `${value.numerator}/${value.denominator}`;
+    }
+    if (text15(field5(value, "schema")) === "rix.algebraic-real@1") {
+      const coefficients = sequence13(field5(value, "coefficients"));
+      const interval2 = field5(value, "interval");
+      const rootIndex = field5(value, "rootIndex");
+      if (coefficients.length && interval2 != null && rootIndex != null) {
+        return `.ar.Root([${coefficients.map(sourceValue).join(",")}],${sourceValue(interval2)},${sourceValue(rootIndex)})`;
+      }
+    }
+    if (Array.isArray(value))
+      return `[${value.map(sourceValue).join(",")}]`;
+    return formatValueSource(value);
+  }
+  function idSource(value) {
+    if (value?.type === "symbol")
+      return sourceValue(value);
+    return JSON.stringify(text15(value));
+  }
+  function pointSource(value, prefix) {
+    const x = field5(value, "x");
+    const y = field5(value, "y");
+    if (x == null || y == null)
+      return null;
+    return `${prefix}Point(${sourceValue(x)},${sourceValue(y)})`;
+  }
+  function matrixSource(value) {
+    const rows = sequence13(value);
+    if (!rows.length)
+      return null;
+    const normalized = rows.map((row) => sequence13(row));
+    if (normalized.some((row) => !row.length))
+      return null;
+    return `[${normalized.map((row) => `[${row.map(sourceValue).join(",")}]`).join(",")}]`;
+  }
+  function transformSource(value, prefix) {
+    const matrix = matrixSource(field5(value, "matrix"));
+    if (!matrix)
+      return null;
+    const kind = text15(field5(value, "transformKind"));
+    return `${prefix}${kind === "projective" ? "Projective" : "Affine"}(${matrix})`;
+  }
+  function identifier(value, label2) {
+    const name = String(value ?? "");
+    if (!/^[a-z][A-Za-z0-9_]*$/.test(name))
+      throw new Error(`${label2} must be a lowercase RiX identifier`);
+    return name;
+  }
+  function validateGeometryConstructionRecord(record) {
+    const diagnostics = [];
+    if (text15(field5(record, "schema")) !== GEOMETRY_CONSTRUCTION_RECORD_SCHEMA) {
+      diagnostics.push(Object.freeze({ code: "record-schema", message: `Expected ${GEOMETRY_CONSTRUCTION_RECORD_SCHEMA}` }));
+    }
+    const nodes = sequence13(field5(record, "nodes"));
+    if (!field5(record, "nodes") || !Array.isArray(field5(record, "nodes")) && !Array.isArray(field5(record, "nodes")?.values)) {
+      diagnostics.push(Object.freeze({ code: "record-nodes", message: "Construction record nodes must be an array" }));
+    }
+    const ids = new Set;
+    for (const [index, node] of nodes.entries()) {
+      const id = text15(field5(node, "id"));
+      if (!id)
+        diagnostics.push(Object.freeze({ code: "node-id", index, message: "Construction node requires an id" }));
+      else if (ids.has(id))
+        diagnostics.push(Object.freeze({ code: "duplicate-id", id, index, message: `Duplicate construction id ${id}` }));
+      for (const dependency of sequence13(field5(node, "dependsOn"))) {
+        const dependencyId = text15(dependency);
+        if (!ids.has(dependencyId))
+          diagnostics.push(Object.freeze({ code: "forward-dependency", id, dependency: dependencyId, index, message: `${id || `Node ${index + 1}`} depends on missing or later node ${dependencyId}` }));
+      }
+      if (id)
+        ids.add(id);
+    }
+    return Object.freeze({
+      schema: "rix.geometry.construction-validation@1",
+      valid: diagnostics.length === 0,
+      diagnostics: Object.freeze(diagnostics),
+      nodeCount: nodes.length
+    });
+  }
+  function geometryConstructionRecordFromGraph(graph) {
+    const schema = text15(field5(graph, "schema"));
+    if (schema !== "rix.geometry.construction-graph@1") {
+      throw new Error("Geometry construction source requires a construction graph or construction record");
+    }
+    return Object.freeze({
+      schema: GEOMETRY_CONSTRUCTION_RECORD_SCHEMA,
+      nodes: Object.freeze([...sequence13(field5(graph, "nodes"))]),
+      history: Object.freeze([...sequence13(field5(graph, "history"))]),
+      future: Object.freeze([...sequence13(field5(graph, "future"))]),
+      deterministic: true
+    });
+  }
+  function encodeGeometryConstructionSource(record, options = {}) {
+    if (text15(field5(record, "schema")) === "rix.geometry.construction-graph@1") {
+      record = geometryConstructionRecordFromGraph(record);
+    }
+    const validation = validateGeometryConstructionRecord(record);
+    const graphName = identifier(options.graphName || "graph", "graphName");
+    const aliases = options.aliases === true;
+    const prefix = aliases ? "" : ".geometry.";
+    const maxNodes = Number.isInteger(options.maxNodes) ? options.maxNodes : 1000;
+    if (options.style !== undefined && options.style !== "assignments")
+      throw new Error("Geometry construction source style must be assignments");
+    if (maxNodes < 1 || maxNodes > 1e4)
+      throw new Error("Geometry construction maxNodes must be between 1 and 10000");
+    const lines = [`${graphName} := ${prefix}ConstructionGraph([]);`];
+    const unsupported = validation.diagnostics.map((diagnostic2) => Object.freeze({
+      id: diagnostic2.id || null,
+      reason: diagnostic2.message
+    }));
+    const nodeStatement = (node) => {
+      const id = field5(node, "id");
+      const dependencies = sequence13(field5(node, "dependsOn"));
+      const recipe = field5(node, "recipe");
+      const free = Boolean(field5(node, "free"));
+      const tool = text15(field5(recipe, "tool") || field5(node, "kind"));
+      const args = sequence13(field5(recipe, "arguments")).length ? sequence13(field5(recipe, "arguments")) : dependencies;
+      const commonOptions = `{= id=${idSource(id)},maxNodes=${maxNodes} }`;
+      let statement = null;
+      if (free && (tool === "point" || text15(field5(field5(node, "value"), "kind")) === "point")) {
+        const target = field5(recipe, "target") || field5(node, "value");
+        const point4 = pointSource(target, prefix);
+        if (point4) {
+          const snap = field5(recipe, "snap");
+          const pointOptions = snap == null ? commonOptions : `{= id=${idSource(id)},snap=${sourceValue(snap)},maxNodes=${maxNodes} }`;
+          statement = `${graphName} := ${prefix}AddPoint(${graphName},${point4},${pointOptions});`;
+        }
+      } else if (["line", "circle", "intersection", "measurement"].includes(tool) && args.length === 2) {
+        const constructor = { line: "AddLine", circle: "AddCircle", intersection: "AddIntersection", measurement: "AddMeasurement" }[tool];
+        statement = `${graphName} := ${prefix}${constructor}(${graphName},${idSource(args[0])},${idSource(args[1])},${commonOptions});`;
+      } else if (tool === "transform" && args.length === 1) {
+        const transform = transformSource(field5(recipe, "transform"), prefix);
+        if (transform)
+          statement = `${graphName} := ${prefix}AddTransform(${graphName},${idSource(args[0])},${transform},${commonOptions});`;
+      }
+      return statement;
+    };
+    const movementStatement = (event) => {
+      const operation = text15(field5(event, "operation"));
+      let statement = null;
+      if (operation === "drag") {
+        const target = pointSource(field5(event, "to"), prefix);
+        const snap = field5(event, "snap");
+        if (target)
+          statement = `${graphName} := ${prefix}Drag(${graphName},${idSource(field5(event, "id"))},${target},{= snap=${snap == null ? "_" : sourceValue(snap)} });`;
+      } else if (operation === "drag_many") {
+        const moves = sequence13(field5(event, "moves"));
+        const moveSources = moves.map((move) => {
+          const target = pointSource(field5(move, "to"), prefix);
+          return target ? `{= id=${idSource(field5(move, "id"))},target=${target} }` : null;
+        });
+        if (moveSources.length && moveSources.every(Boolean)) {
+          statement = `${graphName} := ${prefix}DragMany(${graphName},[${moveSources.join(",")}]);`;
+        }
+      } else if (operation === "constrained_drag") {
+        const target = pointSource(field5(event, "target") || field5(event, "to"), prefix);
+        const snap = field5(event, "snap");
+        if (target)
+          statement = `${graphName} := ${prefix}ConstrainedDrag(${graphName},${idSource(field5(event, "id"))},${target},{= constraint=${idSource(field5(event, "constraint"))},mode=${idSource(field5(event, "mode") || "project")},snap=${snap == null ? "_" : sourceValue(snap)} });`;
+      }
+      return statement;
+    };
+    if (validation.valid)
+      for (const node of sequence13(field5(record, "nodes"))) {
+        const idText = text15(field5(node, "id"));
+        const statement = nodeStatement(node);
+        if (statement)
+          lines.push(statement);
+        else
+          unsupported.push(Object.freeze({ id: idText || null, reason: `Unsupported or incomplete construction recipe for ${idText || "unnamed node"}` }));
+      }
+    if (validation.valid)
+      for (const event of sequence13(field5(record, "history"))) {
+        const operation = text15(field5(event, "operation"));
+        const statement = movementStatement(event);
+        if (statement)
+          lines.push(statement);
+        else if (["drag", "drag_many", "constrained_drag"].includes(operation)) {
+          unsupported.push(Object.freeze({ id: text15(field5(event, "id")) || null, reason: `Unsupported or incomplete ${operation} history event` }));
+        }
+      }
+    const future = validation.valid ? sequence13(field5(record, "future")) : [];
+    for (const event of [...future].reverse()) {
+      const operation = text15(field5(event, "operation"));
+      const statement = operation === "create" ? nodeStatement(field5(event, "node")) : movementStatement(event);
+      if (statement)
+        lines.push(statement);
+      else
+        unsupported.push(Object.freeze({ id: text15(field5(event, "id")) || null, reason: `Unsupported or incomplete future ${operation || "construction"} event` }));
+    }
+    for (let index = 0;index < future.length; index += 1) {
+      lines.push(`${graphName} := ${prefix}Undo(${graphName});`);
+    }
+    const encoded = Object.freeze({
+      schema: GEOMETRY_CONSTRUCTION_SOURCE_SCHEMA,
+      recordSchema: GEOMETRY_CONSTRUCTION_RECORD_SCHEMA,
+      style: "assignments",
+      aliases,
+      source: lines.join(`
+`),
+      supported: unsupported.length === 0,
+      unsupported: Object.freeze(unsupported)
+    });
+    if (options.includeWorkbench === true && encoded.supported) {
+      return Object.freeze({ ...encoded, source: createGeometryAuthoringProgram(encoded.source, { ...options, graphName }) });
+    }
+    return encoded;
+  }
+  function createGeometryAuthoringProgram(constructionSource, options = {}) {
+    const graphName = identifier(options.graphName || "graph", "graphName");
+    const namesPrefix = identifier(options.namesPrefix || "geometryboard", "namesPrefix");
+    const bindingName = identifier(options.bindingName || `${namesPrefix}graph`, "bindingName");
+    const viewName = `${namesPrefix}view`;
+    const sizeName = `${namesPrefix}size`;
+    const actionsName = `${namesPrefix}actions`;
+    const outputName = `${namesPrefix}output`;
+    const actionPrefix = String(options.actionPrefix || "geometry-author");
+    const actionId = (name) => JSON.stringify(`${actionPrefix}-${name}`);
+    const view = Array.isArray(options.view) ? options.view : [-5, -4, 5, 4];
+    const size = Array.isArray(options.size) ? options.size : [720, 520];
+    if (view.length !== 4 || size.length !== 2)
+      throw new Error("Geometry authoring view and size must contain four and two entries");
+    const viewSource = `[${view.map(sourceValue).join(",")}]`;
+    const sizeSource = `[${size.map(sourceValue).join(",")}]`;
+    const snap = options.snap === undefined ? "1/4" : sourceValue(options.snap);
+    const maxNodes = Number.isInteger(options.maxNodes) ? options.maxNodes : 1000;
+    return `${String(constructionSource).trim()}
+$$${bindingName} := ${graphName};
+${viewName} := ${viewSource}; ${sizeName} := ${sizeSource};
+${actionsName} := [
+  .Graphics.Action({= id=${actionId("point")},target=$$${bindingName},action=(current,position)->.geometry.AddPoint(current,.geometry.Point(position[1],position[2]),{= snap=${snap},maxNodes=${maxNodes} }),coordinateSystem={= view=${viewName},size=${sizeName} },children=[.Graphics.Rectangle([0,0],${sizeName},{= fill="transparent",stroke="none" })] }),
+  .Graphics.Action({= id=${actionId("line")},target=$$${bindingName},action=(current,ids)->.geometry.AddLine(current,ids[1],ids[2],{= maxNodes=${maxNodes} }),children=[] }),
+  .Graphics.Action({= id=${actionId("circle")},target=$$${bindingName},action=(current,ids)->.geometry.AddCircle(current,ids[1],ids[2],{= maxNodes=${maxNodes} }),children=[] }),
+  .Graphics.Action({= id=${actionId("intersection")},target=$$${bindingName},action=(current,ids)->.geometry.AddIntersection(current,ids[1],ids[2],{= maxNodes=${maxNodes} }),children=[] }),
+  .Graphics.Action({= id=${actionId("measurement")},target=$$${bindingName},action=(current,ids)->.geometry.AddMeasurement(current,ids[1],ids[2],{= maxNodes=${maxNodes} }),children=[] }),
+  .Graphics.Action({= id=${actionId("transform")},target=$$${bindingName},action=(current,ids)->.geometry.AddTransform(current,ids[1],.geometry.Translate(1,1),{= maxNodes=${maxNodes} }),children=[] }),
+  .Graphics.Action({= id=${actionId("constrained-move")},target=$$${bindingName},action=(current,position,ids)->.geometry.ConstrainedDrag(current,ids[1],.geometry.Point(position[1],position[2]),{= constraint=ids[2] }),coordinateSystem={= view=${viewName},size=${sizeName} },children=[] }),
+  .Graphics.Action({= id=${actionId("undo")},target=$$${bindingName},action=current->.geometry.Undo(current),children=[] }),
+  .Graphics.Action({= id=${actionId("redo")},target=$$${bindingName},action=current->.geometry.Redo(current),children=[] })
+];
+$$${outputName} := .geometry.AuthoringWorkbench($${bindingName},${actionsName},{= view=${viewName},size=${sizeName},snap=${snap},maxNodes=${maxNodes},actionPrefix=${JSON.stringify(actionPrefix)},transformLabel="Translate (1,1)" });
+$${outputName};`;
+  }
+
   // rix/src/tools/graphic-view.js
   var MIN_ZOOM = 1 / 8;
   var MAX_ZOOM = 64;
@@ -88871,14 +89191,14 @@ ${execute}---
     }[direction];
     if (!vector2)
       throw new Error("Graphic spatial navigation direction must be left, right, up, or down");
-    const entries4 = Array.from(catalog || []).filter((entry2) => Array.isArray(entry2.anchor));
-    if (!entries4.length)
+    const entries5 = Array.from(catalog || []).filter((entry2) => Array.isArray(entry2.anchor));
+    if (!entries5.length)
       return null;
-    const current = entries4.find((entry2) => entry2.id === currentId);
+    const current = entries5.find((entry2) => entry2.id === currentId);
     if (!current) {
-      return [...entries4].sort((left, right) => left.anchor[0] * vector2[0] + left.anchor[1] * vector2[1] - (right.anchor[0] * vector2[0] + right.anchor[1] * vector2[1]) || left.id.localeCompare(right.id))[0] || null;
+      return [...entries5].sort((left, right) => left.anchor[0] * vector2[0] + left.anchor[1] * vector2[1] - (right.anchor[0] * vector2[0] + right.anchor[1] * vector2[1]) || left.id.localeCompare(right.id))[0] || null;
     }
-    return entries4.filter((entry2) => entry2 !== current).map((entry2) => {
+    return entries5.filter((entry2) => entry2 !== current).map((entry2) => {
       const dx = entry2.anchor[0] - current.anchor[0];
       const dy = entry2.anchor[1] - current.anchor[1];
       const forward = dx * vector2[0] + dy * vector2[1];
@@ -88920,7 +89240,7 @@ ${execute}---
       ])
     });
   }
-  function createGraphicHitIndex(entries4, cellSize = 64) {
+  function createGraphicHitIndex(entries5, cellSize = 64) {
     const size = Number(cellSize);
     if (!(size > 0) || !Number.isFinite(size))
       throw new Error("Graphic hit-index cell size must be positive");
@@ -88928,7 +89248,7 @@ ${execute}---
     const buckets = new Map;
     const overflow = [];
     let bucketReferences = 0;
-    const source = Array.from(entries4 || []);
+    const source = Array.from(entries5 || []);
     for (const [order, entry2] of source.entries()) {
       const bounds2 = entry2?.bounds;
       if (!bounds2)
@@ -89239,11 +89559,11 @@ ${execute}---
     if (Array.isArray(value?.values) || Array.isArray(value?.elements)) {
       return sequenceValue6(value).map((item) => portableGeometryValue(item, format, seen));
     }
-    const entries4 = value instanceof Map ? value : value?.type === "map" && value.entries instanceof Map ? value.entries : null;
-    if (entries4) {
+    const entries5 = value instanceof Map ? value : value?.type === "map" && value.entries instanceof Map ? value.entries : null;
+    if (entries5) {
       seen.add(value);
       const result = {};
-      for (const [key, item] of [...entries4.entries()].sort(([left], [right]) => String(left).localeCompare(String(right)))) {
+      for (const [key, item] of [...entries5.entries()].sort(([left], [right]) => String(left).localeCompare(String(right)))) {
         if (typeof item === "function" || item?.type === "function")
           continue;
         result[String(key)] = portableGeometryValue(item, format, seen);
@@ -89286,8 +89606,9 @@ ${execute}---
     controls.className = "rix-output-geometry-controls";
     const undo = makeButton(document2, "geometry-undo", "Undo last point movement", "Undo");
     const redo = makeButton(document2, "geometry-redo", "Redo point movement", "Redo");
-    const exportButton = makeButton(document2, "geometry-export", "Export portable construction record", "Export");
-    controls.append(undo, redo, exportButton);
+    const exportRecordButton = makeButton(document2, "geometry-export-record", "Export portable construction record", "Export record");
+    const exportSourceButton = makeButton(document2, "geometry-export-source", "Export rerunnable RiX construction source", "Export source");
+    controls.append(undo, redo, exportRecordButton, exportSourceButton);
     if (authoringEnabled) {
       const activateTool = (tool) => {
         activeTool = tool;
@@ -89471,15 +89792,30 @@ ${execute}---
     };
     undo.addEventListener("click", () => replay(-1));
     redo.addEventListener("click", () => replay(1));
-    exportButton.addEventListener("click", () => {
+    exportRecordButton.addEventListener("click", () => {
       const record = mapField4(workbench, "construction");
-      const text15 = serializeGeometryConstructionRecord(record, options.format || String);
-      exported.textContent = text15;
+      const text16 = serializeGeometryConstructionRecord(record, options.format || String);
+      exported.textContent = text16;
       exported.hidden = false;
-      document2.defaultView?.navigator?.clipboard?.writeText?.(text15).catch?.(() => {});
-      dispatchGraphicEvent(graphic, "rix-geometry-export", { schema: "rix.geometry.construction-record@1", record, text: text15 });
+      document2.defaultView?.navigator?.clipboard?.writeText?.(text16).catch?.(() => {});
+      dispatchGraphicEvent(graphic, "rix-geometry-export", { schema: "rix.geometry.construction-record@1", record, text: text16 });
       if (status)
         status.textContent = "Portable construction record exported";
+    });
+    exportSourceButton.addEventListener("click", () => {
+      const record = mapField4(workbench, "construction");
+      const encoded = encodeGeometryConstructionSource(record);
+      if (!encoded.supported) {
+        if (status)
+          status.textContent = `Source export is unavailable: ${encoded.unsupported.map((item) => item.reason).join("; ")}`;
+        return;
+      }
+      exported.textContent = encoded.source;
+      exported.hidden = false;
+      document2.defaultView?.navigator?.clipboard?.writeText?.(encoded.source).catch?.(() => {});
+      dispatchGraphicEvent(graphic, "rix-geometry-source-export", encoded);
+      if (status)
+        status.textContent = "Rerunnable RiX construction source exported";
     });
     const svg = graphic.querySelector("svg.rix-output-svg");
     svg?.addEventListener?.("click", (event) => {
@@ -89511,24 +89847,24 @@ ${execute}---
     }
     return null;
   }
-  function makeButton(document2, command, label2, text15) {
+  function makeButton(document2, command, label2, text16) {
     const button = document2.createElement("button");
     button.type = "button";
     button.dataset.rixGraphicViewCommand = command;
     button.setAttribute("aria-label", label2);
     button.title = label2;
-    button.textContent = text15;
+    button.textContent = text16;
     return button;
   }
   function makeSelectControl(document2, labelText, dataName) {
     const label2 = document2.createElement("label");
     label2.className = "rix-output-graphic-toolbar-select";
-    const text15 = document2.createElement("span");
-    text15.textContent = labelText;
+    const text16 = document2.createElement("span");
+    text16.textContent = labelText;
     const select = document2.createElement("select");
     select.dataset[dataName] = "true";
     select.setAttribute("aria-label", labelText);
-    label2.append(text15, select);
+    label2.append(text16, select);
     return { label: label2, select };
   }
   function graphicPreferencesKey(graphic) {
@@ -89657,12 +89993,12 @@ ${execute}---
       const needle = state.navigation.query.trim().toLocaleLowerCase();
       return (scope === "all" || entry2?.role === scope) && (!needle || `${entry2?.id || ""} ${entry2?.role || ""} ${entry2?.label || ""}`.toLocaleLowerCase().includes(needle));
     });
-    const appendOption = (select, value, text15) => {
+    const appendOption = (select, value, text16) => {
       if (!select || !document2?.createElement)
         return;
       const option6 = document2.createElement("option");
       option6.value = value;
-      option6.textContent = text15;
+      option6.textContent = text16;
       select.append(option6);
     };
     if (scopeSelect && !scopeSelect.options?.length) {
@@ -89778,8 +90114,8 @@ ${execute}---
       setSelection(values4[next], "keyboard");
     };
     const spatialSelection = (direction) => {
-      const entries4 = filterGraphicSelectionCatalog([...catalog.values()], state.navigation.scope, state.navigation.query);
-      const target = graphicSpatialTarget(entries4, state.selection.focus, direction);
+      const entries5 = filterGraphicSelectionCatalog([...catalog.values()], state.navigation.scope, state.navigation.query);
+      const target = graphicSpatialTarget(entries5, state.selection.focus, direction);
       if (target)
         selectById(target.id, "spatial-keyboard");
     };
@@ -90329,9 +90665,9 @@ ${execute}---
       if (element)
         listeners.push(() => element.removeEventListener?.(name, handler));
     };
-    const setStatus = (text15) => {
+    const setStatus = (text16) => {
       if (status)
-        status.textContent = text15;
+        status.textContent = text16;
     };
     const current = () => activeSeries(plan, state)?.samples[state.sampleIndex] || null;
     const waveformName = () => state.waveform === "series" ? activeSeries(plan, state)?.waveform || "sine" : state.waveform;
@@ -90945,8 +91281,8 @@ ${execute}---
       });
     }));
   }
-  function annotationRectangle(screen, text15, options) {
-    const width = Math.min(options.maxWidth, Math.max(options.minWidth, String(text15 || "").length * options.characterWidth + 12));
+  function annotationRectangle(screen, text16, options) {
+    const width = Math.min(options.maxWidth, Math.max(options.minWidth, String(text16 || "").length * options.characterWidth + 12));
     const height = options.height;
     return {
       left: screen[0] - width / 2,
@@ -90974,14 +91310,14 @@ ${execute}---
     return annotations.map((annotation) => {
       if (!annotation.visible || !annotation.screen)
         return Object.freeze({ ...annotation, displaced: false, crowded: false });
-      const text15 = annotation.text || annotation.label || annotation.pickId || "annotation";
+      const text16 = annotation.text || annotation.label || annotation.pickId || "annotation";
       let placement = null;
       for (const [horizontal, vertical] of candidates) {
         const screen = [
           Math.min(width, Math.max(0, annotation.screen[0] + horizontal * options.offset)),
           Math.min(height, Math.max(0, annotation.screen[1] + vertical * options.offset))
         ];
-        const rectangle = annotationRectangle(screen, text15, options);
+        const rectangle = annotationRectangle(screen, text16, options);
         if (!occupied.some((item) => rectanglesOverlap(rectangle, item, options.gap))) {
           placement = { screen, rectangle, displaced: horizontal !== 0 || vertical !== 0, crowded: false };
           break;
@@ -90989,7 +91325,7 @@ ${execute}---
       }
       if (!placement) {
         const screen = [...annotation.screen];
-        placement = { screen, rectangle: annotationRectangle(screen, text15, options), displaced: false, crowded: true };
+        placement = { screen, rectangle: annotationRectangle(screen, text16, options), displaced: false, crowded: true };
       }
       occupied.push(placement.rectangle);
       return Object.freeze({ ...annotation, screen: placement.screen, displaced: placement.displaced, crowded: placement.crowded });
@@ -91145,12 +91481,12 @@ ${execute}---
           return null;
         const label2 = document2.createElement("label");
         label2.className = "rix-output-scene3d-toolbar-select";
-        const text15 = document2.createElement("span");
-        text15.textContent = labelText;
+        const text16 = document2.createElement("span");
+        text16.textContent = labelText;
         const select2 = document2.createElement("select");
         select2.dataset[dataName] = "true";
         select2.setAttribute("aria-label", labelText);
-        label2.append(text15, select2);
+        label2.append(text16, select2);
         toolbar?.append(label2);
         return select2;
       };
@@ -91162,23 +91498,23 @@ ${execute}---
           return existing;
         const label2 = document2.createElement("label");
         label2.className = "rix-output-scene3d-toolbar-search";
-        const text15 = document2.createElement("span");
-        text15.textContent = "Find object";
+        const text16 = document2.createElement("span");
+        text16.textContent = "Find object";
         const input = document2.createElement("input");
         input.type = "search";
         input.dataset.rixScene3dSearch = "true";
         input.setAttribute("aria-label", "Find 3D object");
-        label2.append(text15, input);
+        label2.append(text16, input);
         toolbar?.append(label2);
         return input;
       })();
       const toleranceSelect = toolbar?.querySelector?.("[data-rix-scene3d-pick-tolerance]") || makeSelect("Pick area", "rixScene3dPickTolerance");
-      const appendOption = (select2, value, text15) => {
+      const appendOption = (select2, value, text16) => {
         if (!select2 || !document2?.createElement)
           return;
         const option6 = document2.createElement("option");
         option6.value = value;
-        option6.textContent = text15;
+        option6.textContent = text16;
         select2.append(option6);
       };
       if (scopeSelect) {
@@ -91210,13 +91546,13 @@ ${execute}---
         if (!objectSelect)
           return;
         objectSelect.replaceChildren?.();
-        const entries4 = scopedCatalog();
-        if (!entries4.length)
+        const entries5 = scopedCatalog();
+        if (!entries5.length)
           appendOption(objectSelect, "", "No objects in this type");
-        for (const [index, entry2] of entries4.entries())
+        for (const [index, entry2] of entries5.entries())
           appendOption(objectSelect, entry2.id, `${index + 1}. ${entry2.label}`);
-        objectSelect.disabled = entries4.length === 0;
-        if (entries4.some((entry2) => entry2.id === state.selection.focus))
+        objectSelect.disabled = entries5.length === 0;
+        if (entries5.some((entry2) => entry2.id === state.selection.focus))
           objectSelect.value = state.selection.focus;
       };
       refreshObjectOptions();
@@ -91981,11 +92317,11 @@ ${execute}---
     }
   }
   function originText(frame) {
-    const entries4 = frame?.origin?.entries;
-    if (!(entries4 instanceof Map))
+    const entries5 = frame?.origin?.entries;
+    if (!(entries5 instanceof Map))
       return "unavailable";
-    const integer2 = (key) => finiteExact(entries4.get(key), 0);
-    const label2 = entries4.get("label");
+    const integer2 = (key) => finiteExact(entries5.get(key), 0);
+    const label2 = entries5.get("label");
     return `entry ${integer2("entry")}, state ${integer2("state")}, ordinal ${integer2("ordinal")}${label2 ? `, label ${exactText3(label2, String)}` : ""}`;
   }
   function identitySet(frameRoot) {
@@ -93141,17 +93477,17 @@ ${execute}---
     return { type: "sequence", values: [...valuesFrom(value)].reverse() };
   }
   function collection() {
-    const entries4 = new Map;
+    const entries5 = new Map;
     const extension = new Map([["immutable", new Integer(1n)]]);
     for (const [name, helper] of [["Sum", sum], ["Describe", describe], ["Reverse", reverse]]) {
-      entries4.set(name, helper);
+      entries5.set(name, helper);
       extension.set(name.toUpperCase(), {
         type: "method_builtin",
         name,
         impl: (args) => helper(args[1])
       });
     }
-    return { type: "map", entries: entries4, _ext: extension };
+    return { type: "map", entries: entries5, _ext: extension };
   }
   function install21({ systemContext }) {
     const value = collection();
