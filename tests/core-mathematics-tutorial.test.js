@@ -19,5 +19,8 @@ for (const [mode,evaluate] of [["sync",parseAndEvaluate],["async",parseAndEvalua
         expect(results[4].values[2]).toBe(UNDECIDED);
         expect(results[5].values[0]).toBeNull();
         expect(results[5].values[1].value).toBe(1n);
+        expect(results[6].values[0].value).toBe(1n);
+        expect(results[6].values[1]).toBeNull();
+        expect(results[7].values[0].value).toBe(1n);
     });
 }

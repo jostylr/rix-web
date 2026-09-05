@@ -7662,6 +7662,8 @@ var expressionField = (value, key) => value?.entries?.get(key.toLowerCase());
 var string = (value) => ({ type: "string", value });
 var nextSymbolId = 1;
 var SYMBOLS = "__math_symbols__";
+var DEFINITION_TOKEN = "__math_definition_token";
+var definitions = new WeakMap;
 function initializeSymbolScope(environment) {
   if (!environment.has(SYMBOLS))
     environment.set(SYMBOLS, new Map);
@@ -7680,12 +7682,101 @@ function scopedExpressionVariable(context, name, outer = false) {
   const environment = environments.at(-1);
   initializeSymbolScope(environment);
   const symbols2 = environment.get(SYMBOLS);
-  if (!symbols2.has(name))
-    symbols2.set(name, expressionRecord("variable", [
+  if (!symbols2.has(name)) {
+    if (context.localScopes.at(-1)?.readOnly || !context.localScopes.length && context.globalReadOnly)
+      throw new Error("Cannot introduce a symbol in a read-only scope");
+    const symbol = expressionRecord("variable", [
       ["name", string(name)],
       ["symbolid", string(`symbol:${nextSymbolId++}`)]
-    ]));
+    ]);
+    const token = () => {
+      throw new Error("Opaque mathematical identity is not callable");
+    };
+    definitions.set(token, { value: null, id: expressionField(symbol, "symbolid").value, name });
+    symbol._ext.set(DEFINITION_TOKEN, token);
+    symbols2.set(name, symbol);
+  }
   return symbols2.get(name);
+}
+function symbolState(symbol) {
+  const id = expressionField(symbol, "symbolid")?.value;
+  if (!id)
+    return null;
+  const state = definitions.get(symbol?._ext?.get(DEFINITION_TOKEN));
+  if (!isMathExpression(symbol) || expressionField(symbol, "kind")?.value !== "variable" || !state || state.id !== id || state.name !== expressionField(symbol, "name")?.value) {
+    throw new Error("Invalid scoped symbol identity");
+  }
+  return state;
+}
+function expressionDefinition(symbol) {
+  return symbolState(symbol)?.value ?? null;
+}
+function referencesSymbol(expression, id, seen = new Set) {
+  if (!isMathExpression(expression) || seen.has(expression))
+    return false;
+  seen.add(expression);
+  if (expressionField(expression, "symbolid")?.value === id)
+    return true;
+  const definition = expressionDefinition(expression);
+  if (definition && referencesSymbol(definition, id, seen))
+    return true;
+  return ["operands", "arguments"].some((key) => expressionField(expression, key)?.values?.some((value) => referencesSymbol(value, id, seen)));
+}
+function defineExpressionSymbol(name, node, context, evaluate) {
+  if (context.localScopes.at(-1)?.readOnly || !context.localScopes.length && context.globalReadOnly)
+    throw new Error("Cannot define a symbol in a read-only scope");
+  const symbol = scopedExpressionVariable(context, name);
+  const state = definitions.get(symbol._ext.get(DEFINITION_TOKEN));
+  if (state.value)
+    throw new Error(`Symbolic definition ::${name} is immutable`);
+  const finish = (value2) => {
+    if (state.value)
+      throw new Error(`Symbolic definition ::${name} is immutable`);
+    const expression = promoteExpression(value2);
+    if (referencesSymbol(expression, expressionField(symbol, "symbolid").value))
+      throw new Error(`Cyclic symbolic definition for ::${name}`);
+    state.value = expression;
+    return symbol;
+  };
+  const value = evaluate(node, context);
+  return value instanceof Promise ? value.then(finish) : finish(value);
+}
+function expandExpression(expression, memo = new Map) {
+  expression = promoteExpression(expression);
+  if (memo.has(expression))
+    return memo.get(expression);
+  const definition = expressionDefinition(expression);
+  if (definition) {
+    const result2 = expandExpression(definition, memo);
+    memo.set(expression, result2);
+    return result2;
+  }
+  const kind = expressionField(expression, "kind")?.value;
+  let result = expression;
+  if (kind === "operator")
+    result = expressionOperation(expressionField(expression, "operation").value, expressionField(expression, "operands").values.map((value) => expandExpression(value, memo)));
+  if (kind === "apply")
+    result = expressionApplication(expressionField(expression, "semanticid").value, expressionField(expression, "name").value, expressionField(expression, "arguments").values.map((value) => expandExpression(value, memo)));
+  memo.set(expression, result);
+  return result;
+}
+function equalityKey(expression) {
+  const operation = expressionField(expression, "operation")?.value;
+  if (!operation)
+    return expressionStructuralKey(expression);
+  const operands = expressionField(expression, "operands").values;
+  const keys = operands.map(equalityKey);
+  const zero = expressionStructuralKey(expressionConstant(new Integer(0n)));
+  const one = expressionStructuralKey(expressionConstant(new Integer(1n)));
+  if (["add", "subtract"].includes(operation) && keys[1] === zero)
+    return keys[0];
+  if (operation === "add" && keys[0] === zero)
+    return keys[1];
+  if (["multiply", "divide", "power"].includes(operation) && keys[1] === one)
+    return keys[0];
+  if (operation === "multiply" && keys[0] === one)
+    return keys[1];
+  return JSON.stringify(["operator", operation, keys]);
 }
 function hasScopedSymbols(expression) {
   if (!isMathExpression(expression))
@@ -7699,7 +7790,7 @@ function expressionStructuralKey(expression) {
     return expressionStructuralKey(expressionConstant(expression));
   const kind = expressionField(expression, "kind")?.value;
   if (kind === "variable")
-    return JSON.stringify([kind, expressionField(expression, "symbolid")?.value ?? ["named", expressionField(expression, "name")?.value]]);
+    return JSON.stringify([kind, symbolState(expression)?.id ?? ["named", expressionField(expression, "name")?.value]]);
   if (kind === "constant")
     return JSON.stringify([kind, String(expressionField(expression, "value"))]);
   if (kind === "operator")
@@ -7785,22 +7876,30 @@ function installExpressionVariants(registry) {
       impl: (args) => {
         if (!args.every((value) => isMathExpression(value) || value instanceof Integer || value instanceof Rational))
           return UNDECIDED;
-        if (expressionStructuralKey(args[0]) === expressionStructuralKey(args[1]))
+        const expanded = args.map((value) => expandExpression(value));
+        if (equalityKey(expanded[0]) === equalityKey(expanded[1]))
           return operation === "EQ" ? new Integer(1n) : null;
-        if (args.every((value) => !isMathExpression(value) || expressionField(value, "kind")?.value === "constant"))
+        if (expanded.every((value) => expressionField(value, "kind")?.value === "constant"))
           return operation === "EQ" ? null : new Integer(1n);
         return UNDECIDED;
       }
     });
 }
 var expressionSyntaxFunctions = {
-  SYMBOL_RETRIEVE: { impl: ([name, outer], context) => scopedExpressionVariable(context, name, outer), lazy: true, pure: false }
+  SYMBOL_RETRIEVE: { impl: ([name, outer], context) => scopedExpressionVariable(context, name, outer), lazy: true, pure: false },
+  SYMBOL_DEFINE: { impl: ([name, node], context, evaluate) => defineExpressionSymbol(name, node, context, evaluate), lazy: true, pure: false }
 };
 var expressionCapabilities = {
+  ExpressionDefinition: { impl: ([symbol]) => {
+    if (!expressionField(symbol, "symbolid"))
+      throw new Error("ExpressionDefinition requires a scoped symbol");
+    return expressionDefinition(symbol);
+  }, pure: false, groups: ["Symbolic"], doc: "Inspect a symbol's immutable definition, or null if it has none" },
+  ExpressionExpand: { impl: ([value]) => expandExpression(value), pure: false, groups: ["Symbolic"], doc: "Expand immutable symbol definitions without changing identities or applying general simplification" },
   ExpressionKey: { impl: ([value]) => string(expressionStructuralKey(value)), pure: true, groups: ["Symbolic"], doc: "Identity-aware structural key, not a proof of mathematical inequality" },
   ExpressionHasScopedSymbols: { impl: ([value]) => hasScopedSymbols(value) ? new Integer(1n) : null, pure: true, groups: ["Symbolic"], doc: "Recognize expressions requiring identity-aware mathematical consumers" },
   SameSymbol: { impl: ([left, right]) => {
-    const a = expressionField(left, "symbolid")?.value, b = expressionField(right, "symbolid")?.value;
+    const a = symbolState(left)?.id, b = symbolState(right)?.id;
     if (!a || !b)
       throw new Error("SameSymbol requires two scoped symbolic variables");
     return a === b ? new Integer(1n) : null;
@@ -11174,7 +11273,7 @@ var runtimeDefaults = Object.freeze({
     Files: Object.freeze(["FILES"]),
     Units: Object.freeze(["UNITS", "Units", "CONVERTUNIT", "ConvertUnit", "DEFINEUNIT", "DefineUnit"]),
     Exact: Object.freeze(["EXACT", "Exact", "COMPLEX", "Complex", "DEFINEEXACTGENERATOR", "DefineExactGenerator", "exactalgebras"]),
-    Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC", "SPECROLES", "SPECFRACTIONPARTS", "SArith", "ExpressionVariable", "ExpressionConstant", "ExpressionOperation", "ExpressionApply", "IsExpression", "ExpressionKey", "ExpressionHasScopedSymbols", "SameSymbol", "SYMBOL_RETRIEVE"]),
+    Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC", "SPECROLES", "SPECFRACTIONPARTS", "SArith", "ExpressionVariable", "ExpressionConstant", "ExpressionOperation", "ExpressionApply", "IsExpression", "ExpressionKey", "ExpressionHasScopedSymbols", "SameSymbol", "SYMBOL_RETRIEVE", "SYMBOL_DEFINE", "ExpressionDefinition", "ExpressionExpand"]),
     Notation: Object.freeze(["SArith", "Poly", "NotationParser"]),
     Random: Object.freeze(["RNG", "RANDOMSEED", "RandomSeed", "RAND_NAME"]),
     Probability: Object.freeze(["probability"]),
@@ -14420,7 +14519,7 @@ function serializeIr(node) {
 function inspectSymbolicSpec(spec) {
   const inspectExpression = spec.expression ? serializeIr(spec.expression) : spec.statements.length === 1 && spec.statements[0].kind === "define" ? serializeIr(spec.statements[0].expr) : null;
   const symbols2 = symbolicNames(spec);
-  const definitions = spec.statements.filter((statement) => statement.kind === "define");
+  const definitions2 = spec.statements.filter((statement) => statement.kind === "define");
   const constraints = spec.statements.filter((statement) => statement.kind === "constraint");
   return rixMap([
     ["kind", rixString("systemSpec")],
@@ -14430,7 +14529,7 @@ function inspectSymbolicSpec(spec) {
     ["inputs", rixTuple(spec.inputs.map(rixString))],
     ["outputs", rixTuple(spec.outputs.map(rixString))],
     ["symbols", rixTuple(symbols2.map(rixString))],
-    ["definitions", rixTuple(definitions.map((statement) => rixMap([
+    ["definitions", rixTuple(definitions2.map((statement) => rixMap([
       ["target", rixString(statement.target)],
       ["expr", serializeIr(statement.expr)]
     ])))],
@@ -16006,11 +16105,11 @@ function createReactiveGraph(options = {}) {
       aliases.set(name, node.name);
       return node;
     },
-    define(definitions, cause = null) {
-      if (!Array.isArray(definitions) || definitions.length === 0)
+    define(definitions2, cause = null) {
+      if (!Array.isArray(definitions2) || definitions2.length === 0)
         return graph;
       const pendingNames = new Set;
-      for (const definition of definitions) {
+      for (const definition of definitions2) {
         const name = normalizeName(definition?.name);
         requireAvailableName(name);
         if (pendingNames.has(name))
@@ -16025,7 +16124,7 @@ function createReactiveGraph(options = {}) {
       }
       const added = [];
       try {
-        for (const definition of definitions) {
+        for (const definition of definitions2) {
           const name = normalizeName(definition.name);
           const node = makeNode(name, definition.kind, definition.kind === "source" ? { value: definition.value } : {
             formula: definition.formula,
@@ -30320,7 +30419,9 @@ function lowerAssignment(node, irFn) {
     return ir2("OUTER_ASSIGN", left.name, lowerNode(node.right));
   }
   if (left.type === "SymbolicVariable") {
-    throw new Error("Symbolic definitions are not implemented yet; bind the symbol to an ordinary variable instead");
+    if (left.outer || irFn !== "ASSIGN")
+      throw new Error("Define a local symbolic variable with '='; symbolic definitions cannot be updated or assigned through capture");
+    return ir2("SYMBOL_DEFINE", left.name, lowerNode(node.right));
   }
   if (left.type === "UserIdentifier" || left.type === "SystemIdentifier") {
     const right = left.type === "SystemIdentifier" && node.right?.type === "EmbeddedLanguage" ? {
@@ -31677,7 +31778,7 @@ function isOpsComment(token2) {
   return token2?.type === "String" && token2.kind === "comment" && /^\s*##ops##/i.test(token2.original || "");
 }
 function extractOperatorDeclarations(tokens, options = {}) {
-  const definitions = new Map;
+  const definitions2 = new Map;
   let reachedCode = false;
   for (const token2 of tokens || []) {
     if (token2.type === "End")
@@ -31705,13 +31806,13 @@ function extractOperatorDeclarations(tokens, options = {}) {
         label: options.label || "OPS",
         line: firstLine + index
       });
-      if (definitions.has(definition.symbol)) {
+      if (definitions2.has(definition.symbol)) {
         declarationError(options.label || "OPS", firstLine + index, `Duplicate operator '${definition.spelling}'`);
       }
-      definitions.set(definition.symbol, definition);
+      definitions2.set(definition.symbol, definition);
     }
   }
-  return definitions;
+  return definitions2;
 }
 function extractOperatorDeclarationsFromSource(source, options = {}) {
   return extractOperatorDeclarations(tokenize(source), {
@@ -31904,8 +32005,8 @@ function validateMetadata(metadata, sourcePath, kind) {
     sourcePath
   };
 }
-function mountedOperatorDefinitions(definitions, metadata, mount) {
-  return (definitions || []).map((definition) => {
+function mountedOperatorDefinitions(definitions2, metadata, mount) {
+  return (definitions2 || []).map((definition) => {
     if (definition.target?.kind !== "plugin-method" || definition.target.pluginId !== metadata.id) {
       return definition;
     }
@@ -31915,10 +32016,10 @@ function mountedOperatorDefinitions(definitions, metadata, mount) {
     };
   });
 }
-function installOperatorDefinitions(context, definitions, metadata, mount) {
-  if (!context?.getEnv || !context?.setEnv || !definitions?.length)
+function installOperatorDefinitions(context, definitions2, metadata, mount) {
+  if (!context?.getEnv || !context?.setEnv || !definitions2?.length)
     return;
-  const mountedDefinitions = mountedOperatorDefinitions(definitions, metadata, mount);
+  const mountedDefinitions = mountedOperatorDefinitions(definitions2, metadata, mount);
   const merged = mergeOperatorDefinitions(context.getEnv(CUSTOM_OPERATOR_ENV_KEY, new Map), mountedDefinitions);
   context.setEnv(CUSTOM_OPERATOR_ENV_KEY, merged);
   const runtime = context.getEnv("__script_runtime__", null);
@@ -100403,5 +100504,5 @@ var STATIC_SYSTEM_CATALOG = Object.freeze([
 ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
 export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, outputValueKind, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, formatOutputText, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateObserved, parseAndEvaluateObservedAsync, lintRix, createGeometryAuthoringProgram, mountOutputWidgets };
 
-//# debugId=77EE8B36825A4A0964756E2164756E21
-//# sourceMappingURL=chunk-afz4ft3b.js.map
+//# debugId=E81C3148AEE4105864756E2164756E21
+//# sourceMappingURL=chunk-s2ykmt4n.js.map
