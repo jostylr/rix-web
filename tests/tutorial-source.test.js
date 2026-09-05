@@ -228,7 +228,7 @@ test("number and decision tutorials cover certified notation, output modes, and 
 test("plugin tutorials are generated after core lessons and grouped by theme", async () => {
     expect(tutorialByNumber("14")?.title).toBe("Plugins: Numbers and numerics");
     expect(tutorials.filter(({ parent }) => parent === "14").map(({ pluginId }) => pluginId)).toEqual([
-        "ball", "cauchy", "complex", "continued-fraction", "float", "numerics", "oracle", "radix", "bessel", "algebraic-real",
+        "ball", "cauchy", "complex", "continued-fraction", "float", "numerics", "ode", "oracle", "radix", "bessel", "algebraic-real",
     ]);
     expect(tutorialByNumber("15")?.title).toBe("Plugins: Algebra and analysis");
     expect(tutorialByNumber("15a")?.pluginId).toBe("algebra");
@@ -246,12 +246,14 @@ test("plugin tutorials are generated after core lessons and grouped by theme", a
     ]);
     expect(tutorialByNumber("19")?.title).toBe("Plugins: Higher-dimensional visualization");
     expect(tutorials.filter(({ parent }) => parent === "19").map(({ pluginId }) => pluginId)).toEqual(["complex-viz"]);
-    expect(tutorialByNumber("20")?.title).toBe("Plugins: Analysis");
-    expect(tutorials.filter(({ parent }) => parent === "20").map(({ pluginId }) => pluginId)).toEqual(["analysis"]);
-    expect(tutorialByNumber("21")?.title).toBe("Plugins: Chaos and fractals");
-    expect(tutorials.filter(({ parent }) => parent === "21").map(({ pluginId }) => pluginId)).toEqual(["fractals"]);
-    expect(tutorialByNumber("22")?.title).toBe("Plugins: Probability");
-    expect(tutorials.filter(({ parent }) => parent === "22").map(({ pluginId }) => pluginId)).toEqual(["probability"]);
+    expect(tutorialByNumber("20")?.title).toBe("Plugins: Algorithms and computer science");
+    expect(tutorials.filter(({ parent }) => parent === "20").map(({ pluginId }) => pluginId)).toEqual(["combinatorics", "graph"]);
+    expect(tutorialByNumber("21")?.title).toBe("Plugins: Analysis");
+    expect(tutorials.filter(({ parent }) => parent === "21").map(({ pluginId }) => pluginId)).toEqual(["analysis"]);
+    expect(tutorialByNumber("22")?.title).toBe("Plugins: Chaos and fractals");
+    expect(tutorials.filter(({ parent }) => parent === "22").map(({ pluginId }) => pluginId)).toEqual(["fractals"]);
+    expect(tutorialByNumber("23")?.title).toBe("Plugins: Probability");
+    expect(tutorials.filter(({ parent }) => parent === "23").map(({ pluginId }) => pluginId)).toEqual(["probability"]);
     const generator = await Bun.file(new URL("../scripts/generate-plugin-tutorial-index.js", import.meta.url)).text();
     expect(generator).toContain('path.join(pluginsRoot, entry.name, "tutorial.md")');
     expect(generator).toContain('"Numbers and numerics"');

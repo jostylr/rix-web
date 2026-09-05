@@ -1,0 +1,67 @@
+<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Normalize exact polynomials and inspect a bounded integration ladder with absolute-value, trigonometric, and quadratic cases." /><title>Course-level symbolic forms and integration — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./plugins-algebra-and-analysis.html#lesson-start" title="Plugins: Algebra and analysis">15</a> <span aria-hidden="true">·</span> <span>c</span></p><h1>Course-level symbolic forms and integration</h1><p class="deck">Normalize exact polynomials and inspect a bounded integration ladder with absolute-value, trigonometric, and quadratic cases.</p><aside class="challenge"><p class="eyebrow">Develop in RiX Notebook</p><p>Open <code>rix/plugins/cas/tutorial.md</code> in the macOS app to edit this lesson with live preview and plugin-aware code results. Use Reload plugins after changing project-local plugin source.</p></aside><div class="lesson-content"><p>Load one isolated CAS surface. Its dependencies remain ordinary focused RiX plugins rather than an external computer-algebra process.</p>
+<h2>Normalize without losing evidence</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">.Plugin.Load(&quot;cas&quot;);
+x := .calculus.Variable(:x);
+source := (x+1)*(x-1);
+collected := .cas.Collect(source,:x);
+expanded := .cas.Expand(source,:x);
+factored := .cas.Factor(source,:x);
+{: collected[:coefficients],expanded[:operation],factored[:factors].Len() };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Walk the integration ladder</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="17" spellcheck="false">.Plugin.Load(&quot;cas&quot;);
+x := .calculus.Variable(:x);
+Exp := .calculus.Exp();
+Log := .calculus.Log();
+examples := [
+  .cas.Integrate(3*x^2+4,x),
+  .cas.Integrate((2*x+3)^4,x),
+  .cas.Integrate(Exp(2*x+3),x),
+  .cas.Integrate(x^2*Exp(x),x),
+  .cas.Integrate(Log(2*x+1),x)
+];
+.Table({=
+  columns=[&quot;status&quot;,&quot;antiderivative&quot;,&quot;rules&quot;,&quot;obligations&quot;],
+  rows=examples.Map((result)-&gt;[
+    result[:status],result[:antiderivative],result[:rules],result[:obligations]
+  ])
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The logarithm row has a positive-argument obligation because <code>Log(2*x+1)</code> is the source function. A reciprocal uses a different, global real primitive:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Plugin.Load(&quot;cas&quot;);
+x := .calculus.Variable(:x);
+reciprocal := .cas.Integrate(1/x,x);
+{: reciprocal[:antiderivative],reciprocal[:obligations],
+   .cas.CheckIntegral(reciprocal)[:accepted] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Its result is a public <code>Log(Abs(x))</code> graph with the exact obligation <code>x != 0</code>, not a false positivity restriction.</p>
+<h2>Add the common trigonometric and quadratic cases</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="15" spellcheck="false">.Plugin.Load(&quot;cas&quot;);
+x := .calculus.Variable(:x);
+Sin := .calculus.Sin();
+Cos := .calculus.Cos();
+sine := .cas.Integrate(Sin(2*x+1),x);
+cosine := .cas.Integrate(Cos(3*x-2),x);
+quadratic := .cas.Integrate(.rf`1/(x^2+1)`);
+.Table({=
+  columns=[&quot;source family&quot;,&quot;antiderivative&quot;,&quot;last rule&quot;],
+  rows=[
+    [&quot;affine sine&quot;,sine[:antiderivative],sine[:rules].Last()],
+    [&quot;affine cosine&quot;,cosine[:antiderivative],cosine[:rules].Last()],
+    [&quot;irreducible quadratic&quot;,quadratic[:antiderivative],quadratic[:rules].Last()]
+  ]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The quadratic rule proves the negative discriminant condition exactly and retains the completed-square coefficients. Higher trigonometric powers and products remain outside this bounded rung.</p>
+<h2>Let exact partial fractions do the algebra</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Plugin.Load(&quot;cas&quot;);
+rational := .rf`(2*x+3)/(x^2-1)`;
+integral := .cas.Integrate(rational);
+replay := .cas.CheckIntegral(integral);
+{: integral[:antiderivative],integral[:obligations],replay[:accepted] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The RationalFunction service proves the decomposition; CAS integrates the polynomial and linear-factor terms. The log obligations retain the selected real branches.</p>
+<h2>Unsupported is a useful result</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Plugin.Load(&quot;cas&quot;);
+x := .calculus.Variable(:x);
+Sqrt := .calculus.Sqrt();
+unsupported := .cas.Integrate(Sqrt(x^2+1),x);
+{: unsupported[:status],unsupported[:reason],unsupported[:antiderivative] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>This integral has a closed form involving inverse hyperbolic functions, but it is outside the current course ladder. A visible unsupported record is safer and more educational than a guessed transformation.</p>
+<h2>Further work</h2>
+<p>1. Differentiate each returned antiderivative and compare it with the source. 2. Try repeated linear factors such as <code>1/(x-1)^2</code> through <code>.rf</code>. 3. Compare the source-domain obligation for <code>Log(x)</code> with the reciprocal-domain obligation for <code>1/x</code>. 4. Derive the completed-square formula used for <code>(m*x+n)/(a*x^2+b*x+c)</code> when <code>4*a*c-b^2 &gt; 0</code>. 5. List the bounded trigonometric power reductions needed next without attempting general identity search.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

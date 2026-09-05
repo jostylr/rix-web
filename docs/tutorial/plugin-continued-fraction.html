@@ -12,6 +12,16 @@ literal := .continuedFraction(3.~7~16);
   ]
 });</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Both rows end at <code>355/113</code>. Coefficients are indexed from zero in the usual mathematical notation, while <code>Convergent(n)</code> consumes <code>n</code> coefficients.</p>
+<h2>Evaluate a nonregular generalized form</h2>
+<p>A generalized continued fraction stores separate partial numerators and denominators. Finite forms may use signed exact coefficients, so their convergents come from the continuant recurrence rather than the regular positive-tail cylinder rule:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">.Plugin.Load(&quot;continued-fraction&quot;);
+g := .cf.GeneralizedFinite(1, [-1,2], [2,-3], {= name=:signedExample });
+normalization := g.Normalize();
+.Table({=
+  columns=[&quot;generalized convergents&quot;, &quot;exact value&quot;, &quot;regular coefficients&quot;],
+  rows=[[g.Convergents(), g.Value(), normalization[:coefficients]]]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The value is <code>1/4</code>, and its canonical regular form is <code>[0,4]</code>. If a continuant denominator becomes zero, <code>ConvergentResult</code> records that exact witness and <code>ZeroStatus</code> stays <code>:unknown</code>; the plugin does not invent an infinite value or reuse the positive-tail proof from simple continued fractions.</p>
 <h2>A lazy quadratic irrational</h2>
 <p>The familiar expansion <code>sqrt(2) = [1; overline{2}]</code> never terminates. Its successive exact Rational convergents alternate around the real value:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="12" spellcheck="false">.Plugin.Load(&quot;continued-fraction&quot;);

@@ -830,6 +830,14 @@
     },
     {
       "number": "20",
+      "file": "plugins-algorithms-and-computer-science.html",
+      "title": "Plugins: Algorithms and computer science",
+      "description": "Optional RiX plugins grouped under Algorithms and computer science.",
+      "pluginGroup": true,
+      "status": "implemented"
+    },
+    {
+      "number": "21",
       "file": "plugins-analysis.html",
       "title": "Plugins: Analysis",
       "description": "Optional RiX plugins grouped under Analysis.",
@@ -837,7 +845,7 @@
       "status": "implemented"
     },
     {
-      "number": "21",
+      "number": "22",
       "file": "plugins-chaos-and-fractals.html",
       "title": "Plugins: Chaos and fractals",
       "description": "Optional RiX plugins grouped under Chaos and fractals.",
@@ -845,7 +853,7 @@
       "status": "implemented"
     },
     {
-      "number": "22",
+      "number": "23",
       "file": "plugins-probability.html",
       "title": "Plugins: Probability",
       "description": "Optional RiX plugins grouped under Probability.",
@@ -909,6 +917,15 @@
     {
       "number": "14g",
       "parent": "14",
+      "file": "plugin-ode.html",
+      "title": "Vector trajectories, adaptive estimates, and validated ODE tubes",
+      "description": "Compare fixed and adaptive demonstrations with checked Picard/Taylor enclosures and honest or certified event candidates.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "14h",
+      "parent": "14",
       "file": "plugin-oracle.html",
       "title": "Rational betweenness oracles",
       "description": "Query and refine a real number through exact rational intervals.",
@@ -916,7 +933,7 @@
       "status": "implemented"
     },
     {
-      "number": "14h",
+      "number": "14i",
       "parent": "14",
       "file": "plugin-radix.html",
       "title": "Inspect an exact repeating expansion",
@@ -925,7 +942,7 @@
       "status": "implemented"
     },
     {
-      "number": "14i",
+      "number": "14j",
       "parent": "14",
       "file": "plugin-bessel.html",
       "title": "Certified Bessel functions",
@@ -934,7 +951,7 @@
       "status": "implemented"
     },
     {
-      "number": "14j",
+      "number": "14k",
       "parent": "14",
       "file": "plugin-algebraic-real.html",
       "title": "Certified algebraic reals in RiX",
@@ -963,6 +980,15 @@
     {
       "number": "15c",
       "parent": "15",
+      "file": "plugin-cas.html",
+      "title": "Course-level symbolic forms and integration",
+      "description": "Normalize exact polynomials and inspect a bounded integration ladder with absolute-value, trigonometric, and quadratic cases.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "15d",
+      "parent": "15",
       "file": "plugin-cayley.html",
       "title": "Build Cayley–Dickson algebras over certified scalars",
       "description": "Construct, enclose, adapt, and verify generic Cayley values.",
@@ -970,7 +996,7 @@
       "status": "implemented"
     },
     {
-      "number": "15d",
+      "number": "15e",
       "parent": "15",
       "file": "plugin-exact-algebras.html",
       "title": "Multiply exact quaternions and octonions",
@@ -979,7 +1005,7 @@
       "status": "implemented"
     },
     {
-      "number": "15e",
+      "number": "15f",
       "parent": "15",
       "file": "plugin-fracfun.html",
       "title": "Explore form-preserving functions",
@@ -988,7 +1014,7 @@
       "status": "implemented"
     },
     {
-      "number": "15f",
+      "number": "15g",
       "parent": "15",
       "file": "plugin-fraction.html",
       "title": "Explore unreduced fractions",
@@ -997,7 +1023,7 @@
       "status": "implemented"
     },
     {
-      "number": "15g",
+      "number": "15h",
       "parent": "15",
       "file": "plugin-linalg.html",
       "title": "Exact linear algebra and Frames",
@@ -1006,7 +1032,16 @@
       "status": "implemented"
     },
     {
-      "number": "15h",
+      "number": "15i",
+      "parent": "15",
+      "file": "plugin-logic.html",
+      "title": "Truth tables, scoped proofs, and educational trees",
+      "description": "Explore propositional validity, countermodels, canonical normal forms, scoped natural deduction, and portable tree views.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "15j",
       "parent": "15",
       "file": "plugin-octonion.html",
       "title": "Preserve octonion structure under exact and intrinsic calculation",
@@ -1015,7 +1050,7 @@
       "status": "implemented"
     },
     {
-      "number": "15i",
+      "number": "15k",
       "parent": "15",
       "file": "plugin-optimize.html",
       "title": "Exact linear programming",
@@ -1024,7 +1059,7 @@
       "status": "implemented"
     },
     {
-      "number": "15j",
+      "number": "15l",
       "parent": "15",
       "file": "plugin-poly.html",
       "title": "Work with callable polynomials",
@@ -1033,7 +1068,7 @@
       "status": "implemented"
     },
     {
-      "number": "15k",
+      "number": "15m",
       "parent": "15",
       "file": "plugin-quaternion.html",
       "title": "Exact arithmetic and intrinsic quaternion functions",
@@ -1042,7 +1077,7 @@
       "status": "implemented"
     },
     {
-      "number": "15l",
+      "number": "15n",
       "parent": "15",
       "file": "plugin-ratfun.html",
       "title": "Work with exact rational functions",
@@ -1051,7 +1086,7 @@
       "status": "implemented"
     },
     {
-      "number": "15m",
+      "number": "15o",
       "parent": "15",
       "file": "plugin-solve.html",
       "title": "Solving exact linear systems",
@@ -1060,7 +1095,7 @@
       "status": "implemented"
     },
     {
-      "number": "15n",
+      "number": "15p",
       "parent": "15",
       "file": "plugin-stern-brocot.html",
       "title": "Explore the exact Stern–Brocot tree",
@@ -1069,7 +1104,7 @@
       "status": "implemented"
     },
     {
-      "number": "15o",
+      "number": "15q",
       "parent": "15",
       "file": "plugin-symbolic.html",
       "title": "Explore exact forms and abstract derivatives together",
@@ -1078,7 +1113,7 @@
       "status": "implemented"
     },
     {
-      "number": "15p",
+      "number": "15r",
       "parent": "15",
       "file": "plugin-stats.html",
       "title": "Summarize and model exact data",
@@ -1287,6 +1322,24 @@
     {
       "number": "20a",
       "parent": "20",
+      "file": "plugin-combinatorics.html",
+      "title": "Enumerate finite combinatorial spaces lazily",
+      "description": "Generate products, permutations, and combinations only as they are consumed.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "20b",
+      "parent": "20",
+      "file": "plugin-graph.html",
+      "title": "Solve exact graph problems",
+      "description": "Validate weighted graphs and retain checkable shortest-path evidence.",
+      "pluginGroup": false,
+      "status": "implemented"
+    },
+    {
+      "number": "21a",
+      "parent": "21",
       "file": "plugin-analysis.html",
       "title": "Effective limits, series, and justified exchanges in RiX",
       "description": "Build scalar and function sequences, inspect exact convergence witnesses, and keep limit-exchange hypotheses visible.",
@@ -1294,8 +1347,8 @@
       "status": "implemented"
     },
     {
-      "number": "21a",
-      "parent": "21",
+      "number": "22a",
+      "parent": "22",
       "file": "plugin-fractals.html",
       "title": "Explore deterministic chaos and escape-time fractals",
       "description": "Keep RiX dynamics mathematical, then lower selected results to portable Graphics.",
@@ -1303,8 +1356,8 @@
       "status": "implemented"
     },
     {
-      "number": "22a",
-      "parent": "22",
+      "number": "23a",
+      "parent": "23",
       "file": "plugin-probability.html",
       "title": "Probability laws and replayable experiments",
       "description": "Compute exact finite probabilities, use certified continuous laws, and run disclosed simulations.",

@@ -26,4 +26,34 @@ labelBox := .draw.Bounds(triangle);
   .draw.Dimension(a,b,&quot;6 units&quot;,ink,{= offset=20 }),
   .draw.Label(.draw.Anchor(labelBox,&quot;north&quot;,[0,-10]),&quot;Exact triangle&quot;,{= anchor=&quot;middle&quot;,size=15 })
 ]);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p><code>Bounds</code> uses renderer-independent drafting estimates for labels. A final renderer still owns exact font metrics.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
+<p><code>Bounds</code> uses renderer-independent drafting estimates for labels. A final renderer still owns exact font metrics.</p>
+<h2>Adapt geometry and annotate a path</h2>
+<p>Draw consumes geometry records by schema; it does not import the Geometry plugin or create a second scene representation.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="20" spellcheck="false">.Plugin.Load(&quot;geometry&quot;);
+.Plugin.Load(&quot;draw&quot;);
+view := .draw.Viewport([-2,-2,2,2],[420,240],{= margin=24 });
+a := .geometry.Point(-1,-1);
+b := .geometry.Point(1,1);
+segment := .draw.From(.geometry.Segment(a,b),{= viewport=view });
+middle := .draw.Trim(segment,1/4,3/4);
+target := .draw.Symbol(&quot;target&quot;,[
+  .draw.Circle([0,0],4,{= fill=&quot;#f97316&quot; }),
+  .draw.Line([-7,0],[7,0],{= stroke=&quot;#7c2d12&quot; })
+]);
+.Graphics.Graphic([420,240],[
+  segment,
+  middle,
+  .draw.Marker(middle,1/2,target),
+  .draw.PlaceLabels([
+    {= id=&quot;a&quot;,position=view.Point([-1,-1]),text=&quot;A&quot; },
+    {= id=&quot;near-a&quot;,position=view.Point([-1,-1]),text=&quot;exact point&quot; }
+  ])
+]);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>An unresolved geometry result stays visible and retains its source evidence:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">.Plugin.Load(&quot;geometry&quot;);
+.Plugin.Load(&quot;draw&quot;);
+parallel := .geometry.Intersect(
+  .geometry.Line(.geometry.Point(0,0),.geometry.Point(1,0)),
+  .geometry.Line(.geometry.Point(0,1),.geometry.Point(1,1))
+);
+.Graphics.Graphic([420,80],[.draw.From(parallel)]);</textarea><div class="tutorial-output" data-tutorial-output></div></section></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

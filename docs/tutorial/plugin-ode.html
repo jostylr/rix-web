@@ -1,0 +1,88 @@
+<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Compare fixed and adaptive demonstrations with checked Picard/Taylor enclosures and honest or certified event candidates." /><title>Vector trajectories, adaptive estimates, and validated ODE tubes — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./plugins-numbers-and-numerics.html#lesson-start" title="Plugins: Numbers and numerics">14</a> <span aria-hidden="true">·</span> <span>g</span></p><h1>Vector trajectories, adaptive estimates, and validated ODE tubes</h1><p class="deck">Compare fixed and adaptive demonstrations with checked Picard/Taylor enclosures and honest or certified event candidates.</p><aside class="challenge"><p class="eyebrow">Develop in RiX Notebook</p><p>Open <code>rix/plugins/ode/tutorial.md</code> in the macOS app to edit this lesson with live preview and plugin-aware code results. Use Reload plugins after changing project-local plugin source.</p></aside><div class="lesson-content"><p>Use a public Calculus graph for the equation <code>y&#039;=y</code>, <code>y(0)=1</code>. The problem record is inert mathematical structure; choosing a solver is a later action.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">.Plugin.Load(&quot;ode&quot;);
+y := .calculus.Variable(:y);
+problem := .ode.IVP(y,0,1,0:1,{=
+  stateNames=[:y],units={= t=:seconds,y=:dimensionless }
+});
+{: problem[:schema],problem[:stateNames],problem[:interval] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Euler and RK4 are demonstrations, not certificates</h2>
+<p>Both methods retain exact rational step arithmetic here. Exact arithmetic does not make the discretization exact: neither result includes a proved truncation bound.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="12" spellcheck="false">.Plugin.Load(&quot;ode&quot;);
+y := .calculus.Variable(:y);
+problem := .ode.IVP(y,0,1,0:1);
+euler := problem.Euler({= steps=4 });
+rk4 := problem.RK4({= steps=1 });
+.Table({=
+  columns=[&quot;method&quot;,&quot;status&quot;,&quot;final state&quot;,&quot;formal order&quot;,&quot;certified&quot;],
+  rows=[
+    [euler[:method],euler[:status],euler[:finalState][1],euler[:errorModel][:formalOrder],euler[:certified]],
+    [rk4[:method],rk4[:status],rk4[:finalState][1],rk4[:errorModel][:formalOrder],rk4[:certified]]
+  ]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Euler returns <code>625/256</code>; one classical RK4 step returns <code>65/24</code>. They can be compared with known values or a certified real, but the ODE result itself stays <code>:approximate</code>.</p>
+<h2>Validate existence, uniqueness, and a tube</h2>
+<p>The Picard method searches for a complete interval tube on each segment. It checks both the right-hand-side range and the symbolically derived state derivative over that tube.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="14" spellcheck="false">.Plugin.Load(&quot;ode&quot;);
+y := .calculus.Variable(:y);
+problem := .ode.IVP(y,0,1,0:1);
+validated := problem.ValidatedPicard({=
+  steps=4,maxTubeIterations=8,maxSubintervals=2
+});
+first := validated[:segments][1];
+.Table({=
+  columns=[&quot;status&quot;,&quot;classification&quot;,&quot;first tube&quot;,&quot;first endpoint&quot;,&quot;uniqueness&quot;],
+  rows=[[
+    validated[:status],validated[:classification],first[:tube],
+    first[:stateEnd][1],first[:uniqueness]
+  ]]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p><code>validated.At(1/2)</code> returns the complete certified tube covering one half. It does not pretend to be a point value:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Plugin.Load(&quot;ode&quot;);
+y := .calculus.Variable(:y);
+solution := .ode.IVP(y,0,1,0:1).ValidatedPicard({= steps=4 });
+{: solution.At(1/2),solution[:finalState][1],solution[:certified] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Solve a vector system</h2>
+<p>The same APIs preserve coordinate order for the harmonic oscillator. RK4 is still approximate; ValidatedPicard checks the entire two-by-two Jacobian and a box contraction.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">.Plugin.Load(&quot;ode&quot;);
+x := .calculus.Variable(:x);
+y := .calculus.Variable(:y);
+oscillator := .ode.IVP([y,-x],0,[1,0],0:1/2,{= stateNames=[:x,:y] });
+rk := oscillator.RK4({= steps=2 });
+tube := oscillator.ValidatedPicard({= steps=4,maxSubintervals=2 });
+{: rk[:finalState],tube[:finalState],tube[:segments][1][:contractionBound] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Adapt steps without overclaiming</h2>
+<p>Step doubling gives a useful local estimate but not a global proof.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">.Plugin.Load(&quot;ode&quot;);
+y := .calculus.Variable(:y);
+adaptive := .ode.IVP(y,0,1,0:1).AdaptiveRK4({=
+  initialSteps=1,tolerance=1/10000,maxAttempts=100
+});
+{: adaptive[:status],adaptive[:work],adaptive[:errorModel] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Keep event claims honest</h2>
+<p>An approximate sign change is an observed candidate. A validated range that misses zero is a proof that no event occurs on that segment.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">.Plugin.Load(&quot;ode&quot;);
+y := .calculus.Variable(:y);
+half := .ode.Event(y-1/2,{= name=:half,direction=:rising });
+observed := .ode.IVP(.calculus.Constant(1),0,0,0:1,{= events=[half] }).RK4({= steps=4 }).IsolateEvents()[1];
+excluded := .ode.IVP(.calculus.Constant(0),0,1,0:1,{= events=[.ode.Event(y)] }).ValidatedPicard({= steps=2 }).IsolateEvents()[1];
+{: observed[:candidates],excluded[:exclusions] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Tighten the tube and certify one event</h2>
+<p>The second-order solver first proves the Picard existence tube, then encloses the total derivative and recenters a Taylor remainder on every segment. For <code>y&#039;=1</code>, the remainder is exactly zero, so the half-height event contracts to an exact time.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">.Plugin.Load(&quot;ode&quot;);
+y := .calculus.Variable(:y);
+half := .ode.Event(y-1/2,{= name=:half,direction=:rising });
+taylor := .ode.IVP(.calculus.Constant(1),0,0,0:1,{= events=[half] }).ValidatedTaylor2({= steps=1,maxSubintervals=2 });
+eventResult := taylor.IsolateEvents(half,{= eventWidth=1/100000 })[1];
+{: taylor[:wrappingControl],taylor.At(1/2),eventResult[:candidates][1] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The event proof is not inferred merely from a tube containing zero. It retains the endpoint range checks, the checked identity <code>g_t + grad(g) dot f</code>, and every interval-Newton contraction.</p>
+<h2>Bounded failure preserves useful work</h2>
+<p>A deliberately inadequate radius budget cannot validate <code>y&#039;=100y</code> over one large step. The unresolved attempted segment remains in the result.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">.Plugin.Load(&quot;ode&quot;);
+y := .calculus.Variable(:y);
+partial := .ode.IVP(100*y,0,1,0:1).ValidatedPicard({=
+  steps=1,maxTubeIterations=1,tubeRadius=1
+});
+{: partial[:status],partial[:work],partial[:segments][1][:diagnostics] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Increase <code>maxTubeIterations</code>, increase <code>steps</code>, or both. More work may find a self-map, but work exhaustion is never reported as nonexistence.</p>
+<h2>Further work</h2>
+<p>1. Compare Euler and RK4 for <code>y&#039;=t+y</code> at several fixed step counts. 2. Give the validated solver an interval initial state such as <code>(99/100):(101/100)</code> and inspect how it propagates measurement uncertainty. 3. Reduce the Picard step count and watch wrapping widen the endpoint. 4. Compare the vector RK4 oscillator against its validated component boxes. 5. Change an event direction and observe which endpoint sign changes qualify. 6. Explain why a validated event range containing zero still needs an existence or interval-Newton argument. 7. Compare <code>ValidatedPicard</code> and <code>ValidatedTaylor2</code> endpoint widths on <code>y&#039;=y</code> as the number of segments changes.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

@@ -50,6 +50,14 @@ export const pluginTutorialGroups = [
   },
   {
     "number": "20",
+    "file": "plugins-algorithms-and-computer-science.html",
+    "title": "Plugins: Algorithms and computer science",
+    "description": "Optional RiX plugins grouped under Algorithms and computer science.",
+    "pluginGroup": true,
+    "theme": "Algorithms and computer science"
+  },
+  {
+    "number": "21",
     "file": "plugins-analysis.html",
     "title": "Plugins: Analysis",
     "description": "Optional RiX plugins grouped under Analysis.",
@@ -57,7 +65,7 @@ export const pluginTutorialGroups = [
     "theme": "Analysis"
   },
   {
-    "number": "21",
+    "number": "22",
     "file": "plugins-chaos-and-fractals.html",
     "title": "Plugins: Chaos and fractals",
     "description": "Optional RiX plugins grouped under Chaos and fractals.",
@@ -65,7 +73,7 @@ export const pluginTutorialGroups = [
     "theme": "Chaos and fractals"
   },
   {
-    "number": "22",
+    "number": "23",
     "file": "plugins-probability.html",
     "title": "Plugins: Probability",
     "description": "Optional RiX plugins grouped under Probability.",
@@ -159,6 +167,20 @@ export const pluginTutorials = [
     "pluginTutorial": true
   },
   {
+    "pluginId": "ode",
+    "pluginDirectory": "ode",
+    "title": "Vector trajectories, adaptive estimates, and validated ODE tubes",
+    "description": "Compare fixed and adaptive demonstrations with checked Picard/Taylor enclosures and honest or certified event candidates.",
+    "status": "implemented",
+    "order": 0,
+    "theme": "Numbers and numerics",
+    "sourcePath": "../rix/plugins/ode/tutorial.md",
+    "number": "14g",
+    "parent": "14",
+    "file": "plugin-ode.html",
+    "pluginTutorial": true
+  },
+  {
     "pluginId": "oracle",
     "pluginDirectory": "oracle",
     "title": "Rational betweenness oracles",
@@ -167,7 +189,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Numbers and numerics",
     "sourcePath": "../rix/plugins/oracle/tutorial.md",
-    "number": "14g",
+    "number": "14h",
     "parent": "14",
     "file": "plugin-oracle.html",
     "pluginTutorial": true
@@ -181,7 +203,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Numbers and numerics",
     "sourcePath": "../rix/plugins/radix/tutorial.md",
-    "number": "14h",
+    "number": "14i",
     "parent": "14",
     "file": "plugin-radix.html",
     "pluginTutorial": true
@@ -195,7 +217,7 @@ export const pluginTutorials = [
     "order": 24,
     "theme": "Numbers and numerics",
     "sourcePath": "../rix/plugins/bessel/tutorial.md",
-    "number": "14i",
+    "number": "14j",
     "parent": "14",
     "file": "plugin-bessel.html",
     "pluginTutorial": true
@@ -209,7 +231,7 @@ export const pluginTutorials = [
     "order": 999,
     "theme": "Numbers and numerics",
     "sourcePath": "../rix/plugins/algebraic-real/tutorial.md",
-    "number": "14j",
+    "number": "14k",
     "parent": "14",
     "file": "plugin-algebraic-real.html",
     "pluginTutorial": true
@@ -243,6 +265,20 @@ export const pluginTutorials = [
     "pluginTutorial": true
   },
   {
+    "pluginId": "cas",
+    "pluginDirectory": "cas",
+    "title": "Course-level symbolic forms and integration",
+    "description": "Normalize exact polynomials and inspect a bounded integration ladder with absolute-value, trigonometric, and quadratic cases.",
+    "status": "implemented",
+    "order": 0,
+    "theme": "Algebra and analysis",
+    "sourcePath": "../rix/plugins/cas/tutorial.md",
+    "number": "15c",
+    "parent": "15",
+    "file": "plugin-cas.html",
+    "pluginTutorial": true
+  },
+  {
     "pluginId": "cayley",
     "pluginDirectory": "cayley",
     "title": "Build Cayley–Dickson algebras over certified scalars",
@@ -251,7 +287,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/cayley/tutorial.md",
-    "number": "15c",
+    "number": "15d",
     "parent": "15",
     "file": "plugin-cayley.html",
     "pluginTutorial": true
@@ -265,7 +301,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/exact-algebras/tutorial.md",
-    "number": "15d",
+    "number": "15e",
     "parent": "15",
     "file": "plugin-exact-algebras.html",
     "pluginTutorial": true
@@ -279,7 +315,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/fracfun/tutorial.md",
-    "number": "15e",
+    "number": "15f",
     "parent": "15",
     "file": "plugin-fracfun.html",
     "pluginTutorial": true
@@ -293,7 +329,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/fraction/tutorial.md",
-    "number": "15f",
+    "number": "15g",
     "parent": "15",
     "file": "plugin-fraction.html",
     "pluginTutorial": true
@@ -307,9 +343,23 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/linalg/tutorial.md",
-    "number": "15g",
+    "number": "15h",
     "parent": "15",
     "file": "plugin-linalg.html",
+    "pluginTutorial": true
+  },
+  {
+    "pluginId": "logic",
+    "pluginDirectory": "logic",
+    "title": "Truth tables, scoped proofs, and educational trees",
+    "description": "Explore propositional validity, countermodels, canonical normal forms, scoped natural deduction, and portable tree views.",
+    "status": "implemented",
+    "order": 0,
+    "theme": "Algebra and analysis",
+    "sourcePath": "../rix/plugins/logic/tutorial.md",
+    "number": "15i",
+    "parent": "15",
+    "file": "plugin-logic.html",
     "pluginTutorial": true
   },
   {
@@ -321,7 +371,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/octonion/tutorial.md",
-    "number": "15h",
+    "number": "15j",
     "parent": "15",
     "file": "plugin-octonion.html",
     "pluginTutorial": true
@@ -335,7 +385,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/optimize/tutorial.md",
-    "number": "15i",
+    "number": "15k",
     "parent": "15",
     "file": "plugin-optimize.html",
     "pluginTutorial": true
@@ -349,7 +399,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/poly/tutorial.md",
-    "number": "15j",
+    "number": "15l",
     "parent": "15",
     "file": "plugin-poly.html",
     "pluginTutorial": true
@@ -363,7 +413,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/quaternion/tutorial.md",
-    "number": "15k",
+    "number": "15m",
     "parent": "15",
     "file": "plugin-quaternion.html",
     "pluginTutorial": true
@@ -377,7 +427,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/ratfun/tutorial.md",
-    "number": "15l",
+    "number": "15n",
     "parent": "15",
     "file": "plugin-ratfun.html",
     "pluginTutorial": true
@@ -391,7 +441,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/solve/tutorial.md",
-    "number": "15m",
+    "number": "15o",
     "parent": "15",
     "file": "plugin-solve.html",
     "pluginTutorial": true
@@ -405,7 +455,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/stern-brocot/tutorial.md",
-    "number": "15n",
+    "number": "15p",
     "parent": "15",
     "file": "plugin-stern-brocot.html",
     "pluginTutorial": true
@@ -419,7 +469,7 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/symbolic/tutorial.md",
-    "number": "15o",
+    "number": "15q",
     "parent": "15",
     "file": "plugin-symbolic.html",
     "pluginTutorial": true
@@ -433,7 +483,7 @@ export const pluginTutorials = [
     "order": 20,
     "theme": "Algebra and analysis",
     "sourcePath": "../rix/plugins/stats/tutorial.md",
-    "number": "15p",
+    "number": "15r",
     "parent": "15",
     "file": "plugin-stats.html",
     "pluginTutorial": true
@@ -747,6 +797,34 @@ export const pluginTutorials = [
     "pluginTutorial": true
   },
   {
+    "pluginId": "combinatorics",
+    "pluginDirectory": "combinatorics",
+    "title": "Enumerate finite combinatorial spaces lazily",
+    "description": "Generate products, permutations, and combinations only as they are consumed.",
+    "status": "implemented",
+    "order": 0,
+    "theme": "Algorithms and computer science",
+    "sourcePath": "../rix/plugins/combinatorics/tutorial.md",
+    "number": "20a",
+    "parent": "20",
+    "file": "plugin-combinatorics.html",
+    "pluginTutorial": true
+  },
+  {
+    "pluginId": "graph",
+    "pluginDirectory": "graph",
+    "title": "Solve exact graph problems",
+    "description": "Validate weighted graphs and retain checkable shortest-path evidence.",
+    "status": "implemented",
+    "order": 0,
+    "theme": "Algorithms and computer science",
+    "sourcePath": "../rix/plugins/graph/tutorial.md",
+    "number": "20b",
+    "parent": "20",
+    "file": "plugin-graph.html",
+    "pluginTutorial": true
+  },
+  {
     "pluginId": "analysis",
     "pluginDirectory": "analysis",
     "title": "Effective limits, series, and justified exchanges in RiX",
@@ -755,8 +833,8 @@ export const pluginTutorials = [
     "order": 0,
     "theme": "Analysis",
     "sourcePath": "../rix/plugins/analysis/tutorial.md",
-    "number": "20a",
-    "parent": "20",
+    "number": "21a",
+    "parent": "21",
     "file": "plugin-analysis.html",
     "pluginTutorial": true
   },
@@ -769,8 +847,8 @@ export const pluginTutorials = [
     "order": 31,
     "theme": "Chaos and fractals",
     "sourcePath": "../rix/plugins/fractals/tutorial.md",
-    "number": "21a",
-    "parent": "21",
+    "number": "22a",
+    "parent": "22",
     "file": "plugin-fractals.html",
     "pluginTutorial": true
   },
@@ -783,8 +861,8 @@ export const pluginTutorials = [
     "order": 21,
     "theme": "Probability",
     "sourcePath": "../rix/plugins/probability/tutorial.md",
-    "number": "22a",
-    "parent": "22",
+    "number": "23a",
+    "parent": "23",
     "file": "plugin-probability.html",
     "pluginTutorial": true
   }

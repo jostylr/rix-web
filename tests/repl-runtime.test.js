@@ -236,7 +236,7 @@ test("the browser-safe renderer plugins produce their text and source targets", 
         ["markdown", `.markdown.Render(${document}).Get("content")`, "# Renderer report"],
         ["html", `.html.Render(${document}).Get("content")`, "<!doctype html>"],
         ["quarto", `.quarto.Render(${document}).Get("content")`, "---\nformat: html"],
-        ["latex", `.latex.Render(${document}).Get("content")`, "\\documentclass{article}"],
+        ["latex", `.latex.Render(${document}).Get("content")`, "\\documentclass[letterpaper]{article}"],
     ];
 
     for (const [plugin, expression, expected] of cases) {

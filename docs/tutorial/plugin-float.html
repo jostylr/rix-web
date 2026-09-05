@@ -37,4 +37,23 @@ nan := .float.Binary64(0) / .float.Binary64(0);
 sample := .numerics.Sample(viaMethod); ## :approximate stored-value sample
 refine := .numerics.Refine(viaMethod); ## :unsupported
 viaMethod &lt; {~ 1 / 2, 1 / 1000 };      ## undecided: providerUncertified</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>The point interval in <code>sample</code> exactly identifies the stored binary32 or binary64 value. It does not certify the intended real that led to that value, so neither Numerics nor a Halo comparison promotes it to proof.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
+<p>The point interval in <code>sample</code> exactly identifies the stored binary32 or binary64 value. It does not certify the intended real that led to that value, so neither Numerics nor a Halo comparison promotes it to proof.</p>
+<p>Reproducible reductions make both order and rounding policy explicit:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="12" spellcheck="false">.Plugin.Load(&quot;float&quot;);
+sequential := .float.Sum([1,1/100000000,-1],
+  {= policy=:sequential,format=:binary64 });
+compensated := .float.Sum([1,1/100000000,-1],
+  {= policy=:compensated,format=:binary64 });
+dot := .float.Dot([1,2,3],[4,5,6],{= policy=:pairwise });
+{:
+  sequential[:value],
+  compensated[:value],
+  dot[:value],
+  dot[:errorEstimate]
+};</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The error estimate is deliberately labeled approximate, not certified. For complex IEEE work, use the separate Float-complex schema:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">z := .float.Complex(1,2,:binary32);
+w := .float.Complex(3,4,:binary32);
+product := .float.ComplexMul(z,w);
+{: product, .float.ComplexConjugate(product), .float.ComplexAbs(product) };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>These values never acquire the exact Complex type or its arithmetic overloads.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

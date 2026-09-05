@@ -48,7 +48,7 @@ import {
   parseAndEvaluateObservedAsync,
   renderOutputHtml,
   tokenize
-} from "./chunk-b3dthdv7.js";
+} from "./chunk-azrpqxc4.js";
 
 // standard-profile.rix
 var standard_profile_default = `## RiX-Web standard calculator profile.
@@ -1494,7 +1494,9 @@ ARArithmetic(operation, left, right ?= _) -> {;
         Refine=(self,request ?= {= })->self[:kind] == :arithmetic ?: self[:recipe].Refine(request) ?_ ARProtocolEnclosure(self,request,:refine),
         NumericsCapabilities=(self)->self[:kind] == :arithmetic ?: ARArithmeticCapabilities(self) ?_ ARCapabilities(self),
         Compare=(self,other,options ?= {= })->ARCompare(self,other,options),
-        ResultantOperation=(self,operation,other,options ?= {= })->ARResultantOperation(operation,self,other,options)
+        ResultantOperation=(self,operation,other,options ?= {= })->ARResultantOperation(operation,self,other,options),
+        Record=(self)->self[:kind] == :arithmetic ?: {= valueKind=self[:valueKind],schema=self[:schema],operation=self[:operation],certified=1 } ?_ ARRecord(self),
+        Export=(self)->ARExport(self)
     },
     installs={=
         ADD=[
@@ -3657,12 +3659,12 @@ besselNamespace._proto = {=
     ["Numerics", "SpecialFunctions"]
 );
 `, sourcePath: "bundled:bessel", kind: "rix" });
-  catalog.addMetadata({ id: "calculus", description: "Portable abstract functions, obligation-bearing higher differentiation, and provenance-recording evaluation through semantic-ID implementation links.", kind: "rix", mount: "calculus", exports: ["Function", "Exp", "Log", "Sqrt", "Asin", "ComplexLog", "Variable", "Constant", "Apply", "Obligation", "Register", "Resolve", "StructuralKey", "Evaluate", "EvaluateResult", "SimplifyResult", "CheckSimplification", "Differentiate", "DifferentiateResult", "DifferentiateN", "DifferentiateNResult", "Partial", "PartialResult", "Gradient", "GradientResult", "Jacobian", "JacobianResult", "Hessian", "HessianResult", "SelectedPrimitive", "AntiderivativeFamily", "DefiniteIntegral", "ToSpec", "FromSpec", "IsFunction", "IsExpression", "IsTransformation", "IsIntegral"], groups: ["Calculus", "Analysis", "Symbolic", "Exact"], permissions: [], provides: ["rix.calculus@1", "rix.abstract-function@1"], schemas: ["rix.calculus.function@1", "rix.calculus.expression@1", "rix.calculus.registry-entry@1", "rix.calculus.obligation@1", "rix.calculus.transformation@1", "rix.calculus.graph-simplification@1", "rix.calculus.evaluation@1", "rix.calculus.derivative-collection@1", "rix.calculus.integral@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:calculus" }, { source: `/**
+  catalog.addMetadata({ id: "calculus", description: "Portable abstract functions, obligation-bearing higher differentiation, and provenance-recording evaluation through semantic-ID implementation links.", kind: "rix", mount: "calculus", exports: ["Function", "Exp", "Log", "Abs", "Sin", "Cos", "Atan", "Sqrt", "Asin", "ComplexLog", "Variable", "Constant", "Apply", "Obligation", "Register", "Resolve", "StructuralKey", "Evaluate", "EvaluateResult", "SimplifyResult", "CheckSimplification", "Differentiate", "DifferentiateResult", "DifferentiateN", "DifferentiateNResult", "Partial", "PartialResult", "Gradient", "GradientResult", "Jacobian", "JacobianResult", "Hessian", "HessianResult", "SelectedPrimitive", "AntiderivativeFamily", "DefiniteIntegral", "ToSpec", "FromSpec", "IsFunction", "IsExpression", "IsTransformation", "IsIntegral"], groups: ["Calculus", "Analysis", "Symbolic", "Exact"], permissions: [], provides: ["rix.calculus@1", "rix.abstract-function@1"], schemas: ["rix.calculus.function@1", "rix.calculus.expression@1", "rix.calculus.registry-entry@1", "rix.calculus.obligation@1", "rix.calculus.transformation@1", "rix.calculus.graph-simplification@1", "rix.calculus.evaluation@1", "rix.calculus.derivative-collection@1", "rix.calculus.integral@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:calculus" }, { source: `/**
 id: calculus
 description: Portable abstract functions, obligation-bearing higher differentiation, and provenance-recording evaluation through semantic-ID implementation links.
 kind: rix
 mount: calculus
-exports: [Function, Exp, Log, Sqrt, Asin, ComplexLog, Variable, Constant, Apply, Obligation, Register, Resolve, StructuralKey, Evaluate, EvaluateResult, SimplifyResult, CheckSimplification, Differentiate, DifferentiateResult, DifferentiateN, DifferentiateNResult, Partial, PartialResult, Gradient, GradientResult, Jacobian, JacobianResult, Hessian, HessianResult, SelectedPrimitive, AntiderivativeFamily, DefiniteIntegral, ToSpec, FromSpec, IsFunction, IsExpression, IsTransformation, IsIntegral]
+exports: [Function, Exp, Log, Abs, Sin, Cos, Atan, Sqrt, Asin, ComplexLog, Variable, Constant, Apply, Obligation, Register, Resolve, StructuralKey, Evaluate, EvaluateResult, SimplifyResult, CheckSimplification, Differentiate, DifferentiateResult, DifferentiateN, DifferentiateNResult, Partial, PartialResult, Gradient, GradientResult, Jacobian, JacobianResult, Hessian, HessianResult, SelectedPrimitive, AntiderivativeFamily, DefiniteIntegral, ToSpec, FromSpec, IsFunction, IsExpression, IsTransformation, IsIntegral]
 groups: [Calculus, Analysis, Symbolic, Exact]
 permissions: []
 provides: [rix.calculus@1, rix.abstract-function@1]
@@ -3963,6 +3965,46 @@ CalculusLog(implementation ?= _) -> CalculusBuildFunction("rix.function.log.real
     domain=:positiveReal,
     codomain=:real,
     facts=[{= kind=:inverseIdentity, inverseOf="rix.function.exp@1", branch=:realPrincipal }],
+    implementation=implementation,
+    implementationEvidence=implementation == _ ?: :none ?_ :declaredByCaller
+});
+
+CalculusAbs(implementation ?= _) -> CalculusBuildFunction("rix.function.abs.real@1", {=
+    name=:Abs,
+    arity=1,
+    domain=:real,
+    codomain=:nonnegativeReal,
+    facts=[{= kind=:piecewiseIdentity, negative=:negate, nonnegative=:identity, nondifferentiableAt=0 }],
+    implementation=implementation,
+    implementationEvidence=implementation == _ ?: :none ?_ :declaredByCaller
+});
+
+CalculusSin(implementation ?= _) -> CalculusBuildFunction("rix.function.sin@1", {=
+    name=:Sin,
+    arity=1,
+    domain=:real,
+    codomain=:closedUnitInterval,
+    facts=[{= kind=:differentialIdentity, derivative="rix.function.cos@1" }],
+    implementation=implementation,
+    implementationEvidence=implementation == _ ?: :none ?_ :declaredByCaller
+});
+
+CalculusCos(implementation ?= _) -> CalculusBuildFunction("rix.function.cos@1", {=
+    name=:Cos,
+    arity=1,
+    domain=:real,
+    codomain=:closedUnitInterval,
+    facts=[{= kind=:differentialIdentity, derivative=:negativeSin }],
+    implementation=implementation,
+    implementationEvidence=implementation == _ ?: :none ?_ :declaredByCaller
+});
+
+CalculusAtan(implementation ?= _) -> CalculusBuildFunction("rix.function.atan.real-principal@1", {=
+    name=:Atan,
+    arity=1,
+    domain=:real,
+    codomain=:principalAtanRange,
+    facts=[{= kind=:inverseIdentity, inverseOf="rix.function.tan@1", branch=:realPrincipal }],
     implementation=implementation,
     implementationEvidence=implementation == _ ?: :none ?_ :declaredByCaller
 });
@@ -4579,6 +4621,14 @@ CalculusHessian(expression, variables) ->
 
 CalculusExpDerivative(application) -> application;
 CalculusReciprocalDerivative(application) -> CalculusDivideExact(CalculusConstant(1),application[:arguments][1]);
+CalculusSinDerivative(application) ->
+    CalculusApplication("rix.function.cos@1",:Cos,[application[:arguments][1]]);
+CalculusCosDerivative(application) ->
+    CalculusNegate(CalculusApplication("rix.function.sin@1",:Sin,[application[:arguments][1]]));
+CalculusAtanDerivative(application) -> {;
+    argument = application[:arguments][1];
+    CalculusDivideExact(CalculusConstant(1),CalculusAddExact(CalculusConstant(1),CalculusPowerExact(argument,2)));
+};
 CalculusSqrtDerivative(application) -> CalculusDivideExact(
     CalculusConstant(1),
     CalculusMultiplyExact(CalculusConstant(2),application)
@@ -4630,6 +4680,38 @@ CalculusRegister(calculusBuiltinLog,{=
     branches=[{= kind=:realBranch, name=:principal, domain=:positiveReal }],
     domainEvidence=:realLogDomain,
     branchEvidence=:inverseOfRealExp
+});
+
+calculusBuiltinAbs = CalculusAbs((value)->.Abs(value));
+CalculusRegister(calculusBuiltinAbs,{=
+    branches=[{= kind=:realPiecewise, split=0 }],
+    domainEvidence=:allReal,
+    branchEvidence=:absoluteValueDefinition
+});
+
+calculusBuiltinSin = CalculusSin();
+CalculusRegister(calculusBuiltinSin,{=
+    derivative=CalculusSinDerivative,
+    derivativeEvidence={= kind=:exactIdentity, identity=:sinDerivative, result=:cos },
+    branches=[],
+    domainEvidence=:allReal
+});
+
+calculusBuiltinCos = CalculusCos();
+CalculusRegister(calculusBuiltinCos,{=
+    derivative=CalculusCosDerivative,
+    derivativeEvidence={= kind=:exactIdentity, identity=:cosDerivative, result=:negativeSin },
+    branches=[],
+    domainEvidence=:allReal
+});
+
+calculusBuiltinAtan = CalculusAtan();
+CalculusRegister(calculusBuiltinAtan,{=
+    derivative=CalculusAtanDerivative,
+    derivativeEvidence={= kind=:exactIdentity, identity=:atanDerivative, result=:reciprocalOnePlusSquare },
+    branches=[{= kind=:realInverseBranch, name=:principal, range=:principalAtanRange }],
+    domainEvidence=:allReal,
+    branchEvidence=:principalInverseOfTan
 });
 
 calculusBuiltinSqrt = CalculusSqrt();
@@ -4694,6 +4776,10 @@ calculusNamespace._proto = {=
     Function=(self, semanticId, options ?= {= })->CalculusBuildFunction(semanticId,options),
     Exp=(self, implementation ?= _)->CalculusExp(implementation),
     Log=(self, implementation ?= _)->CalculusLog(implementation),
+    Abs=(self, implementation ?= _)->CalculusAbs(implementation),
+    Sin=(self, implementation ?= _)->CalculusSin(implementation),
+    Cos=(self, implementation ?= _)->CalculusCos(implementation),
+    Atan=(self, implementation ?= _)->CalculusAtan(implementation),
     Sqrt=(self, implementation ?= _)->CalculusSqrt(implementation),
     Asin=(self, implementation ?= _)->CalculusAsin(implementation),
     ComplexLog=(self, implementation ?= _)->CalculusComplexLog(implementation),
@@ -4738,17 +4824,577 @@ calculusNamespace._proto = {=
 `, sourcePath: "bundled:calculus", kind: "rix" });
   catalog.addMetadata({ id: "canvas", description: "Serializable Canvas 2D drawing plans for Graphics and projected Scene3D snapshots.", kind: "host", mount: "canvas", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.canvas@1", "rix.renderer.canvas@2", "rix.viewport@1", "rix.selection@1"], schemas: ["rix.canvas-plan@1", "rix.canvas-accessibility@1", "rix.viewport@1", "rix.selection@1"], targets: ["canvas", "application/vnd.rix.canvas+json"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], operatorFiles: [], ignore: false, sourcePath: "bundled:canvas" }, { sourcePath: "bundled:canvas", kind: "host" });
   catalog.registerInstaller("canvas", install8);
-  catalog.addMetadata({ id: "cauchy", description: "Rational Cauchy sequences with explicit certified tail bounds and moduli.", kind: "rix", mount: "cauchy", exports: ["Sequence", "Certified", "Geometric", "Terms", "Funnel", "Term", "TailBound", "Modulus", "Enclosure", "Record"], groups: ["Numerics", "Exact"], permissions: [], requires: ["rix.oracle@1"], provides: ["rix.cauchy@1", "rix.refinable@1", "rix.enclosable-real@1"], schemas: ["rix.cauchy.sequence@1", "rix.cauchy.real@1", "rix.cauchy.arithmetic-real@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:cauchy" }, { source: `/**
+  catalog.addMetadata({ id: "cas", description: "Browser-safe course-level symbolic simplification, polynomial forms, and exact integration with checked replay.", kind: "rix", mount: "cas", exports: ["Simplify", "CheckSimplification", "NormalizePolynomial", "Expand", "Collect", "Factor", "Integrate", "CheckIntegral", "Capabilities"], groups: ["Algebra", "Calculus", "CAS", "Exact", "Symbolic"], permissions: [], requires: ["rix.calculus@1", "rix.polynomial@1", "rix.rational-function@1"], provides: ["rix.cas@1", "rix.cas.rewrite@1", "rix.cas.integral@1"], schemas: ["rix.cas.rewrite@1", "rix.cas.integral@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:cas" }, { source: `/**
+id: cas
+description: Browser-safe course-level symbolic simplification, polynomial forms, and exact integration with checked replay.
+kind: rix
+mount: cas
+exports: [Simplify, CheckSimplification, NormalizePolynomial, Expand, Collect, Factor, Integrate, CheckIntegral, Capabilities]
+groups: [Algebra, Calculus, CAS, Exact, Symbolic]
+permissions: []
+requires: [rix.calculus@1, rix.polynomial@1, rix.rational-function@1]
+provides: [rix.cas@1, rix.cas.rewrite@1, rix.cas.integral@1]
+schemas: [rix.cas.rewrite@1, rix.cas.integral@1]
+snapshot: false
+deterministic: true
+defaultEnabled: false
+**/
+
+CasOption(options, key, fallback ?= _) -> options.Has(key) ?: options[key] ?_ fallback;
+CasRequireOptions(value, label) -> value ? :Map ?: value ?_ .Error(@"@{label} must be a Map");
+CasIsExpression(value) -> .calculus.IsExpression(value);
+CasVariableName(variable) ->
+    variable ? :String
+      ?: variable
+      ?_ (CasIsExpression(variable) && variable[:kind]==:variable
+           ?: variable[:name]
+           ?_ .Error("CAS variable must be a string or Calculus variable"));
+CasExpression(value) ->
+    CasIsExpression(value)
+      ?: value
+      ?_ ((value ? :Integer)||(value ? :Rational)
+           ?: .calculus.Constant(value)
+           ?_ .Error("CAS expected a Calculus expression or exact scalar"));
+CasConstantValue(expression) ->
+    CasIsExpression(expression) && expression[:kind]==:constant ?: expression[:value] ?_ _;
+CasExpressionKey(expression) -> .calculus.StructuralKey(expression);
+CasAppend(left,right) -> right.Reduce((result,value)->result.Push(value),left);
+
+CasRewrite(operation, source, expression, evidence, obligations ?= []) ->
+    .ImmutableValue({=
+        valueKind=:casRewrite,
+        schema="rix.cas.rewrite@1",
+        operation=operation,
+        source=source,
+        expression=expression,
+        evidence=evidence,
+        obligations=obligations,
+        exact=1,
+        status=:complete
+    });
+
+CasSimplify(value) -> {;
+    expression = CasExpression(value);
+    checked = .calculus.SimplifyResult(expression);
+    replay = .calculus.CheckSimplification(checked);
+    replay[:accepted]==1
+      ?: _
+      ?_ .Error("CAS rejected an internally produced simplification");
+    CasRewrite(:simplify,expression,checked[:expression],[{=
+        rule=:checkedCalculusSimplification,
+        checker=checked[:checker],
+        replay=replay
+    }],checked[:obligations]);
+};
+
+CasCheckSimplification(candidate) -> {;
+    valid = (candidate ? :Map) && candidate[:schema]=="rix.cas.rewrite@1" && candidate[:operation]==:simplify;
+    valid
+      ?: {;
+          recomputed = CasSimplify(@candidate[:source]);
+          accepted = CasExpressionKey(recomputed[:expression])==CasExpressionKey(@candidate[:expression]);
+          .ImmutableValue({= accepted=accepted,certified=accepted ?: 1 ?_ _,reason=accepted ?: _ ?_ :simplificationClaimMismatch });
+      }
+      ?_ .ImmutableValue({= accepted=_,certified=_,reason=:malformedCasSimplification });
+};
+
+CasPolynomial(value, variable) -> {;
+    name = CasVariableName(variable);
+    value ? :Polynomial
+      ?: value
+      ?_ .poly(.calculus.ToSpec(CasExpression(value),[name]),name);
+};
+
+CasPolynomialExpression(polynomial) -> {;
+    exact = polynomial ? :Polynomial ?: polynomial ?_ .Error("CAS expected a Polynomial");
+    variable = .calculus.Variable(exact.Variable());
+    coefficients = exact.Coefficients(:ascending);
+    coefficients.Reduce((sum,coefficient,index)->
+        sum+coefficient*(variable^(index-1)),
+        .calculus.Constant(0)
+    );
+};
+
+CasNormalizePolynomial(value, variable ?= :x) -> {;
+    polynomial = CasPolynomial(value,variable);
+    expression = CasPolynomialExpression(polynomial);
+    CasRewrite(:normalizePolynomial,value,expression,[{=
+        rule=:canonicalPolynomialCoefficients,
+        polynomial=polynomial,
+        coefficients=polynomial.Coefficients(:ascending),
+        variable=polynomial.Variable()
+    }]);
+};
+
+CasExpand(value, variable ?= :x) -> {;
+    normalized = CasNormalizePolynomial(value,variable);
+    CasRewrite(:expand,value,normalized[:expression],[{=
+        rule=:canonicalPolynomialExpansion,
+        polynomial=normalized[:evidence][1][:polynomial]
+    }]);
+};
+
+CasCollect(value, variable ?= :x) -> {;
+    polynomial = CasPolynomial(value,variable);
+    .ImmutableValue({=
+        valueKind=:casCollectedPolynomial,
+        schema="rix.cas.rewrite@1",
+        operation=:collect,
+        source=value,
+        expression=CasPolynomialExpression(polynomial),
+        polynomial=polynomial,
+        variable=polynomial.Variable(),
+        coefficients=polynomial.Coefficients(:ascending),
+        evidence=[{= rule=:canonicalPolynomialCoefficients }],
+        obligations=[],
+        exact=1,
+        status=:complete
+    });
+};
+
+CasFactor(value, variable ?= :x) -> {;
+    polynomial = CasPolynomial(value,variable);
+    evidence = .poly.FactorEvidence(polynomial);
+    .ImmutableValue({=
+        valueKind=:casFactorization,
+        schema="rix.cas.rewrite@1",
+        operation=:factor,
+        source=value,
+        expression=CasPolynomialExpression(polynomial),
+        polynomial=polynomial,
+        factors=evidence[:factors],
+        residual=evidence[:residual],
+        evidence=[evidence],
+        obligations=[],
+        exact=1,
+        status=evidence[:complete]==1 ?: :complete ?_ :partial
+    });
+};
+
+CasIndependent(expression, variable) -> {;
+    exact = CasExpression(expression);
+    kind = exact[:kind];
+    kind==:constant
+      ?: 1
+      ?_ kind==:variable
+      ?: exact[:name]!=variable
+      ?_ kind==:operator
+      ?: exact[:operands].Filter((operand)->CasIndependent(operand,@variable)).Len()==exact[:operands].Len()
+      ?_ kind==:apply
+      ?: exact[:arguments].Filter((argument)->CasIndependent(argument,@variable)).Len()==exact[:arguments].Len()
+      ?_ _;
+};
+
+CasAffineState(valid, slope ?= 0, intercept ?= 0) -> {= valid=valid,slope=slope,intercept=intercept };
+CasAffine(expression, variable) -> {;
+    exact = CasExpression(expression);
+    kind = exact[:kind];
+    result := CasAffineState(_);
+    kind==:constant ?: {; @result ~= CasAffineState(1,0,@exact[:value]); } ?_ _;
+    kind==:variable && exact[:name]==variable ?: {; @result ~= CasAffineState(1,1,0); } ?_ _;
+    kind==:operator
+      ?: {;
+          operation = @exact[:operation];
+          operands = @exact[:operands];
+          operation==:negate
+            ?: {;
+                inner = CasAffine(@operands[1],@variable);
+                inner[:valid] ?: {; @result ~= CasAffineState(1,-@inner[:slope],-@inner[:intercept]); } ?_ _;
+            }
+            ?_ {;
+                left = CasAffine(@operands[1],@variable);
+                right = CasAffine(@operands[2],@variable);
+                (@operation==:add || @operation==:subtract) && left[:valid] && right[:valid]
+                  ?: {;
+                      @result ~= @operation==:add
+                        ?: CasAffineState(1,@left[:slope]+@right[:slope],@left[:intercept]+@right[:intercept])
+                        ?_ CasAffineState(1,@left[:slope]-@right[:slope],@left[:intercept]-@right[:intercept]);
+                  }
+                  ?_ _;
+                @result[:valid]==_ && @operation==:multiply && left[:valid] && right[:valid] && (left[:slope]==0 || right[:slope]==0)
+                  ?: {;
+                      @result ~= @left[:slope]==0
+                        ?: CasAffineState(1,@left[:intercept]*@right[:slope],@left[:intercept]*@right[:intercept])
+                        ?_ CasAffineState(1,@right[:intercept]*@left[:slope],@right[:intercept]*@left[:intercept]);
+                  }
+                  ?_ _;
+                @result[:valid]==_ && @operation==:divide && left[:valid] && right[:valid] && right[:slope]==0 && right[:intercept]!=0
+                  ?: {; @result ~= CasAffineState(1,@left[:slope]/@right[:intercept],@left[:intercept]/@right[:intercept]); }
+                  ?_ _;
+            };
+      }
+      ?_ _;
+    result;
+};
+
+CasIntegrationState(status, expression ?= _, obligations ?= [], rules ?= [], reason ?= _) -> {=
+    status=status,expression=expression,obligations=obligations,rules=rules,reason=reason
+};
+CasUnsupported(reason) -> CasIntegrationState(:unsupported,_,[],[],reason);
+CasCombineIntegral(operation,left,right) -> {;
+    left[:status]==:complete && right[:status]==:complete
+      ?: CasIntegrationState(
+          :complete,
+          operation==:add ?: left[:expression]+right[:expression] ?_ left[:expression]-right[:expression],
+          CasAppend(left[:obligations],right[:obligations]),
+          CasAppend(left[:rules],right[:rules]).Push({= rule=operation })
+      )
+      ?_ CasUnsupported(operation==:add ?: :unsupportedSumTerm ?_ :unsupportedDifferenceTerm);
+};
+CasPositiveObligation(expression, rule) -> .calculus.Obligation(:domain,:positive,expression,{= reason=rule });
+CasNonzeroObligation(expression, rule) -> .calculus.Obligation(:domain,:nonzero,expression,{= reason=rule });
+CasLogAbs(expression) -> .calculus.Log()(.calculus.Abs()(expression));
+CasApplySemantic(expression, semanticId) ->
+    expression[:kind]==:apply && expression[:semanticId]==semanticId;
+CasPowerExponent(expression) ->
+    expression[:kind]==:operator && expression[:operation]==:power
+      ?: CasConstantValue(expression[:operands][2])
+      ?_ _;
+CasPurePowerDegree(expression, variable) -> {;
+    result := _;
+    expression[:kind]==:variable && expression[:name]==variable
+      ?: {; @result ~= 1; }
+      ?_ _;
+    result==_ && expression[:kind]==:operator && expression[:operation]==:power
+      ?: {;
+          exponent = CasConstantValue(@expression[:operands][2]);
+          base = @expression[:operands][1];
+          exponent!=_ && (exponent ? :Integer) && exponent>=0 && base[:kind]==:variable && base[:name]==@variable
+            ?: {; @result ~= @exponent; }
+            ?_ _;
+      }
+      ?_ _;
+    result;
+};
+
+CasIntegrateExpPower(variableExpression, degree, exponential, slope) ->
+    degree==0
+      ?: exponential/slope
+      ?_ (variableExpression^degree)*exponential/slope
+          -(degree/slope)*CasIntegrateExpPower(variableExpression,degree-1,exponential,slope);
+
+CasIntegrateProduct(left, right, variable) -> {;
+    variableExpression = .calculus.Variable(variable);
+    result := _;
+    CasIndependent(left,variable)
+      ?: {;
+          integrated = CasIntegrateNode(@right,@variable);
+          @result ~= integrated[:status]==:complete
+            ?: CasIntegrationState(:complete,@left*integrated[:expression],integrated[:obligations],integrated[:rules].Push({= rule=:constantFactor }))
+            ?_ integrated;
+      }
+      ?_ _;
+    result==_ && CasIndependent(right,variable)
+      ?: {;
+          integrated = CasIntegrateNode(@left,@variable);
+          @result ~= integrated[:status]==:complete
+            ?: CasIntegrationState(:complete,@right*integrated[:expression],integrated[:obligations],integrated[:rules].Push({= rule=:constantFactor }))
+            ?_ integrated;
+      }
+      ?_ _;
+    leftDegree = CasPurePowerDegree(left,variable);
+    rightDegree = CasPurePowerDegree(right,variable);
+    result==_ && leftDegree!=_ && CasApplySemantic(right,"rix.function.exp@1")
+      ?: {;
+          affine = CasAffine(@right[:arguments][1],@variable);
+          @result ~= affine[:valid] && affine[:slope]!=0
+            ?: CasIntegrationState(:complete,CasIntegrateExpPower(@variableExpression,@leftDegree,@right,affine[:slope]),[],[{= rule=:integrationByPartsExpPower,degree=@leftDegree,slope=affine[:slope] }])
+            ?_ CasUnsupported(:nonAffineExponentialArgument);
+      }
+      ?_ _;
+    result==_ && rightDegree!=_ && CasApplySemantic(left,"rix.function.exp@1")
+      ?: {;
+          affine = CasAffine(@left[:arguments][1],@variable);
+          @result ~= affine[:valid] && affine[:slope]!=0
+            ?: CasIntegrationState(:complete,CasIntegrateExpPower(@variableExpression,@rightDegree,@left,affine[:slope]),[],[{= rule=:integrationByPartsExpPower,degree=@rightDegree,slope=affine[:slope] }])
+            ?_ CasUnsupported(:nonAffineExponentialArgument);
+      }
+      ?_ _;
+    result==_ ?: CasUnsupported(:unsupportedProduct) ?_ result;
+};
+
+CasIntegrateQuotient(numerator, denominator, variable) -> {;
+    CasIndependent(numerator,variable)
+      ?: {;
+          affine = CasAffine(@denominator,@variable);
+          affine[:valid] && affine[:slope]!=0
+            ?: CasIntegrationState(
+                :complete,
+                @numerator*CasLogAbs(@denominator)/affine[:slope],
+                [CasNonzeroObligation(@denominator,:reciprocalDomain)],
+                [{= rule=:affineReciprocalSubstitution,slope=affine[:slope] }]
+            )
+            ?_ CasUnsupported(:unsupportedQuotient);
+      }
+      ?_ CasUnsupported(:unsupportedQuotient);
+};
+
+CasIntegratePower(base, exponentExpression, variable) -> {;
+    exponent = CasConstantValue(exponentExpression);
+    affine = CasAffine(base,variable);
+    affine[:valid] && affine[:slope]!=0 && exponent!=_ && (exponent ? :Integer)
+      ?: (exponent==-1
+           ?: CasIntegrationState(
+               :complete,CasLogAbs(base)/affine[:slope],
+               [CasNonzeroObligation(base,:reciprocalDomain)],
+               [{= rule=:affinePowerSubstitution,exponent=-1,slope=affine[:slope] }]
+           )
+           ?_ CasIntegrationState(
+               :complete,(base^(exponent+1))/(affine[:slope]*(exponent+1)),[],
+               [{= rule=:affinePowerSubstitution,exponent=exponent,slope=affine[:slope] }]
+           ))
+      ?_ CasUnsupported(:unsupportedPower);
+};
+
+CasIntegrateApplication(expression, variable) -> {;
+    argument = expression[:arguments][1];
+    affine = CasAffine(argument,variable);
+    CasApplySemantic(expression,"rix.function.exp@1")
+      ?: (affine[:valid] && affine[:slope]!=0
+           ?: CasIntegrationState(:complete,expression/affine[:slope],[],[{= rule=:affineExponentialSubstitution,slope=affine[:slope] }])
+           ?_ CasUnsupported(:nonAffineExponentialArgument))
+      ?_ CasApplySemantic(expression,"rix.function.log.real-principal@1")
+      ?: (affine[:valid] && affine[:slope]!=0
+           ?: CasIntegrationState(
+               :complete,(argument*expression-argument)/affine[:slope],
+               [CasPositiveObligation(argument,:realLogBranch)],
+               [{= rule=:integrationByPartsLog,slope=affine[:slope] }]
+           )
+           ?_ CasUnsupported(:nonAffineLogarithmArgument))
+      ?_ CasApplySemantic(expression,"rix.function.sin@1")
+      ?: (affine[:valid] && affine[:slope]!=0
+           ?: CasIntegrationState(
+               :complete,-.calculus.Cos()(argument)/affine[:slope],[],
+               [{= rule=:affineSineSubstitution,slope=affine[:slope] }]
+           )
+           ?_ CasUnsupported(:nonAffineSineArgument))
+      ?_ CasApplySemantic(expression,"rix.function.cos@1")
+      ?: (affine[:valid] && affine[:slope]!=0
+           ?: CasIntegrationState(
+               :complete,.calculus.Sin()(argument)/affine[:slope],[],
+               [{= rule=:affineCosineSubstitution,slope=affine[:slope] }]
+           )
+           ?_ CasUnsupported(:nonAffineCosineArgument))
+      ?_ CasUnsupported(:unsupportedSemanticFunction);
+};
+
+CasIntegrateNode(expression, variable) -> {;
+    exact = CasExpression(expression);
+    variableExpression = .calculus.Variable(variable);
+    result := _;
+    CasIndependent(exact,variable)
+      ?: {; @result ~= CasIntegrationState(:complete,@exact*@variableExpression,[],[{= rule=:constantMultiple }]); }
+      ?_ _;
+    result==_ && exact[:kind]==:variable && exact[:name]==variable
+      ?: {; @result ~= CasIntegrationState(:complete,(@variableExpression^2)/2,[],[{= rule=:power,exponent=1 }]); }
+      ?_ _;
+    result==_ && exact[:kind]==:operator
+      ?: {;
+          operation = @exact[:operation];
+          operands = @exact[:operands];
+          operation==:negate
+            ?: {;
+                inner = CasIntegrateNode(@operands[1],@variable);
+                @result ~= inner[:status]==:complete
+                  ?: CasIntegrationState(:complete,-inner[:expression],inner[:obligations],inner[:rules].Push({= rule=:negation }))
+                  ?_ inner;
+            }
+            ?_ (operation==:add || operation==:subtract)
+            ?: {; @result ~= CasCombineIntegral(@operation,CasIntegrateNode(@operands[1],@variable),CasIntegrateNode(@operands[2],@variable)); }
+            ?_ operation==:multiply
+            ?: {; @result ~= CasIntegrateProduct(@operands[1],@operands[2],@variable); }
+            ?_ operation==:divide
+            ?: {; @result ~= CasIntegrateQuotient(@operands[1],@operands[2],@variable); }
+            ?_ operation==:power
+            ?: {; @result ~= CasIntegratePower(@operands[1],@operands[2],@variable); }
+            ?_ {; @result ~= CasUnsupported(:unsupportedOperator); };
+      }
+      ?_ _;
+    result==_ && exact[:kind]==:apply
+      ?: {; @result ~= CasIntegrateApplication(@exact,@variable); }
+      ?_ _;
+    result==_ ?: CasUnsupported(:unsupportedExpression) ?_ result;
+};
+
+CasIntegratePolynomial(polynomial) -> {;
+    variable = polynomial.Variable();
+    expression = CasPolynomialExpression(polynomial);
+    coefficients = polynomial.Coefficients(:ascending);
+    x = .calculus.Variable(variable);
+    primitive = coefficients.Reduce((sum,coefficient,index)->
+        sum+coefficient*(x^index)/index,
+        .calculus.Constant(0)
+    );
+    CasIntegrationState(:complete,primitive,[],[{= rule=:polynomialCoefficientIntegration,coefficients=coefficients }]);
+};
+
+CasCoefficient(coefficients, index) ->
+    index<=coefficients.Len() ?: coefficients[index] ?_ 0;
+
+CasIntegrateQuadraticResidual(decomposition) -> {;
+    residual = decomposition[:residual];
+    numerator = residual[:numerator];
+    denominator = residual[:denominator];
+    numerator.Degree()<=1 && denominator.Degree()==2
+      ?: {;
+          numeratorCoefficients = @numerator.Coefficients(:ascending);
+          denominatorCoefficients = @denominator.Coefficients(:ascending);
+          n = CasCoefficient(numeratorCoefficients,1);
+          m = CasCoefficient(numeratorCoefficients,2);
+          c = CasCoefficient(denominatorCoefficients,1);
+          b = CasCoefficient(denominatorCoefficients,2);
+          a = CasCoefficient(denominatorCoefficients,3);
+          discriminantGap = 4*a*c-b^2;
+          a!=0 && discriminantGap>0
+            ?: {;
+                x = .calculus.Variable(@decomposition[:variable]);
+                denominatorExpression = CasPolynomialExpression(@denominator);
+                sqrtGap = .calculus.Sqrt()(.calculus.Constant(@discriminantGap));
+                alpha = @m/(2*@a);
+                beta = @n-alpha*@b;
+                logarithm = alpha==0
+                  ?: .calculus.Constant(0)
+                  ?_ alpha*CasLogAbs(denominatorExpression);
+                angle = (2*@a*x+@b)/sqrtGap;
+                arctangent = beta==0
+                  ?: .calculus.Constant(0)
+                  ?_ (2*beta/sqrtGap)*.calculus.Atan()(angle);
+                CasIntegrationState(
+                    :complete,
+                    logarithm+arctangent,
+                    [],
+                    [{=
+                        rule=:irreducibleQuadraticPartialFraction,
+                        coefficients={= a=@a,b=@b,c=@c,m=@m,n=@n },
+                        discriminantGap=@discriminantGap,
+                        identity=:logDerivativePlusCompletedSquareAtan
+                    }]
+                );
+            }
+            ?_ CasUnsupported(:quadraticDenominatorHasRealRootsOrDegenerates);
+      }
+      ?_ CasUnsupported(:nonlinearResidualPartialFraction);
+};
+
+CasIntegratePartialFractions(rationalFunction) -> {;
+    decomposition = .ratfun.PartialFractions(rationalFunction);
+    decomposition[:linearComplete]==1
+      ?: {;
+          polynomialState = CasIntegratePolynomial(@decomposition[:polynomialPart]);
+          x = .calculus.Variable(@decomposition[:variable]);
+          state := polynomialState;
+          {@ index=1; index<=@decomposition[:terms].Len(); {;
+             term = @decomposition[:terms][index];
+             base = @x-term[:root];
+             power = term[:power];
+             contribution = power==1
+               ?: term[:coefficient]*CasLogAbs(base)
+               ?_ term[:coefficient]*(base^(1-power))/(1-power);
+             obligations = [CasNonzeroObligation(base,:partialFractionPole)];
+             @state ~= CasIntegrationState(
+                 :complete,
+                 @state[:expression]+contribution,
+                 CasAppend(@state[:obligations],obligations),
+                 @state[:rules].Push({= rule=:linearPartialFraction,root=term[:root],power=power,coefficient=term[:coefficient] })
+             );
+          }; index += 1 };
+          state[:rules] = state[:rules].Push({= rule=:exactPartialFractionDecomposition,evidence=@decomposition });
+          state;
+      }
+      ?_ {;
+          polynomialState = CasIntegratePolynomial(@decomposition[:polynomialPart]);
+          residualState = CasIntegrateQuadraticResidual(@decomposition);
+          residualState[:status]==:complete
+            ?: CasIntegrationState(
+                :complete,
+                polynomialState[:expression]+residualState[:expression],
+                CasAppend(polynomialState[:obligations],residualState[:obligations]),
+                CasAppend(polynomialState[:rules],residualState[:rules]).Push({=
+                    rule=:exactPartialFractionDecomposition,evidence=@decomposition
+                })
+            )
+            ?_ residualState;
+      };
+};
+
+CasIntegralResult(source, variable, state) -> {;
+    result = {=
+        valueKind=:casIntegral,
+        schema="rix.cas.integral@1",
+        source=source,
+        variable=variable,
+        status=state[:status],
+        antiderivative=state[:expression],
+        obligations=state[:obligations],
+        rules=state[:rules],
+        reason=state[:reason],
+        exact=state[:status]==:complete ?: 1 ?_ _,
+        verification=state[:status]==:complete ?: :checkedRuleReplay ?_ :unsupported
+    };
+    .ImmutableValue(result);
+};
+
+CasIntegrate(value, variable ?= :x, options ?= {= }) -> {;
+    options = CasRequireOptions(options,"CAS integration options");
+    name = value ? :Polynomial
+      ?: value.Variable()
+      ?_ value ? :RationalFunction
+      ?: value.variable
+      ?_ CasVariableName(variable);
+    state = value ? :Polynomial
+      ?: CasIntegratePolynomial(value)
+      ?_ value ? :RationalFunction
+      ?: CasIntegratePartialFractions(value)
+      ?_ CasIntegrateNode(CasExpression(value),name);
+    CasIntegralResult(value,name,state);
+};
+
+CasCheckIntegral(candidate) -> {;
+    valid = (candidate ? :Map) && candidate[:schema]=="rix.cas.integral@1";
+    valid
+      ?: {;
+          recomputed = CasIntegrate(@candidate[:source],@candidate[:variable]);
+          statusMatches = recomputed[:status]==@candidate[:status];
+          expressionMatches = recomputed[:status]==:complete
+            ?: CasExpressionKey(recomputed[:antiderivative])==CasExpressionKey(@candidate[:antiderivative])
+            ?_ recomputed[:reason]==@candidate[:reason];
+          accepted = statusMatches && expressionMatches;
+          .ImmutableValue({= accepted=accepted,certified=accepted ?: 1 ?_ _,reason=accepted ?: _ ?_ :integralClaimMismatch,recomputed=recomputed });
+      }
+      ?_ .ImmutableValue({= accepted=_,certified=_,reason=:malformedCasIntegral });
+};
+
+casCapabilities = .ImmutableValue({=
+    simplification=[:checkedGraphIdentities,:canonicalPolynomialNormalization,:expand,:collect,:factor],
+    integration=[:polynomials,:affinePowers,:affineReciprocals,:affineExponentials,:affineSine,:affineCosine,:logByParts,:polynomialTimesExponentialByParts,:linearPartialFractions,:irreducibleQuadraticPartialFractions],
+    unsupported=[:generalRischIntegration,:trigonometricPowerReduction,:higherDegreePartialFractionResiduals,:unrestrictedIdentitySearch]
+});
+
+casNamespace = {= };
+casNamespace._proto = {=
+    Simplify=(self,value)->CasSimplify(value),
+    CheckSimplification=(self,value)->CasCheckSimplification(value),
+    NormalizePolynomial=(self,value,variable ?= :x)->CasNormalizePolynomial(value,variable),
+    Expand=(self,value,variable ?= :x)->CasExpand(value,variable),
+    Collect=(self,value,variable ?= :x)->CasCollect(value,variable),
+    Factor=(self,value,variable ?= :x)->CasFactor(value,variable),
+    Integrate=(self,value,variable ?= :x,options ?= {= })->CasIntegrate(value,variable,options),
+    CheckIntegral=(self,value)->CasCheckIntegral(value),
+    Capabilities=(self)->casCapabilities
+};
+.Host.RegisterValue("cas",casNamespace,"Browser-safe course-level simplification and exact integration",["Algebra","Calculus","CAS","Exact","Symbolic"]);
+`, sourcePath: "bundled:cas", kind: "rix" });
+  catalog.addMetadata({ id: "cauchy", description: "Rational Cauchy sequences with explicit certified tail bounds and moduli.", kind: "rix", mount: "cauchy", exports: ["Sequence", "Certified", "Geometric", "LimitProof", "Limit", "Aitken", "Subsequence", "Diagnose", "Terms", "Funnel", "Term", "TailBound", "Modulus", "Enclosure", "Record"], groups: ["Numerics", "Exact"], permissions: [], requires: ["rix.oracle@1"], provides: ["rix.cauchy@1", "rix.refinable@1", "rix.enclosable-real@1"], schemas: ["rix.cauchy.sequence@1", "rix.cauchy.real@1", "rix.cauchy.arithmetic-real@1", "rix.cauchy.limit-proof@1", "rix.cauchy.diagnosis@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:cauchy" }, { source: `/**
 id: cauchy
 description: Rational Cauchy sequences with explicit certified tail bounds and moduli.
 kind: rix
 mount: cauchy
-exports: [Sequence, Certified, Geometric, Terms, Funnel, Term, TailBound, Modulus, Enclosure, Record]
+exports: [Sequence, Certified, Geometric, LimitProof, Limit, Aitken, Subsequence, Diagnose, Terms, Funnel, Term, TailBound, Modulus, Enclosure, Record]
 groups: [Numerics, Exact]
 permissions: []
 requires: [rix.oracle@1]
 provides: [rix.cauchy@1, rix.refinable@1, rix.enclosable-real@1]
-schemas: [rix.cauchy.sequence@1, rix.cauchy.real@1, rix.cauchy.arithmetic-real@1]
+schemas: [rix.cauchy.sequence@1, rix.cauchy.real@1, rix.cauchy.arithmetic-real@1, rix.cauchy.limit-proof@1, rix.cauchy.diagnosis@1]
 snapshot: false
 deterministic: true
 defaultEnabled: false
@@ -4907,6 +5553,8 @@ CauchyAttachBareProtocol(real) -> {;
     real._proto = {=
         Term = (self, index) -> CauchyTermAt(self, index),
         Terms = (self, start ?= 0, count ?= 10) -> CauchyTerms(self, start, count),
+        Aitken = (self, proof, options ?= {= }) -> CauchyAitken(self, proof, options),
+        Diagnose = (self, options ?= {= }) -> CauchyDiagnose(self, options),
         Funnel = (self, options ?= {= }) -> CauchyFunnel(self, options),
         Record = (self) -> CauchyRecord(self),
         NumericsCapabilities = (self) -> CauchyCapabilities(self),
@@ -4923,6 +5571,10 @@ CauchyAttachCertifiedProtocol(real) -> {;
         Modulus = (self, radius) -> CauchyModulusAt(self, radius),
         Enclosure = (self, index) -> CauchyWitnessAt(self, index)[:interval],
         Terms = (self, start ?= 0, count ?= 10) -> CauchyTerms(self, start, count),
+        Aitken = (self, proof, options ?= {= }) -> CauchyAitken(self, proof, options),
+        Subsequence = (self, stride ?= 2, offset ?= 0, options ?= {= }) ->
+            CauchySubsequence(self, stride, offset, options),
+        Diagnose = (self, options ?= {= }) -> CauchyDiagnose(self, options),
         Funnel = (self, options ?= {= }) -> CauchyFunnel(self, options),
         InitialEnclosure = (self) -> self[:initialWitness][:interval],
         Record = (self) -> CauchyRecord(self),
@@ -4955,7 +5607,7 @@ BuildCertifiedCauchy(termFunction, tailFunction, modulusFunction, options) -> {;
         modulusFunction = modulusFunction,
         evidence = CauchyOption(options, "evidence", :declaredTailModulus),
         initialWitness = CauchyWitness(initialTerm, initialTail, 0),
-        provenance = {= plugin=:cauchy, version=1, source=:declaredTailModulus }
+        provenance = CauchyOption(options, "provenance", {= plugin=:cauchy, version=1, source=:declaredTailModulus })
     });
 };
 
@@ -4994,6 +5646,126 @@ CauchyGeometricConstructor(first, ratio, options ?= {= }) -> {;
         },
         initialWitness = initial,
         provenance = {= plugin=:cauchy, version=1, source=:geometricTail }
+    });
+};
+
+CauchyLimitProof(tailFunction, modulusFunction, options ?= {= }) -> {;
+    level = CauchyOption(options,"level",:proof);
+    {=
+        valueKind=:cauchyLimitProof,
+        schema="rix.cauchy.limit-proof@1",
+        tailFunction=tailFunction,
+        modulusFunction=modulusFunction,
+        level=level,
+        theorem=CauchyOption(options,"theorem",:effectiveCauchyTail),
+        assumptions=CauchyOption(options,"assumptions",[]),
+        witness=CauchyOption(options,"witness",_),
+        certified=level == :proof || level == :constructorGuarantee,
+        provenance=CauchyOption(options,"provenance",{= plugin=:cauchy,source=:declaredLimitProof })
+    };
+};
+
+CauchyLimit(termFunction, proof, options ?= {= }) -> {;
+    proof[:schema] == "rix.cauchy.limit-proof@1"
+      ?: _ ?_ .Error("Cauchy Limit requires a rix.cauchy.limit-proof@1 value");
+    proof[:certified]
+      ?: _ ?_ .Error("Cauchy Limit requires proof or constructor-guarantee tail evidence");
+    BuildCertifiedCauchy(
+        termFunction,
+        proof[:tailFunction],
+        proof[:modulusFunction],
+        options.Merge({=
+            evidence={= kind=:proofCarryingLimit,level=proof[:level],theorem=proof[:theorem],proof=proof },
+            provenance=CauchyOption(options,"provenance",{=
+                plugin=:cauchy,version=3,source=:proofCarryingLimit,proof=proof[:provenance]
+            })
+        })
+    );
+};
+
+CauchyAitken(real, proof, options ?= {= }) -> {;
+    TermFunction = (index) -> {;
+        first = CauchyTermAt(@real,index);
+        second = CauchyTermAt(@real,index+1);
+        third = CauchyTermAt(@real,index+2);
+        delta = second-first;
+        secondDifference = third-2*second+first;
+        secondDifference == 0
+          ?: .Error("Cauchy Aitken transform requires a nonzero second difference")
+          ?_ first-delta^2/secondDifference;
+    };
+    CauchyLimit(TermFunction,proof,options.Merge({=
+        name=CauchyOption(options,"name",:aitkenDeltaSquared),
+        provenance={=
+            plugin=:cauchy,
+            version=3,
+            source=:aitkenDeltaSquared,
+            parent=real[:provenance],
+            proof=proof[:provenance]
+        }
+    }));
+};
+
+CauchySubsequence(real, strideValue ?= 2, offsetValue ?= 0, options ?= {= }) -> {;
+    stride = CauchyRequireIndex(strideValue,"Cauchy subsequence stride");
+    offset = CauchyRequireIndex(offsetValue,"Cauchy subsequence offset");
+    stride >= 1 ?: _ ?_ .Error("Cauchy subsequence stride must be positive");
+    supported = real[:kind] == :geometric || real[:kind] == :declared || real[:kind] == :computed;
+    supported ?: _ ?_ .Error("Cauchy Subsequence requires an effective term/tail/modulus sequence");
+    TermFunction = (index) -> CauchyTermAt(@real,@stride*index+@offset);
+    TailFunction = (index) -> CauchyTailBoundAt(@real,@stride*index+@offset);
+    ModulusFunction = (radius) -> {;
+        required = CauchyModulusAt(@real,radius);
+        required <= @offset ?: 0 ?_ (required-@offset+@stride-1)//@stride;
+    };
+    BuildCertifiedCauchy(TermFunction,TailFunction,ModulusFunction,options.Merge({=
+        name=CauchyOption(options,"name",:subsequence),
+        evidence={=
+            kind=:monotoneSubsequence,
+            property=:sameLimit,
+            stride=stride,
+            offset=offset,
+            sourceEvidence=real[:evidence]
+        },
+        provenance={=
+            plugin=:cauchy,
+            version=3,
+            source=:monotoneSubsequence,
+            stride=stride,
+            offset=offset,
+            parent=real[:provenance]
+        }
+    }));
+};
+
+CauchyDiagnose(real, options ?= {= }) -> {;
+    count = CauchyRequireCount(CauchyOption(options,"count",6),"Cauchy diagnosis count");
+    bare = real[:kind] == :bare;
+    sampledTerms = bare ?: CauchyTerms(real,0,count).Materialize() ?_ [];
+    sampledDifferences := [];
+    {@ index=2; index<=@sampledTerms.Len(); {;
+        @sampledDifferences = @sampledDifferences.Push((@sampledTerms[index]-@sampledTerms[index-1]).Abs());
+    }; index+=1 };
+    capabilities = real.NumericsCapabilities();
+    observationRecord = {= };
+    observationRecord["terms"] = sampledTerms;
+    observationRecord["successiveDifferences"] = sampledDifferences;
+    observationRecord["count"] = count;
+    .ImmutableValue({=
+        valueKind=:cauchyDiagnosis,
+        schema="rix.cauchy.diagnosis@1",
+        status=bare ?: :missingEffectiveTailInformation ?_ :effective,
+        certified=bare ?: _ ?_ capabilities[:certified],
+        sequence=real,
+        capabilities=capabilities,
+        observations=observationRecord,
+        required=bare ?: [:tailBound,:modulus] ?_ [],
+        diagnostics=bare
+          ?: [:finiteTermsDoNotProveCauchy,:missingCertifiedTailBound,:missingEffectiveModulus]
+          ?_ [],
+        evidence=bare
+          ?: {= level=:observed,property=:sampledSuccessiveDifferences,proof=_ }
+          ?_ real[:evidence]
     });
 };
 
@@ -5370,6 +6142,13 @@ cauchyNamespace._proto = {=
     Certified = (self, termFunction, tailFunction, modulusFunction, options ?= {= }) ->
         CauchyCertifiedConstructor(termFunction, tailFunction, modulusFunction, options),
     Geometric = (self, first, ratio, options ?= {= }) -> CauchyGeometricConstructor(first, ratio, options),
+    LimitProof = (self, tailFunction, modulusFunction, options ?= {= }) ->
+        CauchyLimitProof(tailFunction,modulusFunction,options),
+    Limit = (self, termFunction, proof, options ?= {= }) -> CauchyLimit(termFunction,proof,options),
+    Aitken = (self, real, proof, options ?= {= }) -> CauchyAitken(real,proof,options),
+    Subsequence = (self, real, stride ?= 2, offset ?= 0, options ?= {= }) ->
+        CauchySubsequence(real,stride,offset,options),
+    Diagnose = (self, real, options ?= {= }) -> CauchyDiagnose(real,options),
     Terms = (self, real, start ?= 0, count ?= 10) -> CauchyTerms(real, start, count),
     Funnel = (self, real, options ?= {= }) -> CauchyFunnel(real, options),
     Term = (self, real, index) -> CauchyTermAt(real, index),
@@ -5386,6 +6165,370 @@ cauchyNamespace._proto = {=
     ["Numerics", "Exact"]
 );
 `, sourcePath: "bundled:cauchy", kind: "rix" });
+  catalog.addMetadata({ id: "cayley", description: "Scalar-generic Cayley-Dickson values with certified component enclosures.", kind: "rix", mount: "cayley", exports: ["Provider", "Level", "Value", "BasisValue", "BasisProduct", "FromComplex", "FromExactAlgebra", "Components", "Conjugate", "NormSquared", "Inverse", "LeftDivide", "RightDivide", "Enclose", "Refine", "ZeroStatus", "Record", "VerifyMultiplication"], groups: ["Exact", "Numerics"], permissions: [], requires: ["rix.numerics@2", "rix.complex@1", "rix.exact-algebras@1"], provides: ["rix.cayley@2", "rix.enclosable-cayley@1"], schemas: ["rix.cayley.provider@1", "rix.cayley.level@1", "rix.cayley.value@1", "rix.cayley.enclosure@1", "rix.cayley.zero-status@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:cayley" }, { source: `/**
+id: cayley
+description: Scalar-generic Cayley-Dickson values with certified component enclosures.
+kind: rix
+mount: cayley
+exports: [Provider, Level, Value, BasisValue, BasisProduct, FromComplex, FromExactAlgebra, Components, Conjugate, NormSquared, Inverse, LeftDivide, RightDivide, Enclose, Refine, ZeroStatus, Record, VerifyMultiplication]
+groups: [Exact, Numerics]
+permissions: []
+requires: [rix.numerics@2, rix.complex@1, rix.exact-algebras@1]
+provides: [rix.cayley@2, rix.enclosable-cayley@1]
+schemas: [rix.cayley.provider@1, rix.cayley.level@1, rix.cayley.value@1, rix.cayley.enclosure@1, rix.cayley.zero-status@1]
+snapshot: false
+deterministic: true
+defaultEnabled: false
+**/
+
+CayleyExact(value) -> (value ? :Integer) || (value ? :Rational);
+CayleyCertifiedReal(value) -> {;
+    isCandidate=value ? :Map;
+    isCandidate ?: {;
+        capabilities=@value.NumericsCapabilities();
+        capabilities[:certified] && capabilities[:arbitraryRefinement] && capabilities[:denotation]==:singleton;
+    } ?_ _;
+};
+
+CayleyProvider(options ?= {= }) -> {;
+    name=options[:name] == _ ?: :certifiedReal ?_ options[:name];
+    can=options[:can] == _ ?: ((value)->(CayleyExact(value)||CayleyCertifiedReal(value))) ?_ options[:can];
+    division=options[:division] == _ ?: 1 ?_ options[:division];
+    provider={=
+        valueKind=:cayleyScalarProvider,
+        schema="rix.cayley.provider@1",
+        name=name,
+        central=options[:central] == _ ?: 1 ?_ options[:central],
+        commutative=options[:commutative] == _ ?: 1 ?_ options[:commutative],
+        certifiedSingleton=options[:certifiedSingleton] == _ ?: 1 ?_ options[:certifiedSingleton],
+        division=division,
+        can=can,
+        zero=options[:zero] == _ ?: 0 ?_ options[:zero],
+        one=options[:one] == _ ?: 1 ?_ options[:one]
+    };
+    provider._proto={=
+        Accepts=(self,value)->self[:can](value),
+        Record=(self)->{= schema=self[:schema],name=self[:name],central=self[:central],commutative=self[:commutative],certifiedSingleton=self[:certifiedSingleton],division=self[:division] }
+    };
+    .ImmutableValue(provider);
+};
+
+CayleyDefaultProvider=CayleyProvider();
+CayleyPow2(level) -> {; result:=1; {@ index=1;index<=@level;{; @result*=2; };index+=1}; result; };
+CayleyBasisNames(dimension) -> {; names:=[]; {@ index=0;index<@dimension;{; @names~=@names.Push(@"e@{index}"); };index+=1}; names; };
+CayleyLevel(level,provider ?= CayleyDefaultProvider) -> {;
+    valid=(level ? :Integer) && level>=1;
+    valid ?: _ ?_ .Error("Cayley level must be a positive Integer");
+    dimension=CayleyPow2(level);
+    canDivide=level<=3 && provider[:central] && provider[:commutative] && provider[:division];
+    value={=
+        valueKind=:cayleyLevel,schema="rix.cayley.level@1",level=level,dimension=dimension,
+        provider=provider,compositionAlgebra=level<=3,associative=level<=2,commutative=level<=1,
+        alternative=level<=3,division=canDivide
+    };
+    value._proto={=
+        Dimension=(self)->self[:dimension],
+        Basis=(self)->CayleyBasisNames(self[:dimension]),
+        Capabilities=(self)->{= compositionAlgebra=self[:compositionAlgebra],associative=self[:associative],commutative=self[:commutative],alternative=self[:alternative],inverse=self[:division],division=self[:division],componentEnclosure=self[:provider][:certifiedSingleton] },
+        Value=(self,components)->CayleyValue(self,components),
+        BasisValue=(self,index)->CayleyBasisValue(self,index),
+        Record=(self)->{= schema=self[:schema],level=self[:level],dimension=self[:dimension],provider=self[:provider].Record() }
+    };
+    .ImmutableValue(value);
+};
+
+CayleyIsLevel(value) -> (value ? :Map) && value[:valueKind]==:cayleyLevel;
+CayleyRequireLevel(value) -> CayleyIsLevel(value) ?: value ?_ .Error("Expected a Cayley level");
+CayleyIs(value) -> value ? :CayleyValue;
+CayleyRequire(value) -> CayleyIs(value) ?: value ?_ .Error("Expected a Cayley value");
+CayleyZeros(count,zero ?= 0) -> {; values:=[]; {@ index=1;index<=@count;{; @values~=@values.Push(@zero); };index+=1}; values; };
+CayleyConcat(left,right) -> {; values:=left.Map((x)->x); {@ index=1;index<=@right.Len();{; @values~=@values.Push(@right[index]); };index+=1}; values; };
+CayleyBackend = {>
+    (component) ?- [CayleyExact(component)] -> :Rational,
+    (component) ?- [(component ? :float) || (component ? :FloatIEEE754)] -> :float,
+    (component) ?- [component ? :Map] -> (component[:schema]==_ ?: :custom ?_ component[:schema]),
+    (component) -> :custom
+};
+
+CayleyValue(levelOrNumber,components,provenance ?= {= constructor=:components }) -> {;
+    level=CayleyIsLevel(levelOrNumber) ?: levelOrNumber ?_ CayleyLevel(levelOrNumber);
+    dimension=level[:dimension];
+    components.Len()<=dimension ?: _ ?_ .Error(@"Cayley level @{level[:level]} accepts at most @{dimension} components");
+    padded=CayleyConcat(components,CayleyZeros(dimension-components.Len(),level[:provider][:zero]));
+    {@ index=1;index<=@padded.Len();{;
+        @level[:provider].Accepts(@padded[index]) ?: _ ?_ .Error(@"Component @{index} is not accepted by scalar provider @{@level[:provider][:name]}");
+    };index+=1};
+    value={=
+        valueKind=:cayleyValue,schema="rix.cayley.value@1",level=level,dimension=dimension,
+        components=padded,componentBackends=padded.Map((component)->CayleyBackend(component)),
+        provenance=provenance,parenthesization=provenance[:parenthesization]
+    };
+    value.__type="CayleyValue"; value._type="cayley_value";
+    value._proto={=
+        Components=(self)->self[:components],
+        Conjugate=(self)->CayleyConjugate(self),
+        NormSquared=(self)->CayleyNormSquared(self),
+        Inverse=(self)->CayleyInverse(self),
+        LeftDivide=(self,divisor)->CayleyLeftDivide(self,divisor),
+        RightDivide=(self,divisor)->CayleyRightDivide(self,divisor),
+        Enclose=(self,request ?= {= })->CayleyEnclose(self,request,:enclose),
+        Refine=(self,request ?= {= })->CayleyEnclose(self,request,:refine),
+        ZeroStatus=(self,request ?= {= })->CayleyZeroStatus(self,request),
+        Parenthesization=(self)->self[:parenthesization],
+        Record=(self)->CayleyRecord(self)
+    };
+    .ImmutableValue(value ~!: :CayleyValue);
+};
+
+CayleyBasisValue(levelOrNumber,index) -> {;
+    level=CayleyIsLevel(levelOrNumber) ?: levelOrNumber ?_ CayleyLevel(levelOrNumber);
+    (index ? :Integer) && index>=0 && index<level[:dimension] ?: _ ?_ .Error("Basis index is outside the Cayley level");
+    values=CayleyZeros(level[:dimension],level[:provider][:zero]);
+    values[index+1]=level[:provider][:one];
+    CayleyValue(level,values,{= constructor=:basis,index=index });
+};
+
+CayleyConjugateComponents(components) -> {;
+    result:=[components[1]];
+    {@ index=2;index<=@components.Len();{; @result~=@result.Push(-@components[index]); };index+=1};
+    result;
+};
+CayleyAddComponents(left,right) -> {; result:=[]; {@ i=1;i<=@left.Len();{; @result~=@result.Push(@left[i]+@right[i]); };i+=1}; result; };
+CayleySubtractComponents(left,right) -> {; result:=[]; {@ i=1;i<=@left.Len();{; @result~=@result.Push(@left[i]-@right[i]); };i+=1}; result; };
+CayleyMultiplyRecursive(left,right) -> left.Len()==1 ?: [left[1]*right[1]] ?_ {;
+    half=@left.Len()//2; a=@left.Slice(1,half+1); b=@left.Slice(half+1); c=@right.Slice(1,half+1); d=@right.Slice(half+1);
+    CayleyConcat(
+        CayleySubtractComponents(CayleyMultiplyRecursive(a,c),CayleyMultiplyRecursive(CayleyConjugateComponents(d),b)),
+        CayleyAddComponents(CayleyMultiplyRecursive(d,a),CayleyMultiplyRecursive(b,CayleyConjugateComponents(c)))
+    );
+};
+
+CayleyMultiply2(a,b) -> [a[1]*b[1]-a[2]*b[2],a[1]*b[2]+a[2]*b[1]];
+CayleyMultiply4(a,b) -> [
+    a[1]*b[1]-a[2]*b[2]-a[3]*b[3]-a[4]*b[4],
+    a[1]*b[2]+a[2]*b[1]+a[3]*b[4]-a[4]*b[3],
+    a[1]*b[3]-a[2]*b[4]+a[3]*b[1]+a[4]*b[2],
+    a[1]*b[4]+a[2]*b[3]-a[3]*b[2]+a[4]*b[1]
+];
+CayleyMultiplySpecial(left,right) -> {;
+    dimension=left.Len();
+    dimension==2 ?: CayleyMultiply2(left,right)
+      ?_ dimension==4 ?: CayleyMultiply4(left,right)
+      ?_ dimension==8 ?: CayleyMultiplyRecursive(left,right)
+      ?_ CayleyMultiplyRecursive(left,right);
+};
+
+CayleyPromote(value,level) -> CayleyIs(value)
+    ?: (value[:level][:level]==level[:level] && value[:level][:provider][:name]==level[:provider][:name] ?: value ?_ .Error("Cayley operands have incompatible levels or scalar providers"))
+    ?_ CayleyValue(level,[value],{= constructor=:scalarEmbedding });
+CayleyPair(left,right) -> {;
+    source=CayleyIs(left) ?: left ?_ (CayleyIs(right) ?: right ?_ .Error("A Cayley operation needs a Cayley operand"));
+    {= left=CayleyPromote(left,source[:level]),right=CayleyPromote(right,source[:level]),level=source[:level] };
+};
+CayleyAdd(left,right) -> {; pair=CayleyPair(left,right); CayleyValue(pair[:level],CayleyAddComponents(pair[:left][:components],pair[:right][:components]),{= operation=:add,left=pair[:left],right=pair[:right],parenthesization=[:add,pair[:left][:parenthesization],pair[:right][:parenthesization]] }); };
+CayleySubtract(left,right) -> {; pair=CayleyPair(left,right); CayleyValue(pair[:level],CayleySubtractComponents(pair[:left][:components],pair[:right][:components]),{= operation=:subtract,left=pair[:left],right=pair[:right],parenthesization=[:subtract,pair[:left][:parenthesization],pair[:right][:parenthesization]] }); };
+CayleyMultiply(left,right) -> {; pair=CayleyPair(left,right); CayleyValue(pair[:level],CayleyMultiplySpecial(pair[:left][:components],pair[:right][:components]),{= operation=:multiply,left=pair[:left],right=pair[:right],parenthesization=[:multiply,pair[:left][:parenthesization],pair[:right][:parenthesization]] }); };
+CayleyNegate(value) -> {; exact=CayleyRequire(value); CayleyValue(exact[:level],exact[:components].Map((x)->-x),{= operation=:negate,source=exact }); };
+CayleyConjugate(value) -> {; exact=CayleyRequire(value); CayleyValue(exact[:level],CayleyConjugateComponents(exact[:components]),{= operation=:conjugate,source=exact }); };
+CayleyNormSquared(value) -> {; exact=CayleyRequire(value); total:=0; {@ i=1;i<=@exact[:dimension];{; @total+=@exact[:components][i]*@exact[:components][i]; };i+=1}; total; };
+CayleyInverse(value) -> {;
+    exact=CayleyRequire(value); exact[:level][:division] ?: _ ?_ .Error("This Cayley level/provider does not advertise total inversion");
+    status=CayleyZeroStatus(exact); status[:status]==:nonzero ?: _ ?_ .Error("Inverse requires certified nonzero evidence");
+    norm=CayleyNormSquared(exact); scaled=CayleyScaleComponents(CayleyConjugateComponents(exact[:components]),norm); CayleyValue(exact[:level],scaled,{= operation=:inverse,source=exact,evidence=status });
+};
+CayleyScaleComponents(components,divisor) -> components.Map((x)->x/divisor);
+CayleyLeftDivide(value,divisor) -> CayleyMultiply(CayleyInverse(divisor),value);
+CayleyRightDivide(value,divisor) -> CayleyMultiply(value,CayleyInverse(divisor));
+CayleyEqual(left,right) -> {; pair=CayleyPair(left,right); equal:=1; {@ i=1;i<=@pair[:level][:dimension]&&@equal;{; @pair[:left][:components][i]==@pair[:right][:components][i] ?: _ ?_ {; @equal=_; }; };i+=1}; equal; };
+
+CayleyComponentEnclose(component,request) -> {;
+    exact=component ~: :Rational;
+    exact!=_ ?: {= interval=exact:exact,certified=1,goalMet=1,status=:enclosed,work={= calls=0,iterations=0 } }
+      ?_ .numerics.Refine(component,request);
+};
+CayleyEnclose(value,rawRequest ?= {= },operation ?= :refine) -> {;
+    exact=CayleyRequire(value); request=.numerics.Request(rawRequest,operation); intervals:=[]; results:=[]; certified:=1; goalMet:=1; calls:=0; iterations:=0;
+    perWork=.Max(1,request[:work][:maxCalls]//exact[:dimension]);
+    {@ i=1;i<=@exact[:dimension];{;
+        result=CayleyComponentEnclose(@exact[:components][i],{= absoluteWidth=@request[:absoluteWidth],relativeWidth=@request[:relativeWidth],evidenceRequired=@request[:evidenceRequired],maxWork=@perWork,maxCalls=@perWork,maxIterations=@perWork,trace=@request[:trace] });
+        @results~=@results.Push(result); @intervals~=@intervals.Push(result[:interval]);
+        @certified~=@certified&&result[:certified]; @goalMet~=@goalMet&&result[:goalMet];
+        @calls+=result[:work][:calls]; @iterations+=result[:work][:iterations];
+    };i+=1};
+    {=
+        valueKind=:cayleyEnclosure,schema="rix.cayley.enclosure@1",status=goalMet?: :enclosed ?_ :budgetExhausted,
+        geometry=:componentBox,componentIntervals=intervals,componentResults=results,certified=certified,goalMet=goalMet,
+        level=exact[:level][:level],dimension=exact[:dimension],work={= calls=calls,iterations=iterations,maxCalls=request[:work][:maxCalls] },source=exact
+    };
+};
+CayleyZeroStatus(value,request ?= {= absoluteWidth=1/1000000,maxWork=1000 }) -> {;
+    exact=CayleyRequire(value); allExact:=1; anyNonzero:=_; allZero:=1;
+    {@ i=1;i<=@exact[:dimension];{; component=@exact[:components][i] ~: :Rational; component==_ ?:{; @allExact~=_; } ?_ (component!=0 ?:{; @anyNonzero~=1; @allZero~=_; } ?_ _); };i+=1};
+    status=anyNonzero ?: :nonzero ?_ (allExact&&allZero ?: :zero ?_ {;
+        box=CayleyEnclose(@exact,@request,:refine); separated:=_;
+        {@ i=1;i<=@box[:componentIntervals].Len()&&!@separated;{; interval=@box[:componentIntervals][i]; (interval.Lo()>0||interval.Hi()<0) ?:{; @separated~=1; } ?_ _; };i+=1};
+        separated ?: :nonzero ?_ :unknown;
+    });
+    {= valueKind=:cayleyZeroStatus,schema="rix.cayley.zero-status@1",status=status,certified=status!=:unknown,property=:originSeparation,source=exact };
+};
+
+CayleyBasisProduct(levelOrNumber,leftIndex,rightIndex) -> {;
+    level=CayleyIsLevel(levelOrNumber) ?: levelOrNumber ?_ CayleyLevel(levelOrNumber);
+    product=CayleyMultiply(CayleyBasisValue(level,leftIndex),CayleyBasisValue(level,rightIndex));
+    index:=0; coefficient:=0;
+    {@ i=1;i<=@product[:dimension];{; @product[:components][i]!=0 ?:{; @index=@i-1; @coefficient=@product[:components][@i]; } ?_ _; };i+=1};
+    {= left=leftIndex,right=rightIndex,index=index,coefficient=coefficient,dimension=level[:dimension] };
+};
+CayleyComponentsEqual(left,right) -> {; equal:=left.Len()==right.Len(); {@ i=1;i<=@left.Len()&&@equal;{; @left[i]==@right[i] ?: _ ?_ {; @equal~=_; }; };i+=1}; equal; };
+CayleyVerifyMultiplication(left,right) -> {; pair=CayleyPair(left,right); fast=CayleyMultiplySpecial(pair[:left][:components],pair[:right][:components]); recursive=CayleyMultiplyRecursive(pair[:left][:components],pair[:right][:components]); CayleyComponentsEqual(fast,recursive); };
+
+CayleyFromComplex(value,provider ?= CayleyDefaultProvider) -> {;
+    value ? :ComplexReal
+      ?: CayleyValue(CayleyLevel(1,provider),[value.Real(),value.Imaginary()],{= adapter=:rixComplex,source=value })
+      ?_ CayleyValue(CayleyLevel(1,provider),[value.Re(),value.Im()],{= adapter=:coreComplex,source=value });
+};
+CayleyFromExactAlgebra(value,provider ?= CayleyDefaultProvider) -> {;
+    value ? :ExactAlgebra ?: _ ?_ .Error("Expected an exact-algebras Quaternion or Octonion");
+    components=value.Components(); level=components.Len()==4 ?: 2 ?_ 3;
+    CayleyValue(CayleyLevel(level,provider),components,{= adapter=:exactAlgebras,source=value });
+};
+CayleyRecord(value) -> {; exact=CayleyRequire(value); {= schema=exact[:schema],level=exact[:level].Record(),components=exact[:components],componentBackends=exact[:componentBackends],provenance=exact[:provenance],parenthesization=exact[:parenthesization] }; };
+
+.TypeKnown(:CayleyValue) ?: _ ?_ .TypeRegister({=
+    name=:CayleyValue,nativeType=:map,defaultTraits=[:number],convertFrom={= map=(x) ?- [x[:valueKind]==:cayleyValue] -> x },validate=(value)->value[:schema]=="rix.cayley.value@1",proto={=
+        Components=(self)->self[:components],Conjugate=(self)->CayleyConjugate(self),NormSquared=(self)->CayleyNormSquared(self),
+        Inverse=(self)->CayleyInverse(self),LeftDivide=(self,divisor)->CayleyLeftDivide(self,divisor),RightDivide=(self,divisor)->CayleyRightDivide(self,divisor),
+        Enclose=(self,request ?= {= })->CayleyEnclose(self,request,:enclose),Refine=(self,request ?= {= })->CayleyEnclose(self,request,:refine),
+        ZeroStatus=(self,request ?= {= })->CayleyZeroStatus(self,request),Parenthesization=(self)->self[:parenthesization],Record=(self)->CayleyRecord(self)
+    },
+    installs={=
+        ADD=[{= name=:CayleyAdd,prep=(left,right)->CayleyIs(left)||CayleyIs(right),impl=CayleyAdd }],
+        SUB=[{= name=:CayleySubtract,prep=(left,right)->CayleyIs(left)||CayleyIs(right),impl=CayleySubtract }],
+        MUL=[{= name=:CayleyMultiply,prep=(left,right)->CayleyIs(left)||CayleyIs(right),impl=CayleyMultiply }],
+        DIV=[{= name=:CayleyRightDivision,prep=(left,right)->CayleyIs(left)&&CayleyIs(right),impl=CayleyRightDivide }],
+        NEG=[{= name=:CayleyNegate,prep=(value)->CayleyIs(value),impl=CayleyNegate }],
+        EQ=[{= name=:CayleyEqual,prep=(left,right)->CayleyIs(left)||CayleyIs(right),impl=(left,right)->(CayleyEqual(left,right) ?: 1 ?_ _) }],
+        NEQ=[{= name=:CayleyNotEqual,prep=(left,right)->CayleyIs(left)||CayleyIs(right),impl=(left,right)->(CayleyEqual(left,right) ?: _ ?_ 1) }]
+    }
+});
+.TypeInstall(:CayleyValue);
+
+cayleyNamespace={= };
+cayleyNamespace._proto={=
+    Provider=(self,options ?= {= })->CayleyProvider(options),Level=(self,level,provider ?= CayleyDefaultProvider)->CayleyLevel(level,provider),
+    Value=(self,level,components,provenance ?= {= constructor=:components })->CayleyValue(level,components,provenance),
+    BasisValue=(self,level,index)->CayleyBasisValue(level,index),BasisProduct=(self,level,left,right)->CayleyBasisProduct(level,left,right),
+    FromComplex=(self,value,provider ?= CayleyDefaultProvider)->CayleyFromComplex(value,provider),
+    FromExactAlgebra=(self,value,provider ?= CayleyDefaultProvider)->CayleyFromExactAlgebra(value,provider),
+    Components=(self,value)->CayleyRequire(value)[:components],Conjugate=(self,value)->CayleyConjugate(value),NormSquared=(self,value)->CayleyNormSquared(value),
+    Inverse=(self,value)->CayleyInverse(value),LeftDivide=(self,value,divisor)->CayleyLeftDivide(value,divisor),RightDivide=(self,value,divisor)->CayleyRightDivide(value,divisor),
+    Enclose=(self,value,request ?= {= })->CayleyEnclose(value,request,:enclose),Refine=(self,value,request ?= {= })->CayleyEnclose(value,request,:refine),
+    ZeroStatus=(self,value,request ?= {= absoluteWidth=1/1000000,maxWork=1000 })->CayleyZeroStatus(value,request),
+    Record=(self,value)->CayleyRecord(value),
+    VerifyMultiplication=(self,left,right)->CayleyVerifyMultiplication(left,right)
+};
+.Host.RegisterValue("cayley",cayleyNamespace,"Scalar-generic certified Cayley-Dickson values",["Exact","Numerics"]);
+`, sourcePath: "bundled:cayley", kind: "rix" });
+  catalog.addMetadata({ id: "combinatorics", description: "Lazy finite Cartesian products, permutations, combinations, and exact counting.", kind: "rix", mount: "combinatorics", aliases: ["comb"], exports: ["CartesianPower", "Permutations", "Combinations", "CountPermutations", "CountCombinations"], groups: ["Combinatorics", "Algorithms", "Exact"], permissions: [], provides: ["rix.combinatorics@1"], schemas: [], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:combinatorics" }, { source: `/**
+id: combinatorics
+description: Lazy finite Cartesian products, permutations, combinations, and exact counting.
+kind: rix
+mount: combinatorics
+aliases: [comb]
+exports: [CartesianPower, Permutations, Combinations, CountPermutations, CountCombinations]
+groups: [Combinatorics, Algorithms, Exact]
+permissions: []
+provides: [rix.combinatorics@1]
+schemas: []
+snapshot: true
+deterministic: true
+defaultEnabled: false
+**/
+
+CombInteger(value,label,minimum ?= 0) -> {;
+    exact=value ~!: :Integer;
+    exact!=_&&exact>=minimum ?: exact ?_ .Error(@"@{label} must be an Integer at least @{minimum}");
+};
+
+CombValues(value,label ?= "Combinatorics values") ->
+    value ? :Array ?: value ?_ .Error(@"@{label} must be an Array");
+
+CombCartesianValue(values,count,index) -> {;
+    offset:=index-1;result:=[];base=values.Len();
+    {@ position=1;position<=@count;{;
+        digit=(@offset%@base)+1;@result~=@result.Unshift(@values[digit]);@offset~=@offset//@base;
+    };position+=1};
+    result;
+};
+
+CombCartesianPower(valuesValue,countValue,options ?= {= }) -> {;
+    values=CombValues(valuesValue,"CartesianPower values");count=CombInteger(countValue,"CartesianPower count");
+    values.Len()>0||count==0 ?: _ ?_ .Error("CartesianPower needs at least one source value when count is positive");
+    total=values.Len()^count;maxOutcomes=options[:maxOutcomes]==_ ?: 1000000 ?_ CombInteger(options[:maxOutcomes],"CartesianPower maxOutcomes",1);
+    total<=maxOutcomes ?: _ ?_ .Error(@"CartesianPower has @{total} outcomes, exceeding maxOutcomes @{maxOutcomes}");
+    indices=[1 |+ 1 |^ (count==0 ?: 1 ?_ total)];
+    indices |>> (index)->count==0 ?: [] ?_ CombCartesianValue(@values,@count,index);
+};
+
+CombPermutationValue(values,count,index) -> {;
+    pool:=values.Map((value)->value);rank:=index-1;result:=[];n=values.Len();
+    {@ position=1;position<=@count;{;
+        block=CombCountPermutations(@n-position,@count-position);choice=(@rank//block)+1;
+        @rank~=@rank%block;@result~=@result.Push(@pool[choice]);@pool~=@pool.RemoveAt(choice);
+    };position+=1};
+    result;
+};
+
+CombPermutations(valuesValue,countValue ?= _,options ?= {= }) -> {;
+    values=CombValues(valuesValue,"Permutations values");count=countValue==_ ?: values.Len() ?_ CombInteger(countValue,"Permutations count");
+    count<=values.Len() ?: _ ?_ .Error("Permutations count cannot exceed the number of values");
+    total=CombCountPermutations(values.Len(),count);maxOutcomes=options[:maxOutcomes]==_ ?: 1000000 ?_ CombInteger(options[:maxOutcomes],"Permutations maxOutcomes",1);
+    total<=maxOutcomes ?: _ ?_ .Error(@"Permutations has @{total} outcomes, exceeding maxOutcomes @{maxOutcomes}");
+    indices=[1 |+ 1 |^ total];indices |>> (index)->CombPermutationValue(@values,@count,index);
+};
+
+CombCombinationValue(values,count,index) -> {;
+    rank:=index-1;start:=1;result:=[];n=values.Len();
+    {@ position=1;position<=@count;{;
+        candidate:=@start;chosen:=_;
+        {@ scan=1;@chosen==_&&@candidate<=@n-(@count-@position);{;
+            block=CombCountCombinations(@n-@candidate,@count-@position);
+            @rank<block ?: {; @chosen~=@candidate; } ?_ {; @rank-=@block;@candidate+=1; };
+        };scan+=1};
+        chosen!=_ ?: _ ?_ .Error("Combination rank is outside the finite space");
+        @result~=@result.Push(@values[chosen]);@start~=chosen+1;
+    };position+=1};
+    result;
+};
+
+CombCombinations(valuesValue,countValue,options ?= {= }) -> {;
+    values=CombValues(valuesValue,"Combinations values");count=CombInteger(countValue,"Combinations count");
+    count<=values.Len() ?: _ ?_ .Error("Combinations count cannot exceed the number of values");
+    total=CombCountCombinations(values.Len(),count);maxOutcomes=options[:maxOutcomes]==_ ?: 1000000 ?_ CombInteger(options[:maxOutcomes],"Combinations maxOutcomes",1);
+    total<=maxOutcomes ?: _ ?_ .Error(@"Combinations has @{total} outcomes, exceeding maxOutcomes @{maxOutcomes}");
+    indices=[1 |+ 1 |^ total];indices |>> (index)->CombCombinationValue(@values,@count,index);
+};
+
+CombCountPermutations(nValue,kValue ?= _) -> {;
+    n=CombInteger(nValue,"CountPermutations n");k=kValue==_ ?: n ?_ CombInteger(kValue,"CountPermutations k");
+    k<=n ?: n!/(n-k)! ?_ 0;
+};
+
+CombCountCombinations(nValue,kValue) -> {;
+    n=CombInteger(nValue,"CountCombinations n");k=CombInteger(kValue,"CountCombinations k");
+    k<=n ?: n!/(k!*(n-k)!) ?_ 0;
+};
+
+combinatoricsNamespace={= };
+combinatoricsNamespace._proto={=
+    CartesianPower=(self,values,count,options ?= {= })->CombCartesianPower(values,count,options),
+    Permutations=(self,values,count ?= _,options ?= {= })->CombPermutations(values,count,options),
+    Combinations=(self,values,count,options ?= {= })->CombCombinations(values,count,options),
+    CountPermutations=(self,n,k ?= _)->CombCountPermutations(n,k),
+    CountCombinations=(self,n,k)->CombCountCombinations(n,k)
+};
+.Host.RegisterValue("combinatorics",combinatoricsNamespace,"Lazy finite combinatorial enumeration and exact counting",["Combinatorics","Algorithms","Exact"]);
+`, sourcePath: "bundled:combinatorics", kind: "rix" });
   catalog.addMetadata({ id: "complex", description: "Representation-generic certified complex singletons over RiX real backends.", kind: "rix", mount: "complex", exports: ["FromParts", "Real", "Imaginary", "Conjugate", "NormSquared", "ZeroStatus", "Enclose", "Refine", "Exp", "Sin", "Cos", "Log", "LogResult", "Sqrt", "SqrtResult", "Record", "Capabilities", "Rectangle", "Disc", "Union", "FromSingleton", "BoundingRectangle", "RegionImage", "Subdivide", "AnalyzeBoundary"], groups: ["Numerics", "Exact"], permissions: [], requires: ["rix.numerics@1"], provides: ["rix.complex@1", "rix.complex@2", "rix.enclosable-complex@1", "rix.complex-region@1"], schemas: ["rix.complex.real@1", "rix.complex.capabilities@1", "rix.complex.enclosure@1", "rix.complex.zero-status@1", "rix.complex.function-result@1", "rix.complex.region@1", "rix.complex.region-analysis@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:complex" }, { source: `/**
 id: complex
 description: Representation-generic certified complex singletons over RiX real backends.
@@ -6119,30 +7262,55 @@ CVPalette(sector, band) -> {;
     band == :small ?: small[sector + 1] ?_ band == :medium ?: medium[sector + 1] ?_ large[sector + 1];
 };
 
-CVEnclosureColor(enclosure) -> {;
+CVScaleColor(scale,value) -> {;
+    scale ? :Map ?: _ ?_ .Error("complexViz colorScale must be a map");
+    scale[:schema]=="rix.color-scale@1" ?: _ ?_ .Error("complexViz colorScale must use schema rix.color-scale@1");
+    colors=scale[:colors];
+    colors ? :Array ?: _ ?_ .Error("complexViz colorScale colors must be an Array");
+    colors.Len()>=2 ?: _ ?_ .Error("complexViz colorScale requires at least two colors");
+    minimum=scale[:minimum]==_ ?: 0 ?_ scale[:minimum];
+    maximum=scale[:maximum]==_ ?: 4 ?_ scale[:maximum];
+    minimum<maximum ?: _ ?_ .Error("complexViz colorScale bounds must increase");
+    magnitude=.Complex.NormSquared(value) ~!: :Rational;
+    magnitude<=minimum ?: scale[:underflow]
+      ?_ magnitude>=maximum ?: scale[:overflow]
+      ?_ scale[:kind]==:continuous
+           ?: {;
+               hues=@scale[:hueRange];
+               hue=hues[1]+(@magnitude-@minimum)/(@maximum-@minimum)*(hues[2]-hues[1]);
+               @"hsl(@{hue//1}, 80%, 50%)";
+           }
+           ?_ {;
+               index=((@magnitude-@minimum)/(@maximum-@minimum)*(@colors.Len()-1))//1+1;
+               @colors[.Max(1,.Min(@colors.Len(),index))];
+           };
+};
+
+CVExactColor(value,scale ?= _) -> scale==_
+  ?: {; sector=CVPhaseSector(@value); sector==:zero ?: "#111827" ?_ CVPalette(sector,CVMagnitudeBand(@value)); }
+  ?_ CVScaleColor(scale,value);
+
+CVEnclosureColor(enclosure,scale ?= _) -> {;
     real=enclosure[:realInterval]; imaginary=enclosure[:imaginaryInterval];
     corners=[
         .Complex.FromParts(real.Low(),imaginary.Low()),.Complex.FromParts(real.Low(),imaginary.High()),
         .Complex.FromParts(real.High(),imaginary.Low()),.Complex.FromParts(real.High(),imaginary.High())
     ];
-    colors=corners.Map((corner)->{; sector=CVPhaseSector(corner); sector==:zero ?: "#111827" ?_ CVPalette(sector,CVMagnitudeBand(corner)); });
+    colors=corners.Map((corner)->CVExactColor(corner,@scale));
     selected=colors[1]; stable:=1;
     {@ index=2;index<=@colors.Len()&&@stable;{; @colors[index]==@selected ?: _ ?_ {; @stable=_; }; };index+=1};
     stable ?: selected ?_ "#64748b";
 };
 
-CVColor(sampleValue) -> {;
+CVColor(sampleValue,scale ?= _) -> {;
     sample = CVNormalizeSample(sampleValue);
     sample[:status] == :pole
       ?: "#ffffff"
       ?_ sample[:status] == :unresolved
            ?: "#64748b"
            ?_ sample[:status] == :enclosure
-                ?: CVEnclosureColor(sample[:enclosure])
-           ?_ {;
-               sector = CVPhaseSector(@sample[:value]);
-               sector == :zero ?: "#111827" ?_ CVPalette(sector, CVMagnitudeBand(@sample[:value]));
-           };
+                ?: CVEnclosureColor(sample[:enclosure],scale)
+           ?_ CVExactColor(sample[:value],scale);
 };
 
 CVCayleyColor(value) -> {;
@@ -6171,6 +7339,7 @@ CVDomainColoring(spec) -> {;
     columns = CVPositiveInteger(resolution[1], "DomainColoring columns");
     rows = CVPositiveInteger(resolution[2], "DomainColoring rows");
     size = CVOption(spec, "size", [360, 360]);
+    paletteSpec = CVOption(spec, "colorscale", _);
     cellWidth = size[1] / columns;
     cellHeight = size[2] / rows;
     reStep = (re[2] - re[1]) / columns;
@@ -6188,7 +7357,7 @@ CVDomainColoring(spec) -> {;
             sample[:status] == :pole ?: {; @poles += 1; } ?_ _;
             sample[:status] == :unresolved ?: {; @unresolved += 1; } ?_ _;
             (sample[:status] == :value && .Complex.NormSquared(sample[:value]) == 0) ?: {; @zeros += 1; } ?_ _;
-            color = CVColor(sample);
+            color = CVColor(sample,@paletteSpec);
             @children ~= @children.Push(.Graphics.Rectangle(
                 [(column - 1) * @cellWidth, (@row - 1) * @cellHeight],
                 [@cellWidth, @cellHeight],
@@ -6205,6 +7374,7 @@ CVDomainColoring(spec) -> {;
         poleColor="#ffffff",
         unresolvedColor="#64748b",
         zeroColor="#111827",
+        colorScale=paletteSpec,
         domain=domain,
         resolution=resolution,
         samples=rows * columns,
@@ -6284,18 +7454,18 @@ complexVizNamespace._proto = {=
 };
 .Host.RegisterValue("complexViz", complexVizNamespace, "Certified complex coloring, surfaces, and Riemann-sphere scenes", ["Graphics", "Exact", "Algebra"]);
 `, sourcePath: "bundled:complex-viz", kind: "rix" });
-  catalog.addMetadata({ id: "continued-fraction", description: "Finite, lazy, transduced, and certified-extracted simple continued fractions.", kind: "rix", mount: "continuedFraction", aliases: ["cf"], exports: ["Finite", "Lazy", "Periodic", "Sqrt2", "Sqrt", "NthRoot", "FromRational", "FromRefinable", "Coefficient", "CoefficientResult", "Coefficients", "Convergent", "Convergents", "Enclosure", "ErrorInterval", "QuadraticForm", "BestApproximation", "Translate", "Reciprocal", "ZeroStatus", "Record"], groups: ["Numerics", "Exact"], permissions: [], requires: ["rix.oracle@1"], provides: ["rix.continued-fraction@1", "rix.refinable@1", "rix.enclosable-real@1"], schemas: ["rix.continued-fraction.finite@1", "rix.continued-fraction.lazy@1", "rix.continued-fraction.gosper@1", "rix.continued-fraction.extractor@1", "rix.continued-fraction.coefficient-result@1", "rix.continued-fraction.arithmetic-real@1", "rix.continued-fraction.quadratic-form@1", "rix.continued-fraction.best-approximation@1", "rix.continued-fraction.zero-status@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:continued-fraction" }, { source: `/**
+  catalog.addMetadata({ id: "continued-fraction", description: "Finite, lazy, transduced, and certified-extracted simple continued fractions.", kind: "rix", mount: "continuedFraction", aliases: ["cf"], exports: ["Finite", "Lazy", "Periodic", "GeneralizedFinite", "Sqrt2", "Sqrt", "NthRoot", "FromRational", "FromRefinable", "Coefficient", "CoefficientResult", "Coefficients", "Convergent", "Convergents", "Enclosure", "ErrorInterval", "QuadraticForm", "BestApproximation", "Translate", "Reciprocal", "ZeroStatus", "Record"], groups: ["Numerics", "Exact"], permissions: [], requires: ["rix.oracle@1"], provides: ["rix.continued-fraction@1", "rix.refinable@1", "rix.enclosable-real@1"], schemas: ["rix.continued-fraction.finite@1", "rix.continued-fraction.lazy@1", "rix.continued-fraction.generalized-finite@1", "rix.continued-fraction.generalized-result@1", "rix.continued-fraction.generalized-normalization@1", "rix.continued-fraction.gosper@1", "rix.continued-fraction.extractor@1", "rix.continued-fraction.coefficient-result@1", "rix.continued-fraction.arithmetic-real@1", "rix.continued-fraction.quadratic-form@1", "rix.continued-fraction.best-approximation@1", "rix.continued-fraction.zero-status@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:continued-fraction" }, { source: `/**
 id: continued-fraction
 description: Finite, lazy, transduced, and certified-extracted simple continued fractions.
 kind: rix
 mount: continuedFraction
 aliases: [cf]
-exports: [Finite, Lazy, Periodic, Sqrt2, Sqrt, NthRoot, FromRational, FromRefinable, Coefficient, CoefficientResult, Coefficients, Convergent, Convergents, Enclosure, ErrorInterval, QuadraticForm, BestApproximation, Translate, Reciprocal, ZeroStatus, Record]
+exports: [Finite, Lazy, Periodic, GeneralizedFinite, Sqrt2, Sqrt, NthRoot, FromRational, FromRefinable, Coefficient, CoefficientResult, Coefficients, Convergent, Convergents, Enclosure, ErrorInterval, QuadraticForm, BestApproximation, Translate, Reciprocal, ZeroStatus, Record]
 groups: [Numerics, Exact]
 permissions: []
 requires: [rix.oracle@1]
 provides: [rix.continued-fraction@1, rix.refinable@1, rix.enclosable-real@1]
-schemas: [rix.continued-fraction.finite@1, rix.continued-fraction.lazy@1, rix.continued-fraction.gosper@1, rix.continued-fraction.extractor@1, rix.continued-fraction.coefficient-result@1, rix.continued-fraction.arithmetic-real@1, rix.continued-fraction.quadratic-form@1, rix.continued-fraction.best-approximation@1, rix.continued-fraction.zero-status@1]
+schemas: [rix.continued-fraction.finite@1, rix.continued-fraction.lazy@1, rix.continued-fraction.generalized-finite@1, rix.continued-fraction.generalized-result@1, rix.continued-fraction.generalized-normalization@1, rix.continued-fraction.gosper@1, rix.continued-fraction.extractor@1, rix.continued-fraction.coefficient-result@1, rix.continued-fraction.arithmetic-real@1, rix.continued-fraction.quadratic-form@1, rix.continued-fraction.best-approximation@1, rix.continued-fraction.zero-status@1]
 snapshot: false
 deterministic: true
 defaultEnabled: false
@@ -6909,9 +8079,18 @@ CFFromRefinable(value, options ?= {= }) -> {;
 
 CFConstruct(value, options ?= {= }) -> {;
     alreadyContinuedFraction = value ? :Map ?: value[:valueKind] == :continuedFraction ?_ _;
+    fractionAdapter = (value ? :Map) && value[:schema] == "rix.fraction.continued-fraction@1";
     alreadyContinuedFraction
       ?: value
-      ?_ (value ? :Array ?: CFFinite(value, options) ?_ CFFromRational(value, options));
+      ?_ (fractionAdapter
+           ?: CFFinite(value[:coefficients], options.Merge({=
+               evidence={=
+                   kind=:fractionContinuedFractionAdapter,
+                   property=:exactRationalValue,
+                   source=value[:componentProvenance]
+               }
+           }))
+           ?_ (value ? :Array ?: CFFinite(value, options) ?_ CFFromRational(value, options)));
 };
 
 CFRequireCoefficientStream(real, label ?= "Continued-fraction operation") -> {;
@@ -8138,6 +9317,164 @@ CFArithmetic(operation, left, right ?= _) -> {;
                      ?_ CFOracleArithmetic(operation,left,right))));
 };
 
+GCFExact(value, label) -> {;
+    ((value ? :Integer) || (value ? :Rational))
+      ?: value ~!: :Rational
+      ?_ .Error(@"@{label} must be an exact Integer or Rational");
+};
+
+GCFConvergentResult(real, countValue) -> {;
+    count = CFRequireCount(countValue,"Generalized continued-fraction convergent count");
+    count <= real[:length]+1
+      ?: _
+      ?_ .Error("Generalized continued-fraction convergent count exceeds the finite representation");
+    previousNumerator := 1;
+    numerator := real[:integerPart];
+    previousDenominator := 0;
+    denominator := 1;
+    singularIndex := _;
+    {@ index=1; index < @count && @singularIndex == _; {;
+        partialNumerator = (@real[:numerators])[index];
+        partialDenominator = (@real[:denominators])[index];
+        nextNumerator = partialDenominator*@numerator + partialNumerator*@previousNumerator;
+        nextDenominator = partialDenominator*@denominator + partialNumerator*@previousDenominator;
+        @previousNumerator = @numerator;
+        @numerator = nextNumerator;
+        @previousDenominator = @denominator;
+        @denominator = nextDenominator;
+        @singularIndex = nextDenominator == 0 ?: index ?_ _;
+    }; index+=1 };
+    singular = singularIndex != _;
+    .ImmutableValue({=
+        valueKind=:generalizedContinuedFractionResult,
+        schema="rix.continued-fraction.generalized-result@1",
+        status=singular ?: :denominatorZero ?_ :exact,
+        count=count,
+        numerator=numerator,
+        denominator=denominator,
+        value=singular ?: _ ?_ numerator/denominator,
+        certified=singular ?: _ ?_ 1,
+        reason=singular ?: :convergentDenominatorNotSeparatedFromZero ?_ :exactFiniteRecurrence,
+        singularIndex=singularIndex,
+        evidence={=
+            kind=:generalizedContinuantRecurrence,
+            property=singular ?: :zeroDenominatorWitness ?_ :exactRationalConvergent,
+            numerator=numerator,
+            denominator=denominator
+        }
+    });
+};
+
+GCFConvergent(real, count) -> {;
+    result = GCFConvergentResult(real,count);
+    result[:status] == :exact
+      ?: result[:value]
+      ?_ .Error(@"Generalized continued-fraction convergent denominator is zero at index @{result[:singularIndex]}");
+};
+
+GCFConvergents(real) -> {;
+    values := [];
+    {@ count=1; count<=@real[:length]+1; {;
+        @values = @values.Push(GCFConvergent(@real,count));
+    }; count+=1 };
+    values;
+};
+
+GCFNormalize(real) -> {;
+    result = GCFConvergentResult(real,real[:length]+1);
+    result[:status] == :exact
+      ?: _
+      ?_ .Error("Generalized continued-fraction normalization requires a finite value with every convergent denominator nonzero");
+    normalized = CFFromRational(result[:value],{= name=:normalizedGeneralized });
+    .ImmutableValue({=
+        valueKind=:generalizedContinuedFractionNormalization,
+        schema="rix.continued-fraction.generalized-normalization@1",
+        source=real,
+        normalized=normalized,
+        coefficients=normalized[:coefficients],
+        value=result[:value],
+        certified=1,
+        rule=:exactFiniteRegularization,
+        evidence={=
+            kind=:continuantEvaluation,
+            property=:sameExactRationalValue,
+            generalized=result[:evidence],
+            regular=normalized[:evidence]
+        }
+    });
+};
+
+GCFZeroStatus(real) -> {;
+    result = GCFConvergentResult(real,real[:length]+1);
+    exact = result[:status] == :exact;
+    value = exact ?: result[:value] ?_ _;
+    .ImmutableValue({=
+        valueKind=:continuedFractionZeroStatus,
+        schema="rix.continued-fraction.zero-status@1",
+        status=exact ?: (value == 0 ?: :zero ?_ :nonzero) ?_ :unknown,
+        certified=exact ?: 1 ?_ _,
+        sign=exact ?: (value < 0 ?: :negative ?_ (value > 0 ?: :positive ?_ :zero)) ?_ :unknown,
+        reason=exact ?: :exactGeneralizedFiniteValue ?_ result[:reason],
+        evidence=result[:evidence]
+    });
+};
+
+GCFAttachProtocol(real) -> {;
+    real._proto = {=
+        ConvergentResult=(self,count)->GCFConvergentResult(self,count),
+        Convergent=(self,count)->GCFConvergent(self,count),
+        Convergents=(self)->GCFConvergents(self),
+        Value=(self)->GCFConvergent(self,self[:length]+1),
+        Normalize=(self)->GCFNormalize(self),
+        Regularize=(self)->GCFNormalize(self)[:normalized],
+        ZeroStatus=(self)->GCFZeroStatus(self),
+        Record=(self)->{=
+            valueKind=self[:valueKind],schema=self[:schema],kind=self[:kind],
+            integerPart=self[:integerPart],numerators=self[:numerators],
+            denominators=self[:denominators],length=self[:length],
+            normalization=:exactFiniteRegularization,evidence=self[:evidence]
+        }
+    };
+    .ImmutableValue(real);
+};
+
+GCFGeneralizedFinite(integerPartValue, numeratorsValue, denominatorsValue, options ?= {= }) -> {;
+    numeratorsValue ? :Array
+      ?: _ ?_ .Error("GeneralizedFinite numerators must be an Array");
+    denominatorsValue ? :Array
+      ?: _ ?_ .Error("GeneralizedFinite denominators must be an Array");
+    length = numeratorsValue.Len();
+    length == denominatorsValue.Len()
+      ?: _ ?_ .Error("GeneralizedFinite numerator and denominator arrays must have equal length");
+    exactNumerators := [];
+    exactDenominators := [];
+    {@ index=1; index<=@length; {;
+        numerator = GCFExact((@numeratorsValue)[index],@"Generalized numerator @{index}");
+        numerator != 0
+          ?: _ ?_ .Error(@"Generalized numerator @{index} must be nonzero; a zero numerator terminates the representation");
+        @exactNumerators = @exactNumerators.Push(numerator);
+        @exactDenominators = @exactDenominators.Push(
+            GCFExact((@denominatorsValue)[index],@"Generalized denominator @{index}")
+        );
+    }; index+=1 };
+    GCFAttachProtocol({=
+        valueKind=:generalizedContinuedFraction,
+        schema="rix.continued-fraction.generalized-finite@1",
+        kind=:generalizedFinite,
+        name=CFOption(options,"name",:generalizedFinite),
+        integerPart=GCFExact(integerPartValue,"Generalized integer part"),
+        numerators=exactNumerators,
+        denominators=exactDenominators,
+        length=length,
+        evidence={=
+            kind=:finiteGeneralizedContinuedFraction,
+            property=:exactContinuantRecurrence,
+            coefficientPolicy=:signedExactRationals,
+            zeroPolicy=:explicitConvergentDenominatorCheck
+        }
+    });
+};
+
 .TypeKnown(:ContinuedFractionReal) ?: _ ?_ .TypeRegister({=
     name=:ContinuedFractionReal,
     nativeType=:map,
@@ -8203,6 +9540,8 @@ continuedFractionNamespace._proto = {=
     Finite = (self, coefficients, options ?= {= }) -> CFFinite(coefficients, options),
     Lazy = (self, coefficientFunction, options ?= {= }) -> CFLazy(coefficientFunction, options),
     Periodic = (self, prefix, period, options ?= {= }) -> CFPeriodic(prefix, period, options),
+    GeneralizedFinite = (self, integerPart, numerators, denominators, options ?= {= }) ->
+        GCFGeneralizedFinite(integerPart,numerators,denominators,options),
     Sqrt2 = (self) -> CFSqrt2(),
     Sqrt = (self, value, options ?= {= }) -> CFSquareRoot(value, options),
     NthRoot = (self, value, degree ?= 2, options ?= {= }) -> CFNthRoot(value, degree, options),
@@ -8232,11 +9571,11 @@ continuedFractionNamespace._proto = {=
 `, sourcePath: "bundled:continued-fraction", kind: "rix" });
   catalog.addMetadata({ id: "csv", description: "Schema-aware CSV/TSV import and export with exact numeric, sidecar, and streaming-row policies.", kind: "host", mount: "csv", exports: ["Render", "Parse", "ParseStream", "Collect", "Sidecar"], groups: ["Renderers", "Data"], permissions: [], provides: ["rix.renderer.csv@1", "rix.renderer.csv@2", "rix.csv.import@1", "rix.csv.sidecar@1"], schemas: ["rix.csv.import@1", "rix.csv.sidecar@1", "rix.data.relation@1", "rix.data.row-source@1"], targets: ["csv", "text/csv", "tsv", "text/tab-separated-values"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], operatorFiles: [], ignore: false, sourcePath: "bundled:csv" }, { sourcePath: "bundled:csv", kind: "host" });
   catalog.registerInstaller("csv", install18);
-  catalog.addMetadata({ id: "data", description: "Immutable typed relations with joins, grouping, exact aggregation, missing-data policy, and bounded row sources.", kind: "host", mount: "data", exports: ["Relation", "Project", "Rename", "Distinct", "Filter", "Sort", "Join", "Group", "Aggregate", "Frequency", "Contingency", "Calculate", "Missing", "RowSource", "Collect", "TableView", "Schema", "Rows"], groups: ["Data"], permissions: [], provides: ["rix.data.relation@1", "rix.data.groups@1", "rix.data.contingency@1", "rix.data.row-source@1"], schemas: ["rix.data.relation@1", "rix.data.groups@1", "rix.data.contingency@1", "rix.data.row-source@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:data" }, { sourcePath: "bundled:data", kind: "host" });
+  catalog.addMetadata({ id: "data", description: "Immutable typed relations with exact aggregation, bounded row sources, and deterministic tagged JSONL interchange.", kind: "host", mount: "data", exports: ["Relation", "Project", "Rename", "Distinct", "Filter", "Sort", "Join", "Group", "Aggregate", "Frequency", "Contingency", "Calculate", "Missing", "RowSource", "ParseJSONL", "RenderJSONL", "Collect", "TableView", "Schema", "Rows"], groups: ["Data"], permissions: [], provides: ["rix.data.relation@1", "rix.data.groups@1", "rix.data.contingency@1", "rix.data.row-source@1"], schemas: ["rix.data.relation@1", "rix.data.groups@1", "rix.data.contingency@1", "rix.data.row-source@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:data" }, { sourcePath: "bundled:data", kind: "host" });
   catalog.registerInstaller("data", install4);
   catalog.addMetadata({ id: "document", description: "Portable report templates with citations, assets, numbering policies, and safe target-specific nodes.", kind: "host", mount: "document", exports: ["Report", "Label", "Ref", "Theme", "References", "Bibliography", "Citation", "AssetManifest", "Asset", "Numbering", "Header", "Footer", "Template", "ApplyTemplate", "TargetMarkup"], groups: ["Documents"], permissions: [], provides: ["rix.document.report@1", "rix.document.report@2", "rix.document.template@1", "rix.document.assets@1"], schemas: ["rix.document.report@1", "rix.document.theme@1", "rix.document.bibliography@1", "rix.document.citation@1", "rix.document.assets@1", "rix.document.numbering@1", "rix.document.template@1", "rix.document.target-markup@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:document" }, { sourcePath: "bundled:document", kind: "host" });
   catalog.registerInstaller("document", install5);
-  catalog.addMetadata({ id: "draw", description: "Convenient 2D drawing helpers that produce core Graphics nodes.", kind: "host", mount: "draw", exports: ["Line", "Polyline", "Polygon", "Arrow", "Arc", "Ellipse", "Dimension", "Grid", "Label", "Box", "Circle", "Style", "Viewport", "ViewportPoint", "Bounds", "Anchor"], groups: ["Draw"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], provides: [], schemas: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:draw" }, { sourcePath: "bundled:draw", kind: "host" });
+  catalog.addMetadata({ id: "draw", description: "Convenient 2D drawing helpers that produce core Graphics nodes.", kind: "host", mount: "draw", exports: ["Line", "Polyline", "Polygon", "Arrow", "Arc", "Ellipse", "Dimension", "Grid", "Label", "Box", "Circle", "Style", "Viewport", "ViewportPoint", "Bounds", "Anchor", "From", "Trim", "Marker", "Symbol", "UseSymbol", "PlaceLabels"], groups: ["Draw"], permissions: [], provides: ["rix.draw@1", "rix.draw.drawable@1"], schemas: ["rix.draw.symbol@1", "rix.draw.adapter-result@1", "rix.draw.label-layout@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:draw" }, { sourcePath: "bundled:draw", kind: "host" });
   catalog.registerInstaller("draw", install);
   catalog.addMetadata({ id: "exact-algebras", description: "Exact rational quaternion and octonion values.", kind: "rix", mount: "exactAlgebras", exports: ["Quaternion", "Octonion", "Components", "Conjugate", "NormSquared", "Inverse"], groups: ["Exact"], permissions: [], provides: ["rix.exact-algebras@1"], schemas: ["rix.exact-cayley-dickson@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:exact-algebras" }, { source: `/**
 id: exact-algebras
@@ -8472,7 +9811,7 @@ defaultEnabled: false
 .Host.Register("arrayRixDescribe", (values) -> @"count @{values.Len()}; sum @{values.Reduce((total, value) -> total + value, 0)}", "Summarize an array of Integers", ["Examples"]);
 .Host.Register("arrayRixReverse", (values) -> values.Reverse(), "Reverse an array", ["Examples"]);
 `, sourcePath: "bundled:example-array-rix", kind: "rix" });
-  catalog.addMetadata({ id: "float", description: "Configurable IEEE-754 binary32/binary64 conversion, diagnostics, and optional approximate math.", kind: "host", mount: "float", exports: ["Float", "Binary32", "Binary64", "Format", "Classify", "Diagnostics", "NextUp", "NextDown", "NextAfter", "Interval", "Round", "Floor", "Ceiling", "Abs", "Sqrt", "Sin", "Cos", "Tan", "Asin", "Acos", "Atan", "Atan2", "Log", "Ln", "Log10", "Exp"], groups: ["ApproximateMath", "Float"], provides: ["rix.float@2"], schemas: ["rix.float.classification@1"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:float" }, { sourcePath: "bundled:float", kind: "host" });
+  catalog.addMetadata({ id: "float", description: "Configurable IEEE-754 binary32/binary64 conversion, diagnostics, and optional approximate math.", kind: "host", mount: "float", exports: ["Float", "Binary32", "Binary64", "Format", "Classify", "Diagnostics", "NextUp", "NextDown", "NextAfter", "Interval", "Round", "Floor", "Ceiling", "Abs", "Sqrt", "Sin", "Cos", "Tan", "Asin", "Acos", "Atan", "Atan2", "Log", "Ln", "Log10", "Exp", "Sum", "Dot", "Complex", "ComplexAdd", "ComplexSub", "ComplexMul", "ComplexDiv", "ComplexConjugate", "ComplexAbs"], groups: ["ApproximateMath", "Float"], provides: ["rix.float@2"], schemas: ["rix.float.classification@1", "rix.float.algorithm-result@1", "rix.float.error-estimate@1", "rix.float.complex@1"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:float" }, { sourcePath: "bundled:float", kind: "host" });
   catalog.registerInstaller("float", install2);
   catalog.addMetadata({ id: "fracfun", description: "Form-preserving callable polynomial and rational expressions with explicit transformations and canonical projections.", kind: "host", mount: "fracfun", aliases: ["fractionFunction", "ff"], exports: ["FractionFunction", "Parse", "Var", "Fun", "Factor", "SquareFree", "PartialFractions", "PoleZeroEvidence", "RemovableHoleEvidence", "TransformationGrid"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], requires: ["rix.fraction@1", "rix.rational-function@1"], provides: ["rix.fraction-function@1", "rix.fraction-function.presentation@1", "rix.fraction-function.divisor-evidence@1", "rix.fraction-function.removable-hole-evidence@1"], schemas: ["rix.fraction-function@1", "rix.fraction-function.presentation@1", "rix.fraction-function.square-free-pair@1", "rix.fraction-function.divisor-evidence@1", "rix.fraction-function.removable-hole-evidence@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:fracfun" }, { sourcePath: "bundled:fracfun", kind: "host" });
   catalog.registerInstaller("fracfun", install3);
@@ -8889,17 +10228,17 @@ fractalsNamespace._proto = {=
 };
 .Host.RegisterValue("fractals", fractalsNamespace, "Pure-RiX chaos and fractal mathematics with portable Graphics lowering", ["Chaos", "Fractals", "Graphics", "Exact"]);
 `, sourcePath: "bundled:fractals", kind: "rix" });
-  catalog.addMetadata({ id: "fraction", description: "Representation-sensitive fractions, fraction intervals, mediants, and exact classroom policies.", kind: "rix", mount: "fraction", aliases: ["frac", "f"], exports: ["Fraction", "Interval", "Infinity", "Parse", "FromSternBrocotPath"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], provides: ["rix.fraction@1", "rix.fraction-interval@1"], schemas: ["rix.fraction@1", "rix.fraction-interval@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:fraction" }, { source: `/**
+  catalog.addMetadata({ id: "fraction", description: "Representation-sensitive fractions, fraction intervals, mediants, and exact classroom policies.", kind: "rix", mount: "fraction", aliases: ["frac", "f"], exports: ["Fraction", "Interval", "Infinity", "Parse", "FromSternBrocotPath", "ContinuedFraction", "FromContinuedFraction", "FareySearch"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], provides: ["rix.fraction@1", "rix.fraction-interval@1", "rix.fraction-cf-adapter@1"], schemas: ["rix.fraction@1", "rix.fraction-interval@1", "rix.fraction.continued-fraction@1", "rix.fraction.continued-fraction-result@1", "rix.fraction.farey-search@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:fraction" }, { source: `/**
 id: fraction
 description: Representation-sensitive fractions, fraction intervals, mediants, and exact classroom policies.
 kind: rix
 mount: fraction
 aliases: [frac, f]
-exports: [Fraction, Interval, Infinity, Parse, FromSternBrocotPath]
+exports: [Fraction, Interval, Infinity, Parse, FromSternBrocotPath, ContinuedFraction, FromContinuedFraction, FareySearch]
 groups: [Algebra, Exact, Symbolic]
 permissions: []
-provides: [rix.fraction@1, rix.fraction-interval@1]
-schemas: [rix.fraction@1, rix.fraction-interval@1]
+provides: [rix.fraction@1, rix.fraction-interval@1, rix.fraction-cf-adapter@1]
+schemas: [rix.fraction@1, rix.fraction-interval@1, rix.fraction.continued-fraction@1, rix.fraction.continued-fraction-result@1, rix.fraction.farey-search@1]
 snapshot: true
 deterministic: true
 defaultEnabled: false
@@ -8909,6 +10248,8 @@ FractionInteger(value, label) -> {;
     exact = value ~!: :Integer;
     exact == _ ?: .Error(@"@{label} must be an exact integer") ?_ exact;
 };
+
+FractionOption(options, key, fallback) -> options.Has(key) ?: options[key] ?_ fallback;
 
 FractionParts(value) -> .SArith.FractionParts(value);
 FractionNumerator(value) -> FractionParts(value)[1];
@@ -9165,6 +10506,131 @@ FractionRecord(value) -> {;
     };
 };
 
+FractionContinuedFraction(value) -> {;
+    source = FractionFinite(value);
+    reduced = FractionReduce(source);
+    exact = FractionNumerator(reduced) / FractionDenominator(reduced);
+    {=
+        valueKind=:fractionContinuedFraction,
+        schema="rix.fraction.continued-fraction@1",
+        kind=:finite,
+        coefficients=exact.ToContinuedFraction(),
+        length=exact.ToContinuedFraction().Len(),
+        exactValue=exact,
+        sourceFraction=source,
+        componentProvenance={=
+            numerator=FractionNumerator(source),
+            denominator=FractionDenominator(source),
+            reducedNumerator=FractionNumerator(reduced),
+            reducedDenominator=FractionDenominator(reduced)
+        },
+        evidence={= kind=:euclideanAlgorithm, property=:exactFiniteContinuedFraction }
+    };
+};
+
+FractionFromContinuedFraction(source, options ?= {= }) -> {;
+    schema = source[:schema];
+    finite = schema == "rix.fraction.continued-fraction@1" ||
+      schema == "rix.continued-fraction.finite@1" ||
+      (source[:valueKind] == :continuedFraction && source[:kind] == :finite);
+    finite ?: _ ?_ .Error("FromContinuedFraction requires a finite continued-fraction protocol value");
+    coefficients = source[:coefficients];
+    coefficients.Len() >= 1 ?: _ ?_ .Error("Finite continued fraction requires at least one coefficient");
+    p0 := 0;
+    p1 := 1;
+    q0 := 1;
+    q1 := 0;
+    {@ index=1; index<=@coefficients.Len(); {;
+        coefficient = FractionInteger((@coefficients)[index], "Continued-fraction coefficient");
+        index == 1 || coefficient > 0
+          ?: _ ?_ .Error("Continued-fraction tail coefficients must be positive integers");
+        nextP = coefficient*@p1+@p0;
+        nextQ = coefficient*@q1+@q0;
+        @p0 = @p1;
+        @p1 = nextP;
+        @q0 = @q1;
+        @q1 = nextQ;
+    }; index+=1 };
+    fraction = FractionRaw(p1,q1);
+    {=
+        valueKind=:fractionContinuedFractionResult,
+        schema="rix.fraction.continued-fraction-result@1",
+        status=:exact,
+        fraction=fraction,
+        coefficients=coefficients,
+        source=source,
+        componentProvenance={=
+            numerator=p1,
+            denominator=q1,
+            policy=FractionOption(options,"policy",:convergentComponents),
+            sourceSchema=schema
+        },
+        evidence={= kind=:continuantRecurrence, property=:exactConvergent }
+    };
+};
+
+FractionFareySearch(value, options ?= {= }) -> {;
+    target = FractionFinite(value,"Farey search target");
+    reducedTarget = FractionReduce(target);
+    maxSteps = FractionInteger(FractionOption(options,"maxsteps",100),"Farey search maxSteps");
+    maxDenominator = FractionInteger(FractionOption(options,"maxdenominator",1000),"Farey search maxDenominator");
+    maxSteps >= 0 ?: _ ?_ .Error("Farey search maxSteps must be nonnegative");
+    maxDenominator >= 1 ?: _ ?_ .Error("Farey search maxDenominator must be positive");
+    left := FractionRaw(-1,0);
+    right := FractionRaw(1,0);
+    current := FractionRaw(0,1);
+    path := [];
+    trace := [];
+    steps := 0;
+    found := FractionCompare(current,reducedTarget) == 0;
+    blocked := _;
+    {@ iteration=1; !@found && !@blocked && @steps<@maxSteps; {;
+        direction = FractionCompare(@reducedTarget,@current) < 0 ?: "L" ?_ "R";
+        next = direction == "L"
+          ?: FractionMediant(@left,@current)
+          ?_ FractionMediant(@current,@right);
+        permitted = FractionDenominator(next) <= @maxDenominator;
+        @trace = @trace.Push({=
+            step=iteration,
+            direction=direction,
+            candidate=next,
+            permitted=permitted,
+            left=@left,
+            right=@right
+        });
+        permitted
+          ?: {;
+              @path = @path.Push(@direction);
+              @right = @direction == "L" ?: @current ?_ @right;
+              @left = @direction == "R" ?: @current ?_ @left;
+              @current = @next;
+              @steps += 1;
+              @found = FractionCompare(@current,@reducedTarget) == 0;
+          }
+          ?_ {; @blocked = 1; };
+    }; iteration+=1 };
+    status = found ?: :found ?_ (blocked ?: :denominatorLimit ?_ :budgetExhausted);
+    {=
+        valueKind=:fractionFareySearch,
+        schema="rix.fraction.farey-search@1",
+        status=status,
+        target=target,
+        reducedTarget=reducedTarget,
+        result=current,
+        exact=found,
+        path=path,
+        bounds=FractionIntervalRaw(left,right),
+        trace=trace,
+        work={= steps=steps,maxSteps=maxSteps,maxDenominator=maxDenominator,exhausted=!found },
+        componentProvenance={=
+            numerator=FractionNumerator(target),
+            denominator=FractionDenominator(target),
+            reducedNumerator=FractionNumerator(reducedTarget),
+            reducedDenominator=FractionDenominator(reducedTarget)
+        }
+    };
+};
+
 FractionString(value) -> {;
     numerator = FractionNumerator(value);
     denominator = FractionDenominator(value);
@@ -9293,6 +10759,8 @@ FractionF = (value) -> FractionPromote(value);
 .Host.RegisterMethod("Fraction", "IsInfinite", (value)->FractionIsInfinite(value) ?: 1 ?_ _, "fraction", "fraction");
 .Host.RegisterMethod("Fraction", "ToString", FractionString, "fraction", "fraction");
 .Host.RegisterMethod("Fraction", "Record", FractionRecord, "fraction", "fraction");
+.Host.RegisterMethod("Fraction", "ContinuedFraction", FractionContinuedFraction, "fraction", "fraction");
+.Host.RegisterMethod("Fraction", "FareySearch", FractionFareySearch, "fraction", "fraction");
 .Host.RegisterMethod("FractionInterval", "Low", FractionIntervalLow, "fraction", "fraction");
 .Host.RegisterMethod("FractionInterval", "High", FractionIntervalHigh, "fraction", "fraction");
 .Host.RegisterMethod("FractionInterval", "Mediant", FractionIntervalMediant, "fraction", "fraction");
@@ -9317,17 +10785,20 @@ fractionNamespace._proto = {=
     Fraction = (self, first, second ?= _) -> second == _ ?: FractionPromote(first) ?_ FractionRaw(first,second),
     Interval = (self, first, second) -> FractionIntervalRaw(first,second),
     Infinity = (self, sign ?= 1) -> FractionInfinity(sign),
-    FromSternBrocotPath = (self, path) -> FractionFromPath(path)
+    FromSternBrocotPath = (self, path) -> FractionFromPath(path),
+    ContinuedFraction = (self, value) -> FractionContinuedFraction(value),
+    FromContinuedFraction = (self, source, options ?= {= }) -> FractionFromContinuedFraction(source,options),
+    FareySearch = (self, value, options ?= {= }) -> FractionFareySearch(value,options)
 };
 
 .Host.RegisterCallableValue("fraction", fractionNamespace, "Representation-sensitive unreduced fractions", ["Algebra", "Exact", "Symbolic"]);
 `, sourcePath: "bundled:fraction", kind: "rix" });
-  catalog.addMetadata({ id: "geometry", description: "Pure-RiX exact geometry, transformations, conics, constraints, and bounded portable Graphics refinement.", kind: "rix", mount: "geometry", exports: ["Point", "Line", "Segment", "Ray", "Polygon", "Circle", "Conic", "Ellipse", "Parabola", "Hyperbola", "Locus", "Implicit", "Affine", "Projective", "Transform", "Constraint", "Constraints", "SquaredDistance", "Distance", "Length", "Area", "CircularAngle", "Angle", "Centroid", "Incenter", "Orthocenter", "AngleBisector", "Perpendicular", "ParallelThrough", "Midpoint", "PerpendicularBisector", "Circumcircle", "Translate", "RotateQuarterTurns", "Rotate", "ReflectAcross", "Intersect", "Points", "Status", "UncertainPoint", "UncertainBounds", "TransformUncertain", "ConstructionGraph", "ConstructionRecord", "ImportConstruction", "AddPoint", "AddLine", "AddCircle", "AddIntersection", "AddTransform", "AddMeasurement", "Drag", "DragMany", "ConstrainedDrag", "RepairSuggestions", "Undo", "Redo", "Refine", "Draw", "Workbench", "AuthoringWorkbench"], groups: ["Geometry", "Graphics", "Exact"], permissions: [], requires: ["rix.numerics@1", "rix.polynomial.algorithms@1", "rix.algebraic-real@1"], provides: ["rix.geometry@1", "rix.geometry.intersection@1", "rix.geometry.constraint@1", "rix.geometry.refinement@1", "rix.geometry.circular-angle@1", "rix.geometry.uncertain-point@1", "rix.geometry.construction-graph@1", "rix.geometry.construction-record@1", "rix.geometry.workbench@1", "rix.geometry.authoring-policy@1"], schemas: ["rix.geometry@1", "rix.geometry.intersection@1", "rix.geometry.constraint@1", "rix.geometry.refinement@1", "rix.geometry.circular-angle@1", "rix.geometry.uncertain-point@1", "rix.geometry.construction-graph@1", "rix.geometry.construction-record@1", "rix.geometry.workbench@1", "rix.geometry.authoring-policy@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:geometry" }, { source: `/**
+  catalog.addMetadata({ id: "geometry", description: "Pure-RiX exact geometry, transformations, conics, constraints, and bounded portable Graphics refinement.", kind: "rix", mount: "geometry", exports: ["Point", "Line", "Segment", "Ray", "Polygon", "Circle", "Center", "RadiusSquared", "Conic", "Ellipse", "Parabola", "Hyperbola", "Locus", "Implicit", "Affine", "Projective", "Transform", "Constraint", "Constraints", "SquaredDistance", "Distance", "Length", "Area", "CircularAngle", "Angle", "Centroid", "Incenter", "Orthocenter", "AngleBisector", "Perpendicular", "ParallelThrough", "Midpoint", "PerpendicularBisector", "Circumcircle", "Translate", "RotateQuarterTurns", "Rotate", "ReflectAcross", "Intersect", "Points", "Status", "UncertainPoint", "UncertainBounds", "TransformUncertain", "ConstructionGraph", "ConstructionRecord", "ImportConstruction", "AddPoint", "AddLine", "AddCircle", "AddIntersection", "AddTransform", "AddMeasurement", "Drag", "DragMany", "ConstrainedDrag", "RepairSuggestions", "Undo", "Redo", "Refine", "Draw", "Workbench", "AuthoringWorkbench"], groups: ["Geometry", "Graphics", "Exact"], permissions: [], requires: ["rix.numerics@1", "rix.polynomial.algorithms@1", "rix.algebraic-real@1"], provides: ["rix.geometry@1", "rix.geometry.intersection@1", "rix.geometry.constraint@1", "rix.geometry.refinement@1", "rix.geometry.circular-angle@1", "rix.geometry.uncertain-point@1", "rix.geometry.construction-graph@1", "rix.geometry.construction-record@1", "rix.geometry.workbench@1", "rix.geometry.authoring-policy@1"], schemas: ["rix.geometry@1", "rix.geometry.intersection@1", "rix.geometry.constraint@1", "rix.geometry.refinement@1", "rix.geometry.circular-angle@1", "rix.geometry.uncertain-point@1", "rix.geometry.construction-graph@1", "rix.geometry.construction-record@1", "rix.geometry.workbench@1", "rix.geometry.authoring-policy@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:geometry" }, { source: `/**
 id: geometry
 description: Pure-RiX exact geometry, transformations, conics, constraints, and bounded portable Graphics refinement.
 kind: rix
 mount: geometry
-exports: [Point, Line, Segment, Ray, Polygon, Circle, Conic, Ellipse, Parabola, Hyperbola, Locus, Implicit, Affine, Projective, Transform, Constraint, Constraints, SquaredDistance, Distance, Length, Area, CircularAngle, Angle, Centroid, Incenter, Orthocenter, AngleBisector, Perpendicular, ParallelThrough, Midpoint, PerpendicularBisector, Circumcircle, Translate, RotateQuarterTurns, Rotate, ReflectAcross, Intersect, Points, Status, UncertainPoint, UncertainBounds, TransformUncertain, ConstructionGraph, ConstructionRecord, ImportConstruction, AddPoint, AddLine, AddCircle, AddIntersection, AddTransform, AddMeasurement, Drag, DragMany, ConstrainedDrag, RepairSuggestions, Undo, Redo, Refine, Draw, Workbench, AuthoringWorkbench]
+exports: [Point, Line, Segment, Ray, Polygon, Circle, Center, RadiusSquared, Conic, Ellipse, Parabola, Hyperbola, Locus, Implicit, Affine, Projective, Transform, Constraint, Constraints, SquaredDistance, Distance, Length, Area, CircularAngle, Angle, Centroid, Incenter, Orthocenter, AngleBisector, Perpendicular, ParallelThrough, Midpoint, PerpendicularBisector, Circumcircle, Translate, RotateQuarterTurns, Rotate, ReflectAcross, Intersect, Points, Status, UncertainPoint, UncertainBounds, TransformUncertain, ConstructionGraph, ConstructionRecord, ImportConstruction, AddPoint, AddLine, AddCircle, AddIntersection, AddTransform, AddMeasurement, Drag, DragMany, ConstrainedDrag, RepairSuggestions, Undo, Redo, Refine, Draw, Workbench, AuthoringWorkbench]
 groups: [Geometry, Graphics, Exact]
 permissions: []
 requires: [rix.numerics@1, rix.polynomial.algorithms@1, rix.algebraic-real@1]
@@ -9420,9 +10891,10 @@ GeometryApproximateSqrt(value) ->
 
 GeometryRequire(value, kind ?= _, label ?= "geometry value") -> {;
     valid = (value ? :Map) && value.Has("schema") && value[:schema] == "rix.geometry@1";
+    expected = kind == _ ?: "value" ?_ kind;
     valid && (kind == _ || value[:kind] == kind)
       ?: value
-      ?_ .Error(@"@{label} must be a geometry @{kind == _ ?: "value" ?_ kind}");
+      ?_ .Error(@"@{label} must be a geometry @{expected}");
 };
 
 GeometryProvenance(operation, inputs, details ?= _) -> {=
@@ -9617,6 +11089,10 @@ GeometryCircle(first, second ?= _, options ?= {= }) -> {;
         through != _ ?: [center, through] ?_ [center, radiusSquared],
         GeometryOption(settings, "metadata"), GeometryOption(settings, "style"));
 };
+
+GeometryCenter(value) -> GeometryRequire(value, :circle, "geometry.Center value")[:center];
+
+GeometryRadiusSquared(value) -> GeometryRequire(value, :circle, "geometry.RadiusSquared value")[:radiusSquared];
 
 GeometryConic(coefficients, options ?= {= }) -> {;
     settings = ((coefficients ? :Map) && coefficients.Has("coefficients"))
@@ -11158,6 +12634,8 @@ geometryNamespace._proto = {=
     Ray=(self, first, second ?= _, options ?= {= })->GeometryRay(first, second, options),
     Polygon=(self, points, options ?= {= })->GeometryPolygon(points, options),
     Circle=(self, first, second ?= _, options ?= {= })->GeometryCircle(first, second, options),
+    Center=(self, value)->GeometryCenter(value),
+    RadiusSquared=(self, value)->GeometryRadiusSquared(value),
     Conic=(self, coefficients, options ?= {= })->GeometryConic(coefficients, options),
     Ellipse=(self, center, radii ?= _, options ?= {= })->GeometryEllipse(center, radii, options),
     Parabola=(self, vertex, parameter ?= _, options ?= {= })->GeometryParabola(vertex, parameter, options),
@@ -11220,6 +12698,287 @@ geometryNamespace._proto = {=
   catalog.registerInstaller("gif", install19);
   catalog.addMetadata({ id: "gltf", description: "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", kind: "host", mount: "gltf", exports: ["Render"], groups: ["Renderers", "Scene3D"], permissions: [], requires: ["rix.scene3d@1"], provides: ["rix.renderer.gltf@1"], targets: ["gltf", "model/gltf+json"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:gltf" }, { sourcePath: "bundled:gltf", kind: "host" });
   catalog.registerInstaller("gltf", install17);
+  catalog.addMetadata({ id: "graph", description: "Exact validated weighted graphs with shortest paths, traversal, components, and topological sorting.", kind: "rix", mount: "graph", exports: ["Weighted", "ShortestPaths", "ShortestPath", "BreadthFirst", "ConnectedComponents", "TopologicalSort", "CheckCertificate"], groups: ["Graph", "Algorithms", "Exact"], permissions: [], provides: ["rix.graph@1", "rix.graph.algorithms@1"], schemas: ["rix.graph@1", "rix.graph.shortest-paths@1", "rix.graph.shortest-path@1", "rix.graph.certificate@1", "rix.graph.traversal@1", "rix.graph.components@1", "rix.graph.topological-sort@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:graph" }, { source: `/**
+id: graph
+description: Exact validated weighted graphs with shortest paths, traversal, components, and topological sorting.
+kind: rix
+mount: graph
+exports: [Weighted, ShortestPaths, ShortestPath, BreadthFirst, ConnectedComponents, TopologicalSort, CheckCertificate]
+groups: [Graph, Algorithms, Exact]
+permissions: []
+provides: [rix.graph@1, rix.graph.algorithms@1]
+schemas: [rix.graph@1, rix.graph.shortest-paths@1, rix.graph.shortest-path@1, rix.graph.certificate@1, rix.graph.traversal@1, rix.graph.components@1, rix.graph.topological-sort@1]
+snapshot: true
+deterministic: true
+defaultEnabled: false
+**/
+
+GraphOption(options,key,fallback ?= _) -> options.Has(key) ?: options[key] ?_ fallback;
+
+GraphRequire(value) ->
+    (value ? :Map) && value[:schema]=="rix.graph@1"
+      ?: value
+      ?_ .Error("Expected a graph.Weighted value");
+
+GraphVertex(graph,vertex,label ?= "Graph vertex") ->
+    graph[:vertices].Includes(vertex)
+      ?: vertex
+      ?_ .Error(@"@{label} is not present in the graph");
+
+GraphWeighted(verticesValue,edgesValue,options ?= {= }) -> {;
+    verticesValue ? :Array ?: _ ?_ .Error("graph.Weighted vertices must be an Array");
+    verticesValue.Len()>0 ?: _ ?_ .Error("graph.Weighted requires at least one vertex");
+    vertices:=[];
+    {@ index=1;index<=@verticesValue.Len();{;
+        vertex=@verticesValue[index];
+        @vertices.Includes(vertex) ?: .Error("graph.Weighted vertex identifiers must be unique") ?_ _;
+        @vertices~=@vertices.Push(vertex);
+    };index+=1};
+    edgesValue ? :Array ?: _ ?_ .Error("graph.Weighted edges must be an Array");
+    edges:=[];
+    {@ index=1;index<=@edgesValue.Len();{;
+        edge=@edgesValue[index];
+        ((edge ? :Array)||(edge ? :Tuple)) && edge.Len()==3
+          ?: _
+          ?_ .Error("Each graph edge must be [from,to,weight]");
+        from=GraphVertex({= vertices=@vertices},edge[1],"Edge source");
+        to=GraphVertex({= vertices=@vertices},edge[2],"Edge target");
+        weight=edge[3] ~!: :Rational;
+        weight!=_ ?: _ ?_ .Error("Graph edge weights must be exact Integers or Rationals");
+        weight>=0 ?: _ ?_ .Error("graph.Weighted does not accept negative weights");
+        @edges~=@edges.Push({= from=from,to=to,weight=weight});
+    };index+=1};
+    directed=GraphOption(options,"directed",0);
+    (directed==0||directed==1) ?: _ ?_ .Error("graph.Weighted directed must be 0 or 1");
+    graph={=
+        valueKind=:weightedGraph,schema="rix.graph@1",vertices=vertices,edges=edges,
+        directed=directed,exact=1
+    };
+    graph._proto={=
+        Vertices=(self)->self[:vertices],Edges=(self)->self[:edges],
+        ShortestPaths=(self,source)->GraphShortestPaths(self,source),
+        BreadthFirst=(self,source)->GraphBreadthFirst(self,source),
+        ConnectedComponents=(self)->GraphConnectedComponents(self),
+        TopologicalSort=(self)->GraphTopologicalSort(self),
+        Record=(self)->{= schema=self[:schema],vertices=self[:vertices],edges=self[:edges],directed=self[:directed]}
+    };
+    .ImmutableValue(graph);
+};
+
+GraphNeighbor(graph,edge,current) ->
+    edge[:from]==current
+      ?: edge[:to]
+      ?_ (graph[:directed]==0 && edge[:to]==current) ?: edge[:from] ?_ _;
+
+GraphEdgeWeight(graph,from,to) -> {;
+    found:=_;
+    {@ index=1;index<=@graph[:edges].Len();{;
+        edge=@graph[:edges][index];
+        matches=edge[:from]==@from&&edge[:to]==@to;
+        reverse=@graph[:directed]==0&&edge[:from]==@to&&edge[:to]==@from;
+        ((matches||reverse)&&(@found==_||edge[:weight]<@found)) ?: {; @found~=@edge[:weight]; } ?_ _;
+    };index+=1};
+    found;
+};
+
+GraphCertificate(graph,source,distances,predecessors) -> {;
+    certificate={=
+        valueKind=:graphCertificate,schema="rix.graph.certificate@1",kind=:shortestPaths,
+        graph=graph,source=source,distances=distances,predecessors=predecessors,exact=1
+    };
+    certificate._proto={= Verify=(self)->GraphCheckCertificate(self),Record=(self)->self};
+    .ImmutableValue(certificate);
+};
+
+GraphCheckCertificate(value) -> {;
+    (value ? :Map)&&value[:schema]=="rix.graph.certificate@1"&&value[:kind]==:shortestPaths
+      ?: _ ?_ .Error("Expected a graph shortest-path certificate");
+    graph=GraphRequire(value[:graph]);source=GraphVertex(graph,value[:source],"Certificate source");
+    distances=value[:distances];predecessors=value[:predecessors];valid:=distances[source]==0;
+    {@ edgeIndex=1;edgeIndex<=@graph[:edges].Len();{;
+        edge=@graph[:edges][edgeIndex];fromDistance=@distances[edge[:from]];toDistance=@distances[edge[:to]];
+        (fromDistance!=_&&toDistance==_) ?: {; @valid~=_; } ?_ _;
+        (@graph[:directed]==0&&fromDistance==_&&toDistance!=_) ?: {; @valid~=_; } ?_ _;
+        (fromDistance!=_&&toDistance!=_&&toDistance>fromDistance+edge[:weight]) ?: {; @valid~=_; } ?_ _;
+        (@graph[:directed]==0&&fromDistance!=_&&toDistance!=_&&fromDistance>toDistance+edge[:weight]) ?: {; @valid~=_; } ?_ _;
+    };edgeIndex+=1};
+    {@ vertexIndex=1;vertexIndex<=@graph[:vertices].Len();{;
+        vertex=@graph[:vertices][vertexIndex];distance=@distances[vertex];
+        (vertex!=@source&&distance!=_) ?: {;
+            predecessor=@predecessors[@vertex];weight=predecessor==_ ?: _ ?_ GraphEdgeWeight(@graph,predecessor,@vertex);
+            (predecessor==_||weight==_||@distances[predecessor]==_||@distance!=@distances[predecessor]+weight)
+              ?: {; @valid~=_; } ?_ _;
+            cursor:=@vertex;steps:=0;
+            {@ chain=1;@cursor!=@source&&@cursor!=_&&@steps<@graph[:vertices].Len();{;
+                @cursor~=@predecessors[@cursor];@steps+=1;
+            };chain+=1};
+            cursor==@source ?: _ ?_ {; @valid~=_; };
+        } ?_ _;
+    };vertexIndex+=1};
+    valid;
+};
+
+GraphShortestPaths(value,sourceValue) -> {;
+    graph=GraphRequire(value);source=GraphVertex(graph,sourceValue,"Shortest-path source");
+    distances:={= };predecessors:={= };visited:=[];settled:=[];
+    {@ index=1;index<=@graph[:vertices].Len();{;
+        vertex=@graph[:vertices][index];@distances~=@distances.Set(vertex,_);@predecessors~=@predecessors.Set(vertex,_);
+    };index+=1};
+    distances~=distances.Set(source,0);
+    {@ step=1;step<=@graph[:vertices].Len();{;
+        current:=_;best:=_;
+        {@ index=1;index<=@graph[:vertices].Len();{;
+            vertex=@graph[:vertices][index];distance=@distances[vertex];
+            (!(@visited.Includes(vertex))&&distance!=_&&(@best==_||distance<@best))
+              ?: {; @current~=@vertex;@best~=@distance; } ?_ _;
+        };index+=1};
+        current!=_ ?: {;
+            @visited~=@visited.Push(@current);@settled~=@settled.Push(@current);
+            {@ edgeIndex=1;edgeIndex<=@graph[:edges].Len();{;
+                edge=@graph[:edges][edgeIndex];neighbor=GraphNeighbor(@graph,edge,@current);
+                (neighbor!=_&&!(@visited.Includes(neighbor))) ?: {;
+                    alternative=@distances[@current]+@edge[:weight];known=@distances[@neighbor];
+                    (known==_||alternative<known) ?: {;
+                        @distances~=@distances.Set(@neighbor,@alternative);
+                        @predecessors~=@predecessors.Set(@neighbor,@current);
+                    } ?_ _;
+                } ?_ _;
+            };edgeIndex+=1};
+        } ?_ _;
+    };step+=1};
+    unreachableVertices:=[];
+    {@ index=1;index<=@graph[:vertices].Len();{;
+        vertex=@graph[:vertices][index];@distances[vertex]==_ ?: {; @unreachableVertices~=@unreachableVertices.Push(@vertex); } ?_ _;
+    };index+=1};
+    result={=
+        valueKind=:graphShortestPaths,schema="rix.graph.shortest-paths@1",graph=graph,
+        source=source,distances=distances,predecessors=predecessors,settledOrder=settled,
+        unreachable=unreachableVertices,algorithm=:dijkstraExactNonnegative,
+        certificate=GraphCertificate(graph,source,distances,predecessors),exact=1
+    };
+    result._proto={=
+        PathTo=(self,target)->GraphShortestPath(self,target),
+        Verify=(self)->self[:certificate].Verify(),Record=(self)->self
+    };
+    .ImmutableValue(result);
+};
+
+GraphShortestPath(paths,targetValue) -> {;
+    (paths ? :Map)&&paths[:schema]=="rix.graph.shortest-paths@1"
+      ?: _ ?_ .Error("graph.ShortestPath expects a ShortestPaths result");
+    target=GraphVertex(paths[:graph],targetValue,"Shortest-path target");distance=paths[:distances][target];
+    distance==_
+      ?: .ImmutableValue({= valueKind=:graphShortestPath,schema="rix.graph.shortest-path@1",status=:unreachable,source=paths[:source],target=target,vertices=[],weight=_,exact=1})
+      ?_ {;
+          reversed:=[@target];cursor:=@target;
+          {@ step=1;@cursor!=@paths[:source]&&step<=@paths[:graph][:vertices].Len();{;
+              @cursor~=@paths[:predecessors][@cursor];@cursor!=_ ?: {; @reversed~=@reversed.Push(@cursor); } ?_ _;
+          };step+=1};
+          cursor==@paths[:source] ?: _ ?_ .Error("Shortest-path predecessor chain is invalid");
+          .ImmutableValue({=
+              valueKind=:graphShortestPath,schema="rix.graph.shortest-path@1",status=:reachable,
+              source=@paths[:source],target=@target,vertices=reversed.Reverse(),weight=@distance,exact=1
+          });
+      };
+};
+
+GraphBreadthFirst(value,sourceValue) -> {;
+    graph=GraphRequire(value);source=GraphVertex(graph,sourceValue,"Breadth-first source");
+    queue:=[source];cursor:=1;order:=[];distances:={= }.Set(source,0);predecessors:={= }.Set(source,_);
+    {@ step=1;@cursor<=@queue.Len();{;
+        current=@queue[@cursor];@cursor+=1;@order~=@order.Push(current);
+        {@ edgeIndex=1;edgeIndex<=@graph[:edges].Len();{;
+            neighbor=GraphNeighbor(@graph,@graph[:edges][edgeIndex],@current);
+            (neighbor!=_&&!(@distances.Has(neighbor))) ?: {;
+                @distances~=@distances.Set(@neighbor,@distances[@current]+1);
+                @predecessors~=@predecessors.Set(@neighbor,@current);@queue~=@queue.Push(@neighbor);
+            } ?_ _;
+        };edgeIndex+=1};
+    };step+=1};
+    unreachable:=[];
+    {@ index=1;index<=@graph[:vertices].Len();{;
+        vertex=@graph[:vertices][index];!(@distances.Has(vertex)) ?: {; @unreachable~=@unreachable.Push(@vertex); } ?_ _;
+    };index+=1};
+    .ImmutableValue({=
+        valueKind=:graphTraversal,schema="rix.graph.traversal@1",kind=:breadthFirst,
+        graph=graph,source=source,order=order,distances=distances,predecessors=predecessors,
+        unreachable=unreachable,exact=1
+    });
+};
+
+GraphComponentFrom(graph,source,seenValue) -> {;
+    queue:=[source];cursor:=1;members:=[];seen:=seenValue;
+    {@ step=1;@cursor<=@queue.Len();{;
+        current=@queue[@cursor];@cursor+=1;
+        !(@seen.Includes(current)) ?: {;
+            @seen~=@seen.Push(@current);@members~=@members.Push(@current);
+            {@ edgeIndex=1;edgeIndex<=@graph[:edges].Len();{;
+                neighbor=GraphNeighbor(@graph,@graph[:edges][edgeIndex],@current);
+                (neighbor!=_&&!(@seen.Includes(neighbor))&&!(@queue.Includes(neighbor))) ?: {; @queue~=@queue.Push(@neighbor); } ?_ _;
+            };edgeIndex+=1};
+        } ?_ _;
+    };step+=1};
+    {= members=members,seen=seen};
+};
+
+GraphConnectedComponents(value) -> {;
+    graph=GraphRequire(value);graph[:directed]==0 ?: _ ?_ .Error("ConnectedComponents requires an undirected graph");
+    seen:=[];components:=[];
+    {@ index=1;index<=@graph[:vertices].Len();{;
+        vertex=@graph[:vertices][index];
+        !(@seen.Includes(vertex)) ?: {;
+            found=GraphComponentFrom(@graph,@vertex,@seen);@seen~=found[:seen];@components~=@components.Push(found[:members]);
+        } ?_ _;
+    };index+=1};
+    .ImmutableValue({= valueKind=:graphComponents,schema="rix.graph.components@1",graph=graph,components=components,count=components.Len(),exact=1});
+};
+
+GraphTopologicalSort(value) -> {;
+    graph=GraphRequire(value);graph[:directed]==1 ?: _ ?_ .Error("TopologicalSort requires a directed graph");
+    indegrees:={= };
+    {@ index=1;index<=@graph[:vertices].Len();{; @indegrees~=@indegrees.Set(@graph[:vertices][index],0); };index+=1};
+    {@ index=1;index<=@graph[:edges].Len();{;
+        target=@graph[:edges][index][:to];@indegrees~=@indegrees.Set(target,@indegrees[target]+1);
+    };index+=1};
+    queue:=[];
+    {@ index=1;index<=@graph[:vertices].Len();{;
+        vertex=@graph[:vertices][index];@indegrees[vertex]==0 ?: {; @queue~=@queue.Push(@vertex); } ?_ _;
+    };index+=1};
+    cursor:=1;order:=[];
+    {@ step=1;@cursor<=@queue.Len();{;
+        current=@queue[@cursor];@cursor+=1;@order~=@order.Push(current);
+        {@ edgeIndex=1;edgeIndex<=@graph[:edges].Len();{;
+            edge=@graph[:edges][edgeIndex];
+            edge[:from]==@current ?: {;
+                next=@edge[:to];@indegrees~=@indegrees.Set(next,@indegrees[next]-1);
+                @indegrees[next]==0 ?: {; @queue~=@queue.Push(@next); } ?_ _;
+            } ?_ _;
+        };edgeIndex+=1};
+    };step+=1};
+    acyclic=order.Len()==graph[:vertices].Len();
+    remaining:=[];
+    {@ index=1;index<=@graph[:vertices].Len();{;
+        vertex=@graph[:vertices][index];@indegrees[vertex]>0 ?: {; @remaining~=@remaining.Push(@vertex); } ?_ _;
+    };index+=1};
+    .ImmutableValue({=
+        valueKind=:graphTopologicalSort,schema="rix.graph.topological-sort@1",
+        graph=graph,status=acyclic ?: :sorted ?_ :cycleDetected,order=order,
+        remaining=remaining,exact=1
+    });
+};
+
+graphNamespace={= };
+graphNamespace._proto={=
+    Weighted=(self,vertices,edges,options ?= {= })->GraphWeighted(vertices,edges,options),
+    ShortestPaths=(self,graph,source)->GraphShortestPaths(graph,source),
+    ShortestPath=(self,paths,target)->GraphShortestPath(paths,target),
+    BreadthFirst=(self,graph,source)->GraphBreadthFirst(graph,source),
+    ConnectedComponents=(self,graph)->GraphConnectedComponents(graph),
+    TopologicalSort=(self,graph)->GraphTopologicalSort(graph),
+    CheckCertificate=(self,certificate)->GraphCheckCertificate(certificate)
+};
+.Host.RegisterValue("graph",graphNamespace,"Exact validated weighted graphs and graph algorithms",["Graph","Algorithms","Exact"]);
+`, sourcePath: "bundled:graph", kind: "rix" });
   catalog.addMetadata({ id: "html", description: "Standalone semantic HTML renderer for portable RiX output trees.", kind: "host", mount: "html", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.html@1", "rix.renderer.html@2"], schemas: ["rix.html.render@2"], targets: ["html", "text/html"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], operatorFiles: [], ignore: false, sourcePath: "bundled:html" }, { sourcePath: "bundled:html", kind: "host" });
   catalog.registerInstaller("html", install12);
   catalog.addMetadata({ id: "latex", description: "Standalone LaTeX renderer for portable RiX documents and figures.", kind: "host", mount: "latex", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.latex@1", "rix.renderer.latex@2"], schemas: ["rix.latex.render@2"], targets: ["latex", "text/x-tex"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], operatorFiles: [], ignore: false, sourcePath: "bundled:latex" }, { sourcePath: "bundled:latex", kind: "host" });
@@ -12739,6 +14498,607 @@ linalgNamespace._proto["TRANSFORM!"]=(self,value,target)->LinalgTransformBang(va
 .Host.RegisterMethod("Matrix","ColumnSpace",(value)->LinalgColumnSpace(value),"linalg","linalg");
 .Host.RegisterMethod("Matrix","NullSpace",(value)->LinalgNullSpace(value),"linalg","linalg");
 `, sourcePath: "bundled:linalg", kind: "rix" });
+  catalog.addMetadata({ id: "logic", description: "Portable propositional formulas, bounded truth tables, checked normal forms, scoped natural deduction, and educational tree views.", kind: "rix", mount: "logic", exports: ["Atom", "Top", "Bottom", "Not", "And", "Or", "Implies", "Iff", "Evaluate", "Valuations", "TruthTable", "Classify", "NNF", "CNF", "DNF", "CheckNormalForm", "Step", "Subproof", "Proof", "CheckProof", "SyntaxTree", "ProofTree", "IsFormula", "Capabilities"], groups: ["Logic", "Education", "Exact"], permissions: [], provides: ["rix.logic@1", "rix.logic.formula@1", "rix.logic.truth-table@1", "rix.logic.normal-form@1", "rix.logic.proof@1", "rix.logic.tree@1"], schemas: ["rix.logic.formula@1", "rix.logic.truth-table@1", "rix.logic.normal-form@1", "rix.logic.proof@1", "rix.logic.tree@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:logic" }, { source: `/**
+id: logic
+description: Portable propositional formulas, bounded truth tables, checked normal forms, scoped natural deduction, and educational tree views.
+kind: rix
+mount: logic
+exports: [Atom, Top, Bottom, Not, And, Or, Implies, Iff, Evaluate, Valuations, TruthTable, Classify, NNF, CNF, DNF, CheckNormalForm, Step, Subproof, Proof, CheckProof, SyntaxTree, ProofTree, IsFormula, Capabilities]
+groups: [Logic, Education, Exact]
+permissions: []
+provides: [rix.logic@1, rix.logic.formula@1, rix.logic.truth-table@1, rix.logic.normal-form@1, rix.logic.proof@1, rix.logic.tree@1]
+schemas: [rix.logic.formula@1, rix.logic.truth-table@1, rix.logic.normal-form@1, rix.logic.proof@1, rix.logic.tree@1]
+snapshot: false
+deterministic: true
+defaultEnabled: false
+**/
+
+LogicOption(options,key,fallback ?= _) -> options.Has(key) ?: options[key] ?_ fallback;
+LogicRequireOptions(value,label) -> value ? :Map ?: value ?_ .Error(@"@{label} must be a Map");
+LogicIsFormulaValue(value) -> (value ? :Map) && value[:schema]=="rix.logic.formula@1";
+LogicRequireFormula(value,label ?= "Logic value") ->
+    LogicIsFormulaValue(value) ?: value ?_ .Error(@"@{label} must be a Logic formula");
+LogicTruth(value) -> {;
+    result := _;
+    valid := _;
+    value ? :Integer
+      ?: {; @valid ~= 1; @result ~= @value==0 ?: _ ?_ 1; }
+      ?_ _;
+    value ? :String
+      ?: {;
+          @value==:true
+            ?: {; @valid ~= 1; @result ~= 1; }
+            ?_ @value==:false
+            ?: {; @valid ~= 1; @result ~= _; }
+            ?_ _;
+      }
+      ?_ _;
+    value==_ ?: {; @valid ~= 1; @result ~= _; } ?_ _;
+    valid ?: result ?_ .Error("Logic truth values must be 1, 0, true, false, or null");
+};
+LogicSame(left,right) -> LogicKey(left)==LogicKey(right);
+
+LogicFormula(kind,fields ?= {= }) -> {;
+    value = {=
+        valueKind=:logicFormula,
+        schema="rix.logic.formula@1",
+        kind=kind
+    }.Merge(fields);
+    value .= {= _proto=@logicFormulaProto };
+    .ImmutableValue(value);
+};
+
+LogicAtom(name) -> {;
+    name ? :String ?: _ ?_ .Error("Logic atom name must be a string or colon-string");
+    name.Len()>0 ?: _ ?_ .Error("Logic atom name must not be empty");
+    LogicFormula(:atom,{= name=name });
+};
+LogicTop() -> LogicFormula(:top);
+LogicBottom() -> LogicFormula(:bottom);
+LogicNot(value) -> LogicFormula(:not,{= operand=LogicRequireFormula(value) });
+LogicBinary(kind,left,right) -> LogicFormula(kind,{=
+    left=LogicRequireFormula(left),right=LogicRequireFormula(right)
+});
+LogicAnd(left,right) -> LogicBinary(:and,left,right);
+LogicOr(left,right) -> LogicBinary(:or,left,right);
+LogicImplies(left,right) -> LogicBinary(:implies,left,right);
+LogicIff(left,right) -> LogicBinary(:iff,left,right);
+
+LogicKey(value) -> {;
+    formula = LogicRequireFormula(value);
+    kind = formula[:kind];
+    kind==:atom
+      ?: @"atom(@{formula[:name]})"
+      ?_ kind==:top
+      ?: "top"
+      ?_ kind==:bottom
+      ?: "bottom"
+      ?_ kind==:not
+      ?: @"not(@{LogicKey(formula[:operand])})"
+      ?_ @"@{kind}(@{LogicKey(formula[:left])};@{LogicKey(formula[:right])})";
+};
+
+LogicEvaluate(value,valuation) -> {;
+    formula = LogicRequireFormula(value);
+    valuation ? :Map ?: _ ?_ .Error("Logic valuation must be a Map");
+    kind = formula[:kind];
+    kind==:atom
+      ?: {;
+          name = @formula[:name];
+          @valuation.Has(name) ?: _ ?_ .Error(@"Logic valuation has no value for atom @{name}");
+          LogicTruth(@valuation[name]);
+      }
+      ?_ kind==:top
+      ?: 1
+      ?_ kind==:bottom
+      ?: _
+      ?_ kind==:not
+      ?: (LogicEvaluate(formula[:operand],valuation) ?: _ ?_ 1)
+      ?_ kind==:and
+      ?: (LogicEvaluate(formula[:left],valuation) && LogicEvaluate(formula[:right],valuation))
+      ?_ kind==:or
+      ?: (LogicEvaluate(formula[:left],valuation) || LogicEvaluate(formula[:right],valuation))
+      ?_ kind==:implies
+      ?: (LogicEvaluate(formula[:left],valuation) ?: LogicEvaluate(formula[:right],valuation) ?_ 1)
+      ?_ kind==:iff
+      ?: ((LogicEvaluate(formula[:left],valuation) ?: 1 ?_ _) == (LogicEvaluate(formula[:right],valuation) ?: 1 ?_ _) ?: 1 ?_ _)
+      ?_ .Error(@"Unsupported Logic formula kind @{kind}");
+};
+
+LogicUnique(values) -> values.Reduce((result,value)->
+    result.Includes(value) ?: result ?_ result.Push(value),[]
+);
+LogicAtoms(value) -> {;
+    formula = LogicRequireFormula(value);
+    kind = formula[:kind];
+    names = kind==:atom
+      ?: [formula[:name]]
+      ?_ kind==:not
+      ?: LogicAtoms(formula[:operand])
+      ?_ (kind==:and || kind==:or || kind==:implies || kind==:iff)
+      ?: LogicAtoms(formula[:left]).Concat(LogicAtoms(formula[:right]))
+      ?_ [];
+    LogicUnique(names).Sort();
+};
+
+LogicValuationsAt(names,index) -> {;
+    index>names.Len()
+      ?: [{= }]
+      ?_ {;
+          head = @names[@index];
+          smaller = LogicValuationsAt(@names,@index+1);
+          smaller.Reduce((rows,row)->rows.Push(row.Set(@head,0)).Push(row.Set(@head,1)),[]);
+      };
+};
+LogicValuations(names) -> {;
+    names ? :Array ?: _ ?_ .Error("Logic Valuations expects an Array of atom names");
+    LogicValuationsAt(names,1);
+};
+
+LogicRequireAtomBudget(count,options) -> {;
+    maximum = LogicOption(options,"maxatoms",10) ~!: :Integer;
+    maximum>=0 && maximum<=16 ?: _ ?_ .Error("Logic maxAtoms must be from 0 through 16");
+    count<=maximum ?: _ ?_ .Error(@"Logic truth table requires @{count} atoms, exceeding maxAtoms @{maximum}");
+    maximum;
+};
+
+LogicTruthTable(value,options ?= {= }) -> {;
+    formula = LogicRequireFormula(value);
+    options = LogicRequireOptions(options,"Logic TruthTable options");
+    atoms = LogicAtoms(formula);
+    maximum = LogicRequireAtomBudget(atoms.Len(),options);
+    valuations = LogicValuations(atoms);
+    rows = valuations.Map((valuation)->.ImmutableValue({=
+        valuation=valuation,
+        result=LogicEvaluate(@formula,valuation)
+    }));
+    satisfying = rows.Filter((row)->row[:result]);
+    falsifying = rows.Filter((row)->!row[:result]);
+    classification = satisfying.Len()==0
+      ?: :contradiction
+      ?_ falsifying.Len()==0
+      ?: :valid
+      ?_ :contingent;
+    .ImmutableValue({=
+        valueKind=:logicTruthTable,
+        schema="rix.logic.truth-table@1",
+        formula=formula,
+        atoms=atoms,
+        rows=rows,
+        rowCount=rows.Len(),
+        classification=classification,
+        satisfiable=satisfying.Len()>0 ?: 1 ?_ _,
+        valid=falsifying.Len()==0 ?: 1 ?_ _,
+        model=satisfying.Len()>0 ?: satisfying[1][:valuation] ?_ _,
+        countermodel=falsifying.Len()>0 ?: falsifying[1][:valuation] ?_ _,
+        complete=1,
+        boundedBy={= maxAtoms=maximum }
+    });
+};
+LogicClassify(value,options ?= {= }) -> LogicTruthTable(value,options);
+
+LogicEliminateImplications(value) -> {;
+    formula = LogicRequireFormula(value);
+    kind = formula[:kind];
+    kind==:implies
+      ?: LogicOr(LogicNot(LogicEliminateImplications(formula[:left])),LogicEliminateImplications(formula[:right]))
+      ?_ kind==:iff
+      ?: {;
+          left = LogicEliminateImplications(@formula[:left]);
+          right = LogicEliminateImplications(@formula[:right]);
+          LogicAnd(LogicOr(LogicNot(left),right),LogicOr(LogicNot(right),left));
+      }
+      ?_ kind==:not
+      ?: LogicNot(LogicEliminateImplications(formula[:operand]))
+      ?_ (kind==:and || kind==:or)
+      ?: LogicBinary(kind,LogicEliminateImplications(formula[:left]),LogicEliminateImplications(formula[:right]))
+      ?_ formula;
+};
+
+LogicNNFNode(value,negated ?= _) -> {;
+    formula = LogicRequireFormula(value);
+    kind = formula[:kind];
+    kind==:not
+      ?: LogicNNFNode(formula[:operand],!negated)
+      ?_ kind==:top
+      ?: (negated ?: LogicBottom() ?_ LogicTop())
+      ?_ kind==:bottom
+      ?: (negated ?: LogicTop() ?_ LogicBottom())
+      ?_ kind==:atom
+      ?: (negated ?: LogicNot(formula) ?_ formula)
+      ?_ kind==:and
+      ?: (negated
+           ?: LogicOr(LogicNNFNode(formula[:left],1),LogicNNFNode(formula[:right],1))
+           ?_ LogicAnd(LogicNNFNode(formula[:left],_),LogicNNFNode(formula[:right],_)))
+      ?_ kind==:or
+      ?: (negated
+           ?: LogicAnd(LogicNNFNode(formula[:left],1),LogicNNFNode(formula[:right],1))
+           ?_ LogicOr(LogicNNFNode(formula[:left],_),LogicNNFNode(formula[:right],_)))
+      ?_ .Error("Logic NNF expected implications to be eliminated");
+};
+
+LogicFold(kind,values,empty) -> values.Reduce((result,value)->
+    result==_ ?: value ?_ LogicBinary(@kind,result,value),empty
+);
+LogicLiteral(name,value) -> LogicTruth(value) ?: LogicAtom(name) ?_ LogicNot(LogicAtom(name));
+LogicDNFTerm(atoms,valuation) -> LogicFold(:and,atoms.Map((name)->
+    LogicLiteral(name,@valuation[name])
+),_);
+LogicCNFClause(atoms,valuation) -> LogicFold(:or,atoms.Map((name)->
+    LogicLiteral(name,LogicTruth(@valuation[name]) ?: 0 ?_ 1)
+),_);
+
+LogicNormalFormRecord(form,source,expression,table,evidence) ->
+    .ImmutableValue({=
+        valueKind=:logicNormalForm,
+        schema="rix.logic.normal-form@1",
+        form=form,
+        source=source,
+        expression=expression,
+        atoms=table[:atoms],
+        rowCount=table[:rowCount],
+        exact=1,
+        status=:complete,
+        evidence=evidence
+    });
+
+LogicNNF(value,options ?= {= }) -> {;
+    source = LogicRequireFormula(value);
+    table = LogicTruthTable(source,options);
+    expression = LogicNNFNode(LogicEliminateImplications(source));
+    LogicNormalFormRecord(:nnf,source,expression,table,[{= rule=:implicationElimination },{= rule=:deMorganAndDoubleNegation }]);
+};
+LogicDNF(value,options ?= {= }) -> {;
+    source = LogicRequireFormula(value);
+    table = LogicTruthTable(source,options);
+    satisfying = table[:rows].Filter((row)->row[:result]);
+    expression = satisfying.Len()==0
+      ?: LogicBottom()
+      ?_ LogicFold(:or,satisfying.Map((row)->LogicDNFTerm(@table[:atoms],row[:valuation])),_);
+    LogicNormalFormRecord(:dnf,source,expression,table,[{= rule=:canonicalMinterms,modelCount=satisfying.Len() }]);
+};
+LogicCNF(value,options ?= {= }) -> {;
+    source = LogicRequireFormula(value);
+    table = LogicTruthTable(source,options);
+    falsifying = table[:rows].Filter((row)->!row[:result]);
+    expression = falsifying.Len()==0
+      ?: LogicTop()
+      ?_ LogicFold(:and,falsifying.Map((row)->LogicCNFClause(@table[:atoms],row[:valuation])),_);
+    LogicNormalFormRecord(:cnf,source,expression,table,[{= rule=:canonicalMaxterms,countermodelCount=falsifying.Len() }]);
+};
+
+LogicCheckNormalForm(candidate,options ?= {= }) -> {;
+    valid = (candidate ? :Map) && candidate[:schema]=="rix.logic.normal-form@1";
+    valid
+      ?: {;
+          sourceTable = LogicTruthTable(@candidate[:source],@options);
+          same = sourceTable[:rows].Filter((row)->
+              LogicEvaluate(@candidate[:expression],row[:valuation])==row[:result]
+          ).Len()==sourceTable[:rowCount];
+          .ImmutableValue({= accepted=same,certified=same ?: 1 ?_ _,reason=same ?: _ ?_ :normalFormNotEquivalent });
+      }
+      ?_ .ImmutableValue({= accepted=_,certified=_,reason=:malformedNormalForm });
+};
+
+LogicStep(rule,conclusion,premises ?= [],options ?= {= }) -> {;
+    rule ? :String ?: _ ?_ .Error("Logic proof rule must be a string or colon-string");
+    premises ? :Array ?: _ ?_ .Error("Logic proof premises must be an Array of prior line numbers");
+    options = LogicRequireOptions(options,"Logic Step options");
+    subproofs = LogicOption(options,"subproofs",[]);
+    subproofs ? :Array ?: _ ?_ .Error("Logic Step subproofs must be an Array");
+    subproofs.Filter((proof)->(proof ? :Map) && proof[:schema]=="rix.logic.proof@1" && proof[:proofKind]==:subproof).Len()==subproofs.Len()
+      ?: _
+      ?_ .Error("Logic Step subproofs must be checked Logic Subproof records");
+    .ImmutableValue({=
+        valueKind=:logicProofStep,
+        rule=rule,
+        conclusion=LogicRequireFormula(conclusion,"Logic proof conclusion"),
+        premises=premises.Map((line)->line ~!: :Integer),
+        label=LogicOption(options,"label",_),
+        discharges=LogicOption(options,"discharges",[]),
+        subproofs=subproofs
+    });
+};
+
+LogicSubproof(assumption,steps,goal,options ?= {= }) -> {;
+    exactAssumption = LogicRequireFormula(assumption,"Logic subproof assumption");
+    steps ? :Array ?: _ ?_ .Error("Logic Subproof steps must be an Array");
+    options = LogicRequireOptions(options,"Logic Subproof options");
+    freeSteps = steps.Filter((step)->(step ? :Map) && (step[:rule]==:premise || step[:rule]==:assumption));
+    freeSteps.Len()==0
+      ?: _
+      ?_ .Error("Logic Subproof cannot introduce additional premise or assumption lines");
+    combined = [LogicStep(:assumption,exactAssumption)].Concat(steps);
+    proofOptions = options.Set("proofkind",:subproof).Set("assumption",exactAssumption);
+    LogicProof(combined,goal,proofOptions);
+};
+
+LogicPriorStep(steps,line,current) -> {;
+    line>=1 && line<current ?: _ ?_ .Error("Logic proof premise must name an earlier line");
+    steps[line];
+};
+LogicAcceptedSubproof(proof) -> {;
+    valid = (proof ? :Map) && proof[:schema]=="rix.logic.proof@1"
+      && proof[:proofKind]==:subproof;
+    valid ?: LogicCheckProof(proof)[:accepted]==1 ?_ _;
+};
+LogicRuleCheck(step,steps,index) -> {;
+    rule = step[:rule];
+    premises = step[:premises];
+    conclusion = step[:conclusion];
+    accepted := _;
+    reason := :unsupportedRule;
+    (rule==:premise || rule==:assumption) && premises.Len()==0
+      ?: {; @accepted ~= 1; @reason ~= _; }
+      ?_ _;
+    rule==:andIntro && premises.Len()==2
+      ?: {;
+          left = LogicPriorStep(@steps,@premises[1],@index)[:conclusion];
+          right = LogicPriorStep(@steps,@premises[2],@index)[:conclusion];
+          @accepted ~= LogicSame(@conclusion,LogicAnd(left,right)) ?: 1 ?_ _;
+          @reason ~= @accepted ?: _ ?_ :andIntroMismatch;
+      }
+      ?_ _;
+    (rule==:andElimLeft || rule==:andElimRight) && premises.Len()==1
+      ?: {;
+          source = LogicPriorStep(@steps,@premises[1],@index)[:conclusion];
+          source[:kind]==:and
+            ?: {;
+                selected = @rule==:andElimLeft ?: @source[:left] ?_ @source[:right];
+                @accepted ~= LogicSame(@conclusion,selected) ?: 1 ?_ _;
+                @reason ~= @accepted ?: _ ?_ :andEliminationMismatch;
+            }
+            ?_ {; @reason ~= :andEliminationRequiresConjunction; };
+      }
+      ?_ _;
+    (rule==:orIntroLeft || rule==:orIntroRight) && premises.Len()==1
+      ?: {;
+          source = LogicPriorStep(@steps,@premises[1],@index)[:conclusion];
+          expected = @rule==:orIntroLeft
+            ?: (@conclusion[:kind]==:or && LogicSame(source,@conclusion[:left]))
+            ?_ (@conclusion[:kind]==:or && LogicSame(source,@conclusion[:right]));
+          @accepted ~= expected ?: 1 ?_ _;
+          @reason ~= @accepted ?: _ ?_ :orIntroductionMismatch;
+      }
+      ?_ _;
+    rule==:modusPonens && premises.Len()==2
+      ?: {;
+          first = LogicPriorStep(@steps,@premises[1],@index)[:conclusion];
+          second = LogicPriorStep(@steps,@premises[2],@index)[:conclusion];
+          implication = first[:kind]==:implies ?: first ?_ (second[:kind]==:implies ?: second ?_ _);
+          antecedent = implication==first ?: second ?_ first;
+          @accepted ~= implication!=_ && LogicSame(implication[:left],antecedent) && LogicSame(implication[:right],@conclusion) ?: 1 ?_ _;
+          @reason ~= @accepted ?: _ ?_ :modusPonensMismatch;
+      }
+      ?_ _;
+    rule==:implicationIntro && premises.Len()==0 && step[:subproofs].Len()==1
+      ?: {;
+          subproof = @step[:subproofs][1];
+          matches = LogicAcceptedSubproof(subproof) && @conclusion[:kind]==:implies
+            && LogicSame(subproof[:assumption],@conclusion[:left])
+            && LogicSame(subproof[:goal],@conclusion[:right]);
+          @accepted ~= matches ?: 1 ?_ _;
+          @reason ~= @accepted ?: _ ?_ :implicationIntroductionSubproofMismatch;
+      }
+      ?_ _;
+    rule==:orElim && premises.Len()==1 && step[:subproofs].Len()==2
+      ?: {;
+          disjunction = LogicPriorStep(@steps,@premises[1],@index)[:conclusion];
+          firstSubproof = @step[:subproofs][1];
+          secondSubproof = @step[:subproofs][2];
+          direct = disjunction[:kind]==:or
+            && LogicAcceptedSubproof(firstSubproof) && LogicAcceptedSubproof(secondSubproof)
+            && LogicSame(firstSubproof[:assumption],disjunction[:left])
+            && LogicSame(secondSubproof[:assumption],disjunction[:right]);
+          reversed = disjunction[:kind]==:or
+            && LogicAcceptedSubproof(firstSubproof) && LogicAcceptedSubproof(secondSubproof)
+            && LogicSame(firstSubproof[:assumption],disjunction[:right])
+            && LogicSame(secondSubproof[:assumption],disjunction[:left]);
+          goalsMatch = LogicSame(firstSubproof[:goal],@conclusion)
+            && LogicSame(secondSubproof[:goal],@conclusion);
+          @accepted ~= (direct || reversed) && goalsMatch ?: 1 ?_ _;
+          @reason ~= @accepted ?: _ ?_ :disjunctionEliminationSubproofMismatch;
+      }
+      ?_ _;
+    rule==:notIntro && premises.Len()==0 && step[:subproofs].Len()==1
+      ?: {;
+          subproof = @step[:subproofs][1];
+          matches = LogicAcceptedSubproof(subproof) && @conclusion[:kind]==:not
+            && LogicSame(subproof[:assumption],@conclusion[:operand])
+            && subproof[:goal][:kind]==:bottom;
+          @accepted ~= matches ?: 1 ?_ _;
+          @reason ~= @accepted ?: _ ?_ :negationIntroductionSubproofMismatch;
+      }
+      ?_ _;
+    rule==:notElim && premises.Len()==2
+      ?: {;
+          first = LogicPriorStep(@steps,@premises[1],@index)[:conclusion];
+          second = LogicPriorStep(@steps,@premises[2],@index)[:conclusion];
+          pair = first[:kind]==:not
+            ?: LogicSame(first[:operand],second)
+            ?_ (second[:kind]==:not && LogicSame(second[:operand],first));
+          @accepted ~= @conclusion[:kind]==:bottom && pair ?: 1 ?_ _;
+          @reason ~= @accepted ?: _ ?_ :negationEliminationMismatch;
+      }
+      ?_ _;
+    rule==:bottomElim && premises.Len()==1
+      ?: {;
+          source = LogicPriorStep(@steps,@premises[1],@index)[:conclusion];
+          @accepted ~= source[:kind]==:bottom ?: 1 ?_ _;
+          @reason ~= @accepted ?: _ ?_ :bottomEliminationRequiresBottom;
+      }
+      ?_ _;
+    discharged = (rule==:implicationIntro || rule==:notIntro || rule==:orElim)
+      ?: step[:subproofs].Map((proof)->proof[:assumption])
+      ?_ [];
+    .ImmutableValue({= line=index,accepted=accepted,reason=reason,step=step,discharged=discharged });
+};
+
+LogicProof(steps,goal,options ?= {= }) -> {;
+    steps ? :Array ?: _ ?_ .Error("Logic Proof steps must be an Array");
+    options = LogicRequireOptions(options,"Logic Proof options");
+    exactGoal = LogicRequireFormula(goal,"Logic proof goal");
+    checks := [];
+    stopped := _;
+    {@ index=1; index<=@steps.Len() && !@stopped; {;
+       step = @steps[index];
+       step[:valueKind]==:logicProofStep ?: _ ?_ .Error("Logic Proof contains a non-Step value");
+       check = LogicRuleCheck(step,@steps,index);
+       @checks ~= @checks.Push(check);
+       check[:accepted] ?: _ ?_ {; @stopped ~= 1; };
+    }; index += 1 };
+    finalMatches = steps.Len()>0 && LogicSame(steps.Last()[:conclusion],exactGoal);
+    accepted = !stopped && finalMatches;
+    proofKind = LogicOption(options,"proofkind",:derivation);
+    [:derivation,:subproof].Includes(proofKind)
+      ?: _
+      ?_ .Error("Logic proofKind must be derivation or subproof");
+    assumption = LogicOption(options,"assumption",_);
+    proofKind==:subproof && assumption==_
+      ?: .Error("Logic subproof requires its assumption")
+      ?_ _;
+    proof = {=
+        valueKind=:logicProof,
+        schema="rix.logic.proof@1",
+        proofKind=proofKind,
+        system=:introductoryNaturalDeduction,
+        steps=steps,
+        goal=exactGoal,
+        checks=checks,
+        accepted=accepted ?: 1 ?_ _,
+        complete=accepted ?: 1 ?_ _,
+        reason=stopped ?: :invalidStep ?_ (finalMatches ?: _ ?_ :goalMismatch),
+        assumption=assumption,
+        assumptions=steps.Filter((step)->step[:rule]==:premise || step[:rule]==:assumption),
+        supportedRules=[:premise,:assumption,:andIntro,:andElimLeft,:andElimRight,:orIntroLeft,:orIntroRight,:modusPonens,:implicationIntro,:orElim,:notIntro,:notElim,:bottomElim]
+    };
+    proof .= {= _proto=@logicProofProto };
+    .ImmutableValue(proof);
+};
+LogicCheckProof(proof) -> {;
+    valid = (proof ? :Map) && proof[:schema]=="rix.logic.proof@1";
+    valid
+      ?: LogicProof(proof[:steps],proof[:goal],{=
+          proofKind=proof[:proofKind] ?| :derivation,assumption=proof[:assumption]
+      })
+      ?_ .ImmutableValue({= accepted=_,complete=_,reason=:malformedLogicProof });
+};
+
+LogicSyntaxTreeNode(value) -> {;
+    formula = LogicRequireFormula(value);
+    kind = formula[:kind];
+    children = kind==:not
+      ?: [LogicSyntaxTreeNode(formula[:operand])]
+      ?_ (kind==:and || kind==:or || kind==:implies || kind==:iff)
+      ?: [LogicSyntaxTreeNode(formula[:left]),LogicSyntaxTreeNode(formula[:right])]
+      ?_ [];
+    .ImmutableValue({=
+        nodeKind=:formula,
+        connective=kind,
+        label=kind==:atom ?: formula[:name] ?_ kind,
+        formula=formula,
+        children=children
+    });
+};
+
+LogicSyntaxTree(value) -> .ImmutableValue({=
+    valueKind=:logicTree,
+    schema="rix.logic.tree@1",
+    treeKind=:syntaxTree,
+    root=LogicSyntaxTreeNode(value),
+    portable=1
+});
+
+LogicProofTreeLine(steps,line) -> {;
+    step = steps[line];
+    premiseTrees = step[:premises].Map((premise)->LogicProofTreeLine(@steps,premise));
+    subproofTrees = step[:subproofs].Map((proof)->LogicProofTree(proof));
+    .ImmutableValue({=
+        nodeKind=:proofLine,
+        line=line,
+        rule=step[:rule],
+        conclusion=step[:conclusion],
+        premises=premiseTrees,
+        subproofs=subproofTrees
+    });
+};
+
+LogicProofTree(proof) -> {;
+    valid = (proof ? :Map) && proof[:schema]=="rix.logic.proof@1";
+    valid ?: _ ?_ .Error("Logic ProofTree expects a Logic proof");
+    root = proof[:steps].Len()>0 ?: LogicProofTreeLine(proof[:steps],proof[:steps].Len()) ?_ _;
+    .ImmutableValue({=
+        valueKind=:logicTree,
+        schema="rix.logic.tree@1",
+        treeKind=:naturalDeduction,
+        system=proof[:system],
+        proofKind=proof[:proofKind] ?| :derivation,
+        goal=proof[:goal],
+        accepted=proof[:accepted],
+        root=root,
+        portable=1
+    });
+};
+
+logicFormulaProto = {=
+    Not=(self)->LogicNot(self),
+    And=(self,right)->LogicAnd(self,right),
+    Or=(self,right)->LogicOr(self,right),
+    Implies=(self,right)->LogicImplies(self,right),
+    Iff=(self,right)->LogicIff(self,right),
+    Evaluate=(self,valuation)->LogicEvaluate(self,valuation),
+    TruthTable=(self,options ?= {= })->LogicTruthTable(self,options),
+    NNF=(self,options ?= {= })->LogicNNF(self,options),
+    CNF=(self,options ?= {= })->LogicCNF(self,options),
+    DNF=(self,options ?= {= })->LogicDNF(self,options),
+    SyntaxTree=(self)->LogicSyntaxTree(self),
+    Record=(self)->self
+};
+
+logicProofProto = {=
+    Check=(self)->LogicCheckProof(self),
+    Tree=(self)->LogicProofTree(self),
+    Record=(self)->self
+};
+
+logicCapabilities = .ImmutableValue({=
+    semantics=[:propositionalEvaluation,:truthTables,:models,:countermodels,:validity,:satisfiability],
+    normalForms=[:nnf,:canonicalCNF,:canonicalDNF],
+    proofRules=[:premise,:assumption,:andIntro,:andElimLeft,:andElimRight,:orIntroLeft,:orIntroRight,:modusPonens,:implicationIntro,:orElim,:notIntro,:notElim,:bottomElim],
+    proofStructure=[:scopedSubproofs,:explicitDischarge,:naturalDeductionTrees],
+    views=[:syntaxTree,:proofTree],
+    next=[:semanticTableaux,:boundedFirstOrderModels]
+});
+
+logicNamespace = {= };
+logicNamespace._proto = {=
+    Atom=(self,name)->LogicAtom(name),
+    Top=(self)->LogicTop(),
+    Bottom=(self)->LogicBottom(),
+    Not=(self,value)->LogicNot(value),
+    And=(self,left,right)->LogicAnd(left,right),
+    Or=(self,left,right)->LogicOr(left,right),
+    Implies=(self,left,right)->LogicImplies(left,right),
+    Iff=(self,left,right)->LogicIff(left,right),
+    Evaluate=(self,value,valuation)->LogicEvaluate(value,valuation),
+    Valuations=(self,names)->LogicValuations(names),
+    TruthTable=(self,value,options ?= {= })->LogicTruthTable(value,options),
+    Classify=(self,value,options ?= {= })->LogicClassify(value,options),
+    NNF=(self,value,options ?= {= })->LogicNNF(value,options),
+    CNF=(self,value,options ?= {= })->LogicCNF(value,options),
+    DNF=(self,value,options ?= {= })->LogicDNF(value,options),
+    CheckNormalForm=(self,value,options ?= {= })->LogicCheckNormalForm(value,options),
+    Step=(self,rule,conclusion,premises ?= [],options ?= {= })->LogicStep(rule,conclusion,premises,options),
+    Subproof=(self,assumption,steps,goal,options ?= {= })->LogicSubproof(assumption,steps,goal,options),
+    Proof=(self,steps,goal,options ?= {= })->LogicProof(steps,goal,options),
+    CheckProof=(self,proof)->LogicCheckProof(proof),
+    SyntaxTree=(self,value)->LogicSyntaxTree(value),
+    ProofTree=(self,proof)->LogicProofTree(proof),
+    IsFormula=(self,value)->LogicIsFormulaValue(value) ?: 1 ?_ _,
+    Capabilities=(self)->logicCapabilities
+};
+.Host.RegisterValue("logic",logicNamespace,"Portable propositional logic, scoped natural deduction, and educational trees",["Logic","Education","Exact"]);
+`, sourcePath: "bundled:logic", kind: "rix" });
   catalog.addMetadata({ id: "markdown", description: "CommonMark-oriented renderer for portable RiX documents.", kind: "host", mount: "markdown", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.markdown@1", "rix.renderer.markdown@2"], schemas: ["rix.markdown.render@2"], targets: ["markdown", "text/markdown"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], operatorFiles: [], ignore: false, sourcePath: "bundled:markdown" }, { sourcePath: "bundled:markdown", kind: "host" });
   catalog.registerInstaller("markdown", install11);
   catalog.addMetadata({ id: "nd", description: "Pure-RiX exact n-dimensional geometry with affine and Cayley projection records and explicit Scene3D adaptation.", kind: "rix", mount: "nd", exports: ["Point", "Polyline", "Polytope", "Hypercube", "Projection", "CoordinateProjection", "CayleyRotation", "Compose", "Project", "Field", "Evaluate", "SampleField", "AffineSlice", "Parameterize", "Hyperplane", "Section", "Fiber", "ProjectionFamily", "ProjectionAt", "ToPlot", "ToScene3D"], groups: ["Geometry", "Scene3D", "Exact"], permissions: [], requires: ["rix.scene3d@1", "rix.plot@1"], provides: ["rix.nd@1", "rix.nd@2", "rix.nd.projection@1", "rix.nd.field@1", "rix.nd.slice@1", "rix.nd.fiber@1", "rix.nd.projection-family@1"], schemas: ["rix.nd@1", "rix.nd.projection@1", "rix.nd.field@1", "rix.nd.slice@1", "rix.nd.hyperplane@1", "rix.nd.fiber@1", "rix.nd.projection-family@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:nd" }, { source: `/**
@@ -13140,17 +15500,17 @@ ndNamespace._proto={=
 };
 .Host.RegisterValue("nd",ndNamespace,"Pure-RiX exact ND fields, slices, fibers, geometry, and explicit projections",["Geometry","Scene3D","Exact"]);
 `, sourcePath: "bundled:nd", kind: "rix" });
-  catalog.addMetadata({ id: "numerics", description: "Backend-neutral bounded enclosure and refinement orchestration.", kind: "rix", mount: "numerics", exports: ["Request", "WorkPolicy", "EffectiveLimits", "ErrorBudget", "PropagateError", "RefinementHistory", "RefineHistory", "Enclose", "Refine", "Sample", "Compare", "IsolateRoot", "AdaptiveSample", "Integrate", "Optimize", "Constant", "ExplainSelection", "Range", "GraphRange", "CheckGraphRange", "SimplifyGraph", "CheckGraphSimplification", "RewriteGraph", "CheckGraphRewrite", "CheckDerivativeGraph", "DerivativeSign", "LipschitzRange", "TaylorRange", "Box", "MultivariateRequest", "JacobianRange", "AffineRange", "TaylorModelRange", "CheckMultivariateRange", "RecognizeGraph", "FunctionFacts", "WithRangeKnowledge", "RegisterRangeProvider", "CheckRangeResult", "Sign", "RootCount", "Capabilities", "CheckResult", "NthRoot", "Sqrt", "Cbrt", "Hypot", "Pow", "Exp", "Expm1", "Log", "Log1p", "Ln", "Log2", "Log10", "Pi", "EulerGamma", "Sin", "Cos", "Tan", "Sec", "Csc", "Cot", "Sinc", "Asin", "Acos", "Atan", "Atan2", "Arcsin", "Arccos", "Arctan", "Sinh", "Cosh", "Tanh", "Sech", "Csch", "Coth", "Asinh", "Acosh", "Atanh", "Arsinh", "Arcosh", "Artanh", "Radians", "Degrees", "Gamma", "LogGamma", "Beta", "LogBeta", "Digamma", "Trigamma", "Erf", "Erfc", "NormalPDF", "NormalCDF", "NormalQuantile", "LambertW", "BesselJ", "BesselJ0", "BesselJ1", "BesselY", "BesselY0", "BesselY1", "BesselI", "BesselI0", "BesselI1", "BesselK", "BesselK0", "BesselK1", "Zeta", "Quadrature", "Kantorovich"], groups: ["Numerics"], permissions: [], requires: ["rix.oracle@1"], provides: ["rix.numerics@1", "rix.numerics@2", "rix.enclosable-real-consumer@1", "rix.exact-sign-consumer@1", "rix.root-count-consumer@1", "rix.calculus-range-consumer@1"], schemas: ["rix.numerics.refinement-request@1", "rix.numerics.enclosure@1", "rix.numerics.error-budget@1", "rix.numerics.error-propagation@1", "rix.numerics.refinement-history@1", "rix.numerics.selection-explanation@1", "rix.numerics.comparison@1", "rix.numerics.root-isolation@1", "rix.numerics.adaptive-sample@1", "rix.numerics.optimization@1", "rix.numerics.algorithm-real@1", "rix.numerics.interval-image@1", "rix.numerics.range-enclosure@1", "rix.numerics.range-provider@1", "rix.numerics.range-provider-result@1", "rix.numerics.function-facts@1", "rix.numerics.calculus-graph-range@1", "rix.calculus.graph-simplification@1", "rix.calculus.graph-rewrite@1", "rix.numerics.rational-box@1", "rix.numerics.multivariate-range-request@1", "rix.numerics.jacobian-box-range@1", "rix.numerics.affine-box-range@1", "rix.numerics.taylor-model-box-range@1", "rix.numerics.calculus-graph-recognition@1", "rix.numerics.calculus-derivative-sign@1", "rix.exact.sign-witness@1", "rix.exact.root-count@1"], defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:numerics" }, { source: `/**
+  catalog.addMetadata({ id: "numerics", description: "Backend-neutral bounded enclosure and refinement orchestration.", kind: "rix", mount: "numerics", exports: ["Request", "WorkPolicy", "EffectiveLimits", "ErrorBudget", "PropagateError", "RefinementHistory", "RefineHistory", "Enclose", "Refine", "Sample", "Compare", "IsolateRoot", "AdaptiveSample", "Integrate", "Optimize", "IntervalNewton", "Krawczyk", "CheckKrawczyk", "Constant", "ExplainSelection", "Range", "GraphRange", "CheckGraphRange", "SimplifyGraph", "CheckGraphSimplification", "RewriteGraph", "CheckGraphRewrite", "CheckDerivativeGraph", "DerivativeSign", "LipschitzRange", "TaylorRange", "Box", "MultivariateRequest", "JacobianRange", "AffineRange", "TaylorModelRange", "CheckMultivariateRange", "RecognizeGraph", "FunctionFacts", "WithRangeKnowledge", "RegisterRangeProvider", "CheckRangeResult", "Sign", "RootCount", "Capabilities", "CheckResult", "NthRoot", "Sqrt", "Cbrt", "Hypot", "Pow", "Exp", "Expm1", "Log", "Log1p", "Ln", "Log2", "Log10", "Pi", "EulerGamma", "Sin", "Cos", "Tan", "Sec", "Csc", "Cot", "Sinc", "Asin", "Acos", "Atan", "Atan2", "Arcsin", "Arccos", "Arctan", "Sinh", "Cosh", "Tanh", "Sech", "Csch", "Coth", "Asinh", "Acosh", "Atanh", "Arsinh", "Arcosh", "Artanh", "Radians", "Degrees", "Gamma", "LogGamma", "Beta", "LogBeta", "Digamma", "Trigamma", "Erf", "Erfc", "NormalPDF", "NormalCDF", "NormalQuantile", "LambertW", "BesselJ", "BesselJ0", "BesselJ1", "BesselY", "BesselY0", "BesselY1", "BesselI", "BesselI0", "BesselI1", "BesselK", "BesselK0", "BesselK1", "Zeta", "Quadrature", "Kantorovich"], groups: ["Numerics"], permissions: [], requires: ["rix.oracle@1"], provides: ["rix.numerics@1", "rix.numerics@2", "rix.enclosable-real-consumer@1", "rix.exact-sign-consumer@1", "rix.root-count-consumer@1", "rix.calculus-range-consumer@1"], schemas: ["rix.numerics.refinement-request@1", "rix.numerics.enclosure@1", "rix.numerics.error-budget@1", "rix.numerics.error-propagation@1", "rix.numerics.refinement-history@1", "rix.numerics.selection-explanation@1", "rix.numerics.comparison@1", "rix.numerics.root-isolation@1", "rix.numerics.adaptive-sample@1", "rix.numerics.optimization@1", "rix.numerics.interval-newton@1", "rix.numerics.krawczyk-box@1", "rix.numerics.algorithm-real@1", "rix.numerics.interval-image@1", "rix.numerics.range-enclosure@1", "rix.numerics.range-provider@1", "rix.numerics.range-provider-result@1", "rix.numerics.function-facts@1", "rix.numerics.calculus-graph-range@1", "rix.calculus.graph-simplification@1", "rix.calculus.graph-rewrite@1", "rix.numerics.rational-box@1", "rix.numerics.multivariate-range-request@1", "rix.numerics.jacobian-box-range@1", "rix.numerics.affine-box-range@1", "rix.numerics.taylor-model-box-range@1", "rix.numerics.calculus-graph-recognition@1", "rix.numerics.calculus-derivative-sign@1", "rix.exact.sign-witness@1", "rix.exact.root-count@1"], defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:numerics" }, { source: `/**
 id: numerics
 description: Backend-neutral bounded enclosure and refinement orchestration.
 kind: rix
 mount: numerics
-exports: [Request, WorkPolicy, EffectiveLimits, ErrorBudget, PropagateError, RefinementHistory, RefineHistory, Enclose, Refine, Sample, Compare, IsolateRoot, AdaptiveSample, Integrate, Optimize, Constant, ExplainSelection, Range, GraphRange, CheckGraphRange, SimplifyGraph, CheckGraphSimplification, RewriteGraph, CheckGraphRewrite, CheckDerivativeGraph, DerivativeSign, LipschitzRange, TaylorRange, Box, MultivariateRequest, JacobianRange, AffineRange, TaylorModelRange, CheckMultivariateRange, RecognizeGraph, FunctionFacts, WithRangeKnowledge, RegisterRangeProvider, CheckRangeResult, Sign, RootCount, Capabilities, CheckResult, NthRoot, Sqrt, Cbrt, Hypot, Pow, Exp, Expm1, Log, Log1p, Ln, Log2, Log10, Pi, EulerGamma, Sin, Cos, Tan, Sec, Csc, Cot, Sinc, Asin, Acos, Atan, Atan2, Arcsin, Arccos, Arctan, Sinh, Cosh, Tanh, Sech, Csch, Coth, Asinh, Acosh, Atanh, Arsinh, Arcosh, Artanh, Radians, Degrees, Gamma, LogGamma, Beta, LogBeta, Digamma, Trigamma, Erf, Erfc, NormalPDF, NormalCDF, NormalQuantile, LambertW, BesselJ, BesselJ0, BesselJ1, BesselY, BesselY0, BesselY1, BesselI, BesselI0, BesselI1, BesselK, BesselK0, BesselK1, Zeta, Quadrature, Kantorovich]
+exports: [Request, WorkPolicy, EffectiveLimits, ErrorBudget, PropagateError, RefinementHistory, RefineHistory, Enclose, Refine, Sample, Compare, IsolateRoot, AdaptiveSample, Integrate, Optimize, IntervalNewton, Krawczyk, CheckKrawczyk, Constant, ExplainSelection, Range, GraphRange, CheckGraphRange, SimplifyGraph, CheckGraphSimplification, RewriteGraph, CheckGraphRewrite, CheckDerivativeGraph, DerivativeSign, LipschitzRange, TaylorRange, Box, MultivariateRequest, JacobianRange, AffineRange, TaylorModelRange, CheckMultivariateRange, RecognizeGraph, FunctionFacts, WithRangeKnowledge, RegisterRangeProvider, CheckRangeResult, Sign, RootCount, Capabilities, CheckResult, NthRoot, Sqrt, Cbrt, Hypot, Pow, Exp, Expm1, Log, Log1p, Ln, Log2, Log10, Pi, EulerGamma, Sin, Cos, Tan, Sec, Csc, Cot, Sinc, Asin, Acos, Atan, Atan2, Arcsin, Arccos, Arctan, Sinh, Cosh, Tanh, Sech, Csch, Coth, Asinh, Acosh, Atanh, Arsinh, Arcosh, Artanh, Radians, Degrees, Gamma, LogGamma, Beta, LogBeta, Digamma, Trigamma, Erf, Erfc, NormalPDF, NormalCDF, NormalQuantile, LambertW, BesselJ, BesselJ0, BesselJ1, BesselY, BesselY0, BesselY1, BesselI, BesselI0, BesselI1, BesselK, BesselK0, BesselK1, Zeta, Quadrature, Kantorovich]
 groups: [Numerics]
 permissions: []
 requires: [rix.oracle@1]
 provides: [rix.numerics@1, rix.numerics@2, rix.enclosable-real-consumer@1, rix.exact-sign-consumer@1, rix.root-count-consumer@1, rix.calculus-range-consumer@1]
-schemas: [rix.numerics.refinement-request@1, rix.numerics.enclosure@1, rix.numerics.error-budget@1, rix.numerics.error-propagation@1, rix.numerics.refinement-history@1, rix.numerics.selection-explanation@1, rix.numerics.comparison@1, rix.numerics.root-isolation@1, rix.numerics.adaptive-sample@1, rix.numerics.optimization@1, rix.numerics.algorithm-real@1, rix.numerics.interval-image@1, rix.numerics.range-enclosure@1, rix.numerics.range-provider@1, rix.numerics.range-provider-result@1, rix.numerics.function-facts@1, rix.numerics.calculus-graph-range@1, rix.calculus.graph-simplification@1, rix.calculus.graph-rewrite@1, rix.numerics.rational-box@1, rix.numerics.multivariate-range-request@1, rix.numerics.jacobian-box-range@1, rix.numerics.affine-box-range@1, rix.numerics.taylor-model-box-range@1, rix.numerics.calculus-graph-recognition@1, rix.numerics.calculus-derivative-sign@1, rix.exact.sign-witness@1, rix.exact.root-count@1]
+schemas: [rix.numerics.refinement-request@1, rix.numerics.enclosure@1, rix.numerics.error-budget@1, rix.numerics.error-propagation@1, rix.numerics.refinement-history@1, rix.numerics.selection-explanation@1, rix.numerics.comparison@1, rix.numerics.root-isolation@1, rix.numerics.adaptive-sample@1, rix.numerics.optimization@1, rix.numerics.interval-newton@1, rix.numerics.krawczyk-box@1, rix.numerics.algorithm-real@1, rix.numerics.interval-image@1, rix.numerics.range-enclosure@1, rix.numerics.range-provider@1, rix.numerics.range-provider-result@1, rix.numerics.function-facts@1, rix.numerics.calculus-graph-range@1, rix.calculus.graph-simplification@1, rix.calculus.graph-rewrite@1, rix.numerics.rational-box@1, rix.numerics.multivariate-range-request@1, rix.numerics.jacobian-box-range@1, rix.numerics.affine-box-range@1, rix.numerics.taylor-model-box-range@1, rix.numerics.calculus-graph-recognition@1, rix.numerics.calculus-derivative-sign@1, rix.exact.sign-witness@1, rix.exact.root-count@1]
 defaultEnabled: false
 **/
 
@@ -18672,6 +21032,147 @@ NumericsQuadrature(function, lower, upper, options ?= {= }) -> {;
     .ImmutableValue(real);
 };
 
+NumericsIntervalNewton(function, derivative, interval, options ?= {= }) -> {;
+    domain = interval ~!: :RationalInterval;
+    capabilities = NumericsAlgorithmCapabilities({= kind=:intervalNewton });
+    request = .RefinementRequest(options, :refine, capabilities);
+    requestedWidth = request[:absoluteWidth];
+    maxCalls = request[:work][:maxCalls];
+    maxIterations = request[:work][:maxIterations];
+    current := domain;
+    trace := [];
+    calls := 0;
+    iterations := 0;
+    stopped := _;
+    excluded := _;
+    unique := _;
+    derivativeZero := _;
+    stalled := _;
+    {@ step=1;
+       !@stopped && @current.Width() > @requestedWidth
+         && @iterations < @maxIterations && @calls + 2 <= @maxCalls;
+       {;
+           input = @current;
+           midpoint = input.Midpoint();
+           functionAtMidpoint = NumericsAsInterval(midpoint |> @function);
+           derivativeRange = NumericsAsInterval(input |> @derivative);
+           @calls += 2;
+           @iterations += 1;
+           derivativeRange.ContainsZero()
+             ?: {;
+                 @derivativeZero ~= 1;
+                 @stopped ~= 1;
+                 @trace ~= @request[:trace]
+                   ?: @trace.Push({=
+                       iteration=@iterations,input=@input,midpoint=@midpoint,
+                       functionAtMidpoint=@functionAtMidpoint,
+                       derivative=@derivativeRange,newtonImage=_,interval=@input,
+                       classification=:derivativeContainsZero,actualized=1
+                   })
+                   ?_ @trace;
+             }
+             ?_ {;
+                 rawNewtonImage = (@midpoint:@midpoint) - @functionAtMidpoint / @derivativeRange;
+                 newtonImage = rawNewtonImage ? :RationalInterval
+                   ?: rawNewtonImage
+                   ?_ rawNewtonImage.ToRationalInterval();
+                 newtonImage ? :RationalInterval
+                   ?: _
+                   ?_ .Error("Interval Newton image was not one closed interval");
+                 @input.Overlaps(newtonImage)
+                   ?: {;
+                       nextRange = @input.Intersection(@newtonImage);
+                       next = nextRange.ToRationalInterval();
+                       next ? :RationalInterval
+                         ?: _
+                         ?_ .Error("Interval Newton intersection was not one closed interval");
+                       strictInclusion = @input.Low() < @newtonImage.Low()
+                         && @newtonImage.High() < @input.High();
+                       contracted = next.Width() < @input.Width();
+                       @unique ~= @unique || strictInclusion;
+                       @current ~= next;
+                       @trace ~= @request[:trace]
+                         ?: @trace.Push({=
+                             iteration=@iterations,input=@input,midpoint=@midpoint,
+                             functionAtMidpoint=@functionAtMidpoint,
+                             derivative=@derivativeRange,newtonImage=@newtonImage,
+                             interval=next,
+                             classification=strictInclusion ?: :unique ?_ (contracted ?: :contracted ?_ :stalled),
+                             actualized=1
+                         })
+                         ?_ @trace;
+                       contracted
+                         ?: _
+                         ?_ {; @stalled ~= 1; @stopped ~= 1; };
+                   }
+                   ?_ {;
+                       @excluded ~= 1;
+                       @stopped ~= 1;
+                       @trace ~= @request[:trace]
+                         ?: @trace.Push({=
+                             iteration=@iterations,input=@input,midpoint=@midpoint,
+                             functionAtMidpoint=@functionAtMidpoint,
+                             derivative=@derivativeRange,newtonImage=@newtonImage,
+                             interval=_,classification=:excluded,actualized=1
+                         })
+                         ?_ @trace;
+                   };
+             };
+       };
+       step += 1
+    };
+    widthMet = !excluded && !derivativeZero && current.Width() <= requestedWidth;
+    budgetReached = !stopped
+      && (iterations >= maxIterations || calls + 2 > maxCalls);
+    classification = excluded
+      ?: :excluded
+      ?_ (derivativeZero
+        ?: :derivativeContainsZero
+        ?_ (unique ?: :unique ?_ (stalled ?: :stalled ?_ :contracted)));
+    status = excluded
+      ?: :excluded
+      ?_ (derivativeZero
+        ?: :unknown
+        ?_ (widthMet
+          ?: :enclosed
+          ?_ (budgetReached ?: :budgetExhausted ?_ :resolutionFloor)));
+    rootExistence = excluded ?: :none ?_ (unique ?: :unique ?_ :unproved);
+    .ImmutableValue({=
+        valueKind=:intervalNewtonResult,
+        schema="rix.numerics.interval-newton@1",
+        status=status,
+        classification=classification,
+        rootExistence=rootExistence,
+        inputInterval=domain,
+        interval=excluded ?: _ ?_ current,
+        requestedWidth=requestedWidth,
+        achievedWidth=excluded ?: 0 ?_ current.Width(),
+        goalMet=excluded || widthMet,
+        certified=_,
+        conditional=1,
+        evidenceLevel=:assumed,
+        assumptions={=
+            derivativeMatchesFunction=:callerSupplied,
+            differentiableOnInput=:callerSupplied,
+            intervalEvaluation=:outwardExact
+        },
+        work={=
+            calls=calls,iterations=iterations,maxCalls=maxCalls,
+            maxIterations=maxIterations,exhausted=budgetReached
+        },
+        trace=trace,
+        diagnostics=derivativeZero
+          ?: [:derivativeContainsZero]
+          ?_ (stalled ?: [:intervalNewtonResolutionFloor] ?_ (budgetReached ?: [:workBudgetReached] ?_ [])),
+        evidence={=
+            kind=:intervalNewton,
+            property=rootExistence,
+            theorem=:intervalNewtonInclusion,
+            assumptions=:explicitCallerConditions
+        }
+    });
+};
+
 NumericsKantorovich(function, derivative, options ?= {= }) -> {;
     domain = NumericsOption(options, "interval", _) ~!: :RationalInterval;
     initial = NumericsOption(options, "initial", domain.Midpoint()) ~!: :Rational;
@@ -19295,6 +21796,8 @@ numericsNamespace._proto = {=
     AdaptiveSample = (self, function, interval, options ?= {= }) -> NumericsAdaptiveSample(function,interval,options),
     Integrate = (self, function, lower, upper, options ?= {= }) -> NumericsIntegrate(function,lower,upper,options),
     Optimize = (self, function, interval, options ?= {= }) -> NumericsOptimize(function,interval,options),
+    IntervalNewton = (self, function, derivative, interval, options ?= {= }) ->
+        NumericsIntervalNewton(function,derivative,interval,options),
     Constant = (self, name, options ?= {= }) -> NumericsConstant(name,options),
     ExplainSelection = (self, value, operation ?= :refine) -> NumericsExplainSelection(value,operation),
     Range = (self, value, intervalOrOptions ?= _, options ?= {= }) ->
@@ -19324,6 +21827,9 @@ numericsNamespace._proto = {=
         .AffineBoxRange(expression,bindings,options),
     TaylorModelRange = (self, expression, gradient, hessian, bindings, options ?= {= }) ->
         .TaylorModelBoxRange(expression,gradient,hessian,bindings,options),
+    Krawczyk = (self, expressions, jacobian, bindings, options ?= {= }) ->
+        .KrawczykBox(expressions,jacobian,bindings,options),
+    CheckKrawczyk = (self, result) -> .KrawczykCheck(result),
     CheckMultivariateRange = (self, result) -> .MultivariateRangeCheck(result),
     RecognizeGraph = (self, expression, variable) ->
         .CalculusRangeRecognize(expression, variable),
@@ -19548,6 +22054,1273 @@ numericsNamespace.Artanh = AtanhRangeFunction;
 
 .Host.RegisterValue("numerics", numericsNamespace, "Backend-neutral bounded enclosure and refinement orchestration", ["Numerics"]);
 `, sourcePath: "bundled:numerics", kind: "rix" });
+  catalog.addMetadata({ id: "octonion", description: "Certified octonion facade with explicit nonassociativity and intrinsic one-variable functions.", kind: "rix", mount: "octonion", exports: ["Octonion", "FromCayley", "FromExactAlgebra", "Components", "Scalar", "Vector", "Basis", "Conjugate", "NormSquared", "Inverse", "LeftDivide", "RightDivide", "Enclose", "Refine", "ZeroStatus", "Exp", "Log", "LogResult", "Root", "RootResult", "Power", "Series", "VerifyIdentity", "Associator"], groups: ["Exact", "Numerics"], permissions: [], requires: ["rix.cayley@2", "rix.float@2"], provides: ["rix.octonion@2", "rix.enclosable-octonion@1"], schemas: ["rix.octonion.value@1", "rix.octonion.function-result@1", "rix.octonion.identity-evidence@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:octonion" }, { source: `/**
+id: octonion
+description: Certified octonion facade with explicit nonassociativity and intrinsic one-variable functions.
+kind: rix
+mount: octonion
+exports: [Octonion, FromCayley, FromExactAlgebra, Components, Scalar, Vector, Basis, Conjugate, NormSquared, Inverse, LeftDivide, RightDivide, Enclose, Refine, ZeroStatus, Exp, Log, LogResult, Root, RootResult, Power, Series, VerifyIdentity, Associator]
+groups: [Exact, Numerics]
+permissions: []
+requires: [rix.cayley@2, rix.float@2]
+provides: [rix.octonion@2, rix.enclosable-octonion@1]
+schemas: [rix.octonion.value@1, rix.octonion.function-result@1, rix.octonion.identity-evidence@1]
+snapshot: false
+deterministic: true
+defaultEnabled: false
+**/
+
+OctonionIs(value) -> value ? :OctonionValue;
+OctonionRequire(value) -> OctonionIs(value) ?: value ?_ .Error("Expected an Octonion value");
+OctonionFloatProvider=.cayley.Provider({= name=:octonionFloat,certifiedSingleton=_,can=(value)->1 });
+OctonionWrap(cayley,evidence ?= {= constructor=:cayleyFacade }) -> {;
+    cayley[:dimension]==8 ?: _ ?_ .Error("Octonion facade requires an eight-component Cayley value");
+    value={= valueKind=:octonionValue,schema="rix.octonion.value@1",cayley=cayley,components=cayley[:components],evidence=evidence };
+    value.__type="OctonionValue"; value._type="octonion_value";
+    .ImmutableValue(value ~!: :OctonionValue);
+};
+OctonionBuild(a0 ?= 0,a1 ?= 0,a2 ?= 0,a3 ?= 0,a4 ?= 0,a5 ?= 0,a6 ?= 0,a7 ?= 0) -> OctonionWrap(.cayley.Value(3,[a0,a1,a2,a3,a4,a5,a6,a7]),{= constructor=:components });
+OctonionFromCayley(value) -> OctonionWrap(value,{= adapter=:cayley });
+OctonionFromExactAlgebra(value) -> OctonionWrap(.cayley.FromExactAlgebra(value),{= adapter=:exactAlgebras,source=value });
+OctonionBasis(index) -> OctonionWrap(.cayley.BasisValue(3,index),{= constructor=:basis,index=index });
+OctonionComponents(value) -> OctonionRequire(value)[:components];
+OctonionFromComponentsLike(reference,components,evidence) -> OctonionWrap(.cayley.Value(reference[:cayley][:level],components,evidence),evidence);
+OctonionPair(left,right) -> {;
+    source=OctonionIs(left) ?: left ?_ (OctonionIs(right) ?: right ?_ .Error("Octonion operation needs an Octonion operand"));
+    a=OctonionIs(left) ?: left ?_ OctonionFromComponentsLike(source,[left],{= constructor=:scalarEmbedding });
+    b=OctonionIs(right) ?: right ?_ OctonionFromComponentsLike(source,[right],{= constructor=:scalarEmbedding });
+    {= left=a,right=b };
+};
+OctonionAdd(left,right) -> {; pair=OctonionPair(left,right); OctonionWrap(pair[:left][:cayley]+pair[:right][:cayley],{= operation=:add,left=pair[:left],right=pair[:right] }); };
+OctonionSubtract(left,right) -> {; pair=OctonionPair(left,right); OctonionWrap(pair[:left][:cayley]-pair[:right][:cayley],{= operation=:subtract,left=pair[:left],right=pair[:right] }); };
+OctonionMultiply(left,right) -> {; pair=OctonionPair(left,right); OctonionWrap(pair[:left][:cayley]*pair[:right][:cayley],{= operation=:multiply,left=pair[:left],right=pair[:right],parenthesization=[:multiply,pair[:left][:evidence],pair[:right][:evidence]] }); };
+OctonionNegate(value) -> {; exact=OctonionRequire(value); OctonionWrap(-exact[:cayley],{= operation=:negate,source=exact }); };
+OctonionConjugate(value) -> {; exact=OctonionRequire(value); OctonionWrap(exact[:cayley].Conjugate(),{= operation=:conjugate,source=exact }); };
+OctonionNormSquared(value) -> OctonionRequire(value)[:cayley].NormSquared();
+OctonionDivideComponents(components,norm) -> components.Map((x)->x/norm);
+OctonionInverse(value) -> {;
+    exact=OctonionRequire(value); status=OctonionZeroStatus(exact); status[:status]==:nonzero ?: _ ?_ .Error("Octonion inverse requires nonzero evidence");
+    norm=OctonionNormSquared(exact); components=OctonionDivideComponents(OctonionConjugate(exact)[:components],norm);
+    OctonionFromComponentsLike(exact,components,{= operation=:inverse,source=exact,evidence=status });
+};
+OctonionLeftDivide(value,divisor) -> OctonionInverse(divisor)*value;
+OctonionRightDivide(value,divisor) -> value*OctonionInverse(divisor);
+OctonionEqual(left,right) -> {; pair=OctonionPair(left,right); pair[:left][:cayley]==pair[:right][:cayley]; };
+OctonionEnclose(value,request ?= {= }) -> OctonionRequire(value)[:cayley].Enclose(request);
+OctonionRefine(value,request ?= {= }) -> OctonionRequire(value)[:cayley].Refine(request);
+OctonionZeroStatus(value,request ?= {= absoluteWidth=1/1000000,maxWork=1000 }) -> {;
+    exact=OctonionRequire(value); hasFloat:=_; anyNonzero:=_; allFloatZero:=1;
+    {@ i=1;i<=8;{; component=@exact[:components][i]; component ? :float ?:{; @hasFloat~=1; @component==.float.Float(0) ?: _ ?_ {; @anyNonzero~=1; @allFloatZero~=_; }; } ?_ _; };i+=1};
+    hasFloat ?: {= valueKind=:cayleyZeroStatus,schema="rix.cayley.zero-status@1",status=anyNonzero ?: :nonzero ?_ (allFloatZero ?: :zero ?_ :unknown),certified=_,property=:originSeparation,source=exact }
+      ?_ exact[:cayley].ZeroStatus(request);
+};
+
+OctonionFloat(value) -> value ? :float ?: value ?_ .float.Float(value);
+OctonionFloatParts(value) -> OctonionComponents(value).Map((x)->OctonionFloat(x));
+OctonionFloatBuild(components,evidence) -> OctonionWrap(.cayley.Value(.cayley.Level(3,OctonionFloatProvider),components,evidence),evidence);
+OctonionVectorNorm(parts) -> {; total:=.float.Float(0); {@ i=2;i<=8;{; @total+=@parts[i]*@parts[i]; };i+=1}; .float.Sqrt(total); };
+OctonionDirectionNonzero(parts,norm) -> parts.Slice(2).Map((x)->x/norm);
+OctonionDirection(parts,norm,defaultDirection ?= [1,0,0,0,0,0,0]) -> norm==.float.Float(0) ?: defaultDirection ?_ OctonionDirectionNonzero(parts,norm);
+OctonionScaledDirection(direction,scale) -> direction.Map((x)->OctonionFloat(x)*scale);
+OctonionSliceValue(scalarPart,direction,vectorScale,evidence) -> OctonionFloatBuild([scalarPart].Concat(OctonionScaledDirection(direction,vectorScale)),evidence);
+OctonionPi() -> .float.Atan2(.float.Float(0),.float.Float(-1));
+OctonionExp(value) -> {;
+    exact=OctonionRequire(value); parts=OctonionFloatParts(exact); radius=OctonionVectorNorm(parts); unitVector=OctonionDirection(parts,radius); expScalar=.float.Exp(parts[1]);
+    OctonionSliceValue(expScalar*.float.Cos(radius),unitVector,expScalar*.float.Sin(radius),{= operation=:exp,source=exact,evaluationOrder=:sliceFormula,sliceEvidence={= generatedBy=:oneAndVectorDirection,associativeSubalgebra=1,realCoefficients=1 },approximate=1 });
+};
+OctonionLogResult(value,options ?= {= }) -> {;
+    exact=OctonionRequire(value); zero=exact.ZeroStatus(); zero[:status]==:zero ?: .Error("Octonion Log is undefined at zero") ?_ _;
+    parts=OctonionFloatParts(exact); vectorNorm=OctonionVectorNorm(parts); norm=.float.Sqrt(parts[1]*parts[1]+vectorNorm*vectorNorm); zeroFloat=.float.Float(0);
+    vectorZero=vectorNorm==zeroFloat; negativeAxis=vectorZero&&parts[1]<zeroFloat; positiveAxis=vectorZero&&parts[1]>zeroFloat; requestedDirection=options[:branchDirection]; direction=requestedDirection==_ ?: OctonionDirection(parts,vectorNorm) ?_ requestedDirection;
+    angle=positiveAxis ?: zeroFloat ?_ .float.Atan2(vectorNorm,parts[1]); real=.float.Log(norm);
+    principal=negativeAxis&&requestedDirection==_ ?: _ ?_ OctonionSliceValue(real,direction,negativeAxis ?: OctonionPi() ?_ angle,{= operation=:log,source=exact,branch=:principal,evaluationOrder=:sliceFormula,sliceEvidence={= generatedBy=:oneAndDirection,associativeSubalgebra=1,realCoefficients=1 },approximate=1 });
+    {= valueKind=:octonionFunctionResult,schema="rix.octonion.function-result@1",function=:log,status=principal==_ ?: :branchFamily ?_ :resolved,value=principal,branchFamily=negativeAxis ?: {= kind=:directionSphere,directions=:unitSphere6,angle=OctonionPi() } ?_ _,branchDirection=negativeAxis ?: requestedDirection ?_ direction,source=exact,approximate=1 };
+};
+OctonionLog(value,options ?= {= }) -> {; result=OctonionLogResult(value,options); result[:value]!=_ ?: result[:value] ?_ .Error("Octonion Log has a direction family on the negative real axis; use LogResult or supply branchDirection"); };
+OctonionRootResult(value,degree,options ?= {= }) -> {;
+    (degree ? :Integer)&&degree>0 ?: _ ?_ .Error("Octonion root degree must be a positive Integer");
+    exact=OctonionRequire(value); parts=OctonionFloatParts(exact); vectorNorm=OctonionVectorNorm(parts); norm=.float.Sqrt(parts[1]*parts[1]+vectorNorm*vectorNorm); zeroFloat=.float.Float(0);
+    negativeAxis=vectorNorm==zeroFloat&&parts[1]<zeroFloat; requestedDirection=options[:branchDirection]; direction=requestedDirection==_ ?: OctonionDirection(parts,vectorNorm) ?_ requestedDirection;
+    rootNorm=.float.Exp(.float.Log(norm)/.float.Float(degree)); theta=.float.Atan2(vectorNorm,parts[1]); branch=options[:branch]==_ ?: 0 ?_ options[:branch]; angle=((negativeAxis ?: OctonionPi() ?_ theta)+.float.Float(2)*OctonionPi()*.float.Float(branch))/.float.Float(degree);
+    root=negativeAxis&&requestedDirection==_ ?: _ ?_ OctonionSliceValue(rootNorm*.float.Cos(angle),direction,rootNorm*.float.Sin(angle),{= operation=:root,source=exact,degree=degree,branch=branch,evaluationOrder=:sliceFormula,sliceEvidence={= generatedBy=:oneAndDirection,associativeSubalgebra=1,realCoefficients=1 },approximate=1 });
+    {= valueKind=:octonionFunctionResult,schema="rix.octonion.function-result@1",function=:root,status=root==_ ?: :branchFamily ?_ :resolved,value=root,degree=degree,branch=branch,branchFamily=root==_ ?: {= kind=:directionSphere,directions=:unitSphere6 } ?_ _,source=exact,approximate=1 };
+};
+OctonionRoot(value,degree,options ?= {= }) -> {; result=OctonionRootResult(value,degree,options); result[:value]!=_ ?: result[:value] ?_ .Error("Octonion root has a direction family; use RootResult or supply branchDirection"); };
+OctonionPositiveIntegerPower(value,exponent) -> {; result:=OctonionFromComponentsLike(value,[1],{= constructor=:multiplicativeIdentity }); factor:=value; {@ n=@exponent;n>0;{; n%2==1 ?:{; @result~=@result*@factor; } ?_ _; n>1 ?:{; @factor~=@factor*@factor; } ?_ _; };n//=2}; result; };
+OctonionIntegerPower(value,exponent) -> {; exact=OctonionRequire(value); exponent==0 ?: OctonionFromComponentsLike(exact,[1],{= constructor=:multiplicativeIdentity }) ?_ _; exponent<0 ?: OctonionPositiveIntegerPower(exact.Inverse(),-exponent) ?_ OctonionPositiveIntegerPower(exact,exponent); };
+OctonionPower(value,exponent,options ?= {= }) -> exponent ? :Integer ?: OctonionIntegerPower(value,exponent) ?_ OctonionExp(OctonionLog(value,options)*exponent);
+
+OctonionSeries(value,coefficients,options ?= {= }) -> {;
+    exact=OctonionRequire(value); coefficients.Len()>0 ?: _ ?_ .Error("Series needs at least one real coefficient");
+    result:=OctonionFromComponentsLike(exact,[coefficients[coefficients.Len()]],{= constructor=:seriesCoefficient,index=coefficients.Len() });
+    {@ index=@coefficients.Len()-1;index>=1;{; @result=@result*@exact+@coefficients[index]; };index-=1};
+    final=OctonionWrap(result[:cayley],{= operation=:realCoefficientSeries,source=exact,coefficients=coefficients,evaluationOrder=:rightHorner,sliceEvidence={= generatedBy=:oneAndSource,associativeSubalgebra=1,realCoefficients=1 },remainderEvidence=options[:remainderEvidence] });
+    final;
+};
+OctonionAssociator(a,b,c) -> (a*b)*c-a*(b*c);
+OctonionVerifyIdentity(identity,a,b,c ?= _) -> {;
+    altLeft=identity==:alternativityLeft; altRight=identity==:alternativityRight; moufang=identity==:moufang; nonassociative=identity==:nonassociative;
+    valid=altLeft ?: OctonionAssociator(a,a,b)==0
+      ?_ (altRight ?: OctonionAssociator(a,b,b)==0
+      ?_ (moufang ?: ((a*b)*(c*a))==(a*((b*c)*a))
+      ?_ (nonassociative ?: !(OctonionAssociator(a,b,c)==0)
+      ?_ .Error("Unknown octonion identity fixture"))));
+    {= valueKind=:octonionIdentityEvidence,schema="rix.octonion.identity-evidence@1",identity=identity,valid=valid,parenthesized=1,inputs=[a,b,c] };
+};
+OctonionRecord(value) -> {; exact=OctonionRequire(value); {= schema=exact[:schema],components=exact[:components],cayley=.cayley.Record(exact[:cayley]),evidence=exact[:evidence],evaluationOrder=exact[:evidence][:evaluationOrder],sliceEvidence=exact[:evidence][:sliceEvidence] }; };
+
+.TypeKnown(:OctonionValue) ?: _ ?_ .TypeRegister({=
+    name=:OctonionValue,nativeType=:map,defaultTraits=[:number],convertFrom={= map=(x) ?- [x[:valueKind]==:octonionValue] -> x },validate=(x)->x[:schema]=="rix.octonion.value@1",
+    proto={=
+        Components=(self)->self[:components],Scalar=(self)->self[:components][1],Vector=(self)->self[:components].Slice(2),Conjugate=(self)->OctonionConjugate(self),NormSquared=(self)->OctonionNormSquared(self),Inverse=(self)->OctonionInverse(self),
+        LeftDivide=(self,d)->OctonionLeftDivide(self,d),RightDivide=(self,d)->OctonionRightDivide(self,d),Enclose=(self,r ?= {= })->OctonionEnclose(self,r),Refine=(self,r ?= {= })->OctonionRefine(self,r),ZeroStatus=(self,r ?= {= absoluteWidth=1/1000000,maxWork=1000 })->OctonionZeroStatus(self,r),
+        Exp=(self)->OctonionExp(self),Log=(self,o ?= {= })->OctonionLog(self,o),LogResult=(self,o ?= {= })->OctonionLogResult(self,o),Root=(self,n,o ?= {= })->OctonionRoot(self,n,o),RootResult=(self,n,o ?= {= })->OctonionRootResult(self,n,o),Power=(self,e,o ?= {= })->OctonionPower(self,e,o),Series=(self,c,o ?= {= })->OctonionSeries(self,c,o),Associator=(self,b,c)->OctonionAssociator(self,b,c),Record=(self)->OctonionRecord(self)
+    },
+    installs={=
+        ADD=[{= name=:OctonionAdd,priority=460,prep=(x,y)->OctonionIs(x)||OctonionIs(y),impl=OctonionAdd }],SUB=[{= name=:OctonionSubtract,priority=460,prep=(x,y)->OctonionIs(x)||OctonionIs(y),impl=OctonionSubtract }],MUL=[{= name=:OctonionMultiply,priority=460,prep=(x,y)->OctonionIs(x)||OctonionIs(y),impl=OctonionMultiply }],DIV=[{= name=:OctonionRightDivide,priority=460,prep=(x,y)->OctonionIs(x)&&OctonionIs(y),impl=OctonionRightDivide }],NEG=[{= name=:OctonionNegate,priority=460,prep=(x)->OctonionIs(x),impl=OctonionNegate }],EQ=[{= name=:OctonionEqual,priority=460,prep=(x,y)->OctonionIs(x)||OctonionIs(y),impl=OctonionEqual }],NEQ=[{= name=:OctonionNotEqual,priority=460,prep=(x,y)->OctonionIs(x)||OctonionIs(y),impl=(x,y)->!OctonionEqual(x,y) }]
+    }
+});
+.TypeInstall(:OctonionValue);
+
+octonionNamespace={= };
+octonionNamespace._proto={=
+    Octonion=(self,a0 ?= 0,a1 ?= 0,a2 ?= 0,a3 ?= 0,a4 ?= 0,a5 ?= 0,a6 ?= 0,a7 ?= 0)->OctonionBuild(a0,a1,a2,a3,a4,a5,a6,a7),FromCayley=(self,value)->OctonionFromCayley(value),FromExactAlgebra=(self,value)->OctonionFromExactAlgebra(value),
+    Components=(self,value)->OctonionComponents(value),Scalar=(self,value)->OctonionComponents(value)[1],Vector=(self,value)->OctonionComponents(value).Slice(2),Basis=(self,index)->OctonionBasis(index),Conjugate=(self,value)->OctonionConjugate(value),NormSquared=(self,value)->OctonionNormSquared(value),Inverse=(self,value)->OctonionInverse(value),LeftDivide=(self,value,d)->OctonionLeftDivide(value,d),RightDivide=(self,value,d)->OctonionRightDivide(value,d),Enclose=(self,value,r ?= {= })->OctonionEnclose(value,r),Refine=(self,value,r ?= {= })->OctonionRefine(value,r),ZeroStatus=(self,value,r ?= {= absoluteWidth=1/1000000,maxWork=1000 })->OctonionZeroStatus(value,r),
+    Exp=(self,value)->OctonionExp(value),Log=(self,value,o ?= {= })->OctonionLog(value,o),LogResult=(self,value,o ?= {= })->OctonionLogResult(value,o),Root=(self,value,n,o ?= {= })->OctonionRoot(value,n,o),RootResult=(self,value,n,o ?= {= })->OctonionRootResult(value,n,o),Power=(self,value,e,o ?= {= })->OctonionPower(value,e,o),Series=(self,value,c,o ?= {= })->OctonionSeries(value,c,o),VerifyIdentity=(self,identity,a,b,c ?= _)->OctonionVerifyIdentity(identity,a,b,c),Associator=(self,a,b,c)->OctonionAssociator(a,b,c)
+};
+.Host.RegisterValue("octonion",octonionNamespace,"Certified octonions with explicit nonassociativity and intrinsic slice functions",["Exact","Numerics"]);
+`, sourcePath: "bundled:octonion", kind: "rix" });
+  catalog.addMetadata({ id: "ode", description: "Portable initial-value problems, vector trajectories, adaptive demonstrations, checked Picard and second-order Taylor tubes, and certified event isolation.", kind: "rix", mount: "ode", exports: ["IVP", "Euler", "RK4", "AdaptiveRK4", "ValidatedPicard", "ValidatedTaylor2", "Event", "IsolateEvents", "At", "Points", "Segments", "Record", "IsProblem", "IsSolution"], groups: ["Numerics", "ODE", "Calculus"], permissions: [], requires: ["rix.calculus@1", "rix.numerics@2"], provides: ["rix.ode@1", "rix.ode.problem@1", "rix.ode.solution@1", "rix.ode.dense-segment@1", "rix.ode.event@1", "rix.ode.event-result@1"], schemas: ["rix.ode.problem@1", "rix.ode.solution@1", "rix.ode.dense-segment@1", "rix.ode.event@1", "rix.ode.event-result@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:ode" }, { source: `/**
+id: ode
+description: Portable initial-value problems, vector trajectories, adaptive demonstrations, checked Picard and second-order Taylor tubes, and certified event isolation.
+kind: rix
+mount: ode
+exports: [IVP, Euler, RK4, AdaptiveRK4, ValidatedPicard, ValidatedTaylor2, Event, IsolateEvents, At, Points, Segments, Record, IsProblem, IsSolution]
+groups: [Numerics, ODE, Calculus]
+permissions: []
+requires: [rix.calculus@1, rix.numerics@2]
+provides: [rix.ode@1, rix.ode.problem@1, rix.ode.solution@1, rix.ode.dense-segment@1, rix.ode.event@1, rix.ode.event-result@1]
+schemas: [rix.ode.problem@1, rix.ode.solution@1, rix.ode.dense-segment@1, rix.ode.event@1, rix.ode.event-result@1]
+snapshot: false
+deterministic: true
+defaultEnabled: false
+**/
+
+OdeOption(options, key, fallback ?= _) -> options.Has(key) ?: options[key] ?_ fallback;
+
+OdeRequireOptions(value, label) ->
+    value ? :Map ?: value ?_ .Error(@"@{label} must be a map");
+
+OdeRequirePositiveInteger(value, label, maximum ?= 10000) -> {;
+    exact = value ~!: :Integer;
+    exact >= 1 && exact <= maximum
+      ?: exact
+      ?_ .Error(@"@{label} must be an Integer from 1 through @{maximum}");
+};
+
+OdeRequirePositiveRational(value, label) -> {;
+    exact = value ~!: :Rational;
+    exact > 0 ?: exact ?_ .Error(@"@{label} must be a positive Rational");
+};
+
+OdeAsInterval(value, label) ->
+    value ? :RationalInterval
+      ?: value
+      ?_ {;
+          exact = @value ~!: :Rational;
+          exact:exact;
+      };
+
+OdeIsProblemValue(value) ->
+    (value ? :Map) && value[:schema] == "rix.ode.problem@1";
+
+OdeIsSolutionValue(value) ->
+    (value ? :Map) && value[:schema] == "rix.ode.solution@1";
+
+OdeRequireProblem(value) ->
+    OdeIsProblemValue(value) ?: value ?_ .Error("ODE expected rix.ode.problem@1");
+
+OdeRequireSolution(value) ->
+    OdeIsSolutionValue(value) ?: value ?_ .Error("ODE expected rix.ode.solution@1");
+
+OdeNormalizeExpressions(value) -> {;
+    expressions = value ? :Array ?: value ?_ [value];
+    expressions.Len() >= 1
+      ?: _
+      ?_ .Error("ODE right-hand side must contain at least one expression");
+    expressions.Map((expression)->
+        .calculus.IsExpression(expression)
+          ?: expression
+          ?_ .Error("ODE right-hand sides must be public Calculus expressions")
+    );
+};
+
+OdeNormalizeState(value) -> {;
+    states = value ? :Array ?: value ?_ [value];
+    states.Len() >= 1
+      ?: _
+      ?_ .Error("ODE initial state must contain at least one value");
+    states.Map((state)->OdeAsInterval(state,"ODE initial-state entry"));
+};
+
+OdeNormalizeNames(value, count) -> {;
+    names = value ? :Array ?: value ?_ .Error("ODE stateNames must be an Array");
+    names.Len() == count
+      ?: _
+      ?_ .Error("ODE stateNames length must match the state dimension");
+    names.Map((name)->name ? :String ?: name ?_ .Error("ODE state names must be strings"));
+};
+
+OdeIVP(rhsValue, initialTimeValue, initialStateValue, intervalValue, options ?= {= }) -> {;
+    options = OdeRequireOptions(options,"ODE IVP options");
+    rhs = OdeNormalizeExpressions(rhsValue);
+    initialState = OdeNormalizeState(initialStateValue);
+    rhs.Len() == initialState.Len()
+      ?: _
+      ?_ .Error("ODE right-hand side dimension must match the initial state");
+    defaultNames = rhs.Len() == 1 ?: [:y] ?_ _;
+    requestedNames = OdeOption(options,"statenames",defaultNames);
+    requestedNames != _
+      ?: _
+      ?_ .Error("Vector IVPs require explicit stateNames");
+    stateNames = OdeNormalizeNames(requestedNames,rhs.Len());
+    independent = OdeOption(options,"independent",:t);
+    independent ? :String
+      ?: independent
+      ?_ .Error("ODE independent variable must be a string");
+    stateNames.Includes(independent)
+      ?: .Error("ODE independent variable must differ from every state name")
+      ?_ _;
+    initialTime = initialTimeValue ~!: :Rational;
+    interval = intervalValue ~!: :RationalInterval;
+    interval.Low() == initialTime && interval.High() > initialTime
+      ?: _
+      ?_ .Error("ODE Phase 1 IVPs must start at the lower endpoint of a forward interval");
+    parameters = OdeRequireOptions(OdeOption(options,"parameters",{= }),"ODE parameters");
+    units = OdeRequireOptions(OdeOption(options,"units",{= }),"ODE units");
+    events = OdeOption(options,"events",[]);
+    events ? :Array ?: _ ?_ .Error("ODE events must be an Array");
+    assumptions = OdeOption(options,"assumptions",[]);
+    assumptions ? :Array ?: _ ?_ .Error("ODE assumptions must be an Array");
+    problem = {=
+        valueKind=:odeProblem,
+        schema="rix.ode.problem@1",
+        problemKind=:initialValueProblem,
+        independent=independent,
+        stateNames=stateNames,
+        dimension=rhs.Len(),
+        rhs=rhs,
+        initialTime=initialTime,
+        initialState=initialState,
+        interval=interval,
+        parameters=parameters,
+        units=units,
+        events=events,
+        assumptions=assumptions,
+        direction=:forward,
+        portableExpression=1
+    };
+    problem .= {= _proto=odeProblemProto };
+    problem = .ImmutableValue(problem);
+    problem;
+};
+
+OdeRequirePointState(problem, method) -> problem[:initialState].Map((entry)->
+    entry.Width() == 0
+      ?: entry.Low()
+      ?_ .Error(@"ODE @{method} requires a point initial state; use ValidatedPicard to propagate interval state")
+);
+
+OdeBindings(problem, time, state) -> {;
+    bindings := problem[:parameters].Set(problem[:independent],time);
+    {@ index=1; index<=@problem[:dimension]; {;
+       @bindings ~= @bindings.Set(@problem[:stateNames][index],@state[index]);
+    }; index += 1 };
+    bindings;
+};
+
+OdePointValues(problem, time, state) -> {;
+    bindings = OdeBindings(problem,time,state);
+    problem[:rhs].Map((expression)->
+        .calculus.Evaluate(expression,@bindings) ~!: :Rational
+    );
+};
+
+OdeVectorAdd(left, right) -> left.Map((value,index)->value+right[index]);
+OdeVectorSubtract(left, right) -> left.Map((value,index)->value-right[index]);
+OdeVectorScale(values, scale) -> values.Map((value)->value*scale);
+OdeVectorCombination(k1, k2, k3, k4) -> k1.Map((value,index)->
+    value+2*k2[index]+2*k3[index]+k4[index]
+);
+OdeVectorMaxAbs(values) -> values.Reduce((largest,value)->{;
+    magnitude = value < 0 ?: -value ?_ value;
+    magnitude > largest ?: magnitude ?_ largest;
+},0);
+
+OdeRK4Step(problem, time, state, stepSize) -> {;
+    k1 = OdePointValues(problem,time,state);
+    k2 = OdePointValues(problem,time+stepSize/2,OdeVectorAdd(state,OdeVectorScale(k1,stepSize/2)));
+    k3 = OdePointValues(problem,time+stepSize/2,OdeVectorAdd(state,OdeVectorScale(k2,stepSize/2)));
+    k4 = OdePointValues(problem,time+stepSize,OdeVectorAdd(state,OdeVectorScale(k3,stepSize)));
+    next = OdeVectorAdd(state,OdeVectorScale(OdeVectorCombination(k1,k2,k3,k4),stepSize/6));
+    {= next=next,slopes=[k1,k2,k3,k4],rhsEvaluations=4 };
+};
+
+OdeDenseSegment(method, index, t0, t1, y0, y1, data ?= {= }) ->
+    .ImmutableValue({=
+        valueKind=:odeDenseSegment,
+        schema="rix.ode.dense-segment@1",
+        segmentKind=:approximate,
+        method=method,
+        index=index,
+        tStart=t0,
+        tEnd=t1,
+        stateStart=y0,
+        stateEnd=y1,
+        interpolation=:linear,
+        data=data,
+        certified=_,
+        evidenceLevel=:observed
+    });
+
+OdeApproximateSolution(problemValue, method, options ?= {= }) -> {;
+    problem = OdeRequireProblem(problemValue);
+    options = OdeRequireOptions(options,@"ODE @{method} options");
+    steps = OdeRequirePositiveInteger(OdeOption(options,"steps",10),@"ODE @{method} steps");
+    lower = problem[:initialTime];
+    upper = problem[:interval].High();
+    stepSize = (upper-lower)/steps;
+    time := lower;
+    state := OdeRequirePointState(problem,method);
+    points := [[time,state]];
+    segments := [];
+    {@ index=1; index<=@steps; {;
+       nextTime = @time+@stepSize;
+       nextState := _;
+       data := _;
+       @method == :euler
+         ?: {;
+             k1 = OdePointValues(@problem,@time,@state);
+             @nextState ~= OdeVectorAdd(@state,OdeVectorScale(k1,@stepSize));
+             @data ~= {= slopes=[k1],order=1 };
+         }
+         ?_ {;
+             step = OdeRK4Step(@problem,@time,@state,@stepSize);
+             @nextState ~= step[:next];
+             @data ~= {= slopes=step[:slopes],order=4 };
+         };
+       @segments ~= @segments.Push(OdeDenseSegment(@method,index,@time,nextTime,@state,nextState,data));
+       @time ~= nextTime;
+       @state ~= nextState;
+       @points ~= @points.Push([nextTime,nextState]);
+    }; index += 1 };
+    solution = {=
+        valueKind=:odeSolution,
+        schema="rix.ode.solution@1",
+        problem=problem,
+        method=method,
+        status=:approximate,
+        classification=:fixedStepTrajectory,
+        stateNames=problem[:stateNames],
+        interval=problem[:interval],
+        points=points,
+        segments=segments,
+        finalState=state,
+        certified=_,
+        evidenceLevel=:observed,
+        errorModel={=
+            localEstimate=:notComputed,
+            globalEstimate=:notComputed,
+            formalOrder=method == :euler ?: 1 ?_ 4
+        },
+        work={= steps=steps,rhsEvaluations=method == :euler ?: steps ?_ 4*steps,exhausted=_ },
+        diagnostics=[:approximateNoCertifiedErrorBound]
+    };
+    solution .= {= _proto=odeSolutionProto };
+    solution = .ImmutableValue(solution);
+    solution;
+};
+
+OdeAdaptiveRK4(problemValue, options ?= {= }) -> {;
+    problem = OdeRequireProblem(problemValue);
+    options = OdeRequireOptions(options,"ODE AdaptiveRK4 options");
+    initialSteps = OdeRequirePositiveInteger(
+        OdeOption(options,"initialsteps",4),"ODE AdaptiveRK4 initialSteps",10000
+    );
+    maxAttempts = OdeRequirePositiveInteger(
+        OdeOption(options,"maxattempts",1000),"ODE AdaptiveRK4 maxAttempts",100000
+    );
+    tolerance = OdeRequirePositiveRational(
+        OdeOption(options,"tolerance",1/100000),"ODE AdaptiveRK4 tolerance"
+    );
+    lower = problem[:initialTime];
+    upper = problem[:interval].High();
+    time := lower;
+    state := OdeRequirePointState(problem,:adaptiveRK4);
+    stepSize := (upper-lower)/initialSteps;
+    points := [[time,state]];
+    segments := [];
+    estimates := [];
+    accepted := 0;
+    rejected := 0;
+    rhsEvaluations := 0;
+    {@ attempt=1; @time<@upper && attempt<=@maxAttempts; {;
+       h = @time+@stepSize > @upper ?: @upper-@time ?_ @stepSize;
+       full = OdeRK4Step(@problem,@time,@state,h);
+       half1 = OdeRK4Step(@problem,@time,@state,h/2);
+       half2 = OdeRK4Step(@problem,@time+h/2,half1[:next],h/2);
+       @rhsEvaluations += 12;
+       difference = OdeVectorSubtract(half2[:next],full[:next]);
+       estimate = OdeVectorMaxAbs(difference)/15;
+       estimate <= @tolerance
+         ?: {;
+             corrected = OdeVectorAdd(@half2[:next],OdeVectorScale(@difference,1/15));
+             nextTime = @time+@h;
+             data = {=
+                 order=4,
+                 extrapolatedOrder=5,
+                 localErrorEstimate=@estimate,
+                 tolerance=@tolerance,
+                 estimator=:rk4StepDoubling
+             };
+             @segments ~= @segments.Push(OdeDenseSegment(
+                 :adaptiveRK4,@accepted+1,@time,nextTime,@state,corrected,data
+             ));
+             @state ~= corrected;
+             @time ~= nextTime;
+             @points ~= @points.Push([@time,@state]);
+             @estimates ~= @estimates.Push(@estimate);
+             @accepted += 1;
+             @estimate <= @tolerance/32 ?: {; @stepSize *= 2; } ?_ _;
+         }
+         ?_ {;
+             @rejected += 1;
+             @stepSize /= 2;
+         };
+    }; attempt += 1 };
+    complete = time == upper;
+    solution = {=
+        valueKind=:odeSolution,
+        schema="rix.ode.solution@1",
+        problem=problem,
+        method=:adaptiveRK4,
+        status=complete ?: :approximate ?_ :partial,
+        classification=complete ?: :adaptiveTrajectory ?_ :adaptiveBudgetExhausted,
+        stateNames=problem[:stateNames],
+        interval=problem[:interval],
+        coveredInterval=lower:time,
+        points=points,
+        segments=segments,
+        finalState=complete ?: state ?_ _,
+        certified=_,
+        evidenceLevel=:observed,
+        errorModel={=
+            localEstimate=:stepDoubling,
+            acceptedEstimates=estimates,
+            globalEstimate=:notCertified,
+            formalOrder=4
+        },
+        work={=
+            acceptedSteps=accepted,
+            rejectedSteps=rejected,
+            maxAttempts=maxAttempts,
+            rhsEvaluations=rhsEvaluations,
+            exhausted=!complete
+        },
+        diagnostics=complete
+          ?: [:approximateLocalEstimateNotGlobalCertificate]
+          ?_ [:approximateLocalEstimateNotGlobalCertificate,:adaptiveBudgetExhausted]
+    };
+    solution .= {= _proto=odeSolutionProto };
+    .ImmutableValue(solution);
+};
+
+OdeRangeResult(expression, problem, timeRange, stateRanges, maxSubintervals) -> {;
+    bindings = OdeBindings(problem,timeRange,stateRanges);
+    result = .numerics.GraphRange(expression,bindings,{= maxSubintervals=maxSubintervals });
+    result[:certified] == 1 && result[:domainStatus] == :allDefined && result[:interval] != _
+      ?: result
+      ?_ .Error("Validated ODE range evaluation was not certified on the complete tube");
+};
+
+OdeIntervalMagnitude(interval) -> {;
+    lower = interval.Low();
+    upper = interval.High();
+    lowerMagnitude = lower < 0 ?: -lower ?_ lower;
+    upperMagnitude = upper < 0 ?: -upper ?_ upper;
+    lowerMagnitude > upperMagnitude ?: lowerMagnitude ?_ upperMagnitude;
+};
+
+OdeValidatedSegment(problem, index, t0, t1, initial, derivatives, options) -> {;
+    h = t1-t0;
+    maxTubeIterations = options[:maxTubeIterations];
+    maxSubintervals = options[:maxSubintervals];
+    requestedRadius = options[:tubeRadius];
+    radius := requestedRadius == _ ?: h ?_ requestedRadius;
+    accepted := _;
+    tube := _;
+    rhsResult := _;
+    derivativeResult := _;
+    selfMap := _;
+    contractionBound := _;
+    lastCandidate := _;
+    lastImage := _;
+    lastContraction := _;
+    lastContained := _;
+    attempts := 0;
+    {@ attempt=1; !@accepted && attempt<=@maxTubeIterations; {;
+       @attempts += 1;
+       attemptRadius = @radius*(2^(attempt-1));
+       candidate = @initial.Map((entry)->(entry.Low()-attemptRadius):(entry.High()+attemptRadius));
+       timeRange = @t0:@t1;
+       candidateRhs = @problem[:rhs].Map((expression)->OdeRangeResult(
+           expression,@problem,@timeRange,@candidate,@maxSubintervals
+       ));
+       candidateDerivative = @derivatives.Map((row)->row.Map((derivative)->OdeRangeResult(
+           derivative[:expression],@problem,@timeRange,@candidate,@maxSubintervals
+       )));
+       image = @initial.Map((entry,axis)->
+           entry+(0:@h)*candidateRhs[axis][:interval]
+       );
+       contains = candidate.Filter((entry,axis)->
+           entry.Low() <= image[axis].Low() && image[axis].High() <= entry.High()
+       ).Len() == @problem[:dimension];
+       rowBounds = candidateDerivative.Map((row)->row.Reduce((sum,result)->
+           sum+OdeIntervalMagnitude(result[:interval]),0
+       ));
+       contraction = @h*rowBounds.Reduce((largest,value)->value>largest ?: value ?_ largest,0);
+       unique = contraction < 1;
+       @lastCandidate ~= candidate;
+       @lastImage ~= image;
+       @lastContraction ~= contraction;
+       @lastContained ~= contains;
+       contains && unique
+         ?: {;
+             @accepted ~= 1;
+             @tube ~= @candidate;
+             @rhsResult ~= @candidateRhs;
+             @derivativeResult ~= @candidateDerivative;
+             @selfMap ~= @image;
+             @contractionBound ~= @contraction;
+         }
+         ?_ _;
+    }; attempt += 1 };
+    accepted
+      ?: {;
+          endpoint = @initial.Map((entry,axis)->entry+(@h:@h)*@rhsResult[axis][:interval]);
+          .ImmutableValue({=
+              valueKind=:odeDenseSegment,
+              schema="rix.ode.dense-segment@1",
+              segmentKind=:validatedTube,
+              method=:validatedPicard,
+              index=@index,
+              tStart=@t0,
+              tEnd=@t1,
+              stateStart=@initial,
+              stateEnd=endpoint,
+              interpolation=:intervalTube,
+              tube=@tube,
+              selfMap=@selfMap,
+              rhsRange=@rhsResult.Map((result)->result[:interval]),
+              derivativeRange=@derivativeResult.Map((row)->row.Map((result)->result[:interval])),
+              contractionBound=@contractionBound,
+              uniqueness=:picardLindelof,
+              certified=1,
+              evidenceLevel=:proof,
+              evidence={=
+                  theorem=:picardSelfMapAndLipschitz,
+                  rhsRange=@rhsResult.Map((result)->result[:evidence]),
+                  derivativeRange=@derivativeResult.Map((row)->row.Map((result)->result[:evidence])),
+                  selfMapContained=1,
+                  contractionEstablished=1,
+                  derivativeIdentity=@derivatives.Map((row)->row.Map((derivative)->derivative[:evidence]))
+              },
+              work={= tubeIterations=@attempts }
+          });
+      }
+      ?_ .ImmutableValue({=
+          valueKind=:odeDenseSegment,
+          schema="rix.ode.dense-segment@1",
+          segmentKind=:unresolvedTube,
+          method=:validatedPicard,
+          index=index,
+          tStart=t0,
+          tEnd=t1,
+          stateStart=initial,
+          stateEnd=_,
+          interpolation=:none,
+          certified=_,
+          evidenceLevel=:unresolved,
+          diagnostics=[:tubeSelfMapNotEstablished],
+          candidate=lastCandidate,
+          selfMap=lastImage,
+          contractionBound=lastContraction,
+          selfMapContained=lastContained,
+          work={= tubeIterations=attempts }
+      });
+};
+
+OdeValidatedPicard(problemValue, options ?= {= }) -> {;
+    problem = OdeRequireProblem(problemValue);
+    options = OdeRequireOptions(options,"ODE ValidatedPicard options");
+    steps = OdeRequirePositiveInteger(OdeOption(options,"steps",4),"ODE ValidatedPicard steps");
+    maxTubeIterations = OdeRequirePositiveInteger(
+        OdeOption(options,"maxtubeiterations",8),"ODE maxTubeIterations",32
+    );
+    maxSubintervals = OdeRequirePositiveInteger(
+        OdeOption(options,"maxsubintervals",4),"ODE maxSubintervals",64
+    );
+    tubeRadiusValue = OdeOption(options,"tuberadius",_);
+    tubeRadius = tubeRadiusValue == _ ?: _ ?_ OdeRequirePositiveRational(tubeRadiusValue,"ODE tubeRadius");
+    derivatives = problem[:rhs].Map((expression)->problem[:stateNames].Map((name)->
+        .calculus.PartialResult(expression,name)
+    ));
+    derivativeChecks = derivatives.Map((row)->row.Map((derivative)->
+        .numerics.CheckDerivativeGraph(derivative)
+    ));
+    derivativeChecks.Filter((row)->row.Filter((check)->check[:accepted]==1).Len()==problem[:dimension]).Len()==problem[:dimension]
+      ?: _
+      ?_ .Error("Validated ODE requires a checked state derivative");
+    derivatives.Filter((row)->row.Filter((derivative)->derivative[:obligations].Len()==0).Len()==problem[:dimension]).Len()==problem[:dimension]
+      ?: _
+      ?_ .Error("Validated ODE Phase 1 requires an unconditional state derivative on its tube");
+    normalized = {=
+        maxTubeIterations=maxTubeIterations,
+        maxSubintervals=maxSubintervals,
+        tubeRadius=tubeRadius
+    };
+    lower = problem[:initialTime];
+    upper = problem[:interval].High();
+    stepSize = (upper-lower)/steps;
+    time := lower;
+    state := problem[:initialState];
+    points := [[time,state]];
+    segments := [];
+    stopped := _;
+    {@ index=1; index<=@steps && !@stopped; {;
+       nextTime = @time+@stepSize;
+       segment = OdeValidatedSegment(
+           @problem,index,@time,nextTime,@state,@derivatives,@normalized
+       );
+       @segments ~= @segments.Push(segment);
+       segment[:certified] == 1
+         ?: {;
+             @state ~= @segment[:stateEnd];
+             @time ~= @nextTime;
+             @points ~= @points.Push([@nextTime,@state]);
+         }
+         ?_ {; @stopped ~= 1; };
+    }; index += 1 };
+    complete = !stopped && segments.Len() == steps;
+    solution = {=
+        valueKind=:odeSolution,
+        schema="rix.ode.solution@1",
+        problem=problem,
+        method=:validatedPicard,
+        status=complete ?: :validated ?_ :partial,
+        classification=complete ?: :certifiedTube ?_ :unresolvedTube,
+        stateNames=problem[:stateNames],
+        interval=problem[:interval],
+        coveredInterval=lower:time,
+        points=points,
+        segments=segments,
+        finalState=complete ?: state ?_ _,
+        certified=complete ?: 1 ?_ _,
+        evidenceLevel=complete ?: :proof ?_ :partialProof,
+        derivative=derivatives,
+        work={=
+            requestedSteps=steps,
+            completedSteps=points.Len()-1,
+            maxTubeIterations=maxTubeIterations,
+            exhausted=!complete
+        },
+        diagnostics=complete ?: [] ?_ [:validatedTrajectoryPartial]
+    };
+    solution .= {= _proto=odeSolutionProto };
+    solution = .ImmutableValue(solution);
+    solution;
+};
+
+OdeCheckedPartial(expression, variable, label) -> {;
+    derivative = .calculus.PartialResult(expression,variable);
+    check = .numerics.CheckDerivativeGraph(derivative);
+    check[:accepted]==1
+      ?: _
+      ?_ .Error(@"ODE could not check the @{label} derivative");
+    derivative[:obligations].Len()==0
+      ?: _
+      ?_ .Error(@"ODE @{label} derivative has unresolved domain or branch obligations");
+    derivative;
+};
+
+OdeTotalDerivative(expression, problem, label) -> {;
+    timeDerivative = OdeCheckedPartial(expression,problem[:independent],@"time @{label}");
+    stateDerivatives = problem[:stateNames].Map((name)->
+        OdeCheckedPartial(@expression,name,@"state @{label}")
+    );
+    total = stateDerivatives.Reduce((sum,derivative,index)->
+        sum+derivative[:expression]*@problem[:rhs][index],
+        timeDerivative[:expression]
+    );
+    {=
+        expression=total,
+        timeDerivative=timeDerivative,
+        stateDerivatives=stateDerivatives,
+        evidence={=
+            rule=:odeTotalDerivative,
+            identity=:partialTimePlusGradientDotFlow,
+            timeEvidence=timeDerivative[:evidence],
+            stateEvidence=stateDerivatives.Map((derivative)->derivative[:evidence])
+        }
+    };
+};
+
+OdeIntersectIntervals(left, right, label) -> {;
+    left.Overlaps(right)
+      ?: _
+      ?_ .Error(@"ODE certified @{label} enclosures are inconsistent");
+    left.Intersection(right).ToRationalInterval();
+};
+
+OdeTaylorStateRange(segment, timeRange) -> {;
+    delta = timeRange-(segment[:tStart]:segment[:tStart]);
+    raw = segment[:stateStart].Map((entry,axis)->
+        entry+delta*segment[:taylorBaseSlopeRange][axis]
+          +(delta^2)*segment[:secondDerivativeRange][axis]/2
+    );
+    raw.Map((entry,axis)->OdeIntersectIntervals(entry,segment[:tube][axis],"Taylor state"));
+};
+
+OdeTaylorizeSegment(problem, segment, secondDerivatives, maxSubintervals) -> {;
+    segment[:certified]==1
+      ?: {;
+          activeSegment = @segment;
+          activeProblem = @problem;
+          activeSecondDerivatives = @secondDerivatives;
+          activeMaxSubintervals = @maxSubintervals;
+          startTime = activeSegment[:tStart]:activeSegment[:tStart];
+          fullTime = activeSegment[:tStart]:activeSegment[:tEnd];
+          startRanges = activeProblem[:rhs].Map((expression)->OdeRangeResult(
+              expression,@activeProblem,@startTime,@activeSegment[:stateStart],@activeMaxSubintervals
+          ));
+          secondRanges = activeSecondDerivatives.Map((derivative)->OdeRangeResult(
+              derivative[:expression],@activeProblem,@fullTime,@activeSegment[:tube],@activeMaxSubintervals
+          ));
+          h = activeSegment[:tEnd]-activeSegment[:tStart];
+          rawEndpoint = activeSegment[:stateStart].Map((entry,axis)->
+              entry+(h:h)*startRanges[axis][:interval]
+                +(h*h/2:h*h/2)*secondRanges[axis][:interval]
+          );
+          endpoint = rawEndpoint.Map((entry,axis)->
+              OdeIntersectIntervals(entry,@activeSegment[:stateEnd][axis],"Taylor endpoint")
+          );
+          delta = 0:h;
+          rawTube = activeSegment[:stateStart].Map((entry,axis)->
+              entry+delta*startRanges[axis][:interval]
+                +(delta^2)*secondRanges[axis][:interval]/2
+          );
+          tightenedTube = rawTube.Map((entry,axis)->
+              OdeIntersectIntervals(entry,@activeSegment[:tube][axis],"Taylor tube")
+          );
+          .ImmutableValue({=
+              valueKind=:odeDenseSegment,
+              schema="rix.ode.dense-segment@1",
+              segmentKind=:validatedTaylorTube,
+              method=:validatedTaylor2,
+              index=activeSegment[:index],
+              tStart=activeSegment[:tStart],
+              tEnd=activeSegment[:tEnd],
+              stateStart=activeSegment[:stateStart],
+              stateEnd=endpoint,
+              interpolation=:secondOrderTaylorInterval,
+              tube=tightenedTube,
+              picardTube=activeSegment[:tube],
+              taylorBaseSlopeRange=startRanges.Map((result)->result[:interval]),
+              secondDerivativeRange=secondRanges.Map((result)->result[:interval]),
+              rawTaylorEndpoint=rawEndpoint,
+              contractionBound=activeSegment[:contractionBound],
+              uniqueness=activeSegment[:uniqueness],
+              wrappingControl=:segmentwiseTaylorRecentering,
+              certified=1,
+              evidenceLevel=:proof,
+              evidence={=
+                  theorem=:secondOrderTaylorRemainderInsidePicardTube,
+                  existenceAndUniqueness=activeSegment[:evidence],
+                  baseSlopeRange=startRanges.Map((result)->result[:evidence]),
+                  secondDerivativeRange=secondRanges.Map((result)->result[:evidence]),
+                  totalDerivativeIdentity=activeSecondDerivatives.Map((derivative)->derivative[:evidence]),
+                  endpointIntersection=1,
+                  tubeIntersection=1
+              },
+              work=activeSegment[:work]
+          });
+      }
+      ?_ segment;
+};
+
+OdeValidatedTaylor2(problemValue, options ?= {= }) -> {;
+    problem = OdeRequireProblem(problemValue);
+    options = OdeRequireOptions(options,"ODE ValidatedTaylor2 options");
+    steps = OdeRequirePositiveInteger(OdeOption(options,"steps",4),"ODE ValidatedTaylor2 steps");
+    maxTubeIterations = OdeRequirePositiveInteger(
+        OdeOption(options,"maxtubeiterations",8),"ODE maxTubeIterations",32
+    );
+    maxSubintervals = OdeRequirePositiveInteger(
+        OdeOption(options,"maxsubintervals",4),"ODE maxSubintervals",64
+    );
+    tubeRadiusValue = OdeOption(options,"tuberadius",_);
+    tubeRadius = tubeRadiusValue == _ ?: _ ?_ OdeRequirePositiveRational(tubeRadiusValue,"ODE tubeRadius");
+    stateDerivatives = problem[:rhs].Map((expression)->problem[:stateNames].Map((name)->
+        OdeCheckedPartial(expression,name,"Picard state")
+    ));
+    secondDerivatives = problem[:rhs].Map((expression,index)->
+        OdeTotalDerivative(expression,@problem,@"right-hand side @{index}")
+    );
+    normalized = {=
+        maxTubeIterations=maxTubeIterations,
+        maxSubintervals=maxSubintervals,
+        tubeRadius=tubeRadius
+    };
+    lower = problem[:initialTime];
+    upper = problem[:interval].High();
+    stepSize = (upper-lower)/steps;
+    time := lower;
+    state := problem[:initialState];
+    points := [[time,state]];
+    segments := [];
+    stopped := _;
+    {@ index=1; index<=@steps && !@stopped; {;
+       nextTime = @time+@stepSize;
+       picard = OdeValidatedSegment(
+           @problem,index,@time,nextTime,@state,@stateDerivatives,@normalized
+       );
+       segment = OdeTaylorizeSegment(@problem,picard,@secondDerivatives,@maxSubintervals);
+       @segments ~= @segments.Push(segment);
+       segment[:certified]==1
+         ?: {;
+             @state ~= @segment[:stateEnd];
+             @time ~= @nextTime;
+             @points ~= @points.Push([@nextTime,@state]);
+         }
+         ?_ {; @stopped ~= 1; };
+    }; index += 1 };
+    complete = !stopped && segments.Len()==steps;
+    solution = {=
+        valueKind=:odeSolution,
+        schema="rix.ode.solution@1",
+        problem=problem,
+        method=:validatedTaylor2,
+        status=complete ?: :validated ?_ :partial,
+        classification=complete ?: :certifiedTaylorTube ?_ :unresolvedTaylorTube,
+        stateNames=problem[:stateNames],
+        interval=problem[:interval],
+        coveredInterval=lower:time,
+        points=points,
+        segments=segments,
+        finalState=complete ?: state ?_ _,
+        certified=complete ?: 1 ?_ _,
+        evidenceLevel=complete ?: :proof ?_ :partialProof,
+        derivative={= stateJacobian=stateDerivatives,totalRhsDerivative=secondDerivatives },
+        wrappingControl={=
+            kind=:secondOrderTaylorRecentering,
+            order=2,
+            baseExistenceTube=:validatedPicard,
+            affineArithmetic=_
+        },
+        work={=
+            requestedSteps=steps,
+            completedSteps=points.Len()-1,
+            maxTubeIterations=maxTubeIterations,
+            exhausted=!complete
+        },
+        diagnostics=complete ?: [] ?_ [:validatedTaylorTrajectoryPartial]
+    };
+    solution .= {= _proto=odeSolutionProto };
+    .ImmutableValue(solution);
+};
+
+OdeAt(solutionValue, timeValue) -> {;
+    solution = OdeRequireSolution(solutionValue);
+    time = timeValue ~!: :Rational;
+    solution[:interval].ContainsValue(time)
+      ?: _
+      ?_ .Error("ODE query time lies outside the problem interval");
+    selected := _;
+    {@ index=1; index<=@solution[:segments].Len() && @selected==_; {;
+       segment = @solution[:segments][index];
+       @time >= segment[:tStart] && @time <= segment[:tEnd]
+         ?: {; @selected ~= @segment; }
+         ?_ _;
+    }; index += 1 };
+    selected != _
+      ?: _
+      ?_ .Error("ODE query time lies beyond the computed partial trajectory");
+    selected[:segmentKind] == :validatedTaylorTube
+      ?: {;
+          values = OdeTaylorStateRange(@selected,@time:@time);
+          @solution[:problem][:dimension] == 1 ?: values[1] ?_ values;
+      }
+      ?_ selected[:segmentKind] == :validatedTube
+      ?: (solution[:problem][:dimension] == 1 ?: selected[:tube][1] ?_ selected[:tube])
+      ?_ {;
+          width = @selected[:tEnd]-@selected[:tStart];
+          ratio = width == 0 ?: 0 ?_ (@time-@selected[:tStart])/width;
+          values = OdeVectorAdd(
+              @selected[:stateStart],
+              OdeVectorScale(OdeVectorSubtract(@selected[:stateEnd],@selected[:stateStart]),ratio)
+          );
+          @solution[:problem][:dimension] == 1 ?: values[1] ?_ values;
+      };
+};
+
+OdeIsEventValue(value) -> (value ? :Map) && value[:schema] == "rix.ode.event@1";
+
+OdeEvent(expression, options ?= {= }) -> {;
+    exact = .calculus.IsExpression(expression)
+      ?: expression
+      ?_ .Error("ODE Event expects a public Calculus expression");
+    options = OdeRequireOptions(options,"ODE Event options");
+    name = OdeOption(options,"name",:event);
+    name ? :String ?: _ ?_ .Error("ODE Event name must be a string");
+    direction = OdeOption(options,"direction",:any);
+    [:any,:rising,:falling].Includes(direction)
+      ?: _
+      ?_ .Error("ODE Event direction must be any, rising, or falling");
+    .ImmutableValue({=
+        valueKind=:odeEvent,
+        schema="rix.ode.event@1",
+        name=name,
+        expression=exact,
+        direction=direction,
+        terminal=OdeOption(options,"terminal",_),
+        continuityAssumption=OdeOption(options,"continuity",:calculusGraph)
+    });
+};
+
+OdeEventValue(event, problem, time, state) ->
+    .calculus.Evaluate(event[:expression],OdeBindings(problem,time,state)) ~!: :Rational;
+
+OdeEventDirectionMatches(direction, left, right) ->
+    direction == :any
+      ?: ((left<=0 && right>=0) || (left>=0 && right<=0))
+      ?_ (direction == :rising
+           ?: (left<=0 && right>=0)
+           ?_ (left>=0 && right<=0));
+
+OdeBisectObservedEvent(event, problem, segment, maxBisections) -> {;
+    leftTime := segment[:tStart];
+    rightTime := segment[:tEnd];
+    leftState := segment[:stateStart];
+    rightState := segment[:stateEnd];
+    leftValue := OdeEventValue(event,problem,leftTime,leftState);
+    rightValue := OdeEventValue(event,problem,rightTime,rightState);
+    {@ iteration=1; iteration<=@maxBisections && @leftTime<@rightTime; {;
+       midpoint = (@leftTime+@rightTime)/2;
+       ratio = (midpoint-@segment[:tStart])/(@segment[:tEnd]-@segment[:tStart]);
+       midpointState = OdeVectorAdd(
+           @segment[:stateStart],
+           OdeVectorScale(OdeVectorSubtract(@segment[:stateEnd],@segment[:stateStart]),ratio)
+       );
+       midpointValue = OdeEventValue(@event,@problem,midpoint,midpointState);
+       OdeEventDirectionMatches(@event[:direction],@leftValue,midpointValue)
+         ?: {;
+             @rightTime ~= @midpoint;
+             @rightState ~= @midpointState;
+             @rightValue ~= @midpointValue;
+         }
+         ?_ {;
+             @leftTime ~= @midpoint;
+             @leftState ~= @midpointState;
+             @leftValue ~= @midpointValue;
+         };
+    }; iteration += 1 };
+    .ImmutableValue({=
+        classification=:observedCandidate,
+        interval=leftTime:rightTime,
+        segment=segment[:index],
+        endpointValues=[leftValue,rightValue],
+        certified=_,
+        evidenceLevel=:observed,
+        diagnostics=[:linearDenseOutputNotTrajectoryProof]
+    });
+};
+
+OdeIntervalStrictSign(interval) ->
+    interval.High()<0 ?: -1 ?_ (interval.Low()>0 ?: 1 ?_ 0);
+
+OdeCertifiedEventBracket(event, leftRange, rightRange) -> {;
+    leftSign = OdeIntervalStrictSign(leftRange);
+    rightSign = OdeIntervalStrictSign(rightRange);
+    crossing = leftSign*rightSign == -1;
+    directionMatches := _;
+    event[:direction]==:any ?: {; @directionMatches ~= @crossing; } ?_ _;
+    event[:direction]==:rising ?: {; @directionMatches ~= @leftSign==-1 && @rightSign==1; } ?_ _;
+    event[:direction]==:falling ?: {; @directionMatches ~= @leftSign==1 && @rightSign==-1; } ?_ _;
+    crossing && directionMatches;
+};
+
+OdeCertifiedTaylorEvent(event, problem, segment, options) -> {;
+    maxSubintervals = OdeRequirePositiveInteger(
+        OdeOption(options,"maxsubintervals",4),"ODE event maxSubintervals",64
+    );
+    maxIterations = OdeRequirePositiveInteger(
+        OdeOption(options,"maxnewtoniterations",12),"ODE event maxNewtonIterations",64
+    );
+    requestedWidth = OdeRequirePositiveRational(
+        OdeOption(options,"eventwidth",1/100000),"ODE eventWidth"
+    );
+    leftResult = OdeRangeResult(
+        event[:expression],problem,segment[:tStart]:segment[:tStart],segment[:stateStart],maxSubintervals
+    );
+    rightResult = OdeRangeResult(
+        event[:expression],problem,segment[:tEnd]:segment[:tEnd],segment[:stateEnd],maxSubintervals
+    );
+    bracketed = OdeCertifiedEventBracket(event,leftResult[:interval],rightResult[:interval]);
+    bracketed
+      ?: {;
+          activeEvent = @event;
+          activeProblem = @problem;
+          activeSegment = @segment;
+          endpointLeft = @leftResult;
+          endpointRight = @rightResult;
+          eventMaxSubintervals = @maxSubintervals;
+          eventMaxIterations = @maxIterations;
+          eventRequestedWidth = @requestedWidth;
+          totalDerivative = OdeTotalDerivative(activeEvent[:expression],activeProblem,"event");
+          current := activeSegment[:tStart]:activeSegment[:tEnd];
+          trace := [];
+          stopped := _;
+          derivativeZero := _;
+          iterations := 0;
+          {@ iteration=1;
+             !@stopped && @current.Width()>@eventRequestedWidth && iteration<=@eventMaxIterations;
+             {;
+                 @iterations += 1;
+                 stateRange = OdeTaylorStateRange(@activeSegment,@current);
+                 derivativeResult = OdeRangeResult(
+                     @totalDerivative[:expression],@activeProblem,@current,stateRange,@eventMaxSubintervals
+                 );
+                 derivativeRange = derivativeResult[:interval];
+                 derivativeRange.ContainsValue(0)
+                   ?: {; @derivativeZero ~= 1; @stopped ~= 1; }
+                   ?_ {;
+                       midpoint = @current.Midpoint();
+                       midpointState = OdeTaylorStateRange(@activeSegment,midpoint:midpoint);
+                       midpointResult = OdeRangeResult(
+                           @activeEvent[:expression],@activeProblem,midpoint:midpoint,midpointState,@eventMaxSubintervals
+                       );
+                       image = (midpoint:midpoint)-midpointResult[:interval]/@derivativeRange;
+                       image ? :RationalInterval
+                         ?: _
+                         ?_ .Error("ODE event interval-Newton image must be one interval");
+                       @current.Overlaps(image)
+                         ?: {;
+                             next = @current.Intersection(@image).ToRationalInterval();
+                             @trace ~= @trace.Push(.ImmutableValue({=
+                                 iteration=@iterations,
+                                 input=@current,
+                                 midpoint=@midpoint,
+                                 eventAtMidpoint=@midpointResult[:interval],
+                                 totalDerivative=@derivativeRange,
+                                 newtonImage=@image,
+                                 interval=next
+                             }));
+                             next.Width()<@current.Width()
+                               ?: {; @current ~= @next; }
+                               ?_ {; @stopped ~= 1; };
+                         }
+                         ?_ .Error("ODE certified event bracket contradicted the interval-Newton image");
+                   };
+             };
+             iteration += 1
+          };
+          derivativeZero
+            ?: .ImmutableValue({=
+                classification=:unresolvedCandidate,
+                interval=activeSegment[:tStart]:activeSegment[:tEnd],
+                segment=activeSegment[:index],
+                certified=_,
+                evidenceLevel=:unresolved,
+                diagnostics=[:totalEventDerivativeContainsZero],
+                endpointRanges=[endpointLeft[:interval],endpointRight[:interval]],
+                work={= intervalNewtonIterations=iterations,maxIterations=eventMaxIterations,exhausted=iterations>=eventMaxIterations }
+            })
+            ?_ .ImmutableValue({=
+                classification=:certifiedUniqueEvent,
+                interval=current,
+                segment=activeSegment[:index],
+                endpointRanges=[endpointLeft[:interval],endpointRight[:interval]],
+                certified=1,
+                evidenceLevel=:proof,
+                evidence={=
+                    theorem=:intermediateValuePlusMonotoneIntervalNewton,
+                    endpointBracket=[endpointLeft[:evidence],endpointRight[:evidence]],
+                    totalDerivativeIdentity=totalDerivative[:evidence],
+                    trajectoryEnclosure=activeSegment[:evidence],
+                    trace=trace
+                },
+                work={=
+                    intervalNewtonIterations=iterations,
+                    maxIterations=eventMaxIterations,
+                    requestedWidth=eventRequestedWidth,
+                    achievedWidth=current.Width(),
+                    exhausted=current.Width()>eventRequestedWidth
+                }
+            });
+      }
+      ?_ _;
+};
+
+OdeEventCandidates(solution, event, options) -> {;
+    maxBisections = OdeRequirePositiveInteger(
+        OdeOption(options,"maxbisections",12),"ODE event maxBisections",64
+    );
+    candidates := [];
+    exclusions := [];
+    solution[:segments].Reduce((ignored,segment)->{;
+        segment[:segmentKind] == :validatedTaylorTube
+          ?: {;
+              certifiedCandidate = OdeCertifiedTaylorEvent(@event,@solution[:problem],@segment,@options);
+              certifiedCandidate != _
+                ?: {; @candidates ~= @candidates.Push(@certifiedCandidate); }
+                ?_ {;
+                    range = OdeRangeResult(
+                        @event[:expression],@solution[:problem],
+                        @segment[:tStart]:@segment[:tEnd],@segment[:tube],
+                        OdeRequirePositiveInteger(OdeOption(@options,"maxsubintervals",4),"ODE event maxSubintervals",64)
+                    );
+                    range[:interval].ContainsValue(0)
+                      ?: {; @candidates ~= @candidates.Push(.ImmutableValue({=
+                          classification=:unresolvedCandidate,
+                          interval=@segment[:tStart]:@segment[:tEnd],segment=@segment[:index],
+                          eventRange=@range[:interval],certified=_,evidenceLevel=:unresolved,
+                          diagnostics=[:noCertifiedEndpointBracket]
+                      })); }
+                      ?_ {; @exclusions ~= @exclusions.Push(.ImmutableValue({=
+                          classification=:excluded,interval=@segment[:tStart]:@segment[:tEnd],
+                          segment=@segment[:index],eventRange=@range[:interval],certified=1,
+                          evidenceLevel=:proof,evidence=@range[:evidence]
+                      })); };
+                };
+          }
+          ?_ segment[:segmentKind] == :validatedTube
+          ?: {;
+              range = OdeRangeResult(
+                  @event[:expression],@solution[:problem],
+                  @segment[:tStart]:@segment[:tEnd],@segment[:tube],
+                  OdeRequirePositiveInteger(OdeOption(@options,"maxsubintervals",4),"ODE event maxSubintervals",64)
+              );
+              interval = range[:interval];
+              interval.ContainsValue(0)
+                ?: {;
+                    @candidates ~= @candidates.Push(.ImmutableValue({=
+                        classification=:unresolvedCandidate,
+                        interval=@segment[:tStart]:@segment[:tEnd],
+                        segment=@segment[:index],
+                        eventRange=@interval,
+                        certified=_,
+                        evidenceLevel=:unresolved,
+                        diagnostics=[:rangeContainsZeroWithoutExistenceOrUniquenessProof]
+                    }));
+                }
+                ?_ {;
+                    @exclusions ~= @exclusions.Push(.ImmutableValue({=
+                        classification=:excluded,
+                        interval=@segment[:tStart]:@segment[:tEnd],
+                        segment=@segment[:index],
+                        eventRange=@interval,
+                        certified=1,
+                        evidenceLevel=:proof,
+                        evidence=@range[:evidence]
+                    }));
+                };
+          }
+          ?_ {;
+              left = OdeEventValue(@event,@solution[:problem],@segment[:tStart],@segment[:stateStart]);
+              right = OdeEventValue(@event,@solution[:problem],@segment[:tEnd],@segment[:stateEnd]);
+              OdeEventDirectionMatches(@event[:direction],left,right)
+                ?: {; @candidates ~= @candidates.Push(OdeBisectObservedEvent(@event,@solution[:problem],@segment,@maxBisections)); }
+                ?_ _;
+          };
+        ignored;
+    },_);
+    .ImmutableValue({=
+        valueKind=:odeEventResult,
+        schema="rix.ode.event-result@1",
+        event=event,
+        solution=solution,
+        candidates=candidates,
+        exclusions=exclusions,
+        complete=solution[:status] != :partial ?: 1 ?_ _,
+        certifiedCandidates=candidates.Filter((candidate)->candidate[:certified]==1).Len(),
+        certified=(candidates.Len()>0 && candidates.Filter((candidate)->candidate[:certified]==1).Len()==candidates.Len())
+          ?: 1 ?_ _,
+        evidenceLevel=candidates.Len()>0 && candidates.Filter((candidate)->candidate[:certified]==1).Len()==candidates.Len()
+          ?: :proof
+          ?_ (candidates.Len()==0 && exclusions.Len()>0 ?: :partialProof ?_ :observed)
+    });
+};
+
+OdeIsolateEvents(solutionValue, eventValue ?= _, options ?= {= }) -> {;
+    solution = OdeRequireSolution(solutionValue);
+    options = OdeRequireOptions(options,"ODE IsolateEvents options");
+    requested = eventValue == _ ?: solution[:problem][:events] ?_ [eventValue];
+    events = requested.Filter((event)->OdeIsEventValue(event));
+    events.Len() > 0
+      ?: _
+      ?_ .Error("ODE IsolateEvents requires at least one .ode.Event record");
+    events.Map((event)->OdeEventCandidates(@solution,event,@options));
+};
+
+OdeRecord(value) ->
+    OdeIsProblemValue(value)
+      ?: value
+      ?_ (OdeIsSolutionValue(value)
+           ?: value
+           ?_ .Error("ODE Record expects a problem or solution"));
+
+odeProblemProto = {=
+    Euler=(self, options ?= {= })->OdeApproximateSolution(self,:euler,options),
+    RK4=(self, options ?= {= })->OdeApproximateSolution(self,:rk4,options),
+    AdaptiveRK4=(self, options ?= {= })->OdeAdaptiveRK4(self,options),
+    ValidatedPicard=(self, options ?= {= })->OdeValidatedPicard(self,options),
+    ValidatedTaylor2=(self, options ?= {= })->OdeValidatedTaylor2(self,options),
+    Record=(self)->OdeRecord(self)
+};
+
+odeSolutionProto = {=
+    At=(self,time)->OdeAt(self,time),
+    Points=(self)->self[:points],
+    Segments=(self)->self[:segments],
+    IsolateEvents=(self,event ?= _,options ?= {= })->OdeIsolateEvents(self,event,options),
+    Record=(self)->OdeRecord(self)
+};
+
+odeNamespace = (value)->value;
+odeNamespace._proto = {=
+    IVP=(self,rhs,initialTime,initialState,interval,options ?= {= })->
+        OdeIVP(rhs,initialTime,initialState,interval,options),
+    Euler=(self,problem,options ?= {= })->OdeApproximateSolution(problem,:euler,options),
+    RK4=(self,problem,options ?= {= })->OdeApproximateSolution(problem,:rk4,options),
+    AdaptiveRK4=(self,problem,options ?= {= })->OdeAdaptiveRK4(problem,options),
+    ValidatedPicard=(self,problem,options ?= {= })->OdeValidatedPicard(problem,options),
+    ValidatedTaylor2=(self,problem,options ?= {= })->OdeValidatedTaylor2(problem,options),
+    Event=(self,expression,options ?= {= })->OdeEvent(expression,options),
+    IsolateEvents=(self,solution,event ?= _,options ?= {= })->OdeIsolateEvents(solution,event,options),
+    At=(self,solution,time)->OdeAt(solution,time),
+    Points=(self,solution)->OdeRequireSolution(solution)[:points],
+    Segments=(self,solution)->OdeRequireSolution(solution)[:segments],
+    Record=(self,value)->OdeRecord(value),
+    IsProblem=(self,value)->OdeIsProblemValue(value),
+    IsSolution=(self,value)->OdeIsSolutionValue(value)
+};
+.Host.RegisterValue(
+    "ode",
+    odeNamespace,
+    "Portable initial-value problems, educational trajectories, and checked Picard/Taylor tubes",
+    ["Numerics","ODE","Calculus"]
+);
+`, sourcePath: "bundled:ode", kind: "rix" });
   catalog.addMetadata({ id: "optimize", description: "Pure-RiX exact general linear programs, two-phase simplex, and checkable certificates.", kind: "rix", mount: "optimize", exports: ["LinearProgram", "Solve", "Evaluate", "Maximize", "Minimize", "FromRecord", "CheckCertificate"], groups: ["Optimization", "Exact"], permissions: [], requires: ["rix.linear-algebra@1"], provides: ["rix.optimization@2", "rix.optimization@1", "rix.linear-program@2", "rix.linear-program@1"], schemas: ["rix.optimize.linear-program@2", "rix.optimize.linear-program@1", "rix.optimize.result@2", "rix.optimize.result@1", "rix.optimize.certificate@1", "rix.optimize.sensitivity@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:optimize" }, { source: `/**
 id: optimize
 description: Pure-RiX exact general linear programs, two-phase simplex, and checkable certificates.
@@ -19747,17 +23520,28 @@ OptimizeRequireProgram(value) -> {;
 };
 
 OptimizeResult(program, fields) -> {;
+    certificate = fields.Has("certificate") ?: fields[:certificate] ?_ _;
     result = {=
         valueKind = :optimizationResult,
         schema = "rix.optimize.result@1",
         program = program,
-        method = :exactPrimalSimplex,
+        method = :standardPrimalSimplex,
+        certificate = certificate,
+        certificateStatus = certificate == _ ?: :notAvailable ?_ :verified,
         exact = 1
     }.Merge(fields);
+    (result[:method]==:standardPrimalSimplex&&result[:certificate]==_)
+      ?: {;
+          diagnostics=@result[:diagnostics]==_ ?: [] ?_ @result[:diagnostics];
+          @result~=@result.Set("diagnostics",diagnostics.Push("Request twoPhase=1 for a portable optimality certificate"));
+      }
+      ?_ _;
     result.__type = "OptimizationResult";
     result.schema = result[:schema];
     result.program = result[:program];
     result.method = result[:method];
+    result.certificate = result[:certificate];
+    result.certificateStatus = result[:certificateStatus];
     result.exact = result[:exact];
     result.status = result[:status];
     result.solution = result[:solution];
@@ -20398,16 +24182,16 @@ optimizeNamespace._proto = {=
 
 .Host.RegisterValue("optimize", optimizeNamespace, "Pure-RiX exact linear programs and deterministic simplex optimization", ["Optimization", "Exact"]);
 `, sourcePath: "bundled:optimize", kind: "rix" });
-  catalog.addMetadata({ id: "oracle", description: "Exact rational-betweenness oracles, certified refinement funnels, and coarse eta-resolution models.", kind: "rix", mount: "oracle", exports: ["Rational", "Coarse", "From", "Operation", "ToFunnel", "FromFunnel", "FunnelRefine", "NthRootFunnel", "NthRoot", "Cauchy", "Query", "Answer", "Decision", "Prophecy", "WorkPolicy", "Evidence", "Ask", "AskAll", "CheckRange", "Refine"], groups: ["Numerics", "Exact"], permissions: [], provides: ["rix.oracle@1", "rix.enclosable-real@1"], schemas: ["rix.oracle@1", "rix.oracle.query@1", "rix.oracle.answer@1", "rix.oracle.prophecy@1", "rix.oracle.refinement@1", "rix.oracle.funnel@1"], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:oracle" }, { source: `/**
+  catalog.addMetadata({ id: "oracle", description: "Exact rational-betweenness oracles, certified refinement funnels, and coarse eta-resolution models.", kind: "rix", mount: "oracle", exports: ["Rational", "Coarse", "From", "Operation", "Negate", "Add", "Subtract", "Multiply", "Reciprocal", "Divide", "FunnelOperation", "ToFunnel", "FromFunnel", "FunnelRefine", "NthRootFunnel", "NthRoot", "Cauchy", "Testing", "Query", "Answer", "Decision", "Prophecy", "WorkPolicy", "Evidence", "TruthEvidence", "RootEvidence", "PropertyEvidence", "Compatible", "Equivalent", "CompareWithin", "Ask", "AskAll", "CheckRange", "Refine"], groups: ["Numerics", "Exact"], permissions: [], provides: ["rix.oracle@1", "rix.enclosable-real@1"], schemas: ["rix.oracle@1", "rix.oracle.query@1", "rix.oracle.answer@1", "rix.oracle.prophecy@1", "rix.oracle.refinement@1", "rix.oracle.funnel@1", "rix.oracle.comparison@1", "rix.oracle.equivalence@1", "rix.oracle.truth-evidence@1", "rix.oracle.root-evidence@1", "rix.oracle.property-evidence@1"], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:oracle" }, { source: `/**
 id: oracle
 description: Exact rational-betweenness oracles, certified refinement funnels, and coarse eta-resolution models.
 kind: rix
 mount: oracle
-exports: [Rational, Coarse, From, Operation, ToFunnel, FromFunnel, FunnelRefine, NthRootFunnel, NthRoot, Cauchy, Query, Answer, Decision, Prophecy, WorkPolicy, Evidence, Ask, AskAll, CheckRange, Refine]
+exports: [Rational, Coarse, From, Operation, Negate, Add, Subtract, Multiply, Reciprocal, Divide, FunnelOperation, ToFunnel, FromFunnel, FunnelRefine, NthRootFunnel, NthRoot, Cauchy, Testing, Query, Answer, Decision, Prophecy, WorkPolicy, Evidence, TruthEvidence, RootEvidence, PropertyEvidence, Compatible, Equivalent, CompareWithin, Ask, AskAll, CheckRange, Refine]
 groups: [Numerics, Exact]
 permissions: []
 provides: [rix.oracle@1, rix.enclosable-real@1]
-schemas: [rix.oracle@1, rix.oracle.query@1, rix.oracle.answer@1, rix.oracle.prophecy@1, rix.oracle.refinement@1, rix.oracle.funnel@1]
+schemas: [rix.oracle@1, rix.oracle.query@1, rix.oracle.answer@1, rix.oracle.prophecy@1, rix.oracle.refinement@1, rix.oracle.funnel@1, rix.oracle.comparison@1, rix.oracle.equivalence@1, rix.oracle.truth-evidence@1, rix.oracle.root-evidence@1, rix.oracle.property-evidence@1]
 defaultEnabled: false
 **/
 
@@ -20488,6 +24272,58 @@ OracleEvidence(property, level, subject, witness ?= _, diagnostics ?= []) -> {=
     subject = subject,
     witness = witness,
     diagnostics = diagnostics
+};
+
+OracleTruthEvidence(status, property, subject, witness ?= _, level ?= :observed) -> {;
+    {| :yes, :no, :undecided |}.Has(status)
+      ?: {=
+          valueKind=:oracleTruthEvidence,
+          schema="rix.oracle.truth-evidence@1",
+          status=status,
+          property=property,
+          subject=subject,
+          witness=witness,
+          level=level,
+          certified=(status != :undecided) && (level == :proof || level == :constructorGuarantee)
+      }
+      ?_ .Error("Oracle truth evidence status must be :yes, :no, or :undecided");
+};
+
+OraclePropertyEvidence(property, subject, witness ?= _, level ?= :observed) -> {=
+    valueKind=:oraclePropertyEvidence,
+    schema="rix.oracle.property-evidence@1",
+    property=property,
+    subject=subject,
+    witness=witness,
+    level=level,
+    certified=level == :proof || level == :constructorGuarantee
+};
+
+OracleRootEvidence(options) -> {;
+    domain = AsInterval(options[:domain]);
+    level = Option(options, "level", :assumed);
+    rootExists = Option(options, "rootexists", _);
+    unique = Option(options, "unique", _);
+    continuous = Option(options, "continuous", _);
+    endpointSigns = Option(options, "endpointsigns", _);
+    signsComplete = endpointSigns != _ && endpointSigns.Len() == 2 &&
+      {| :negative, :zero, :positive |}.Has(endpointSigns[1]) &&
+      {| :negative, :zero, :positive |}.Has(endpointSigns[2]) &&
+      (endpointSigns[1] == :zero || endpointSigns[2] == :zero || endpointSigns[1] != endpointSigns[2]);
+    complete = rootExists && unique && continuous && signsComplete;
+    {=
+        valueKind=:oracleRootEvidence,
+        schema="rix.oracle.root-evidence@1",
+        property=:uniqueRoot,
+        domain=domain,
+        rootExists=rootExists,
+        unique=unique,
+        continuous=continuous,
+        endpointSigns=endpointSigns,
+        level=level,
+        certified=complete && (level == :proof || level == :constructorGuarantee),
+        source=Option(options, "source", :declaredEvidence)
+    };
 };
 
 OracleQuery(interval, delta, auxiliary ?= _) -> {;
@@ -20650,6 +24486,134 @@ OracleOperation(operation, left, right ?= _) -> {?
     operation == :div ? BuildArithmeticOracle(:div, left, right);
     operation == :pow ? BuildArithmeticOracle(:pow, left, right);
     .Error("Unsupported Oracle arithmetic operation")
+};
+
+OracleNamedReciprocal(value) -> OracleOperation(:div, 1, value);
+
+OracleFunnelOperation(operation, left, right ?= _, options ?= {= }) ->
+    BuildProviderFunnel(OracleOperation(operation, left, right), options.Set("name", :arithmeticFunnel));
+
+BuildTestingOracle(spec) -> {;
+    F = spec[:function];
+    evidence = spec[:rootEvidence];
+    evidence[:schema] == "rix.oracle.root-evidence@1"
+      ?: _ ?_ .Error("Oracle Testing requires rix.oracle.root-evidence@1 rootEvidence");
+    evidence[:certified]
+      ?: _ ?_ .Error("Oracle Testing requires explicit proof or constructor-guarantee uniqueness evidence");
+    domain = AsInterval(spec[:domain]);
+    evidenceDomain = evidence[:domain];
+    domain.Low() == evidenceDomain.Low() && domain.High() == evidenceDomain.High()
+      ?: _ ?_ .Error("Oracle Testing domain must match its root evidence domain");
+    lowValue = F(domain.Low()) ~!: :Rational;
+    highValue = F(domain.High()) ~!: :Rational;
+    lowValue == 0 || highValue == 0 || lowValue * highValue < 0
+      ?: _ ?_ .Error("Oracle Testing evidence requires endpoint values that bracket a root");
+    real = {=
+        valueKind=:oracle,
+        schema="rix.oracle@1",
+        kind=:testingRoot,
+        constructor=:testingRoot,
+        procedure=:evidenceBisection,
+        parameters={= function=F, domain=domain, rootEvidence=evidence },
+        declaredProperties=[:range, :existence, :separation, :consistency, :singularity, :closure, :uniqueRoot],
+        provenance={= plugin=:oracle, version=3, source=:testingRoot, evidence=evidence }
+    };
+    real._proto = {=
+        Enclose=(self, request ?= {= })->OracleProtocolEnclose(self, request, :enclose),
+        Refine=(self, request ?= {= })->OracleProtocolEnclose(self, request, :refine),
+        NumericsCapabilities=(self)->OracleNumericsCapabilities(self)
+    };
+    .ImmutableValue(real ~!: :Oracle);
+};
+
+OracleCompatible(left, right) -> {;
+    leftInterval = (left ? :Map) && left[:valueKind] == :oracleProphecy ?: left[:interval] ?_ AsInterval(left);
+    rightInterval = (right ? :Map) && right[:valueKind] == :oracleProphecy ?: right[:interval] ?_ AsInterval(right);
+    compatible = leftInterval.Overlaps(rightInterval);
+    OracleTruthEvidence(
+        compatible ?: :yes ?_ :no,
+        :prophecyCompatibility,
+        [left, right],
+        {= left=leftInterval, right=rightInterval, intersection=compatible ?: leftInterval.Intersection(rightInterval) ?_ _ },
+        :proof
+    );
+};
+
+OracleCompareWithin(left, right, epsilon, options ?= {= }) -> {;
+    target = RequirePositive(epsilon, "Oracle comparison epsilon");
+    policy = OracleWorkPolicy(options);
+    leftReal = OracleFrom(left);
+    rightReal = OracleFrom(right);
+    leftBudget = policy[:maxCalls] // 2;
+    rightBudget = policy[:maxCalls] - leftBudget;
+    leftResult = OracleOperandRefinement(leftReal, target / 4, leftBudget, policy[:trace]);
+    rightResult = OracleOperandRefinement(rightReal, target / 4, rightBudget, policy[:trace]);
+    a = leftResult[:interval];
+    b = rightResult[:interval];
+    separatedLeft = a.High() < b.Low();
+    separatedRight = b.High() < a.Low();
+    hull = (.Min(a.Low(), b.Low())):(.Max(a.High(), b.High()));
+    compatible = !separatedLeft && !separatedRight && hull.Width() <= target;
+    status = separatedLeft ?: :less ?_ (separatedRight ?: :greater ?_ (compatible ?: :compatible ?_ :undecided));
+    evidenceLevel = OracleWeakerEvidence(leftResult[:evidenceLevel], rightResult[:evidenceLevel]);
+    {=
+        valueKind=:oracleComparison,
+        schema="rix.oracle.comparison@1",
+        status=status,
+        epsilon=target,
+        left=leftReal,
+        right=rightReal,
+        leftInterval=a,
+        rightInterval=b,
+        commonInterval=compatible ?: hull ?_ _,
+        certified=(status == :less || status == :greater || status == :compatible) && leftResult[:certified] && rightResult[:certified],
+        evidenceLevel=evidenceLevel,
+        evidence=OracleTruthEvidence(
+            status == :undecided ?: :undecided ?_ :yes,
+            status == :compatible ?: :epsilonCompatibility ?_ :strictOrdering,
+            [leftReal, rightReal],
+            {= status=status, left=a, right=b, epsilon=target },
+            evidenceLevel
+        ),
+        work={=
+            calls=Option(leftResult[:work], "calls", 0) + Option(rightResult[:work], "calls", 0),
+            maxCalls=policy[:maxCalls],
+            exhausted=status == :undecided && (
+                Option(leftResult[:work], "exhausted", _) || Option(rightResult[:work], "exhausted", _)
+            )
+        },
+        diagnostics=status == :undecided ?: [:comparisonResolutionNotReached] ?_ []
+    };
+};
+
+OracleEquivalent(left, right, options ?= {= }) -> {;
+    epsilon = RequirePositive(Option(options, "epsilon", 1/1000), "Oracle equivalence epsilon");
+    a = OracleFrom(left);
+    b = OracleFrom(right);
+    bothExact = a[:constructor] == :rational && b[:constructor] == :rational;
+    exactEqual = bothExact && a[:parameters][:value] == b[:parameters][:value];
+    comparison = bothExact ?: _ ?_ OracleCompareWithin(a, b, epsilon, options);
+    status = bothExact
+      ?: (exactEqual ?: :equal ?_ :different)
+      ?_ ((comparison[:status] == :less || comparison[:status] == :greater) ?: :different ?_ :undecided);
+    level = bothExact ?: :proof ?_ comparison[:evidenceLevel];
+    {=
+        valueKind=:oracleEquivalence,
+        schema="rix.oracle.equivalence@1",
+        status=status,
+        left=a,
+        right=b,
+        epsilon=epsilon,
+        comparison=comparison,
+        certified=status == :equal || status == :different,
+        evidence=OracleTruthEvidence(
+            status == :equal ?: :yes ?_ (status == :different ?: :no ?_ :undecided),
+            :equivalence,
+            [a,b],
+            bothExact ?: {= exactLeft=a[:parameters][:value], exactRight=b[:parameters][:value] } ?_ comparison,
+            level
+        )
+    };
 };
 
 OracleCertifiedRefinableSource(source, label ?= "Oracle funnel source") -> {;
@@ -21061,7 +25025,9 @@ OracleAsk(real, interval, delta, auxiliary ?= _) -> {;
        };
        real[:kind] == :funnel ? OracleAskFunnel(real, query);
        real[:kind] == :coarse ? OracleAskCoarse(real, query);
-       .Error("Ask requires a rational, funnel-derived, or coarse Oracle")
+       (real[:kind] == :adapter || real[:kind] == :arithmetic || real[:kind] == :testingRoot)
+         ? OracleAskRefinable(real, query);
+       .Error("Ask requires a rational, refinable, funnel-derived, or coarse Oracle")
     };
 };
 
@@ -21076,6 +25042,22 @@ OracleUnknownFunnelAnswer(query, result) -> {;
         source=result[:evidence]
     };
     answer;
+};
+
+OracleAskRefinable(real, query) -> {;
+    result = OracleRefine(real, {= width=query[:delta]/2, maxCalls=100, maxIterations=100, trace=1 });
+    result[:status] == :enclosed
+      ?: {;
+          prophecy = OracleProphecy(@real, @result[:interval], @query, :refinement);
+          intersects = prophecy[:interval].Overlaps(@query[:interval]);
+          answer = intersects
+            ?: OracleAnswer(:yes, @query, prophecy, :refinedIntersection, :refinableOracle)
+            ?_ OracleAnswer(:no, @query, prophecy, :refinedSeparation, :refinableOracle);
+          answer["work"] = @result[:work];
+          answer["evidence"] = @result[:evidence];
+          CheckedAnswer(answer);
+      }
+      ?_ OracleUnknownFunnelAnswer(query, result);
 };
 
 OracleAskFunnel(real, query) -> {;
@@ -21208,6 +25190,72 @@ OraclePointRefinement(value, requestedWidth) -> {;
         work={= calls=0, iterations=0, exhausted=_ },
         evidence=OracleEvidence(:enclosure, :proof, value, interval),
         source={= plugin=:oracle, source=:exactScalar }
+    };
+};
+
+OracleRefineTestingRoot(real, options ?= {= }) -> {;
+    requestedWidth = RequirePositive(Option(options, "width", 1/1000), "width");
+    maxCalls = RequireNonnegativeInteger(Option(options, "maxcalls", 100), "maxCalls");
+    keepTrace = Option(options, "trace", 1);
+    F = real[:parameters][:function];
+    evidence = real[:parameters][:rootEvidence];
+    initial = real[:parameters][:domain];
+    low = initial.Low();
+    high = initial.High();
+    lowValue = F(low) ~!: :Rational;
+    highValue = F(high) ~!: :Rational;
+    calls = 0;
+    trace = [];
+    achievedWidth = high - low;
+
+    {@ iteration = 1; @achievedWidth > @requestedWidth && @calls < @maxCalls; {;
+        midpoint = (@low + @high) / 2;
+        midpointValue = @F(midpoint) ~!: :Rational;
+        exactRoot = midpointValue == 0;
+        leftBracket = @lowValue == 0 || @lowValue * midpointValue < 0;
+        nextLow = exactRoot ?: midpoint ?_ (leftBracket ?: @low ?_ midpoint);
+        nextHigh = exactRoot ?: midpoint ?_ (leftBracket ?: midpoint ?_ @high);
+        nextLowValue = exactRoot ?: midpointValue ?_ (leftBracket ?: @lowValue ?_ midpointValue);
+        nextHighValue = exactRoot ?: midpointValue ?_ (leftBracket ?: midpointValue ?_ @highValue);
+        @low = nextLow;
+        @high = nextHigh;
+        @lowValue = nextLowValue;
+        @highValue = nextHighValue;
+        @calls += 1;
+        @achievedWidth = @high - @low;
+        @trace = @keepTrace ?: @trace.Push({=
+            iteration=iteration,
+            split=midpoint,
+            value=midpointValue,
+            interval=@low:@high,
+            width=@achievedWidth,
+            evidence=@evidence
+        }) ?_ @trace;
+      };
+      iteration += 1
+    };
+
+    enclosed = achievedWidth <= requestedWidth;
+    interval = low:high;
+    {=
+        valueKind=:oracleRefinement,
+        schema="rix.oracle.refinement@1",
+        status=enclosed ?: :enclosed ?_ :budgetExhausted,
+        interval=interval,
+        certified=1,
+        requestedWidth=requestedWidth,
+        achievedWidth=achievedWidth,
+        approximation=.CertifiedApproximation(interval.Midpoint(), interval, {=
+            provider=:oracle,
+            reason=enclosed ?: :refined ?_ :budgetExhausted,
+            constructor=:testingRoot
+        }),
+        evidenceLevel=evidence[:level],
+        trace=trace,
+        work={= calls=calls, iterations=calls, maxCalls=maxCalls, exhausted=!enclosed },
+        diagnostics=enclosed ?: [] ?_ [:rootRefinementBudgetExhausted],
+        evidence=evidence,
+        source=real[:provenance]
     };
 };
 
@@ -21448,6 +25496,7 @@ OracleRefineArithmetic(real, options) -> {;
 OracleRefine(real, options ?= {= }) -> {?
     real[:kind] == :adapter ? OracleRefineSource(real, options);
     real[:kind] == :arithmetic ? OracleRefineArithmetic(real, options);
+    real[:kind] == :testingRoot ? OracleRefineTestingRoot(real, options);
     real[:kind] == :funnel ? OracleRefineFunnel(real, options);
     real[:kind] == :coarse ? OracleRefineCoarse(real, options);
     OracleRefineRational(real, options)
@@ -21459,16 +25508,20 @@ OracleNumericsCapabilities(real) -> {;
       ?: :certifiedSingletonAdapter
       ?_ (real[:kind] == :arithmetic
            ?: :exactIntervalArithmeticRecipe
-           ?_ (real[:kind] == :funnel
+           ?_ (real[:kind] == :testingRoot
+                ?: :evidenceBisectionRoot
+                ?_ (real[:kind] == :funnel
                 ?: :refinementFunnelOracle
-                ?_ (real[:kind] == :coarse ?: :etaCoarseInterval ?_ :rationalBetweennessOracle)));
+                ?_ (real[:kind] == :coarse ?: :etaCoarseInterval ?_ :rationalBetweennessOracle))));
     selectedEvidenceLevels = real[:kind] == :adapter
       ?: sourceCapabilities[:evidenceLevels]
       ?_ (real[:kind] == :arithmetic
            ?: [:constructorGuarantee, :proof]
-           ?_ (real[:kind] == :funnel
+           ?_ (real[:kind] == :testingRoot
+                ?: [real[:parameters][:rootEvidence][:level]]
+                ?_ (real[:kind] == :funnel
                 ?: [real[:source][:evidenceLevel]]
-                ?_ [:constructorGuarantee]));
+                ?_ [:constructorGuarantee])));
     coarse = real[:kind] == :coarse;
     {=
         valueKind = :numericsCapabilities,
@@ -21560,11 +25613,20 @@ oracleNamespace._proto = {=
     Coarse = (self, interval, eta, options ?= {= }) -> BuildCoarseOracle(interval, eta, options),
     From = (self, value) -> OracleFrom(value),
     Operation = (self, operation, left, right ?= _) -> OracleOperation(operation, left, right),
+    Negate = (self, value) -> OracleOperation(:neg, value),
+    Add = (self, left, right) -> OracleOperation(:add, left, right),
+    Subtract = (self, left, right) -> OracleOperation(:sub, left, right),
+    Multiply = (self, left, right) -> OracleOperation(:mul, left, right),
+    Reciprocal = (self, value) -> OracleNamedReciprocal(value),
+    Divide = (self, left, right) -> OracleOperation(:div, left, right),
+    FunnelOperation = (self, operation, left, right ?= _, options ?= {= }) ->
+        OracleFunnelOperation(operation, left, right, options),
     ToFunnel = (self, source, options ?= {= }) -> BuildProviderFunnel(source, options),
     FromFunnel = (self, funnel) -> BuildFunnelOracle(funnel),
     FunnelRefine = (self, funnel, options ?= {= }) -> OracleFunnelRefine(funnel, options, :refine),
     NthRootFunnel = (self, value, degree, options ?= {= }) -> BuildNthRootFunnel(value, degree, options),
     NthRoot = (self, value, degree, options ?= {= }) -> BuildFunnelOracle(BuildNthRootFunnel(value, degree, options)),
+    Testing = (self, specification) -> BuildTestingOracle(specification),
     Cauchy = (self, source, options ?= {= }) -> {;
         capabilities = OracleCertifiedRefinableSource(source, "Oracle Cauchy adapter source");
         capabilities[:backend] == :cauchy
@@ -21577,6 +25639,15 @@ oracleNamespace._proto = {=
     Prophecy = (self, real, interval, query ?= _) -> OracleProphecy(real, interval, query),
     WorkPolicy = (self, options ?= {= }) -> OracleWorkPolicy(options),
     Evidence = (self, property, level, subject, witness ?= _) -> OracleEvidence(property, level, subject, witness),
+    TruthEvidence = (self, status, property, subject, witness ?= _, level ?= :observed) ->
+        OracleTruthEvidence(status, property, subject, witness, level),
+    RootEvidence = (self, options) -> OracleRootEvidence(options),
+    PropertyEvidence = (self, property, subject, witness ?= _, level ?= :observed) ->
+        OraclePropertyEvidence(property, subject, witness, level),
+    Compatible = (self, left, right) -> OracleCompatible(left, right),
+    Equivalent = (self, left, right, options ?= {= }) -> OracleEquivalent(left, right, options),
+    CompareWithin = (self, left, right, epsilon, options ?= {= }) ->
+        OracleCompareWithin(left, right, epsilon, options),
     Ask = (self, real, interval, delta, auxiliary ?= _) -> OracleAsk(real, interval, delta, auxiliary),
     AskAll = (self, real, interval, delta, options ?= {= }) -> OracleAskAll(real, interval, delta, options),
     CheckRange = (self, answer) -> OracleCheckRange(answer),
@@ -21587,17 +25658,17 @@ oracleNamespace._proto = {=
 `, sourcePath: "bundled:oracle", kind: "rix" });
   catalog.addMetadata({ id: "pdf", description: "PDF document and figure renderer orchestrated through LaTeX.", kind: "host", mount: "pdf", exports: ["Render"], groups: ["Renderers"], permissions: ["process", "files"], provides: ["rix.renderer.pdf@1", "rix.renderer.pdf@2"], schemas: ["rix.pdf.render@2"], targets: ["pdf", "application/pdf"], snapshot: true, deterministic: false, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], operatorFiles: [], ignore: false, sourcePath: "bundled:pdf" }, { sourcePath: "bundled:pdf", kind: "host" });
   catalog.registerInstaller("pdf", install16);
-  catalog.addMetadata({ id: "plot", description: "Pure-RiX exact and numerics-backed 2D plotting that lowers to portable core Graphics scenes.", kind: "rix", mount: "plot", exports: ["Polynomial", "PolynomialPOI", "Function", "Parametric", "Scatter", "Line", "Bar", "Step", "Polar", "Implicit", "Inequality", "Contour", "HeatMap", "VectorField"], groups: ["Plot", "Graphics", "Exact"], permissions: [], requires: ["rix.numerics@1"], provides: ["rix.plot@1", "rix.plot.poi@1", "rix.plot.refinement-policy@1"], schemas: ["rix.plot@1", "rix.plot.poi@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:plot" }, { source: `/**
+  catalog.addMetadata({ id: "plot", description: "Pure-RiX exact and numerics-backed 2D plotting that lowers to portable core Graphics scenes.", kind: "rix", mount: "plot", exports: ["Polynomial", "PolynomialPOI", "Function", "Parametric", "Scatter", "Line", "Bar", "Step", "Polar", "ErrorBand", "Interval", "Implicit", "Inequality", "Contour", "HeatMap", "VectorField", "ColorScale"], groups: ["Plot", "Graphics", "Exact"], permissions: [], requires: ["rix.numerics@1"], provides: ["rix.plot@1", "rix.plot.poi@1", "rix.plot.refinement-policy@1"], schemas: ["rix.plot@1", "rix.plot.poi@1", "rix.plot.band-evidence@1", "rix.color-scale@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:plot" }, { source: `/**
 id: plot
 description: Pure-RiX exact and numerics-backed 2D plotting that lowers to portable core Graphics scenes.
 kind: rix
 mount: plot
-exports: [Polynomial, PolynomialPOI, Function, Parametric, Scatter, Line, Bar, Step, Polar, Implicit, Inequality, Contour, HeatMap, VectorField]
+exports: [Polynomial, PolynomialPOI, Function, Parametric, Scatter, Line, Bar, Step, Polar, ErrorBand, Interval, Implicit, Inequality, Contour, HeatMap, VectorField, ColorScale]
 groups: [Plot, Graphics, Exact]
 permissions: []
 requires: [rix.numerics@1]
 provides: [rix.plot@1, rix.plot.poi@1, rix.plot.refinement-policy@1]
-schemas: [rix.plot@1, rix.plot.poi@1]
+schemas: [rix.plot@1, rix.plot.poi@1, rix.plot.band-evidence@1, rix.color-scale@1]
 snapshot: true
 deterministic: true
 defaultEnabled: false
@@ -22209,6 +26280,100 @@ PlotPolar(fn, angleDomain, options ?= {= }) -> {;
     graphic;
 };
 
+PlotBandRows(data, kind) -> {;
+    data ? :Array ?: _ ?_ .Error("plot band data must be an Array");
+    data.Len() >= 2 ?: _ ?_ .Error("plot band data must contain at least two rows");
+    rows := [];
+    previousX := _;
+    {@ index=1; index<=@data.Len(); {;
+        row=@data[index];
+        row ? :Array ?: _ ?_ .Error(@"plot band row @{index} must be an Array");
+        x=PlotExact(row[1],@"plot band row @{index} x value");
+        @previousX==_||x>@previousX ?: _ ?_ .Error("plot band x values must increase strictly");
+        @previousX ~= x;
+        @kind==:interval
+          ?: {;
+              @row.Len()==2 ?: _ ?_ .Error(@"interval plot row @{@index} must contain [x, interval]");
+              interval=@row[2] ~!: :RationalInterval;
+              low=interval.Low(); high=interval.High(); center=(low+high)/2;
+              @rows ~= @rows.Push({=
+                  id=@"interval-sample-@{@index}",x=@x,low=low,center=center,high=high,
+                  interval=interval,status=:enclosed,evidenceLevel=:exactInterval
+              });
+          }
+          ?_ {;
+              @row.Len()==3 ?: _ ?_ .Error(@"error-band row @{@index} must contain [x, estimate, error]");
+              center=PlotExact(@row[2],@"error-band row @{@index} estimate");
+              error=PlotExact(@row[3],@"error-band row @{@index} error");
+              error>=0 ?: _ ?_ .Error(@"error-band row @{@index} error must be nonnegative");
+              @rows ~= @rows.Push({=
+                  id=@"error-band-sample-@{@index}",x=@x,low=center-error,center=center,high=center+error,
+                  error=error,status=:declared,evidenceLevel=:declaredError
+              });
+          };
+    }; index+=1 };
+    rows;
+};
+
+PlotBandBounds(rows,settings) -> {;
+    xmin:=rows[1][:x]; xmax:=rows.Last()[:x];
+    ymin:=rows[1][:low]; ymax:=rows[1][:high];
+    {@ index=2; index<=@rows.Len(); {;
+        @ymin ~= @rows[index][:low]<@ymin ?: @rows[index][:low] ?_ @ymin;
+        @ymax ~= @rows[index][:high]>@ymax ?: @rows[index][:high] ?_ @ymax;
+    }; index+=1 };
+    xDomain=PlotOption(settings,"xdomain"); yDomain=PlotOption(settings,"ydomain");
+    xDomain==_ ?: {;
+        xPadding=(@xmax-@xmin)/20; @xmin-=xPadding; @xmax+=xPadding;
+    } ?_ {; fixed=PlotFixedYBounds(@xDomain); @xmin=fixed[1]; @xmax=fixed[2]; };
+    yDomain==_ ?: {;
+        @ymin==@ymax ?: {; @ymin-=1; @ymax+=1; } ?_ {; yPadding=(@ymax-@ymin)*2/25; @ymin-=yPadding; @ymax+=yPadding; };
+    } ?_ {; fixed=PlotFixedYBounds(@yDomain); @ymin=fixed[1]; @ymax=fixed[2]; };
+    {= xmin=xmin,xmax=xmax,ymin=ymin,ymax=ymax };
+};
+
+PlotBand(data,settings,kind) -> {;
+    settings ? :Map ?: _ ?_ .Error("plot band options must be a map");
+    rows=PlotBandRows(data,kind); bounds=PlotBandBounds(rows,settings);
+    size=PlotOption(settings,"size",[640,360]);
+    size ? :Array ?: _ ?_ .Error("plot band size must be an Array");
+    size.Len()==2 ?: _ ?_ .Error("plot band size must contain width and height");
+    width=PlotExact(size[1],"plot band width"); height=PlotExact(size[2],"plot band height");
+    margin=PlotExact(PlotOption(settings,"margin",42),"plot band margin");
+    (width>0&&height>0&&margin>=0&&margin*2<.Min(width,height)) ?: _ ?_ .Error("plot band size and margin do not leave a positive viewport");
+    config={=
+        xmin=bounds[:xmin],xmax=bounds[:xmax],ymin=bounds[:ymin],ymax=bounds[:ymax],
+        columns=rows.Len()-1,rows=1,width=width,height=height,margin=margin
+    };
+    lower=rows.Map((row)->PlotProject([row[:x],row[:low]],config));
+    upper=rows.Map((row)->PlotProject([row[:x],row[:high]],config));
+    center=rows.Map((row)->PlotProject([row[:x],row[:center]],config));
+    polygon=upper.Concat(lower.Reverse());
+    bandStyle=PlotOption(settings,"bandstyle",{= fill="#93c5fd",stroke="#2563eb",width=1,opacity=2/5 });
+    lineStyle=PlotOption(settings,"linestyle",{= fill="none",stroke="#1d4ed8",width=2 });
+    children=[
+        .Graphics.Path(polygon,bandStyle.Merge({= closed=1,hitId=@"@{kind}-region" })),
+        .Graphics.Path(lower,{= fill="none",stroke=PlotOption(settings,"boundarystroke","#60a5fa"),width=1,hitId=@"@{kind}-lower" }),
+        .Graphics.Path(upper,{= fill="none",stroke=PlotOption(settings,"boundarystroke","#60a5fa"),width=1,hitId=@"@{kind}-upper" }),
+        .Graphics.Path(center,lineStyle.Merge({= hitId=@"@{kind}-center" }))
+    ];
+    PlotFieldGraphic(kind,config,settings,children,{=
+        status=kind==:interval ?: :enclosed ?_ :declared,
+        evidence={=
+            schema="rix.plot.band-evidence@1",samples=rows.Len(),
+            level=kind==:interval ?: :exactInterval ?_ :declaredError,
+            interpretation=kind==:interval ?: :enclosure ?_ :symmetricDeclaredError
+        },
+        records=rows,
+        series=[
+            {= kind=:lower,data=rows.Map((row)->[row[:x],row[:low]]),style=bandStyle },
+            {= kind=:center,data=rows.Map((row)->[row[:x],row[:center]]),style=lineStyle },
+            {= kind=:upper,data=rows.Map((row)->[row[:x],row[:high]]),style=bandStyle }
+        ],
+        sampling={= method=:providedIntervals,samples=rows.Len() },rendering=:intervalBand
+    });
+};
+
 PlotGridCount(value,label) -> {;
     count=value ~!: :Integer;
     (count>=2&&count<=100) ?: count ?_ .Error(@"@{label} must be between 2 and 100");
@@ -22647,21 +26812,55 @@ PlotContinuousColor(value,minimum,maximum,hues) -> {;
     @"hsl(@{hue//1}, 80%, 50%)";
 };
 
+PlotColorScale(spec ?= {= }) -> {;
+    spec ? :Map ?: _ ?_ .Error("ColorScale specification must be a map");
+    kind=PlotOption(spec,"kind",:discrete);
+    (kind==:discrete||kind==:continuous) ?: _ ?_ .Error("ColorScale kind must be :discrete or :continuous");
+    colors=PlotOption(spec,"colors",["#312e81","#2563eb","#06b6d4","#f8fafc","#facc15","#f97316","#be123c"]);
+    colors ? :Array ?: _ ?_ .Error("ColorScale colors must be an Array");
+    colors.Len()>=2 ?: _ ?_ .Error("ColorScale colors must contain at least two colors");
+    hues=PlotExactArray(PlotOption(spec,"huerange",[240,0]),"ColorScale hueRange");
+    hues.Len()==2 ?: _ ?_ .Error("ColorScale hueRange must contain two exact hue values");
+    minimum=PlotOption(spec,"minimum"); maximum=PlotOption(spec,"maximum");
+    (minimum==_)==(maximum==_) ?: _ ?_ .Error("ColorScale minimum and maximum must be supplied together");
+    minimum==_ ?: _ ?_ {;
+        @minimum ~= PlotExact(@minimum,"ColorScale minimum");
+        @maximum ~= PlotExact(@maximum,"ColorScale maximum");
+        @minimum<@maximum ?: _ ?_ .Error("ColorScale minimum must be less than maximum");
+    };
+    {=
+        valueKind=:colorScale,schema="rix.color-scale@1",kind=kind,
+        minimum=minimum,maximum=maximum,colors=colors,hueRange=hues,
+        quantization=kind==:continuous ?: :oneDegreeHsl ?_ :palette,
+        underflow=PlotOption(spec,"underflow",colors[1]),overflow=PlotOption(spec,"overflow",colors.Last())
+    };
+};
+
+PlotReadColorScale(settings) -> {;
+    supplied=PlotOption(settings,"colorscale");
+    supplied==_
+      ?: PlotColorScale({=
+          kind=PlotOption(settings,"colormode",:discrete),
+          colors=PlotOption(settings,"colors",["#312e81","#2563eb","#06b6d4","#f8fafc","#facc15","#f97316","#be123c"]),
+          hueRange=PlotOption(settings,"huerange",[240,0])
+      })
+      ?_ {;
+          @supplied ? :Map ?: _ ?_ .Error("heat-map colorScale must be a map");
+          @supplied[:schema]=="rix.color-scale@1" ?: @supplied ?_ .Error("heat-map colorScale must use schema rix.color-scale@1");
+      };
+};
+
 PlotHeatMap(fn,xDomain,yDomain,settings ?= {= }) -> {;
     config=PlotFieldConfig(xDomain,yDomain,settings); field=PlotFieldSample(fn,config,settings);
-    palette=PlotOption(settings,"colors",["#312e81","#2563eb","#06b6d4","#f8fafc","#facc15","#f97316","#be123c"]);
-    palette ? :Array ?: _ ?_ .Error("heat-map colors must be an Array");
-    palette.Len()>=2 ?: _ ?_ .Error("heat-map colors must contain at least two colors");
-    colorMode=PlotOption(settings,"colormode",:discrete);
-    (colorMode==:discrete||colorMode==:continuous) ?: _ ?_ .Error("heat-map colorMode must be :discrete or :continuous");
-    hues=PlotExactArray(PlotOption(settings,"huerange",[240,0]),"heat-map hueRange");
-    hues.Len()==2 ?: _ ?_ .Error("heat-map hueRange must contain two exact hue values");
+    paletteSpec=PlotReadColorScale(settings); palette=paletteSpec[:colors];
+    colorMode=paletteSpec[:kind]; hues=paletteSpec[:hueRange];
     values=field[:samples].Filter((sample)->sample[:usable]).Map((sample)->sample[:value]);
     values.Len()>0 ?: _ ?_ .Error("heat-map has no resolved samples");
     minimum:=values[1]; maximum:=values[1];
     {@ index=2; index<=@values.Len(); {; @minimum ~= @values[index]<@minimum ?: @values[index] ?_ @minimum; @maximum ~= @values[index]>@maximum ?: @values[index] ?_ @maximum; }; index+=1 };
     scale=PlotOption(settings,"colordomain");
     scale!=_ ?: {; fixed=PlotFixedYBounds(@scale); @minimum=fixed[1]; @maximum=fixed[2]; } ?_ _;
+    paletteSpec[:minimum]!=_ ?: {; @minimum=@paletteSpec[:minimum]; @maximum=@paletteSpec[:maximum]; } ?_ _;
     children := []; records := []; unresolved := [];
     {@ row=1; row<=@config[:rows]; {;
         {@ column=1; column<=@config[:columns]; {;
@@ -22685,7 +26884,7 @@ PlotHeatMap(fn,xDomain,yDomain,settings ?= {= }) -> {;
     PlotFieldGraphic(:heatmap,config,settings,children,{=
         records=records,unresolvedRegions=unresolved,evidence=field[:evidence],status=field[:status],
         legend=[{= label="minimum",value=minimum,color=palette[1] },{= label="maximum",value=maximum,color=palette.Last() }],
-        colorScale={= kind=colorMode,minimum=minimum,maximum=maximum,colors=palette,hueRange=hues,quantization=colorMode==:continuous ?: :one_degree ?_ :palette },
+        colorScale=paletteSpec.Merge({= minimum=minimum,maximum=maximum }),
         sampling={= method=:cell_corner_mean,certification=:sampled_values }
     });
 };
@@ -22738,11 +26937,14 @@ plotNamespace._proto = {=
     Bar=(self, data, options ?= {= })->PlotDataCall(data, options, :bar),
     Step=(self, data, options ?= {= })->PlotDataCall(data, options, :step),
     Polar=(self, fn, angleDomain, options ?= {= })->PlotPolar(fn, angleDomain, options),
+    ErrorBand=(self, data, options ?= {= })->PlotBand(data, options, :error_band),
+    Interval=(self, data, options ?= {= })->PlotBand(data, options, :interval),
     Implicit=(self, fn, xDomain, yDomain, options ?= {= })->PlotContourBuild(fn,xDomain,yDomain,options,:implicit),
     Inequality=(self, fn, xDomain, yDomain, options ?= {= })->PlotInequality(fn,xDomain,yDomain,options),
     Contour=(self, fn, xDomain, yDomain, options ?= {= })->PlotContourBuild(fn,xDomain,yDomain,options,:contour),
     HeatMap=(self, fn, xDomain, yDomain, options ?= {= })->PlotHeatMap(fn,xDomain,yDomain,options),
-    VectorField=(self, fn, xDomain, yDomain, options ?= {= })->PlotVectorField(fn,xDomain,yDomain,options)
+    VectorField=(self, fn, xDomain, yDomain, options ?= {= })->PlotVectorField(fn,xDomain,yDomain,options),
+    ColorScale=(self, spec ?= {= })->PlotColorScale(spec)
 };
 .Host.RegisterValue("plot", plotNamespace, "Exact and numerics-backed 2D plots lowered into portable Graphics", ["Plot", "Graphics", "Exact"]);
 `, sourcePath: "bundled:plot", kind: "rix" });
@@ -25086,6 +29288,168 @@ probabilityNamespace._proto = {=
 `, sourcePath: "bundled:probability", kind: "rix" });
   catalog.addMetadata({ id: "quarto", description: "Quarto Markdown renderer with front matter and portable figure lowering.", kind: "host", mount: "quarto", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.quarto@1", "rix.renderer.quarto@2"], schemas: ["rix.quarto.project@1", "rix.quarto.render@2"], targets: ["quarto", "text/x-quarto"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], operatorFiles: [], ignore: false, sourcePath: "bundled:quarto" }, { sourcePath: "bundled:quarto", kind: "host" });
   catalog.registerInstaller("quarto", install13);
+  catalog.addMetadata({ id: "quaternion", description: "Certified quaternion facade with order-aware arithmetic and intrinsic slice functions.", kind: "rix", mount: "quaternion", exports: ["Quaternion", "FromCayley", "FromExactAlgebra", "Components", "Scalar", "Vector", "Basis", "Conjugate", "NormSquared", "Inverse", "LeftDivide", "RightDivide", "Enclose", "Refine", "ZeroStatus", "Direction", "Exp", "Log", "LogResult", "Root", "RootResult", "Power", "Sin", "Cos", "Tan", "Sinh", "Cosh"], groups: ["Exact", "Numerics"], permissions: [], requires: ["rix.cayley@2", "rix.float@2"], provides: ["rix.quaternion@2", "rix.enclosable-quaternion@1"], schemas: ["rix.quaternion.value@1", "rix.quaternion.function-result@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:quaternion" }, { source: `/**
+id: quaternion
+description: Certified quaternion facade with order-aware arithmetic and intrinsic slice functions.
+kind: rix
+mount: quaternion
+exports: [Quaternion, FromCayley, FromExactAlgebra, Components, Scalar, Vector, Basis, Conjugate, NormSquared, Inverse, LeftDivide, RightDivide, Enclose, Refine, ZeroStatus, Direction, Exp, Log, LogResult, Root, RootResult, Power, Sin, Cos, Tan, Sinh, Cosh]
+groups: [Exact, Numerics]
+permissions: []
+requires: [rix.cayley@2, rix.float@2]
+provides: [rix.quaternion@2, rix.enclosable-quaternion@1]
+schemas: [rix.quaternion.value@1, rix.quaternion.function-result@1]
+snapshot: false
+deterministic: true
+defaultEnabled: false
+**/
+
+QuaternionIs(value) -> value ? :QuaternionValue;
+QuaternionRequire(value) -> QuaternionIs(value) ?: value ?_ .Error("Expected a Quaternion value");
+QuaternionFloatProvider=.cayley.Provider({= name=:float,certifiedSingleton=_,can=(value)->1 });
+
+QuaternionWrap(cayley,evidence ?= {= constructor=:cayleyFacade }) -> {;
+    cayley[:dimension]==4 ?: _ ?_ .Error("Quaternion facade requires a four-component Cayley value");
+    value={= valueKind=:quaternionValue,schema="rix.quaternion.value@1",cayley=cayley,components=cayley[:components],evidence=evidence };
+    value.__type="QuaternionValue"; value._type="quaternion_value";
+    .ImmutableValue(value ~!: :QuaternionValue);
+};
+QuaternionBuild(a ?= 0,b ?= 0,c ?= 0,d ?= 0) -> QuaternionWrap(.cayley.Value(2,[a,b,c,d]),{= constructor=:components });
+QuaternionFromCayley(value) -> QuaternionWrap(value,{= adapter=:cayley });
+QuaternionFromExactAlgebra(value) -> QuaternionWrap(.cayley.FromExactAlgebra(value),{= adapter=:exactAlgebras,source=value });
+QuaternionBasis(index) -> QuaternionWrap(.cayley.BasisValue(2,index),{= constructor=:basis,index=index });
+QuaternionComponents(value) -> QuaternionRequire(value)[:components];
+QuaternionScalar(value) -> QuaternionComponents(value)[1];
+QuaternionVector(value) -> QuaternionComponents(value).Slice(2);
+QuaternionFromComponentsLike(reference,components,evidence) -> QuaternionWrap(.cayley.Value(reference[:cayley][:level],components,evidence),evidence);
+
+QuaternionPair(left,right) -> {;
+    source=QuaternionIs(left) ?: left ?_ (QuaternionIs(right) ?: right ?_ .Error("Quaternion operation needs a Quaternion operand"));
+    a=QuaternionIs(left) ?: left ?_ QuaternionFromComponentsLike(source,[left],{= constructor=:scalarEmbedding });
+    b=QuaternionIs(right) ?: right ?_ QuaternionFromComponentsLike(source,[right],{= constructor=:scalarEmbedding });
+    {= left=a,right=b };
+};
+QuaternionAdd(left,right) -> {; pair=QuaternionPair(left,right); QuaternionWrap(pair[:left][:cayley]+pair[:right][:cayley],{= operation=:add,left=pair[:left],right=pair[:right] }); };
+QuaternionSubtract(left,right) -> {; pair=QuaternionPair(left,right); QuaternionWrap(pair[:left][:cayley]-pair[:right][:cayley],{= operation=:subtract,left=pair[:left],right=pair[:right] }); };
+QuaternionMultiply(left,right) -> {; pair=QuaternionPair(left,right); QuaternionWrap(pair[:left][:cayley]*pair[:right][:cayley],{= operation=:multiply,left=pair[:left],right=pair[:right],parenthesization=[:multiply,pair[:left][:evidence],pair[:right][:evidence]] }); };
+QuaternionNegate(value) -> {; exact=QuaternionRequire(value); QuaternionWrap(-exact[:cayley],{= operation=:negate,source=exact }); };
+QuaternionConjugate(value) -> {; exact=QuaternionRequire(value); QuaternionWrap(exact[:cayley].Conjugate(),{= operation=:conjugate,source=exact }); };
+QuaternionNormSquared(value) -> QuaternionRequire(value)[:cayley].NormSquared();
+QuaternionDivideComponents(components,norm) -> components.Map((x)->x/norm);
+QuaternionInverse(value) -> {;
+    exact=QuaternionRequire(value); status=QuaternionZeroStatus(exact); status[:status]==:nonzero ?: _ ?_ .Error("Quaternion inverse requires nonzero evidence");
+    norm=QuaternionNormSquared(exact); components=QuaternionDivideComponents(QuaternionConjugate(exact)[:components],norm);
+    QuaternionFromComponentsLike(exact,components,{= operation=:inverse,source=exact,evidence=status });
+};
+QuaternionLeftDivide(value,divisor) -> QuaternionInverse(divisor)*value;
+QuaternionRightDivide(value,divisor) -> value*QuaternionInverse(divisor);
+QuaternionEqual(left,right) -> {; pair=QuaternionPair(left,right); pair[:left][:cayley]==pair[:right][:cayley]; };
+QuaternionEnclose(value,request ?= {= }) -> QuaternionRequire(value)[:cayley].Enclose(request);
+QuaternionRefine(value,request ?= {= }) -> QuaternionRequire(value)[:cayley].Refine(request);
+QuaternionZeroStatus(value,request ?= {= absoluteWidth=1/1000000,maxWork=1000 }) -> {;
+    exact=QuaternionRequire(value); hasFloat:=_; anyNonzero:=_; allFloatZero:=1;
+    {@ i=1;i<=4;{; component=@exact[:components][i]; component ? :float ?:{; @hasFloat~=1; @component==.float.Float(0) ?: _ ?_ {; @anyNonzero~=1; @allFloatZero~=_; }; } ?_ _; };i+=1};
+    hasFloat ?: {= valueKind=:cayleyZeroStatus,schema="rix.cayley.zero-status@1",status=anyNonzero ?: :nonzero ?_ (allFloatZero ?: :zero ?_ :unknown),certified=_,property=:originSeparation,source=exact }
+      ?_ exact[:cayley].ZeroStatus(request);
+};
+
+QuaternionFloat(value) -> value ? :float ?: value ?_ .float.Float(value);
+QuaternionFloatParts(value) -> QuaternionComponents(value).Map((x)->QuaternionFloat(x));
+QuaternionFloatBuild(components,evidence) -> QuaternionWrap(.cayley.Value(.cayley.Level(2,QuaternionFloatProvider),components,evidence),evidence);
+QuaternionVectorNorm(parts) -> .float.Sqrt(parts[2]*parts[2]+parts[3]*parts[3]+parts[4]*parts[4]);
+QuaternionScaleVector(parts,scale) -> [parts[1],parts[2]*scale,parts[3]*scale,parts[4]*scale];
+QuaternionDirectionNonzero(parts,norm) -> [parts[2]/norm,parts[3]/norm,parts[4]/norm];
+QuaternionDirection(parts,norm,defaultDirection ?= [1,0,0]) -> norm==.float.Float(0) ?: defaultDirection ?_ QuaternionDirectionNonzero(parts,norm);
+QuaternionSliceValue(scalarPart,unitVector,sliceImaginary,evidence) -> QuaternionFloatBuild([scalarPart,QuaternionFloat(unitVector[1])*sliceImaginary,QuaternionFloat(unitVector[2])*sliceImaginary,QuaternionFloat(unitVector[3])*sliceImaginary],evidence);
+QuaternionSinhScalar(value) -> (.float.Exp(value)-.float.Exp(-value))/.float.Float(2);
+QuaternionCoshScalar(value) -> (.float.Exp(value)+.float.Exp(-value))/.float.Float(2);
+QuaternionPi() -> .float.Atan2(.float.Float(0),.float.Float(-1));
+
+QuaternionExp(value) -> {;
+    exact=QuaternionRequire(value); parts=QuaternionFloatParts(exact); radius=QuaternionVectorNorm(parts); unitVector=QuaternionDirection(parts,radius);
+    expScalar=.float.Exp(parts[1]); result=QuaternionSliceValue(expScalar*.float.Cos(radius),unitVector,expScalar*.float.Sin(radius),{= operation=:exp,source=exact,sliceEvidence={= generatedBy=:oneAndVectorDirection,associative=1 },approximate=1 });
+    result;
+};
+
+QuaternionLogResult(value,options ?= {= }) -> {;
+    exact=QuaternionRequire(value); zero=exact.ZeroStatus();
+    zero[:status]==:zero ?: .Error("Quaternion Log is undefined at zero") ?_ _;
+    parts=QuaternionFloatParts(exact); vectorNorm=QuaternionVectorNorm(parts); norm=.float.Sqrt(parts[1]*parts[1]+vectorNorm*vectorNorm); real=.float.Log(norm);
+    zeroFloat=.float.Float(0); vectorZero=vectorNorm==zeroFloat; negativeAxis=vectorZero&&parts[1]<zeroFloat; positiveAxis=vectorZero&&parts[1]>zeroFloat;
+    requestedDirection=options[:branchDirection]; direction=requestedDirection==_ ?: QuaternionDirection(parts,vectorNorm) ?_ requestedDirection;
+    angle=positiveAxis ?: .float.Float(0) ?_ .float.Atan2(vectorNorm,parts[1]);
+    principal=negativeAxis&&requestedDirection==_ ?: _ ?_ QuaternionSliceValue(real,direction,negativeAxis ?: QuaternionPi() ?_ angle,{= operation=:log,source=exact,branch=:principal,sliceEvidence={= generatedBy=:oneAndDirection,associative=1 },approximate=1 });
+    {=
+        valueKind=:quaternionFunctionResult,schema="rix.quaternion.function-result@1",function=:log,
+        status=negativeAxis&&requestedDirection==_ ?: :branchFamily ?_ :resolved,value=principal,principalValue=principal,
+        branchFamily=negativeAxis ?: {= kind=:directionSphere,directions=:unitSphere2,angle=QuaternionPi() } ?_ _,
+        branchDirection=negativeAxis ?: requestedDirection ?_ direction,source=exact,certified=_,approximate=1
+    };
+};
+QuaternionLog(value,options ?= {= }) -> {; result=QuaternionLogResult(value,options); result[:value]!=_ ?: result[:value] ?_ .Error("Quaternion Log has a direction family on the negative real axis; use LogResult or supply branchDirection"); };
+
+QuaternionRootResult(value,degree,options ?= {= }) -> {;
+    (degree ? :Integer)&&degree>0 ?: _ ?_ .Error("Quaternion root degree must be a positive Integer");
+    exact=QuaternionRequire(value); parts=QuaternionFloatParts(exact); vectorNorm=QuaternionVectorNorm(parts); norm=.float.Sqrt(parts[1]*parts[1]+vectorNorm*vectorNorm);
+    zeroFloat=.float.Float(0); negativeAxis=vectorNorm==zeroFloat&&parts[1]<zeroFloat; requestedDirection=options[:branchDirection]; direction=requestedDirection==_ ?: QuaternionDirection(parts,vectorNorm) ?_ requestedDirection;
+    rootNorm=.float.Exp(.float.Log(norm)/.float.Float(degree)); theta=.float.Atan2(vectorNorm,parts[1]); branch=options[:branch]==_ ?: 0 ?_ options[:branch];
+    angle=(negativeAxis ?: QuaternionPi() ?_ theta)+.float.Float(2)*QuaternionPi()*.float.Float(branch); angle/= .float.Float(degree);
+    root=negativeAxis&&requestedDirection==_ ?: _ ?_ QuaternionSliceValue(rootNorm*.float.Cos(angle),direction,rootNorm*.float.Sin(angle),{= operation=:root,source=exact,degree=degree,branch=branch,sliceEvidence={= generatedBy=:oneAndDirection,associative=1 },approximate=1 });
+    {= valueKind=:quaternionFunctionResult,schema="rix.quaternion.function-result@1",function=:root,status=root==_ ?: :branchFamily ?_ :resolved,value=root,degree=degree,branch=branch,branchFamily=root==_ ?: {= kind=:directionSphere,directions=:unitSphere2 } ?_ _,source=exact,approximate=1 };
+};
+QuaternionRoot(value,degree,options ?= {= }) -> {; result=QuaternionRootResult(value,degree,options); result[:value]!=_ ?: result[:value] ?_ .Error("Quaternion root has a direction family; use RootResult or supply branchDirection"); };
+QuaternionPositiveIntegerPower(value,exponent) -> {; result:=QuaternionFromComponentsLike(value,[1],{= constructor=:multiplicativeIdentity }); factor:=value; {@ n=@exponent;n>0;{; n%2==1 ?:{; @result~=@result*@factor; } ?_ _; n>1 ?:{; @factor~=@factor*@factor; } ?_ _; };n//=2}; result; };
+QuaternionIntegerPower(value,exponent) -> {;
+    exact=QuaternionRequire(value); exponent==0 ?: QuaternionFromComponentsLike(exact,[1],{= constructor=:multiplicativeIdentity }) ?_ _;
+    exponent<0 ?: QuaternionPositiveIntegerPower(exact.Inverse(),-exponent) ?_ QuaternionPositiveIntegerPower(exact,exponent);
+};
+QuaternionPower(value,exponent,options ?= {= }) -> exponent ? :Integer ?: QuaternionIntegerPower(value,exponent) ?_ QuaternionExp(QuaternionLog(value,options)*exponent);
+
+QuaternionSin(value) -> {;
+    exact=QuaternionRequire(value); p=QuaternionFloatParts(exact); r=QuaternionVectorNorm(p); u=QuaternionDirection(p,r);
+    QuaternionSliceValue(.float.Sin(p[1])*QuaternionCoshScalar(r),u,.float.Cos(p[1])*QuaternionSinhScalar(r),{= operation=:sin,source=exact,sliceEvidence={= generatedBy=:oneAndVectorDirection,associative=1 },approximate=1 });
+};
+QuaternionCos(value) -> {;
+    exact=QuaternionRequire(value); p=QuaternionFloatParts(exact); r=QuaternionVectorNorm(p); u=QuaternionDirection(p,r);
+    QuaternionSliceValue(.float.Cos(p[1])*QuaternionCoshScalar(r),u,-.float.Sin(p[1])*QuaternionSinhScalar(r),{= operation=:cos,source=exact,sliceEvidence={= generatedBy=:oneAndVectorDirection,associative=1 },approximate=1 });
+};
+QuaternionTan(value) -> QuaternionSin(value).RightDivide(QuaternionCos(value));
+QuaternionSinh(value) -> {;
+    exact=QuaternionRequire(value); p=QuaternionFloatParts(exact); r=QuaternionVectorNorm(p); u=QuaternionDirection(p,r);
+    QuaternionSliceValue(QuaternionSinhScalar(p[1])*.float.Cos(r),u,QuaternionCoshScalar(p[1])*.float.Sin(r),{= operation=:sinh,source=exact,sliceEvidence={= generatedBy=:oneAndVectorDirection,associative=1 },approximate=1 });
+};
+QuaternionCosh(value) -> {;
+    exact=QuaternionRequire(value); p=QuaternionFloatParts(exact); r=QuaternionVectorNorm(p); u=QuaternionDirection(p,r);
+    QuaternionSliceValue(QuaternionCoshScalar(p[1])*.float.Cos(r),u,QuaternionSinhScalar(p[1])*.float.Sin(r),{= operation=:cosh,source=exact,sliceEvidence={= generatedBy=:oneAndVectorDirection,associative=1 },approximate=1 });
+};
+QuaternionRecord(value) -> {; exact=QuaternionRequire(value); {= schema=exact[:schema],components=exact[:components],cayley=.cayley.Record(exact[:cayley]),evidence=exact[:evidence],evaluationOrder=exact[:evidence][:parenthesization],sliceEvidence=exact[:evidence][:sliceEvidence] }; };
+
+.TypeKnown(:QuaternionValue) ?: _ ?_ .TypeRegister({=
+    name=:QuaternionValue,nativeType=:map,defaultTraits=[:number],convertFrom={= map=(x) ?- [x[:valueKind]==:quaternionValue] -> x },validate=(x)->x[:schema]=="rix.quaternion.value@1",
+    proto={=
+        Components=(self)->self[:components],Scalar=(self)->self[:components][1],Vector=(self)->self[:components].Slice(2),Conjugate=(self)->QuaternionConjugate(self),NormSquared=(self)->QuaternionNormSquared(self),
+        Inverse=(self)->QuaternionInverse(self),LeftDivide=(self,d)->QuaternionLeftDivide(self,d),RightDivide=(self,d)->QuaternionRightDivide(self,d),Enclose=(self,r ?= {= })->QuaternionEnclose(self,r),Refine=(self,r ?= {= })->QuaternionRefine(self,r),
+        ZeroStatus=(self,r ?= {= absoluteWidth=1/1000000,maxWork=1000 })->QuaternionZeroStatus(self,r),Exp=(self)->QuaternionExp(self),Log=(self,o ?= {= })->QuaternionLog(self,o),LogResult=(self,o ?= {= })->QuaternionLogResult(self,o),
+        Root=(self,n,o ?= {= })->QuaternionRoot(self,n,o),RootResult=(self,n,o ?= {= })->QuaternionRootResult(self,n,o),Power=(self,e,o ?= {= })->QuaternionPower(self,e,o),Sin=(self)->QuaternionSin(self),Cos=(self)->QuaternionCos(self),Tan=(self)->QuaternionTan(self),Sinh=(self)->QuaternionSinh(self),Cosh=(self)->QuaternionCosh(self),Record=(self)->QuaternionRecord(self)
+    },
+    installs={=
+        ADD=[{= name=:QuaternionAdd,priority=460,prep=(x,y)->QuaternionIs(x)||QuaternionIs(y),impl=QuaternionAdd }],SUB=[{= name=:QuaternionSubtract,priority=460,prep=(x,y)->QuaternionIs(x)||QuaternionIs(y),impl=QuaternionSubtract }],
+        MUL=[{= name=:QuaternionMultiply,priority=460,prep=(x,y)->QuaternionIs(x)||QuaternionIs(y),impl=QuaternionMultiply }],DIV=[{= name=:QuaternionRightDivide,priority=460,prep=(x,y)->QuaternionIs(x)&&QuaternionIs(y),impl=QuaternionRightDivide }],
+        NEG=[{= name=:QuaternionNegate,priority=460,prep=(x)->QuaternionIs(x),impl=QuaternionNegate }],EQ=[{= name=:QuaternionEqual,priority=460,prep=(x,y)->QuaternionIs(x)||QuaternionIs(y),impl=QuaternionEqual }],NEQ=[{= name=:QuaternionNotEqual,priority=460,prep=(x,y)->QuaternionIs(x)||QuaternionIs(y),impl=(x,y)->!QuaternionEqual(x,y) }]
+    }
+});
+.TypeInstall(:QuaternionValue);
+
+quaternionNamespace=(a ?= 0,b ?= 0,c ?= 0,d ?= 0)->QuaternionBuild(a,b,c,d);
+quaternionNamespace._proto={=
+    Quaternion=(self,a ?= 0,b ?= 0,c ?= 0,d ?= 0)->QuaternionBuild(a,b,c,d),FromCayley=(self,value)->QuaternionFromCayley(value),FromExactAlgebra=(self,value)->QuaternionFromExactAlgebra(value),
+    Components=(self,value)->QuaternionComponents(value),Scalar=(self,value)->QuaternionScalar(value),Vector=(self,value)->QuaternionVector(value),Basis=(self,index)->QuaternionBasis(index),Conjugate=(self,value)->QuaternionConjugate(value),NormSquared=(self,value)->QuaternionNormSquared(value),
+    Inverse=(self,value)->QuaternionInverse(value),LeftDivide=(self,value,divisor)->QuaternionLeftDivide(value,divisor),RightDivide=(self,value,divisor)->QuaternionRightDivide(value,divisor),Enclose=(self,value,request ?= {= })->QuaternionEnclose(value,request),Refine=(self,value,request ?= {= })->QuaternionRefine(value,request),ZeroStatus=(self,value,request ?= {= absoluteWidth=1/1000000,maxWork=1000 })->QuaternionZeroStatus(value,request),
+    Direction=(self,value)->{; parts=QuaternionFloatParts(value); QuaternionDirection(parts,QuaternionVectorNorm(parts)); },
+    Exp=(self,value)->QuaternionExp(value),Log=(self,value,options ?= {= })->QuaternionLog(value,options),LogResult=(self,value,options ?= {= })->QuaternionLogResult(value,options),Root=(self,value,degree,options ?= {= })->QuaternionRoot(value,degree,options),RootResult=(self,value,degree,options ?= {= })->QuaternionRootResult(value,degree,options),Power=(self,value,exponent,options ?= {= })->QuaternionPower(value,exponent,options),Sin=(self,value)->QuaternionSin(value),Cos=(self,value)->QuaternionCos(value),Tan=(self,value)->QuaternionTan(value),Sinh=(self,value)->QuaternionSinh(value),Cosh=(self,value)->QuaternionCosh(value)
+};
+.Host.RegisterValue("quaternion",quaternionNamespace,"Certified quaternion facade and intrinsic slice functions",["Exact","Numerics"]);
+`, sourcePath: "bundled:quaternion", kind: "rix" });
   catalog.addMetadata({ id: "radix", description: "Exact positional expansions, cloneable lazy digit streams, configurable formatting, and bounded period analysis.", kind: "rix", mount: "radix", exports: ["Expansion", "Digits", "DigitStream", "PeriodLength", "PeriodInfo", "ToString"], groups: ["Exact", "Radix"], permissions: [], provides: ["rix.radix@1", "rix.radix.digit-stream@1"], schemas: ["rix.radix.expansion@1", "rix.radix.digit-stream@1", "rix.radix.period-info@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:radix" }, { source: `/**
 id: radix
 description: Exact positional expansions, cloneable lazy digit streams, configurable formatting, and bounded period analysis.
@@ -28230,6 +32594,29 @@ StatsHistogram(values, binCount ?= 5) -> {;
     };
 };
 
+StatsColorScaleColor(scale,value,fallbackMinimum,fallbackMaximum) -> {;
+    scale ? :Map ?: _ ?_ .Error("HistogramGraphic colorScale must be a map");
+    scale[:schema]=="rix.color-scale@1" ?: _ ?_ .Error("HistogramGraphic colorScale must use schema rix.color-scale@1");
+    colors=scale[:colors];
+    colors ? :Array ?: _ ?_ .Error("HistogramGraphic colorScale colors must be an Array");
+    colors.Len()>=2 ?: _ ?_ .Error("HistogramGraphic colorScale requires at least two colors");
+    minimum=scale[:minimum]==_ ?: fallbackMinimum ?_ scale[:minimum];
+    maximum=scale[:maximum]==_ ?: fallbackMaximum ?_ scale[:maximum];
+    minimum<maximum ?: _ ?_ .Error("HistogramGraphic colorScale bounds must increase");
+    value<=minimum ?: scale[:underflow]
+      ?_ value>=maximum ?: scale[:overflow]
+      ?_ scale[:kind]==:continuous
+           ?: {;
+               hues=@scale[:hueRange];
+               hue=hues[1]+(@value-@minimum)/(@maximum-@minimum)*(hues[2]-hues[1]);
+               @"hsl(@{hue//1}, 80%, 50%)";
+           }
+           ?_ {;
+               index=((@value-@minimum)/(@maximum-@minimum)*(@colors.Len()-1))//1+1;
+               @colors[.Max(1,.Min(@colors.Len(),index))];
+           };
+};
+
 StatsHistogramGraphic(value, options ?= {= }) -> {;
     histogram = value ? :Array
       ?: StatsHistogram(value, StatsOption(options, "bins", 5))
@@ -28237,6 +32624,7 @@ StatsHistogramGraphic(value, options ?= {= }) -> {;
     histogram[:schema] == "rix.stats.histogram@1" ?: _ ?_ .Error("HistogramGraphic expects values or a stats histogram");
     size = StatsOption(options, "size", [420, 220]);
     fill = StatsOption(options, "fill", "#2563eb");
+    paletteSpec = StatsOption(options, "colorscale", _);
     margin = 28;
     chartWidth = size[1] - 2 * margin;
     chartHeight = size[2] - 2 * margin;
@@ -28248,15 +32636,19 @@ StatsHistogramGraphic(value, options ?= {= }) -> {;
     ];
     {@ index = 1; index <= @bins.Len(); {;
         height = @chartHeight * @bins[index][:count] / @maximumCount;
+        selectedFill = @paletteSpec==_
+          ?: @fill
+          ?_ StatsColorScaleColor(@paletteSpec,@bins[index][:count],0,@maximumCount);
         @children ~= @children.Push(.Graphics.Rectangle(
             [@margin + (index - 1) * @cellWidth + 1, @margin + @chartHeight - height],
             [@cellWidth - 2, height],
-            {= fill=@fill, stroke="#1e3a8a", width=1 }
+            {= fill=selectedFill, stroke="#1e3a8a", width=1,hitId=@"histogram-bin-@{index}" }
         ));
     }; index += 1 };
     .Graphics.Graphic(size, children, {=
         schema="rix.stats.histogram-graphic@1",
         histogram=histogram,
+        colorScale=paletteSpec,
         alt="Exact histogram"
     });
 };
@@ -30280,7 +34672,7 @@ symbolicNamespace._proto = {=
 
 .Host.RegisterValue("symbolic",symbolicNamespace,"Representation-sensitive symbolic and abstract Calculus workspace",["Algebra","Calculus","Analysis","Exact","Symbolic"]);
 `, sourcePath: "bundled:symbolic", kind: "rix" });
-  catalog.addMetadata({ id: "terminal-ascii", description: "Deterministic strict-ASCII fallback with wrapping, pagination, slides, tables, grids, and simple Graphics.", kind: "host", mount: "terminalAscii", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.terminal-ascii@1"], targets: ["terminal-ascii", "terminal", "ascii", "txt", "text/plain"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:terminal-ascii" }, { sourcePath: "bundled:terminal-ascii", kind: "host" });
+  catalog.addMetadata({ id: "terminal-ascii", description: "Deterministic strict-ASCII fallback with explicit Unicode and ANSI terminal capability profiles.", kind: "host", mount: "terminalAscii", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.terminal-ascii@1", "rix.renderer.terminal-rich@1"], targets: ["terminal-ascii", "terminal", "ascii", "txt", "text/plain"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:terminal-ascii" }, { sourcePath: "bundled:terminal-ascii", kind: "host" });
   catalog.registerInstaller("terminal-ascii", install6);
   catalog.addMetadata({ id: "tikz", description: "Editable TikZ/PGF source renderer for core Graphics scenes.", kind: "host", mount: "tikz", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.tikz@1", "rix.tikz.dependencies@1"], schemas: ["rix.tikz.dependencies@1"], targets: ["tikz", "text/x-tikz"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], operatorFiles: [], ignore: false, sourcePath: "bundled:tikz" }, { sourcePath: "bundled:tikz", kind: "host" });
   catalog.registerInstaller("tikz", install10);
@@ -30803,7 +35195,7 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
     },
     async runAsync(source) {
       const tokens = tokenize(source);
-      const usesAsyncTerminal = [...source.matchAll(/\.(ForEach|Reduce|Collect|First|Find|Count|Close|Retry)\s*\(/gi)].some((match) => match[1].toLowerCase() !== "collect" || !/(?:\.data|\.csv)$/i.test(source.slice(0, match.index)));
+      const usesAsyncTerminal = [...source.matchAll(/\.(ForEach|Reduce|Collect|First|Find|Count|Close|Retry)\s*\(/gi)].some((match) => match[1].toLowerCase() !== "collect" || !/(?:\.data|\.csv|\.cas)$/i.test(source.slice(0, match.index)));
       const usesAsyncEvaluation = tokens.some((token) => token.value === "{$" || token.value === "{$$") || tokens.some((token) => token.value === "|>_" || token.value === "|>!") || usesAsyncTerminal;
       if (!usesAsyncEvaluation)
         return this.run(source);
@@ -30950,5 +35342,5 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
 
 export { pluginProfileFromUrl, stripMarkedPluginProfile, findHelp, createRixRepl };
 
-//# debugId=5EE124F86E8C4FD664756E2164756E21
-//# sourceMappingURL=chunk-v1274xzd.js.map
+//# debugId=B1A4E021127089E264756E2164756E21
+//# sourceMappingURL=chunk-3m9js3x1.js.map

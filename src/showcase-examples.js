@@ -360,7 +360,7 @@ HiddenRotation(dimension, turn) -> {;
         visible := hidden-3;
         parameter := hidden%2 == 0 ?: @turn ?_ 0-@turn;
         next := .nd.CayleyRotation(@dimension, visible, hidden, parameter);
-        @combined ~= .nd.Compose(next, @combined);
+        @combined = .nd.Compose(next, @combined);
     }; hidden+=1 };
     combined
 };

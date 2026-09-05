@@ -24,6 +24,19 @@ observations := [[1,2],[2,5/2],[3,7/4],[4,3]];
 <p>Polar curves use radians and retain their angle/radius source samples:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Plugin.Load(&quot;plot&quot;);
 .plot.Polar(t -&gt; 2, [0,6], {= samples=81,title=&quot;A sampled polar circle&quot; });</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Exact interval measurements and declared symmetric errors use different APIs so the retained evidence cannot be confused:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">.Plugin.Load(&quot;plot&quot;);
+.Fragment([
+  .Figure(
+    .plot.Interval([[0,1:2],[1,2:4],[2,3:5]], {= title=&quot;Exact interval values&quot; }),
+    &quot;Each vertical extent is an exact RationalInterval&quot;
+  ),
+  .Figure(
+    .plot.ErrorBand([[0,2,1/2],[1,3,1/4],[2,4,3/4]]),
+    &quot;Caller-declared symmetric error radii&quot;
+  )
+]);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Both results are portable Graphics. Their metadata keeps lower, center, and upper series plus stable hit identities; <code>Interval</code> reports exact-interval evidence while <code>ErrorBand</code> labels its bounds as declared.</p>
 <p>Scalar and vector fields share exact domains and a bounded cell grid:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="17" spellcheck="false">.Plugin.Load(&quot;plot&quot;);
 .Fragment([
@@ -42,4 +55,15 @@ observations := [[1,2],[2,5/2],[3,7/4],[4,3]];
     &quot;A normalized rotational vector field&quot;
   )
 ]);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p><code>Contour</code> adds multiple <code>levels</code>; <code>Inequality</code> uses <code>relation=:le</code> by default. Inspect the returned Graphic&#039;s <code>metadata.plot</code> record through a renderer or host to find the sampling record, evidence counts, stable hit identities, ambiguous cells, and unresolved regions. These records distinguish sampled boundary evidence from a certified enclosure. <code>refineDepth</code> is bounded from zero through six; <code>refinementBudget</code> caps total processed cells and must cover the base grid. With <code>certifyIntervals=1</code>, interval-compatible functions can certify whole-cell exclusion or inequality classification. The plotted crossing itself remains sampled unless a separate mathematical continuity/existence contract certifies it.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
+<p><code>Contour</code> adds multiple <code>levels</code>; <code>Inequality</code> uses <code>relation=:le</code> by default. Inspect the returned Graphic&#039;s <code>metadata.plot</code> record through a renderer or host to find the sampling record, evidence counts, stable hit identities, ambiguous cells, and unresolved regions. These records distinguish sampled boundary evidence from a certified enclosure. <code>refineDepth</code> is bounded from zero through six; <code>refinementBudget</code> caps total processed cells and must cover the base grid. With <code>certifyIntervals=1</code>, interval-compatible functions can certify whole-cell exclusion or inequality classification. The plotted crossing itself remains sampled unless a separate mathematical continuity/existence contract certifies it.</p>
+<h2>Share a color policy</h2>
+<p>One portable scale can drive a heat map, a statistics graphic, and a complex magnitude coloring without becoming renderer state:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="9" spellcheck="false">.Plugin.Load(&quot;plot&quot;);
+.Plugin.Load(&quot;stats&quot;);
+scale := .plot.ColorScale({=
+  colors=[&quot;#172554&quot;,&quot;#38bdf8&quot;,&quot;#f8fafc&quot;],minimum=0,maximum=4
+});
+.Fragment([
+  .plot.HeatMap((x,y)-&gt;x^2+y^2,[-1,1],[-1,1],{= grid=[8,8],colorScale=scale }),
+  .stats.HistogramGraphic([1,2,2,3,4],{= bins=3,colorScale=scale })
+]);</textarea><div class="tutorial-output" data-tutorial-output></div></section></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

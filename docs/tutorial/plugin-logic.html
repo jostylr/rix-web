@@ -1,0 +1,87 @@
+<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Explore propositional validity, countermodels, canonical normal forms, scoped natural deduction, and portable tree views." /><title>Truth tables, scoped proofs, and educational trees — RatCalc</title><link rel="stylesheet" href="../assets/app.css" /><link rel="stylesheet" href="../assets/tutorial.css" /><link rel="stylesheet" href="../assets/tutorial-extra.css" /></head><body><main class="tutorial-page"><div class="tutorial-shell"><header class="tutorial-header"><a class="brand" href="../" aria-label="RatCalc home"><span class="rm-mark">R/M</span><span><b>RatCalc</b><small>powered by RiX</small></span></a><div class="tutorial-header-actions"><button id="tutorial-contents-toggle" type="button" data-toggle-contents aria-controls="lesson-sidebar" aria-expanded="false">Contents</button><a href="../">Open calculator</a></div></header><div class="lesson-layout"><aside id="lesson-sidebar" class="lesson-sidebar" data-tutorial-sidebar><p>Contents</p><a href="./index.html">Browse the tutorial index</a></aside><article id="lesson-start" class="lesson-card"><p class="lesson-kicker"><a href="./index.html">RiX walkthrough</a> <span aria-hidden="true">·</span> <a href="./plugins-algebra-and-analysis.html#lesson-start" title="Plugins: Algebra and analysis">15</a> <span aria-hidden="true">·</span> <span>i</span></p><h1>Truth tables, scoped proofs, and educational trees</h1><p class="deck">Explore propositional validity, countermodels, canonical normal forms, scoped natural deduction, and portable tree views.</p><aside class="challenge"><p class="eyebrow">Develop in RiX Notebook</p><p>Open <code>rix/plugins/logic/tutorial.md</code> in the macOS app to edit this lesson with live preview and plugin-aware code results. Use Reload plugins after changing project-local plugin source.</p></aside><div class="lesson-content"><h2>Find a model and a countermodel</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">.Plugin.Load(&quot;logic&quot;);
+p := .logic.Atom(:p);
+q := .logic.Atom(:q);
+formula := p.Implies(q);
+table := formula.TruthTable();
+{: table[:classification],table[:model],table[:countermodel],table[:rows] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The implication is contingent. The countermodel makes <code>p</code> true and <code>q</code> false; the table is complete for its two atoms, not a sample.</p>
+<h2>Compare valid and contradictory formulas</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">.Plugin.Load(&quot;logic&quot;);
+p := .logic.Atom(:p);
+tautology := p.Or(p.Not()).TruthTable();
+contradiction := p.And(p.Not()).TruthTable();
+.Table({=
+  columns=[&quot;formula kind&quot;,&quot;classification&quot;,&quot;satisfiable&quot;,&quot;valid&quot;],
+  rows=[
+    [&quot;excluded middle&quot;,tautology[:classification],tautology[:satisfiable],tautology[:valid]],
+    [&quot;contradiction&quot;,contradiction[:classification],contradiction[:satisfiable],contradiction[:valid]]
+  ]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Construct and replay normal forms</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="8" spellcheck="false">.Plugin.Load(&quot;logic&quot;);
+p := .logic.Atom(:p);
+q := .logic.Atom(:q);
+source := p.Iff(q.Not());
+nnf := source.NNF();
+cnf := source.CNF();
+dnf := source.DNF();
+{: nnf[:expression],cnf[:expression],dnf[:expression],.logic.CheckNormalForm(cnf) };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Canonical CNF and DNF can be much larger than a hand-simplified equivalent. Their purpose here is to expose minterms and maxterms and make replay simple.</p>
+<h2>Check a line-by-line derivation</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="9" spellcheck="false">.Plugin.Load(&quot;logic&quot;);
+p := .logic.Atom(:p);
+q := .logic.Atom(:q);
+proof := .logic.Proof([
+  .logic.Step(:premise,p),
+  .logic.Step(:premise,p.Implies(q)),
+  .logic.Step(:modusPonens,q,[1,2])
+],q);
+{: proof[:accepted],proof[:checks],.logic.CheckProof(proof) };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Changing the last conclusion to <code>p</code> leaves a failed <code>:modusPonensMismatch</code> record. RiX checks the rule; it does not trust the rule label.</p>
+<h2>Discharge a scoped assumption</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">.Plugin.Load(&quot;logic&quot;);
+p := .logic.Atom(:p);
+inside := .logic.Subproof(p,[],p);
+identity := .logic.Proof([
+  .logic.Step(:implicationIntro,p.Implies(p),[],{= subproofs=[inside] })
+],p.Implies(p));
+{: identity[:accepted],identity[:checks][1][:discharged],identity.Tree() };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p><code>Subproof</code> inserts the assumption as its first local line. The outer proof sees only the checked subproof record, not its assumption as a freely usable outer premise. Additional free <code>premise</code> and <code>assumption</code> lines are rejected inside this first self-contained subproof model. This makes implication introduction a real scope operation; a later outer-line import feature will need to name and replay every imported dependency explicitly.</p>
+<h2>Reason by cases</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="15" spellcheck="false">.Plugin.Load(&quot;logic&quot;);
+p := .logic.Atom(:p);
+q := .logic.Atom(:q);
+either := p.Or(q);
+fromP := .logic.Subproof(p,[
+  .logic.Step(:orIntroLeft,either,[1])
+],either);
+fromQ := .logic.Subproof(q,[
+  .logic.Step(:orIntroRight,either,[1])
+],either);
+cases := .logic.Proof([
+  .logic.Step(:premise,either),
+  .logic.Step(:orElim,either,[1],{= subproofs=[fromP,fromQ] })
+],either);
+{: cases[:accepted],cases[:checks][2],.logic.ProofTree(cases) };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Both cases must start from the corresponding disjunct and reach exactly the same conclusion. Reversing the two case records is allowed; omitting a case or changing either goal is rejected.</p>
+<h2>Prove a negation from contradiction</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="12" spellcheck="false">.Plugin.Load(&quot;logic&quot;);
+p := .logic.Atom(:p);
+impossible := p.And(p.Not());
+contradiction := .logic.Subproof(impossible,[
+  .logic.Step(:andElimLeft,p,[1]),
+  .logic.Step(:andElimRight,p.Not(),[1]),
+  .logic.Step(:notElim,.logic.Bottom(),[2,3])
+],.logic.Bottom());
+proof := .logic.Proof([
+  .logic.Step(:notIntro,impossible.Not(),[],{= subproofs=[contradiction] })
+],impossible.Not());
+{: proof[:accepted],impossible.Not().SyntaxTree() };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p><code>bottomElim</code> is also available when a derivation already contains <code>Bottom</code>. These are explicit checked rules, not automatic theorem search.</p>
+<h2>Bounded work stays visible</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Plugin.Load(&quot;logic&quot;);
+{: .logic.Capabilities(),.logic.Valuations([:p,:q]) };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Truth tables reject requests above their explicit atom budget. A future semantic tableau will record open and closed branches, and the later finite-model explorer will preserve the same distinction between exhaustive bounded search and an unbounded theorem.</p>
+<h2>Further work</h2>
+<p>1. Build the truth table for contraposition. 2. Compare canonical CNF with a shorter equivalent written by hand. 3. Construct an <code>andIntro</code> proof and eliminate each conjunct on later lines. 4. Change one <code>orElim</code> case goal and inspect the retained failure reason. 5. Use <code>bottomElim</code> to derive a chosen formula from an explicit contradiction.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

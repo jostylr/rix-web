@@ -313,7 +313,7 @@ export function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true
             const tokens = tokenize(source);
             const usesAsyncTerminal = [...source.matchAll(/\.(ForEach|Reduce|Collect|First|Find|Count|Close|Retry)\s*\(/gi)]
                 .some((match) => match[1].toLowerCase() !== "collect"
-                    || !/(?:\.data|\.csv)$/i.test(source.slice(0, match.index)));
+                    || !/(?:\.data|\.csv|\.cas)$/i.test(source.slice(0, match.index)));
             const usesAsyncEvaluation = tokens.some((token) => token.value === "{$" || token.value === "{$$")
                 || tokens.some((token) => token.value === "|>_" || token.value === "|>!")
                 || usesAsyncTerminal;

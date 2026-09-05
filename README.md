@@ -57,6 +57,13 @@ bun run build
 bun run serve
 ```
 
+Use `bun run test:short` for browser contracts affected by ordinary RiX-Web
+work, `bun run test:ten` for the medium/full browser set, and
+`bun run test:suite` (or `bun run test`) before integration. The repository
+uses the umbrella's current `../rix` checkout when generating the approved
+plugin catalog, tutorial index, and published schemas; run `bun run build:app`
+after changing those RiX inputs.
+
 `bun run build` (or `bun run build:dynamic`) uses manifest-loaded navigation
 for low-churn development. `bun run build:static` restores fully pre-rendered
 tutorial indexes, sidebars, and previous/next links for release builds.

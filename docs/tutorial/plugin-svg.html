@@ -26,7 +26,8 @@ lowered := .svg.Render(exactScene, {= precision=3, rounding=&quot;nearest&quot; 
 <p>The guarantee is <code>outward-exact-enclosure</code>. Float-originated coordinates may still round messily, but are marked non-certified and never presented as an exact enclosure.</p>
 <p>SVG also validates the complete nested Graphics tree. Unsupported nodes, Path commands, and style properties fail with a stable path such as <code>graphic[2].group[1]</code>; they are never silently omitted. Generic <code>.Render</code> can use an explicitly requested fallback target, which retains the SVG failure in its diagnostics.</p>
 <h2>Reuse paint and interaction definitions</h2>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="17" spellcheck="false">paint := {= gradient={= from=&quot;#dbeafe&quot;, to=&quot;#2563eb&quot;, angle=45 },
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="18" spellcheck="false">.Plugin.Load(&quot;svg&quot;);
+paint := {= gradient={= from=&quot;#dbeafe&quot;, to=&quot;#2563eb&quot;, angle=45 },
             mask={= opacity=3/4 } };
 decorated := .Graphics.Graphic([120,70], [
     .Graphics.Group([

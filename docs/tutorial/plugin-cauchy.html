@@ -40,6 +40,47 @@ g := .cauchy.Geometric(1, 1/2, {= name=&quot;binary geometric&quot; });
   ])
 });</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>At every row the exact limit <code>2</code> lies in the interval. Negative ratios use the same absolute remainder theorem and produce certified alternating examples.</p>
+<h2>Proof-carrying generated limits</h2>
+<p>A limit constructor makes the source of its global convergence claim visible. Evidence marked <code>:assumed</code> is rejected; a proof or constructor guarantee must provide both an exact tail bound and a modulus:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">.Plugin.Load(&quot;cauchy&quot;);
+constantProof := .cauchy.LimitProof((n)-&gt;0, (radius)-&gt;0, {=
+  level=:proof,
+  theorem=:constantSequenceLimit,
+  witness=5
+});
+five := .cauchy.Limit((n)-&gt;5, constantProof, {= name=:five });
+.Table({=
+  columns=[&quot;term&quot;, &quot;tail bound&quot;, &quot;certified enclosure&quot;],
+  rows=[[five.Term(0), five.TailBound(0), five.Enclosure(0)]]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The Aitken delta-squared transform can accelerate a generated sequence, but the new sequence still needs its own limit proof. For geometric partial sums it collapses to the exact sum. A derived subsequence, by contrast, reuses the parent&#039;s effective tail information automatically:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="15" spellcheck="false">.Plugin.Load(&quot;cauchy&quot;);
+g := .cauchy.Geometric(1,1/2);
+aitkenProof := .cauchy.LimitProof((n)-&gt;0, (radius)-&gt;0, {=
+  level=:proof,
+  theorem=:geometricAitkenExact
+});
+fast := g.Aitken(aitkenProof);
+odd := g.Subsequence(2,1);
+.Table({=
+  columns=[&quot;construction&quot;, &quot;first term&quot;, &quot;tail bound&quot;],
+  rows=[
+    [&quot;Aitken&quot;, fast.Term(0), fast.TailBound(0)],
+    [&quot;odd partial sums&quot;, odd.Term(0), odd.TailBound(0)]
+  ]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Use <code>Diagnose</code> when a generator lacks effective tail information. Its sample is bounded observation, and its structured result states exactly what is missing:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">.Plugin.Load(&quot;cauchy&quot;);
+bare := .cauchy.Sequence((n)-&gt;1/(n+1));
+diagnosis := bare.Diagnose({= count=4 });
+.Table({=
+  columns=[&quot;status&quot;, &quot;observed terms&quot;, &quot;required evidence&quot;],
+  rows=[[
+    diagnosis[:status],
+    diagnosis[:observations][&quot;terms&quot;],
+    diagnosis[:required]
+  ]]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>Bounded refinement and Halo decisions</h2>
 <p>Refinement advances only while its exact work budget permits. The result keeps the best tail witness whether or not the requested width is reached:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="18" spellcheck="false">.Plugin.Load(&quot;cauchy&quot;);

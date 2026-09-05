@@ -26,7 +26,8 @@ report;</textarea><div class="tutorial-output" data-tutorial-output></div></sect
 .markdown.Render(report).Get(&quot;content&quot;);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>Reuse a course-report template</h2>
 <p>The template stores presentation defaults while the report supplies its title and children. Bibliography and asset values remain portable data; declaring an asset does not read it.</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="24" spellcheck="false">bib := .document.Bibliography([
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="26" spellcheck="false">.Plugin.Load(&quot;document&quot;);
+bib := .document.Bibliography([
     {= key=&quot;knuth84&quot;, author=&quot;Donald Knuth&quot;, year=1984,
        title=&quot;Literate Programming&quot; }
 ]);
@@ -46,13 +47,15 @@ course := .document.Template(&quot;course-report&quot;, {=
 discussion := .Paragraph([
     .Text(&quot;Compare &quot;), .document.Citation(&quot;knuth84&quot;), .Text(&quot;.&quot;)
 ]);
+values := .Table([&quot;x&quot;, &quot;x² - 1&quot;], [[-1, 0], [0, -1], [1, 0]]);
 templated := .document.ApplyTemplate(course, {=
     title=&quot;Evidence report&quot;, children=[discussion, values]
 });
 [.document.Asset(assets, &quot;logo&quot;), .document.References(templated), templated];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>Isolate target-specific source</h2>
 <p>Raw target text is explicit and has a portable fallback. Generic HTML and text views see only the fallback; a matching renderer may opt into the raw content under its own policy.</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">latexOnly := .document.TargetMarkup(
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">.Plugin.Load(&quot;document&quot;);
+latexOnly := .document.TargetMarkup(
     :latex,
     &quot;\\newcommand{\\CourseName}{Exact Mathematics}&quot;,
     &quot;[LaTeX preamble omitted]&quot;

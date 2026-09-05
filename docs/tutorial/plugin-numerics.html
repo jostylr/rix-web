@@ -311,11 +311,17 @@ values |&gt;&gt; ((value) -&gt; RefineGamma(value, {=
   maxWork=1200
 }));</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p><code>Atan2(0,0)</code> is undefined and therefore refines to structured <code>:unknown</code> evidence. Beta and the polygamma functions likewise report <code>:unknown</code> when their positive-real domains cannot be certified.</p>
-<h2>Kantorovich certification and interval Newton</h2>
-<p><code>.numerics.Kantorovich</code> first checks the supplied initial interval and rational bounds. The derivative interval must exclude zero, <code>derivativeLower</code> may not overstate its certified magnitude, and an optional interval-valued second derivative verifies <code>secondDerivativeUpper</code>. The Kantorovich inequality then certifies an initial root enclosure. Refinement uses interval Newton and intersects every new interval with the preceding one:</p>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="24" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
+<h2>Compare Kantorovich with direct interval Newton</h2>
+<p>Kantorovich establishes an initial existence/uniqueness ball from pointwise Newton data, a derivative lower bound, and a derivative-Lipschitz or second-derivative bound. Direct interval Newton starts from a box and uses the complete first-derivative interval on that box. For <code>x^2-2</code>, both routes work:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="29" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
 
-root := .numerics.Kantorovich(
+direct := .numerics.IntervalNewton(
+  (x) -&gt; x^2 - 2,
+  (x) -&gt; 2*x,
+  1:2,
+  {= absoluteWidth=1/100000,maxWork=30,trace=1 }
+);
+entry := .numerics.Kantorovich(
   (x) -&gt; x^2 - 2,
   (x) -&gt; 2*x,
   {=
@@ -326,18 +332,62 @@ root := .numerics.Kantorovich(
     secondDerivative=(x)-&gt;2
   }
 );
-
-result := .numerics.Refine(root, {=
+fromKantorovich := .numerics.Refine(entry, {=
   absoluteWidth=1/100000, maxWork=30, trace=1
 });
 .Table({=
-  columns=[&quot;status&quot;, &quot;evidence&quot;, &quot;interval&quot;, &quot;calls&quot;],
+  columns=[&quot;route&quot;,&quot;status&quot;,&quot;classification&quot;,&quot;interval&quot;,&quot;calls&quot;],
+  rows=[
+    [&quot;direct interval Newton&quot;,direct[:status],direct[:classification],direct[:interval],direct[:work][:calls]],
+    [&quot;Kantorovich + refinement&quot;,fromKantorovich[:status],:unique,fromKantorovich[:interval],fromKantorovich[:work][:calls]]
+  ]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The direct callback form records <code>evidenceLevel=:assumed</code>: its interval arithmetic and inclusion theorem are exact, but an arbitrary callback pair does not prove its own differentiability or derivative identity. Kantorovich checks its numeric bounds and condition, while retaining the same function/derivative identity assumption.</p>
+<p>They also compose. Kantorovich can establish the initial ball; the public box operator can then show the contraction separately:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="13" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
+entry := .numerics.Kantorovich(
+  (x)-&gt;x^2-2,(x)-&gt;2*x,
+  {=
+    interval=1:2,initial=3/2,derivativeLower=2,
+    secondDerivativeUpper=2,secondDerivative=(x)-&gt;2
+  }
+);
+contracted := .numerics.IntervalNewton(
+  (x)-&gt;x^2-2,(x)-&gt;2*x,entry[:initialEnclosure],
+  {= absoluteWidth=1/10000,maxWork=20,trace=1 }
+);
+[entry[:initialEnclosure],contracted[:interval],contracted[:classification]];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Interval Newton can prove absence as well as uniqueness. It fails closed when the derivative interval contains zero instead of dividing through it:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
+excluded := .numerics.IntervalNewton((x)-&gt;x^2+1,(x)-&gt;2*x,1:2,{= maxWork=5 });
+unresolved := .numerics.IntervalNewton((x)-&gt;x^2,(x)-&gt;2*x,(-1):1,{= maxWork=5 });
+.Table({=
+  columns=[&quot;box&quot;,&quot;status&quot;,&quot;classification&quot;,&quot;root existence&quot;],
+  rows=[
+    [&quot;1:2 for x^2+1&quot;,excluded[:status],excluded[:classification],excluded[:rootExistence]],
+    [&quot;-1:1 for x^2&quot;,unresolved[:status],unresolved[:classification],unresolved[:rootExistence]]
+  ]
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Every trace step materializes the input box, midpoint value, derivative enclosure, Newton image, intersection, and classification with bounded work.</p>
+<h2>Move from scalar Newton to a checked Krawczyk box</h2>
+<p>Krawczyk generalizes the enclosure idea to square systems. Unlike the callback form above, it accepts public Calculus expression graphs and a derivative collection whose Jacobian identities RiX checks independently.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="16" spellcheck="false">.Plugin.Load(&quot;calculus&quot;);
+.Plugin.Load(&quot;numerics&quot;);
+x := .calculus.Variable(:x);
+y := .calculus.Variable(:y);
+system := [x^2+y^2-1,x-y];
+jacobian := .calculus.JacobianResult(system,[:x,:y]);
+result := .numerics.Krawczyk(
+  system,jacobian,{= x=(1/2):1,y=(1/2):1 },{= maxIterations=4,trace=1 }
+);
+.Table({=
+  columns=[&quot;status&quot;,&quot;classification&quot;,&quot;root existence&quot;,&quot;replay accepted&quot;],
   rows=[[
-    result[:status], result[:evidenceLevel],
-    result[:interval], result[:work][:calls]
+    result[:status],result[:classification],result[:rootExistence],
+    result[:checker][:accepted]
   ]]
 });</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>The function and derivative may accept exact points and rational intervals, which makes interval evaluation visible and inspectable. Every Newton trace step contains the materialized guess, derivative enclosure, new certified interval, error radius, and <code>actualized=1</code>; there is no retained trail of lazy arithmetic expressions between iterations.</p>
+<p>Here strict Krawczyk inclusion proves a unique positive circle/diagonal intersection. A disjoint operator coordinate proves exclusion. A singular midpoint Jacobian remains <code>:singularPreconditioner</code>: that describes this algorithm&#039;s failure on the chosen box, not the absence of roots.</p>
 <h2>Request exact sign and root-count witnesses</h2>
 <p>The same witness schema covers exact scalars, polynomial evaluations, and bounded certified refinement. Root counts retain their complete Sturm evidence.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);

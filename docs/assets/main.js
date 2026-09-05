@@ -3,7 +3,7 @@ import {
   findHelp,
   pluginProfileFromUrl,
   stripMarkedPluginProfile
-} from "./chunk-v1274xzd.js";
+} from "./chunk-3m9js3x1.js";
 import {
   Integer,
   Rational,
@@ -13,7 +13,7 @@ import {
   mountOutputWidgets,
   parse,
   renderOutputHtml
-} from "./chunk-b3dthdv7.js";
+} from "./chunk-azrpqxc4.js";
 
 // src/interval-explorer.js
 var SVG_NS = "http://www.w3.org/2000/svg";
@@ -914,7 +914,7 @@ HiddenRotation(dimension, turn) -> {;
         visible := hidden-3;
         parameter := hidden%2 == 0 ?: @turn ?_ 0-@turn;
         next := .nd.CayleyRotation(@dimension, visible, hidden, parameter);
-        @combined ~= .nd.Compose(next, @combined);
+        @combined = .nd.Compose(next, @combined);
     }; hidden+=1 };
     combined
 };
@@ -1988,5 +1988,5 @@ window.addEventListener("pagehide", () => {
   repl.dispose();
 });
 
-//# debugId=7C8C6E64707C6BC164756E2164756E21
+//# debugId=47AB5FC5D6C593A264756E2164756E21
 //# sourceMappingURL=main.js.map

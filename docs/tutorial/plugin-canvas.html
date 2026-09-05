@@ -8,7 +8,8 @@ scene := .Graphics.Graphic([180, 100], [
 <p>The plan preserves the scene dimensions and reports unsupported nodes through diagnostics. Use <code>.Out(&quot;diagram.canvas.json&quot;, scene)</code> to save it with the CLI.</p>
 <ul><li>Browser: complete plan generation and optional host painting.</li><li>CLI: no external tools.</li><li>Options: <code>pixelRatio</code>, <code>viewport</code>, <code>selection</code>, and portable <code>assets</code>.</li></ul>
 <h2>Preserve interaction semantics</h2>
-<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">interactivePlan := .canvas.Render(.Graphics.Graphic([100,60], [
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">.Plugin.Load(&quot;canvas&quot;);
+interactivePlan := .canvas.Render(.Graphics.Graphic([100,60], [
     .Graphics.Rectangle([10,10],[30,20], {= fill=&quot;#2563eb&quot;, id=&quot;box&quot; }),
     .Graphics.Text([50,50], &quot;measurement&quot;, {= id=&quot;label&quot; })
 ]), {=
