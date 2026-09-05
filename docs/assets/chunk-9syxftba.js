@@ -5231,6 +5231,7 @@ var symbols = [
   "||>",
   "~~=",
   "::=",
+  ":::",
   "//=",
   "**=",
   "/^=",
@@ -6197,7 +6198,7 @@ function tryMatchBrace(input, position) {
       };
     }
   }
-  const sigilChars = new Set(["@", ";", "|", ":", "=", "?", "$", "#", "^", ">", "~"]);
+  const sigilChars = new Set(["@", ";", "|", ":", "=", "?", "$", "#", "^", ">", "~", "&"]);
   if (sigilChars.has(ch)) {
     const sigil = ch;
     const after = input[position + 2];
@@ -7685,18 +7686,23 @@ function scopedExpressionVariable(context, name, outer = false) {
   if (!symbols2.has(name)) {
     if (context.localScopes.at(-1)?.readOnly || !context.localScopes.length && context.globalReadOnly)
       throw new Error("Cannot introduce a symbol in a read-only scope");
-    const symbol = expressionRecord("variable", [
-      ["name", string(name)],
-      ["symbolid", string(`symbol:${nextSymbolId++}`)]
-    ]);
-    const token = () => {
-      throw new Error("Opaque mathematical identity is not callable");
-    };
-    definitions.set(token, { value: null, id: expressionField(symbol, "symbolid").value, name });
-    symbol._ext.set(DEFINITION_TOKEN, token);
+    const symbol = freshExpressionSymbol(name);
     symbols2.set(name, symbol);
   }
   return symbols2.get(name);
+}
+function freshExpressionSymbol(name, bound = false) {
+  const symbol = expressionRecord("variable", [
+    ["name", string(name)],
+    ["symbolid", string(`symbol:${nextSymbolId++}`)],
+    ...bound ? [["bound", new Integer(1n)]] : []
+  ]);
+  const token = () => {
+    throw new Error("Opaque mathematical identity is not callable");
+  };
+  definitions.set(token, { value: null, id: expressionField(symbol, "symbolid").value, name });
+  symbol._ext.set(DEFINITION_TOKEN, token);
+  return symbol;
 }
 function symbolState(symbol) {
   const id = expressionField(symbol, "symbolid")?.value;
@@ -11274,6 +11280,7 @@ var runtimeDefaults = Object.freeze({
     Units: Object.freeze(["UNITS", "Units", "CONVERTUNIT", "ConvertUnit", "DEFINEUNIT", "DefineUnit"]),
     Exact: Object.freeze(["EXACT", "Exact", "COMPLEX", "Complex", "DEFINEEXACTGENERATOR", "DefineExactGenerator", "exactalgebras"]),
     Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC", "SPECROLES", "SPECFRACTIONPARTS", "SArith", "ExpressionVariable", "ExpressionConstant", "ExpressionOperation", "ExpressionApply", "IsExpression", "ExpressionKey", "ExpressionHasScopedSymbols", "SameSymbol", "SYMBOL_RETRIEVE", "SYMBOL_DEFINE", "ExpressionDefinition", "ExpressionExpand"]),
+    MathematicalContexts: Object.freeze(["MATH_CONTEXT", "BOUND_SYMBOL"]),
     Notation: Object.freeze(["SArith", "Poly", "NotationParser"]),
     Random: Object.freeze(["RNG", "RANDOMSEED", "RandomSeed", "RAND_NAME"]),
     Probability: Object.freeze(["probability"]),
@@ -29671,6 +29678,31 @@ var LOWERERS = {
   SymbolicVariable(node) {
     return ir2("SYMBOL_RETRIEVE", node.name, node.outer === true);
   },
+  BoundSymbol(node) {
+    return ir2("BOUND_SYMBOL", node.name);
+  },
+  MathematicalContext(node) {
+    const header = node.header.flatMap(({ declaration, source }) => {
+      if (declaration.type === "BoundSymbol")
+        return [{ kind: "binder", name: declaration.name, source: source ? lowerNode(source) : null }];
+      if (["Tuple", "TupleContainer"].includes(declaration.type) && declaration.elements.length && declaration.elements.every((item) => item.type === "BoundSymbol")) {
+        const names = declaration.elements.map((item) => item.name);
+        if (new Set(names).size !== names.length)
+          throw new Error("Duplicate bound symbol in tuple declaration");
+        return [{ kind: "binder", names, source: source ? lowerNode(source) : null }];
+      }
+      if (source)
+        throw new Error("A binding source requires a leading bound symbol");
+      if (declaration.type !== "BinaryOperation" || !["==", "!=", "<", ">", "<=", ">="].includes(declaration.operator)) {
+        throw new Error("Mathematical assumptions require a comparison; use :::name to declare a binder");
+      }
+      return [
+        ...declaration.left.type === "BoundSymbol" ? [{ kind: "binder", name: declaration.left.name, source: null }] : [],
+        { kind: "assumption", operator: declaration.operator, left: lowerNode(declaration.left), right: lowerNode(declaration.right) }
+      ];
+    });
+    return ir2("MATH_CONTEXT", header, node.elements.map(lowerNode));
+  },
   SystemIdentifier(node) {
     if (node.original && node.original.trim().startsWith("@")) {
       return ir2("SYSREF", node.name);
@@ -30418,6 +30450,8 @@ function lowerAssignment(node, irFn) {
     }
     return ir2("OUTER_ASSIGN", left.name, lowerNode(node.right));
   }
+  if (left.type === "BoundSymbol")
+    throw new Error("Bound symbols cannot be assigned; constrain them in a mathematical header");
   if (left.type === "SymbolicVariable") {
     if (left.outer || irFn !== "ASSIGN")
       throw new Error("Define a local symbolic variable with '='; symbolic definitions cannot be updated or assigned through capture");
@@ -30791,6 +30825,233 @@ class Registry {
     return this.list();
   }
 }
+// ../rix/src/runtime/math-context.js
+var str = (value) => ({ type: "string", value });
+var seq = (values2) => ({ type: "sequence", values: values2 });
+var record = (fields) => ({ type: "map", entries: new Map(Object.entries(fields)), _ext: new Map([["immutable", new Integer(1n)]]) });
+var exact = (value) => value instanceof Integer ? new Rational(value.value, 1n) : value instanceof Rational ? value : null;
+var scalar = (value) => exact(value) || (isMathExpression(value) ? exact(expressionField(expandExpression(value), "value")) : null);
+var compare3 = (a, b) => a.lessThan(b) ? -1 : a.greaterThan(b) ? 1 : 0;
+var then = (value, finish) => value instanceof Promise ? value.then(finish) : finish(value);
+var binderNames = (item) => item.names || [item.name];
+function bindIR(node, symbols2) {
+  if (!node || typeof node !== "object" || node instanceof Map)
+    return node;
+  if (node.fn === "BOUND_SYMBOL") {
+    const symbol = symbols2.get(node.args[0]);
+    if (!symbol)
+      throw new Error(`Undeclared bound symbol :::${node.args[0]}`);
+    return symbol;
+  }
+  if (node.fn === "MATH_CONTEXT") {
+    const shadowed = new Set(node.args[0].filter((item) => item.kind === "binder").flatMap(binderNames));
+    const outer = new Map([...symbols2].filter(([name]) => !shadowed.has(name)));
+    return replaceKnown(node, outer);
+  }
+  if (Array.isArray(node))
+    return node.map((value) => bindIR(value, symbols2));
+  if (node.type)
+    return node;
+  return Object.fromEntries(Object.entries(node).map(([key, value]) => [key, bindIR(value, symbols2)]));
+}
+function replaceKnown(node, symbols2) {
+  if (!node || typeof node !== "object" || node.type || node instanceof Map)
+    return node;
+  if (node.fn === "BOUND_SYMBOL")
+    return symbols2.get(node.args[0]) || node;
+  if (Array.isArray(node))
+    return node.map((value) => replaceKnown(value, symbols2));
+  if (node.fn === "MATH_CONTEXT") {
+    const local = new Map(symbols2);
+    for (const item of node.args[0])
+      if (item.kind === "binder")
+        for (const name of binderNames(item))
+          local.delete(name);
+    return { ...node, args: node.args.map((value) => replaceKnown(value, local)) };
+  }
+  return Object.fromEntries(Object.entries(node).map(([key, value]) => [key, replaceKnown(value, symbols2)]));
+}
+function intervalDomain(value) {
+  if (value?.type === "tuple" && value.values.length === 2 && value.values[0] instanceof RationalInterval) {
+    const domain = intervalDomain(value.values[0]), direction = value.values[1]?.value;
+    if (!["asc", "desc"].includes(direction))
+      throw new Error("Domain direction requires :asc or :desc");
+    return { ...domain, orientation: direction, start: direction === "asc" ? domain.lower : domain.upper, end: direction === "asc" ? domain.upper : domain.lower };
+  }
+  if (value?.type === "map") {
+    const allowed = new Set(["start", "end", "lowerclosed", "upperclosed"]);
+    if ([...value.entries.keys()].some((key) => !allowed.has(key)))
+      throw new Error("Unknown mathematical domain field");
+    const start = scalar(value.entries.get("start")), end = scalar(value.entries.get("end"));
+    if (!start || !end)
+      throw new Error("Domain endpoints currently require exact rational values");
+    const closed = (key) => {
+      if (!value.entries.has(key))
+        return true;
+      const flag = value.entries.get(key);
+      if (flag === null)
+        return false;
+      if (flag instanceof Integer && flag.value === 1n)
+        return true;
+      throw new Error("Domain endpoint inclusion requires 1 or _");
+    };
+    const ascending = compare3(start, end) <= 0;
+    const domain = {
+      lower: ascending ? start : end,
+      upper: ascending ? end : start,
+      start,
+      end,
+      orientation: ascending ? "asc" : "desc",
+      lowerClosed: closed("lowerclosed"),
+      upperClosed: closed("upperclosed")
+    };
+    intersect({}, domain);
+    return domain;
+  }
+  if (!(value instanceof RationalInterval))
+    throw new Error("Binding source requires a rational interval, direction tuple, or domain object");
+  return {
+    lower: value.low,
+    upper: value.high,
+    lowerClosed: true,
+    upperClosed: true,
+    start: value.start,
+    end: value.end,
+    orientation: compare3(value.start, value.end) <= 0 ? "asc" : "desc"
+  };
+}
+function intersect(bounds, patch) {
+  for (const side of ["lower", "upper"]) {
+    if (!patch[side])
+      continue;
+    const comparison = bounds[side] ? compare3(patch[side], bounds[side]) : null;
+    if (comparison === null || (side === "lower" ? comparison > 0 : comparison < 0)) {
+      bounds[side] = patch[side];
+      bounds[`${side}Closed`] = patch[`${side}Closed`];
+    }
+    if (comparison === 0)
+      bounds[`${side}Closed`] = bounds[`${side}Closed`] && patch[`${side}Closed`];
+  }
+  if (bounds.lower && bounds.upper) {
+    const order = compare3(bounds.lower, bounds.upper);
+    if (order > 0 || order === 0 && (!bounds.lowerClosed || !bounds.upperClosed))
+      throw new Error("Conflicting mathematical header constraints");
+    if (order === 0 && bounds.excluded?.some((value) => compare3(value, bounds.lower) === 0))
+      throw new Error("Conflicting mathematical header constraints");
+  }
+}
+function domainRecord2(domain) {
+  if (!domain)
+    return null;
+  return record({
+    lower: domain.lower || null,
+    upper: domain.upper || null,
+    lowerclosed: domain.lowerClosed ? new Integer(1n) : null,
+    upperclosed: domain.upperClosed ? new Integer(1n) : null,
+    start: domain.start || null,
+    end: domain.end || null,
+    orientation: domain.orientation ? str(domain.orientation) : null,
+    excluded: seq(domain.excluded || [])
+  });
+}
+function evaluateContext([header, body], context, evaluate) {
+  const symbols2 = new Map, binders = [], assumptions = [], bounds = new Map;
+  let unresolved = false;
+  const boundFor = (symbol) => {
+    const key = expressionStructuralKey(symbol);
+    if (!bounds.has(key))
+      bounds.set(key, { symbol, excluded: [] });
+    return bounds.get(key);
+  };
+  const evaluateNode2 = (node) => evaluate(bindIR(node, symbols2), context);
+  function assumption(operator, left, right) {
+    assumptions.push(record({ operator: str(operator), left, right }));
+    const a = scalar(left), b = scalar(right);
+    if (a && b) {
+      const c = compare3(a, b);
+      if (!{ "==": c === 0, "!=": c !== 0, "<": c < 0, ">": c > 0, "<=": c <= 0, ">=": c >= 0 }[operator])
+        throw new Error("Conflicting mathematical header constraints");
+      return;
+    }
+    if (a && !b)
+      return constrain(right, { "<": ">", ">": "<", "<=": ">=", ">=": "<=", "==": "==", "!=": "!=" }[operator], a);
+    if (b && !a)
+      return constrain(left, operator, b);
+    unresolved = true;
+  }
+  function constrain(symbol, operator, value) {
+    if (expressionField(symbol, "kind")?.value !== "variable") {
+      unresolved = true;
+      return;
+    }
+    const domain = boundFor(symbol), patch = {};
+    if ([">", ">=", "=="].includes(operator)) {
+      patch.lower = value;
+      patch.lowerClosed = operator !== ">";
+    }
+    if (["<", "<=", "=="].includes(operator)) {
+      patch.upper = value;
+      patch.upperClosed = operator !== "<";
+    }
+    if (operator === "!=")
+      domain.excluded.push(value);
+    intersect(domain, patch);
+  }
+  function declaration(index) {
+    if (index === header.length)
+      return statement(0, null);
+    const item = header[index];
+    if (item.kind === "binder") {
+      for (const name of binderNames(item)) {
+        if (symbols2.has(name))
+          continue;
+        const symbol = freshExpressionSymbol(name, true);
+        symbols2.set(name, symbol);
+        binders.push(symbol);
+      }
+      if (!item.source)
+        return declaration(index + 1);
+      return then(evaluateNode2(item.source), (source) => {
+        const sources = item.names ? source?.type === "tuple" ? source.values : null : [source];
+        if (!sources || sources.length !== binderNames(item).length)
+          throw new Error("Tuple binding requires one domain per bound symbol");
+        binderNames(item).forEach((name, index2) => {
+          const next = intervalDomain(sources[index2]), target = boundFor(symbols2.get(name));
+          if (target.orientation && target.orientation !== next.orientation)
+            throw new Error("Conflicting binding traversal orientations");
+          if (!target.orientation)
+            Object.assign(target, { start: next.start, end: next.end, orientation: next.orientation });
+          intersect(target, next);
+        });
+        return declaration(index + 1);
+      });
+    }
+    return then(evaluateNode2(item.left), (left) => then(evaluateNode2(item.right), (right) => {
+      assumption(item.operator, left, right);
+      return declaration(index + 1);
+    }));
+  }
+  function statement(index, result) {
+    if (index < body.length)
+      return then(evaluateNode2(body[index]), (value) => statement(index + 1, value));
+    return record({
+      schema: str("rix.math.context@1"),
+      result,
+      binders: seq(binders),
+      assumptions: seq(assumptions),
+      domains: seq([...bounds.values()].map((domain) => record({ symbol: domain.symbol, domain: domainRecord2(domain) }))),
+      consistency: str(unresolved ? "unresolved" : "checkedBounds")
+    });
+  }
+  return declaration(0);
+}
+var mathContextSyntaxFunctions = {
+  MATH_CONTEXT: { impl: evaluateContext, lazy: true, pure: false },
+  BOUND_SYMBOL: { impl: ([name]) => {
+    throw new Error(`Bound symbol :::${name} requires a declaring mathematical context`);
+  }, lazy: true, pure: false }
+};
+
 // ../rix/src/runtime/system-context.js
 var trustedRangeProviderDescriptors = new WeakMap;
 function isRangeProviderCallable(value) {
@@ -32200,8 +32461,8 @@ class PluginCatalog {
     this.loading.add(metadata.id);
     try {
       for (const requirement of metadata.requires) {
-        const exact = this.info(requirement);
-        const providers = exact ? [exact] : this.list().filter((candidate) => candidate.provides.includes(requirement));
+        const exact2 = this.info(requirement);
+        const providers = exact2 ? [exact2] : this.list().filter((candidate) => candidate.provides.includes(requirement));
         if (providers.length === 0) {
           throw new Error(`Plugin '${metadata.id}' requires unavailable service '${requirement}'`);
         }
@@ -32316,8 +32577,8 @@ class PluginCatalog {
   }
   async _activateAsync(metadata, runtime) {
     for (const requirement of metadata.requires) {
-      const exact = this.info(requirement);
-      const providers = exact ? [exact] : this.list().filter((candidate) => candidate.provides.includes(requirement));
+      const exact2 = this.info(requirement);
+      const providers = exact2 ? [exact2] : this.list().filter((candidate) => candidate.provides.includes(requirement));
       if (providers.length === 0) {
         throw new Error(`Plugin '${metadata.id}' requires unavailable service '${requirement}'`);
       }
@@ -34300,6 +34561,8 @@ var SYMBOL_TABLE = {
   "{^": { precedence: 0, type: "brace_sigil" },
   "{>": { precedence: 0, type: "brace_sigil" },
   "{~": { precedence: 0, type: "brace_sigil" },
+  "{&": { precedence: 0, type: "brace_sigil" },
+  "&": { precedence: 0, type: "separator" },
   "{!": { precedence: 0, type: "brace_sigil" },
   "..": { precedence: PRECEDENCE.PROPERTY, associativity: "left", type: "infix" },
   ".|": { precedence: PRECEDENCE.PROPERTY, associativity: "left", type: "postfix" },
@@ -34647,6 +34910,10 @@ class Parser {
           return this.parseAngleForm();
         } else if (token2.value === "{") {
           return this.parseBraceContainer();
+        } else if (token2.value === "{&") {
+          return this.parseMathematicalContext();
+        } else if (token2.value === ":::") {
+          return this.parseSymbolicVariable(false);
         } else if (token2.value === "{=" || token2.value === "{?" || token2.value === "{;" || token2.value === "{|" || token2.value === "{:" || token2.value === "{@" || token2.value === "{#" || token2.value === "{.." || token2.value === "{>" || token2.value === "{~" || token2.value === "{^" || token2.value === "{$" || token2.value === "{$$") {
           if (token2.value === "{#") {
             return this.parseSystemSpecLiteral();
@@ -37085,6 +37352,44 @@ class Parser {
       original: left.original + operator.original
     });
   }
+  parseMathematicalContext() {
+    const start = this.current;
+    if (start.containerName)
+      this.error("Mathematical contexts do not have named headers");
+    this.advance();
+    const header = [], elements = [];
+    while (this.current.value !== "&") {
+      if (this.current.type === "End" || this.current.value === "}")
+        this.error("Expected '&' after mathematical header");
+      const declaration = this.parseExpression(0);
+      let source = null;
+      if (this.current.value === "|") {
+        this.advance();
+        source = this.parseExpression(0);
+      }
+      header.push({ declaration, source });
+      if (this.current.value === ";")
+        this.advance();
+      else if (this.current.value !== "&")
+        this.error("Expected ';' or '&' after mathematical declaration");
+    }
+    this.advance();
+    while (this.current.value !== "}") {
+      if (this.current.type === "End")
+        this.error("Expected '}' after mathematical body");
+      if (this.current.value === ";") {
+        this.advance();
+        continue;
+      }
+      elements.push(this.parseExpression(0));
+      if (this.current.value === ";")
+        this.advance();
+      else if (this.current.value !== "}")
+        this.error("Expected ';' or '}' after mathematical body statement");
+    }
+    this.advance();
+    return this.createNode("MathematicalContext", { header, elements, pos: start.pos, original: start.original });
+  }
   parseSymbolicVariable(outer, startToken = this.current) {
     const prefix = this.current;
     this.advance();
@@ -37092,9 +37397,9 @@ class Parser {
       this.error("Symbolic '::' must be immediately followed by a name");
     }
     const name = this.current.value;
-    const original = (outer ? "@::" : "::") + this.current.original;
+    const original = (outer ? "@::" : prefix.value) + this.current.original;
     this.advance();
-    return this.createNode("SymbolicVariable", { name, outer, pos: startToken.pos, original });
+    return this.createNode(prefix.value === ":::" ? "BoundSymbol" : "SymbolicVariable", { name, outer, pos: startToken.pos, original });
   }
   parseBracketSpec() {
     const token2 = this.current;
@@ -38525,8 +38830,8 @@ function ensureSafeDigits(baseSystem) {
     }
   }
 }
-function parseBaseInteger(str, baseSystem, allowSign = true) {
-  let s = str;
+function parseBaseInteger(str2, baseSystem, allowSign = true) {
+  let s = str2;
   let sign = 1n;
   if (allowSign && (s.startsWith("-") || s.startsWith("+"))) {
     sign = s[0] === "-" ? -1n : 1n;
@@ -38573,8 +38878,8 @@ function parseBaseInteger(str, baseSystem, allowSign = true) {
   const cleaned = chars.filter((ch) => ch !== "_").join("");
   return sign * baseSystem.toDecimal(cleaned);
 }
-function parseSimpleBaseNumeral(str, baseSystem) {
-  let s = str;
+function parseSimpleBaseNumeral(str2, baseSystem) {
+  let s = str2;
   let sign = 1n;
   if (s.startsWith("-") || s.startsWith("+")) {
     sign = s[0] === "-" ? -1n : 1n;
@@ -38970,36 +39275,36 @@ function exactPrefixedText(text8, prefix, quoted = false) {
   }
   return prefixed(text8);
 }
-function parseLiteral(str) {
-  if (typeof str !== "string")
-    return str;
-  const isCoreApproximation = str.includes("?") && !/^~?(?:0z\[\d+\]|0[a-zA-Z])/.test(str) && !/^0[A-Z]"/.test(str);
-  const isCoreUncertainty = isCoreApproximation || /^[+-]?(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)\[[^\]]+\]$/.test(str);
+function parseLiteral(str2) {
+  if (typeof str2 !== "string")
+    return str2;
+  const isCoreApproximation = str2.includes("?") && !/^~?(?:0z\[\d+\]|0[a-zA-Z])/.test(str2) && !/^0[A-Z]"/.test(str2);
+  const isCoreUncertainty = isCoreApproximation || /^[+-]?(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)\[[^\]]+\]$/.test(str2);
   if (isCoreUncertainty) {
-    return parseNumber(str);
+    return parseNumber(str2);
   }
-  if (/^(?:(?:\d(?:_?\d)*|\{\d+~\d+\})+(?:\.(?:\d(?:_?\d)*|\{\d+~\d+\})*)?|\.(?:\d(?:_?\d)*|\{\d+~\d+\})+)(?:#(?:\d(?:_?\d)*|\{\d+~\d+\})+)?$/.test(str)) {
-    return parseNumber(str);
+  if (/^(?:(?:\d(?:_?\d)*|\{\d+~\d+\})+(?:\.(?:\d(?:_?\d)*|\{\d+~\d+\})*)?|\.(?:\d(?:_?\d)*|\{\d+~\d+\})+)(?:#(?:\d(?:_?\d)*|\{\d+~\d+\})+)?$/.test(str2)) {
+    return parseNumber(str2);
   }
-  const basedApproximation = str.match(/^(-?)(?:0z\[(\d+)\]|0([a-zA-Z]))([0-9a-zA-Z]+)(?:\.([0-9a-zA-Z]*))?\?([0-9a-zA-Z]*)$/);
+  const basedApproximation = str2.match(/^(-?)(?:0z\[(\d+)\]|0([a-zA-Z]))([0-9a-zA-Z]+)(?:\.([0-9a-zA-Z]*))?\?([0-9a-zA-Z]*)$/);
   if (basedApproximation) {
     const baseSystem2 = basedApproximation[2] ? BaseSystem.fromBase(parseInt(basedApproximation[2], 10)) : BaseSystem.getSystemForPrefix(basedApproximation[3]);
     if (!baseSystem2)
-      throw new Error(`Unknown base prefix in approximation: ${str}`);
+      throw new Error(`Unknown base prefix in approximation: ${str2}`);
     return certifiedRadixPrefix({
       integerDigits: normalizeBaseDigits(basedApproximation[4], baseSystem2),
       fractionalDigits: normalizeBaseDigits(basedApproximation[5] ?? "", baseSystem2),
       provisionalDigits: normalizeBaseDigits(basedApproximation[6] ?? "", baseSystem2),
       negative: basedApproximation[1] === "-",
       baseSystem: baseSystem2,
-      original: str
+      original: str2
     });
   }
-  const basedCfApproximation = str.match(/^~?(-?)(?:0z\[(\d+)\]|0([a-zA-Z]))([0-9a-zA-Z]+)\.~([0-9a-zA-Z]+(?:~[0-9a-zA-Z]+)*)\?([0-9a-zA-Z]+(?:~[0-9a-zA-Z]+)*)?$/);
+  const basedCfApproximation = str2.match(/^~?(-?)(?:0z\[(\d+)\]|0([a-zA-Z]))([0-9a-zA-Z]+)\.~([0-9a-zA-Z]+(?:~[0-9a-zA-Z]+)*)\?([0-9a-zA-Z]+(?:~[0-9a-zA-Z]+)*)?$/);
   if (basedCfApproximation) {
     const baseSystem2 = basedCfApproximation[2] ? BaseSystem.fromBase(parseInt(basedCfApproximation[2], 10)) : BaseSystem.getSystemForPrefix(basedCfApproximation[3]);
     if (!baseSystem2)
-      throw new Error(`Unknown base prefix in continued-fraction approximation: ${str}`);
+      throw new Error(`Unknown base prefix in continued-fraction approximation: ${str2}`);
     const coefficient = (digits) => baseSystem2.toDecimal(normalizeBaseDigits(digits, baseSystem2));
     const certified = [
       coefficient(basedCfApproximation[4]) * (basedCfApproximation[1] === "-" ? -1n : 1n),
@@ -39009,13 +39314,13 @@ function parseLiteral(str) {
     return certifiedContinuedFractionPrefix({
       coefficients: certified,
       provisionalCoefficients: provisional,
-      original: str
+      original: str2
     });
   }
-  if (/^0[a-zA-Z]$/.test(str) || /^0z\[\d+\]$/.test(str)) {
-    return str;
+  if (/^0[a-zA-Z]$/.test(str2) || /^0z\[\d+\]$/.test(str2)) {
+    return str2;
   }
-  const explicitPrefixed = str.match(/^~(-?)(?:0z\[(\d+)\]|0([a-zA-Z]))(.+)$/);
+  const explicitPrefixed = str2.match(/^~(-?)(?:0z\[(\d+)\]|0([a-zA-Z]))(.+)$/);
   if (explicitPrefixed) {
     const neg2 = explicitPrefixed[1] === "-" ? "-" : "";
     const custom = explicitPrefixed[2];
@@ -39023,23 +39328,23 @@ function parseLiteral(str) {
     const tail = explicitPrefixed[4];
     const baseSystem2 = custom ? BaseSystem.fromBase(parseInt(custom, 10)) : BaseSystem.getSystemForPrefix(prefix);
     if (!baseSystem2) {
-      throw new Error(`Unknown base prefix in explicit continued fraction: ${str}`);
+      throw new Error(`Unknown base prefix in explicit continued fraction: ${str2}`);
     }
     return fromBaseString(`~${neg2}${tail}`, baseSystem2);
   }
-  if (str.startsWith("~")) {
-    const cfStr = str.slice(1);
+  if (str2.startsWith("~")) {
+    const cfStr = str2.slice(1);
     const cfMatch = cfStr.match(/^(-?\d+)\.~(\d+(?:~\d+)*)$/);
     if (cfMatch) {
       const intPart = BigInt(cfMatch[1]);
       const cfTerms = cfMatch[2].split("~").map((t) => BigInt(t));
       return Rational.fromContinuedFraction([intPart, ...cfTerms]);
     }
-    throw new Error(`Invalid explicit continued fraction format: ${str}`);
+    throw new Error(`Invalid explicit continued fraction format: ${str2}`);
   }
-  const isNegative2 = str.startsWith("-");
-  const posStr = isNegative2 ? str.slice(1) : str;
-  const quotedPrefix = str.match(/^(-?)0([A-Z])"((?:[^"\\]|\\.)*)"$/);
+  const isNegative2 = str2.startsWith("-");
+  const posStr = isNegative2 ? str2.slice(1) : str2;
+  const quotedPrefix = str2.match(/^(-?)0([A-Z])"((?:[^"\\]|\\.)*)"$/);
   if (quotedPrefix) {
     const sign = quotedPrefix[1] === "-" ? "-" : "";
     const prefix = quotedPrefix[2];
@@ -39053,14 +39358,14 @@ function parseLiteral(str) {
     }
     return fromBaseString(sign + stream, baseSystem2);
   }
-  if (str.includes(".~") && !/^-?(?:0z\[\d+\]|0[a-zA-Z])/.test(str)) {
-    const cfMatch = str.match(/^(\d+)\.~(\d+(?:~\d+)*)$/);
+  if (str2.includes(".~") && !/^-?(?:0z\[\d+\]|0[a-zA-Z])/.test(str2)) {
+    const cfMatch = str2.match(/^(\d+)\.~(\d+(?:~\d+)*)$/);
     if (cfMatch) {
       const intPart = BigInt(cfMatch[1]);
       const cfTerms = cfMatch[2].split("~").map((t) => BigInt(t));
       return Rational.fromContinuedFraction([intPart, ...cfTerms]);
     }
-    throw new Error(`Invalid continued fraction format: ${str}`);
+    throw new Error(`Invalid continued fraction format: ${str2}`);
   }
   if (posStr.includes("_^")) {
     const shiftMatch = posStr.match(/^(.*?)_\^([+-]?\d(?:_?\d)*)$/);
@@ -39078,10 +39383,10 @@ function parseLiteral(str) {
       const result = baseRat.multiply(scale);
       return result.denominator === 1n ? new Integer(result.numerator) : result;
     }
-    throw new Error(`Invalid radix shift format: ${str}`);
+    throw new Error(`Invalid radix shift format: ${str2}`);
   }
   if (posStr.includes("#") && !/^(?:0z\[\d+\]|0[a-zA-Z])/.test(posStr)) {
-    return parseRepeatingDecimalLiteral(str);
+    return parseRepeatingDecimalLiteral(str2);
   }
   const parseWithBase = (numStr, baseSystem2) => {
     const normalizeCase = (s, sys) => {
@@ -39136,7 +39441,7 @@ function parseLiteral(str) {
     return new Integer(baseSystem2.toDecimal(normalizeCase(numStr, baseSystem2)));
   };
   let baseSystem = null;
-  let valueStr = str;
+  let valueStr = str2;
   const customMatch = posStr.match(/^0z\[(\d+)\](.*)$/);
   if (customMatch) {
     baseSystem = BaseSystem.fromBase(parseInt(customMatch[1]));
@@ -39153,18 +39458,18 @@ function parseLiteral(str) {
   }
   if (baseSystem) {
     if (!valueStr || valueStr === "-") {
-      throw new Error(`Invalid base literal: ${str}`);
+      throw new Error(`Invalid base literal: ${str2}`);
     }
     return fromBaseString(valueStr, baseSystem);
   }
-  if (/^-?\d(?:_?\d)*$/.test(str)) {
-    return new Integer(stripGroupedDecimalDigits(str, { allowSign: true }));
+  if (/^-?\d(?:_?\d)*$/.test(str2)) {
+    return new Integer(stripGroupedDecimalDigits(str2, { allowSign: true }));
   }
-  const ratMatch = str.match(/^(-?\d(?:_?\d)*)\/(\d(?:_?\d)*)$/);
+  const ratMatch = str2.match(/^(-?\d(?:_?\d)*)\/(\d(?:_?\d)*)$/);
   if (ratMatch) {
     return new Rational(BigInt(stripGroupedDecimalDigits(ratMatch[1], { allowSign: true })), BigInt(stripGroupedDecimalDigits(ratMatch[2])));
   }
-  const mixedMatch = str.match(/^(-?\d(?:_?\d)*)\.\.(\d(?:_?\d)*)\/(\d(?:_?\d)*)$/);
+  const mixedMatch = str2.match(/^(-?\d(?:_?\d)*)\.\.(\d(?:_?\d)*)\/(\d(?:_?\d)*)$/);
   if (mixedMatch) {
     const whole = BigInt(stripGroupedDecimalDigits(mixedMatch[1], { allowSign: true }));
     const num = BigInt(stripGroupedDecimalDigits(mixedMatch[2]));
@@ -39173,8 +39478,8 @@ function parseLiteral(str) {
     const absWhole = whole < 0n ? -whole : whole;
     return new Rational(sign * (absWhole * den + num), den);
   }
-  if (/^-?\d(?:_?\d)*\.\d(?:_?\d)*$/.test(str)) {
-    const parts = str.split(".");
+  if (/^-?\d(?:_?\d)*\.\d(?:_?\d)*$/.test(str2)) {
+    const parts = str2.split(".");
     const sign = parts[0].startsWith("-") ? -1n : 1n;
     const intPart = stripGroupedDecimalDigits(parts[0].startsWith("-") ? parts[0].slice(1) : parts[0]);
     const fracPart = stripGroupedDecimalDigits(parts[1]);
@@ -39183,17 +39488,17 @@ function parseLiteral(str) {
     return new Rational(num, den);
   }
   try {
-    return new Integer(str);
+    return new Integer(str2);
   } catch {
-    throw new Error(`Invalid number format: ${str}`);
+    throw new Error(`Invalid number format: ${str2}`);
   }
 }
-function parseRepeatingDecimalLiteral(str) {
-  const isNeg = str.startsWith("-");
-  const s = isNeg ? str.slice(1) : str;
+function parseRepeatingDecimalLiteral(str2) {
+  const isNeg = str2.startsWith("-");
+  const s = isNeg ? str2.slice(1) : str2;
   const hashIdx = s.indexOf("#");
   if (hashIdx === -1)
-    throw new Error(`Expected # in repeating decimal: ${str}`);
+    throw new Error(`Expected # in repeating decimal: ${str2}`);
   const nonRepStr = s.slice(0, hashIdx);
   const repStr = s.slice(hashIdx + 1);
   if (repStr === "" || repStr === "0") {
@@ -40201,20 +40506,20 @@ var coreFunctions = {
         return { type: "map", entries: entries2 };
       };
       const regexFunc = (inputVal) => {
-        const str = inputVal && inputVal.type === "string" ? inputVal.value : inputVal;
-        if (typeof str !== "string") {
+        const str2 = inputVal && inputVal.type === "string" ? inputVal.value : inputVal;
+        if (typeof str2 !== "string") {
           throw new Error("regex expects string");
         }
         re.lastIndex = 0;
         if (mode === 0) {
-          const m = re.exec(str);
+          const m = re.exec(str2);
           return m ? buildMatchObject(m) : null;
         } else if (mode === 1) {
-          return re.test(str) ? new Integer(1n) : null;
+          return re.test(str2) ? new Integer(1n) : null;
         } else if (mode === 2) {
           const results = [];
           let m;
-          while ((m = re.exec(str)) !== null) {
+          while ((m = re.exec(str2)) !== null) {
             results.push(buildMatchObject(m));
             if (m[0].length === 0) {
               re.lastIndex++;
@@ -40229,7 +40534,7 @@ var coreFunctions = {
             if (isExhausted)
               return null;
             re.lastIndex = lastIdx;
-            const m = re.exec(str);
+            const m = re.exec(str2);
             lastIdx = re.lastIndex;
             if (m) {
               const obj = buildMatchObject(m);
@@ -41774,8 +42079,8 @@ var stdlibFunctions = {
   UPPER: {
     impl(args) {
       const val = args[0];
-      const str = val?.value ?? String(val);
-      return { type: "string", value: str.toUpperCase() };
+      const str2 = val?.value ?? String(val);
+      return { type: "string", value: str2.toUpperCase() };
     },
     pure: true,
     doc: "Convert string to uppercase"
@@ -41783,10 +42088,10 @@ var stdlibFunctions = {
   SUBSTR: {
     impl(args) {
       const val = args[0];
-      const str = val?.value ?? String(val);
+      const str2 = val?.value ?? String(val);
       const start = args[1] instanceof Integer ? Number(args[1].value) : Number(args[1]);
       const len = args[2] instanceof Integer ? Number(args[2].value) : Number(args[2]);
-      return { type: "string", value: str.substring(start, start + len) };
+      return { type: "string", value: str2.substring(start, start + len) };
     },
     pure: true,
     doc: "Get substring"
@@ -80271,7 +80576,7 @@ function number(value, label) {
     return value;
   throw new Error(`${label} must be a finite number`);
 }
-function exact(value) {
+function exact2(value) {
   if (value instanceof Integer || value instanceof Rational)
     return value;
   if (!Number.isFinite(value))
@@ -80290,7 +80595,7 @@ function pointNumbers(value, label) {
   return point2(value, label).map((coordinate, index) => number(coordinate, `${label} ${index ? "y" : "x"}`));
 }
 function pointsValue(points) {
-  return points.map(([x, y]) => [exact(x), exact(y)]);
+  return points.map(([x, y]) => [exact2(x), exact2(y)]);
 }
 function entriesFor(args, positional, name) {
   if (args.length === 1 && args[0]?.type === "map" && args[0].entries instanceof Map)
@@ -80341,7 +80646,7 @@ function arrow(args) {
     throw new Error("draw.Arrow requires distinct endpoints");
   const options = get2(entries2, "options")?.type === "map" ? get2(entries2, "options").entries : new Map;
   const headLength = number(get2(options, "headLength", int7(10)), "draw.Arrow headLength");
-  const headWidth = number(get2(options, "headWidth", exact(headLength * 0.7)), "draw.Arrow headWidth");
+  const headWidth = number(get2(options, "headWidth", exact2(headLength * 0.7)), "draw.Arrow headWidth");
   if (headLength <= 0 || headWidth <= 0)
     throw new Error("draw.Arrow head dimensions must be positive");
   const ux = dx / length;
@@ -80527,12 +80832,12 @@ function bounds(args) {
   const entries2 = entriesFor(args, ["value"], "draw.Bounds");
   const [xmin, ymin, xmax, ymax] = boundsFor(get2(entries2, "value"));
   return mapValue4([
-    ["xmin", exact(xmin)],
-    ["ymin", exact(ymin)],
-    ["xmax", exact(xmax)],
-    ["ymax", exact(ymax)],
-    ["width", exact(xmax - xmin)],
-    ["height", exact(ymax - ymin)]
+    ["xmin", exact2(xmin)],
+    ["ymin", exact2(ymin)],
+    ["xmax", exact2(xmax)],
+    ["ymax", exact2(ymax)],
+    ["width", exact2(xmax - xmin)],
+    ["height", exact2(ymax - ymin)]
   ]);
 }
 function anchor(args) {
@@ -80653,7 +80958,7 @@ function useSymbol(args) {
 function marker(args) {
   const entries2 = entriesFor(args, ["path", "at", "marker", "style"], "draw.Marker");
   const path = get2(entries2, "path");
-  const at = number(get2(entries2, "at", exact(0.5)), "draw.Marker at");
+  const at = number(get2(entries2, "at", exact2(0.5)), "draw.Marker at");
   const position = pathPointAt(path, at, "draw.Marker");
   const value = get2(entries2, "marker");
   if (value?.type === "map" && get2(value.entries, "schema")?.value === "rix.draw.symbol@1") {
@@ -80665,7 +80970,7 @@ function marker(args) {
   const radius = value === null ? 4 : number(value, "draw.Marker radius");
   if (radius <= 0)
     throw new Error("draw.Marker radius must be positive");
-  return createCircle([pointsValue([position])[0], exact(radius), get2(entries2, "style")]);
+  return createCircle([pointsValue([position])[0], exact2(radius), get2(entries2, "style")]);
 }
 function intersects(first, second, padding = 0) {
   return !(first[2] + padding <= second[0] || second[2] + padding <= first[0] || first[3] + padding <= second[1] || second[3] + padding <= first[1]);
@@ -80759,18 +81064,18 @@ function fromDrawable(args) {
     throw new Error("draw.From requires a Graphics node or drawable protocol map");
   const options = get2(entries2, "options")?.type === "map" ? get2(entries2, "options").entries : new Map;
   const embedded = get2(source.entries, "drawProtocol");
-  const record = embedded?.type === "map" ? embedded : source;
-  const schema = get2(record.entries, "schema")?.value;
-  const kindValue = get2(record.entries, "kind");
+  const record2 = embedded?.type === "map" ? embedded : source;
+  const schema = get2(record2.entries, "schema")?.value;
+  const kindValue = get2(record2.entries, "kind");
   const kind = kindValue?.value ?? String(kindValue ?? "");
   const viewportValue = get2(options, "viewport");
-  const styleValue2 = get2(options, "style", get2(record.entries, "style"));
+  const styleValue2 = get2(options, "style", get2(record2.entries, "style"));
   if (schema === "rix.geometry.intersection@1") {
-    const status = get2(record.entries, "status")?.value;
+    const status = get2(record2.entries, "status")?.value;
     if (!["one", "two"].includes(status)) {
-      return unresolvedDrawable(source, get2(record.entries, "diagnostic")?.value ?? `Intersection status: ${status}`);
+      return unresolvedDrawable(source, get2(record2.entries, "diagnostic")?.value ?? `Intersection status: ${status}`);
     }
-    const children = sequence5(get2(record.entries, "points"), "draw.From intersection points").map((item) => fromDrawable([item, mapValue4([...options])]));
+    const children = sequence5(get2(record2.entries, "points"), "draw.From intersection points").map((item) => fromDrawable([item, mapValue4([...options])]));
     return createGroup([children, null, mapValue4([
       ["schema", string2("rix.draw.adapter-result@1")],
       ["sourceSchema", string2(schema)],
@@ -80778,7 +81083,7 @@ function fromDrawable(args) {
     ])]);
   }
   if (schema === "rix.geometry.uncertain-point@1") {
-    const center = get2(record.entries, "center");
+    const center = get2(record2.entries, "center");
     const position = projectProtocolPoint(get2(center.entries, "coordinates"), viewportValue, "draw.From uncertain point center");
     return createGroup([[
       createCircle([position, int7(7), mergedStyle(styleValue2, [["fill", string2("#fef3c7")], ["stroke", string2("#b45309")], ["dash", string2("3 2")]])])
@@ -80793,19 +81098,19 @@ function fromDrawable(args) {
     throw new Error(`draw.From does not support drawable schema '${schema ?? "missing"}'`);
   }
   if (kind === "point") {
-    const position = projectProtocolPoint(get2(record.entries, "coordinates"), viewportValue, "draw.From point");
+    const position = projectProtocolPoint(get2(record2.entries, "coordinates"), viewportValue, "draw.From point");
     return createCircle([position, get2(options, "radius", int7(5)), mergedStyle(styleValue2, [["hitId", get2(options, "hitId", string2("geometry-point"))]])]);
   }
   if (kind === "segment" || kind === "polygon") {
-    const rawPoints = kind === "segment" ? [get2(get2(record.entries, "first").entries, "coordinates"), get2(get2(record.entries, "second").entries, "coordinates")] : sequence5(get2(record.entries, "points"), "draw.From polygon points").map((item) => get2(item.entries, "coordinates"));
+    const rawPoints = kind === "segment" ? [get2(get2(record2.entries, "first").entries, "coordinates"), get2(get2(record2.entries, "second").entries, "coordinates")] : sequence5(get2(record2.entries, "points"), "draw.From polygon points").map((item) => get2(item.entries, "coordinates"));
     const projected = rawPoints.map((item, index) => projectProtocolPoint(item, viewportValue, `draw.From ${kind} point ${index + 1}`));
     return createPath([projected, mergedStyle(styleValue2, [["closed", kind === "polygon"], ["hitId", get2(options, "hitId", string2(`geometry-${kind}`))]])]);
   }
   if (kind === "circle") {
-    const center = get2(record.entries, "center");
+    const center = get2(record2.entries, "center");
     const rawCenter = get2(center.entries, "coordinates");
     const centerPoint = pointNumbers(rawCenter, "draw.From circle center");
-    const radiusSquared = number(get2(record.entries, "radiusSquared"), "draw.From circle radiusSquared");
+    const radiusSquared = number(get2(record2.entries, "radiusSquared"), "draw.From circle radiusSquared");
     if (radiusSquared < 0)
       throw new Error("draw.From circle radiusSquared must be nonnegative");
     const radius = Math.sqrt(radiusSquared);
@@ -80814,7 +81119,7 @@ function fromDrawable(args) {
     const projectedCenterNumbers = pointNumbers(projectedCenter, "draw.From projected circle center");
     const projectedEdgeNumbers = pointNumbers(projectedEdge, "draw.From projected circle edge");
     const projectedRadius = Math.hypot(projectedEdgeNumbers[0] - projectedCenterNumbers[0], projectedEdgeNumbers[1] - projectedCenterNumbers[1]);
-    return createCircle([projectedCenter, exact(projectedRadius), mergedStyle(styleValue2, [["hitId", get2(options, "hitId", string2("geometry-circle"))]])]);
+    return createCircle([projectedCenter, exact2(projectedRadius), mergedStyle(styleValue2, [["hitId", get2(options, "hitId", string2("geometry-circle"))]])]);
   }
   return unresolvedDrawable(source, `draw.From has no finite adapter for geometry kind '${kind}'`);
 }
@@ -81466,7 +81771,7 @@ function NumericsCapabilities(value = null) {
 function approximateStoredValue(value, request, operation) {
   const classification = classifyFloat(value);
   const finite = classification.finite;
-  const exact2 = finite ? exactFloatRational(value) : Rational.zero;
+  const exact3 = finite ? exactFloatRational(value) : Rational.zero;
   const requestedWidth = entry(request, "absolutewidth", null);
   const requestedWork = entry(entry(request, "work", null), "maxwork", int9(0));
   const valueDiagnostics = diagnosticsOf(value);
@@ -81475,7 +81780,7 @@ function approximateStoredValue(value, request, operation) {
     ["valuekind", text9("enclosure")],
     ["schema", text9("rix.numerics.enclosure@1")],
     ["status", text9(finite ? "approximate" : "unknown")],
-    ["interval", new RationalInterval(exact2, exact2)],
+    ["interval", new RationalInterval(exact3, exact3)],
     ["certified", null],
     ["goalmet", null],
     ["requestedwidth", requestedWidth],
@@ -81567,17 +81872,17 @@ function floorDiv3(numerator, denominator) {
   return numerator >= 0n ? numerator / denominator : -((-numerator + denominator - 1n) / denominator);
 }
 function decimalRounded(value, places, mode) {
-  const exact2 = exactFloatRational(value);
+  const exact3 = exactFloatRational(value);
   const scale = 10n ** BigInt(places);
-  const scaled = exact2.numerator * scale;
-  const lower2 = floorDiv3(scaled, exact2.denominator);
+  const scaled = exact3.numerator * scale;
+  const lower2 = floorDiv3(scaled, exact3.denominator);
   let coefficient = lower2;
-  if (mode === "ceiling" && scaled !== lower2 * exact2.denominator)
+  if (mode === "ceiling" && scaled !== lower2 * exact3.denominator)
     coefficient += 1n;
   if (mode === "round") {
-    const remainder = scaled - lower2 * exact2.denominator;
+    const remainder = scaled - lower2 * exact3.denominator;
     const doubled = remainder * 2n;
-    if (doubled > exact2.denominator || doubled === exact2.denominator && (lower2 & 1n) !== 0n)
+    if (doubled > exact3.denominator || doubled === exact3.denominator && (lower2 & 1n) !== 0n)
       coefficient += 1n;
   }
   return new Rational(coefficient, scale);
@@ -81717,8 +82022,8 @@ function installBrowserApproxMathPlugin({ systemContext, registry, metadata = {}
     if (!Number.isFinite(value2.value)) {
       throw new Error("Float Interval requires a finite stored value; use Classify() for NaN or infinity");
     }
-    const exact2 = exactFloatRational(value2);
-    return new RationalInterval(exact2, exact2);
+    const exact3 = exactFloatRational(value2);
+    return new RationalInterval(exact3, exact3);
   });
   add3("Round", (args, _context, evaluate) => decimalRounded(requireFloat(args[1], evaluate), decimalPlaces(args[2]), "round"));
   add3("Floor", (args, _context, evaluate) => decimalRounded(requireFloat(args[1], evaluate), decimalPlaces(args[2]), "floor"));
@@ -81911,8 +82216,8 @@ function polynomialCoefficients(polynomial, context, evaluate, { trim: trim2 = t
 
 // ../rix/plugins/ratfun/rational-function.js
 var RATIONAL_FUNCTION_SCHEMA = "rix.rational-function@1";
-var str = (value) => ({ type: "string", value: String(value) });
-var seq = (values3) => ({ type: "sequence", values: values3 });
+var str2 = (value) => ({ type: "string", value: String(value) });
+var seq2 = (values3) => ({ type: "sequence", values: values3 });
 var zero = () => new Rational(0n, 1n);
 var one = () => new Rational(1n, 1n);
 function isExactScalar2(value) {
@@ -81931,9 +82236,9 @@ var isZero4 = (value) => value.numerator === 0n;
 function normalize2(valuesList, label2 = "Polynomial coefficients") {
   if (valuesList.length === 0)
     throw new Error(`${label2} cannot be empty`);
-  const exact2 = valuesList.map((value, index) => rational(value, `${label2} ${index + 1}`));
-  const first = exact2.findIndex((value) => !isZero4(value));
-  return first < 0 ? [zero()] : exact2.slice(first);
+  const exact3 = valuesList.map((value, index) => rational(value, `${label2} ${index + 1}`));
+  const first = exact3.findIndex((value) => !isZero4(value));
+  return first < 0 ? [zero()] : exact3.slice(first);
 }
 function coefficientsEqual(left, right) {
   return left.length === right.length && left.every((value, index) => value.equals(right[index]));
@@ -81996,7 +82301,7 @@ function canonicalPair(numerator, denominator) {
   };
 }
 function polynomialValue(coefficients, variable, context, evaluate) {
-  return createPolynomial([seq(normalize2(coefficients)), str(variable)], context, evaluate);
+  return createPolynomial([seq2(normalize2(coefficients)), str2(variable)], context, evaluate);
 }
 function extensionValue2(value, name) {
   const requested = String(name).toLowerCase();
@@ -82144,8 +82449,8 @@ var FRACTION_FUNCTION_PRESENTATION_SCHEMA = "rix.fraction-function.presentation@
 var FRACTION_FUNCTION_DIVISOR_EVIDENCE_SCHEMA = "rix.fraction-function.divisor-evidence@1";
 var FRACTION_FUNCTION_HOLE_EVIDENCE_SCHEMA = "rix.fraction-function.removable-hole-evidence@1";
 var int12 = (value) => new Integer(BigInt(value));
-var str2 = (value) => ({ type: "string", value: String(value) });
-var seq2 = (values3) => ({ type: "sequence", values: values3 });
+var str3 = (value) => ({ type: "string", value: String(value) });
+var seq3 = (values3) => ({ type: "sequence", values: values3 });
 var rixMap2 = (entries2) => ({ type: "map", entries: new Map(entries2) });
 function immutableMap(entries2, methods2 = []) {
   return {
@@ -82398,9 +82703,9 @@ function decorate(displaySpec, evaluationSpec, context, evaluate, provenance = [
   });
   if (!(callable._ext instanceof Map))
     callable._ext = new Map;
-  callable._ext.set("__type", str2("FractionFunction"));
-  callable._ext.set("_type", str2("fraction_function"));
-  callable._ext.set("_symbolicKind", str2("FractionFunction"));
+  callable._ext.set("__type", str3("FractionFunction"));
+  callable._ext.set("_type", str3("fraction_function"));
+  callable._ext.set("_symbolicKind", str3("FractionFunction"));
   callable._ext.set("immutable", int12(1));
   callable._ext.set("_spec", normalizedDisplay);
   callable._spec = normalizedDisplay;
@@ -82499,7 +82804,7 @@ function transformed(value, direction, args, context, evaluate) {
   const source = requireFractionFunction(value);
   const display = symbolicCapabilities.TRANSFORM.impl([
     metadata(source).displaySpec,
-    str2(direction),
+    str3(direction),
     ...args
   ]);
   return decorate(display, metadata(source).evaluationSpec, context, evaluate, [
@@ -82566,11 +82871,11 @@ function restrictionSpecs(value) {
 function restrictionCalculusExpressions(value) {
   return restrictionSpecs(value).map((spec2) => symbolicSpecToCalculusExpression(spec2));
 }
-function domainRecord2(value) {
+function domainRecord3(value) {
   return rixMap2([
-    ["policy", str2("original denominators != 0")],
-    ["restrictions", seq2(restrictionSpecs(value))],
-    ["calculusRestrictions", seq2(restrictionCalculusExpressions(value))],
+    ["policy", str3("original denominators != 0")],
+    ["restrictions", seq3(restrictionSpecs(value))],
+    ["calculusRestrictions", seq3(restrictionCalculusExpressions(value))],
     ["cancelledRestrictionsPreserved", int12(1)]
   ]);
 }
@@ -82606,27 +82911,27 @@ function sourcePolynomialPair(value, context, evaluate) {
   };
 }
 function canonicalPresentation(value, kind, context, evaluate) {
-  const exact2 = canonical(value, context, evaluate);
+  const exact3 = canonical(value, context, evaluate);
   if (kind === "factored")
-    return invokeReceiver(exact2, "Factored", [], context, evaluate);
+    return invokeReceiver(exact3, "Factored", [], context, evaluate);
   if (kind === "partialFractions")
-    return invokeReceiver(exact2, "PartialFractions", [], context, evaluate);
+    return invokeReceiver(exact3, "PartialFractions", [], context, evaluate);
   if (kind === "squareFree") {
-    const numerator = invokeReceiver(exact2, "Numerator", [], context, evaluate);
-    const denominator = invokeReceiver(exact2, "Denominator", [], context, evaluate);
+    const numerator = invokeReceiver(exact3, "Numerator", [], context, evaluate);
+    const denominator = invokeReceiver(exact3, "Denominator", [], context, evaluate);
     const squareFreePart = (polynomial2) => exactIntegerIs(invokeReceiver(polynomial2, "Degree", [], context, evaluate), -1) ? immutableMap([
-      ["schema", str2("rix.polynomial.square-free@1")],
-      ["valueKind", str2("polynomialSquareFreeDecomposition")],
-      ["status", str2("identicallyZero")],
+      ["schema", str3("rix.polynomial.square-free@1")],
+      ["valueKind", str3("polynomialSquareFreeDecomposition")],
+      ["status", str3("identicallyZero")],
       ["polynomial", polynomial2],
-      ["factors", seq2([])],
+      ["factors", seq3([])],
       ["verified", int12(1)]
     ]) : invokeReceiver(polynomial2, "SquareFreeDecomposition", [], context, evaluate);
     const numeratorPresentation = squareFreePart(numerator);
     const denominatorPresentation = squareFreePart(denominator);
     return immutableMap([
-      ["schema", str2("rix.fraction-function.square-free-pair@1")],
-      ["valueKind", str2("fractionFunctionSquareFreePair")],
+      ["schema", str3("rix.fraction-function.square-free-pair@1")],
+      ["valueKind", str3("fractionFunctionSquareFreePair")],
       ["exact", int12(1)],
       ["verified", exactTruth(mapField3(numeratorPresentation, "verified")) && exactTruth(mapField3(denominatorPresentation, "verified")) ? int12(1) : null],
       ["numerator", numeratorPresentation],
@@ -82643,44 +82948,44 @@ function presentationLabel(kind) {
   return "factored";
 }
 function presentationGrid(source, kind, payload, context, evaluate) {
-  const exact2 = requireFractionFunction(source);
+  const exact3 = requireFractionFunction(source);
   return createGrid([
-    seq2([str2("Transformation"), str2("Source form"), str2("Canonical projection"), str2("Verified presentation"), str2("Authoritative domain")]),
-    seq2([seq2([
-      str2(presentationLabel(kind)),
-      metadata(exact2).displaySpec,
-      canonical(exact2, context, evaluate),
+    seq3([str3("Transformation"), str3("Source form"), str3("Canonical projection"), str3("Verified presentation"), str3("Authoritative domain")]),
+    seq3([seq3([
+      str3(presentationLabel(kind)),
+      metadata(exact3).displaySpec,
+      canonical(exact3, context, evaluate),
       payload,
-      domainRecord2(exact2)
+      domainRecord3(exact3)
     ])]),
-    seq2([])
+    seq3([])
   ]);
 }
 function presentationValue(value, kind, context, evaluate) {
   const source = requireFractionFunction(value);
-  const exact2 = canonical(source, context, evaluate);
+  const exact3 = canonical(source, context, evaluate);
   const payload = canonicalPresentation(source, kind, context, evaluate);
   const verified = mapField3(payload, "verified");
   const result = immutableMap([
-    ["schema", str2(FRACTION_FUNCTION_PRESENTATION_SCHEMA)],
-    ["valueKind", str2("fractionFunctionPresentation")],
-    ["kind", str2(kind)],
+    ["schema", str3(FRACTION_FUNCTION_PRESENTATION_SCHEMA)],
+    ["valueKind", str3("fractionFunctionPresentation")],
+    ["kind", str3(kind)],
     ["exact", int12(1)],
     ["verified", exactTruth(verified) ? int12(1) : null],
     ["sourceDomainPreserved", int12(1)],
     ["source", source],
     ["sourceForm", metadata(source).displaySpec],
-    ["canonical", exact2],
+    ["canonical", exact3],
     ["presentation", payload],
-    ["domain", domainRecord2(source)],
-    ["restrictions", seq2(restrictionSpecs(source))],
-    ["calculusRestrictions", seq2(restrictionCalculusExpressions(source))]
+    ["domain", domainRecord3(source)],
+    ["restrictions", seq3(restrictionSpecs(source))],
+    ["calculusRestrictions", seq3(restrictionCalculusExpressions(source))]
   ], [
     ["SOURCE", method6("Source", () => source)],
     ["FUNCTION", method6("Function", () => source)],
-    ["CANONICAL", method6("Canonical", () => exact2)],
+    ["CANONICAL", method6("Canonical", () => exact3)],
     ["PRESENTATION", method6("Presentation", () => payload)],
-    ["DOMAIN", method6("Domain", () => domainRecord2(source))],
+    ["DOMAIN", method6("Domain", () => domainRecord3(source))],
     ["GRID", method6("Grid", (_args, callContext, callEvaluate) => presentationGrid(source, kind, payload, callContext, callEvaluate))],
     ["RECORD", method6("Record", () => result)]
   ]);
@@ -82712,14 +83017,14 @@ function removableHoleEvidence(value, context, evaluate) {
     ["multiplicity", mapField3(entry2, "multiplicity")],
     ["cancelledFactor", mapField3(entry2, "factor")],
     ["canonicalPole", null],
-    ["classification", str2("removableHole")],
+    ["classification", str3("removableHole")],
     ["verified", int12(1)]
   ]));
   const complete = exactTruth(mapField3(cancelledEvidence, "complete")) && exactTruth(mapField3(polePart, "complete"));
   const restrictions = restrictionFactorEvidence(source, context, evaluate);
   const result = immutableMap([
-    ["schema", str2(FRACTION_FUNCTION_HOLE_EVIDENCE_SCHEMA)],
-    ["valueKind", str2("fractionFunctionRemovableHoleEvidence")],
+    ["schema", str3(FRACTION_FUNCTION_HOLE_EVIDENCE_SCHEMA)],
+    ["valueKind", str3("fractionFunctionRemovableHoleEvidence")],
     ["exact", int12(1)],
     ["verified", exactTruth(mapField3(cancelledEvidence, "verified")) && exactTruth(mapField3(canonicalEvidence, "verified")) ? int12(1) : null],
     ["complete", complete ? int12(1) : null],
@@ -82730,13 +83035,13 @@ function removableHoleEvidence(value, context, evaluate) {
     ["cancelledFactor", cancelled2],
     ["cancelledFactorEvidence", cancelledEvidence],
     ["canonicalPoleEvidence", polePart],
-    ["holes", seq2(holes)],
-    ["restrictionEvidence", seq2(restrictions)],
-    ["domain", domainRecord2(source)]
+    ["holes", seq3(holes)],
+    ["restrictionEvidence", seq3(restrictions)],
+    ["domain", domainRecord3(source)]
   ], [
-    ["HOLES", method6("Holes", () => seq2(holes))],
+    ["HOLES", method6("Holes", () => seq3(holes))],
     ["SOURCE", method6("Source", () => source)],
-    ["DOMAIN", method6("Domain", () => domainRecord2(source))],
+    ["DOMAIN", method6("Domain", () => domainRecord3(source))],
     ["RECORD", method6("Record", () => result)]
   ]);
   return result;
@@ -82746,8 +83051,8 @@ function divisorEvidence(value, context, evaluate) {
   const canonicalEvidence = invokeReceiver(canonical(source, context, evaluate), "PoleZeroEvidence", [], context, evaluate);
   const holes = removableHoleEvidence(source, context, evaluate);
   const result = immutableMap([
-    ["schema", str2(FRACTION_FUNCTION_DIVISOR_EVIDENCE_SCHEMA)],
-    ["valueKind", str2("fractionFunctionDivisorEvidence")],
+    ["schema", str3(FRACTION_FUNCTION_DIVISOR_EVIDENCE_SCHEMA)],
+    ["valueKind", str3("fractionFunctionDivisorEvidence")],
     ["exact", int12(1)],
     ["verified", exactTruth(mapField3(canonicalEvidence, "verified")) && exactTruth(mapField3(holes, "verified")) ? int12(1) : null],
     ["sourceDomainPreserved", int12(1)],
@@ -82757,32 +83062,32 @@ function divisorEvidence(value, context, evaluate) {
     ["removableHoles", mapField3(holes, "holes")],
     ["canonicalEvidence", canonicalEvidence],
     ["holeEvidence", holes],
-    ["domain", domainRecord2(source)]
+    ["domain", domainRecord3(source)]
   ], [
     ["ZEROS", method6("Zeros", () => mapField3(canonicalEvidence, "zeros"))],
     ["POLES", method6("Poles", () => mapField3(canonicalEvidence, "poles"))],
     ["REMOVABLEHOLES", method6("RemovableHoles", () => mapField3(holes, "holes"))],
     ["SOURCE", method6("Source", () => source)],
-    ["DOMAIN", method6("Domain", () => domainRecord2(source))],
+    ["DOMAIN", method6("Domain", () => domainRecord3(source))],
     ["RECORD", method6("Record", () => result)]
   ]);
   return result;
 }
 function transformationGrid(value, context, evaluate) {
   const source = requireFractionFunction(value);
-  const exact2 = canonical(source, context, evaluate);
+  const exact3 = canonical(source, context, evaluate);
   const kinds = ["factored", "squareFree", "partialFractions"];
-  const rows = kinds.map((kind) => seq2([
-    str2(presentationLabel(kind)),
+  const rows = kinds.map((kind) => seq3([
+    str3(presentationLabel(kind)),
     metadata(source).displaySpec,
-    exact2,
+    exact3,
     canonicalPresentation(source, kind, context, evaluate),
-    domainRecord2(source)
+    domainRecord3(source)
   ]));
   return createGrid([
-    seq2([str2("Transformation"), str2("Source form"), str2("Canonical projection"), str2("Verified presentation"), str2("Authoritative domain")]),
-    seq2(rows),
-    seq2([])
+    seq3([str3("Transformation"), str3("Source form"), str3("Canonical projection"), str3("Verified presentation"), str3("Authoritative domain")]),
+    seq3(rows),
+    seq3([])
   ]);
 }
 function method6(name, impl) {
@@ -82829,8 +83134,8 @@ function registerFractionFunctionMethods(systemContext, owner = {}) {
   register("FractionFunction", "EvaluationSpec", ([value]) => metadata(requireFractionFunction(value)).evaluationSpec);
   register("FractionFunction", "CalculusExpression", ([value]) => symbolicSpecToCalculusExpression(metadata(requireFractionFunction(value)).displaySpec));
   register("FractionFunction", "EvaluationCalculusExpression", ([value]) => symbolicSpecToCalculusExpression(metadata(requireFractionFunction(value)).evaluationSpec));
-  register("FractionFunction", "RestrictionExpressions", ([value]) => seq2(restrictionCalculusExpressions(value)));
-  register("FractionFunction", "Variable", ([value]) => str2(requireFractionFunction(value).variable));
+  register("FractionFunction", "RestrictionExpressions", ([value]) => seq3(restrictionCalculusExpressions(value)));
+  register("FractionFunction", "Variable", ([value]) => str3(requireFractionFunction(value).variable));
   register("FractionFunction", "Evaluate", ([value, argument], context, evaluate) => callWithConcreteArgs(value, [argument], context, evaluate));
   register("FractionFunction", "Compose", ([value, argument], context, evaluate) => callWithConcreteArgs(value, [argument], context, evaluate));
   register("FractionFunction", "Numerator", ([value], context, evaluate) => formPart(value, "numerator", context, evaluate));
@@ -82867,7 +83172,7 @@ function registerFractionFunctionMethods(systemContext, owner = {}) {
     const equivalent = rationalFunctionsEqual(canonical(value, context, evaluate), canonical(other, context, evaluate), context, evaluate);
     return equivalent && restrictionsEqual(value, other) ? int12(1) : null;
   });
-  register("FractionFunction", "Domain", ([value]) => domainRecord2(value));
+  register("FractionFunction", "Domain", ([value]) => domainRecord3(value));
   register("FractionFunction", "ForgetRestrictions", ([value], context, evaluate) => {
     const source = requireFractionFunction(value);
     return decorate(metadata(source).displaySpec, metadata(source).displaySpec, context, evaluate, [
@@ -82879,15 +83184,15 @@ function registerFractionFunctionMethods(systemContext, owner = {}) {
     const source = requireFractionFunction(value);
     const info = metadata(source);
     return rixMap2([
-      ["schema", str2(FRACTION_FUNCTION_SCHEMA)],
-      ["variable", str2(source.variable)],
+      ["schema", str3(FRACTION_FUNCTION_SCHEMA)],
+      ["variable", str3(source.variable)],
       ["form", info.displaySpec],
       ["evaluation", info.evaluationSpec],
-      ["restrictions", seq2(restrictionSpecs(source))],
-      ["calculusRestrictions", seq2(restrictionCalculusExpressions(source))],
+      ["restrictions", seq3(restrictionSpecs(source))],
+      ["calculusRestrictions", seq3(restrictionCalculusExpressions(source))],
       ["canonicalAvailable", info.canonicalRationalFunction ? int12(1) : null],
       ["polynomialAvailable", info.canonicalPolynomial ? int12(1) : null],
-      ["canonicalError", info.canonicalError ? str2(info.canonicalError) : null]
+      ["canonicalError", info.canonicalError ? str3(info.canonicalError) : null]
     ]);
   });
 }
@@ -83245,10 +83550,10 @@ function rationalCompare(left, right) {
 function measurementParts(value) {
   if (value instanceof RationalInterval)
     return [value.low, value.high];
-  const exact2 = exactParts(value);
-  if (!exact2)
+  const exact3 = exactParts(value);
+  if (!exact3)
     return null;
-  const point3 = new Rational(exact2[0], exact2[1]);
+  const point3 = new Rational(exact3[0], exact3[1]);
   return [point3, point3];
 }
 function compareValues2(left, right, column, operation = "Sort") {
@@ -83445,9 +83750,9 @@ function keySignature(row, selected) {
     const value = row[index];
     if (value === null)
       return "missing";
-    const exact2 = exactParts(value);
-    if (exact2)
-      return `q:${exact2[0]}/${exact2[1]}`;
+    const exact3 = exactParts(value);
+    if (exact3)
+      return `q:${exact3[0]}/${exact3[1]}`;
     const measurement = measurementParts(value);
     if (measurement) {
       if (rationalCompare(measurement[0], measurement[1]) === 0) {
@@ -83907,14 +84212,14 @@ function parseJsonlSource(args) {
     if (!(indexValue instanceof Integer) || indexValue.value < 1n || indexValue.value > BigInt(Number.MAX_SAFE_INTEGER)) {
       throw new Error("data.ParseJSONL row index must be a positive safe Integer");
     }
-    const record = records[Number(indexValue.value) - 1];
-    if (!record || Number(indexValue.value) > maxRows)
+    const record2 = records[Number(indexValue.value) - 1];
+    if (!record2 || Number(indexValue.value) > maxRows)
       return null;
     let parsed;
     try {
-      parsed = JSON.parse(source.slice(record.start, record.end));
+      parsed = JSON.parse(source.slice(record2.start, record2.end));
     } catch (error) {
-      throw new Error(`data.ParseJSONL invalid JSON at physical line ${record.line}: ${error.message}`);
+      throw new Error(`data.ParseJSONL invalid JSON at physical line ${record2.line}: ${error.message}`);
     }
     let rawRow;
     if (Array.isArray(parsed))
@@ -83923,14 +84228,14 @@ function parseJsonlSource(args) {
       const known = new Set(columns.map(({ id }) => id));
       const unknown = Object.keys(parsed).find((key) => !known.has(key));
       if (unknown)
-        throw new Error(`data.ParseJSONL physical line ${record.line} contains unknown column '${unknown}'`);
+        throw new Error(`data.ParseJSONL physical line ${record2.line} contains unknown column '${unknown}'`);
       rawRow = columns.map(({ id }) => Object.hasOwn(parsed, id) ? parsed[id] : null);
     } else
-      throw new Error(`data.ParseJSONL physical line ${record.line} must be a JSON object or array`);
+      throw new Error(`data.ParseJSONL physical line ${record2.line} must be a JSON object or array`);
     if (rawRow.length !== columns.length) {
-      throw new Error(`data.ParseJSONL physical line ${record.line} has ${rawRow.length} cells; expected ${columns.length}`);
+      throw new Error(`data.ParseJSONL physical line ${record2.line} has ${rawRow.length} cells; expected ${columns.length}`);
     }
-    const row = rawRow.map((value, columnIndex2) => decodeJsonValue(value, columns[columnIndex2], `data.ParseJSONL line ${record.line} column '${columns[columnIndex2].id}'`));
+    const row = rawRow.map((value, columnIndex2) => decodeJsonValue(value, columns[columnIndex2], `data.ParseJSONL line ${record2.line} column '${columns[columnIndex2].id}'`));
     return sequenceValue3(row);
   };
   return Object.freeze({
@@ -84237,10 +84542,10 @@ function createDocumentBibliography(args) {
   const source = sequence10(args[0], "document.Bibliography entries");
   const records = source.map((value, index) => bibliographyEntry(value, index + 1));
   const seen = new Set;
-  for (const record of records) {
-    if (seen.has(record.key))
-      throw new Error(`document.Bibliography contains duplicate key '${record.key}'`);
-    seen.add(record.key);
+  for (const record2 of records) {
+    if (seen.has(record2.key))
+      throw new Error(`document.Bibliography contains duplicate key '${record2.key}'`);
+    seen.add(record2.key);
   }
   const options = args[1] === null || args[1] === undefined ? new Map : entries3(args[1], "document.Bibliography options");
   const title = text12(field2(options, "title", stringValue8("References")), "document.Bibliography title");
@@ -84248,13 +84553,13 @@ function createDocumentBibliography(args) {
     ["valueKind", stringValue8("documentBibliography")],
     ["schema", stringValue8("rix.document.bibliography@1")],
     ["title", stringValue8(title)],
-    ["entries", sequenceValue4(records.map((record) => mapValue7([
-      ["key", stringValue8(record.key)],
-      ["title", stringValue8(record.title)],
-      ["author", stringValue8(record.author)],
-      ["year", stringValue8(record.year)],
-      ["url", record.url === null ? null : stringValue8(record.url)],
-      ["number", new Integer(BigInt(record.number))]
+    ["entries", sequenceValue4(records.map((record2) => mapValue7([
+      ["key", stringValue8(record2.key)],
+      ["title", stringValue8(record2.title)],
+      ["author", stringValue8(record2.author)],
+      ["year", stringValue8(record2.year)],
+      ["url", record2.url === null ? null : stringValue8(record2.url)],
+      ["number", new Integer(BigInt(record2.number))]
     ])))]
   ]);
 }
@@ -84290,22 +84595,22 @@ function createDocumentAssetManifest(args) {
   const source = sequence10(args[0], "document.AssetManifest entries");
   const seen = new Set;
   const assets = source.map((value, index) => {
-    const record = entries3(value, `document.AssetManifest entry ${index + 1}`);
-    const id = validLabel(field2(record, "id"), `document.AssetManifest entry ${index + 1} id`);
+    const record2 = entries3(value, `document.AssetManifest entry ${index + 1}`);
+    const id = validLabel(field2(record2, "id"), `document.AssetManifest entry ${index + 1} id`);
     if (seen.has(id))
       throw new Error(`document.AssetManifest contains duplicate id '${id}'`);
     seen.add(id);
-    const path = text12(field2(record, "path"), `document.AssetManifest entry ${index + 1} path`);
+    const path = text12(field2(record2, "path"), `document.AssetManifest entry ${index + 1} path`);
     if (path.startsWith("/") || path.includes(".."))
       throw new Error("document.AssetManifest paths must be safe relative paths");
-    const mimeValue = field2(record, "mime", stringValue8("application/octet-stream"));
-    const altValue = field2(record, "alt", stringValue8(""));
+    const mimeValue = field2(record2, "mime", stringValue8("application/octet-stream"));
+    const altValue = field2(record2, "alt", stringValue8(""));
     return mapValue7([
       ["id", stringValue8(id)],
       ["path", stringValue8(path)],
       ["mime", stringValue8(text12(mimeValue, "document.AssetManifest mime"))],
       ["alt", stringValue8(text12(altValue, "document.AssetManifest alt"))],
-      ["checksum", field2(record, "checksum")]
+      ["checksum", field2(record2, "checksum")]
     ]);
   });
   return mapValue7([
@@ -84502,13 +84807,13 @@ function numberedCaption(kind, number2, caption) {
 function resolveCitation(value, citations) {
   const citation = value.documentCitation;
   const selected = citation.keys.map((key) => {
-    const record = citations.records.get(key);
-    if (!record)
+    const record2 = citations.records.get(key);
+    if (!record2)
       throw new Error(`document.Report cannot resolve citation '${key}'`);
     citations.used.add(key);
-    return record;
+    return record2;
   });
-  const body = citations.style === "author-year" ? selected.map((record) => `${record.author}, ${record.year}`).join("; ") : `[${selected.map((record) => record.number).join(", ")}]`;
+  const body = citations.style === "author-year" ? selected.map((record2) => `${record2.author}, ${record2.year}`).join("; ") : `[${selected.map((record2) => record2.number).join(", ")}]`;
   return textNode(`${citation.prefix}${body}${citation.suffix}`, {
     documentCitationResolved: Object.freeze({ ...citation, records: Object.freeze(selected) })
   });
@@ -84570,7 +84875,7 @@ function citationIndex(bibliography, numbering) {
   const records = new Map;
   if (bibliography !== null) {
     for (const value of sequence10(field2(bibliography, "entries"), "document.Bibliography entries")) {
-      const record = {
+      const record2 = {
         key: field2(value, "key").value,
         title: field2(value, "title").value,
         author: field2(value, "author").value,
@@ -84578,7 +84883,7 @@ function citationIndex(bibliography, numbering) {
         url: field2(value, "url")?.value || null,
         number: Number(field2(value, "number").value)
       };
-      records.set(record.key, Object.freeze(record));
+      records.set(record2.key, Object.freeze(record2));
     }
   }
   return { records, used: new Set, style: field2(numbering, "citationStyle")?.value || "numeric" };
@@ -87786,10 +88091,10 @@ function exportSceneGltf(scene, { pretty = true } = {}) {
     asset: { version: "2.0", generator: "RiX glTF renderer" },
     scene: 0,
     scenes: [{ name: "RiX Scene3D", nodes: records.map((_, index) => index) }],
-    nodes: records.map((record, index) => ({
-      name: record.primitive.label || record.primitive.pickid || `RiX primitive ${index + 1}`,
+    nodes: records.map((record2, index) => ({
+      name: record2.primitive.label || record2.primitive.pickid || `RiX primitive ${index + 1}`,
       mesh: index,
-      ...record.primitive.pickid ? { extras: { rix: { pickid: record.primitive.pickid } } } : {}
+      ...record2.primitive.pickid ? { extras: { rix: { pickid: record2.primitive.pickid } } } : {}
     })),
     meshes: [],
     materials: [],
@@ -87800,8 +88105,8 @@ function exportSceneGltf(scene, { pretty = true } = {}) {
       rix: { schema: SCENE3D_SCHEMA, sourceCoordinates: "right-handed Z-up", exportedCoordinates: "right-handed Y-up" }
     }
   };
-  records.forEach((record, index) => {
-    const style3 = record.primitive.style;
+  records.forEach((record2, index) => {
+    const style3 = record2.primitive.style;
     const opacity = numberValue2(style3?.opacity ?? 1, "Scene3D material opacity");
     const material = gltf.materials.push({
       name: `RiX material ${index + 1}`,
@@ -87809,28 +88114,28 @@ function exportSceneGltf(scene, { pretty = true } = {}) {
       alphaMode: opacity < 1 ? "BLEND" : "OPAQUE",
       doubleSided: true
     }) - 1;
-    const xs = record.positions.map((point4) => point4[0]);
-    const ys = record.positions.map((point4) => point4[1]);
-    const zs = record.positions.map((point4) => point4[2]);
+    const xs = record2.positions.map((point4) => point4[0]);
+    const ys = record2.positions.map((point4) => point4[1]);
+    const zs = record2.positions.map((point4) => point4[2]);
     const positionAccessor = gltf.accessors.push({
-      bufferView: record.positionChunk,
+      bufferView: record2.positionChunk,
       componentType: 5126,
-      count: record.positions.length,
+      count: record2.positions.length,
       type: "VEC3",
       min: [Math.min(...xs), Math.min(...ys), Math.min(...zs)],
       max: [Math.max(...xs), Math.max(...ys), Math.max(...zs)]
     }) - 1;
     const indexAccessor = gltf.accessors.push({
-      bufferView: record.indexChunk,
+      bufferView: record2.indexChunk,
       componentType: 5125,
-      count: record.indices.length,
+      count: record2.indices.length,
       type: "SCALAR",
-      min: record.indices.length ? [Math.min(...record.indices)] : [0],
-      max: record.indices.length ? [Math.max(...record.indices)] : [0]
+      min: record2.indices.length ? [Math.min(...record2.indices)] : [0],
+      max: record2.indices.length ? [Math.max(...record2.indices)] : [0]
     }) - 1;
     gltf.meshes.push({
       name: `RiX mesh ${index + 1}`,
-      primitives: [{ attributes: { POSITION: positionAccessor }, indices: indexAccessor, material, mode: record.mode }]
+      primitives: [{ attributes: { POSITION: positionAccessor }, indices: indexAccessor, material, mode: record2.mode }]
     });
   });
   const diagnostics = [];
@@ -88237,9 +88542,9 @@ function prepareImport(args) {
     }
   }
   const missing = missingTokens(options);
-  for (const record of records) {
-    if (record.fields.length !== empty.columns.length) {
-      throw new Error(`csv line ${record.line} has ${record.fields.length} fields; expected ${empty.columns.length}`);
+  for (const record2 of records) {
+    if (record2.fields.length !== empty.columns.length) {
+      throw new Error(`csv line ${record2.line} has ${record2.fields.length} fields; expected ${empty.columns.length}`);
     }
   }
   const sidecar = Object.freeze({
@@ -88258,7 +88563,7 @@ function prepareImport(args) {
     rowCount: records.length,
     columnCount: empty.columns.length
   });
-  const convert = (record, index) => sequenceValue5(record.fields.map((cell, columnIndex2) => typedCell(cell, empty.columns[columnIndex2], policy, missing, index + 1)));
+  const convert = (record2, index) => sequenceValue5(record2.fields.map((cell, columnIndex2) => typedCell(cell, empty.columns[columnIndex2], policy, missing, index + 1)));
   return { schema: schemaMap(empty.columns), columns: empty.columns, records, convert, sidecar };
 }
 function attachSidecar(value, sidecar) {
@@ -89545,6 +89850,7 @@ function createDefaultRegistry(options = {}) {
   registry.registerAll(unitExactFunctions);
   registry.registerAll(symbolicFunctions);
   registry.registerAll(expressionSyntaxFunctions);
+  registry.registerAll(mathContextSyntaxFunctions);
   registry.registerAll(outputFunctions);
   registry.registerAll(formulaSheetFunctions);
   registry.registerAll(reactiveGraphFunctions);
@@ -89772,11 +90078,11 @@ function createNumberConfigValue() {
 function createDefaultSystemContext(options = {}) {
   const frozen = options.frozen !== false;
   const ctx = new SystemContext(new Map, false);
-  const exact2 = options.exact || createDefaultExactCollection();
-  const units = options.units || createDefaultUnitCollection(exact2);
-  const complex = options.complex || createDefaultComplexCollection(exact2);
+  const exact3 = options.exact || createDefaultExactCollection();
+  const units = options.units || createDefaultUnitCollection(exact3);
+  const complex = options.complex || createDefaultComplexCollection(exact3);
   ctx.registerValue("Units", units, { doc: "Canonical RiX unit collection" });
-  ctx.registerValue("Exact", exact2, { doc: "Canonical RiX exact-generator collection" });
+  ctx.registerValue("Exact", exact3, { doc: "Canonical RiX exact-generator collection" });
   ctx.registerValue("Complex", complex, { doc: "Exact complex-number operations" });
   ctx.registerValue("Config", createNumberConfigValue(), {
     doc: "Session-scoped RiX configuration, including numeric input and display",
@@ -91340,15 +91646,15 @@ async function orderedAsyncTerminal(items, state, worker, terminal) {
     while (nextToStart < items.length && nextToStart < window)
       start(nextToStart++);
     for (let published = 0;published < items.length; published++) {
-      const record = await promises[published];
-      if (!record.dropped) {
+      const record2 = await promises[published];
+      if (!record2.dropped) {
         candidateCount++;
-        lastCandidate = record.value;
-        if (record.terminalState === "undecided")
+        lastCandidate = record2.value;
+        if (record2.terminalState === "undecided")
           uncertain = true;
-        if (terminal === "PANY" && record.terminalState === "truth")
-          return await stop(record.value);
-        if (terminal === "PALL" && record.terminalState === "null")
+        if (terminal === "PANY" && record2.terminalState === "truth")
+          return await stop(record2.value);
+        if (terminal === "PALL" && record2.terminalState === "null")
           return await stop(null);
       }
       if (nextToStart < items.length)
@@ -91445,17 +91751,17 @@ async function consumeAsyncStreamStructured(stream, terminal, context, registry,
     while (nextToStart < window)
       start(nextToStart++);
     while (!stopped) {
-      const record = await promises[nextToPublish++];
-      if (record.done) {
+      const record2 = await promises[nextToPublish++];
+      if (record2.done) {
         stopReason = { kind: "complete" };
         cancelPending(streamEarlyStop("source completion"));
         break;
       }
-      if (record.unresolved !== undefined) {
-        finalResult = record.unresolved;
+      if (record2.unresolved !== undefined) {
+        finalResult = record2.unresolved;
         stopped = true;
       }
-      for (const entry2 of record.records) {
+      for (const entry2 of record2.records) {
         outputIndex++;
         if (terminal.kind === "collect")
           collected.push(entry2.value);
@@ -91489,7 +91795,7 @@ async function consumeAsyncStreamStructured(stream, terminal, context, registry,
         if (stopped)
           break;
       }
-      if (record.stop)
+      if (record2.stop)
         stopped = true;
       if (stopped) {
         stopReason = { kind: "early terminal" };
@@ -91716,25 +92022,25 @@ function collectionItems(collection) {
   throw new Error("Async pipe requires a finite collection");
 }
 function assembleAsyncPipeResult(collection, items, records, stages = []) {
-  if (records.some((record) => record.unresolved === true))
+  if (records.some((record2) => record2.unresolved === true))
     return UNDECIDED;
   if (isShaped(collection)) {
-    const kept = records.filter((record) => record.keep);
+    const kept = records.filter((record2) => record2.keep);
     if (stages.some((stage) => stage.fn === "PFILTER")) {
       return {
         type: "sequence",
-        values: kept.map((record) => ({
+        values: kept.map((record2) => ({
           type: "tuple",
-          values: [record.value, items[record.index].locator]
+          values: [record2.value, items[record2.index].locator]
         }))
       };
     }
-    return createShaped(collection.shape, kept.map((record) => record.value));
+    return createShaped(collection.shape, kept.map((record2) => record2.value));
   }
   if (collection?.type === "map") {
     return { type: "map", entries: new Map(records.filter((r) => r.keep).map((r) => [items[r.index].key, r.value])) };
   }
-  const values4 = records.filter((record) => record.keep).map((record) => record.value);
+  const values4 = records.filter((record2) => record2.keep).map((record2) => record2.value);
   if (typeof collection === "string" || collection?.type === "string") {
     const joined = values4.map((value) => value?.type === "string" ? value.value : value).join("");
     return collection?.type === "string" ? { type: "string", value: joined } : joined;
@@ -91818,16 +92124,16 @@ async function runAsyncPipeStages(value, index, key, collection, stages, callabl
 }
 function asyncTerminalResult(terminal, records) {
   if (terminal === "PANY") {
-    const match = records.find((record) => !record.dropped && record.terminalState === "truth");
+    const match = records.find((record2) => !record2.dropped && record2.terminalState === "truth");
     if (match)
       return match.value;
-    return records.some((record) => !record.dropped && record.terminalState === "undecided") ? UNDECIDED : null;
+    return records.some((record2) => !record2.dropped && record2.terminalState === "undecided") ? UNDECIDED : null;
   }
   if (terminal === "PALL") {
-    const candidates = records.filter((record) => !record.dropped);
-    if (candidates.length === 0 || candidates.some((record) => record.terminalState === "null"))
+    const candidates = records.filter((record2) => !record2.dropped);
+    if (candidates.length === 0 || candidates.some((record2) => record2.terminalState === "null"))
       return null;
-    if (candidates.some((record) => record.terminalState === "undecided"))
+    if (candidates.some((record2) => record2.terminalState === "undecided"))
       return UNDECIDED;
     return candidates.at(-1).value;
   }
@@ -91890,10 +92196,10 @@ function expectedPipeScalarSource(source, stages) {
   return !Array.isArray(source?.values);
 }
 async function evaluateScalarExpectedPipe(source, stages, callables, context, registry, systemContext, state) {
-  const record = await runAsyncPipeStages(source, 0, undefined, source, stages, callables, context, registry, systemContext, state);
+  const record2 = await runAsyncPipeStages(source, 0, undefined, source, stages, callables, context, registry, systemContext, state);
   if (stages.at(-1)?.fn === "PFOREACH")
     return null;
-  return record.keep ? record.value : PIPE_SKIP;
+  return record2.keep ? record2.value : PIPE_SKIP;
 }
 async function evaluateSequentialAsyncPipe(irNode, context, registry, systemContext, state) {
   const stages = [];
@@ -92057,17 +92363,17 @@ async function evaluateAsyncReduce(args, context, registry, systemContext, state
   }
   return accumulator;
 }
-async function stableAsyncMergeSort(items, compare3) {
+async function stableAsyncMergeSort(items, compare4) {
   if (items.length < 2)
     return [...items];
   const middle = Math.floor(items.length / 2);
-  const left = await stableAsyncMergeSort(items.slice(0, middle), compare3);
-  const right = await stableAsyncMergeSort(items.slice(middle), compare3);
+  const left = await stableAsyncMergeSort(items.slice(0, middle), compare4);
+  const right = await stableAsyncMergeSort(items.slice(middle), compare4);
   const merged = [];
   let leftIndex = 0;
   let rightIndex = 0;
   while (leftIndex < left.length && rightIndex < right.length) {
-    if (await compare3(left[leftIndex], right[rightIndex]) <= 0) {
+    if (await compare4(left[leftIndex], right[rightIndex]) <= 0) {
       merged.push(left[leftIndex++]);
     } else {
       merged.push(right[rightIndex++]);
@@ -92109,7 +92415,7 @@ async function evaluateAsyncSort(args, context, registry, systemContext, state) 
       return result;
     return 0;
   };
-  const compare3 = async (left, right) => {
+  const compare4 = async (left, right) => {
     if (callable && !isHole(callable)) {
       const result = await invokeCallableAsync(callable, [left, right], context, registry, systemContext, state);
       return comparatorResult(result);
@@ -92126,7 +92432,7 @@ async function evaluateAsyncSort(args, context, registry, systemContext, state) 
     const rightNumber = right?.constructor?.name === "Integer" ? Number(right.value) : Number(right);
     return leftNumber - rightNumber;
   };
-  const sorted = await stableAsyncMergeSort(items, compare3);
+  const sorted = await stableAsyncMergeSort(items, compare4);
   if (uncertainOrdering)
     return UNDECIDED;
   if (isString) {
@@ -94094,6 +94400,18 @@ function analyzeRix(source, options = {}) {
       }
       return;
     }
+    if (node.type === "MathematicalContext") {
+      for (const item of node.header) {
+        visit2(item.declaration, scope, { ...state, role: "value", tail: false, discarded: false });
+        if (item.source)
+          visit2(item.source, scope, { ...state, role: "value", tail: false, discarded: false });
+      }
+      for (const element of node.elements)
+        visit2(element, scope, state);
+      return;
+    }
+    if (node.type === "BoundSymbol")
+      return;
     if (node.type === "SymbolicVariable") {
       if (!node.outer)
         scope.symbols.add(node.name);
@@ -95093,9 +95411,9 @@ function enhanceSheet(sheet, options) {
         }
         if (result?.type === "error")
           throw new Error(result.text);
-        const exact2 = submittedCell.textContent.trim();
+        const exact3 = submittedCell.textContent.trim();
         if (editValue)
-          editValue.textContent = `Exact value: ${exact2}`;
+          editValue.textContent = `Exact value: ${exact3}`;
         if (editStatus)
           editStatus.textContent = "Saved";
         options.onEditCommitted?.(detail, result, submittedCell, sheet);
@@ -95211,13 +95529,13 @@ function identifier(value, label2) {
     throw new Error(`${label2} must be a lowercase RiX identifier`);
   return name;
 }
-function validateGeometryConstructionRecord(record) {
+function validateGeometryConstructionRecord(record2) {
   const diagnostics = [];
-  if (text16(field5(record, "schema")) !== GEOMETRY_CONSTRUCTION_RECORD_SCHEMA) {
+  if (text16(field5(record2, "schema")) !== GEOMETRY_CONSTRUCTION_RECORD_SCHEMA) {
     diagnostics.push(Object.freeze({ code: "record-schema", message: `Expected ${GEOMETRY_CONSTRUCTION_RECORD_SCHEMA}` }));
   }
-  const nodes = sequence14(field5(record, "nodes"));
-  if (!field5(record, "nodes") || !Array.isArray(field5(record, "nodes")) && !Array.isArray(field5(record, "nodes")?.values)) {
+  const nodes = sequence14(field5(record2, "nodes"));
+  if (!field5(record2, "nodes") || !Array.isArray(field5(record2, "nodes")) && !Array.isArray(field5(record2, "nodes")?.values)) {
     diagnostics.push(Object.freeze({ code: "record-nodes", message: "Construction record nodes must be an array" }));
   }
   const ids = new Set;
@@ -95255,11 +95573,11 @@ function geometryConstructionRecordFromGraph(graph) {
     deterministic: true
   });
 }
-function encodeGeometryConstructionSource(record, options = {}) {
-  if (text16(field5(record, "schema")) === "rix.geometry.construction-graph@1") {
-    record = geometryConstructionRecordFromGraph(record);
+function encodeGeometryConstructionSource(record2, options = {}) {
+  if (text16(field5(record2, "schema")) === "rix.geometry.construction-graph@1") {
+    record2 = geometryConstructionRecordFromGraph(record2);
   }
-  const validation = validateGeometryConstructionRecord(record);
+  const validation = validateGeometryConstructionRecord(record2);
   const graphName = identifier(options.graphName || "graph", "graphName");
   const aliases = options.aliases === true;
   const prefix = aliases ? "" : ".geometry.";
@@ -95326,7 +95644,7 @@ function encodeGeometryConstructionSource(record, options = {}) {
     return statement;
   };
   if (validation.valid)
-    for (const node of sequence14(field5(record, "nodes"))) {
+    for (const node of sequence14(field5(record2, "nodes"))) {
       const idText = text16(field5(node, "id"));
       const statement = nodeStatement(node);
       if (statement)
@@ -95335,7 +95653,7 @@ function encodeGeometryConstructionSource(record, options = {}) {
         unsupported.push(Object.freeze({ id: idText || null, reason: `Unsupported or incomplete construction recipe for ${idText || "unnamed node"}` }));
     }
   if (validation.valid)
-    for (const event of sequence14(field5(record, "history"))) {
+    for (const event of sequence14(field5(record2, "history"))) {
       const operation = text16(field5(event, "operation"));
       const statement = movementStatement(event);
       if (statement)
@@ -95344,7 +95662,7 @@ function encodeGeometryConstructionSource(record, options = {}) {
         unsupported.push(Object.freeze({ id: text16(field5(event, "id")) || null, reason: `Unsupported or incomplete ${operation} history event` }));
       }
     }
-  const future = validation.valid ? sequence14(field5(record, "future")) : [];
+  const future = validation.valid ? sequence14(field5(record2, "future")) : [];
   for (const event of [...future].reverse()) {
     const operation = text16(field5(event, "operation"));
     const statement = operation === "create" ? nodeStatement(field5(event, "node")) : movementStatement(event);
@@ -95957,8 +96275,8 @@ function portableGeometryValue(value, format, seen = new Set) {
     return String(value);
   }
 }
-function serializeGeometryConstructionRecord(record, format = String) {
-  return JSON.stringify(portableGeometryValue(record, format), null, 2);
+function serializeGeometryConstructionRecord(record2, format = String) {
+  return JSON.stringify(portableGeometryValue(record2, format), null, 2);
 }
 function installGeometryWorkbench(graphic, status, options, navigation, actionActivators = new Map, pendingActionPayloads = new Map) {
   const workbench = geometryWorkbench(options.graphic);
@@ -96057,8 +96375,8 @@ function installGeometryWorkbench(graphic, status, options, navigation, actionAc
       const statusValue = stringValue11(mapField4(node, "status"));
       const diagnostic2 = stringValue11(mapField4(node, "diagnostic"));
       const dependencyText = dependencies.length ? `depends on ${dependencies.join(", ")}` : "no dependencies";
-      const exact2 = mapField4(node, "value");
-      properties.textContent = [id, kind, free ? "free" : "derived", dependencyText, statusValue, diagnostic2, exact2 === null ? null : `exact ${exactText(exact2, options.format || String)}`].filter(Boolean).join(" · ");
+      const exact3 = mapField4(node, "value");
+      properties.textContent = [id, kind, free ? "free" : "derived", dependencyText, statusValue, diagnostic2, exact3 === null ? null : `exact ${exactText(exact3, options.format || String)}`].filter(Boolean).join(" · ");
       if (authoringEnabled && activeTool !== "point") {
         const spec2 = specsByTool.get(activeTool);
         const label2 = stringValue11(mapField4(spec2, "label")) || activeTool;
@@ -96173,18 +96491,18 @@ function installGeometryWorkbench(graphic, status, options, navigation, actionAc
   undo.addEventListener("click", () => replay(-1));
   redo.addEventListener("click", () => replay(1));
   exportRecordButton.addEventListener("click", () => {
-    const record = mapField4(workbench, "construction");
-    const text17 = serializeGeometryConstructionRecord(record, options.format || String);
+    const record2 = mapField4(workbench, "construction");
+    const text17 = serializeGeometryConstructionRecord(record2, options.format || String);
     exported.textContent = text17;
     exported.hidden = false;
     document.defaultView?.navigator?.clipboard?.writeText?.(text17).catch?.(() => {});
-    dispatchGraphicEvent(graphic, "rix-geometry-export", { schema: "rix.geometry.construction-record@1", record, text: text17 });
+    dispatchGraphicEvent(graphic, "rix-geometry-export", { schema: "rix.geometry.construction-record@1", record: record2, text: text17 });
     if (status)
       status.textContent = "Portable construction record exported";
   });
   exportSourceButton.addEventListener("click", () => {
-    const record = mapField4(workbench, "construction");
-    const encoded = encodeGeometryConstructionSource(record);
+    const record2 = mapField4(workbench, "construction");
+    const encoded = encodeGeometryConstructionSource(record2);
     if (!encoded.supported) {
       if (status)
         status.textContent = `Source export is unavailable: ${encoded.unsupported.map((item) => item.reason).join("; ")}`;
@@ -96469,9 +96787,9 @@ function installNavigation(graphic, svg, status, options) {
     for (const textObject of graphic.querySelectorAll?.("[data-rix-graphics-text-object]") || []) {
       textObject.toggleAttribute?.("aria-current", textObject.dataset.rixGraphicsTextObject === id);
     }
-    const exact2 = element ? describe(element, scenePoint) : "Selection cleared";
+    const exact3 = element ? describe(element, scenePoint) : "Selection cleared";
     const plot = plotInspection(options.graphic, scenePoint, options.format || String);
-    const message = plot ? `${exact2} · ${plot}` : exact2;
+    const message = plot ? `${exact3} · ${plot}` : exact3;
     if (inspector)
       inspector.textContent = message;
     if (status)
@@ -98001,17 +98319,17 @@ function enhanceScene3DViews(root, options = {}) {
     const select = (pickId, source) => {
       state.selection.ids = pickId ? [pickId] : [];
       state.selection.focus = pickId || null;
-      const exact2 = describeScene3DSelection(scene, pickId, format);
+      const exact3 = describeScene3DSelection(scene, pickId, format);
       if (inspector)
-        inspector.textContent = exact2;
-      setStatus(exact2);
+        inspector.textContent = exact3;
+      setStatus(exact3);
       if (objectSelect && scopedCatalog().some((entry2) => entry2.id === pickId))
         objectSelect.value = pickId;
       for (const annotation of overlay?.querySelectorAll?.("[data-rix-semantic-id]") || []) {
         annotation.toggleAttribute?.("aria-current", annotation.dataset.rixSemanticId === pickId);
       }
       const interaction = pickId ? plan.picking[pickId]?.interaction ?? null : null;
-      const detail = Object.freeze({ type: "scene3d:selection", selection: { ...state.selection, ids: [...state.selection.ids] }, pickId, exact: exact2, interaction, source });
+      const detail = Object.freeze({ type: "scene3d:selection", selection: { ...state.selection, ids: [...state.selection.ids] }, pickId, exact: exact3, interaction, source });
       options.onSelection?.(detail);
       dispatchSceneEvent(container, detail);
       savePreferences();
@@ -98449,7 +98767,7 @@ function enhanceTimelineView(root, options = {}) {
   const loop = root.querySelector("[data-rix-timeline-loop]");
   const start = root.querySelector("[data-rix-timeline-range-start]");
   const end = root.querySelector("[data-rix-timeline-range-end]");
-  const compare3 = root.querySelector("[data-rix-timeline-compare]");
+  const compare4 = root.querySelector("[data-rix-timeline-compare]");
   const compareFrame = root.querySelector("[data-rix-timeline-compare-frame]");
   const marker2 = root.querySelector("select[data-rix-timeline-marker]");
   const exported = root.querySelector("[data-rix-timeline-export]");
@@ -98572,8 +98890,8 @@ function enhanceTimelineView(root, options = {}) {
       start.value = String(state.range.start);
     if (end)
       end.value = String(state.range.end);
-    if (compare3)
-      compare3.value = state.compareMode;
+    if (compare4)
+      compare4.value = state.compareMode;
     if (compareFrame)
       compareFrame.value = String(state.compareFrame);
     const stateText = exactText3(frame.state, format);
@@ -98584,7 +98902,7 @@ function enhanceTimelineView(root, options = {}) {
     if (exactTextOutput)
       exactTextOutput.textContent = formatOutputText(frame.content, format);
     const identityText = matched.length === 0 ? "no semantic objects matched from the previous frame" : `${matched.length} semantic object${matched.length === 1 ? "" : "s"} matched from the previous frame`;
-    const mismatches = transitionRecords.filter((record) => record.status !== "matched");
+    const mismatches = transitionRecords.filter((record2) => record2.status !== "matched");
     const changeText = state.transition.mode === "crossfade" && !state.reducedMotion ? `declared ${state.transition.properties.join(", ") || "opacity"} transition; exact values remain discrete` : "discrete exact values";
     const markerLabel = timeline.markers?.find((entry2) => entry2.frame === state.frame)?.label;
     if (marker2)
@@ -98592,7 +98910,7 @@ function enhanceTimelineView(root, options = {}) {
     if (status)
       status.textContent = `Frame ${state.frame} of ${state.length}${markerLabel ? ` · marker ${markerLabel}` : ""} · exact state ${stateText} · ${identityText} · ${mismatches.length} transition mismatch${mismatches.length === 1 ? "" : "es"} · ${state.recording.length} recorded · ${changeText}${state.playing ? " · playing" : " · paused"}`;
     if (diagnostics) {
-      diagnostics.textContent = transitionRecords.length ? transitionRecords.map((record) => `${record.id}: ${record.status.replaceAll("_", " ")}${record.previousKind || record.currentKind ? ` (${record.previousKind || "none"} → ${record.currentKind || "none"})` : ""}`).join(`
+      diagnostics.textContent = transitionRecords.length ? transitionRecords.map((record2) => `${record2.id}: ${record2.status.replaceAll("_", " ")}${record2.previousKind || record2.currentKind ? ` (${record2.previousKind || "none"} → ${record2.currentKind || "none"})` : ""}`).join(`
 `) : "No previous frame is available.";
     }
     if (transitioned && currentRoot?.animate && state.transition.mode === "crossfade" && !state.reducedMotion && comparisonIndices.size === 0) {
@@ -100504,5 +100822,5 @@ var STATIC_SYSTEM_CATALOG = Object.freeze([
 ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
 export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, outputValueKind, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, formatOutputText, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateObserved, parseAndEvaluateObservedAsync, lintRix, createGeometryAuthoringProgram, mountOutputWidgets };
 
-//# debugId=E81C3148AEE4105864756E2164756E21
-//# sourceMappingURL=chunk-s2ykmt4n.js.map
+//# debugId=9ED46027C68F53F064756E2164756E21
+//# sourceMappingURL=chunk-9syxftba.js.map

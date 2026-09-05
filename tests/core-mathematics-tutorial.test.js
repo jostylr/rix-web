@@ -22,5 +22,12 @@ for (const [mode,evaluate] of [["sync",parseAndEvaluate],["async",parseAndEvalua
         expect(results[6].values[0].value).toBe(1n);
         expect(results[6].values[1]).toBeNull();
         expect(results[7].values[0].value).toBe(1n);
+        expect(results[8].values[0].value).toBe(1n);
+        expect(results[8].values[1].value).toBe("desc");
+        expect(results[8].values[2]).toBeNull();
+        expect(results[9].values[0]).toBeNull();
+        expect(results[10].values[0].value).toBe("unresolved");
+        expect(results[10].values[1]).toBeNull();
+        expect(results[10].values[2]).toBe(UNDECIDED);
     });
 }
