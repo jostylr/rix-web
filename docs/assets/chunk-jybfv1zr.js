@@ -48,7 +48,7 @@ import {
   parseAndEvaluateObservedAsync,
   renderOutputHtml,
   tokenize
-} from "./chunk-azrpqxc4.js";
+} from "./chunk-d65j3vgz.js";
 
 // standard-profile.rix
 var standard_profile_default = `## RiX-Web standard calculator profile.
@@ -3710,47 +3710,13 @@ CalculusRequireExpression(value, label ?= "value") ->
 CalculusExactScalar(value) -> (value ? :Integer) || (value ? :Rational);
 CalculusOperand(value) -> CalculusIsExpression(value) || CalculusExactScalar(value);
 
-CalculusExpression(kind, fields) -> {;
-    value = {=
-        valueKind=:calculusExpression,
-        schema="rix.calculus.expression@1",
-        kind=kind
-    }.Merge(fields);
-    value.__type = "CalculusExpression";
-    value._type = "calculus_expression";
-    value._proto = {=
-        Record=(self)->self,
-        Kind=(self)->self[:kind],
-        Operands=(self)->self.Has("operands") ?: self[:operands] ?_ [],
-        SemanticId=(self)->self.Has("semanticId") ?: self[:semanticId] ?_ _
-    };
-    .ImmutableValue(value);
-};
-
-CalculusVariable(name) -> {;
-    name ? :String ?: _ ?_ .Error("Calculus variable name must be a string or colon-string");
-    CalculusExpression(:variable, {= name=name });
-};
-
-CalculusConstant(value) -> CalculusExactScalar(value)
-    ?: CalculusExpression(:constant, {= value=value })
-    ?_ .Error("Calculus constants currently require an exact Integer or Rational");
-
+CalculusVariable(name) -> .ExpressionVariable(name);
+CalculusConstant(value) -> .ExpressionConstant(value);
 CalculusPromote(value) -> CalculusIsExpression(value) ?: value ?_ CalculusConstant(value);
-
-CalculusOperator(operation, operands) -> CalculusExpression(:operator, {=
-    operation=operation,
-    operands=operands.Map((value)->CalculusPromote(value))
-});
-
+CalculusOperator(operation, operands) -> .ExpressionOperation(operation,operands);
 CalculusBinary(operation, left, right) -> CalculusOperator(operation, [left,right]);
 CalculusNegate(value) -> CalculusOperator(:negate, [value]);
-
-CalculusApplication(semanticId, name, arguments) -> CalculusExpression(:apply, {=
-    semanticId=semanticId,
-    name=name,
-    arguments=arguments.Map((value)->CalculusPromote(value))
-});
+CalculusApplication(semanticId, name, arguments) -> .ExpressionApply(semanticId,name,arguments);
 
 CalculusApply(function, argument) -> {;
     exact = function ? :MathematicalFunction
@@ -4750,14 +4716,7 @@ CalculusRegister(calculusBuiltinComplexLog,{=
     defaultTraits=[],
     validate=(value)->value.Has("schema") && value[:schema] == "rix.calculus.expression@1",
     proto={= },
-    installs={=
-        ADD=[{= name=:CalculusAdd, priority=250, prep=(left,right)->CalculusOperand(left)&&CalculusOperand(right)&&(CalculusIsExpression(left)||CalculusIsExpression(right)), impl=(left,right)->CalculusBinary(:add,left,right) }],
-        SUB=[{= name=:CalculusSub, priority=250, prep=(left,right)->CalculusOperand(left)&&CalculusOperand(right)&&(CalculusIsExpression(left)||CalculusIsExpression(right)), impl=(left,right)->CalculusBinary(:subtract,left,right) }],
-        MUL=[{= name=:CalculusMul, priority=250, prep=(left,right)->CalculusOperand(left)&&CalculusOperand(right)&&(CalculusIsExpression(left)||CalculusIsExpression(right)), impl=(left,right)->CalculusBinary(:multiply,left,right) }],
-        DIV=[{= name=:CalculusDiv, priority=250, prep=(left,right)->CalculusOperand(left)&&CalculusOperand(right)&&(CalculusIsExpression(left)||CalculusIsExpression(right)), impl=(left,right)->CalculusBinary(:divide,left,right) }],
-        POW=[{= name=:CalculusPow, priority=250, prep=(left,right)->CalculusOperand(left)&&CalculusOperand(right)&&(CalculusIsExpression(left)||CalculusIsExpression(right)), impl=(left,right)->CalculusBinary(:power,left,right) }],
-        NEG=[{= name=:CalculusNeg, priority=250, prep=(value)->CalculusIsExpression(value), impl=CalculusNegate }]
-    }
+    installs={= }
 });
 .TypeInstall(:CalculusExpression);
 
@@ -4841,22 +4800,29 @@ defaultEnabled: false
 **/
 
 CasOption(options, key, fallback ?= _) -> options.Has(key) ?: options[key] ?_ fallback;
-CasRequireOptions(value, label) -> value ? :Map ?: value ?_ .Error(@"@{label} must be a Map");
+CasRequireOptions(value, label) ?!- [
+    value ? :Map ?_> .Error(@"@{label} must be a Map")
+] -> value;
 CasIsExpression(value) -> .calculus.IsExpression(value);
 CasVariableName(variable) ->
     variable ? :String
       ?: variable
-      ?_ (CasIsExpression(variable) && variable[:kind]==:variable
-           ?: variable[:name]
-           ?_ .Error("CAS variable must be a string or Calculus variable"));
+      ?_ {;
+          CasIsExpression(@variable) && @variable[:kind]==:variable
+            ?_> .Error("CAS variable must be a string or Calculus variable");
+          @variable[:name];
+      };
 CasExpression(value) ->
     CasIsExpression(value)
       ?: value
-      ?_ ((value ? :Integer)||(value ? :Rational)
-           ?: .calculus.Constant(value)
-           ?_ .Error("CAS expected a Calculus expression or exact scalar"));
-CasConstantValue(expression) ->
-    CasIsExpression(expression) && expression[:kind]==:constant ?: expression[:value] ?_ _;
+      ?_ {;
+          (@value ? :Integer)||(@value ? :Rational)
+            ?_> .Error("CAS expected a Calculus expression or exact scalar");
+          .calculus.Constant(@value);
+      };
+CasConstantValue(expression) ?!- [
+    CasIsExpression(expression) && expression[:kind]==:constant ?_> _
+] -> expression[:value];
 CasExpressionKey(expression) -> .calculus.StructuralKey(expression);
 CasAppend(left,right) -> right.Reduce((result,value)->result.Push(value),left);
 
@@ -4877,9 +4843,7 @@ CasSimplify(value) -> {;
     expression = CasExpression(value);
     checked = .calculus.SimplifyResult(expression);
     replay = .calculus.CheckSimplification(checked);
-    replay[:accepted]==1
-      ?: _
-      ?_ .Error("CAS rejected an internally produced simplification");
+    replay[:accepted]==1 ?_> .Error("CAS rejected an internally produced simplification");
     CasRewrite(:simplify,expression,checked[:expression],[{=
         rule=:checkedCalculusSimplification,
         checker=checked[:checker],
@@ -4889,13 +4853,10 @@ CasSimplify(value) -> {;
 
 CasCheckSimplification(candidate) -> {;
     valid = (candidate ? :Map) && candidate[:schema]=="rix.cas.rewrite@1" && candidate[:operation]==:simplify;
-    valid
-      ?: {;
-          recomputed = CasSimplify(@candidate[:source]);
-          accepted = CasExpressionKey(recomputed[:expression])==CasExpressionKey(@candidate[:expression]);
-          .ImmutableValue({= accepted=accepted,certified=accepted ?: 1 ?_ _,reason=accepted ?: _ ?_ :simplificationClaimMismatch });
-      }
-      ?_ .ImmutableValue({= accepted=_,certified=_,reason=:malformedCasSimplification });
+    valid ?_> .ImmutableValue({= accepted=_,certified=_,reason=:malformedCasSimplification });
+    recomputed = CasSimplify(candidate[:source]);
+    accepted = CasExpressionKey(recomputed[:expression])==CasExpressionKey(candidate[:expression]);
+    .ImmutableValue({= accepted=accepted,certified=accepted ?: 1 ?_ _,reason=accepted ?: _ ?_ :simplificationClaimMismatch });
 };
 
 CasPolynomial(value, variable) -> {;
@@ -4905,10 +4866,11 @@ CasPolynomial(value, variable) -> {;
       ?_ .poly(.calculus.ToSpec(CasExpression(value),[name]),name);
 };
 
-CasPolynomialExpression(polynomial) -> {;
-    exact = polynomial ? :Polynomial ?: polynomial ?_ .Error("CAS expected a Polynomial");
-    variable = .calculus.Variable(exact.Variable());
-    coefficients = exact.Coefficients(:ascending);
+CasPolynomialExpression(polynomial) ?!- [
+    polynomial ? :Polynomial ?_> .Error("CAS expected a Polynomial")
+] -> {;
+    variable = .calculus.Variable(polynomial.Variable());
+    coefficients = polynomial.Coefficients(:ascending);
     coefficients.Reduce((sum,coefficient,index)->
         sum+coefficient*(variable^(index-1)),
         .calculus.Constant(0)
@@ -4989,83 +4951,74 @@ CasAffineState(valid, slope ?= 0, intercept ?= 0) -> {= valid=valid,slope=slope,
 CasAffine(expression, variable) -> {;
     exact = CasExpression(expression);
     kind = exact[:kind];
-    result := CasAffineState(_);
-    kind==:constant ?: {; @result ~= CasAffineState(1,0,@exact[:value]); } ?_ _;
-    kind==:variable && exact[:name]==variable ?: {; @result ~= CasAffineState(1,1,0); } ?_ _;
-    kind==:operator
-      ?: {;
+    kind==:constant ?: CasAffineState(1,0,exact[:value])
+      ?_ kind==:variable ?: (exact[:name]==variable ?: CasAffineState(1,1,0) ?_ CasAffineState(_))
+      ?_ {;
+          @kind==:operator ?_> CasAffineState(_);
           operation = @exact[:operation];
           operands = @exact[:operands];
+          left = CasAffine(operands[1],@variable);
+          left[:valid] ?_> CasAffineState(_);
           operation==:negate
-            ?: {;
-                inner = CasAffine(@operands[1],@variable);
-                inner[:valid] ?: {; @result ~= CasAffineState(1,-@inner[:slope],-@inner[:intercept]); } ?_ _;
-            }
+            ?: CasAffineState(1,-left[:slope],-left[:intercept])
             ?_ {;
-                left = CasAffine(@operands[1],@variable);
                 right = CasAffine(@operands[2],@variable);
-                (@operation==:add || @operation==:subtract) && left[:valid] && right[:valid]
+                right[:valid] ?_> CasAffineState(_);
+                @operation==:add
+                  ?: CasAffineState(1,@left[:slope]+right[:slope],@left[:intercept]+right[:intercept])
+                  ?_ @operation==:subtract
+                  ?: CasAffineState(1,@left[:slope]-right[:slope],@left[:intercept]-right[:intercept])
+                  ?_ @operation==:multiply
                   ?: {;
-                      @result ~= @operation==:add
-                        ?: CasAffineState(1,@left[:slope]+@right[:slope],@left[:intercept]+@right[:intercept])
-                        ?_ CasAffineState(1,@left[:slope]-@right[:slope],@left[:intercept]-@right[:intercept]);
-                  }
-                  ?_ _;
-                @result[:valid]==_ && @operation==:multiply && left[:valid] && right[:valid] && (left[:slope]==0 || right[:slope]==0)
-                  ?: {;
-                      @result ~= @left[:slope]==0
+                      @left[:slope]==0 || @right[:slope]==0 ?_> CasAffineState(_);
+                      @left[:slope]==0
                         ?: CasAffineState(1,@left[:intercept]*@right[:slope],@left[:intercept]*@right[:intercept])
                         ?_ CasAffineState(1,@right[:intercept]*@left[:slope],@right[:intercept]*@left[:intercept]);
                   }
-                  ?_ _;
-                @result[:valid]==_ && @operation==:divide && left[:valid] && right[:valid] && right[:slope]==0 && right[:intercept]!=0
-                  ?: {; @result ~= CasAffineState(1,@left[:slope]/@right[:intercept],@left[:intercept]/@right[:intercept]); }
-                  ?_ _;
+                  ?_ @operation==:divide
+                  ?: {;
+                      @right[:slope]==0 && @right[:intercept]!=0 ?_> CasAffineState(_);
+                      CasAffineState(1,@left[:slope]/@right[:intercept],@left[:intercept]/@right[:intercept]);
+                  }
+                  ?_ CasAffineState(_);
             };
-      }
-      ?_ _;
-    result;
+      };
 };
 
 CasIntegrationState(status, expression ?= _, obligations ?= [], rules ?= [], reason ?= _) -> {=
     status=status,expression=expression,obligations=obligations,rules=rules,reason=reason
 };
 CasUnsupported(reason) -> CasIntegrationState(:unsupported,_,[],[],reason);
-CasCombineIntegral(operation,left,right) -> {;
+CasCombineIntegral(operation,left,right) ?!- [
     left[:status]==:complete && right[:status]==:complete
-      ?: CasIntegrationState(
+      ?_> CasUnsupported(operation==:add ?: :unsupportedSumTerm ?_ :unsupportedDifferenceTerm)
+] -> CasIntegrationState(
           :complete,
           operation==:add ?: left[:expression]+right[:expression] ?_ left[:expression]-right[:expression],
           CasAppend(left[:obligations],right[:obligations]),
           CasAppend(left[:rules],right[:rules]).Push({= rule=operation })
-      )
-      ?_ CasUnsupported(operation==:add ?: :unsupportedSumTerm ?_ :unsupportedDifferenceTerm);
-};
+      );
 CasPositiveObligation(expression, rule) -> .calculus.Obligation(:domain,:positive,expression,{= reason=rule });
 CasNonzeroObligation(expression, rule) -> .calculus.Obligation(:domain,:nonzero,expression,{= reason=rule });
 CasLogAbs(expression) -> .calculus.Log()(.calculus.Abs()(expression));
 CasApplySemantic(expression, semanticId) ->
     expression[:kind]==:apply && expression[:semanticId]==semanticId;
-CasPowerExponent(expression) ->
+CasPowerExponent(expression) ?!- [
     expression[:kind]==:operator && expression[:operation]==:power
-      ?: CasConstantValue(expression[:operands][2])
-      ?_ _;
-CasPurePowerDegree(expression, variable) -> {;
-    result := _;
-    expression[:kind]==:variable && expression[:name]==variable
-      ?: {; @result ~= 1; }
-      ?_ _;
-    result==_ && expression[:kind]==:operator && expression[:operation]==:power
-      ?: {;
+      ?_> _
+] -> CasConstantValue(expression[:operands][2]);
+CasPurePowerDegree(expression, variable) ->
+    (expression[:kind]==:variable && expression[:name]==variable)
+      ?: 1
+      ?_ {;
+          @expression[:kind]==:operator && @expression[:operation]==:power ?_> _;
           exponent = CasConstantValue(@expression[:operands][2]);
+          exponent ? :Integer ?_> _;
+          exponent>=0 ?_> _;
           base = @expression[:operands][1];
-          exponent!=_ && (exponent ? :Integer) && exponent>=0 && base[:kind]==:variable && base[:name]==@variable
-            ?: {; @result ~= @exponent; }
-            ?_ _;
-      }
-      ?_ _;
-    result;
-};
+          base[:kind]==:variable && base[:name]==@variable ?_> _;
+          exponent;
+      };
 
 CasIntegrateExpPower(variableExpression, degree, exponential, slope) ->
     degree==0
@@ -5073,23 +5026,76 @@ CasIntegrateExpPower(variableExpression, degree, exponential, slope) ->
       ?_ (variableExpression^degree)*exponential/slope
           -(degree/slope)*CasIntegrateExpPower(variableExpression,degree-1,exponential,slope);
 
+CasTrigKind(expression) ->
+    CasApplySemantic(expression,"rix.function.sin@1") ?: :sin
+      ?_ CasApplySemantic(expression,"rix.function.cos@1") ?: :cos ?_ _;
+
+CasTrigPowerPrimitive(kind, argument, degree) -> {;
+    sine = .calculus.Sin()(argument);
+    cosine = .calculus.Cos()(argument);
+    degree==0 ?: argument
+      ?_ degree==1 ?: (kind==:sin ?: -cosine ?_ sine)
+      ?_ (kind==:sin
+           ?: -(sine^(degree-1))*cosine/degree
+           ?_ (cosine^(degree-1))*sine/degree)
+          +((degree-1)/degree)*CasTrigPowerPrimitive(kind,argument,degree-2);
+};
+
+CasIntegrateTrigPower(base, exponent, variable) ?!- [
+    kind = CasTrigKind(base) ?_> CasUnsupported(:unsupportedPower),
+    exponent ? :Integer ?_> CasUnsupported(:unsupportedTrigonometricExponent),
+    exponent >= 0 ?_> CasUnsupported(:unsupportedTrigonometricExponent),
+    exponent <= 8 ?_> CasUnsupported(:trigonometricDegreeBudgetExceeded),
+    argument = base[:arguments][1],
+    affine = CasAffine(argument,variable),
+    affine[:valid] && affine[:slope]!=0 ?_> CasUnsupported(:nonAffineTrigonometricArgument)
+] -> CasIntegrationState(:complete,
+    CasTrigPowerPrimitive(kind,argument,exponent)/affine[:slope],[],
+    [{= rule=:trigonometricPowerReduction,kind=kind,degree=exponent,
+        slope=affine[:slope],recurrenceStep=2,maxDegree=8 }]);
+
+CasHarmonicPrimitive(kind, slope, phase, variable) -> {;
+    x = .calculus.Variable(variable);
+    argument = slope*x+phase;
+    slope==0
+      ?: x*(kind==:sin ?: .calculus.Sin()(.calculus.Constant(phase)) ?_ .calculus.Cos()(.calculus.Constant(phase)))
+      ?_ (kind==:sin ?: -.calculus.Cos()(argument)/slope ?_ .calculus.Sin()(argument)/slope);
+};
+
+CasIntegrateTrigProduct(left, right, variable) ?!- [
+    leftKind = CasTrigKind(left) ?_> CasUnsupported(:unsupportedProduct),
+    rightKind = CasTrigKind(right) ?_> CasUnsupported(:unsupportedProduct),
+    a = CasAffine(left[:arguments][1],variable),
+    b = CasAffine(right[:arguments][1],variable),
+    a[:valid] && b[:valid] ?_> CasUnsupported(:nonAffineTrigonometricArgument)
+] -> {;
+    kind = leftKind==rightKind ?: :cos ?_ :sin;
+    sum = CasHarmonicPrimitive(kind,a[:slope]+b[:slope],a[:intercept]+b[:intercept],variable);
+    difference = CasHarmonicPrimitive(kind,a[:slope]-b[:slope],a[:intercept]-b[:intercept],variable);
+    primitive = (leftKind==:sin && rightKind==:sin) ?: (difference-sum)/2
+      ?_ (leftKind==:cos && rightKind==:sin) ?: (sum-difference)/2
+      ?_ (sum+difference)/2;
+    CasIntegrationState(:complete,primitive,[],[{=
+        rule=:trigonometricProductToSum,leftKind=leftKind,rightKind=rightKind,
+        leftAffine=a,rightAffine=b,zeroFrequencyHandled=1
+    }]);
+};
+
 CasIntegrateProduct(left, right, variable) -> {;
     variableExpression = .calculus.Variable(variable);
     result := _;
     CasIndependent(left,variable)
       ?: {;
           integrated = CasIntegrateNode(@right,@variable);
-          @result ~= integrated[:status]==:complete
-            ?: CasIntegrationState(:complete,@left*integrated[:expression],integrated[:obligations],integrated[:rules].Push({= rule=:constantFactor }))
-            ?_ integrated;
+          integrated[:status]==:complete ?_> integrated;
+          @result ~= CasIntegrationState(:complete,@left*integrated[:expression],integrated[:obligations],integrated[:rules].Push({= rule=:constantFactor }));
       }
       ?_ _;
     result==_ && CasIndependent(right,variable)
       ?: {;
           integrated = CasIntegrateNode(@left,@variable);
-          @result ~= integrated[:status]==:complete
-            ?: CasIntegrationState(:complete,@right*integrated[:expression],integrated[:obligations],integrated[:rules].Push({= rule=:constantFactor }))
-            ?_ integrated;
+          integrated[:status]==:complete ?_> integrated;
+          @result ~= CasIntegrationState(:complete,@right*integrated[:expression],integrated[:obligations],integrated[:rules].Push({= rule=:constantFactor }));
       }
       ?_ _;
     leftDegree = CasPurePowerDegree(left,variable);
@@ -5097,42 +5103,35 @@ CasIntegrateProduct(left, right, variable) -> {;
     result==_ && leftDegree!=_ && CasApplySemantic(right,"rix.function.exp@1")
       ?: {;
           affine = CasAffine(@right[:arguments][1],@variable);
-          @result ~= affine[:valid] && affine[:slope]!=0
-            ?: CasIntegrationState(:complete,CasIntegrateExpPower(@variableExpression,@leftDegree,@right,affine[:slope]),[],[{= rule=:integrationByPartsExpPower,degree=@leftDegree,slope=affine[:slope] }])
-            ?_ CasUnsupported(:nonAffineExponentialArgument);
+          affine[:valid] && affine[:slope]!=0 ?_> CasUnsupported(:nonAffineExponentialArgument);
+          @result ~= CasIntegrationState(:complete,CasIntegrateExpPower(@variableExpression,@leftDegree,@right,affine[:slope]),[],[{= rule=:integrationByPartsExpPower,degree=@leftDegree,slope=affine[:slope] }]);
       }
       ?_ _;
     result==_ && rightDegree!=_ && CasApplySemantic(left,"rix.function.exp@1")
       ?: {;
           affine = CasAffine(@left[:arguments][1],@variable);
-          @result ~= affine[:valid] && affine[:slope]!=0
-            ?: CasIntegrationState(:complete,CasIntegrateExpPower(@variableExpression,@rightDegree,@left,affine[:slope]),[],[{= rule=:integrationByPartsExpPower,degree=@rightDegree,slope=affine[:slope] }])
-            ?_ CasUnsupported(:nonAffineExponentialArgument);
+          affine[:valid] && affine[:slope]!=0 ?_> CasUnsupported(:nonAffineExponentialArgument);
+          @result ~= CasIntegrationState(:complete,CasIntegrateExpPower(@variableExpression,@rightDegree,@left,affine[:slope]),[],[{= rule=:integrationByPartsExpPower,degree=@rightDegree,slope=affine[:slope] }]);
       }
       ?_ _;
-    result==_ ?: CasUnsupported(:unsupportedProduct) ?_ result;
+    result==_ ?: CasIntegrateTrigProduct(left,right,variable) ?_ result;
 };
 
-CasIntegrateQuotient(numerator, denominator, variable) -> {;
-    CasIndependent(numerator,variable)
-      ?: {;
-          affine = CasAffine(@denominator,@variable);
-          affine[:valid] && affine[:slope]!=0
-            ?: CasIntegrationState(
+CasIntegrateQuotient(numerator, denominator, variable) ?!- [
+    CasIndependent(numerator,variable) ?_> CasUnsupported(:unsupportedQuotient),
+    affine = CasAffine(denominator,variable),
+    affine[:valid] && affine[:slope]!=0 ?_> CasUnsupported(:unsupportedQuotient)
+] -> CasIntegrationState(
                 :complete,
-                @numerator*CasLogAbs(@denominator)/affine[:slope],
-                [CasNonzeroObligation(@denominator,:reciprocalDomain)],
+                numerator*CasLogAbs(denominator)/affine[:slope],
+                [CasNonzeroObligation(denominator,:reciprocalDomain)],
                 [{= rule=:affineReciprocalSubstitution,slope=affine[:slope] }]
-            )
-            ?_ CasUnsupported(:unsupportedQuotient);
-      }
-      ?_ CasUnsupported(:unsupportedQuotient);
-};
+            );
 
 CasIntegratePower(base, exponentExpression, variable) -> {;
     exponent = CasConstantValue(exponentExpression);
     affine = CasAffine(base,variable);
-    affine[:valid] && affine[:slope]!=0 && exponent!=_ && (exponent ? :Integer)
+    (affine[:valid] && affine[:slope]!=0 && exponent!=_ && (exponent ? :Integer))
       ?: (exponent==-1
            ?: CasIntegrationState(
                :complete,CasLogAbs(base)/affine[:slope],
@@ -5143,38 +5142,42 @@ CasIntegratePower(base, exponentExpression, variable) -> {;
                :complete,(base^(exponent+1))/(affine[:slope]*(exponent+1)),[],
                [{= rule=:affinePowerSubstitution,exponent=exponent,slope=affine[:slope] }]
            ))
-      ?_ CasUnsupported(:unsupportedPower);
+      ?_ CasIntegrateTrigPower(base,exponent,variable);
 };
 
 CasIntegrateApplication(expression, variable) -> {;
     argument = expression[:arguments][1];
     affine = CasAffine(argument,variable);
     CasApplySemantic(expression,"rix.function.exp@1")
-      ?: (affine[:valid] && affine[:slope]!=0
-           ?: CasIntegrationState(:complete,expression/affine[:slope],[],[{= rule=:affineExponentialSubstitution,slope=affine[:slope] }])
-           ?_ CasUnsupported(:nonAffineExponentialArgument))
+      ?: {;
+          @affine[:valid] && @affine[:slope]!=0 ?_> CasUnsupported(:nonAffineExponentialArgument);
+          CasIntegrationState(:complete,@expression/@affine[:slope],[],[{= rule=:affineExponentialSubstitution,slope=@affine[:slope] }]);
+      }
       ?_ CasApplySemantic(expression,"rix.function.log.real-principal@1")
-      ?: (affine[:valid] && affine[:slope]!=0
-           ?: CasIntegrationState(
-               :complete,(argument*expression-argument)/affine[:slope],
-               [CasPositiveObligation(argument,:realLogBranch)],
-               [{= rule=:integrationByPartsLog,slope=affine[:slope] }]
-           )
-           ?_ CasUnsupported(:nonAffineLogarithmArgument))
+      ?: {;
+          @affine[:valid] && @affine[:slope]!=0 ?_> CasUnsupported(:nonAffineLogarithmArgument);
+          CasIntegrationState(
+              :complete,(@argument*@expression-@argument)/@affine[:slope],
+              [CasPositiveObligation(@argument,:realLogBranch)],
+              [{= rule=:integrationByPartsLog,slope=@affine[:slope] }]
+          );
+      }
       ?_ CasApplySemantic(expression,"rix.function.sin@1")
-      ?: (affine[:valid] && affine[:slope]!=0
-           ?: CasIntegrationState(
-               :complete,-.calculus.Cos()(argument)/affine[:slope],[],
-               [{= rule=:affineSineSubstitution,slope=affine[:slope] }]
-           )
-           ?_ CasUnsupported(:nonAffineSineArgument))
+      ?: {;
+          @affine[:valid] && @affine[:slope]!=0 ?_> CasUnsupported(:nonAffineSineArgument);
+          CasIntegrationState(
+              :complete,-.calculus.Cos()(@argument)/@affine[:slope],[],
+              [{= rule=:affineSineSubstitution,slope=@affine[:slope] }]
+          );
+      }
       ?_ CasApplySemantic(expression,"rix.function.cos@1")
-      ?: (affine[:valid] && affine[:slope]!=0
-           ?: CasIntegrationState(
-               :complete,.calculus.Sin()(argument)/affine[:slope],[],
-               [{= rule=:affineCosineSubstitution,slope=affine[:slope] }]
-           )
-           ?_ CasUnsupported(:nonAffineCosineArgument))
+      ?: {;
+          @affine[:valid] && @affine[:slope]!=0 ?_> CasUnsupported(:nonAffineCosineArgument);
+          CasIntegrationState(
+              :complete,.calculus.Sin()(@argument)/@affine[:slope],[],
+              [{= rule=:affineCosineSubstitution,slope=@affine[:slope] }]
+          );
+      }
       ?_ CasUnsupported(:unsupportedSemanticFunction);
 };
 
@@ -5195,9 +5198,8 @@ CasIntegrateNode(expression, variable) -> {;
           operation==:negate
             ?: {;
                 inner = CasIntegrateNode(@operands[1],@variable);
-                @result ~= inner[:status]==:complete
-                  ?: CasIntegrationState(:complete,-inner[:expression],inner[:obligations],inner[:rules].Push({= rule=:negation }))
-                  ?_ inner;
+                inner[:status]==:complete ?_> inner;
+                @result ~= CasIntegrationState(:complete,-inner[:expression],inner[:obligations],inner[:rules].Push({= rule=:negation }));
             }
             ?_ (operation==:add || operation==:subtract)
             ?: {; @result ~= CasCombineIntegral(@operation,CasIntegrateNode(@operands[1],@variable),CasIntegrateNode(@operands[2],@variable)); }
@@ -5231,49 +5233,44 @@ CasIntegratePolynomial(polynomial) -> {;
 CasCoefficient(coefficients, index) ->
     index<=coefficients.Len() ?: coefficients[index] ?_ 0;
 
-CasIntegrateQuadraticResidual(decomposition) -> {;
-    residual = decomposition[:residual];
-    numerator = residual[:numerator];
-    denominator = residual[:denominator];
+CasIntegrateQuadraticResidual(decomposition) ?!- [
+    residual = decomposition[:residual],
+    numerator = residual[:numerator],
+    denominator = residual[:denominator],
     numerator.Degree()<=1 && denominator.Degree()==2
-      ?: {;
-          numeratorCoefficients = @numerator.Coefficients(:ascending);
-          denominatorCoefficients = @denominator.Coefficients(:ascending);
-          n = CasCoefficient(numeratorCoefficients,1);
-          m = CasCoefficient(numeratorCoefficients,2);
-          c = CasCoefficient(denominatorCoefficients,1);
-          b = CasCoefficient(denominatorCoefficients,2);
-          a = CasCoefficient(denominatorCoefficients,3);
-          discriminantGap = 4*a*c-b^2;
-          a!=0 && discriminantGap>0
-            ?: {;
-                x = .calculus.Variable(@decomposition[:variable]);
-                denominatorExpression = CasPolynomialExpression(@denominator);
-                sqrtGap = .calculus.Sqrt()(.calculus.Constant(@discriminantGap));
-                alpha = @m/(2*@a);
-                beta = @n-alpha*@b;
-                logarithm = alpha==0
-                  ?: .calculus.Constant(0)
-                  ?_ alpha*CasLogAbs(denominatorExpression);
-                angle = (2*@a*x+@b)/sqrtGap;
-                arctangent = beta==0
-                  ?: .calculus.Constant(0)
-                  ?_ (2*beta/sqrtGap)*.calculus.Atan()(angle);
-                CasIntegrationState(
-                    :complete,
-                    logarithm+arctangent,
-                    [],
-                    [{=
-                        rule=:irreducibleQuadraticPartialFraction,
-                        coefficients={= a=@a,b=@b,c=@c,m=@m,n=@n },
-                        discriminantGap=@discriminantGap,
-                        identity=:logDerivativePlusCompletedSquareAtan
-                    }]
-                );
-            }
-            ?_ CasUnsupported(:quadraticDenominatorHasRealRootsOrDegenerates);
-      }
-      ?_ CasUnsupported(:nonlinearResidualPartialFraction);
+      ?_> CasUnsupported(:nonlinearResidualPartialFraction),
+    numeratorCoefficients = numerator.Coefficients(:ascending),
+    denominatorCoefficients = denominator.Coefficients(:ascending),
+    n = CasCoefficient(numeratorCoefficients,1),
+    m = CasCoefficient(numeratorCoefficients,2),
+    c = CasCoefficient(denominatorCoefficients,1),
+    b = CasCoefficient(denominatorCoefficients,2),
+    a = CasCoefficient(denominatorCoefficients,3),
+    discriminantGap = 4*a*c-b^2,
+    a!=0 && discriminantGap>0
+      ?_> CasUnsupported(:quadraticDenominatorHasRealRootsOrDegenerates)
+] -> {;
+    x = .calculus.Variable(decomposition[:variable]);
+    denominatorExpression = CasPolynomialExpression(denominator);
+    sqrtGap = .calculus.Sqrt()(.calculus.Constant(discriminantGap));
+    alpha = m/(2*a);
+    beta = n-alpha*b;
+    logarithm = alpha==0
+      ?: .calculus.Constant(0)
+      ?_ alpha*CasLogAbs(denominatorExpression);
+    angle = (2*a*x+b)/sqrtGap;
+    arctangent = beta==0
+      ?: .calculus.Constant(0)
+      ?_ (2*beta/sqrtGap)*.calculus.Atan()(angle);
+    CasIntegrationState(
+        :complete,logarithm+arctangent,[],
+        [{=
+            rule=:irreducibleQuadraticPartialFraction,
+            coefficients={= a=a,b=b,c=c,m=m,n=n },
+            discriminantGap=discriminantGap,
+            identity=:logDerivativePlusCompletedSquareAtan
+        }]
+    );
 };
 
 CasIntegratePartialFractions(rationalFunction) -> {;
@@ -5304,16 +5301,15 @@ CasIntegratePartialFractions(rationalFunction) -> {;
       ?_ {;
           polynomialState = CasIntegratePolynomial(@decomposition[:polynomialPart]);
           residualState = CasIntegrateQuadraticResidual(@decomposition);
-          residualState[:status]==:complete
-            ?: CasIntegrationState(
+          residualState[:status]==:complete ?_> residualState;
+          CasIntegrationState(
                 :complete,
                 polynomialState[:expression]+residualState[:expression],
                 CasAppend(polynomialState[:obligations],residualState[:obligations]),
                 CasAppend(polynomialState[:rules],residualState[:rules]).Push({=
                     rule=:exactPartialFractionDecomposition,evidence=@decomposition
                 })
-            )
-            ?_ residualState;
+            );
       };
 };
 
@@ -5336,14 +5332,16 @@ CasIntegralResult(source, variable, state) -> {;
 
 CasIntegrate(value, variable ?= :x, options ?= {= }) -> {;
     options = CasRequireOptions(options,"CAS integration options");
-    name = value ? :Polynomial
+    /* Parenthesize type predicates in a conditional chain: otherwise the next
+       ? :Type can test the preceding conditional's result instead of value. */
+    name = (value ? :Polynomial)
       ?: value.Variable()
-      ?_ value ? :RationalFunction
+      ?_ (value ? :RationalFunction)
       ?: value.variable
       ?_ CasVariableName(variable);
-    state = value ? :Polynomial
+    state = (value ? :Polynomial)
       ?: CasIntegratePolynomial(value)
-      ?_ value ? :RationalFunction
+      ?_ (value ? :RationalFunction)
       ?: CasIntegratePartialFractions(value)
       ?_ CasIntegrateNode(CasExpression(value),name);
     CasIntegralResult(value,name,state);
@@ -5351,23 +5349,21 @@ CasIntegrate(value, variable ?= :x, options ?= {= }) -> {;
 
 CasCheckIntegral(candidate) -> {;
     valid = (candidate ? :Map) && candidate[:schema]=="rix.cas.integral@1";
-    valid
-      ?: {;
-          recomputed = CasIntegrate(@candidate[:source],@candidate[:variable]);
-          statusMatches = recomputed[:status]==@candidate[:status];
-          expressionMatches = recomputed[:status]==:complete
-            ?: CasExpressionKey(recomputed[:antiderivative])==CasExpressionKey(@candidate[:antiderivative])
-            ?_ recomputed[:reason]==@candidate[:reason];
-          accepted = statusMatches && expressionMatches;
-          .ImmutableValue({= accepted=accepted,certified=accepted ?: 1 ?_ _,reason=accepted ?: _ ?_ :integralClaimMismatch,recomputed=recomputed });
-      }
-      ?_ .ImmutableValue({= accepted=_,certified=_,reason=:malformedCasIntegral });
+    valid ?_> .ImmutableValue({= accepted=_,certified=_,reason=:malformedCasIntegral });
+    recomputed = CasIntegrate(candidate[:source],candidate[:variable]);
+    statusMatches = recomputed[:status]==candidate[:status];
+    expressionMatches = recomputed[:status]==:complete
+      ?: CasExpressionKey(recomputed[:antiderivative])==CasExpressionKey(candidate[:antiderivative])
+      ?_ recomputed[:reason]==candidate[:reason];
+    accepted = statusMatches && expressionMatches;
+    .ImmutableValue({= accepted=accepted,certified=accepted ?: 1 ?_ _,reason=accepted ?: _ ?_ :integralClaimMismatch,recomputed=recomputed });
 };
 
 casCapabilities = .ImmutableValue({=
     simplification=[:checkedGraphIdentities,:canonicalPolynomialNormalization,:expand,:collect,:factor],
-    integration=[:polynomials,:affinePowers,:affineReciprocals,:affineExponentials,:affineSine,:affineCosine,:logByParts,:polynomialTimesExponentialByParts,:linearPartialFractions,:irreducibleQuadraticPartialFractions],
-    unsupported=[:generalRischIntegration,:trigonometricPowerReduction,:higherDegreePartialFractionResiduals,:unrestrictedIdentitySearch]
+    integration=[:polynomials,:affinePowers,:affineReciprocals,:affineExponentials,:affineSine,:affineCosine,:trigonometricPowerReduction,:trigonometricProductToSum,:logByParts,:polynomialTimesExponentialByParts,:linearPartialFractions,:irreducibleQuadraticPartialFractions],
+    limits={= maxTrigonometricDegree=8 },
+    unsupported=[:generalRischIntegration,:mixedTrigonometricPowers,:radicalSubstitution,:higherDegreePartialFractionResiduals,:unrestrictedIdentitySearch]
 });
 
 casNamespace = {= };
@@ -14498,16 +14494,16 @@ linalgNamespace._proto["TRANSFORM!"]=(self,value,target)->LinalgTransformBang(va
 .Host.RegisterMethod("Matrix","ColumnSpace",(value)->LinalgColumnSpace(value),"linalg","linalg");
 .Host.RegisterMethod("Matrix","NullSpace",(value)->LinalgNullSpace(value),"linalg","linalg");
 `, sourcePath: "bundled:linalg", kind: "rix" });
-  catalog.addMetadata({ id: "logic", description: "Portable propositional formulas, bounded truth tables, checked normal forms, scoped natural deduction, and educational tree views.", kind: "rix", mount: "logic", exports: ["Atom", "Top", "Bottom", "Not", "And", "Or", "Implies", "Iff", "Evaluate", "Valuations", "TruthTable", "Classify", "NNF", "CNF", "DNF", "CheckNormalForm", "Step", "Subproof", "Proof", "CheckProof", "SyntaxTree", "ProofTree", "IsFormula", "Capabilities"], groups: ["Logic", "Education", "Exact"], permissions: [], provides: ["rix.logic@1", "rix.logic.formula@1", "rix.logic.truth-table@1", "rix.logic.normal-form@1", "rix.logic.proof@1", "rix.logic.tree@1"], schemas: ["rix.logic.formula@1", "rix.logic.truth-table@1", "rix.logic.normal-form@1", "rix.logic.proof@1", "rix.logic.tree@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:logic" }, { source: `/**
+  catalog.addMetadata({ id: "logic", description: "Portable propositional formulas, bounded truth tables, checked normal forms, scoped natural deduction, and educational tree views.", kind: "rix", mount: "logic", exports: ["Atom", "Top", "Bottom", "Not", "And", "Or", "Implies", "Iff", "Evaluate", "Valuations", "TruthTable", "Classify", "Tableau", "CheckTableau", "NNF", "CNF", "DNF", "CheckNormalForm", "Step", "Subproof", "Proof", "CheckProof", "SyntaxTree", "ProofTree", "IsFormula", "Capabilities"], groups: ["Logic", "Education", "Exact"], permissions: [], provides: ["rix.logic@1", "rix.logic.formula@1", "rix.logic.truth-table@1", "rix.logic.normal-form@1", "rix.logic.proof@1", "rix.logic.tree@1", "rix.logic.tableau@1"], schemas: ["rix.logic.formula@1", "rix.logic.truth-table@1", "rix.logic.normal-form@1", "rix.logic.proof@1", "rix.logic.tree@1", "rix.logic.tableau@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:logic" }, { source: `/**
 id: logic
 description: Portable propositional formulas, bounded truth tables, checked normal forms, scoped natural deduction, and educational tree views.
 kind: rix
 mount: logic
-exports: [Atom, Top, Bottom, Not, And, Or, Implies, Iff, Evaluate, Valuations, TruthTable, Classify, NNF, CNF, DNF, CheckNormalForm, Step, Subproof, Proof, CheckProof, SyntaxTree, ProofTree, IsFormula, Capabilities]
+exports: [Atom, Top, Bottom, Not, And, Or, Implies, Iff, Evaluate, Valuations, TruthTable, Classify, Tableau, CheckTableau, NNF, CNF, DNF, CheckNormalForm, Step, Subproof, Proof, CheckProof, SyntaxTree, ProofTree, IsFormula, Capabilities]
 groups: [Logic, Education, Exact]
 permissions: []
-provides: [rix.logic@1, rix.logic.formula@1, rix.logic.truth-table@1, rix.logic.normal-form@1, rix.logic.proof@1, rix.logic.tree@1]
-schemas: [rix.logic.formula@1, rix.logic.truth-table@1, rix.logic.normal-form@1, rix.logic.proof@1, rix.logic.tree@1]
+provides: [rix.logic@1, rix.logic.formula@1, rix.logic.truth-table@1, rix.logic.normal-form@1, rix.logic.proof@1, rix.logic.tree@1, rix.logic.tableau@1]
+schemas: [rix.logic.formula@1, rix.logic.truth-table@1, rix.logic.normal-form@1, rix.logic.proof@1, rix.logic.tree@1, rix.logic.tableau@1]
 snapshot: false
 deterministic: true
 defaultEnabled: false
@@ -14568,7 +14564,7 @@ LogicKey(value) -> {;
     formula = LogicRequireFormula(value);
     kind = formula[:kind];
     kind==:atom
-      ?: @"atom(@{formula[:name]})"
+      ?: @"atom(@{formula[:name].Len()}:@{formula[:name]})"
       ?_ kind==:top
       ?: "top"
       ?_ kind==:bottom
@@ -14948,7 +14944,6 @@ LogicProof(steps,goal,options ?= {= }) -> {;
        check[:accepted] ?: _ ?_ {; @stopped ~= 1; };
     }; index += 1 };
     finalMatches = steps.Len()>0 && LogicSame(steps.Last()[:conclusion],exactGoal);
-    accepted = !stopped && finalMatches;
     proofKind = LogicOption(options,"proofkind",:derivation);
     [:derivation,:subproof].Includes(proofKind)
       ?: _
@@ -14957,6 +14952,11 @@ LogicProof(steps,goal,options ?= {= }) -> {;
     proofKind==:subproof && assumption==_
       ?: .Error("Logic subproof requires its assumption")
       ?_ _;
+    freeSteps = steps.Filter((step)->step[:rule]==:premise || step[:rule]==:assumption);
+    scopeValid = proofKind==:derivation
+      || (steps.Len()>0 && freeSteps.Len()==1 && steps[1][:rule]==:assumption
+          && LogicSame(steps[1][:conclusion],assumption));
+    accepted = !stopped && finalMatches && scopeValid;
     proof = {=
         valueKind=:logicProof,
         schema="rix.logic.proof@1",
@@ -14967,9 +14967,10 @@ LogicProof(steps,goal,options ?= {= }) -> {;
         checks=checks,
         accepted=accepted ?: 1 ?_ _,
         complete=accepted ?: 1 ?_ _,
-        reason=stopped ?: :invalidStep ?_ (finalMatches ?: _ ?_ :goalMismatch),
+        reason=!scopeValid ?: :invalidSubproofScope
+          ?_ stopped ?: :invalidStep ?_ (finalMatches ?: _ ?_ :goalMismatch),
         assumption=assumption,
-        assumptions=steps.Filter((step)->step[:rule]==:premise || step[:rule]==:assumption),
+        assumptions=freeSteps,
         supportedRules=[:premise,:assumption,:andIntro,:andElimLeft,:andElimRight,:orIntroLeft,:orIntroRight,:modusPonens,:implicationIntro,:orElim,:notIntro,:notElim,:bottomElim]
     };
     proof .= {= _proto=@logicProofProto };
@@ -14979,9 +14980,148 @@ LogicCheckProof(proof) -> {;
     valid = (proof ? :Map) && proof[:schema]=="rix.logic.proof@1";
     valid
       ?: LogicProof(proof[:steps],proof[:goal],{=
-          proofKind=proof[:proofKind] ?| :derivation,assumption=proof[:assumption]
+          proofKind=proof[:proofKind]==_ ?: :derivation ?_ proof[:proofKind],assumption=proof[:assumption]
       })
       ?_ .ImmutableValue({= accepted=_,complete=_,reason=:malformedLogicProof });
+};
+
+/* Signed tableaux expand original formulas directly: no exponential NNF
+   preprocessing and no truth-table enumeration are required. */
+LogicSigned(formula,truth) -> {= formula=formula,truth=truth };
+LogicTableauAlternatives(signed) -> {;
+    f = signed[:formula];
+    t = signed[:truth];
+    opposite = 1-t;
+    k = f[:kind];
+    k==:not ?: [[LogicSigned(f[:operand],opposite)]]
+      ?_ k==:and
+      ?: (t==1 ?: [[LogicSigned(f[:left],1),LogicSigned(f[:right],1)]]
+                   ?_ [[LogicSigned(f[:left],0)],[LogicSigned(f[:right],0)]])
+      ?_ k==:or
+      ?: (t==1 ?: [[LogicSigned(f[:left],1)],[LogicSigned(f[:right],1)]]
+                   ?_ [[LogicSigned(f[:left],0),LogicSigned(f[:right],0)]])
+      ?_ k==:implies
+      ?: (t==1 ?: [[LogicSigned(f[:left],0)],[LogicSigned(f[:right],1)]]
+                   ?_ [[LogicSigned(f[:left],1),LogicSigned(f[:right],0)]])
+      ?_ k==:iff
+      ?: [[LogicSigned(f[:left],1),LogicSigned(f[:right],t)],
+          [LogicSigned(f[:left],0),LogicSigned(f[:right],opposite)]]
+      ?_ [[]];
+};
+LogicTableauBranch(path,pending,valuation) -> {=
+    path=path,pending=pending,valuation=valuation
+};
+LogicTableau(value,options ?= {= }) -> {;
+    source = LogicRequireFormula(value);
+    options = LogicRequireOptions(options,"Logic Tableau options");
+    mode = LogicOption(options,"mode",:satisfiability);
+    [:satisfiability,:validity].Includes(mode)
+      ?: _ ?_ .Error("Logic Tableau mode must be satisfiability or validity");
+    maxSteps = LogicOption(options,"maxsteps",128) ~!: :Integer;
+    maxBranches = LogicOption(options,"maxbranches",64) ~!: :Integer;
+    (maxSteps>=0 && maxSteps<=2048) ?: _ ?_ .Error("Logic Tableau maxSteps must be from 0 through 2048");
+    (maxBranches>=1 && maxBranches<=256) ?: _ ?_ .Error("Logic Tableau maxBranches must be from 1 through 256");
+    atoms = LogicAtoms(source);
+    seedTruth = mode==:validity ?: 0 ?_ 1;
+    queue := [LogicTableauBranch("root",[LogicSigned(source,seedTruth)],{= })];
+    leaves := [];
+    trace := [];
+    branches := 1;
+    {@ ; @queue.Len()>0; {;
+        branch = @queue[1];
+        @queue ~= @queue.Slice(2);
+        pending = branch[:pending];
+        valuation = branch[:valuation];
+        path = branch[:path];
+        pending.Len()==0
+          ?: {; @leaves ~= @leaves.Push(@branch.Merge({= status=:open,reason=:saturated })); }
+          ?_ @trace.Len()>=@maxSteps
+          ?: {; @leaves ~= @leaves.Push(@branch.Merge({= status=:unresolved,reason=:stepBudgetExhausted })); }
+          ?_ {;
+              signed = @pending[1];
+              f = signed[:formula];
+              truth = signed[:truth];
+              kind = f[:kind];
+              alternatives = LogicTableauAlternatives(signed);
+              split = alternatives.Len()==2;
+              (split && @branches>=@maxBranches)
+                ?: {; @leaves ~= @leaves.Push(@branch.Merge({= status=:unresolved,reason=:branchBudgetExhausted })); }
+                ?_ {;
+                    conflict = @kind==:atom
+                      ?: (@valuation.Has(@f[:name]) && @valuation[@f[:name]]!=@truth)
+                      ?_ ((@kind==:top && @truth==0) || (@kind==:bottom && @truth==1));
+                    rule = conflict ?: :close
+                      ?_ @kind==:atom ?: :literal
+                      ?_ (@kind==:top || @kind==:bottom) ?: :constant
+                      ?_ @split ?: :beta ?_ :alpha;
+                    @trace ~= @trace.Push({= path=@path,signed=@signed,rule=rule });
+                    conflict
+                      ?: {; @leaves ~= @leaves.Push(@branch.Merge({= status=:closed,reason=:contradiction })); }
+                      ?_ {;
+                          nextValuation = @kind==:atom ?: @valuation.Set(@f[:name],@truth) ?_ @valuation;
+                          @split ?: {; @branches ~= @branches+1; } ?_ _;
+                          {@ i=1; i<=@alternatives.Len(); {;
+                              nextPath = @split ?: @path+(i==1 ?: "L" ?_ "R") ?_ @path;
+                              nextPending = @alternatives[i].Concat(@pending.Slice(2));
+                              @queue ~= @queue.Push(LogicTableauBranch(nextPath,nextPending,@nextValuation));
+                          }; i+=1 };
+                      };
+                };
+          };
+    }; };
+    open = leaves.Filter((branch)->branch[:status]==:open);
+    unresolved = leaves.Filter((branch)->branch[:status]==:unresolved);
+    witness = open.Len()>0
+      ?: atoms.Reduce((valuation,name)->valuation.Has(name) ?: valuation ?_ valuation.Set(name,0),open[1][:valuation])
+      ?_ _;
+    witness!=_
+      ?: ((LogicEvaluate(source,witness) ?: 1 ?_ 0)==seedTruth
+          ?: _ ?_ .Error("Logic Tableau internal witness mismatch"))
+      ?_ _;
+    status = open.Len()>0
+      ?: (mode==:validity ?: :invalid ?_ :satisfiable)
+      ?_ unresolved.Len()>0 ?: :unresolved
+      ?_ (mode==:validity ?: :valid ?_ :unsatisfiable);
+    .ImmutableValue({=
+        valueKind=:logicTableau,schema="rix.logic.tableau@1",system=:classicalSignedTableau,
+        source=source,mode=mode,seedTruth=seedTruth,status=status,
+        complete=unresolved.Len()==0 ?: 1 ?_ _,
+        decided=status!=:unresolved ?: 1 ?_ _,
+        atoms=atoms,witness=witness,
+        witnessKind=witness==_ ?: _ ?_ (mode==:validity ?: :countermodel ?_ :model),
+        branches=leaves,trace=trace,
+        work={= steps=trace.Len(),branchCount=branches,unresolvedBranches=unresolved.Len() },
+        options={= mode=mode,maxSteps=maxSteps,maxBranches=maxBranches }
+    });
+};
+
+/* Compare every retained public evidence field, not just the claimed status. */
+LogicEvidenceSame(left,right) -> {;
+    LogicIsFormulaValue(left)
+      ?: (LogicIsFormulaValue(right) && LogicSame(left,right))
+      ?_ (left ? :Array)
+      ?: {;
+          same := (@right ? :Array) && @left.Len()==@right.Len();
+          {@ i=1; @same && i<=@left.Len(); {;
+              @same ~= LogicEvidenceSame(@left[i],@right[i]);
+          }; i+=1 };
+          same;
+      }
+      ?_ (left ? :Map)
+      ?: ((right ? :Map) && left.Len()==right.Len()
+          && left.ReduceKeys((same,key,value)->same && @right.Has(key) && LogicEvidenceSame(value,@right[key]),1))
+      ?_ left==right;
+};
+LogicCheckTableau(candidate) -> {;
+    valid = (candidate ? :Map) && candidate[:schema]=="rix.logic.tableau@1";
+    valid
+      ?: {;
+          replay = LogicTableau(@candidate[:source],@candidate[:options]);
+          accepted = LogicEvidenceSame(@candidate,replay);
+          .ImmutableValue({= accepted=accepted ?: 1 ?_ _,
+              reason=accepted ?: _ ?_ :tableauEvidenceMismatch,result=replay });
+      }
+      ?_ .ImmutableValue({= accepted=_,reason=:malformedLogicTableau,result=_ });
 };
 
 LogicSyntaxTreeNode(value) -> {;
@@ -15048,6 +15188,7 @@ logicFormulaProto = {=
     Iff=(self,right)->LogicIff(self,right),
     Evaluate=(self,valuation)->LogicEvaluate(self,valuation),
     TruthTable=(self,options ?= {= })->LogicTruthTable(self,options),
+    Tableau=(self,options ?= {= })->LogicTableau(self,options),
     NNF=(self,options ?= {= })->LogicNNF(self,options),
     CNF=(self,options ?= {= })->LogicCNF(self,options),
     DNF=(self,options ?= {= })->LogicDNF(self,options),
@@ -15067,7 +15208,8 @@ logicCapabilities = .ImmutableValue({=
     proofRules=[:premise,:assumption,:andIntro,:andElimLeft,:andElimRight,:orIntroLeft,:orIntroRight,:modusPonens,:implicationIntro,:orElim,:notIntro,:notElim,:bottomElim],
     proofStructure=[:scopedSubproofs,:explicitDischarge,:naturalDeductionTrees],
     views=[:syntaxTree,:proofTree],
-    next=[:semanticTableaux,:boundedFirstOrderModels]
+    tableaux=[:signedPropositional,:openClosedBranchEvidence,:boundedSearch,:replay],
+    next=[:boundedFirstOrderModels,:sequentCalculus]
 });
 
 logicNamespace = {= };
@@ -15084,6 +15226,8 @@ logicNamespace._proto = {=
     Valuations=(self,names)->LogicValuations(names),
     TruthTable=(self,value,options ?= {= })->LogicTruthTable(value,options),
     Classify=(self,value,options ?= {= })->LogicClassify(value,options),
+    Tableau=(self,value,options ?= {= })->LogicTableau(value,options),
+    CheckTableau=(self,value)->LogicCheckTableau(value),
     NNF=(self,value,options ?= {= })->LogicNNF(value,options),
     CNF=(self,value,options ?= {= })->LogicCNF(value,options),
     DNF=(self,value,options ?= {= })->LogicDNF(value,options),
@@ -22190,12 +22334,12 @@ octonionNamespace._proto={=
 };
 .Host.RegisterValue("octonion",octonionNamespace,"Certified octonions with explicit nonassociativity and intrinsic slice functions",["Exact","Numerics"]);
 `, sourcePath: "bundled:octonion", kind: "rix" });
-  catalog.addMetadata({ id: "ode", description: "Portable initial-value problems, vector trajectories, adaptive demonstrations, checked Picard and second-order Taylor tubes, and certified event isolation.", kind: "rix", mount: "ode", exports: ["IVP", "Euler", "RK4", "AdaptiveRK4", "ValidatedPicard", "ValidatedTaylor2", "Event", "IsolateEvents", "At", "Points", "Segments", "Record", "IsProblem", "IsSolution"], groups: ["Numerics", "ODE", "Calculus"], permissions: [], requires: ["rix.calculus@1", "rix.numerics@2"], provides: ["rix.ode@1", "rix.ode.problem@1", "rix.ode.solution@1", "rix.ode.dense-segment@1", "rix.ode.event@1", "rix.ode.event-result@1"], schemas: ["rix.ode.problem@1", "rix.ode.solution@1", "rix.ode.dense-segment@1", "rix.ode.event@1", "rix.ode.event-result@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:ode" }, { source: `/**
+  catalog.addMetadata({ id: "ode", description: "Portable initial-value problems, vector trajectories, adaptive demonstrations, checked Picard and second-order Taylor tubes, and certified event isolation.", kind: "rix", mount: "ode", exports: ["IVP", "Euler", "RK4", "AdaptiveRK4", "ValidatedPicard", "ValidatedTaylor2", "AdaptiveValidatedTaylor2", "Event", "IsolateEvents", "At", "Points", "Segments", "Record", "IsProblem", "IsSolution"], groups: ["Numerics", "ODE", "Calculus"], permissions: [], requires: ["rix.calculus@1", "rix.numerics@2"], provides: ["rix.ode@1", "rix.ode.problem@1", "rix.ode.solution@1", "rix.ode.dense-segment@1", "rix.ode.event@1", "rix.ode.event-result@1"], schemas: ["rix.ode.problem@1", "rix.ode.solution@1", "rix.ode.dense-segment@1", "rix.ode.event@1", "rix.ode.event-result@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:ode" }, { source: `/**
 id: ode
 description: Portable initial-value problems, vector trajectories, adaptive demonstrations, checked Picard and second-order Taylor tubes, and certified event isolation.
 kind: rix
 mount: ode
-exports: [IVP, Euler, RK4, AdaptiveRK4, ValidatedPicard, ValidatedTaylor2, Event, IsolateEvents, At, Points, Segments, Record, IsProblem, IsSolution]
+exports: [IVP, Euler, RK4, AdaptiveRK4, ValidatedPicard, ValidatedTaylor2, AdaptiveValidatedTaylor2, Event, IsolateEvents, At, Points, Segments, Record, IsProblem, IsSolution]
 groups: [Numerics, ODE, Calculus]
 permissions: []
 requires: [rix.calculus@1, rix.numerics@2]
@@ -22858,10 +23002,17 @@ OdeTaylorizeSegment(problem, segment, secondDerivatives, maxSubintervals) -> {;
       ?_ segment;
 };
 
-OdeValidatedTaylor2(problemValue, options ?= {= }) -> {;
+OdeValidatedTaylor2(problemValue, options ?= {= }, adaptive ?= _) -> {;
     problem = OdeRequireProblem(problemValue);
     options = OdeRequireOptions(options,"ODE ValidatedTaylor2 options");
     steps = OdeRequirePositiveInteger(OdeOption(options,"steps",4),"ODE ValidatedTaylor2 steps");
+    maxAttempts = adaptive
+      ?: OdeRequirePositiveInteger(OdeOption(options,"maxattempts",256),"ODE maxAttempts")
+      ?_ steps;
+    minimumStepValue = OdeOption(options,"minimumstep",1/1048576);
+    minimumStep = OdeRequirePositiveRational(minimumStepValue,"ODE minimumStep");
+    toleranceValue = OdeOption(options,"remaindertolerance",_);
+    remainderTolerance = toleranceValue==_ ?: _ ?_ OdeRequirePositiveRational(toleranceValue,"ODE remainderTolerance");
     maxTubeIterations = OdeRequirePositiveInteger(
         OdeOption(options,"maxtubeiterations",8),"ODE maxTubeIterations",32
     );
@@ -22883,33 +23034,59 @@ OdeValidatedTaylor2(problemValue, options ?= {= }) -> {;
     };
     lower = problem[:initialTime];
     upper = problem[:interval].High();
-    stepSize = (upper-lower)/steps;
+    stepSize := (upper-lower)/steps;
+    maximumStep = stepSize;
     time := lower;
     state := problem[:initialState];
     points := [[time,state]];
     segments := [];
     stopped := _;
-    {@ index=1; index<=@steps && !@stopped; {;
-       nextTime = @time+@stepSize;
+    attempts := [];
+    rejected := 0;
+    stopReason := :attemptBudgetExhausted;
+    {@ attempt=1; attempt<=@maxAttempts && @time<@upper && !@stopped; {;
+       h = @stepSize < @upper-@time ?: @stepSize ?_ @upper-@time;
+       nextTime = @time+h;
        picard = OdeValidatedSegment(
-           @problem,index,@time,nextTime,@state,@stateDerivatives,@normalized
+           @problem,@points.Len(),@time,nextTime,@state,@stateDerivatives,@normalized
        );
        segment = OdeTaylorizeSegment(@problem,picard,@secondDerivatives,@maxSubintervals);
-       @segments ~= @segments.Push(segment);
-       segment[:certified]==1
+       remainderBound = segment[:certified]==1
+         ?: segment[:secondDerivativeRange].Reduce((largest,range)->
+             .Max(largest,OdeIntervalMagnitude(range)*@h*@h/2),0)
+         ?_ _;
+       accepted = segment[:certified]==1 && (!@adaptive || @remainderTolerance==_ || remainderBound<=@remainderTolerance);
+       @attempts ~= @attempts.Push({=
+           tStart=@time,tEnd=nextTime,accepted=accepted,
+           remainderBound=remainderBound,
+           reason=accepted ?: :accepted ?_ (segment[:certified]==1 ?: :remainderToleranceExceeded ?_ :tubeSelfMapNotEstablished),
+           segment=segment
+       });
+       accepted
          ?: {;
+             @segments ~= @segments.Push(@segment);
              @state ~= @segment[:stateEnd];
              @time ~= @nextTime;
              @points ~= @points.Push([@nextTime,@state]);
+             @adaptive ?: {; @stepSize ~= .Min(2*@h,@maximumStep); } ?_ _;
          }
-         ?_ {; @stopped ~= 1; };
-    }; index += 1 };
-    complete = !stopped && segments.Len()==steps;
+         ?_ {;
+             @rejected += 1;
+             (@adaptive && @h/2>=@minimumStep)
+               ?: {; @stepSize ~= @h/2; }
+               ?_ {;
+                   @stopped ~= 1;
+                   @stopReason ~= @adaptive ?: :minimumStepReached ?_ :tubeSelfMapNotEstablished;
+                   !@adaptive ?: {; @segments ~= @segments.Push(@segment); } ?_ _;
+               };
+         };
+    }; attempt += 1 };
+    complete = time==upper;
     solution = {=
         valueKind=:odeSolution,
         schema="rix.ode.solution@1",
         problem=problem,
-        method=:validatedTaylor2,
+        method=adaptive ?: :adaptiveValidatedTaylor2 ?_ :validatedTaylor2,
         status=complete ?: :validated ?_ :partial,
         classification=complete ?: :certifiedTaylorTube ?_ :unresolvedTaylorTube,
         stateNames=problem[:stateNames],
@@ -22931,6 +23108,13 @@ OdeValidatedTaylor2(problemValue, options ?= {= }) -> {;
             requestedSteps=steps,
             completedSteps=points.Len()-1,
             maxTubeIterations=maxTubeIterations,
+            attempts=attempts,
+            attemptedSteps=attempts.Len(),
+            rejectedSteps=rejected,
+            maxAttempts=maxAttempts,
+            minimumStep=minimumStep,
+            remainderTolerance=remainderTolerance,
+            stopReason=complete ?: _ ?_ stopReason,
             exhausted=!complete
         },
         diagnostics=complete ?: [] ?_ [:validatedTaylorTrajectoryPartial]
@@ -23285,6 +23469,7 @@ odeProblemProto = {=
     AdaptiveRK4=(self, options ?= {= })->OdeAdaptiveRK4(self,options),
     ValidatedPicard=(self, options ?= {= })->OdeValidatedPicard(self,options),
     ValidatedTaylor2=(self, options ?= {= })->OdeValidatedTaylor2(self,options),
+    AdaptiveValidatedTaylor2=(self, options ?= {= })->OdeValidatedTaylor2(self,options,1),
     Record=(self)->OdeRecord(self)
 };
 
@@ -23305,6 +23490,7 @@ odeNamespace._proto = {=
     AdaptiveRK4=(self,problem,options ?= {= })->OdeAdaptiveRK4(problem,options),
     ValidatedPicard=(self,problem,options ?= {= })->OdeValidatedPicard(problem,options),
     ValidatedTaylor2=(self,problem,options ?= {= })->OdeValidatedTaylor2(problem,options),
+    AdaptiveValidatedTaylor2=(self,problem,options ?= {= })->OdeValidatedTaylor2(problem,options,1),
     Event=(self,expression,options ?= {= })->OdeEvent(expression,options),
     IsolateEvents=(self,solution,event ?= _,options ?= {= })->OdeIsolateEvents(solution,event,options),
     At=(self,solution,time)->OdeAt(solution,time),
@@ -35342,5 +35528,5 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
 
 export { pluginProfileFromUrl, stripMarkedPluginProfile, findHelp, createRixRepl };
 
-//# debugId=B1A4E021127089E264756E2164756E21
-//# sourceMappingURL=chunk-3m9js3x1.js.map
+//# debugId=784FBD7A4A3EB62964756E2164756E21
+//# sourceMappingURL=chunk-jybfv1zr.js.map

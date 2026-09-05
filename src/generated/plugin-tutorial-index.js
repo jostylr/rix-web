@@ -351,8 +351,8 @@ export const pluginTutorials = [
   {
     "pluginId": "logic",
     "pluginDirectory": "logic",
-    "title": "Truth tables, scoped proofs, and educational trees",
-    "description": "Explore propositional validity, countermodels, canonical normal forms, scoped natural deduction, and portable tree views.",
+    "title": "Truth tables, scoped proofs, and semantic tableaux",
+    "description": "Explore propositional validity, countermodels, scoped natural deduction, and bounded open/closed branch evidence.",
     "status": "implemented",
     "order": 0,
     "theme": "Algebra and analysis",

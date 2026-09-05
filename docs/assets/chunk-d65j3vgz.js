@@ -5289,6 +5289,8 @@ var symbols = [
   "=>",
   "**",
   "?=",
+  "?_>",
+  "??>",
   "?_",
   "??",
   "?:",
@@ -10997,7 +10999,7 @@ var runtimeDefaults = Object.freeze({
     Core: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "IF", "LOOP", "MULTI", "RAND_NAME", "PRINT", "Shaped", "KEYOF", "KEYS", "VALUES", "REGISTERMETHOD", "CertifiedApproximation", "Undecided", "RefinementRequest", "RefinementEffectiveLimits", "RefinementSupports", "RefinementCheck", "RefinementUnsupported", "TypeKnown", "ImmutableValue"]),
     Methods: Object.freeze(["REGISTERMETHOD"]),
     Arith: Object.freeze(["ADD", "SUB", "MUL", "DIV", "INTDIV", "DIVMOD", "MOD", "POW", "FACTORIAL", "DOUBLEFACTORIAL", "RANGE_POLICY", "RANGE_EVIDENCE", "RANGE_ADD", "RANGE_SUBTRACT", "RANGE_MULTIPLY", "RANGE_DIVIDE", "RANGE_NEGATE", "RANGE_ABSOLUTE_VALUE", "RANGE_RECIPROCAL", "RANGE_INTEGER_POWER", "CALCULUS_RANGE", "CALCULUS_RANGE_CHECK", "CALCULUS_RANGE_RECOGNIZE", "CALCULUS_GRAPH_SIMPLIFY", "CALCULUS_GRAPH_SIMPLIFICATION_CHECK", "CALCULUS_DERIVATIVE_CHECK", "CALCULUS_DERIVATIVE_SIGN", "CALCULUS_LIPSCHITZ_RANGE", "CALCULUS_TAYLOR_RANGE"]),
-    Logic: Object.freeze(["EQ", "NEQ", "LT", "GT", "LTE", "GTE", "AND", "OR", "NOT"]),
+    Logic: Object.freeze(["EQ", "NEQ", "LT", "GT", "LTE", "GTE", "AND", "OR", "NOT", "GUARD_RETURN"]),
     Collections: Object.freeze(["LEN", "FIRST", "LAST", "GETEL", "IRANGE", "MAP", "FILTER", "REDUCE", "Shaped", "Stream"]),
     Async: Object.freeze(["Stream", "Retry"]),
     Background: Object.freeze(["BACKGROUND"]),
@@ -11010,7 +11012,7 @@ var runtimeDefaults = Object.freeze({
     Files: Object.freeze(["FILES"]),
     Units: Object.freeze(["UNITS", "Units", "CONVERTUNIT", "ConvertUnit", "DEFINEUNIT", "DefineUnit"]),
     Exact: Object.freeze(["EXACT", "Exact", "COMPLEX", "Complex", "DEFINEEXACTGENERATOR", "DefineExactGenerator", "exactalgebras"]),
-    Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC", "SPECROLES", "SPECFRACTIONPARTS", "SArith"]),
+    Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC", "SPECROLES", "SPECFRACTIONPARTS", "SArith", "ExpressionVariable", "ExpressionConstant", "ExpressionOperation", "ExpressionApply", "IsExpression"]),
     Notation: Object.freeze(["SArith", "Poly", "NotationParser"]),
     Random: Object.freeze(["RNG", "RANDOMSEED", "RandomSeed", "RAND_NAME"]),
     Probability: Object.freeze(["probability"]),
@@ -12688,6 +12690,91 @@ function emitNoPrepWarning(context, multifnName, index, variantName) {
   ]));
 }
 
+// ../rix/src/runtime/math-expression.js
+var EXPRESSION_SCHEMA = "rix.calculus.expression@1";
+var expressionField = (value, key) => value?.entries?.get(key.toLowerCase());
+var string = (value) => ({ type: "string", value });
+function isMathExpression(value) {
+  return value?.type === "map" && expressionField(value, "schema")?.value === EXPRESSION_SCHEMA;
+}
+function expressionRecord(kind, fields = []) {
+  const method = (name, fn) => ({ type: "method_builtin", name, impl: (args) => fn(args[0]) });
+  const proto = { type: "map", entries: new Map([
+    ["RECORD", method("Record", (self) => self)],
+    ["KIND", method("Kind", (self) => expressionField(self, "kind"))],
+    ["OPERANDS", method("Operands", (self) => expressionField(self, "operands") || { type: "sequence", values: [] })],
+    ["SEMANTICID", method("SemanticId", (self) => expressionField(self, "semanticid") || null)]
+  ]) };
+  const record = {
+    type: "map",
+    entries: new Map([
+      ["valuekind", string("calculusExpression")],
+      ["schema", string(EXPRESSION_SCHEMA)],
+      ["kind", string(kind)],
+      ...fields
+    ]),
+    _ext: new Map([
+      ["__type", string("CalculusExpression")],
+      ["_type", string("calculus_expression")],
+      ["immutable", new Integer(1n)],
+      ["_proto", proto]
+    ])
+  };
+  return record;
+}
+function expressionVariable(name) {
+  const text5 = typeof name === "string" ? name : name?.type === "string" ? name.value : null;
+  if (!text5)
+    throw new Error("Expression variable name must be a nonempty string");
+  return expressionRecord("variable", [["name", string(text5)]]);
+}
+function expressionConstant(value) {
+  if (!(value instanceof Integer || value instanceof Rational)) {
+    throw new Error("Expression constant currently requires an exact Integer or Rational");
+  }
+  return expressionRecord("constant", [["value", value]]);
+}
+function promoteExpression(value) {
+  return isMathExpression(value) ? value : expressionConstant(value);
+}
+function expressionOperation(operation, operands) {
+  const arity = { add: 2, subtract: 2, multiply: 2, divide: 2, power: 2, negate: 1 }[operation];
+  if (!arity || !Array.isArray(operands) || operands.length !== arity)
+    throw new Error("Invalid expression operator or arity");
+  return expressionRecord("operator", [
+    ["operation", string(operation)],
+    ["operands", { type: "sequence", values: operands.map(promoteExpression) }]
+  ]);
+}
+function expressionApplication(semanticId, name, args) {
+  return expressionRecord("apply", [
+    ["semanticid", string(semanticId)],
+    ["name", string(name)],
+    ["arguments", { type: "sequence", values: args.map(promoteExpression) }]
+  ]);
+}
+function installExpressionVariants(registry) {
+  for (const [fn, operation] of Object.entries({ ADD: "add", SUB: "subtract", MUL: "multiply", DIV: "divide", POW: "power", NEG: "negate" })) {
+    registry.installVariant(fn, {
+      name: `CoreExpression_${fn}`,
+      priority: 250,
+      prep: (args) => args.length === (fn === "NEG" ? 1 : 2) && args.some(isMathExpression),
+      impl: (args) => expressionOperation(operation, args)
+    });
+  }
+}
+var expressionCapabilities = {
+  ExpressionVariable: { impl: ([name]) => expressionVariable(name), pure: true, groups: ["Symbolic"], doc: "Construct a mathematical variable expression without loading a plugin" },
+  ExpressionConstant: { impl: ([value]) => expressionConstant(value), pure: true, groups: ["Symbolic"], doc: "Construct an exact mathematical constant expression" },
+  ExpressionOperation: { impl: ([operation, operands]) => expressionOperation(operation?.value, operands?.values), pure: true, groups: ["Symbolic"], doc: "Construct a validated mathematical arithmetic node" },
+  ExpressionApply: { impl: ([id, name, args]) => {
+    if (id?.type !== "string" || name?.type !== "string" || !Array.isArray(args?.values))
+      throw new Error("ExpressionApply requires semantic ID, name, and arguments");
+    return expressionApplication(id.value, name.value, args.values);
+  }, pure: true, groups: ["Symbolic"], doc: "Construct a mathematical function application" },
+  IsExpression: { impl: ([value]) => isMathExpression(value) ? new Integer(1n) : null, pure: true, groups: ["Symbolic"], doc: "Recognize a core mathematical expression" }
+};
+
 // ../rix/src/runtime/structural-arithmetic.js
 var DEFAULT_BINARY = {
   ":": { precedence: 70, associativity: "left", head: "Interval" },
@@ -14012,7 +14099,7 @@ var CALCULUS_OPERATOR_TO_IR = new Map([
   ["negate", "NEG"]
 ]);
 var IR_TO_CALCULUS_OPERATOR = new Map(Array.from(CALCULUS_OPERATOR_TO_IR, ([name, fn]) => [fn, name]));
-var CALCULUS_EXPRESSION_SCHEMA = "rix.calculus.expression@1";
+var CALCULUS_EXPRESSION_SCHEMA = EXPRESSION_SCHEMA;
 var symbolicIr = (fn, ...args) => ({ fn, args });
 var ir = symbolicIr;
 var symbolicLiteral = (value) => ir("LITERAL", String(value));
@@ -14342,20 +14429,6 @@ function calculusExpressionToSymbolicIr(value, path = "expression") {
   }
   throw new Error(`${path}.kind '${kind}' is not supported by the exact symbolic bridge`);
 }
-function calculusExpressionRecord(kind, entries) {
-  const record = rixMap([
-    ["valuekind", rixString("calculusExpression")],
-    ["schema", rixString(CALCULUS_EXPRESSION_SCHEMA)],
-    ["kind", rixString(kind)],
-    ...entries
-  ]);
-  record._ext = new Map([
-    ["__type", rixString("CalculusExpression")],
-    ["_type", rixString("map")],
-    ["immutable", new Integer(1n)]
-  ]);
-  return record;
-}
 function symbolicIrToCalculusExpression(node, path = "expression") {
   if (!node?.fn)
     throw new Error(`${path} is not symbolic expression IR`);
@@ -14363,23 +14436,23 @@ function symbolicIrToCalculusExpression(node, path = "expression") {
     const text5 = String(node.args[0]);
     if (!/^-?\d+$/.test(text5))
       throw new Error(`${path} contains unsupported literal '${text5}'`);
-    return calculusExpressionRecord("constant", [["value", new Integer(BigInt(text5))]]);
+    return expressionRecord("constant", [["value", new Integer(BigInt(text5))]]);
   }
   if (node.fn === "RETRIEVE" || node.fn === "OUTER_RETRIEVE") {
-    return calculusExpressionRecord("variable", [
+    return expressionRecord("variable", [
       ["name", rixString(node.args[0])],
       ["scope", rixString(node.fn === "OUTER_RETRIEVE" ? "outer" : "local")]
     ]);
   }
   if (IR_TO_CALCULUS_OPERATOR.has(node.fn)) {
     const operation = IR_TO_CALCULUS_OPERATOR.get(node.fn);
-    return calculusExpressionRecord("operator", [
+    return expressionRecord("operator", [
       ["operation", rixString(operation)],
       ["operands", { type: "sequence", values: node.args.map((operand2, index) => symbolicIrToCalculusExpression(operand2, `${path}.${operation}[${index + 1}]`)) }]
     ]);
   }
   if (node.fn === "SEMANTIC_APPLY") {
-    return calculusExpressionRecord("apply", [
+    return expressionRecord("apply", [
       ["semanticid", rixString(node.args[0])],
       ["name", rixString(node.args[1])],
       ["arguments", { type: "sequence", values: node.args.slice(2).map((arg, index) => symbolicIrToCalculusExpression(arg, `${path}.arguments[${index + 1}]`)) }]
@@ -17035,6 +17108,44 @@ var asyncStreamMethodHelpers = {
   asyncStreamDone
 };
 
+// ../rix/src/runtime/function-return.js
+class FunctionReturnSignal extends Error {
+  constructor(target, value) {
+    super("Function return");
+    this.name = "FunctionReturnSignal";
+    this.target = target;
+    this.value = value;
+  }
+}
+function isFunctionReturnSignal(value) {
+  return value instanceof FunctionReturnSignal;
+}
+function requireReturnTarget(context) {
+  const target = context.functionReturnTargets?.at(-1);
+  if (!target?.active) {
+    const error = new Error("?_> and ??> require an active function call");
+    error.functionReturnFault = true;
+    throw error;
+  }
+  return target;
+}
+function isFunctionReturnControl(error) {
+  return isFunctionReturnSignal(error) || error?.functionReturnFault === true;
+}
+function markReturnPayloadError(error) {
+  if (isFunctionReturnSignal(error))
+    return error;
+  if (!(error instanceof Error))
+    error = new Error(String(error));
+  error.functionReturnFault = true;
+  return error;
+}
+function returnedValue(signal) {
+  if (signal.suppressed?.length)
+    throw signal.suppressed[0];
+  return signal.value;
+}
+
 // ../rix/src/eval/functions/functions.js
 function callableValue(value) {
   return isReactiveNode(value) ? value.peek() : value;
@@ -17138,6 +17249,8 @@ function runCallablePrep(fn, context, evaluate) {
         return { ok: false };
       }
     } catch (error) {
+      if (isFunctionReturnControl(error))
+        throw error;
       if (error?.message?.includes("prep remained undecided"))
         throw error;
       if (strict) {
@@ -17163,6 +17276,7 @@ function invokeUserCallable(fn, callArgs, context, evaluate, options = {}) {
   const closureScopes = Array.isArray(fn.__closureScopes) ? fn.__closureScopes : [];
   let pushedClosureScopes = 0;
   let scopeActive = false;
+  const returnTarget = { active: true };
   const tc = context.getEnv("__trace_context__");
   let traceActive = false;
   const restoredEnv = new Map;
@@ -17202,11 +17316,15 @@ function invokeUserCallable(fn, callArgs, context, evaluate, options = {}) {
     });
     pushedClosureScopes++;
   }
-  context.push(bindCallScope(fn.params, callArgs, evaluate));
-  scopeActive = true;
-  if (callName)
-    context.pushCall(callName);
+  let callActive = false;
+  context.functionReturnTargets.push(returnTarget);
   try {
+    context.push(bindCallScope(fn.params, callArgs, evaluate));
+    scopeActive = true;
+    if (callName) {
+      context.pushCall(callName);
+      callActive = true;
+    }
     while (true) {
       const prepResult = runCallablePrep(fn, context, evaluate);
       if (!prepResult.ok) {
@@ -17234,7 +17352,16 @@ function invokeUserCallable(fn, callArgs, context, evaluate, options = {}) {
       context.push(bindCallScope(fn.params, result.args, evaluate));
       scopeActive = true;
     }
+  } catch (error) {
+    if (!isFunctionReturnSignal(error) || error.target !== returnTarget)
+      throw error;
+    const value = returnedValue(error);
+    doTraceExit(value, false);
+    traceActive = false;
+    return returnPrepStatus ? { matched: true, value } : value;
   } finally {
+    returnTarget.active = false;
+    context.functionReturnTargets.pop();
     for (const [key, entry] of restoredEnv) {
       if (entry.has)
         context.setEnv(key, entry.value);
@@ -17244,7 +17371,7 @@ function invokeUserCallable(fn, callArgs, context, evaluate, options = {}) {
     if (traceActive && tc) {
       tc.currentDepth--;
     }
-    if (callName)
+    if (callActive)
       context.popCall();
     if (scopeActive)
       context.pop();
@@ -21423,7 +21550,7 @@ var collectionFunctions = {
       const header = args[0]?.header || null;
       const defaultMode = header?.captureMode || constructorDefaultCaptureMode(ctx);
       const start = header ? 1 : 0;
-      const value = { type: "tuple", values: args.slice(start).map((arg) => captureIrValue(arg.expression || arg, arg.captureMode || defaultMode, ctx, evaluate)) };
+      const value = { type: "tuple", values: args.slice(start).map((arg) => captureIrValue(arg && Object.hasOwn(arg, "expression") ? arg.expression : arg, arg?.captureMode || defaultMode, ctx, evaluate)) };
       return applySemanticHeader(attachBuiltinProto(value), header, ctx);
     },
     pure: true,
@@ -21438,7 +21565,7 @@ var collectionFunctions = {
       const seen = new Set;
       const values2 = [];
       for (const arg of args.slice(start)) {
-        const val = captureIrValue(arg.expression || arg, arg.captureMode || defaultMode, ctx, evaluate);
+        const val = captureIrValue(arg && Object.hasOwn(arg, "expression") ? arg.expression : arg, arg?.captureMode || defaultMode, ctx, evaluate);
         const key = valueKey(val);
         if (!seen.has(key)) {
           seen.add(key);
@@ -21531,7 +21658,7 @@ var collectionFunctions = {
       const header = args[0]?.header || null;
       const defaultMode = header?.captureMode || constructorDefaultCaptureMode(ctx);
       const start = header ? 1 : 0;
-      const values2 = args.slice(start).map((arg) => captureIrValue(arg.expression || arg, arg.captureMode || defaultMode, ctx, evaluate));
+      const values2 = args.slice(start).map((arg) => captureIrValue(arg && Object.hasOwn(arg, "expression") ? arg.expression : arg, arg?.captureMode || defaultMode, ctx, evaluate));
       return applySemanticHeader(attachBuiltinProto({
         type: "sequence",
         values: values2,
@@ -22257,8 +22384,27 @@ function callIterator(fn, args, context, evaluate, invoke) {
   }
   return invoke(fn, args, context, evaluate);
 }
-function predicateResult(fn, args, context, evaluate, invoke) {
-  return truthy2(callIterator(fn, args, context, evaluate, invoke));
+function callbackSteps(steps, execution) {
+  if (execution?.promiseAware) {
+    return (async () => {
+      let step2 = steps.next();
+      while (!step2.done)
+        step2 = steps.next(await step2.value);
+      return step2.value;
+    })();
+  }
+  let step = steps.next();
+  while (!step.done)
+    step = steps.next(step.value);
+  return step.value;
+}
+function mapCallbacks(values2, mapper, execution) {
+  return callbackSteps(function* () {
+    const results = [];
+    for (const value of values2)
+      results.push(yield mapper(value));
+    return results;
+  }(), execution);
 }
 function sequenceAt(target, rawIndex) {
   const index = normalizeLookupIndex(rawIndex, target.values.length);
@@ -22352,46 +22498,56 @@ function flattenValues(values2, depth) {
   }
   return out;
 }
-function reduceEntries(target, iterator, initial, context, evaluate, invoke, entryMapper = (entry) => [entry.value, entry.key, target]) {
-  const entries = iterateEntries(target);
-  let accumulator = initial === undefined ? defaultAccumulator(target) : initial;
-  for (const entry of entries) {
-    accumulator = invoke(iterator, [accumulator, ...entryMapper(entry)], context, evaluate);
-  }
-  return accumulator;
-}
-function anyEntries(target, iterator, context, evaluate, invoke) {
-  for (const entry of iterateEntries(target)) {
-    if (predicateResult(iterator, [entry.value, entry.key, target], context, evaluate, invoke)) {
-      return int5(1);
+function reduceEntries(target, iterator, initial, context, evaluate, invoke, execution, entryMapper = (entry) => [entry.value, entry.key, target]) {
+  return callbackSteps(function* () {
+    const entries = iterateEntries(target);
+    let accumulator = initial === undefined ? defaultAccumulator(target) : initial;
+    for (const entry of entries) {
+      accumulator = yield invoke(iterator, [accumulator, ...entryMapper(entry)], context, evaluate);
     }
-  }
-  return null;
+    return accumulator;
+  }(), execution);
 }
-function allEntries(target, iterator, context, evaluate, invoke) {
-  for (const entry of iterateEntries(target)) {
-    if (!predicateResult(iterator, [entry.value, entry.key, target], context, evaluate, invoke)) {
-      return null;
+function anyEntries(target, iterator, context, evaluate, invoke, execution) {
+  return callbackSteps(function* () {
+    for (const entry of iterateEntries(target)) {
+      if (truthy2(yield callIterator(iterator, [entry.value, entry.key, target], context, evaluate, invoke))) {
+        return int5(1);
+      }
     }
-  }
-  return int5(1);
+    return null;
+  }(), execution);
 }
-function countEntries(target, iterator, context, evaluate, invoke) {
-  let count = 0;
-  for (const entry of iterateEntries(target)) {
-    if (!iterator || predicateResult(iterator, [entry.value, entry.key, target], context, evaluate, invoke)) {
-      count += 1;
+function allEntries(target, iterator, context, evaluate, invoke, execution) {
+  return callbackSteps(function* () {
+    for (const entry of iterateEntries(target)) {
+      if (!truthy2(yield callIterator(iterator, [entry.value, entry.key, target], context, evaluate, invoke))) {
+        return null;
+      }
     }
-  }
-  return int5(count);
+    return int5(1);
+  }(), execution);
 }
-function findEntry(target, iterator, context, evaluate, invoke, wantKey = false) {
-  for (const entry of iterateEntries(target)) {
-    if (predicateResult(iterator, [entry.value, entry.key, target], context, evaluate, invoke)) {
-      return wantKey ? entry.key : entry.value;
+function countEntries(target, iterator, context, evaluate, invoke, execution) {
+  return callbackSteps(function* () {
+    let count = 0;
+    for (const entry of iterateEntries(target)) {
+      if (!iterator || truthy2(yield callIterator(iterator, [entry.value, entry.key, target], context, evaluate, invoke))) {
+        count += 1;
+      }
     }
-  }
-  return null;
+    return int5(count);
+  }(), execution);
+}
+function findEntry(target, iterator, context, evaluate, invoke, wantKey = false, execution) {
+  return callbackSteps(function* () {
+    for (const entry of iterateEntries(target)) {
+      if (truthy2(yield callIterator(iterator, [entry.value, entry.key, target], context, evaluate, invoke))) {
+        return wantKey ? entry.key : entry.value;
+      }
+    }
+    return null;
+  }(), execution);
 }
 function arithmeticAdd(a, b) {
   return arithmeticFunctions.ADD.impl([a, b]);
@@ -22581,28 +22737,31 @@ var arrayMethods = {
     ensureSequence(target, "Shift!");
     return target.values.length === 0 ? HOLE : target.values.shift();
   }),
-  MAP: method2("MAP", ([target, iterator], context, evaluate, invoke) => {
+  MAP: method2("MAP", ([target, iterator], context, evaluate, invoke, execution) => {
     ensureSequence(target, "Map");
-    return {
-      type: "sequence",
-      values: iterateEntries(target).map((entry) => invoke(iterator, [entry.value, entry.key, target], context, evaluate)),
-      _ext: mutableExt2()
-    };
+    return callbackSteps(function* () {
+      const values2 = yield mapCallbacks(iterateEntries(target), (entry) => invoke(iterator, [entry.value, entry.key, target], context, evaluate), execution);
+      return { type: "sequence", values: values2, _ext: mutableExt2() };
+    }(), execution);
   }),
-  FILTER: method2("FILTER", ([target, iterator], context, evaluate, invoke) => {
+  FILTER: method2("FILTER", ([target, iterator], context, evaluate, invoke, execution) => {
     ensureSequence(target, "Filter");
-    return {
-      type: "sequence",
-      values: iterateEntries(target).filter((entry) => predicateResult(iterator, [entry.value, entry.key, target], context, evaluate, invoke)).map((entry) => entry.value),
-      _ext: mutableExt2()
-    };
+    return callbackSteps(function* () {
+      const values2 = [];
+      for (const entry of iterateEntries(target)) {
+        if (truthy2(yield callIterator(iterator, [entry.value, entry.key, target], context, evaluate, invoke))) {
+          values2.push(entry.value);
+        }
+      }
+      return { type: "sequence", values: values2, _ext: mutableExt2() };
+    }(), execution);
   }),
-  ANY: method2("ANY", ([target, iterator], context, evaluate, invoke) => anyEntries(target, iterator, context, evaluate, invoke)),
-  ALL: method2("ALL", ([target, iterator], context, evaluate, invoke) => allEntries(target, iterator, context, evaluate, invoke)),
-  COUNT: method2("COUNT", ([target, iterator], context, evaluate, invoke) => countEntries(target, iterator, context, evaluate, invoke)),
-  FIND: method2("FIND", ([target, iterator], context, evaluate, invoke) => findEntry(target, iterator, context, evaluate, invoke, false)),
-  FINDINDEX: method2("FINDINDEX", ([target, iterator], context, evaluate, invoke) => findEntry(target, iterator, context, evaluate, invoke, true)),
-  REDUCE: method2("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke)),
+  ANY: method2("ANY", ([target, iterator], context, evaluate, invoke, execution) => anyEntries(target, iterator, context, evaluate, invoke, execution)),
+  ALL: method2("ALL", ([target, iterator], context, evaluate, invoke, execution) => allEntries(target, iterator, context, evaluate, invoke, execution)),
+  COUNT: method2("COUNT", ([target, iterator], context, evaluate, invoke, execution) => countEntries(target, iterator, context, evaluate, invoke, execution)),
+  FIND: method2("FIND", ([target, iterator], context, evaluate, invoke, execution) => findEntry(target, iterator, context, evaluate, invoke, false, execution)),
+  FINDINDEX: method2("FINDINDEX", ([target, iterator], context, evaluate, invoke, execution) => findEntry(target, iterator, context, evaluate, invoke, true, execution)),
+  REDUCE: method2("REDUCE", ([target, iterator, initial], context, evaluate, invoke, execution) => reduceEntries(target, iterator, initial, context, evaluate, invoke, execution)),
   "SWAP!": method2("SWAP!", ([target, i, j]) => {
     ensureSequence(target, "Swap!");
     const len = target.values.length;
@@ -22862,22 +23021,26 @@ var mapMethods = {
       target.entries.set(key, value);
     return target;
   }),
-  UPDATE: method2("UPDATE", ([target, key, updater], context, evaluate, invoke) => {
-    ensureMap(target, "Update");
-    const canonical = keyOf(key);
-    const current = target.entries.has(canonical) ? target.entries.get(canonical) : null;
-    const next = invoke(updater, [current, stringObj3(canonical), target], context, evaluate);
-    const copy = shallowCopyValue(target);
-    copy.entries.set(canonical, next);
-    return copy;
+  UPDATE: method2("UPDATE", ([target, key, updater], context, evaluate, invoke, execution) => {
+    return callbackSteps(function* () {
+      ensureMap(target, "Update");
+      const canonical = keyOf(key);
+      const current = target.entries.has(canonical) ? target.entries.get(canonical) : null;
+      const next = yield invoke(updater, [current, stringObj3(canonical), target], context, evaluate);
+      const copy = shallowCopyValue(target);
+      copy.entries.set(canonical, next);
+      return copy;
+    }(), execution);
   }),
-  "UPDATE!": method2("UPDATE!", ([target, key, updater], context, evaluate, invoke) => {
-    ensureMap(target, "Update!");
-    const canonical = keyOf(key);
-    const current = target.entries.has(canonical) ? target.entries.get(canonical) : null;
-    const next = invoke(updater, [current, stringObj3(canonical), target], context, evaluate);
-    target.entries.set(canonical, next);
-    return target;
+  "UPDATE!": method2("UPDATE!", ([target, key, updater], context, evaluate, invoke, execution) => {
+    return callbackSteps(function* () {
+      ensureMap(target, "Update!");
+      const canonical = keyOf(key);
+      const current = target.entries.has(canonical) ? target.entries.get(canonical) : null;
+      const next = yield invoke(updater, [current, stringObj3(canonical), target], context, evaluate);
+      target.entries.set(canonical, next);
+      return target;
+    }(), execution);
   }),
   DEFAULT: method2("DEFAULT", ([target, key, value]) => {
     ensureMap(target, "Default");
@@ -22929,36 +23092,42 @@ var mapMethods = {
       target.entries.delete(key);
     return target;
   }),
-  MAPVALUES: method2("MAPVALUES", ([target, iterator], context, evaluate, invoke) => {
-    ensureMap(target, "MapValues");
-    const entries = new Map;
-    for (const [key, value] of target.entries) {
-      entries.set(key, invoke(iterator, [value, stringObj3(key), target], context, evaluate));
-    }
-    return { type: "map", entries, _ext: mutableExt2() };
-  }),
-  REDUCEKEYS: method2("REDUCEKEYS", ([target, iterator, initial], context, evaluate, invoke) => {
-    ensureMap(target, "ReduceKeys");
-    let acc = initial === undefined ? defaultAccumulator(target) : initial;
-    for (const [key, value] of target.entries) {
-      acc = invoke(iterator, [acc, stringObj3(key), value, target], context, evaluate);
-    }
-    return acc;
-  }),
-  FILTER: method2("FILTER", ([target, iterator], context, evaluate, invoke) => {
-    ensureMap(target, "Filter");
-    const entries = new Map;
-    for (const [key, value] of target.entries) {
-      if (predicateResult(iterator, [value, stringObj3(key), target], context, evaluate, invoke)) {
-        entries.set(key, value);
+  MAPVALUES: method2("MAPVALUES", ([target, iterator], context, evaluate, invoke, execution) => {
+    return callbackSteps(function* () {
+      ensureMap(target, "MapValues");
+      const entries = new Map;
+      for (const [key, value] of target.entries) {
+        entries.set(key, yield invoke(iterator, [value, stringObj3(key), target], context, evaluate));
       }
-    }
-    return { type: "map", entries, _ext: mutableExt2() };
+      return { type: "map", entries, _ext: mutableExt2() };
+    }(), execution);
   }),
-  ANY: method2("ANY", ([target, iterator], context, evaluate, invoke) => anyEntries(target, iterator, context, evaluate, invoke)),
-  ALL: method2("ALL", ([target, iterator], context, evaluate, invoke) => allEntries(target, iterator, context, evaluate, invoke)),
-  COUNT: method2("COUNT", ([target, iterator], context, evaluate, invoke) => countEntries(target, iterator, context, evaluate, invoke)),
-  REDUCE: method2("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke))
+  REDUCEKEYS: method2("REDUCEKEYS", ([target, iterator, initial], context, evaluate, invoke, execution) => {
+    return callbackSteps(function* () {
+      ensureMap(target, "ReduceKeys");
+      let acc = initial === undefined ? defaultAccumulator(target) : initial;
+      for (const [key, value] of target.entries) {
+        acc = yield invoke(iterator, [acc, stringObj3(key), value, target], context, evaluate);
+      }
+      return acc;
+    }(), execution);
+  }),
+  FILTER: method2("FILTER", ([target, iterator], context, evaluate, invoke, execution) => {
+    ensureMap(target, "Filter");
+    return callbackSteps(function* () {
+      const entries = new Map;
+      for (const [key, value] of target.entries) {
+        if (truthy2(yield callIterator(iterator, [value, stringObj3(key), target], context, evaluate, invoke))) {
+          entries.set(key, value);
+        }
+      }
+      return { type: "map", entries, _ext: mutableExt2() };
+    }(), execution);
+  }),
+  ANY: method2("ANY", ([target, iterator], context, evaluate, invoke, execution) => anyEntries(target, iterator, context, evaluate, invoke, execution)),
+  ALL: method2("ALL", ([target, iterator], context, evaluate, invoke, execution) => allEntries(target, iterator, context, evaluate, invoke, execution)),
+  COUNT: method2("COUNT", ([target, iterator], context, evaluate, invoke, execution) => countEntries(target, iterator, context, evaluate, invoke, execution)),
+  REDUCE: method2("REDUCE", ([target, iterator, initial], context, evaluate, invoke, execution) => reduceEntries(target, iterator, initial, context, evaluate, invoke, execution))
 };
 var setMethods = {
   LEN: method2("LEN", ([target]) => {
@@ -23046,18 +23215,22 @@ var setMethods = {
     ensureSet(other, "Disjoint");
     return bool3(target.values.every((value) => !setHas(other, value)));
   }),
-  FILTER: method2("FILTER", ([target, iterator], context, evaluate, invoke) => {
+  FILTER: method2("FILTER", ([target, iterator], context, evaluate, invoke, execution) => {
     ensureSet(target, "Filter");
-    return {
-      type: "set",
-      values: target.values.filter((value) => predicateResult(iterator, [value, value, target], context, evaluate, invoke)),
-      _ext: mutableExt2()
-    };
+    return callbackSteps(function* () {
+      const values2 = [];
+      for (const entry of iterateEntries(target)) {
+        if (truthy2(yield callIterator(iterator, [entry.value, entry.key, target], context, evaluate, invoke))) {
+          values2.push(entry.value);
+        }
+      }
+      return { type: "set", values: values2, _ext: mutableExt2() };
+    }(), execution);
   }),
-  ANY: method2("ANY", ([target, iterator], context, evaluate, invoke) => anyEntries(target, iterator, context, evaluate, invoke)),
-  ALL: method2("ALL", ([target, iterator], context, evaluate, invoke) => allEntries(target, iterator, context, evaluate, invoke)),
-  COUNT: method2("COUNT", ([target, iterator], context, evaluate, invoke) => countEntries(target, iterator, context, evaluate, invoke)),
-  REDUCE: method2("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke))
+  ANY: method2("ANY", ([target, iterator], context, evaluate, invoke, execution) => anyEntries(target, iterator, context, evaluate, invoke, execution)),
+  ALL: method2("ALL", ([target, iterator], context, evaluate, invoke, execution) => allEntries(target, iterator, context, evaluate, invoke, execution)),
+  COUNT: method2("COUNT", ([target, iterator], context, evaluate, invoke, execution) => countEntries(target, iterator, context, evaluate, invoke, execution)),
+  REDUCE: method2("REDUCE", ([target, iterator, initial], context, evaluate, invoke, execution) => reduceEntries(target, iterator, initial, context, evaluate, invoke, execution))
 };
 var stringMethods = {
   LEN: method2("LEN", ([target]) => {
@@ -23156,7 +23329,7 @@ var stringMethods = {
     ensureString(target, "Repeat");
     return stringObj3(target.value.repeat(numericIndex(count)));
   }),
-  REDUCE: method2("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke))
+  REDUCE: method2("REDUCE", ([target, iterator, initial], context, evaluate, invoke, execution) => reduceEntries(target, iterator, initial, context, evaluate, invoke, execution))
 };
 var tupleMethods = {
   LEN: method2("LEN", ([target]) => {
@@ -23193,7 +23366,7 @@ var tupleMethods = {
     ensureTuple(target, "ToArray");
     return { type: "sequence", values: [...target.values], _ext: mutableExt2() };
   }),
-  REDUCE: method2("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke))
+  REDUCE: method2("REDUCE", ([target, iterator, initial], context, evaluate, invoke, execution) => reduceEntries(target, iterator, initial, context, evaluate, invoke, execution))
 };
 function shapedSelectorsFromArgs(args) {
   if (args.length === 1 && args[0]?.type === "tuple") {
@@ -23283,13 +23456,12 @@ var shapedMethods = {
       offset: target.offset
     });
   }),
-  MAP: method2("MAP", ([target, iterator], context, evaluate, invoke) => {
+  MAP: method2("MAP", ([target, iterator], context, evaluate, invoke, execution) => {
     ensureShaped(target, "Map");
-    const data = [];
-    forEachShapedCell2(target, (value, tuple) => {
-      data.push(invoke(iterator, [value, shapedIndexTuple(tuple), target], context, evaluate));
-    });
-    return createShaped(target.shape, data);
+    return callbackSteps(function* () {
+      const data = yield mapCallbacks(iterateEntries(target), (entry) => invoke(iterator, [entry.value, entry.key, target], context, evaluate), execution);
+      return createShaped(target.shape, data);
+    }(), execution);
   }),
   "FILL!": method2("FILL!", ([target, value]) => {
     ensureShaped(target, "Fill!");
@@ -23318,7 +23490,7 @@ var shapedMethods = {
       return null;
     return arithmeticDiv(shapedMethods.SUM.impl([target]), int5(size));
   }),
-  REDUCE: method2("REDUCE", ([target, iterator, initial], context, evaluate, invoke) => reduceEntries(target, iterator, initial, context, evaluate, invoke))
+  REDUCE: method2("REDUCE", ([target, iterator, initial], context, evaluate, invoke, execution) => reduceEntries(target, iterator, initial, context, evaluate, invoke, execution))
 };
 var commonMethods = {
   CHECKTRAITS: method2("CHECKTRAITS", ([target], context) => checkTraits(target, context, { warnOnly: true })),
@@ -23491,7 +23663,7 @@ var structuralMethods = {
   INSPECT: method2("Inspect", ([target]) => inspectStructuralValue(target)),
   RENDER: method2("Render", ([target]) => stringObj3(formatStructuralValue(target, valueKey2))),
   COLLAPSE: method2("Collapse", ([target], context) => collapseStructuralValue(target, context)),
-  TOEXACT: method2("ToExact", ([target], context, evaluate, invoke) => {
+  TOEXACT: method2("ToExact", ([target], context, evaluate, invoke, execution) => {
     if (target.type !== "structural_algebra")
       return collapseStructuralValue(target, context);
     const components = target.components.map((component) => collapseStructuralValue(component, context));
@@ -23519,7 +23691,7 @@ var structuralMethods = {
     const methodName = target.profile === "Complex" ? "FROMPARTS" : target.profile.toUpperCase();
     const constructor = resolveMethod(receiver, methodName);
     if (constructor.type === "method_builtin") {
-      return constructor.impl([receiver, ...components], context, evaluate, invoke);
+      return constructor.impl([receiver, ...components], context, evaluate, invoke, execution);
     }
     return invoke(constructor, [receiver, ...components], context, evaluate);
   }),
@@ -23540,16 +23712,18 @@ var structuralMethods = {
       _ext: mutableExt2()
     };
   }),
-  MAPARGUMENTS: method2("MapArguments", ([target, mapper], context, evaluate, invoke) => {
-    if (target.type === "structural_algebra") {
-      const profile = createStructuralAlgebraProfile(target.profile, target.basis, {
-        cayleyDickson: ["Complex", "Quaternion", "Octonion"].includes(target.profile)
-      });
-      return structuralAlgebra(profile, target.components.map((component) => invoke(mapper, [component], context, evaluate)), target.mode, structuralSourceSpan(target));
-    }
-    if (target.type !== "structural_form")
-      return target;
-    return structuralForm(target.head, target.args.map((argument) => invoke(mapper, [argument], context, evaluate)), target.mode, structuralSourceSpan(target));
+  MAPARGUMENTS: method2("MapArguments", ([target, mapper], context, evaluate, invoke, execution) => {
+    return callbackSteps(function* () {
+      if (target.type === "structural_algebra") {
+        const profile = createStructuralAlgebraProfile(target.profile, target.basis, {
+          cayleyDickson: ["Complex", "Quaternion", "Octonion"].includes(target.profile)
+        });
+        return structuralAlgebra(profile, yield mapCallbacks(target.components, (component) => invoke(mapper, [component], context, evaluate), execution), target.mode, structuralSourceSpan(target));
+      }
+      if (target.type !== "structural_form")
+        return target;
+      return structuralForm(target.head, yield mapCallbacks(target.args, (argument) => invoke(mapper, [argument], context, evaluate), execution), target.mode, structuralSourceSpan(target));
+    }(), execution);
   })
 };
 var PROTOS = new Map([
@@ -28631,6 +28805,12 @@ function previewIr(node, options = {}) {
     return truncate(irToText(node), maxLen);
   }
   switch (node.fn) {
+    case "GUARD_RETURN": {
+      const marker = node.args[0].decision === "null" ? "?_>" : "??>";
+      const left = node.args[1]?.args?.[0];
+      const right = node.args[2]?.args?.[0];
+      return truncate(`(${previewIr(left, { maxLen, depth: depth + 1 })} ${marker} ${previewIr(right, { maxLen, depth: depth + 1 })})`, maxLen);
+    }
     case "LITERAL":
       return String(node.args[0]);
     case "STRING":
@@ -29904,6 +30084,9 @@ var LOWERERS = {
   Sort(node) {
     return ir2("PSORT", lowerNode(node.left), lowerNode(node.right));
   },
+  ReturnGuard(node) {
+    return ir2("GUARD_RETURN", { decision: node.decision }, ir2("DEFER", lowerNode(node.condition)), ir2("DEFER", lowerNode(node.value)));
+  },
   TernaryOperation(node) {
     return ir2("TERNARY", lowerNode(node.condition), ir2("DEFER", lowerNode(node.trueExpression)), ir2("DEFER", node.nullExpression ? lowerNode(node.nullExpression) : ir2("NULL")), ir2("DEFER", node.undecidedExpression ? lowerNode(node.undecidedExpression) : ir2("UNDECIDED")));
   },
@@ -30563,7 +30746,7 @@ function namespaceEntry(context, namespace) {
   value._ext.set("REGISTER", {
     type: "method_builtin",
     name: "Register",
-    impl(args, evaluationContext, _evaluate, callWithConcreteArgs2) {
+    impl(args, evaluationContext, _evaluate) {
       if (!canRegister(evaluationContext)) {
         throw new Error(`.${title}.Register is not permitted in this execution context`);
       }
@@ -30572,8 +30755,8 @@ function namespaceEntry(context, namespace) {
       const doc = args[3]?.type === "string" ? args[3].value : "";
       const groups = rixStringList(args[4], `.${title}.Register groups`);
       const definition = {
-        impl(callArgs, callContext, callEvaluate) {
-          return callWithConcreteArgs2(callable, callArgs, callContext, callEvaluate);
+        impl(callArgs, callContext, callEvaluate, execution) {
+          return execution?.promiseAware ? execution.invoke(callable, callArgs) : callWithConcreteArgs(callable, callArgs, callContext, callEvaluate);
         },
         doc
       };
@@ -30614,7 +30797,7 @@ function namespaceEntry(context, namespace) {
   value._ext.set("REGISTERCALLABLEVALUE", {
     type: "method_builtin",
     name: "RegisterCallableValue",
-    impl(args, evaluationContext, _evaluate, callWithConcreteArgs2) {
+    impl(args, evaluationContext, _evaluate) {
       if (!canRegister(evaluationContext)) {
         throw new Error(`.${title}.RegisterCallableValue is not permitted in this execution context`);
       }
@@ -30623,8 +30806,8 @@ function namespaceEntry(context, namespace) {
       const doc = args[3]?.type === "string" ? args[3].value : "";
       const groups = rixStringList(args[4], `.${title}.RegisterCallableValue groups`);
       const definition = {
-        impl(callArgs, callContext, callEvaluate) {
-          return callWithConcreteArgs2(callableValue2, callArgs, callContext, callEvaluate);
+        impl(callArgs, callContext, callEvaluate, execution) {
+          return execution?.promiseAware ? execution.invoke(callableValue2, callArgs) : callWithConcreteArgs(callableValue2, callArgs, callContext, callEvaluate);
         },
         doc
       };
@@ -30644,7 +30827,7 @@ function namespaceEntry(context, namespace) {
   value._ext.set("REGISTERMETHOD", {
     type: "method_builtin",
     name: "RegisterMethod",
-    impl(args, evaluationContext, _evaluate, invoke) {
+    impl(args, evaluationContext, _evaluate) {
       if (!canRegister(evaluationContext)) {
         throw new Error(`.${title}.RegisterMethod is not permitted in this execution context`);
       }
@@ -30665,7 +30848,7 @@ function namespaceEntry(context, namespace) {
       const wrapped = {
         type: "method_builtin",
         name: methodName,
-        impl(callArgs, callContext, callEvaluate) {
+        impl(callArgs, callContext, callEvaluate, _invoke, execution) {
           const envKey = "__embedded_caller_scopes__";
           const hadCallerScopes = callContext.env.has(envKey);
           const priorCallerScopes = callContext.getEnv(envKey, null);
@@ -30676,13 +30859,25 @@ function namespaceEntry(context, namespace) {
             readThrough: true,
             callableBoundary: false
           }, ...callContext.captureClosureScopes()]);
-          try {
-            return invoke(callable, callArgs, callContext, callEvaluate);
-          } finally {
+          const restoreCallerScopes = () => {
             if (hadCallerScopes)
               callContext.setEnv(envKey, priorCallerScopes);
             else
               callContext.env.delete(envKey);
+          };
+          if (execution?.promiseAware) {
+            return (async () => {
+              try {
+                return await execution.invoke(callable, callArgs);
+              } finally {
+                restoreCallerScopes();
+              }
+            })();
+          }
+          try {
+            return callWithConcreteArgs(callable, callArgs, callContext, callEvaluate);
+          } finally {
+            restoreCallerScopes();
           }
         }
       };
@@ -32265,6 +32460,7 @@ class Context {
     this.globalScopedEnv = new Map;
     this.callStack = [];
     this.currentCallables = [];
+    this.functionReturnTargets = [];
     this.sharedBodyOverrides = [];
     this.finalizerActivations = [];
     this.readOnlyCells = new WeakSet;
@@ -32575,6 +32771,7 @@ class Context {
     }
     child.callStack = [...this.callStack];
     child.currentCallables = [...this.currentCallables];
+    child.functionReturnTargets = [...this.functionReturnTargets];
     child.sharedBodyOverrides = [...this.sharedBodyOverrides];
     child.finalizerActivations = [];
     return child;
@@ -32605,6 +32802,7 @@ class Context {
     forkRuntimeRandom(this, child);
     child.callStack = [...this.callStack];
     child.currentCallables = [...this.currentCallables];
+    child.functionReturnTargets = [...this.functionReturnTargets];
     child.sharedBodyOverrides = [];
     child.finalizerActivations = [];
     return child;
@@ -32654,6 +32852,7 @@ class Context {
     this.functions.clear();
     this.callStack = [];
     this.currentCallables = [];
+    this.functionReturnTargets = [];
     this.env.delete("__reactive_binding_graph__");
     this.env.delete("__reactive_active_graph__");
     this.env.delete("__reactive_transaction__");
@@ -33480,6 +33679,7 @@ var propertyFunctions = {
 // ../rix/src/parser/parser.js
 var PRECEDENCE = {
   STATEMENT: 0,
+  RETURN_GUARD: 8,
   ASSIGNMENT: 10,
   PIPE: 20,
   ARROW: 25,
@@ -33502,6 +33702,8 @@ var PRECEDENCE = {
 var JUXTAPOSITION_PRECEDENCE = 95;
 var IMPLICIT_APPLICATION_PRECEDENCE = 97;
 var SYMBOL_TABLE = {
+  "?_>": { precedence: PRECEDENCE.RETURN_GUARD, associativity: "left", type: "infix" },
+  "??>": { precedence: PRECEDENCE.RETURN_GUARD, associativity: "left", type: "infix" },
   ":=": {
     precedence: PRECEDENCE.ASSIGNMENT,
     associativity: "right",
@@ -34473,6 +34675,17 @@ class Parser {
   }
   parseInfix(left, symbolInfo) {
     const operator = this.current;
+    if (operator.value === "?_>" || operator.value === "??>") {
+      this.advance();
+      const value = this.parseExpression(PRECEDENCE.RETURN_GUARD + 1);
+      return this.createNode("ReturnGuard", {
+        condition: left,
+        decision: operator.value === "?_>" ? "null" : "undecided",
+        value,
+        pos: left.pos,
+        original: (left.original || "") + operator.original + (value.original || "")
+      });
+    }
     if (symbolInfo.type === "postfix" && (operator.value === "!" || operator.value === "!!")) {
       this.advance();
       return this.createNode(operator.value === "!" ? "Factorial" : "DoubleFactorial", {
@@ -39221,6 +39434,8 @@ function evaluatePreparedTrial(args, context, evaluate, preserveFailure) {
   try {
     candidate = evaluate(candidateNode);
   } catch (error) {
+    if (isFunctionReturnControl(error))
+      throw error;
     if (gates[0]?.strict === true)
       throw error;
     return preparedTrialFailure(preserveFailure);
@@ -39253,6 +39468,8 @@ function evaluatePreparedTrial(args, context, evaluate, preserveFailure) {
           }
         }
       } catch (error) {
+        if (isFunctionReturnControl(error))
+          throw error;
         if (error?.message?.includes("remained undecided"))
           throw error;
         if (strict)
@@ -40319,7 +40536,7 @@ function isBreakSignal(error) {
   return Boolean(error) && error.kind === "break";
 }
 function addEvaluationContext(error, detail) {
-  if (!error || typeof error !== "object" || isBreakSignal(error))
+  if (!error || typeof error !== "object" || isBreakSignal(error) || isFunctionReturnSignal(error))
     return error;
   if (!Array.isArray(error.rixEvaluationContexts))
     error.rixEvaluationContexts = [];
@@ -40362,6 +40579,23 @@ function applyImports(imports, context) {
   }
 }
 var controlFunctions = {
+  GUARD_RETURN: {
+    lazy: true,
+    impl(args, context, evaluate) {
+      const target = requireReturnTarget(context);
+      const value = evaluate(unwrapDefer(args[1]));
+      if (decisionState(value) !== args[0].decision)
+        return value;
+      let result;
+      try {
+        result = evaluate(unwrapDefer(args[2]));
+      } catch (error) {
+        throw markReturnPayloadError(error);
+      }
+      throw new FunctionReturnSignal(target, result);
+    },
+    doc: "Return from the active function on a null or undecided decision"
+  },
   SEQ: {
     lazy: true,
     impl(args, context, evaluate) {
@@ -41670,6 +41904,10 @@ function runSequentialTests(label, setupNode, testArgs, filePath, context, evalu
   try {
     context.withSharedBody(setupNode, () => evaluate(setupNode));
   } catch (err) {
+    if (isFunctionReturnSignal(err)) {
+      context.pop();
+      throw err;
+    }
     setupResult = { type: "map", entries: new Map([
       ["passed", null],
       ["error", toRixString(err.message)]
@@ -41712,6 +41950,10 @@ function runSequentialTests(label, setupNode, testArgs, filePath, context, evalu
           stopped = true;
         }
       } catch (err) {
+        if (isFunctionReturnSignal(err)) {
+          context.pop();
+          throw err;
+        }
         results.push(makeTestEntry(i + 1, false, null, err.message, false));
         totalErrored++;
         passedAll = false;
@@ -41866,6 +42108,8 @@ function runIsolatedTestEntries(label, setupNode, testEntries, filePath, context
         passedAll = false;
       }
     } catch (err) {
+      if (isFunctionReturnSignal(err))
+        throw err;
       resultMap.set(key, makeIsolatedEntry(false, null, err.message));
       totalErrored++;
       passedAll = false;
@@ -41932,6 +42176,8 @@ async function runSequentialTestsAsync(label, setupNode, testArgs, filePath, con
     try {
       await context.withSharedBodyAsync(setupNode, () => evaluate(setupNode));
     } catch (err) {
+      if (isFunctionReturnSignal(err))
+        throw err;
       setupResult = { type: "map", entries: new Map([
         ["passed", null],
         ["error", toRixString(err.message)]
@@ -41969,6 +42215,8 @@ async function runSequentialTestsAsync(label, setupNode, testArgs, filePath, con
             stopped = true;
           }
         } catch (err) {
+          if (isFunctionReturnSignal(err))
+            throw err;
           results.push(makeTestEntry(i + 1, false, null, err.message, false));
           totalErrored++;
           passedAll = false;
@@ -42084,6 +42332,8 @@ async function runIsolatedTestEntriesAsync(label, setupNode, testEntries, filePa
         passedAll = false;
       }
     } catch (err) {
+      if (isFunctionReturnSignal(err))
+        throw err;
       resultMap.set(key, makeIsolatedEntry(false, null, err.message));
       totalErrored++;
       passedAll = false;
@@ -42133,6 +42383,8 @@ var DEBUG = {
     try {
       finalValue = evaluate(exprNode);
     } catch (err) {
+      if (isFunctionReturnSignal(err))
+        throw err;
       const dataEntries2 = new Map;
       dataEntries2.set("exprSource", toRixString(exprSource));
       dataEntries2.set("ast", toRixString(astRepr));
@@ -42344,6 +42596,8 @@ function runAbortTest(testKind, args, context, evaluate) {
     try {
       setupValue = context.withSharedBody(setupNode, () => evaluate(setupNode));
     } catch (err) {
+      if (isFunctionReturnSignal(err))
+        throw err;
       setupPassed = false;
       const c = classifyError(err);
       setupOutcome = c.outcome;
@@ -42362,6 +42616,8 @@ function runAbortTest(testKind, args, context, evaluate) {
         exprValue = val;
         passed = false;
       } catch (err) {
+        if (isFunctionReturnSignal(err))
+          throw err;
         const c = classifyError(err);
         exprOutcome = c.outcome;
         exprAbort = c.abort;
@@ -42419,6 +42675,8 @@ async function runAbortTestAsync(testKind, args, context, evaluate) {
     try {
       setupValue = await context.withSharedBodyAsync(setupNode, () => evaluate(setupNode));
     } catch (err) {
+      if (isFunctionReturnSignal(err))
+        throw err;
       setupPassed = false;
       const classified = classifyError(err);
       setupOutcome = classified.outcome;
@@ -42429,6 +42687,8 @@ async function runAbortTestAsync(testKind, args, context, evaluate) {
       try {
         exprValue = exprNode && exprNode.fn === "BLOCK" ? await context.withSharedBodyAsync(exprNode, () => evaluate(exprNode)) : await evaluate(exprNode);
       } catch (err) {
+        if (isFunctionReturnSignal(err))
+          throw err;
         const classified = classifyError(err);
         exprOutcome = classified.outcome;
         exprAbort = classified.abort;
@@ -62932,22 +63192,29 @@ defaultEnabled: false
 **/
 
 CasOption(options, key, fallback ?= _) -> options.Has(key) ?: options[key] ?_ fallback;
-CasRequireOptions(value, label) -> value ? :Map ?: value ?_ .Error(@"@{label} must be a Map");
+CasRequireOptions(value, label) ?!- [
+    value ? :Map ?_> .Error(@"@{label} must be a Map")
+] -> value;
 CasIsExpression(value) -> .calculus.IsExpression(value);
 CasVariableName(variable) ->
     variable ? :String
       ?: variable
-      ?_ (CasIsExpression(variable) && variable[:kind]==:variable
-           ?: variable[:name]
-           ?_ .Error("CAS variable must be a string or Calculus variable"));
+      ?_ {;
+          CasIsExpression(@variable) && @variable[:kind]==:variable
+            ?_> .Error("CAS variable must be a string or Calculus variable");
+          @variable[:name];
+      };
 CasExpression(value) ->
     CasIsExpression(value)
       ?: value
-      ?_ ((value ? :Integer)||(value ? :Rational)
-           ?: .calculus.Constant(value)
-           ?_ .Error("CAS expected a Calculus expression or exact scalar"));
-CasConstantValue(expression) ->
-    CasIsExpression(expression) && expression[:kind]==:constant ?: expression[:value] ?_ _;
+      ?_ {;
+          (@value ? :Integer)||(@value ? :Rational)
+            ?_> .Error("CAS expected a Calculus expression or exact scalar");
+          .calculus.Constant(@value);
+      };
+CasConstantValue(expression) ?!- [
+    CasIsExpression(expression) && expression[:kind]==:constant ?_> _
+] -> expression[:value];
 CasExpressionKey(expression) -> .calculus.StructuralKey(expression);
 CasAppend(left,right) -> right.Reduce((result,value)->result.Push(value),left);
 
@@ -62968,9 +63235,7 @@ CasSimplify(value) -> {;
     expression = CasExpression(value);
     checked = .calculus.SimplifyResult(expression);
     replay = .calculus.CheckSimplification(checked);
-    replay[:accepted]==1
-      ?: _
-      ?_ .Error("CAS rejected an internally produced simplification");
+    replay[:accepted]==1 ?_> .Error("CAS rejected an internally produced simplification");
     CasRewrite(:simplify,expression,checked[:expression],[{=
         rule=:checkedCalculusSimplification,
         checker=checked[:checker],
@@ -62980,13 +63245,10 @@ CasSimplify(value) -> {;
 
 CasCheckSimplification(candidate) -> {;
     valid = (candidate ? :Map) && candidate[:schema]=="rix.cas.rewrite@1" && candidate[:operation]==:simplify;
-    valid
-      ?: {;
-          recomputed = CasSimplify(@candidate[:source]);
-          accepted = CasExpressionKey(recomputed[:expression])==CasExpressionKey(@candidate[:expression]);
-          .ImmutableValue({= accepted=accepted,certified=accepted ?: 1 ?_ _,reason=accepted ?: _ ?_ :simplificationClaimMismatch });
-      }
-      ?_ .ImmutableValue({= accepted=_,certified=_,reason=:malformedCasSimplification });
+    valid ?_> .ImmutableValue({= accepted=_,certified=_,reason=:malformedCasSimplification });
+    recomputed = CasSimplify(candidate[:source]);
+    accepted = CasExpressionKey(recomputed[:expression])==CasExpressionKey(candidate[:expression]);
+    .ImmutableValue({= accepted=accepted,certified=accepted ?: 1 ?_ _,reason=accepted ?: _ ?_ :simplificationClaimMismatch });
 };
 
 CasPolynomial(value, variable) -> {;
@@ -62996,10 +63258,11 @@ CasPolynomial(value, variable) -> {;
       ?_ .poly(.calculus.ToSpec(CasExpression(value),[name]),name);
 };
 
-CasPolynomialExpression(polynomial) -> {;
-    exact = polynomial ? :Polynomial ?: polynomial ?_ .Error("CAS expected a Polynomial");
-    variable = .calculus.Variable(exact.Variable());
-    coefficients = exact.Coefficients(:ascending);
+CasPolynomialExpression(polynomial) ?!- [
+    polynomial ? :Polynomial ?_> .Error("CAS expected a Polynomial")
+] -> {;
+    variable = .calculus.Variable(polynomial.Variable());
+    coefficients = polynomial.Coefficients(:ascending);
     coefficients.Reduce((sum,coefficient,index)->
         sum+coefficient*(variable^(index-1)),
         .calculus.Constant(0)
@@ -63080,83 +63343,74 @@ CasAffineState(valid, slope ?= 0, intercept ?= 0) -> {= valid=valid,slope=slope,
 CasAffine(expression, variable) -> {;
     exact = CasExpression(expression);
     kind = exact[:kind];
-    result := CasAffineState(_);
-    kind==:constant ?: {; @result ~= CasAffineState(1,0,@exact[:value]); } ?_ _;
-    kind==:variable && exact[:name]==variable ?: {; @result ~= CasAffineState(1,1,0); } ?_ _;
-    kind==:operator
-      ?: {;
+    kind==:constant ?: CasAffineState(1,0,exact[:value])
+      ?_ kind==:variable ?: (exact[:name]==variable ?: CasAffineState(1,1,0) ?_ CasAffineState(_))
+      ?_ {;
+          @kind==:operator ?_> CasAffineState(_);
           operation = @exact[:operation];
           operands = @exact[:operands];
+          left = CasAffine(operands[1],@variable);
+          left[:valid] ?_> CasAffineState(_);
           operation==:negate
-            ?: {;
-                inner = CasAffine(@operands[1],@variable);
-                inner[:valid] ?: {; @result ~= CasAffineState(1,-@inner[:slope],-@inner[:intercept]); } ?_ _;
-            }
+            ?: CasAffineState(1,-left[:slope],-left[:intercept])
             ?_ {;
-                left = CasAffine(@operands[1],@variable);
                 right = CasAffine(@operands[2],@variable);
-                (@operation==:add || @operation==:subtract) && left[:valid] && right[:valid]
+                right[:valid] ?_> CasAffineState(_);
+                @operation==:add
+                  ?: CasAffineState(1,@left[:slope]+right[:slope],@left[:intercept]+right[:intercept])
+                  ?_ @operation==:subtract
+                  ?: CasAffineState(1,@left[:slope]-right[:slope],@left[:intercept]-right[:intercept])
+                  ?_ @operation==:multiply
                   ?: {;
-                      @result ~= @operation==:add
-                        ?: CasAffineState(1,@left[:slope]+@right[:slope],@left[:intercept]+@right[:intercept])
-                        ?_ CasAffineState(1,@left[:slope]-@right[:slope],@left[:intercept]-@right[:intercept]);
-                  }
-                  ?_ _;
-                @result[:valid]==_ && @operation==:multiply && left[:valid] && right[:valid] && (left[:slope]==0 || right[:slope]==0)
-                  ?: {;
-                      @result ~= @left[:slope]==0
+                      @left[:slope]==0 || @right[:slope]==0 ?_> CasAffineState(_);
+                      @left[:slope]==0
                         ?: CasAffineState(1,@left[:intercept]*@right[:slope],@left[:intercept]*@right[:intercept])
                         ?_ CasAffineState(1,@right[:intercept]*@left[:slope],@right[:intercept]*@left[:intercept]);
                   }
-                  ?_ _;
-                @result[:valid]==_ && @operation==:divide && left[:valid] && right[:valid] && right[:slope]==0 && right[:intercept]!=0
-                  ?: {; @result ~= CasAffineState(1,@left[:slope]/@right[:intercept],@left[:intercept]/@right[:intercept]); }
-                  ?_ _;
+                  ?_ @operation==:divide
+                  ?: {;
+                      @right[:slope]==0 && @right[:intercept]!=0 ?_> CasAffineState(_);
+                      CasAffineState(1,@left[:slope]/@right[:intercept],@left[:intercept]/@right[:intercept]);
+                  }
+                  ?_ CasAffineState(_);
             };
-      }
-      ?_ _;
-    result;
+      };
 };
 
 CasIntegrationState(status, expression ?= _, obligations ?= [], rules ?= [], reason ?= _) -> {=
     status=status,expression=expression,obligations=obligations,rules=rules,reason=reason
 };
 CasUnsupported(reason) -> CasIntegrationState(:unsupported,_,[],[],reason);
-CasCombineIntegral(operation,left,right) -> {;
+CasCombineIntegral(operation,left,right) ?!- [
     left[:status]==:complete && right[:status]==:complete
-      ?: CasIntegrationState(
+      ?_> CasUnsupported(operation==:add ?: :unsupportedSumTerm ?_ :unsupportedDifferenceTerm)
+] -> CasIntegrationState(
           :complete,
           operation==:add ?: left[:expression]+right[:expression] ?_ left[:expression]-right[:expression],
           CasAppend(left[:obligations],right[:obligations]),
           CasAppend(left[:rules],right[:rules]).Push({= rule=operation })
-      )
-      ?_ CasUnsupported(operation==:add ?: :unsupportedSumTerm ?_ :unsupportedDifferenceTerm);
-};
+      );
 CasPositiveObligation(expression, rule) -> .calculus.Obligation(:domain,:positive,expression,{= reason=rule });
 CasNonzeroObligation(expression, rule) -> .calculus.Obligation(:domain,:nonzero,expression,{= reason=rule });
 CasLogAbs(expression) -> .calculus.Log()(.calculus.Abs()(expression));
 CasApplySemantic(expression, semanticId) ->
     expression[:kind]==:apply && expression[:semanticId]==semanticId;
-CasPowerExponent(expression) ->
+CasPowerExponent(expression) ?!- [
     expression[:kind]==:operator && expression[:operation]==:power
-      ?: CasConstantValue(expression[:operands][2])
-      ?_ _;
-CasPurePowerDegree(expression, variable) -> {;
-    result := _;
-    expression[:kind]==:variable && expression[:name]==variable
-      ?: {; @result ~= 1; }
-      ?_ _;
-    result==_ && expression[:kind]==:operator && expression[:operation]==:power
-      ?: {;
+      ?_> _
+] -> CasConstantValue(expression[:operands][2]);
+CasPurePowerDegree(expression, variable) ->
+    (expression[:kind]==:variable && expression[:name]==variable)
+      ?: 1
+      ?_ {;
+          @expression[:kind]==:operator && @expression[:operation]==:power ?_> _;
           exponent = CasConstantValue(@expression[:operands][2]);
+          exponent ? :Integer ?_> _;
+          exponent>=0 ?_> _;
           base = @expression[:operands][1];
-          exponent!=_ && (exponent ? :Integer) && exponent>=0 && base[:kind]==:variable && base[:name]==@variable
-            ?: {; @result ~= @exponent; }
-            ?_ _;
-      }
-      ?_ _;
-    result;
-};
+          base[:kind]==:variable && base[:name]==@variable ?_> _;
+          exponent;
+      };
 
 CasIntegrateExpPower(variableExpression, degree, exponential, slope) ->
     degree==0
@@ -63164,23 +63418,76 @@ CasIntegrateExpPower(variableExpression, degree, exponential, slope) ->
       ?_ (variableExpression^degree)*exponential/slope
           -(degree/slope)*CasIntegrateExpPower(variableExpression,degree-1,exponential,slope);
 
+CasTrigKind(expression) ->
+    CasApplySemantic(expression,"rix.function.sin@1") ?: :sin
+      ?_ CasApplySemantic(expression,"rix.function.cos@1") ?: :cos ?_ _;
+
+CasTrigPowerPrimitive(kind, argument, degree) -> {;
+    sine = .calculus.Sin()(argument);
+    cosine = .calculus.Cos()(argument);
+    degree==0 ?: argument
+      ?_ degree==1 ?: (kind==:sin ?: -cosine ?_ sine)
+      ?_ (kind==:sin
+           ?: -(sine^(degree-1))*cosine/degree
+           ?_ (cosine^(degree-1))*sine/degree)
+          +((degree-1)/degree)*CasTrigPowerPrimitive(kind,argument,degree-2);
+};
+
+CasIntegrateTrigPower(base, exponent, variable) ?!- [
+    kind = CasTrigKind(base) ?_> CasUnsupported(:unsupportedPower),
+    exponent ? :Integer ?_> CasUnsupported(:unsupportedTrigonometricExponent),
+    exponent >= 0 ?_> CasUnsupported(:unsupportedTrigonometricExponent),
+    exponent <= 8 ?_> CasUnsupported(:trigonometricDegreeBudgetExceeded),
+    argument = base[:arguments][1],
+    affine = CasAffine(argument,variable),
+    affine[:valid] && affine[:slope]!=0 ?_> CasUnsupported(:nonAffineTrigonometricArgument)
+] -> CasIntegrationState(:complete,
+    CasTrigPowerPrimitive(kind,argument,exponent)/affine[:slope],[],
+    [{= rule=:trigonometricPowerReduction,kind=kind,degree=exponent,
+        slope=affine[:slope],recurrenceStep=2,maxDegree=8 }]);
+
+CasHarmonicPrimitive(kind, slope, phase, variable) -> {;
+    x = .calculus.Variable(variable);
+    argument = slope*x+phase;
+    slope==0
+      ?: x*(kind==:sin ?: .calculus.Sin()(.calculus.Constant(phase)) ?_ .calculus.Cos()(.calculus.Constant(phase)))
+      ?_ (kind==:sin ?: -.calculus.Cos()(argument)/slope ?_ .calculus.Sin()(argument)/slope);
+};
+
+CasIntegrateTrigProduct(left, right, variable) ?!- [
+    leftKind = CasTrigKind(left) ?_> CasUnsupported(:unsupportedProduct),
+    rightKind = CasTrigKind(right) ?_> CasUnsupported(:unsupportedProduct),
+    a = CasAffine(left[:arguments][1],variable),
+    b = CasAffine(right[:arguments][1],variable),
+    a[:valid] && b[:valid] ?_> CasUnsupported(:nonAffineTrigonometricArgument)
+] -> {;
+    kind = leftKind==rightKind ?: :cos ?_ :sin;
+    sum = CasHarmonicPrimitive(kind,a[:slope]+b[:slope],a[:intercept]+b[:intercept],variable);
+    difference = CasHarmonicPrimitive(kind,a[:slope]-b[:slope],a[:intercept]-b[:intercept],variable);
+    primitive = (leftKind==:sin && rightKind==:sin) ?: (difference-sum)/2
+      ?_ (leftKind==:cos && rightKind==:sin) ?: (sum-difference)/2
+      ?_ (sum+difference)/2;
+    CasIntegrationState(:complete,primitive,[],[{=
+        rule=:trigonometricProductToSum,leftKind=leftKind,rightKind=rightKind,
+        leftAffine=a,rightAffine=b,zeroFrequencyHandled=1
+    }]);
+};
+
 CasIntegrateProduct(left, right, variable) -> {;
     variableExpression = .calculus.Variable(variable);
     result := _;
     CasIndependent(left,variable)
       ?: {;
           integrated = CasIntegrateNode(@right,@variable);
-          @result ~= integrated[:status]==:complete
-            ?: CasIntegrationState(:complete,@left*integrated[:expression],integrated[:obligations],integrated[:rules].Push({= rule=:constantFactor }))
-            ?_ integrated;
+          integrated[:status]==:complete ?_> integrated;
+          @result ~= CasIntegrationState(:complete,@left*integrated[:expression],integrated[:obligations],integrated[:rules].Push({= rule=:constantFactor }));
       }
       ?_ _;
     result==_ && CasIndependent(right,variable)
       ?: {;
           integrated = CasIntegrateNode(@left,@variable);
-          @result ~= integrated[:status]==:complete
-            ?: CasIntegrationState(:complete,@right*integrated[:expression],integrated[:obligations],integrated[:rules].Push({= rule=:constantFactor }))
-            ?_ integrated;
+          integrated[:status]==:complete ?_> integrated;
+          @result ~= CasIntegrationState(:complete,@right*integrated[:expression],integrated[:obligations],integrated[:rules].Push({= rule=:constantFactor }));
       }
       ?_ _;
     leftDegree = CasPurePowerDegree(left,variable);
@@ -63188,42 +63495,35 @@ CasIntegrateProduct(left, right, variable) -> {;
     result==_ && leftDegree!=_ && CasApplySemantic(right,"rix.function.exp@1")
       ?: {;
           affine = CasAffine(@right[:arguments][1],@variable);
-          @result ~= affine[:valid] && affine[:slope]!=0
-            ?: CasIntegrationState(:complete,CasIntegrateExpPower(@variableExpression,@leftDegree,@right,affine[:slope]),[],[{= rule=:integrationByPartsExpPower,degree=@leftDegree,slope=affine[:slope] }])
-            ?_ CasUnsupported(:nonAffineExponentialArgument);
+          affine[:valid] && affine[:slope]!=0 ?_> CasUnsupported(:nonAffineExponentialArgument);
+          @result ~= CasIntegrationState(:complete,CasIntegrateExpPower(@variableExpression,@leftDegree,@right,affine[:slope]),[],[{= rule=:integrationByPartsExpPower,degree=@leftDegree,slope=affine[:slope] }]);
       }
       ?_ _;
     result==_ && rightDegree!=_ && CasApplySemantic(left,"rix.function.exp@1")
       ?: {;
           affine = CasAffine(@left[:arguments][1],@variable);
-          @result ~= affine[:valid] && affine[:slope]!=0
-            ?: CasIntegrationState(:complete,CasIntegrateExpPower(@variableExpression,@rightDegree,@left,affine[:slope]),[],[{= rule=:integrationByPartsExpPower,degree=@rightDegree,slope=affine[:slope] }])
-            ?_ CasUnsupported(:nonAffineExponentialArgument);
+          affine[:valid] && affine[:slope]!=0 ?_> CasUnsupported(:nonAffineExponentialArgument);
+          @result ~= CasIntegrationState(:complete,CasIntegrateExpPower(@variableExpression,@rightDegree,@left,affine[:slope]),[],[{= rule=:integrationByPartsExpPower,degree=@rightDegree,slope=affine[:slope] }]);
       }
       ?_ _;
-    result==_ ?: CasUnsupported(:unsupportedProduct) ?_ result;
+    result==_ ?: CasIntegrateTrigProduct(left,right,variable) ?_ result;
 };
 
-CasIntegrateQuotient(numerator, denominator, variable) -> {;
-    CasIndependent(numerator,variable)
-      ?: {;
-          affine = CasAffine(@denominator,@variable);
-          affine[:valid] && affine[:slope]!=0
-            ?: CasIntegrationState(
+CasIntegrateQuotient(numerator, denominator, variable) ?!- [
+    CasIndependent(numerator,variable) ?_> CasUnsupported(:unsupportedQuotient),
+    affine = CasAffine(denominator,variable),
+    affine[:valid] && affine[:slope]!=0 ?_> CasUnsupported(:unsupportedQuotient)
+] -> CasIntegrationState(
                 :complete,
-                @numerator*CasLogAbs(@denominator)/affine[:slope],
-                [CasNonzeroObligation(@denominator,:reciprocalDomain)],
+                numerator*CasLogAbs(denominator)/affine[:slope],
+                [CasNonzeroObligation(denominator,:reciprocalDomain)],
                 [{= rule=:affineReciprocalSubstitution,slope=affine[:slope] }]
-            )
-            ?_ CasUnsupported(:unsupportedQuotient);
-      }
-      ?_ CasUnsupported(:unsupportedQuotient);
-};
+            );
 
 CasIntegratePower(base, exponentExpression, variable) -> {;
     exponent = CasConstantValue(exponentExpression);
     affine = CasAffine(base,variable);
-    affine[:valid] && affine[:slope]!=0 && exponent!=_ && (exponent ? :Integer)
+    (affine[:valid] && affine[:slope]!=0 && exponent!=_ && (exponent ? :Integer))
       ?: (exponent==-1
            ?: CasIntegrationState(
                :complete,CasLogAbs(base)/affine[:slope],
@@ -63234,38 +63534,42 @@ CasIntegratePower(base, exponentExpression, variable) -> {;
                :complete,(base^(exponent+1))/(affine[:slope]*(exponent+1)),[],
                [{= rule=:affinePowerSubstitution,exponent=exponent,slope=affine[:slope] }]
            ))
-      ?_ CasUnsupported(:unsupportedPower);
+      ?_ CasIntegrateTrigPower(base,exponent,variable);
 };
 
 CasIntegrateApplication(expression, variable) -> {;
     argument = expression[:arguments][1];
     affine = CasAffine(argument,variable);
     CasApplySemantic(expression,"rix.function.exp@1")
-      ?: (affine[:valid] && affine[:slope]!=0
-           ?: CasIntegrationState(:complete,expression/affine[:slope],[],[{= rule=:affineExponentialSubstitution,slope=affine[:slope] }])
-           ?_ CasUnsupported(:nonAffineExponentialArgument))
+      ?: {;
+          @affine[:valid] && @affine[:slope]!=0 ?_> CasUnsupported(:nonAffineExponentialArgument);
+          CasIntegrationState(:complete,@expression/@affine[:slope],[],[{= rule=:affineExponentialSubstitution,slope=@affine[:slope] }]);
+      }
       ?_ CasApplySemantic(expression,"rix.function.log.real-principal@1")
-      ?: (affine[:valid] && affine[:slope]!=0
-           ?: CasIntegrationState(
-               :complete,(argument*expression-argument)/affine[:slope],
-               [CasPositiveObligation(argument,:realLogBranch)],
-               [{= rule=:integrationByPartsLog,slope=affine[:slope] }]
-           )
-           ?_ CasUnsupported(:nonAffineLogarithmArgument))
+      ?: {;
+          @affine[:valid] && @affine[:slope]!=0 ?_> CasUnsupported(:nonAffineLogarithmArgument);
+          CasIntegrationState(
+              :complete,(@argument*@expression-@argument)/@affine[:slope],
+              [CasPositiveObligation(@argument,:realLogBranch)],
+              [{= rule=:integrationByPartsLog,slope=@affine[:slope] }]
+          );
+      }
       ?_ CasApplySemantic(expression,"rix.function.sin@1")
-      ?: (affine[:valid] && affine[:slope]!=0
-           ?: CasIntegrationState(
-               :complete,-.calculus.Cos()(argument)/affine[:slope],[],
-               [{= rule=:affineSineSubstitution,slope=affine[:slope] }]
-           )
-           ?_ CasUnsupported(:nonAffineSineArgument))
+      ?: {;
+          @affine[:valid] && @affine[:slope]!=0 ?_> CasUnsupported(:nonAffineSineArgument);
+          CasIntegrationState(
+              :complete,-.calculus.Cos()(@argument)/@affine[:slope],[],
+              [{= rule=:affineSineSubstitution,slope=@affine[:slope] }]
+          );
+      }
       ?_ CasApplySemantic(expression,"rix.function.cos@1")
-      ?: (affine[:valid] && affine[:slope]!=0
-           ?: CasIntegrationState(
-               :complete,.calculus.Sin()(argument)/affine[:slope],[],
-               [{= rule=:affineCosineSubstitution,slope=affine[:slope] }]
-           )
-           ?_ CasUnsupported(:nonAffineCosineArgument))
+      ?: {;
+          @affine[:valid] && @affine[:slope]!=0 ?_> CasUnsupported(:nonAffineCosineArgument);
+          CasIntegrationState(
+              :complete,.calculus.Sin()(@argument)/@affine[:slope],[],
+              [{= rule=:affineCosineSubstitution,slope=@affine[:slope] }]
+          );
+      }
       ?_ CasUnsupported(:unsupportedSemanticFunction);
 };
 
@@ -63286,9 +63590,8 @@ CasIntegrateNode(expression, variable) -> {;
           operation==:negate
             ?: {;
                 inner = CasIntegrateNode(@operands[1],@variable);
-                @result ~= inner[:status]==:complete
-                  ?: CasIntegrationState(:complete,-inner[:expression],inner[:obligations],inner[:rules].Push({= rule=:negation }))
-                  ?_ inner;
+                inner[:status]==:complete ?_> inner;
+                @result ~= CasIntegrationState(:complete,-inner[:expression],inner[:obligations],inner[:rules].Push({= rule=:negation }));
             }
             ?_ (operation==:add || operation==:subtract)
             ?: {; @result ~= CasCombineIntegral(@operation,CasIntegrateNode(@operands[1],@variable),CasIntegrateNode(@operands[2],@variable)); }
@@ -63322,49 +63625,44 @@ CasIntegratePolynomial(polynomial) -> {;
 CasCoefficient(coefficients, index) ->
     index<=coefficients.Len() ?: coefficients[index] ?_ 0;
 
-CasIntegrateQuadraticResidual(decomposition) -> {;
-    residual = decomposition[:residual];
-    numerator = residual[:numerator];
-    denominator = residual[:denominator];
+CasIntegrateQuadraticResidual(decomposition) ?!- [
+    residual = decomposition[:residual],
+    numerator = residual[:numerator],
+    denominator = residual[:denominator],
     numerator.Degree()<=1 && denominator.Degree()==2
-      ?: {;
-          numeratorCoefficients = @numerator.Coefficients(:ascending);
-          denominatorCoefficients = @denominator.Coefficients(:ascending);
-          n = CasCoefficient(numeratorCoefficients,1);
-          m = CasCoefficient(numeratorCoefficients,2);
-          c = CasCoefficient(denominatorCoefficients,1);
-          b = CasCoefficient(denominatorCoefficients,2);
-          a = CasCoefficient(denominatorCoefficients,3);
-          discriminantGap = 4*a*c-b^2;
-          a!=0 && discriminantGap>0
-            ?: {;
-                x = .calculus.Variable(@decomposition[:variable]);
-                denominatorExpression = CasPolynomialExpression(@denominator);
-                sqrtGap = .calculus.Sqrt()(.calculus.Constant(@discriminantGap));
-                alpha = @m/(2*@a);
-                beta = @n-alpha*@b;
-                logarithm = alpha==0
-                  ?: .calculus.Constant(0)
-                  ?_ alpha*CasLogAbs(denominatorExpression);
-                angle = (2*@a*x+@b)/sqrtGap;
-                arctangent = beta==0
-                  ?: .calculus.Constant(0)
-                  ?_ (2*beta/sqrtGap)*.calculus.Atan()(angle);
-                CasIntegrationState(
-                    :complete,
-                    logarithm+arctangent,
-                    [],
-                    [{=
-                        rule=:irreducibleQuadraticPartialFraction,
-                        coefficients={= a=@a,b=@b,c=@c,m=@m,n=@n },
-                        discriminantGap=@discriminantGap,
-                        identity=:logDerivativePlusCompletedSquareAtan
-                    }]
-                );
-            }
-            ?_ CasUnsupported(:quadraticDenominatorHasRealRootsOrDegenerates);
-      }
-      ?_ CasUnsupported(:nonlinearResidualPartialFraction);
+      ?_> CasUnsupported(:nonlinearResidualPartialFraction),
+    numeratorCoefficients = numerator.Coefficients(:ascending),
+    denominatorCoefficients = denominator.Coefficients(:ascending),
+    n = CasCoefficient(numeratorCoefficients,1),
+    m = CasCoefficient(numeratorCoefficients,2),
+    c = CasCoefficient(denominatorCoefficients,1),
+    b = CasCoefficient(denominatorCoefficients,2),
+    a = CasCoefficient(denominatorCoefficients,3),
+    discriminantGap = 4*a*c-b^2,
+    a!=0 && discriminantGap>0
+      ?_> CasUnsupported(:quadraticDenominatorHasRealRootsOrDegenerates)
+] -> {;
+    x = .calculus.Variable(decomposition[:variable]);
+    denominatorExpression = CasPolynomialExpression(denominator);
+    sqrtGap = .calculus.Sqrt()(.calculus.Constant(discriminantGap));
+    alpha = m/(2*a);
+    beta = n-alpha*b;
+    logarithm = alpha==0
+      ?: .calculus.Constant(0)
+      ?_ alpha*CasLogAbs(denominatorExpression);
+    angle = (2*a*x+b)/sqrtGap;
+    arctangent = beta==0
+      ?: .calculus.Constant(0)
+      ?_ (2*beta/sqrtGap)*.calculus.Atan()(angle);
+    CasIntegrationState(
+        :complete,logarithm+arctangent,[],
+        [{=
+            rule=:irreducibleQuadraticPartialFraction,
+            coefficients={= a=a,b=b,c=c,m=m,n=n },
+            discriminantGap=discriminantGap,
+            identity=:logDerivativePlusCompletedSquareAtan
+        }]
+    );
 };
 
 CasIntegratePartialFractions(rationalFunction) -> {;
@@ -63395,16 +63693,15 @@ CasIntegratePartialFractions(rationalFunction) -> {;
       ?_ {;
           polynomialState = CasIntegratePolynomial(@decomposition[:polynomialPart]);
           residualState = CasIntegrateQuadraticResidual(@decomposition);
-          residualState[:status]==:complete
-            ?: CasIntegrationState(
+          residualState[:status]==:complete ?_> residualState;
+          CasIntegrationState(
                 :complete,
                 polynomialState[:expression]+residualState[:expression],
                 CasAppend(polynomialState[:obligations],residualState[:obligations]),
                 CasAppend(polynomialState[:rules],residualState[:rules]).Push({=
                     rule=:exactPartialFractionDecomposition,evidence=@decomposition
                 })
-            )
-            ?_ residualState;
+            );
       };
 };
 
@@ -63427,14 +63724,16 @@ CasIntegralResult(source, variable, state) -> {;
 
 CasIntegrate(value, variable ?= :x, options ?= {= }) -> {;
     options = CasRequireOptions(options,"CAS integration options");
-    name = value ? :Polynomial
+    /* Parenthesize type predicates in a conditional chain: otherwise the next
+       ? :Type can test the preceding conditional's result instead of value. */
+    name = (value ? :Polynomial)
       ?: value.Variable()
-      ?_ value ? :RationalFunction
+      ?_ (value ? :RationalFunction)
       ?: value.variable
       ?_ CasVariableName(variable);
-    state = value ? :Polynomial
+    state = (value ? :Polynomial)
       ?: CasIntegratePolynomial(value)
-      ?_ value ? :RationalFunction
+      ?_ (value ? :RationalFunction)
       ?: CasIntegratePartialFractions(value)
       ?_ CasIntegrateNode(CasExpression(value),name);
     CasIntegralResult(value,name,state);
@@ -63442,23 +63741,21 @@ CasIntegrate(value, variable ?= :x, options ?= {= }) -> {;
 
 CasCheckIntegral(candidate) -> {;
     valid = (candidate ? :Map) && candidate[:schema]=="rix.cas.integral@1";
-    valid
-      ?: {;
-          recomputed = CasIntegrate(@candidate[:source],@candidate[:variable]);
-          statusMatches = recomputed[:status]==@candidate[:status];
-          expressionMatches = recomputed[:status]==:complete
-            ?: CasExpressionKey(recomputed[:antiderivative])==CasExpressionKey(@candidate[:antiderivative])
-            ?_ recomputed[:reason]==@candidate[:reason];
-          accepted = statusMatches && expressionMatches;
-          .ImmutableValue({= accepted=accepted,certified=accepted ?: 1 ?_ _,reason=accepted ?: _ ?_ :integralClaimMismatch,recomputed=recomputed });
-      }
-      ?_ .ImmutableValue({= accepted=_,certified=_,reason=:malformedCasIntegral });
+    valid ?_> .ImmutableValue({= accepted=_,certified=_,reason=:malformedCasIntegral });
+    recomputed = CasIntegrate(candidate[:source],candidate[:variable]);
+    statusMatches = recomputed[:status]==candidate[:status];
+    expressionMatches = recomputed[:status]==:complete
+      ?: CasExpressionKey(recomputed[:antiderivative])==CasExpressionKey(candidate[:antiderivative])
+      ?_ recomputed[:reason]==candidate[:reason];
+    accepted = statusMatches && expressionMatches;
+    .ImmutableValue({= accepted=accepted,certified=accepted ?: 1 ?_ _,reason=accepted ?: _ ?_ :integralClaimMismatch,recomputed=recomputed });
 };
 
 casCapabilities = .ImmutableValue({=
     simplification=[:checkedGraphIdentities,:canonicalPolynomialNormalization,:expand,:collect,:factor],
-    integration=[:polynomials,:affinePowers,:affineReciprocals,:affineExponentials,:affineSine,:affineCosine,:logByParts,:polynomialTimesExponentialByParts,:linearPartialFractions,:irreducibleQuadraticPartialFractions],
-    unsupported=[:generalRischIntegration,:trigonometricPowerReduction,:higherDegreePartialFractionResiduals,:unrestrictedIdentitySearch]
+    integration=[:polynomials,:affinePowers,:affineReciprocals,:affineExponentials,:affineSine,:affineCosine,:trigonometricPowerReduction,:trigonometricProductToSum,:logByParts,:polynomialTimesExponentialByParts,:linearPartialFractions,:irreducibleQuadraticPartialFractions],
+    limits={= maxTrigonometricDegree=8 },
+    unsupported=[:generalRischIntegration,:mixedTrigonometricPowers,:radicalSubstitution,:higherDegreePartialFractionResiduals,:unrestrictedIdentitySearch]
 });
 
 casNamespace = {= };
@@ -63482,11 +63779,11 @@ id: logic
 description: Portable propositional formulas, bounded truth tables, checked normal forms, scoped natural deduction, and educational tree views.
 kind: rix
 mount: logic
-exports: [Atom, Top, Bottom, Not, And, Or, Implies, Iff, Evaluate, Valuations, TruthTable, Classify, NNF, CNF, DNF, CheckNormalForm, Step, Subproof, Proof, CheckProof, SyntaxTree, ProofTree, IsFormula, Capabilities]
+exports: [Atom, Top, Bottom, Not, And, Or, Implies, Iff, Evaluate, Valuations, TruthTable, Classify, Tableau, CheckTableau, NNF, CNF, DNF, CheckNormalForm, Step, Subproof, Proof, CheckProof, SyntaxTree, ProofTree, IsFormula, Capabilities]
 groups: [Logic, Education, Exact]
 permissions: []
-provides: [rix.logic@1, rix.logic.formula@1, rix.logic.truth-table@1, rix.logic.normal-form@1, rix.logic.proof@1, rix.logic.tree@1]
-schemas: [rix.logic.formula@1, rix.logic.truth-table@1, rix.logic.normal-form@1, rix.logic.proof@1, rix.logic.tree@1]
+provides: [rix.logic@1, rix.logic.formula@1, rix.logic.truth-table@1, rix.logic.normal-form@1, rix.logic.proof@1, rix.logic.tree@1, rix.logic.tableau@1]
+schemas: [rix.logic.formula@1, rix.logic.truth-table@1, rix.logic.normal-form@1, rix.logic.proof@1, rix.logic.tree@1, rix.logic.tableau@1]
 snapshot: false
 deterministic: true
 defaultEnabled: false
@@ -63547,7 +63844,7 @@ LogicKey(value) -> {;
     formula = LogicRequireFormula(value);
     kind = formula[:kind];
     kind==:atom
-      ?: @"atom(@{formula[:name]})"
+      ?: @"atom(@{formula[:name].Len()}:@{formula[:name]})"
       ?_ kind==:top
       ?: "top"
       ?_ kind==:bottom
@@ -63927,7 +64224,6 @@ LogicProof(steps,goal,options ?= {= }) -> {;
        check[:accepted] ?: _ ?_ {; @stopped ~= 1; };
     }; index += 1 };
     finalMatches = steps.Len()>0 && LogicSame(steps.Last()[:conclusion],exactGoal);
-    accepted = !stopped && finalMatches;
     proofKind = LogicOption(options,"proofkind",:derivation);
     [:derivation,:subproof].Includes(proofKind)
       ?: _
@@ -63936,6 +64232,11 @@ LogicProof(steps,goal,options ?= {= }) -> {;
     proofKind==:subproof && assumption==_
       ?: .Error("Logic subproof requires its assumption")
       ?_ _;
+    freeSteps = steps.Filter((step)->step[:rule]==:premise || step[:rule]==:assumption);
+    scopeValid = proofKind==:derivation
+      || (steps.Len()>0 && freeSteps.Len()==1 && steps[1][:rule]==:assumption
+          && LogicSame(steps[1][:conclusion],assumption));
+    accepted = !stopped && finalMatches && scopeValid;
     proof = {=
         valueKind=:logicProof,
         schema="rix.logic.proof@1",
@@ -63946,9 +64247,10 @@ LogicProof(steps,goal,options ?= {= }) -> {;
         checks=checks,
         accepted=accepted ?: 1 ?_ _,
         complete=accepted ?: 1 ?_ _,
-        reason=stopped ?: :invalidStep ?_ (finalMatches ?: _ ?_ :goalMismatch),
+        reason=!scopeValid ?: :invalidSubproofScope
+          ?_ stopped ?: :invalidStep ?_ (finalMatches ?: _ ?_ :goalMismatch),
         assumption=assumption,
-        assumptions=steps.Filter((step)->step[:rule]==:premise || step[:rule]==:assumption),
+        assumptions=freeSteps,
         supportedRules=[:premise,:assumption,:andIntro,:andElimLeft,:andElimRight,:orIntroLeft,:orIntroRight,:modusPonens,:implicationIntro,:orElim,:notIntro,:notElim,:bottomElim]
     };
     proof .= {= _proto=@logicProofProto };
@@ -63958,9 +64260,148 @@ LogicCheckProof(proof) -> {;
     valid = (proof ? :Map) && proof[:schema]=="rix.logic.proof@1";
     valid
       ?: LogicProof(proof[:steps],proof[:goal],{=
-          proofKind=proof[:proofKind] ?| :derivation,assumption=proof[:assumption]
+          proofKind=proof[:proofKind]==_ ?: :derivation ?_ proof[:proofKind],assumption=proof[:assumption]
       })
       ?_ .ImmutableValue({= accepted=_,complete=_,reason=:malformedLogicProof });
+};
+
+/* Signed tableaux expand original formulas directly: no exponential NNF
+   preprocessing and no truth-table enumeration are required. */
+LogicSigned(formula,truth) -> {= formula=formula,truth=truth };
+LogicTableauAlternatives(signed) -> {;
+    f = signed[:formula];
+    t = signed[:truth];
+    opposite = 1-t;
+    k = f[:kind];
+    k==:not ?: [[LogicSigned(f[:operand],opposite)]]
+      ?_ k==:and
+      ?: (t==1 ?: [[LogicSigned(f[:left],1),LogicSigned(f[:right],1)]]
+                   ?_ [[LogicSigned(f[:left],0)],[LogicSigned(f[:right],0)]])
+      ?_ k==:or
+      ?: (t==1 ?: [[LogicSigned(f[:left],1)],[LogicSigned(f[:right],1)]]
+                   ?_ [[LogicSigned(f[:left],0),LogicSigned(f[:right],0)]])
+      ?_ k==:implies
+      ?: (t==1 ?: [[LogicSigned(f[:left],0)],[LogicSigned(f[:right],1)]]
+                   ?_ [[LogicSigned(f[:left],1),LogicSigned(f[:right],0)]])
+      ?_ k==:iff
+      ?: [[LogicSigned(f[:left],1),LogicSigned(f[:right],t)],
+          [LogicSigned(f[:left],0),LogicSigned(f[:right],opposite)]]
+      ?_ [[]];
+};
+LogicTableauBranch(path,pending,valuation) -> {=
+    path=path,pending=pending,valuation=valuation
+};
+LogicTableau(value,options ?= {= }) -> {;
+    source = LogicRequireFormula(value);
+    options = LogicRequireOptions(options,"Logic Tableau options");
+    mode = LogicOption(options,"mode",:satisfiability);
+    [:satisfiability,:validity].Includes(mode)
+      ?: _ ?_ .Error("Logic Tableau mode must be satisfiability or validity");
+    maxSteps = LogicOption(options,"maxsteps",128) ~!: :Integer;
+    maxBranches = LogicOption(options,"maxbranches",64) ~!: :Integer;
+    (maxSteps>=0 && maxSteps<=2048) ?: _ ?_ .Error("Logic Tableau maxSteps must be from 0 through 2048");
+    (maxBranches>=1 && maxBranches<=256) ?: _ ?_ .Error("Logic Tableau maxBranches must be from 1 through 256");
+    atoms = LogicAtoms(source);
+    seedTruth = mode==:validity ?: 0 ?_ 1;
+    queue := [LogicTableauBranch("root",[LogicSigned(source,seedTruth)],{= })];
+    leaves := [];
+    trace := [];
+    branches := 1;
+    {@ ; @queue.Len()>0; {;
+        branch = @queue[1];
+        @queue ~= @queue.Slice(2);
+        pending = branch[:pending];
+        valuation = branch[:valuation];
+        path = branch[:path];
+        pending.Len()==0
+          ?: {; @leaves ~= @leaves.Push(@branch.Merge({= status=:open,reason=:saturated })); }
+          ?_ @trace.Len()>=@maxSteps
+          ?: {; @leaves ~= @leaves.Push(@branch.Merge({= status=:unresolved,reason=:stepBudgetExhausted })); }
+          ?_ {;
+              signed = @pending[1];
+              f = signed[:formula];
+              truth = signed[:truth];
+              kind = f[:kind];
+              alternatives = LogicTableauAlternatives(signed);
+              split = alternatives.Len()==2;
+              (split && @branches>=@maxBranches)
+                ?: {; @leaves ~= @leaves.Push(@branch.Merge({= status=:unresolved,reason=:branchBudgetExhausted })); }
+                ?_ {;
+                    conflict = @kind==:atom
+                      ?: (@valuation.Has(@f[:name]) && @valuation[@f[:name]]!=@truth)
+                      ?_ ((@kind==:top && @truth==0) || (@kind==:bottom && @truth==1));
+                    rule = conflict ?: :close
+                      ?_ @kind==:atom ?: :literal
+                      ?_ (@kind==:top || @kind==:bottom) ?: :constant
+                      ?_ @split ?: :beta ?_ :alpha;
+                    @trace ~= @trace.Push({= path=@path,signed=@signed,rule=rule });
+                    conflict
+                      ?: {; @leaves ~= @leaves.Push(@branch.Merge({= status=:closed,reason=:contradiction })); }
+                      ?_ {;
+                          nextValuation = @kind==:atom ?: @valuation.Set(@f[:name],@truth) ?_ @valuation;
+                          @split ?: {; @branches ~= @branches+1; } ?_ _;
+                          {@ i=1; i<=@alternatives.Len(); {;
+                              nextPath = @split ?: @path+(i==1 ?: "L" ?_ "R") ?_ @path;
+                              nextPending = @alternatives[i].Concat(@pending.Slice(2));
+                              @queue ~= @queue.Push(LogicTableauBranch(nextPath,nextPending,@nextValuation));
+                          }; i+=1 };
+                      };
+                };
+          };
+    }; };
+    open = leaves.Filter((branch)->branch[:status]==:open);
+    unresolved = leaves.Filter((branch)->branch[:status]==:unresolved);
+    witness = open.Len()>0
+      ?: atoms.Reduce((valuation,name)->valuation.Has(name) ?: valuation ?_ valuation.Set(name,0),open[1][:valuation])
+      ?_ _;
+    witness!=_
+      ?: ((LogicEvaluate(source,witness) ?: 1 ?_ 0)==seedTruth
+          ?: _ ?_ .Error("Logic Tableau internal witness mismatch"))
+      ?_ _;
+    status = open.Len()>0
+      ?: (mode==:validity ?: :invalid ?_ :satisfiable)
+      ?_ unresolved.Len()>0 ?: :unresolved
+      ?_ (mode==:validity ?: :valid ?_ :unsatisfiable);
+    .ImmutableValue({=
+        valueKind=:logicTableau,schema="rix.logic.tableau@1",system=:classicalSignedTableau,
+        source=source,mode=mode,seedTruth=seedTruth,status=status,
+        complete=unresolved.Len()==0 ?: 1 ?_ _,
+        decided=status!=:unresolved ?: 1 ?_ _,
+        atoms=atoms,witness=witness,
+        witnessKind=witness==_ ?: _ ?_ (mode==:validity ?: :countermodel ?_ :model),
+        branches=leaves,trace=trace,
+        work={= steps=trace.Len(),branchCount=branches,unresolvedBranches=unresolved.Len() },
+        options={= mode=mode,maxSteps=maxSteps,maxBranches=maxBranches }
+    });
+};
+
+/* Compare every retained public evidence field, not just the claimed status. */
+LogicEvidenceSame(left,right) -> {;
+    LogicIsFormulaValue(left)
+      ?: (LogicIsFormulaValue(right) && LogicSame(left,right))
+      ?_ (left ? :Array)
+      ?: {;
+          same := (@right ? :Array) && @left.Len()==@right.Len();
+          {@ i=1; @same && i<=@left.Len(); {;
+              @same ~= LogicEvidenceSame(@left[i],@right[i]);
+          }; i+=1 };
+          same;
+      }
+      ?_ (left ? :Map)
+      ?: ((right ? :Map) && left.Len()==right.Len()
+          && left.ReduceKeys((same,key,value)->same && @right.Has(key) && LogicEvidenceSame(value,@right[key]),1))
+      ?_ left==right;
+};
+LogicCheckTableau(candidate) -> {;
+    valid = (candidate ? :Map) && candidate[:schema]=="rix.logic.tableau@1";
+    valid
+      ?: {;
+          replay = LogicTableau(@candidate[:source],@candidate[:options]);
+          accepted = LogicEvidenceSame(@candidate,replay);
+          .ImmutableValue({= accepted=accepted ?: 1 ?_ _,
+              reason=accepted ?: _ ?_ :tableauEvidenceMismatch,result=replay });
+      }
+      ?_ .ImmutableValue({= accepted=_,reason=:malformedLogicTableau,result=_ });
 };
 
 LogicSyntaxTreeNode(value) -> {;
@@ -64027,6 +64468,7 @@ logicFormulaProto = {=
     Iff=(self,right)->LogicIff(self,right),
     Evaluate=(self,valuation)->LogicEvaluate(self,valuation),
     TruthTable=(self,options ?= {= })->LogicTruthTable(self,options),
+    Tableau=(self,options ?= {= })->LogicTableau(self,options),
     NNF=(self,options ?= {= })->LogicNNF(self,options),
     CNF=(self,options ?= {= })->LogicCNF(self,options),
     DNF=(self,options ?= {= })->LogicDNF(self,options),
@@ -64046,7 +64488,8 @@ logicCapabilities = .ImmutableValue({=
     proofRules=[:premise,:assumption,:andIntro,:andElimLeft,:andElimRight,:orIntroLeft,:orIntroRight,:modusPonens,:implicationIntro,:orElim,:notIntro,:notElim,:bottomElim],
     proofStructure=[:scopedSubproofs,:explicitDischarge,:naturalDeductionTrees],
     views=[:syntaxTree,:proofTree],
-    next=[:semanticTableaux,:boundedFirstOrderModels]
+    tableaux=[:signedPropositional,:openClosedBranchEvidence,:boundedSearch,:replay],
+    next=[:boundedFirstOrderModels,:sequentCalculus]
 });
 
 logicNamespace = {= };
@@ -64063,6 +64506,8 @@ logicNamespace._proto = {=
     Valuations=(self,names)->LogicValuations(names),
     TruthTable=(self,value,options ?= {= })->LogicTruthTable(value,options),
     Classify=(self,value,options ?= {= })->LogicClassify(value,options),
+    Tableau=(self,value,options ?= {= })->LogicTableau(value,options),
+    CheckTableau=(self,value)->LogicCheckTableau(value),
     NNF=(self,value,options ?= {= })->LogicNNF(value,options),
     CNF=(self,value,options ?= {= })->LogicCNF(value,options),
     DNF=(self,value,options ?= {= })->LogicDNF(value,options),
@@ -64131,47 +64576,13 @@ CalculusRequireExpression(value, label ?= "value") ->
 CalculusExactScalar(value) -> (value ? :Integer) || (value ? :Rational);
 CalculusOperand(value) -> CalculusIsExpression(value) || CalculusExactScalar(value);
 
-CalculusExpression(kind, fields) -> {;
-    value = {=
-        valueKind=:calculusExpression,
-        schema="rix.calculus.expression@1",
-        kind=kind
-    }.Merge(fields);
-    value.__type = "CalculusExpression";
-    value._type = "calculus_expression";
-    value._proto = {=
-        Record=(self)->self,
-        Kind=(self)->self[:kind],
-        Operands=(self)->self.Has("operands") ?: self[:operands] ?_ [],
-        SemanticId=(self)->self.Has("semanticId") ?: self[:semanticId] ?_ _
-    };
-    .ImmutableValue(value);
-};
-
-CalculusVariable(name) -> {;
-    name ? :String ?: _ ?_ .Error("Calculus variable name must be a string or colon-string");
-    CalculusExpression(:variable, {= name=name });
-};
-
-CalculusConstant(value) -> CalculusExactScalar(value)
-    ?: CalculusExpression(:constant, {= value=value })
-    ?_ .Error("Calculus constants currently require an exact Integer or Rational");
-
+CalculusVariable(name) -> .ExpressionVariable(name);
+CalculusConstant(value) -> .ExpressionConstant(value);
 CalculusPromote(value) -> CalculusIsExpression(value) ?: value ?_ CalculusConstant(value);
-
-CalculusOperator(operation, operands) -> CalculusExpression(:operator, {=
-    operation=operation,
-    operands=operands.Map((value)->CalculusPromote(value))
-});
-
+CalculusOperator(operation, operands) -> .ExpressionOperation(operation,operands);
 CalculusBinary(operation, left, right) -> CalculusOperator(operation, [left,right]);
 CalculusNegate(value) -> CalculusOperator(:negate, [value]);
-
-CalculusApplication(semanticId, name, arguments) -> CalculusExpression(:apply, {=
-    semanticId=semanticId,
-    name=name,
-    arguments=arguments.Map((value)->CalculusPromote(value))
-});
+CalculusApplication(semanticId, name, arguments) -> .ExpressionApply(semanticId,name,arguments);
 
 CalculusApply(function, argument) -> {;
     exact = function ? :MathematicalFunction
@@ -65171,14 +65582,7 @@ CalculusRegister(calculusBuiltinComplexLog,{=
     defaultTraits=[],
     validate=(value)->value.Has("schema") && value[:schema] == "rix.calculus.expression@1",
     proto={= },
-    installs={=
-        ADD=[{= name=:CalculusAdd, priority=250, prep=(left,right)->CalculusOperand(left)&&CalculusOperand(right)&&(CalculusIsExpression(left)||CalculusIsExpression(right)), impl=(left,right)->CalculusBinary(:add,left,right) }],
-        SUB=[{= name=:CalculusSub, priority=250, prep=(left,right)->CalculusOperand(left)&&CalculusOperand(right)&&(CalculusIsExpression(left)||CalculusIsExpression(right)), impl=(left,right)->CalculusBinary(:subtract,left,right) }],
-        MUL=[{= name=:CalculusMul, priority=250, prep=(left,right)->CalculusOperand(left)&&CalculusOperand(right)&&(CalculusIsExpression(left)||CalculusIsExpression(right)), impl=(left,right)->CalculusBinary(:multiply,left,right) }],
-        DIV=[{= name=:CalculusDiv, priority=250, prep=(left,right)->CalculusOperand(left)&&CalculusOperand(right)&&(CalculusIsExpression(left)||CalculusIsExpression(right)), impl=(left,right)->CalculusBinary(:divide,left,right) }],
-        POW=[{= name=:CalculusPow, priority=250, prep=(left,right)->CalculusOperand(left)&&CalculusOperand(right)&&(CalculusIsExpression(left)||CalculusIsExpression(right)), impl=(left,right)->CalculusBinary(:power,left,right) }],
-        NEG=[{= name=:CalculusNeg, priority=250, prep=(value)->CalculusIsExpression(value), impl=CalculusNegate }]
-    }
+    installs={= }
 });
 .TypeInstall(:CalculusExpression);
 
@@ -66719,7 +67123,7 @@ id: ode
 description: Portable initial-value problems, vector trajectories, adaptive demonstrations, checked Picard and second-order Taylor tubes, and certified event isolation.
 kind: rix
 mount: ode
-exports: [IVP, Euler, RK4, AdaptiveRK4, ValidatedPicard, ValidatedTaylor2, Event, IsolateEvents, At, Points, Segments, Record, IsProblem, IsSolution]
+exports: [IVP, Euler, RK4, AdaptiveRK4, ValidatedPicard, ValidatedTaylor2, AdaptiveValidatedTaylor2, Event, IsolateEvents, At, Points, Segments, Record, IsProblem, IsSolution]
 groups: [Numerics, ODE, Calculus]
 permissions: []
 requires: [rix.calculus@1, rix.numerics@2]
@@ -67382,10 +67786,17 @@ OdeTaylorizeSegment(problem, segment, secondDerivatives, maxSubintervals) -> {;
       ?_ segment;
 };
 
-OdeValidatedTaylor2(problemValue, options ?= {= }) -> {;
+OdeValidatedTaylor2(problemValue, options ?= {= }, adaptive ?= _) -> {;
     problem = OdeRequireProblem(problemValue);
     options = OdeRequireOptions(options,"ODE ValidatedTaylor2 options");
     steps = OdeRequirePositiveInteger(OdeOption(options,"steps",4),"ODE ValidatedTaylor2 steps");
+    maxAttempts = adaptive
+      ?: OdeRequirePositiveInteger(OdeOption(options,"maxattempts",256),"ODE maxAttempts")
+      ?_ steps;
+    minimumStepValue = OdeOption(options,"minimumstep",1/1048576);
+    minimumStep = OdeRequirePositiveRational(minimumStepValue,"ODE minimumStep");
+    toleranceValue = OdeOption(options,"remaindertolerance",_);
+    remainderTolerance = toleranceValue==_ ?: _ ?_ OdeRequirePositiveRational(toleranceValue,"ODE remainderTolerance");
     maxTubeIterations = OdeRequirePositiveInteger(
         OdeOption(options,"maxtubeiterations",8),"ODE maxTubeIterations",32
     );
@@ -67407,33 +67818,59 @@ OdeValidatedTaylor2(problemValue, options ?= {= }) -> {;
     };
     lower = problem[:initialTime];
     upper = problem[:interval].High();
-    stepSize = (upper-lower)/steps;
+    stepSize := (upper-lower)/steps;
+    maximumStep = stepSize;
     time := lower;
     state := problem[:initialState];
     points := [[time,state]];
     segments := [];
     stopped := _;
-    {@ index=1; index<=@steps && !@stopped; {;
-       nextTime = @time+@stepSize;
+    attempts := [];
+    rejected := 0;
+    stopReason := :attemptBudgetExhausted;
+    {@ attempt=1; attempt<=@maxAttempts && @time<@upper && !@stopped; {;
+       h = @stepSize < @upper-@time ?: @stepSize ?_ @upper-@time;
+       nextTime = @time+h;
        picard = OdeValidatedSegment(
-           @problem,index,@time,nextTime,@state,@stateDerivatives,@normalized
+           @problem,@points.Len(),@time,nextTime,@state,@stateDerivatives,@normalized
        );
        segment = OdeTaylorizeSegment(@problem,picard,@secondDerivatives,@maxSubintervals);
-       @segments ~= @segments.Push(segment);
-       segment[:certified]==1
+       remainderBound = segment[:certified]==1
+         ?: segment[:secondDerivativeRange].Reduce((largest,range)->
+             .Max(largest,OdeIntervalMagnitude(range)*@h*@h/2),0)
+         ?_ _;
+       accepted = segment[:certified]==1 && (!@adaptive || @remainderTolerance==_ || remainderBound<=@remainderTolerance);
+       @attempts ~= @attempts.Push({=
+           tStart=@time,tEnd=nextTime,accepted=accepted,
+           remainderBound=remainderBound,
+           reason=accepted ?: :accepted ?_ (segment[:certified]==1 ?: :remainderToleranceExceeded ?_ :tubeSelfMapNotEstablished),
+           segment=segment
+       });
+       accepted
          ?: {;
+             @segments ~= @segments.Push(@segment);
              @state ~= @segment[:stateEnd];
              @time ~= @nextTime;
              @points ~= @points.Push([@nextTime,@state]);
+             @adaptive ?: {; @stepSize ~= .Min(2*@h,@maximumStep); } ?_ _;
          }
-         ?_ {; @stopped ~= 1; };
-    }; index += 1 };
-    complete = !stopped && segments.Len()==steps;
+         ?_ {;
+             @rejected += 1;
+             (@adaptive && @h/2>=@minimumStep)
+               ?: {; @stepSize ~= @h/2; }
+               ?_ {;
+                   @stopped ~= 1;
+                   @stopReason ~= @adaptive ?: :minimumStepReached ?_ :tubeSelfMapNotEstablished;
+                   !@adaptive ?: {; @segments ~= @segments.Push(@segment); } ?_ _;
+               };
+         };
+    }; attempt += 1 };
+    complete = time==upper;
     solution = {=
         valueKind=:odeSolution,
         schema="rix.ode.solution@1",
         problem=problem,
-        method=:validatedTaylor2,
+        method=adaptive ?: :adaptiveValidatedTaylor2 ?_ :validatedTaylor2,
         status=complete ?: :validated ?_ :partial,
         classification=complete ?: :certifiedTaylorTube ?_ :unresolvedTaylorTube,
         stateNames=problem[:stateNames],
@@ -67455,6 +67892,13 @@ OdeValidatedTaylor2(problemValue, options ?= {= }) -> {;
             requestedSteps=steps,
             completedSteps=points.Len()-1,
             maxTubeIterations=maxTubeIterations,
+            attempts=attempts,
+            attemptedSteps=attempts.Len(),
+            rejectedSteps=rejected,
+            maxAttempts=maxAttempts,
+            minimumStep=minimumStep,
+            remainderTolerance=remainderTolerance,
+            stopReason=complete ?: _ ?_ stopReason,
             exhausted=!complete
         },
         diagnostics=complete ?: [] ?_ [:validatedTaylorTrajectoryPartial]
@@ -67809,6 +68253,7 @@ odeProblemProto = {=
     AdaptiveRK4=(self, options ?= {= })->OdeAdaptiveRK4(self,options),
     ValidatedPicard=(self, options ?= {= })->OdeValidatedPicard(self,options),
     ValidatedTaylor2=(self, options ?= {= })->OdeValidatedTaylor2(self,options),
+    AdaptiveValidatedTaylor2=(self, options ?= {= })->OdeValidatedTaylor2(self,options,1),
     Record=(self)->OdeRecord(self)
 };
 
@@ -67829,6 +68274,7 @@ odeNamespace._proto = {=
     AdaptiveRK4=(self,problem,options ?= {= })->OdeAdaptiveRK4(problem,options),
     ValidatedPicard=(self,problem,options ?= {= })->OdeValidatedPicard(problem,options),
     ValidatedTaylor2=(self,problem,options ?= {= })->OdeValidatedTaylor2(problem,options),
+    AdaptiveValidatedTaylor2=(self,problem,options ?= {= })->OdeValidatedTaylor2(problem,options,1),
     Event=(self,expression,options ?= {= })->OdeEvent(expression,options),
     IsolateEvents=(self,solution,event ?= _,options ?= {= })->OdeIsolateEvents(solution,event,options),
     At=(self,solution,time)->OdeAt(solution,time),
@@ -79607,7 +80053,7 @@ ndNamespace._proto={=
 
 // ../rix/plugins/draw/draw.plugin.rix.js
 var int7 = (value) => new Integer(BigInt(value));
-var string = (value) => ({ type: "string", value: String(value) });
+var string2 = (value) => ({ type: "string", value: String(value) });
 var mapValue4 = (entries2) => ({ type: "map", entries: new Map(entries2) });
 var arrayValue = (values2) => ({ type: "sequence", values: values2 });
 function sequence5(value, label) {
@@ -79705,7 +80151,7 @@ function arrow(args) {
   const style = get2(entries2, "style");
   const headStyle = mergedStyle(style, [
     ["closed", true],
-    ["fill", get2(style?.entries ?? new Map, "stroke", string("#111827"))]
+    ["fill", get2(style?.entries ?? new Map, "stroke", string2("#111827"))]
   ]);
   return createGroup([[
     createPath([pointsValue([from, to]), style]),
@@ -79756,7 +80202,7 @@ function dimension(args) {
   const first = [from[0] + nx * offset, from[1] + ny * offset];
   const second = [to[0] + nx * offset, to[1] + ny * offset];
   const style = get2(entries2, "style");
-  const textValue4 = get2(entries2, "text", string(Number(length.toPrecision(6))));
+  const textValue4 = get2(entries2, "text", string2(Number(length.toPrecision(6))));
   const arrowOptions = mapValue4([["headLength", int7(7)], ["headWidth", int7(5)]]);
   return createGroup([[
     createPath([pointsValue([from, first]), style]),
@@ -79766,7 +80212,7 @@ function dimension(args) {
     createTextMark([
       pointsValue([[(first[0] + second[0]) / 2 + nx * 6, (first[1] + second[1]) / 2 + ny * 6]])[0],
       textValue4,
-      mapValue4([["anchor", string("middle")], ["size", int7(13)]])
+      mapValue4([["anchor", string2("middle")], ["size", int7(13)]])
     ])
   ]]);
 }
@@ -79815,7 +80261,7 @@ function viewport(args) {
   const entries2 = entriesFor(args, ["domain", "size", "options"], "draw.Viewport");
   const options = get2(entries2, "options")?.type === "map" ? get2(entries2, "options").entries : new Map;
   const value = mapValue4([
-    ["type", string("draw_viewport")],
+    ["type", string2("draw_viewport")],
     ["domain", get2(entries2, "domain")],
     ["size", get2(entries2, "size")],
     ["margin", get2(options, "margin", int7(0))],
@@ -79896,7 +80342,7 @@ function anchor(args) {
   const ymin = number(get2(box2, "ymin"), "draw.Anchor ymin");
   const xmax = number(get2(box2, "xmax"), "draw.Anchor xmax");
   const ymax = number(get2(box2, "ymax"), "draw.Anchor ymax");
-  const name = get2(entries2, "name", string("center"))?.value ?? String(get2(entries2, "name"));
+  const name = get2(entries2, "name", string2("center"))?.value ?? String(get2(entries2, "name"));
   const positions = {
     center: [(xmin + xmax) / 2, (ymin + ymax) / 2],
     north: [(xmin + xmax) / 2, ymin],
@@ -79977,9 +80423,9 @@ function symbol(args) {
     throw new Error("draw.Symbol children must be Graphics nodes");
   const options = get2(entries2, "options")?.type === "map" ? get2(entries2, "options").entries : new Map;
   return mapValue4([
-    ["valueKind", string("drawSymbol")],
-    ["schema", string("rix.draw.symbol@1")],
-    ["name", string(name)],
+    ["valueKind", string2("drawSymbol")],
+    ["schema", string2("rix.draw.symbol@1")],
+    ["name", string2(name)],
     ["children", arrayValue(children)],
     ["anchor", get2(options, "anchor", arrayValue([int7(0), int7(0)]))],
     ["metadata", get2(options, "metadata")]
@@ -80069,17 +80515,17 @@ function placeLabels(args) {
     children.push(createTextMark([
       pointsValue([chosen.position])[0],
       textValue4,
-      mergedStyle(styleValue2, [["hitId", string(id)]])
+      mergedStyle(styleValue2, [["hitId", string2(id)]])
     ]));
     placements.push(mapValue4([
-      ["id", string(id)],
+      ["id", string2(id)],
       ["position", arrayValue(pointsValue([chosen.position])[0])],
       ["offset", arrayValue(pointsValue([chosen.offset])[0])],
       ["collided", int7(chosen.collided ? 1 : 0)]
     ]));
   });
   return createGroup([children, null, mapValue4([
-    ["schema", string("rix.draw.label-layout@1")],
+    ["schema", string2("rix.draw.label-layout@1")],
     ["placements", arrayValue(placements)],
     ["resolved", int7(unresolved === 0 ? 1 : 0)],
     ["unresolved", int7(unresolved)]
@@ -80093,12 +80539,12 @@ function projectProtocolPoint(value, viewportValue, label2) {
 }
 function unresolvedDrawable(source, message, position = [int7(8), int7(18)]) {
   return createGroup([[
-    createTextMark([position, string(message), mapValue4([["fill", string("#b91c1c")], ["size", int7(13)]])])
+    createTextMark([position, string2(message), mapValue4([["fill", string2("#b91c1c")], ["size", int7(13)]])])
   ], null, mapValue4([
-    ["schema", string("rix.draw.adapter-result@1")],
+    ["schema", string2("rix.draw.adapter-result@1")],
     ["resolved", int7(0)],
     ["uncertainty", source],
-    ["diagnostic", string(message)]
+    ["diagnostic", string2(message)]
   ])]);
 }
 function fromDrawable(args) {
@@ -80125,8 +80571,8 @@ function fromDrawable(args) {
     }
     const children = sequence5(get2(record.entries, "points"), "draw.From intersection points").map((item) => fromDrawable([item, mapValue4([...options])]));
     return createGroup([children, null, mapValue4([
-      ["schema", string("rix.draw.adapter-result@1")],
-      ["sourceSchema", string(schema)],
+      ["schema", string2("rix.draw.adapter-result@1")],
+      ["sourceSchema", string2(schema)],
       ["resolved", int7(1)]
     ])]);
   }
@@ -80134,10 +80580,10 @@ function fromDrawable(args) {
     const center = get2(record.entries, "center");
     const position = projectProtocolPoint(get2(center.entries, "coordinates"), viewportValue, "draw.From uncertain point center");
     return createGroup([[
-      createCircle([position, int7(7), mergedStyle(styleValue2, [["fill", string("#fef3c7")], ["stroke", string("#b45309")], ["dash", string("3 2")]])])
+      createCircle([position, int7(7), mergedStyle(styleValue2, [["fill", string2("#fef3c7")], ["stroke", string2("#b45309")], ["dash", string2("3 2")]])])
     ], null, mapValue4([
-      ["schema", string("rix.draw.adapter-result@1")],
-      ["sourceSchema", string(schema)],
+      ["schema", string2("rix.draw.adapter-result@1")],
+      ["sourceSchema", string2(schema)],
       ["resolved", int7(0)],
       ["uncertainty", source]
     ])]);
@@ -80147,12 +80593,12 @@ function fromDrawable(args) {
   }
   if (kind === "point") {
     const position = projectProtocolPoint(get2(record.entries, "coordinates"), viewportValue, "draw.From point");
-    return createCircle([position, get2(options, "radius", int7(5)), mergedStyle(styleValue2, [["hitId", get2(options, "hitId", string("geometry-point"))]])]);
+    return createCircle([position, get2(options, "radius", int7(5)), mergedStyle(styleValue2, [["hitId", get2(options, "hitId", string2("geometry-point"))]])]);
   }
   if (kind === "segment" || kind === "polygon") {
     const rawPoints = kind === "segment" ? [get2(get2(record.entries, "first").entries, "coordinates"), get2(get2(record.entries, "second").entries, "coordinates")] : sequence5(get2(record.entries, "points"), "draw.From polygon points").map((item) => get2(item.entries, "coordinates"));
     const projected = rawPoints.map((item, index) => projectProtocolPoint(item, viewportValue, `draw.From ${kind} point ${index + 1}`));
-    return createPath([projected, mergedStyle(styleValue2, [["closed", kind === "polygon"], ["hitId", get2(options, "hitId", string(`geometry-${kind}`))]])]);
+    return createPath([projected, mergedStyle(styleValue2, [["closed", kind === "polygon"], ["hitId", get2(options, "hitId", string2(`geometry-${kind}`))]])]);
   }
   if (kind === "circle") {
     const center = get2(record.entries, "center");
@@ -80167,7 +80613,7 @@ function fromDrawable(args) {
     const projectedCenterNumbers = pointNumbers(projectedCenter, "draw.From projected circle center");
     const projectedEdgeNumbers = pointNumbers(projectedEdge, "draw.From projected circle edge");
     const projectedRadius = Math.hypot(projectedEdgeNumbers[0] - projectedCenterNumbers[0], projectedEdgeNumbers[1] - projectedCenterNumbers[1]);
-    return createCircle([projectedCenter, exact(projectedRadius), mergedStyle(styleValue2, [["hitId", get2(options, "hitId", string("geometry-circle"))]])]);
+    return createCircle([projectedCenter, exact(projectedRadius), mergedStyle(styleValue2, [["hitId", get2(options, "hitId", string2("geometry-circle"))]])]);
   }
   return unresolvedDrawable(source, `draw.From has no finite adapter for geometry kind '${kind}'`);
 }
@@ -80545,7 +80991,7 @@ function diagnosticsOf(value) {
 
 // ../rix/plugins/float/approximate-algorithms.js
 var int8 = (value) => new Integer(BigInt(value));
-var string2 = (value) => ({ type: "string", value: String(value) });
+var string3 = (value) => ({ type: "string", value: String(value) });
 var mapValue5 = (entries2) => ({ type: "map", entries: new Map(entries2) });
 function sequence6(value, label2) {
   if (Array.isArray(value))
@@ -80619,23 +81065,23 @@ function errorEstimate(numbers, result, format, operations, nativeType) {
   const absolute = factor < 1 ? factor / (1 - factor) * magnitude : Infinity;
   const relative = result === 0 ? null : Math.abs(absolute / result);
   return mapValue5([
-    ["valueKind", string2("floatErrorEstimate")],
-    ["schema", string2("rix.float.error-estimate@1")],
+    ["valueKind", string3("floatErrorEstimate")],
+    ["schema", string3("rix.float.error-estimate@1")],
     ["absolute", convertFloat(absolute, format, nativeType)],
     ["relative", relative === null ? null : convertFloat(relative, format, nativeType)],
-    ["model", string2("standard-first-order")],
+    ["model", string3("standard-first-order")],
     ["certified", null]
   ]);
 }
 function algorithmResult({ algorithm, policy, format, values: values2, result, operations, nativeType }) {
   return mapValue5([
-    ["valueKind", string2("floatAlgorithmResult")],
-    ["schema", string2("rix.float.algorithm-result@1")],
-    ["algorithm", string2(algorithm)],
-    ["policy", string2(policy)],
-    ["format", string2(format)],
+    ["valueKind", string3("floatAlgorithmResult")],
+    ["schema", string3("rix.float.algorithm-result@1")],
+    ["algorithm", string3(algorithm)],
+    ["policy", string3(policy)],
+    ["format", string3(format)],
     ["count", int8(values2.length)],
-    ["status", string2("approximate")],
+    ["status", string3("approximate")],
     ["value", convertFloat(result, format, nativeType)],
     ["errorEstimate", errorEstimate(values2, result, format, operations, nativeType)]
   ]);
@@ -80648,13 +81094,13 @@ function complexParts2(value, label2) {
 }
 function complexValue(real, imaginary, format, nativeType, operation = "construct") {
   return mapValue5([
-    ["valueKind", string2("floatComplex")],
-    ["schema", string2("rix.float.complex@1")],
-    ["format", string2(format)],
+    ["valueKind", string3("floatComplex")],
+    ["schema", string3("rix.float.complex@1")],
+    ["format", string3(format)],
     ["real", convertFloat(real, format, nativeType)],
     ["imaginary", convertFloat(imaginary, format, nativeType)],
-    ["operation", string2(operation)],
-    ["status", string2("approximate")]
+    ["operation", string3(operation)],
+    ["status", string3("approximate")]
   ]);
 }
 function commonComplex(left, right, label2) {
@@ -88905,6 +89351,7 @@ function createDefaultRegistry(options = {}) {
   installRegisteredTypes(registry);
   installUnitExactVariants(registry);
   installSymbolicVariants(registry);
+  installExpressionVariants(registry);
   for (const loadStartup of options.startupLoaders || []) {
     loadStartup(registry);
   }
@@ -89224,6 +89671,8 @@ function createDefaultSystemContext(options = {}) {
   ctx.register("ConvertUnit", unitExactFunctions.CONVERTUNIT);
   ctx.register("DefineUnit", unitExactFunctions.DEFINEUNIT);
   ctx.register("DefineExactGenerator", unitExactFunctions.DEFINEEXACTGENERATOR);
+  for (const [name, definition12] of Object.entries(expressionCapabilities))
+    ctx.register(name, definition12);
   ctx.installManagementNamespaces();
   const rendererRegistry = options.rendererRegistry || new RendererRegistry;
   ctx.attachRendererRegistry(rendererRegistry, {
@@ -89461,7 +89910,7 @@ function findIdentifierOffset(source, name, approximateOffset) {
   return -1;
 }
 function annotateEvaluationError(error, irNode, context) {
-  if (!error || typeof error !== "object" || error.__rixLocationAttached) {
+  if (!error || typeof error !== "object" || error.__rixLocationAttached || isFunctionReturnSignal(error)) {
     return error;
   }
   const location = getNodeLocation(irNode, context);
@@ -90071,6 +90520,8 @@ async function runCallablePrepAsync(fn, context, registry, systemContext, state)
         return { ok: false };
       }
     } catch (error) {
+      if (isFunctionReturnControl(error))
+        throw error;
       if (error?.message?.includes("prep remained undecided"))
         throw error;
       if (strict)
@@ -90128,6 +90579,8 @@ async function invokeUserCallableAsync(fn, callArgs, context, registry, systemCo
   let traceActive = false;
   let primaryError = null;
   let schedulerCleanupError = null;
+  const returnTarget = { active: true };
+  context.functionReturnTargets.push(returnTarget);
   const traceEnter = (args) => {
     if (!trace?.active || trace.currentDepth >= trace.depth)
       return false;
@@ -90202,12 +90655,20 @@ async function invokeUserCallableAsync(fn, callArgs, context, registry, systemCo
       scopeActive = true;
     }
   } catch (error) {
+    if (isFunctionReturnSignal(error) && error.target === returnTarget) {
+      const value = returnedValue(error);
+      traceExit(value);
+      traceActive = false;
+      return returnPrepStatus ? { matched: true, value } : value;
+    }
     primaryError = error;
     if (callableAsync.ownsScheduler) {
       callableState.scheduler.cancelGroup(callableState.group, error);
     }
     throw error;
   } finally {
+    returnTarget.active = false;
+    context.functionReturnTargets.pop();
     if (callableAsync.ownsScheduler) {
       try {
         await callableState.scheduler.waitForIdle(callableState.group);
@@ -90342,7 +90803,8 @@ async function invokeCallableAsync(fn, callArgs, context, registry, systemContex
         throw new Error(`System ${capability2.kind} .${capability2.displayName} is not callable`);
       return await capability2.impl(callArgs, context, (node) => evaluateAsyncInternal(node, context, registry, systemContext, state), {
         promiseAware: true,
-        signal: state?.signal ?? null
+        signal: state?.signal ?? null,
+        invoke: (callable, values4) => invokeCallableAsync(callable, values4, context, registry, systemContext, state)
       });
     }
     return evaluateAsyncInternal({ fn: fn.name, args: callArgs }, context, registry, systemContext, state);
@@ -90420,6 +90882,8 @@ async function evaluateDebugCapabilityAsync(args, context, registry, systemConte
   try {
     finalValue = await evaluateAsyncInternal(exprNode, context, registry, systemContext, state);
   } catch (error) {
+    if (isFunctionReturnSignal(error))
+      throw error;
     getDiagnostics(context).addEvent(createEvent({
       kind: "debug",
       label: label2,
@@ -90903,10 +91367,10 @@ function asyncCollectionEntry(node, context, registry, systemContext, state) {
   if (state.parallelCollections === false) {
     return evaluateAsyncInternal(node, context, registry, systemContext, state);
   }
-  if (containsNestedAsyncCollection(node)) {
-    return evaluateAsyncInternal(node, context, registry, systemContext, state);
-  }
   const itemContext = context.concurrentChild();
+  if (containsNestedAsyncCollection(node)) {
+    return evaluateAsyncInternal(node, itemContext, registry, systemContext, state);
+  }
   return state.scheduler.run((admission) => withAsyncItemFinalizers(itemContext, () => evaluateAsyncInternal(node, itemContext, registry, systemContext, { ...state, admission })), state.group, {
     branchPath: state.branchPath,
     path: asyncTaskPath(state)
@@ -91870,6 +92334,8 @@ async function evaluatePreparedTrialAsync(args, context, registry, systemContext
   try {
     candidate = await evaluateAsyncInternal(candidateNode, context, registry, systemContext, state);
   } catch (error) {
+    if (isFunctionReturnControl(error))
+      throw error;
     if (gates[0]?.strict === true)
       throw error;
     return asyncPreparedTrialFailure(preserveFailure);
@@ -91904,6 +92370,8 @@ async function evaluatePreparedTrialAsync(args, context, registry, systemContext
           }
         }
       } catch (error) {
+        if (isFunctionReturnControl(error))
+          throw error;
         if (error?.message?.includes("remained undecided"))
           throw error;
         if (strict)
@@ -92181,7 +92649,8 @@ async function evaluateAsyncInternal(irNode, context, registry, systemContext, s
       if (capability2.lazy)
         return await capability2.impl(callArgNodes, context, evalAsync, {
           promiseAware: true,
-          signal: state?.signal ?? null
+          signal: state?.signal ?? null,
+          invoke: (callable, values5) => invokeCallableAsync(callable, values5, context, registry, systemContext, state)
         });
       const values4 = [];
       for (const arg of callArgNodes)
@@ -92191,7 +92660,8 @@ async function evaluateAsyncInternal(irNode, context, registry, systemContext, s
       const capabilityEvaluate = SYNC_REACTIVE_FORMULA_CAPABILITY_IMPLS.has(capability2.impl) ? (node) => evaluate(node, context, registry, systemContext) : evalAsync;
       return await capability2.impl(values4, context, capabilityEvaluate, {
         promiseAware: true,
-        signal: state?.signal ?? null
+        signal: state?.signal ?? null,
+        invoke: (callable, values5) => invokeCallableAsync(callable, values5, context, registry, systemContext, state)
       });
     }
     if (["SYS_GET", "SYS_OBJ"].includes(fn))
@@ -92228,6 +92698,19 @@ async function evaluateAsyncInternal(irNode, context, registry, systemContext, s
         if (!shareCurrentScope)
           context.pop();
       }
+    }
+    if (fn === "GUARD_RETURN") {
+      const target = requireReturnTarget(context);
+      const value = await evalAsync(args[1]?.fn === "DEFER" ? args[1].args[0] : args[1]);
+      if (decisionState(value) !== args[0].decision)
+        return value;
+      let result;
+      try {
+        result = await evalAsync(args[2]?.fn === "DEFER" ? args[2].args[0] : args[2]);
+      } catch (error) {
+        throw markReturnPayloadError(error);
+      }
+      throw new FunctionReturnSignal(target, result);
     }
     if (fn === "TERNARY") {
       const condition = await evalAsync(args[0]);
@@ -93042,6 +93525,10 @@ function declarationNodes(nodes, options = {}) {
     const node = statementExpression(raw);
     if (!node)
       return;
+    if (node.type === "ReturnGuard") {
+      scan(node.condition);
+      return;
+    }
     const assignment = assignmentDetails(node);
     if (assignment && !UPDATE_OPERATORS.has(assignment.operator) && assignment.left?.type !== "ReactiveRef") {
       for (const target of targetNames(assignment.left).filter(({ node: targetNode }) => targetNode?.type !== "OuterIdentifier")) {
@@ -93337,6 +93824,11 @@ function analyzeRix(source, options = {}) {
       }
     }
     const functionState = { functionName, functionBody: body, tail: true, loopScope: null };
+    const prepEntries = node.prep?.elements || [];
+    declareAll(functionScope, prepEntries, { shareBlocks: false });
+    for (const entry2 of prepEntries) {
+      visit3(entry2, functionScope, { ...functionState, role: "value", tail: false });
+    }
     if (body?.type === "BlockContainer") {
       declareImports(functionScope, body);
       declareAll(functionScope, body.elements, { shareBlocks: false });
@@ -99797,5 +100289,5 @@ var STATIC_SYSTEM_CATALOG = Object.freeze([
 ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
 export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, outputValueKind, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, formatOutputText, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateObserved, parseAndEvaluateObservedAsync, lintRix, createGeometryAuthoringProgram, mountOutputWidgets };
 
-//# debugId=7C08BA4DE163022264756E2164756E21
-//# sourceMappingURL=chunk-azrpqxc4.js.map
+//# debugId=5AE4B16F5236E29164756E2164756E21
+//# sourceMappingURL=chunk-d65j3vgz.js.map

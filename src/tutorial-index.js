@@ -47,6 +47,7 @@ const coreTutorials = [
     { number: "8b", parent: "8", file: "headers-and-traits.html", title: "Headers and traits", description: "Sticky semantics and protocol bundles." },
     { number: "8c", parent: "8", file: "units.html", title: "Physical units and quantities", description: "Compose units, convert exactly, and catch dimensional mistakes." },
     { number: "8d", parent: "8", file: "exact-generators.html", title: "Exact generators", description: "Keep pi and algebraic roots exact through arithmetic." },
+    { number: "8d1", parent: "8d", file: "core-mathematics.html", title: "Core mathematical expressions", description: "Construct mathematical expressions without loading a plugin." },
     { number: "8e", parent: "8", file: "complex-numbers.html", title: "Exact complex numbers", description: "Divide, conjugate, and inspect exact complex values." },
     { number: "8f", parent: "8", file: "cayley-polar.html", title: "Exact Cayley polar form", description: "Represent exact complex direction without a transcendental angle." },
     { number: "8g", parent: "8", file: "capstone-measurement.html", title: "Capstone: exact measurement", description: "Combine physical dimensions with an exact symbolic magnitude." },
