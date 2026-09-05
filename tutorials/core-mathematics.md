@@ -30,8 +30,54 @@ integral := .cas.Integrate(t^2,:t);
 ```
 
 The constructors do not automatically simplify, integrate, or approximate.
-Scoped symbol notation and mathematical-context blocks are subsequent stages
-of this work; the examples here use the implemented core constructor surface.
+
+## Scoped symbolic names
+
+`::x` creates or retrieves the mathematical symbol named x in the current
+programming scope. It does not retrieve the ordinary binding named x.
+
+```rix edu
+x := 7;
+symbol := ::x;
+copy ::= symbol;
+{: x, .SameSymbol(symbol,::x), .SameSymbol(copy,symbol), ::x+1 };
+```
+
+Copies preserve identity. Each nested programming scope has its own symbolic
+names, and `@::x` explicitly captures an already introduced enclosing symbol.
+
+```rix edu
+outer := ::x;
+{;
+    inner := ::x;
+    {: .SameSymbol(inner,@::x), .SameSymbol(@outer,@::x), inner==@::x };
+};
+```
+
+The results are `_`, `1`, and `?`: the inner symbol has a different identity,
+but that does not prove its mathematical value differs. `SameSymbol` asks
+identity; `==` asks mathematical equality. Currently equality establishes
+identical trees and exact constant comparisons; other cases stay undecided.
+
+```rix edu
+Fresh()->::t;
+{: .SameSymbol(Fresh(),Fresh()), ::x==::x, .ExpressionKey(::x+1) };
+```
+
+Function invocations get fresh local symbols. Repeated top-level cells in the
+same session share symbols; resetting the session starts a new namespace.
+Use spaces around assignment (`x := ::x`): adjacent `:=::` overlaps the old
+reserved `:=:` token. Index-leading `::` stays reserved for slicing, not a
+symbolic literal; `( ::x )` makes an expression boundary explicit if needed.
+
+### Current implementation boundary
+
+Scoped symbols support core construction, arithmetic, identity, keys, and
+conservative equality. The existing name-based calculus, CAS, range, and
+specification consumers reject scoped expressions until their identity-aware
+conversion is implemented. The first section's constructor-based examples
+remain usable with those consumers. Immutable symbolic definitions, `:::x`,
+and `{& header & body }` are still pending.
 
 :::challenge Build and inspect
 Construct `(x+1)^3` without loading a plugin, then inspect its operands.

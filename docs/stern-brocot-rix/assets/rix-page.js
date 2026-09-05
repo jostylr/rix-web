@@ -2436,6 +2436,8 @@
             });
           } else if (token.value === "@") {
             this.advance();
+            if (this.current.value === "::")
+              return this.parseSymbolicVariable(true, token);
             if (this.current.type === "String" && this.current.kind === "quote") {
               const template = this.current;
               this.advance();
@@ -2557,6 +2559,8 @@
             return this.createNode("SystemObject", {
               original: token.original
             });
+          } else if (token.value === "::") {
+            return this.parseSymbolicVariable(false);
           } else if (token.value === "_") {
             this.advance();
             return this.createNode("NULL", {
@@ -4840,6 +4844,17 @@
         pos: left.pos,
         original: left.original + operator.original
       });
+    }
+    parseSymbolicVariable(outer, startToken = this.current) {
+      const prefix = this.current;
+      this.advance();
+      if (this.current.type !== "Identifier" || prefix.pos[2] !== this.current.pos[1]) {
+        this.error("Symbolic '::' must be immediately followed by a name");
+      }
+      const name = this.current.value;
+      const original = (outer ? "@::" : "::") + this.current.original;
+      this.advance();
+      return this.createNode("SymbolicVariable", { name, outer, pos: startToken.pos, original });
     }
     parseBracketSpec() {
       const token = this.current;
@@ -12786,7 +12801,7 @@ ${indentStr})`;
       Files: Object.freeze(["FILES"]),
       Units: Object.freeze(["UNITS", "Units", "CONVERTUNIT", "ConvertUnit", "DEFINEUNIT", "DefineUnit"]),
       Exact: Object.freeze(["EXACT", "Exact", "COMPLEX", "Complex", "DEFINEEXACTGENERATOR", "DefineExactGenerator", "exactalgebras"]),
-      Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC", "SPECROLES", "SPECFRACTIONPARTS", "SArith", "ExpressionVariable", "ExpressionConstant", "ExpressionOperation", "ExpressionApply", "IsExpression"]),
+      Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC", "SPECROLES", "SPECFRACTIONPARTS", "SArith", "ExpressionVariable", "ExpressionConstant", "ExpressionOperation", "ExpressionApply", "IsExpression", "ExpressionKey", "ExpressionHasScopedSymbols", "SameSymbol", "SYMBOL_RETRIEVE"]),
       Notation: Object.freeze(["SArith", "Poly", "NotationParser"]),
       Random: Object.freeze(["RNG", "RANDOMSEED", "RandomSeed", "RAND_NAME"]),
       Probability: Object.freeze(["probability"]),
@@ -13122,6 +13137,54 @@ ${indentStr})`;
   var EXPRESSION_SCHEMA = "rix.calculus.expression@1";
   var expressionField = (value, key) => value?.entries?.get(key.toLowerCase());
   var string = (value) => ({ type: "string", value });
+  var nextSymbolId = 1;
+  var SYMBOLS = "__math_symbols__";
+  function initializeSymbolScope(environment) {
+    if (!environment.has(SYMBOLS))
+      environment.set(SYMBOLS, new Map);
+    return environment;
+  }
+  function scopedExpressionVariable(context, name, outer = false) {
+    const environments = [context.globalScopedEnv, ...context.localScopes.map((scope) => scope.scopedEnv)];
+    if (outer) {
+      for (let i = environments.length - 2;i >= 0; i--) {
+        const symbol = environments[i].get(SYMBOLS)?.get(name);
+        if (symbol)
+          return symbol;
+      }
+      throw new Error(`No enclosing symbolic variable ::${name}`);
+    }
+    const environment = environments.at(-1);
+    initializeSymbolScope(environment);
+    const symbols2 = environment.get(SYMBOLS);
+    if (!symbols2.has(name))
+      symbols2.set(name, expressionRecord("variable", [
+        ["name", string(name)],
+        ["symbolid", string(`symbol:${nextSymbolId++}`)]
+      ]));
+    return symbols2.get(name);
+  }
+  function hasScopedSymbols(expression) {
+    if (!isMathExpression(expression))
+      return false;
+    if (expressionField(expression, "symbolid"))
+      return true;
+    return ["operands", "arguments"].some((key) => expressionField(expression, key)?.values?.some(hasScopedSymbols));
+  }
+  function expressionStructuralKey(expression) {
+    if (!isMathExpression(expression))
+      return expressionStructuralKey(expressionConstant(expression));
+    const kind = expressionField(expression, "kind")?.value;
+    if (kind === "variable")
+      return JSON.stringify([kind, expressionField(expression, "symbolid")?.value ?? ["named", expressionField(expression, "name")?.value]]);
+    if (kind === "constant")
+      return JSON.stringify([kind, String(expressionField(expression, "value"))]);
+    if (kind === "operator")
+      return JSON.stringify([kind, expressionField(expression, "operation")?.value, expressionField(expression, "operands").values.map(expressionStructuralKey)]);
+    if (kind === "apply")
+      return JSON.stringify([kind, expressionField(expression, "semanticid")?.value, expressionField(expression, "arguments").values.map(expressionStructuralKey)]);
+    throw new Error("Unsupported mathematical expression kind");
+  }
   function isMathExpression(value) {
     return value?.type === "map" && expressionField(value, "schema")?.value === EXPRESSION_SCHEMA;
   }
@@ -13133,6 +13196,7 @@ ${indentStr})`;
       ["OPERANDS", method("Operands", (self) => expressionField(self, "operands") || { type: "sequence", values: [] })],
       ["SEMANTICID", method("SemanticId", (self) => expressionField(self, "semanticid") || null)]
     ]) };
+    proto.entries.set("SYMBOLID", method("SymbolId", (self) => expressionField(self, "symbolid") || null));
     const record = {
       type: "map",
       entries: new Map([
@@ -13190,8 +13254,34 @@ ${indentStr})`;
         impl: (args) => expressionOperation(operation, args)
       });
     }
+    for (const operation of ["EQ", "NEQ"])
+      registry.installVariant(operation, {
+        name: `CoreExpression_${operation}`,
+        priority: 250,
+        prep: (args) => args.some(isMathExpression),
+        impl: (args) => {
+          if (!args.every((value) => isMathExpression(value) || value instanceof Integer || value instanceof Rational))
+            return UNDECIDED;
+          if (expressionStructuralKey(args[0]) === expressionStructuralKey(args[1]))
+            return operation === "EQ" ? new Integer(1n) : null;
+          if (args.every((value) => !isMathExpression(value) || expressionField(value, "kind")?.value === "constant"))
+            return operation === "EQ" ? null : new Integer(1n);
+          return UNDECIDED;
+        }
+      });
   }
+  var expressionSyntaxFunctions = {
+    SYMBOL_RETRIEVE: { impl: ([name, outer], context) => scopedExpressionVariable(context, name, outer), lazy: true, pure: false }
+  };
   var expressionCapabilities = {
+    ExpressionKey: { impl: ([value]) => string(expressionStructuralKey(value)), pure: true, groups: ["Symbolic"], doc: "Identity-aware structural key, not a proof of mathematical inequality" },
+    ExpressionHasScopedSymbols: { impl: ([value]) => hasScopedSymbols(value) ? new Integer(1n) : null, pure: true, groups: ["Symbolic"], doc: "Recognize expressions requiring identity-aware mathematical consumers" },
+    SameSymbol: { impl: ([left, right]) => {
+      const a = expressionField(left, "symbolid")?.value, b = expressionField(right, "symbolid")?.value;
+      if (!a || !b)
+        throw new Error("SameSymbol requires two scoped symbolic variables");
+      return a === b ? new Integer(1n) : null;
+    }, pure: true, groups: ["Symbolic"], doc: "Compare symbol identities independently of mathematical equality" },
     ExpressionVariable: { impl: ([name]) => expressionVariable(name), pure: true, groups: ["Symbolic"], doc: "Construct a mathematical variable expression without loading a plugin" },
     ExpressionConstant: { impl: ([value]) => expressionConstant(value), pure: true, groups: ["Symbolic"], doc: "Construct an exact mathematical constant expression" },
     ExpressionOperation: { impl: ([operation, operands]) => expressionOperation(operation?.value, operands?.values), pure: true, groups: ["Symbolic"], doc: "Construct a validated mathematical arithmetic node" },
@@ -14812,6 +14902,8 @@ ${indentStr})`;
     return entry.values;
   }
   function requireCalculusExpression(value, path = "expression") {
+    if (hasScopedSymbols(value))
+      throw new Error("Scoped mathematical symbols require an identity-aware specification consumer (not yet implemented)");
     if (value?.type !== "map" || !(value.entries instanceof Map)) {
       throw new Error(`${path} must be a ${CALCULUS_EXPRESSION_SCHEMA} map`);
     }
@@ -25422,6 +25514,8 @@ ${indented.join(`,
     return fallback;
   }
   function isExpression(value) {
+    if (hasScopedSymbols(value))
+      throw new Error("Scoped mathematical symbols require an identity-aware range consumer (not yet implemented)");
     return (value?.type === "map" || value && typeof value === "object") && textValue(mapValue(value, "schema")) === "rix.calculus.expression@1";
   }
   function expressionKind(value) {
@@ -34994,6 +35088,9 @@ ${indented.join(`,
     UserIdentifier(node) {
       return ir2("RETRIEVE", node.name);
     },
+    SymbolicVariable(node) {
+      return ir2("SYMBOL_RETRIEVE", node.name, node.outer === true);
+    },
     SystemIdentifier(node) {
       if (node.original && node.original.trim().startsWith("@")) {
         return ir2("SYSREF", node.name);
@@ -35740,6 +35837,9 @@ ${indented.join(`,
         return ir2("OUTER_UPDATE", left.name, lowerNode(node.right), depth);
       }
       return ir2("OUTER_ASSIGN", left.name, lowerNode(node.right));
+    }
+    if (left.type === "SymbolicVariable") {
+      throw new Error("Symbolic definitions are not implemented yet; bind the symbol to an ordinary variable instead");
     }
     if (left.type === "UserIdentifier" || left.type === "SystemIdentifier") {
       const right = left.type === "SystemIdentifier" && node.right?.type === "EmbeddedLanguage" ? {
@@ -36849,7 +36949,7 @@ ${indented.join(`,
       this.localScopes = [];
       this.functions = new Map;
       this.env = new Map;
-      this.globalScopedEnv = new Map;
+      this.globalScopedEnv = initializeSymbolScope(new Map);
       this.callStack = [];
       this.currentCallables = [];
       this.functionReturnTargets = [];
@@ -36870,7 +36970,7 @@ ${indented.join(`,
       }
       const scope = {
         bindings,
-        scopedEnv: options.scopedEnv instanceof Map ? options.scopedEnv : new Map,
+        scopedEnv: initializeSymbolScope(options.scopedEnv instanceof Map ? options.scopedEnv : new Map),
         isolated: options.isolated === true,
         readThrough: options.readThrough === true,
         callableBoundary: options.callableBoundary === true,
@@ -64507,7 +64607,7 @@ CalculusRegistryEvidence(semanticId, key, value) -> {;
     CalculusRegistrySet(:evidence,semanticId,evidence.Set(key,value));
 };
 
-CalculusIsExpression(value) -> value ? :CalculusExpression;
+CalculusIsExpression(value) -> (value ? :CalculusExpression) && !.ExpressionHasScopedSymbols(value);
 CalculusIsFunction(value) -> value ? :MathematicalFunction;
 
 CalculusRequireExpression(value, label ?= "value") ->
@@ -89283,6 +89383,7 @@ ${execute}---
     registry.registerAll(advancedFunctions);
     registry.registerAll(unitExactFunctions);
     registry.registerAll(symbolicFunctions);
+    registry.registerAll(expressionSyntaxFunctions);
     registry.registerAll(outputFunctions);
     registry.registerAll(formulaSheetFunctions);
     registry.registerAll(reactiveGraphFunctions);
