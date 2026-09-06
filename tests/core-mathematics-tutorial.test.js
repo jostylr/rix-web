@@ -99,5 +99,7 @@ for (const [mode,evaluate] of [["sync",parseAndEvaluate],["async",parseAndEvalua
         expect(results[35].values[3].value).toBe("complete");
         expect(String(results[35].values[4])).toBe("1");
         expect(results[36].values.map(String)).toEqual(["32","1","1"]);
+        expect(results[37].values.map(String)).toEqual(["11","11","2"]);
+        expect(results[38].values.map(String)).toEqual(["16","6"]);
     });
 }

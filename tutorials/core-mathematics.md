@@ -523,3 +523,39 @@ converting them into a different polynomial.
     (p.Degree(),.SameSymbol(p.Variable(),::x),p.Evaluate(0));
 };
 ```
+
+## From symbols to executable specifications
+
+Give the explicit input order when compiling a scoped expression. Here the two
+symbols both print as `x`, but remain distinct. The compiled function takes `b`
+first and `a` second; restoring its expression recovers the original identities.
+
+```rix edu
+{;
+    a := ::x; b := {; ::x };
+    spec := .SpecFromExpression(a^2+b,[b,a]);
+    F := .Poly(spec);
+    expr := .ExpressionFromSpec(F);
+    (F(2,3),expr.Eval([(a,3),(b,2)])[:value],
+     .InspectSpec(spec)[:symbolBindings].Len());
+};
+```
+
+Specification composition also retains identities. Capitalize callable names:
+`P(Q)` substitutes a specification, whereas lowercase juxtaposition means multiplication.
+
+```rix edu
+{;
+    P := .SpecFromExpression(::x^2,[::x],{= maxVisits=100 });
+    Q := .SpecFromExpression(::y+1,[::y]);
+    expr := .ExpressionFromSpec(P(Q));
+    d := .ExpressionFromSpec(.Deriv(P,::x));
+    (expr.Eval([(::y,3)])[:value],d.Eval([(::x,3)])[:value]);
+};
+```
+
+This bridge currently accepts rational arithmetic, not mathematical contexts or
+semantic calls. Use `Eval` for assumption-aware and provider-aware evaluation.
+Conversion traversal budgets are configurable; they do not limit later callable
+execution. Private slot names shown by spec inspection are not portable source:
+save expressions and their symbols together using mathematical JSON/JSONL.

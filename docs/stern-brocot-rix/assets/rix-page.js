@@ -13182,6 +13182,39 @@ ${indentStr})`;
     return filtered;
   }
 
+  // rix/src/runtime/math-budgets.js
+  var DEFAULT_MATH_BUDGETS = Object.freeze({
+    maxvisits: 1e4,
+    maxdepth: 128,
+    maxdigits: 1e4,
+    maxterms: 1024,
+    maxproductpairs: 1024,
+    maxsumterms: 1024,
+    maxgenerators: 64,
+    maxpolynomialcoefficients: 64,
+    maxdegree: 1e4,
+    maxexponent: 256,
+    rootbits: 64
+  });
+  function mathBudgets(options) {
+    const result = { ...DEFAULT_MATH_BUDGETS };
+    if (options === undefined || options === null)
+      return result;
+    if (options?.type !== "map")
+      throw new Error("Mathematical budgets require an options map");
+    for (const [key, value] of options.entries) {
+      if (!Object.hasOwn(result, key))
+        throw new Error(`Unknown mathematical budget: ${key}`);
+      if (!(value instanceof Integer) || value.value < 1n || value.value > BigInt(Number.MAX_SAFE_INTEGER))
+        throw new Error(`Mathematical budget ${key} requires a positive safe integer`);
+      result[key] = Number(value.value);
+    }
+    if (result.maxdepth > 512)
+      throw new Error("Mathematical maxDepth exceeds the host safety ceiling of 512");
+    return result;
+  }
+  var mathBudgetRecord = (limits) => ({ type: "map", entries: new Map(Object.entries(limits).map(([key, value]) => [key, new Integer(BigInt(value))])), _ext: new Map([["immutable", new Integer(1n)]]) });
+
   // rix/src/runtime/cell.js
   class Cell {
     constructor(value) {
@@ -15812,6 +15845,17 @@ ${indentStr})`;
       outputs = [];
       statements = [];
     }
+    const symbolBindings = new Map(meta.symbolBindings || []);
+    const referenced = new Set(inputs);
+    if (expression)
+      retrieveNames(expression, referenced);
+    for (const statement of statements)
+      retrieveNames(statement.expr, referenced);
+    for (const name of referenced) {
+      if (name.startsWith("$symbol:") && !symbolBindings.has(name)) {
+        throw new Error("This specification consumer does not preserve scoped symbol bindings yet");
+      }
+    }
     return {
       type: "symbolic_spec",
       syntax: "#",
@@ -15824,7 +15868,8 @@ ${indentStr})`;
       imports: cloneIr(meta.imports || []),
       __closureScopes: meta.__closureScopes || context?.captureClosureScopes?.() || [],
       origin: meta.origin || null,
-      transform: meta.transform || null
+      transform: meta.transform || null,
+      symbolBindings
     };
   }
   function specWithExpression(source, expression, options = {}) {
@@ -15834,7 +15879,8 @@ ${indentStr})`;
       imports: source.imports,
       __closureScopes: options.__closureScopes || source.__closureScopes,
       origin: options.origin || source.origin,
-      transform: options.transform || source.transform
+      transform: options.transform || source.transform,
+      symbolBindings: options.symbolBindings || source.symbolBindings
     };
     if (outputMode === "named") {
       const target = source.outputs[0];
@@ -15992,6 +16038,7 @@ ${indentStr})`;
       ["form", rixString(outputModeOf(spec))],
       ["source", rixString(formatSymbolicSpec(spec))],
       ["inputs", rixTuple(spec.inputs.map(rixString))],
+      ["symbolbindings", rixTuple([...spec.symbolBindings || []].map(([name, symbol]) => rixTuple([rixString(name), symbol])))],
       ["outputs", rixTuple(spec.outputs.map(rixString))],
       ["symbols", rixTuple(symbols2.map(rixString))],
       ["definitions", rixTuple(definitions2.map((statement) => rixMap([
@@ -16074,7 +16121,7 @@ ${indentStr})`;
     }
     throw new Error(`${path}.kind '${kind}' is not supported by the exact symbolic bridge`);
   }
-  function symbolicIrToCalculusExpression(node, path = "expression") {
+  function symbolicIrToCalculusExpression(node, path = "expression", bindings = new Map) {
     if (!node?.fn)
       throw new Error(`${path} is not symbolic expression IR`);
     if (node.fn === "LITERAL") {
@@ -16084,6 +16131,10 @@ ${indentStr})`;
       return expressionRecord("constant", [["value", new Integer(BigInt(text))]]);
     }
     if (node.fn === "RETRIEVE" || node.fn === "OUTER_RETRIEVE") {
+      if (bindings.has(node.args[0]))
+        return bindings.get(node.args[0]);
+      if (node.args[0].startsWith("$symbol:"))
+        throw new Error("Scoped specification lost its symbol binding metadata");
       return expressionRecord("variable", [
         ["name", rixString(node.args[0])],
         ["scope", rixString(node.fn === "OUTER_RETRIEVE" ? "outer" : "local")]
@@ -16093,14 +16144,14 @@ ${indentStr})`;
       const operation = IR_TO_CALCULUS_OPERATOR.get(node.fn);
       return expressionRecord("operator", [
         ["operation", rixString(operation)],
-        ["operands", { type: "sequence", values: node.args.map((operand2, index) => symbolicIrToCalculusExpression(operand2, `${path}.${operation}[${index + 1}]`)) }]
+        ["operands", { type: "sequence", values: node.args.map((operand2, index) => symbolicIrToCalculusExpression(operand2, `${path}.${operation}[${index + 1}]`, bindings)) }]
       ]);
     }
     if (node.fn === "SEMANTIC_APPLY") {
       return expressionRecord("apply", [
         ["semanticid", rixString(node.args[0])],
         ["name", rixString(node.args[1])],
-        ["arguments", { type: "sequence", values: node.args.slice(2).map((arg, index) => symbolicIrToCalculusExpression(arg, `${path}.arguments[${index + 1}]`)) }]
+        ["arguments", { type: "sequence", values: node.args.slice(2).map((arg, index) => symbolicIrToCalculusExpression(arg, `${path}.arguments[${index + 1}]`, bindings)) }]
       ]);
     }
     throw new Error(`${path} contains unsupported symbolic operation '${node.fn}'`);
@@ -16116,7 +16167,9 @@ ${indentStr})`;
       throw new Error(`Calculus expression inputs omit free variable(s): ${missing.join(", ")}`);
     return inputs;
   }
-  function calculusExpressionToSpec(value, inputs = null, context = null) {
+  function calculusExpressionToSpec(value, inputs = null, context = null, options = null) {
+    if (hasScopedSymbols(value) || inputs?.values?.some(hasScopedSymbols))
+      return scopedExpressionToSpec(value, inputs, options);
     const expression = calculusExpressionToSymbolicIr(value);
     return createSymbolicSpec({
       inputs: calculusSpecInputs(inputs, expression),
@@ -16129,7 +16182,67 @@ ${indentStr})`;
     const spec = getAttachedSpec(value);
     if (!isSymbolicSpec(spec))
       throw new Error("ExpressionFromSpec expects a symbolic spec or spec-backed function");
-    return symbolicIrToCalculusExpression(expressionOf(spec));
+    return symbolicIrToCalculusExpression(expressionOf(spec), "expression", spec.symbolBindings);
+  }
+  function scopedExpressionToSpec(value, inputs, options) {
+    const limits = mathBudgets(options);
+    const bindings = new Map;
+    let visits = 0;
+    function visit(node, depth = 0) {
+      if (++visits > limits.maxvisits || depth > limits.maxdepth)
+        throw new Error("Scoped specification traversal budget exceeded");
+      const definition = expressionDefinition(node);
+      if (definition)
+        return visit(definition, depth + 1);
+      if (!isMathExpression(node))
+        throw new Error("Specification conversion requires a core expression");
+      const kind = expressionField(node, "kind")?.value;
+      if (kind === "variable") {
+        expressionStructuralKey(node);
+        const id = expressionField(node, "symbolid")?.value;
+        if (!id)
+          throw new Error("Scoped specification conversion cannot mix named and scoped variables");
+        if (expressionField(node, "bound"))
+          throw new Error("Instantiate mathematical binders before specification conversion");
+        const name = `$${id}`;
+        bindings.set(name, node);
+        return retrieve(name);
+      }
+      if (kind === "constant")
+        return calculusExpressionToSymbolicIr(node);
+      if (kind === "operator") {
+        const fn = CALCULUS_OPERATOR_TO_IR.get(expressionField(node, "operation")?.value);
+        if (!fn)
+          throw new Error("Unsupported scoped specification operation");
+        const operands = calculusRecordValues(node, "operands", "expression.operands");
+        if (operands.length !== (fn === "NEG" ? 1 : 2))
+          throw new Error("Invalid scoped specification operator arity");
+        return ir(fn, ...operands.map((child) => visit(child, depth + 1)));
+      }
+      throw new Error("Scoped specification conversion currently supports rational arithmetic, not semantic applications");
+    }
+    const expression = visit(value);
+    if (inputs === null || inputs === undefined)
+      throw new Error("Scoped specifications require an explicit ordered array of symbolic inputs");
+    if (!["array", "sequence", "tuple"].includes(inputs?.type))
+      throw new Error("Scoped specification inputs must be an array of symbols");
+    const names = inputs.values.map((symbol) => {
+      expressionStructuralKey(symbol);
+      const id = expressionField(symbol, "symbolid")?.value;
+      if (!id || expressionField(symbol, "kind")?.value !== "variable" || expressionDefinition(symbol) || expressionField(symbol, "bound"))
+        throw new Error("Scoped specification inputs must be independent free symbols");
+      const name = `$${id}`;
+      bindings.set(name, symbol);
+      return name;
+    });
+    if (new Set(names).size !== names.length)
+      throw new Error("Duplicate scoped specification input");
+    if ([...retrieveNames(expression)].some((name) => !names.includes(name)))
+      throw new Error("Scoped specification inputs omit a free symbolic identity");
+    return createSymbolicSpec({ inputs: names, expression, outputMode: "expression", symbolBindings: bindings, __closureScopes: [], origin: ".SpecFromExpression" });
+  }
+  function mergeSymbolBindings(specs) {
+    return new Map(specs.flatMap((spec) => [...spec?.symbolBindings || []]));
   }
   function supportedExpression(node) {
     if (!node?.fn)
@@ -16390,6 +16503,13 @@ ${indentStr})`;
         return spec.inputs[0];
       throw new Error(`${operation} needs an explicit variable for a multi-input spec`);
     }
+    if (spec.symbolBindings?.size) {
+      const key = isMathExpression(value) ? expressionStructuralKey(value) : null;
+      for (const [name, symbol] of spec.symbolBindings)
+        if (expressionStructuralKey(symbol) === key)
+          return name;
+      throw new Error(`${operation} requires an explicit symbolic input identity`);
+    }
     if (typeof value === "string")
       return value;
     if (value?.type === "string")
@@ -16565,6 +16685,7 @@ ${indentStr})`;
         capturedNames2.delete(input);
       return createSymbolicSpec({
         inputs,
+        symbolBindings: mergeSymbolBindings([spec, ...argumentSpecs]),
         outputs: spec.outputs,
         outputsDeclared: spec.outputsDeclared,
         outputMode: "system",
@@ -16581,6 +16702,7 @@ ${indentStr})`;
       capturedNames.delete(input);
     return specWithExpression(spec, expression, {
       inputs,
+      symbolBindings: mergeSymbolBindings([spec, ...argumentSpecs]),
       __closureScopes: unionScopes([spec.__closureScopes, ...argumentSpecs.map((item) => item.__closureScopes)], capturedNames),
       outputMode: outputModeOf(spec) === "named" ? "named" : "expression",
       transform: { operation: "substitute" }
@@ -16607,6 +16729,7 @@ ${indentStr})`;
       capturedNames.delete(input);
     const spec = specWithExpression(template, expression, {
       inputs,
+      symbolBindings: mergeSymbolBindings([left.spec, right?.spec]),
       __closureScopes: unionScopes([left.spec?.__closureScopes, right?.spec?.__closureScopes], capturedNames),
       outputMode: outputModeOf(template) === "named" ? "named" : "expression",
       transform: { operation: BINARY_TEXT.get(operator) || operator }
@@ -17104,6 +17227,7 @@ ${indentStr})`;
     const expression = expressionOf(source);
     const wrap = (part) => createSymbolicSpec({
       inputs: source.inputs,
+      symbolBindings: source.symbolBindings,
       outputMode: "expression",
       expression: part,
       imports: source.imports,
@@ -17126,7 +17250,7 @@ ${indentStr})`;
     INSPECTSPEC: { impl: ([value]) => inspectSymbolicSpec(getAttachedSpec(value) || value), pure: true, doc: "Return the structural inspection map for a symbolic spec" },
     SPECROLES: { impl: ([value, overrides = null]) => symbolicRolesValue(value, overrides), pure: true, doc: "Resolve all symbols and input/output roles, with optional role overrides" },
     SPECFRACTIONPARTS: { impl: ([value], context) => symbolicFractionParts(value, context), pure: true, doc: "Split a symbolic top-level fraction into numerator and denominator specs" },
-    SPECFROMEXPRESSION: { impl: ([value, inputs = null], context) => calculusExpressionToSpec(value, inputs, context), pure: true, doc: "Import a public Calculus expression record as a core symbolic specification" },
+    SPECFROMEXPRESSION: { impl: ([value, inputs = null, options = null], context) => calculusExpressionToSpec(value, inputs, context, options), pure: true, doc: "Import an expression with explicit identity-ordered inputs for scoped symbols" },
     EXPRESSIONFROMSPEC: { impl: ([value]) => symbolicSpecToCalculusExpression(value), pure: true, doc: "Export a symbolic specification through the public Calculus expression schema" }
   };
   var symbolicFunctions = {
@@ -37491,39 +37615,6 @@ ${indented.join(`,
       resultKind: (value) => value === null ? "unresolved" : value instanceof RationalInterval ? sawSet ? "setEnclosure" : "singletonEnclosure" : isExactValue(value) ? "exactScalar" : "rational"
     };
   }
-
-  // rix/src/runtime/math-budgets.js
-  var DEFAULT_MATH_BUDGETS = Object.freeze({
-    maxvisits: 1e4,
-    maxdepth: 128,
-    maxdigits: 1e4,
-    maxterms: 1024,
-    maxproductpairs: 1024,
-    maxsumterms: 1024,
-    maxgenerators: 64,
-    maxpolynomialcoefficients: 64,
-    maxdegree: 1e4,
-    maxexponent: 256,
-    rootbits: 64
-  });
-  function mathBudgets(options) {
-    const result = { ...DEFAULT_MATH_BUDGETS };
-    if (options === undefined || options === null)
-      return result;
-    if (options?.type !== "map")
-      throw new Error("Mathematical budgets require an options map");
-    for (const [key, value] of options.entries) {
-      if (!Object.hasOwn(result, key))
-        throw new Error(`Unknown mathematical budget: ${key}`);
-      if (!(value instanceof Integer) || value.value < 1n || value.value > BigInt(Number.MAX_SAFE_INTEGER))
-        throw new Error(`Mathematical budget ${key} requires a positive safe integer`);
-      result[key] = Number(value.value);
-    }
-    if (result.maxdepth > 512)
-      throw new Error("Mathematical maxDepth exceeds the host safety ceiling of 512");
-    return result;
-  }
-  var mathBudgetRecord = (limits) => ({ type: "map", entries: new Map(Object.entries(limits).map(([key, value]) => [key, new Integer(BigInt(value))])), _ext: new Map([["immutable", new Integer(1n)]]) });
 
   // rix/src/runtime/math-polynomial.js
   function mathematicalPolynomialCoefficients(expression, variable, options) {
@@ -67385,7 +67476,7 @@ calculusNamespace._proto = {=
         CalculusAntiderivativeFamily(integrand,variable,primitive,constant,options),
     DefiniteIntegral=(self, integrand, variable, lower, upper, options ?= {= })->
         CalculusDefiniteIntegral(integrand,variable,lower,upper,options),
-    ToSpec=(self, expression, inputs ?= _)->.SpecFromExpression(expression,inputs),
+    ToSpec=(self, expression, inputs ?= _, options ?= _)->.SpecFromExpression(expression,inputs,options),
     FromSpec=(self, value)->.ExpressionFromSpec(value),
     IsFunction=(self, value)->CalculusIsFunction(value) ?: 1 ?_ _,
     IsExpression=(self, value)->CalculusIsExpression(value) ?: 1 ?_ _,

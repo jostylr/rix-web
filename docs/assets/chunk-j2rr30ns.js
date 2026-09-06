@@ -48,7 +48,7 @@ import {
   parseAndEvaluateObservedAsync,
   renderOutputHtml,
   tokenize
-} from "./chunk-z7c15mx5.js";
+} from "./chunk-7mm8apnx.js";
 
 // standard-profile.rix
 var standard_profile_default = `## RiX-Web standard calculator profile.
@@ -4782,7 +4782,7 @@ calculusNamespace._proto = {=
         CalculusAntiderivativeFamily(integrand,variable,primitive,constant,options),
     DefiniteIntegral=(self, integrand, variable, lower, upper, options ?= {= })->
         CalculusDefiniteIntegral(integrand,variable,lower,upper,options),
-    ToSpec=(self, expression, inputs ?= _)->.SpecFromExpression(expression,inputs),
+    ToSpec=(self, expression, inputs ?= _, options ?= _)->.SpecFromExpression(expression,inputs,options),
     FromSpec=(self, value)->.ExpressionFromSpec(value),
     IsFunction=(self, value)->CalculusIsFunction(value) ?: 1 ?_ _,
     IsExpression=(self, value)->CalculusIsExpression(value) ?: 1 ?_ _,
@@ -35557,5 +35557,5 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
 
 export { pluginProfileFromUrl, stripMarkedPluginProfile, findHelp, createRixRepl };
 
-//# debugId=0F56887B2D62809264756E2164756E21
-//# sourceMappingURL=chunk-dm81zee8.js.map
+//# debugId=BB93BF77D56CEA2464756E2164756E21
+//# sourceMappingURL=chunk-j2rr30ns.js.map

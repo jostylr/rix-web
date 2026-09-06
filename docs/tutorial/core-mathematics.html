@@ -253,4 +253,23 @@ portableRoot := .MathDecodeJSON(.MathEncodeJSON(.ExpressionReal(.numerics.Sqrt(2
     coefficients := .MathPolynomialCoefficients((::x+1)^32,::x,{= maxProductPairs=4096 });
     p := .poly({= coefficients=coefficients,order=:ascending,variable=::x });
     (p.Degree(),.SameSymbol(p.Variable(),::x),p.Evaluate(0));
-};</textarea><div class="tutorial-output" data-tutorial-output></div></section></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
+};</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>From symbols to executable specifications</h2>
+<p>Give the explicit input order when compiling a scoped expression. Here the two symbols both print as <code>x</code>, but remain distinct. The compiled function takes <code>b</code> first and <code>a</code> second; restoring its expression recovers the original identities.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="8" spellcheck="false">{;
+    a := ::x; b := {; ::x };
+    spec := .SpecFromExpression(a^2+b,[b,a]);
+    F := .Poly(spec);
+    expr := .ExpressionFromSpec(F);
+    (F(2,3),expr.Eval([(a,3),(b,2)])[:value],
+     .InspectSpec(spec)[:symbolBindings].Len());
+};</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Specification composition also retains identities. Capitalize callable names: <code>P(Q)</code> substitutes a specification, whereas lowercase juxtaposition means multiplication.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">{;
+    P := .SpecFromExpression(::x^2,[::x],{= maxVisits=100 });
+    Q := .SpecFromExpression(::y+1,[::y]);
+    expr := .ExpressionFromSpec(P(Q));
+    d := .ExpressionFromSpec(.Deriv(P,::x));
+    (expr.Eval([(::y,3)])[:value],d.Eval([(::x,3)])[:value]);
+};</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>This bridge currently accepts rational arithmetic, not mathematical contexts or semantic calls. Use <code>Eval</code> for assumption-aware and provider-aware evaluation. Conversion traversal budgets are configurable; they do not limit later callable execution. Private slot names shown by spec inspection are not portable source: save expressions and their symbols together using mathematical JSON/JSONL.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
