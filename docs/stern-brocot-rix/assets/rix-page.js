@@ -26854,13 +26854,16 @@ ${indented.join(`,
       return Object.freeze({ accepted: false, certified: false, reason: error.message });
     }
   }
-  function substituteCalculusGraphVariable(expression, variableValue, replacement) {
-    if (hasScopedSymbols(expression) || hasScopedSymbols(replacement))
-      throw new Error("Scoped composition requires the core Substitute API");
+  function substituteCalculusGraphVariable(expression, variableValue, replacement, options) {
+    validateRangeTraversal(expression, options);
+    validateRangeTraversal(replacement, options);
     if (!isExpression(expression) || !isExpression(replacement)) {
       throw new Error("Calculus composition requires expression graphs");
     }
-    const variable = textValue(variableValue)?.toLowerCase();
+    const scoped = hasScopedSymbols(expression) || hasScopedSymbols(replacement) || !!mapValue(variableValue, "symbolid");
+    if (scoped && !mapValue(variableValue, "symbolid"))
+      throw new Error("Scoped composition requires a symbolic selector");
+    const variable = scoped ? rangeVariableKey(variableValue) : textValue(variableValue)?.toLowerCase();
     if (!variable)
       throw new Error("invalidCompositionVariable");
     const visit = (node) => {
@@ -26868,7 +26871,9 @@ ${indented.join(`,
       if (kind === "constant")
         return node;
       if (kind === "variable") {
-        const name = textValue(mapValue(node, "name"))?.toLowerCase();
+        if (mapValue(node, "symbolid") && !scoped)
+          throw new Error("Scoped composition requires a symbolic selector");
+        const name = rangeVariableKey(node);
         return name === variable ? replacement : node;
       }
       if (kind === "operator") {
@@ -26879,7 +26884,9 @@ ${indented.join(`,
       }
       throw new Error(`unsupportedCompositionGraphKind:${String(kind)}`);
     };
-    return visit(expression);
+    const result = visit(expression);
+    validateRangeTraversal(result, options);
+    return result;
   }
   function exactGraphValue(expression, value) {
     if (!isExpression(expression) || expressionKind(expression) !== "constant")
@@ -28608,6 +28615,25 @@ ${indented.join(`,
     }
   }
   var sameVariable = (left, right) => proofVariableKey(left) === proofVariableKey(right);
+  function requireUnivariateCompositionGraph(expression, variable) {
+    const expected = proofVariableKey(variable);
+    const pending = [expression];
+    while (pending.length) {
+      const node = pending.pop();
+      const field = (key) => expressionField(node, key) ?? node?.[key];
+      const kind = field("kind")?.value ?? field("kind");
+      if (kind === "variable") {
+        if (expressionDefinition(node))
+          throw new Error("compositionRequiresExpandedDefinitions");
+        const coordinate = field("symbolid") ? node : field("name")?.value ?? field("name");
+        if (proofVariableKey(coordinate) !== expected)
+          throw new Error("monotoneCompositionRequiresUnivariateGraphs");
+      }
+      const children = kind === "operator" ? field("operands") : kind === "apply" ? field("arguments") : [];
+      for (const child of children?.values instanceof Array ? children.values : children || [])
+        pending.push(child);
+    }
+  }
   function derivativeRangeFact(value) {
     if (value?.type !== "derivativeRange" || typeof value.functionGraph !== "string" || typeof value.derivativeGraph !== "string" || !isProofVariable(value.variable)) {
       throw new Error("wrongDerivativeRangeFact");
@@ -29067,10 +29093,15 @@ ${indented.join(`,
         const outerVariable = node.parameters?.outerVariable;
         let actualComposition;
         try {
-          actualComposition = substituteCalculusGraphVariable(outerExpression, outerVariable, innerExpression);
+          actualComposition = substituteCalculusGraphVariable(outerExpression, outerVariable, innerExpression, options.compositionOptions);
         } catch {
           throw new Error("invalidMonotoneCompositionGraph");
         }
+        if (!isProofVariable(inner.variable) || !isProofVariable(outer.variable) || !sameVariable(outer.variable, outerVariable))
+          throw new Error("monotoneCompositionVariableMismatch");
+        requireUnivariateCompositionGraph(innerExpression, inner.variable);
+        requireUnivariateCompositionGraph(outerExpression, outerVariable);
+        validateRangeTraversal(composedExpression, options.compositionOptions);
         const innerGraph = calculusGraphStructuralKey(innerExpression);
         const outerGraph = calculusGraphStructuralKey(outerExpression);
         const composedGraph = calculusGraphStructuralKey(composedExpression);
@@ -29094,7 +29125,8 @@ ${indented.join(`,
           fact: {
             ...claimed,
             innerFunctionGraph: innerGraph,
-            outerFunctionGraph: outerGraph
+            outerFunctionGraph: outerGraph,
+            variable: inner.variable
           },
           trusted: false
         };

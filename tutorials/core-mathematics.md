@@ -665,3 +665,28 @@ the range strategies to discharge those conditions for a particular domain.
 `DerivativeProof` accepts the derivative checker's configurable work/depth options.
 The native proof checker also supports scoped critical-point and monotonicity-partition
 records. Its proof-chain traversal is iterative; expression depth limits remain separate.
+
+## Composing distinct same-named symbols
+
+Use identities when substituting one expression into another. Here `a` and `b`
+both print as `x`, but only `b` is replaced in the outer expression.
+
+```rix edu
+.Plugin.Load("calculus"); .Plugin.Load("numerics");
+{;
+    a := ::x; b := {; ::x };
+    inner := a+1;
+    outer := b^2;
+    composed := outer.Substitute([(b,inner)],{= maxDepth=16 });
+    d := .calculus.DifferentiateResult(composed,a);
+    sign := .numerics.DerivativeSign(d,[(a,1:2)]);
+    (composed.Eval([(a,2)])[:value],sign[:direction],sign[:monotonicityCertified]);
+};
+```
+
+This example checks the composed graph directly. The native proof checker's
+`monotone.compose` rule can instead combine existing monotonicity and image
+premises. It requires the inner image to fit inside the outer domain and retains
+the original coordinates. It currently accepts univariate graphs only: hidden
+parameter dependence would invalidate the simple composition argument. Trusted
+premises remain explicitly trusted; combining them does not remove that dependency.

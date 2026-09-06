@@ -111,5 +111,6 @@ for (const [mode,evaluate] of [["sync",parseAndEvaluate],["async",parseAndEvalua
         expect(results[42].values[1].value).toBe("rationalFunction");
         expect(results[42].values.slice(2).map(String)).toEqual(["1","null","1"]);
         expect(results[43].values.map(v=>v?.type==='string'?v.value:String(v))).toEqual(["1","checkedEvidence","0","1","derivative.graph"]);
+        expect(results[44].values.map(v=>v?.type==='string'?v.value:String(v))).toEqual(["9","nondecreasing","1"]);
     });
 }
