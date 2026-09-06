@@ -229,8 +229,9 @@ in-memory text APIs; they do not claim unlimited streaming capacity.
 
 Scoped symbols support core construction, arithmetic, identity, keys, and
 conservative equality. The existing name-based calculus, CAS, range, and
-specification consumers reject scoped expressions and extended constants until their identity/provider-aware
-conversion is implemented. The first section's constructor-based examples
+specification and certified range consumers still reject scoped expressions; symbolic
+calculus differentiation and CAS integration/simplification now preserve identities
+(see below). Their algorithmic constant support remains rational-only. The first section's constructor-based examples
 remain usable with those consumers. Bounded free substitution and core-provider evaluation
 are now available below, as is explicit binder instantiation. General domain reasoning, remaining numeric
 adapters, and safe refinement-recipe restoration remain pending. Context-argument
@@ -457,5 +458,37 @@ the allowlisted kernel. Unknown semantics remain unresolved.
     ans := expr.Eval({& ::x == -3 & });
     saved := .MathDecodeJSON(.MathEncodeJSON(expr.Substitute([(::x,-4)])));
     (ans[:value],saved.Eval()[:value],ans[:semantics][1]);
+};
+```
+## Calculus and CAS with scoped symbols
+
+Select the actual mathematical variable. A second x from a nested scope remains
+independent, even though both symbols have the same display name.
+
+```rix edu
+.Plugin.Load("cas");
+{;
+    a := ::x; b := {; ::x };
+    expr := a^2+b;
+    da := .calculus.Differentiate(expr,a);
+    db := .calculus.Differentiate(expr,b);
+    primitive := .cas.Integrate(a*b,a);
+    (da.Eval([(a,3)])[:value],db.Eval()[:value],
+     primitive[:antiderivative].Eval([(a,2),(b,3)])[:value],
+     .cas.CheckIntegral(primitive)[:accepted]);
+};
+```
+
+Evaluate an entire derivative transformation to preserve its conditions. Here the
+logarithm's positive-real condition remains relevant even though its derivative is
+just a reciprocal. Unsupported branch conditions remain conditional.
+
+```rix edu
+.Plugin.Load("calculus");
+{;
+    d := .calculus.DifferentiateResult(.calculus.Log()(::x),::x);
+    good := .calculus.EvaluateResult(d,[(::x,2)]);
+    bad := .calculus.EvaluateResult(d,[(::x,-2)]);
+    (good[:value],bad[:status],good[:obligations].Len());
 };
 ```

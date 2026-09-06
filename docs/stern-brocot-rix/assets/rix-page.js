@@ -12846,10 +12846,10 @@ ${indentStr})`;
       Files: Object.freeze(["FILES"]),
       Units: Object.freeze(["UNITS", "Units", "CONVERTUNIT", "ConvertUnit", "DEFINEUNIT", "DefineUnit"]),
       Exact: Object.freeze(["EXACT", "Exact", "COMPLEX", "Complex", "DEFINEEXACTGENERATOR", "DefineExactGenerator", "exactalgebras"]),
-      Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC", "SPECROLES", "SPECFRACTIONPARTS", "SArith", "ExpressionVariable", "ExpressionConstant", "ExpressionOperation", "ExpressionApply", "IsExpression", "ExpressionKey", "ExpressionHasScopedSymbols", "SameSymbol", "SYMBOL_RETRIEVE", "SYMBOL_DEFINE", "ExpressionDefinition", "ExpressionExpand"]),
+      Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC", "SPECROLES", "SPECFRACTIONPARTS", "SArith", "ExpressionVariable", "ExpressionConstant", "ExpressionOperation", "ExpressionApply", "IsExpression", "ExpressionKey", "ExpressionHasScopedSymbols", "SameSymbol", "SYMBOL_RETRIEVE", "SYMBOL_DEFINE", "ExpressionDefinition", "ExpressionExpand", "ExpressionVariableSelector", "ExpressionVariableMatches"]),
       MathematicalContexts: Object.freeze(["MATH_CONTEXT", "BOUND_SYMBOL"]),
       MathematicalSerialization: Object.freeze(["MathEncodeJSON", "MathDecodeJSON", "MathEncodeJSONL", "MathDecodeJSONL"]),
-      MathematicalLocalization: Object.freeze(["MathSubstitute", "MathEvaluate", "MathInstantiate", "MathBudgets"]),
+      MathematicalLocalization: Object.freeze(["MathSubstitute", "MathEvaluate", "MathInstantiate", "MathBudgets", "MathEvaluateCalculus"]),
       SymbolicConstants: Object.freeze(["ExpressionConstantInfo", "ExpressionHasExtendedConstants", "ExpressionReal", "ExpressionRefine"]),
       Notation: Object.freeze(["SArith", "Poly", "NotationParser"]),
       Random: Object.freeze(["RNG", "RANDOMSEED", "RandomSeed", "RAND_NAME"]),
@@ -14361,6 +14361,29 @@ ${indentStr})`;
     SYMBOL_DEFINE: { impl: ([name, node], context, evaluate) => defineExpressionSymbol(name, node, context, evaluate), lazy: true, pure: false }
   };
   var expressionCapabilities = {
+    ExpressionVariableSelector: { impl: ([expression, selector]) => {
+      if (selector?.type === "string") {
+        if (hasScopedSymbols(expression))
+          throw new Error("Scoped expressions require an explicit symbolic variable, not a name string");
+        return selector;
+      }
+      if (!isMathExpression(selector) || expressionField(selector, "kind")?.value !== "variable")
+        throw new Error("Expected a symbolic variable or name string");
+      if (expressionDefinition(selector))
+        throw new Error("A defined symbol is not an independent differentiation/integration variable");
+      return selector;
+    }, pure: false, groups: ["Symbolic"], doc: "Validate an identity-preserving mathematical variable selector" },
+    ExpressionVariableMatches: { impl: ([left, right]) => {
+      if (!isMathExpression(left) || expressionField(left, "kind")?.value !== "variable")
+        return null;
+      const a = symbolState(left)?.id;
+      if (right?.type === "string")
+        return !a && expressionField(left, "name")?.value === right.value ? new Integer(1n) : null;
+      if (!isMathExpression(right) || expressionField(right, "kind")?.value !== "variable")
+        throw new Error("Expected a symbolic variable selector");
+      const b = symbolState(right)?.id;
+      return (a || b ? a === b : expressionField(left, "name")?.value === expressionField(right, "name")?.value) ? new Integer(1n) : null;
+    }, pure: true, groups: ["Symbolic"], doc: "Compare variable identities without conflating same-spelled scoped symbols" },
     ExpressionReal: { impl: ([source, options], context, evaluate) => {
       const adapted = adaptRealConstant(source, options, context, evaluate);
       return adapted instanceof Promise ? adapted.then(expressionConstant) : expressionConstant(adapted);
@@ -26246,8 +26269,6 @@ ${indented.join(`,
   function isExpression(value) {
     if (hasExtendedConstants(value))
       throw new Error("Extended mathematical constants require a provider-aware range consumer (not yet implemented)");
-    if (hasScopedSymbols(value))
-      throw new Error("Scoped mathematical symbols require an identity-aware range consumer (not yet implemented)");
     return (value?.type === "map" || value && typeof value === "object") && textValue(mapValue(value, "schema")) === "rix.calculus.expression@1";
   }
   function expressionKind(value) {
@@ -26269,7 +26290,7 @@ ${indented.join(`,
     if (kind === "constant")
       return `constant(${String(mapValue(expression, "value"))})`;
     if (kind === "variable")
-      return `variable(${textValue(mapValue(expression, "name"))})`;
+      return mapValue(expression, "symbolid") ? `scoped(${textValue(mapValue(expression, "symbolid"))})` : `variable(${textValue(mapValue(expression, "name"))})`;
     if (kind === "operator") {
       const operation = textValue(mapValue(expression, "operation"));
       const children = expressionChildren(expression, "operands").map(calculusGraphStructuralKey).join(";");
@@ -26296,31 +26317,30 @@ ${indented.join(`,
     if (!rational)
       throw new Error("nonRationalGraphConstant");
     const exact = rational.denominator === 1n ? new Integer(rational.numerator) : rational;
-    return map3([
-      ["valueKind", text6("calculusExpression")],
-      ["schema", text6("rix.calculus.expression@1")],
-      ["kind", text6("constant")],
-      ["value", exact]
-    ]);
+    return map3([["valueKind", text6("calculusExpression")], ["schema", text6("rix.calculus.expression@1")], ["kind", text6("constant")], ["value", exact]]);
   }
   function graphOperator(operation, operands) {
-    return map3([
-      ["valueKind", text6("calculusExpression")],
-      ["schema", text6("rix.calculus.expression@1")],
-      ["kind", text6("operator")],
-      ["operation", text6(operation)],
-      ["operands", sequence3(operands)]
-    ]);
+    return map3([["valueKind", text6("calculusExpression")], ["schema", text6("rix.calculus.expression@1")], ["kind", text6("operator")], ["operation", text6(operation)], ["operands", sequence3(operands)]]);
+  }
+  function coreGraph(node) {
+    if (node?.type === "map" && node._ext)
+      return node;
+    const kind = expressionKind(node);
+    if (kind === "variable") {
+      if (mapValue(node, "symbolid"))
+        throw new Error("Scoped graph identities require runtime symbol values");
+      return expressionVariable(textValue(mapValue(node, "name")));
+    }
+    if (kind === "constant")
+      return expressionConstant(mapValue(node, "value"));
+    if (kind === "operator")
+      return expressionOperation(textValue(mapValue(node, "operation")), expressionChildren(node, "operands").map(coreGraph));
+    if (kind === "apply")
+      return expressionApplication(textValue(mapValue(node, "semanticid")), textValue(mapValue(node, "name")), expressionChildren(node, "arguments").map(coreGraph));
+    throw new Error("Unsupported calculus graph node");
   }
   function graphApplication(semanticId2, name, argumentsValue) {
-    return map3([
-      ["valueKind", text6("calculusExpression")],
-      ["schema", text6("rix.calculus.expression@1")],
-      ["kind", text6("apply")],
-      ["semanticId", text6(semanticId2)],
-      ["name", text6(name ?? semanticId2)],
-      ["arguments", sequence3(argumentsValue)]
-    ]);
+    return map3([["valueKind", text6("calculusExpression")], ["schema", text6("rix.calculus.expression@1")], ["kind", text6("apply")], ["semanticId", text6(semanticId2)], ["name", text6(name ?? semanticId2)], ["arguments", sequence3(argumentsValue)]]);
   }
   function simplificationRule(rule, path, source, expression) {
     return Object.freeze({
@@ -26787,6 +26807,8 @@ ${indented.join(`,
     ].join("|");
   }
   function differentiateCalculusPrimitiveGraphN(expression, variableValues) {
+    if (hasScopedSymbols(expression))
+      throw new Error("Scoped differentiation requires the calculus plugin identity-aware API");
     if (!isExpression(expression))
       throw new Error("Expected a Calculus expression graph");
     const rawVariables = Array.isArray(variableValues) ? variableValues : [variableValues];
@@ -27374,6 +27396,8 @@ ${indented.join(`,
     throw new Error(`unsupportedGraphOperator:${String(operation)}`);
   }
   function recognizeCalculusGraph(expression, variableValue) {
+    if (hasScopedSymbols(expression))
+      throw new Error("Scoped polynomial recognition requires an identity-aware specification bridge");
     if (!isExpression(expression)) {
       return Object.freeze({ recognized: false, reason: "notCalculusExpression" });
     }
@@ -27717,6 +27741,8 @@ ${indented.join(`,
     return "allDefined";
   }
   function evaluateWithBindings(expression, bindings, options, conventions) {
+    if (hasScopedSymbols(expression))
+      throw new Error("Scoped range evaluation requires the core Eval API");
     const state = {
       cache: new Map,
       trace: [],
@@ -27955,7 +27981,7 @@ ${indented.join(`,
   }
   function calculusGraphSimplificationValue(expression) {
     const result = simplifyCalculusGraph(expression);
-    return portable({ ...result, checker: checkCalculusGraphSimplification(result) });
+    return portable({ ...result, expression: coreGraph(result.expression), checker: checkCalculusGraphSimplification(result) });
   }
   function calculusGraphSimplificationCheckValue(value) {
     return portable(checkCalculusGraphSimplification(value));
@@ -37729,6 +37755,47 @@ ${indented.join(`,
     });
   }
   var mathematicalLocalizationCapabilities = {
+    MathEvaluateCalculus: { impl: ([value, bindings = seq2([]), options]) => {
+      const transformation = expressionField(value, "schema")?.value === "rix.calculus.transformation@1" ? value : null;
+      const expression = transformation ? expressionField(value, "expression") : value;
+      if (bindings?.type === "map" && !isContext(bindings)) {
+        if (bindings.entries.size)
+          throw new Error("Core calculus evaluation requires identity binding pairs or a mathematical context");
+        bindings = seq2([]);
+      }
+      const assumptions = [], unknown = [];
+      const obligations = transformation ? expressionField(transformation, "obligations")?.values || [] : [];
+      for (const obligation of obligations) {
+        const relation = expressionField(obligation, "relation")?.value, subject = expressionField(obligation, "expression");
+        const add2 = (operator, right) => assumptions.push(record2({ operator: str2(operator), left: subject, right: new Integer(BigInt(right)) }));
+        if (expressionField(obligation, "kind")?.value !== "domain")
+          unknown.push(obligation);
+        else if (relation === "nonzero")
+          add2("!=", 0);
+        else if (relation === "positive")
+          add2(">", 0);
+        else if (relation === "nonnegative")
+          add2(">=", 0);
+        else if (relation === "insideOpenUnitInterval") {
+          add2(">", -1);
+          add2("<", 1);
+        } else
+          unknown.push(obligation);
+      }
+      const base = { schema: str2("rix.math.context@1"), result: expression, binders: seq2([]), domains: seq2([]), consistency: str2("unresolved") };
+      const report = isContext(bindings) ? evaluateMathematics(expression, record2({ ...Object.fromEntries(bindings.entries), assumptions: seq2([...expressionField(bindings, "assumptions").values, ...assumptions]) }), options) : evaluateMathematics(record2({ ...base, assumptions: seq2(assumptions) }), bindings, options);
+      report.entries.set("transformation", transformation);
+      report.entries.set("obligations", seq2(obligations));
+      report.entries.set("unresolvedobligations", seq2(unknown));
+      if (unknown.length) {
+        report.entries.set("reasons", seq2([...expressionField(report, "reasons").values, str2("unsupportedCalculusObligation")]));
+        if (["complete", "enclosed"].includes(expressionField(report, "status").value)) {
+          report.entries.set("status", str2("conditional"));
+          report.entries.set("value", null);
+        }
+      }
+      return report;
+    }, pure: false, doc: "Evaluate core calculus transformations while retaining domain and branch obligations" },
     MathBudgets: { impl: ([options]) => mathBudgetRecord(mathBudgets(options)), pure: true, doc: "Inspect default or overridden per-call mathematical budgets" },
     MathInstantiate: { impl: ([value, bindings, options]) => instantiateMathematics(value, bindings, options), pure: false, doc: "Instantiate selected local binders while retaining their domains and assumptions" },
     MathSubstitute: { impl: ([value, bindings, options]) => substituteMathematics(value, bindings, options), pure: false, doc: "Simultaneous identity-based free substitution retaining context conditions" },
@@ -64768,11 +64835,15 @@ CasVariableName(variable) ->
       ?_ {;
           CasIsExpression(@variable) && @variable[:kind]==:variable
             ?_> .Error("CAS variable must be a string or Calculus variable");
-          @variable[:name];
+          @variable[:symbolId]!=_ ?: @variable ?_ @variable[:name];
       };
 CasExpression(value) ->
     CasIsExpression(value)
-      ?: value
+      ?: {;
+          exact = .ExpressionExpand(@value);
+          !.ExpressionHasExtendedConstants(exact) ?_> .Error("CAS algorithms currently require rational constants; extended providers need algebraic laws");
+          exact;
+      }
       ?_ {;
           (@value ? :Integer)||(@value ? :Rational)
             ?_> .Error("CAS expected a Calculus expression or exact scalar");
@@ -64897,7 +64968,7 @@ CasIndependent(expression, variable) -> {;
     kind==:constant
       ?: 1
       ?_ kind==:variable
-      ?: exact[:name]!=variable
+      ?: !.ExpressionVariableMatches(exact,variable)
       ?_ kind==:operator
       ?: exact[:operands].Filter((operand)->CasIndependent(operand,@variable)).Len()==exact[:operands].Len()
       ?_ kind==:apply
@@ -64910,7 +64981,7 @@ CasAffine(expression, variable) -> {;
     exact = CasExpression(expression);
     kind = exact[:kind];
     kind==:constant ?: CasAffineState(1,0,exact[:value])
-      ?_ kind==:variable ?: (exact[:name]==variable ?: CasAffineState(1,1,0) ?_ CasAffineState(_))
+      ?_ kind==:variable ?: (.ExpressionVariableMatches(exact,variable) ?: CasAffineState(1,1,0) ?_ CasAffineState(_))
       ?_ {;
           @kind==:operator ?_> CasAffineState(_);
           operation = @exact[:operation];
@@ -64966,7 +65037,7 @@ CasPowerExponent(expression) ?!- [
       ?_> _
 ] -> CasConstantValue(expression[:operands][2]);
 CasPurePowerDegree(expression, variable) ->
-    (expression[:kind]==:variable && expression[:name]==variable)
+    (expression[:kind]==:variable && .ExpressionVariableMatches(expression,variable))
       ?: 1
       ?_ {;
           @expression[:kind]==:operator && @expression[:operation]==:power ?_> _;
@@ -64974,7 +65045,7 @@ CasPurePowerDegree(expression, variable) ->
           exponent ? :Integer ?_> _;
           exponent>=0 ?_> _;
           base = @expression[:operands][1];
-          base[:kind]==:variable && base[:name]==@variable ?_> _;
+          base[:kind]==:variable && .ExpressionVariableMatches(base,@variable) ?_> _;
           exponent;
       };
 
@@ -65146,7 +65217,7 @@ CasIntegrateNode(expression, variable) -> {;
     CasIndependent(exact,variable)
       ?: {; @result ~= CasIntegrationState(:complete,@exact*@variableExpression,[],[{= rule=:constantMultiple }]); }
       ?_ _;
-    result==_ && exact[:kind]==:variable && exact[:name]==variable
+    result==_ && exact[:kind]==:variable && .ExpressionVariableMatches(exact,variable)
       ?: {; @result ~= CasIntegrationState(:complete,(@variableExpression^2)/2,[],[{= rule=:power,exponent=1 }]); }
       ?_ _;
     result==_ && exact[:kind]==:operator
@@ -65297,6 +65368,7 @@ CasIntegrate(value, variable ?= :x, options ?= {= }) -> {;
       ?_ (value ? :RationalFunction)
       ?: value.variable
       ?_ CasVariableName(variable);
+    name = CasIsExpression(value) ?: .ExpressionVariableSelector(.ExpressionExpand(value),name) ?_ name;
     state = (value ? :Polynomial)
       ?: CasIntegratePolynomial(value)
       ?_ (value ? :RationalFunction)
@@ -66133,7 +66205,7 @@ CalculusRegistryEvidence(semanticId, key, value) -> {;
     CalculusRegistrySet(:evidence,semanticId,evidence.Set(key,value));
 };
 
-CalculusIsExpression(value) -> (value ? :CalculusExpression) && !.ExpressionHasScopedSymbols(value) && !.ExpressionHasExtendedConstants(value);
+CalculusIsExpression(value) -> .IsExpression(value);
 CalculusIsFunction(value) -> value ? :MathematicalFunction;
 
 CalculusRequireExpression(value, label ?= "value") ->
@@ -66142,7 +66214,7 @@ CalculusRequireExpression(value, label ?= "value") ->
 CalculusExactScalar(value) -> (value ? :Integer) || (value ? :Rational);
 CalculusOperand(value) -> CalculusIsExpression(value) || CalculusExactScalar(value);
 
-CalculusVariable(name) -> .ExpressionVariable(name);
+CalculusVariable(name) -> (CalculusIsExpression(name) && name[:kind]==:variable) ?: name ?_ .ExpressionVariable(name);
 CalculusConstant(value) -> .ExpressionConstant(value);
 CalculusPromote(value) -> CalculusIsExpression(value) ?: value ?_ CalculusConstant(value);
 CalculusOperator(operation, operands) -> .ExpressionOperation(operation,operands);
@@ -66610,6 +66682,10 @@ CalculusEvaluateObligation(obligation, bindings, reuseCommon) -> {;
 };
 
 CalculusEvaluateResult(value, bindings ?= {= }, options ?= {= }) -> {;
+    graph = CalculusIsTransformation(value) ?: value[:expression] ?_ value;
+    !(.ExpressionHasScopedSymbols(graph) || .ExpressionHasExtendedConstants(graph) ||
+      .ExpressionHasScopedSymbols(value[:source]) || .ExpressionHasScopedSymbols(value[:variable]))
+      ?_> .MathEvaluateCalculus(value,bindings,options);
     bindings ? :Map ?: _ ?_ .Error("Calculus evaluation bindings must be a Map");
     options ? :Map ?: _ ?_ .Error("Calculus evaluation options must be a Map");
     reuseCommon = CalculusOption(options,"reusecommonsubexpressions",1) ?: 1 ?_ _;
@@ -66637,6 +66713,10 @@ CalculusEvaluateResult(value, bindings ?= {= }, options ?= {= }) -> {;
 
 CalculusEvaluate(value, bindings ?= {= }, options ?= {= }) -> {;
     result = CalculusEvaluateResult(value,bindings,options);
+    result[:schema]!="rix.math.evaluation@1" ?_> {;
+        @result[:status]==:complete ?_> .Error("Core calculus evaluation is not complete; use EvaluateResult to inspect conditions and enclosures");
+        @result[:value];
+    };
     result[:obligations].Len() == 0
       ?: result[:value]
       ?_ .Error("Calculus evaluation has unresolved domain or branch obligations; use .calculus.EvaluateResult");
@@ -66682,7 +66762,7 @@ CalculusExpressionKey(expression) -> {;
     kind == :constant
       ?: @"constant(@{exact[:value]})"
       ?_ kind == :variable
-      ?: @"variable(@{exact[:name]})"
+      ?: (exact[:symbolId]!=_ ?: @"scoped(@{exact[:symbolId]})" ?_ @"variable(@{exact[:name]})")
       ?_ kind == :operator
       ?: CalculusOperatorKey(exact)
       ?_ kind == :apply
@@ -66712,7 +66792,7 @@ CalculusDerivativeVariable(variable) ->
     variable ? :String
       ?: variable
       ?_ (CalculusIsExpression(variable) && variable[:kind] == :variable
-           ?: variable[:name]
+           ?: (variable[:symbolId]!=_ ?: variable ?_ variable[:name])
            ?_ .Error("Calculus differentiation variable must be a string or variable expression"));
 
 CalculusAppend(left, right) -> right.Reduce((result,value)->result.Push(value),left);
@@ -66867,7 +66947,7 @@ CalculusDifferentiateNode(expression, variable) -> {;
     kind == :constant ?: CalculusStateWithRule(CalculusConstant(0),[],[],:constant)
       ?_ (kind == :variable
            ?: CalculusStateWithRule(
-                CalculusConstant(exact[:name] == variable ?: 1 ?_ 0),
+                CalculusConstant(.ExpressionVariableMatches(exact,variable) ?: 1 ?_ 0),
                 [],
                 [],
                 :variable,
@@ -66886,6 +66966,9 @@ CalculusDifferentiateResult(value, variable) -> {;
     exact = previous == _
       ?: CalculusRequireExpression(value,"differentiate expression")
       ?_ previous[:expression];
+    exact = .ExpressionExpand(exact);
+    !.ExpressionHasExtendedConstants(exact) ?_> .Error("Calculus differentiation currently requires rational constants; extended providers need derivative rules");
+    differentiatedBy = .ExpressionVariableSelector(exact,differentiatedBy);
     source = previous == _ ?: exact ?_ previous[:source];
     priorVariables = previous == _
       ?: []

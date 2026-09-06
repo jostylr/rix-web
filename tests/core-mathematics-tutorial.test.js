@@ -90,5 +90,9 @@ for (const [mode,evaluate] of [["sync",parseAndEvaluate],["async",parseAndEvalua
         expect(results[31].values[3].value).toBe("unresolved");
         expect(results[32].values.slice(0,2).map(String)).toEqual(["3","4"]);
         expect(results[32].values[2].value).toBe("rix.function.abs.real@1");
+        expect(results[33].values.map(String)).toEqual(["6","1","6","1"]);
+        expect(String(results[34].values[0])).toBe("1/2");
+        expect(results[34].values[1].value).toBe("invalidAssumptions");
+        expect(String(results[34].values[2])).toBe("1");
     });
 }

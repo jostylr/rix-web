@@ -48,7 +48,7 @@ import {
   parseAndEvaluateObservedAsync,
   renderOutputHtml,
   tokenize
-} from "./chunk-gsra39dw.js";
+} from "./chunk-06rxk1b6.js";
 
 // standard-profile.rix
 var standard_profile_default = `## RiX-Web standard calculator profile.
@@ -3701,7 +3701,7 @@ CalculusRegistryEvidence(semanticId, key, value) -> {;
     CalculusRegistrySet(:evidence,semanticId,evidence.Set(key,value));
 };
 
-CalculusIsExpression(value) -> (value ? :CalculusExpression) && !.ExpressionHasScopedSymbols(value) && !.ExpressionHasExtendedConstants(value);
+CalculusIsExpression(value) -> .IsExpression(value);
 CalculusIsFunction(value) -> value ? :MathematicalFunction;
 
 CalculusRequireExpression(value, label ?= "value") ->
@@ -3710,7 +3710,7 @@ CalculusRequireExpression(value, label ?= "value") ->
 CalculusExactScalar(value) -> (value ? :Integer) || (value ? :Rational);
 CalculusOperand(value) -> CalculusIsExpression(value) || CalculusExactScalar(value);
 
-CalculusVariable(name) -> .ExpressionVariable(name);
+CalculusVariable(name) -> (CalculusIsExpression(name) && name[:kind]==:variable) ?: name ?_ .ExpressionVariable(name);
 CalculusConstant(value) -> .ExpressionConstant(value);
 CalculusPromote(value) -> CalculusIsExpression(value) ?: value ?_ CalculusConstant(value);
 CalculusOperator(operation, operands) -> .ExpressionOperation(operation,operands);
@@ -4178,6 +4178,10 @@ CalculusEvaluateObligation(obligation, bindings, reuseCommon) -> {;
 };
 
 CalculusEvaluateResult(value, bindings ?= {= }, options ?= {= }) -> {;
+    graph = CalculusIsTransformation(value) ?: value[:expression] ?_ value;
+    !(.ExpressionHasScopedSymbols(graph) || .ExpressionHasExtendedConstants(graph) ||
+      .ExpressionHasScopedSymbols(value[:source]) || .ExpressionHasScopedSymbols(value[:variable]))
+      ?_> .MathEvaluateCalculus(value,bindings,options);
     bindings ? :Map ?: _ ?_ .Error("Calculus evaluation bindings must be a Map");
     options ? :Map ?: _ ?_ .Error("Calculus evaluation options must be a Map");
     reuseCommon = CalculusOption(options,"reusecommonsubexpressions",1) ?: 1 ?_ _;
@@ -4205,6 +4209,10 @@ CalculusEvaluateResult(value, bindings ?= {= }, options ?= {= }) -> {;
 
 CalculusEvaluate(value, bindings ?= {= }, options ?= {= }) -> {;
     result = CalculusEvaluateResult(value,bindings,options);
+    result[:schema]!="rix.math.evaluation@1" ?_> {;
+        @result[:status]==:complete ?_> .Error("Core calculus evaluation is not complete; use EvaluateResult to inspect conditions and enclosures");
+        @result[:value];
+    };
     result[:obligations].Len() == 0
       ?: result[:value]
       ?_ .Error("Calculus evaluation has unresolved domain or branch obligations; use .calculus.EvaluateResult");
@@ -4250,7 +4258,7 @@ CalculusExpressionKey(expression) -> {;
     kind == :constant
       ?: @"constant(@{exact[:value]})"
       ?_ kind == :variable
-      ?: @"variable(@{exact[:name]})"
+      ?: (exact[:symbolId]!=_ ?: @"scoped(@{exact[:symbolId]})" ?_ @"variable(@{exact[:name]})")
       ?_ kind == :operator
       ?: CalculusOperatorKey(exact)
       ?_ kind == :apply
@@ -4280,7 +4288,7 @@ CalculusDerivativeVariable(variable) ->
     variable ? :String
       ?: variable
       ?_ (CalculusIsExpression(variable) && variable[:kind] == :variable
-           ?: variable[:name]
+           ?: (variable[:symbolId]!=_ ?: variable ?_ variable[:name])
            ?_ .Error("Calculus differentiation variable must be a string or variable expression"));
 
 CalculusAppend(left, right) -> right.Reduce((result,value)->result.Push(value),left);
@@ -4435,7 +4443,7 @@ CalculusDifferentiateNode(expression, variable) -> {;
     kind == :constant ?: CalculusStateWithRule(CalculusConstant(0),[],[],:constant)
       ?_ (kind == :variable
            ?: CalculusStateWithRule(
-                CalculusConstant(exact[:name] == variable ?: 1 ?_ 0),
+                CalculusConstant(.ExpressionVariableMatches(exact,variable) ?: 1 ?_ 0),
                 [],
                 [],
                 :variable,
@@ -4454,6 +4462,9 @@ CalculusDifferentiateResult(value, variable) -> {;
     exact = previous == _
       ?: CalculusRequireExpression(value,"differentiate expression")
       ?_ previous[:expression];
+    exact = .ExpressionExpand(exact);
+    !.ExpressionHasExtendedConstants(exact) ?_> .Error("Calculus differentiation currently requires rational constants; extended providers need derivative rules");
+    differentiatedBy = .ExpressionVariableSelector(exact,differentiatedBy);
     source = previous == _ ?: exact ?_ previous[:source];
     priorVariables = previous == _
       ?: []
@@ -4810,11 +4821,15 @@ CasVariableName(variable) ->
       ?_ {;
           CasIsExpression(@variable) && @variable[:kind]==:variable
             ?_> .Error("CAS variable must be a string or Calculus variable");
-          @variable[:name];
+          @variable[:symbolId]!=_ ?: @variable ?_ @variable[:name];
       };
 CasExpression(value) ->
     CasIsExpression(value)
-      ?: value
+      ?: {;
+          exact = .ExpressionExpand(@value);
+          !.ExpressionHasExtendedConstants(exact) ?_> .Error("CAS algorithms currently require rational constants; extended providers need algebraic laws");
+          exact;
+      }
       ?_ {;
           (@value ? :Integer)||(@value ? :Rational)
             ?_> .Error("CAS expected a Calculus expression or exact scalar");
@@ -4939,7 +4954,7 @@ CasIndependent(expression, variable) -> {;
     kind==:constant
       ?: 1
       ?_ kind==:variable
-      ?: exact[:name]!=variable
+      ?: !.ExpressionVariableMatches(exact,variable)
       ?_ kind==:operator
       ?: exact[:operands].Filter((operand)->CasIndependent(operand,@variable)).Len()==exact[:operands].Len()
       ?_ kind==:apply
@@ -4952,7 +4967,7 @@ CasAffine(expression, variable) -> {;
     exact = CasExpression(expression);
     kind = exact[:kind];
     kind==:constant ?: CasAffineState(1,0,exact[:value])
-      ?_ kind==:variable ?: (exact[:name]==variable ?: CasAffineState(1,1,0) ?_ CasAffineState(_))
+      ?_ kind==:variable ?: (.ExpressionVariableMatches(exact,variable) ?: CasAffineState(1,1,0) ?_ CasAffineState(_))
       ?_ {;
           @kind==:operator ?_> CasAffineState(_);
           operation = @exact[:operation];
@@ -5008,7 +5023,7 @@ CasPowerExponent(expression) ?!- [
       ?_> _
 ] -> CasConstantValue(expression[:operands][2]);
 CasPurePowerDegree(expression, variable) ->
-    (expression[:kind]==:variable && expression[:name]==variable)
+    (expression[:kind]==:variable && .ExpressionVariableMatches(expression,variable))
       ?: 1
       ?_ {;
           @expression[:kind]==:operator && @expression[:operation]==:power ?_> _;
@@ -5016,7 +5031,7 @@ CasPurePowerDegree(expression, variable) ->
           exponent ? :Integer ?_> _;
           exponent>=0 ?_> _;
           base = @expression[:operands][1];
-          base[:kind]==:variable && base[:name]==@variable ?_> _;
+          base[:kind]==:variable && .ExpressionVariableMatches(base,@variable) ?_> _;
           exponent;
       };
 
@@ -5188,7 +5203,7 @@ CasIntegrateNode(expression, variable) -> {;
     CasIndependent(exact,variable)
       ?: {; @result ~= CasIntegrationState(:complete,@exact*@variableExpression,[],[{= rule=:constantMultiple }]); }
       ?_ _;
-    result==_ && exact[:kind]==:variable && exact[:name]==variable
+    result==_ && exact[:kind]==:variable && .ExpressionVariableMatches(exact,variable)
       ?: {; @result ~= CasIntegrationState(:complete,(@variableExpression^2)/2,[],[{= rule=:power,exponent=1 }]); }
       ?_ _;
     result==_ && exact[:kind]==:operator
@@ -5339,6 +5354,7 @@ CasIntegrate(value, variable ?= :x, options ?= {= }) -> {;
       ?_ (value ? :RationalFunction)
       ?: value.variable
       ?_ CasVariableName(variable);
+    name = CasIsExpression(value) ?: .ExpressionVariableSelector(.ExpressionExpand(value),name) ?_ name;
     state = (value ? :Polynomial)
       ?: CasIntegratePolynomial(value)
       ?_ (value ? :RationalFunction)
@@ -35528,5 +35544,5 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
 
 export { pluginProfileFromUrl, stripMarkedPluginProfile, findHelp, createRixRepl };
 
-//# debugId=9135A58AB62738D164756E2164756E21
-//# sourceMappingURL=chunk-10sp600w.js.map
+//# debugId=F0DFF25473B67D0B64756E2164756E21
+//# sourceMappingURL=chunk-y5g44s5w.js.map
