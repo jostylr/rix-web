@@ -12634,7 +12634,7 @@ var runtimeDefaults = Object.freeze({
     Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC", "SPECROLES", "SPECFRACTIONPARTS", "SArith", "ExpressionVariable", "ExpressionConstant", "ExpressionOperation", "ExpressionApply", "IsExpression", "ExpressionKey", "ExpressionHasScopedSymbols", "SameSymbol", "SYMBOL_RETRIEVE", "SYMBOL_DEFINE", "ExpressionDefinition", "ExpressionExpand"]),
     MathematicalContexts: Object.freeze(["MATH_CONTEXT", "BOUND_SYMBOL"]),
     MathematicalSerialization: Object.freeze(["MathEncodeJSON", "MathDecodeJSON", "MathEncodeJSONL", "MathDecodeJSONL"]),
-    MathematicalLocalization: Object.freeze(["MathSubstitute", "MathEvaluate"]),
+    MathematicalLocalization: Object.freeze(["MathSubstitute", "MathEvaluate", "MathInstantiate"]),
     SymbolicConstants: Object.freeze(["ExpressionConstantInfo", "ExpressionHasExtendedConstants", "ExpressionReal", "ExpressionRefine"]),
     Notation: Object.freeze(["SArith", "Poly", "NotationParser"]),
     Random: Object.freeze(["RNG", "RANDOMSEED", "RandomSeed", "RAND_NAME"]),
@@ -31047,6 +31047,22 @@ class Registry {
     return this.list();
   }
 }
+// ../rix/src/runtime/math-context-methods.js
+function attachMathContextMethods(value) {
+  if (value?.entries?.get("schema")?.value !== "rix.math.context@1")
+    return value;
+  const entries2 = new Map;
+  for (const [name, capability] of [["Eval", "MathEvaluate"], ["Substitute", "MathSubstitute"], ["Instantiate", "MathInstantiate"]]) {
+    entries2.set(name.toUpperCase(), {
+      type: "method_builtin",
+      name,
+      impl: (args, context, evaluate) => evaluate({ fn: "SYS_CALL", args: [capability, ...args] }, context)
+    });
+  }
+  value._ext.set("_proto", { type: "map", entries: entries2 });
+  return value;
+}
+
 // ../rix/src/runtime/math-context.js
 var str = (value) => ({ type: "string", value });
 var seq = (values2) => ({ type: "sequence", values: values2 });
@@ -31256,14 +31272,14 @@ function evaluateContext([header, body], context, evaluate) {
   function statement(index, result) {
     if (index < body.length)
       return then2(evaluateNode2(body[index]), (value) => statement(index + 1, value));
-    return record({
+    return attachMathContextMethods(record({
       schema: str("rix.math.context@1"),
       result,
       binders: seq(binders),
       assumptions: seq(assumptions),
       domains: seq([...bounds.values()].map((domain) => record({ symbol: domain.symbol, domain: domainRecord2(domain) }))),
       consistency: str(unresolved ? "unresolved" : "checkedBounds")
-    });
+    }));
   }
   return declaration(0);
 }
@@ -31284,7 +31300,7 @@ var fail = (message) => {
   throw new Error(`Mathematical JSON: ${message}`);
 };
 var text8 = (value) => ({ type: "string", value });
-var immutable = (entries2) => ({ type: "map", entries: new Map(entries2), _ext: new Map([["immutable", new Integer(1n)]]) });
+var immutable = (entries2) => attachMathContextMethods({ type: "map", entries: new Map(entries2), _ext: new Map([["immutable", new Integer(1n)]]) });
 function fields(value, keys) {
   if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== keys.length || keys.some((key) => !Object.hasOwn(value, key)))
     fail("unexpected or missing fields");
@@ -31662,11 +31678,11 @@ var mathematicalJSONCapabilities = {
 // ../rix/src/runtime/math-localize.js
 var str2 = (value) => ({ type: "string", value });
 var seq2 = (values2) => ({ type: "sequence", values: values2 });
-var record2 = (fields2) => ({ type: "map", entries: new Map(Object.entries(fields2)), _ext: new Map([["immutable", new Integer(1n)]]) });
+var record2 = (fields2) => attachMathContextMethods({ type: "map", entries: new Map(Object.entries(fields2)), _ext: new Map([["immutable", new Integer(1n)]]) });
 var rational = (value) => value instanceof Integer ? new Rational(value.value, 1n) : value instanceof Rational && value.denominator !== 0n ? value : null;
 var isContext = (value) => expressionField(value, "schema")?.value === "rix.math.context@1";
 var id = (value) => expressionField(value, "symbolid")?.value;
-function worker(bindings) {
+function worker(bindings, allowedBinders = null) {
   if (!["sequence", "tuple"].includes(bindings?.type))
     throw new Error("Mathematical bindings require a sequence of (symbol, value) pairs");
   const replacements = new Map;
@@ -31678,7 +31694,7 @@ function worker(bindings) {
   function checkReplacement(value, depth = 0) {
     tick(depth);
     if (expressionField(value, "bound"))
-      throw new Error("Substitution cannot introduce bound symbols; binder instantiation is not supported");
+      throw new Error("Substitution cannot introduce bound symbols");
     const definition = expressionDefinition(value);
     if (definition)
       checkReplacement(definition, depth + 1);
@@ -31690,8 +31706,10 @@ function worker(bindings) {
     if (pair?.type !== "tuple" || pair.values.length !== 2)
       throw new Error("Expected a (symbol, value) binding");
     const [symbol, value] = pair.values;
-    if (!isMathExpression(symbol) || expressionField(symbol, "kind")?.value !== "variable" || !id(symbol) || expressionField(symbol, "bound"))
-      throw new Error("Bindings require free scoped symbols");
+    if (!isMathExpression(symbol) || expressionField(symbol, "kind")?.value !== "variable" || !id(symbol))
+      throw new Error("Bindings require scoped symbols");
+    if (allowedBinders ? !expressionField(symbol, "bound") || !allowedBinders.has(id(symbol)) : expressionField(symbol, "bound"))
+      throw new Error(allowedBinders ? "Instantiation requires a binder declared by this context" : "Bindings require free scoped symbols");
     expressionDefinition(symbol);
     if (replacements.has(id(symbol)))
       throw new Error("Duplicate mathematical binding");
@@ -31716,7 +31734,10 @@ function worker(bindings) {
     if (["sequence", "tuple"].includes(value?.type))
       return { type: value.type, values: value.values.map((v) => walk(v, depth + 1)) };
     if (value?.type === "map") {
-      const fields2 = Object.fromEntries([...value.entries].map(([key, v]) => [key, walk(v, depth + 1)]));
+      const fields2 = Object.fromEntries([...value.entries].map(([key, v]) => [
+        key,
+        isContext(value) && key === "binders" && allowedBinders ? seq2(v.values.filter((symbol) => !replacements.has(id(symbol)))) : walk(v, depth + 1)
+      ]));
       if (isContext(value))
         fields2.consistency = str2("unresolved");
       return record2(fields2);
@@ -31724,6 +31745,17 @@ function worker(bindings) {
     return value;
   }
   return { walk, tick };
+}
+function instantiateMathematics(value, bindings) {
+  if (!isContext(value) || expressionField(value, "binders")?.type !== "sequence")
+    throw new Error("MathInstantiate requires a mathematical context");
+  const allowed = new Set(expressionField(value, "binders").values.map(id));
+  const localized = worker(bindings, allowed).walk(value);
+  localized.entries.set("instantiations", seq2([
+    ...expressionField(localized, "instantiations")?.values || [],
+    ...bindings.values.map((pair) => record2({ symbol: pair.values[0], value: promoteExpression(pair.values[1]) }))
+  ]));
+  return localized;
 }
 function substituteMathematics(value, bindings) {
   if (!isMathExpression(value) && !isContext(value))
@@ -31818,7 +31850,7 @@ function evaluateMathematics(value, bindings = seq2([])) {
   if (context) {
     conditional = !!expressionField(context, "binders")?.values.length || expressionField(context, "validation")?.value === "unverifiedImport";
     for (const entry of expressionField(context, "domains")?.values || []) {
-      const point2 = assumptionContext ? rational(expressionField(expressionField(entry, "symbol"), "value")) : null;
+      const point2 = rational(calculate(expressionField(entry, "symbol")));
       const domain = expressionField(entry, "domain");
       if (!point2 || !domain) {
         conditional = true;
@@ -31876,6 +31908,7 @@ function evaluateMathematics(value, bindings = seq2([])) {
   });
 }
 var mathematicalLocalizationCapabilities = {
+  MathInstantiate: { impl: ([value, bindings]) => instantiateMathematics(value, bindings), pure: false, doc: "Instantiate selected local binders while retaining their domains and assumptions" },
   MathSubstitute: { impl: ([value, bindings]) => substituteMathematics(value, bindings), pure: false, doc: "Simultaneous identity-based free substitution retaining context conditions" },
   MathEvaluate: { impl: ([value, bindings]) => evaluateMathematics(value, bindings), pure: false, doc: "Bounded exact rational evaluation with explicit unresolved context obligations" }
 };
@@ -101654,5 +101687,5 @@ var STATIC_SYSTEM_CATALOG = Object.freeze([
 ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
 export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, outputValueKind, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, formatOutputText, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateObserved, parseAndEvaluateObservedAsync, lintRix, createGeometryAuthoringProgram, mountOutputWidgets };
 
-//# debugId=D68E275022E1348D64756E2164756E21
-//# sourceMappingURL=chunk-jnxgm79j.js.map
+//# debugId=BF0551FDCA492D3B64756E2164756E21
+//# sourceMappingURL=chunk-k569sfs5.js.map

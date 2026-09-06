@@ -232,7 +232,7 @@ conservative equality. The existing name-based calculus, CAS, range, and
 specification consumers reject scoped expressions and extended constants until their identity/provider-aware
 conversion is implemented. The first section's constructor-based examples
 remain usable with those consumers. Bounded free substitution and rational evaluation
-are now available below. Binder instantiation, general domain reasoning, remaining numeric
+are now available below, as is explicit binder instantiation. General domain reasoning, remaining numeric
 adapters, and safe refinement-recipe restoration remain pending. Context-argument
 evaluation below supports exact equalities and rational point-domain checks. Graph serialization
 and frozen snapshots are available now.
@@ -260,8 +260,8 @@ earlier in this worksheet.
 `.MathEvaluate(expr,bindings)`; `expr.Substitute(bindings)` likewise replaces
 `.MathSubstitute(expr,bindings)`. Both methods leave the expression unchanged.
 A mathematical context is more than its result expression. Conditions remain attached
-to the report. The candidate below is 3, but the positive-domain obligation keeps the
-status conditional. A negative replacement contradicts the retained assumption.
+to the report. The positive-domain check now succeeds for 2, producing a complete
+value of 3. A negative replacement contradicts the retained assumption.
 
 ```rix edu
 {;
@@ -273,7 +273,7 @@ status conditional. A negative replacement contradicts the retained assumption.
 ```
 
 Same-spelled bound and free symbols remain different. Free substitution cannot replace
-a binder or insert a bound symbol. Binder instantiation is a separate, future API.
+a binder or insert a bound symbol. Use the separate `Instantiate` method below.
 
 ```rix edu
 {;
@@ -322,5 +322,32 @@ it is not a proof that those assumptions hold universally.
     unknown := expr.Eval({& ::x==::y; ::y==7 & });
     conflict := expr.Eval({& ::x==3; ::y==7; ::x==::y & });
     (unknown[:status],conflict[:status],conflict[:value]);
+};
+```
+## Instantiating a bound parameter
+
+Choose the actual binder identity from a context. Instantiation produces a new
+context and retains its conditions, including open endpoints and traversal direction.
+It selects a parameter value; it does not perform an integral or a sum.
+
+```rix edu
+{;
+    ctx := {& :::t | 1:0; :::t>0 & :::t^2 };
+    t := ctx[:binders][1];
+    point := ctx.Instantiate([(t,1/2)]);
+    bad := ctx.Instantiate([(t,0)]);
+    (point.Eval()[:value],bad.Eval()[:status],ctx[:binders].Len(),
+     point[:domains][1][:domain][:orientation]);
+};
+```
+
+Free symbols in a replacement remain free. They can be evaluated later, while
+any unselected binders remain local. Bound symbols cannot be inserted as replacements.
+
+```rix edu
+{;
+    ctx := {& :::t | 0:1 & :::t+1 };
+    point := ctx.Instantiate([(ctx[:binders][1],::x/2)]);
+    (point.Eval()[:status],point.Eval([(::x,1)])[:value],point[:instantiations].Len());
 };
 ```

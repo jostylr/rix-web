@@ -52,8 +52,8 @@ for (const [mode,evaluate] of [["sync",parseAndEvaluate],["async",parseAndEvalua
         expect(results[17].values[2].value).toBe("unverifiedImport");
         expect(results[18].values[0].value).toBe("complete");
         expect(String(results[18].values[1])).toBe("10");
-        expect(results[19].values[0].value).toBe("conditional");
-        expect(results[19].values[1]).toBeNull();
+        expect(results[19].values[0].value).toBe("complete");
+        expect(String(results[19].values[1])).toBe("3");
         expect(String(results[19].values[2])).toBe("3");
         expect(results[19].values[3].value).toBe("invalidAssumptions");
         expect(results[20].values[0].value).toBe(1n);
@@ -66,5 +66,12 @@ for (const [mode,evaluate] of [["sync",parseAndEvaluate],["async",parseAndEvalua
         expect(results[22].values.slice(1).map(v=>v.value)).toEqual(["unresolved","unresolved"]);
         expect(results[23].values.slice(0,2).map(v=>v.value)).toEqual(["unresolved","invalidAssumptions"]);
         expect(results[23].values[2]).toBeNull();
+        expect(String(results[24].values[0])).toBe("1/4");
+        expect(results[24].values[1].value).toBe("invalidAssumptions");
+        expect(String(results[24].values[2])).toBe("1");
+        expect(results[24].values[3].value).toBe("desc");
+        expect(results[25].values[0].value).toBe("unresolved");
+        expect(String(results[25].values[1])).toBe("3/2");
+        expect(String(results[25].values[2])).toBe("1");
     });
 }
