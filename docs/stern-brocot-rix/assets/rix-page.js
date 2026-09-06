@@ -37238,6 +37238,60 @@ ${indented.join(`,
     }, pure: false, groups: ["Symbolic"], doc: "Decode independent bounded JSONL documents without executing code" }
   };
 
+  // rix/src/runtime/math-semantic-eval.js
+  var REAL_SEMANTICS = Object.freeze(["rix.function.abs.real@1", "rix.function.sqrt.real-principal@1"]);
+  function integerRoot(value) {
+    if (value < 2n)
+      return value;
+    let root = 1n << BigInt(Math.ceil(value.toString(2).length / 2));
+    for (;; ) {
+      const next = (root + value / root) / 2n;
+      if (next >= root)
+        return root;
+      root = next;
+    }
+  }
+  function rootBounds(value, limits) {
+    if (value.numerator.toString().length + Math.ceil(2 * limits.rootbits / 3) > limits.maxdigits)
+      throw new Error("Mathematical square-root integer budget exceeded");
+    const scale = 1n << BigInt(limits.rootbits);
+    const numerator = value.numerator * scale * scale;
+    const root = integerRoot(numerator / value.denominator);
+    const exact3 = root * root * value.denominator === numerator;
+    return [new Rational(root, scale), new Rational(exact3 ? root : root + 1n, scale)];
+  }
+  function evaluateRealSemantic(id, args, limits, check, unsupported) {
+    if (!REAL_SEMANTICS.includes(id))
+      return unsupported("unlinkedSemanticApplication");
+    if (args.length !== 1)
+      return unsupported("semanticArityMismatch");
+    const value = args[0] instanceof Integer ? new Rational(args[0].value, 1n) : args[0];
+    if (!(value instanceof Rational) && !(value instanceof RationalInterval))
+      return unsupported("unsupportedSemanticProvider");
+    const zero = new Rational(0n);
+    if (id === "rix.function.abs.real@1") {
+      if (value instanceof Rational)
+        return check(value.abs());
+      if (value.high.lessThan(zero))
+        return check(value.negate());
+      if (!value.low.lessThan(zero))
+        return check(new RationalInterval(value.low, value.high));
+      const negative = value.low.negate();
+      return check(new RationalInterval(zero, negative.greaterThan(value.high) ? negative : value.high));
+    }
+    if (value instanceof Rational) {
+      if (value.lessThan(zero))
+        return unsupported("outsideRealSquareRootDomain");
+      return check(exactSquareRoot(value));
+    }
+    if (value.high.lessThan(zero))
+      return unsupported("outsideRealSquareRootDomain");
+    if (value.low.lessThan(zero))
+      return unsupported("squareRootDomainUnresolved");
+    const lower2 = rootBounds(value.low, limits), upper = rootBounds(value.high, limits);
+    return check(new RationalInterval(lower2[0], upper[1]));
+  }
+
   // rix/src/runtime/math-provider-eval.js
   var asRational5 = (value) => value instanceof Integer ? new Rational(value.value, 1n) : value instanceof Rational && value.denominator !== 0n ? value : null;
   var interval2 = (value) => value instanceof RationalInterval ? value : asRational5(value) ? new RationalInterval(asRational5(value), asRational5(value)) : null;
@@ -37306,7 +37360,7 @@ ${indented.join(`,
   }
   function createProviderEvaluation(reasons, limits) {
     const check = (value) => budget(value, limits);
-    const providers = new Map, reals = new Map;
+    const providers = new Map, reals = new Map, semantics = new Set;
     let sawReal = false, sawSet = false, unverified = false;
     const unsupported = (reason) => {
       reasons.add(reason);
@@ -37393,6 +37447,14 @@ ${indented.join(`,
     return {
       read,
       operate,
+      supportsApplication: (id) => REAL_SEMANTICS.includes(id),
+      apply: (id, args) => {
+        semantics.add(id);
+        return evaluateRealSemantic(id, args, limits, check, unsupported);
+      },
+      get semantics() {
+        return [...semantics];
+      },
       get unverified() {
         return unverified;
       },
@@ -37415,7 +37477,8 @@ ${indented.join(`,
     maxgenerators: 64,
     maxpolynomialcoefficients: 64,
     maxdegree: 1e4,
-    maxexponent: 256
+    maxexponent: 256,
+    rootbits: 64
   });
   function mathBudgets(options) {
     const result = { ...DEFAULT_MATH_BUDGETS };
@@ -37576,8 +37639,13 @@ ${indented.join(`,
         return null;
       }
       if (kind === "apply") {
-        reasons.add("unlinkedSemanticApplication");
-        return null;
+        const semantic = expressionField(expr, "semanticid").value;
+        if (!provider.supportsApplication(semantic)) {
+          reasons.add("unlinkedSemanticApplication");
+          return null;
+        }
+        const args2 = expressionField(expr, "arguments").values.map((v) => calculate(v, depth + 1));
+        return args2.some((v) => v === null) ? null : provider.apply(semantic, args2);
       }
       const args = expressionField(expr, "operands").values.map((v) => calculate(v, depth + 1));
       if (args.some((v) => v === null))
@@ -37656,6 +37724,7 @@ ${indented.join(`,
       resultkind: str2(invalid ? "unresolved" : resultKind),
       enclosure: !invalid && candidate instanceof RationalInterval ? candidate : null,
       providers: seq2(provider.providers),
+      semantics: seq2(provider.semantics.map(str2)),
       budgets: mathBudgetRecord(limits)
     });
   }

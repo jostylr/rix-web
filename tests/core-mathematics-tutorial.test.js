@@ -83,5 +83,12 @@ for (const [mode,evaluate] of [["sync",parseAndEvaluate],["async",parseAndEvalua
         expect(results[28].values[3].value).toBe(1n);
         expect(results[28].values[4].value).toBe("conditional");
         expect(results[29].values.map(v=>v.value)).toEqual(["complete",2048n,1024n]);
+        expect(results[30].values.slice(0,2).map(v=>v.value)).toEqual(["complete","exactScalar"]);
+        expect(results[30].values[2].value).toBe(1n);
+        expect(String(results[30].values[3])).toBe("3/2");
+        expect(results[31].values.slice(0,3).map(v=>v.value)).toEqual([1n,1n,1n]);
+        expect(results[31].values[3].value).toBe("unresolved");
+        expect(results[32].values.slice(0,2).map(String)).toEqual(["3","4"]);
+        expect(results[32].values[2].value).toBe("rix.function.abs.real@1");
     });
 }

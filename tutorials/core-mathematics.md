@@ -418,3 +418,44 @@ the default. Larger budgets can require much more time and memory.
 The same final options map works with `Substitute` and `Instantiate`. Traversal
 depth retains a host-safety ceiling of 512; JSON import limits and real refinement
 budgets are separate. Raising a work budget never disables mathematical domain checks.
+## Evaluating a mathematical function by its meaning
+
+Real absolute value and principal real square root now have trusted core evaluation
+kernels. This small constructor makes a symbolic root without loading a plugin.
+Its semantic ID specifies the meaning; the display name does not select executable code.
+
+```rix edu
+{;
+    Root(x) -> .ExpressionApply("rix.function.sqrt.real-principal@1",:Sqrt,[x]);
+    ans := Root(::x).Eval([(::x,2)]);
+    (ans[:status],ans[:resultKind],
+     .ExpressionConstant(ans[:value]^2)==.ExpressionConstant(2),Root(9/4).Eval()[:value]);
+};
+```
+
+Intervals use certified endpoint enclosures. `rootBits` controls endpoint precision,
+not the width of the input interval. A partially negative domain is not silently clipped.
+
+```rix edu
+{;
+    Root(x) -> .ExpressionApply("rix.function.sqrt.real-principal@1",:Sqrt,[x]);
+    expr := Root(::x);
+    a := expr.Eval([(::x,2:3)],{= rootBits=8 })[:enclosure];
+    b := expr.Eval([(::x,2:3)],{= rootBits=32 })[:enclosure];
+    (b.Start()^2<=2,b.End()^2>=3,
+     b.End()-b.Start()<a.End()-a.Start(),Root(-1:2).Eval()[:status]);
+};
+```
+
+The same evaluation works under local facts. Saving an expression retains its
+semantic ID; loading never runs it. Only a subsequent explicit evaluation uses
+the allowlisted kernel. Unknown semantics remain unresolved.
+
+```rix edu
+{;
+    expr := .ExpressionApply("rix.function.abs.real@1",:Abs,[::x]);
+    ans := expr.Eval({& ::x == -3 & });
+    saved := .MathDecodeJSON(.MathEncodeJSON(expr.Substitute([(::x,-4)])));
+    (ans[:value],saved.Eval()[:value],ans[:semantics][1]);
+};
+```

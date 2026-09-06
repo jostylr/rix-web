@@ -189,4 +189,28 @@ portableRoot := .MathDecodeJSON(.MathEncodeJSON(.ExpressionReal(.numerics.Sqrt(2
     ans := expr.Eval([(::x,1~{pi})],{= maxProductPairs=2048 });
     (ans[:status],ans[:budgets][:maxProductPairs],.MathBudgets()[:maxProductPairs]);
 };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>The same final options map works with <code>Substitute</code> and <code>Instantiate</code>. Traversal depth retains a host-safety ceiling of 512; JSON import limits and real refinement budgets are separate. Raising a work budget never disables mathematical domain checks.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
+<p>The same final options map works with <code>Substitute</code> and <code>Instantiate</code>. Traversal depth retains a host-safety ceiling of 512; JSON import limits and real refinement budgets are separate. Raising a work budget never disables mathematical domain checks.</p>
+<h2>Evaluating a mathematical function by its meaning</h2>
+<p>Real absolute value and principal real square root now have trusted core evaluation kernels. This small constructor makes a symbolic root without loading a plugin. Its semantic ID specifies the meaning; the display name does not select executable code.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">{;
+    Root(x) -&gt; .ExpressionApply(&quot;rix.function.sqrt.real-principal@1&quot;,:Sqrt,[x]);
+    ans := Root(::x).Eval([(::x,2)]);
+    (ans[:status],ans[:resultKind],
+     .ExpressionConstant(ans[:value]^2)==.ExpressionConstant(2),Root(9/4).Eval()[:value]);
+};</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Intervals use certified endpoint enclosures. <code>rootBits</code> controls endpoint precision, not the width of the input interval. A partially negative domain is not silently clipped.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="8" spellcheck="false">{;
+    Root(x) -&gt; .ExpressionApply(&quot;rix.function.sqrt.real-principal@1&quot;,:Sqrt,[x]);
+    expr := Root(::x);
+    a := expr.Eval([(::x,2:3)],{= rootBits=8 })[:enclosure];
+    b := expr.Eval([(::x,2:3)],{= rootBits=32 })[:enclosure];
+    (b.Start()^2&lt;=2,b.End()^2&gt;=3,
+     b.End()-b.Start()&lt;a.End()-a.Start(),Root(-1:2).Eval()[:status]);
+};</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The same evaluation works under local facts. Saving an expression retains its semantic ID; loading never runs it. Only a subsequent explicit evaluation uses the allowlisted kernel. Unknown semantics remain unresolved.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">{;
+    expr := .ExpressionApply(&quot;rix.function.abs.real@1&quot;,:Abs,[::x]);
+    ans := expr.Eval({&amp; ::x == -3 &amp; });
+    saved := .MathDecodeJSON(.MathEncodeJSON(expr.Substitute([(::x,-4)])));
+    (ans[:value],saved.Eval()[:value],ans[:semantics][1]);
+};</textarea><div class="tutorial-output" data-tutorial-output></div></section></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
