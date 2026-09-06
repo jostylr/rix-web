@@ -250,11 +250,14 @@ earlier in this worksheet.
 ```rix edu
 {;
     expr := ::x^2+1;
-    ans := .MathEvaluate(expr,[(::x,3)]);
+    ans := expr.Eval([(::x,3)]);
     (ans[:status],ans[:value]);
 };
 ```
 
+`expr.Eval(bindings)` is the method form of
+`.MathEvaluate(expr,bindings)`; `expr.Substitute(bindings)` likewise replaces
+`.MathSubstitute(expr,bindings)`. Both methods leave the expression unchanged.
 A mathematical context is more than its result expression. Conditions remain attached
 to the report. The candidate below is 3, but the positive-domain obligation keeps the
 status conditional. A negative replacement contradicts the retained assumption.

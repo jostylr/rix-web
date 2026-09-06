@@ -14271,6 +14271,13 @@ ${indentStr})`;
       ["SEMANTICID", method2("SemanticId", (self) => expressionField(self, "semanticid") || null)]
     ]) };
     proto.entries.set("SYMBOLID", method2("SymbolId", (self) => expressionField(self, "symbolid") || null));
+    for (const [name, capability] of [["Eval", "MathEvaluate"], ["Substitute", "MathSubstitute"]]) {
+      proto.entries.set(name.toUpperCase(), {
+        type: "method_builtin",
+        name,
+        impl: (args, context, evaluate) => evaluate({ fn: "SYS_CALL", args: [capability, ...args] }, context)
+      });
+    }
     const record = {
       type: "map",
       entries: new Map([

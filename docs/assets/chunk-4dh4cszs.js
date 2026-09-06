@@ -9149,6 +9149,13 @@ function expressionRecord(kind, fields = []) {
     ["SEMANTICID", method2("SemanticId", (self) => expressionField(self, "semanticid") || null)]
   ]) };
   proto.entries.set("SYMBOLID", method2("SymbolId", (self) => expressionField(self, "symbolid") || null));
+  for (const [name, capability] of [["Eval", "MathEvaluate"], ["Substitute", "MathSubstitute"]]) {
+    proto.entries.set(name.toUpperCase(), {
+      type: "method_builtin",
+      name,
+      impl: (args, context, evaluate) => evaluate({ fn: "SYS_CALL", args: [capability, ...args] }, context)
+    });
+  }
   const record = {
     type: "map",
     entries: new Map([
@@ -101586,5 +101593,5 @@ var STATIC_SYSTEM_CATALOG = Object.freeze([
 ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
 export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, outputValueKind, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, formatOutputText, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateObserved, parseAndEvaluateObservedAsync, lintRix, createGeometryAuthoringProgram, mountOutputWidgets };
 
-//# debugId=B0B2D4A91A8E462964756E2164756E21
-//# sourceMappingURL=chunk-dsdgcmpj.js.map
+//# debugId=7C930617E7A3C1C464756E2164756E21
+//# sourceMappingURL=chunk-4dh4cszs.js.map

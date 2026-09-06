@@ -99,10 +99,10 @@ portableRoot := .MathDecodeJSON(.MathEncodeJSON(.ExpressionReal(.numerics.Sqrt(2
 <p>Bindings use symbol identities, not names. They are simultaneous and do not modify definitions or programming variables. This evaluator currently computes exact rational arithmetic; unsupported functions and constant providers remain explicit unresolved work. Each example uses a fresh block scope so <code>::x</code> is independent of its definition earlier in this worksheet.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">{;
     expr := ::x^2+1;
-    ans := .MathEvaluate(expr,[(::x,3)]);
+    ans := expr.Eval([(::x,3)]);
     (ans[:status],ans[:value]);
 };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>A mathematical context is more than its result expression. Conditions remain attached to the report. The candidate below is 3, but the positive-domain obligation keeps the status conditional. A negative replacement contradicts the retained assumption.</p>
+<p><code>expr.Eval(bindings)</code> is the method form of <code>.MathEvaluate(expr,bindings)</code>; <code>expr.Substitute(bindings)</code> likewise replaces <code>.MathSubstitute(expr,bindings)</code>. Both methods leave the expression unchanged. A mathematical context is more than its result expression. Conditions remain attached to the report. The candidate below is 3, but the positive-domain obligation keeps the status conditional. A negative replacement contradicts the retained assumption.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">{;
     ctx := {&amp; ::x&gt;0 &amp; ::x+1 };
     good := .MathEvaluate(ctx,[(::x,2)]);
