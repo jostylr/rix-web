@@ -244,11 +244,15 @@ Construct `(x+1)^3` without loading a plugin, then inspect its operands.
 Bindings use symbol identities, not names. They are simultaneous and do not modify
 definitions or programming variables. This evaluator currently computes exact rational
 arithmetic; unsupported functions and constant providers remain explicit unresolved work.
+Each example uses a fresh block scope so `::x` is independent of its definition
+earlier in this worksheet.
 
 ```rix edu
-localizationExpression := ::localizationX^2+1;
-localizationAnswer := .MathEvaluate(localizationExpression,[(::localizationX,3)]);
-(localizationAnswer[:status],localizationAnswer[:value]);
+{;
+    expr := ::x^2+1;
+    ans := .MathEvaluate(expr,[(::x,3)]);
+    (ans[:status],ans[:value]);
+};
 ```
 
 A mathematical context is more than its result expression. Conditions remain attached
@@ -256,18 +260,22 @@ to the report. The candidate below is 3, but the positive-domain obligation keep
 status conditional. A negative replacement contradicts the retained assumption.
 
 ```rix edu
-localizationContext := {& ::localizationX>0 & ::localizationX+1 };
-localizationGood := .MathEvaluate(localizationContext,[(::localizationX,2)]);
-localizationBad := .MathEvaluate(localizationContext,[(::localizationX,-2)]);
-(localizationGood[:status],localizationGood[:value],localizationGood[:candidate],localizationBad[:status]);
+{;
+    ctx := {& ::x>0 & ::x+1 };
+    good := .MathEvaluate(ctx,[(::x,2)]);
+    bad := .MathEvaluate(ctx,[(::x,-2)]);
+    (good[:status],good[:value],good[:candidate],bad[:status]);
+};
 ```
 
 Same-spelled bound and free symbols remain different. Free substitution cannot replace
 a binder or insert a bound symbol. Binder instantiation is a separate, future API.
 
 ```rix edu
-localizationBound := {& :::localizationX | 0:1 & :::localizationX+::localizationX };
-localizationChanged := .MathSubstitute(localizationBound,[(::localizationX,7)]);
-(.SameSymbol(localizationBound[:binders][1],localizationChanged[:result].Operands()[1]),
- .MathEvaluate(localizationChanged)[:status]);
+{;
+    ctx := {& :::x | 0:1 & :::x+::x };
+    changed := .MathSubstitute(ctx,[(::x,7)]);
+    (.SameSymbol(ctx[:binders][1],changed[:result].Operands()[1]),
+     .MathEvaluate(changed)[:status]);
+};
 ```
