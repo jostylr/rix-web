@@ -31731,6 +31731,34 @@ function substituteMathematics(value, bindings) {
   return worker(bindings).walk(value);
 }
 function evaluateMathematics(value, bindings = seq2([])) {
+  const assumptionContext = isContext(bindings) ? bindings : null;
+  if (assumptionContext) {
+    if (!isMathExpression(value))
+      throw new Error("Evaluation under a context requires an expression receiver");
+    const assumptions = expressionField(assumptionContext, "assumptions");
+    if (assumptions?.type !== "sequence" || expressionField(assumptionContext, "domains")?.type !== "sequence" || expressionField(assumptionContext, "binders")?.type !== "sequence")
+      throw new Error("Invalid mathematical evaluation context");
+    const inferred = new Map;
+    const inspector = worker(seq2([]));
+    const exactValue = (expr) => {
+      const expanded = inspector.walk(expr);
+      return rational(expanded) || (expressionField(expanded, "kind")?.value === "constant" ? rational(expressionField(expanded, "value")) : null);
+    };
+    for (const assumption of assumptions.values) {
+      if (expressionField(assumption, "operator")?.value !== "==")
+        continue;
+      const left = expressionField(assumption, "left"), right = expressionField(assumption, "right");
+      for (const [symbol, other] of [[left, right], [right, left]]) {
+        if (!isMathExpression(symbol) || expressionField(symbol, "kind")?.value !== "variable" || !id(symbol) || expressionField(symbol, "bound") || expressionDefinition(symbol))
+          continue;
+        const exact3 = exactValue(other);
+        if (exact3 && !inferred.has(id(symbol)))
+          inferred.set(id(symbol), { type: "tuple", values: [symbol, exact3] });
+      }
+    }
+    bindings = seq2([...inferred.values()]);
+    value = record2({ ...Object.fromEntries(assumptionContext.entries), result: value });
+  }
   const localized = substituteMathematics(value, bindings);
   const { tick } = worker(seq2([]));
   const reasons = new Set;
@@ -31788,7 +31816,39 @@ function evaluateMathematics(value, bindings = seq2([])) {
   const candidate = calculate(context ? expressionField(context, "result") : localized);
   let conditional = false, invalid = false;
   if (context) {
-    conditional = !!expressionField(context, "binders")?.values.length || !!expressionField(context, "domains")?.values.length || expressionField(context, "validation")?.value === "unverifiedImport";
+    conditional = !!expressionField(context, "binders")?.values.length || expressionField(context, "validation")?.value === "unverifiedImport";
+    for (const entry of expressionField(context, "domains")?.values || []) {
+      const point2 = assumptionContext ? rational(expressionField(expressionField(entry, "symbol"), "value")) : null;
+      const domain = expressionField(entry, "domain");
+      if (!point2 || !domain) {
+        conditional = true;
+        continue;
+      }
+      for (const [endpoint, closed, lower2] of [["lower", "lowerclosed", true], ["upper", "upperclosed", false]]) {
+        const raw = expressionField(domain, endpoint);
+        if (raw === null)
+          continue;
+        const bound = rational(raw), inclusion = expressionField(domain, closed);
+        if (!bound || !(inclusion === null || inclusion instanceof Integer && inclusion.value === 1n)) {
+          conditional = true;
+          continue;
+        }
+        const c = point2.lessThan(bound) ? -1 : point2.greaterThan(bound) ? 1 : 0;
+        if ((lower2 ? c < 0 : c > 0) || c === 0 && inclusion === null)
+          invalid = true;
+      }
+      const excluded = expressionField(domain, "excluded");
+      if (excluded?.type !== "sequence")
+        conditional = true;
+      else
+        for (const raw of excluded.values) {
+          const bound = rational(raw);
+          if (!bound)
+            conditional = true;
+          else if (!point2.lessThan(bound) && !point2.greaterThan(bound))
+            invalid = true;
+        }
+    }
     for (const assumption of expressionField(context, "assumptions")?.values || []) {
       const a = calculate(expressionField(assumption, "left")), b = calculate(expressionField(assumption, "right"));
       if (!a || !b) {
@@ -31811,6 +31871,7 @@ function evaluateMathematics(value, bindings = seq2([])) {
     candidate: invalid ? null : candidate,
     localized,
     context,
+    assumptioncontext: assumptionContext,
     reasons: seq2([...reasons].map(str2))
   });
 }
@@ -101593,5 +101654,5 @@ var STATIC_SYSTEM_CATALOG = Object.freeze([
 ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
 export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, outputValueKind, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, formatOutputText, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateObserved, parseAndEvaluateObservedAsync, lintRix, createGeometryAuthoringProgram, mountOutputWidgets };
 
-//# debugId=7C930617E7A3C1C464756E2164756E21
-//# sourceMappingURL=chunk-4dh4cszs.js.map
+//# debugId=D68E275022E1348D64756E2164756E21
+//# sourceMappingURL=chunk-jnxgm79j.js.map

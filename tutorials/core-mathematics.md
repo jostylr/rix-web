@@ -232,8 +232,9 @@ conservative equality. The existing name-based calculus, CAS, range, and
 specification consumers reject scoped expressions and extended constants until their identity/provider-aware
 conversion is implemented. The first section's constructor-based examples
 remain usable with those consumers. Bounded free substitution and rational evaluation
-are now available below. Binder instantiation, domain discharge, remaining numeric
-adapters, and safe refinement-recipe restoration remain pending. Graph serialization
+are now available below. Binder instantiation, general domain reasoning, remaining numeric
+adapters, and safe refinement-recipe restoration remain pending. Context-argument
+evaluation below supports exact equalities and rational point-domain checks. Graph serialization
 and frozen snapshots are available now.
 
 :::challenge Build and inspect
@@ -280,5 +281,46 @@ a binder or insert a bound symbol. Binder instantiation is a separate, future AP
     changed := .MathSubstitute(ctx,[(::x,7)]);
     (.SameSymbol(ctx[:binders][1],changed[:result].Operands()[1]),
      .MathEvaluate(changed)[:status]);
+};
+```
+## Evaluating under local mathematical facts
+
+Use capitalized expression methods, just like functions. `Substitute` explicitly
+replaces symbols; `Eval` can instead use a mathematical context containing local
+facts. Semicolons separate the header assumptions. Its body can be empty.
+
+```rix edu
+{;
+    expr := ::x^2+::y;
+    ctx := {& ::x==3; ::y==7 & };
+    ans := expr.Eval(ctx);
+    changed := expr.Substitute([(::y,::x)]);
+    (ans[:status],ans[:value],changed==::x^2+::x,.ExpressionDefinition(::x));
+};
+```
+
+The values are local to evaluation, not definitions installed on the symbols.
+Exact points are checked against the retained rational domains. Merely saying
+x is positive does not pick a numerical value for x.
+
+```rix edu
+{;
+    expr := ::x+1;
+    ans := expr.Eval({& ::x>0; ::x==3 & });
+    (ans[:value],expr.Eval({& ::x>0 & })[:status],expr.Eval()[:status]);
+};
+```
+
+Equalities between symbols remain relationships, not instructions to solve a
+system. Once exact values are supplied, incompatible relationships are diagnosed.
+A complete result means evaluation succeeded under its retained assumptions;
+it is not a proof that those assumptions hold universally.
+
+```rix edu
+{;
+    expr := ::x+1;
+    unknown := expr.Eval({& ::x==::y; ::y==7 & });
+    conflict := expr.Eval({& ::x==3; ::y==7; ::x==::y & });
+    (unknown[:status],conflict[:status],conflict[:value]);
 };
 ```

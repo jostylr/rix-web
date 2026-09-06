@@ -58,5 +58,13 @@ for (const [mode,evaluate] of [["sync",parseAndEvaluate],["async",parseAndEvalua
         expect(results[19].values[3].value).toBe("invalidAssumptions");
         expect(results[20].values[0].value).toBe(1n);
         expect(results[20].values[1].value).toBe("unresolved");
+        expect(results[21].values[0].value).toBe("complete");
+        expect(String(results[21].values[1])).toBe("16");
+        expect(results[21].values[2].value).toBe(1n);
+        expect(results[21].values[3]).toBeNull();
+        expect(String(results[22].values[0])).toBe("4");
+        expect(results[22].values.slice(1).map(v=>v.value)).toEqual(["unresolved","unresolved"]);
+        expect(results[23].values.slice(0,2).map(v=>v.value)).toEqual(["unresolved","invalidAssumptions"]);
+        expect(results[23].values[2]).toBeNull();
     });
 }
