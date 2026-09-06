@@ -48,7 +48,7 @@ import {
   parseAndEvaluateObservedAsync,
   renderOutputHtml,
   tokenize
-} from "./chunk-06rxk1b6.js";
+} from "./chunk-z7c15mx5.js";
 
 // standard-profile.rix
 var standard_profile_default = `## RiX-Web standard calculator profile.
@@ -4878,7 +4878,9 @@ CasPolynomial(value, variable) -> {;
     name = CasVariableName(variable);
     value ? :Polynomial
       ?: value
-      ?_ .poly(.calculus.ToSpec(CasExpression(value),[name]),name);
+      ?_ (.ExpressionHasScopedSymbols(value)
+          ?: .poly(CasExpression(value),name)
+          ?_ .poly(.calculus.ToSpec(CasExpression(value),[name]),name));
 };
 
 CasPolynomialExpression(polynomial) ?!- [
@@ -4887,7 +4889,9 @@ CasPolynomialExpression(polynomial) ?!- [
     variable = .calculus.Variable(polynomial.Variable());
     coefficients = polynomial.Coefficients(:ascending);
     coefficients.Reduce((sum,coefficient,index)->
-        sum+coefficient*(variable^(index-1)),
+        coefficient==0 ?: sum
+          ?_ index==1 ?: sum+coefficient
+          ?_ sum+coefficient*(variable^(index-1)),
         .calculus.Constant(0)
     );
 };
@@ -27287,8 +27291,12 @@ PolyDegree(polynomial) -> {;
     (coefficients.Len() == 1 && PolyIsZero(coefficients[1])) ?: -1 ?_ coefficients.Len() - 1;
 };
 
+PolyVariableEqual(left,right) ->
+    .IsExpression(left) ?: .ExpressionVariableMatches(left,right)
+      ?_ .IsExpression(right) ?: .ExpressionVariableMatches(right,left)
+      ?_ left==right;
 PolySameVariable(left, right) -> {;
-    left.variable == right.variable ?: 1 ?_ .Error(@"Polynomial variables must match: @{left.variable} and @{right.variable}");
+    PolyVariableEqual(left.variable,right.variable) ?: 1 ?_ .Error("Polynomial variable identities must match");
 };
 
 PolyPromote(value, variable) -> value ? :Polynomial ?: value ?_ PolyFromAscending([PolyExact(value, "Polynomial operand")], variable, 0, _, [:scalar]);
@@ -27321,7 +27329,7 @@ PolyArraysEqual(left, right) -> {;
 
 PolyEqual(left, right) -> {;
     (left ? :Polynomial) && (right ? :Polynomial)
-      ?: (left.variable == right.variable && PolyArraysEqual(PolyCurrentAscending(left), PolyCurrentAscending(right)))
+      ?: (PolyVariableEqual(left.variable,right.variable) && PolyArraysEqual(PolyCurrentAscending(left), PolyCurrentAscending(right)))
       ?_ 0;
 };
 
@@ -27476,6 +27484,11 @@ PolyFromRecord(source, second) -> {;
 };
 
 PolyConstruct(source, second ?= _) -> {;
+    !.IsExpression(source) ?_> {;
+        variable = .ExpressionVariableSelector(@source,@second);
+        coefficients = .MathPolynomialCoefficients(@source,variable);
+        PolyFromAscending(coefficients,variable,_,_,[:coreSymbolicSource]);
+    };
     isPolynomial = source ? :Polynomial;
     isArray = source ? :Array;
     isMap = source ? :Map;
@@ -35544,5 +35557,5 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
 
 export { pluginProfileFromUrl, stripMarkedPluginProfile, findHelp, createRixRepl };
 
-//# debugId=F0DFF25473B67D0B64756E2164756E21
-//# sourceMappingURL=chunk-y5g44s5w.js.map
+//# debugId=0F56887B2D62809264756E2164756E21
+//# sourceMappingURL=chunk-dm81zee8.js.map

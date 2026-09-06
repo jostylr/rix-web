@@ -492,3 +492,34 @@ just a reciprocal. Unsupported branch conditions remain conditional.
     (good[:value],bad[:status],good[:obligations].Len());
 };
 ```
+## Scoped polynomial forms
+
+Collection and factoring preserve the selected symbol inside their polynomial objects.
+Those objects can be evaluated, combined with polynomials in the same identity, and
+integrated. A distinct same-named symbol is not an interchangeable polynomial variable.
+
+```rix edu
+.Plugin.Load("cas");
+{;
+    collected := .cas.Collect((::x+1)^3,::x);
+    p := collected[:polynomial];
+    primitive := .cas.Integrate(p);
+    factored := .cas.Factor(::x^2-1,::x);
+    (.SameSymbol(p.Variable(),::x),p.Evaluate(2),
+     primitive[:antiderivative].Eval([(::x,1)])[:value],factored[:status],
+     .cas.Expand((::x+1)^3,::x)[:expression].Eval([(::x,0)])[:value]);
+};
+```
+
+The coefficient compiler has explicit per-call work budgets. It rejects foreign
+symbols and operations with variable-dependent undefined points rather than silently
+converting them into a different polynomial.
+
+```rix edu
+.Plugin.Load("poly");
+{;
+    coefficients := .MathPolynomialCoefficients((::x+1)^32,::x,{= maxProductPairs=4096 });
+    p := .poly({= coefficients=coefficients,order=:ascending,variable=::x });
+    (p.Degree(),.SameSymbol(p.Variable(),::x),p.Evaluate(0));
+};
+```

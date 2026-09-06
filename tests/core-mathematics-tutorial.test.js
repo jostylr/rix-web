@@ -94,5 +94,10 @@ for (const [mode,evaluate] of [["sync",parseAndEvaluate],["async",parseAndEvalua
         expect(String(results[34].values[0])).toBe("1/2");
         expect(results[34].values[1].value).toBe("invalidAssumptions");
         expect(String(results[34].values[2])).toBe("1");
+        expect(results[35].values[0].value).toBe(1n);
+        expect(results[35].values.slice(1,3).map(String)).toEqual(["27","15/4"]);
+        expect(results[35].values[3].value).toBe("complete");
+        expect(String(results[35].values[4])).toBe("1");
+        expect(results[36].values.map(String)).toEqual(["32","1","1"]);
     });
 }

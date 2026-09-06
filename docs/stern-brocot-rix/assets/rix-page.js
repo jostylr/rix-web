@@ -12849,7 +12849,7 @@ ${indentStr})`;
       Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC", "SPECROLES", "SPECFRACTIONPARTS", "SArith", "ExpressionVariable", "ExpressionConstant", "ExpressionOperation", "ExpressionApply", "IsExpression", "ExpressionKey", "ExpressionHasScopedSymbols", "SameSymbol", "SYMBOL_RETRIEVE", "SYMBOL_DEFINE", "ExpressionDefinition", "ExpressionExpand", "ExpressionVariableSelector", "ExpressionVariableMatches"]),
       MathematicalContexts: Object.freeze(["MATH_CONTEXT", "BOUND_SYMBOL"]),
       MathematicalSerialization: Object.freeze(["MathEncodeJSON", "MathDecodeJSON", "MathEncodeJSONL", "MathDecodeJSONL"]),
-      MathematicalLocalization: Object.freeze(["MathSubstitute", "MathEvaluate", "MathInstantiate", "MathBudgets", "MathEvaluateCalculus"]),
+      MathematicalLocalization: Object.freeze(["MathSubstitute", "MathEvaluate", "MathInstantiate", "MathBudgets", "MathEvaluateCalculus", "MathPolynomialCoefficients"]),
       SymbolicConstants: Object.freeze(["ExpressionConstantInfo", "ExpressionHasExtendedConstants", "ExpressionReal", "ExpressionRefine"]),
       Notation: Object.freeze(["SArith", "Poly", "NotationParser"]),
       Random: Object.freeze(["RNG", "RANDOMSEED", "RandomSeed", "RAND_NAME"]),
@@ -37525,6 +37525,91 @@ ${indented.join(`,
   }
   var mathBudgetRecord = (limits) => ({ type: "map", entries: new Map(Object.entries(limits).map(([key, value]) => [key, new Integer(BigInt(value))])), _ext: new Map([["immutable", new Integer(1n)]]) });
 
+  // rix/src/runtime/math-polynomial.js
+  function mathematicalPolynomialCoefficients(expression, variable, options) {
+    if (!isMathExpression(expression))
+      throw new Error("Polynomial compilation requires a core expression");
+    expressionCapabilities.ExpressionVariableSelector.impl([expression, variable]);
+    const limits = mathBudgets(options), provider = createProviderEvaluation(new Set, limits);
+    let visits = 0;
+    const zero = () => new Rational(0n), one = () => new Rational(1n);
+    const matches = (node) => variable?.type === "string" ? !expressionField(node, "symbolid") && expressionField(node, "name")?.value === variable.value : expressionStructuralKey(node) === expressionStructuralKey(variable);
+    const trim = (values2) => {
+      while (values2.length > 1 && values2.at(-1).numerator === 0n)
+        values2.pop();
+      if (values2.length > limits.maxterms || values2.length - 1 > limits.maxdegree)
+        throw new Error("Mathematical polynomial degree/term budget exceeded");
+      return values2;
+    };
+    function add2(a, b, subtract2 = false) {
+      if (a.length + b.length > limits.maxsumterms)
+        throw new Error("Mathematical polynomial sum budget exceeded");
+      return trim(Array.from({ length: Math.max(a.length, b.length) }, (_, i) => provider.operate(subtract2 ? "subtract" : "add", [a[i] || zero(), b[i] || zero()])));
+    }
+    function multiply2(a, b) {
+      if (a.length * b.length > limits.maxproductpairs || a.length + b.length - 2 > limits.maxdegree || a.length + b.length - 1 > limits.maxterms)
+        throw new Error("Mathematical polynomial product/degree budget exceeded");
+      const result = Array.from({ length: a.length + b.length - 1 }, zero);
+      for (let i = 0;i < a.length; i++)
+        for (let j = 0;j < b.length; j++)
+          result[i + j] = provider.operate("add", [result[i + j], provider.operate("multiply", [a[i], b[j]])]);
+      return trim(result);
+    }
+    function visit(node, depth = 0) {
+      if (++visits > limits.maxvisits || depth > limits.maxdepth)
+        throw new Error("Mathematical polynomial traversal budget exceeded");
+      const definition = expressionDefinition(node);
+      if (definition)
+        return visit(definition, depth + 1);
+      const kind = expressionField(node, "kind")?.value;
+      if (kind === "constant") {
+        const value = asRational5(expressionField(node, "value"));
+        if (!value)
+          throw new Error("Polynomial coefficients require rational constants");
+        return [provider.read(value)];
+      }
+      if (kind === "variable") {
+        if (!matches(node))
+          throw new Error("Univariate polynomial contains another symbolic identity");
+        return trim([zero(), one()]);
+      }
+      if (kind !== "operator")
+        throw new Error("Polynomial compilation does not accept semantic applications");
+      const operands = expressionField(node, "operands").values, op = expressionField(node, "operation").value;
+      const a = visit(operands[0], depth + 1);
+      if (op === "negate")
+        return a.map((v) => provider.operate("negate", [v]));
+      const b = visit(operands[1], depth + 1);
+      if (op === "add" || op === "subtract")
+        return add2(a, b, op === "subtract");
+      if (op === "multiply")
+        return multiply2(a, b);
+      if (op === "divide") {
+        if (b.length !== 1 || b[0].numerator === 0n)
+          throw new Error("Polynomial compilation requires a nonzero constant denominator");
+        return a.map((v) => provider.operate("divide", [v, b[0]]));
+      }
+      if (op === "power") {
+        if (b.length !== 1 || b[0].denominator !== 1n || b[0].numerator < 0n || b[0].numerator > BigInt(limits.maxexponent))
+          throw new Error("Polynomial exponent unsupported or exceeds budget");
+        let n = b[0].numerator;
+        if (n === 0n && (a.length !== 1 || a[0].numerator === 0n))
+          throw new Error("Zero power cannot discard a possible undefined point");
+        let result = [one()], factor = a;
+        while (n) {
+          if (n % 2n)
+            result = multiply2(result, factor);
+          n /= 2n;
+          if (n)
+            factor = multiply2(factor, factor);
+        }
+        return result;
+      }
+      throw new Error("Unsupported polynomial operation");
+    }
+    return { type: "sequence", values: visit(expression) };
+  }
+
   // rix/src/runtime/math-localize.js
   var str2 = (value) => ({ type: "string", value });
   var seq2 = (values2) => ({ type: "sequence", values: values2 });
@@ -37755,6 +37840,7 @@ ${indented.join(`,
     });
   }
   var mathematicalLocalizationCapabilities = {
+    MathPolynomialCoefficients: { impl: ([expression, variable, options]) => mathematicalPolynomialCoefficients(expression, variable, options), pure: false, doc: "Compile a selected symbolic identity into bounded ascending rational coefficients" },
     MathEvaluateCalculus: { impl: ([value, bindings = seq2([]), options]) => {
       const transformation = expressionField(value, "schema")?.value === "rix.calculus.transformation@1" ? value : null;
       const expression = transformation ? expressionField(value, "expression") : value;
@@ -60979,8 +61065,12 @@ PolyDegree(polynomial) -> {;
     (coefficients.Len() == 1 && PolyIsZero(coefficients[1])) ?: -1 ?_ coefficients.Len() - 1;
 };
 
+PolyVariableEqual(left,right) ->
+    .IsExpression(left) ?: .ExpressionVariableMatches(left,right)
+      ?_ .IsExpression(right) ?: .ExpressionVariableMatches(right,left)
+      ?_ left==right;
 PolySameVariable(left, right) -> {;
-    left.variable == right.variable ?: 1 ?_ .Error(@"Polynomial variables must match: @{left.variable} and @{right.variable}");
+    PolyVariableEqual(left.variable,right.variable) ?: 1 ?_ .Error("Polynomial variable identities must match");
 };
 
 PolyPromote(value, variable) -> value ? :Polynomial ?: value ?_ PolyFromAscending([PolyExact(value, "Polynomial operand")], variable, 0, _, [:scalar]);
@@ -61013,7 +61103,7 @@ PolyArraysEqual(left, right) -> {;
 
 PolyEqual(left, right) -> {;
     (left ? :Polynomial) && (right ? :Polynomial)
-      ?: (left.variable == right.variable && PolyArraysEqual(PolyCurrentAscending(left), PolyCurrentAscending(right)))
+      ?: (PolyVariableEqual(left.variable,right.variable) && PolyArraysEqual(PolyCurrentAscending(left), PolyCurrentAscending(right)))
       ?_ 0;
 };
 
@@ -61168,6 +61258,11 @@ PolyFromRecord(source, second) -> {;
 };
 
 PolyConstruct(source, second ?= _) -> {;
+    !.IsExpression(source) ?_> {;
+        variable = .ExpressionVariableSelector(@source,@second);
+        coefficients = .MathPolynomialCoefficients(@source,variable);
+        PolyFromAscending(coefficients,variable,_,_,[:coreSymbolicSource]);
+    };
     isPolynomial = source ? :Polynomial;
     isArray = source ? :Array;
     isMap = source ? :Map;
@@ -64892,7 +64987,9 @@ CasPolynomial(value, variable) -> {;
     name = CasVariableName(variable);
     value ? :Polynomial
       ?: value
-      ?_ .poly(.calculus.ToSpec(CasExpression(value),[name]),name);
+      ?_ (.ExpressionHasScopedSymbols(value)
+          ?: .poly(CasExpression(value),name)
+          ?_ .poly(.calculus.ToSpec(CasExpression(value),[name]),name));
 };
 
 CasPolynomialExpression(polynomial) ?!- [
@@ -64901,7 +64998,9 @@ CasPolynomialExpression(polynomial) ?!- [
     variable = .calculus.Variable(polynomial.Variable());
     coefficients = polynomial.Coefficients(:ascending);
     coefficients.Reduce((sum,coefficient,index)->
-        sum+coefficient*(variable^(index-1)),
+        coefficient==0 ?: sum
+          ?_ index==1 ?: sum+coefficient
+          ?_ sum+coefficient*(variable^(index-1)),
         .calculus.Constant(0)
     );
 };
@@ -83298,6 +83397,8 @@ ndNamespace._proto={=
   function attachCanonicalSpec(value, context, evaluate) {
     const metadata = purePolynomialMetadata(value);
     if (!metadata)
+      return value;
+    if (isMathExpression(metadata.variable))
       return value;
     const coefficients = polynomialCoefficients(value, context, evaluate);
     const polynomial = new Map;
