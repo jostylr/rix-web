@@ -82,5 +82,6 @@ for (const [mode,evaluate] of [["sync",parseAndEvaluate],["async",parseAndEvalua
         expect(results[28].values[2]).toBeNull();
         expect(results[28].values[3].value).toBe(1n);
         expect(results[28].values[4].value).toBe("conditional");
+        expect(results[29].values.map(v=>v.value)).toEqual(["complete",2048n,1024n]);
     });
 }

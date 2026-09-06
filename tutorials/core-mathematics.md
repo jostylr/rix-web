@@ -400,3 +400,21 @@ evaluation conditional. Live provider evidence is protocol-checked, not independ
      b.End()-b.Start()<a.End()-a.Start(),saved.Eval()[:status]);
 };
 ```
+## Choosing a work budget
+
+Raise or lower a budget for one call without changing the worksheet's defaults.
+`MathBudgets` lists the effective settings, and each evaluation report records them.
+Here a larger input-term-product budget permits an exact expansion that exceeds
+the default. Larger budgets can require much more time and memory.
+
+```rix edu
+{;
+    expr := (::x+1)^64;
+    ans := expr.Eval([(::x,1~{pi})],{= maxProductPairs=2048 });
+    (ans[:status],ans[:budgets][:maxProductPairs],.MathBudgets()[:maxProductPairs]);
+};
+```
+
+The same final options map works with `Substitute` and `Instantiate`. Traversal
+depth retains a host-safety ceiling of 512; JSON import limits and real refinement
+budgets are separate. Raising a work budget never disables mathematical domain checks.

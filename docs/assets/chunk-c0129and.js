@@ -12634,7 +12634,7 @@ var runtimeDefaults = Object.freeze({
     Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC", "SPECROLES", "SPECFRACTIONPARTS", "SArith", "ExpressionVariable", "ExpressionConstant", "ExpressionOperation", "ExpressionApply", "IsExpression", "ExpressionKey", "ExpressionHasScopedSymbols", "SameSymbol", "SYMBOL_RETRIEVE", "SYMBOL_DEFINE", "ExpressionDefinition", "ExpressionExpand"]),
     MathematicalContexts: Object.freeze(["MATH_CONTEXT", "BOUND_SYMBOL"]),
     MathematicalSerialization: Object.freeze(["MathEncodeJSON", "MathDecodeJSON", "MathEncodeJSONL", "MathDecodeJSONL"]),
-    MathematicalLocalization: Object.freeze(["MathSubstitute", "MathEvaluate", "MathInstantiate"]),
+    MathematicalLocalization: Object.freeze(["MathSubstitute", "MathEvaluate", "MathInstantiate", "MathBudgets"]),
     SymbolicConstants: Object.freeze(["ExpressionConstantInfo", "ExpressionHasExtendedConstants", "ExpressionReal", "ExpressionRefine"]),
     Notation: Object.freeze(["SArith", "Poly", "NotationParser"]),
     Random: Object.freeze(["RNG", "RANDOMSEED", "RandomSeed", "RAND_NAME"]),
@@ -31679,40 +31679,39 @@ var mathematicalJSONCapabilities = {
 var asRational5 = (value) => value instanceof Integer ? new Rational(value.value, 1n) : value instanceof Rational && value.denominator !== 0n ? value : null;
 var interval2 = (value) => value instanceof RationalInterval ? value : asRational5(value) ? new RationalInterval(asRational5(value), asRational5(value)) : null;
 var size = (value) => value?.type === "exact_expression" ? value.terms.size : 1;
-var maxDigits = 1e4;
-var maxTerms = 1024;
-function rationalBudget(value) {
+function rationalBudget(value, limits) {
+  const maxDigits = limits.maxdigits;
   if (!asRational5(value) || value.numerator?.toString().length > maxDigits || value.denominator?.toString().length > maxDigits || value.value?.toString().length > maxDigits)
     throw new Error("Mathematical evaluation integer budget exceeded");
 }
-function budget(value) {
+function budget(value, limits) {
   if (value instanceof RationalInterval) {
-    rationalBudget(value.low);
-    rationalBudget(value.high);
+    rationalBudget(value.low, limits);
+    rationalBudget(value.high, limits);
     return value;
   }
   if (!isExactValue(value)) {
-    rationalBudget(value);
+    rationalBudget(value, limits);
     return value;
   }
   const checkGenerator = (generator) => {
-    if (generator.polynomial?.length > 64)
+    if (generator.polynomial?.length > limits.maxpolynomialcoefficients)
       throw new Error("Mathematical evaluation polynomial budget exceeded");
     for (const c of generator.polynomial || [])
-      rationalBudget(c);
+      rationalBudget(c, limits);
   };
   if (value.type === "exact_generator")
     checkGenerator(value);
   else {
-    if (size(value) > maxTerms)
+    if (size(value) > limits.maxterms)
       throw new Error("Mathematical evaluation exact-term budget exceeded");
     for (const term of value.terms.values()) {
-      rationalBudget(term.coefficient);
-      if (term.powers.size > 64)
+      rationalBudget(term.coefficient, limits);
+      if (term.powers.size > limits.maxgenerators)
         throw new Error("Mathematical evaluation generator budget exceeded");
       for (const [generator, power] of term.powers) {
         checkGenerator(generator);
-        if (!Number.isSafeInteger(power) || Math.abs(power) > 1e4)
+        if (!Number.isSafeInteger(power) || Math.abs(power) > limits.maxdegree)
           throw new Error("Mathematical evaluation degree budget exceeded");
       }
     }
@@ -31742,7 +31741,8 @@ function compareProviderValues(left, right, op) {
   }
   return null;
 }
-function createProviderEvaluation(reasons) {
+function createProviderEvaluation(reasons, limits) {
+  const check = (value) => budget(value, limits);
   const providers = new Map, reals = new Map;
   let sawReal = false, sawSet = false, unverified = false;
   const unsupported = (reason) => {
@@ -31755,7 +31755,7 @@ function createProviderEvaluation(reasons) {
       sawReal = true;
       unverified ||= !real.source;
       if (!reals.has(real.id)) {
-        reals.set(real.id, budget(new RationalInterval(real.interval.start, real.interval.end)));
+        reals.set(real.id, check(new RationalInterval(real.interval.start, real.interval.end)));
         providers.set(real.id, constantProviderInfo(value));
       }
       return reals.get(real.id);
@@ -31764,31 +31764,31 @@ function createProviderEvaluation(reasons) {
       sawSet = true;
     if (!asRational5(value) && !(value instanceof RationalInterval) && !isExactValue(value))
       return unsupported("unsupportedConstantProvider");
-    const result = budget(asRational5(value) || value);
+    const result = check(asRational5(value) || value);
     const key = value instanceof RationalInterval ? "rationalInterval" : isExactValue(value) ? "exactScalar" : "rational";
     if (!providers.has(key))
       providers.set(key, constantProviderInfo(value));
     return result;
   }
   function multiply2(a, b) {
-    if (size(a) * size(b) > maxTerms)
+    if (size(a) * size(b) > limits.maxproductpairs)
       throw new Error("Mathematical evaluation exact-term budget exceeded");
-    return budget(multiplyScalars(a, b));
+    return check(multiplyScalars(a, b));
   }
   function operate(op, args) {
     const [a, b] = args;
     if (op === "power") {
       const exponent = asRational5(b);
-      if (!exponent || exponent.denominator !== 1n || exponent.numerator > 256n || exponent.numerator < -256n)
+      if (!exponent || exponent.denominator !== 1n || exponent.numerator > BigInt(limits.maxexponent) || exponent.numerator < -BigInt(limits.maxexponent))
         return unsupported("unsupportedExponent");
       const n = exponent.numerator, range = interval2(a);
       if (n <= 0n && (range ? range.containsZero() : true))
         return unsupported(range ? "undefinedPower" : "nonzeroNotEstablished");
       if (range) {
         const magnitude = Number(n < 0n ? -n : n);
-        if ([range.low, range.high].some((v) => Math.max(v.numerator.toString().length, v.denominator.toString().length) * magnitude > maxDigits))
+        if ([range.low, range.high].some((v) => Math.max(v.numerator.toString().length, v.denominator.toString().length) * magnitude > limits.maxdigits))
           throw new Error("Mathematical evaluation integer budget exceeded");
-        return budget(a instanceof RationalInterval ? a.pow(n) : asRational5(a).pow(n));
+        return check(a instanceof RationalInterval ? a.pow(n) : asRational5(a).pow(n));
       }
       let result = new Rational(1n), factor = a, remaining = n;
       while (remaining > 0n) {
@@ -31806,7 +31806,7 @@ function createProviderEvaluation(reasons) {
       const x = interval2(a), y = b === undefined ? null : interval2(b);
       if (op === "divide" && y.containsZero())
         return unsupported("divisorMayContainZero");
-      return budget({ add: () => x.add(y), subtract: () => x.subtract(y), multiply: () => x.multiply(y), divide: () => x.divide(y), negate: () => x.negate() }[op]());
+      return check({ add: () => x.add(y), subtract: () => x.subtract(y), multiply: () => x.multiply(y), divide: () => x.divide(y), negate: () => x.negate() }[op]());
     }
     if (op === "divide") {
       const denominator = asRational5(b);
@@ -31814,17 +31814,17 @@ function createProviderEvaluation(reasons) {
         return unsupported("nonRationalExactDivisor");
       if (denominator.numerator === 0n)
         return unsupported("divisionByZero");
-      return budget(divideScalars(a, denominator));
+      return check(divideScalars(a, denominator));
     }
     if (op === "multiply")
       return multiply2(a, b);
     if (op === "add" || op === "subtract") {
-      if (size(a) + size(b) > maxTerms)
+      if ((isExactValue(a) || isExactValue(b)) && size(a) + size(b) > limits.maxsumterms)
         throw new Error("Mathematical evaluation exact-term budget exceeded");
-      return budget(op === "add" ? addScalars(a, b) : subtractScalars(a, b));
+      return check(op === "add" ? addScalars(a, b) : subtractScalars(a, b));
     }
     if (op === "negate")
-      return budget(negateScalar(a));
+      return check(negateScalar(a));
     return unsupported("unsupportedOperation");
   }
   return {
@@ -31841,6 +31841,38 @@ function createProviderEvaluation(reasons) {
   };
 }
 
+// ../rix/src/runtime/math-budgets.js
+var DEFAULT_MATH_BUDGETS = Object.freeze({
+  maxvisits: 1e4,
+  maxdepth: 128,
+  maxdigits: 1e4,
+  maxterms: 1024,
+  maxproductpairs: 1024,
+  maxsumterms: 1024,
+  maxgenerators: 64,
+  maxpolynomialcoefficients: 64,
+  maxdegree: 1e4,
+  maxexponent: 256
+});
+function mathBudgets(options) {
+  const result = { ...DEFAULT_MATH_BUDGETS };
+  if (options === undefined || options === null)
+    return result;
+  if (options?.type !== "map")
+    throw new Error("Mathematical budgets require an options map");
+  for (const [key, value] of options.entries) {
+    if (!Object.hasOwn(result, key))
+      throw new Error(`Unknown mathematical budget: ${key}`);
+    if (!(value instanceof Integer) || value.value < 1n || value.value > BigInt(Number.MAX_SAFE_INTEGER))
+      throw new Error(`Mathematical budget ${key} requires a positive safe integer`);
+    result[key] = Number(value.value);
+  }
+  if (result.maxdepth > 512)
+    throw new Error("Mathematical maxDepth exceeds the host safety ceiling of 512");
+  return result;
+}
+var mathBudgetRecord = (limits) => ({ type: "map", entries: new Map(Object.entries(limits).map(([key, value]) => [key, new Integer(BigInt(value))])), _ext: new Map([["immutable", new Integer(1n)]]) });
+
 // ../rix/src/runtime/math-localize.js
 var str2 = (value) => ({ type: "string", value });
 var seq2 = (values2) => ({ type: "sequence", values: values2 });
@@ -31848,13 +31880,13 @@ var record2 = (fields2) => attachMathContextMethods({ type: "map", entries: new 
 var rational = (value) => value instanceof Integer ? new Rational(value.value, 1n) : value instanceof Rational && value.denominator !== 0n ? value : null;
 var isContext = (value) => expressionField(value, "schema")?.value === "rix.math.context@1";
 var id = (value) => expressionField(value, "symbolid")?.value;
-function worker(bindings, allowedBinders = null) {
+function worker(bindings, allowedBinders = null, limits = mathBudgets()) {
   if (!["sequence", "tuple"].includes(bindings?.type))
     throw new Error("Mathematical bindings require a sequence of (symbol, value) pairs");
   const replacements = new Map;
   let visits = 0;
   const tick = (depth) => {
-    if (++visits > 1e4 || depth > 128)
+    if (++visits > limits.maxvisits || depth > limits.maxdepth)
       throw new Error("Mathematical localization traversal budget exceeded");
   };
   function checkReplacement(value, depth = 0) {
@@ -31912,23 +31944,24 @@ function worker(bindings, allowedBinders = null) {
   }
   return { walk, tick };
 }
-function instantiateMathematics(value, bindings) {
+function instantiateMathematics(value, bindings, options) {
   if (!isContext(value) || expressionField(value, "binders")?.type !== "sequence")
     throw new Error("MathInstantiate requires a mathematical context");
   const allowed = new Set(expressionField(value, "binders").values.map(id));
-  const localized = worker(bindings, allowed).walk(value);
+  const localized = worker(bindings, allowed, mathBudgets(options)).walk(value);
   localized.entries.set("instantiations", seq2([
     ...expressionField(localized, "instantiations")?.values || [],
     ...bindings.values.map((pair) => record2({ symbol: pair.values[0], value: promoteExpression(pair.values[1]) }))
   ]));
   return localized;
 }
-function substituteMathematics(value, bindings) {
+function substituteMathematics(value, bindings, options) {
   if (!isMathExpression(value) && !isContext(value))
     throw new Error("MathSubstitute requires an expression or mathematical context");
-  return worker(bindings).walk(value);
+  return worker(bindings, null, mathBudgets(options)).walk(value);
 }
-function evaluateMathematics(value, bindings = seq2([])) {
+function evaluateMathematics(value, bindings = seq2([]), options) {
+  const limits = mathBudgets(options);
   const assumptionContext = isContext(bindings) ? bindings : null;
   if (assumptionContext) {
     if (!isMathExpression(value))
@@ -31937,7 +31970,7 @@ function evaluateMathematics(value, bindings = seq2([])) {
     if (assumptions?.type !== "sequence" || expressionField(assumptionContext, "domains")?.type !== "sequence" || expressionField(assumptionContext, "binders")?.type !== "sequence")
       throw new Error("Invalid mathematical evaluation context");
     const inferred = new Map;
-    const inspector = worker(seq2([]));
+    const inspector = worker(seq2([]), null, limits);
     const exactValue = (expr) => {
       const expanded = inspector.walk(expr);
       return rational(expanded) || (expressionField(expanded, "kind")?.value === "constant" ? rational(expressionField(expanded, "value")) : null);
@@ -31957,10 +31990,12 @@ function evaluateMathematics(value, bindings = seq2([])) {
     bindings = seq2([...inferred.values()]);
     value = record2({ ...Object.fromEntries(assumptionContext.entries), result: value });
   }
-  const localized = substituteMathematics(value, bindings);
-  const { tick } = worker(seq2([]));
+  const localized = worker(bindings, null, limits).walk(value);
+  if (!isMathExpression(value) && !isContext(value))
+    throw new Error("MathEvaluate requires an expression or mathematical context");
+  const { tick } = worker(seq2([]), null, limits);
   const reasons = new Set;
-  const provider = createProviderEvaluation(reasons);
+  const provider = createProviderEvaluation(reasons, limits);
   function calculate(expr, depth = 0) {
     tick(depth);
     if (isExpressionScalar(expr))
@@ -32057,13 +32092,15 @@ function evaluateMathematics(value, bindings = seq2([])) {
     reasons: seq2([...reasons].map(str2)),
     resultkind: str2(invalid ? "unresolved" : resultKind),
     enclosure: !invalid && candidate instanceof RationalInterval ? candidate : null,
-    providers: seq2(provider.providers)
+    providers: seq2(provider.providers),
+    budgets: mathBudgetRecord(limits)
   });
 }
 var mathematicalLocalizationCapabilities = {
-  MathInstantiate: { impl: ([value, bindings]) => instantiateMathematics(value, bindings), pure: false, doc: "Instantiate selected local binders while retaining their domains and assumptions" },
-  MathSubstitute: { impl: ([value, bindings]) => substituteMathematics(value, bindings), pure: false, doc: "Simultaneous identity-based free substitution retaining context conditions" },
-  MathEvaluate: { impl: ([value, bindings]) => evaluateMathematics(value, bindings), pure: false, doc: "Bounded exact rational evaluation with explicit unresolved context obligations" }
+  MathBudgets: { impl: ([options]) => mathBudgetRecord(mathBudgets(options)), pure: true, doc: "Inspect default or overridden per-call mathematical budgets" },
+  MathInstantiate: { impl: ([value, bindings, options]) => instantiateMathematics(value, bindings, options), pure: false, doc: "Instantiate selected local binders while retaining their domains and assumptions" },
+  MathSubstitute: { impl: ([value, bindings, options]) => substituteMathematics(value, bindings, options), pure: false, doc: "Simultaneous identity-based free substitution retaining context conditions" },
+  MathEvaluate: { impl: ([value, bindings, options]) => evaluateMathematics(value, bindings, options), pure: false, doc: "Bounded provider evaluation with explicit unresolved context obligations" }
 };
 
 // ../rix/src/runtime/system-context.js
@@ -101840,5 +101877,5 @@ var STATIC_SYSTEM_CATALOG = Object.freeze([
 ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
 export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, outputValueKind, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, formatOutputText, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateObserved, parseAndEvaluateObservedAsync, lintRix, createGeometryAuthoringProgram, mountOutputWidgets };
 
-//# debugId=E15520FAD2A1772264756E2164756E21
-//# sourceMappingURL=chunk-mj452ay5.js.map
+//# debugId=944DB9A98ED1C71F64756E2164756E21
+//# sourceMappingURL=chunk-c0129and.js.map
