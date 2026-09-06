@@ -48,7 +48,7 @@ import {
   parseAndEvaluateObservedAsync,
   renderOutputHtml,
   tokenize
-} from "./chunk-hgb2xt75.js";
+} from "./chunk-c7epm5jz.js";
 
 // standard-profile.rix
 var standard_profile_default = `## RiX-Web standard calculator profile.
@@ -21975,7 +21975,7 @@ numericsNamespace._proto = {=
     RewriteGraph = (self, source, target, theorem) ->
         .CalculusGraphRewrite(source,target,theorem),
     CheckGraphRewrite = (self, result) -> .CalculusGraphRewriteCheck(result),
-    CheckDerivativeGraph = (self, transformation) -> .CalculusDerivativeCheck(transformation),
+    CheckDerivativeGraph = (self, transformation, options ?= {= }) -> .CalculusDerivativeCheck(transformation,options),
     DerivativeSign = (self, transformation, bindings, options ?= {= }) ->
         .CalculusDerivativeSign(transformation,bindings,options),
     LipschitzRange = (self, transformation, bindings, options ?= {= }) ->
@@ -21995,8 +21995,8 @@ numericsNamespace._proto = {=
         .KrawczykBox(expressions,jacobian,bindings,options),
     CheckKrawczyk = (self, result) -> .KrawczykCheck(result),
     CheckMultivariateRange = (self, result) -> .MultivariateRangeCheck(result),
-    RecognizeGraph = (self, expression, variable) ->
-        .CalculusRangeRecognize(expression, variable),
+    RecognizeGraph = (self, expression, variable, options ?= {= }) ->
+        .CalculusRangeRecognize(expression, variable, options),
     FunctionFacts = (self, function) -> NumericsFunctionFacts(function),
     WithRangeKnowledge = (self, function, knowledge) ->
         NumericsWithRangeKnowledge(function, knowledge),
@@ -35557,5 +35557,5 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
 
 export { pluginProfileFromUrl, stripMarkedPluginProfile, findHelp, createRixRepl };
 
-//# debugId=BB93BF77D56CEA2464756E2164756E21
-//# sourceMappingURL=chunk-0a3s7rn5.js.map
+//# debugId=0BBA2A31F39DEE3364756E2164756E21
+//# sourceMappingURL=chunk-c0tqtgqs.js.map

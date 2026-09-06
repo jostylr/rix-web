@@ -9327,6 +9327,234 @@ function mathBudgets(options) {
 }
 var mathBudgetRecord = (limits) => ({ type: "map", entries: new Map(Object.entries(limits).map(([key, value]) => [key, new Integer(BigInt(value))])), _ext: new Map([["immutable", new Integer(1n)]]) });
 
+// ../rix/src/runtime/math-semantic-eval.js
+var REAL_SEMANTICS = Object.freeze(["rix.function.abs.real@1", "rix.function.sqrt.real-principal@1"]);
+function integerRoot(value) {
+  if (value < 2n)
+    return value;
+  let root = 1n << BigInt(Math.ceil(value.toString(2).length / 2));
+  for (;; ) {
+    const next = (root + value / root) / 2n;
+    if (next >= root)
+      return root;
+    root = next;
+  }
+}
+function rootBounds(value, limits) {
+  if (value.numerator.toString().length + Math.ceil(2 * limits.rootbits / 3) > limits.maxdigits)
+    throw new Error("Mathematical square-root integer budget exceeded");
+  const scale = 1n << BigInt(limits.rootbits);
+  const numerator = value.numerator * scale * scale;
+  const root = integerRoot(numerator / value.denominator);
+  const exact = root * root * value.denominator === numerator;
+  return [new Rational(root, scale), new Rational(exact ? root : root + 1n, scale)];
+}
+function evaluateRealSemantic(id, args, limits, check, unsupported) {
+  if (!REAL_SEMANTICS.includes(id))
+    return unsupported("unlinkedSemanticApplication");
+  if (args.length !== 1)
+    return unsupported("semanticArityMismatch");
+  const value = args[0] instanceof Integer ? new Rational(args[0].value, 1n) : args[0];
+  if (!(value instanceof Rational) && !(value instanceof RationalInterval))
+    return unsupported("unsupportedSemanticProvider");
+  const zero = new Rational(0n);
+  if (id === "rix.function.abs.real@1") {
+    if (value instanceof Rational)
+      return check(value.abs());
+    if (value.high.lessThan(zero))
+      return check(value.negate());
+    if (!value.low.lessThan(zero))
+      return check(new RationalInterval(value.low, value.high));
+    const negative = value.low.negate();
+    return check(new RationalInterval(zero, negative.greaterThan(value.high) ? negative : value.high));
+  }
+  if (value instanceof Rational) {
+    if (value.lessThan(zero))
+      return unsupported("outsideRealSquareRootDomain");
+    return check(exactSquareRoot(value));
+  }
+  if (value.high.lessThan(zero))
+    return unsupported("outsideRealSquareRootDomain");
+  if (value.low.lessThan(zero))
+    return unsupported("squareRootDomainUnresolved");
+  const lower = rootBounds(value.low, limits), upper = rootBounds(value.high, limits);
+  return check(new RationalInterval(lower[0], upper[1]));
+}
+
+// ../rix/src/runtime/math-provider-eval.js
+var asRational5 = (value) => value instanceof Integer ? new Rational(value.value, 1n) : value instanceof Rational && value.denominator !== 0n ? value : null;
+var interval = (value) => value instanceof RationalInterval ? value : asRational5(value) ? new RationalInterval(asRational5(value), asRational5(value)) : null;
+var size = (value) => value?.type === "exact_expression" ? value.terms.size : 1;
+function rationalBudget(value, limits) {
+  const maxDigits = limits.maxdigits;
+  if (!asRational5(value) || value.numerator?.toString().length > maxDigits || value.denominator?.toString().length > maxDigits || value.value?.toString().length > maxDigits)
+    throw new Error("Mathematical evaluation integer budget exceeded");
+}
+function budget(value, limits) {
+  if (value instanceof RationalInterval) {
+    rationalBudget(value.low, limits);
+    rationalBudget(value.high, limits);
+    return value;
+  }
+  if (!isExactValue(value)) {
+    rationalBudget(value, limits);
+    return value;
+  }
+  const checkGenerator = (generator) => {
+    if (generator.polynomial?.length > limits.maxpolynomialcoefficients)
+      throw new Error("Mathematical evaluation polynomial budget exceeded");
+    for (const c of generator.polynomial || [])
+      rationalBudget(c, limits);
+  };
+  if (value.type === "exact_generator")
+    checkGenerator(value);
+  else {
+    if (size(value) > limits.maxterms)
+      throw new Error("Mathematical evaluation exact-term budget exceeded");
+    for (const term of value.terms.values()) {
+      rationalBudget(term.coefficient, limits);
+      if (term.powers.size > limits.maxgenerators)
+        throw new Error("Mathematical evaluation generator budget exceeded");
+      for (const [generator, power] of term.powers) {
+        checkGenerator(generator);
+        if (!Number.isSafeInteger(power) || Math.abs(power) > limits.maxdegree)
+          throw new Error("Mathematical evaluation degree budget exceeded");
+      }
+    }
+  }
+  return value;
+}
+function compareProviderValues(left, right, op) {
+  const a = interval(left), b = interval(right);
+  if (!a || !b) {
+    if (["==", "!="].includes(op)) {
+      const equal = constantEquality(left, right);
+      return equal === null ? null : op === "==" ? equal : !equal;
+    }
+    return null;
+  }
+  if (op === ">")
+    return compareProviderValues(right, left, "<");
+  if (op === ">=")
+    return compareProviderValues(right, left, "<=");
+  if (op === "<")
+    return a.high.lessThan(b.low) ? true : !a.low.lessThan(b.high) ? false : null;
+  if (op === "<=")
+    return !a.high.greaterThan(b.low) ? true : a.low.greaterThan(b.high) ? false : null;
+  if (op === "==" || op === "!=") {
+    const equal = a.high.lessThan(b.low) || b.high.lessThan(a.low) ? false : a.low.equals(a.high) && b.low.equals(b.high) ? a.low.equals(b.low) : null;
+    return equal === null ? null : op === "==" ? equal : !equal;
+  }
+  return null;
+}
+function createProviderEvaluation(reasons, limits) {
+  const check = (value) => budget(value, limits);
+  const providers = new Map, reals = new Map, semantics = new Set;
+  let sawReal = false, sawSet = false, unverified = false;
+  const unsupported = (reason) => {
+    reasons.add(reason);
+    return null;
+  };
+  function read(value) {
+    const real = realConstantState(value);
+    if (real) {
+      sawReal = true;
+      unverified ||= !real.source;
+      if (!reals.has(real.id)) {
+        reals.set(real.id, check(new RationalInterval(real.interval.start, real.interval.end)));
+        providers.set(real.id, constantProviderInfo(value));
+      }
+      return reals.get(real.id);
+    }
+    if (value instanceof RationalInterval)
+      sawSet = true;
+    if (!asRational5(value) && !(value instanceof RationalInterval) && !isExactValue(value))
+      return unsupported("unsupportedConstantProvider");
+    const result = check(asRational5(value) || value);
+    const key = value instanceof RationalInterval ? "rationalInterval" : isExactValue(value) ? "exactScalar" : "rational";
+    if (!providers.has(key))
+      providers.set(key, constantProviderInfo(value));
+    return result;
+  }
+  function multiply(a, b) {
+    if (size(a) * size(b) > limits.maxproductpairs)
+      throw new Error("Mathematical evaluation exact-term budget exceeded");
+    return check(multiplyScalars(a, b));
+  }
+  function operate(op, args) {
+    const [a, b] = args;
+    if (op === "power") {
+      const exponent = asRational5(b);
+      if (!exponent || exponent.denominator !== 1n || exponent.numerator > BigInt(limits.maxexponent) || exponent.numerator < -BigInt(limits.maxexponent))
+        return unsupported("unsupportedExponent");
+      const n = exponent.numerator, range = interval(a);
+      if (n <= 0n && (range ? range.containsZero() : true))
+        return unsupported(range ? "undefinedPower" : "nonzeroNotEstablished");
+      if (range) {
+        const magnitude = Number(n < 0n ? -n : n);
+        if ([range.low, range.high].some((v) => Math.max(v.numerator.toString().length, v.denominator.toString().length) * magnitude > limits.maxdigits))
+          throw new Error("Mathematical evaluation integer budget exceeded");
+        return check(a instanceof RationalInterval ? a.pow(n) : asRational5(a).pow(n));
+      }
+      let result = new Rational(1n), factor = a, remaining = n;
+      while (remaining > 0n) {
+        if (remaining % 2n)
+          result = multiply(result, factor);
+        remaining /= 2n;
+        if (remaining)
+          factor = multiply(factor, factor);
+      }
+      return result;
+    }
+    if (args.some((v) => v instanceof RationalInterval)) {
+      if (args.some((v) => !interval(v)))
+        return unsupported("mixedProviderArithmetic");
+      const x = interval(a), y = b === undefined ? null : interval(b);
+      if (op === "divide" && y.containsZero())
+        return unsupported("divisorMayContainZero");
+      return check({ add: () => x.add(y), subtract: () => x.subtract(y), multiply: () => x.multiply(y), divide: () => x.divide(y), negate: () => x.negate() }[op]());
+    }
+    if (op === "divide") {
+      const denominator = asRational5(b);
+      if (!denominator)
+        return unsupported("nonRationalExactDivisor");
+      if (denominator.numerator === 0n)
+        return unsupported("divisionByZero");
+      return check(divideScalars(a, denominator));
+    }
+    if (op === "multiply")
+      return multiply(a, b);
+    if (op === "add" || op === "subtract") {
+      if ((isExactValue(a) || isExactValue(b)) && size(a) + size(b) > limits.maxsumterms)
+        throw new Error("Mathematical evaluation exact-term budget exceeded");
+      return check(op === "add" ? addScalars(a, b) : subtractScalars(a, b));
+    }
+    if (op === "negate")
+      return check(negateScalar(a));
+    return unsupported("unsupportedOperation");
+  }
+  return {
+    read,
+    operate,
+    supportsApplication: (id) => REAL_SEMANTICS.includes(id),
+    apply: (id, args) => {
+      semantics.add(id);
+      return evaluateRealSemantic(id, args, limits, check, unsupported);
+    },
+    get semantics() {
+      return [...semantics];
+    },
+    get unverified() {
+      return unverified;
+    },
+    get providers() {
+      return [...providers.values()];
+    },
+    isApproximation: (value) => sawReal && value instanceof RationalInterval,
+    resultKind: (value) => value === null ? "unresolved" : value instanceof RationalInterval ? sawSet ? "setEnclosure" : "singletonEnclosure" : isExactValue(value) ? "exactScalar" : "rational"
+  };
+}
+
 // ../rix/src/runtime/calculus-range.js
 var CALCULUS_GRAPH_RANGE_SCHEMA = "rix.numerics.calculus-graph-range@1";
 var CALCULUS_GRAPH_RANGE_CHECKER = "rix.runtime.calculus-graph-range-checker@1";
@@ -9865,7 +10093,7 @@ function differentiatePrimitiveNode(expression, variable) {
   if (kind === "constant")
     return { expression: graphConstant(0), obligations: [] };
   if (kind === "variable") {
-    const name = textValue(mapValue(expression, "name"))?.toLowerCase();
+    const name = rangeVariableKey(expression);
     return { expression: graphConstant(name === variable ? 1 : 0), obligations: [] };
   }
   if (kind === "apply")
@@ -9926,21 +10154,28 @@ function obligationFingerprint(value) {
     textValue(mapValue(value, "reason"))
   ].join("|");
 }
-function differentiateCalculusPrimitiveGraphN(expression, variableValues) {
-  if (hasScopedSymbols(expression))
-    throw new Error("Scoped differentiation requires the calculus plugin identity-aware API");
+function differentiateCalculusPrimitiveGraphN(expression, variableValues, options = map2([])) {
+  validateRangeTraversal(expression, options);
   if (!isExpression(expression))
     throw new Error("Expected a Calculus expression graph");
   const rawVariables = Array.isArray(variableValues) ? variableValues : [variableValues];
-  const variables = rawVariables.map((value) => textValue(value)?.toLowerCase());
-  if (variables.length < 1 || variables.length > 16 || variables.some((value) => !value)) {
+  const variables = rawVariables.map((value) => mapValue(value, "symbolid") ? value : textValue(value)?.toLowerCase());
+  const maxOrder = derivativeOrderLimit(options);
+  if (hasScopedSymbols(expression) && variables.some((value) => !mapValue(value, "symbolid")))
+    throw new Error("Scoped derivative checking requires symbolic selectors");
+  for (const variable of variables)
+    if (mapValue(variable, "symbolid"))
+      rangeVariableKey(variable);
+  if (variables.length < 1 || variables.length > maxOrder || variables.some((value) => !value)) {
     throw new Error("invalidDerivativeVariables");
   }
-  let current = expression;
+  let current = hasScopedSymbols(expression) ? expandExpression(expression) : expression;
   const obligations = [];
   const derivativeExpressions = [];
   for (const variable of variables) {
-    const result = differentiatePrimitiveNode(current, variable);
+    validateRangeTraversal(current, options);
+    const result = differentiatePrimitiveNode(current, typeof variable === "string" ? variable : rangeVariableKey(variable));
+    validateRangeTraversal(result.expression, options);
     current = result.expression;
     obligations.push(...result.obligations);
     derivativeExpressions.push(current);
@@ -9957,27 +10192,35 @@ function differentiateCalculusPrimitiveGraphN(expression, variableValues) {
     obligations: Object.freeze(obligations)
   });
 }
-function checkCalculusDerivativeTransformation(transformation) {
+function derivativeOrderLimit(options) {
+  const raw = mapValue(options, "maxderivativeorder");
+  const value = integerValue(raw, raw == null ? 16n : null);
+  if (value === null || value < 1n || value > BigInt(Number.MAX_SAFE_INTEGER))
+    throw new Error("maxDerivativeOrder must be a positive safe integer");
+  return Number(value);
+}
+function checkCalculusDerivativeTransformation(transformation, options = map2([])) {
   try {
     if (textValue(mapValue(transformation, "schema")) !== "rix.calculus.transformation@1" || textValue(mapValue(transformation, "operation")) !== "differentiate") {
       throw new Error("notCalculusDerivativeTransformation");
     }
     const source = mapValue(transformation, "source");
     const expression = mapValue(transformation, "expression");
-    const variable = textValue(mapValue(transformation, "variable"));
+    const variable = mapValue(transformation, "variable");
     const order = integerValue(mapValue(transformation, "order"), 1n);
-    if (order < 1n || order > 16n)
+    if (order < 1n || order > BigInt(derivativeOrderLimit(options)))
       throw new Error("unsupportedDerivativeOrder");
     const claimedObligations = collectionValues(mapValue(transformation, "obligations"));
     if (!isExpression(source) || !isExpression(expression) || !claimedObligations) {
       throw new Error("malformedDerivativeTransformation");
     }
     const claimedVariables = collectionValues(mapValue(transformation, "variables"));
-    const variables = claimedVariables ? claimedVariables.map((value) => textValue(value)) : Array.from({ length: Number(order) }, () => variable);
+    const variables = claimedVariables ? claimedVariables : Array.from({ length: Number(order) }, () => variable);
     if (variables.length !== Number(order) || variables.some((value) => !value)) {
       throw new Error("derivativeOrderVariableMismatch");
     }
-    const actual = differentiateCalculusPrimitiveGraphN(source, variables);
+    validateRangeTraversal(expression, options);
+    const actual = differentiateCalculusPrimitiveGraphN(source, variables, options);
     if (calculusGraphStructuralKey(expression) !== actual.derivativeGraph) {
       throw new Error("derivativeGraphMismatch");
     }
@@ -10047,7 +10290,7 @@ function derivativeObligationChecks(identity, bindings, options, conventions) {
   });
 }
 function evaluateCalculusDerivativeSign(transformation, bindings, options, conventions = { zeroPowerZero: "undefined" }) {
-  const identity = checkCalculusDerivativeTransformation(transformation);
+  const identity = checkCalculusDerivativeTransformation(transformation, options);
   if (!identity.accepted) {
     return Object.freeze({
       schema: CALCULUS_DERIVATIVE_SIGN_SCHEMA,
@@ -10070,6 +10313,8 @@ function evaluateCalculusDerivativeSign(transformation, bindings, options, conve
       diagnostics: Object.freeze(["derivativeSignRequiresFirstDerivative"])
     });
   }
+  if (mapValue(identity.variable, "symbolid") && bindings?.type === "map")
+    throw new Error("Scoped derivative ranges require identity binding pairs");
   const derivativeExpression = mapValue(transformation, "expression");
   const derivativeRange = evaluateCalculusGraphRange(derivativeExpression, bindings, options, conventions);
   const obligationChecks = derivativeObligationChecks(identity, bindings, options, conventions);
@@ -10095,8 +10340,15 @@ function evaluateCalculusDerivativeSign(transformation, bindings, options, conve
     direction = "nondecreasing";
   else if (rangeCertified && nonpositive.contains(derivativeRange.range))
     direction = "nonincreasing";
+  const variableKey = typeof identity.variable === "string" ? identity.variable : rangeVariableKey(identity.variable);
+  const variableDomain = normalizeBindings(bindings).get(variableKey);
+  const connectedDomain = variableDomain?.components.length === 1 && !variableDomain.isEmpty;
+  if (!connectedDomain)
+    direction = "unknown";
   const monotonicityCertified = direction !== "unknown";
   const diagnostics = [];
+  if (!connectedDomain)
+    diagnostics.push("monotonicityRequiresOneConnectedVariableDomain");
   if (!derivativeRange.certified || derivativeRange.domainStatus !== "allDefined") {
     diagnostics.push("derivativeRangeNotTotal");
   }
@@ -10160,19 +10412,22 @@ function closedStrategyPieces(input, maximum) {
   return pieces;
 }
 function strategySetup(transformation, bindings, options, requiredOrder) {
-  const identity = checkCalculusDerivativeTransformation(transformation);
+  const identity = checkCalculusDerivativeTransformation(transformation, options);
   if (!identity.accepted)
     throw new Error(identity.reason);
   if (identity.order !== requiredOrder)
     throw new Error(`strategyRequiresDerivativeOrder${requiredOrder}`);
-  if (identity.variables.some((variable) => variable !== identity.variables[0])) {
+  if (mapValue(identity.variable, "symbolid") && bindings?.type === "map")
+    throw new Error("Scoped derivative ranges require identity binding pairs");
+  const variableKey = (value) => typeof value === "string" ? value : rangeVariableKey(value);
+  if (identity.variables.some((variable) => variableKey(variable) !== variableKey(identity.variables[0]))) {
     throw new Error("strategyRequiresOneDifferentiationVariable");
   }
   const normalized = normalizeBindings(bindings);
-  if (normalized.size !== 1 || !normalized.has(identity.variable)) {
+  if (normalized.size !== 1 || !normalized.has(variableKey(identity.variable))) {
     throw new Error("strategyRequiresOneMatchingBinding");
   }
-  const input = normalized.get(identity.variable);
+  const input = normalized.get(variableKey(identity.variable));
   const pieces = closedStrategyPieces(input, subdivisionCount(options));
   let optionEntries = [];
   if (options?.type === "map" && options.entries instanceof Map) {
@@ -10185,6 +10440,8 @@ function strategySetup(transformation, bindings, options, requiredOrder) {
   return { identity, input, pieces, pieceOptions: map2(optionEntries) };
 }
 function pieceBindings(variable, piece) {
+  if (mapValue(variable, "symbolid"))
+    return sequence2([{ type: "tuple", values: [variable, piece] }]);
   return map2([[variable, piece]]);
 }
 function strategyFailure(schema, strategy, transformation, bindings, options, conventions, reason) {
@@ -10403,70 +10660,88 @@ function trimPolynomial2(coefficients) {
     result.pop();
   return result;
 }
-function polynomialAdd2(left, right, subtract = false) {
+function boundedPolynomial(values, budget2) {
+  if (values.length > budget2.maxterms || values.length - 1 > budget2.maxdegree)
+    throw new Error("recognitionDegreeTermBudget");
+  for (const value of values)
+    budget2.arithmetic.read(value);
+  return trimPolynomial2(values);
+}
+function polynomialAdd2(left, right, subtract, budget2) {
+  if (left.length + right.length > budget2.maxsumterms)
+    throw new Error("recognitionSumBudget");
   const length = Math.max(left.length, right.length);
   const result = [];
   for (let index = 0;index < length; index += 1) {
     const a = left[index] ?? Rational.zero;
     const b = right[index] ?? Rational.zero;
-    result.push(subtract ? a.subtract(b) : a.add(b));
+    result.push(budget2.arithmetic.operate(subtract ? "subtract" : "add", [a, b]));
   }
-  return trimPolynomial2(result);
+  return boundedPolynomial(result, budget2);
 }
 function polynomialNegate2(value) {
   return trimPolynomial2(value.map((coefficient) => coefficient.negate()));
 }
-function polynomialMultiply2(left, right) {
+function polynomialMultiply2(left, right, budget2) {
+  if (left.length * right.length > budget2.maxproductpairs)
+    throw new Error("recognitionProductBudget");
+  if (left.length + right.length - 1 > budget2.maxterms || left.length + right.length - 2 > budget2.maxdegree)
+    throw new Error("recognitionDegreeTermBudget");
   const result = Array.from({ length: left.length + right.length - 1 }, () => Rational.zero);
   for (let i = 0;i < left.length; i += 1) {
     for (let j = 0;j < right.length; j += 1) {
-      result[i + j] = result[i + j].add(left[i].multiply(right[j]));
+      result[i + j] = budget2.arithmetic.operate("add", [result[i + j], budget2.arithmetic.operate("multiply", [left[i], right[j]])]);
     }
   }
-  return trimPolynomial2(result);
+  return boundedPolynomial(result, budget2);
 }
-function polynomialPower(value, exponent) {
+function polynomialPower(value, exponent, budget2) {
+  if (exponent > BigInt(budget2.maxexponent))
+    throw new Error("recognitionExponentBudget");
   let power = exponent;
   let factor = value;
   let result = [Rational.one];
   while (power > 0n) {
     if ((power & 1n) === 1n)
-      result = polynomialMultiply2(result, factor);
+      result = polynomialMultiply2(result, factor, budget2);
     power >>= 1n;
     if (power > 0n)
-      factor = polynomialMultiply2(factor, factor);
+      factor = polynomialMultiply2(factor, factor, budget2);
   }
   return trimPolynomial2(result);
 }
 function isZeroPolynomial(value) {
   return value.length === 1 && value[0].equals(Rational.zero);
 }
-function rationalGraphValue(numerator, denominator = [Rational.one], restrictions = []) {
+function rationalGraphValue(numerator, denominator = [Rational.one], restrictions = [], budget2) {
   return {
-    numerator: trimPolynomial2(numerator),
-    denominator: trimPolynomial2(denominator),
+    numerator: boundedPolynomial(numerator, budget2),
+    denominator: boundedPolynomial(denominator, budget2),
+    budget: budget2,
     restrictions: [...restrictions]
   };
 }
 function rationalGraphAdd(left, right, subtract = false) {
-  return rationalGraphValue(polynomialAdd2(polynomialMultiply2(left.numerator, right.denominator), polynomialMultiply2(right.numerator, left.denominator), subtract), polynomialMultiply2(left.denominator, right.denominator), [...left.restrictions, ...right.restrictions]);
+  const budget2 = left.budget;
+  return rationalGraphValue(polynomialAdd2(polynomialMultiply2(left.numerator, right.denominator, budget2), polynomialMultiply2(right.numerator, left.denominator, budget2), subtract, budget2), polynomialMultiply2(left.denominator, right.denominator, budget2), [...left.restrictions, ...right.restrictions], budget2);
 }
 function rationalGraphMultiply(left, right) {
-  return rationalGraphValue(polynomialMultiply2(left.numerator, right.numerator), polynomialMultiply2(left.denominator, right.denominator), [...left.restrictions, ...right.restrictions]);
+  const budget2 = left.budget;
+  return rationalGraphValue(polynomialMultiply2(left.numerator, right.numerator, budget2), polynomialMultiply2(left.denominator, right.denominator, budget2), [...left.restrictions, ...right.restrictions], budget2);
 }
-function recognizeRationalGraphNode(expression, variable) {
+function recognizeRationalGraphNode(expression, variable, budget2) {
   const kind = expressionKind(expression);
   if (kind === "constant") {
     const value = exactRational(mapValue(expression, "value"));
     if (!value)
       throw new Error("nonRationalGraphConstant");
-    return rationalGraphValue([value]);
+    return rationalGraphValue([value], undefined, [], budget2);
   }
   if (kind === "variable") {
-    const name = textValue(mapValue(expression, "name"))?.toLowerCase();
+    const name = rangeVariableKey(expression);
     if (name !== variable)
       throw new Error(`unexpectedGraphVariable:${String(name)}`);
-    return rationalGraphValue([Rational.zero, Rational.one]);
+    return rationalGraphValue([Rational.zero, Rational.one], undefined, [], budget2);
   }
   if (kind !== "operator") {
     if (kind === "apply") {
@@ -10479,24 +10754,24 @@ function recognizeRationalGraphNode(expression, variable) {
   if (operation === "negate") {
     if (operands.length !== 1)
       throw new Error("graphOperatorArity");
-    const value = recognizeRationalGraphNode(operands[0], variable);
-    return rationalGraphValue(polynomialNegate2(value.numerator), value.denominator, value.restrictions);
+    const value = recognizeRationalGraphNode(operands[0], variable, budget2);
+    return rationalGraphValue(polynomialNegate2(value.numerator), value.denominator, value.restrictions, budget2);
   }
   if (operands.length !== 2)
     throw new Error("graphOperatorArity");
-  const left = recognizeRationalGraphNode(operands[0], variable);
+  const left = recognizeRationalGraphNode(operands[0], variable, budget2);
   if (operation === "power") {
     const exponent = exactIntegerConstant(operands[1]);
     if (exponent === null)
       throw new Error("graphPowerRequiresIntegerConstant");
     if (exponent >= 0n) {
-      return rationalGraphValue(polynomialPower(left.numerator, exponent), polynomialPower(left.denominator, exponent), exponent === 0n ? [...left.restrictions, `zeroPowerZero:${calculusGraphStructuralKey(operands[0])}`] : left.restrictions);
+      return rationalGraphValue(polynomialPower(left.numerator, exponent, budget2), polynomialPower(left.denominator, exponent, budget2), exponent === 0n ? [...left.restrictions, `zeroPowerZero:${calculusGraphStructuralKey(operands[0])}`] : left.restrictions, budget2);
     }
     if (isZeroPolynomial(left.numerator))
       throw new Error("identicallyZeroDenominator");
-    return rationalGraphValue(polynomialPower(left.denominator, -exponent), polynomialPower(left.numerator, -exponent), [...left.restrictions, calculusGraphStructuralKey(operands[0])]);
+    return rationalGraphValue(polynomialPower(left.denominator, -exponent, budget2), polynomialPower(left.numerator, -exponent, budget2), [...left.restrictions, calculusGraphStructuralKey(operands[0])], budget2);
   }
-  const right = recognizeRationalGraphNode(operands[1], variable);
+  const right = recognizeRationalGraphNode(operands[1], variable, budget2);
   if (operation === "add")
     return rationalGraphAdd(left, right);
   if (operation === "subtract")
@@ -10507,25 +10782,30 @@ function recognizeRationalGraphNode(expression, variable) {
     if (isZeroPolynomial(right.numerator))
       throw new Error("identicallyZeroDenominator");
     const divisorKnownNonzeroConstant = right.numerator.length === 1 && right.denominator.length === 1 && !right.numerator[0].equals(Rational.zero);
-    return rationalGraphValue(polynomialMultiply2(left.numerator, right.denominator), polynomialMultiply2(left.denominator, right.numerator), [
+    return rationalGraphValue(polynomialMultiply2(left.numerator, right.denominator, budget2), polynomialMultiply2(left.denominator, right.numerator, budget2), [
       ...left.restrictions,
       ...right.restrictions,
       ...divisorKnownNonzeroConstant ? [] : [calculusGraphStructuralKey(operands[1])]
-    ]);
+    ], budget2);
   }
   throw new Error(`unsupportedGraphOperator:${String(operation)}`);
 }
-function recognizeCalculusGraph(expression, variableValue) {
-  if (hasScopedSymbols(expression))
-    throw new Error("Scoped polynomial recognition requires an identity-aware specification bridge");
+function recognizeCalculusGraph(expression, variableValue, options) {
+  const limits = mathBudgets(options);
+  validateRangeTraversal(expression, map2([["maxdepth", new Integer(BigInt(limits.maxdepth))], ["maxwork", new Integer(BigInt(limits.maxvisits))]]));
   if (!isExpression(expression)) {
     return Object.freeze({ recognized: false, reason: "notCalculusExpression" });
   }
-  const variable = textValue(variableValue)?.toLowerCase();
+  const scoped = hasScopedSymbols(expression) || !!mapValue(variableValue, "symbolid");
+  const variable = scoped ? variableValue : textValue(variableValue)?.toLowerCase();
   if (!variable)
     return Object.freeze({ recognized: false, reason: "invalidPolynomialVariable" });
   try {
-    const value = recognizeRationalGraphNode(expression, variable);
+    if (scoped && !mapValue(variable, "symbolid"))
+      throw new Error("Scoped recognition requires a symbolic selector");
+    const budget2 = { ...limits, arithmetic: createProviderEvaluation(new Set, limits) };
+    const expanded = scoped ? expandExpression(expression) : expression;
+    const value = recognizeRationalGraphNode(expanded, scoped ? rangeVariableKey(variable) : variable, budget2);
     if (isZeroPolynomial(value.denominator)) {
       return Object.freeze({ recognized: false, reason: "identicallyZeroDenominator" });
     }
@@ -10533,7 +10813,7 @@ function recognizeCalculusGraph(expression, variableValue) {
     let denominator = value.denominator;
     if (denominator.length === 1 && !denominator[0].equals(Rational.zero)) {
       const scale = denominator[0].reciprocal();
-      numerator = numerator.map((coefficient) => coefficient.multiply(scale));
+      numerator = numerator.map((coefficient) => budget2.arithmetic.operate("multiply", [coefficient, scale]));
       denominator = [Rational.one];
     }
     const polynomial = denominator.length === 1 && denominator[0].equals(Rational.one) && value.restrictions.length === 0;
@@ -10542,6 +10822,7 @@ function recognizeCalculusGraph(expression, variableValue) {
       schema: "rix.numerics.calculus-graph-recognition@1",
       kind: polynomial ? "polynomial" : "rationalFunction",
       variable,
+      budgets: mathBudgetRecord(limits),
       graphIdentity: calculusGraphStructuralKey(expression),
       numerator: Object.freeze(trimPolynomial2(numerator)),
       denominator: Object.freeze(trimPolynomial2(denominator)),
@@ -11081,7 +11362,7 @@ function calculusGraphRangeValue(expression, bindings, options, context) {
   const conventions = Object.freeze({ zeroPowerZero: policy.zeroPowerZero });
   const result = evaluateCalculusGraphRange(expression, bindings, options, conventions);
   const check = checkCalculusGraphRangeResult(result);
-  const interval = result.range.toRationalInterval();
+  const interval2 = result.range.toRationalInterval();
   const value = map2([
     ["valueKind", text3("calculusGraphRange")],
     ["schema", text3(result.schema)],
@@ -11092,7 +11373,7 @@ function calculusGraphRangeValue(expression, bindings, options, context) {
     ["bindings", bindings],
     ["status", text3(result.status)],
     ["range", result.range],
-    ["interval", interval],
+    ["interval", interval2],
     ["certified", portable(check.certified)],
     ["domainStatus", text3(result.domainStatus)],
     ["exactImage", portable(result.exactImage)],
@@ -11156,8 +11437,8 @@ function calculusGraphRangeCheckValue(value) {
     domainStatus: recomputed.domainStatus
   });
 }
-function calculusGraphRecognitionValue(expression, variable) {
-  return portable(recognizeCalculusGraph(expression, variable));
+function calculusGraphRecognitionValue(expression, variable, options) {
+  return portable(recognizeCalculusGraph(expression, variable, options));
 }
 function calculusGraphSimplificationValue(expression) {
   const result = simplifyCalculusGraph(expression);
@@ -11172,8 +11453,8 @@ function calculusGraphRewriteValue(source, expression, theorem) {
 function calculusGraphRewriteCheckValue(value) {
   return portable(checkCalculusGraphRewrite(value));
 }
-function calculusDerivativeCheckValue(transformation) {
-  return portable(checkCalculusDerivativeTransformation(transformation));
+function calculusDerivativeCheckValue(transformation, options) {
+  return portable(checkCalculusDerivativeTransformation(transformation, options));
 }
 function calculusDerivativeSignValue(transformation, bindings, options, context) {
   const conventions = rangeMathPolicy(context);
@@ -11842,26 +12123,26 @@ function closedComponent(range, reason) {
   }
   return component;
 }
-function rationalIdentity(size) {
-  return Array.from({ length: size }, (_, row) => Array.from({ length: size }, (_2, column) => row === column ? Rational.one : Rational.zero));
+function rationalIdentity(size2) {
+  return Array.from({ length: size2 }, (_, row) => Array.from({ length: size2 }, (_2, column) => row === column ? Rational.one : Rational.zero));
 }
 function invertRationalMatrix(source) {
-  const size = source.length;
+  const size2 = source.length;
   const augmented = source.map((row, rowIndex) => [
     ...row,
-    ...rationalIdentity(size)[rowIndex]
+    ...rationalIdentity(size2)[rowIndex]
   ]);
-  for (let column = 0;column < size; column += 1) {
+  for (let column = 0;column < size2; column += 1) {
     let pivot = column;
-    while (pivot < size && augmented[pivot][column].equals(Rational.zero))
+    while (pivot < size2 && augmented[pivot][column].equals(Rational.zero))
       pivot += 1;
-    if (pivot === size)
+    if (pivot === size2)
       return null;
     if (pivot !== column)
       [augmented[pivot], augmented[column]] = [augmented[column], augmented[pivot]];
     const divisor = augmented[column][column];
     augmented[column] = augmented[column].map((value) => value.divide(divisor));
-    for (let row = 0;row < size; row += 1) {
+    for (let row = 0;row < size2; row += 1) {
       if (row === column)
         continue;
       const factor = augmented[row][column];
@@ -11870,7 +12151,7 @@ function invertRationalMatrix(source) {
       augmented[row] = augmented[row].map((value, index) => value.subtract(factor.multiply(augmented[column][index])));
     }
   }
-  return augmented.map((row) => row.slice(size));
+  return augmented.map((row) => row.slice(size2));
 }
 function krawczykLimits(options) {
   const rawIterations = integerValue2(mapValue2(options, "maxiterations"), integerValue2(mapValue2(options, "maxwork"), 8n));
@@ -12376,10 +12657,10 @@ var arithmeticFunctions = {
   },
   CALCULUS_RANGE_RECOGNIZE: {
     impl(args) {
-      if (args.length !== 2) {
-        throw new Error("CalculusRangeRecognize expects an expression and variable");
+      if (args.length < 2 || args.length > 3) {
+        throw new Error("CalculusRangeRecognize expects an expression, variable, and optional budgets");
       }
-      return calculusGraphRecognitionValue(args[0], args[1]);
+      return calculusGraphRecognitionValue(args[0], args[1], args[2]);
     },
     pure: true,
     doc: "Recognize an exact polynomial or source-domain-preserving rational graph"
@@ -12425,10 +12706,10 @@ var arithmeticFunctions = {
   },
   CALCULUS_DERIVATIVE_CHECK: {
     impl(args) {
-      if (args.length !== 1) {
-        throw new Error("CalculusDerivativeCheck expects one transformation");
+      if (args.length < 1 || args.length > 2) {
+        throw new Error("CalculusDerivativeCheck expects a transformation and optional work options");
       }
-      return calculusDerivativeCheckValue(args[0]);
+      return calculusDerivativeCheckValue(args[0], args[1]);
     },
     pure: true,
     doc: "Independently recompute and check a primitive Calculus derivative transformation"
@@ -17670,13 +17951,13 @@ function dropAsyncStream(source, countValue) {
   return derive(source, { kind: "drop", count, seen: 0 });
 }
 function chunkAsyncStream(source, sizeValue) {
-  const size = positiveInteger(sizeValue, "Stream Chunk size");
-  return derive(source, { kind: "chunk", size, buffer: [] });
+  const size2 = positiveInteger(sizeValue, "Stream Chunk size");
+  return derive(source, { kind: "chunk", size: size2, buffer: [] });
 }
 function windowAsyncStream(source, sizeValue, stepValue = new Integer(1n)) {
-  const size = positiveInteger(sizeValue, "Stream Window size");
+  const size2 = positiveInteger(sizeValue, "Stream Window size");
   const step = positiveInteger(stepValue, "Stream Window step");
-  return derive(source, { kind: "window", size, step, buffer: [], sinceEmit: 0 });
+  return derive(source, { kind: "window", size: size2, step, buffer: [], sinceEmit: 0 });
 }
 function asyncStreamSupportsConcurrentItems(stream) {
   return isAsyncStream(stream) && stream._stream.stages.every((stage) => stage.kind === "map" || stage.kind === "filter" || stage.kind === "expected_error");
@@ -18728,12 +19009,12 @@ var functionFunctions = {
         return null;
       if (isLazySequence(coll))
         coll = materializeLazySequence(coll);
-      const interval = evaluate(intervalNode);
+      const interval2 = evaluate(intervalNode);
       let i_val, j_val;
-      if (interval && interval.constructor && interval.constructor.name === "RationalInterval") {
-        i_val = Number(interval.start.numerator) / Number(interval.start.denominator);
-        j_val = Number(interval.end.numerator) / Number(interval.end.denominator);
-      } else if (interval && interval.type === "interval") {
+      if (interval2 && interval2.constructor && interval2.constructor.name === "RationalInterval") {
+        i_val = Number(interval2.start.numerator) / Number(interval2.start.denominator);
+        j_val = Number(interval2.end.numerator) / Number(interval2.end.denominator);
+      } else if (interval2 && interval2.type === "interval") {
         const getNum = (x) => {
           if (x && x.numerator !== undefined)
             return Number(x.numerator) / Number(x.denominator);
@@ -18741,8 +19022,8 @@ var functionFunctions = {
             return Number(x.value);
           return Number(x);
         };
-        i_val = getNum(interval.lo);
-        j_val = getNum(interval.hi);
+        i_val = getNum(interval2.lo);
+        j_val = getNum(interval2.hi);
       } else {
         return null;
       }
@@ -18836,14 +19117,14 @@ var functionFunctions = {
       } else {
         return emptyOutput;
       }
-      const interval = evaluate(intervalNode);
-      if (!interval)
+      const interval2 = evaluate(intervalNode);
+      if (!interval2)
         throw new Error("Invalid interval for clamping");
       let i_val, j_val;
-      if (interval && interval.constructor && interval.constructor.name === "RationalInterval") {
-        i_val = Number(interval.start.numerator) / Number(interval.start.denominator);
-        j_val = Number(interval.end.numerator) / Number(interval.end.denominator);
-      } else if (interval && interval.type === "interval") {
+      if (interval2 && interval2.constructor && interval2.constructor.name === "RationalInterval") {
+        i_val = Number(interval2.start.numerator) / Number(interval2.start.denominator);
+        j_val = Number(interval2.end.numerator) / Number(interval2.end.denominator);
+      } else if (interval2 && interval2.type === "interval") {
         const getNum = (x) => {
           if (x && x.numerator !== undefined)
             return Number(x.numerator) / Number(x.denominator);
@@ -18851,8 +19132,8 @@ var functionFunctions = {
             return Number(x.value);
           return Number(x);
         };
-        i_val = getNum(interval.lo);
-        j_val = getNum(interval.hi);
+        i_val = getNum(interval2.lo);
+        j_val = getNum(interval2.hi);
       } else {
         throw new Error("Invalid interval representation");
       }
@@ -20306,8 +20587,8 @@ function matrixPower(matrix, exponent, context, evaluate) {
     throw new Error("Matrix power requires a nonempty Matrix");
   const zeroValue = invokeScalarOperator("SUB", [entries[0], entries[0]], context, evaluate);
   const oneValue = invokeScalarOperator("POW", [entries[0], new Integer(0n)], context, evaluate);
-  const size = matrix.shape[0];
-  let result = createShaped([size, size], Array.from({ length: size * size }, (_, index) => Math.floor(index / size) === index % size ? oneValue : zeroValue));
+  const size2 = matrix.shape[0];
+  let result = createShaped([size2, size2], Array.from({ length: size2 * size2 }, (_, index) => Math.floor(index / size2) === index % size2 ? oneValue : zeroValue));
   let base = matrix;
   let remaining = exponent.value;
   while (remaining > 0n) {
@@ -22046,11 +22327,11 @@ function createGeneratorValue(args, ctx, evaluate, defaultMode) {
     knownLength: numericLimit,
     maxIterations,
     label: "sequence generator",
-    pull(state, self, budget) {
+    pull(state, self, budget2) {
       if (state.stop || numericLimit !== null && state.emitted >= numericLimit)
         return { done: true };
       let attempts = 0;
-      while (attempts < budget) {
+      while (attempts < budget2) {
         let candidate;
         if (state.seedIndex < state.seeds.length) {
           candidate = state.seeds[state.seedIndex++];
@@ -22112,7 +22393,7 @@ function createGeneratorValue(args, ctx, evaluate, defaultMode) {
         }
         return { done: false, value: captureResolvedValue(value, defaultMode), attempts };
       }
-      return { attempts: budget + 1 };
+      return { attempts: budget2 + 1 };
     }
   });
   if (!eager)
@@ -23478,8 +23759,8 @@ var asyncStreamMethods = {
   FILTER: method3("FILTER", ([target, predicate]) => asyncStreamMethodHelpers.filterAsyncStream(target, predicate)),
   TAKE: method3("TAKE", ([target, count]) => asyncStreamMethodHelpers.takeAsyncStream(target, count)),
   DROP: method3("DROP", ([target, count]) => asyncStreamMethodHelpers.dropAsyncStream(target, count)),
-  CHUNK: method3("CHUNK", ([target, size]) => asyncStreamMethodHelpers.chunkAsyncStream(target, size)),
-  WINDOW: method3("WINDOW", ([target, size, step]) => asyncStreamMethodHelpers.windowAsyncStream(target, size, step)),
+  CHUNK: method3("CHUNK", ([target, size2]) => asyncStreamMethodHelpers.chunkAsyncStream(target, size2)),
+  WINDOW: method3("WINDOW", ([target, size2, step]) => asyncStreamMethodHelpers.windowAsyncStream(target, size2, step)),
   FOREACH: method3("FOREACH", ([target, callable], _context, _evaluate, _invoke, execution) => requireAsyncStreamExecution(execution, "ForEach").consume(target, {
     kind: "forEach",
     callable,
@@ -24102,10 +24383,10 @@ var shapedMethods = {
   }),
   MEAN: method3("MEAN", ([target]) => {
     ensureShaped(target, "Mean");
-    const size = shapedSize(target);
-    if (size === 0)
+    const size2 = shapedSize(target);
+    if (size2 === 0)
       return null;
-    return arithmeticDiv(shapedMethods.SUM.impl([target]), int5(size));
+    return arithmeticDiv(shapedMethods.SUM.impl([target]), int5(size2));
   }),
   REDUCE: method3("REDUCE", ([target, iterator, initial], context, evaluate, invoke, execution) => reduceEntries(target, iterator, initial, context, evaluate, invoke, execution))
 };
@@ -24580,7 +24861,7 @@ function integer(value, label = "Binding index") {
     return Number(value);
   throw new Error(`${label} must be an integer`);
 }
-function interval(value) {
+function interval2(value) {
   if (value instanceof RationalInterval)
     return { start: value.start, end: value.end };
   if (value?.type === "interval")
@@ -24588,7 +24869,7 @@ function interval(value) {
   return null;
 }
 function selector(value) {
-  const range = interval(value);
+  const range = interval2(value);
   return range ? { kind: "slice", start: range.start, end: range.end } : { kind: "index", value };
 }
 function selectorLabel(item) {
@@ -26558,12 +26839,12 @@ function reactiveTarget(entry, name) {
   }
   return target;
 }
-function exactScale(interval2, stepValue, stepsValue, name) {
-  if (!(interval2 instanceof RationalInterval)) {
+function exactScale(interval3, stepValue, stepsValue, name) {
+  if (!(interval3 instanceof RationalInterval)) {
     throw new Error(`${name} interval must be a RiX interval such as 0:10`);
   }
-  const low = interval2.low;
-  const high = interval2.high;
+  const low = interval3.low;
+  const high = interval3.high;
   const span = high.subtract(low);
   if (span.numerator === 0n)
     throw new Error(`${name} interval endpoints must differ`);
@@ -27183,8 +27464,8 @@ function createGrid(args) {
 function createSliderControl(args, runtime = null) {
   const entry = spec(args, ["target", "interval", "step", "label"], "Controls.Slider");
   const target = reactiveTarget(entry, "Controls.Slider");
-  const interval2 = get(entry, "interval");
-  const scale = exactScale(interval2, get(entry, "step"), get(entry, "steps"), "Controls.Slider");
+  const interval3 = get(entry, "interval");
+  const scale = exactScale(interval3, get(entry, "step"), get(entry, "steps"), "Controls.Slider");
   const value = exactRational4(target.get(), "Controls.Slider target value");
   const index = scaleIndex(value, scale, "Controls.Slider target value");
   return output("control_slider", {
@@ -27902,10 +28183,10 @@ function createTextMark(args) {
 function createRectangle(args) {
   const entry = spec(args, ["origin", "size", "style"], "Rectangle");
   const origin = sequence4(get(entry, "origin"), "Rectangle origin");
-  const size = sequence4(get(entry, "size"), "Rectangle size");
-  if (origin.length !== 2 || size.length !== 2)
+  const size2 = sequence4(get(entry, "size"), "Rectangle size");
+  if (origin.length !== 2 || size2.length !== 2)
     throw new Error("Rectangle origin and size must each contain x and y coordinates");
-  return output("rectangle", { origin, size, style: optionalMap(get(entry, "style"), "Rectangle style") });
+  return output("rectangle", { origin, size: size2, style: optionalMap(get(entry, "style"), "Rectangle style") });
 }
 function createCircle(args) {
   const entry = spec(args, ["center", "radius", "style"], "Circle");
@@ -27936,10 +28217,10 @@ function normalizeGraphicCoordinateSystem(suppliedCoordinates, name) {
       throw new Error(`${name} coordinateSystem frame must contain four coordinates`);
     numericFrame = frame.map((value, index) => numericValue(value, `${name} frame coordinate ${index + 1}`));
   } else {
-    const size = sequence4(suppliedSize, `${name} coordinateSystem size`);
-    if (size.length !== 2)
+    const size2 = sequence4(suppliedSize, `${name} coordinateSystem size`);
+    if (size2.length !== 2)
       throw new Error(`${name} coordinateSystem size must contain width and height`);
-    const [width, height] = size.map((value, index) => numericValue(value, `${name} size coordinate ${index + 1}`));
+    const [width, height] = size2.map((value, index) => numericValue(value, `${name} size coordinate ${index + 1}`));
     if (!(width > 0 && height > 0 && xmax > xmin && ymax > ymin)) {
       throw new Error(`${name} coordinateSystem requires positive size and increasing view bounds`);
     }
@@ -28030,10 +28311,10 @@ function createClip(args) {
 }
 function createGraphic(args) {
   const entry = spec(args, ["size", "children", "metadata"], "Graphic");
-  const size = sequence4(get(entry, "size"), "Graphic size");
-  if (size.length !== 2)
+  const size2 = sequence4(get(entry, "size"), "Graphic size");
+  if (size2.length !== 2)
     throw new Error("Graphic size must contain width and height");
-  return output("graphic", { size, children: sequence4(get(entry, "children"), "Graphic children"), metadata: optionalMap(get(entry, "metadata"), "Graphic metadata") });
+  return output("graphic", { size: size2, children: sequence4(get(entry, "children"), "Graphic children"), metadata: optionalMap(get(entry, "metadata"), "Graphic metadata") });
 }
 function createFigure(args) {
   const entry = spec(args, ["content", "caption", "label", "alt"], "Figure");
@@ -28224,8 +28505,8 @@ function roundedRational(value, policy) {
     scale
   };
 }
-function intervalMidpoint(interval2) {
-  return new Rational(interval2.low.numerator * interval2.high.denominator + interval2.high.numerator * interval2.low.denominator, 2n * interval2.low.denominator * interval2.high.denominator);
+function intervalMidpoint(interval3) {
+  return new Rational(interval3.low.numerator * interval3.high.denominator + interval3.high.numerator * interval3.low.denominator, 2n * interval3.low.denominator * interval3.high.denominator);
 }
 function scaledDistance(scaled, scale, value) {
   const difference = scaled * value.denominator - value.numerator * scale;
@@ -28237,16 +28518,16 @@ function svgNumber(value, label, policy, role = "scalar") {
   let exact;
   let approximated = false;
   if (value instanceof RationalInterval || value instanceof CertifiedApproximation) {
-    const interval2 = value instanceof CertifiedApproximation ? value.enclosure : value;
-    const candidateValue = value instanceof CertifiedApproximation ? value.candidate : intervalMidpoint(interval2);
+    const interval3 = value instanceof CertifiedApproximation ? value.enclosure : value;
+    const candidateValue = value instanceof CertifiedApproximation ? value.candidate : intervalMidpoint(interval3);
     const candidate = candidateValue instanceof Integer ? new Rational(candidateValue.value, 1n) : candidateValue;
     const result = roundedRational(candidate, policy);
-    const lower = roundedRational(interval2.low, { ...policy, rounding: "floor" });
-    const upper = roundedRational(interval2.high, { ...policy, rounding: "ceil" });
+    const lower = roundedRational(interval3.low, { ...policy, rounding: "floor" });
+    const upper = roundedRational(interval3.high, { ...policy, rounding: "ceil" });
     exact = String(value);
     lowered = result.text;
     approximated = true;
-    const error = Math.max(scaledDistance(result.scaled, result.scale, interval2.low), scaledDistance(result.scaled, result.scale, interval2.high));
+    const error = Math.max(scaledDistance(result.scaled, result.scale, interval3.low), scaledDistance(result.scaled, result.scale, interval3.high));
     policy.entries.push({
       path: label,
       role,
@@ -28425,11 +28706,11 @@ function svgPaintDefinition(style, defs, policy, path) {
       unsupportedSvg(`unknown pattern '${kind}'`, `${path}.style.pattern.type`, "svg-unsupported-pattern");
     const foreground = asString(styleEntry(spec2, "color")) || "currentColor";
     const background = asString(styleEntry(spec2, "background")) || "none";
-    const size = svgNumber(styleEntry(spec2, "size") ?? int6(8), `${path} pattern size`, policy, "width");
+    const size2 = svgNumber(styleEntry(spec2, "size") ?? int6(8), `${path} pattern size`, policy, "width");
     return registerSvgDefinition(defs, policy, "pattern", spec2, (id) => {
-      const backdrop = background === "none" ? "" : `<rect width="${size}" height="${size}" fill="${escapeHtml2(background)}"/>`;
-      const mark = kind === "dots" ? `<circle cx="${Number(size) / 2}" cy="${Number(size) / 2}" r="${Math.max(0.5, Number(size) / 8)}" fill="${escapeHtml2(foreground)}"/>` : kind === "stripes" ? `<path d="M0 ${size} L${size} 0" stroke="${escapeHtml2(foreground)}"/>` : `<path d="M0 0 H${size} M0 0 V${size}" stroke="${escapeHtml2(foreground)}"/>`;
-      return `<pattern id="${id}" width="${size}" height="${size}" patternUnits="userSpaceOnUse">${backdrop}${mark}</pattern>`;
+      const backdrop = background === "none" ? "" : `<rect width="${size2}" height="${size2}" fill="${escapeHtml2(background)}"/>`;
+      const mark = kind === "dots" ? `<circle cx="${Number(size2) / 2}" cy="${Number(size2) / 2}" r="${Math.max(0.5, Number(size2) / 8)}" fill="${escapeHtml2(foreground)}"/>` : kind === "stripes" ? `<path d="M0 ${size2} L${size2} 0" stroke="${escapeHtml2(foreground)}"/>` : `<path d="M0 0 H${size2} M0 0 V${size2}" stroke="${escapeHtml2(foreground)}"/>`;
+      return `<pattern id="${id}" width="${size2}" height="${size2}" patternUnits="userSpaceOnUse">${backdrop}${mark}</pattern>`;
     });
   }
   return null;
@@ -28446,11 +28727,11 @@ function svgMarkerDefinition(value, sizeValue, defs, policy, path) {
   const kind = (asString(value) || String(value || "arrow")).toLowerCase();
   if (!["arrow", "circle", "square", "diamond"].includes(kind))
     unsupportedSvg(`unknown marker '${kind}'`, `${path}.style.marker`, "svg-unsupported-marker");
-  const size = svgNumber(sizeValue ?? int6(5), `${path} marker size`, policy, "radius");
-  const spec2 = new Map([["kind", kind], ["size", size]]);
+  const size2 = svgNumber(sizeValue ?? int6(5), `${path} marker size`, policy, "radius");
+  const spec2 = new Map([["kind", kind], ["size", size2]]);
   return registerSvgDefinition(defs, policy, "marker", spec2, (id) => {
     const shape = kind === "arrow" ? '<path d="M0 0 L10 5 L0 10 Z" fill="context-stroke"/>' : kind === "circle" ? '<circle cx="5" cy="5" r="4" fill="context-stroke"/>' : kind === "square" ? '<rect x="1" y="1" width="8" height="8" fill="context-stroke"/>' : '<path d="M5 0 L10 5 L5 10 L0 5 Z" fill="context-stroke"/>';
-    return `<marker id="${id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="${size}" markerHeight="${size}" orient="auto-start-reverse">${shape}</marker>`;
+    return `<marker id="${id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="${size2}" markerHeight="${size2}" orient="auto-start-reverse">${shape}</marker>`;
   });
 }
 function svgStyle(style, defaultFill = null, policy, defs = null, path = "graphic") {
@@ -28524,14 +28805,14 @@ function svgTransform(node, policy) {
 function renderSvgText(node, format, defs, policy, path) {
   const [x, y] = svgPair(node.position, "TextMark position", policy);
   const anchor = asString(styleEntry(node.style, "anchor"));
-  const size = styleEntry(node.style, "size") ?? styleEntry(node.style, "fontSize");
+  const size2 = styleEntry(node.style, "size") ?? styleEntry(node.style, "fontSize");
   const font = asString(styleEntry(node.style, "font"));
   const weight = asString(styleEntry(node.style, "weight"));
   const attrs = [svgStyle(node.style, "currentColor", policy, defs, path)];
   if (anchor)
     attrs.push(`text-anchor="${escapeHtml2(anchor)}"`);
-  if (size !== null && size !== undefined)
-    attrs.push(`font-size="${svgNumber(size, "TextMark size", policy, "font-size")}"`);
+  if (size2 !== null && size2 !== undefined)
+    attrs.push(`font-size="${svgNumber(size2, "TextMark size", policy, "font-size")}"`);
   if (font) {
     policy.fonts.add(font);
     if (policy.fontPolicy === "system")
@@ -28556,12 +28837,12 @@ function renderSvgNode(node, format, defs, policy, path) {
     const marker = styleEntry(node.style, "marker");
     const markerStart = styleEntry(node.style, "markerStart");
     const markerEnd = styleEntry(node.style, "markerEnd") ?? marker;
-    const size = styleEntry(node.style, "markerSize");
+    const size2 = styleEntry(node.style, "markerSize");
     const markerAttrs = [];
     if (markerStart !== null)
-      markerAttrs.push(`marker-start="url(#${svgMarkerDefinition(markerStart, size, defs, policy, path)})"`);
+      markerAttrs.push(`marker-start="url(#${svgMarkerDefinition(markerStart, size2, defs, policy, path)})"`);
     if (markerEnd !== null)
-      markerAttrs.push(`marker-end="url(#${svgMarkerDefinition(markerEnd, size, defs, policy, path)})"`);
+      markerAttrs.push(`marker-end="url(#${svgMarkerDefinition(markerEnd, size2, defs, policy, path)})"`);
     return `<path d="${d}" ${svgSemanticAttributes(node, path)} ${svgStyle(node.style, "none", policy, defs, path)}${markerAttrs.length ? ` ${markerAttrs.join(" ")}` : ""}/>`;
   }
   if (node.kind === "rectangle") {
@@ -28621,7 +28902,7 @@ function lowerGraphicSvg(graphic, format = (item) => String(item ?? ""), options
   if (!isOutputValue(graphic) || graphic.kind !== "graphic")
     throw new Error("Expected a Graphic output value");
   const policy = svgPolicy(options);
-  const size = graphic.size.map((value, index) => svgNumber(value, `Graphic size ${index + 1}`, policy, index === 0 ? "width" : "height"));
+  const size2 = graphic.size.map((value, index) => svgNumber(value, `Graphic size ${index + 1}`, policy, index === 0 ? "width" : "height"));
   const defs = [];
   const children = graphic.children.map((child, index) => renderSvgNode(child, format, defs, policy, `graphic[${index + 1}]`)).join("");
   const collisions = [...policy.collisions.entries()].filter(([, exactValues]) => exactValues.size > 1).map(([key, exactValues]) => ({ lowered: key.slice(key.indexOf(":") + 1), role: key.slice(0, key.indexOf(":")), exact: [...exactValues] }));
@@ -28678,7 +28959,7 @@ function lowerGraphicSvg(graphic, format = (item) => String(item ?? ""), options
   const renderedChildren = enclosureRadius > 0 ? `<g class="rix-exact-enclosure" filter="url(#rix-exact-enclosure)">${children}</g>` : children;
   const accessibleSummary = createGraphicsTextPlan(graphic, format).summary;
   return {
-    content: `<svg class="rix-output-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size[0]} ${size[1]}" width="${size[0]}" height="${size[1]}" overflow="visible" role="img" data-rix-graphic-summary="${escapeHtml2(formatOutputText(graphic, format))}" tabindex="0" aria-label="${escapeHtml2(accessibleSummary)} Use arrow keys to pan, plus and minus to zoom, and Home to reset the view.">${defs.length ? `<defs>${defs.join("")}</defs>` : ""}${renderedChildren}</svg>`,
+    content: `<svg class="rix-output-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size2[0]} ${size2[1]}" width="${size2[0]}" height="${size2[1]}" overflow="visible" role="img" data-rix-graphic-summary="${escapeHtml2(formatOutputText(graphic, format))}" tabindex="0" aria-label="${escapeHtml2(accessibleSummary)} Use arrow keys to pan, plus and minus to zoom, and Home to reset the view.">${defs.length ? `<defs>${defs.join("")}</defs>` : ""}${renderedChildren}</svg>`,
     diagnostics,
     metadata: {
       schema: "rix.svg.coordinate-lowering@1",
@@ -29667,12 +29948,12 @@ function certifiedEnclosureInterval(value) {
     return null;
   const schema = entries2.get("schema");
   const certified = entries2.get("certified");
-  const interval2 = entries2.get("interval");
+  const interval3 = entries2.get("interval");
   if (schema?.type !== "string" || !["rix.numerics.enclosure@1", "rix.numerics.range-enclosure@1"].includes(schema.value))
     return null;
   if (certified?.value !== 1n)
     return null;
-  return interval2 || null;
+  return interval3 || null;
 }
 function formatValue(val, options = {}) {
   const activeValues = options[FORMAT_ACTIVE_VALUES] || new WeakSet;
@@ -29750,9 +30031,9 @@ function formatValue(val, options = {}) {
       return formatWithCycleGuard(val, activeValues, () => open + val.values.map(formatChild).join(", ") + close);
     }
     if (options.certifiedEnclosureDisplay !== false) {
-      const interval2 = certifiedEnclosureInterval(val);
-      if (interval2 !== null)
-        return formatChild(interval2);
+      const interval3 = certifiedEnclosureInterval(val);
+      if (interval3 !== null)
+        return formatChild(interval3);
     }
     if (val.type === "map") {
       return formatWithCycleGuard(val, activeValues, () => {
@@ -29984,7 +30265,7 @@ function implicitShapedLayout(structure, rank) {
       shape[axis] = uniformDimension(groupCounts, `axis ${axis + 1}`);
     }
   }
-  const expectedRows = shape[0] * shape.slice(2).reduce((product, size) => product * size, 1);
+  const expectedRows = shape[0] * shape.slice(2).reduce((product, size2) => product * size2, 1);
   if (rows.length !== expectedRows) {
     throw new Error(`Semicolon Shaped literal shape inference expected ${expectedRows} rows, received ${rows.length}`);
   }
@@ -30007,11 +30288,11 @@ function implicitShapedLayout(structure, rank) {
   if (rank === 2 || displayElements.length === 0)
     return { shape, elements: displayElements };
   const displayShape = [...shape.slice(2).reverse(), shape[0], shape[1]];
-  const externalStrides = shape.map((_, axis) => shape.slice(axis + 1).reduce((product, size) => product * size, 1));
+  const externalStrides = shape.map((_, axis) => shape.slice(axis + 1).reduce((product, size2) => product * size2, 1));
   const elements = new Array(displayElements.length);
   for (let linear = 0;linear < displayElements.length; linear++) {
     let remainder = linear;
-    const displayCoordinates = displayShape.map((size, axis) => {
+    const displayCoordinates = displayShape.map((size2, axis) => {
       const stride = displayShape.slice(axis + 1).reduce((product, value) => product * value, 1);
       const coordinate = stride === 0 ? 0 : Math.floor(remainder / stride);
       remainder = stride === 0 ? 0 : remainder % stride;
@@ -31817,10 +32098,10 @@ function decodeMathematicalJSON(source) {
         const endpoints = list(s.interval.$interval);
         if (endpoints.length !== 2)
           fail("invalid real interval");
-        const interval2 = new RationalInterval(exact2(child(endpoints[0])), exact2(child(endpoints[1])));
-        if (!interval2.high.subtract(interval2.low).equals(exact2(child(s.achievedWidth))))
+        const interval3 = new RationalInterval(exact2(child(endpoints[0])), exact2(child(endpoints[1])));
+        if (!interval3.high.subtract(interval3.low).equals(exact2(child(s.achievedWidth))))
           fail("inconsistent snapshot width");
-        result = restoreRealSnapshot(interval2, string2(s.evidenceLevel));
+        result = restoreRealSnapshot(interval3, string2(s.evidenceLevel));
         break;
       }
       case "tuple":
@@ -31884,234 +32165,6 @@ var mathematicalJSONCapabilities = {
     }) };
   }, pure: false, groups: ["Symbolic"], doc: "Decode independent bounded JSONL documents without executing code" }
 };
-
-// ../rix/src/runtime/math-semantic-eval.js
-var REAL_SEMANTICS = Object.freeze(["rix.function.abs.real@1", "rix.function.sqrt.real-principal@1"]);
-function integerRoot(value) {
-  if (value < 2n)
-    return value;
-  let root = 1n << BigInt(Math.ceil(value.toString(2).length / 2));
-  for (;; ) {
-    const next = (root + value / root) / 2n;
-    if (next >= root)
-      return root;
-    root = next;
-  }
-}
-function rootBounds(value, limits) {
-  if (value.numerator.toString().length + Math.ceil(2 * limits.rootbits / 3) > limits.maxdigits)
-    throw new Error("Mathematical square-root integer budget exceeded");
-  const scale = 1n << BigInt(limits.rootbits);
-  const numerator = value.numerator * scale * scale;
-  const root = integerRoot(numerator / value.denominator);
-  const exact3 = root * root * value.denominator === numerator;
-  return [new Rational(root, scale), new Rational(exact3 ? root : root + 1n, scale)];
-}
-function evaluateRealSemantic(id, args, limits, check, unsupported) {
-  if (!REAL_SEMANTICS.includes(id))
-    return unsupported("unlinkedSemanticApplication");
-  if (args.length !== 1)
-    return unsupported("semanticArityMismatch");
-  const value = args[0] instanceof Integer ? new Rational(args[0].value, 1n) : args[0];
-  if (!(value instanceof Rational) && !(value instanceof RationalInterval))
-    return unsupported("unsupportedSemanticProvider");
-  const zero = new Rational(0n);
-  if (id === "rix.function.abs.real@1") {
-    if (value instanceof Rational)
-      return check(value.abs());
-    if (value.high.lessThan(zero))
-      return check(value.negate());
-    if (!value.low.lessThan(zero))
-      return check(new RationalInterval(value.low, value.high));
-    const negative = value.low.negate();
-    return check(new RationalInterval(zero, negative.greaterThan(value.high) ? negative : value.high));
-  }
-  if (value instanceof Rational) {
-    if (value.lessThan(zero))
-      return unsupported("outsideRealSquareRootDomain");
-    return check(exactSquareRoot(value));
-  }
-  if (value.high.lessThan(zero))
-    return unsupported("outsideRealSquareRootDomain");
-  if (value.low.lessThan(zero))
-    return unsupported("squareRootDomainUnresolved");
-  const lower2 = rootBounds(value.low, limits), upper = rootBounds(value.high, limits);
-  return check(new RationalInterval(lower2[0], upper[1]));
-}
-
-// ../rix/src/runtime/math-provider-eval.js
-var asRational5 = (value) => value instanceof Integer ? new Rational(value.value, 1n) : value instanceof Rational && value.denominator !== 0n ? value : null;
-var interval2 = (value) => value instanceof RationalInterval ? value : asRational5(value) ? new RationalInterval(asRational5(value), asRational5(value)) : null;
-var size = (value) => value?.type === "exact_expression" ? value.terms.size : 1;
-function rationalBudget(value, limits) {
-  const maxDigits = limits.maxdigits;
-  if (!asRational5(value) || value.numerator?.toString().length > maxDigits || value.denominator?.toString().length > maxDigits || value.value?.toString().length > maxDigits)
-    throw new Error("Mathematical evaluation integer budget exceeded");
-}
-function budget(value, limits) {
-  if (value instanceof RationalInterval) {
-    rationalBudget(value.low, limits);
-    rationalBudget(value.high, limits);
-    return value;
-  }
-  if (!isExactValue(value)) {
-    rationalBudget(value, limits);
-    return value;
-  }
-  const checkGenerator = (generator) => {
-    if (generator.polynomial?.length > limits.maxpolynomialcoefficients)
-      throw new Error("Mathematical evaluation polynomial budget exceeded");
-    for (const c of generator.polynomial || [])
-      rationalBudget(c, limits);
-  };
-  if (value.type === "exact_generator")
-    checkGenerator(value);
-  else {
-    if (size(value) > limits.maxterms)
-      throw new Error("Mathematical evaluation exact-term budget exceeded");
-    for (const term of value.terms.values()) {
-      rationalBudget(term.coefficient, limits);
-      if (term.powers.size > limits.maxgenerators)
-        throw new Error("Mathematical evaluation generator budget exceeded");
-      for (const [generator, power] of term.powers) {
-        checkGenerator(generator);
-        if (!Number.isSafeInteger(power) || Math.abs(power) > limits.maxdegree)
-          throw new Error("Mathematical evaluation degree budget exceeded");
-      }
-    }
-  }
-  return value;
-}
-function compareProviderValues(left, right, op) {
-  const a = interval2(left), b = interval2(right);
-  if (!a || !b) {
-    if (["==", "!="].includes(op)) {
-      const equal = constantEquality(left, right);
-      return equal === null ? null : op === "==" ? equal : !equal;
-    }
-    return null;
-  }
-  if (op === ">")
-    return compareProviderValues(right, left, "<");
-  if (op === ">=")
-    return compareProviderValues(right, left, "<=");
-  if (op === "<")
-    return a.high.lessThan(b.low) ? true : !a.low.lessThan(b.high) ? false : null;
-  if (op === "<=")
-    return !a.high.greaterThan(b.low) ? true : a.low.greaterThan(b.high) ? false : null;
-  if (op === "==" || op === "!=") {
-    const equal = a.high.lessThan(b.low) || b.high.lessThan(a.low) ? false : a.low.equals(a.high) && b.low.equals(b.high) ? a.low.equals(b.low) : null;
-    return equal === null ? null : op === "==" ? equal : !equal;
-  }
-  return null;
-}
-function createProviderEvaluation(reasons, limits) {
-  const check = (value) => budget(value, limits);
-  const providers = new Map, reals = new Map, semantics = new Set;
-  let sawReal = false, sawSet = false, unverified = false;
-  const unsupported = (reason) => {
-    reasons.add(reason);
-    return null;
-  };
-  function read(value) {
-    const real = realConstantState(value);
-    if (real) {
-      sawReal = true;
-      unverified ||= !real.source;
-      if (!reals.has(real.id)) {
-        reals.set(real.id, check(new RationalInterval(real.interval.start, real.interval.end)));
-        providers.set(real.id, constantProviderInfo(value));
-      }
-      return reals.get(real.id);
-    }
-    if (value instanceof RationalInterval)
-      sawSet = true;
-    if (!asRational5(value) && !(value instanceof RationalInterval) && !isExactValue(value))
-      return unsupported("unsupportedConstantProvider");
-    const result = check(asRational5(value) || value);
-    const key = value instanceof RationalInterval ? "rationalInterval" : isExactValue(value) ? "exactScalar" : "rational";
-    if (!providers.has(key))
-      providers.set(key, constantProviderInfo(value));
-    return result;
-  }
-  function multiply2(a, b) {
-    if (size(a) * size(b) > limits.maxproductpairs)
-      throw new Error("Mathematical evaluation exact-term budget exceeded");
-    return check(multiplyScalars(a, b));
-  }
-  function operate(op, args) {
-    const [a, b] = args;
-    if (op === "power") {
-      const exponent = asRational5(b);
-      if (!exponent || exponent.denominator !== 1n || exponent.numerator > BigInt(limits.maxexponent) || exponent.numerator < -BigInt(limits.maxexponent))
-        return unsupported("unsupportedExponent");
-      const n = exponent.numerator, range = interval2(a);
-      if (n <= 0n && (range ? range.containsZero() : true))
-        return unsupported(range ? "undefinedPower" : "nonzeroNotEstablished");
-      if (range) {
-        const magnitude = Number(n < 0n ? -n : n);
-        if ([range.low, range.high].some((v) => Math.max(v.numerator.toString().length, v.denominator.toString().length) * magnitude > limits.maxdigits))
-          throw new Error("Mathematical evaluation integer budget exceeded");
-        return check(a instanceof RationalInterval ? a.pow(n) : asRational5(a).pow(n));
-      }
-      let result = new Rational(1n), factor = a, remaining = n;
-      while (remaining > 0n) {
-        if (remaining % 2n)
-          result = multiply2(result, factor);
-        remaining /= 2n;
-        if (remaining)
-          factor = multiply2(factor, factor);
-      }
-      return result;
-    }
-    if (args.some((v) => v instanceof RationalInterval)) {
-      if (args.some((v) => !interval2(v)))
-        return unsupported("mixedProviderArithmetic");
-      const x = interval2(a), y = b === undefined ? null : interval2(b);
-      if (op === "divide" && y.containsZero())
-        return unsupported("divisorMayContainZero");
-      return check({ add: () => x.add(y), subtract: () => x.subtract(y), multiply: () => x.multiply(y), divide: () => x.divide(y), negate: () => x.negate() }[op]());
-    }
-    if (op === "divide") {
-      const denominator = asRational5(b);
-      if (!denominator)
-        return unsupported("nonRationalExactDivisor");
-      if (denominator.numerator === 0n)
-        return unsupported("divisionByZero");
-      return check(divideScalars(a, denominator));
-    }
-    if (op === "multiply")
-      return multiply2(a, b);
-    if (op === "add" || op === "subtract") {
-      if ((isExactValue(a) || isExactValue(b)) && size(a) + size(b) > limits.maxsumterms)
-        throw new Error("Mathematical evaluation exact-term budget exceeded");
-      return check(op === "add" ? addScalars(a, b) : subtractScalars(a, b));
-    }
-    if (op === "negate")
-      return check(negateScalar(a));
-    return unsupported("unsupportedOperation");
-  }
-  return {
-    read,
-    operate,
-    supportsApplication: (id) => REAL_SEMANTICS.includes(id),
-    apply: (id, args) => {
-      semantics.add(id);
-      return evaluateRealSemantic(id, args, limits, check, unsupported);
-    },
-    get semantics() {
-      return [...semantics];
-    },
-    get unverified() {
-      return unverified;
-    },
-    get providers() {
-      return [...providers.values()];
-    },
-    isApproximation: (value) => sawReal && value instanceof RationalInterval,
-    resultKind: (value) => value === null ? "unresolved" : value instanceof RationalInterval ? sawSet ? "setEnclosure" : "singletonEnclosure" : isExactValue(value) ? "exactScalar" : "rational"
-  };
-}
 
 // ../rix/src/runtime/math-polynomial.js
 function mathematicalPolynomialCoefficients(expression, variable, options) {
@@ -55143,7 +55196,7 @@ numericsNamespace._proto = {=
     RewriteGraph = (self, source, target, theorem) ->
         .CalculusGraphRewrite(source,target,theorem),
     CheckGraphRewrite = (self, result) -> .CalculusGraphRewriteCheck(result),
-    CheckDerivativeGraph = (self, transformation) -> .CalculusDerivativeCheck(transformation),
+    CheckDerivativeGraph = (self, transformation, options ?= {= }) -> .CalculusDerivativeCheck(transformation,options),
     DerivativeSign = (self, transformation, bindings, options ?= {= }) ->
         .CalculusDerivativeSign(transformation,bindings,options),
     LipschitzRange = (self, transformation, bindings, options ?= {= }) ->
@@ -55163,8 +55216,8 @@ numericsNamespace._proto = {=
         .KrawczykBox(expressions,jacobian,bindings,options),
     CheckKrawczyk = (self, result) -> .KrawczykCheck(result),
     CheckMultivariateRange = (self, result) -> .MultivariateRangeCheck(result),
-    RecognizeGraph = (self, expression, variable) ->
-        .CalculusRangeRecognize(expression, variable),
+    RecognizeGraph = (self, expression, variable, options ?= {= }) ->
+        .CalculusRangeRecognize(expression, variable, options),
     FunctionFacts = (self, function) -> NumericsFunctionFacts(function),
     WithRangeKnowledge = (self, function, knowledge) ->
         NumericsWithRangeKnowledge(function, knowledge),
@@ -102281,5 +102334,5 @@ var STATIC_SYSTEM_CATALOG = Object.freeze([
 ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
 export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, outputValueKind, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, formatOutputText, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateObserved, parseAndEvaluateObservedAsync, lintRix, createGeometryAuthoringProgram, mountOutputWidgets };
 
-//# debugId=01128D14472F76D364756E2164756E21
-//# sourceMappingURL=chunk-hgb2xt75.js.map
+//# debugId=F9BD649E7745B7C464756E2164756E21
+//# sourceMappingURL=chunk-c7epm5jz.js.map

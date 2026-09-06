@@ -597,4 +597,46 @@ time or total work across all partitions. Increasing budgets can cost time and m
 The answer is one wherever the expression is defined, but zero remains excluded.
 Always inspect `domainStatus` alongside certification. This engine currently handles
 arithmetic graphs, not contextual assumptions or the full provider-aware `Eval` surface.
-Scoped derivative-sign, Lipschitz, and Taylor range strategies are a later increment.
+
+## Derivative-based certified bounds
+
+The derivative checker independently recomputes the identity and domain obligations.
+Lipschitz bounds control variation using the first derivative; Taylor bounds use
+a second-derivative remainder. Subdivision can make their enclosures tighter.
+
+```rix edu
+.Plugin.Load("calculus"); .Plugin.Load("numerics");
+{;
+    d := .calculus.DifferentiateResult(::x^2,::x);
+    dd := .calculus.DifferentiateNResult(::x^2,::x,2);
+    sign := .numerics.DerivativeSign(d,[(::x,1:2)]);
+    broad := .numerics.LipschitzRange(d,[(::x,(-1):1)]);
+    split := .numerics.LipschitzRange(d,[(::x,(-1):1)],{= maxSubintervals=2 });
+    taylor := .numerics.TaylorRange(dd,[(::x,(-1):1)]);
+    (sign[:direction],broad[:range],split[:range],
+     taylor[:checker][:accepted],taylor[:curvature]);
+};
+```
+
+Domain conditions must hold on the requested interval. A pole prevents certification.
+A uniform derivative sign on disconnected intervals does not establish monotonicity
+across their gaps. Check `monotonicityCertified`, not just the derivative enclosure.
+Checker limits `maxDepth`, `maxWork`, and `maxDerivativeOrder` are configurable;
+the last defaults to 16 and is a per-check order budget, not a fixed ceiling.
+
+## Recognize rational graphs without erasing holes
+
+Recognition retains the coordinate's identity and records source restrictions.
+The quotient `x/x` is not silently replaced with an everywhere-defined constant.
+Recognition arithmetic uses configurable core `MathBudgets` settings.
+
+```rix edu
+.Plugin.Load("numerics");
+{;
+    ans := .numerics.RecognizeGraph(::x/::x,::x);
+    low := .numerics.RecognizeGraph((::x+1)^8,::x,{= maxProductPairs=2 });
+    high := .numerics.RecognizeGraph((::x+1)^8,::x,{= maxProductPairs=100 });
+    (.SameSymbol(ans[:variable],::x),ans[:kind],
+     ans[:sourceDomainRestrictions].Len(),low[:recognized],high[:recognized]);
+};
+```

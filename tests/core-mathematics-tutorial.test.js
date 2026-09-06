@@ -104,5 +104,11 @@ for (const [mode,evaluate] of [["sync",parseAndEvaluate],["async",parseAndEvalua
         expect(results[39].values.map(String)).toEqual(["0:0","-1:1","1"]);
         expect(results[40].values[1].value).toBe("partiallyDefined");
         expect([results[40].values[0],...results[40].values.slice(2)].map(String)).toEqual(["1:1","1","200","20000"]);
+        expect(results[41].values[0].value).toBe("nondecreasing");
+        expect(results[41].values.slice(1,4).map(String)).toEqual(["[-2,2]","[-3/4,5/4]","1"]);
+        expect(results[41].values[4].value).toBe("convex");
+        expect(String(results[42].values[0])).toBe("1");
+        expect(results[42].values[1].value).toBe("rationalFunction");
+        expect(results[42].values.slice(2).map(String)).toEqual(["1","null","1"]);
     });
 }

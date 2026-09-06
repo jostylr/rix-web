@@ -292,4 +292,28 @@ portableRoot := .MathDecodeJSON(.MathEncodeJSON(.ExpressionReal(.numerics.Sqrt(2
      .numerics.CheckGraphRange(ans)[:certified],
      ans[:budgets][:maxDepth],ans[:budgets][:maxWork]);
 };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>The answer is one wherever the expression is defined, but zero remains excluded. Always inspect <code>domainStatus</code> alongside certification. This engine currently handles arithmetic graphs, not contextual assumptions or the full provider-aware <code>Eval</code> surface. Scoped derivative-sign, Lipschitz, and Taylor range strategies are a later increment.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
+<p>The answer is one wherever the expression is defined, but zero remains excluded. Always inspect <code>domainStatus</code> alongside certification. This engine currently handles arithmetic graphs, not contextual assumptions or the full provider-aware <code>Eval</code> surface.</p>
+<h2>Derivative-based certified bounds</h2>
+<p>The derivative checker independently recomputes the identity and domain obligations. Lipschitz bounds control variation using the first derivative; Taylor bounds use a second-derivative remainder. Subdivision can make their enclosures tighter.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">.Plugin.Load(&quot;calculus&quot;); .Plugin.Load(&quot;numerics&quot;);
+{;
+    d := .calculus.DifferentiateResult(::x^2,::x);
+    dd := .calculus.DifferentiateNResult(::x^2,::x,2);
+    sign := .numerics.DerivativeSign(d,[(::x,1:2)]);
+    broad := .numerics.LipschitzRange(d,[(::x,(-1):1)]);
+    split := .numerics.LipschitzRange(d,[(::x,(-1):1)],{= maxSubintervals=2 });
+    taylor := .numerics.TaylorRange(dd,[(::x,(-1):1)]);
+    (sign[:direction],broad[:range],split[:range],
+     taylor[:checker][:accepted],taylor[:curvature]);
+};</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Domain conditions must hold on the requested interval. A pole prevents certification. A uniform derivative sign on disconnected intervals does not establish monotonicity across their gaps. Check <code>monotonicityCertified</code>, not just the derivative enclosure. Checker limits <code>maxDepth</code>, <code>maxWork</code>, and <code>maxDerivativeOrder</code> are configurable; the last defaults to 16 and is a per-check order budget, not a fixed ceiling.</p>
+<h2>Recognize rational graphs without erasing holes</h2>
+<p>Recognition retains the coordinate&#039;s identity and records source restrictions. The quotient <code>x/x</code> is not silently replaced with an everywhere-defined constant. Recognition arithmetic uses configurable core <code>MathBudgets</code> settings.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="8" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
+{;
+    ans := .numerics.RecognizeGraph(::x/::x,::x);
+    low := .numerics.RecognizeGraph((::x+1)^8,::x,{= maxProductPairs=2 });
+    high := .numerics.RecognizeGraph((::x+1)^8,::x,{= maxProductPairs=100 });
+    (.SameSymbol(ans[:variable],::x),ans[:kind],
+     ans[:sourceDomainRestrictions].Len(),low[:recognized],high[:recognized]);
+};</textarea><div class="tutorial-output" data-tutorial-output></div></section></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
