@@ -183,7 +183,47 @@ coarseResult := .ExpressionRefine(coarseRoot,{= absoluteWidth=1/100000,maxWork=1
 Budget exhaustion can still return a certified enclosure. Check `goalMet`
 before claiming the requested width was reached. Protocol checks validate
 the reported contract, not arbitrary provider code; the evidence level remains
-the provider's claim. The procedure is retained in memory, not yet serialized.
+the provider's claim. Procedures stay in memory; saved reals become snapshots.
+
+## Saving a graph without saving a programming scope
+
+```rix edu
+::savedY = ::savedX-0;
+savedGraph := .MathEncodeJSON((::savedX,::savedY,::savedX));
+loadedGraph := .MathDecodeJSON(savedGraph);
+{: .SameSymbol(loadedGraph[1],loadedGraph[3]),loadedGraph[1]==loadedGraph[2],
+   .SameSymbol(::savedX,loadedGraph[1]) };
+```
+
+Shared identities and definitions survive, but imported symbols are fresh.
+Names never overwrite your programming scope. `savedGraph` is ordinary JSON
+text with exact scalar tags and a document-local node table—not executable code.
+
+```rix edu
+graphLines := .MathEncodeJSONL([::savedX,::savedX]);
+graphRows := .MathDecodeJSONL(graphLines);
+savedContext := .MathDecodeJSON(.MathEncodeJSON({& :::t | 1:0 & :::t*::savedX }));
+{: .SameSymbol(graphRows[1],graphRows[2]),savedContext[:validation],
+   savedContext[:domains][1][:domain][:orientation] };
+```
+
+Each JSONL line has an independent identity table. Put related values in one
+tuple or map document to preserve shared identity. Context claims load as
+unverified data; their assumptions are retained, not automatically proved.
+
+```rix edu
+.Plugin.Load("numerics");
+portableRoot := .MathDecodeJSON(.MathEncodeJSON(.ExpressionReal(.numerics.Sqrt(2))));
+{: .ExpressionConstantInfo(portableRoot)[:provider],
+   .ExpressionConstantInfo(portableRoot)[:refinable],
+   .ExpressionConstantInfo(portableRoot)[:validation] };
+```
+
+The singleton and its enclosure survive as a frozen snapshot. The procedure
+does not: calling `ExpressionRefine` on this loaded value reports that no
+recipe is installed. Loading never runs source code or loads plugins. Safe
+recipe restoration is a later increment. JSONL helpers here are bounded,
+in-memory text APIs; they do not claim unlimited streaming capacity.
 
 ### Current implementation boundary
 
@@ -192,7 +232,8 @@ conservative equality. The existing name-based calculus, CAS, range, and
 specification consumers reject scoped expressions and extended constants until their identity/provider-aware
 conversion is implemented. The first section's constructor-based examples
 remain usable with those consumers. Context substitution, assumption-aware
-evaluation, remaining numeric adapters, and portable serialization remain pending.
+evaluation, remaining numeric adapters, and safe refinement-recipe restoration
+remain pending. Graph serialization and frozen snapshots are available now.
 
 :::challenge Build and inspect
 Construct `(x+1)^3` without loading a plugin, then inspect its operands.

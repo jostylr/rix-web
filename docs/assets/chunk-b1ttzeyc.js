@@ -7118,7 +7118,7 @@ function shallowCopyValue(value) {
   if (value instanceof Rational)
     return new Rational(value.numerator, value.denominator);
   if (value instanceof RationalInterval) {
-    return new RationalInterval(new Rational(value.low.numerator, value.low.denominator), new Rational(value.high.numerator, value.high.denominator));
+    return new RationalInterval(new Rational(value.start.numerator, value.start.denominator), new Rational(value.end.numerator, value.end.denominator));
   }
   if (value instanceof RationalIntervalSet)
     return new RationalIntervalSet(value);
@@ -7225,7 +7225,7 @@ function deepCopyValue(value, memo = new WeakMap) {
     return copy;
   }
   if (value instanceof RationalInterval) {
-    const copy = new RationalInterval(new Rational(value.low.numerator, value.low.denominator), new Rational(value.high.numerator, value.high.denominator));
+    const copy = new RationalInterval(new Rational(value.start.numerator, value.start.denominator), new Rational(value.end.numerator, value.end.denominator));
     memo.set(value, copy);
     return copy;
   }
@@ -8807,6 +8807,23 @@ function realConstantState(value) {
     throw new Error("Invalid mathematical real identity");
   return state;
 }
+function restoreRealSnapshot(interval, savedEvidence) {
+  if (!(interval instanceof RationalInterval) || interval.low.denominator === 0n || interval.high.denominator === 0n)
+    throw new Error("Invalid saved real enclosure");
+  const token = () => {
+    throw new Error("Opaque real identity is not callable");
+  };
+  states.set(token, {
+    id: `real:${nextIdentity++}`,
+    source: null,
+    capabilities: null,
+    interval,
+    evidence: { type: "string", value: "declared" },
+    savedEvidence,
+    result: { type: "map", entries: new Map([["status", { type: "string", value: "snapshot" }], ["goalmet", null]]) }
+  });
+  return { type: "math_real", _ext: new Map([[TOKEN, token], ["immutable", new Integer(1n)]]) };
+}
 function requestFor(options, capabilities) {
   if (options !== null && options !== undefined && options?.type !== "map")
     throw new Error("Real refinement options require a map");
@@ -8850,6 +8867,8 @@ function refineRealConstant(value, options, context, evaluate) {
   const state = realConstantState(value);
   if (!state)
     throw new Error("ExpressionRefine requires an adapted real constant");
+  if (!state.source)
+    throw new Error("Saved real is a frozen snapshot; no refinement recipe is installed");
   const request = requestFor(options, state.capabilities);
   return then(method(state.source, "REFINE", [request], context, evaluate), (result) => {
     const interval = checkedInterval(result, request, state.capabilities);
@@ -8927,17 +8946,18 @@ function constantProviderInfo(value) {
   const decision = (value2) => value2 ? new Integer(1n) : null;
   return { type: "map", entries: new Map([
     ["schema", text3("rix.math.constant-provider@1")],
-    ["provider", text3(real ? "refinableReal" : interval ? "rationalInterval" : exact ? "exactScalar" : "rational")],
+    ["provider", text3(real ? real.source ? "refinableReal" : "realSnapshot" : interval ? "rationalInterval" : exact ? "exactScalar" : "rational")],
     ["denotation", text3(interval ? "setEnclosure" : "singleton")],
     ["exact", decision(!interval)],
-    ["refinable", decision(!!real)],
+    ["refinable", decision(!!real?.source)],
     ["commutative", new Integer(1n)],
     ["associative", new Integer(1n)],
     ["distributive", decision(!interval)],
     ["cancellation", exact ? UNDECIDED : decision(!interval)],
     ["enclosure", real ? real.interval : interval ? value : null],
     ["evidencelevel", real ? real.evidence : null],
-    ["validation", real ? text3("protocolChecked") : null],
+    ["validation", real ? text3(real.source ? "protocolChecked" : "unverifiedImport") : null],
+    ["savedevidencelevel", real?.savedEvidence ? text3(real.savedEvidence) : null],
     ["laststatus", real ? text3(refinementEntry(real.result, "status")?.value) : null],
     ["lastgoalmet", real ? decision(refinementEntry(real.result, "goalmet")?.value === 1n) : null]
   ]), _ext: new Map([["immutable", new Integer(1n)]]) };
@@ -9003,6 +9023,15 @@ function symbolState(symbol) {
 function expressionDefinition(symbol) {
   return symbolState(symbol)?.value ?? null;
 }
+function restoreExpressionDefinition(symbol, value) {
+  const state = symbolState(symbol);
+  if (!state || state.value || expressionField(symbol, "bound"))
+    throw new Error("Invalid saved symbolic definition");
+  const expression = promoteExpression(value);
+  if (referencesSymbol(expression, state.id))
+    throw new Error("Cyclic saved symbolic definition");
+  state.value = expression;
+}
 function referencesSymbol(expression, id, seen = new Set) {
   if (!isMathExpression(expression) || seen.has(expression))
     return false;
@@ -9052,24 +9081,24 @@ function expandExpression(expression, memo = new Map) {
   memo.set(expression, result);
   return result;
 }
-function equalityKey(expression) {
+function equalityTree(expression) {
   const operation = expressionField(expression, "operation")?.value;
   if (!operation)
-    return expressionStructuralKey(expression);
+    return expressionStructuralTree(expression);
   const operands = expressionField(expression, "operands").values;
-  const keys = operands.map(equalityKey);
-  const zero = expressionStructuralKey(expressionConstant(new Integer(0n)));
-  const one = expressionStructuralKey(expressionConstant(new Integer(1n)));
-  if (["add", "subtract"].includes(operation) && keys[1] === zero)
+  const keys = operands.map(equalityTree);
+  const isNumber = (tree, value) => tree?.[0] === "constant" && tree[1]?.[0] === "rational" && tree[1][1] === `${value}/1`;
+  if (["add", "subtract"].includes(operation) && isNumber(keys[1], 0))
     return keys[0];
-  if (operation === "add" && keys[0] === zero)
+  if (operation === "add" && isNumber(keys[0], 0))
     return keys[1];
-  if (["multiply", "divide", "power"].includes(operation) && keys[1] === one)
+  if (["multiply", "divide", "power"].includes(operation) && isNumber(keys[1], 1))
     return keys[0];
-  if (operation === "multiply" && keys[0] === one)
+  if (operation === "multiply" && isNumber(keys[0], 1))
     return keys[1];
-  return JSON.stringify(["operator", operation, keys]);
+  return ["operator", operation, keys];
 }
+var equalityKey = (expression) => JSON.stringify(equalityTree(expression));
 function hasScopedSymbols(expression) {
   if (!isMathExpression(expression))
     return false;
@@ -9092,17 +9121,20 @@ function hasEnclosures(expression) {
   return ["operands", "arguments"].some((key) => expressionField(expression, key)?.values?.some(hasEnclosures));
 }
 function expressionStructuralKey(expression) {
+  return JSON.stringify(expressionStructuralTree(expression));
+}
+function expressionStructuralTree(expression) {
   if (!isMathExpression(expression))
-    return expressionStructuralKey(expressionConstant(expression));
+    return expressionStructuralTree(expressionConstant(expression));
   const kind = expressionField(expression, "kind")?.value;
   if (kind === "variable")
-    return JSON.stringify([kind, symbolState(expression)?.id ?? ["named", expressionField(expression, "name")?.value]]);
+    return [kind, symbolState(expression)?.id ?? ["named", expressionField(expression, "name")?.value]];
   if (kind === "constant")
-    return JSON.stringify([kind, constantKey(expressionField(expression, "value"))]);
+    return [kind, constantKey(expressionField(expression, "value"))];
   if (kind === "operator")
-    return JSON.stringify([kind, expressionField(expression, "operation")?.value, expressionField(expression, "operands").values.map(expressionStructuralKey)]);
+    return [kind, expressionField(expression, "operation")?.value, expressionField(expression, "operands").values.map(expressionStructuralTree)];
   if (kind === "apply")
-    return JSON.stringify([kind, expressionField(expression, "semanticid")?.value, expressionField(expression, "arguments").values.map(expressionStructuralKey)]);
+    return [kind, expressionField(expression, "semanticid")?.value, expressionField(expression, "arguments").values.map(expressionStructuralTree)];
   throw new Error("Unsupported mathematical expression kind");
 }
 function isMathExpression(value) {
@@ -12594,6 +12626,7 @@ var runtimeDefaults = Object.freeze({
     Exact: Object.freeze(["EXACT", "Exact", "COMPLEX", "Complex", "DEFINEEXACTGENERATOR", "DefineExactGenerator", "exactalgebras"]),
     Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC", "SPECROLES", "SPECFRACTIONPARTS", "SArith", "ExpressionVariable", "ExpressionConstant", "ExpressionOperation", "ExpressionApply", "IsExpression", "ExpressionKey", "ExpressionHasScopedSymbols", "SameSymbol", "SYMBOL_RETRIEVE", "SYMBOL_DEFINE", "ExpressionDefinition", "ExpressionExpand"]),
     MathematicalContexts: Object.freeze(["MATH_CONTEXT", "BOUND_SYMBOL"]),
+    MathematicalSerialization: Object.freeze(["MathEncodeJSON", "MathDecodeJSON", "MathEncodeJSONL", "MathDecodeJSONL"]),
     SymbolicConstants: Object.freeze(["ExpressionConstantInfo", "ExpressionHasExtendedConstants", "ExpressionReal", "ExpressionRefine"]),
     Notation: Object.freeze(["SArith", "Poly", "NotationParser"]),
     Random: Object.freeze(["RNG", "RANDOMSEED", "RandomSeed", "RAND_NAME"]),
@@ -31233,6 +31266,391 @@ var mathContextSyntaxFunctions = {
   }, lazy: true, pure: false }
 };
 
+// ../rix/src/runtime/math-json.js
+var MATH_DOCUMENT_SCHEMA = "rix.math.document@1";
+var MAX_TEXT = 2000000;
+var MAX_NODES = 1e4;
+var MAX_DEPTH = 128;
+var MAX_DIGITS = 1024;
+var fail = (message) => {
+  throw new Error(`Mathematical JSON: ${message}`);
+};
+var text8 = (value) => ({ type: "string", value });
+var immutable = (entries2) => ({ type: "map", entries: new Map(entries2), _ext: new Map([["immutable", new Integer(1n)]]) });
+function fields(value, keys) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== keys.length || keys.some((key) => !Object.hasOwn(value, key)))
+    fail("unexpected or missing fields");
+}
+function string2(value) {
+  if (typeof value !== "string" || value.length > MAX_TEXT)
+    fail("invalid string");
+  return value;
+}
+function integer2(value) {
+  if (typeof value !== "string" || value.length > MAX_DIGITS || !/^(0|-?[1-9][0-9]*)$/.test(value))
+    fail("invalid or oversized integer");
+  return BigInt(value);
+}
+function list(value) {
+  if (!Array.isArray(value) || value.length > MAX_NODES)
+    fail("invalid or oversized array");
+  return value;
+}
+function exact2(value) {
+  if (!(value instanceof Integer || value instanceof Rational))
+    fail("expected exact scalar");
+  return value;
+}
+function safeTree(value, depth = 0) {
+  if (depth > MAX_DEPTH)
+    fail("nesting budget exceeded");
+  if (value && typeof value === "object")
+    for (const item of Object.values(value))
+      safeTree(item, depth + 1);
+}
+function encodeMathematicalJSON(root) {
+  const nodes = [], identities = new Map, objects = new Map;
+  function encode(value, depth = 0) {
+    if (depth > MAX_DEPTH)
+      fail("graph depth budget exceeded");
+    if (value === null)
+      return null;
+    if (value === UNDECIDED)
+      return { $undecided: true };
+    if (value instanceof Integer) {
+      integer2(String(value.value));
+      return { $integer: String(value.value) };
+    }
+    if (value instanceof Rational) {
+      if (value.denominator === 0n)
+        fail("nonfinite rational");
+      integer2(String(value.numerator));
+      integer2(String(value.denominator));
+      return { $rational: [String(value.numerator), String(value.denominator)] };
+    }
+    if (value?.type === "string")
+      return { $string: value.value };
+    if (!value || typeof value !== "object")
+      fail("unsupported value or callable");
+    const kind = isMathExpression(value) ? expressionField(value, "kind")?.value : null;
+    const real = realConstantState(value);
+    const identity = kind === "variable" ? `symbol:${expressionStructuralKey(value)}` : real ? `real:${real.id}` : value.type === "exact_generator" ? `generator:${value.id}` : null;
+    if (identity && identities.has(identity))
+      return { $ref: identities.get(identity) };
+    if (objects.has(value))
+      return { $ref: objects.get(value) };
+    if (nodes.length >= MAX_NODES)
+      fail("node budget exceeded");
+    const id = `n${nodes.length}`, node = { id };
+    nodes.push(node);
+    objects.set(value, id);
+    if (identity)
+      identities.set(identity, id);
+    const child = (value2) => encode(value2, depth + 1);
+    if (kind === "variable")
+      Object.assign(node, { kind: "symbol", name: expressionField(value, "name").value, bound: !!expressionField(value, "bound"), definition: child(expressionDefinition(value)) });
+    else if (kind === "constant")
+      Object.assign(node, { kind, value: child(expressionField(value, "value")) });
+    else if (kind === "operator")
+      Object.assign(node, { kind, operation: expressionField(value, "operation").value, operands: expressionField(value, "operands").values.map(child) });
+    else if (kind === "apply")
+      Object.assign(node, { kind, semanticId: expressionField(value, "semanticid").value, name: expressionField(value, "name").value, arguments: expressionField(value, "arguments").values.map(child) });
+    else if (value instanceof RationalInterval)
+      Object.assign(node, { kind: "interval", start: child(value.start), end: child(value.end) });
+    else if (real)
+      Object.assign(node, { kind: "real", envelope: {
+        schema: "rix.refinable-real@1",
+        subject: { kind: "opaqueSingleton", stableName: id },
+        snapshot: {
+          interval: { $interval: [child(real.interval.low), child(real.interval.high)] },
+          status: real.source ? "certified" : "assumed",
+          evidenceLevel: real.savedEvidence || real.evidence?.value || "declared",
+          verification: "unavailable",
+          evidence: [],
+          achievedWidth: child(real.interval.high.subtract(real.interval.low)),
+          work: { calls: "0", iterations: "0" }
+        },
+        recipe: null
+      } });
+    else if (value.type === "exact_generator")
+      Object.assign(node, {
+        kind: "generator",
+        name: value.name,
+        category: value.category,
+        real: value.real,
+        positiveRoot: value.positiveRoot,
+        polynomial: value.minimalPolynomial ? value.minimalPolynomial.map(child) : null
+      });
+    else if (value.type === "exact_expression")
+      Object.assign(node, { kind: "exact", terms: [...value.terms.values()].map((term) => ({ coefficient: child(term.coefficient), powers: [...term.powers].map(([g, e]) => [child(g), e]) })) });
+    else if (["tuple", "sequence"].includes(value.type))
+      Object.assign(node, { kind: value.type, values: list(value.values).map(child) });
+    else if (value.type === "map")
+      Object.assign(node, { kind: "map", entries: list([...value.entries]).map(([key, item]) => [string2(key), child(item)]) });
+    else
+      fail(`unsupported value type ${value.type || "object"}`);
+    return { $ref: id };
+  }
+  const doc = { schema: MATH_DOCUMENT_SCHEMA, root: encode(root), nodes };
+  const output2 = JSON.stringify(doc);
+  validateDocument(output2);
+  return output2;
+}
+function validateDocument(source) {
+  if (typeof source !== "string" || source.length > MAX_TEXT)
+    fail("text budget exceeded or non-string input");
+  let doc;
+  try {
+    doc = JSON.parse(source);
+  } catch {
+    fail("invalid JSON");
+  }
+  safeTree(doc);
+  fields(doc, ["schema", "root", "nodes"]);
+  if (doc.schema !== MATH_DOCUMENT_SCHEMA)
+    fail("unsupported document version");
+  const table = new Map;
+  for (const node of list(doc.nodes)) {
+    if (!node || typeof node.id !== "string" || !/^n[0-9]+$/.test(node.id) || table.has(node.id))
+      fail("invalid or duplicate node ID");
+    table.set(node.id, node);
+  }
+  const visited = new Set, active = new Set;
+  function scan(value, depth = 0) {
+    if (depth > MAX_DEPTH)
+      fail("graph depth budget exceeded");
+    if (!value || typeof value !== "object")
+      return;
+    if (Object.hasOwn(value, "$ref")) {
+      fields(value, ["$ref"]);
+      const id = value.$ref;
+      if (!table.has(id))
+        fail("dangling reference");
+      if (active.has(id))
+        fail("cyclic graph or definition");
+      if (visited.has(id))
+        return;
+      active.add(id);
+      scan(table.get(id), depth + 1);
+      active.delete(id);
+      visited.add(id);
+      return;
+    }
+    for (const child of Object.values(value))
+      scan(child, depth + 1);
+  }
+  scan(doc.root);
+  for (const id of table.keys())
+    scan({ $ref: id });
+  const weights = new Map;
+  function weight(value) {
+    if (!value || typeof value !== "object")
+      return { size: 1, height: 1 };
+    if (Object.hasOwn(value, "$ref")) {
+      if (!weights.has(value.$ref))
+        weights.set(value.$ref, weight(table.get(value.$ref)));
+      return weights.get(value.$ref);
+    }
+    let total = 1, height = 1;
+    for (const child of Object.values(value)) {
+      const nested = weight(child);
+      total += nested.size;
+      height = Math.max(height, nested.height + 1);
+      if (total > 1e5 || height > MAX_DEPTH)
+        fail("expanded graph budget exceeded");
+    }
+    return { size: total, height };
+  }
+  weight(doc.root);
+  for (const id of table.keys())
+    weight({ $ref: id });
+  return { doc, table };
+}
+function decodeMathematicalJSON(source) {
+  const { doc, table } = validateDocument(source), memo = new Map;
+  function decode(value, depth = 0) {
+    if (depth > MAX_DEPTH)
+      fail("graph depth budget exceeded");
+    if (value === null)
+      return null;
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      fail("expected tagged value");
+    const keys = Object.keys(value);
+    if (keys.length !== 1)
+      fail("invalid value tag");
+    if (keys[0] === "$integer")
+      return new Integer(integer2(value.$integer));
+    if (keys[0] === "$rational") {
+      const parts = list(value.$rational);
+      if (parts.length !== 2)
+        fail("invalid rational");
+      const n2 = integer2(parts[0]), d = integer2(parts[1]);
+      if (d <= 0n)
+        fail("nonpositive denominator");
+      const rational = new Rational(n2, d);
+      if (rational.numerator !== n2 || rational.denominator !== d)
+        fail("noncanonical rational");
+      return rational;
+    }
+    if (keys[0] === "$string")
+      return text8(string2(value.$string));
+    if (keys[0] === "$undecided" && value.$undecided === true)
+      return UNDECIDED;
+    if (keys[0] !== "$ref" || !table.has(value.$ref))
+      fail("unknown tag or reference");
+    if (memo.has(value.$ref))
+      return memo.get(value.$ref);
+    const n = table.get(value.$ref), child = (value2) => decode(value2, depth + 1);
+    const shape = (...names) => fields(n, ["id", "kind", ...names]);
+    let result;
+    switch (n.kind) {
+      case "symbol": {
+        shape("name", "bound", "definition");
+        string2(n.name);
+        if (!n.name || typeof n.bound !== "boolean")
+          fail("invalid symbol");
+        result = freshExpressionSymbol(n.name, n.bound);
+        if (n.definition !== null)
+          restoreExpressionDefinition(result, child(n.definition));
+        break;
+      }
+      case "constant":
+        shape("value");
+        result = expressionConstant(child(n.value));
+        break;
+      case "operator":
+        shape("operation", "operands");
+        result = expressionOperation(string2(n.operation), list(n.operands).map(child));
+        break;
+      case "apply":
+        shape("semanticId", "name", "arguments");
+        result = expressionApplication(string2(n.semanticId), string2(n.name), list(n.arguments).map(child));
+        break;
+      case "interval":
+        shape("start", "end");
+        result = new RationalInterval(exact2(child(n.start)), exact2(child(n.end)));
+        break;
+      case "generator": {
+        shape("name", "category", "real", "positiveRoot", "polynomial");
+        if (typeof n.real !== "boolean" || typeof n.positiveRoot !== "boolean")
+          fail("invalid generator flags");
+        const polynomial = n.polynomial === null ? null : list(n.polynomial).map((value2) => exact2(child(value2)));
+        if (polynomial && polynomial.length > 64)
+          fail("generator degree budget exceeded");
+        result = createExactGenerator(string2(n.name), { category: string2(n.category), real: n.real, positiveRoot: n.positiveRoot, minimalPolynomial: polynomial });
+        break;
+      }
+      case "exact": {
+        shape("terms");
+        const terms = new Map;
+        for (const term of list(n.terms)) {
+          fields(term, ["coefficient", "powers"]);
+          const coefficient = exact2(child(term.coefficient)), powers = new Map;
+          for (const pair of list(term.powers)) {
+            if (!Array.isArray(pair) || pair.length !== 2)
+              fail("invalid generator power");
+            const generator = child(pair[0]), exponent = pair[1];
+            if (generator?.type !== "exact_generator" || !Number.isSafeInteger(exponent) || exponent < 1 || exponent > 1e4 || powers.has(generator))
+              fail("invalid generator power");
+            powers.set(generator, exponent);
+          }
+          const key = [...powers].sort(([a], [b]) => a.id.localeCompare(b.id)).map(([g, e]) => `${g.id}^${e}`).join("|");
+          if (terms.has(key))
+            fail("duplicate exact term");
+          terms.set(key, { coefficient, powers });
+        }
+        result = { type: "exact_expression", terms };
+        break;
+      }
+      case "real": {
+        shape("envelope");
+        const e = n.envelope;
+        fields(e, ["schema", "subject", "snapshot", "recipe"]);
+        if (e.schema !== "rix.refinable-real@1" || e.recipe !== null)
+          fail("unsupported real envelope or recipe");
+        fields(e.subject, ["kind", "stableName"]);
+        if (e.subject.kind !== "opaqueSingleton")
+          fail("unsupported real subject");
+        string2(e.subject.stableName);
+        const s = e.snapshot;
+        fields(s, ["interval", "status", "evidenceLevel", "verification", "evidence", "achievedWidth", "work"]);
+        if (!["certified", "assumed", "approximate", "unresolved"].includes(s.status) || s.verification !== "unavailable" || list(s.evidence).length)
+          fail("unsupported real evidence");
+        fields(s.work, ["calls", "iterations"]);
+        if (s.work.calls !== "0" || s.work.iterations !== "0")
+          fail("unsupported snapshot work");
+        fields(s.interval, ["$interval"]);
+        const endpoints = list(s.interval.$interval);
+        if (endpoints.length !== 2)
+          fail("invalid real interval");
+        const interval2 = new RationalInterval(exact2(child(endpoints[0])), exact2(child(endpoints[1])));
+        if (!interval2.high.subtract(interval2.low).equals(exact2(child(s.achievedWidth))))
+          fail("inconsistent snapshot width");
+        result = restoreRealSnapshot(interval2, string2(s.evidenceLevel));
+        break;
+      }
+      case "tuple":
+      case "sequence":
+        shape("values");
+        result = { type: n.kind, values: list(n.values).map(child) };
+        break;
+      case "map": {
+        shape("entries");
+        const entries2 = new Map;
+        for (const pair of list(n.entries)) {
+          if (!Array.isArray(pair) || pair.length !== 2 || entries2.has(string2(pair[0])))
+            fail("invalid or duplicate map key");
+          entries2.set(pair[0], child(pair[1]));
+        }
+        if (entries2.get("schema")?.value === "rix.math.context@1") {
+          entries2.set("consistency", text8("unresolved"));
+          entries2.set("validation", text8("unverifiedImport"));
+        }
+        result = immutable(entries2);
+        break;
+      }
+      default:
+        fail("unknown node kind");
+    }
+    memo.set(n.id, result);
+    return result;
+  }
+  for (const id of table.keys())
+    decode({ $ref: id });
+  return decode(doc.root);
+}
+var mathematicalJSONCapabilities = {
+  MathEncodeJSON: { impl: ([value]) => text8(encodeMathematicalJSON(value)), pure: false, groups: ["Symbolic"], doc: "Encode an inert document-local mathematical graph" },
+  MathDecodeJSON: { impl: ([value]) => decodeMathematicalJSON(value?.type === "string" ? value.value : value), pure: false, groups: ["Symbolic"], doc: "Load fresh identities and frozen real snapshots without executing code" },
+  MathEncodeJSONL: { impl: ([values2]) => {
+    if (!["sequence", "tuple"].includes(values2?.type) || values2.values.length > 1000)
+      fail("JSONL requires at most 1000 values");
+    const lines = values2.values.map(encodeMathematicalJSON).join(`
+`), output2 = lines ? lines + `
+` : "";
+    if (output2.length > MAX_TEXT)
+      fail("JSONL text budget exceeded");
+    return text8(output2);
+  }, pure: false, groups: ["Symbolic"], doc: "Encode independent mathematical documents, one per line" },
+  MathDecodeJSONL: { impl: ([value]) => {
+    const source = value?.type === "string" ? value.value : value;
+    if (typeof source !== "string" || source.length > MAX_TEXT)
+      fail("JSONL text budget exceeded");
+    const lines = source.split(/\r?\n/);
+    if (lines.at(-1) === "")
+      lines.pop();
+    if (lines.length > 1000 || lines.some((line) => !line.trim()))
+      fail("JSONL line budget or blank line");
+    return { type: "sequence", values: lines.map((line, index) => {
+      try {
+        return decodeMathematicalJSON(line);
+      } catch (error) {
+        fail(`line ${index + 1}: ${error.message}`);
+      }
+    }) };
+  }, pure: false, groups: ["Symbolic"], doc: "Decode independent bounded JSONL documents without executing code" }
+};
+
 // ../rix/src/runtime/system-context.js
 var trustedRangeProviderDescriptors = new WeakMap;
 function isRangeProviderCallable(value) {
@@ -32145,14 +32563,14 @@ function parseTarget(rawTarget, owner, label, line) {
 function parseOperatorDeclarationLine(source, options = {}) {
   const label = options.label || "OPS";
   const line = options.line || 1;
-  const fields = String(source).trim().split(/\s+/).filter(Boolean);
+  const fields2 = String(source).trim().split(/\s+/).filter(Boolean);
   let symbol = null;
   let target = null;
   let fixity = null;
   let associativity = null;
   let relation = null;
   let band = null;
-  for (const field of fields) {
+  for (const field of fields2) {
     const operatorMatch2 = field.match(OPERATOR_TOKEN);
     if (operatorMatch2) {
       if (symbol !== null)
@@ -32240,10 +32658,10 @@ function extractOperatorDeclarations(tokens, options = {}) {
     const lines = String(token2.value || "").replace(/\r/g, "").split(`
 `);
     for (let index = 0;index < lines.length; index += 1) {
-      const text8 = lines[index].trim();
-      if (!text8)
+      const text9 = lines[index].trim();
+      if (!text9)
         continue;
-      const definition = parseOperatorDeclarationLine(text8, {
+      const definition = parseOperatorDeclarationLine(text9, {
         owner: options.owner,
         label: options.label || "OPS",
         line: firstLine + index
@@ -32354,11 +32772,11 @@ function parsePluginYaml(source, label = "plugin header") {
     const withoutDocStar = rawLine.replace(/^\s*\* ?/, "");
     if (!withoutDocStar.trim() || withoutDocStar.trimStart().startsWith("#"))
       continue;
-    const list = withoutDocStar.match(/^\s+-\s+(.+)$/);
-    if (list) {
+    const list2 = withoutDocStar.match(/^\s+-\s+(.+)$/);
+    if (list2) {
       if (!pendingList)
         throw new Error(`${label}: list item has no key`);
-      metadata[pendingList].push(parseScalar(list[1]));
+      metadata[pendingList].push(parseScalar(list2[1]));
       continue;
     }
     const match = withoutDocStar.match(/^\s*([A-Za-z][A-Za-z0-9_-]*)\s*:\s*(.*?)\s*$/);
@@ -32642,8 +33060,8 @@ class PluginCatalog {
     this.loading.add(metadata.id);
     try {
       for (const requirement of metadata.requires) {
-        const exact2 = this.info(requirement);
-        const providers = exact2 ? [exact2] : this.list().filter((candidate) => candidate.provides.includes(requirement));
+        const exact3 = this.info(requirement);
+        const providers = exact3 ? [exact3] : this.list().filter((candidate) => candidate.provides.includes(requirement));
         if (providers.length === 0) {
           throw new Error(`Plugin '${metadata.id}' requires unavailable service '${requirement}'`);
         }
@@ -32758,8 +33176,8 @@ class PluginCatalog {
   }
   async _activateAsync(metadata, runtime) {
     for (const requirement of metadata.requires) {
-      const exact2 = this.info(requirement);
-      const providers = exact2 ? [exact2] : this.list().filter((candidate) => candidate.provides.includes(requirement));
+      const exact3 = this.info(requirement);
+      const providers = exact3 ? [exact3] : this.list().filter((candidate) => candidate.provides.includes(requirement));
       if (providers.length === 0) {
         throw new Error(`Plugin '${metadata.id}' requires unavailable service '${requirement}'`);
       }
@@ -37640,8 +38058,8 @@ class Parser {
     }
     this.position = endIndex + 1;
     this.advance();
-    const text8 = raw.trim();
-    if (!text8.length) {
+    const text9 = raw.trim();
+    if (!text9.length) {
       this.error("Import header cannot be empty");
     }
     const seenLocals = new Set;
@@ -38778,8 +39196,8 @@ var BASE_MODE_ALIASES = new Map([
 ]);
 var DEFAULT_BASE_DIGITS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz@&";
 var DEFAULT_BASE_EXPANSION_LIMIT = 20;
-function unescapeQuotedString(text8) {
-  return text8.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16))).replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+function unescapeQuotedString(text9) {
+  return text9.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16))).replace(/\\"/g, '"').replace(/\\\\/g, "\\");
 }
 function toRationalValue(value) {
   if (value instanceof Integer)
@@ -38881,10 +39299,10 @@ function groupDigits(intStr) {
   }
   return sign + out;
 }
-function stripGroupedDecimalDigits(text8, { allowSign = false } = {}) {
-  if (typeof text8 !== "string" || text8.length === 0)
-    return text8;
-  let s = text8;
+function stripGroupedDecimalDigits(text9, { allowSign = false } = {}) {
+  if (typeof text9 !== "string" || text9.length === 0)
+    return text9;
+  let s = text9;
   let sign = "";
   if (allowSign && (s.startsWith("-") || s.startsWith("+"))) {
     sign = s[0];
@@ -38906,9 +39324,9 @@ function stripGroupedDecimalDigits(text8, { allowSign = false } = {}) {
   }
   return sign + s.replace(/_/g, "");
 }
-function groupDigitRuns(text8, baseSystem) {
-  if (!text8)
-    return text8;
+function groupDigitRuns(text9, baseSystem) {
+  if (!text9)
+    return text9;
   let out = "";
   let run = "";
   const flush = () => {
@@ -38925,7 +39343,7 @@ function groupDigitRuns(text8, baseSystem) {
     }
     run = "";
   };
-  for (const ch of text8) {
+  for (const ch of text9) {
     if (baseSystem.charMap.has(ch)) {
       run += ch;
     } else {
@@ -39245,7 +39663,7 @@ function boundedBaseApproximation(value, baseSystem, digitLimit) {
   const rational = toRationalValue(value);
   const negative = rational.numerator < 0n;
   const numerator = negative ? -rational.numerator : rational.numerator;
-  const integer2 = numerator / rational.denominator;
+  const integer3 = numerator / rational.denominator;
   let remainder = numerator % rational.denominator;
   let digits = "";
   for (let index = 0;index < limit && remainder !== 0n; index++) {
@@ -39255,7 +39673,7 @@ function boundedBaseApproximation(value, baseSystem, digitLimit) {
   }
   if (remainder === 0n)
     return value;
-  const integerDigits = baseSystem.fromDecimal(integer2);
+  const integerDigits = baseSystem.fromDecimal(integer3);
   return certifiedRadixPrefix({
     integerDigits,
     fractionalDigits: digits,
@@ -39297,12 +39715,12 @@ function toBaseString(value, baseSystem, modeSpec = { mode: 1 }) {
     const hash = body.indexOf("#");
     const dot = body.indexOf(".");
     const cut = dot === -1 ? hash === -1 ? body.length : hash : dot;
-    const integer2 = body.slice(0, cut);
-    const integerDigits = Array.from(integer2).filter((ch) => baseSystem.charMap.has(ch)).length;
-    if (integer2.length <= 1)
+    const integer3 = body.slice(0, cut);
+    const integerDigits = Array.from(integer3).filter((ch) => baseSystem.charMap.has(ch)).length;
+    if (integer3.length <= 1)
       return `${groupRadixExpansion(sign2 + body, baseSystem)}_^0`;
     const tail = dot === -1 ? hash === -1 ? "" : body.slice(hash) : body.slice(dot + 1);
-    const shifted = `${integer2[0]}.${integer2.slice(1)}${tail}`;
+    const shifted = `${integer3[0]}.${integer3.slice(1)}${tail}`;
     return `${groupRadixExpansion(sign2 + shifted, baseSystem)}_^${integerDigits - 1}`;
   }
   if (mode === 6) {
@@ -39437,7 +39855,7 @@ function validateNumberDisplayProfile(profile) {
     }
   }
 }
-function exactPrefixedText(text8, prefix, quoted = false) {
+function exactPrefixedText(text9, prefix, quoted = false) {
   const marker = `0${prefix}`;
   const prefixed = (component) => {
     const negative = component.startsWith("-");
@@ -39445,16 +39863,16 @@ function exactPrefixedText(text8, prefix, quoted = false) {
     const body = quoted ? JSON.stringify(digits) : digits;
     return `${negative ? "-" : ""}${marker}${body}`;
   };
-  if (text8.includes("..")) {
-    const [whole, fraction] = text8.split("..");
+  if (text9.includes("..")) {
+    const [whole, fraction] = text9.split("..");
     const [num, den] = fraction.split("/");
     return `${prefixed(whole)}..${prefixed(num)}/${prefixed(den)}`;
   }
-  if (text8.includes("/") && !text8.includes(".~")) {
-    const [num, den] = text8.split("/");
+  if (text9.includes("/") && !text9.includes(".~")) {
+    const [num, den] = text9.split("/");
     return `${prefixed(num)}/${prefixed(den)}`;
   }
-  return prefixed(text8);
+  return prefixed(text9);
 }
 function parseLiteral(str2) {
   if (typeof str2 !== "string")
@@ -40544,8 +40962,8 @@ var coreFunctions = {
         } catch {}
       }
       const baseSystem = resolveBaseSpecFromValue(baseSpecValue);
-      const text8 = toBaseString(value, baseSystem, modeSpec);
-      return { type: "string", value: text8 };
+      const text9 = toBaseString(value, baseSystem, modeSpec);
+      return { type: "string", value: text9 };
     },
     doc: "Format number to base string: expr _> baseSpec"
   },
@@ -40567,14 +40985,14 @@ var coreFunctions = {
       if (modeSpec.limit !== undefined) {
         throw new Error("_>! does not permit a digit limit because truncation is not lossless");
       }
-      const text8 = toBaseString(value, baseSystem, modeSpec);
-      if (text8.includes("...")) {
+      const text9 = toBaseString(value, baseSystem, modeSpec);
+      if (text9.includes("...")) {
         throw new Error("_>! could not produce a lossless finite RiX numeral");
       }
       if (baseSystem.requiresQuoting && modeSpec.mode !== 6) {
         throw new Error("_>! punctuation-digit systems require fraction mode so every component can be quoted");
       }
-      return { type: "string", value: exactPrefixedText(text8, prefix, baseSystem.requiresQuoting) };
+      return { type: "string", value: exactPrefixedText(text9, prefix, baseSystem.requiresQuoting) };
     },
     doc: "Format a number as lossless RiX source, or fail"
   },
@@ -40609,11 +41027,11 @@ var coreFunctions = {
       const strVal = evaluate(args[0]);
       const specNode = args[1];
       const baseSpecValue = specNode && specNode.fn === "LITERAL" && typeof specNode.args?.[0] === "string" && /^0([A-Za-z])$/.test(specNode.args[0]) ? specNode.args[0] : evaluate(specNode);
-      const text8 = strVal && strVal.type === "string" ? strVal.value : strVal;
-      if (typeof text8 !== "string")
+      const text9 = strVal && strVal.type === "string" ? strVal.value : strVal;
+      if (typeof text9 !== "string")
         throw new Error("FROMBASE expects a string left operand");
       const baseSystem = resolveBaseSpecFromValue(baseSpecValue);
-      return fromBaseString(text8, baseSystem);
+      return fromBaseString(text9, baseSystem);
     },
     doc: "Parse base string to number: str <_ baseSpec"
   },
@@ -40642,8 +41060,8 @@ var coreFunctions = {
         const groups = [];
         const spans = [];
         for (let i = 0;i < match.length; i++) {
-          const text8 = match[i];
-          groups.push(text8 === undefined ? null : { type: "string", value: text8 });
+          const text9 = match[i];
+          groups.push(text9 === undefined ? null : { type: "string", value: text9 });
           if (match.indices && match.indices[i]) {
             const [start, end] = match.indices[i];
             spans.push({
@@ -40660,8 +41078,8 @@ var coreFunctions = {
         const named = new Map;
         const namedSpans = new Map;
         if (match.groups) {
-          for (const [key, text8] of Object.entries(match.groups)) {
-            named.set(key, text8 === undefined ? null : { type: "string", value: text8 });
+          for (const [key, text9] of Object.entries(match.groups)) {
+            named.set(key, text9 === undefined ? null : { type: "string", value: text9 });
             if (match.indices && match.indices.groups && match.indices.groups[key]) {
               const [s, e] = match.indices.groups[key];
               namedSpans.set(key, {
@@ -42340,10 +42758,10 @@ var stdlibFunctions = {
     impl(args, context) {
       const io = context?.getEnv?.(RIX_IO_ENV, null);
       const formatter = typeof io?.format === "function" ? io.format : defaultPrettyFormat;
-      const printer = typeof io?.print === "function" ? io.print : (text8) => console.log(text8);
+      const printer = typeof io?.print === "function" ? io.print : (text9) => console.log(text9);
       for (const arg of args) {
-        const text8 = formatter(arg, { formatValue, prettyFormat: defaultPrettyFormat, context });
-        printer(text8, arg, { formatValue, prettyFormat: defaultPrettyFormat, context });
+        const text9 = formatter(arg, { formatValue, prettyFormat: defaultPrettyFormat, context });
+        printer(text9, arg, { formatValue, prettyFormat: defaultPrettyFormat, context });
       }
       return null;
     },
@@ -43615,11 +44033,11 @@ function standaloneInterpolation(body, context, evaluate) {
   const hole = source.startsWith("@{") ? readHole(source, 0) : null;
   return hole && hole.end === source.length ? { matched: true, value: evaluateTemplateSource(hole.source, context, evaluate) } : { matched: false, value: null };
 }
-function textValue3(text8) {
-  return { type: "string", value: text8 };
+function textValue3(text9) {
+  return { type: "string", value: text9 };
 }
-function outputMap(fields) {
-  return { type: "map", entries: new Map(Object.entries(fields).filter(([, value]) => value !== undefined && value !== null)) };
+function outputMap(fields2) {
+  return { type: "map", entries: new Map(Object.entries(fields2).filter(([, value]) => value !== undefined && value !== null)) };
 }
 function literalValue2(value) {
   return { type: "string", value };
@@ -44197,16 +44615,16 @@ var DOCUMENT_VIEW_KEYS = Object.freeze([
   "columnLabels",
   "address"
 ]);
-function fail(path, message) {
+function fail2(path, message) {
   throw new Error(`Invalid RiXCel document at ${path}: ${message}`);
 }
 function plainObject(value, path) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    fail(path, "must be an object");
+    fail2(path, "must be an object");
   }
   const prototype = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) {
-    fail(path, "must be a plain object");
+    fail2(path, "must be a plain object");
   }
   return value;
 }
@@ -44215,19 +44633,19 @@ function jsonClone(value, path, seen = new Set) {
     return value;
   if (typeof value === "number") {
     if (!Number.isFinite(value))
-      fail(path, "must not contain non-finite numbers");
+      fail2(path, "must not contain non-finite numbers");
     return value;
   }
   if (typeof value !== "object")
-    fail(path, `contains unsupported ${typeof value} value`);
+    fail2(path, `contains unsupported ${typeof value} value`);
   if (seen.has(value))
-    fail(path, "must not contain cycles");
+    fail2(path, "must not contain cycles");
   seen.add(value);
   try {
     if (Array.isArray(value)) {
       return Array.from({ length: value.length }, (_unused, index) => {
         if (!Object.hasOwn(value, index))
-          fail(`${path}[${index}]`, "must not be sparse");
+          fail2(`${path}[${index}]`, "must not be sparse");
         return jsonClone(value[index], `${path}[${index}]`, seen);
       });
     }
@@ -44252,21 +44670,21 @@ function documentInput(value) {
 }
 function documentId(value) {
   if (typeof value !== "string" || value.trim().length === 0) {
-    fail("$.id", "must be a non-empty string");
+    fail2("$.id", "must be a non-empty string");
   }
   return value;
 }
 function documentShape(value) {
   if (!Array.isArray(value) || value.length === 0)
-    fail("$.shape", "must be a non-empty array");
+    fail2("$.shape", "must be a non-empty array");
   let size = 1;
   const shape = value.map((length, axis) => {
     if (!Number.isSafeInteger(length) || length < 1) {
-      fail(`$.shape[${axis}]`, "must be a positive safe integer");
+      fail2(`$.shape[${axis}]`, "must be a positive safe integer");
     }
     size *= length;
     if (!Number.isSafeInteger(size))
-      fail("$.shape", "has too many logical slots");
+      fail2("$.shape", "has too many logical slots");
     return length;
   });
   return { shape, size };
@@ -44289,11 +44707,11 @@ function linearOffset(index, shape) {
 }
 function normalizeIndex3(value, shape, path) {
   if (!Array.isArray(value) || value.length !== shape.length) {
-    fail(path, `must contain exactly ${shape.length} indices`);
+    fail2(path, `must contain exactly ${shape.length} indices`);
   }
   return value.map((item, axis) => {
     if (!Number.isSafeInteger(item) || item < 1 || item > shape[axis]) {
-      fail(`${path}[${axis}]`, `must be an integer from 1 through ${shape[axis]}`);
+      fail2(`${path}[${axis}]`, `must be an integer from 1 through ${shape[axis]}`);
     }
     return item;
   });
@@ -44310,41 +44728,41 @@ function normalizeDocumentView(value, path, shape) {
   for (const canonical of DOCUMENT_VIEW_KEYS) {
     const matches = entries2.filter(([key]) => key.toLowerCase() === canonical.toLowerCase());
     if (matches.length > 1)
-      fail(path, `contains duplicate case variants for ${canonical}`);
+      fail2(path, `contains duplicate case variants for ${canonical}`);
     if (matches.length === 1 && matches[0][0] !== canonical) {
       delete view[matches[0][0]];
       view[canonical] = matches[0][1];
     }
   }
   if (view.title !== undefined && typeof view.title !== "string") {
-    fail(`${path}.title`, "must be a string");
+    fail2(`${path}.title`, "must be a string");
   }
   if (view.address !== undefined && (typeof view.address !== "string" || view.address.length === 0)) {
-    fail(`${path}.address`, "must be a non-empty string");
+    fail2(`${path}.address`, "must be a non-empty string");
   }
   if (view.axes !== undefined) {
     if (!Array.isArray(view.axes) || view.axes.length !== shape.length) {
-      fail(`${path}.axes`, `must contain exactly ${shape.length} names`);
+      fail2(`${path}.axes`, `must contain exactly ${shape.length} names`);
     }
     view.axes.forEach((name, axis) => {
       if (typeof name !== "string" || name.length === 0) {
-        fail(`${path}.axes[${axis}]`, "must be a non-empty string");
+        fail2(`${path}.axes[${axis}]`, "must be a non-empty string");
       }
     });
   }
   if (view.axisLabels !== undefined) {
     if (!Array.isArray(view.axisLabels) || view.axisLabels.length !== shape.length) {
-      fail(`${path}.axisLabels`, `must contain exactly ${shape.length} axis entries`);
+      fail2(`${path}.axisLabels`, `must contain exactly ${shape.length} axis entries`);
     }
     view.axisLabels.forEach((labels, axis) => {
       if (labels === null)
         return;
       if (!Array.isArray(labels) || labels.length !== shape[axis]) {
-        fail(`${path}.axisLabels[${axis}]`, `must be null or contain exactly ${shape[axis]} labels`);
+        fail2(`${path}.axisLabels[${axis}]`, `must be null or contain exactly ${shape[axis]} labels`);
       }
       labels.forEach((label, index) => {
         if (label !== null && (typeof label !== "string" || label.length === 0)) {
-          fail(`${path}.axisLabels[${axis}][${index}]`, "must be null or a non-empty string");
+          fail2(`${path}.axisLabels[${axis}][${index}]`, "must be null or a non-empty string");
         }
       });
     });
@@ -44353,25 +44771,25 @@ function normalizeDocumentView(value, path, shape) {
   const viewAxes = view.viewAxes === undefined ? defaultViewAxes : view.viewAxes;
   const visibleCount = shape.length === 1 ? 1 : 2;
   if (!Array.isArray(viewAxes) || viewAxes.length !== visibleCount || viewAxes.some((axis) => !Number.isSafeInteger(axis) || axis < 1 || axis > shape.length) || new Set(viewAxes).size !== viewAxes.length) {
-    fail(`${path}.viewAxes`, `must contain ${visibleCount} distinct valid axis indices`);
+    fail2(`${path}.viewAxes`, `must contain ${visibleCount} distinct valid axis indices`);
   }
   if (view.slice !== undefined) {
     if (!Array.isArray(view.slice) || view.slice.length !== shape.length) {
-      fail(`${path}.slice`, `must contain exactly ${shape.length} entries`);
+      fail2(`${path}.slice`, `must contain exactly ${shape.length} entries`);
     }
     const visible = new Set(viewAxes);
     view.slice.forEach((coordinate, axisIndex) => {
       const axis = axisIndex + 1;
       if (visible.has(axis)) {
         if (coordinate !== null)
-          fail(`${path}.slice[${axisIndex}]`, "must be null for a visible axis");
+          fail2(`${path}.slice[${axisIndex}]`, "must be null for a visible axis");
       } else if (!Number.isSafeInteger(coordinate) || coordinate < 1 || coordinate > shape[axisIndex]) {
-        fail(`${path}.slice[${axisIndex}]`, `must be an integer from 1 through ${shape[axisIndex]}`);
+        fail2(`${path}.slice[${axisIndex}]`, `must be an integer from 1 through ${shape[axisIndex]}`);
       }
     });
   }
   if (view.columnLabels !== undefined && !["dual", "letters", "numbers"].includes(view.columnLabels)) {
-    fail(`${path}.columnLabels`, "must be dual, letters, or numbers");
+    fail2(`${path}.columnLabels`, "must be dual, letters, or numbers");
   }
   return view;
 }
@@ -44380,10 +44798,10 @@ function normalizeSlotDefinition(value, path, { defaultView = {} } = {}) {
   const source = slot.source ?? "_";
   const assignmentMode2 = slot.assignmentMode ?? ":=";
   if (typeof source !== "string" || source.trim().length === 0) {
-    fail(`${path}.source`, "must be a non-empty string");
+    fail2(`${path}.source`, "must be a non-empty string");
   }
   if (!ASSIGNMENT_MODES2.has(assignmentMode2)) {
-    fail(`${path}.assignmentMode`, `is not supported: ${assignmentMode2}`);
+    fail2(`${path}.assignmentMode`, `is not supported: ${assignmentMode2}`);
   }
   return {
     source,
@@ -44409,7 +44827,7 @@ function normalizeEvent(rawEvent, offset, id, shape) {
   const sequence5 = offset + 1;
   const type = event.type;
   if (!EVENT_TYPES.has(type))
-    fail(`${path}.type`, `is not supported: ${type}`);
+    fail2(`${path}.type`, `is not supported: ${type}`);
   const normalized = type === "slot:set" ? {
     id: eventId(id, sequence5),
     sequence: sequence5,
@@ -44418,7 +44836,7 @@ function normalizeEvent(rawEvent, offset, id, shape) {
     ...normalizeSlotDefinition(event, path)
   } : type === "slot:batch" ? (() => {
     if (!Array.isArray(event.edits) || event.edits.length < 1) {
-      fail(`${path}.edits`, "must be a non-empty array");
+      fail2(`${path}.edits`, "must be a non-empty array");
     }
     const occupied = new Set;
     const edits = event.edits.map((edit, editOffset) => {
@@ -44427,7 +44845,7 @@ function normalizeEvent(rawEvent, offset, id, shape) {
       const index = normalizeIndex3(edit.index, shape, `${editPath}.index`);
       const key = indexKey(index);
       if (occupied.has(key))
-        fail(`${editPath}.index`, "duplicates a coordinate in this batch");
+        fail2(`${editPath}.index`, "duplicates a coordinate in this batch");
       occupied.add(key);
       return { index, ...normalizeSlotDefinition(edit, editPath) };
     });
@@ -44436,23 +44854,23 @@ function normalizeEvent(rawEvent, offset, id, shape) {
     const axis = event.axis;
     const coordinate = event.coordinate;
     if (!Number.isSafeInteger(axis) || axis < 1 || axis > shape.length) {
-      fail(`${path}.axis`, `must be an integer from 1 through ${shape.length}`);
+      fail2(`${path}.axis`, `must be an integer from 1 through ${shape.length}`);
     }
     if (!Number.isSafeInteger(coordinate) || coordinate < 1 || coordinate > shape[axis - 1]) {
-      fail(`${path}.coordinate`, `must be an integer from 1 through ${shape[axis - 1]}`);
+      fail2(`${path}.coordinate`, `must be an integer from 1 through ${shape[axis - 1]}`);
     }
     if (event.label !== null && (typeof event.label !== "string" || event.label.trim().length === 0)) {
-      fail(`${path}.label`, "must be null or a non-empty string");
+      fail2(`${path}.label`, "must be null or a non-empty string");
     }
     return { id: eventId(id, sequence5), sequence: sequence5, type, axis, coordinate, label: event.label };
   })();
   if (event.id !== undefined && event.id !== normalized.id)
-    fail(`${path}.id`, `must equal "${normalized.id}"`);
+    fail2(`${path}.id`, `must equal "${normalized.id}"`);
   if (event.sequence !== undefined && event.sequence !== sequence5)
-    fail(`${path}.sequence`, `must equal ${sequence5}`);
+    fail2(`${path}.sequence`, `must equal ${sequence5}`);
   const command = rixCelEventCommand(normalized);
   if (event.command !== undefined && event.command !== command) {
-    fail(`${path}.command`, "must match the canonical RiX command");
+    fail2(`${path}.command`, "must match the canonical RiX command");
   }
   return { ...normalized, command };
 }
@@ -44463,14 +44881,14 @@ function normalizeDraft(rawDraft, offset, shape) {
   const source = draft.source;
   const assignmentMode2 = draft.assignmentMode ?? ":=";
   if (typeof source !== "string" || source.trim().length === 0)
-    fail(`${path}.source`, "must be a non-empty string");
+    fail2(`${path}.source`, "must be a non-empty string");
   if (!ASSIGNMENT_MODES2.has(assignmentMode2))
-    fail(`${path}.assignmentMode`, `is not supported: ${assignmentMode2}`);
+    fail2(`${path}.assignmentMode`, `is not supported: ${assignmentMode2}`);
   if (draft.kind !== undefined && !["parse", "cycle", "runtime"].includes(draft.kind)) {
-    fail(`${path}.kind`, "must be parse, cycle, or runtime");
+    fail2(`${path}.kind`, "must be parse, cycle, or runtime");
   }
   if (draft.message !== undefined && typeof draft.message !== "string")
-    fail(`${path}.message`, "must be a string");
+    fail2(`${path}.message`, "must be a string");
   const normalized = {
     index,
     source,
@@ -44484,9 +44902,9 @@ function denseVersionOne(input) {
   const id = documentId(input.id);
   const { shape, size } = documentShape(input.shape);
   if (!Array.isArray(input.slots))
-    fail("$.slots", "must be an array");
+    fail2("$.slots", "must be an array");
   if (input.slots.length !== size)
-    fail("$.slots", `must contain exactly ${size} dense slots`);
+    fail2("$.slots", `must contain exactly ${size} dense slots`);
   const occupied = new Set;
   const slots = input.slots.map((rawSlot, offset) => {
     const path = `$.slots[${offset}]`;
@@ -44494,11 +44912,11 @@ function denseVersionOne(input) {
     const index = normalizeIndex3(slot.index, shape, `${path}.index`);
     const key = indexKey(index);
     if (occupied.has(key))
-      fail(`${path}.index`, `duplicates coordinate [${index.join(",")}]`);
+      fail2(`${path}.index`, `duplicates coordinate [${index.join(",")}]`);
     occupied.add(key);
     const expectedId = slotId(id, index);
     if (slot.id !== expectedId)
-      fail(`${path}.id`, `must equal "${expectedId}"`);
+      fail2(`${path}.id`, `must equal "${expectedId}"`);
     return { id: expectedId, index, ...normalizeSlotDefinition(slot, path) };
   });
   slots.sort((left, right) => linearOffset(left.index, shape) - linearOffset(right.index, shape));
@@ -44508,9 +44926,9 @@ function draftToVersionOne(document) {
   const input = plainObject(document, "$");
   const format = input.format ?? input.kind;
   if (format !== RIXCEL_FORMAT)
-    fail("$.format", `must equal "${RIXCEL_FORMAT}"`);
+    fail2("$.format", `must equal "${RIXCEL_FORMAT}"`);
   if (!Array.isArray(input.slots))
-    fail("$.slots", "must be an array");
+    fail2("$.slots", "must be an array");
   const id = documentId(input.id);
   return {
     format: RIXCEL_FORMAT,
@@ -44557,36 +44975,36 @@ function parseRixCelDocument(value) {
   if (input.version === undefined || input.version === 0)
     input = draftToVersionOne(input);
   if (input.format !== RIXCEL_FORMAT)
-    fail("$.format", `must equal "${RIXCEL_FORMAT}"`);
+    fail2("$.format", `must equal "${RIXCEL_FORMAT}"`);
   if (!Number.isSafeInteger(input.version))
-    fail("$.version", "must be an integer");
+    fail2("$.version", "must be an integer");
   if (input.version > RIXCEL_VERSION) {
     throw new Error(`Unsupported RiXCel document version ${input.version}; this runtime supports through version ${RIXCEL_VERSION}`);
   }
   if (input.version === 1)
     return versionOneToVersionTwo(input);
   if (input.version !== RIXCEL_VERSION)
-    fail("$.version", `must equal ${RIXCEL_VERSION}`);
+    fail2("$.version", `must equal ${RIXCEL_VERSION}`);
   const id = documentId(input.id);
   const { shape } = documentShape(input.shape);
   const view = normalizeDocumentView(input.view, "$.view", shape);
   const defaultSlot = normalizeSlotDefinition(input.defaultSlot, "$.defaultSlot");
   if (!Array.isArray(input.events))
-    fail("$.events", "must be an array");
+    fail2("$.events", "must be an array");
   const events = input.events.map((event, offset) => normalizeEvent(event, offset, id, shape));
   const cursor = input.cursor ?? events.length;
   if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor > events.length) {
-    fail("$.cursor", `must be an integer from 0 through ${events.length}`);
+    fail2("$.cursor", `must be an integer from 0 through ${events.length}`);
   }
   const draftsInput = input.drafts ?? [];
   if (!Array.isArray(draftsInput))
-    fail("$.drafts", "must be an array");
+    fail2("$.drafts", "must be an array");
   const drafts = draftsInput.map((draft, offset) => normalizeDraft(draft, offset, shape));
   const draftCoordinates = new Set;
   for (const [offset, draft] of drafts.entries()) {
     const key = indexKey(draft.index);
     if (draftCoordinates.has(key))
-      fail(`$.drafts[${offset}].index`, "duplicates a draft coordinate");
+      fail2(`$.drafts[${offset}].index`, "duplicates a draft coordinate");
     draftCoordinates.add(key);
   }
   return { format: RIXCEL_FORMAT, version: RIXCEL_VERSION, id, shape, view, defaultSlot, events, cursor, drafts };
@@ -44864,10 +45282,10 @@ function formulaSheetCapability(args, context, evaluate, systemContext) {
     const value = option3(name);
     if (value === null)
       return fallback;
-    const text8 = value?.type === "string" ? value.value : typeof value === "string" ? value : null;
-    if (text8 === null)
+    const text9 = value?.type === "string" ? value.value : typeof value === "string" ? value : null;
+    if (text9 === null)
       throw new Error(`FormulaSheet ${name} must be a string`);
-    return text8;
+    return text9;
   };
   const viewOption = option3("view");
   if (viewOption !== null && (viewOption?.type !== "map" || !(viewOption.entries instanceof Map))) {
@@ -44894,10 +45312,10 @@ function rixCelImportCapability(args, context, evaluate, systemContext) {
   return importRixCelDocument(args[0], createFormulaSheetRuntimeOptions(context, evaluate, systemContext));
 }
 function delimitedText(value, label) {
-  const text8 = value?.type === "string" ? value.value : typeof value === "string" ? value : null;
-  if (text8 === null)
+  const text9 = value?.type === "string" ? value.value : typeof value === "string" ? value : null;
+  if (text9 === null)
     throw new Error(`${label} expects a text string`);
-  return text8;
+  return text9;
 }
 function parseDelimitedRows(source, delimiter) {
   const rows = [];
@@ -45023,11 +45441,11 @@ function exportDelimitedCapability(args, delimiter, label) {
   if (Array.isArray(labels?.[1]))
     lines.push(labels[1].map(csvField).join(delimiter));
   for (let row = 1;row <= sheet.shape[0]; row += 1) {
-    const fields = [];
+    const fields2 = [];
     for (let column = 1;column <= sheet.shape[1]; column += 1) {
-      fields.push(csvField(sheet.get([row, column])));
+      fields2.push(csvField(sheet.get([row, column])));
     }
-    lines.push(fields.join(delimiter));
+    lines.push(fields2.join(delimiter));
   }
   return { type: "string", value: lines.join(`
 `) };
@@ -45846,17 +46264,17 @@ function mapField2(map5, name) {
   return map5.entries.get(name);
 }
 function operatorDeclaration(value, context, evaluate, invoke) {
-  const text8 = (name, fallback = null) => {
+  const text9 = (name, fallback = null) => {
     const field = mapField2(value, name);
     return field === undefined ? fallback : stringFromValue(field, `.SArith.Configure ${name}`);
   };
   const precedence2 = mapField2(value, "precedence");
   const apply = mapField2(value, "apply");
   return {
-    symbol: text8("symbol"),
-    head: text8("head"),
-    fixity: text8("fixity", "infix"),
-    associativity: text8("associativity", "left"),
+    symbol: text9("symbol"),
+    head: text9("head"),
+    fixity: text9("fixity", "infix"),
+    associativity: text9("associativity", "left"),
     precedence: precedence2 instanceof Integer ? Number(precedence2.value) : undefined,
     apply: apply ? (...args) => invoke(apply, args, context, evaluate) : null
   };
@@ -80740,7 +81158,7 @@ ndNamespace._proto={=
 
 // ../rix/plugins/draw/draw.plugin.rix.js
 var int7 = (value) => new Integer(BigInt(value));
-var string2 = (value) => ({ type: "string", value: String(value) });
+var string3 = (value) => ({ type: "string", value: String(value) });
 var mapValue4 = (entries2) => ({ type: "map", entries: new Map(entries2) });
 var arrayValue = (values2) => ({ type: "sequence", values: values2 });
 function sequence5(value, label) {
@@ -80757,7 +81175,7 @@ function number(value, label) {
     return value;
   throw new Error(`${label} must be a finite number`);
 }
-function exact2(value) {
+function exact3(value) {
   if (value instanceof Integer || value instanceof Rational)
     return value;
   if (!Number.isFinite(value))
@@ -80776,7 +81194,7 @@ function pointNumbers(value, label) {
   return point2(value, label).map((coordinate, index) => number(coordinate, `${label} ${index ? "y" : "x"}`));
 }
 function pointsValue(points) {
-  return points.map(([x, y]) => [exact2(x), exact2(y)]);
+  return points.map(([x, y]) => [exact3(x), exact3(y)]);
 }
 function entriesFor(args, positional, name) {
   if (args.length === 1 && args[0]?.type === "map" && args[0].entries instanceof Map)
@@ -80827,7 +81245,7 @@ function arrow(args) {
     throw new Error("draw.Arrow requires distinct endpoints");
   const options = get2(entries2, "options")?.type === "map" ? get2(entries2, "options").entries : new Map;
   const headLength = number(get2(options, "headLength", int7(10)), "draw.Arrow headLength");
-  const headWidth = number(get2(options, "headWidth", exact2(headLength * 0.7)), "draw.Arrow headWidth");
+  const headWidth = number(get2(options, "headWidth", exact3(headLength * 0.7)), "draw.Arrow headWidth");
   if (headLength <= 0 || headWidth <= 0)
     throw new Error("draw.Arrow head dimensions must be positive");
   const ux = dx / length;
@@ -80838,7 +81256,7 @@ function arrow(args) {
   const style = get2(entries2, "style");
   const headStyle = mergedStyle(style, [
     ["closed", true],
-    ["fill", get2(style?.entries ?? new Map, "stroke", string2("#111827"))]
+    ["fill", get2(style?.entries ?? new Map, "stroke", string3("#111827"))]
   ]);
   return createGroup([[
     createPath([pointsValue([from, to]), style]),
@@ -80889,7 +81307,7 @@ function dimension(args) {
   const first = [from[0] + nx * offset, from[1] + ny * offset];
   const second = [to[0] + nx * offset, to[1] + ny * offset];
   const style = get2(entries2, "style");
-  const textValue4 = get2(entries2, "text", string2(Number(length.toPrecision(6))));
+  const textValue4 = get2(entries2, "text", string3(Number(length.toPrecision(6))));
   const arrowOptions = mapValue4([["headLength", int7(7)], ["headWidth", int7(5)]]);
   return createGroup([[
     createPath([pointsValue([from, first]), style]),
@@ -80899,7 +81317,7 @@ function dimension(args) {
     createTextMark([
       pointsValue([[(first[0] + second[0]) / 2 + nx * 6, (first[1] + second[1]) / 2 + ny * 6]])[0],
       textValue4,
-      mapValue4([["anchor", string2("middle")], ["size", int7(13)]])
+      mapValue4([["anchor", string3("middle")], ["size", int7(13)]])
     ])
   ]]);
 }
@@ -80948,7 +81366,7 @@ function viewport(args) {
   const entries2 = entriesFor(args, ["domain", "size", "options"], "draw.Viewport");
   const options = get2(entries2, "options")?.type === "map" ? get2(entries2, "options").entries : new Map;
   const value = mapValue4([
-    ["type", string2("draw_viewport")],
+    ["type", string3("draw_viewport")],
     ["domain", get2(entries2, "domain")],
     ["size", get2(entries2, "size")],
     ["margin", get2(options, "margin", int7(0))],
@@ -81013,12 +81431,12 @@ function bounds(args) {
   const entries2 = entriesFor(args, ["value"], "draw.Bounds");
   const [xmin, ymin, xmax, ymax] = boundsFor(get2(entries2, "value"));
   return mapValue4([
-    ["xmin", exact2(xmin)],
-    ["ymin", exact2(ymin)],
-    ["xmax", exact2(xmax)],
-    ["ymax", exact2(ymax)],
-    ["width", exact2(xmax - xmin)],
-    ["height", exact2(ymax - ymin)]
+    ["xmin", exact3(xmin)],
+    ["ymin", exact3(ymin)],
+    ["xmax", exact3(xmax)],
+    ["ymax", exact3(ymax)],
+    ["width", exact3(xmax - xmin)],
+    ["height", exact3(ymax - ymin)]
   ]);
 }
 function anchor(args) {
@@ -81029,7 +81447,7 @@ function anchor(args) {
   const ymin = number(get2(box2, "ymin"), "draw.Anchor ymin");
   const xmax = number(get2(box2, "xmax"), "draw.Anchor xmax");
   const ymax = number(get2(box2, "ymax"), "draw.Anchor ymax");
-  const name = get2(entries2, "name", string2("center"))?.value ?? String(get2(entries2, "name"));
+  const name = get2(entries2, "name", string3("center"))?.value ?? String(get2(entries2, "name"));
   const positions = {
     center: [(xmin + xmax) / 2, (ymin + ymax) / 2],
     north: [(xmin + xmax) / 2, ymin],
@@ -81110,9 +81528,9 @@ function symbol(args) {
     throw new Error("draw.Symbol children must be Graphics nodes");
   const options = get2(entries2, "options")?.type === "map" ? get2(entries2, "options").entries : new Map;
   return mapValue4([
-    ["valueKind", string2("drawSymbol")],
-    ["schema", string2("rix.draw.symbol@1")],
-    ["name", string2(name)],
+    ["valueKind", string3("drawSymbol")],
+    ["schema", string3("rix.draw.symbol@1")],
+    ["name", string3(name)],
     ["children", arrayValue(children)],
     ["anchor", get2(options, "anchor", arrayValue([int7(0), int7(0)]))],
     ["metadata", get2(options, "metadata")]
@@ -81139,7 +81557,7 @@ function useSymbol(args) {
 function marker(args) {
   const entries2 = entriesFor(args, ["path", "at", "marker", "style"], "draw.Marker");
   const path = get2(entries2, "path");
-  const at = number(get2(entries2, "at", exact2(0.5)), "draw.Marker at");
+  const at = number(get2(entries2, "at", exact3(0.5)), "draw.Marker at");
   const position = pathPointAt(path, at, "draw.Marker");
   const value = get2(entries2, "marker");
   if (value?.type === "map" && get2(value.entries, "schema")?.value === "rix.draw.symbol@1") {
@@ -81151,7 +81569,7 @@ function marker(args) {
   const radius = value === null ? 4 : number(value, "draw.Marker radius");
   if (radius <= 0)
     throw new Error("draw.Marker radius must be positive");
-  return createCircle([pointsValue([position])[0], exact2(radius), get2(entries2, "style")]);
+  return createCircle([pointsValue([position])[0], exact3(radius), get2(entries2, "style")]);
 }
 function intersects(first, second, padding = 0) {
   return !(first[2] + padding <= second[0] || second[2] + padding <= first[0] || first[3] + padding <= second[1] || second[3] + padding <= first[1]);
@@ -81202,17 +81620,17 @@ function placeLabels(args) {
     children.push(createTextMark([
       pointsValue([chosen.position])[0],
       textValue4,
-      mergedStyle(styleValue2, [["hitId", string2(id)]])
+      mergedStyle(styleValue2, [["hitId", string3(id)]])
     ]));
     placements.push(mapValue4([
-      ["id", string2(id)],
+      ["id", string3(id)],
       ["position", arrayValue(pointsValue([chosen.position])[0])],
       ["offset", arrayValue(pointsValue([chosen.offset])[0])],
       ["collided", int7(chosen.collided ? 1 : 0)]
     ]));
   });
   return createGroup([children, null, mapValue4([
-    ["schema", string2("rix.draw.label-layout@1")],
+    ["schema", string3("rix.draw.label-layout@1")],
     ["placements", arrayValue(placements)],
     ["resolved", int7(unresolved === 0 ? 1 : 0)],
     ["unresolved", int7(unresolved)]
@@ -81226,12 +81644,12 @@ function projectProtocolPoint(value, viewportValue, label2) {
 }
 function unresolvedDrawable(source, message, position = [int7(8), int7(18)]) {
   return createGroup([[
-    createTextMark([position, string2(message), mapValue4([["fill", string2("#b91c1c")], ["size", int7(13)]])])
+    createTextMark([position, string3(message), mapValue4([["fill", string3("#b91c1c")], ["size", int7(13)]])])
   ], null, mapValue4([
-    ["schema", string2("rix.draw.adapter-result@1")],
+    ["schema", string3("rix.draw.adapter-result@1")],
     ["resolved", int7(0)],
     ["uncertainty", source],
-    ["diagnostic", string2(message)]
+    ["diagnostic", string3(message)]
   ])]);
 }
 function fromDrawable(args) {
@@ -81258,8 +81676,8 @@ function fromDrawable(args) {
     }
     const children = sequence5(get2(record2.entries, "points"), "draw.From intersection points").map((item) => fromDrawable([item, mapValue4([...options])]));
     return createGroup([children, null, mapValue4([
-      ["schema", string2("rix.draw.adapter-result@1")],
-      ["sourceSchema", string2(schema)],
+      ["schema", string3("rix.draw.adapter-result@1")],
+      ["sourceSchema", string3(schema)],
       ["resolved", int7(1)]
     ])]);
   }
@@ -81267,10 +81685,10 @@ function fromDrawable(args) {
     const center = get2(record2.entries, "center");
     const position = projectProtocolPoint(get2(center.entries, "coordinates"), viewportValue, "draw.From uncertain point center");
     return createGroup([[
-      createCircle([position, int7(7), mergedStyle(styleValue2, [["fill", string2("#fef3c7")], ["stroke", string2("#b45309")], ["dash", string2("3 2")]])])
+      createCircle([position, int7(7), mergedStyle(styleValue2, [["fill", string3("#fef3c7")], ["stroke", string3("#b45309")], ["dash", string3("3 2")]])])
     ], null, mapValue4([
-      ["schema", string2("rix.draw.adapter-result@1")],
-      ["sourceSchema", string2(schema)],
+      ["schema", string3("rix.draw.adapter-result@1")],
+      ["sourceSchema", string3(schema)],
       ["resolved", int7(0)],
       ["uncertainty", source]
     ])]);
@@ -81280,12 +81698,12 @@ function fromDrawable(args) {
   }
   if (kind === "point") {
     const position = projectProtocolPoint(get2(record2.entries, "coordinates"), viewportValue, "draw.From point");
-    return createCircle([position, get2(options, "radius", int7(5)), mergedStyle(styleValue2, [["hitId", get2(options, "hitId", string2("geometry-point"))]])]);
+    return createCircle([position, get2(options, "radius", int7(5)), mergedStyle(styleValue2, [["hitId", get2(options, "hitId", string3("geometry-point"))]])]);
   }
   if (kind === "segment" || kind === "polygon") {
     const rawPoints = kind === "segment" ? [get2(get2(record2.entries, "first").entries, "coordinates"), get2(get2(record2.entries, "second").entries, "coordinates")] : sequence5(get2(record2.entries, "points"), "draw.From polygon points").map((item) => get2(item.entries, "coordinates"));
     const projected = rawPoints.map((item, index) => projectProtocolPoint(item, viewportValue, `draw.From ${kind} point ${index + 1}`));
-    return createPath([projected, mergedStyle(styleValue2, [["closed", kind === "polygon"], ["hitId", get2(options, "hitId", string2(`geometry-${kind}`))]])]);
+    return createPath([projected, mergedStyle(styleValue2, [["closed", kind === "polygon"], ["hitId", get2(options, "hitId", string3(`geometry-${kind}`))]])]);
   }
   if (kind === "circle") {
     const center = get2(record2.entries, "center");
@@ -81300,7 +81718,7 @@ function fromDrawable(args) {
     const projectedCenterNumbers = pointNumbers(projectedCenter, "draw.From projected circle center");
     const projectedEdgeNumbers = pointNumbers(projectedEdge, "draw.From projected circle edge");
     const projectedRadius = Math.hypot(projectedEdgeNumbers[0] - projectedCenterNumbers[0], projectedEdgeNumbers[1] - projectedCenterNumbers[1]);
-    return createCircle([projectedCenter, exact2(projectedRadius), mergedStyle(styleValue2, [["hitId", get2(options, "hitId", string2("geometry-circle"))]])]);
+    return createCircle([projectedCenter, exact3(projectedRadius), mergedStyle(styleValue2, [["hitId", get2(options, "hitId", string3("geometry-circle"))]])]);
   }
   return unresolvedDrawable(source, `draw.From has no finite adapter for geometry kind '${kind}'`);
 }
@@ -81678,7 +82096,7 @@ function diagnosticsOf(value) {
 
 // ../rix/plugins/float/approximate-algorithms.js
 var int8 = (value) => new Integer(BigInt(value));
-var string3 = (value) => ({ type: "string", value: String(value) });
+var string4 = (value) => ({ type: "string", value: String(value) });
 var mapValue5 = (entries2) => ({ type: "map", entries: new Map(entries2) });
 function sequence6(value, label2) {
   if (Array.isArray(value))
@@ -81690,7 +82108,7 @@ function sequence6(value, label2) {
 function optionEntries(value) {
   return value?.type === "map" && value.entries instanceof Map ? value.entries : new Map;
 }
-function text8(value, fallback) {
+function text9(value, fallback) {
   return value?.value ?? (value === undefined || value === null ? fallback : String(value));
 }
 function selectedFormat(values2, requested) {
@@ -81752,23 +82170,23 @@ function errorEstimate(numbers, result, format, operations, nativeType) {
   const absolute = factor < 1 ? factor / (1 - factor) * magnitude : Infinity;
   const relative = result === 0 ? null : Math.abs(absolute / result);
   return mapValue5([
-    ["valueKind", string3("floatErrorEstimate")],
-    ["schema", string3("rix.float.error-estimate@1")],
+    ["valueKind", string4("floatErrorEstimate")],
+    ["schema", string4("rix.float.error-estimate@1")],
     ["absolute", convertFloat(absolute, format, nativeType)],
     ["relative", relative === null ? null : convertFloat(relative, format, nativeType)],
-    ["model", string3("standard-first-order")],
+    ["model", string4("standard-first-order")],
     ["certified", null]
   ]);
 }
 function algorithmResult({ algorithm, policy, format, values: values2, result, operations, nativeType }) {
   return mapValue5([
-    ["valueKind", string3("floatAlgorithmResult")],
-    ["schema", string3("rix.float.algorithm-result@1")],
-    ["algorithm", string3(algorithm)],
-    ["policy", string3(policy)],
-    ["format", string3(format)],
+    ["valueKind", string4("floatAlgorithmResult")],
+    ["schema", string4("rix.float.algorithm-result@1")],
+    ["algorithm", string4(algorithm)],
+    ["policy", string4(policy)],
+    ["format", string4(format)],
     ["count", int8(values2.length)],
-    ["status", string3("approximate")],
+    ["status", string4("approximate")],
     ["value", convertFloat(result, format, nativeType)],
     ["errorEstimate", errorEstimate(values2, result, format, operations, nativeType)]
   ]);
@@ -81781,13 +82199,13 @@ function complexParts2(value, label2) {
 }
 function complexValue(real, imaginary, format, nativeType, operation = "construct") {
   return mapValue5([
-    ["valueKind", string3("floatComplex")],
-    ["schema", string3("rix.float.complex@1")],
-    ["format", string3(format)],
+    ["valueKind", string4("floatComplex")],
+    ["schema", string4("rix.float.complex@1")],
+    ["format", string4(format)],
     ["real", convertFloat(real, format, nativeType)],
     ["imaginary", convertFloat(imaginary, format, nativeType)],
-    ["operation", string3(operation)],
-    ["status", string3("approximate")]
+    ["operation", string4(operation)],
+    ["status", string4("approximate")]
   ]);
 }
 function commonComplex(left, right, label2) {
@@ -81805,7 +82223,7 @@ function createApproximateAlgorithms(nativeType) {
       const options = optionEntries(optionsValue);
       const { format, values: values2 } = normalizedValues(valuesValue, options, nativeType, "float.Sum values");
       const numbers = values2.map(numberFrom2);
-      const policy = text8(options.get("policy"), "pairwise").toLowerCase();
+      const policy = text9(options.get("policy"), "pairwise").toLowerCase();
       const result = sumWithPolicy(numbers, format, policy);
       return algorithmResult({
         algorithm: "sum",
@@ -81828,7 +82246,7 @@ function createApproximateAlgorithms(nativeType) {
       const left = leftSource.map((value) => convertFloat(value, format, nativeType));
       const right = rightSource.map((value) => convertFloat(value, format, nativeType));
       const products = left.map((value, index) => multiply2(numberFrom2(value), numberFrom2(right[index]), format));
-      const policy = text8(options.get("policy"), "pairwise").toLowerCase();
+      const policy = text9(options.get("policy"), "pairwise").toLowerCase();
       const result = sumWithPolicy(products, format, policy);
       return algorithmResult({
         algorithm: "dot",
@@ -81889,7 +82307,7 @@ var FLOAT_ALGORITHM_EXPORTS = [
 function int9(value) {
   return new Integer(BigInt(value));
 }
-function text9(value) {
+function text10(value) {
   return { type: "string", value };
 }
 function map5(entries2) {
@@ -81932,15 +82350,15 @@ function exactFloatRational(float) {
 function NumericsCapabilities(value = null) {
   const format = formatOf(value);
   return map5([
-    ["valuekind", text9("numericsCapabilities")],
-    ["schema", text9("rix.numerics.capabilities@1")],
-    ["backend", text9("float")],
-    ["representation", text9(format === "binary32" ? "ieee754Binary32" : "ieee754Binary64")],
-    ["format", text9(format)],
+    ["valuekind", text10("numericsCapabilities")],
+    ["schema", text10("rix.numerics.capabilities@1")],
+    ["backend", text10("float")],
+    ["representation", text10(format === "binary32" ? "ieee754Binary32" : "ieee754Binary64")],
+    ["format", text10(format)],
     ["precisionbits", int9(formatInfo(format).precisionBits)],
-    ["denotation", text9("storedScalar")],
-    ["operations", sequence7([text9("sample"), text9("enclose")])],
-    ["evidencelevels", sequence7([text9("approximate")])],
+    ["denotation", text10("storedScalar")],
+    ["operations", sequence7([text10("sample"), text10("enclose")])],
+    ["evidencelevels", sequence7([text10("approximate")])],
     ["certified", null],
     ["arbitraryrefinement", null],
     ["deterministic", int9(1)],
@@ -81952,36 +82370,36 @@ function NumericsCapabilities(value = null) {
 function approximateStoredValue(value, request, operation) {
   const classification = classifyFloat(value);
   const finite = classification.finite;
-  const exact3 = finite ? exactFloatRational(value) : Rational.zero;
+  const exact4 = finite ? exactFloatRational(value) : Rational.zero;
   const requestedWidth = entry(request, "absolutewidth", null);
   const requestedWork = entry(entry(request, "work", null), "maxwork", int9(0));
   const valueDiagnostics = diagnosticsOf(value);
   const diagnostics = finite ? ["storedValueOnly", "noErrorBoundForIntendedReal", ...valueDiagnostics] : ["storedValueNonFinite", "noFiniteRationalInterval", ...valueDiagnostics];
   return map5([
-    ["valuekind", text9("enclosure")],
-    ["schema", text9("rix.numerics.enclosure@1")],
-    ["status", text9(finite ? "approximate" : "unknown")],
-    ["interval", new RationalInterval(exact3, exact3)],
+    ["valuekind", text10("enclosure")],
+    ["schema", text10("rix.numerics.enclosure@1")],
+    ["status", text10(finite ? "approximate" : "unknown")],
+    ["interval", new RationalInterval(exact4, exact4)],
     ["certified", null],
     ["goalmet", null],
     ["requestedwidth", requestedWidth],
     ["achievedwidth", Rational.zero],
-    ["evidencelevel", text9("approximate")],
-    ["backend", text9("float")],
-    ["operation", text9(operation)],
+    ["evidencelevel", text10("approximate")],
+    ["backend", text10("float")],
+    ["operation", text10(operation)],
     ["trace", sequence7([])],
     ["work", map5([
       ["samples", int9(1)],
       ["maxwork", requestedWork],
       ["exhausted", null]
     ])],
-    ["diagnostics", sequence7([...new Set(diagnostics)].map(text9))],
+    ["diagnostics", sequence7([...new Set(diagnostics)].map(text10))],
     ["source", map5([
-      ["plugin", text9("float")],
-      ["representation", text9(classification.format === "binary32" ? "ieee754Binary32" : "ieee754Binary64")],
-      ["format", text9(classification.format)],
-      ["classification", text9(classification.className)],
-      ["sign", text9(classification.sign)],
+      ["plugin", text10("float")],
+      ["representation", text10(classification.format === "binary32" ? "ieee754Binary32" : "ieee754Binary64")],
+      ["format", text10(classification.format)],
+      ["classification", text10(classification.className)],
+      ["sign", text10(classification.sign)],
       ["storedvalueexact", finite ? int9(1) : null]
     ])]
   ]);
@@ -82053,17 +82471,17 @@ function floorDiv3(numerator, denominator) {
   return numerator >= 0n ? numerator / denominator : -((-numerator + denominator - 1n) / denominator);
 }
 function decimalRounded(value, places, mode) {
-  const exact3 = exactFloatRational(value);
+  const exact4 = exactFloatRational(value);
   const scale = 10n ** BigInt(places);
-  const scaled = exact3.numerator * scale;
-  const lower2 = floorDiv3(scaled, exact3.denominator);
+  const scaled = exact4.numerator * scale;
+  const lower2 = floorDiv3(scaled, exact4.denominator);
   let coefficient = lower2;
-  if (mode === "ceiling" && scaled !== lower2 * exact3.denominator)
+  if (mode === "ceiling" && scaled !== lower2 * exact4.denominator)
     coefficient += 1n;
   if (mode === "round") {
-    const remainder = scaled - lower2 * exact3.denominator;
+    const remainder = scaled - lower2 * exact4.denominator;
     const doubled = remainder * 2n;
-    if (doubled > exact3.denominator || doubled === exact3.denominator && (lower2 & 1n) !== 0n)
+    if (doubled > exact4.denominator || doubled === exact4.denominator && (lower2 & 1n) !== 0n)
       coefficient += 1n;
   }
   return new Rational(coefficient, scale);
@@ -82203,8 +82621,8 @@ function installBrowserApproxMathPlugin({ systemContext, registry, metadata = {}
     if (!Number.isFinite(value2.value)) {
       throw new Error("Float Interval requires a finite stored value; use Classify() for NaN or infinity");
     }
-    const exact3 = exactFloatRational(value2);
-    return new RationalInterval(exact3, exact3);
+    const exact4 = exactFloatRational(value2);
+    return new RationalInterval(exact4, exact4);
   });
   add3("Round", (args, _context, evaluate) => decimalRounded(requireFloat(args[1], evaluate), decimalPlaces(args[2]), "round"));
   add3("Floor", (args, _context, evaluate) => decimalRounded(requireFloat(args[1], evaluate), decimalPlaces(args[2]), "floor"));
@@ -82417,9 +82835,9 @@ var isZero4 = (value) => value.numerator === 0n;
 function normalize2(valuesList, label2 = "Polynomial coefficients") {
   if (valuesList.length === 0)
     throw new Error(`${label2} cannot be empty`);
-  const exact3 = valuesList.map((value, index) => rational(value, `${label2} ${index + 1}`));
-  const first = exact3.findIndex((value) => !isZero4(value));
-  return first < 0 ? [zero()] : exact3.slice(first);
+  const exact4 = valuesList.map((value, index) => rational(value, `${label2} ${index + 1}`));
+  const first = exact4.findIndex((value) => !isZero4(value));
+  return first < 0 ? [zero()] : exact4.slice(first);
 }
 function coefficientsEqual(left, right) {
   return left.length === right.length && left.every((value, index) => value.equals(right[index]));
@@ -82652,7 +83070,7 @@ function mapField3(value, name, fallback = null) {
   }
   return fallback;
 }
-function text10(value, fallback = null) {
+function text11(value, fallback = null) {
   if (value?.type === "string")
     return value.value;
   return typeof value === "string" ? value : fallback;
@@ -82665,7 +83083,7 @@ function values3(value, label2) {
   throw new Error(`${label2} must be an array, tuple, or sequence`);
 }
 function variableName2(value, fallback = null) {
-  const result = text10(value, fallback);
+  const result = text11(value, fallback);
   if (result === null)
     return null;
   if (!/^[\p{L}_][\p{L}\p{N}_]*$/u.test(result)) {
@@ -83092,14 +83510,14 @@ function sourcePolynomialPair(value, context, evaluate) {
   };
 }
 function canonicalPresentation(value, kind, context, evaluate) {
-  const exact3 = canonical(value, context, evaluate);
+  const exact4 = canonical(value, context, evaluate);
   if (kind === "factored")
-    return invokeReceiver(exact3, "Factored", [], context, evaluate);
+    return invokeReceiver(exact4, "Factored", [], context, evaluate);
   if (kind === "partialFractions")
-    return invokeReceiver(exact3, "PartialFractions", [], context, evaluate);
+    return invokeReceiver(exact4, "PartialFractions", [], context, evaluate);
   if (kind === "squareFree") {
-    const numerator = invokeReceiver(exact3, "Numerator", [], context, evaluate);
-    const denominator = invokeReceiver(exact3, "Denominator", [], context, evaluate);
+    const numerator = invokeReceiver(exact4, "Numerator", [], context, evaluate);
+    const denominator = invokeReceiver(exact4, "Denominator", [], context, evaluate);
     const squareFreePart = (polynomial2) => exactIntegerIs(invokeReceiver(polynomial2, "Degree", [], context, evaluate), -1) ? immutableMap([
       ["schema", str3("rix.polynomial.square-free@1")],
       ["valueKind", str3("polynomialSquareFreeDecomposition")],
@@ -83129,22 +83547,22 @@ function presentationLabel(kind) {
   return "factored";
 }
 function presentationGrid(source, kind, payload, context, evaluate) {
-  const exact3 = requireFractionFunction(source);
+  const exact4 = requireFractionFunction(source);
   return createGrid([
     seq3([str3("Transformation"), str3("Source form"), str3("Canonical projection"), str3("Verified presentation"), str3("Authoritative domain")]),
     seq3([seq3([
       str3(presentationLabel(kind)),
-      metadata(exact3).displaySpec,
-      canonical(exact3, context, evaluate),
+      metadata(exact4).displaySpec,
+      canonical(exact4, context, evaluate),
       payload,
-      domainRecord3(exact3)
+      domainRecord3(exact4)
     ])]),
     seq3([])
   ]);
 }
 function presentationValue(value, kind, context, evaluate) {
   const source = requireFractionFunction(value);
-  const exact3 = canonical(source, context, evaluate);
+  const exact4 = canonical(source, context, evaluate);
   const payload = canonicalPresentation(source, kind, context, evaluate);
   const verified = mapField3(payload, "verified");
   const result = immutableMap([
@@ -83156,7 +83574,7 @@ function presentationValue(value, kind, context, evaluate) {
     ["sourceDomainPreserved", int12(1)],
     ["source", source],
     ["sourceForm", metadata(source).displaySpec],
-    ["canonical", exact3],
+    ["canonical", exact4],
     ["presentation", payload],
     ["domain", domainRecord3(source)],
     ["restrictions", seq3(restrictionSpecs(source))],
@@ -83164,7 +83582,7 @@ function presentationValue(value, kind, context, evaluate) {
   ], [
     ["SOURCE", method7("Source", () => source)],
     ["FUNCTION", method7("Function", () => source)],
-    ["CANONICAL", method7("Canonical", () => exact3)],
+    ["CANONICAL", method7("Canonical", () => exact4)],
     ["PRESENTATION", method7("Presentation", () => payload)],
     ["DOMAIN", method7("Domain", () => domainRecord3(source))],
     ["GRID", method7("Grid", (_args, callContext, callEvaluate) => presentationGrid(source, kind, payload, callContext, callEvaluate))],
@@ -83256,12 +83674,12 @@ function divisorEvidence(value, context, evaluate) {
 }
 function transformationGrid(value, context, evaluate) {
   const source = requireFractionFunction(value);
-  const exact3 = canonical(source, context, evaluate);
+  const exact4 = canonical(source, context, evaluate);
   const kinds = ["factored", "squareFree", "partialFractions"];
   const rows = kinds.map((kind) => seq3([
     str3(presentationLabel(kind)),
     metadata(source).displaySpec,
-    exact3,
+    exact4,
     canonicalPresentation(source, kind, context, evaluate),
     domainRecord3(source)
   ]));
@@ -83380,7 +83798,7 @@ function registerFractionFunctionMethods(systemContext, owner = {}) {
 function modifierNames2(value) {
   if (!value)
     return [];
-  return values3(value, "FractionFunction parser modifiers").map((item) => text10(item));
+  return values3(value, "FractionFunction parser modifiers").map((item) => text11(item));
 }
 function parseVariableModifier(modifiers) {
   const matches = modifiers.map((modifier) => String(modifier).match(/^VAR\(([^)]+)\)$/iu)).filter(Boolean);
@@ -83392,7 +83810,7 @@ function parseVariableModifier(modifiers) {
   return matches.length ? variableName2(matches[0][1]) : null;
 }
 function parseFractionFunction(args, context, evaluate) {
-  const body = text10(args[1]);
+  const body = text11(args[1]);
   if (body === null)
     throw new Error(".fracfun.Parse body must be a string");
   const variable = parseVariableModifier(modifierNames2(args[2]));
@@ -83490,7 +83908,7 @@ function sequence9(value, label2) {
     return value.values;
   throw new Error(`${label2} must be a sequence`);
 }
-function text11(value, label2) {
+function text12(value, label2) {
   if (value?.type === "string")
     return value.value;
   if (typeof value === "string")
@@ -83519,7 +83937,7 @@ var TYPE_NAMES = new Map([
 function columnType(value, index) {
   if (value === null || value === undefined)
     return "Any";
-  const source = text11(value, `data column ${index + 1} type`).replace(/^:/, "").toLowerCase();
+  const source = text12(value, `data column ${index + 1} type`).replace(/^:/, "").toLowerCase();
   const result = TYPE_NAMES.get(source);
   if (!result)
     throw new Error(`data column ${index + 1} type must be Any, Integer, Rational, Number, Interval, or String`);
@@ -83533,13 +83951,13 @@ function normalizeColumns2(value) {
     let type;
     let nullable = true;
     if (source?.type === "string" || typeof source === "string") {
-      id = text11(source, `data column ${index + 1}`);
+      id = text12(source, `data column ${index + 1}`);
       label2 = id;
       type = "Any";
     } else {
       const spec2 = entries2(source, `data column ${index + 1}`);
-      id = text11(field(spec2, "id", field(spec2, "name")), `data column ${index + 1} id`);
-      label2 = field(spec2, "label") === null ? id : text11(field(spec2, "label"), `data column ${index + 1} label`);
+      id = text12(field(spec2, "id", field(spec2, "name")), `data column ${index + 1} id`);
+      label2 = field(spec2, "label") === null ? id : text12(field(spec2, "label"), `data column ${index + 1} label`);
       type = columnType(field(spec2, "type"), index);
       nullable = truthy3(field(spec2, "nullable", new Integer(1n)));
     }
@@ -83629,7 +84047,7 @@ function createRelation(args) {
   return makeRelation(columns, rows, ["relation"]);
 }
 function selectedColumnIds(value, relation, label2) {
-  const requested = sequence9(value, label2).map((entry2, index) => text11(entry2, `${label2} entry ${index + 1}`));
+  const requested = sequence9(value, label2).map((entry2, index) => text12(entry2, `${label2} entry ${index + 1}`));
   const byId = new Map(relation.columns.map((column, index) => [column.id.toLowerCase(), index]));
   const selected = requested.map((id) => {
     const index = byId.get(id.toLowerCase());
@@ -83660,7 +84078,7 @@ function renameRelation(args) {
   const renames = new Map;
   for (const [sourceValue, targetValue] of requested) {
     const source = String(sourceValue);
-    const target = text11(targetValue, `data.Rename target for '${source}'`);
+    const target = text12(targetValue, `data.Rename target for '${source}'`);
     const index = columnIndex(relation, source, "data.Rename map");
     if (!target.trim())
       throw new Error(`data.Rename target for '${source}' must not be empty`);
@@ -83731,10 +84149,10 @@ function rationalCompare(left, right) {
 function measurementParts(value) {
   if (value instanceof RationalInterval)
     return [value.low, value.high];
-  const exact3 = exactParts(value);
-  if (!exact3)
+  const exact4 = exactParts(value);
+  if (!exact4)
     return null;
-  const point3 = new Rational(exact3[0], exact3[1]);
+  const point3 = new Rational(exact4[0], exact4[1]);
   return [point3, point3];
 }
 function compareValues2(left, right, column, operation = "Sort") {
@@ -83788,10 +84206,10 @@ function sortRelation(args) {
 function operationName2(value, label2, fallback = null) {
   if (value === null || value === undefined)
     return fallback;
-  return text11(value, label2).replace(/^:/, "").toLowerCase();
+  return text12(value, label2).replace(/^:/, "").toLowerCase();
 }
 function columnIndex(relation, value, label2) {
-  const id = text11(value, label2);
+  const id = text12(value, label2);
   const index = relation.columns.findIndex((column) => column.id.toLowerCase() === id.toLowerCase());
   if (index < 0)
     throw new Error(`${label2} contains unknown column '${id}'`);
@@ -83859,7 +84277,7 @@ function joinRelations(args) {
   if (!["inner", "left", "right", "full"].includes(kind)) {
     throw new Error("data.Join type must be inner, left, right, or full");
   }
-  const suffix = text11(option3(args[3], "suffix", stringValue7("_right")), "data.Join suffix");
+  const suffix = text12(option3(args[3], "suffix", stringValue7("_right")), "data.Join suffix");
   const missingMatches = truthy3(option3(args[3], "missingMatches", null));
   const rightKeys = new Set(pairs.map(([, index]) => index));
   const used = new Set(left.columns.map((column) => column.id.toLowerCase()));
@@ -83931,9 +84349,9 @@ function keySignature(row, selected) {
     const value = row[index];
     if (value === null)
       return "missing";
-    const exact3 = exactParts(value);
-    if (exact3)
-      return `q:${exact3[0]}/${exact3[1]}`;
+    const exact4 = exactParts(value);
+    if (exact4)
+      return `q:${exact4[0]}/${exact4[1]}`;
     const measurement = measurementParts(value);
     if (measurement) {
       if (rationalCompare(measurement[0], measurement[1]) === 0) {
@@ -84011,7 +84429,7 @@ function aggregateSpec(value, groups, index) {
   if (op !== "count" && sourceIndex === null)
     throw new Error(`data.Aggregate ${op} requires a column`);
   const defaultId = sourceIndex === null ? "count" : `${op}_${groups.relation.columns[sourceIndex].id}`;
-  const id = text11(field(spec2, "id", stringValue7(defaultId)), `data.Aggregate specification ${index + 1} id`);
+  const id = text12(field(spec2, "id", stringValue7(defaultId)), `data.Aggregate specification ${index + 1} id`);
   const missing = operationName2(field(spec2, "missing", stringValue7("skip")), `data.Aggregate specification ${index + 1} missing policy`);
   if (!["skip", "propagate", "error"].includes(missing))
     throw new Error("data.Aggregate missing policy must be skip, propagate, or error");
@@ -84100,8 +84518,8 @@ function frequencyRelation(args) {
     }
     group.count += 1;
   }
-  const countId = text11(option3(args[2], "count", stringValue7("count")), "data.Frequency count column");
-  const proportionId = text11(option3(args[2], "proportion", stringValue7("proportion")), "data.Frequency proportion column");
+  const countId = text12(option3(args[2], "count", stringValue7("count")), "data.Frequency count column");
+  const proportionId = text12(option3(args[2], "proportion", stringValue7("proportion")), "data.Frequency proportion column");
   const includeProportion = truthy3(option3(args[2], "includeProportion", new Integer(1n)));
   const baseColumns = selected.map((index) => relation.columns[index]);
   const columns = [
@@ -84383,8 +84801,8 @@ function parseJsonlSource(args) {
   const columns = normalizeColumns2(args[0]);
   if (!columns.length)
     throw new Error("data.ParseJSONL schema must contain at least one column");
-  const source = text11(args[1], "data.ParseJSONL text");
-  const blankPolicy = text11(option3(args[2], "blankLines", stringValue7("skip")), "data.ParseJSONL blankLines").replace(/^:/, "").toLowerCase();
+  const source = text12(args[1], "data.ParseJSONL text");
+  const blankPolicy = text12(option3(args[2], "blankLines", stringValue7("skip")), "data.ParseJSONL blankLines").replace(/^:/, "").toLowerCase();
   if (!["skip", "error"].includes(blankPolicy))
     throw new Error("data.ParseJSONL blankLines must be skip or error");
   const records = jsonlOffsets(source, blankPolicy);
@@ -84491,7 +84909,7 @@ function relationTableView(args) {
     throw new Error("data.TableView expects a Relation and optional options");
   const relation = requireRelation(args[0], "data.TableView");
   const captionValue = option3(args[1], "caption", null);
-  const caption = captionValue === null ? null : text11(captionValue, "data.TableView caption");
+  const caption = captionValue === null ? null : text12(captionValue, "data.TableView caption");
   return Object.freeze({
     type: "output",
     kind: "table",
@@ -84595,7 +85013,7 @@ function field2(source, name, fallback = null) {
   }
   return fallback;
 }
-function text12(value, label2) {
+function text13(value, label2) {
   if (value?.type === "string")
     return value.value;
   if (typeof value === "string")
@@ -84612,11 +85030,11 @@ function sequence10(value, label2) {
 function exactPositiveInteger(value, label2, fallback = 1) {
   if (value === null || value === undefined)
     return fallback;
-  const integer2 = value instanceof Integer ? value.value : typeof value === "bigint" ? value : null;
-  if (integer2 === null || integer2 < 1n || integer2 > BigInt(Number.MAX_SAFE_INTEGER)) {
+  const integer3 = value instanceof Integer ? value.value : typeof value === "bigint" ? value : null;
+  if (integer3 === null || integer3 < 1n || integer3 > BigInt(Number.MAX_SAFE_INTEGER)) {
     throw new Error(`${label2} must be a positive Integer`);
   }
-  return Number(integer2);
+  return Number(integer3);
 }
 function booleanValue(value, fallback = false) {
   if (value === null || value === undefined)
@@ -84626,17 +85044,17 @@ function booleanValue(value, fallback = false) {
   return Boolean(value);
 }
 function validLabel(value, label2) {
-  const result = text12(value, label2);
+  const result = text13(value, label2);
   if (!/^[A-Za-z][A-Za-z0-9:_-]*$/.test(result)) {
     throw new Error(`${label2} must start with a letter and contain only letters, digits, colon, underscore, or hyphen`);
   }
   return result;
 }
-function clone(value, fields) {
-  return Object.freeze({ ...value, ...fields });
+function clone(value, fields2) {
+  return Object.freeze({ ...value, ...fields2 });
 }
-function textNode(value, fields = {}) {
-  return clone(createText([stringValue8(value)]), fields);
+function textNode(value, fields2 = {}) {
+  return clone(createText([stringValue8(value)]), fields2);
 }
 function inlineValues(value) {
   if (Array.isArray(value))
@@ -84652,15 +85070,15 @@ var THEMES = Object.freeze({
 function createDocumentTheme(args) {
   if (args.length > 2)
     throw new Error("document.Theme expects an optional name and options map");
-  const name = args[0] === null || args[0] === undefined ? "plain" : text12(args[0], "document.Theme name").toLowerCase();
+  const name = args[0] === null || args[0] === undefined ? "plain" : text13(args[0], "document.Theme name").toLowerCase();
   const defaults = THEMES[name];
   if (!defaults)
     throw new Error("document.Theme name must be :plain or :compact");
   const options = args[1] === null || args[1] === undefined ? new Map : entries3(args[1], "document.Theme options");
   const accentValue = field2(options, "accent", stringValue8(defaults.accent));
   const densityValue = field2(options, "density", stringValue8(defaults.density));
-  const accent = text12(accentValue, "document.Theme accent");
-  const density = text12(densityValue, "document.Theme density").toLowerCase();
+  const accent = text13(accentValue, "document.Theme accent");
+  const density = text13(densityValue, "document.Theme density").toLowerCase();
   if (!/^#[0-9a-f]{6}$/i.test(accent))
     throw new Error("document.Theme accent must be a six-digit hex color");
   if (!["comfortable", "compact"].includes(density)) {
@@ -84679,10 +85097,10 @@ function createDocumentNumbering(args) {
   if (args.length > 1)
     throw new Error("document.Numbering expects an optional options map");
   const options = args[0] === null || args[0] === undefined ? new Map : entries3(args[0], "document.Numbering options");
-  const style2 = text12(field2(options, "style", stringValue8("decimal")), "document.Numbering style").toLowerCase();
+  const style2 = text13(field2(options, "style", stringValue8("decimal")), "document.Numbering style").toLowerCase();
   if (!NUMBER_STYLES.has(style2))
     throw new Error("document.Numbering style must be :decimal, :roman, or :alpha");
-  const citationStyle = text12(field2(options, "citationStyle", stringValue8("numeric")), "document.Numbering citationStyle").toLowerCase();
+  const citationStyle = text13(field2(options, "citationStyle", stringValue8("numeric")), "document.Numbering citationStyle").toLowerCase();
   if (!["numeric", "author-year"].includes(citationStyle)) {
     throw new Error("document.Numbering citationStyle must be :numeric or :author-year");
   }
@@ -84708,13 +85126,13 @@ function normalizeNumbering(value) {
 function bibliographyEntry(value, index) {
   const source = entries3(value, `document.Bibliography entry ${index}`);
   const key = validLabel(field2(source, "key"), `document.Bibliography entry ${index} key`);
-  const title = text12(field2(source, "title"), `document.Bibliography entry ${index} title`);
+  const title = text13(field2(source, "title"), `document.Bibliography entry ${index} title`);
   const authorValue = field2(source, "author", stringValue8("Unknown author"));
-  const author = text12(authorValue, `document.Bibliography entry ${index} author`);
+  const author = text13(authorValue, `document.Bibliography entry ${index} author`);
   const yearValue = field2(source, "year", stringValue8("n.d."));
-  const year = yearValue instanceof Integer ? String(yearValue.value) : text12(yearValue, `document.Bibliography entry ${index} year`);
+  const year = yearValue instanceof Integer ? String(yearValue.value) : text13(yearValue, `document.Bibliography entry ${index} year`);
   const urlValue = field2(source, "url");
-  const url = urlValue === null ? null : text12(urlValue, `document.Bibliography entry ${index} url`);
+  const url = urlValue === null ? null : text13(urlValue, `document.Bibliography entry ${index} url`);
   return Object.freeze({ key, title, author, year, url, number: index });
 }
 function createDocumentBibliography(args) {
@@ -84729,7 +85147,7 @@ function createDocumentBibliography(args) {
     seen.add(record2.key);
   }
   const options = args[1] === null || args[1] === undefined ? new Map : entries3(args[1], "document.Bibliography options");
-  const title = text12(field2(options, "title", stringValue8("References")), "document.Bibliography title");
+  const title = text13(field2(options, "title", stringValue8("References")), "document.Bibliography title");
   return mapValue7([
     ["valueKind", stringValue8("documentBibliography")],
     ["schema", stringValue8("rix.document.bibliography@1")],
@@ -84765,8 +85183,8 @@ function createDocumentCitation(args) {
     documentCitation: Object.freeze({
       schema: "rix.document.citation@1",
       keys: Object.freeze(keys),
-      prefix: prefixValue === null ? "" : text12(prefixValue, "document.Citation prefix"),
-      suffix: suffixValue === null ? "" : text12(suffixValue, "document.Citation suffix")
+      prefix: prefixValue === null ? "" : text13(prefixValue, "document.Citation prefix"),
+      suffix: suffixValue === null ? "" : text13(suffixValue, "document.Citation suffix")
     })
   });
 }
@@ -84781,7 +85199,7 @@ function createDocumentAssetManifest(args) {
     if (seen.has(id))
       throw new Error(`document.AssetManifest contains duplicate id '${id}'`);
     seen.add(id);
-    const path = text12(field2(record2, "path"), `document.AssetManifest entry ${index + 1} path`);
+    const path = text13(field2(record2, "path"), `document.AssetManifest entry ${index + 1} path`);
     if (path.startsWith("/") || path.includes(".."))
       throw new Error("document.AssetManifest paths must be safe relative paths");
     const mimeValue = field2(record2, "mime", stringValue8("application/octet-stream"));
@@ -84789,8 +85207,8 @@ function createDocumentAssetManifest(args) {
     return mapValue7([
       ["id", stringValue8(id)],
       ["path", stringValue8(path)],
-      ["mime", stringValue8(text12(mimeValue, "document.AssetManifest mime"))],
-      ["alt", stringValue8(text12(altValue, "document.AssetManifest alt"))],
+      ["mime", stringValue8(text13(mimeValue, "document.AssetManifest mime"))],
+      ["alt", stringValue8(text13(altValue, "document.AssetManifest alt"))],
       ["checksum", field2(record2, "checksum")]
     ]);
   });
@@ -84826,11 +85244,11 @@ var createDocumentFooter = (args) => documentRegion(args, "Footer");
 function createDocumentTargetMarkup(args) {
   if (args.length < 2 || args.length > 3)
     throw new Error("document.TargetMarkup expects target, content, and optional fallback");
-  const target = text12(args[0], "document.TargetMarkup target").toLowerCase();
+  const target = text13(args[0], "document.TargetMarkup target").toLowerCase();
   if (!/^[a-z][a-z0-9+.-]*$/.test(target))
     throw new Error("document.TargetMarkup target must be a renderer target name");
-  const content = text12(args[1], "document.TargetMarkup content");
-  const fallback = args[2] === null || args[2] === undefined ? "" : text12(args[2], "document.TargetMarkup fallback");
+  const content = text13(args[1], "document.TargetMarkup content");
+  const fallback = args[2] === null || args[2] === undefined ? "" : text13(args[2], "document.TargetMarkup fallback");
   return textNode(fallback, {
     documentTargetMarkup: Object.freeze({ schema: "rix.document.target-markup@1", target, content })
   });
@@ -84898,7 +85316,7 @@ function createDocumentReference(args) {
   if (args.length < 1 || args.length > 2)
     throw new Error("document.Ref expects an id and optional display text");
   const id = validLabel(args[0], "document.Ref id");
-  const display = args[1] === null || args[1] === undefined ? null : text12(args[1], "document.Ref text");
+  const display = args[1] === null || args[1] === undefined ? null : text13(args[1], "document.Ref text");
   return textNode("", { documentReference: id, documentReferenceText: display });
 }
 function childOutputs(value) {
@@ -85105,7 +85523,7 @@ function metadata2(theme, title, numbering, assets, bibliography, template) {
 function createDocumentReport(args) {
   if (args.length < 2 || args.length > 3)
     throw new Error("document.Report expects a title, children, and optional options");
-  const title = text12(args[0], "document.Report title");
+  const title = text13(args[0], "document.Report title");
   if (!title.trim())
     throw new Error("document.Report title must not be empty");
   const options = args[2] === null || args[2] === undefined ? new Map : entries3(args[2], "document.Report options");
@@ -85120,9 +85538,9 @@ function createDocumentReport(args) {
   if (footer !== null && (!isOutputValue(footer) || footer.documentRegion !== "footer"))
     throw new Error("document.Report footer must come from document.Footer");
   const templateValue = field2(options, "template");
-  const template = templateValue === null ? null : text12(templateValue, "document.Report template");
+  const template = templateValue === null ? null : text13(templateValue, "document.Report template");
   const authorValue = field2(options, "author");
-  const author = authorValue === null ? null : text12(authorValue, "document.Report author");
+  const author = authorValue === null ? null : text13(authorValue, "document.Report author");
   const sourceChildren = reportChildren(args[1]);
   if (!sourceChildren.every(isOutputValue))
     throw new Error("document.Report children must be portable output values");
@@ -85479,12 +85897,12 @@ function integerOption(value, fallback, label2, minimum, maximum) {
   return result;
 }
 function truncate2(value, width, marker2 = "~") {
-  const text13 = String(value);
-  if (text13.length <= width)
-    return text13;
+  const text14 = String(value);
+  if (text14.length <= width)
+    return text14;
   if (width <= 1)
     return marker2;
-  return `${text13.slice(0, width - 1)}${marker2}`;
+  return `${text14.slice(0, width - 1)}${marker2}`;
 }
 function wrappingOption(value) {
   if (value === null || value === undefined)
@@ -85590,14 +86008,14 @@ function shrinkWidths(widths, available, state, path) {
   return result;
 }
 function align(value, width, mode = "left", marker2 = "~") {
-  const text13 = truncate2(value, width, marker2);
+  const text14 = truncate2(value, width, marker2);
   if (mode === "right")
-    return text13.padStart(width);
+    return text14.padStart(width);
   if (mode === "center") {
-    const left = Math.floor((width - text13.length) / 2);
-    return `${" ".repeat(left)}${text13}${" ".repeat(width - text13.length - left)}`;
+    const left = Math.floor((width - text14.length) / 2);
+    return `${" ".repeat(left)}${text14}${" ".repeat(width - text14.length - left)}`;
   }
-  return text13.padEnd(width);
+  return text14.padEnd(width);
 }
 function renderTable(value, state, path) {
   const headers = value.columns.map((column, index) => strictAscii(column.label, state, `${path}.column${index + 1}`));
@@ -86224,7 +86642,7 @@ function install9(api) {
 // ../rix/plugins/render-webgl/webgl-plan.js
 var SCENE_SCHEMA = "rix.scene3d@1";
 var REALIZED_SCHEMA = "rix.scene3d.realized@1";
-function text13(value, fallback = null) {
+function text14(value, fallback = null) {
   return rixString4(value) ?? (typeof value === "string" ? value : fallback);
 }
 function vector(value, length, label2) {
@@ -86237,7 +86655,7 @@ function indices(value, label2) {
   return sequence11(value, label2).map((entry2, index) => sequence11(entry2, `${label2} ${index + 1}`).map((item) => numberValue2(item, `${label2} index`) - 1));
 }
 function color(value, fallback = "#275dad") {
-  const source = text13(value, fallback);
+  const source = text14(value, fallback);
   const match = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(source || "");
   const hex = match?.[1]?.length === 3 ? [...match[1]].map((digit) => `${digit}${digit}`).join("") : match?.[1] || fallback.slice(1);
   return [0, 2, 4].map((offset) => parseInt(hex.slice(offset, offset + 2), 16) / 255);
@@ -86250,19 +86668,19 @@ function style2(value) {
     width: numberValue2(field3(value, "width", 1), "Scene3D style width"),
     roughness: numberValue2(field3(value, "roughness", 1), "Scene3D material roughness"),
     metallic: numberValue2(field3(value, "metallic", 0), "Scene3D material metallic"),
-    emissive: text13(field3(value, "emissive"))
+    emissive: text14(field3(value, "emissive"))
   };
 }
 function clipPlane(value, index) {
   return {
-    schema: text13(field3(value, "clipschema"), "rix.scene3d.clip-plane@1"),
+    schema: text14(field3(value, "clipschema"), "rix.scene3d.clip-plane@1"),
     normal: vector(field3(value, "normal"), 3, `Scene3D clip plane ${index + 1} normal`),
     offset: numberValue2(field3(value, "offset", 0), `Scene3D clip plane ${index + 1} offset`),
-    label: text13(field3(value, "label"))
+    label: text14(field3(value, "label"))
   };
 }
 function primitive(value, index) {
-  const kind = text13(field3(value, "kind"));
+  const kind = text14(field3(value, "kind"));
   const points = sequence11(field3(value, "points"), `Scene3D primitive ${index + 1} points`).map((point4, pointIndex) => vector(point4, 3, `Scene3D primitive ${index + 1} point ${pointIndex + 1}`));
   return {
     kind,
@@ -86270,10 +86688,10 @@ function primitive(value, index) {
     segments: indices(field3(value, "segments", { type: "sequence", values: [] }), `Scene3D primitive ${index + 1} segments`),
     triangles: indices(field3(value, "triangles", { type: "sequence", values: [] }), `Scene3D primitive ${index + 1} triangles`),
     radius: kind === "points" ? numberValue2(field3(value, "radius", 3), "Scene3D point radius") : null,
-    text: text13(field3(value, "text")),
+    text: text14(field3(value, "text")),
     style: style2(field3(value, "style")),
-    pickId: text13(field3(value, "pickid")),
-    label: text13(field3(value, "label")),
+    pickId: text14(field3(value, "pickid")),
+    label: text14(field3(value, "label")),
     interaction: plainValue(field3(value, "interaction")),
     annotationPolicy: plainValue(field3(value, "annotationpolicy")),
     clipPlanes: sequence11(field3(value, "clipplanes", { type: "sequence", values: [] }), `Scene3D primitive ${index + 1} clip planes`).map(clipPlane)
@@ -86281,7 +86699,7 @@ function primitive(value, index) {
 }
 function cameraPlan(value) {
   return {
-    projection: text13(field3(value, "projection"), "perspective"),
+    projection: text14(field3(value, "projection"), "perspective"),
     position: vector(field3(value, "position"), 3, "Scene3D camera position"),
     target: vector(field3(value, "target"), 3, "Scene3D camera target"),
     up: vector(field3(value, "up"), 3, "Scene3D camera up"),
@@ -86293,7 +86711,7 @@ function cameraPlan(value) {
   };
 }
 function lightPlan(value, index) {
-  const kind = text13(field3(value, "kind"));
+  const kind = text14(field3(value, "kind"));
   return {
     kind,
     color: color(field3(value, "color"), "#ffffff"),
@@ -86303,18 +86721,18 @@ function lightPlan(value, index) {
   };
 }
 function createWebGLPlan(scene, options = null) {
-  if (text13(field3(scene, "type")) !== "output" || text13(field3(scene, "kind")) !== "scene3d" || text13(field3(scene, "schema")) !== SCENE_SCHEMA) {
+  if (text14(field3(scene, "type")) !== "output" || text14(field3(scene, "kind")) !== "scene3d" || text14(field3(scene, "schema")) !== SCENE_SCHEMA) {
     throw new Error("webgl accepts a Scene3D scene");
   }
   const realized = field3(scene, "realized");
-  if (text13(field3(realized, "schema")) !== REALIZED_SCHEMA) {
+  if (text14(field3(realized, "schema")) !== REALIZED_SCHEMA) {
     throw new Error(`webgl requires the public ${REALIZED_SCHEMA} realization on a Scene3D scene`);
   }
   const width = numberValue2(option4(options, "width", 640), "WebGL viewport width");
   const height = numberValue2(option4(options, "height", 480), "WebGL viewport height");
   if (width <= 0 || height <= 0)
     throw new Error("WebGL viewport dimensions must be positive");
-  const mode = text13(option4(options, "mode", "solid"), "solid");
+  const mode = text14(option4(options, "mode", "solid"), "solid");
   if (!["solid", "wireframe"].includes(mode))
     throw new Error("WebGL mode must be 'solid' or 'wireframe'");
   const primitives = sequence11(field3(realized, "primitives"), "Scene3D realized primitives").map(primitive);
@@ -87562,9 +87980,9 @@ function quartoFrontMatter(options) {
   const lines = [];
   for (const key of keys) {
     const value = field3(metadata3, key);
-    const text14 = rixString4(value) ?? (typeof value === "string" ? value : null);
-    if (text14 !== null)
-      lines.push(`${key}: ${JSON.stringify(text14)}`);
+    const text15 = rixString4(value) ?? (typeof value === "string" ? value : null);
+    if (text15 !== null)
+      lines.push(`${key}: ${JSON.stringify(text15)}`);
   }
   if (!lines.some((line2) => line2.startsWith("format:")))
     lines.push("format: html");
@@ -87905,9 +88323,9 @@ function graphicFigures(value, result = []) {
 function selectorValue(value) {
   if (value === null || value === undefined)
     return null;
-  const text14 = rixString4(value);
-  if (text14 !== null)
-    return text14;
+  const text15 = rixString4(value);
+  if (text15 !== null)
+    return text15;
   const number2 = numberValue2(value, "PNG document figure selector");
   if (!Number.isInteger(number2) || number2 < 1)
     throw new Error("PNG document figure selector must be a positive integer or figure label");
@@ -88001,10 +88419,10 @@ function normalizeMetadata(value) {
     if (!["string", "number", "boolean"].includes(typeof plain) && plain !== null) {
       throw new Error(`PNG metadata '${key}' must be a scalar value`);
     }
-    const text14 = plain === null ? "" : String(plain);
-    if (new TextEncoder().encode(text14).length > 4096)
+    const text15 = plain === null ? "" : String(plain);
+    if (new TextEncoder().encode(text15).length > 4096)
       throw new Error(`PNG metadata '${key}' exceeds 4096 UTF-8 bytes`);
-    result[key] = text14;
+    result[key] = text15;
   }
   return result;
 }
@@ -88157,26 +88575,26 @@ function install17(api) {
 // ../rix/plugins/render-gltf/gltf-renderer.js
 var SCENE3D_SCHEMA = "rix.scene3d@1";
 var REALIZED_SCHEMA2 = "rix.scene3d.realized@1";
-function text14(value, fallback = null) {
+function text15(value, fallback = null) {
   return rixString4(value) ?? (typeof value === "string" ? value : fallback);
 }
 function portableScene(scene) {
-  return text14(field3(scene, "type")) === "output" && text14(field3(scene, "kind")) === "scene3d" && text14(field3(scene, "schema")) === SCENE3D_SCHEMA;
+  return text15(field3(scene, "type")) === "output" && text15(field3(scene, "kind")) === "scene3d" && text15(field3(scene, "schema")) === SCENE3D_SCHEMA;
 }
 function primitiveRecord(value, index) {
   const points = sequence11(field3(value, "points"), `Scene3D primitive ${index + 1} points`).map((point4, pointIndex) => sequence11(point4, `Scene3D primitive ${index + 1} point ${pointIndex + 1}`).map((coordinate, coordinateIndex) => numberValue2(coordinate, `Scene3D coordinate ${coordinateIndex + 1}`)));
   const indices2 = (name) => sequence11(field3(value, name, { type: "sequence", values: [] }), `Scene3D primitive ${index + 1} ${name}`).map((entry2) => sequence11(entry2, `Scene3D primitive ${index + 1} ${name} entry`).map((item) => numberValue2(item, `Scene3D ${name} index`) - 1));
   const styleValue3 = field3(value, "style");
   return {
-    kind: text14(field3(value, "kind")),
-    pickid: text14(field3(value, "pickid")),
-    label: text14(field3(value, "label")),
+    kind: text15(field3(value, "kind")),
+    pickid: text15(field3(value, "pickid")),
+    label: text15(field3(value, "label")),
     points,
     segments: indices2("segments"),
     triangles: indices2("triangles"),
     radius: field3(value, "radius"),
     style: {
-      color: text14(field3(styleValue3, "color"), "#275dad"),
+      color: text15(field3(styleValue3, "color"), "#275dad"),
       opacity: field3(styleValue3, "opacity", 1),
       width: field3(styleValue3, "width", 1)
     }
@@ -88184,7 +88602,7 @@ function primitiveRecord(value, index) {
 }
 function realizedPrimitives(scene) {
   const realized = field3(scene, "realized");
-  if (text14(field3(realized, "schema")) !== REALIZED_SCHEMA2) {
+  if (text15(field3(realized, "schema")) !== REALIZED_SCHEMA2) {
     throw new Error(`gltf requires the public ${REALIZED_SCHEMA2} realization on a Scene3D scene`);
   }
   return sequence11(field3(realized, "primitives"), "Scene3D realized primitives").map(primitiveRecord);
@@ -88384,7 +88802,7 @@ function field4(source, name, fallback = null) {
   }
   return fallback;
 }
-function text15(value, label2) {
+function text16(value, label2) {
   if (value?.type === "string")
     return value.value;
   if (typeof value === "string")
@@ -88412,7 +88830,7 @@ function sequence12(value, label2) {
 function delimiterValue(value, fallback = ",") {
   if (value === undefined || value === null)
     return fallback;
-  const delimiter = text15(value, "csv delimiter");
+  const delimiter = text16(value, "csv delimiter");
   if (delimiter.toLowerCase() === "comma")
     return ",";
   if (["tab", "\\t"].includes(delimiter.toLowerCase()))
@@ -88426,15 +88844,15 @@ function delimiterValue(value, fallback = ",") {
   return delimiter;
 }
 function localePolicy(options, delimiter) {
-  const locale = text15(field4(options, "locale", stringValue9("invariant")), "csv locale").toLowerCase();
+  const locale = text16(field4(options, "locale", stringValue9("invariant")), "csv locale").toLowerCase();
   const known = LOCALES[locale];
   if (!known)
     throw new Error("csv locale must be invariant, en-US, de-DE, or fr-FR");
-  const decimal = text15(field4(options, "decimal", stringValue9("canonical")), "csv decimal policy").toLowerCase();
+  const decimal = text16(field4(options, "decimal", stringValue9("canonical")), "csv decimal policy").toLowerCase();
   if (!["canonical", "locale"].includes(decimal))
     throw new Error("csv decimal policy must be canonical or locale");
-  const decimalMark = decimal === "canonical" ? "." : text15(field4(options, "decimalMark", stringValue9(known.decimalMark)), "csv decimal mark");
-  const groupMark = decimal === "canonical" ? "" : text15(field4(options, "groupMark", stringValue9(known.groupMark)), "csv group mark");
+  const decimalMark = decimal === "canonical" ? "." : text16(field4(options, "decimalMark", stringValue9(known.decimalMark)), "csv decimal mark");
+  const groupMark = decimal === "canonical" ? "" : text16(field4(options, "groupMark", stringValue9(known.groupMark)), "csv group mark");
   if ([...decimalMark].length !== 1 || /[\r\n\d+-]/.test(decimalMark)) {
     throw new Error("csv decimal mark must be one nonnumeric character");
   }
@@ -88452,7 +88870,7 @@ function commentPrefix(options) {
   const value = field4(options, "comment", stringValue9("#"));
   if (value === null)
     return null;
-  const prefix = text15(value, "csv comment prefix");
+  const prefix = text16(value, "csv comment prefix");
   if (prefix === "")
     return null;
   if ([...prefix].length !== 1 || /[\r\n\"]/.test(prefix)) {
@@ -88594,7 +89012,7 @@ function inferredSchema(header) {
 function missingTokens(options) {
   const value = field4(options, "missing", stringValue9(""));
   const values4 = value?.type === "sequence" || Array.isArray(value) ? sequence12(value, "csv missing tokens") : [value];
-  return new Set(values4.map((entry2, index) => text15(entry2, `csv missing token ${index + 1}`)));
+  return new Set(values4.map((entry2, index) => text16(entry2, `csv missing token ${index + 1}`)));
 }
 function ungroup(integerPart, groupMark, label2) {
   if (!groupMark || !integerPart.includes(groupMark))
@@ -88677,7 +89095,7 @@ function metadataFromComments(comments) {
 function parseArguments(args) {
   if (args.length < 1 || args.length > 3)
     throw new Error("csv.Parse expects text, optional schema, and optional options");
-  const source = text15(args[0], "csv input");
+  const source = text16(args[0], "csv input");
   let schema = null;
   let options = null;
   if (args.length >= 2) {
@@ -88714,7 +89132,7 @@ function prepareImport(args) {
   if (!header && !requestedSchema)
     throw new Error("csv import without a header requires an explicit schema");
   if (headerFields && requestedSchema) {
-    const headerPolicy = text15(field4(options, "headerPolicy", stringValue9("labels")), "csv header policy").toLowerCase();
+    const headerPolicy = text16(field4(options, "headerPolicy", stringValue9("labels")), "csv header policy").toLowerCase();
     if (!["labels", "ids", "ignore"].includes(headerPolicy))
       throw new Error("csv header policy must be labels, ids, or ignore");
     const expected = empty.columns.map((column) => headerPolicy === "ids" ? column.id : column.label);
@@ -88992,8 +89410,8 @@ function exactDecimal(numerator, denominator, policy, label2) {
     return groupedInteger(sign + digits, policy.grouping ? policy.groupMark : "");
   digits = digits.padStart(places + 1, "0");
   const fraction = digits.slice(-places).replace(/0+$/, "");
-  const integer2 = groupedInteger(sign + digits.slice(0, -places), policy.grouping ? policy.groupMark : "");
-  return fraction ? `${integer2}${policy.decimalMark}${fraction}` : integer2;
+  const integer3 = groupedInteger(sign + digits.slice(0, -places), policy.grouping ? policy.groupMark : "");
+  return fraction ? `${integer3}${policy.decimalMark}${fraction}` : integer3;
 }
 function numericText(value, policy, label2) {
   if (value instanceof Integer) {
@@ -89068,8 +89486,8 @@ function scalarText(value, missing, policy, flatten, path, diagnostics) {
   }
   throw new Error(`csv nested cell at ${path} requires flatten=:json; received ${value?.type || typeof value}`);
 }
-function quote(text16, delimiter) {
-  const source = String(text16);
+function quote(text17, delimiter) {
+  const source = String(text17);
   return source.includes(delimiter) || /["\r\n]/.test(source) ? `"${source.replaceAll('"', '""')}"` : source;
 }
 function sidecarLines(options, comment, policy) {
@@ -89781,9 +90199,9 @@ function divideWithUnits(left, right) {
 function resolveTargetUnit(target, context, systemContext) {
   if (isUnitValue(target))
     return target;
-  const text16 = stringValue10(target, "ConvertUnit target");
+  const text17 = stringValue10(target, "ConvertUnit target");
   const collection = activeCollection(context, systemContext, "Units", ["UNITS", "Units"]);
-  return parseUnitExpression(text16, collection);
+  return parseUnitExpression(text17, collection);
 }
 var unitExactFunctions = {
   UNIT: {
@@ -90259,11 +90677,11 @@ function createNumberConfigValue() {
 function createDefaultSystemContext(options = {}) {
   const frozen = options.frozen !== false;
   const ctx = new SystemContext(new Map, false);
-  const exact3 = options.exact || createDefaultExactCollection();
-  const units = options.units || createDefaultUnitCollection(exact3);
-  const complex = options.complex || createDefaultComplexCollection(exact3);
+  const exact4 = options.exact || createDefaultExactCollection();
+  const units = options.units || createDefaultUnitCollection(exact4);
+  const complex = options.complex || createDefaultComplexCollection(exact4);
   ctx.registerValue("Units", units, { doc: "Canonical RiX unit collection" });
-  ctx.registerValue("Exact", exact3, { doc: "Canonical RiX exact-generator collection" });
+  ctx.registerValue("Exact", exact4, { doc: "Canonical RiX exact-generator collection" });
   ctx.registerValue("Complex", complex, { doc: "Exact complex-number operations" });
   ctx.registerValue("Config", createNumberConfigValue(), {
     doc: "Session-scoped RiX configuration, including numeric input and display",
@@ -90361,6 +90779,8 @@ function createDefaultSystemContext(options = {}) {
   ctx.register("DefineUnit", unitExactFunctions.DEFINEUNIT);
   ctx.register("DefineExactGenerator", unitExactFunctions.DEFINEEXACTGENERATOR);
   for (const [name, definition12] of Object.entries(expressionCapabilities))
+    ctx.register(name, definition12);
+  for (const [name, definition12] of Object.entries(mathematicalJSONCapabilities))
     ctx.register(name, definition12);
   ctx.installManagementNamespaces();
   const rendererRegistry = options.rendererRegistry || new RendererRegistry;
@@ -91516,10 +91936,10 @@ async function invokeTraversalCallbackAsync(fn, callArgs, context, registry, sys
   return invokeCallableAsync(fn, callArgs, context, registry, systemContext, state);
 }
 function asyncCapabilityString(value, label2) {
-  const text16 = rixStringValue(value);
-  if (text16 === null)
+  const text17 = rixStringValue(value);
+  if (text17 === null)
     throw new Error(`${label2} must be a string`);
-  return text16;
+  return text17;
 }
 function asyncDiagnosticString(value) {
   return { type: "string", value: String(value) };
@@ -91659,10 +92079,10 @@ async function evaluateTraceCapabilityAsync(args, context, registry, systemConte
     const varsValue = await evaluateAsyncInternal(args[2], context, registry, systemContext, state);
     if (isRixArray(varsValue)) {
       trackedVars = varsValue.values.map((value) => {
-        const text16 = rixStringValue(value);
-        if (text16 === null)
+        const text17 = rixStringValue(value);
+        if (text17 === null)
           throw new Error(".Trace trackedVars must be an array of strings");
-        return text16;
+        return text17;
       });
     } else if (varsValue !== null) {
       throw new Error(".Trace trackedVars must be an array of strings");
@@ -93875,13 +94295,13 @@ var DIVISION_OPERATORS = new Set(["/", "//", "%", "/%"]);
 function normalizeLintLevel(value = "standard") {
   if (Number.isInteger(value) && value >= 1 && value <= 4)
     return value;
-  const text16 = String(value).toLowerCase();
-  if (/^[1-4]$/.test(text16))
-    return Number(text16);
-  if (!Object.hasOwn(RIX_LINT_LEVELS, text16)) {
+  const text17 = String(value).toLowerCase();
+  if (/^[1-4]$/.test(text17))
+    return Number(text17);
+  if (!Object.hasOwn(RIX_LINT_LEVELS, text17)) {
     throw new Error(`Unknown RiX lint level '${value}'. Use essential, standard, thorough, or pedantic.`);
   }
-  return RIX_LINT_LEVELS[text16];
+  return RIX_LINT_LEVELS[text17];
 }
 function normalizeLintProfiles(value = "default") {
   const requested = Array.isArray(value) ? value : String(value).split(",");
@@ -94994,16 +95414,16 @@ function sheetPlaneKey2(selections) {
 }
 var RIXCEL_FORMULA_CLIPBOARD_TYPE = "application/x-rixcel-formula";
 var RIXCEL_FORMULA_BLOCK_CLIPBOARD_TYPE = "application/x-rixcel-formula-block";
-function parseSheetFormulaClipboard(text16, fallbackAssignmentMode = ":=") {
-  const source = String(text16 ?? "");
+function parseSheetFormulaClipboard(text17, fallbackAssignmentMode = ":=") {
+  const source = String(text17 ?? "");
   const match = source.match(/^\s*(::=|~~=|:=|~=|=)\s*([\s\S]+)$/u);
   return Object.freeze({
     source: match ? match[2] : source,
     assignmentMode: match?.[1] ?? fallbackAssignmentMode
   });
 }
-function parseSheetFormulaBlock(text16, fallbackAssignmentMode = ":=") {
-  const rows = String(text16 ?? "").replace(/\r\n?/gu, `
+function parseSheetFormulaBlock(text17, fallbackAssignmentMode = ":=") {
+  const rows = String(text17 ?? "").replace(/\r\n?/gu, `
 `).split(`
 `);
   if (rows.at(-1) === "")
@@ -95592,9 +96012,9 @@ function enhanceSheet(sheet, options) {
         }
         if (result?.type === "error")
           throw new Error(result.text);
-        const exact3 = submittedCell.textContent.trim();
+        const exact4 = submittedCell.textContent.trim();
         if (editValue)
-          editValue.textContent = `Exact value: ${exact3}`;
+          editValue.textContent = `Exact value: ${exact4}`;
         if (editStatus)
           editStatus.textContent = "Saved";
         options.onEditCommitted?.(detail, result, submittedCell, sheet);
@@ -95651,7 +96071,7 @@ function sequence14(value) {
     return value.elements;
   return [];
 }
-function text16(value) {
+function text17(value) {
   if (typeof value === "string")
     return value;
   if (value?.type === "string" || value?.type === "symbol")
@@ -95664,7 +96084,7 @@ function sourceValue(value) {
   if (value?.type === "rational" && value.numerator !== undefined) {
     return String(value.denominator) === "1" ? String(value.numerator) : `${value.numerator}/${value.denominator}`;
   }
-  if (text16(field5(value, "schema")) === "rix.algebraic-real@1") {
+  if (text17(field5(value, "schema")) === "rix.algebraic-real@1") {
     const coefficients = sequence14(field5(value, "coefficients"));
     const interval2 = field5(value, "interval");
     const rootIndex = field5(value, "rootIndex");
@@ -95679,7 +96099,7 @@ function sourceValue(value) {
 function idSource(value) {
   if (value?.type === "symbol")
     return sourceValue(value);
-  return JSON.stringify(text16(value));
+  return JSON.stringify(text17(value));
 }
 function pointSource(value, prefix) {
   const x = field5(value, "x");
@@ -95701,7 +96121,7 @@ function transformSource(value, prefix) {
   const matrix = matrixSource(field5(value, "matrix"));
   if (!matrix)
     return null;
-  const kind = text16(field5(value, "transformKind"));
+  const kind = text17(field5(value, "transformKind"));
   return `${prefix}${kind === "projective" ? "Projective" : "Affine"}(${matrix})`;
 }
 function identifier(value, label2) {
@@ -95712,7 +96132,7 @@ function identifier(value, label2) {
 }
 function validateGeometryConstructionRecord(record2) {
   const diagnostics = [];
-  if (text16(field5(record2, "schema")) !== GEOMETRY_CONSTRUCTION_RECORD_SCHEMA) {
+  if (text17(field5(record2, "schema")) !== GEOMETRY_CONSTRUCTION_RECORD_SCHEMA) {
     diagnostics.push(Object.freeze({ code: "record-schema", message: `Expected ${GEOMETRY_CONSTRUCTION_RECORD_SCHEMA}` }));
   }
   const nodes = sequence14(field5(record2, "nodes"));
@@ -95721,13 +96141,13 @@ function validateGeometryConstructionRecord(record2) {
   }
   const ids = new Set;
   for (const [index, node] of nodes.entries()) {
-    const id = text16(field5(node, "id"));
+    const id = text17(field5(node, "id"));
     if (!id)
       diagnostics.push(Object.freeze({ code: "node-id", index, message: "Construction node requires an id" }));
     else if (ids.has(id))
       diagnostics.push(Object.freeze({ code: "duplicate-id", id, index, message: `Duplicate construction id ${id}` }));
     for (const dependency of sequence14(field5(node, "dependsOn"))) {
-      const dependencyId = text16(dependency);
+      const dependencyId = text17(dependency);
       if (!ids.has(dependencyId))
         diagnostics.push(Object.freeze({ code: "forward-dependency", id, dependency: dependencyId, index, message: `${id || `Node ${index + 1}`} depends on missing or later node ${dependencyId}` }));
     }
@@ -95742,7 +96162,7 @@ function validateGeometryConstructionRecord(record2) {
   });
 }
 function geometryConstructionRecordFromGraph(graph) {
-  const schema = text16(field5(graph, "schema"));
+  const schema = text17(field5(graph, "schema"));
   if (schema !== "rix.geometry.construction-graph@1") {
     throw new Error("Geometry construction source requires a construction graph or construction record");
   }
@@ -95755,7 +96175,7 @@ function geometryConstructionRecordFromGraph(graph) {
   });
 }
 function encodeGeometryConstructionSource(record2, options = {}) {
-  if (text16(field5(record2, "schema")) === "rix.geometry.construction-graph@1") {
+  if (text17(field5(record2, "schema")) === "rix.geometry.construction-graph@1") {
     record2 = geometryConstructionRecordFromGraph(record2);
   }
   const validation = validateGeometryConstructionRecord(record2);
@@ -95777,11 +96197,11 @@ function encodeGeometryConstructionSource(record2, options = {}) {
     const dependencies = sequence14(field5(node, "dependsOn"));
     const recipe = field5(node, "recipe");
     const free = Boolean(field5(node, "free"));
-    const tool = text16(field5(recipe, "tool") || field5(node, "kind"));
+    const tool = text17(field5(recipe, "tool") || field5(node, "kind"));
     const args = sequence14(field5(recipe, "arguments")).length ? sequence14(field5(recipe, "arguments")) : dependencies;
     const commonOptions = `{= id=${idSource(id)},maxNodes=${maxNodes} }`;
     let statement = null;
-    if (free && (tool === "point" || text16(field5(field5(node, "value"), "kind")) === "point")) {
+    if (free && (tool === "point" || text17(field5(field5(node, "value"), "kind")) === "point")) {
       const target = field5(recipe, "target") || field5(node, "value");
       const point4 = pointSource(target, prefix);
       if (point4) {
@@ -95800,7 +96220,7 @@ function encodeGeometryConstructionSource(record2, options = {}) {
     return statement;
   };
   const movementStatement = (event) => {
-    const operation = text16(field5(event, "operation"));
+    const operation = text17(field5(event, "operation"));
     let statement = null;
     if (operation === "drag") {
       const target = pointSource(field5(event, "to"), prefix);
@@ -95826,7 +96246,7 @@ function encodeGeometryConstructionSource(record2, options = {}) {
   };
   if (validation.valid)
     for (const node of sequence14(field5(record2, "nodes"))) {
-      const idText = text16(field5(node, "id"));
+      const idText = text17(field5(node, "id"));
       const statement = nodeStatement(node);
       if (statement)
         lines.push(statement);
@@ -95835,22 +96255,22 @@ function encodeGeometryConstructionSource(record2, options = {}) {
     }
   if (validation.valid)
     for (const event of sequence14(field5(record2, "history"))) {
-      const operation = text16(field5(event, "operation"));
+      const operation = text17(field5(event, "operation"));
       const statement = movementStatement(event);
       if (statement)
         lines.push(statement);
       else if (["drag", "drag_many", "constrained_drag"].includes(operation)) {
-        unsupported.push(Object.freeze({ id: text16(field5(event, "id")) || null, reason: `Unsupported or incomplete ${operation} history event` }));
+        unsupported.push(Object.freeze({ id: text17(field5(event, "id")) || null, reason: `Unsupported or incomplete ${operation} history event` }));
       }
     }
   const future = validation.valid ? sequence14(field5(record2, "future")) : [];
   for (const event of [...future].reverse()) {
-    const operation = text16(field5(event, "operation"));
+    const operation = text17(field5(event, "operation"));
     const statement = operation === "create" ? nodeStatement(field5(event, "node")) : movementStatement(event);
     if (statement)
       lines.push(statement);
     else
-      unsupported.push(Object.freeze({ id: text16(field5(event, "id")) || null, reason: `Unsupported or incomplete future ${operation || "construction"} event` }));
+      unsupported.push(Object.freeze({ id: text17(field5(event, "id")) || null, reason: `Unsupported or incomplete future ${operation || "construction"} event` }));
   }
   for (let index = 0;index < future.length; index += 1) {
     lines.push(`${graphName} := ${prefix}Undo(${graphName});`);
@@ -96556,8 +96976,8 @@ function installGeometryWorkbench(graphic, status, options, navigation, actionAc
       const statusValue = stringValue11(mapField4(node, "status"));
       const diagnostic2 = stringValue11(mapField4(node, "diagnostic"));
       const dependencyText = dependencies.length ? `depends on ${dependencies.join(", ")}` : "no dependencies";
-      const exact3 = mapField4(node, "value");
-      properties.textContent = [id, kind, free ? "free" : "derived", dependencyText, statusValue, diagnostic2, exact3 === null ? null : `exact ${exactText(exact3, options.format || String)}`].filter(Boolean).join(" · ");
+      const exact4 = mapField4(node, "value");
+      properties.textContent = [id, kind, free ? "free" : "derived", dependencyText, statusValue, diagnostic2, exact4 === null ? null : `exact ${exactText(exact4, options.format || String)}`].filter(Boolean).join(" · ");
       if (authoringEnabled && activeTool !== "point") {
         const spec2 = specsByTool.get(activeTool);
         const label2 = stringValue11(mapField4(spec2, "label")) || activeTool;
@@ -96673,11 +97093,11 @@ function installGeometryWorkbench(graphic, status, options, navigation, actionAc
   redo.addEventListener("click", () => replay(1));
   exportRecordButton.addEventListener("click", () => {
     const record2 = mapField4(workbench, "construction");
-    const text17 = serializeGeometryConstructionRecord(record2, options.format || String);
-    exported.textContent = text17;
+    const text18 = serializeGeometryConstructionRecord(record2, options.format || String);
+    exported.textContent = text18;
     exported.hidden = false;
-    document.defaultView?.navigator?.clipboard?.writeText?.(text17).catch?.(() => {});
-    dispatchGraphicEvent(graphic, "rix-geometry-export", { schema: "rix.geometry.construction-record@1", record: record2, text: text17 });
+    document.defaultView?.navigator?.clipboard?.writeText?.(text18).catch?.(() => {});
+    dispatchGraphicEvent(graphic, "rix-geometry-export", { schema: "rix.geometry.construction-record@1", record: record2, text: text18 });
     if (status)
       status.textContent = "Portable construction record exported";
   });
@@ -96726,24 +97146,24 @@ function interactiveElement(element, svg) {
   }
   return null;
 }
-function makeButton(document, command, label2, text17) {
+function makeButton(document, command, label2, text18) {
   const button = document.createElement("button");
   button.type = "button";
   button.dataset.rixGraphicViewCommand = command;
   button.setAttribute("aria-label", label2);
   button.title = label2;
-  button.textContent = text17;
+  button.textContent = text18;
   return button;
 }
 function makeSelectControl(document, labelText, dataName) {
   const label2 = document.createElement("label");
   label2.className = "rix-output-graphic-toolbar-select";
-  const text17 = document.createElement("span");
-  text17.textContent = labelText;
+  const text18 = document.createElement("span");
+  text18.textContent = labelText;
   const select = document.createElement("select");
   select.dataset[dataName] = "true";
   select.setAttribute("aria-label", labelText);
-  label2.append(text17, select);
+  label2.append(text18, select);
   return { label: label2, select };
 }
 function graphicPreferencesKey(graphic) {
@@ -96872,12 +97292,12 @@ function installNavigation(graphic, svg, status, options) {
     const needle = state.navigation.query.trim().toLocaleLowerCase();
     return (scope === "all" || entry2?.role === scope) && (!needle || `${entry2?.id || ""} ${entry2?.role || ""} ${entry2?.label || ""}`.toLocaleLowerCase().includes(needle));
   });
-  const appendOption = (select, value, text17) => {
+  const appendOption = (select, value, text18) => {
     if (!select || !document?.createElement)
       return;
     const option6 = document.createElement("option");
     option6.value = value;
-    option6.textContent = text17;
+    option6.textContent = text18;
     select.append(option6);
   };
   if (scopeSelect && !scopeSelect.options?.length) {
@@ -96968,9 +97388,9 @@ function installNavigation(graphic, svg, status, options) {
     for (const textObject of graphic.querySelectorAll?.("[data-rix-graphics-text-object]") || []) {
       textObject.toggleAttribute?.("aria-current", textObject.dataset.rixGraphicsTextObject === id);
     }
-    const exact3 = element ? describe(element, scenePoint) : "Selection cleared";
+    const exact4 = element ? describe(element, scenePoint) : "Selection cleared";
     const plot = plotInspection(options.graphic, scenePoint, options.format || String);
-    const message = plot ? `${exact3} · ${plot}` : exact3;
+    const message = plot ? `${exact4} · ${plot}` : exact4;
     if (inspector)
       inspector.textContent = message;
     if (status)
@@ -97545,9 +97965,9 @@ function enhance(root, options) {
     if (element)
       listeners.push(() => element.removeEventListener?.(name, handler));
   };
-  const setStatus = (text17) => {
+  const setStatus = (text18) => {
     if (status)
-      status.textContent = text17;
+      status.textContent = text18;
   };
   const current = () => activeSeries(plan, state)?.samples[state.sampleIndex] || null;
   const waveformName = () => state.waveform === "series" ? activeSeries(plan, state)?.waveform || "sine" : state.waveform;
@@ -98162,8 +98582,8 @@ function scene3DSelectionCatalog(scene, plan, format = String) {
     });
   }));
 }
-function annotationRectangle(screen, text17, options) {
-  const width = Math.min(options.maxWidth, Math.max(options.minWidth, String(text17 || "").length * options.characterWidth + 12));
+function annotationRectangle(screen, text18, options) {
+  const width = Math.min(options.maxWidth, Math.max(options.minWidth, String(text18 || "").length * options.characterWidth + 12));
   const height = options.height;
   return {
     left: screen[0] - width / 2,
@@ -98191,14 +98611,14 @@ function layoutScene3DAnnotations(annotations, viewport2, settings = {}) {
   return annotations.map((annotation) => {
     if (!annotation.visible || !annotation.screen)
       return Object.freeze({ ...annotation, displaced: false, crowded: false });
-    const text17 = annotation.text || annotation.label || annotation.pickId || "annotation";
+    const text18 = annotation.text || annotation.label || annotation.pickId || "annotation";
     let placement = null;
     for (const [horizontal, vertical] of candidates) {
       const screen = [
         Math.min(width, Math.max(0, annotation.screen[0] + horizontal * options.offset)),
         Math.min(height, Math.max(0, annotation.screen[1] + vertical * options.offset))
       ];
-      const rectangle = annotationRectangle(screen, text17, options);
+      const rectangle = annotationRectangle(screen, text18, options);
       if (!occupied.some((item) => rectanglesOverlap(rectangle, item, options.gap))) {
         placement = { screen, rectangle, displaced: horizontal !== 0 || vertical !== 0, crowded: false };
         break;
@@ -98206,7 +98626,7 @@ function layoutScene3DAnnotations(annotations, viewport2, settings = {}) {
     }
     if (!placement) {
       const screen = [...annotation.screen];
-      placement = { screen, rectangle: annotationRectangle(screen, text17, options), displaced: false, crowded: true };
+      placement = { screen, rectangle: annotationRectangle(screen, text18, options), displaced: false, crowded: true };
     }
     occupied.push(placement.rectangle);
     return Object.freeze({ ...annotation, screen: placement.screen, displaced: placement.displaced, crowded: placement.crowded });
@@ -98362,12 +98782,12 @@ function enhanceScene3DViews(root, options = {}) {
         return null;
       const label2 = document.createElement("label");
       label2.className = "rix-output-scene3d-toolbar-select";
-      const text17 = document.createElement("span");
-      text17.textContent = labelText;
+      const text18 = document.createElement("span");
+      text18.textContent = labelText;
       const select2 = document.createElement("select");
       select2.dataset[dataName] = "true";
       select2.setAttribute("aria-label", labelText);
-      label2.append(text17, select2);
+      label2.append(text18, select2);
       toolbar?.append(label2);
       return select2;
     };
@@ -98379,23 +98799,23 @@ function enhanceScene3DViews(root, options = {}) {
         return existing;
       const label2 = document.createElement("label");
       label2.className = "rix-output-scene3d-toolbar-search";
-      const text17 = document.createElement("span");
-      text17.textContent = "Find object";
+      const text18 = document.createElement("span");
+      text18.textContent = "Find object";
       const input = document.createElement("input");
       input.type = "search";
       input.dataset.rixScene3dSearch = "true";
       input.setAttribute("aria-label", "Find 3D object");
-      label2.append(text17, input);
+      label2.append(text18, input);
       toolbar?.append(label2);
       return input;
     })();
     const toleranceSelect = toolbar?.querySelector?.("[data-rix-scene3d-pick-tolerance]") || makeSelect("Pick area", "rixScene3dPickTolerance");
-    const appendOption = (select2, value, text17) => {
+    const appendOption = (select2, value, text18) => {
       if (!select2 || !document?.createElement)
         return;
       const option6 = document.createElement("option");
       option6.value = value;
-      option6.textContent = text17;
+      option6.textContent = text18;
       select2.append(option6);
     };
     if (scopeSelect) {
@@ -98500,17 +98920,17 @@ function enhanceScene3DViews(root, options = {}) {
     const select = (pickId, source) => {
       state.selection.ids = pickId ? [pickId] : [];
       state.selection.focus = pickId || null;
-      const exact3 = describeScene3DSelection(scene, pickId, format);
+      const exact4 = describeScene3DSelection(scene, pickId, format);
       if (inspector)
-        inspector.textContent = exact3;
-      setStatus(exact3);
+        inspector.textContent = exact4;
+      setStatus(exact4);
       if (objectSelect && scopedCatalog().some((entry2) => entry2.id === pickId))
         objectSelect.value = pickId;
       for (const annotation of overlay?.querySelectorAll?.("[data-rix-semantic-id]") || []) {
         annotation.toggleAttribute?.("aria-current", annotation.dataset.rixSemanticId === pickId);
       }
       const interaction = pickId ? plan.picking[pickId]?.interaction ?? null : null;
-      const detail = Object.freeze({ type: "scene3d:selection", selection: { ...state.selection, ids: [...state.selection.ids] }, pickId, exact: exact3, interaction, source });
+      const detail = Object.freeze({ type: "scene3d:selection", selection: { ...state.selection, ids: [...state.selection.ids] }, pickId, exact: exact4, interaction, source });
       options.onSelection?.(detail);
       dispatchSceneEvent(container, detail);
       savePreferences();
@@ -98853,9 +99273,9 @@ function originText(frame) {
   const entries5 = frame?.origin?.entries;
   if (!(entries5 instanceof Map))
     return "unavailable";
-  const integer2 = (key) => finiteExact(entries5.get(key), 0);
+  const integer3 = (key) => finiteExact(entries5.get(key), 0);
   const label2 = entries5.get("label");
-  return `entry ${integer2("entry")}, state ${integer2("state")}, ordinal ${integer2("ordinal")}${label2 ? `, label ${exactText3(label2, String)}` : ""}`;
+  return `entry ${integer3("entry")}, state ${integer3("state")}, ordinal ${integer3("ordinal")}${label2 ? `, label ${exactText3(label2, String)}` : ""}`;
 }
 function identitySet(frameRoot) {
   return new Set([...frameRoot?.querySelectorAll?.("[data-rix-semantic-id]") || []].map((node) => node.dataset.rixSemanticId).filter(Boolean));
@@ -99661,11 +100081,11 @@ function normalizedIndex(index, shape) {
     throw new Error(`Sheet edit index must contain ${shape.length} entries`);
   }
   return index.map((value, axis) => {
-    const integer2 = Number(value);
-    if (!Number.isInteger(integer2) || integer2 < 1 || integer2 > shape[axis]) {
+    const integer3 = Number(value);
+    if (!Number.isInteger(integer3) || integer3 < 1 || integer3 > shape[axis]) {
       throw new Error(`Sheet edit index ${value} is out of range on axis ${axis + 1}`);
     }
-    return integer2;
+    return integer3;
   });
 }
 
@@ -100719,8 +101139,8 @@ function preview(value, formatValue2) {
   if (value === undefined)
     return "";
   try {
-    const text17 = formatValue2 ? formatValue2(value) : String(value);
-    return text17.length > 72 ? `${text17.slice(0, 69)}…` : text17;
+    const text18 = formatValue2 ? formatValue2(value) : String(value);
+    return text18.length > 72 ? `${text18.slice(0, 69)}…` : text18;
   } catch {
     return "";
   }
@@ -101003,5 +101423,5 @@ var STATIC_SYSTEM_CATALOG = Object.freeze([
 ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
 export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, outputValueKind, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, formatOutputText, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateObserved, parseAndEvaluateObservedAsync, lintRix, createGeometryAuthoringProgram, mountOutputWidgets };
 
-//# debugId=F698BC79CC4D9DDB64756E2164756E21
-//# sourceMappingURL=chunk-y1z3ryg4.js.map
+//# debugId=DF5B12CCED9CB48F64756E2164756E21
+//# sourceMappingURL=chunk-b1ttzeyc.js.map

@@ -42,5 +42,13 @@ for (const [mode,evaluate] of [["sync",parseAndEvaluate],["async",parseAndEvalua
         expect(results[14].values[0].value).toBe("budgetExhausted");
         expect(results[14].values[1].value).toBe(1n);
         expect(results[14].values[2]).toBeNull();
+        expect(results[15].values.slice(0,2).map(value=>value.value)).toEqual([1n,1n]);
+        expect(results[15].values[2]).toBeNull();
+        expect(results[16].values[0]).toBeNull();
+        expect(results[16].values[1].value).toBe("unverifiedImport");
+        expect(results[16].values[2].value).toBe("desc");
+        expect(results[17].values[0].value).toBe("realSnapshot");
+        expect(results[17].values[1]).toBeNull();
+        expect(results[17].values[2].value).toBe("unverifiedImport");
     });
 }
