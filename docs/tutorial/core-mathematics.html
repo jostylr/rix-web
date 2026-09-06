@@ -93,10 +93,10 @@ portableRoot := .MathDecodeJSON(.MathEncodeJSON(.ExpressionReal(.numerics.Sqrt(2
    .ExpressionConstantInfo(portableRoot)[:validation] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The singleton and its enclosure survive as a frozen snapshot. The procedure does not: calling <code>ExpressionRefine</code> on this loaded value reports that no recipe is installed. Loading never runs source code or loads plugins. Safe recipe restoration is a later increment. JSONL helpers here are bounded, in-memory text APIs; they do not claim unlimited streaming capacity.</p>
 <h3>Current implementation boundary</h3>
-<p>Scoped symbols support core construction, arithmetic, identity, keys, and conservative equality. The existing name-based calculus, CAS, range, and specification consumers reject scoped expressions and extended constants until their identity/provider-aware conversion is implemented. The first section&#039;s constructor-based examples remain usable with those consumers. Bounded free substitution and rational evaluation are now available below, as is explicit binder instantiation. General domain reasoning, remaining numeric adapters, and safe refinement-recipe restoration remain pending. Context-argument evaluation below supports exact equalities and rational point-domain checks. Graph serialization and frozen snapshots are available now.</p>
+<p>Scoped symbols support core construction, arithmetic, identity, keys, and conservative equality. The existing name-based calculus, CAS, range, and specification consumers reject scoped expressions and extended constants until their identity/provider-aware conversion is implemented. The first section&#039;s constructor-based examples remain usable with those consumers. Bounded free substitution and core-provider evaluation are now available below, as is explicit binder instantiation. General domain reasoning, remaining numeric adapters, and safe refinement-recipe restoration remain pending. Context-argument evaluation below supports exact equalities and rational point-domain checks. Graph serialization and frozen snapshots are available now.</p>
 <aside class="challenge"><p class="eyebrow">Challenge</p><h3>Build and inspect</h3><p>Construct <code>(x+1)^3</code> without loading a plugin, then inspect its operands.</p><section class="tutorial-cell"><header><span>Your RiX answer</span><button type="button" data-tutorial-run>Run answer</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false" placeholder="# Write your RiX solution here"></textarea><div class="tutorial-output" data-tutorial-output></div></section></aside>
 <h2>Localizing an expression without losing its conditions</h2>
-<p>Bindings use symbol identities, not names. They are simultaneous and do not modify definitions or programming variables. This evaluator currently computes exact rational arithmetic; unsupported functions and constant providers remain explicit unresolved work. Each example uses a fresh block scope so <code>::x</code> is independent of its definition earlier in this worksheet.</p>
+<p>Bindings use symbol identities, not names. They are simultaneous and do not modify definitions or programming variables. Evaluation begins with exact rational arithmetic; additional supported providers are demonstrated below. Unsupported functions and provider combinations remain explicit unresolved work. Each example uses a fresh block scope so <code>::x</code> is independent of its definition earlier in this worksheet.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">{;
     expr := ::x^2+1;
     ans := expr.Eval([(::x,3)]);
@@ -153,4 +153,32 @@ portableRoot := .MathDecodeJSON(.MathEncodeJSON(.ExpressionReal(.numerics.Sqrt(2
     ctx := {&amp; :::t | 0:1 &amp; :::t+1 };
     point := ctx.Instantiate([(ctx[:binders][1],::x/2)]);
     (point.Eval()[:status],point.Eval([(::x,1)])[:value],point[:instantiations].Len());
+};</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Evaluating with intervals and exact scalars</h2>
+<p>Interval arithmetic keeps conservative bounds, not a guessed midpoint. A completed set-enclosure calculation need not be the exact range: repeated uses of a variable can widen the enclosure. Domain overlap stays conditional rather than being assumed valid.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">{;
+    ans := (::x^2+1).Eval([(::x,-1:2)]);
+    ctx := {&amp; :::t&gt;0 &amp; :::t+1 };
+    overlap := ctx.Instantiate([(ctx[:binders][1],0:2)]).Eval();
+    (ans[:status],ans[:resultKind],ans[:enclosure].Start(),ans[:enclosure].End(),overlap[:status]);
+};</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>Exact generators retain their identities and algebraic rules. Supported arithmetic includes positive powers and division by nonzero rationals. Division by arbitrary exact expressions is not presumed safe, nor is an exact-to-interval approximation guessed.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">{;
+    p := 1~{pi};
+    ans := ((::x+1)^2/2).Eval([(::x,p)]);
+    (ans[:status],ans[:resultKind],
+     .ExpressionConstant(ans[:value])==.ExpressionConstant((p+1)^2/2));
+};</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<h2>Evaluating a certified real enclosure</h2>
+<p>Real evaluation reads the stored enclosure; it does not call the refinement procedure. An <code>enclosed</code> result has no exact <code>value</code>. Refine explicitly, then evaluate again for tighter bounds. A saved real retains its enclosure but unverified evidence keeps its evaluation conditional. Live provider evidence is protocol-checked, not independently proved.</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">.Plugin.Load(&quot;numerics&quot;);
+{;
+    r := .ExpressionReal(.numerics.Sqrt(2),{= absoluteWidth=1/10,maxWork=30 });
+    loose := (r^2).Eval();
+    .ExpressionRefine(r,{= absoluteWidth=1/1000,maxWork=100 });
+    tight := (r^2).Eval();
+    a := loose[:enclosure]; b := tight[:enclosure];
+    saved := .MathDecodeJSON(.MathEncodeJSON(r));
+    (tight[:status],tight[:resultKind],tight[:value],
+     b.End()-b.Start()&lt;a.End()-a.Start(),saved.Eval()[:status]);
 };</textarea><div class="tutorial-output" data-tutorial-output></div></section></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

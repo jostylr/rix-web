@@ -73,5 +73,14 @@ for (const [mode,evaluate] of [["sync",parseAndEvaluate],["async",parseAndEvalua
         expect(results[25].values[0].value).toBe("unresolved");
         expect(String(results[25].values[1])).toBe("3/2");
         expect(String(results[25].values[2])).toBe("1");
+        expect(results[26].values.slice(0,2).map(v=>v.value)).toEqual(["complete","setEnclosure"]);
+        expect(results[26].values.slice(2,4).map(String)).toEqual(["1","5"]);
+        expect(results[26].values[4].value).toBe("conditional");
+        expect(results[27].values.slice(0,2).map(v=>v.value)).toEqual(["complete","exactScalar"]);
+        expect(results[27].values[2].value).toBe(1n);
+        expect(results[28].values.slice(0,2).map(v=>v.value)).toEqual(["enclosed","singletonEnclosure"]);
+        expect(results[28].values[2]).toBeNull();
+        expect(results[28].values[3].value).toBe(1n);
+        expect(results[28].values[4].value).toBe("conditional");
     });
 }

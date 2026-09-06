@@ -37238,6 +37238,172 @@ ${indented.join(`,
     }, pure: false, groups: ["Symbolic"], doc: "Decode independent bounded JSONL documents without executing code" }
   };
 
+  // rix/src/runtime/math-provider-eval.js
+  var asRational5 = (value) => value instanceof Integer ? new Rational(value.value, 1n) : value instanceof Rational && value.denominator !== 0n ? value : null;
+  var interval2 = (value) => value instanceof RationalInterval ? value : asRational5(value) ? new RationalInterval(asRational5(value), asRational5(value)) : null;
+  var size = (value) => value?.type === "exact_expression" ? value.terms.size : 1;
+  var maxDigits = 1e4;
+  var maxTerms = 1024;
+  function rationalBudget(value) {
+    if (!asRational5(value) || value.numerator?.toString().length > maxDigits || value.denominator?.toString().length > maxDigits || value.value?.toString().length > maxDigits)
+      throw new Error("Mathematical evaluation integer budget exceeded");
+  }
+  function budget(value) {
+    if (value instanceof RationalInterval) {
+      rationalBudget(value.low);
+      rationalBudget(value.high);
+      return value;
+    }
+    if (!isExactValue(value)) {
+      rationalBudget(value);
+      return value;
+    }
+    const checkGenerator = (generator) => {
+      if (generator.polynomial?.length > 64)
+        throw new Error("Mathematical evaluation polynomial budget exceeded");
+      for (const c of generator.polynomial || [])
+        rationalBudget(c);
+    };
+    if (value.type === "exact_generator")
+      checkGenerator(value);
+    else {
+      if (size(value) > maxTerms)
+        throw new Error("Mathematical evaluation exact-term budget exceeded");
+      for (const term of value.terms.values()) {
+        rationalBudget(term.coefficient);
+        if (term.powers.size > 64)
+          throw new Error("Mathematical evaluation generator budget exceeded");
+        for (const [generator, power] of term.powers) {
+          checkGenerator(generator);
+          if (!Number.isSafeInteger(power) || Math.abs(power) > 1e4)
+            throw new Error("Mathematical evaluation degree budget exceeded");
+        }
+      }
+    }
+    return value;
+  }
+  function compareProviderValues(left, right, op) {
+    const a = interval2(left), b = interval2(right);
+    if (!a || !b) {
+      if (["==", "!="].includes(op)) {
+        const equal = constantEquality(left, right);
+        return equal === null ? null : op === "==" ? equal : !equal;
+      }
+      return null;
+    }
+    if (op === ">")
+      return compareProviderValues(right, left, "<");
+    if (op === ">=")
+      return compareProviderValues(right, left, "<=");
+    if (op === "<")
+      return a.high.lessThan(b.low) ? true : !a.low.lessThan(b.high) ? false : null;
+    if (op === "<=")
+      return !a.high.greaterThan(b.low) ? true : a.low.greaterThan(b.high) ? false : null;
+    if (op === "==" || op === "!=") {
+      const equal = a.high.lessThan(b.low) || b.high.lessThan(a.low) ? false : a.low.equals(a.high) && b.low.equals(b.high) ? a.low.equals(b.low) : null;
+      return equal === null ? null : op === "==" ? equal : !equal;
+    }
+    return null;
+  }
+  function createProviderEvaluation(reasons) {
+    const providers = new Map, reals = new Map;
+    let sawReal = false, sawSet = false, unverified = false;
+    const unsupported = (reason) => {
+      reasons.add(reason);
+      return null;
+    };
+    function read(value) {
+      const real = realConstantState(value);
+      if (real) {
+        sawReal = true;
+        unverified ||= !real.source;
+        if (!reals.has(real.id)) {
+          reals.set(real.id, budget(new RationalInterval(real.interval.start, real.interval.end)));
+          providers.set(real.id, constantProviderInfo(value));
+        }
+        return reals.get(real.id);
+      }
+      if (value instanceof RationalInterval)
+        sawSet = true;
+      if (!asRational5(value) && !(value instanceof RationalInterval) && !isExactValue(value))
+        return unsupported("unsupportedConstantProvider");
+      const result = budget(asRational5(value) || value);
+      const key = value instanceof RationalInterval ? "rationalInterval" : isExactValue(value) ? "exactScalar" : "rational";
+      if (!providers.has(key))
+        providers.set(key, constantProviderInfo(value));
+      return result;
+    }
+    function multiply2(a, b) {
+      if (size(a) * size(b) > maxTerms)
+        throw new Error("Mathematical evaluation exact-term budget exceeded");
+      return budget(multiplyScalars(a, b));
+    }
+    function operate(op, args) {
+      const [a, b] = args;
+      if (op === "power") {
+        const exponent = asRational5(b);
+        if (!exponent || exponent.denominator !== 1n || exponent.numerator > 256n || exponent.numerator < -256n)
+          return unsupported("unsupportedExponent");
+        const n = exponent.numerator, range = interval2(a);
+        if (n <= 0n && (range ? range.containsZero() : true))
+          return unsupported(range ? "undefinedPower" : "nonzeroNotEstablished");
+        if (range) {
+          const magnitude = Number(n < 0n ? -n : n);
+          if ([range.low, range.high].some((v) => Math.max(v.numerator.toString().length, v.denominator.toString().length) * magnitude > maxDigits))
+            throw new Error("Mathematical evaluation integer budget exceeded");
+          return budget(a instanceof RationalInterval ? a.pow(n) : asRational5(a).pow(n));
+        }
+        let result = new Rational(1n), factor = a, remaining = n;
+        while (remaining > 0n) {
+          if (remaining % 2n)
+            result = multiply2(result, factor);
+          remaining /= 2n;
+          if (remaining)
+            factor = multiply2(factor, factor);
+        }
+        return result;
+      }
+      if (args.some((v) => v instanceof RationalInterval)) {
+        if (args.some((v) => !interval2(v)))
+          return unsupported("mixedProviderArithmetic");
+        const x = interval2(a), y = b === undefined ? null : interval2(b);
+        if (op === "divide" && y.containsZero())
+          return unsupported("divisorMayContainZero");
+        return budget({ add: () => x.add(y), subtract: () => x.subtract(y), multiply: () => x.multiply(y), divide: () => x.divide(y), negate: () => x.negate() }[op]());
+      }
+      if (op === "divide") {
+        const denominator = asRational5(b);
+        if (!denominator)
+          return unsupported("nonRationalExactDivisor");
+        if (denominator.numerator === 0n)
+          return unsupported("divisionByZero");
+        return budget(divideScalars(a, denominator));
+      }
+      if (op === "multiply")
+        return multiply2(a, b);
+      if (op === "add" || op === "subtract") {
+        if (size(a) + size(b) > maxTerms)
+          throw new Error("Mathematical evaluation exact-term budget exceeded");
+        return budget(op === "add" ? addScalars(a, b) : subtractScalars(a, b));
+      }
+      if (op === "negate")
+        return budget(negateScalar(a));
+      return unsupported("unsupportedOperation");
+    }
+    return {
+      read,
+      operate,
+      get unverified() {
+        return unverified;
+      },
+      get providers() {
+        return [...providers.values()];
+      },
+      isApproximation: (value) => sawReal && value instanceof RationalInterval,
+      resultKind: (value) => value === null ? "unresolved" : value instanceof RationalInterval ? sawSet ? "setEnclosure" : "singletonEnclosure" : isExactValue(value) ? "exactScalar" : "rational"
+    };
+  }
+
   // rix/src/runtime/math-localize.js
   var str2 = (value) => ({ type: "string", value });
   var seq2 = (values2) => ({ type: "sequence", values: values2 });
@@ -37357,21 +37523,18 @@ ${indented.join(`,
     const localized = substituteMathematics(value, bindings);
     const { tick } = worker(seq2([]));
     const reasons = new Set;
+    const provider = createProviderEvaluation(reasons);
     function calculate(expr, depth = 0) {
       tick(depth);
-      const direct = rational(expr);
-      if (direct)
-        return direct;
+      if (isExpressionScalar(expr))
+        return provider.read(expr);
       if (!isMathExpression(expr)) {
         reasons.add("unsupportedResult");
         return null;
       }
       const kind = expressionField(expr, "kind")?.value;
       if (kind === "constant") {
-        const result2 = rational(expressionField(expr, "value"));
-        if (!result2)
-          reasons.add("unsupportedConstantProvider");
-        return result2;
+        return provider.read(expressionField(expr, "value"));
       }
       if (kind === "variable") {
         reasons.add("unboundSymbol");
@@ -37384,36 +37547,16 @@ ${indented.join(`,
       const args = expressionField(expr, "operands").values.map((v) => calculate(v, depth + 1));
       if (args.some((v) => v === null))
         return null;
-      const [a, b] = args, op = expressionField(expr, "operation").value;
-      if (op === "divide" && b.numerator === 0n) {
-        reasons.add("divisionByZero");
-        return null;
-      }
-      if (op === "power") {
-        if (b.denominator !== 1n || b.numerator > 256n || b.numerator < -256n) {
-          reasons.add("unsupportedExponent");
-          return null;
-        }
-        if (a.numerator === 0n && b.numerator <= 0n) {
-          reasons.add("undefinedPower");
-          return null;
-        }
-        const magnitude = Number(b.numerator < 0n ? -b.numerator : b.numerator);
-        if (Math.max(a.numerator.toString().length, a.denominator.toString().length) * magnitude > 1e4)
-          throw new Error("Mathematical evaluation integer budget exceeded");
-      }
-      const result = { add: () => a.add(b), subtract: () => a.subtract(b), multiply: () => a.multiply(b), divide: () => a.divide(b), negate: () => a.negate(), power: () => a.pow(b.numerator) }[op]();
-      if (result.numerator.toString().length > 1e4 || result.denominator.toString().length > 1e4)
-        throw new Error("Mathematical evaluation integer budget exceeded");
-      return result;
+      return provider.operate(expressionField(expr, "operation").value, args);
     }
     const context = isContext(localized) ? localized : null;
     const candidate = calculate(context ? expressionField(context, "result") : localized);
+    const resultKind = provider.resultKind(candidate), approximation = provider.isApproximation(candidate);
     let conditional = false, invalid = false;
     if (context) {
       conditional = !!expressionField(context, "binders")?.values.length || expressionField(context, "validation")?.value === "unverifiedImport";
       for (const entry of expressionField(context, "domains")?.values || []) {
-        const point2 = rational(calculate(expressionField(entry, "symbol")));
+        const point2 = calculate(expressionField(entry, "symbol"));
         const domain = expressionField(entry, "domain");
         if (!point2 || !domain) {
           conditional = true;
@@ -37428,8 +37571,10 @@ ${indented.join(`,
             conditional = true;
             continue;
           }
-          const c = point2.lessThan(bound) ? -1 : point2.greaterThan(bound) ? 1 : 0;
-          if ((lower2 ? c < 0 : c > 0) || c === 0 && inclusion === null)
+          const truth3 = compareProviderValues(point2, bound, lower2 ? inclusion === null ? ">" : ">=" : inclusion === null ? "<" : "<=");
+          if (truth3 === null)
+            conditional = true;
+          else if (!truth3)
             invalid = true;
         }
         const excluded = expressionField(domain, "excluded");
@@ -37440,8 +37585,13 @@ ${indented.join(`,
             const bound = rational(raw);
             if (!bound)
               conditional = true;
-            else if (!point2.lessThan(bound) && !point2.greaterThan(bound))
-              invalid = true;
+            else {
+              const truth3 = compareProviderValues(point2, bound, "!=");
+              if (truth3 === null)
+                conditional = true;
+              else if (!truth3)
+                invalid = true;
+            }
           }
       }
       for (const assumption of expressionField(context, "assumptions")?.values || []) {
@@ -37450,15 +37600,15 @@ ${indented.join(`,
           conditional = true;
           continue;
         }
-        const c = a.lessThan(b) ? -1 : a.greaterThan(b) ? 1 : 0;
-        const truth3 = { "==": c === 0, "!=": c !== 0, "<": c < 0, ">": c > 0, "<=": c <= 0, ">=": c >= 0 }[expressionField(assumption, "operator")?.value];
-        if (truth3 === undefined)
+        const truth3 = compareProviderValues(a, b, expressionField(assumption, "operator")?.value);
+        if (truth3 === null)
           conditional = true;
         else if (!truth3)
           invalid = true;
       }
     }
-    const status = invalid ? "invalidAssumptions" : candidate === null ? "unresolved" : conditional ? "conditional" : "complete";
+    conditional ||= provider.unverified;
+    const status = invalid ? "invalidAssumptions" : candidate === null ? "unresolved" : conditional ? "conditional" : approximation ? "enclosed" : "complete";
     return record2({
       schema: str2("rix.math.evaluation@1"),
       status: str2(status),
@@ -37467,7 +37617,10 @@ ${indented.join(`,
       localized,
       context,
       assumptioncontext: assumptionContext,
-      reasons: seq2([...reasons].map(str2))
+      reasons: seq2([...reasons].map(str2)),
+      resultkind: str2(invalid ? "unresolved" : resultKind),
+      enclosure: !invalid && candidate instanceof RationalInterval ? candidate : null,
+      providers: seq2(provider.providers)
     });
   }
   var mathematicalLocalizationCapabilities = {
@@ -38721,14 +38874,14 @@ ${indented.join(`,
     const existing = context.getEnv(EVALUATION_BUDGET_ENV, null);
     if (existing)
       return { budget: existing, leave() {} };
-    const budget = createEvaluationBudget(options);
-    if (!budget)
+    const budget2 = createEvaluationBudget(options);
+    if (!budget2)
       return { budget: null, leave() {} };
     const hadPrevious = context.env?.has(EVALUATION_BUDGET_ENV) === true;
     const previous = context.getEnv(EVALUATION_BUDGET_ENV, undefined);
-    context.setEnv(EVALUATION_BUDGET_ENV, budget);
+    context.setEnv(EVALUATION_BUDGET_ENV, budget2);
     return {
-      budget,
+      budget: budget2,
       leave() {
         if (hadPrevious)
           context.setEnv(EVALUATION_BUDGET_ENV, previous);
@@ -38738,18 +38891,18 @@ ${indented.join(`,
     };
   }
   function evaluationCheckpoint(context) {
-    const budget = context?.getEnv?.(EVALUATION_BUDGET_ENV, null);
-    if (!budget)
+    const budget2 = context?.getEnv?.(EVALUATION_BUDGET_ENV, null);
+    if (!budget2)
       return;
-    if (budget.signal?.aborted) {
-      throw budget.signal.reason || new DOMException("Evaluation cancelled", "AbortError");
+    if (budget2.signal?.aborted) {
+      throw budget2.signal.reason || new DOMException("Evaluation cancelled", "AbortError");
     }
-    budget.steps++;
-    if (budget.maxSteps !== null && budget.steps > budget.maxSteps) {
-      throw new EvaluationLimitError(`Evaluation exceeded its ${budget.maxSteps}-step limit`, { maxSteps: budget.maxSteps, steps: budget.steps });
+    budget2.steps++;
+    if (budget2.maxSteps !== null && budget2.steps > budget2.maxSteps) {
+      throw new EvaluationLimitError(`Evaluation exceeded its ${budget2.maxSteps}-step limit`, { maxSteps: budget2.maxSteps, steps: budget2.steps });
     }
-    if (budget.deadline !== null && Date.now() > budget.deadline) {
-      throw new EvaluationLimitError(`Evaluation exceeded its ${budget.maxTimeMs}ms time limit`, { maxTimeMs: budget.maxTimeMs, steps: budget.steps });
+    if (budget2.deadline !== null && Date.now() > budget2.deadline) {
+      throw new EvaluationLimitError(`Evaluation exceeded its ${budget2.maxTimeMs}ms time limit`, { maxTimeMs: budget2.maxTimeMs, steps: budget2.steps });
     }
   }
 
@@ -42292,11 +42445,11 @@ ${detail}`;
     }
     throw new Error(`${name} must be an exact rational value`);
   }
-  function intervalBounds(interval2) {
-    if (interval2 instanceof RationalInterval)
-      return [interval2.low, interval2.high];
-    if (interval2?.type === "interval")
-      return [toRational2(interval2.lo, "interval lower bound"), toRational2(interval2.hi, "interval upper bound")];
+  function intervalBounds(interval3) {
+    if (interval3 instanceof RationalInterval)
+      return [interval3.low, interval3.high];
+    if (interval3?.type === "interval")
+      return [toRational2(interval3.lo, "interval lower bound"), toRational2(interval3.hi, "interval upper bound")];
     throw new Error("Interval operation requires a rational interval");
   }
   function eagerSequence(values2) {
@@ -44938,17 +45091,17 @@ ${pad}}`;
   function documentShape(value) {
     if (!Array.isArray(value) || value.length === 0)
       fail2("$.shape", "must be a non-empty array");
-    let size = 1;
+    let size2 = 1;
     const shape = value.map((length, axis) => {
       if (!Number.isSafeInteger(length) || length < 1) {
         fail2(`$.shape[${axis}]`, "must be a positive safe integer");
       }
-      size *= length;
-      if (!Number.isSafeInteger(size))
+      size2 *= length;
+      if (!Number.isSafeInteger(size2))
         fail2("$.shape", "has too many logical slots");
       return length;
     });
-    return { shape, size };
+    return { shape, size: size2 };
   }
   function indexKey(index) {
     return index.join(",");
@@ -45161,11 +45314,11 @@ ${pad}}`;
   }
   function denseVersionOne(input) {
     const id2 = documentId(input.id);
-    const { shape, size } = documentShape(input.shape);
+    const { shape, size: size2 } = documentShape(input.shape);
     if (!Array.isArray(input.slots))
       fail2("$.slots", "must be an array");
-    if (input.slots.length !== size)
-      fail2("$.slots", `must contain exactly ${size} dense slots`);
+    if (input.slots.length !== size2)
+      fail2("$.slots", `must contain exactly ${size2} dense slots`);
     const occupied = new Set;
     const slots = input.slots.map((rawSlot, offset) => {
       const path = `$.slots[${offset}]`;
@@ -81552,16 +81705,16 @@ ndNamespace._proto={=
   function viewportPoint(pointValue, viewport) {
     const entries2 = viewport?.type === "map" ? viewport.entries : viewport;
     const domain = sequence5(get2(entries2, "domain"), "draw.Viewport domain").map((value, index) => number(value, `draw.Viewport domain ${index + 1}`));
-    const size = pointNumbers(get2(entries2, "size"), "draw.Viewport size");
+    const size2 = pointNumbers(get2(entries2, "size"), "draw.Viewport size");
     const margin = number(get2(entries2, "margin", int7(0)), "draw.Viewport margin");
     if (domain.length !== 4 || !(domain[2] > domain[0]) || !(domain[3] > domain[1]))
       throw new Error("draw.Viewport domain must be [xmin,ymin,xmax,ymax]");
-    if (size.some((value) => value <= margin * 2))
+    if (size2.some((value) => value <= margin * 2))
       throw new Error("draw.Viewport size must exceed twice its margin");
     const [x, y] = pointNumbers(pointValue, "draw.Viewport point");
-    const px = margin + (x - domain[0]) / (domain[2] - domain[0]) * (size[0] - margin * 2);
+    const px = margin + (x - domain[0]) / (domain[2] - domain[0]) * (size2[0] - margin * 2);
     const normalizedY = (y - domain[1]) / (domain[3] - domain[1]);
-    const py = get2(entries2, "flipY", int7(1)) === null ? margin + normalizedY * (size[1] - margin * 2) : size[1] - margin - normalizedY * (size[1] - margin * 2);
+    const py = get2(entries2, "flipY", int7(1)) === null ? margin + normalizedY * (size2[1] - margin * 2) : size2[1] - margin - normalizedY * (size2[1] - margin * 2);
     return arrayValue(pointsValue([[px, py]])[0]);
   }
   function viewport(args) {
@@ -81615,10 +81768,10 @@ ndNamespace._proto={=
     }
     if (node.kind === "text_mark") {
       const [x, y] = pointNumbers(node.position, "draw.Bounds label position");
-      const size = number(node.style?.get("size") ?? int7(14), "draw.Bounds label size");
+      const size2 = number(node.style?.get("size") ?? int7(14), "draw.Bounds label size");
       const content = node.text?.value ?? String(node.text ?? "");
-      const width = content.length * size * 0.6;
-      return [x, y - size, x + width, y + size * 0.2];
+      const width = content.length * size2 * 0.6;
+      return [x, y - size2, x + width, y + size2 * 0.2];
     }
     if (node.kind === "group" || node.kind === "graphic") {
       const children = node.children ?? [];
@@ -81801,11 +81954,11 @@ ndNamespace._proto={=
       if (!content)
         throw new Error(`draw.PlaceLabels entry ${index + 1} requires text`);
       const styleValue2 = get2(entry.entries, "style");
-      const size = number(styleValue2?.entries?.get("size") ?? int7(14), `draw.PlaceLabels entry ${index + 1} size`);
+      const size2 = number(styleValue2?.entries?.get("size") ?? int7(14), `draw.PlaceLabels entry ${index + 1} size`);
       let chosen = null;
       for (const offset of offsets) {
         const candidate = [position[0] + offset[0], position[1] + offset[1]];
-        const box2 = [candidate[0], candidate[1] - size, candidate[0] + content.length * size * 0.6, candidate[1] + size * 0.2];
+        const box2 = [candidate[0], candidate[1] - size2, candidate[0] + content.length * size2 * 0.6, candidate[1] + size2 * 0.2];
         if (!boxes.some((existing) => intersects(existing, box2, padding))) {
           chosen = { position: candidate, box: box2, offset, collided: false };
           break;
@@ -81814,7 +81967,7 @@ ndNamespace._proto={=
       if (!chosen) {
         const offset = offsets[0];
         const candidate = [position[0] + offset[0], position[1] + offset[1]];
-        chosen = { position: candidate, box: [candidate[0], candidate[1] - size, candidate[0] + content.length * size * 0.6, candidate[1] + size * 0.2], offset, collided: true };
+        chosen = { position: candidate, box: [candidate[0], candidate[1] - size2, candidate[0] + content.length * size2 * 0.6, candidate[1] + size2 * 0.2], offset, collided: true };
         unresolved += 1;
       }
       boxes.push(chosen.box);
@@ -86353,10 +86506,10 @@ ndNamespace._proto={=
         put(grid2, ...project(child.center).reverse(), state.glyphs.point, state.glyphs.cross);
       } else if (outputKind(child) === "rectangle") {
         const origin = project(child.origin);
-        const size = Array.isArray(child.size) ? child.size : child.size?.values;
+        const size2 = Array.isArray(child.size) ? child.size : child.size?.values;
         const opposite = project([
-          numberValue2(child.origin[0], "Rectangle x") + numberValue2(size[0], "Rectangle width"),
-          numberValue2(child.origin[1], "Rectangle y") + numberValue2(size[1], "Rectangle height")
+          numberValue2(child.origin[0], "Rectangle x") + numberValue2(size2[0], "Rectangle width"),
+          numberValue2(child.origin[1], "Rectangle y") + numberValue2(size2[1], "Rectangle height")
         ]);
         drawLine(grid2, origin, [opposite[0], origin[1]], state.glyphs.rectangle, state.glyphs.cross);
         drawLine(grid2, [opposite[0], origin[1]], opposite, state.glyphs.rectangle, state.glyphs.cross);
@@ -86699,9 +86852,9 @@ ${renderNode(slide.content, state, `${path}.slide${index + 1}.content`)}`;
       recordHit(interaction, node, path, pathBounds(node), "graphics-symbol");
     } else if (node.kind === "rectangle") {
       const origin = point3(node.origin, `${path} origin`);
-      const size = point3(node.size, `${path} size`);
-      commands.push(["rectangle", ...origin, ...size, { ...mergedStyle2(inheritedStyle, node.style), hitId: semanticId2(node, path) }]);
-      recordHit(interaction, node, path, { x: origin[0], y: origin[1], width: size[0], height: size[1] }, "graphics-symbol");
+      const size2 = point3(node.size, `${path} size`);
+      commands.push(["rectangle", ...origin, ...size2, { ...mergedStyle2(inheritedStyle, node.style), hitId: semanticId2(node, path) }]);
+      recordHit(interaction, node, path, { x: origin[0], y: origin[1], width: size2[0], height: size2[1] }, "graphics-symbol");
     } else if (node.kind === "circle" || node.kind === "drag_point") {
       const center = point3(node.center, `${path} center`);
       const radius = numberValue2(node.radius, `${path} radius`);
@@ -86711,17 +86864,17 @@ ${renderNode(slide.content, state, `${path}.slide${index + 1}.content`)}`;
         diagnostics.push(diagnostic("canvas-static-drag-point", "Canvas plans render DragPoint as a static marker; host interaction must bind the target separately", "info", path));
     } else if (node.kind === "text_mark") {
       const [x, y] = point3(node.position, `${path} position`);
-      const size = styleValue2(node.style, "size", styleValue2(node.style, "fontSize", 16));
+      const size2 = styleValue2(node.style, "size", styleValue2(node.style, "fontSize", 16));
       const content = textValue4(node.text, format);
       commands.push(["text", x, y, content, {
         ...mergedStyle2(inheritedStyle, node.style, "currentColor"),
         font: rixString4(styleValue2(node.style, "font")) || "sans-serif",
-        size: numberValue2(size, `${path} font size`),
+        size: numberValue2(size2, `${path} font size`),
         weight: rixString4(styleValue2(node.style, "weight")) || "normal",
         anchor: rixString4(styleValue2(node.style, "anchor")) || "start",
         hitId: semanticId2(node, path)
       }]);
-      recordHit(interaction, node, path, { x, y: y - numberValue2(size, `${path} font size`), width: Math.max(1, content.length * numberValue2(size, `${path} font size`) * 0.6), height: numberValue2(size, `${path} font size`) }, "text", content);
+      recordHit(interaction, node, path, { x, y: y - numberValue2(size2, `${path} font size`), width: Math.max(1, content.length * numberValue2(size2, `${path} font size`) * 0.6), height: numberValue2(size2, `${path} font size`) }, "text", content);
     } else if (["group", "transform", "clip", "graphic_action"].includes(node.kind)) {
       commands.push(["save"]);
       if (node.kind === "transform")
@@ -87464,12 +87617,12 @@ ${renderNode(slide.content, state, `${path}.slide${index + 1}.content`)}`;
       const [x, y] = point3(node.position, `${path} position`);
       const anchor2 = rixString4(styleValue2(resolvedStyle, "anchor"));
       const fill = tikzColor(styleValue2(resolvedStyle, "fill"));
-      const size = styleValue2(resolvedStyle, "size", styleValue2(resolvedStyle, "fontSize"));
+      const size2 = styleValue2(resolvedStyle, "size", styleValue2(resolvedStyle, "fontSize"));
       const weight = rixString4(styleValue2(resolvedStyle, "weight"));
       const options = [
         anchor2 === "middle" ? "anchor=center" : anchor2 === "end" ? "anchor=east" : "anchor=west",
         fill ? `text=${fill}` : null,
-        size ? `font=\\fontsize{${stableNumber(size, `${path} font size`)}}{${stableNumber(numberValue2(size, `${path} font size`) * 1.2)}}\\selectfont${weight === "bold" ? "\\bfseries" : ""}` : null
+        size2 ? `font=\\fontsize{${stableNumber(size2, `${path} font size`)}}{${stableNumber(numberValue2(size2, `${path} font size`) * 1.2)}}\\selectfont${weight === "bold" ? "\\bfseries" : ""}` : null
       ].filter(Boolean).join(",");
       return `\\node[${options}] at (${stableNumber(x)},${stableNumber(y)}) {${texText(textValue4(node.text, format))}};`;
     }
@@ -88833,7 +88986,7 @@ ${execute}---
     throw new Error("This host does not provide browser-compatible base64 encoding");
   }
   function encodeBuffer(chunks) {
-    const total = chunks.reduce((size, chunk) => align4(size) + chunk.byteLength, 0);
+    const total = chunks.reduce((size2, chunk) => align4(size2) + chunk.byteLength, 0);
     const bytes = new Uint8Array(align4(total));
     const views = [];
     let offset = 0;
@@ -95658,10 +95811,10 @@ ${execute}---
     }
     if (text17(field5(value, "schema")) === "rix.algebraic-real@1") {
       const coefficients = sequence14(field5(value, "coefficients"));
-      const interval2 = field5(value, "interval");
+      const interval3 = field5(value, "interval");
       const rootIndex = field5(value, "rootIndex");
-      if (coefficients.length && interval2 != null && rootIndex != null) {
-        return `.ar.Root([${coefficients.map(sourceValue).join(",")}],${sourceValue(interval2)},${sourceValue(rootIndex)})`;
+      if (coefficients.length && interval3 != null && rootIndex != null) {
+        return `.ar.Root([${coefficients.map(sourceValue).join(",")}],${sourceValue(interval3)},${sourceValue(rootIndex)})`;
       }
     }
     if (Array.isArray(value))
@@ -95873,11 +96026,11 @@ ${execute}---
     const actionPrefix = String(options.actionPrefix || "geometry-author");
     const actionId = (name) => JSON.stringify(`${actionPrefix}-${name}`);
     const view = Array.isArray(options.view) ? options.view : [-5, -4, 5, 4];
-    const size = Array.isArray(options.size) ? options.size : [720, 520];
-    if (view.length !== 4 || size.length !== 2)
+    const size2 = Array.isArray(options.size) ? options.size : [720, 520];
+    if (view.length !== 4 || size2.length !== 2)
       throw new Error("Geometry authoring view and size must contain four and two entries");
     const viewSource = `[${view.map(sourceValue).join(",")}]`;
-    const sizeSource = `[${size.map(sourceValue).join(",")}]`;
+    const sizeSource = `[${size2.map(sourceValue).join(",")}]`;
     const snap = options.snap === undefined ? "1/4" : sourceValue(options.snap);
     const maxNodes = Number.isInteger(options.maxNodes) ? options.maxNodes : 1000;
     return `${String(constructionSource).trim()}
@@ -95987,8 +96140,8 @@ $${outputName};`;
       return point4(node.position);
     if (node.kind === "rectangle") {
       const origin = point4(node.origin);
-      const size = point4(node.size);
-      return origin && size ? [origin[0] + size[0] / 2, origin[1] + size[1] / 2] : null;
+      const size2 = point4(node.size);
+      return origin && size2 ? [origin[0] + size2[0] / 2, origin[1] + size2[1] / 2] : null;
     }
     const points = sequenceValue6(node.points).map(point4).filter(Boolean);
     if (points.length) {
@@ -96112,8 +96265,8 @@ $${outputName};`;
     });
   }
   function createGraphicHitIndex(entries5, cellSize = 64) {
-    const size = Number(cellSize);
-    if (!(size > 0) || !Number.isFinite(size))
+    const size2 = Number(cellSize);
+    if (!(size2 > 0) || !Number.isFinite(size2))
       throw new Error("Graphic hit-index cell size must be positive");
     const normalized = [];
     const buckets = new Map;
@@ -96132,10 +96285,10 @@ $${outputName};`;
         continue;
       const item = Object.freeze({ ...entry2, bounds: Object.freeze({ left, right, top, bottom }), order });
       const index = normalized.push(item) - 1;
-      const firstX = Math.floor(left / size);
-      const lastX = Math.floor(right / size);
-      const firstY = Math.floor(top / size);
-      const lastY = Math.floor(bottom / size);
+      const firstX = Math.floor(left / size2);
+      const lastX = Math.floor(right / size2);
+      const firstY = Math.floor(top / size2);
+      const lastY = Math.floor(bottom / size2);
       if ((lastX - firstX + 1) * (lastY - firstY + 1) > 4096) {
         overflow.push(index);
         continue;
@@ -96153,7 +96306,7 @@ $${outputName};`;
     const maximumBucketLoad = [...buckets.values()].reduce((maximum, bucket) => Math.max(maximum, bucket.length), 0);
     return Object.freeze({
       schema: "rix.graphics.hit-index@1",
-      cellSize: size,
+      cellSize: size2,
       entries: Object.freeze(normalized),
       buckets,
       overflow: Object.freeze(overflow),

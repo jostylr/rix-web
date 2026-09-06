@@ -231,7 +231,7 @@ Scoped symbols support core construction, arithmetic, identity, keys, and
 conservative equality. The existing name-based calculus, CAS, range, and
 specification consumers reject scoped expressions and extended constants until their identity/provider-aware
 conversion is implemented. The first section's constructor-based examples
-remain usable with those consumers. Bounded free substitution and rational evaluation
+remain usable with those consumers. Bounded free substitution and core-provider evaluation
 are now available below, as is explicit binder instantiation. General domain reasoning, remaining numeric
 adapters, and safe refinement-recipe restoration remain pending. Context-argument
 evaluation below supports exact equalities and rational point-domain checks. Graph serialization
@@ -243,8 +243,9 @@ Construct `(x+1)^3` without loading a plugin, then inspect its operands.
 ## Localizing an expression without losing its conditions
 
 Bindings use symbol identities, not names. They are simultaneous and do not modify
-definitions or programming variables. This evaluator currently computes exact rational
-arithmetic; unsupported functions and constant providers remain explicit unresolved work.
+definitions or programming variables. Evaluation begins with exact rational arithmetic;
+additional supported providers are demonstrated below. Unsupported functions and provider
+combinations remain explicit unresolved work.
 Each example uses a fresh block scope so `::x` is independent of its definition
 earlier in this worksheet.
 
@@ -349,5 +350,53 @@ any unselected binders remain local. Bound symbols cannot be inserted as replace
     ctx := {& :::t | 0:1 & :::t+1 };
     point := ctx.Instantiate([(ctx[:binders][1],::x/2)]);
     (point.Eval()[:status],point.Eval([(::x,1)])[:value],point[:instantiations].Len());
+};
+```
+## Evaluating with intervals and exact scalars
+
+Interval arithmetic keeps conservative bounds, not a guessed midpoint. A completed
+set-enclosure calculation need not be the exact range: repeated uses of a variable
+can widen the enclosure. Domain overlap stays conditional rather than being assumed valid.
+
+```rix edu
+{;
+    ans := (::x^2+1).Eval([(::x,-1:2)]);
+    ctx := {& :::t>0 & :::t+1 };
+    overlap := ctx.Instantiate([(ctx[:binders][1],0:2)]).Eval();
+    (ans[:status],ans[:resultKind],ans[:enclosure].Start(),ans[:enclosure].End(),overlap[:status]);
+};
+```
+
+Exact generators retain their identities and algebraic rules. Supported arithmetic
+includes positive powers and division by nonzero rationals. Division by arbitrary
+exact expressions is not presumed safe, nor is an exact-to-interval approximation guessed.
+
+```rix edu
+{;
+    p := 1~{pi};
+    ans := ((::x+1)^2/2).Eval([(::x,p)]);
+    (ans[:status],ans[:resultKind],
+     .ExpressionConstant(ans[:value])==.ExpressionConstant((p+1)^2/2));
+};
+```
+
+## Evaluating a certified real enclosure
+
+Real evaluation reads the stored enclosure; it does not call the refinement procedure.
+An `enclosed` result has no exact `value`. Refine explicitly, then evaluate again for
+tighter bounds. A saved real retains its enclosure but unverified evidence keeps its
+evaluation conditional. Live provider evidence is protocol-checked, not independently proved.
+
+```rix edu
+.Plugin.Load("numerics");
+{;
+    r := .ExpressionReal(.numerics.Sqrt(2),{= absoluteWidth=1/10,maxWork=30 });
+    loose := (r^2).Eval();
+    .ExpressionRefine(r,{= absoluteWidth=1/1000,maxWork=100 });
+    tight := (r^2).Eval();
+    a := loose[:enclosure]; b := tight[:enclosure];
+    saved := .MathDecodeJSON(.MathEncodeJSON(r));
+    (tight[:status],tight[:resultKind],tight[:value],
+     b.End()-b.Start()<a.End()-a.Start(),saved.Eval()[:status]);
 };
 ```
