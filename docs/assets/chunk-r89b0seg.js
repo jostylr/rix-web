@@ -7461,202 +7461,6 @@ function transferMetaForUpdate(oldValue, newValue, rhsValue, depth) {
   }
 }
 
-// ../rix/src/runtime/range-policy.js
-var RANGE_MATH_POLICY_KEY = "__range_math_policy__";
-var DEFAULT_RANGE_MATH_POLICY = Object.freeze({
-  defaultAction: "report",
-  zeroPowerZero: "undefined",
-  actions: Object.freeze({})
-});
-function mapEntries(value) {
-  if (!value || value.type !== "map" || !(value.entries instanceof Map)) {
-    throw new Error("RangePolicy options must be a map");
-  }
-  return value.entries;
-}
-function text(value, label) {
-  if (typeof value === "string")
-    return value;
-  if (value?.type === "string")
-    return value.value;
-  throw new Error(`${label} must be a name or string`);
-}
-function truth(value) {
-  return value instanceof Integer && value.value !== 0n;
-}
-function normalizedAction(value, label) {
-  const action = text(value, label).toLowerCase();
-  if (action !== "report" && action !== "throw") {
-    throw new Error(`${label} must be :report or :throw`);
-  }
-  return action;
-}
-function entryCaseInsensitive(entries, wanted) {
-  if (entries.has(wanted))
-    return entries.get(wanted);
-  const lower = wanted.toLowerCase();
-  for (const [key, value] of entries) {
-    if (String(key).toLowerCase() === lower)
-      return value;
-  }
-  return;
-}
-function rangeMathPolicy(context) {
-  return context?.getScopedEnv?.(RANGE_MATH_POLICY_KEY, DEFAULT_RANGE_MATH_POLICY) || DEFAULT_RANGE_MATH_POLICY;
-}
-function mergeRangeMathPolicy(parent, value) {
-  const entries = mapEntries(value);
-  const inherited = parent || DEFAULT_RANGE_MATH_POLICY;
-  const actions = { ...inherited.actions || {} };
-  let defaultAction = inherited.defaultAction || "report";
-  let zeroPowerZero = inherited.zeroPowerZero || "undefined";
-  const strict = entryCaseInsensitive(entries, "strict");
-  if (strict !== undefined)
-    defaultAction = truth(strict) ? "throw" : "report";
-  const defaultValue = entryCaseInsensitive(entries, "default");
-  if (defaultValue !== undefined) {
-    defaultAction = normalizedAction(defaultValue, "RangePolicy default");
-  }
-  const zeroConvention = entryCaseInsensitive(entries, "zeroPowerZero");
-  if (zeroConvention !== undefined) {
-    zeroPowerZero = text(zeroConvention, "RangePolicy zeroPowerZero").toLowerCase();
-    if (zeroPowerZero !== "undefined" && zeroPowerZero !== "one") {
-      throw new Error("RangePolicy zeroPowerZero must be :undefined or :one");
-    }
-  }
-  for (const [key, setting] of entries) {
-    const name = String(key);
-    const lower = name.toLowerCase();
-    if (lower === "strict" || lower === "default" || lower === "zeropowerzero")
-      continue;
-    actions[name] = normalizedAction(setting, `RangePolicy ${name}`);
-  }
-  return Object.freeze({
-    defaultAction,
-    zeroPowerZero,
-    actions: Object.freeze(actions)
-  });
-}
-function rangeDiagnosticAction(policy, category) {
-  const direct = policy?.actions?.[category];
-  if (direct)
-    return direct;
-  const lower = String(category).toLowerCase();
-  for (const [key, value] of Object.entries(policy?.actions || {})) {
-    if (key.toLowerCase() === lower)
-      return value;
-  }
-  return policy?.defaultAction || "report";
-}
-
-// ../rix/src/runtime/range-arithmetic.js
-var text2 = (value) => ({ type: "string", value: String(value) });
-var bool = (value) => value ? new Integer(1n) : null;
-var sequence = (values) => ({ type: "sequence", values });
-var map = (entries) => ({ type: "map", entries: new Map(entries) });
-function portableValue(value) {
-  if (value === null || value === undefined)
-    return null;
-  if (value instanceof Integer || value instanceof Rational || value instanceof RationalInterval || value instanceof RationalIntervalSet)
-    return value;
-  if (typeof value === "bigint")
-    return new Integer(value);
-  if (typeof value === "number" && Number.isSafeInteger(value))
-    return new Integer(BigInt(value));
-  if (typeof value === "string")
-    return text2(value);
-  if (typeof value === "boolean")
-    return bool(value);
-  if (Array.isArray(value))
-    return sequence(value.map(portableValue));
-  if (typeof value === "object") {
-    return map(Object.entries(value).map(([key, entry]) => [key, portableValue(entry)]));
-  }
-  return text2(value);
-}
-function exclusionMap(exclusion) {
-  return map([
-    ["reason", text2(exclusion.reason)],
-    ["operand", new Integer(BigInt(exclusion.operand))],
-    ["excludedSet", exclusion.excludedSet]
-  ]);
-}
-function evidenceMap(record, check, diagnostics) {
-  const domainEntries = [
-    ["coverage", text2(record.domain.coverage)],
-    ["exclusions", sequence(record.domain.exclusions.map(exclusionMap))]
-  ];
-  if (record.domain.definedInput)
-    domainEntries.push(["definedInput", record.domain.definedInput]);
-  return map([
-    ["schema", text2("rix.numerics.range-operation-result@1")],
-    ["operation", text2(record.operation)],
-    ["operands", sequence([...record.operands])],
-    ["parameters", portableValue(record.parameters)],
-    ["range", new RationalIntervalSet(record.range)],
-    ["domain", map(domainEntries)],
-    ["certified", bool(check.accepted)],
-    ["evidenceLevel", text2(check.accepted ? "checkedEvidence" : "heuristic")],
-    ["evidence", portableValue(record.evidence)],
-    ["checker", portableValue(check)],
-    ["diagnostics", sequence(diagnostics.map(text2))]
-  ]);
-}
-function isRangeArithmeticOperand(value) {
-  return value instanceof RationalIntervalSet || value instanceof RationalInterval || value instanceof Rational || value instanceof Integer;
-}
-function operationRecord(operation, args, policy) {
-  switch (operation) {
-    case "add":
-      return rangeAdd(args[0], args[1]);
-    case "subtract":
-      return rangeSubtract(args[0], args[1]);
-    case "multiply":
-      return rangeMultiply(args[0], args[1]);
-    case "divide":
-      return rangeDivide(args[0], args[1]);
-    case "negate":
-      return rangeNegate(args[0]);
-    case "absoluteValue":
-      return rangeAbsoluteValue(args[0]);
-    case "reciprocal":
-      return rangeReciprocal(args[0]);
-    case "integerPower":
-      return rangeIntegerPower(args[0], args[1], {
-        zeroPowerZero: policy.zeroPowerZero
-      });
-    default:
-      throw new Error(`Unknown exact range operation: ${operation}`);
-  }
-}
-function executeRangeOperation(operation, args, context) {
-  const policy = rangeMathPolicy(context);
-  const record = operationRecord(operation, args, policy);
-  const check = checkRangeOperationResult(record, {
-    operation,
-    operands: record.operands,
-    parameters: record.parameters
-  });
-  if (!check.accepted)
-    throw new Error(`Exact range checker rejected ${operation}: ${check.reason}`);
-  const diagnostics = record.domain.exclusions.map((entry) => entry.reason);
-  if (record.domain.coverage !== "allDefined")
-    diagnostics.push(record.domain.coverage);
-  const metadata = evidenceMap(record, check, diagnostics);
-  const result = new RationalIntervalSet(record.range);
-  result._ext = new Map([["rangeEvidence", metadata]]);
-  const throwing = diagnostics.find((category) => rangeDiagnosticAction(policy, category) === "throw");
-  if (throwing) {
-    const error = new Error(`Range arithmetic ${operation} encountered ${throwing}`);
-    error.rangeEvidence = metadata;
-    throw error;
-  }
-  return result;
-}
-function rangeEvidence(value) {
-  return value?._ext instanceof Map ? value._ext.get("rangeEvidence") ?? null : null;
-}
-
 // ../rix/src/runtime/exact-values.js
 var nextGeneratorId = 1;
 var squareRootGenerators = new Map;
@@ -8487,19 +8291,19 @@ function asNonnegativeInteger(value, label) {
     throw new RangeError(`${label} must be a nonnegative Integer`);
   return value;
 }
-function truth2(value) {
+function truth(value) {
   return value !== null && value !== undefined;
 }
-function bool2(value) {
+function bool(value) {
   return value ? new Integer(1n) : null;
 }
-function option(map2, key, fallback) {
+function option(map, key, fallback) {
   if (arguments.length < 3)
     fallback = null;
-  if (!(map2?.type === "map" && map2.entries instanceof Map))
+  if (!(map?.type === "map" && map.entries instanceof Map))
     return fallback;
   const wanted = String(key).toLowerCase();
-  for (const [candidate, value] of map2.entries) {
+  for (const [candidate, value] of map.entries) {
     if (String(candidate).toLowerCase() === wanted)
       return value;
   }
@@ -8690,8 +8494,8 @@ function checkRefinementResult(result, request, capabilities = null) {
   const requestedOperation = nameOf(refinementEntry(normalizedRequest, "operation", null));
   const operationValid = nameOf(refinementEntry(result, "operation", null)) === requestedOperation;
   const capabilityValid = capabilities === null || refinementSupports(capabilities, requestedOperation);
-  const certified = truth2(refinementEntry(result, "certified", null));
-  const certificationValid = capabilities === null || !certified || truth2(refinementEntry(capabilities, "certified", null));
+  const certified = truth(refinementEntry(result, "certified", null));
+  const certificationValid = capabilities === null || !certified || truth(refinementEntry(capabilities, "certified", null));
   const approximation = refinementEntry(result, "approximation", null);
   const approximationPresent = !certified || approximation instanceof CertifiedApproximation;
   const approximationConsistent = !certified || approximation instanceof CertifiedApproximation && intervalValid && approximation.enclosure.equals(interval);
@@ -8701,7 +8505,7 @@ function checkRefinementResult(result, request, capabilities = null) {
   const resultRequestedWidth = refinementEntry(result, "requestedwidth", null);
   const requestedWidthConsistent = (resultRequestedWidth instanceof Integer || resultRequestedWidth instanceof Rational) && asRational4(resultRequestedWidth, "requestedWidth").equals(requestedWidth);
   const widthGoal = intervalValid && intervalWidth(interval).lessThanOrEqual(requestedWidth);
-  const goalMet = truth2(refinementEntry(result, "goalmet", null));
+  const goalMet = truth(refinementEntry(result, "goalmet", null));
   const goalConsistent = certified ? goalMet === widthGoal && !(["budgetExhausted", "resolutionFloor", "unsupported", "unknown"].includes(status) && goalMet) : !goalMet;
   const statusConsistent = (status !== "enclosed" || certified && goalMet) && (status !== "approximate" || !certified) && (status !== "unsupported" || !certified);
   const evidenceValid = evidenceSatisfies(refinementEntry(result, "evidencelevel", null), refinementEntry(normalizedRequest, "evidencerequired", null));
@@ -8724,23 +8528,23 @@ function checkRefinementResult(result, request, capabilities = null) {
   const valid = Boolean(fieldsPresent && schemaValid && statusValid && intervalValid && operationValid && capabilityValid && certificationValid && approximationPresent && approximationConsistent && requestedWidthConsistent && widthConsistent && goalConsistent && statusConsistent && evidenceValid && capabilityEvidenceValid && workWithinLimits);
   return refinementMap([
     ["valuekind", refinementText("numericsResultCheck")],
-    ["valid", bool2(valid)],
-    ["fieldspresent", bool2(fieldsPresent)],
-    ["schemavalid", bool2(schemaValid)],
-    ["statusvalid", bool2(statusValid)],
-    ["intervalvalid", bool2(intervalValid)],
-    ["operationvalid", bool2(operationValid)],
-    ["capabilityvalid", bool2(capabilityValid)],
-    ["certificationvalid", bool2(certificationValid)],
-    ["approximationpresent", bool2(approximationPresent)],
-    ["approximationconsistent", bool2(approximationConsistent)],
-    ["widthconsistent", bool2(widthConsistent)],
-    ["requestedwidthconsistent", bool2(requestedWidthConsistent)],
-    ["goalconsistent", bool2(goalConsistent)],
-    ["statusconsistent", bool2(statusConsistent)],
-    ["evidencevalid", bool2(evidenceValid)],
-    ["capabilityevidencevalid", bool2(capabilityEvidenceValid)],
-    ["workwithinlimits", bool2(workWithinLimits)],
+    ["valid", bool(valid)],
+    ["fieldspresent", bool(fieldsPresent)],
+    ["schemavalid", bool(schemaValid)],
+    ["statusvalid", bool(statusValid)],
+    ["intervalvalid", bool(intervalValid)],
+    ["operationvalid", bool(operationValid)],
+    ["capabilityvalid", bool(capabilityValid)],
+    ["certificationvalid", bool(certificationValid)],
+    ["approximationpresent", bool(approximationPresent)],
+    ["approximationconsistent", bool(approximationConsistent)],
+    ["widthconsistent", bool(widthConsistent)],
+    ["requestedwidthconsistent", bool(requestedWidthConsistent)],
+    ["goalconsistent", bool(goalConsistent)],
+    ["statusconsistent", bool(statusConsistent)],
+    ["evidencevalid", bool(evidenceValid)],
+    ["capabilityevidencevalid", bool(capabilityEvidenceValid)],
+    ["workwithinlimits", bool(workWithinLimits)],
     ["interval", interval],
     ["request", normalizedRequest],
     ["result", result]
@@ -8769,7 +8573,7 @@ function unsupportedRefinementResult(request, capabilities = null, reason = "uns
 function refinementOutcome(result, request, capabilities = null) {
   const check = checkRefinementResult(result, request, capabilities);
   const status = nameOf(refinementEntry(result, "status", null), "unknown");
-  const certified = truth2(refinementEntry(result, "certified", null));
+  const certified = truth(refinementEntry(result, "certified", null));
   const approximation = refinementEntry(result, "approximation", null);
   const details = refinementMap([
     ["status", refinementEntry(result, "status", refinementText(status))],
@@ -8783,7 +8587,7 @@ function refinementOutcome(result, request, capabilities = null) {
   ]);
   if (!certified)
     return { value: null, reason: status === "unsupported" ? "unsupported" : "providerUncertified", details, check };
-  if (!truth2(refinementEntry(check, "valid", null)))
+  if (!truth(refinementEntry(check, "valid", null)))
     return { value: null, reason: "invalidProviderResult", details, check };
   if (approximation instanceof CertifiedApproximation) {
     const fallbackReason = status === "budgetExhausted" ? "budgetExhausted" : status === "resolutionFloor" ? "resolutionFloor" : status === "unsupported" ? "unsupported" : status === "unknown" ? "unknown" : "haloResolutionReached";
@@ -8942,12 +8746,12 @@ function constantEquality(left, right) {
 function constantProviderInfo(value) {
   constantKey(value);
   const interval = isEnclosureConstant(value), exact = isExactValue(value), real = realConstantState(value);
-  const text3 = (value2) => ({ type: "string", value: value2 });
+  const text = (value2) => ({ type: "string", value: value2 });
   const decision = (value2) => value2 ? new Integer(1n) : null;
   return { type: "map", entries: new Map([
-    ["schema", text3("rix.math.constant-provider@1")],
-    ["provider", text3(real ? real.source ? "refinableReal" : "realSnapshot" : interval ? "rationalInterval" : exact ? "exactScalar" : "rational")],
-    ["denotation", text3(interval ? "setEnclosure" : "singleton")],
+    ["schema", text("rix.math.constant-provider@1")],
+    ["provider", text(real ? real.source ? "refinableReal" : "realSnapshot" : interval ? "rationalInterval" : exact ? "exactScalar" : "rational")],
+    ["denotation", text(interval ? "setEnclosure" : "singleton")],
     ["exact", decision(!interval)],
     ["refinable", decision(!!real?.source)],
     ["commutative", new Integer(1n)],
@@ -8956,9 +8760,9 @@ function constantProviderInfo(value) {
     ["cancellation", exact ? UNDECIDED : decision(!interval)],
     ["enclosure", real ? real.interval : interval ? value : null],
     ["evidencelevel", real ? real.evidence : null],
-    ["validation", real ? text3(real.source ? "protocolChecked" : "unverifiedImport") : null],
-    ["savedevidencelevel", real?.savedEvidence ? text3(real.savedEvidence) : null],
-    ["laststatus", real ? text3(refinementEntry(real.result, "status")?.value) : null],
+    ["validation", real ? text(real.source ? "protocolChecked" : "unverifiedImport") : null],
+    ["savedevidencelevel", real?.savedEvidence ? text(real.savedEvidence) : null],
+    ["laststatus", real ? text(refinementEntry(real.result, "status")?.value) : null],
     ["lastgoalmet", real ? decision(refinementEntry(real.result, "goalmet")?.value === 1n) : null]
   ]), _ext: new Map([["immutable", new Integer(1n)]]) };
 }
@@ -9174,10 +8978,10 @@ function expressionRecord(kind, fields = []) {
   return record;
 }
 function expressionVariable(name) {
-  const text3 = typeof name === "string" ? name : name?.type === "string" ? name.value : null;
-  if (!text3)
+  const text = typeof name === "string" ? name : name?.type === "string" ? name.value : null;
+  if (!text)
     throw new Error("Expression variable name must be a nonempty string");
-  return expressionRecord("variable", [["name", string(text3)]]);
+  return expressionRecord("variable", [["name", string(text)]]);
 }
 function expressionConstant(value) {
   constantKey(value);
@@ -9555,6 +9359,94 @@ function createProviderEvaluation(reasons, limits) {
   };
 }
 
+// ../rix/src/runtime/range-policy.js
+var RANGE_MATH_POLICY_KEY = "__range_math_policy__";
+var DEFAULT_RANGE_MATH_POLICY = Object.freeze({
+  defaultAction: "report",
+  zeroPowerZero: "undefined",
+  actions: Object.freeze({})
+});
+function mapEntries(value) {
+  if (!value || value.type !== "map" || !(value.entries instanceof Map)) {
+    throw new Error("RangePolicy options must be a map");
+  }
+  return value.entries;
+}
+function text(value, label) {
+  if (typeof value === "string")
+    return value;
+  if (value?.type === "string")
+    return value.value;
+  throw new Error(`${label} must be a name or string`);
+}
+function truth2(value) {
+  return value instanceof Integer && value.value !== 0n;
+}
+function normalizedAction(value, label) {
+  const action = text(value, label).toLowerCase();
+  if (action !== "report" && action !== "throw") {
+    throw new Error(`${label} must be :report or :throw`);
+  }
+  return action;
+}
+function entryCaseInsensitive(entries, wanted) {
+  if (entries.has(wanted))
+    return entries.get(wanted);
+  const lower = wanted.toLowerCase();
+  for (const [key, value] of entries) {
+    if (String(key).toLowerCase() === lower)
+      return value;
+  }
+  return;
+}
+function rangeMathPolicy(context) {
+  return context?.getScopedEnv?.(RANGE_MATH_POLICY_KEY, DEFAULT_RANGE_MATH_POLICY) || DEFAULT_RANGE_MATH_POLICY;
+}
+function mergeRangeMathPolicy(parent, value) {
+  const entries = mapEntries(value);
+  const inherited = parent || DEFAULT_RANGE_MATH_POLICY;
+  const actions = { ...inherited.actions || {} };
+  let defaultAction = inherited.defaultAction || "report";
+  let zeroPowerZero = inherited.zeroPowerZero || "undefined";
+  const strict = entryCaseInsensitive(entries, "strict");
+  if (strict !== undefined)
+    defaultAction = truth2(strict) ? "throw" : "report";
+  const defaultValue = entryCaseInsensitive(entries, "default");
+  if (defaultValue !== undefined) {
+    defaultAction = normalizedAction(defaultValue, "RangePolicy default");
+  }
+  const zeroConvention = entryCaseInsensitive(entries, "zeroPowerZero");
+  if (zeroConvention !== undefined) {
+    zeroPowerZero = text(zeroConvention, "RangePolicy zeroPowerZero").toLowerCase();
+    if (zeroPowerZero !== "undefined" && zeroPowerZero !== "one") {
+      throw new Error("RangePolicy zeroPowerZero must be :undefined or :one");
+    }
+  }
+  for (const [key, setting] of entries) {
+    const name = String(key);
+    const lower = name.toLowerCase();
+    if (lower === "strict" || lower === "default" || lower === "zeropowerzero")
+      continue;
+    actions[name] = normalizedAction(setting, `RangePolicy ${name}`);
+  }
+  return Object.freeze({
+    defaultAction,
+    zeroPowerZero,
+    actions: Object.freeze(actions)
+  });
+}
+function rangeDiagnosticAction(policy, category) {
+  const direct = policy?.actions?.[category];
+  if (direct)
+    return direct;
+  const lower = String(category).toLowerCase();
+  for (const [key, value] of Object.entries(policy?.actions || {})) {
+    if (key.toLowerCase() === lower)
+      return value;
+  }
+  return policy?.defaultAction || "report";
+}
+
 // ../rix/src/runtime/calculus-range.js
 var CALCULUS_GRAPH_RANGE_SCHEMA = "rix.numerics.calculus-graph-range@1";
 var CALCULUS_GRAPH_RANGE_CHECKER = "rix.runtime.calculus-graph-range-checker@1";
@@ -9566,9 +9458,9 @@ var CALCULUS_DERIVATIVE_SIGN_SCHEMA = "rix.numerics.calculus-derivative-sign@1";
 var CALCULUS_LIPSCHITZ_RANGE_SCHEMA = "rix.numerics.calculus-lipschitz-range@1";
 var CALCULUS_TAYLOR_RANGE_SCHEMA = "rix.numerics.calculus-taylor-range@1";
 var CALCULUS_STRATEGY_RANGE_CHECKER = "rix.runtime.calculus-strategy-range-checker@1";
-var text3 = (value) => ({ type: "string", value: String(value) });
-var sequence2 = (values) => ({ type: "sequence", values });
-var map2 = (entries) => ({
+var text2 = (value) => ({ type: "string", value: String(value) });
+var sequence = (values) => ({ type: "sequence", values });
+var map = (entries) => ({
   type: "map",
   entries: new Map(entries.map(([key, value]) => [String(key).toLowerCase(), value]))
 });
@@ -9665,10 +9557,10 @@ function graphConstant(value) {
   if (!rational)
     throw new Error("nonRationalGraphConstant");
   const exact = rational.denominator === 1n ? new Integer(rational.numerator) : rational;
-  return map2([["valueKind", text3("calculusExpression")], ["schema", text3("rix.calculus.expression@1")], ["kind", text3("constant")], ["value", exact]]);
+  return map([["valueKind", text2("calculusExpression")], ["schema", text2("rix.calculus.expression@1")], ["kind", text2("constant")], ["value", exact]]);
 }
 function graphOperator(operation, operands) {
-  return map2([["valueKind", text3("calculusExpression")], ["schema", text3("rix.calculus.expression@1")], ["kind", text3("operator")], ["operation", text3(operation)], ["operands", sequence2(operands)]]);
+  return map([["valueKind", text2("calculusExpression")], ["schema", text2("rix.calculus.expression@1")], ["kind", text2("operator")], ["operation", text2(operation)], ["operands", sequence(operands)]]);
 }
 function coreGraph(node) {
   if (node?.type === "map" && node._ext)
@@ -9688,7 +9580,7 @@ function coreGraph(node) {
   throw new Error("Unsupported calculus graph node");
 }
 function graphApplication(semanticId, name, argumentsValue) {
-  return map2([["valueKind", text3("calculusExpression")], ["schema", text3("rix.calculus.expression@1")], ["kind", text3("apply")], ["semanticId", text3(semanticId)], ["name", text3(name ?? semanticId)], ["arguments", sequence2(argumentsValue)]]);
+  return map([["valueKind", text2("calculusExpression")], ["schema", text2("rix.calculus.expression@1")], ["kind", text2("apply")], ["semanticId", text2(semanticId)], ["name", text2(name ?? semanticId)], ["arguments", sequence(argumentsValue)]]);
 }
 function simplificationRule(rule, path, source, expression) {
   return Object.freeze({
@@ -9957,6 +9849,33 @@ function checkCalculusGraphRewrite(candidate) {
     return Object.freeze({ accepted: false, certified: false, reason: error.message });
   }
 }
+function substituteCalculusGraphVariable(expression, variableValue, replacement) {
+  if (hasScopedSymbols(expression) || hasScopedSymbols(replacement))
+    throw new Error("Scoped composition requires the core Substitute API");
+  if (!isExpression(expression) || !isExpression(replacement)) {
+    throw new Error("Calculus composition requires expression graphs");
+  }
+  const variable = textValue(variableValue)?.toLowerCase();
+  if (!variable)
+    throw new Error("invalidCompositionVariable");
+  const visit = (node) => {
+    const kind = expressionKind(node);
+    if (kind === "constant")
+      return node;
+    if (kind === "variable") {
+      const name = textValue(mapValue(node, "name"))?.toLowerCase();
+      return name === variable ? replacement : node;
+    }
+    if (kind === "operator") {
+      return graphOperator(textValue(mapValue(node, "operation")), expressionChildren(node, "operands").map(visit));
+    }
+    if (kind === "apply") {
+      return graphApplication(textValue(mapValue(node, "semanticid")), textValue(mapValue(node, "name")), expressionChildren(node, "arguments").map(visit));
+    }
+    throw new Error(`unsupportedCompositionGraphKind:${String(kind)}`);
+  };
+  return visit(expression);
+}
 function exactGraphValue(expression, value) {
   if (!isExpression(expression) || expressionKind(expression) !== "constant")
     return false;
@@ -10154,7 +10073,7 @@ function obligationFingerprint(value) {
     textValue(mapValue(value, "reason"))
   ].join("|");
 }
-function differentiateCalculusPrimitiveGraphN(expression, variableValues, options = map2([])) {
+function differentiateCalculusPrimitiveGraphN(expression, variableValues, options = map([])) {
   validateRangeTraversal(expression, options);
   if (!isExpression(expression))
     throw new Error("Expected a Calculus expression graph");
@@ -10199,7 +10118,7 @@ function derivativeOrderLimit(options) {
     throw new Error("maxDerivativeOrder must be a positive safe integer");
   return Number(value);
 }
-function checkCalculusDerivativeTransformation(transformation, options = map2([])) {
+function checkCalculusDerivativeTransformation(transformation, options = map([])) {
   try {
     if (textValue(mapValue(transformation, "schema")) !== "rix.calculus.transformation@1" || textValue(mapValue(transformation, "operation")) !== "differentiate") {
       throw new Error("notCalculusDerivativeTransformation");
@@ -10437,12 +10356,12 @@ function strategySetup(transformation, bindings, options, requiredOrder) {
   }
   optionEntries = optionEntries.filter(([key]) => String(key).toLowerCase() !== "maxsubintervals");
   optionEntries.push(["maxSubintervals", new Integer(1n)]);
-  return { identity, input, pieces, pieceOptions: map2(optionEntries) };
+  return { identity, input, pieces, pieceOptions: map(optionEntries) };
 }
 function pieceBindings(variable, piece) {
   if (mapValue(variable, "symbolid"))
-    return sequence2([{ type: "tuple", values: [variable, piece] }]);
-  return map2([[variable, piece]]);
+    return sequence([{ type: "tuple", values: [variable, piece] }]);
+  return map([[variable, piece]]);
 }
 function strategyFailure(schema, strategy, transformation, bindings, options, conventions, reason) {
   return Object.freeze({
@@ -10465,7 +10384,7 @@ function strategyFailure(schema, strategy, transformation, bindings, options, co
     })
   });
 }
-function evaluateCalculusLipschitzRange(transformation, bindings, options = map2([]), conventions = { zeroPowerZero: "undefined" }) {
+function evaluateCalculusLipschitzRange(transformation, bindings, options = map([]), conventions = { zeroPowerZero: "undefined" }) {
   try {
     const { identity, input, pieces, pieceOptions } = strategySetup(transformation, bindings, options, 1);
     const partitions = [];
@@ -10554,7 +10473,7 @@ function curvatureFromRange(range) {
     return "concave";
   return "unknown";
 }
-function evaluateCalculusTaylorRange(transformation, bindings, options = map2([]), conventions = { zeroPowerZero: "undefined" }) {
+function evaluateCalculusTaylorRange(transformation, bindings, options = map([]), conventions = { zeroPowerZero: "undefined" }) {
   try {
     const { identity, input, pieces, pieceOptions } = strategySetup(transformation, bindings, options, 2);
     const firstDerivative = identity.derivativeExpressions[0];
@@ -10792,7 +10711,7 @@ function recognizeRationalGraphNode(expression, variable, budget2) {
 }
 function recognizeCalculusGraph(expression, variableValue, options) {
   const limits = mathBudgets(options);
-  validateRangeTraversal(expression, map2([["maxdepth", new Integer(BigInt(limits.maxdepth))], ["maxwork", new Integer(BigInt(limits.maxvisits))]]));
+  validateRangeTraversal(expression, map([["maxdepth", new Integer(BigInt(limits.maxdepth))], ["maxwork", new Integer(BigInt(limits.maxvisits))]]));
   if (!isExpression(expression)) {
     return Object.freeze({ recognized: false, reason: "notCalculusExpression" });
   }
@@ -10882,7 +10801,7 @@ function rangeVariableKey(symbol) {
 }
 function validateRangeTraversal(expression, options) {
   const depth = mapValue(options, "maxdepth");
-  const limits = mathBudgets(depth === undefined ? null : map2([["maxdepth", depth]]));
+  const limits = mathBudgets(depth === undefined ? null : map([["maxdepth", depth]]));
   const maxVisits = maxNodeCount(options);
   const stack = [[expression, 0]];
   let visits = 0;
@@ -10945,7 +10864,7 @@ function mergeCoverage(children, localCoverage, localReliable = true) {
     return "allDefined";
   return partials === 1 ? "partiallyDefined" : "unresolved";
 }
-function operationRecord2(operation, operands, exponent = null, zeroPowerZero = "undefined") {
+function operationRecord(operation, operands, exponent = null, zeroPowerZero = "undefined") {
   switch (operation) {
     case "negate":
       return rangeNegate(operands[0]);
@@ -11081,7 +11000,7 @@ function evaluateNode(expression, bindings, state) {
       if (operands.length !== 1)
         throw new Error("graphOperatorArity");
       const child = evaluateNode(operands[0], bindings, state);
-      const record = operationRecord2("negate", [child.range]);
+      const record = operationRecord("negate", [child.range]);
       result = graphNodeResult({
         range: record.range,
         coverage: child.coverage,
@@ -11114,7 +11033,7 @@ function evaluateNode(expression, bindings, state) {
         } else if (!["add", "subtract", "multiply", "divide"].includes(operation)) {
           throw new Error(`unsupportedGraphOperator:${String(operation)}`);
         }
-        const record = operationRecord2(coreOperation, operationChildren.map((child) => child.range), exponent, state.zeroPowerZero);
+        const record = operationRecord(coreOperation, operationChildren.map((child) => child.range), exponent, state.zeroPowerZero);
         const independent = operationChildren.length === 1 || disjoint(left.dependencies, right.dependencies);
         const inputsExact = operationChildren.every((child) => child.exactImage);
         const localReliable = coreOperation !== "divide" || inputsExact && independent;
@@ -11312,7 +11231,7 @@ function rangeResult(expression, sourceBindings, options, conventions = { zeroPo
     })
   });
 }
-function evaluateCalculusGraphRange(expression, bindings, options = map2([]), conventions = { zeroPowerZero: "undefined" }) {
+function evaluateCalculusGraphRange(expression, bindings, options = map([]), conventions = { zeroPowerZero: "undefined" }) {
   return rangeResult(expression, bindings, options, conventions);
 }
 function checkCalculusGraphRangeResult(candidate) {
@@ -11343,19 +11262,19 @@ function portable(value) {
   if (typeof value === "number" && Number.isSafeInteger(value))
     return new Integer(BigInt(value));
   if (typeof value === "string")
-    return text3(value);
+    return text2(value);
   if (Array.isArray(value))
-    return sequence2(value.map(portable));
+    return sequence(value.map(portable));
   if (value instanceof Set)
-    return sequence2([...value].map(portable));
+    return sequence([...value].map(portable));
   if (value instanceof Map)
-    return map2([...value].map(([key, entry]) => [key, portable(entry)]));
+    return map([...value].map(([key, entry]) => [key, portable(entry)]));
   if (["map", "sequence", "array", "tuple", "string"].includes(value?.type))
     return value;
   if (typeof value === "object") {
-    return map2(Object.entries(value).map(([key, entry]) => [key, portable(entry)]));
+    return map(Object.entries(value).map(([key, entry]) => [key, portable(entry)]));
   }
-  return text3(value);
+  return text2(value);
 }
 function calculusGraphRangeValue(expression, bindings, options, context) {
   const policy = rangeMathPolicy(context);
@@ -11363,22 +11282,22 @@ function calculusGraphRangeValue(expression, bindings, options, context) {
   const result = evaluateCalculusGraphRange(expression, bindings, options, conventions);
   const check = checkCalculusGraphRangeResult(result);
   const interval2 = result.range.toRationalInterval();
-  const value = map2([
-    ["valueKind", text3("calculusGraphRange")],
-    ["schema", text3(result.schema)],
-    ["functionId", text3(result.functionId)],
+  const value = map([
+    ["valueKind", text2("calculusGraphRange")],
+    ["schema", text2(result.schema)],
+    ["functionId", text2(result.functionId)],
     ["expression", expression],
     ["evaluationExpression", result.evaluationExpression],
     ["simplification", portable(result.simplification)],
     ["bindings", bindings],
-    ["status", text3(result.status)],
+    ["status", text2(result.status)],
     ["range", result.range],
     ["interval", interval2],
     ["certified", portable(check.certified)],
-    ["domainStatus", text3(result.domainStatus)],
+    ["domainStatus", text2(result.domainStatus)],
     ["exactImage", portable(result.exactImage)],
     ["goalMet", portable(result.goalMet)],
-    ["evidenceLevel", text3(check.certified ? "checkedEvidence" : "heuristic")],
+    ["evidenceLevel", text2(check.certified ? "checkedEvidence" : "heuristic")],
     ["work", portable(result.work)],
     ["budgets", portable(result.budgets)],
     ["diagnostics", portable(result.diagnostics)],
@@ -11387,10 +11306,10 @@ function calculusGraphRangeValue(expression, bindings, options, context) {
     ["checker", portable(check)]
   ]);
   if (check.certified) {
-    result.range._ext = new Map([["rangeEvidence", map2([
-      ["schema", text3(result.schema)],
-      ["functionId", text3(result.functionId)],
-      ["domainStatus", text3(result.domainStatus)],
+    result.range._ext = new Map([["rangeEvidence", map([
+      ["schema", text2(result.schema)],
+      ["functionId", text2(result.functionId)],
+      ["domainStatus", text2(result.domainStatus)],
       ["evidence", portable(result.evidence)],
       ["checker", portable(check)]
     ])]]);
@@ -11414,7 +11333,7 @@ function calculusGraphRangeCheckValue(value) {
   const evidence = mapValue(value, "evidence");
   const expression = mapValue(evidence, "expression");
   const bindings = mapValue(evidence, "bindings");
-  const options = mapValue(evidence, "options") ?? map2([]);
+  const options = mapValue(evidence, "options") ?? map([]);
   const conventionValue = mapValue(evidence, "conventions");
   const zeroPowerZero = textValue(mapValue(conventionValue, "zeropowerzero")) ?? "undefined";
   if (textValue(mapValue(value, "schema")) !== CALCULUS_GRAPH_RANGE_SCHEMA || textValue(mapValue(evidence, "kind")) !== "calculusGraphEvaluation" || textValue(mapValue(evidence, "checker")) !== CALCULUS_GRAPH_RANGE_CHECKER || !isExpression(expression) || !["map", "array", "sequence", "tuple"].includes(bindings?.type)) {
@@ -11485,6 +11404,1001 @@ function calculusTaylorRangeValue(transformation, bindings, options, context) {
   return calculusStrategyValue(evaluateCalculusTaylorRange, transformation, bindings, options, context);
 }
 
+// ../rix/src/runtime/range-evidence-checker.js
+var RANGE_EVIDENCE_SCHEMA = "rix.numerics.range-evidence@1";
+var RANGE_CHECKER_VOCABULARY = "rix.numerics.range-checker@1";
+var DEFAULT_LIMITS = Object.freeze({
+  maxNodes: 1e4,
+  maxComponents: 1e4,
+  maxPolynomialDegree: 256
+});
+function exactRational2(value) {
+  if (value instanceof Rational)
+    return value;
+  if (value instanceof Integer)
+    return new Rational(value.value);
+  if (typeof value === "bigint" || typeof value === "string" || typeof value === "number" && Number.isSafeInteger(value))
+    return new Rational(value);
+  throw new Error("polynomialCoefficientNotExactRational");
+}
+function normalizePolynomial2(value) {
+  if (!Array.isArray(value) || value.length === 0)
+    throw new Error("invalidPolynomial");
+  const polynomial = value.map(exactRational2);
+  while (polynomial.length > 1 && polynomial.at(-1).equals(Rational.zero))
+    polynomial.pop();
+  return polynomial;
+}
+function samePolynomial(left, right) {
+  try {
+    const a = normalizePolynomial2(left);
+    const b = normalizePolynomial2(right);
+    return a.length === b.length && a.every((coefficient, index) => coefficient.equals(b[index]));
+  } catch {
+    return false;
+  }
+}
+function zeroPolynomial(value) {
+  return value.length === 1 && value[0].equals(Rational.zero);
+}
+function polynomialDerivative(value) {
+  if (value.length === 1)
+    return [Rational.zero];
+  return value.slice(1).map((coefficient, index) => coefficient.multiply(new Rational(BigInt(index + 1))));
+}
+function polynomialNegatedRemainder(dividend, divisor) {
+  if (zeroPolynomial(divisor))
+    throw new Error("polynomialDivisionByZero");
+  const remainder = normalizePolynomial2(dividend);
+  const divisorDegree = divisor.length - 1;
+  while (!zeroPolynomial(remainder) && remainder.length - 1 >= divisorDegree) {
+    const offset = remainder.length - divisor.length;
+    const scale = remainder.at(-1).divide(divisor.at(-1));
+    for (let index = 0;index < divisor.length; index += 1) {
+      remainder[index + offset] = remainder[index + offset].subtract(divisor[index].multiply(scale));
+    }
+    while (remainder.length > 1 && remainder.at(-1).equals(Rational.zero))
+      remainder.pop();
+  }
+  return remainder.map((coefficient) => coefficient.negate());
+}
+function sturmSequence(polynomial, maxDegree) {
+  const source = normalizePolynomial2(polynomial);
+  if (zeroPolynomial(source))
+    throw new Error("identicallyZeroPolynomial");
+  if (source.length - 1 > maxDegree)
+    throw new Error("polynomialDegreeLimit");
+  if (source.length === 1)
+    return [source];
+  const sequence2 = [source, normalizePolynomial2(polynomialDerivative(source))];
+  while (!zeroPolynomial(sequence2.at(-1))) {
+    const remainder = normalizePolynomial2(polynomialNegatedRemainder(sequence2.at(-2), sequence2.at(-1)));
+    if (zeroPolynomial(remainder))
+      break;
+    sequence2.push(remainder);
+  }
+  return sequence2;
+}
+function samePolynomialSequence(left, right) {
+  return Array.isArray(left) && left.length === right.length && left.every((polynomial, index) => samePolynomial(polynomial, right[index]));
+}
+function polynomialSignAt(polynomial, point) {
+  const x = exactRational2(point);
+  let value = Rational.zero;
+  for (let index = polynomial.length - 1;index >= 0; index -= 1) {
+    value = value.multiply(x).add(polynomial[index]);
+  }
+  return value.numerator < 0n ? -1 : value.numerator > 0n ? 1 : 0;
+}
+function signVariations(sequence2, point) {
+  const signs = sequence2.map((polynomial) => polynomialSignAt(polynomial, point)).filter((sign) => sign !== 0);
+  let variations = 0;
+  for (let index = 1;index < signs.length; index += 1) {
+    if (signs[index] !== signs[index - 1])
+      variations += 1;
+  }
+  return variations;
+}
+function polynomialSignBeside(polynomial, point, side) {
+  if (side !== "left" && side !== "right")
+    throw new Error("invalidRootSide");
+  let derivative = normalizePolynomial2(polynomial);
+  let order = 0;
+  while (!zeroPolynomial(derivative)) {
+    const sign = polynomialSignAt(derivative, point);
+    if (sign !== 0)
+      return side === "left" && order % 2 === 1 ? -sign : sign;
+    derivative = normalizePolynomial2(polynomialDerivative(derivative));
+    order += 1;
+  }
+  return 0;
+}
+function signVariationsBeside(sequence2, point, side) {
+  const signs = sequence2.map((polynomial) => polynomialSignBeside(polynomial, point, side)).filter((sign) => sign !== 0);
+  let variations = 0;
+  for (let index = 1;index < signs.length; index += 1) {
+    if (signs[index] !== signs[index - 1])
+      variations += 1;
+  }
+  return variations;
+}
+function endpointPolicyTopology(endpointPolicy, component) {
+  const expected = {
+    open: [false, false],
+    closed: [true, true],
+    leftClosed: [true, false],
+    rightClosed: [false, true]
+  }[endpointPolicy];
+  if (!expected)
+    return;
+  if (component.lowClosed !== expected[0] || component.highClosed !== expected[1]) {
+    throw new Error("rootEndpointPolicyTopologyMismatch");
+  }
+}
+function rootCountOnSet(sequence2, input, endpointPolicy) {
+  const set = asSet(input);
+  if (set.isEmpty || set.componentCount !== 1)
+    throw new Error("rootCountRequiresConnectedInput");
+  const component = set.components[0];
+  if (component.low === null || component.high === null)
+    throw new Error("rootCountRequiresBoundedInput");
+  const lowIsRoot = polynomialSignAt(sequence2[0], component.low) === 0;
+  const highIsRoot = polynomialSignAt(sequence2[0], component.high) === 0;
+  if (endpointPolicy === "endpointsNotRoots") {
+    if (lowIsRoot || highIsRoot)
+      throw new Error("rootAtCountEndpoint");
+    return signVariations(sequence2, component.low) - signVariations(sequence2, component.high);
+  }
+  if (!["open", "closed", "leftClosed", "rightClosed"].includes(endpointPolicy)) {
+    throw new Error("unsupportedRootEndpointPolicy");
+  }
+  endpointPolicyTopology(endpointPolicy, component);
+  if (component.low.equals(component.high))
+    return lowIsRoot ? 1 : 0;
+  const interior = signVariationsBeside(sequence2, component.low, "right") - signVariationsBeside(sequence2, component.high, "left");
+  return interior + (component.lowClosed && lowIsRoot ? 1 : 0) + (component.highClosed && highIsRoot ? 1 : 0);
+}
+function sturmSequenceFact(value, maxDegree) {
+  if (value?.type !== "sturmSequence")
+    throw new Error("expectedSturmSequenceFact");
+  const polynomial = normalizePolynomial2(value.polynomial);
+  const sequence2 = sturmSequence(polynomial, maxDegree);
+  if (!samePolynomialSequence(value.sequence, sequence2))
+    throw new Error("sturmSequenceMismatch");
+  return { ...value, polynomial, sequence: sequence2 };
+}
+function asSet(value) {
+  return value instanceof RationalIntervalSet ? value : new RationalIntervalSet(value);
+}
+function sameSet(left, right) {
+  try {
+    return asSet(left).equals(asSet(right));
+  } catch {
+    return false;
+  }
+}
+function exactSetFact(value) {
+  if (value?.type !== "exactSet")
+    throw new Error("expectedExactSetFact");
+  return asSet(value.set);
+}
+function sameIdentity(left, right) {
+  return typeof left === "string" && left.length > 0 && left === right;
+}
+function proofVariableKey(value) {
+  if (typeof value === "string" && value.length)
+    return `named:${value.toLowerCase()}`;
+  if (!isMathExpression(value) || expressionField(value, "kind")?.value !== "variable" || !expressionField(value, "symbolid"))
+    throw new Error("invalidProofVariable");
+  if (expressionDefinition(value) || expressionField(value, "bound"))
+    throw new Error("proofVariableMustBeIndependent");
+  return expressionStructuralKey(value);
+}
+function isProofVariable(value) {
+  try {
+    proofVariableKey(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+var sameVariable = (left, right) => proofVariableKey(left) === proofVariableKey(right);
+function derivativeRangeFact(value) {
+  if (value?.type !== "derivativeRange" || typeof value.functionGraph !== "string" || typeof value.derivativeGraph !== "string" || !isProofVariable(value.variable)) {
+    throw new Error("wrongDerivativeRangeFact");
+  }
+  const input = asSet(value.input);
+  const range = asSet(value.range);
+  const domainCoverage = value.domainCoverage ?? value.domainWitness?.coverage;
+  if (input.isEmpty || input.componentCount !== 1)
+    throw new Error("monotonicityRequiresConnectedInput");
+  if (range.isEmpty)
+    throw new Error("emptyDerivativeRange");
+  if (domainCoverage !== "allDefined")
+    throw new Error("derivativeDomainNotCovered");
+  return { ...value, input, range, domainCoverage };
+}
+function derivativeIdentityFact(value) {
+  if (value?.type !== "derivativeIdentity" || typeof value.functionGraph !== "string" || typeof value.derivativeGraph !== "string" || !isProofVariable(value.variable) || !Array.isArray(value.obligations)) {
+    throw new Error("wrongDerivativeIdentityFact");
+  }
+  return value;
+}
+function monotonicityFact(value) {
+  if (value?.type !== "monotonicity" || typeof value.functionGraph !== "string" || !["nondecreasing", "nonincreasing", "constant"].includes(value.direction)) {
+    throw new Error("wrongMonotonicityFact");
+  }
+  return { ...value, input: asSet(value.input) };
+}
+function rangeEnclosureFact(value) {
+  if (value?.type !== "rangeEnclosure" || typeof value.subject !== "string") {
+    throw new Error("wrongRangeEnclosureFact");
+  }
+  return {
+    ...value,
+    input: asSet(value.input),
+    range: asSet(value.range),
+    exclusions: value.exclusions || []
+  };
+}
+function partitionFact(value) {
+  if (value?.type !== "partition")
+    throw new Error("expectedPartitionFact");
+  return {
+    ...value,
+    parent: asSet(value.parent),
+    pieces: (value.pieces || []).map(asSet)
+  };
+}
+function criticalPointsFact(value) {
+  if (value?.type !== "criticalPoints" || value.complete !== true || typeof value.functionGraph !== "string" || typeof value.derivativeGraph !== "string" || !isProofVariable(value.variable) || !Array.isArray(value.isolatingComponents)) {
+    throw new Error("expectedCriticalPointsFact");
+  }
+  return {
+    ...value,
+    searchSet: asSet(value.searchSet),
+    isolatingComponents: value.isolatingComponents.map(asSet),
+    polynomial: normalizePolynomial2(value.polynomial)
+  };
+}
+function monotonicityPartitionFact(value) {
+  if (value?.type !== "monotonicityPartition" || typeof value.functionGraph !== "string" || typeof value.derivativeGraph !== "string" || !isProofVariable(value.variable) || !Array.isArray(value.pieces) || !Array.isArray(value.directions) || value.pieces.length !== value.directions.length) {
+    throw new Error("expectedMonotonicityPartitionFact");
+  }
+  return {
+    ...value,
+    parent: asSet(value.parent),
+    pieces: value.pieces.map(asSet),
+    roots: (value.roots || []).map(exactRational2)
+  };
+}
+function rangeCoverFact(value) {
+  if (value?.type === "partition")
+    return partitionFact(value);
+  return monotonicityPartitionFact(value);
+}
+function aggregateDomainCoverage(values) {
+  const coverages = values.map((value) => value.domainCoverage);
+  if (coverages.includes("unresolved"))
+    return "unresolved";
+  if (coverages.every((coverage) => coverage === "noDefinedInputs")) {
+    return "noDefinedInputs";
+  }
+  if (coverages.every((coverage) => coverage === "allDefined"))
+    return "allDefined";
+  return "partiallyDefined";
+}
+function countComponents(value) {
+  if (value instanceof RationalIntervalSet)
+    return value.components.length;
+  if (Array.isArray(value))
+    return value.reduce((sum, entry) => sum + countComponents(entry), 0);
+  if (!value || typeof value !== "object")
+    return 0;
+  if (value.type === "exactSet" && value.set)
+    return countComponents(asSet(value.set));
+  if (value.type === "rangeEnclosure" && value.range)
+    return countComponents(asSet(value.range));
+  if (value.type === "monotonicityPartition") {
+    return (value.pieces || []).reduce((sum, piece) => sum + countComponents(asSet(piece)), 0);
+  }
+  return 0;
+}
+function arithmeticRecord(rule, parameters = {}) {
+  const operands = parameters.operands || [];
+  switch (rule) {
+    case "arith.negate":
+      return rangeNegate(operands[0]);
+    case "arith.absoluteValue":
+      return rangeAbsoluteValue(operands[0]);
+    case "arith.add":
+      return rangeAdd(operands[0], operands[1]);
+    case "arith.subtract":
+      return rangeSubtract(operands[0], operands[1]);
+    case "arith.multiply":
+      return rangeMultiply(operands[0], operands[1]);
+    case "arith.reciprocal":
+      return rangeReciprocal(operands[0]);
+    case "arith.divide":
+      return rangeDivide(operands[0], operands[1]);
+    case "arith.integerPower":
+      return rangeIntegerPower(operands[0], parameters.exponent, { zeroPowerZero: parameters.zeroPowerZero ?? "undefined" });
+    default:
+      return null;
+  }
+}
+function sameExclusions2(claimed = [], actual = []) {
+  if (claimed.length !== actual.length)
+    return false;
+  return claimed.every((entry, index) => entry.reason === actual[index].reason && entry.operand === actual[index].operand && sameSet(entry.excludedSet, actual[index].excludedSet));
+}
+function checkNode(node, premises, options) {
+  const conclusion = node.conclusion;
+  switch (node.rule) {
+    case "given.input":
+    case "given.constant": {
+      const set = exactSetFact(conclusion);
+      return { fact: { ...conclusion, set }, trusted: false };
+    }
+    case "trusted.range":
+    case "trusted.domain":
+    case "trusted.derivativeRange": {
+      if (options.pureCheckedOnly)
+        throw new Error("trustedLeafRejected");
+      if (typeof options.resolveTrusted !== "function" || options.resolveTrusted(node) !== true) {
+        throw new Error("unresolvedTrustedLeaf");
+      }
+      return { fact: conclusion, trusted: true };
+    }
+    case "set.normalize": {
+      const source = asSet(node.parameters?.set);
+      const claimed = exactSetFact(conclusion);
+      if (!claimed.equals(source))
+        throw new Error("setClaimMismatch");
+      return { fact: { ...conclusion, set: claimed }, trusted: false };
+    }
+    case "set.union":
+    case "set.intersection": {
+      if (premises.length < 1)
+        throw new Error("missingPremise");
+      const sets = premises.map((premise) => exactSetFact(premise.fact));
+      const actual = sets.slice(1).reduce((value, next) => node.rule === "set.union" ? value.union(next) : value.intersection(next), sets[0]);
+      const claimed = exactSetFact(conclusion);
+      if (!claimed.equals(actual))
+        throw new Error("setClaimMismatch");
+      return { fact: { ...conclusion, set: claimed }, trusted: false };
+    }
+    case "set.hull": {
+      if (premises.length !== 1)
+        throw new Error("wrongPremiseCount");
+      const actual = exactSetFact(premises[0].fact).hull();
+      const claimed = exactSetFact(conclusion);
+      const actualSet = actual === null ? RationalIntervalSet.empty : new RationalIntervalSet(actual);
+      if (!claimed.equals(actualSet))
+        throw new Error("setClaimMismatch");
+      return { fact: { ...conclusion, set: claimed }, trusted: false };
+    }
+    case "set.include": {
+      if (conclusion?.type !== "setInclusion")
+        throw new Error("wrongConclusionType");
+      const subset = asSet(conclusion.subset);
+      const superset = asSet(conclusion.superset);
+      if (!superset.contains(subset))
+        throw new Error("setInclusionFailed");
+      return { fact: { ...conclusion, subset, superset }, trusted: false };
+    }
+    case "partition.cover": {
+      if (conclusion?.type !== "partition")
+        throw new Error("wrongConclusionType");
+      const parent = asSet(conclusion.parent);
+      const pieces = (conclusion.pieces || []).map(asSet);
+      if (pieces.some((piece) => piece.isEmpty || !parent.contains(piece))) {
+        throw new Error("invalidPartitionPiece");
+      }
+      for (let left = 0;left < pieces.length; left += 1) {
+        for (let right = left + 1;right < pieces.length; right += 1) {
+          if (!pieces[left].intersection(pieces[right]).isEmpty) {
+            throw new Error("partitionOverlap");
+          }
+        }
+      }
+      const union = pieces.reduce((value, piece) => value.union(piece), RationalIntervalSet.empty);
+      if (!union.equals(parent))
+        throw new Error("incompletePartition");
+      return { fact: { ...conclusion, parent, pieces }, trusted: false };
+    }
+    case "range.assembleUnion":
+    case "range.assembleHull": {
+      if (premises.length < 2)
+        throw new Error("missingPremise");
+      const partition = rangeCoverFact(premises[0].fact);
+      const pieces = premises.slice(1).map((premise) => rangeEnclosureFact(premise.fact));
+      const claimed = rangeEnclosureFact(conclusion);
+      if (pieces.length !== partition.pieces.length)
+        throw new Error("rangePartitionCountMismatch");
+      if (!claimed.input.equals(partition.parent) || pieces.some((piece, index) => !sameIdentity(piece.subject, claimed.subject) || !piece.input.equals(partition.pieces[index]))) {
+        throw new Error("rangePartitionIdentityMismatch");
+      }
+      const union = pieces.reduce((value, piece) => value.union(piece.range), RationalIntervalSet.empty);
+      const hull = union.hull();
+      const actual = node.rule === "range.assembleUnion" ? union : hull === null ? RationalIntervalSet.empty : new RationalIntervalSet(hull);
+      const coverage = aggregateDomainCoverage(pieces);
+      const exclusions = pieces.flatMap((piece) => piece.exclusions);
+      if (!claimed.range.equals(actual) || claimed.domainCoverage !== coverage || !sameExclusions2(claimed.exclusions, exclusions)) {
+        throw new Error("assembledRangeMismatch");
+      }
+      return {
+        fact: { ...claimed, range: actual, domainCoverage: coverage, exclusions },
+        trusted: false
+      };
+    }
+    case "polynomial.sturmSequence": {
+      if (premises.length !== 0)
+        throw new Error("wrongPremiseCount");
+      const fact = sturmSequenceFact(conclusion, options.limits.maxPolynomialDegree);
+      return { fact, trusted: false };
+    }
+    case "polynomial.rootCount": {
+      if (premises.length !== 1)
+        throw new Error("wrongPremiseCount");
+      const sturm = sturmSequenceFact(premises[0].fact, options.limits.maxPolynomialDegree);
+      if (conclusion?.type !== "rootCount" || !samePolynomial(conclusion.polynomial, sturm.polynomial) || !Number.isSafeInteger(conclusion.count) || conclusion.count < 0) {
+        throw new Error("wrongRootCountFact");
+      }
+      const input = asSet(conclusion.input);
+      const actual = rootCountOnSet(sturm.sequence, input, conclusion.endpointPolicy);
+      if (conclusion.count !== actual)
+        throw new Error("rootCountMismatch");
+      return {
+        fact: { ...conclusion, polynomial: sturm.polynomial, input, count: actual },
+        trusted: false
+      };
+    }
+    case "polynomial.isolateRoots": {
+      if (premises.length !== 1)
+        throw new Error("wrongPremiseCount");
+      const sturm = sturmSequenceFact(premises[0].fact, options.limits.maxPolynomialDegree);
+      if (conclusion?.type !== "isolatedRoots" || conclusion.complete !== true || !samePolynomial(conclusion.polynomial, sturm.polynomial) || !Array.isArray(conclusion.isolatingComponents)) {
+        throw new Error("wrongIsolatedRootsFact");
+      }
+      if (conclusion.isolatingComponents.length > options.limits.maxComponents) {
+        throw new Error("resourceLimit");
+      }
+      const searchSet = asSet(conclusion.searchSet);
+      const isolatingComponents = conclusion.isolatingComponents.map(asSet);
+      if (isolatingComponents.some((component) => component.isEmpty || component.componentCount !== 1 || !searchSet.contains(component))) {
+        throw new Error("invalidRootIsolationComponent");
+      }
+      for (let left = 0;left < isolatingComponents.length; left += 1) {
+        for (let right = left + 1;right < isolatingComponents.length; right += 1) {
+          if (!isolatingComponents[left].intersection(isolatingComponents[right]).isEmpty) {
+            throw new Error("overlappingRootIsolation");
+          }
+        }
+      }
+      const endpointPolicy = conclusion.endpointPolicy;
+      const isolatedCount = isolatingComponents.reduce((sum, component) => {
+        const count = rootCountOnSet(sturm.sequence, component, endpointPolicy);
+        if (count !== 1)
+          throw new Error("rootIsolationCountMismatch");
+        return sum + count;
+      }, 0);
+      let totalCount = 0;
+      for (const component of searchSet.components) {
+        totalCount += rootCountOnSet(sturm.sequence, new RationalIntervalSet(component), endpointPolicy);
+      }
+      if (isolatedCount !== totalCount)
+        throw new Error("incompleteRootIsolation");
+      return {
+        fact: {
+          ...conclusion,
+          polynomial: sturm.polynomial,
+          searchSet,
+          isolatingComponents,
+          rootCount: totalCount
+        },
+        trusted: false
+      };
+    }
+    case "polynomial.completeCriticalPoints": {
+      if (premises.length !== 2)
+        throw new Error("wrongPremiseCount");
+      const identity = derivativeIdentityFact(premises[0].fact);
+      const isolated = premises[1].fact;
+      if (isolated?.type !== "isolatedRoots" || isolated.complete !== true || !Array.isArray(isolated.isolatingComponents)) {
+        throw new Error("expectedIsolatedRootsFact");
+      }
+      if (identity.obligations.length !== 0) {
+        throw new Error("criticalPointDomainObligationsNotDischarged");
+      }
+      const recognition = recognizeCalculusGraph(identity.derivativeExpression, identity.variable, options.recognitionOptions);
+      if (!recognition.recognized || recognition.kind !== "polynomial" || !sameIdentity(recognition.graphIdentity, identity.derivativeGraph) || !samePolynomial(recognition.numerator, isolated.polynomial)) {
+        throw new Error("criticalPointPolynomialMismatch");
+      }
+      if (conclusion?.type !== "criticalPoints" || conclusion.complete !== true || !sameIdentity(conclusion.functionGraph, identity.functionGraph) || !sameIdentity(conclusion.derivativeGraph, identity.derivativeGraph) || !isProofVariable(conclusion.variable) || !sameVariable(conclusion.variable, identity.variable) || conclusion.endpointPolicy !== isolated.endpointPolicy || !sameSet(conclusion.searchSet, isolated.searchSet) || !Array.isArray(conclusion.isolatingComponents) || conclusion.isolatingComponents.length !== isolated.isolatingComponents.length || conclusion.isolatingComponents.some((component, index) => !sameSet(component, isolated.isolatingComponents[index]))) {
+        throw new Error("criticalPointIdentityMismatch");
+      }
+      return {
+        fact: {
+          ...conclusion,
+          variable: identity.variable,
+          searchSet: asSet(isolated.searchSet),
+          isolatingComponents: isolated.isolatingComponents.map(asSet),
+          polynomial: recognition.numerator
+        },
+        trusted: false
+      };
+    }
+    case "polynomial.monotonicityPartition": {
+      if (premises.length !== 1)
+        throw new Error("wrongPremiseCount");
+      const critical = criticalPointsFact(premises[0].fact);
+      if (critical.endpointPolicy !== "closed") {
+        throw new Error("monotonicityPartitionRequiresClosedRootPolicy");
+      }
+      if (critical.searchSet.isEmpty || critical.searchSet.componentCount !== 1) {
+        throw new Error("monotonicityPartitionRequiresConnectedInput");
+      }
+      const component = critical.searchSet.components[0];
+      if (component.low === null || component.high === null || !component.lowClosed || !component.highClosed) {
+        throw new Error("monotonicityPartitionRequiresClosedBoundedInput");
+      }
+      const roots = critical.isolatingComponents.map((isolation) => {
+        if (isolation.componentCount !== 1)
+          throw new Error("criticalPointNotExactRational");
+        const isolated = isolation.components[0];
+        if (isolated.low === null || isolated.high === null || !isolated.lowClosed || !isolated.highClosed || !isolated.low.equals(isolated.high)) {
+          throw new Error("criticalPointNotExactRational");
+        }
+        return isolated.low;
+      }).sort((left, right) => left.lessThan(right) ? -1 : left.greaterThan(right) ? 1 : 0);
+      if (roots.some((root, index) => index > 0 && root.equals(roots[index - 1]))) {
+        throw new Error("duplicateCriticalPoint");
+      }
+      const breakpoints = [component.low];
+      for (const root of roots) {
+        if (component.low.lessThan(root) && root.lessThan(component.high))
+          breakpoints.push(root);
+      }
+      if (!component.low.equals(component.high))
+        breakpoints.push(component.high);
+      const pieces = [];
+      const directions = [];
+      if (breakpoints.length === 1) {
+        pieces.push(RationalIntervalSet.point(breakpoints[0]));
+        directions.push("constant");
+      } else {
+        for (let index = 1;index < breakpoints.length; index += 1) {
+          const low = breakpoints[index - 1];
+          const high = breakpoints[index];
+          const piece = new RationalIntervalSet({ low, high });
+          const midpoint = low.add(high).divide(new Rational(2));
+          const sign = polynomialSignAt(critical.polynomial, midpoint);
+          if (sign === 0)
+            throw new Error("incompleteCriticalPointPartition");
+          pieces.push(piece);
+          directions.push(sign > 0 ? "nondecreasing" : "nonincreasing");
+        }
+      }
+      const claimed = monotonicityPartitionFact(conclusion);
+      if (!sameIdentity(claimed.functionGraph, critical.functionGraph) || !sameIdentity(claimed.derivativeGraph, critical.derivativeGraph) || !sameVariable(claimed.variable, critical.variable) || !claimed.parent.equals(critical.searchSet) || claimed.endpointPolicy !== critical.endpointPolicy || claimed.pieces.length !== pieces.length || claimed.pieces.some((piece, index) => !piece.equals(pieces[index])) || claimed.directions.some((direction, index) => direction !== directions[index]) || claimed.roots.length !== roots.length || claimed.roots.some((root, index) => !root.equals(roots[index]))) {
+        throw new Error("monotonicityPartitionMismatch");
+      }
+      return {
+        fact: { ...claimed, parent: critical.searchSet, pieces, directions, roots },
+        trusted: false
+      };
+    }
+    case "derivative.graph": {
+      if (premises.length !== 0)
+        throw new Error("wrongPremiseCount");
+      const claimed = derivativeIdentityFact(conclusion);
+      const checked = checkCalculusDerivativeTransformation(node.parameters?.transformation, options.derivativeOptions);
+      if (!checked.accepted)
+        throw new Error(checked.reason);
+      if (checked.order !== 1)
+        throw new Error("derivativeGraphRuleRequiresFirstDerivative");
+      if (!sameIdentity(claimed.functionGraph, checked.functionGraph) || !sameIdentity(claimed.derivativeGraph, checked.derivativeGraph) || !sameVariable(claimed.variable, checked.variable) || claimed.obligations.length !== checked.obligationDescriptors.length || claimed.obligations.some((value, index) => value !== checked.obligationDescriptors[index])) {
+        throw new Error("derivativeIdentityMismatch");
+      }
+      return {
+        fact: {
+          ...claimed,
+          variable: checked.variable,
+          obligations: checked.obligationDescriptors,
+          sourceExpression: checked.source,
+          derivativeExpression: checked.expression
+        },
+        trusted: false
+      };
+    }
+    case "monotone.derivativeSign": {
+      if (premises.length !== 1 && premises.length !== 2)
+        throw new Error("wrongPremiseCount");
+      const identity = premises.length === 2 ? derivativeIdentityFact(premises[0].fact) : null;
+      const derivative = derivativeRangeFact(premises.at(-1).fact);
+      const claimed = monotonicityFact(conclusion);
+      if (identity && (!sameIdentity(identity.functionGraph, derivative.functionGraph) || !sameIdentity(identity.derivativeGraph, derivative.derivativeGraph) || !sameVariable(identity.variable, derivative.variable))) {
+        throw new Error("derivativeRangeIdentityMismatch");
+      }
+      if (!sameIdentity(claimed.functionGraph, derivative.functionGraph) || !claimed.input.equals(derivative.input)) {
+        throw new Error("monotonicityIdentityMismatch");
+      }
+      const nonnegative = new RationalIntervalSet({
+        low: 0,
+        high: null,
+        lowClosed: true,
+        highClosed: false
+      });
+      const nonpositive = new RationalIntervalSet({
+        low: null,
+        high: 0,
+        lowClosed: false,
+        highClosed: true
+      });
+      const zero = RationalIntervalSet.point(0);
+      const signValid = claimed.direction === "constant" ? derivative.range.equals(zero) : claimed.direction === "nondecreasing" ? nonnegative.contains(derivative.range) : nonpositive.contains(derivative.range);
+      if (!signValid)
+        throw new Error("derivativeSignMismatch");
+      return {
+        fact: {
+          ...claimed,
+          derivativeGraph: derivative.derivativeGraph,
+          variable: derivative.variable
+        },
+        trusted: false
+      };
+    }
+    case "monotone.compose": {
+      if (premises.length !== 3)
+        throw new Error("wrongPremiseCount");
+      const inner = monotonicityFact(premises[0].fact);
+      const outer = monotonicityFact(premises[1].fact);
+      const innerImage = rangeEnclosureFact(premises[2].fact);
+      const claimed = monotonicityFact(conclusion);
+      const innerExpression = node.parameters?.innerExpression;
+      const outerExpression = node.parameters?.outerExpression;
+      const composedExpression = node.parameters?.composedExpression;
+      const outerVariable = node.parameters?.outerVariable;
+      let actualComposition;
+      try {
+        actualComposition = substituteCalculusGraphVariable(outerExpression, outerVariable, innerExpression);
+      } catch {
+        throw new Error("invalidMonotoneCompositionGraph");
+      }
+      const innerGraph = calculusGraphStructuralKey(innerExpression);
+      const outerGraph = calculusGraphStructuralKey(outerExpression);
+      const composedGraph = calculusGraphStructuralKey(composedExpression);
+      if (calculusGraphStructuralKey(actualComposition) !== composedGraph || !sameIdentity(inner.functionGraph, innerGraph) || !sameIdentity(outer.functionGraph, outerGraph) || !sameIdentity(innerImage.subject, innerGraph) || !sameIdentity(claimed.functionGraph, composedGraph) || !inner.input.equals(innerImage.input) || !claimed.input.equals(inner.input)) {
+        throw new Error("monotoneCompositionIdentityMismatch");
+      }
+      if (innerImage.domainCoverage !== "allDefined" || innerImage.exclusions.length !== 0 || innerImage.range.isEmpty || !outer.input.contains(innerImage.range)) {
+        throw new Error("monotoneCompositionDomainMismatch");
+      }
+      let direction;
+      if (inner.direction === "constant" || outer.direction === "constant") {
+        direction = "constant";
+      } else if (outer.direction === "nondecreasing") {
+        direction = inner.direction;
+      } else {
+        direction = inner.direction === "nondecreasing" ? "nonincreasing" : "nondecreasing";
+      }
+      if (claimed.direction !== direction)
+        throw new Error("monotoneCompositionDirectionMismatch");
+      return {
+        fact: {
+          ...claimed,
+          innerFunctionGraph: innerGraph,
+          outerFunctionGraph: outerGraph
+        },
+        trusted: false
+      };
+    }
+    case "monotone.polynomialPiece": {
+      if (premises.length !== 1)
+        throw new Error("wrongPremiseCount");
+      const partition = monotonicityPartitionFact(premises[0].fact);
+      const pieceIndex = node.parameters?.pieceIndex;
+      if (!Number.isSafeInteger(pieceIndex) || pieceIndex < 0 || pieceIndex >= partition.pieces.length) {
+        throw new Error("invalidMonotonicityPieceIndex");
+      }
+      const claimed = monotonicityFact(conclusion);
+      if (!sameIdentity(claimed.functionGraph, partition.functionGraph) || !claimed.input.equals(partition.pieces[pieceIndex]) || claimed.direction !== partition.directions[pieceIndex]) {
+        throw new Error("monotonicityPieceMismatch");
+      }
+      return {
+        fact: {
+          ...claimed,
+          derivativeGraph: partition.derivativeGraph,
+          variable: partition.variable,
+          criticalRoots: partition.roots
+        },
+        trusted: false
+      };
+    }
+    case "range.monotoneEndpoints": {
+      if (premises.length !== 3)
+        throw new Error("wrongPremiseCount");
+      const monotonicity = monotonicityFact(premises[0].fact);
+      const lowEndpoint = rangeEnclosureFact(premises[1].fact);
+      const highEndpoint = rangeEnclosureFact(premises[2].fact);
+      const claimed = rangeEnclosureFact(conclusion);
+      if (monotonicity.input.componentCount !== 1 || monotonicity.input.isEmpty) {
+        throw new Error("monotonicityRequiresConnectedInput");
+      }
+      const component = monotonicity.input.components[0];
+      if (component.low === null || component.high === null || !component.lowClosed || !component.highClosed) {
+        throw new Error("monotoneEndpointsRequireClosedBoundedInput");
+      }
+      const lowInput = RationalIntervalSet.point(component.low);
+      const highInput = RationalIntervalSet.point(component.high);
+      if (!sameIdentity(monotonicity.functionGraph, lowEndpoint.subject) || !sameIdentity(monotonicity.functionGraph, highEndpoint.subject) || !sameIdentity(monotonicity.functionGraph, claimed.subject) || !lowEndpoint.input.equals(lowInput) || !highEndpoint.input.equals(highInput) || !claimed.input.equals(monotonicity.input)) {
+        throw new Error("monotoneEndpointIdentityMismatch");
+      }
+      if (lowEndpoint.domainCoverage !== "allDefined" || highEndpoint.domainCoverage !== "allDefined" || claimed.domainCoverage !== "allDefined") {
+        throw new Error("monotoneEndpointDomainMismatch");
+      }
+      if (lowEndpoint.range.isEmpty || highEndpoint.range.isEmpty) {
+        throw new Error("emptyEndpointRange");
+      }
+      const endpointUnion = lowEndpoint.range.union(highEndpoint.range);
+      const hull = endpointUnion.hull();
+      const actual = hull === null ? RationalIntervalSet.empty : new RationalIntervalSet(hull);
+      if (!claimed.range.equals(actual) || claimed.exclusions.length !== 0) {
+        throw new Error("monotoneEndpointRangeMismatch");
+      }
+      return { fact: { ...claimed, range: actual }, trusted: false };
+    }
+    default: {
+      const record = arithmeticRecord(node.rule, node.parameters);
+      if (!record)
+        throw new Error("unsupportedRule");
+      if (conclusion?.type !== "rangeEnclosure")
+        throw new Error("wrongConclusionType");
+      if (!sameSet(conclusion.range, record.range) || conclusion.domainCoverage !== record.domain.coverage || !sameExclusions2(conclusion.exclusions, record.domain.exclusions)) {
+        throw new Error("rangeClaimMismatch");
+      }
+      return {
+        fact: {
+          ...conclusion,
+          range: asSet(conclusion.range),
+          exclusions: record.domain.exclusions
+        },
+        trusted: false
+      };
+    }
+  }
+}
+function checkRangeEvidence(document, options = {}) {
+  const limits = { ...DEFAULT_LIMITS, ...options.limits || {} };
+  const diagnostics = [];
+  const reject = (reason, extra = {}) => Object.freeze({
+    accepted: false,
+    certified: false,
+    vocabulary: RANGE_CHECKER_VOCABULARY,
+    conclusion: null,
+    evidenceLevel: "heuristic",
+    trustedDependencies: Object.freeze([]),
+    diagnostics: Object.freeze([reason]),
+    work: Object.freeze({ nodes: extra.nodes ?? 0, exactOperations: extra.exactOperations ?? 0 })
+  });
+  for (const [key, value] of Object.entries(limits)) {
+    if (!Object.hasOwn(DEFAULT_LIMITS, key) || !Number.isSafeInteger(value) || value < 0)
+      return reject("invalidResourceLimit");
+  }
+  if (document?.schema !== RANGE_EVIDENCE_SCHEMA || document?.vocabulary !== RANGE_CHECKER_VOCABULARY)
+    return reject("unsupportedSchema");
+  if (!Array.isArray(document.nodes) || document.nodes.length > limits.maxNodes) {
+    return reject("resourceLimit");
+  }
+  const byId = new Map;
+  for (const node of document.nodes) {
+    if (!node || typeof node.id !== "string" || byId.has(node.id))
+      return reject("duplicateOrInvalidNodeId");
+    byId.set(node.id, node);
+  }
+  if (!byId.has(document.root))
+    return reject("missingRoot");
+  const states2 = new Map;
+  const results = new Map;
+  const trustedDependencies = [];
+  let exactOperations = 0;
+  try {
+    const pending = [[document.root, false]];
+    while (pending.length) {
+      const [id, leaving] = pending.pop();
+      if (!byId.has(id))
+        throw new Error("danglingPremise");
+      if (states2.get(id) === "done")
+        continue;
+      const node = byId.get(id);
+      if (!leaving) {
+        if (states2.get(id) === "visiting")
+          throw new Error("evidenceCycle");
+        if (!Array.isArray(node.premises))
+          throw new Error("invalidPremises");
+        states2.set(id, "visiting");
+        pending.push([id, true]);
+        for (let i = node.premises.length - 1;i >= 0; i--)
+          pending.push([node.premises[i], false]);
+        continue;
+      }
+      const result = checkNode(node, node.premises.map((key) => results.get(key)), { ...options, limits });
+      exactOperations += 1;
+      if (countComponents(result.fact) > limits.maxComponents)
+        throw new Error("resourceLimit");
+      if (result.trusted)
+        trustedDependencies.push(node.id);
+      states2.set(id, "done");
+      results.set(id, result);
+    }
+    const root = results.get(document.root);
+    return Object.freeze({
+      accepted: true,
+      certified: true,
+      vocabulary: RANGE_CHECKER_VOCABULARY,
+      conclusion: root.fact,
+      evidenceLevel: trustedDependencies.length ? "trustedCapability" : "checkedEvidence",
+      trustedDependencies: Object.freeze([...trustedDependencies]),
+      diagnostics: Object.freeze(diagnostics),
+      work: Object.freeze({ nodes: results.size, exactOperations })
+    });
+  } catch (error) {
+    return reject(error.message, { nodes: results.size, exactOperations });
+  }
+}
+
+// ../rix/src/runtime/calculus-proof.js
+function portable2(value) {
+  if (value == null || value === false)
+    return null;
+  if (value === true)
+    return new Integer(1n);
+  if (typeof value === "number")
+    return new Integer(BigInt(value));
+  if (typeof value === "string")
+    return { type: "string", value };
+  if (value?.type === "map" || value?.type === "sequence" || value?.type === "string")
+    return value;
+  if (Array.isArray(value))
+    return { type: "sequence", values: value.map(portable2) };
+  if (value instanceof Integer || value instanceof Rational)
+    return value;
+  return { type: "map", entries: new Map(Object.entries(value).map(([key, item]) => [key.toLowerCase(), portable2(item)])) };
+}
+function calculusDerivativeProofValue(transformation, options) {
+  const identity = checkCalculusDerivativeTransformation(transformation, options);
+  if (!identity.accepted || identity.order !== 1)
+    return portable2({
+      accepted: false,
+      certified: false,
+      diagnostics: [identity.reason || "derivativeGraphRuleRequiresFirstDerivative"],
+      evidence: null
+    });
+  const evidence = { schema: RANGE_EVIDENCE_SCHEMA, vocabulary: RANGE_CHECKER_VOCABULARY, root: "derivative", nodes: [{
+    id: "derivative",
+    rule: "derivative.graph",
+    premises: [],
+    parameters: { transformation },
+    conclusion: {
+      type: "derivativeIdentity",
+      functionGraph: identity.functionGraph,
+      derivativeGraph: identity.derivativeGraph,
+      variable: identity.variable,
+      obligations: identity.obligationDescriptors
+    }
+  }] };
+  return portable2({ ...checkRangeEvidence(evidence, { derivativeOptions: options }), evidence });
+}
+
+// ../rix/src/runtime/range-arithmetic.js
+var text3 = (value) => ({ type: "string", value: String(value) });
+var bool2 = (value) => value ? new Integer(1n) : null;
+var sequence2 = (values) => ({ type: "sequence", values });
+var map2 = (entries) => ({ type: "map", entries: new Map(entries) });
+function portableValue(value) {
+  if (value === null || value === undefined)
+    return null;
+  if (value instanceof Integer || value instanceof Rational || value instanceof RationalInterval || value instanceof RationalIntervalSet)
+    return value;
+  if (typeof value === "bigint")
+    return new Integer(value);
+  if (typeof value === "number" && Number.isSafeInteger(value))
+    return new Integer(BigInt(value));
+  if (typeof value === "string")
+    return text3(value);
+  if (typeof value === "boolean")
+    return bool2(value);
+  if (Array.isArray(value))
+    return sequence2(value.map(portableValue));
+  if (typeof value === "object") {
+    return map2(Object.entries(value).map(([key, entry]) => [key, portableValue(entry)]));
+  }
+  return text3(value);
+}
+function exclusionMap(exclusion) {
+  return map2([
+    ["reason", text3(exclusion.reason)],
+    ["operand", new Integer(BigInt(exclusion.operand))],
+    ["excludedSet", exclusion.excludedSet]
+  ]);
+}
+function evidenceMap(record, check, diagnostics) {
+  const domainEntries = [
+    ["coverage", text3(record.domain.coverage)],
+    ["exclusions", sequence2(record.domain.exclusions.map(exclusionMap))]
+  ];
+  if (record.domain.definedInput)
+    domainEntries.push(["definedInput", record.domain.definedInput]);
+  return map2([
+    ["schema", text3("rix.numerics.range-operation-result@1")],
+    ["operation", text3(record.operation)],
+    ["operands", sequence2([...record.operands])],
+    ["parameters", portableValue(record.parameters)],
+    ["range", new RationalIntervalSet(record.range)],
+    ["domain", map2(domainEntries)],
+    ["certified", bool2(check.accepted)],
+    ["evidenceLevel", text3(check.accepted ? "checkedEvidence" : "heuristic")],
+    ["evidence", portableValue(record.evidence)],
+    ["checker", portableValue(check)],
+    ["diagnostics", sequence2(diagnostics.map(text3))]
+  ]);
+}
+function isRangeArithmeticOperand(value) {
+  return value instanceof RationalIntervalSet || value instanceof RationalInterval || value instanceof Rational || value instanceof Integer;
+}
+function operationRecord2(operation, args, policy) {
+  switch (operation) {
+    case "add":
+      return rangeAdd(args[0], args[1]);
+    case "subtract":
+      return rangeSubtract(args[0], args[1]);
+    case "multiply":
+      return rangeMultiply(args[0], args[1]);
+    case "divide":
+      return rangeDivide(args[0], args[1]);
+    case "negate":
+      return rangeNegate(args[0]);
+    case "absoluteValue":
+      return rangeAbsoluteValue(args[0]);
+    case "reciprocal":
+      return rangeReciprocal(args[0]);
+    case "integerPower":
+      return rangeIntegerPower(args[0], args[1], {
+        zeroPowerZero: policy.zeroPowerZero
+      });
+    default:
+      throw new Error(`Unknown exact range operation: ${operation}`);
+  }
+}
+function executeRangeOperation(operation, args, context) {
+  const policy = rangeMathPolicy(context);
+  const record = operationRecord2(operation, args, policy);
+  const check = checkRangeOperationResult(record, {
+    operation,
+    operands: record.operands,
+    parameters: record.parameters
+  });
+  if (!check.accepted)
+    throw new Error(`Exact range checker rejected ${operation}: ${check.reason}`);
+  const diagnostics = record.domain.exclusions.map((entry) => entry.reason);
+  if (record.domain.coverage !== "allDefined")
+    diagnostics.push(record.domain.coverage);
+  const metadata = evidenceMap(record, check, diagnostics);
+  const result = new RationalIntervalSet(record.range);
+  result._ext = new Map([["rangeEvidence", metadata]]);
+  const throwing = diagnostics.find((category) => rangeDiagnosticAction(policy, category) === "throw");
+  if (throwing) {
+    const error = new Error(`Range arithmetic ${operation} encountered ${throwing}`);
+    error.rangeEvidence = metadata;
+    throw error;
+  }
+  return result;
+}
+function rangeEvidence(value) {
+  return value?._ext instanceof Map ? value._ext.get("rangeEvidence") ?? null : null;
+}
+
 // ../rix/src/runtime/multivariate-range.js
 var RATIONAL_BOX_SCHEMA = "rix.numerics.rational-box@1";
 var MULTIVARIATE_RANGE_REQUEST_SCHEMA = "rix.numerics.multivariate-range-request@1";
@@ -11540,7 +12454,7 @@ function integerValue2(value, fallback) {
     return BigInt(value);
   return fallback;
 }
-function exactRational2(value) {
+function exactRational3(value) {
   if (value instanceof Rational)
     return value;
   if (value instanceof Integer)
@@ -11549,7 +12463,7 @@ function exactRational2(value) {
     return new Rational(value);
   return null;
 }
-function portable2(value) {
+function portable3(value) {
   if (value === undefined || value === null || value === false)
     return null;
   if (value === true)
@@ -11563,13 +12477,13 @@ function portable2(value) {
   if (typeof value === "string")
     return text4(value);
   if (Array.isArray(value))
-    return sequence3(value.map(portable2));
+    return sequence3(value.map(portable3));
   if (value instanceof Map)
-    return map3([...value].map(([key, entry]) => [key, portable2(entry)]));
+    return map3([...value].map(([key, entry]) => [key, portable3(entry)]));
   if (value?.type === "map" || value?.type === "sequence" || value?.type === "string")
     return value;
   if (typeof value === "object") {
-    return map3(Object.entries(value).map(([key, entry]) => [key, portable2(entry)]));
+    return map3(Object.entries(value).map(([key, entry]) => [key, portable3(entry)]));
   }
   return text4(value);
 }
@@ -11910,7 +12824,7 @@ function combineCoefficients(left, right, leftScale, rightScale) {
 function affineEvaluate(expression, box, state, conventions) {
   const kind = expressionKind2(expression);
   if (kind === "constant") {
-    const value = exactRational2(mapValue2(expression, "value"));
+    const value = exactRational3(mapValue2(expression, "value"));
     if (!value)
       throw new Error("affineRequiresExactRationalConstants");
     return affineForm(value);
@@ -11939,7 +12853,7 @@ function affineEvaluate(expression, box, state, conventions) {
     throw new Error("affineOperatorArity");
   const left = affineEvaluate(operands[0], box, state, conventions);
   if (operation === "power") {
-    const exponent = expressionKind2(operands[1]) === "constant" ? exactRational2(mapValue2(operands[1], "value")) : null;
+    const exponent = expressionKind2(operands[1]) === "constant" ? exactRational3(mapValue2(operands[1], "value")) : null;
     if (!exponent || exponent.denominator !== 1n || exponent.numerator < 0n || exponent.numerator > 32n) {
       throw new Error("affinePowerRequiresSmallNonnegativeInteger");
     }
@@ -12421,7 +13335,7 @@ function checkMultivariateRangeResult(candidate) {
 function valueWithCheck(result) {
   const checker = checkMultivariateRangeResult(result);
   if (checker.certified && result.range instanceof RationalIntervalSet) {
-    result.range._ext = new Map([["rangeEvidence", portable2({
+    result.range._ext = new Map([["rangeEvidence", portable3({
       schema: result.schema,
       strategy: result.strategy,
       domainStatus: result.domainStatus,
@@ -12429,13 +13343,13 @@ function valueWithCheck(result) {
       checker
     })]]);
   }
-  return portable2({ ...result, checker });
+  return portable3({ ...result, checker });
 }
 function rationalBoxValue(source) {
-  return portable2(createRationalBox(source));
+  return portable3(createRationalBox(source));
 }
 function multivariateRangeRequestValue(expression, source, options) {
-  return portable2(createMultivariateRangeRequest(expression, source, options));
+  return portable3(createMultivariateRangeRequest(expression, source, options));
 }
 function jacobianBoxRangeValue(expression, derivatives, source, options, context) {
   const policy = rangeMathPolicy(context);
@@ -12452,13 +13366,13 @@ function taylorModelBoxRangeValue(expression, gradient, hessian, source, options
 function krawczykBoxValue(expressions, jacobian, source, options, context) {
   const policy = rangeMathPolicy(context);
   const result = evaluateKrawczykBox(expressions, jacobian, source, options, { zeroPowerZero: policy.zeroPowerZero });
-  return portable2({ ...result, checker: checkKrawczykResult(result) });
+  return portable3({ ...result, checker: checkKrawczykResult(result) });
 }
 function krawczykCheckValue(candidate) {
   try {
-    return portable2(checkKrawczykResult(candidate));
+    return portable3(checkKrawczykResult(candidate));
   } catch (error) {
-    return portable2({
+    return portable3({
       accepted: false,
       certified: false,
       reason: error.message || "malformedKrawczykResult"
@@ -12466,7 +13380,7 @@ function krawczykCheckValue(candidate) {
   }
 }
 function multivariateRangeCheckValue(candidate) {
-  return portable2(checkMultivariateRangeResult(candidate));
+  return portable3(checkMultivariateRangeResult(candidate));
 }
 
 // ../rix/src/eval/functions/arithmetic.js
@@ -12713,6 +13627,11 @@ var arithmeticFunctions = {
     },
     pure: true,
     doc: "Independently recompute and check a primitive Calculus derivative transformation"
+  },
+  CALCULUS_DERIVATIVE_PROOF: {
+    impl: ([transformation, options]) => calculusDerivativeProofValue(transformation, options),
+    pure: true,
+    doc: "Build and independently check a first-derivative proof record without trusted leaves"
   },
   CALCULUS_DERIVATIVE_SIGN: {
     impl(args, context) {
@@ -13033,6 +13952,7 @@ var runtimeDefaults = Object.freeze({
     Exact: Object.freeze(["EXACT", "Exact", "COMPLEX", "Complex", "DEFINEEXACTGENERATOR", "DefineExactGenerator", "exactalgebras"]),
     Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC", "SPECROLES", "SPECFRACTIONPARTS", "SArith", "ExpressionVariable", "ExpressionConstant", "ExpressionOperation", "ExpressionApply", "IsExpression", "ExpressionKey", "ExpressionHasScopedSymbols", "SameSymbol", "SYMBOL_RETRIEVE", "SYMBOL_DEFINE", "ExpressionDefinition", "ExpressionExpand", "ExpressionVariableSelector", "ExpressionVariableMatches"]),
     MathematicalContexts: Object.freeze(["MATH_CONTEXT", "BOUND_SYMBOL"]),
+    MathematicalProof: Object.freeze(["CALCULUS_DERIVATIVE_PROOF"]),
     MathematicalSerialization: Object.freeze(["MathEncodeJSON", "MathDecodeJSON", "MathEncodeJSONL", "MathDecodeJSONL"]),
     MathematicalLocalization: Object.freeze(["MathSubstitute", "MathEvaluate", "MathInstantiate", "MathBudgets", "MathEvaluateCalculus", "MathPolynomialCoefficients"]),
     SymbolicConstants: Object.freeze(["ExpressionConstantInfo", "ExpressionHasExtendedConstants", "ExpressionReal", "ExpressionRefine"]),
@@ -22970,7 +23890,7 @@ function safeExactNumber(value, label) {
   }
   return number;
 }
-function exactRational3(value, label) {
+function exactRational4(value, label) {
   if (value instanceof Rational)
     return value;
   if (value instanceof Integer)
@@ -24457,7 +25377,7 @@ var rationalExactMethods = {
       throw new Error("Convergent index must be at least 1");
     return target.getConvergent(oneBasedIndex - 1);
   }),
-  APPROXIMATIONERROR: method3("ApproximationError", ([target, other]) => target.approximationError(exactRational3(other, "Approximation target"))),
+  APPROXIMATIONERROR: method3("ApproximationError", ([target, other]) => target.approximationError(exactRational4(other, "Approximation target"))),
   BESTAPPROXIMATION: method3("BestApproximation", ([target, maxDenominator]) => target.bestApproximation(exactBigInt(maxDenominator, "Maximum denominator"))),
   BESTCONVERGENT: method3("BestConvergent", ([target, maxDenominator]) => target.bestConvergent(exactBigInt(maxDenominator, "Maximum denominator"))),
   BITLENGTH: method3("BitLength", ([target]) => int5(target.bitLength())),
@@ -24476,7 +25396,7 @@ var rationalIntervalMethods = {
   RECIPROCAL: method3("Reciprocal", ([target]) => target.reciprocate()),
   OVERLAPS: method3("Overlaps", ([target, other]) => bool3(target.overlaps(exactInterval(other, "Other interval")))),
   CONTAINS: method3("Contains", ([target, other]) => bool3(target.contains(exactInterval(other, "Contained interval")))),
-  CONTAINSVALUE: method3("ContainsValue", ([target, value]) => bool3(target.containsValue(exactRational3(value, "Contained value")))),
+  CONTAINSVALUE: method3("ContainsValue", ([target, value]) => bool3(target.containsValue(exactRational4(value, "Contained value")))),
   CONTAINSZERO: method3("ContainsZero", ([target]) => bool3(target.containsZero())),
   INTERSECTION: method3("Intersection", ([target, other]) => attachBuiltinProto(RationalIntervalSet.fromInterval(target).intersection(exactRangeSet(other, "Other range")))),
   UNION: method3("Union", ([target, other]) => attachBuiltinProto(RationalIntervalSet.fromInterval(target).union(exactRangeSet(other, "Other range")))),
@@ -24531,7 +25451,7 @@ var rationalIntervalSetMethods = {
   UNION: method3("Union", ([target, other]) => attachBuiltinProto(target.union(exactRangeSet(other, "Other range")))),
   INTERSECTION: method3("Intersection", ([target, other]) => attachBuiltinProto(target.intersection(exactRangeSet(other, "Other range")))),
   CONTAINS: method3("Contains", ([target, other]) => bool3(target.contains(exactRangeSet(other, "Contained range")))),
-  CONTAINSVALUE: method3("ContainsValue", ([target, value]) => bool3(target.containsValue(exactRational3(value, "Contained value")))),
+  CONTAINSVALUE: method3("ContainsValue", ([target, value]) => bool3(target.containsValue(exactRational4(value, "Contained value")))),
   HULL: method3("Hull", ([target]) => attachBuiltinProto(target.hull())),
   ADD: method3("Add", ([target, other], context) => attachBuiltinProto(executeRangeOperation("add", [target, other], context))),
   SUBTRACT: method3("Subtract", ([target, other], context) => attachBuiltinProto(executeRangeOperation("subtract", [target, other], context))),
@@ -26815,7 +27735,7 @@ function timelineTracks(value, count) {
     return track;
   }));
 }
-function exactRational4(value, label) {
+function exactRational5(value, label) {
   if (value instanceof Rational)
     return value;
   if (value instanceof Integer)
@@ -26857,7 +27777,7 @@ function exactScale(interval3, stepValue, stepsValue, name) {
     steps = positiveCount(stepsValue, `${name} steps`);
     step = span.divide(new Integer(BigInt(steps)));
   } else {
-    step = stepValue === null ? span.divide(new Integer(20n)) : exactRational4(stepValue, `${name} step`);
+    step = stepValue === null ? span.divide(new Integer(20n)) : exactRational5(stepValue, `${name} step`);
     if (step.numerator <= 0n)
       throw new Error(`${name} step must be positive`);
     const ratio = span.divide(step);
@@ -26870,7 +27790,7 @@ function exactScale(interval3, stepValue, stepsValue, name) {
   return { low, high, step, steps };
 }
 function scaleIndex(value, scale, label) {
-  const exact = exactRational4(value, label);
+  const exact = exactRational5(value, label);
   const indexValue = exact.subtract(scale.low).divide(scale.step);
   if (indexValue.denominator !== 1n) {
     const stepKind = label.includes("Slider") ? "slider" : "control";
@@ -26886,8 +27806,8 @@ function controlValuesEqual(left, right) {
   if (left === right)
     return true;
   if ((left instanceof Integer || left instanceof Rational) && (right instanceof Integer || right instanceof Rational)) {
-    const a = exactRational4(left, "Control value");
-    const b = exactRational4(right, "Control value");
+    const a = exactRational5(left, "Control value");
+    const b = exactRational5(right, "Control value");
     return a.numerator === b.numerator && a.denominator === b.denominator;
   }
   if (left instanceof RationalInterval && right instanceof RationalInterval) {
@@ -27466,7 +28386,7 @@ function createSliderControl(args, runtime = null) {
   const target = reactiveTarget(entry, "Controls.Slider");
   const interval3 = get(entry, "interval");
   const scale = exactScale(interval3, get(entry, "step"), get(entry, "steps"), "Controls.Slider");
-  const value = exactRational4(target.get(), "Controls.Slider target value");
+  const value = exactRational5(target.get(), "Controls.Slider target value");
   const index = scaleIndex(value, scale, "Controls.Slider target value");
   return output("control_slider", {
     id: asString(get(entry, "id")) || `${target.id}:slider`,
@@ -48890,7 +49810,7 @@ id: numerics
 description: Backend-neutral bounded enclosure and refinement orchestration.
 kind: rix
 mount: numerics
-exports: [Request, WorkPolicy, EffectiveLimits, ErrorBudget, PropagateError, RefinementHistory, RefineHistory, Enclose, Refine, Sample, Compare, IsolateRoot, AdaptiveSample, Integrate, Optimize, IntervalNewton, Krawczyk, CheckKrawczyk, Constant, ExplainSelection, Range, GraphRange, CheckGraphRange, SimplifyGraph, CheckGraphSimplification, RewriteGraph, CheckGraphRewrite, CheckDerivativeGraph, DerivativeSign, LipschitzRange, TaylorRange, Box, MultivariateRequest, JacobianRange, AffineRange, TaylorModelRange, CheckMultivariateRange, RecognizeGraph, FunctionFacts, WithRangeKnowledge, RegisterRangeProvider, CheckRangeResult, Sign, RootCount, Capabilities, CheckResult, NthRoot, Sqrt, Cbrt, Hypot, Pow, Exp, Expm1, Log, Log1p, Ln, Log2, Log10, Pi, EulerGamma, Sin, Cos, Tan, Sec, Csc, Cot, Sinc, Asin, Acos, Atan, Atan2, Arcsin, Arccos, Arctan, Sinh, Cosh, Tanh, Sech, Csch, Coth, Asinh, Acosh, Atanh, Arsinh, Arcosh, Artanh, Radians, Degrees, Gamma, LogGamma, Beta, LogBeta, Digamma, Trigamma, Erf, Erfc, NormalPDF, NormalCDF, NormalQuantile, LambertW, BesselJ, BesselJ0, BesselJ1, BesselY, BesselY0, BesselY1, BesselI, BesselI0, BesselI1, BesselK, BesselK0, BesselK1, Zeta, Quadrature, Kantorovich]
+exports: [Request, WorkPolicy, EffectiveLimits, ErrorBudget, PropagateError, RefinementHistory, RefineHistory, Enclose, Refine, Sample, Compare, IsolateRoot, AdaptiveSample, Integrate, Optimize, IntervalNewton, Krawczyk, CheckKrawczyk, Constant, ExplainSelection, Range, GraphRange, CheckGraphRange, SimplifyGraph, CheckGraphSimplification, RewriteGraph, CheckGraphRewrite, CheckDerivativeGraph, DerivativeProof, DerivativeSign, LipschitzRange, TaylorRange, Box, MultivariateRequest, JacobianRange, AffineRange, TaylorModelRange, CheckMultivariateRange, RecognizeGraph, FunctionFacts, WithRangeKnowledge, RegisterRangeProvider, CheckRangeResult, Sign, RootCount, Capabilities, CheckResult, NthRoot, Sqrt, Cbrt, Hypot, Pow, Exp, Expm1, Log, Log1p, Ln, Log2, Log10, Pi, EulerGamma, Sin, Cos, Tan, Sec, Csc, Cot, Sinc, Asin, Acos, Atan, Atan2, Arcsin, Arccos, Arctan, Sinh, Cosh, Tanh, Sech, Csch, Coth, Asinh, Acosh, Atanh, Arsinh, Arcosh, Artanh, Radians, Degrees, Gamma, LogGamma, Beta, LogBeta, Digamma, Trigamma, Erf, Erfc, NormalPDF, NormalCDF, NormalQuantile, LambertW, BesselJ, BesselJ0, BesselJ1, BesselY, BesselY0, BesselY1, BesselI, BesselI0, BesselI1, BesselK, BesselK0, BesselK1, Zeta, Quadrature, Kantorovich]
 groups: [Numerics]
 permissions: []
 requires: [rix.oracle@1]
@@ -55197,6 +56117,7 @@ numericsNamespace._proto = {=
         .CalculusGraphRewrite(source,target,theorem),
     CheckGraphRewrite = (self, result) -> .CalculusGraphRewriteCheck(result),
     CheckDerivativeGraph = (self, transformation, options ?= {= }) -> .CalculusDerivativeCheck(transformation,options),
+    DerivativeProof = (self, transformation, options ?= {= }) -> .CalculusDerivativeProof(transformation,options),
     DerivativeSign = (self, transformation, bindings, options ?= {= }) ->
         .CalculusDerivativeSign(transformation,bindings,options),
     LipschitzRange = (self, transformation, bindings, options ?= {= }) ->
@@ -85317,7 +86238,7 @@ function requireGroups(value) {
   }
   return value;
 }
-function exactRational5(value, label2) {
+function exactRational6(value, label2) {
   if (value instanceof Rational)
     return value;
   if (value instanceof Integer)
@@ -85384,7 +86305,7 @@ function aggregateValue(group, spec2, relation) {
     }, values4[0]);
   }
   const intervalSource = relation.columns[spec2.sourceIndex].type === "Interval";
-  const total = values4.reduce((sum, value) => sum.add(intervalSource ? value : exactRational5(value, `data.Aggregate ${spec2.op}`)), new Rational(0n, 1n));
+  const total = values4.reduce((sum, value) => sum.add(intervalSource ? value : exactRational6(value, `data.Aggregate ${spec2.op}`)), new Rational(0n, 1n));
   return collapseRational(spec2.op === "mean" ? total.divide(new Rational(BigInt(values4.length), 1n)) : total);
 }
 function aggregateGroups(args) {
@@ -85605,8 +86526,8 @@ function taggedExact(value, label2) {
     if (!(low instanceof Integer || low instanceof Rational) || !(high instanceof Integer || high instanceof Rational)) {
       throw new Error(`${label2} interval endpoints must be tagged Integers or Rationals`);
     }
-    const lowRational = exactRational5(low, `${label2} lower endpoint`);
-    const highRational = exactRational5(high, `${label2} upper endpoint`);
+    const lowRational = exactRational6(low, `${label2} lower endpoint`);
+    const highRational = exactRational6(high, `${label2} upper endpoint`);
     if (rationalCompare(lowRational, highRational) > 0)
       throw new Error(`${label2} interval endpoints must be ordered`);
     return new RationalInterval(lowRational, highRational);
@@ -87168,8 +88089,8 @@ function renderTerminalAscii(value, { options = {}, format = String } = {}) {
   };
   const rendered = renderNode(value, state);
   const paginated = paginate(rendered, state);
-  const portable3 = strictAscii(paginated.content, state, "output");
-  const content = state.color === "ansi16" ? ansiColor(portable3) : portable3;
+  const portable4 = strictAscii(paginated.content, state, "output");
+  const content = state.color === "ansi16" ? ansiColor(portable4) : portable4;
   return {
     content: `${content}
 `,
@@ -91415,6 +92336,7 @@ var CORE_SYNTAX_CAPABILITIES = {
   CalculusGraphRewrite: "CALCULUS_GRAPH_REWRITE",
   CalculusGraphRewriteCheck: "CALCULUS_GRAPH_REWRITE_CHECK",
   CalculusDerivativeCheck: "CALCULUS_DERIVATIVE_CHECK",
+  CalculusDerivativeProof: "CALCULUS_DERIVATIVE_PROOF",
   CalculusDerivativeSign: "CALCULUS_DERIVATIVE_SIGN",
   CalculusLipschitzRange: "CALCULUS_LIPSCHITZ_RANGE",
   CalculusTaylorRange: "CALCULUS_TAYLOR_RANGE",
@@ -102179,12 +103101,6 @@ function complete(source, cursor, { context, systemContext, formatValue: formatV
   }
   return { from, to: cursor, query, candidates: filterAndSort(candidates, query) };
 }
-// ../rix/src/runtime/range-evidence-checker.js
-var DEFAULT_LIMITS = Object.freeze({
-  maxNodes: 1e4,
-  maxComponents: 1e4,
-  maxPolynomialDegree: 256
-});
 // ../rix/src/tools/language-service/formatter.js
 var PIPE_OPERATORS = new Set([
   "|>",
@@ -102334,5 +103250,5 @@ var STATIC_SYSTEM_CATALOG = Object.freeze([
 ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
 export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, outputValueKind, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, formatOutputText, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateObserved, parseAndEvaluateObservedAsync, lintRix, createGeometryAuthoringProgram, mountOutputWidgets };
 
-//# debugId=F9BD649E7745B7C464756E2164756E21
-//# sourceMappingURL=chunk-c7epm5jz.js.map
+//# debugId=252D9843D66FAE9464756E2164756E21
+//# sourceMappingURL=chunk-r89b0seg.js.map

@@ -640,3 +640,28 @@ Recognition arithmetic uses configurable core `MathBudgets` settings.
      ans[:sourceDomainRestrictions].Len(),low[:recognized],high[:recognized]);
 };
 ```
+
+## A small proof you can inspect
+
+A proof adapter packages an algorithm's result into a fixed checker rule. It must
+carry the actual symbolic coordinate, not just its printed name. Here the runtime
+recomputes a first derivative and exposes the checked transcript. There is no
+external prover, saved executable code, or trusted leaf in this example.
+
+```rix edu
+.Plugin.Load("calculus"); .Plugin.Load("numerics");
+{;
+    d := .calculus.DifferentiateResult(::x^2,::x);
+    proof := .numerics.DerivativeProof(d,{= maxWork=1000 });
+    (proof[:certified],proof[:evidenceLevel],proof[:trustedDependencies].Len(),
+     .SameSymbol(proof[:conclusion][:variable],::x),
+     proof[:evidence][:nodes][1][:rule]);
+};
+```
+
+This certifies a derivative identity with retained domain obligations; it is not
+automatically a proof of definedness on every interval. Use `DerivativeSign` or
+the range strategies to discharge those conditions for a particular domain.
+`DerivativeProof` accepts the derivative checker's configurable work/depth options.
+The native proof checker also supports scoped critical-point and monotonicity-partition
+records. Its proof-chain traversal is iterative; expression depth limits remain separate.
