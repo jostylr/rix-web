@@ -13195,7 +13195,8 @@ ${indentStr})`;
     maxpolynomialcoefficients: 64,
     maxdegree: 1e4,
     maxexponent: 256,
-    rootbits: 64
+    rootbits: 64,
+    transcendentalbits: 64
   });
   function mathBudgets(options) {
     const result = { ...DEFAULT_MATH_BUDGETS };
@@ -26137,7 +26138,41 @@ ${indented.join(`,
   var deferredMethods = { EVAL: Eval, DESUGAR: Desugar, INSPECT: Inspect };
 
   // rix/src/runtime/math-semantic-eval.js
-  var REAL_SEMANTICS = Object.freeze(["rix.function.abs.real@1", "rix.function.sqrt.real-principal@1"]);
+  var REAL_SEMANTICS = Object.freeze(["rix.function.abs.real@1", "rix.function.sqrt.real-principal@1", "rix.function.exp@1"]);
+  function exponentialBounds(value, limits, check, unsupported) {
+    const zero = new Rational(0n), one = new Rational(1n), two = new Rational(2n);
+    if (value.equals(zero))
+      return [one, one];
+    if (Math.ceil(limits.transcendentalbits / 3) + 1 > limits.maxdigits)
+      throw new Error("Mathematical exponential precision integer budget exceeded");
+    const target = check(new Rational(1n, 1n << BigInt(limits.transcendentalbits)));
+    const negative = value.lessThan(zero);
+    let reduced = value.abs(), halvings = 0;
+    while (reduced.greaterThan(one)) {
+      if (halvings >= limits.maxexponent)
+        return unsupported("exponentialReductionBudgetExceeded");
+      reduced = check(reduced.divide(two));
+      halvings++;
+    }
+    let sum = one, term = one;
+    for (let n = 0;n < limits.maxsumterms; n++) {
+      const next = check(check(term.multiply(reduced)).divide(new Rational(BigInt(n) + 1n)));
+      const ratio = check(reduced.divide(new Rational(BigInt(n) + 2n)));
+      const tail = check(next.divide(check(one.subtract(ratio))));
+      let low = sum, high = check(sum.add(tail));
+      for (let i = 0;i < halvings; i++) {
+        low = check(low.multiply(low));
+        high = check(high.multiply(high));
+      }
+      if (negative)
+        [low, high] = [check(high.reciprocal()), check(low.reciprocal())];
+      if (check(high.subtract(low)).lessThanOrEqual(target))
+        return [low, high];
+      sum = check(sum.add(next));
+      term = next;
+    }
+    return unsupported("exponentialSeriesBudgetExceeded");
+  }
   function integerRoot(value) {
     if (value < 2n)
       return value;
@@ -26167,6 +26202,15 @@ ${indented.join(`,
     if (!(value instanceof Rational) && !(value instanceof RationalInterval))
       return unsupported("unsupportedSemanticProvider");
     const zero = new Rational(0n);
+    if (id === "rix.function.exp@1") {
+      const low = exponentialBounds(value instanceof Rational ? value : value.low, limits, check, unsupported);
+      if (!low)
+        return null;
+      const high = value instanceof Rational || value.low.equals(value.high) ? low : exponentialBounds(value.high, limits, check, unsupported);
+      if (!high)
+        return null;
+      return check(low[0].equals(high[1]) ? low[0] : new RationalInterval(low[0], high[1]));
+    }
     if (id === "rix.function.abs.real@1") {
       if (value instanceof Rational)
         return check(value.abs());
@@ -26259,7 +26303,7 @@ ${indented.join(`,
   function createProviderEvaluation(reasons, limits) {
     const check = (value) => budget(value, limits);
     const providers = new Map, reals = new Map, semantics = new Set;
-    let sawReal = false, sawSet = false, unverified = false;
+    let sawReal = false, sawSet = false, unverified = false, sawSemanticEnclosure = false;
     const unsupported = (reason) => {
       reasons.add(reason);
       return null;
@@ -26348,7 +26392,10 @@ ${indented.join(`,
       supportsApplication: (id) => REAL_SEMANTICS.includes(id),
       apply: (id, args) => {
         semantics.add(id);
-        return evaluateRealSemantic(id, args, limits, check, unsupported);
+        const result = evaluateRealSemantic(id, args, limits, check, unsupported);
+        if (id === "rix.function.exp@1" && result instanceof RationalInterval)
+          sawSemanticEnclosure = true;
+        return result;
       },
       get semantics() {
         return [...semantics];
@@ -26359,7 +26406,7 @@ ${indented.join(`,
       get providers() {
         return [...providers.values()];
       },
-      isApproximation: (value) => sawReal && value instanceof RationalInterval,
+      isApproximation: (value) => (sawReal || sawSemanticEnclosure) && value instanceof RationalInterval,
       resultKind: (value) => value === null ? "unresolved" : value instanceof RationalInterval ? sawSet ? "setEnclosure" : "singletonEnclosure" : isExactValue(value) ? "exactScalar" : "rational"
     };
   }

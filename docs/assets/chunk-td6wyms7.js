@@ -9110,7 +9110,8 @@ var DEFAULT_MATH_BUDGETS = Object.freeze({
   maxpolynomialcoefficients: 64,
   maxdegree: 1e4,
   maxexponent: 256,
-  rootbits: 64
+  rootbits: 64,
+  transcendentalbits: 64
 });
 function mathBudgets(options) {
   const result = { ...DEFAULT_MATH_BUDGETS };
@@ -9132,7 +9133,41 @@ function mathBudgets(options) {
 var mathBudgetRecord = (limits) => ({ type: "map", entries: new Map(Object.entries(limits).map(([key, value]) => [key, new Integer(BigInt(value))])), _ext: new Map([["immutable", new Integer(1n)]]) });
 
 // ../rix/src/runtime/math-semantic-eval.js
-var REAL_SEMANTICS = Object.freeze(["rix.function.abs.real@1", "rix.function.sqrt.real-principal@1"]);
+var REAL_SEMANTICS = Object.freeze(["rix.function.abs.real@1", "rix.function.sqrt.real-principal@1", "rix.function.exp@1"]);
+function exponentialBounds(value, limits, check, unsupported) {
+  const zero = new Rational(0n), one = new Rational(1n), two = new Rational(2n);
+  if (value.equals(zero))
+    return [one, one];
+  if (Math.ceil(limits.transcendentalbits / 3) + 1 > limits.maxdigits)
+    throw new Error("Mathematical exponential precision integer budget exceeded");
+  const target = check(new Rational(1n, 1n << BigInt(limits.transcendentalbits)));
+  const negative = value.lessThan(zero);
+  let reduced = value.abs(), halvings = 0;
+  while (reduced.greaterThan(one)) {
+    if (halvings >= limits.maxexponent)
+      return unsupported("exponentialReductionBudgetExceeded");
+    reduced = check(reduced.divide(two));
+    halvings++;
+  }
+  let sum = one, term = one;
+  for (let n = 0;n < limits.maxsumterms; n++) {
+    const next = check(check(term.multiply(reduced)).divide(new Rational(BigInt(n) + 1n)));
+    const ratio = check(reduced.divide(new Rational(BigInt(n) + 2n)));
+    const tail = check(next.divide(check(one.subtract(ratio))));
+    let low = sum, high = check(sum.add(tail));
+    for (let i = 0;i < halvings; i++) {
+      low = check(low.multiply(low));
+      high = check(high.multiply(high));
+    }
+    if (negative)
+      [low, high] = [check(high.reciprocal()), check(low.reciprocal())];
+    if (check(high.subtract(low)).lessThanOrEqual(target))
+      return [low, high];
+    sum = check(sum.add(next));
+    term = next;
+  }
+  return unsupported("exponentialSeriesBudgetExceeded");
+}
 function integerRoot(value) {
   if (value < 2n)
     return value;
@@ -9162,6 +9197,15 @@ function evaluateRealSemantic(id, args, limits, check, unsupported) {
   if (!(value instanceof Rational) && !(value instanceof RationalInterval))
     return unsupported("unsupportedSemanticProvider");
   const zero = new Rational(0n);
+  if (id === "rix.function.exp@1") {
+    const low = exponentialBounds(value instanceof Rational ? value : value.low, limits, check, unsupported);
+    if (!low)
+      return null;
+    const high = value instanceof Rational || value.low.equals(value.high) ? low : exponentialBounds(value.high, limits, check, unsupported);
+    if (!high)
+      return null;
+    return check(low[0].equals(high[1]) ? low[0] : new RationalInterval(low[0], high[1]));
+  }
   if (id === "rix.function.abs.real@1") {
     if (value instanceof Rational)
       return check(value.abs());
@@ -9254,7 +9298,7 @@ function compareProviderValues(left, right, op) {
 function createProviderEvaluation(reasons, limits) {
   const check = (value) => budget(value, limits);
   const providers = new Map, reals = new Map, semantics = new Set;
-  let sawReal = false, sawSet = false, unverified = false;
+  let sawReal = false, sawSet = false, unverified = false, sawSemanticEnclosure = false;
   const unsupported = (reason) => {
     reasons.add(reason);
     return null;
@@ -9343,7 +9387,10 @@ function createProviderEvaluation(reasons, limits) {
     supportsApplication: (id) => REAL_SEMANTICS.includes(id),
     apply: (id, args) => {
       semantics.add(id);
-      return evaluateRealSemantic(id, args, limits, check, unsupported);
+      const result = evaluateRealSemantic(id, args, limits, check, unsupported);
+      if (id === "rix.function.exp@1" && result instanceof RationalInterval)
+        sawSemanticEnclosure = true;
+      return result;
     },
     get semantics() {
       return [...semantics];
@@ -9354,7 +9401,7 @@ function createProviderEvaluation(reasons, limits) {
     get providers() {
       return [...providers.values()];
     },
-    isApproximation: (value) => sawReal && value instanceof RationalInterval,
+    isApproximation: (value) => (sawReal || sawSemanticEnclosure) && value instanceof RationalInterval,
     resultKind: (value) => value === null ? "unresolved" : value instanceof RationalInterval ? sawSet ? "setEnclosure" : "singletonEnclosure" : isExactValue(value) ? "exactScalar" : "rational"
   };
 }
@@ -103282,5 +103329,5 @@ var STATIC_SYSTEM_CATALOG = Object.freeze([
 ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
 export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, outputValueKind, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, formatOutputText, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateObserved, parseAndEvaluateObservedAsync, lintRix, createGeometryAuthoringProgram, mountOutputWidgets };
 
-//# debugId=0EF3451DA89DDB3164756E2164756E21
-//# sourceMappingURL=chunk-pbbk8fk3.js.map
+//# debugId=624C70C70076364464756E2164756E21
+//# sourceMappingURL=chunk-td6wyms7.js.map

@@ -690,3 +690,27 @@ premises. It requires the inner image to fit inside the outer domain and retains
 the original coordinates. It currently accepts univariate graphs only: hidden
 parameter dependence would invalidate the simple composition argument. Trusted
 premises remain explicitly trusted; combining them does not remove that dependency.
+
+## Certified exponential evaluation
+
+Core evaluation now understands the trusted real exponential meaning. It uses
+exact rational series-tail bounds, not floating-point estimates or linked code.
+Zero gives exact one; other rational inputs give certified enclosures.
+
+```rix edu
+.Plugin.Load("calculus");
+{;
+    expr := .calculus.Exp()(::x);
+    exact := expr.Eval([(::x,0)]);
+    ans := expr.Eval([(::x,1)],{= transcendentalBits=32 });
+    limited := expr.Eval([(::x,1)],{= maxSumTerms=1 });
+    (exact[:value],ans[:status],ans[:value],ans[:budgets][:transcendentalBits],limited[:status]);
+};
+```
+
+Inspect `ans[:enclosure]` for rational bounds. `transcendentalBits` controls endpoint
+precision; `maxSumTerms` bounds series work, `maxExponent` bounds argument-reduction
+steps, and `maxDigits` bounds rational arithmetic. Interval inputs retain their
+input uncertainty. Stored refinable-real enclosures may be used without refinement,
+and frozen imports retain conditional status. This does not yet broaden CAS algebraic
+rules or the older arithmetic graph-range engine's semantic-function support.
