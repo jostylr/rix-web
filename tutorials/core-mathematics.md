@@ -152,8 +152,38 @@ withPi := ::position + exactPi;
 Core exact scalars also promote, using generator identities rather than their
 display names. This is exact symbolic pi, not a refinable numerical pi. The
 provider record exposes algebraic laws; exact polynomial quotients do not
-automatically promise cancellation. Physical quantities, refinable-real
-providers, and quaternion/octonion adapters remain future work.
+automatically promise cancellation. Physical quantities and quaternion/octonion
+adapters remain future work.
+
+## Retaining a real's refinement procedure
+
+```rix edu
+.Plugin.Load("numerics");
+realRoot := .ExpressionReal(.numerics.Sqrt(2),{= absoluteWidth=1/10,maxWork=30 });
+rootKey := .ExpressionKey(realRoot);
+rootCopy ::= realRoot;
+rootResult := .ExpressionRefine(rootCopy,{= absoluteWidth=1/10000,maxWork=100 });
+{: rootResult[:goalMet],rootKey==.ExpressionKey(realRoot),realRoot==rootCopy,
+   .ExpressionConstantInfo(realRoot)[:provider],(::position+realRoot).Kind() };
+```
+
+The constant retains one real's identity, its enclosure, and its procedure.
+Copies share that identity. Refining a copy narrows their shared knowledge,
+but never changes the expression key. Construction makes one bounded protocol
+call; inspection, arithmetic construction, and equality do not refine.
+Separate adaptations remain distinct identities with undecided equality.
+
+```rix edu
+.Plugin.Load("numerics");
+coarseRoot := .ExpressionReal(.numerics.Sqrt(2),{= absoluteWidth=1/100000,maxWork=1 });
+coarseResult := .ExpressionRefine(coarseRoot,{= absoluteWidth=1/100000,maxWork=1 });
+{: coarseResult[:status],coarseResult[:certified],coarseResult[:goalMet] };
+```
+
+Budget exhaustion can still return a certified enclosure. Check `goalMet`
+before claiming the requested width was reached. Protocol checks validate
+the reported contract, not arbitrary provider code; the evidence level remains
+the provider's claim. The procedure is retained in memory, not yet serialized.
 
 ### Current implementation boundary
 

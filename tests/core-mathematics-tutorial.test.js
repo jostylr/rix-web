@@ -36,5 +36,11 @@ for (const [mode,evaluate] of [["sync",parseAndEvaluate],["async",parseAndEvalua
         expect(results[12].values[0].value).toBe("operator");
         expect(results[12].values[1].value).toBe("exactScalar");
         expect(results[12].values[2].value).toBe(1n);
+        expect(results[13].values.slice(0,3).map(value=>value.value)).toEqual([1n,1n,1n]);
+        expect(results[13].values[3].value).toBe("refinableReal");
+        expect(results[13].values[4].value).toBe("operator");
+        expect(results[14].values[0].value).toBe("budgetExhausted");
+        expect(results[14].values[1].value).toBe(1n);
+        expect(results[14].values[2]).toBeNull();
     });
 }

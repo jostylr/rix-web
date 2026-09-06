@@ -12848,7 +12848,7 @@ ${indentStr})`;
       Exact: Object.freeze(["EXACT", "Exact", "COMPLEX", "Complex", "DEFINEEXACTGENERATOR", "DefineExactGenerator", "exactalgebras"]),
       Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC", "SPECROLES", "SPECFRACTIONPARTS", "SArith", "ExpressionVariable", "ExpressionConstant", "ExpressionOperation", "ExpressionApply", "IsExpression", "ExpressionKey", "ExpressionHasScopedSymbols", "SameSymbol", "SYMBOL_RETRIEVE", "SYMBOL_DEFINE", "ExpressionDefinition", "ExpressionExpand"]),
       MathematicalContexts: Object.freeze(["MATH_CONTEXT", "BOUND_SYMBOL"]),
-      SymbolicConstants: Object.freeze(["ExpressionConstantInfo", "ExpressionHasExtendedConstants"]),
+      SymbolicConstants: Object.freeze(["ExpressionConstantInfo", "ExpressionHasExtendedConstants", "ExpressionReal", "ExpressionRefine"]),
       Notation: Object.freeze(["SArith", "Poly", "NotationParser"]),
       Random: Object.freeze(["RNG", "RANDOMSEED", "RandomSeed", "RAND_NAME"]),
       Probability: Object.freeze(["probability"]),
@@ -13180,6 +13180,813 @@ ${indentStr})`;
     return filtered;
   }
 
+  // rix/src/runtime/cell.js
+  class Cell {
+    constructor(value) {
+      this.value = value;
+    }
+  }
+  function classifyMetaKey(name) {
+    if (name.startsWith("__"))
+      return "sticky";
+    if (name.startsWith("_"))
+      return "ephemeral";
+    return "ordinary";
+  }
+  function shallowCopyValue(value) {
+    if (value == null)
+      return value;
+    if (typeof value !== "object")
+      return value;
+    if (value instanceof UndecidedDiagnostic)
+      return value.copy();
+    if (isUndecided(value))
+      return value;
+    if (value instanceof CertifiedApproximation)
+      return value.copy();
+    if (value instanceof Integer)
+      return new Integer(value.value);
+    if (value instanceof Rational)
+      return new Rational(value.numerator, value.denominator);
+    if (value instanceof RationalInterval) {
+      return new RationalInterval(new Rational(value.low.numerator, value.low.denominator), new Rational(value.high.numerator, value.high.denominator));
+    }
+    if (value instanceof RationalIntervalSet)
+      return new RationalIntervalSet(value);
+    if (value.type === "string")
+      return { type: "string", value: value.value };
+    if (isLazySequence(value))
+      return cloneLazySequence(value);
+    if (value.type === "iterator") {
+      return {
+        type: "iterator",
+        source: value.source,
+        cursor: value.cursor,
+        _ext: value._ext ? new Map(value._ext) : undefined
+      };
+    }
+    if (value.type === "sequence") {
+      return {
+        type: "sequence",
+        values: [...value.values],
+        _ext: value._ext ? new Map(value._ext) : undefined
+      };
+    }
+    if (value.type === "tuple") {
+      return {
+        type: "tuple",
+        values: [...value.values],
+        _ext: value._ext ? new Map(value._ext) : undefined
+      };
+    }
+    if (value.type === "map" && value.entries instanceof Map) {
+      return {
+        type: "map",
+        entries: new Map(value.entries),
+        _ext: value._ext ? new Map(value._ext) : undefined
+      };
+    }
+    if (value.type === "export_bundle" && value.entries instanceof Map) {
+      return {
+        type: "export_bundle",
+        entries: new Map(value.entries),
+        _ext: value._ext ? new Map(value._ext) : undefined
+      };
+    }
+    if (value.type === "set") {
+      return {
+        type: "set",
+        values: [...value.values],
+        _ext: value._ext ? new Map(value._ext) : undefined
+      };
+    }
+    if (isShaped(value)) {
+      return {
+        type: "shaped",
+        data: [...value.data],
+        shape: [...value.shape],
+        strides: [...value.strides],
+        offset: value.offset,
+        _ext: value._ext ? new Map(value._ext) : undefined
+      };
+    }
+    if (value.type === "quantity") {
+      return { ...value, _ext: value._ext ? new Map(value._ext) : undefined };
+    }
+    if (value.type === "unit_expr") {
+      return { ...value, factors: new Map(value.factors), _ext: value._ext ? new Map(value._ext) : undefined };
+    }
+    if (value.type === "exact_expression") {
+      return { ...value, terms: new Map(value.terms), _ext: value._ext ? new Map(value._ext) : undefined };
+    }
+    if (value.type === "cayley") {
+      return { ...value, _ext: value._ext ? new Map(value._ext) : undefined };
+    }
+    return value;
+  }
+  function deepCopyValue(value, memo = new WeakMap) {
+    if (!(memo instanceof WeakMap))
+      memo = new WeakMap;
+    if (value == null)
+      return value;
+    if (typeof value !== "object")
+      return value;
+    if (memo.has(value))
+      return memo.get(value);
+    if (value instanceof UndecidedDiagnostic) {
+      const copy = value.copy();
+      memo.set(value, copy);
+      return copy;
+    }
+    if (isUndecided(value))
+      return value;
+    if (value instanceof CertifiedApproximation) {
+      const copy = value.copy();
+      memo.set(value, copy);
+      return copy;
+    }
+    if (value instanceof Integer) {
+      const copy = new Integer(value.value);
+      memo.set(value, copy);
+      return copy;
+    }
+    if (value instanceof Rational) {
+      const copy = new Rational(value.numerator, value.denominator);
+      memo.set(value, copy);
+      return copy;
+    }
+    if (value instanceof RationalInterval) {
+      const copy = new RationalInterval(new Rational(value.low.numerator, value.low.denominator), new Rational(value.high.numerator, value.high.denominator));
+      memo.set(value, copy);
+      return copy;
+    }
+    if (value instanceof RationalIntervalSet) {
+      const copy = new RationalIntervalSet(value);
+      memo.set(value, copy);
+      return copy;
+    }
+    if (value.type === "string") {
+      const copy = { type: "string", value: value.value };
+      memo.set(value, copy);
+      return copy;
+    }
+    if (isLazySequence(value)) {
+      const copy = cloneLazySequence(value, {
+        restart: true,
+        cloneValue: (child) => deepCopyValue(child, memo)
+      });
+      memo.set(value, copy);
+      return copy;
+    }
+    if (value.type === "iterator") {
+      const copy = {
+        type: "iterator",
+        source: undefined,
+        cursor: value.cursor,
+        _ext: undefined
+      };
+      memo.set(value, copy);
+      copy.source = deepCopyValue(value.source, memo);
+      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
+      return copy;
+    }
+    if (value.type === "sequence") {
+      const copy = {
+        type: "sequence",
+        values: [],
+        _ext: undefined
+      };
+      memo.set(value, copy);
+      copy.values = value.values.map((child) => deepCopyValue(child, memo));
+      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
+      return copy;
+    }
+    if (value.type === "tuple") {
+      const copy = {
+        type: "tuple",
+        values: [],
+        _ext: undefined
+      };
+      memo.set(value, copy);
+      copy.values = value.values.map((child) => deepCopyValue(child, memo));
+      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
+      return copy;
+    }
+    if (value.type === "map" && value.entries instanceof Map) {
+      const copy = {
+        type: "map",
+        entries: new Map,
+        _ext: undefined
+      };
+      memo.set(value, copy);
+      for (const [k, v] of value.entries) {
+        copy.entries.set(k, deepCopyValue(v, memo));
+      }
+      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
+      return copy;
+    }
+    if (value.type === "export_bundle" && value.entries instanceof Map) {
+      const copy = {
+        type: "export_bundle",
+        entries: new Map,
+        _ext: undefined
+      };
+      memo.set(value, copy);
+      for (const [k, v] of value.entries) {
+        copy.entries.set(k, deepCopyCell(v, memo));
+      }
+      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
+      return copy;
+    }
+    if (value.type === "set") {
+      const copy = {
+        type: "set",
+        values: [],
+        _ext: undefined
+      };
+      memo.set(value, copy);
+      copy.values = value.values.map((child) => deepCopyValue(child, memo));
+      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
+      return copy;
+    }
+    if (isShaped(value)) {
+      const copy = {
+        type: "shaped",
+        data: [],
+        shape: [...value.shape],
+        strides: [...value.strides],
+        offset: value.offset,
+        _ext: undefined
+      };
+      memo.set(value, copy);
+      copy.data = value.data.map((child) => deepCopyValue(child, memo));
+      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
+      return copy;
+    }
+    if (value.type === "quantity") {
+      const copy = {
+        ...value,
+        baseMagnitude: undefined,
+        displayUnit: undefined,
+        _ext: undefined
+      };
+      memo.set(value, copy);
+      copy.baseMagnitude = deepCopyValue(value.baseMagnitude, memo);
+      copy.displayUnit = deepCopyValue(value.displayUnit, memo);
+      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
+      return copy;
+    }
+    if (value.type === "unit_expr") {
+      const copy = {
+        ...value,
+        factors: new Map(value.factors),
+        _ext: undefined
+      };
+      memo.set(value, copy);
+      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
+      return copy;
+    }
+    if (value.type === "exact_expression") {
+      const copy = { ...value, terms: new Map, _ext: undefined };
+      memo.set(value, copy);
+      for (const [key, term] of value.terms) {
+        copy.terms.set(key, {
+          powers: new Map(term.powers),
+          coefficient: deepCopyValue(term.coefficient, memo)
+        });
+      }
+      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
+      return copy;
+    }
+    if (value.type === "cayley") {
+      const copy = {
+        ...value,
+        magnitude: undefined,
+        direction: undefined,
+        _ext: undefined
+      };
+      memo.set(value, copy);
+      copy.magnitude = deepCopyValue(value.magnitude, memo);
+      copy.direction = deepCopyValue(value.direction, memo);
+      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
+      return copy;
+    }
+    memo.set(value, value);
+    return value;
+  }
+  function deepCopyMeta(meta, memo) {
+    if (memo.has(meta))
+      return memo.get(meta);
+    const result = new Map;
+    memo.set(meta, result);
+    for (const [key, val] of meta) {
+      result.set(key, deepCopyValue(val, memo));
+    }
+    return result;
+  }
+  function deepCopyCell(cell, memo) {
+    if (memo.has(cell))
+      return memo.get(cell);
+    const result = new Cell(undefined);
+    memo.set(cell, result);
+    result.value = deepCopyValue(cell.value, memo);
+    return result;
+  }
+  function ensureExt2(obj) {
+    if (!obj || typeof obj !== "object") {
+      throw new Error(`Cannot attach meta properties to ${typeof obj}`);
+    }
+    if (!obj._ext) {
+      obj._ext = new Map;
+    }
+    return obj._ext;
+  }
+  function copyAllMeta(source, target, depth) {
+    const srcMeta = source?._ext;
+    if (!srcMeta || srcMeta.size === 0)
+      return;
+    if (!target || typeof target !== "object")
+      return;
+    const tgtMeta = ensureExt2(target);
+    for (const [key, val] of srcMeta) {
+      tgtMeta.set(key, depth === "deep" ? deepCopyValue(val) : val);
+    }
+  }
+  function transferMetaForUpdate(oldValue, newValue, rhsValue, depth) {
+    if (!newValue || typeof newValue !== "object")
+      return;
+    const oldMeta = oldValue?._ext;
+    const rhsMeta = rhsValue?._ext;
+    if (!oldMeta && !rhsMeta)
+      return;
+    const tgtMeta = new Map;
+    newValue._ext = tgtMeta;
+    const copyVal = depth === "deep" ? deepCopyValue : (v) => v;
+    if (oldMeta) {
+      for (const [key, val] of oldMeta) {
+        if (classifyMetaKey(key) === "ordinary") {
+          tgtMeta.set(key, copyVal(val));
+        }
+      }
+    }
+    if (oldMeta) {
+      for (const [key, val] of oldMeta) {
+        if (classifyMetaKey(key) === "sticky") {
+          tgtMeta.set(key, copyVal(val));
+        }
+      }
+    }
+    if (rhsMeta) {
+      for (const [key, val] of rhsMeta) {
+        if (classifyMetaKey(key) === "sticky") {
+          tgtMeta.set(key, copyVal(val));
+        }
+      }
+    }
+    if (rhsMeta) {
+      for (const [key, val] of rhsMeta) {
+        if (classifyMetaKey(key) === "ephemeral") {
+          tgtMeta.set(key, copyVal(val));
+        }
+      }
+    }
+  }
+
+  // rix/src/runtime/refinement.js
+  var REFINEMENT_REQUEST_SCHEMA = "rix.numerics.refinement-request@1";
+  var REFINEMENT_RESULT_SCHEMA = "rix.numerics.enclosure@1";
+  var REFINEMENT_CAPABILITIES_SCHEMA = "rix.numerics.capabilities@1";
+  var OPERATIONS = new Set(["enclose", "refine", "sample"]);
+  var STATUSES = new Set([
+    "enclosed",
+    "approximate",
+    "goalNotMet",
+    "budgetExhausted",
+    "resolutionFloor",
+    "unsupported",
+    "unknown"
+  ]);
+  var LIMIT_KEYS = ["maxwork", "maxcalls", "maxiterations", "maxdepth", "timeout", "memory"];
+  var EVIDENCE_RANK = new Map([
+    ["approximate", 0],
+    ["observed", 1],
+    ["assumed", 2],
+    ["constructorGuarantee", 3],
+    ["proof", 4]
+  ]);
+  var refinementText = (value) => ({ type: "string", value: String(value) });
+  var refinementMap = (entries = []) => ({ type: "map", entries: new Map(entries) });
+  var refinementSequence = (values = []) => ({ type: "sequence", values });
+  function refinementEntry(value, key, fallback = null) {
+    if (!(value?.type === "map" && value.entries instanceof Map))
+      return fallback;
+    const wanted = String(key).toLowerCase();
+    for (const [candidate, item] of value.entries) {
+      if (String(candidate).toLowerCase() === wanted)
+        return item;
+    }
+    return fallback;
+  }
+  function nameOf(value, fallback = null) {
+    if (value === null || value === undefined)
+      return fallback;
+    if (value?.type === "string")
+      return value.value;
+    return String(value);
+  }
+  function asRational4(value, label, { positive = false } = {}) {
+    const rational = value instanceof Integer ? value.toRational() : value;
+    if (!(rational instanceof Rational))
+      throw new TypeError(`${label} must be an exact Integer or Rational`);
+    if (positive && !rational.greaterThan(Rational.zero))
+      throw new RangeError(`${label} must be positive`);
+    return rational;
+  }
+  function asNonnegativeInteger(value, label) {
+    if (!(value instanceof Integer) || value.value < 0n)
+      throw new RangeError(`${label} must be a nonnegative Integer`);
+    return value;
+  }
+  function truth(value) {
+    return value !== null && value !== undefined;
+  }
+  function bool(value) {
+    return value ? new Integer(1n) : null;
+  }
+  function option(map, key, fallback) {
+    if (arguments.length < 3)
+      fallback = null;
+    if (!(map?.type === "map" && map.entries instanceof Map))
+      return fallback;
+    const wanted = String(key).toLowerCase();
+    for (const [candidate, value] of map.entries) {
+      if (String(candidate).toLowerCase() === wanted)
+        return value;
+    }
+    return fallback;
+  }
+  function exactLessThanOrEqual(left, right) {
+    const a = left instanceof Integer ? left.toRational() : left;
+    const b = right instanceof Integer ? right.toRational() : right;
+    if (!(a instanceof Rational) || !(b instanceof Rational))
+      return null;
+    return a.lessThanOrEqual(b);
+  }
+  function restrictiveLimit(requested, provider) {
+    if (requested === null || requested === undefined)
+      return provider ?? null;
+    if (provider === null || provider === undefined)
+      return requested;
+    const comparison = exactLessThanOrEqual(requested, provider);
+    return comparison === null || comparison ? requested : provider;
+  }
+  function normalizeLimitKey(key) {
+    const normalized = String(key).toLowerCase();
+    return normalized === "maxmemory" ? "memory" : normalized;
+  }
+  function providerLimits(capabilities) {
+    const found = new Map;
+    if (!(capabilities?.type === "map" && capabilities.entries instanceof Map))
+      return found;
+    for (const [key, value] of capabilities.entries) {
+      const normalized = normalizeLimitKey(key);
+      if (LIMIT_KEYS.includes(normalized))
+        found.set(normalized, value);
+    }
+    for (const container of ["limits", "work"]) {
+      const nested = refinementEntry(capabilities, container, null);
+      if (!(nested?.type === "map" && nested.entries instanceof Map))
+        continue;
+      for (const [key, value] of nested.entries) {
+        const normalized = normalizeLimitKey(key);
+        if (LIMIT_KEYS.includes(normalized))
+          found.set(normalized, value);
+      }
+    }
+    return found;
+  }
+  function requestedLimits(options) {
+    const found = new Map;
+    const work = option(options, "work", null);
+    for (const key of LIMIT_KEYS) {
+      const aliases = key === "memory" ? ["memory", "maxmemory"] : [key];
+      let value;
+      for (const alias of aliases) {
+        value = option(options, alias, undefined);
+        if (value === undefined && work)
+          value = option(work, alias, undefined);
+        if (value !== undefined)
+          break;
+      }
+      if (value !== undefined)
+        found.set(key, value);
+    }
+    return found;
+  }
+  function normalizeWork(options, capabilities) {
+    const requested = requestedLimits(options);
+    const defaults = new Map([
+      ["maxwork", new Integer(100n)]
+    ]);
+    if (!requested.has("maxwork"))
+      requested.set("maxwork", defaults.get("maxwork"));
+    if (!requested.has("maxcalls"))
+      requested.set("maxcalls", requested.get("maxwork"));
+    if (!requested.has("maxiterations"))
+      requested.set("maxiterations", requested.get("maxwork"));
+    const provider = providerLimits(capabilities);
+    const effective = new Map;
+    for (const key of LIMIT_KEYS) {
+      const value = restrictiveLimit(requested.get(key), provider.get(key));
+      if (value === null || value === undefined)
+        continue;
+      if (["maxwork", "maxcalls", "maxiterations", "maxdepth", "memory"].includes(key)) {
+        asNonnegativeInteger(value, key);
+      } else if (key === "timeout") {
+        asRational4(value, key, { positive: true });
+      }
+      effective.set(key, value);
+    }
+    return refinementMap(effective);
+  }
+  function normalizeRefinementRequest(options = null, { operation = null, capabilities = null } = {}) {
+    const source = options?.type === "map" && options.entries instanceof Map ? options : refinementMap();
+    const selectedOperation = nameOf(operation, nameOf(option(source, "operation", null), "enclose"));
+    if (!OPERATIONS.has(selectedOperation))
+      throw new RangeError(`Unknown refinement operation '${selectedOperation}'`);
+    const absoluteWidthValue = option(source, "absolutewidth", option(source, "width", null));
+    const relativeWidthValue = option(source, "relativewidth", null);
+    const relativeWidth = relativeWidthValue === null ? null : asRational4(relativeWidthValue, "relativeWidth", { positive: true });
+    const absoluteLimit = absoluteWidthValue === null ? relativeWidth === null ? new Rational(1n, 1000n) : null : asRational4(absoluteWidthValue, "absoluteWidth", { positive: true });
+    const relativeScale = relativeWidth === null ? null : asRational4(option(source, "relativescale", option(source, "scale", Rational.one)), "relativeScale", { positive: true });
+    const relativeLimit = relativeWidth === null ? null : relativeWidth.multiply(relativeScale);
+    const absoluteWidth = absoluteLimit === null ? relativeLimit : relativeLimit === null || absoluteLimit.lessThanOrEqual(relativeLimit) ? absoluteLimit : relativeLimit;
+    const work = normalizeWork(source, capabilities);
+    const entries = [
+      ["valuekind", refinementText("refinementRequest")],
+      ["schema", refinementText(REFINEMENT_REQUEST_SCHEMA)],
+      ["operation", refinementText(selectedOperation)],
+      ["absolutewidth", absoluteWidth],
+      ["absolutelimit", absoluteLimit],
+      ["relativewidth", relativeWidth],
+      ["relativescale", relativeScale],
+      ["effectivewidth", absoluteWidth],
+      ["evidencerequired", option(source, "evidencerequired", refinementText("any"))],
+      ["trace", option(source, "trace", new Integer(1n))],
+      ["seed", option(source, "seed", new Integer(1n))],
+      ["work", work]
+    ];
+    const purpose = option(source, "purpose", null);
+    if (purpose !== null)
+      entries.push(["purpose", purpose]);
+    for (const key of ["timeout", "memory"]) {
+      const value = refinementEntry(work, key, null);
+      if (value !== null)
+        entries.push([key, value]);
+    }
+    return refinementMap(entries);
+  }
+  function refinementEffectiveLimits(request, capabilities = null) {
+    return normalizeWork(normalizeRefinementRequest(request), capabilities);
+  }
+  function refinementSupports(capabilities, operation) {
+    if (!(capabilities?.type === "map" && capabilities.entries instanceof Map))
+      return false;
+    if (nameOf(refinementEntry(capabilities, "schema", null)) !== REFINEMENT_CAPABILITIES_SCHEMA)
+      return false;
+    const wanted = nameOf(operation);
+    const operations = refinementEntry(capabilities, "operations", null)?.values;
+    return Array.isArray(operations) && operations.some((item) => nameOf(item) === wanted);
+  }
+  function intervalWidth(interval) {
+    return interval.high.subtract(interval.low);
+  }
+  function limitObserved(work, name) {
+    if (!(work?.type === "map" && work.entries instanceof Map))
+      return null;
+    const aliases = name === "maxwork" ? ["total", "work", "calls"] : name === "maxcalls" ? ["calls"] : name === "maxiterations" ? ["iterations"] : name === "maxdepth" ? ["depth"] : name === "timeout" ? ["elapsed", "timeout"] : name === "memory" ? ["memory", "maxmemory"] : [];
+    for (const alias of aliases) {
+      const value = refinementEntry(work, alias, null);
+      if (value !== null)
+        return value;
+    }
+    return null;
+  }
+  function evidenceSatisfies(actualValue, requiredValue) {
+    const required = nameOf(requiredValue, "any");
+    if (required === "any")
+      return true;
+    const actual = nameOf(actualValue, "");
+    if (!EVIDENCE_RANK.has(required))
+      return actual === required;
+    return (EVIDENCE_RANK.get(actual) ?? -1) >= EVIDENCE_RANK.get(required);
+  }
+  function checkRefinementResult(result, request, capabilities = null) {
+    const normalizedRequest = normalizeRefinementRequest(request);
+    const isMap = result?.type === "map" && result.entries instanceof Map;
+    const requiredFields = [
+      "schema",
+      "status",
+      "interval",
+      "certified",
+      "goalmet",
+      "evidencelevel",
+      "backend",
+      "operation",
+      "requestedwidth",
+      "achievedwidth",
+      "work",
+      "diagnostics"
+    ];
+    const fieldsPresent = isMap && requiredFields.every((key) => {
+      const wanted = key.toLowerCase();
+      return Array.from(result.entries.keys()).some((candidate) => String(candidate).toLowerCase() === wanted);
+    });
+    const schemaValid = isMap && nameOf(refinementEntry(result, "schema", null)) === REFINEMENT_RESULT_SCHEMA;
+    const status = nameOf(refinementEntry(result, "status", null));
+    const statusValid = STATUSES.has(status);
+    const interval = refinementEntry(result, "interval", null);
+    const intervalValid = interval instanceof RationalInterval;
+    const requestedOperation = nameOf(refinementEntry(normalizedRequest, "operation", null));
+    const operationValid = nameOf(refinementEntry(result, "operation", null)) === requestedOperation;
+    const capabilityValid = capabilities === null || refinementSupports(capabilities, requestedOperation);
+    const certified = truth(refinementEntry(result, "certified", null));
+    const certificationValid = capabilities === null || !certified || truth(refinementEntry(capabilities, "certified", null));
+    const approximation = refinementEntry(result, "approximation", null);
+    const approximationPresent = !certified || approximation instanceof CertifiedApproximation;
+    const approximationConsistent = !certified || approximation instanceof CertifiedApproximation && intervalValid && approximation.enclosure.equals(interval);
+    const achievedWidth = refinementEntry(result, "achievedwidth", null);
+    const widthConsistent = !intervalValid || (achievedWidth instanceof Integer || achievedWidth instanceof Rational) && asRational4(achievedWidth, "achievedWidth").equals(intervalWidth(interval));
+    const requestedWidth = refinementEntry(normalizedRequest, "absolutewidth", null);
+    const resultRequestedWidth = refinementEntry(result, "requestedwidth", null);
+    const requestedWidthConsistent = (resultRequestedWidth instanceof Integer || resultRequestedWidth instanceof Rational) && asRational4(resultRequestedWidth, "requestedWidth").equals(requestedWidth);
+    const widthGoal = intervalValid && intervalWidth(interval).lessThanOrEqual(requestedWidth);
+    const goalMet = truth(refinementEntry(result, "goalmet", null));
+    const goalConsistent = certified ? goalMet === widthGoal && !(["budgetExhausted", "resolutionFloor", "unsupported", "unknown"].includes(status) && goalMet) : !goalMet;
+    const statusConsistent = (status !== "enclosed" || certified && goalMet) && (status !== "approximate" || !certified) && (status !== "unsupported" || !certified);
+    const evidenceValid = evidenceSatisfies(refinementEntry(result, "evidencelevel", null), refinementEntry(normalizedRequest, "evidencerequired", null));
+    const capabilityEvidence = refinementEntry(capabilities, "evidencelevels", null)?.values;
+    const actualEvidence = nameOf(refinementEntry(result, "evidencelevel", null));
+    const capabilityEvidenceValid = capabilities === null || !Array.isArray(capabilityEvidence) || capabilityEvidence.some((item) => nameOf(item) === actualEvidence);
+    const work = refinementEntry(result, "work", null);
+    const requestWork = refinementEntry(normalizedRequest, "work", null);
+    let workWithinLimits = work?.type === "map" && work.entries instanceof Map;
+    if (workWithinLimits) {
+      for (const key of LIMIT_KEYS) {
+        const limit = refinementEntry(requestWork, key, null);
+        const observed = limitObserved(work, key);
+        if (limit !== null && observed !== null && exactLessThanOrEqual(observed, limit) !== true) {
+          workWithinLimits = false;
+          break;
+        }
+      }
+    }
+    const valid = Boolean(fieldsPresent && schemaValid && statusValid && intervalValid && operationValid && capabilityValid && certificationValid && approximationPresent && approximationConsistent && requestedWidthConsistent && widthConsistent && goalConsistent && statusConsistent && evidenceValid && capabilityEvidenceValid && workWithinLimits);
+    return refinementMap([
+      ["valuekind", refinementText("numericsResultCheck")],
+      ["valid", bool(valid)],
+      ["fieldspresent", bool(fieldsPresent)],
+      ["schemavalid", bool(schemaValid)],
+      ["statusvalid", bool(statusValid)],
+      ["intervalvalid", bool(intervalValid)],
+      ["operationvalid", bool(operationValid)],
+      ["capabilityvalid", bool(capabilityValid)],
+      ["certificationvalid", bool(certificationValid)],
+      ["approximationpresent", bool(approximationPresent)],
+      ["approximationconsistent", bool(approximationConsistent)],
+      ["widthconsistent", bool(widthConsistent)],
+      ["requestedwidthconsistent", bool(requestedWidthConsistent)],
+      ["goalconsistent", bool(goalConsistent)],
+      ["statusconsistent", bool(statusConsistent)],
+      ["evidencevalid", bool(evidenceValid)],
+      ["capabilityevidencevalid", bool(capabilityEvidenceValid)],
+      ["workwithinlimits", bool(workWithinLimits)],
+      ["interval", interval],
+      ["request", normalizedRequest],
+      ["result", result]
+    ]);
+  }
+  function unsupportedRefinementResult(request, capabilities = null, reason = "unsupported") {
+    const normalized = normalizeRefinementRequest(request);
+    const operation = refinementEntry(normalized, "operation", refinementText("refine"));
+    const backend = refinementEntry(capabilities, "backend", refinementText("unknown"));
+    return refinementMap([
+      ["valuekind", refinementText("enclosure")],
+      ["schema", refinementText(REFINEMENT_RESULT_SCHEMA)],
+      ["status", refinementText("unsupported")],
+      ["interval", RationalInterval.zero],
+      ["certified", null],
+      ["goalmet", null],
+      ["requestedwidth", refinementEntry(normalized, "absolutewidth", null)],
+      ["achievedwidth", Rational.zero],
+      ["evidencelevel", refinementText("approximate")],
+      ["backend", backend],
+      ["operation", operation],
+      ["work", refinementMap()],
+      ["diagnostics", refinementSequence([refinementText(reason)])]
+    ]);
+  }
+  function refinementOutcome(result, request, capabilities = null) {
+    const check = checkRefinementResult(result, request, capabilities);
+    const status = nameOf(refinementEntry(result, "status", null), "unknown");
+    const certified = truth(refinementEntry(result, "certified", null));
+    const approximation = refinementEntry(result, "approximation", null);
+    const details = refinementMap([
+      ["status", refinementEntry(result, "status", refinementText(status))],
+      ["backend", refinementEntry(result, "backend", refinementText("unknown"))],
+      ["requestedwidth", refinementEntry(request, "absolutewidth", null)],
+      ["achievedwidth", refinementEntry(result, "achievedwidth", null)],
+      ["work", refinementEntry(result, "work", refinementMap())],
+      ["diagnostics", refinementEntry(result, "diagnostics", refinementSequence())],
+      ["evidence", refinementEntry(result, "evidence", null)],
+      ["check", check]
+    ]);
+    if (!certified)
+      return { value: null, reason: status === "unsupported" ? "unsupported" : "providerUncertified", details, check };
+    if (!truth(refinementEntry(check, "valid", null)))
+      return { value: null, reason: "invalidProviderResult", details, check };
+    if (approximation instanceof CertifiedApproximation) {
+      const fallbackReason = status === "budgetExhausted" ? "budgetExhausted" : status === "resolutionFloor" ? "resolutionFloor" : status === "unsupported" ? "unsupported" : status === "unknown" ? "unknown" : "haloResolutionReached";
+      return { value: approximation, reason: fallbackReason, details, check };
+    }
+    return { value: null, reason: "invalidProviderResult", details, check };
+  }
+
+  // rix/src/runtime/math-real.js
+  var states = new WeakMap;
+  var TOKEN = "__math_real_token";
+  var nextIdentity = 1;
+  var yes = (value) => value instanceof Integer && value.value === 1n;
+  var then = (value, finish) => value instanceof Promise ? value.then(finish) : finish(value);
+  var method = (source, name, args, context, evaluate) => evaluate({ fn: "CALL_METHOD", args: [source, name, ...args] }, context);
+  function realConstantState(value) {
+    if (value?.type !== "math_real")
+      return null;
+    const state = states.get(value._ext?.get(TOKEN));
+    if (!state)
+      throw new Error("Invalid mathematical real identity");
+    return state;
+  }
+  function requestFor(options, capabilities) {
+    if (options !== null && options !== undefined && options?.type !== "map")
+      throw new Error("Real refinement options require a map");
+    return normalizeRefinementRequest(options, { operation: "refine", capabilities });
+  }
+  function checkedInterval(result, request, capabilities) {
+    const check = checkRefinementResult(result, request, capabilities);
+    const interval = refinementEntry(result, "interval");
+    if (!yes(refinementEntry(check, "valid")) || !yes(refinementEntry(result, "certified")) || !(interval instanceof RationalInterval)) {
+      throw new Error("Mathematical real requires a valid certified refinement result");
+    }
+    if (interval.low.denominator === 0n || interval.high.denominator === 0n)
+      throw new Error("Mathematical real requires a finite certified enclosure");
+    return interval;
+  }
+  function adaptRealConstant(source, options, context, evaluate) {
+    const captured = deepCopyValue(source);
+    return then(method(captured, "NUMERICSCAPABILITIES", [], context, evaluate), (capabilities) => {
+      if (!refinementSupports(capabilities, "refine") || !yes(refinementEntry(capabilities, "certified")) || !yes(refinementEntry(capabilities, "arbitraryrefinement")) || refinementEntry(capabilities, "denotation")?.value !== "singleton") {
+        throw new Error("Mathematical real requires a certified arbitrarily refinable singleton provider");
+      }
+      const request = requestFor(options, capabilities);
+      return then(method(captured, "REFINE", [request], context, evaluate), (result) => {
+        const interval = checkedInterval(result, request, capabilities);
+        const token = () => {
+          throw new Error("Opaque real identity is not callable");
+        };
+        states.set(token, {
+          id: `real:${nextIdentity++}`,
+          source: captured,
+          capabilities: deepCopyValue(capabilities),
+          interval,
+          evidence: refinementEntry(result, "evidencelevel"),
+          result: deepCopyValue(result)
+        });
+        return { type: "math_real", _ext: new Map([[TOKEN, token], ["immutable", new Integer(1n)]]) };
+      });
+    });
+  }
+  function refineRealConstant(value, options, context, evaluate) {
+    const state = realConstantState(value);
+    if (!state)
+      throw new Error("ExpressionRefine requires an adapted real constant");
+    const request = requestFor(options, state.capabilities);
+    return then(method(state.source, "REFINE", [request], context, evaluate), (result) => {
+      const interval = checkedInterval(result, request, state.capabilities);
+      if (interval.high.lessThan(state.interval.low) || state.interval.high.lessThan(interval.low)) {
+        throw new Error("Refinement contradicts the retained real enclosure");
+      }
+      const lower = interval.low.greaterThan(state.interval.low) ? interval.low : state.interval.low;
+      const upper = interval.high.lessThan(state.interval.high) ? interval.high : state.interval.high;
+      state.interval = new RationalInterval(lower, upper);
+      const evidence = refinementEntry(result, "evidencelevel");
+      if (state.evidence?.value !== evidence?.value)
+        state.evidence = { type: "string", value: "mixed" };
+      state.result = deepCopyValue(result);
+      return result;
+    });
+  }
+
   // rix/src/runtime/math-constant.js
   var rationalKey = (value) => {
     if (value instanceof Integer)
@@ -13188,8 +13995,11 @@ ${indentStr})`;
       throw new Error("Expression constant provider requires finite rational components");
     return `${value.numerator}/${value.denominator}`;
   };
-  var isExpressionScalar = (value) => value instanceof Integer || value instanceof Rational || value instanceof RationalInterval || isExactValue(value);
+  var isExpressionScalar = (value) => value instanceof Integer || value instanceof Rational || value instanceof RationalInterval || isExactValue(value) || !!realConstantState(value);
   function constantKey(value) {
+    const real = realConstantState(value);
+    if (real)
+      return ["refinableReal", real.id];
     if (value instanceof Integer || value instanceof Rational)
       return ["rational", rationalKey(value)];
     if (value instanceof RationalInterval)
@@ -13207,6 +14017,12 @@ ${indentStr})`;
     return value instanceof RationalInterval;
   }
   function constantEquality(left, right) {
+    const aReal = realConstantState(left), bReal = realConstantState(right);
+    if (aReal || bReal) {
+      if (aReal && bReal && aReal.id === bReal.id)
+        return true;
+      return null;
+    }
     if (left instanceof RationalInterval || right instanceof RationalInterval) {
       const interval = (value) => value instanceof RationalInterval ? value : value instanceof Integer || value instanceof Rational ? new RationalInterval(value, value) : null;
       const a = interval(left), b = interval(right);
@@ -13226,20 +14042,24 @@ ${indentStr})`;
   }
   function constantProviderInfo(value) {
     constantKey(value);
-    const interval = isEnclosureConstant(value), exact = isExactValue(value);
+    const interval = isEnclosureConstant(value), exact = isExactValue(value), real = realConstantState(value);
     const text = (value2) => ({ type: "string", value: value2 });
     const decision = (value2) => value2 ? new Integer(1n) : null;
     return { type: "map", entries: new Map([
       ["schema", text("rix.math.constant-provider@1")],
-      ["provider", text(interval ? "rationalInterval" : exact ? "exactScalar" : "rational")],
+      ["provider", text(real ? "refinableReal" : interval ? "rationalInterval" : exact ? "exactScalar" : "rational")],
       ["denotation", text(interval ? "setEnclosure" : "singleton")],
       ["exact", decision(!interval)],
-      ["refinable", null],
+      ["refinable", decision(!!real)],
       ["commutative", new Integer(1n)],
       ["associative", new Integer(1n)],
       ["distributive", decision(!interval)],
       ["cancellation", exact ? UNDECIDED : decision(!interval)],
-      ["enclosure", interval ? value : null]
+      ["enclosure", real ? real.interval : interval ? value : null],
+      ["evidencelevel", real ? real.evidence : null],
+      ["validation", real ? text("protocolChecked") : null],
+      ["laststatus", real ? text(refinementEntry(real.result, "status")?.value) : null],
+      ["lastgoalmet", real ? decision(refinementEntry(real.result, "goalmet")?.value === 1n) : null]
     ]), _ext: new Map([["immutable", new Integer(1n)]]) };
   }
 
@@ -13409,14 +14229,14 @@ ${indentStr})`;
     return value?.type === "map" && expressionField(value, "schema")?.value === EXPRESSION_SCHEMA;
   }
   function expressionRecord(kind, fields = []) {
-    const method = (name, fn) => ({ type: "method_builtin", name, impl: (args) => fn(args[0]) });
+    const method2 = (name, fn) => ({ type: "method_builtin", name, impl: (args) => fn(args[0]) });
     const proto = { type: "map", entries: new Map([
-      ["RECORD", method("Record", (self) => self)],
-      ["KIND", method("Kind", (self) => expressionField(self, "kind"))],
-      ["OPERANDS", method("Operands", (self) => expressionField(self, "operands") || { type: "sequence", values: [] })],
-      ["SEMANTICID", method("SemanticId", (self) => expressionField(self, "semanticid") || null)]
+      ["RECORD", method2("Record", (self) => self)],
+      ["KIND", method2("Kind", (self) => expressionField(self, "kind"))],
+      ["OPERANDS", method2("Operands", (self) => expressionField(self, "operands") || { type: "sequence", values: [] })],
+      ["SEMANTICID", method2("SemanticId", (self) => expressionField(self, "semanticid") || null)]
     ]) };
-    proto.entries.set("SYMBOLID", method("SymbolId", (self) => expressionField(self, "symbolid") || null));
+    proto.entries.set("SYMBOLID", method2("SymbolId", (self) => expressionField(self, "symbolid") || null));
     const record = {
       type: "map",
       entries: new Map([
@@ -13500,7 +14320,12 @@ ${indentStr})`;
     SYMBOL_DEFINE: { impl: ([name, node], context, evaluate) => defineExpressionSymbol(name, node, context, evaluate), lazy: true, pure: false }
   };
   var expressionCapabilities = {
-    ExpressionConstantInfo: { impl: ([value]) => constantProviderInfo(isMathExpression(value) && expressionField(value, "kind")?.value === "constant" ? expressionField(value, "value") : value), pure: true, groups: ["Symbolic"], doc: "Inspect core constant denotation and algebraic laws without refinement" },
+    ExpressionReal: { impl: ([source, options], context, evaluate) => {
+      const adapted = adaptRealConstant(source, options, context, evaluate);
+      return adapted instanceof Promise ? adapted.then(expressionConstant) : expressionConstant(adapted);
+    }, pure: false, groups: ["Symbolic"], doc: "Adapt a certified singleton provider with one bounded initial refinement" },
+    ExpressionRefine: { impl: ([value, options], context, evaluate) => refineRealConstant(isMathExpression(value) && expressionField(value, "kind")?.value === "constant" ? expressionField(value, "value") : value, options, context, evaluate), pure: false, groups: ["Symbolic"], doc: "Explicitly refine an adapted real constant and check its enclosure" },
+    ExpressionConstantInfo: { impl: ([value]) => constantProviderInfo(isMathExpression(value) && expressionField(value, "kind")?.value === "constant" ? expressionField(value, "value") : value), pure: false, groups: ["Symbolic"], doc: "Inspect core constant denotation and algebraic laws without refinement" },
     ExpressionHasExtendedConstants: { impl: ([value]) => hasExtendedConstants(value) ? new Integer(1n) : null, pure: true, groups: ["Symbolic"], doc: "Recognize constants requiring provider-aware consumers" },
     ExpressionDefinition: { impl: ([symbol]) => {
       if (!expressionField(symbol, "symbolid"))
@@ -14387,26 +15212,26 @@ ${indentStr})`;
     }
     if (!isStructuralForm(value))
       return algebraScalar(value, profile);
-    const states = value.args.map((argument) => algebraState(argument, profile));
-    if (states.some((state) => state.unsupported)) {
+    const states2 = value.args.map((argument) => algebraState(argument, profile));
+    if (states2.some((state) => state.unsupported)) {
       return {
         ...algebraScalar(value, profile),
         unsupported: true
       };
     }
-    const anyBasis = states.some((state) => state.usesBasis);
+    const anyBasis = states2.some((state) => state.usesBasis);
     if (!anyBasis) {
-      return algebraScalar(rebuildForm(value, states.map((state) => state.components[0])), profile);
+      return algebraScalar(rebuildForm(value, states2.map((state) => state.components[0])), profile);
     }
     if (value.head === "Sum") {
-      return states.slice(1).reduce((left, right) => addAlgebraStates(left, right, value.mode), states[0]);
+      return states2.slice(1).reduce((left, right) => addAlgebraStates(left, right, value.mode), states2[0]);
     }
-    if (value.head === "Difference" && states.length === 2) {
-      return addAlgebraStates(states[0], states[1], value.mode, true);
+    if (value.head === "Difference" && states2.length === 2) {
+      return addAlgebraStates(states2[0], states2[1], value.mode, true);
     }
-    if ((value.head === "Negative" || value.head === "Positive") && states.length === 1) {
-      return value.head === "Positive" ? states[0] : {
-        components: states[0].components.map((component) => componentNegate(component, value.mode)),
+    if ((value.head === "Negative" || value.head === "Positive") && states2.length === 1) {
+      return value.head === "Positive" ? states2[0] : {
+        components: states2[0].components.map((component) => componentNegate(component, value.mode)),
         usesBasis: true,
         mode: value.mode,
         unsupported: false
@@ -14414,30 +15239,30 @@ ${indentStr})`;
     }
     if (value.head === "Product") {
       if (value.mode === "construct") {
-        const basisStates = states.filter((state) => state.usesBasis);
+        const basisStates = states2.filter((state) => state.usesBasis);
         if (basisStates.length === 1) {
-          const scalars = states.filter((state) => !state.usesBasis).map((state) => state.components[0]);
+          const scalars = states2.filter((state) => !state.usesBasis).map((state) => state.components[0]);
           const scalar = scalars.reduce((left, right) => componentMultiply(left, right, "construct"), new Integer(1n));
           return scaleAlgebraState(basisStates[0], scalar, "construct");
         }
       } else if (profile.multiplication) {
-        return states.slice(1).reduce((left, right) => multiplyAlgebraStates(left, right, profile, "apply"), states[0]);
+        return states2.slice(1).reduce((left, right) => multiplyAlgebraStates(left, right, profile, "apply"), states2[0]);
       }
     }
-    if (value.head === "Fraction" && value.mode === "apply" && states.length === 2 && !states[1].usesBasis) {
-      const denominator = states[1].components[0];
+    if (value.head === "Fraction" && value.mode === "apply" && states2.length === 2 && !states2[1].usesBasis) {
+      const denominator = states2[1].components[0];
       return {
-        components: states[0].components.map((component) => applyStructuralBinary("/", component, denominator)),
-        usesBasis: states[0].usesBasis,
+        components: states2[0].components.map((component) => applyStructuralBinary("/", component, denominator)),
+        usesBasis: states2[0].usesBasis,
         mode: "apply",
         unsupported: false
       };
     }
-    if (value.head === "Power" && value.mode === "apply" && states.length === 2 && states[0].usesBasis && !states[1].usesBasis && profile.multiplication) {
-      const exponent = integerComponent(states[1].components[0]);
+    if (value.head === "Power" && value.mode === "apply" && states2.length === 2 && states2[0].usesBasis && !states2[1].usesBasis && profile.multiplication) {
+      const exponent = integerComponent(states2[1].components[0]);
       if (exponent !== null && exponent >= 0n) {
         let result = algebraScalar(new Integer(1n), profile);
-        let factor = states[0];
+        let factor = states2[0];
         let remaining = exponent;
         while (remaining > 0n) {
           if (remaining % 2n === 1n) {
@@ -16276,7 +17101,7 @@ ${indentStr})`;
   // rix/src/runtime/reactive-graph.js
   var nextGraphId = 1;
   var REACTIVE_READ_ENV = "__reactive_read__";
-  function method(name, impl) {
+  function method2(name, impl) {
     return { type: "method_builtin", name, impl };
   }
   function text(value) {
@@ -16293,25 +17118,25 @@ ${indentStr})`;
   }
   function graphMethods() {
     return new Map([
-      ["SOURCE", method("Source", ([target, name, value]) => target.addSource(name, value))],
-      ["DERIVE", method("Derive", ([target, name, formula]) => target.addComputed(name, formula))],
-      ["GET", method("Get", ([target, name]) => target.get(name))],
-      ["NODE", method("Node", ([target, name]) => target.node(name))],
-      ["TOUCH", method("Touch", ([target, name]) => target.touch(name))],
-      ["RECALCULATE", method("Recalculate", ([target]) => target.recalculate())],
+      ["SOURCE", method2("Source", ([target, name, value]) => target.addSource(name, value))],
+      ["DERIVE", method2("Derive", ([target, name, formula]) => target.addComputed(name, formula))],
+      ["GET", method2("Get", ([target, name]) => target.get(name))],
+      ["NODE", method2("Node", ([target, name]) => target.node(name))],
+      ["TOUCH", method2("Touch", ([target, name]) => target.touch(name))],
+      ["RECALCULATE", method2("Recalculate", ([target]) => target.recalculate())],
       ["_mutable", new Integer(1n)]
     ]);
   }
   function nodeMethods() {
     return new Map([
-      ["GET", method("Get", ([target]) => target.get())],
-      ["PEEK", method("Peek", ([target]) => target.peek())],
-      ["SET", method("Set", ([target, value]) => target.set(value))],
-      ["REPLACEVALUE", method("ReplaceValue", ([target, value]) => target.replaceValue(value))],
-      ["TOUCH", method("Touch", ([target]) => target.touch())],
-      ["GETFORMULA", method("GetFormula", ([target]) => target.formula)],
-      ["SETFORMULA", method("SetFormula", ([target, formula]) => target.setFormula(formula))],
-      ["LIVE", method("Live", ([target]) => target.live())],
+      ["GET", method2("Get", ([target]) => target.get())],
+      ["PEEK", method2("Peek", ([target]) => target.peek())],
+      ["SET", method2("Set", ([target, value]) => target.set(value))],
+      ["REPLACEVALUE", method2("ReplaceValue", ([target, value]) => target.replaceValue(value))],
+      ["TOUCH", method2("Touch", ([target]) => target.touch())],
+      ["GETFORMULA", method2("GetFormula", ([target]) => target.formula)],
+      ["SETFORMULA", method2("SetFormula", ([target, formula]) => target.setFormula(formula))],
+      ["LIVE", method2("Live", ([target]) => target.live())],
       ["_mutable", new Integer(1n)]
     ]);
   }
@@ -16488,7 +17313,7 @@ ${indentStr})`;
       const stagedValues = new Map([...nodes].map(([name, node]) => [name, node.value]));
       for (const [name, value] of sourceOverrides)
         stagedValues.set(name, value);
-      const states = new Map([...nodes].map(([name, node]) => [
+      const states2 = new Map([...nodes].map(([name, node]) => [
         name,
         requested.has(name) && node.kind === "computed" && !preserveValues.has(name) ? "dirty" : "clean"
       ]));
@@ -16502,24 +17327,24 @@ ${indentStr})`;
         read(name) {
           name = canonicalName(name);
           const node = requireNode(name);
-          if (!states.has(name)) {
+          if (!states2.has(name)) {
             requested.add(name);
             stagedValues.set(name, node.value);
-            states.set(name, node.kind === "computed" ? "dirty" : "clean");
+            states2.set(name, node.kind === "computed" ? "dirty" : "clean");
             dependencies.set(name, new Set(node.dependencies));
           }
           if (currentName && currentName !== name)
             dependencies.get(currentName).add(name);
           if (node.kind === "source")
             return stagedValues.get(name);
-          if (states.get(name) === "clean")
+          if (states2.get(name) === "clean")
             return stagedValues.get(name);
-          if (states.get(name) === "evaluating") {
+          if (states2.get(name) === "evaluating") {
             const cycleStart = stack.indexOf(name);
             const cycle = [...stack.slice(cycleStart), name].map((item) => options.labelForNode?.(item) ?? item);
             throw new Error(`${options.cycleLabel || "Reactive cycle"}: ${cycle.join(" -> ")}`);
           }
-          states.set(name, "evaluating");
+          states2.set(name, "evaluating");
           stack.push(name);
           const previousName = currentName;
           currentName = name;
@@ -16527,7 +17352,7 @@ ${indentStr})`;
             const value = node.evaluator ? node.evaluator(node.formula, graph) : options.evaluateFormula(node.formula, graph);
             assertSynchronousFormulaValue(value);
             stagedValues.set(name, value);
-            states.set(name, "clean");
+            states2.set(name, "clean");
             return value;
           } finally {
             currentName = previousName;
@@ -16551,7 +17376,7 @@ ${indentStr})`;
           epoch.read(name);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        for (const [name, state] of states) {
+        for (const [name, state] of states2) {
           if (state !== "evaluating")
             continue;
           const node = nodes.get(name);
@@ -18230,11 +19055,11 @@ ${indentStr})`;
       return fn.invokeSync(callArgs, context, evaluate);
     }
     if (fn.type === "bound_method") {
-      const method2 = resolveMethod(fn.target, fn.methodName, context);
-      if (!method2) {
+      const method3 = resolveMethod(fn.target, fn.methodName, context);
+      if (!method3) {
         throw new Error(`Plugin export '${fn.methodName}' is no longer available`);
       }
-      return method2.type === "method_builtin" ? method2.impl([fn.target, ...callArgs], context, evaluate, callWithConcreteArgs) : callWithConcreteArgs(method2, [fn.target, ...callArgs], context, evaluate);
+      return method3.type === "method_builtin" ? method3.impl([fn.target, ...callArgs], context, evaluate, callWithConcreteArgs) : callWithConcreteArgs(method3, [fn.target, ...callArgs], context, evaluate);
     }
     if (isSymbolicSpec(fn)) {
       return applySymbolicSpec(fn, callArgs);
@@ -20071,20 +20896,20 @@ ${indentStr})`;
       return integer2;
     });
   }
-  function method2(name, impl) {
+  function method3(name, impl) {
     return { type: "method_builtin", name, impl };
   }
   function formulaSheetMethods() {
     return new Map([
-      ["GETFORMULA", method2("GetFormula", ([target, ...index]) => target.getFormula(index))],
-      ["SETFORMULA", method2("SetFormula", ([target, ...args]) => {
+      ["GETFORMULA", method3("GetFormula", ([target, ...index]) => target.getFormula(index))],
+      ["SETFORMULA", method3("SetFormula", ([target, ...args]) => {
         if (args.length < 2)
           throw new Error("FormulaSheet.SetFormula requires indices and a deferred formula");
         const formula = args.at(-1);
         return target.setFormula(args.slice(0, -1), formula);
       })],
-      ["GETSOURCE", method2("GetSource", ([target, ...index]) => target.getFormulaSource(index))],
-      ["SETSOURCE", method2("SetSource", ([target, ...args]) => {
+      ["GETSOURCE", method3("GetSource", ([target, ...index]) => target.getFormulaSource(index))],
+      ["SETSOURCE", method3("SetSource", ([target, ...args]) => {
         const rank = target.rank;
         if (args.length !== rank + 1 && args.length !== rank + 2) {
           throw new Error(`FormulaSheet.SetSource expects ${rank} indices, source, and optional assignment mode`);
@@ -20094,15 +20919,15 @@ ${indentStr})`;
         const mode = args[rank + 1] ?? null;
         return target.setFormulaSource(index, source, mode);
       })],
-      ["GETASSIGNMENTMODE", method2("GetAssignmentMode", ([target, ...index]) => target.slot(index).assignmentMode)],
-      ["INDEX", method2("Index", ([target, selector2]) => target.index(selector2))],
-      ["AT", method2("At", ([target, selector2]) => target.at(selector2))],
-      ["SLOTAT", method2("SlotAt", ([target, selector2]) => target.slotAt(selector2))],
-      ["NEAR", method2("Near", ([target, origin, offsets]) => target.near(origin, offsets))],
-      ["SETAXISLABEL", method2("SetAxisLabel", ([target, axis, coordinate, label]) => target.setAxisLabel(axis, coordinate, label))],
-      ["RECALCULATE", method2("Recalculate", ([target]) => target.recalculate())],
-      ["SLOT", method2("Slot", ([target, ...index]) => target.slot(index))],
-      ["GRAPH", method2("Graph", ([target]) => target.graph)],
+      ["GETASSIGNMENTMODE", method3("GetAssignmentMode", ([target, ...index]) => target.slot(index).assignmentMode)],
+      ["INDEX", method3("Index", ([target, selector2]) => target.index(selector2))],
+      ["AT", method3("At", ([target, selector2]) => target.at(selector2))],
+      ["SLOTAT", method3("SlotAt", ([target, selector2]) => target.slotAt(selector2))],
+      ["NEAR", method3("Near", ([target, origin, offsets]) => target.near(origin, offsets))],
+      ["SETAXISLABEL", method3("SetAxisLabel", ([target, axis, coordinate, label]) => target.setAxisLabel(axis, coordinate, label))],
+      ["RECALCULATE", method3("Recalculate", ([target]) => target.recalculate())],
+      ["SLOT", method3("Slot", ([target, ...index]) => target.slot(index))],
+      ["GRAPH", method3("Graph", ([target]) => target.graph)],
       ["_mutable", new Integer(1n)]
     ]);
   }
@@ -21437,7 +22262,7 @@ ${indentStr})`;
       ])
     });
   }
-  function method3(name, impl) {
+  function method4(name, impl) {
     return { type: "method_builtin", name, impl };
   }
   function sheetMethods() {
@@ -21453,8 +22278,8 @@ ${indentStr})`;
       throw new Error(`Sheet coordinate is unavailable: [${coordinate.join(",")}]`);
     };
     return [
-      ["INDEX", method3("Index", ([target, selector2]) => coordinateTuple(index(target, selector2, "Sheet.Index")))],
-      ["AT", method3("At", ([target, selector2]) => cellAt(target, index(target, selector2, "Sheet.At")).value)]
+      ["INDEX", method4("Index", ([target, selector2]) => coordinateTuple(index(target, selector2, "Sheet.Index")))],
+      ["AT", method4("At", ([target, selector2]) => cellAt(target, index(target, selector2, "Sheet.At")).value)]
     ];
   }
   function exactInteger4(value, label) {
@@ -21842,7 +22667,7 @@ ${indentStr})`;
     let ordinal = 0;
     return sequence(value, `${name} entries`).flatMap((entry, group) => {
       let scene;
-      let states;
+      let states2;
       let label = null;
       if (entry?.type === "map") {
         const fields = map(entry, `${name} entry ${group + 1}`);
@@ -21850,15 +22675,15 @@ ${indentStr})`;
           throw new Error(`${name} entry ${group + 1} requires scene and states`);
         }
         scene = get(fields, "scene");
-        states = get(fields, "states");
+        states2 = get(fields, "states");
         label = asString(get(fields, "label"));
       } else {
         const pair = sequence(entry, `${name} entry ${group + 1}`);
         if (pair.length !== 2)
           throw new Error(`${name} entry ${group + 1} must be a [scene, states] tuple`);
-        [scene, states] = pair;
+        [scene, states2] = pair;
       }
-      return sequence(states, `${name} entry ${group + 1} states`).map((state, index) => {
+      return sequence(states2, `${name} entry ${group + 1} states`).map((state, index) => {
         const originEntries = new Map([
           ["entry", int3(group + 1)],
           ["state", int3(index + 1)],
@@ -22283,10 +23108,10 @@ ${indentStr})`;
     });
   }
   function normalizeChoiceOptions(value) {
-    return sequence(value, "Controls.Choice options").map((option, index) => {
-      if (option?.type !== "map")
-        return Object.freeze({ value: option, label: asString(option) });
-      const entries2 = map(option, `Controls.Choice option ${index + 1}`);
+    return sequence(value, "Controls.Choice options").map((option2, index) => {
+      if (option2?.type !== "map")
+        return Object.freeze({ value: option2, label: asString(option2) });
+      const entries2 = map(option2, `Controls.Choice option ${index + 1}`);
       const optionValue = get(entries2, "value");
       if (!has(entries2, "value"))
         throw new Error(`Controls.Choice option ${index + 1} requires value`);
@@ -22300,10 +23125,10 @@ ${indentStr})`;
     if (options.length === 0)
       throw new Error("Controls.Choice requires at least one option");
     const value = target.get();
-    const index = options.findIndex((option) => controlValuesEqual(option.value, value));
+    const index = options.findIndex((option2) => controlValuesEqual(option2.value, value));
     if (index === -1)
       throw new Error("Controls.Choice target value must match one of its options");
-    const displayOptions = options.map((option) => option.label === null ? controlDisplay(entry, { option: option.value }, "Controls.Choice", runtime, ["value", "option"]).option : option.label);
+    const displayOptions = options.map((option2) => option2.label === null ? controlDisplay(entry, { option: option2.value }, "Controls.Choice", runtime, ["value", "option"]).option : option2.label);
     return output("control_choice", {
       id: asString(get(entry, "id")) || `${target.id}:choice`,
       label: asString(get(entry, "label")) || target.name,
@@ -22470,7 +23295,7 @@ ${indentStr})`;
       interactive: true,
       style: optionalMap(get(entry, "style"), "ControlPanel style"),
       metadata: optionalMap(get(entry, "metadata"), "ControlPanel metadata")
-    }, [["SNAPSHOT", method3("Snapshot", ([target]) => createControlPanelSnapshot(target))]]);
+    }, [["SNAPSHOT", method4("Snapshot", ([target]) => createControlPanelSnapshot(target))]]);
   }
   function controlSnapshot(control) {
     const {
@@ -24196,7 +25021,7 @@ ${formatOutputText(slide, format)}`).join(`
     }
     if (value.kind === "control_choice") {
       const dependencies = value.replacesDependencies.length > 0 ? ` data-rix-replaces-dependencies="${escapeHtml2(value.replacesDependencies.join(","))}"` : "";
-      const options = value.options.map((option, index) => `<option value="${index}"${index === value.index ? " selected" : ""}>${escapeHtml2(cellText(value.displayOptions[index], format))}</option>`).join("");
+      const options = value.options.map((option2, index) => `<option value="${index}"${index === value.index ? " selected" : ""}>${escapeHtml2(cellText(value.displayOptions[index], format))}</option>`).join("");
       return `<label class="rix-output-control rix-output-control-choice" data-rix-control-kind="choice" data-rix-control-id="${escapeHtml2(value.id)}" data-rix-control-target="${escapeHtml2(value.targetId)}"${controlStyleAttributes(value)}${controlStateAttributes(value)}${dependencies}><span class="rix-output-control-label">${escapeHtml2(value.label)}</span><select data-rix-control-input aria-label="${escapeHtml2(value.label)}"${controlInputAttributes(value)}>${options}</select><output data-rix-control-value>${text4(controlField(value, "value"))}</output>${controlMessages(value)}</label>`;
     }
     if (value.kind === "control_toggle") {
@@ -25122,378 +25947,6 @@ ${indented.join(`,
   };
   var deferredMethods = { EVAL: Eval, DESUGAR: Desugar, INSPECT: Inspect };
 
-  // rix/src/runtime/cell.js
-  class Cell {
-    constructor(value) {
-      this.value = value;
-    }
-  }
-  function classifyMetaKey(name) {
-    if (name.startsWith("__"))
-      return "sticky";
-    if (name.startsWith("_"))
-      return "ephemeral";
-    return "ordinary";
-  }
-  function shallowCopyValue(value) {
-    if (value == null)
-      return value;
-    if (typeof value !== "object")
-      return value;
-    if (value instanceof UndecidedDiagnostic)
-      return value.copy();
-    if (isUndecided(value))
-      return value;
-    if (value instanceof CertifiedApproximation)
-      return value.copy();
-    if (value instanceof Integer)
-      return new Integer(value.value);
-    if (value instanceof Rational)
-      return new Rational(value.numerator, value.denominator);
-    if (value instanceof RationalInterval) {
-      return new RationalInterval(new Rational(value.low.numerator, value.low.denominator), new Rational(value.high.numerator, value.high.denominator));
-    }
-    if (value instanceof RationalIntervalSet)
-      return new RationalIntervalSet(value);
-    if (value.type === "string")
-      return { type: "string", value: value.value };
-    if (isLazySequence(value))
-      return cloneLazySequence(value);
-    if (value.type === "iterator") {
-      return {
-        type: "iterator",
-        source: value.source,
-        cursor: value.cursor,
-        _ext: value._ext ? new Map(value._ext) : undefined
-      };
-    }
-    if (value.type === "sequence") {
-      return {
-        type: "sequence",
-        values: [...value.values],
-        _ext: value._ext ? new Map(value._ext) : undefined
-      };
-    }
-    if (value.type === "tuple") {
-      return {
-        type: "tuple",
-        values: [...value.values],
-        _ext: value._ext ? new Map(value._ext) : undefined
-      };
-    }
-    if (value.type === "map" && value.entries instanceof Map) {
-      return {
-        type: "map",
-        entries: new Map(value.entries),
-        _ext: value._ext ? new Map(value._ext) : undefined
-      };
-    }
-    if (value.type === "export_bundle" && value.entries instanceof Map) {
-      return {
-        type: "export_bundle",
-        entries: new Map(value.entries),
-        _ext: value._ext ? new Map(value._ext) : undefined
-      };
-    }
-    if (value.type === "set") {
-      return {
-        type: "set",
-        values: [...value.values],
-        _ext: value._ext ? new Map(value._ext) : undefined
-      };
-    }
-    if (isShaped(value)) {
-      return {
-        type: "shaped",
-        data: [...value.data],
-        shape: [...value.shape],
-        strides: [...value.strides],
-        offset: value.offset,
-        _ext: value._ext ? new Map(value._ext) : undefined
-      };
-    }
-    if (value.type === "quantity") {
-      return { ...value, _ext: value._ext ? new Map(value._ext) : undefined };
-    }
-    if (value.type === "unit_expr") {
-      return { ...value, factors: new Map(value.factors), _ext: value._ext ? new Map(value._ext) : undefined };
-    }
-    if (value.type === "exact_expression") {
-      return { ...value, terms: new Map(value.terms), _ext: value._ext ? new Map(value._ext) : undefined };
-    }
-    if (value.type === "cayley") {
-      return { ...value, _ext: value._ext ? new Map(value._ext) : undefined };
-    }
-    return value;
-  }
-  function deepCopyValue(value, memo = new WeakMap) {
-    if (!(memo instanceof WeakMap))
-      memo = new WeakMap;
-    if (value == null)
-      return value;
-    if (typeof value !== "object")
-      return value;
-    if (memo.has(value))
-      return memo.get(value);
-    if (value instanceof UndecidedDiagnostic) {
-      const copy = value.copy();
-      memo.set(value, copy);
-      return copy;
-    }
-    if (isUndecided(value))
-      return value;
-    if (value instanceof CertifiedApproximation) {
-      const copy = value.copy();
-      memo.set(value, copy);
-      return copy;
-    }
-    if (value instanceof Integer) {
-      const copy = new Integer(value.value);
-      memo.set(value, copy);
-      return copy;
-    }
-    if (value instanceof Rational) {
-      const copy = new Rational(value.numerator, value.denominator);
-      memo.set(value, copy);
-      return copy;
-    }
-    if (value instanceof RationalInterval) {
-      const copy = new RationalInterval(new Rational(value.low.numerator, value.low.denominator), new Rational(value.high.numerator, value.high.denominator));
-      memo.set(value, copy);
-      return copy;
-    }
-    if (value instanceof RationalIntervalSet) {
-      const copy = new RationalIntervalSet(value);
-      memo.set(value, copy);
-      return copy;
-    }
-    if (value.type === "string") {
-      const copy = { type: "string", value: value.value };
-      memo.set(value, copy);
-      return copy;
-    }
-    if (isLazySequence(value)) {
-      const copy = cloneLazySequence(value, {
-        restart: true,
-        cloneValue: (child) => deepCopyValue(child, memo)
-      });
-      memo.set(value, copy);
-      return copy;
-    }
-    if (value.type === "iterator") {
-      const copy = {
-        type: "iterator",
-        source: undefined,
-        cursor: value.cursor,
-        _ext: undefined
-      };
-      memo.set(value, copy);
-      copy.source = deepCopyValue(value.source, memo);
-      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
-      return copy;
-    }
-    if (value.type === "sequence") {
-      const copy = {
-        type: "sequence",
-        values: [],
-        _ext: undefined
-      };
-      memo.set(value, copy);
-      copy.values = value.values.map((child) => deepCopyValue(child, memo));
-      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
-      return copy;
-    }
-    if (value.type === "tuple") {
-      const copy = {
-        type: "tuple",
-        values: [],
-        _ext: undefined
-      };
-      memo.set(value, copy);
-      copy.values = value.values.map((child) => deepCopyValue(child, memo));
-      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
-      return copy;
-    }
-    if (value.type === "map" && value.entries instanceof Map) {
-      const copy = {
-        type: "map",
-        entries: new Map,
-        _ext: undefined
-      };
-      memo.set(value, copy);
-      for (const [k, v] of value.entries) {
-        copy.entries.set(k, deepCopyValue(v, memo));
-      }
-      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
-      return copy;
-    }
-    if (value.type === "export_bundle" && value.entries instanceof Map) {
-      const copy = {
-        type: "export_bundle",
-        entries: new Map,
-        _ext: undefined
-      };
-      memo.set(value, copy);
-      for (const [k, v] of value.entries) {
-        copy.entries.set(k, deepCopyCell(v, memo));
-      }
-      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
-      return copy;
-    }
-    if (value.type === "set") {
-      const copy = {
-        type: "set",
-        values: [],
-        _ext: undefined
-      };
-      memo.set(value, copy);
-      copy.values = value.values.map((child) => deepCopyValue(child, memo));
-      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
-      return copy;
-    }
-    if (isShaped(value)) {
-      const copy = {
-        type: "shaped",
-        data: [],
-        shape: [...value.shape],
-        strides: [...value.strides],
-        offset: value.offset,
-        _ext: undefined
-      };
-      memo.set(value, copy);
-      copy.data = value.data.map((child) => deepCopyValue(child, memo));
-      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
-      return copy;
-    }
-    if (value.type === "quantity") {
-      const copy = {
-        ...value,
-        baseMagnitude: undefined,
-        displayUnit: undefined,
-        _ext: undefined
-      };
-      memo.set(value, copy);
-      copy.baseMagnitude = deepCopyValue(value.baseMagnitude, memo);
-      copy.displayUnit = deepCopyValue(value.displayUnit, memo);
-      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
-      return copy;
-    }
-    if (value.type === "unit_expr") {
-      const copy = {
-        ...value,
-        factors: new Map(value.factors),
-        _ext: undefined
-      };
-      memo.set(value, copy);
-      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
-      return copy;
-    }
-    if (value.type === "exact_expression") {
-      const copy = { ...value, terms: new Map, _ext: undefined };
-      memo.set(value, copy);
-      for (const [key, term] of value.terms) {
-        copy.terms.set(key, {
-          powers: new Map(term.powers),
-          coefficient: deepCopyValue(term.coefficient, memo)
-        });
-      }
-      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
-      return copy;
-    }
-    if (value.type === "cayley") {
-      const copy = {
-        ...value,
-        magnitude: undefined,
-        direction: undefined,
-        _ext: undefined
-      };
-      memo.set(value, copy);
-      copy.magnitude = deepCopyValue(value.magnitude, memo);
-      copy.direction = deepCopyValue(value.direction, memo);
-      copy._ext = value._ext ? deepCopyMeta(value._ext, memo) : undefined;
-      return copy;
-    }
-    memo.set(value, value);
-    return value;
-  }
-  function deepCopyMeta(meta, memo) {
-    if (memo.has(meta))
-      return memo.get(meta);
-    const result = new Map;
-    memo.set(meta, result);
-    for (const [key, val] of meta) {
-      result.set(key, deepCopyValue(val, memo));
-    }
-    return result;
-  }
-  function deepCopyCell(cell, memo) {
-    if (memo.has(cell))
-      return memo.get(cell);
-    const result = new Cell(undefined);
-    memo.set(cell, result);
-    result.value = deepCopyValue(cell.value, memo);
-    return result;
-  }
-  function ensureExt2(obj) {
-    if (!obj || typeof obj !== "object") {
-      throw new Error(`Cannot attach meta properties to ${typeof obj}`);
-    }
-    if (!obj._ext) {
-      obj._ext = new Map;
-    }
-    return obj._ext;
-  }
-  function copyAllMeta(source, target, depth) {
-    const srcMeta = source?._ext;
-    if (!srcMeta || srcMeta.size === 0)
-      return;
-    if (!target || typeof target !== "object")
-      return;
-    const tgtMeta = ensureExt2(target);
-    for (const [key, val] of srcMeta) {
-      tgtMeta.set(key, depth === "deep" ? deepCopyValue(val) : val);
-    }
-  }
-  function transferMetaForUpdate(oldValue, newValue, rhsValue, depth) {
-    if (!newValue || typeof newValue !== "object")
-      return;
-    const oldMeta = oldValue?._ext;
-    const rhsMeta = rhsValue?._ext;
-    if (!oldMeta && !rhsMeta)
-      return;
-    const tgtMeta = new Map;
-    newValue._ext = tgtMeta;
-    const copyVal = depth === "deep" ? deepCopyValue : (v) => v;
-    if (oldMeta) {
-      for (const [key, val] of oldMeta) {
-        if (classifyMetaKey(key) === "ordinary") {
-          tgtMeta.set(key, copyVal(val));
-        }
-      }
-    }
-    if (oldMeta) {
-      for (const [key, val] of oldMeta) {
-        if (classifyMetaKey(key) === "sticky") {
-          tgtMeta.set(key, copyVal(val));
-        }
-      }
-    }
-    if (rhsMeta) {
-      for (const [key, val] of rhsMeta) {
-        if (classifyMetaKey(key) === "sticky") {
-          tgtMeta.set(key, copyVal(val));
-        }
-      }
-    }
-    if (rhsMeta) {
-      for (const [key, val] of rhsMeta) {
-        if (classifyMetaKey(key) === "ephemeral") {
-          tgtMeta.set(key, copyVal(val));
-        }
-      }
-    }
-  }
-
   // rix/src/runtime/range-policy.js
   var RANGE_MATH_POLICY_KEY = "__range_math_policy__";
   var DEFAULT_RANGE_MATH_POLICY = Object.freeze({
@@ -25514,7 +25967,7 @@ ${indented.join(`,
       return value.value;
     throw new Error(`${label} must be a name or string`);
   }
-  function truth(value) {
+  function truth2(value) {
     return value instanceof Integer && value.value !== 0n;
   }
   function normalizedAction(value, label) {
@@ -25545,7 +25998,7 @@ ${indented.join(`,
     let zeroPowerZero = inherited.zeroPowerZero || "undefined";
     const strict = entryCaseInsensitive(entries2, "strict");
     if (strict !== undefined)
-      defaultAction = truth(strict) ? "throw" : "report";
+      defaultAction = truth2(strict) ? "throw" : "report";
     const defaultValue = entryCaseInsensitive(entries2, "default");
     if (defaultValue !== undefined) {
       defaultAction = normalizedAction(defaultValue, "RangePolicy default");
@@ -25584,7 +26037,7 @@ ${indented.join(`,
 
   // rix/src/runtime/range-arithmetic.js
   var text5 = (value) => ({ type: "string", value: String(value) });
-  var bool = (value) => value ? new Integer(1n) : null;
+  var bool2 = (value) => value ? new Integer(1n) : null;
   var sequence2 = (values) => ({ type: "sequence", values });
   var map2 = (entries2) => ({ type: "map", entries: new Map(entries2) });
   function portableValue(value) {
@@ -25599,7 +26052,7 @@ ${indented.join(`,
     if (typeof value === "string")
       return text5(value);
     if (typeof value === "boolean")
-      return bool(value);
+      return bool2(value);
     if (Array.isArray(value))
       return sequence2(value.map(portableValue));
     if (typeof value === "object") {
@@ -25628,7 +26081,7 @@ ${indented.join(`,
       ["parameters", portableValue(record.parameters)],
       ["range", new RationalIntervalSet(record.range)],
       ["domain", map2(domainEntries)],
-      ["certified", bool(check.accepted)],
+      ["certified", bool2(check.accepted)],
       ["evidenceLevel", text5(check.accepted ? "checkedEvidence" : "heuristic")],
       ["evidence", portableValue(record.evidence)],
       ["checker", portableValue(check)],
@@ -30737,366 +31190,6 @@ ${indented.join(`,
     return value;
   }
 
-  // rix/src/runtime/refinement.js
-  var REFINEMENT_REQUEST_SCHEMA = "rix.numerics.refinement-request@1";
-  var REFINEMENT_RESULT_SCHEMA = "rix.numerics.enclosure@1";
-  var REFINEMENT_CAPABILITIES_SCHEMA = "rix.numerics.capabilities@1";
-  var OPERATIONS = new Set(["enclose", "refine", "sample"]);
-  var STATUSES = new Set([
-    "enclosed",
-    "approximate",
-    "goalNotMet",
-    "budgetExhausted",
-    "resolutionFloor",
-    "unsupported",
-    "unknown"
-  ]);
-  var LIMIT_KEYS = ["maxwork", "maxcalls", "maxiterations", "maxdepth", "timeout", "memory"];
-  var EVIDENCE_RANK = new Map([
-    ["approximate", 0],
-    ["observed", 1],
-    ["assumed", 2],
-    ["constructorGuarantee", 3],
-    ["proof", 4]
-  ]);
-  var refinementText = (value) => ({ type: "string", value: String(value) });
-  var refinementMap = (entries2 = []) => ({ type: "map", entries: new Map(entries2) });
-  var refinementSequence = (values2 = []) => ({ type: "sequence", values: values2 });
-  function refinementEntry(value, key, fallback = null) {
-    if (!(value?.type === "map" && value.entries instanceof Map))
-      return fallback;
-    const wanted = String(key).toLowerCase();
-    for (const [candidate, item] of value.entries) {
-      if (String(candidate).toLowerCase() === wanted)
-        return item;
-    }
-    return fallback;
-  }
-  function nameOf(value, fallback = null) {
-    if (value === null || value === undefined)
-      return fallback;
-    if (value?.type === "string")
-      return value.value;
-    return String(value);
-  }
-  function asRational4(value, label, { positive = false } = {}) {
-    const rational = value instanceof Integer ? value.toRational() : value;
-    if (!(rational instanceof Rational))
-      throw new TypeError(`${label} must be an exact Integer or Rational`);
-    if (positive && !rational.greaterThan(Rational.zero))
-      throw new RangeError(`${label} must be positive`);
-    return rational;
-  }
-  function asNonnegativeInteger(value, label) {
-    if (!(value instanceof Integer) || value.value < 0n)
-      throw new RangeError(`${label} must be a nonnegative Integer`);
-    return value;
-  }
-  function truth2(value) {
-    return value !== null && value !== undefined;
-  }
-  function bool2(value) {
-    return value ? new Integer(1n) : null;
-  }
-  function option(map5, key, fallback) {
-    if (arguments.length < 3)
-      fallback = null;
-    if (!(map5?.type === "map" && map5.entries instanceof Map))
-      return fallback;
-    const wanted = String(key).toLowerCase();
-    for (const [candidate, value] of map5.entries) {
-      if (String(candidate).toLowerCase() === wanted)
-        return value;
-    }
-    return fallback;
-  }
-  function exactLessThanOrEqual(left, right) {
-    const a = left instanceof Integer ? left.toRational() : left;
-    const b = right instanceof Integer ? right.toRational() : right;
-    if (!(a instanceof Rational) || !(b instanceof Rational))
-      return null;
-    return a.lessThanOrEqual(b);
-  }
-  function restrictiveLimit(requested, provider) {
-    if (requested === null || requested === undefined)
-      return provider ?? null;
-    if (provider === null || provider === undefined)
-      return requested;
-    const comparison = exactLessThanOrEqual(requested, provider);
-    return comparison === null || comparison ? requested : provider;
-  }
-  function normalizeLimitKey(key) {
-    const normalized = String(key).toLowerCase();
-    return normalized === "maxmemory" ? "memory" : normalized;
-  }
-  function providerLimits(capabilities) {
-    const found = new Map;
-    if (!(capabilities?.type === "map" && capabilities.entries instanceof Map))
-      return found;
-    for (const [key, value] of capabilities.entries) {
-      const normalized = normalizeLimitKey(key);
-      if (LIMIT_KEYS.includes(normalized))
-        found.set(normalized, value);
-    }
-    for (const container of ["limits", "work"]) {
-      const nested = refinementEntry(capabilities, container, null);
-      if (!(nested?.type === "map" && nested.entries instanceof Map))
-        continue;
-      for (const [key, value] of nested.entries) {
-        const normalized = normalizeLimitKey(key);
-        if (LIMIT_KEYS.includes(normalized))
-          found.set(normalized, value);
-      }
-    }
-    return found;
-  }
-  function requestedLimits(options) {
-    const found = new Map;
-    const work = option(options, "work", null);
-    for (const key of LIMIT_KEYS) {
-      const aliases = key === "memory" ? ["memory", "maxmemory"] : [key];
-      let value;
-      for (const alias of aliases) {
-        value = option(options, alias, undefined);
-        if (value === undefined && work)
-          value = option(work, alias, undefined);
-        if (value !== undefined)
-          break;
-      }
-      if (value !== undefined)
-        found.set(key, value);
-    }
-    return found;
-  }
-  function normalizeWork(options, capabilities) {
-    const requested = requestedLimits(options);
-    const defaults = new Map([
-      ["maxwork", new Integer(100n)]
-    ]);
-    if (!requested.has("maxwork"))
-      requested.set("maxwork", defaults.get("maxwork"));
-    if (!requested.has("maxcalls"))
-      requested.set("maxcalls", requested.get("maxwork"));
-    if (!requested.has("maxiterations"))
-      requested.set("maxiterations", requested.get("maxwork"));
-    const provider = providerLimits(capabilities);
-    const effective = new Map;
-    for (const key of LIMIT_KEYS) {
-      const value = restrictiveLimit(requested.get(key), provider.get(key));
-      if (value === null || value === undefined)
-        continue;
-      if (["maxwork", "maxcalls", "maxiterations", "maxdepth", "memory"].includes(key)) {
-        asNonnegativeInteger(value, key);
-      } else if (key === "timeout") {
-        asRational4(value, key, { positive: true });
-      }
-      effective.set(key, value);
-    }
-    return refinementMap(effective);
-  }
-  function normalizeRefinementRequest(options = null, { operation = null, capabilities = null } = {}) {
-    const source = options?.type === "map" && options.entries instanceof Map ? options : refinementMap();
-    const selectedOperation = nameOf(operation, nameOf(option(source, "operation", null), "enclose"));
-    if (!OPERATIONS.has(selectedOperation))
-      throw new RangeError(`Unknown refinement operation '${selectedOperation}'`);
-    const absoluteWidthValue = option(source, "absolutewidth", option(source, "width", null));
-    const relativeWidthValue = option(source, "relativewidth", null);
-    const relativeWidth = relativeWidthValue === null ? null : asRational4(relativeWidthValue, "relativeWidth", { positive: true });
-    const absoluteLimit = absoluteWidthValue === null ? relativeWidth === null ? new Rational(1n, 1000n) : null : asRational4(absoluteWidthValue, "absoluteWidth", { positive: true });
-    const relativeScale = relativeWidth === null ? null : asRational4(option(source, "relativescale", option(source, "scale", Rational.one)), "relativeScale", { positive: true });
-    const relativeLimit = relativeWidth === null ? null : relativeWidth.multiply(relativeScale);
-    const absoluteWidth = absoluteLimit === null ? relativeLimit : relativeLimit === null || absoluteLimit.lessThanOrEqual(relativeLimit) ? absoluteLimit : relativeLimit;
-    const work = normalizeWork(source, capabilities);
-    const entries2 = [
-      ["valuekind", refinementText("refinementRequest")],
-      ["schema", refinementText(REFINEMENT_REQUEST_SCHEMA)],
-      ["operation", refinementText(selectedOperation)],
-      ["absolutewidth", absoluteWidth],
-      ["absolutelimit", absoluteLimit],
-      ["relativewidth", relativeWidth],
-      ["relativescale", relativeScale],
-      ["effectivewidth", absoluteWidth],
-      ["evidencerequired", option(source, "evidencerequired", refinementText("any"))],
-      ["trace", option(source, "trace", new Integer(1n))],
-      ["seed", option(source, "seed", new Integer(1n))],
-      ["work", work]
-    ];
-    const purpose = option(source, "purpose", null);
-    if (purpose !== null)
-      entries2.push(["purpose", purpose]);
-    for (const key of ["timeout", "memory"]) {
-      const value = refinementEntry(work, key, null);
-      if (value !== null)
-        entries2.push([key, value]);
-    }
-    return refinementMap(entries2);
-  }
-  function refinementEffectiveLimits(request, capabilities = null) {
-    return normalizeWork(normalizeRefinementRequest(request), capabilities);
-  }
-  function refinementSupports(capabilities, operation) {
-    if (!(capabilities?.type === "map" && capabilities.entries instanceof Map))
-      return false;
-    if (nameOf(refinementEntry(capabilities, "schema", null)) !== REFINEMENT_CAPABILITIES_SCHEMA)
-      return false;
-    const wanted = nameOf(operation);
-    const operations = refinementEntry(capabilities, "operations", null)?.values;
-    return Array.isArray(operations) && operations.some((item) => nameOf(item) === wanted);
-  }
-  function intervalWidth(interval2) {
-    return interval2.high.subtract(interval2.low);
-  }
-  function limitObserved(work, name) {
-    if (!(work?.type === "map" && work.entries instanceof Map))
-      return null;
-    const aliases = name === "maxwork" ? ["total", "work", "calls"] : name === "maxcalls" ? ["calls"] : name === "maxiterations" ? ["iterations"] : name === "maxdepth" ? ["depth"] : name === "timeout" ? ["elapsed", "timeout"] : name === "memory" ? ["memory", "maxmemory"] : [];
-    for (const alias of aliases) {
-      const value = refinementEntry(work, alias, null);
-      if (value !== null)
-        return value;
-    }
-    return null;
-  }
-  function evidenceSatisfies(actualValue, requiredValue) {
-    const required = nameOf(requiredValue, "any");
-    if (required === "any")
-      return true;
-    const actual = nameOf(actualValue, "");
-    if (!EVIDENCE_RANK.has(required))
-      return actual === required;
-    return (EVIDENCE_RANK.get(actual) ?? -1) >= EVIDENCE_RANK.get(required);
-  }
-  function checkRefinementResult(result, request, capabilities = null) {
-    const normalizedRequest = normalizeRefinementRequest(request);
-    const isMap = result?.type === "map" && result.entries instanceof Map;
-    const requiredFields = [
-      "schema",
-      "status",
-      "interval",
-      "certified",
-      "goalmet",
-      "evidencelevel",
-      "backend",
-      "operation",
-      "requestedwidth",
-      "achievedwidth",
-      "work",
-      "diagnostics"
-    ];
-    const fieldsPresent = isMap && requiredFields.every((key) => {
-      const wanted = key.toLowerCase();
-      return Array.from(result.entries.keys()).some((candidate) => String(candidate).toLowerCase() === wanted);
-    });
-    const schemaValid = isMap && nameOf(refinementEntry(result, "schema", null)) === REFINEMENT_RESULT_SCHEMA;
-    const status = nameOf(refinementEntry(result, "status", null));
-    const statusValid = STATUSES.has(status);
-    const interval2 = refinementEntry(result, "interval", null);
-    const intervalValid = interval2 instanceof RationalInterval;
-    const requestedOperation = nameOf(refinementEntry(normalizedRequest, "operation", null));
-    const operationValid = nameOf(refinementEntry(result, "operation", null)) === requestedOperation;
-    const capabilityValid = capabilities === null || refinementSupports(capabilities, requestedOperation);
-    const certified = truth2(refinementEntry(result, "certified", null));
-    const certificationValid = capabilities === null || !certified || truth2(refinementEntry(capabilities, "certified", null));
-    const approximation = refinementEntry(result, "approximation", null);
-    const approximationPresent = !certified || approximation instanceof CertifiedApproximation;
-    const approximationConsistent = !certified || approximation instanceof CertifiedApproximation && intervalValid && approximation.enclosure.equals(interval2);
-    const achievedWidth = refinementEntry(result, "achievedwidth", null);
-    const widthConsistent = !intervalValid || (achievedWidth instanceof Integer || achievedWidth instanceof Rational) && asRational4(achievedWidth, "achievedWidth").equals(intervalWidth(interval2));
-    const requestedWidth = refinementEntry(normalizedRequest, "absolutewidth", null);
-    const resultRequestedWidth = refinementEntry(result, "requestedwidth", null);
-    const requestedWidthConsistent = (resultRequestedWidth instanceof Integer || resultRequestedWidth instanceof Rational) && asRational4(resultRequestedWidth, "requestedWidth").equals(requestedWidth);
-    const widthGoal = intervalValid && intervalWidth(interval2).lessThanOrEqual(requestedWidth);
-    const goalMet = truth2(refinementEntry(result, "goalmet", null));
-    const goalConsistent = certified ? goalMet === widthGoal && !(["budgetExhausted", "resolutionFloor", "unsupported", "unknown"].includes(status) && goalMet) : !goalMet;
-    const statusConsistent = (status !== "enclosed" || certified && goalMet) && (status !== "approximate" || !certified) && (status !== "unsupported" || !certified);
-    const evidenceValid = evidenceSatisfies(refinementEntry(result, "evidencelevel", null), refinementEntry(normalizedRequest, "evidencerequired", null));
-    const capabilityEvidence = refinementEntry(capabilities, "evidencelevels", null)?.values;
-    const actualEvidence = nameOf(refinementEntry(result, "evidencelevel", null));
-    const capabilityEvidenceValid = capabilities === null || !Array.isArray(capabilityEvidence) || capabilityEvidence.some((item) => nameOf(item) === actualEvidence);
-    const work = refinementEntry(result, "work", null);
-    const requestWork = refinementEntry(normalizedRequest, "work", null);
-    let workWithinLimits = work?.type === "map" && work.entries instanceof Map;
-    if (workWithinLimits) {
-      for (const key of LIMIT_KEYS) {
-        const limit = refinementEntry(requestWork, key, null);
-        const observed = limitObserved(work, key);
-        if (limit !== null && observed !== null && exactLessThanOrEqual(observed, limit) !== true) {
-          workWithinLimits = false;
-          break;
-        }
-      }
-    }
-    const valid = Boolean(fieldsPresent && schemaValid && statusValid && intervalValid && operationValid && capabilityValid && certificationValid && approximationPresent && approximationConsistent && requestedWidthConsistent && widthConsistent && goalConsistent && statusConsistent && evidenceValid && capabilityEvidenceValid && workWithinLimits);
-    return refinementMap([
-      ["valuekind", refinementText("numericsResultCheck")],
-      ["valid", bool2(valid)],
-      ["fieldspresent", bool2(fieldsPresent)],
-      ["schemavalid", bool2(schemaValid)],
-      ["statusvalid", bool2(statusValid)],
-      ["intervalvalid", bool2(intervalValid)],
-      ["operationvalid", bool2(operationValid)],
-      ["capabilityvalid", bool2(capabilityValid)],
-      ["certificationvalid", bool2(certificationValid)],
-      ["approximationpresent", bool2(approximationPresent)],
-      ["approximationconsistent", bool2(approximationConsistent)],
-      ["widthconsistent", bool2(widthConsistent)],
-      ["requestedwidthconsistent", bool2(requestedWidthConsistent)],
-      ["goalconsistent", bool2(goalConsistent)],
-      ["statusconsistent", bool2(statusConsistent)],
-      ["evidencevalid", bool2(evidenceValid)],
-      ["capabilityevidencevalid", bool2(capabilityEvidenceValid)],
-      ["workwithinlimits", bool2(workWithinLimits)],
-      ["interval", interval2],
-      ["request", normalizedRequest],
-      ["result", result]
-    ]);
-  }
-  function unsupportedRefinementResult(request, capabilities = null, reason = "unsupported") {
-    const normalized = normalizeRefinementRequest(request);
-    const operation = refinementEntry(normalized, "operation", refinementText("refine"));
-    const backend = refinementEntry(capabilities, "backend", refinementText("unknown"));
-    return refinementMap([
-      ["valuekind", refinementText("enclosure")],
-      ["schema", refinementText(REFINEMENT_RESULT_SCHEMA)],
-      ["status", refinementText("unsupported")],
-      ["interval", RationalInterval.zero],
-      ["certified", null],
-      ["goalmet", null],
-      ["requestedwidth", refinementEntry(normalized, "absolutewidth", null)],
-      ["achievedwidth", Rational.zero],
-      ["evidencelevel", refinementText("approximate")],
-      ["backend", backend],
-      ["operation", operation],
-      ["work", refinementMap()],
-      ["diagnostics", refinementSequence([refinementText(reason)])]
-    ]);
-  }
-  function refinementOutcome(result, request, capabilities = null) {
-    const check = checkRefinementResult(result, request, capabilities);
-    const status = nameOf(refinementEntry(result, "status", null), "unknown");
-    const certified = truth2(refinementEntry(result, "certified", null));
-    const approximation = refinementEntry(result, "approximation", null);
-    const details = refinementMap([
-      ["status", refinementEntry(result, "status", refinementText(status))],
-      ["backend", refinementEntry(result, "backend", refinementText("unknown"))],
-      ["requestedwidth", refinementEntry(request, "absolutewidth", null)],
-      ["achievedwidth", refinementEntry(result, "achievedwidth", null)],
-      ["work", refinementEntry(result, "work", refinementMap())],
-      ["diagnostics", refinementEntry(result, "diagnostics", refinementSequence())],
-      ["evidence", refinementEntry(result, "evidence", null)],
-      ["check", check]
-    ]);
-    if (!certified)
-      return { value: null, reason: status === "unsupported" ? "unsupported" : "providerUncertified", details, check };
-    if (!truth2(refinementEntry(check, "valid", null)))
-      return { value: null, reason: "invalidProviderResult", details, check };
-    if (approximation instanceof CertifiedApproximation) {
-      const fallbackReason = status === "budgetExhausted" ? "budgetExhausted" : status === "resolutionFloor" ? "resolutionFloor" : status === "unsupported" ? "unsupported" : status === "unknown" ? "unknown" : "haloResolutionReached";
-      return { value: approximation, reason: fallbackReason, details, check };
-    }
-    return { value: null, reason: "invalidProviderResult", details, check };
-  }
-
   // rix/src/eval/functions/comparison.js
   function haloRequest(halo, purpose, capabilities = null) {
     const entries2 = new Map(halo.limits?.entries ?? []);
@@ -31112,9 +31205,9 @@ ${indented.join(`,
       return { value, diagnostic: null };
     if (isEnclosed(value) || value instanceof Integer || value instanceof Rational)
       return { value, diagnostic: null };
-    let method4;
+    let method5;
     try {
-      method4 = resolveMethod(value, "REFINE", context);
+      method5 = resolveMethod(value, "REFINE", context);
     } catch (error) {
       if (/Method not found/.test(error?.message || "")) {
         return { value, diagnostic: undecidedDiagnostic("unsupported", refinementMap([
@@ -31150,7 +31243,7 @@ ${indented.join(`,
         ["capabilities", capabilities]
       ])) };
     }
-    const result = invokeMethod(method4, [value, request]);
+    const result = invokeMethod(method5, [value, request]);
     if (result && typeof result.then === "function") {
       throw new Error("Async halo refinement requires an async comparison context");
     }
@@ -32327,7 +32420,7 @@ ${indented.join(`,
       _ext: createFrozenMeta()
     };
   }
-  function method4(name, impl) {
+  function method5(name, impl) {
     return { type: "method_builtin", name, impl };
   }
   function mutableExt2() {
@@ -32776,36 +32869,36 @@ ${indented.join(`,
     return arithmeticFunctions.DIV.impl([a, b]);
   }
   var arrayMethods = {
-    LEN: method4("LEN", ([target]) => {
+    LEN: method5("LEN", ([target]) => {
       ensureSequence(target, "Len");
       return int6(target.values.length);
     }),
-    ISEMPTY: method4("ISEMPTY", ([target]) => {
+    ISEMPTY: method5("ISEMPTY", ([target]) => {
       ensureSequence(target, "IsEmpty");
       return bool3(target.values.length === 0);
     }),
-    GET: method4("GET", ([target, index]) => {
+    GET: method5("GET", ([target, index]) => {
       ensureSequence(target, "Get");
       return sequenceAt(target, index);
     }),
-    FIRST: method4("FIRST", ([target]) => {
+    FIRST: method5("FIRST", ([target]) => {
       ensureSequence(target, "First");
       return target.values[0] ?? null;
     }),
-    LAST: method4("LAST", ([target]) => {
+    LAST: method5("LAST", ([target]) => {
       ensureSequence(target, "Last");
       return target.values[target.values.length - 1] ?? null;
     }),
-    INCLUDES: method4("INCLUDES", ([target, value]) => {
+    INCLUDES: method5("INCLUDES", ([target, value]) => {
       ensureSequence(target, "Includes");
       return bool3(target.values.some((entry) => valueKey2(entry) === valueKey2(value)));
     }),
-    INDEXOF: method4("INDEXOF", ([target, value]) => {
+    INDEXOF: method5("INDEXOF", ([target, value]) => {
       ensureSequence(target, "IndexOf");
       const idx = target.values.findIndex((entry) => valueKey2(entry) === valueKey2(value));
       return idx === -1 ? null : int6(idx + 1);
     }),
-    LASTINDEXOF: method4("LASTINDEXOF", ([target, value]) => {
+    LASTINDEXOF: method5("LASTINDEXOF", ([target, value]) => {
       ensureSequence(target, "LastIndexOf");
       for (let i = target.values.length - 1;i >= 0; i--) {
         if (valueKey2(target.values[i]) === valueKey2(value))
@@ -32813,64 +32906,64 @@ ${indented.join(`,
       }
       return null;
     }),
-    HASAT: method4("HASAT", ([target, index]) => {
+    HASAT: method5("HASAT", ([target, index]) => {
       ensureSequence(target, "HasAt");
       const found = sequenceAt(target, index);
       return bool3(found !== null && !isHole(found));
     }),
-    SLICE: method4("SLICE", ([target, start, end]) => {
+    SLICE: method5("SLICE", ([target, start, end]) => {
       ensureSequence(target, "Slice");
       return { type: "sequence", values: jsSlice(target.values, start, end), _ext: mutableExt2() };
     }),
-    JOIN: method4("JOIN", ([target, separator]) => {
+    JOIN: method5("JOIN", ([target, separator]) => {
       ensureSequence(target, "Join");
       return stringObj3(target.values.map((value) => stringValue4(value)).join(stringValue4(separator ?? stringObj3(","))));
     }),
-    PUSH: method4("PUSH", ([target, ...values2]) => {
+    PUSH: method5("PUSH", ([target, ...values2]) => {
       ensureSequence(target, "Push");
       const copy = shallowCopyValue(target);
       copy.values.push(...values2);
       return copy;
     }),
-    "PUSH!": method4("PUSH!", ([target, ...values2]) => {
+    "PUSH!": method5("PUSH!", ([target, ...values2]) => {
       ensureSequence(target, "Push!");
       target.values.push(...values2);
       return target;
     }),
-    UNSHIFT: method4("UNSHIFT", ([target, ...values2]) => {
+    UNSHIFT: method5("UNSHIFT", ([target, ...values2]) => {
       ensureSequence(target, "Unshift");
       const copy = shallowCopyValue(target);
       copy.values.unshift(...values2);
       return copy;
     }),
-    "UNSHIFT!": method4("UNSHIFT!", ([target, ...values2]) => {
+    "UNSHIFT!": method5("UNSHIFT!", ([target, ...values2]) => {
       ensureSequence(target, "Unshift!");
       target.values.unshift(...values2);
       return target;
     }),
-    SET: method4("SET", ([target, index, value]) => {
+    SET: method5("SET", ([target, index, value]) => {
       ensureSequence(target, "Set");
       return nonMutatingSetValue(target, index, value);
     }),
-    "SET!": method4("SET!", ([target, index, value]) => {
+    "SET!": method5("SET!", ([target, index, value]) => {
       ensureSequence(target, "Set!");
       mutableSetValue(target, index, value);
       return target;
     }),
-    INSERT: method4("INSERT", ([target, index, value]) => {
+    INSERT: method5("INSERT", ([target, index, value]) => {
       ensureSequence(target, "Insert");
       const copy = shallowCopyValue(target);
       const at = normalizeWritableIndex(index, copy.values.length, true);
       copy.values.splice(at - 1, 0, value);
       return copy;
     }),
-    "INSERT!": method4("INSERT!", ([target, index, value]) => {
+    "INSERT!": method5("INSERT!", ([target, index, value]) => {
       ensureSequence(target, "Insert!");
       const at = normalizeWritableIndex(index, target.values.length, true);
       target.values.splice(at - 1, 0, value);
       return target;
     }),
-    REMOVEAT: method4("REMOVEAT", ([target, index]) => {
+    REMOVEAT: method5("REMOVEAT", ([target, index]) => {
       ensureSequence(target, "RemoveAt");
       const copy = shallowCopyValue(target);
       const at = normalizeLookupIndex(index, copy.values.length);
@@ -32878,18 +32971,18 @@ ${indented.join(`,
         copy.values.splice(at - 1, 1);
       return copy;
     }),
-    "REMOVEAT!": method4("REMOVEAT!", ([target, index]) => {
+    "REMOVEAT!": method5("REMOVEAT!", ([target, index]) => {
       ensureSequence(target, "RemoveAt!");
       const at = normalizeLookupIndex(index, target.values.length);
       if (at !== null)
         target.values[at - 1] = HOLE;
       return target;
     }),
-    CONCAT: method4("CONCAT", ([target, ...others]) => {
+    CONCAT: method5("CONCAT", ([target, ...others]) => {
       ensureSequence(target, "Concat");
       return others.reduce((acc, other) => collectionFunctions.CONCAT.impl([acc, other]), target);
     }),
-    "CONCAT!": method4("CONCAT!", ([target, ...others]) => {
+    "CONCAT!": method5("CONCAT!", ([target, ...others]) => {
       ensureSequence(target, "Concat!");
       for (const other of others) {
         const values2 = other?.values || [other];
@@ -32897,74 +32990,74 @@ ${indented.join(`,
       }
       return target;
     }),
-    REVERSE: method4("REVERSE", ([target]) => {
+    REVERSE: method5("REVERSE", ([target]) => {
       ensureSequence(target, "Reverse");
       const copy = shallowCopyValue(target);
       copy.values.reverse();
       return copy;
     }),
-    "REVERSE!": method4("REVERSE!", ([target]) => {
+    "REVERSE!": method5("REVERSE!", ([target]) => {
       ensureSequence(target, "Reverse!");
       target.values.reverse();
       return target;
     }),
-    SORT: method4("SORT", ([target]) => {
+    SORT: method5("SORT", ([target]) => {
       ensureSequence(target, "Sort");
       const copy = shallowCopyValue(target);
       copy.values.sort(compareValues);
       return copy;
     }),
-    "SORT!": method4("SORT!", ([target]) => {
+    "SORT!": method5("SORT!", ([target]) => {
       ensureSequence(target, "Sort!");
       target.values.sort(compareValues);
       return target;
     }),
-    DISTINCT: method4("DISTINCT", ([target]) => {
+    DISTINCT: method5("DISTINCT", ([target]) => {
       ensureSequence(target, "Distinct");
       return { type: "sequence", values: removeDuplicates(target.values), _ext: mutableExt2() };
     }),
-    "DISTINCT!": method4("DISTINCT!", ([target]) => {
+    "DISTINCT!": method5("DISTINCT!", ([target]) => {
       ensureSequence(target, "Distinct!");
       target.values = removeDuplicates(target.values);
       return target;
     }),
-    FLATTEN: method4("FLATTEN", ([target, depth]) => {
+    FLATTEN: method5("FLATTEN", ([target, depth]) => {
       ensureSequence(target, "Flatten");
       const levels = depth === undefined ? 1 : numericIndex(depth, "Flatten depth");
       return { type: "sequence", values: flattenValues(target.values, levels), _ext: mutableExt2() };
     }),
-    "FLATTEN!": method4("FLATTEN!", ([target, depth]) => {
+    "FLATTEN!": method5("FLATTEN!", ([target, depth]) => {
       ensureSequence(target, "Flatten!");
       const levels = depth === undefined ? 1 : numericIndex(depth, "Flatten depth");
       target.values = flattenValues(target.values, levels);
       return target;
     }),
-    DROPFIRST: method4("DROPFIRST", ([target, count]) => {
+    DROPFIRST: method5("DROPFIRST", ([target, count]) => {
       ensureSequence(target, "DropFirst");
       const n = count === undefined ? 1 : Math.max(0, numericIndex(count));
       return { type: "sequence", values: target.values.slice(n), _ext: mutableExt2() };
     }),
-    DROPLAST: method4("DROPLAST", ([target, count]) => {
+    DROPLAST: method5("DROPLAST", ([target, count]) => {
       ensureSequence(target, "DropLast");
       const n = count === undefined ? 1 : Math.max(0, numericIndex(count));
       return { type: "sequence", values: target.values.slice(0, Math.max(0, target.values.length - n)), _ext: mutableExt2() };
     }),
-    "POP!": method4("POP!", ([target]) => {
+    "POP!": method5("POP!", ([target]) => {
       ensureSequence(target, "Pop!");
       return target.values.length === 0 ? HOLE : target.values.pop();
     }),
-    "SHIFT!": method4("SHIFT!", ([target]) => {
+    "SHIFT!": method5("SHIFT!", ([target]) => {
       ensureSequence(target, "Shift!");
       return target.values.length === 0 ? HOLE : target.values.shift();
     }),
-    MAP: method4("MAP", ([target, iterator], context, evaluate, invoke, execution) => {
+    MAP: method5("MAP", ([target, iterator], context, evaluate, invoke, execution) => {
       ensureSequence(target, "Map");
       return callbackSteps(function* () {
         const values2 = yield mapCallbacks(iterateEntries(target), (entry) => invoke(iterator, [entry.value, entry.key, target], context, evaluate), execution);
         return { type: "sequence", values: values2, _ext: mutableExt2() };
       }(), execution);
     }),
-    FILTER: method4("FILTER", ([target, iterator], context, evaluate, invoke, execution) => {
+    FILTER: method5("FILTER", ([target, iterator], context, evaluate, invoke, execution) => {
       ensureSequence(target, "Filter");
       return callbackSteps(function* () {
         const values2 = [];
@@ -32976,13 +33069,13 @@ ${indented.join(`,
         return { type: "sequence", values: values2, _ext: mutableExt2() };
       }(), execution);
     }),
-    ANY: method4("ANY", ([target, iterator], context, evaluate, invoke, execution) => anyEntries(target, iterator, context, evaluate, invoke, execution)),
-    ALL: method4("ALL", ([target, iterator], context, evaluate, invoke, execution) => allEntries(target, iterator, context, evaluate, invoke, execution)),
-    COUNT: method4("COUNT", ([target, iterator], context, evaluate, invoke, execution) => countEntries(target, iterator, context, evaluate, invoke, execution)),
-    FIND: method4("FIND", ([target, iterator], context, evaluate, invoke, execution) => findEntry(target, iterator, context, evaluate, invoke, false, execution)),
-    FINDINDEX: method4("FINDINDEX", ([target, iterator], context, evaluate, invoke, execution) => findEntry(target, iterator, context, evaluate, invoke, true, execution)),
-    REDUCE: method4("REDUCE", ([target, iterator, initial], context, evaluate, invoke, execution) => reduceEntries(target, iterator, initial, context, evaluate, invoke, execution)),
-    "SWAP!": method4("SWAP!", ([target, i, j]) => {
+    ANY: method5("ANY", ([target, iterator], context, evaluate, invoke, execution) => anyEntries(target, iterator, context, evaluate, invoke, execution)),
+    ALL: method5("ALL", ([target, iterator], context, evaluate, invoke, execution) => allEntries(target, iterator, context, evaluate, invoke, execution)),
+    COUNT: method5("COUNT", ([target, iterator], context, evaluate, invoke, execution) => countEntries(target, iterator, context, evaluate, invoke, execution)),
+    FIND: method5("FIND", ([target, iterator], context, evaluate, invoke, execution) => findEntry(target, iterator, context, evaluate, invoke, false, execution)),
+    FINDINDEX: method5("FINDINDEX", ([target, iterator], context, evaluate, invoke, execution) => findEntry(target, iterator, context, evaluate, invoke, true, execution)),
+    REDUCE: method5("REDUCE", ([target, iterator, initial], context, evaluate, invoke, execution) => reduceEntries(target, iterator, initial, context, evaluate, invoke, execution)),
+    "SWAP!": method5("SWAP!", ([target, i, j]) => {
       ensureSequence(target, "Swap!");
       const len = target.values.length;
       const idxI = normalizeLookupIndex(i, len);
@@ -32994,13 +33087,13 @@ ${indented.join(`,
       target.values[idxJ - 1] = tmp;
       return target;
     }),
-    SWAP: method4("SWAP", ([target, i, j]) => {
+    SWAP: method5("SWAP", ([target, i, j]) => {
       ensureSequence(target, "Swap");
       const copy = shallowCopyValue(target);
       copy.values = [...target.values];
       return arrayMethods["SWAP!"].impl([copy, i, j]);
     }),
-    "MOVE!": method4("MOVE!", ([target, rangeOrIdx, targetIdx]) => {
+    "MOVE!": method5("MOVE!", ([target, rangeOrIdx, targetIdx]) => {
       ensureSequence(target, "Move!");
       const len = target.values.length;
       let s, e;
@@ -33032,7 +33125,7 @@ ${indented.join(`,
       target.values.splice(insertPos - 1, 0, ...movedItems);
       return target;
     }),
-    MOVE: method4("MOVE", ([target, rangeOrIdx, targetIdx]) => {
+    MOVE: method5("MOVE", ([target, rangeOrIdx, targetIdx]) => {
       ensureSequence(target, "Move");
       const copy = shallowCopyValue(target);
       copy.values = [...target.values];
@@ -33040,17 +33133,17 @@ ${indented.join(`,
     })
   };
   var lazySequenceMethods = {
-    LEN: method4("LEN", ([target]) => {
+    LEN: method5("LEN", ([target]) => {
       const length = lazyKnownLength(target);
       if (length === null)
         throw new Error("Length is unknown for this lazy sequence");
       return int6(length);
     }),
-    ISEMPTY: method4("ISEMPTY", ([target]) => {
+    ISEMPTY: method5("ISEMPTY", ([target]) => {
       ensureLazyIndex(target, 1);
       return bool3(target._lazy.done && target._lazy.cache.length === 0);
     }),
-    GET: method4("GET", ([target, index]) => {
+    GET: method5("GET", ([target, index]) => {
       const raw = numericIndex(index);
       if (raw < 0)
         return sequenceAt(materializeLazySequence(target), index);
@@ -33058,12 +33151,12 @@ ${indented.join(`,
         throw new Error("Sequence indexes are 1-based; zero is invalid");
       return ensureLazyIndex(target, raw);
     }),
-    FIRST: method4("FIRST", ([target]) => ensureLazyIndex(target, 1)),
-    LAST: method4("LAST", ([target]) => {
+    FIRST: method5("FIRST", ([target]) => ensureLazyIndex(target, 1)),
+    LAST: method5("LAST", ([target]) => {
       const sequence5 = materializeLazySequence(target);
       return sequence5.values.at(-1) ?? null;
     }),
-    MATERIALIZE: method4("MATERIALIZE", ([target]) => materializeLazySequence(target))
+    MATERIALIZE: method5("MATERIALIZE", ([target]) => materializeLazySequence(target))
   };
   function requireAsyncStreamExecution(execution, methodName) {
     if (!execution?.consume) {
@@ -33077,57 +33170,57 @@ ${indented.join(`,
     return asyncStreamMethodHelpers.positiveInteger(value, label, { allowZero: true });
   }
   var asyncStreamMethods = {
-    MAP: method4("MAP", ([target, mapper]) => asyncStreamMethodHelpers.mapAsyncStream(target, mapper)),
-    FILTER: method4("FILTER", ([target, predicate]) => asyncStreamMethodHelpers.filterAsyncStream(target, predicate)),
-    TAKE: method4("TAKE", ([target, count]) => asyncStreamMethodHelpers.takeAsyncStream(target, count)),
-    DROP: method4("DROP", ([target, count]) => asyncStreamMethodHelpers.dropAsyncStream(target, count)),
-    CHUNK: method4("CHUNK", ([target, size]) => asyncStreamMethodHelpers.chunkAsyncStream(target, size)),
-    WINDOW: method4("WINDOW", ([target, size, step]) => asyncStreamMethodHelpers.windowAsyncStream(target, size, step)),
-    FOREACH: method4("FOREACH", ([target, callable], _context, _evaluate, _invoke, execution) => requireAsyncStreamExecution(execution, "ForEach").consume(target, {
+    MAP: method5("MAP", ([target, mapper]) => asyncStreamMethodHelpers.mapAsyncStream(target, mapper)),
+    FILTER: method5("FILTER", ([target, predicate]) => asyncStreamMethodHelpers.filterAsyncStream(target, predicate)),
+    TAKE: method5("TAKE", ([target, count]) => asyncStreamMethodHelpers.takeAsyncStream(target, count)),
+    DROP: method5("DROP", ([target, count]) => asyncStreamMethodHelpers.dropAsyncStream(target, count)),
+    CHUNK: method5("CHUNK", ([target, size]) => asyncStreamMethodHelpers.chunkAsyncStream(target, size)),
+    WINDOW: method5("WINDOW", ([target, size, step]) => asyncStreamMethodHelpers.windowAsyncStream(target, size, step)),
+    FOREACH: method5("FOREACH", ([target, callable], _context, _evaluate, _invoke, execution) => requireAsyncStreamExecution(execution, "ForEach").consume(target, {
       kind: "forEach",
       callable,
       initial: null,
       bound: null
     })),
-    REDUCE: method4("REDUCE", ([target, initial, callable], _context, _evaluate, _invoke, execution) => requireAsyncStreamExecution(execution, "Reduce").consume(target, {
+    REDUCE: method5("REDUCE", ([target, initial, callable], _context, _evaluate, _invoke, execution) => requireAsyncStreamExecution(execution, "Reduce").consume(target, {
       kind: "reduce",
       callable,
       initial,
       bound: null
     })),
-    COLLECT: method4("COLLECT", ([target, bound], _context, _evaluate, _invoke, execution) => requireAsyncStreamExecution(execution, "Collect").consume(target, {
+    COLLECT: method5("COLLECT", ([target, bound], _context, _evaluate, _invoke, execution) => requireAsyncStreamExecution(execution, "Collect").consume(target, {
       kind: "collect",
       callable: null,
       initial: null,
       bound: optionalBound(bound, "Collect bound")
     })),
-    FIRST: method4("FIRST", ([target], _context, _evaluate, _invoke, execution) => requireAsyncStreamExecution(execution, "First").consume(target, {
+    FIRST: method5("FIRST", ([target], _context, _evaluate, _invoke, execution) => requireAsyncStreamExecution(execution, "First").consume(target, {
       kind: "first",
       callable: null,
       initial: null,
       bound: 1
     })),
-    FIND: method4("FIND", ([target, callable], _context, _evaluate, _invoke, execution) => requireAsyncStreamExecution(execution, "Find").consume(target, {
+    FIND: method5("FIND", ([target, callable], _context, _evaluate, _invoke, execution) => requireAsyncStreamExecution(execution, "Find").consume(target, {
       kind: "find",
       callable,
       initial: null,
       bound: null
     })),
-    COUNT: method4("COUNT", ([target, bound], _context, _evaluate, _invoke, execution) => requireAsyncStreamExecution(execution, "Count").consume(target, {
+    COUNT: method5("COUNT", ([target, bound], _context, _evaluate, _invoke, execution) => requireAsyncStreamExecution(execution, "Count").consume(target, {
       kind: "count",
       callable: null,
       initial: null,
       bound: optionalBound(bound, "Count bound")
     })),
-    CLOSE: method4("CLOSE", ([target, reason]) => asyncStreamMethodHelpers.closeAsyncStream(target, reason)),
-    DONE: method4("DONE", ([target]) => bool3(asyncStreamMethodHelpers.asyncStreamDone(target))),
-    STATUS: method4("STATUS", ([target]) => asyncStreamMethodHelpers.asyncStreamStatus(target))
+    CLOSE: method5("CLOSE", ([target, reason]) => asyncStreamMethodHelpers.closeAsyncStream(target, reason)),
+    DONE: method5("DONE", ([target]) => bool3(asyncStreamMethodHelpers.asyncStreamDone(target))),
+    STATUS: method5("STATUS", ([target]) => asyncStreamMethodHelpers.asyncStreamStatus(target))
   };
   var iterableMethods = {
-    ITERATOR: method4("ITERATOR", ([target]) => createCollectionIterator(target))
+    ITERATOR: method5("ITERATOR", ([target]) => createCollectionIterator(target))
   };
   var iteratorMethods = {
-    NEXT: method4("NEXT", ([target, step]) => {
+    NEXT: method5("NEXT", ([target, step]) => {
       if (target.cursor === null)
         return null;
       const amount = step === undefined ? 1 : iteratorStep(step, "Iterator step");
@@ -33142,15 +33235,15 @@ ${indented.join(`,
       target.cursor = destination;
       return result.value;
     }),
-    PEEK: method4("PEEK", ([target, offset]) => {
+    PEEK: method5("PEEK", ([target, offset]) => {
       if (target.cursor === null)
         return null;
       const amount = offset === undefined ? 0 : iteratorStep(offset, "Iterator peek offset");
       return iteratorLookup(target.source, target.cursor + amount).value;
     }),
-    DONE: method4("DONE", ([target]) => bool3(target.cursor === null)),
-    INDEX: method4("INDEX", ([target]) => target.cursor === null ? null : int6(target.cursor)),
-    RESET: method4("RESET", ([target, index]) => {
+    DONE: method5("DONE", ([target]) => bool3(target.cursor === null)),
+    INDEX: method5("INDEX", ([target]) => target.cursor === null ? null : int6(target.cursor)),
+    RESET: method5("RESET", ([target, index]) => {
       if (index === undefined || !isIndexedIteratorSource(target.source)) {
         target.cursor = 0;
         return target;
@@ -33172,31 +33265,31 @@ ${indented.join(`,
     })
   };
   var mapMethods = {
-    LEN: method4("LEN", ([target]) => {
+    LEN: method5("LEN", ([target]) => {
       ensureMap(target, "Len");
       return int6(target.entries.size);
     }),
-    ISEMPTY: method4("ISEMPTY", ([target]) => {
+    ISEMPTY: method5("ISEMPTY", ([target]) => {
       ensureMap(target, "IsEmpty");
       return bool3(target.entries.size === 0);
     }),
-    HAS: method4("HAS", ([target, key]) => {
+    HAS: method5("HAS", ([target, key]) => {
       ensureMap(target, "Has");
       return bool3(target.entries.has(keyOf(key)));
     }),
-    GET: method4("GET", ([target, key]) => {
+    GET: method5("GET", ([target, key]) => {
       ensureMap(target, "Get");
       return mapValue3(target, key);
     }),
-    KEYS: method4("KEYS", ([target]) => {
+    KEYS: method5("KEYS", ([target]) => {
       ensureMap(target, "Keys");
       return { type: "set", values: Array.from(target.entries.keys()) };
     }),
-    VALUES: method4("VALUES", ([target]) => {
+    VALUES: method5("VALUES", ([target]) => {
       ensureMap(target, "Values");
       return { type: "set", values: Array.from(target.entries.values()) };
     }),
-    ENTRIES: method4("ENTRIES", ([target]) => {
+    ENTRIES: method5("ENTRIES", ([target]) => {
       ensureMap(target, "Entries");
       return {
         type: "sequence",
@@ -33207,41 +33300,41 @@ ${indented.join(`,
         _ext: mutableExt2()
       };
     }),
-    SET: method4("SET", ([target, key, value]) => {
+    SET: method5("SET", ([target, key, value]) => {
       ensureMap(target, "Set");
       const copy = shallowCopyValue(target);
       copy.entries.set(keyOf(key), value);
       return copy;
     }),
-    "SET!": method4("SET!", ([target, key, value]) => {
+    "SET!": method5("SET!", ([target, key, value]) => {
       ensureMap(target, "Set!");
       target.entries.set(keyOf(key), value);
       return target;
     }),
-    REMOVE: method4("REMOVE", ([target, key]) => {
+    REMOVE: method5("REMOVE", ([target, key]) => {
       ensureMap(target, "Remove");
       const copy = shallowCopyValue(target);
       copy.entries.delete(keyOf(key));
       return copy;
     }),
-    "REMOVE!": method4("REMOVE!", ([target, key]) => {
+    "REMOVE!": method5("REMOVE!", ([target, key]) => {
       ensureMap(target, "Remove!");
       target.entries.delete(keyOf(key));
       return target;
     }),
-    MERGE: method4("MERGE", ([target, other]) => {
+    MERGE: method5("MERGE", ([target, other]) => {
       ensureMap(target, "Merge");
       ensureMap(other, "Merge");
       return { type: "map", entries: new Map([...target.entries, ...other.entries]), _ext: mutableExt2() };
     }),
-    "MERGE!": method4("MERGE!", ([target, other]) => {
+    "MERGE!": method5("MERGE!", ([target, other]) => {
       ensureMap(target, "Merge!");
       ensureMap(other, "Merge!");
       for (const [key, value] of other.entries)
         target.entries.set(key, value);
       return target;
     }),
-    UPDATE: method4("UPDATE", ([target, key, updater], context, evaluate, invoke, execution) => {
+    UPDATE: method5("UPDATE", ([target, key, updater], context, evaluate, invoke, execution) => {
       return callbackSteps(function* () {
         ensureMap(target, "Update");
         const canonical = keyOf(key);
@@ -33252,7 +33345,7 @@ ${indented.join(`,
         return copy;
       }(), execution);
     }),
-    "UPDATE!": method4("UPDATE!", ([target, key, updater], context, evaluate, invoke, execution) => {
+    "UPDATE!": method5("UPDATE!", ([target, key, updater], context, evaluate, invoke, execution) => {
       return callbackSteps(function* () {
         ensureMap(target, "Update!");
         const canonical = keyOf(key);
@@ -33262,7 +33355,7 @@ ${indented.join(`,
         return target;
       }(), execution);
     }),
-    DEFAULT: method4("DEFAULT", ([target, key, value]) => {
+    DEFAULT: method5("DEFAULT", ([target, key, value]) => {
       ensureMap(target, "Default");
       const canonical = keyOf(key);
       if (target.entries.has(canonical))
@@ -33271,14 +33364,14 @@ ${indented.join(`,
       copy.entries.set(canonical, value);
       return copy;
     }),
-    "DEFAULT!": method4("DEFAULT!", ([target, key, value]) => {
+    "DEFAULT!": method5("DEFAULT!", ([target, key, value]) => {
       ensureMap(target, "Default!");
       const canonical = keyOf(key);
       if (!target.entries.has(canonical))
         target.entries.set(canonical, value);
       return target;
     }),
-    KEEP: method4("KEEP", ([target, keys]) => {
+    KEEP: method5("KEEP", ([target, keys]) => {
       ensureMap(target, "Keep");
       const wanted = new Set(mapLikeKeys(keys));
       return {
@@ -33287,7 +33380,7 @@ ${indented.join(`,
         _ext: mutableExt2()
       };
     }),
-    "KEEP!": method4("KEEP!", ([target, keys]) => {
+    "KEEP!": method5("KEEP!", ([target, keys]) => {
       ensureMap(target, "Keep!");
       const wanted = new Set(mapLikeKeys(keys));
       for (const key of Array.from(target.entries.keys())) {
@@ -33296,7 +33389,7 @@ ${indented.join(`,
       }
       return target;
     }),
-    OMIT: method4("OMIT", ([target, keys]) => {
+    OMIT: method5("OMIT", ([target, keys]) => {
       ensureMap(target, "Omit");
       const blocked = new Set(mapLikeKeys(keys));
       return {
@@ -33305,14 +33398,14 @@ ${indented.join(`,
         _ext: mutableExt2()
       };
     }),
-    "OMIT!": method4("OMIT!", ([target, keys]) => {
+    "OMIT!": method5("OMIT!", ([target, keys]) => {
       ensureMap(target, "Omit!");
       const blocked = new Set(mapLikeKeys(keys));
       for (const key of blocked)
         target.entries.delete(key);
       return target;
     }),
-    MAPVALUES: method4("MAPVALUES", ([target, iterator], context, evaluate, invoke, execution) => {
+    MAPVALUES: method5("MAPVALUES", ([target, iterator], context, evaluate, invoke, execution) => {
       return callbackSteps(function* () {
         ensureMap(target, "MapValues");
         const entries2 = new Map;
@@ -33322,7 +33415,7 @@ ${indented.join(`,
         return { type: "map", entries: entries2, _ext: mutableExt2() };
       }(), execution);
     }),
-    REDUCEKEYS: method4("REDUCEKEYS", ([target, iterator, initial], context, evaluate, invoke, execution) => {
+    REDUCEKEYS: method5("REDUCEKEYS", ([target, iterator, initial], context, evaluate, invoke, execution) => {
       return callbackSteps(function* () {
         ensureMap(target, "ReduceKeys");
         let acc = initial === undefined ? defaultAccumulator(target) : initial;
@@ -33332,7 +33425,7 @@ ${indented.join(`,
         return acc;
       }(), execution);
     }),
-    FILTER: method4("FILTER", ([target, iterator], context, evaluate, invoke, execution) => {
+    FILTER: method5("FILTER", ([target, iterator], context, evaluate, invoke, execution) => {
       ensureMap(target, "Filter");
       return callbackSteps(function* () {
         const entries2 = new Map;
@@ -33344,29 +33437,29 @@ ${indented.join(`,
         return { type: "map", entries: entries2, _ext: mutableExt2() };
       }(), execution);
     }),
-    ANY: method4("ANY", ([target, iterator], context, evaluate, invoke, execution) => anyEntries(target, iterator, context, evaluate, invoke, execution)),
-    ALL: method4("ALL", ([target, iterator], context, evaluate, invoke, execution) => allEntries(target, iterator, context, evaluate, invoke, execution)),
-    COUNT: method4("COUNT", ([target, iterator], context, evaluate, invoke, execution) => countEntries(target, iterator, context, evaluate, invoke, execution)),
-    REDUCE: method4("REDUCE", ([target, iterator, initial], context, evaluate, invoke, execution) => reduceEntries(target, iterator, initial, context, evaluate, invoke, execution))
+    ANY: method5("ANY", ([target, iterator], context, evaluate, invoke, execution) => anyEntries(target, iterator, context, evaluate, invoke, execution)),
+    ALL: method5("ALL", ([target, iterator], context, evaluate, invoke, execution) => allEntries(target, iterator, context, evaluate, invoke, execution)),
+    COUNT: method5("COUNT", ([target, iterator], context, evaluate, invoke, execution) => countEntries(target, iterator, context, evaluate, invoke, execution)),
+    REDUCE: method5("REDUCE", ([target, iterator, initial], context, evaluate, invoke, execution) => reduceEntries(target, iterator, initial, context, evaluate, invoke, execution))
   };
   var setMethods = {
-    LEN: method4("LEN", ([target]) => {
+    LEN: method5("LEN", ([target]) => {
       ensureSet(target, "Len");
       return int6(target.values.length);
     }),
-    ISEMPTY: method4("ISEMPTY", ([target]) => {
+    ISEMPTY: method5("ISEMPTY", ([target]) => {
       ensureSet(target, "IsEmpty");
       return bool3(target.values.length === 0);
     }),
-    HAS: method4("HAS", ([target, value]) => {
+    HAS: method5("HAS", ([target, value]) => {
       ensureSet(target, "Has");
       return bool3(setHas(target, value));
     }),
-    VALUES: method4("VALUES", ([target]) => {
+    VALUES: method5("VALUES", ([target]) => {
       ensureSet(target, "Values");
       return { type: "sequence", values: [...target.values], _ext: mutableExt2() };
     }),
-    ADD: method4("ADD", ([target, value]) => {
+    ADD: method5("ADD", ([target, value]) => {
       ensureSet(target, "Add");
       if (setHas(target, value))
         return shallowCopyValue(target);
@@ -33374,68 +33467,68 @@ ${indented.join(`,
       copy.values.push(value);
       return copy;
     }),
-    "ADD!": method4("ADD!", ([target, value]) => {
+    "ADD!": method5("ADD!", ([target, value]) => {
       ensureSet(target, "Add!");
       if (!setHas(target, value))
         target.values.push(value);
       return target;
     }),
-    REMOVE: method4("REMOVE", ([target, value]) => {
+    REMOVE: method5("REMOVE", ([target, value]) => {
       ensureSet(target, "Remove");
       const copy = shallowCopyValue(target);
       copy.values = copy.values.filter((entry) => valueKey2(entry) !== valueKey2(value));
       return copy;
     }),
-    "REMOVE!": method4("REMOVE!", ([target, value]) => {
+    "REMOVE!": method5("REMOVE!", ([target, value]) => {
       ensureSet(target, "Remove!");
       target.values = target.values.filter((entry) => valueKey2(entry) !== valueKey2(value));
       return target;
     }),
-    UNION: method4("UNION", ([target, other]) => collectionFunctions.UNION.impl([target, other])),
-    "UNION!": method4("UNION!", ([target, other]) => {
+    UNION: method5("UNION", ([target, other]) => collectionFunctions.UNION.impl([target, other])),
+    "UNION!": method5("UNION!", ([target, other]) => {
       ensureSet(target, "Union!");
       ensureSet(other, "Union!");
       target.values = collectionFunctions.UNION.impl([target, other]).values;
       return target;
     }),
-    INTERSECT: method4("INTERSECT", ([target, other]) => collectionFunctions.INTERSECT.impl([target, other])),
-    "INTERSECT!": method4("INTERSECT!", ([target, other]) => {
+    INTERSECT: method5("INTERSECT", ([target, other]) => collectionFunctions.INTERSECT.impl([target, other])),
+    "INTERSECT!": method5("INTERSECT!", ([target, other]) => {
       ensureSet(target, "Intersect!");
       ensureSet(other, "Intersect!");
       const next = collectionFunctions.INTERSECT.impl([target, other]);
       target.values = next ? next.values : [];
       return target;
     }),
-    DIFF: method4("DIFF", ([target, other]) => collectionFunctions.SET_DIFF.impl([target, other])),
-    "DIFF!": method4("DIFF!", ([target, other]) => {
+    DIFF: method5("DIFF", ([target, other]) => collectionFunctions.SET_DIFF.impl([target, other])),
+    "DIFF!": method5("DIFF!", ([target, other]) => {
       ensureSet(target, "Diff!");
       const next = collectionFunctions.SET_DIFF.impl([target, other]);
       target.values = next.values;
       return target;
     }),
-    SYMDIFF: method4("SYMDIFF", ([target, other]) => collectionFunctions.SET_SYMDIFF.impl([target, other])),
-    "SYMDIFF!": method4("SYMDIFF!", ([target, other]) => {
+    SYMDIFF: method5("SYMDIFF", ([target, other]) => collectionFunctions.SET_SYMDIFF.impl([target, other])),
+    "SYMDIFF!": method5("SYMDIFF!", ([target, other]) => {
       ensureSet(target, "SymDiff!");
       const next = collectionFunctions.SET_SYMDIFF.impl([target, other]);
       target.values = next.values;
       return target;
     }),
-    SUBSETOF: method4("SUBSETOF", ([target, other]) => {
+    SUBSETOF: method5("SUBSETOF", ([target, other]) => {
       ensureSet(target, "SubsetOf");
       ensureSet(other, "SubsetOf");
       return bool3(target.values.every((value) => setHas(other, value)));
     }),
-    SUPERSETOF: method4("SUPERSETOF", ([target, other]) => {
+    SUPERSETOF: method5("SUPERSETOF", ([target, other]) => {
       ensureSet(target, "SupersetOf");
       ensureSet(other, "SupersetOf");
       return bool3(other.values.every((value) => setHas(target, value)));
     }),
-    DISJOINT: method4("DISJOINT", ([target, other]) => {
+    DISJOINT: method5("DISJOINT", ([target, other]) => {
       ensureSet(target, "Disjoint");
       ensureSet(other, "Disjoint");
       return bool3(target.values.every((value) => !setHas(other, value)));
     }),
-    FILTER: method4("FILTER", ([target, iterator], context, evaluate, invoke, execution) => {
+    FILTER: method5("FILTER", ([target, iterator], context, evaluate, invoke, execution) => {
       ensureSet(target, "Filter");
       return callbackSteps(function* () {
         const values2 = [];
@@ -33447,133 +33540,133 @@ ${indented.join(`,
         return { type: "set", values: values2, _ext: mutableExt2() };
       }(), execution);
     }),
-    ANY: method4("ANY", ([target, iterator], context, evaluate, invoke, execution) => anyEntries(target, iterator, context, evaluate, invoke, execution)),
-    ALL: method4("ALL", ([target, iterator], context, evaluate, invoke, execution) => allEntries(target, iterator, context, evaluate, invoke, execution)),
-    COUNT: method4("COUNT", ([target, iterator], context, evaluate, invoke, execution) => countEntries(target, iterator, context, evaluate, invoke, execution)),
-    REDUCE: method4("REDUCE", ([target, iterator, initial], context, evaluate, invoke, execution) => reduceEntries(target, iterator, initial, context, evaluate, invoke, execution))
+    ANY: method5("ANY", ([target, iterator], context, evaluate, invoke, execution) => anyEntries(target, iterator, context, evaluate, invoke, execution)),
+    ALL: method5("ALL", ([target, iterator], context, evaluate, invoke, execution) => allEntries(target, iterator, context, evaluate, invoke, execution)),
+    COUNT: method5("COUNT", ([target, iterator], context, evaluate, invoke, execution) => countEntries(target, iterator, context, evaluate, invoke, execution)),
+    REDUCE: method5("REDUCE", ([target, iterator, initial], context, evaluate, invoke, execution) => reduceEntries(target, iterator, initial, context, evaluate, invoke, execution))
   };
   var stringMethods = {
-    LEN: method4("LEN", ([target]) => {
+    LEN: method5("LEN", ([target]) => {
       ensureString(target, "Len");
       return int6(Array.from(target.value).length);
     }),
-    ISEMPTY: method4("ISEMPTY", ([target]) => {
+    ISEMPTY: method5("ISEMPTY", ([target]) => {
       ensureString(target, "IsEmpty");
       return bool3(target.value.length === 0);
     }),
-    GET: method4("GET", ([target, index]) => {
+    GET: method5("GET", ([target, index]) => {
       ensureString(target, "Get");
       return stringAt(target, index);
     }),
-    FIRST: method4("FIRST", ([target]) => {
+    FIRST: method5("FIRST", ([target]) => {
       ensureString(target, "First");
       return charsOf(target)[0] ?? null;
     }),
-    LAST: method4("LAST", ([target]) => {
+    LAST: method5("LAST", ([target]) => {
       ensureString(target, "Last");
       const chars = charsOf(target);
       return chars[chars.length - 1] ?? null;
     }),
-    INCLUDES: method4("INCLUDES", ([target, needle]) => {
+    INCLUDES: method5("INCLUDES", ([target, needle]) => {
       ensureString(target, "Includes");
       return bool3(target.value.includes(stringValue4(needle)));
     }),
-    STARTSWITH: method4("STARTSWITH", ([target, prefix]) => {
+    STARTSWITH: method5("STARTSWITH", ([target, prefix]) => {
       ensureString(target, "StartsWith");
       return bool3(target.value.startsWith(stringValue4(prefix)));
     }),
-    ENDSWITH: method4("ENDSWITH", ([target, suffix]) => {
+    ENDSWITH: method5("ENDSWITH", ([target, suffix]) => {
       ensureString(target, "EndsWith");
       return bool3(target.value.endsWith(stringValue4(suffix)));
     }),
-    INDEXOF: method4("INDEXOF", ([target, needle]) => {
+    INDEXOF: method5("INDEXOF", ([target, needle]) => {
       ensureString(target, "IndexOf");
       const idx = target.value.indexOf(stringValue4(needle));
       return idx === -1 ? null : int6(idx + 1);
     }),
-    LASTINDEXOF: method4("LASTINDEXOF", ([target, needle]) => {
+    LASTINDEXOF: method5("LASTINDEXOF", ([target, needle]) => {
       ensureString(target, "LastIndexOf");
       const idx = target.value.lastIndexOf(stringValue4(needle));
       return idx === -1 ? null : int6(idx + 1);
     }),
-    SLICE: method4("SLICE", ([target, start, end]) => {
+    SLICE: method5("SLICE", ([target, start, end]) => {
       ensureString(target, "Slice");
       return fromChars(jsSlice(charsOf(target), start, end));
     }),
-    CONCAT: method4("CONCAT", ([target, ...parts]) => {
+    CONCAT: method5("CONCAT", ([target, ...parts]) => {
       ensureString(target, "Concat");
       return stringObj3([target, ...parts].map((part) => stringValue4(part)).join(""));
     }),
-    SPLIT: method4("SPLIT", ([target, separator]) => {
+    SPLIT: method5("SPLIT", ([target, separator]) => {
       ensureString(target, "Split");
       const parts = separator === undefined ? Array.from(target.value) : target.value.split(stringValue4(separator));
       return { type: "sequence", values: parts.map((part) => stringObj3(part)), _ext: mutableExt2() };
     }),
-    TRIM: method4("TRIM", ([target]) => {
+    TRIM: method5("TRIM", ([target]) => {
       ensureString(target, "Trim");
       return stringObj3(target.value.trim());
     }),
-    TRIMSTART: method4("TRIMSTART", ([target]) => {
+    TRIMSTART: method5("TRIMSTART", ([target]) => {
       ensureString(target, "TrimStart");
       return stringObj3(target.value.trimStart());
     }),
-    TRIMEND: method4("TRIMEND", ([target]) => {
+    TRIMEND: method5("TRIMEND", ([target]) => {
       ensureString(target, "TrimEnd");
       return stringObj3(target.value.trimEnd());
     }),
-    UPPER: method4("UPPER", ([target]) => {
+    UPPER: method5("UPPER", ([target]) => {
       ensureString(target, "Upper");
       return stringObj3(target.value.toUpperCase());
     }),
-    LOWER: method4("LOWER", ([target]) => {
+    LOWER: method5("LOWER", ([target]) => {
       ensureString(target, "Lower");
       return stringObj3(target.value.toLowerCase());
     }),
-    REPLACE: method4("REPLACE", ([target, search, replacement]) => {
+    REPLACE: method5("REPLACE", ([target, search, replacement]) => {
       ensureString(target, "Replace");
       return stringObj3(target.value.replace(stringValue4(search), stringValue4(replacement)));
     }),
-    REPLACEALL: method4("REPLACEALL", ([target, search, replacement]) => {
+    REPLACEALL: method5("REPLACEALL", ([target, search, replacement]) => {
       ensureString(target, "ReplaceAll");
       return stringObj3(target.value.split(stringValue4(search)).join(stringValue4(replacement)));
     }),
-    PADLEFT: method4("PADLEFT", ([target, length, pad]) => {
+    PADLEFT: method5("PADLEFT", ([target, length, pad]) => {
       ensureString(target, "PadLeft");
       return stringObj3(target.value.padStart(numericIndex(length), stringValue4(pad ?? stringObj3(" "))));
     }),
-    PADRIGHT: method4("PADRIGHT", ([target, length, pad]) => {
+    PADRIGHT: method5("PADRIGHT", ([target, length, pad]) => {
       ensureString(target, "PadRight");
       return stringObj3(target.value.padEnd(numericIndex(length), stringValue4(pad ?? stringObj3(" "))));
     }),
-    REPEAT: method4("REPEAT", ([target, count]) => {
+    REPEAT: method5("REPEAT", ([target, count]) => {
       ensureString(target, "Repeat");
       return stringObj3(target.value.repeat(numericIndex(count)));
     }),
-    REDUCE: method4("REDUCE", ([target, iterator, initial], context, evaluate, invoke, execution) => reduceEntries(target, iterator, initial, context, evaluate, invoke, execution))
+    REDUCE: method5("REDUCE", ([target, iterator, initial], context, evaluate, invoke, execution) => reduceEntries(target, iterator, initial, context, evaluate, invoke, execution))
   };
   var tupleMethods = {
-    LEN: method4("LEN", ([target]) => {
+    LEN: method5("LEN", ([target]) => {
       ensureTuple(target, "Len");
       return int6(target.values.length);
     }),
-    GET: method4("GET", ([target, index]) => {
+    GET: method5("GET", ([target, index]) => {
       ensureTuple(target, "Get");
       const at = normalizeLookupIndex(index, target.values.length);
       return at === null ? null : target.values[at - 1];
     }),
-    FIRST: method4("FIRST", ([target]) => {
+    FIRST: method5("FIRST", ([target]) => {
       ensureTuple(target, "First");
       return target.values[0] ?? null;
     }),
-    LAST: method4("LAST", ([target]) => {
+    LAST: method5("LAST", ([target]) => {
       ensureTuple(target, "Last");
       return target.values[target.values.length - 1] ?? null;
     }),
-    SLICE: method4("SLICE", ([target, start, end]) => {
+    SLICE: method5("SLICE", ([target, start, end]) => {
       ensureTuple(target, "Slice");
       return { type: "tuple", values: jsSlice(target.values, start, end) };
     }),
-    SET: method4("SET", ([target, index, value]) => {
+    SET: method5("SET", ([target, index, value]) => {
       ensureTuple(target, "Set");
       const copy = shallowCopyValue(target);
       const at = normalizeLookupIndex(index, copy.values.length);
@@ -33582,11 +33675,11 @@ ${indented.join(`,
       copy.values[at - 1] = value;
       return copy;
     }),
-    TOARRAY: method4("TOARRAY", ([target]) => {
+    TOARRAY: method5("TOARRAY", ([target]) => {
       ensureTuple(target, "ToArray");
       return { type: "sequence", values: [...target.values], _ext: mutableExt2() };
     }),
-    REDUCE: method4("REDUCE", ([target, iterator, initial], context, evaluate, invoke, execution) => reduceEntries(target, iterator, initial, context, evaluate, invoke, execution))
+    REDUCE: method5("REDUCE", ([target, iterator, initial], context, evaluate, invoke, execution) => reduceEntries(target, iterator, initial, context, evaluate, invoke, execution))
   };
   function shapedSelectorsFromArgs(args) {
     if (args.length === 1 && args[0]?.type === "tuple") {
@@ -33595,36 +33688,36 @@ ${indented.join(`,
     return args.map((value) => ({ kind: "index", value }));
   }
   var shapedMethods = {
-    SCALARDOMAIN: method4("SCALARDOMAIN", ([target]) => {
+    SCALARDOMAIN: method5("SCALARDOMAIN", ([target]) => {
       ensureShaped(target, "ScalarDomain");
       return stringObj3(shapedScalarDomain(target));
     }),
-    WITHSCALARDOMAIN: method4("WITHSCALARDOMAIN", ([target, domain]) => {
+    WITHSCALARDOMAIN: method5("WITHSCALARDOMAIN", ([target, domain]) => {
       ensureShaped(target, "WithScalarDomain");
       const copy = shallowCopyValue(target);
       return validateShapedScalarDomain(copy, stringValue4(domain));
     }),
-    "SETSCALARDOMAIN!": method4("SETSCALARDOMAIN!", ([target, domain]) => {
+    "SETSCALARDOMAIN!": method5("SETSCALARDOMAIN!", ([target, domain]) => {
       ensureShaped(target, "SetScalarDomain!");
       return validateShapedScalarDomain(target, stringValue4(domain));
     }),
-    SHAPE: method4("SHAPE", ([target]) => {
+    SHAPE: method5("SHAPE", ([target]) => {
       ensureShaped(target, "Shape");
       return { type: "tuple", values: shapedShape(target).map((dim) => int6(dim)) };
     }),
-    RANK: method4("RANK", ([target]) => {
+    RANK: method5("RANK", ([target]) => {
       ensureShaped(target, "Rank");
       return int6(shapedRank(target));
     }),
-    SIZE: method4("SIZE", ([target]) => {
+    SIZE: method5("SIZE", ([target]) => {
       ensureShaped(target, "Size");
       return int6(shapedSize(target));
     }),
-    GET: method4("GET", ([target, ...selectors]) => {
+    GET: method5("GET", ([target, ...selectors]) => {
       ensureShaped(target, "Get");
       return shapedGetBySelectors(target, shapedSelectorsFromArgs(selectors));
     }),
-    SET: method4("SET", ([target, ...selectorsAndValue]) => {
+    SET: method5("SET", ([target, ...selectorsAndValue]) => {
       ensureShaped(target, "Set");
       const value = selectorsAndValue[selectorsAndValue.length - 1];
       const selectors = selectorsAndValue.slice(0, -1);
@@ -33632,14 +33725,14 @@ ${indented.join(`,
       shapedAssignBySelectors(copy, shapedSelectorsFromArgs(selectors), value);
       return copy;
     }),
-    "SET!": method4("SET!", ([target, ...selectorsAndValue]) => {
+    "SET!": method5("SET!", ([target, ...selectorsAndValue]) => {
       ensureShaped(target, "Set!");
       const value = selectorsAndValue[selectorsAndValue.length - 1];
       const selectors = selectorsAndValue.slice(0, -1);
       shapedAssignBySelectors(target, shapedSelectorsFromArgs(selectors), value);
       return target;
     }),
-    RESHAPE: method4("RESHAPE", ([target, shape]) => {
+    RESHAPE: method5("RESHAPE", ([target, shape]) => {
       ensureShaped(target, "Reshape");
       const nextShape = shape?.type === "tuple" || shape?.type === "sequence" ? shape.values.map((value) => numericIndex(value)) : null;
       if (!nextShape)
@@ -33649,11 +33742,11 @@ ${indented.join(`,
         throw new Error("Reshape size mismatch");
       return createShaped(nextShape, target.data);
     }),
-    FLATTEN: method4("FLATTEN", ([target]) => {
+    FLATTEN: method5("FLATTEN", ([target]) => {
       ensureShaped(target, "Flatten");
       return createShaped([shapedSize(target)], [...target.data]);
     }),
-    TRANSPOSE: method4("TRANSPOSE", ([target]) => {
+    TRANSPOSE: method5("TRANSPOSE", ([target]) => {
       ensureShaped(target, "Transpose");
       if (shapedRank(target) !== 2)
         throw new Error("Transpose currently expects a rank-2 Shaped value");
@@ -33663,7 +33756,7 @@ ${indented.join(`,
         offset: target.offset
       });
     }),
-    PERMUTE: method4("PERMUTE", ([target, order]) => {
+    PERMUTE: method5("PERMUTE", ([target, order]) => {
       ensureShaped(target, "Permute");
       if (order?.type !== "tuple")
         throw new Error("Permute expects a tuple of axis numbers");
@@ -33676,14 +33769,14 @@ ${indented.join(`,
         offset: target.offset
       });
     }),
-    MAP: method4("MAP", ([target, iterator], context, evaluate, invoke, execution) => {
+    MAP: method5("MAP", ([target, iterator], context, evaluate, invoke, execution) => {
       ensureShaped(target, "Map");
       return callbackSteps(function* () {
         const data = yield mapCallbacks(iterateEntries(target), (entry) => invoke(iterator, [entry.value, entry.key, target], context, evaluate), execution);
         return createShaped(target.shape, data);
       }(), execution);
     }),
-    "FILL!": method4("FILL!", ([target, value]) => {
+    "FILL!": method5("FILL!", ([target, value]) => {
       ensureShaped(target, "Fill!");
       const domain = shapedScalarDomain(target);
       if (!valueBelongsToScalarDomain(value, domain)) {
@@ -33694,7 +33787,7 @@ ${indented.join(`,
       });
       return target;
     }),
-    SUM: method4("SUM", ([target]) => {
+    SUM: method5("SUM", ([target]) => {
       ensureShaped(target, "Sum");
       let acc = int6(0);
       forEachShapedCell2(target, (value) => {
@@ -33703,18 +33796,18 @@ ${indented.join(`,
       });
       return acc;
     }),
-    MEAN: method4("MEAN", ([target]) => {
+    MEAN: method5("MEAN", ([target]) => {
       ensureShaped(target, "Mean");
       const size = shapedSize(target);
       if (size === 0)
         return null;
       return arithmeticDiv(shapedMethods.SUM.impl([target]), int6(size));
     }),
-    REDUCE: method4("REDUCE", ([target, iterator, initial], context, evaluate, invoke, execution) => reduceEntries(target, iterator, initial, context, evaluate, invoke, execution))
+    REDUCE: method5("REDUCE", ([target, iterator, initial], context, evaluate, invoke, execution) => reduceEntries(target, iterator, initial, context, evaluate, invoke, execution))
   };
   var commonMethods = {
-    CHECKTRAITS: method4("CHECKTRAITS", ([target], context) => checkTraits(target, context, { warnOnly: true })),
-    CheckTraits: method4("CheckTraits", ([target], context) => checkTraits(target, context, { warnOnly: true }))
+    CHECKTRAITS: method5("CHECKTRAITS", ([target], context) => checkTraits(target, context, { warnOnly: true })),
+    CheckTraits: method5("CheckTraits", ([target], context) => checkTraits(target, context, { warnOnly: true }))
   };
   function assumptionName(value) {
     if (value?.type === "string")
@@ -33724,36 +33817,36 @@ ${indented.join(`,
     throw new Error("Structural nonzero assumptions must be names or structural symbols");
   }
   var integerExactMethods = {
-    NEGATE: method4("Negate", ([target]) => target.negate()),
-    ABS: method4("Abs", ([target]) => target.abs()),
-    E: method4("E", ([target, exponent]) => target.E(exactBigInt(exponent, "Exponent"))),
-    BITLENGTH: method4("BitLength", ([target]) => int6(target.bitLength())),
-    TOSTRING: method4("ToString", ([target]) => stringObj3(target.toString()))
+    NEGATE: method5("Negate", ([target]) => target.negate()),
+    ABS: method5("Abs", ([target]) => target.abs()),
+    E: method5("E", ([target, exponent]) => target.E(exactBigInt(exponent, "Exponent"))),
+    BITLENGTH: method5("BitLength", ([target]) => int6(target.bitLength())),
+    TOSTRING: method5("ToString", ([target]) => stringObj3(target.toString()))
   };
   var rationalExactMethods = {
-    NUMERATOR: method4("Numerator", ([target]) => int6(target.numerator)),
-    DENOMINATOR: method4("Denominator", ([target]) => int6(target.denominator)),
-    NEGATE: method4("Negate", ([target]) => target.negate()),
-    RECIPROCAL: method4("Reciprocal", ([target]) => target.reciprocal()),
-    ABS: method4("Abs", ([target]) => target.abs()),
-    FLOOR: method4("Floor", ([target]) => int6(target.floor())),
-    CEIL: method4("Ceil", ([target]) => int6(target.ceil())),
-    TRUNC: method4("Trunc", ([target]) => int6(target.trunc())),
-    ROUND: method4("Round", ([target, mode]) => int6(target.round(mode === undefined ? undefined : stringValue4(mode)))),
-    ROUNDTO: method4("RoundTo", ([target, places, mode]) => target.roundTo(safeExactNumber(places, "Decimal places"), mode === undefined ? undefined : stringValue4(mode))),
-    E: method4("E", ([target, exponent]) => target.E(exactBigInt(exponent, "Exponent"))),
-    TOMIXEDSTRING: method4("ToMixedString", ([target]) => stringObj3(target.toMixedString())),
-    TODECIMAL: method4("ToDecimal", ([target, options]) => {
+    NUMERATOR: method5("Numerator", ([target]) => int6(target.numerator)),
+    DENOMINATOR: method5("Denominator", ([target]) => int6(target.denominator)),
+    NEGATE: method5("Negate", ([target]) => target.negate()),
+    RECIPROCAL: method5("Reciprocal", ([target]) => target.reciprocal()),
+    ABS: method5("Abs", ([target]) => target.abs()),
+    FLOOR: method5("Floor", ([target]) => int6(target.floor())),
+    CEIL: method5("Ceil", ([target]) => int6(target.ceil())),
+    TRUNC: method5("Trunc", ([target]) => int6(target.trunc())),
+    ROUND: method5("Round", ([target, mode]) => int6(target.round(mode === undefined ? undefined : stringValue4(mode)))),
+    ROUNDTO: method5("RoundTo", ([target, places, mode]) => target.roundTo(safeExactNumber(places, "Decimal places"), mode === undefined ? undefined : stringValue4(mode))),
+    E: method5("E", ([target, exponent]) => target.E(exactBigInt(exponent, "Exponent"))),
+    TOMIXEDSTRING: method5("ToMixedString", ([target]) => stringObj3(target.toMixedString())),
+    TODECIMAL: method5("ToDecimal", ([target, options]) => {
       const parsed = numericFormatOptions(options, "maxDigits", "Maximum decimal digits");
       return stringObj3(target.toDecimal(parsed.maxDigits));
     }),
-    TOLOCALESTRING: method4("ToLocaleString", ([target, options]) => stringObj3(localeNumberString(target, options ?? { type: "map", entries: new Map }))),
-    TOREPEATINGDECIMAL: method4("ToRepeatingDecimal", ([target, options]) => {
+    TOLOCALESTRING: method5("ToLocaleString", ([target, options]) => stringObj3(localeNumberString(target, options ?? { type: "map", entries: new Map }))),
+    TOREPEATINGDECIMAL: method5("ToRepeatingDecimal", ([target, options]) => {
       const parsed = repeatingOptions(options);
       const result = target.toRepeatingDecimalWithPeriod(parsed ?? true).decimal;
       return result === null ? null : stringObj3(result);
     }),
-    TOREPEATINGDECIMALINFO: method4("ToRepeatingDecimalInfo", ([target, options]) => {
+    TOREPEATINGDECIMALINFO: method5("ToRepeatingDecimalInfo", ([target, options]) => {
       const info = target.toRepeatingDecimalWithPeriod(repeatingOptions(options) ?? true);
       return {
         type: "map",
@@ -33764,62 +33857,62 @@ ${indented.join(`,
         ])
       };
     }),
-    TODECIMALAPPROXIMATION: method4("ToDecimalApproximation", ([target, options]) => boundedDecimalApproximation(target, {
+    TODECIMALAPPROXIMATION: method5("ToDecimalApproximation", ([target, options]) => boundedDecimalApproximation(target, {
       fractionalDigits: numericFormatOptions(options, "fractionalDigits", "Fractional digits").fractionalDigits
     })),
-    TOCONTINUEDFRACTION: method4("ToContinuedFraction", ([target, options]) => exactSequence(target.toContinuedFraction(numericFormatOptions(options, "maxTerms", "Maximum terms")).map((value) => int6(value)))),
-    TOCONTINUEDFRACTIONSTRING: method4("ToContinuedFractionString", ([target, options]) => stringObj3(target.toContinuedFractionString(numericFormatOptions(options, "maxTerms", "Maximum terms")))),
-    TOCONTINUEDFRACTIONAPPROXIMATION: method4("ToContinuedFractionApproximation", ([target, options]) => boundedContinuedFractionApproximation(target, {
+    TOCONTINUEDFRACTION: method5("ToContinuedFraction", ([target, options]) => exactSequence(target.toContinuedFraction(numericFormatOptions(options, "maxTerms", "Maximum terms")).map((value) => int6(value)))),
+    TOCONTINUEDFRACTIONSTRING: method5("ToContinuedFractionString", ([target, options]) => stringObj3(target.toContinuedFractionString(numericFormatOptions(options, "maxTerms", "Maximum terms")))),
+    TOCONTINUEDFRACTIONAPPROXIMATION: method5("ToContinuedFractionApproximation", ([target, options]) => boundedContinuedFractionApproximation(target, {
       maxTerms: numericFormatOptions(options, "maxTerms", "Maximum terms").maxTerms
     })),
-    CONVERGENTS: method4("Convergents", ([target, maxCount]) => exactSequence(target.convergents(maxCount === undefined ? undefined : safeExactNumber(maxCount, "Maximum convergents")))),
-    CONVERGENT: method4("Convergent", ([target, index]) => {
+    CONVERGENTS: method5("Convergents", ([target, maxCount]) => exactSequence(target.convergents(maxCount === undefined ? undefined : safeExactNumber(maxCount, "Maximum convergents")))),
+    CONVERGENT: method5("Convergent", ([target, index]) => {
       const oneBasedIndex = safeExactNumber(index, "Convergent index");
       if (oneBasedIndex < 1)
         throw new Error("Convergent index must be at least 1");
       return target.getConvergent(oneBasedIndex - 1);
     }),
-    APPROXIMATIONERROR: method4("ApproximationError", ([target, other]) => target.approximationError(exactRational4(other, "Approximation target"))),
-    BESTAPPROXIMATION: method4("BestApproximation", ([target, maxDenominator]) => target.bestApproximation(exactBigInt(maxDenominator, "Maximum denominator"))),
-    BESTCONVERGENT: method4("BestConvergent", ([target, maxDenominator]) => target.bestConvergent(exactBigInt(maxDenominator, "Maximum denominator"))),
-    BITLENGTH: method4("BitLength", ([target]) => int6(target.bitLength())),
-    TOSTRING: method4("ToString", ([target]) => stringObj3(target.toString()))
+    APPROXIMATIONERROR: method5("ApproximationError", ([target, other]) => target.approximationError(exactRational4(other, "Approximation target"))),
+    BESTAPPROXIMATION: method5("BestApproximation", ([target, maxDenominator]) => target.bestApproximation(exactBigInt(maxDenominator, "Maximum denominator"))),
+    BESTCONVERGENT: method5("BestConvergent", ([target, maxDenominator]) => target.bestConvergent(exactBigInt(maxDenominator, "Maximum denominator"))),
+    BITLENGTH: method5("BitLength", ([target]) => int6(target.bitLength())),
+    TOSTRING: method5("ToString", ([target]) => stringObj3(target.toString()))
   };
   var rationalIntervalMethods = {
-    START: method4("Start", ([target]) => target.start),
-    END: method4("End", ([target]) => target.end),
-    LOW: method4("Low", ([target]) => target.low),
-    HIGH: method4("High", ([target]) => target.high),
-    WIDTH: method4("Width", ([target]) => target.high.subtract(target.low)),
-    ISASCENDING: method4("IsAscending", ([target]) => bool3(target.isAscending)),
-    MIDPOINT: method4("Midpoint", ([target]) => target.midpoint()),
-    MEDIANT: method4("Mediant", ([target]) => target.mediant()),
-    NEGATE: method4("Negate", ([target]) => target.negate()),
-    RECIPROCAL: method4("Reciprocal", ([target]) => target.reciprocate()),
-    OVERLAPS: method4("Overlaps", ([target, other]) => bool3(target.overlaps(exactInterval(other, "Other interval")))),
-    CONTAINS: method4("Contains", ([target, other]) => bool3(target.contains(exactInterval(other, "Contained interval")))),
-    CONTAINSVALUE: method4("ContainsValue", ([target, value]) => bool3(target.containsValue(exactRational4(value, "Contained value")))),
-    CONTAINSZERO: method4("ContainsZero", ([target]) => bool3(target.containsZero())),
-    INTERSECTION: method4("Intersection", ([target, other]) => attachBuiltinProto(RationalIntervalSet.fromInterval(target).intersection(exactRangeSet(other, "Other range")))),
-    UNION: method4("Union", ([target, other]) => attachBuiltinProto(RationalIntervalSet.fromInterval(target).union(exactRangeSet(other, "Other range")))),
-    HULL: method4("Hull", ([target, other]) => {
+    START: method5("Start", ([target]) => target.start),
+    END: method5("End", ([target]) => target.end),
+    LOW: method5("Low", ([target]) => target.low),
+    HIGH: method5("High", ([target]) => target.high),
+    WIDTH: method5("Width", ([target]) => target.high.subtract(target.low)),
+    ISASCENDING: method5("IsAscending", ([target]) => bool3(target.isAscending)),
+    MIDPOINT: method5("Midpoint", ([target]) => target.midpoint()),
+    MEDIANT: method5("Mediant", ([target]) => target.mediant()),
+    NEGATE: method5("Negate", ([target]) => target.negate()),
+    RECIPROCAL: method5("Reciprocal", ([target]) => target.reciprocate()),
+    OVERLAPS: method5("Overlaps", ([target, other]) => bool3(target.overlaps(exactInterval(other, "Other interval")))),
+    CONTAINS: method5("Contains", ([target, other]) => bool3(target.contains(exactInterval(other, "Contained interval")))),
+    CONTAINSVALUE: method5("ContainsValue", ([target, value]) => bool3(target.containsValue(exactRational4(value, "Contained value")))),
+    CONTAINSZERO: method5("ContainsZero", ([target]) => bool3(target.containsZero())),
+    INTERSECTION: method5("Intersection", ([target, other]) => attachBuiltinProto(RationalIntervalSet.fromInterval(target).intersection(exactRangeSet(other, "Other range")))),
+    UNION: method5("Union", ([target, other]) => attachBuiltinProto(RationalIntervalSet.fromInterval(target).union(exactRangeSet(other, "Other range")))),
+    HULL: method5("Hull", ([target, other]) => {
       const hull = other === undefined ? RationalIntervalSet.fromInterval(target) : RationalIntervalSet.fromInterval(target).union(exactRangeSet(other, "Other range")).hull();
       return hull.toRationalInterval() ?? attachBuiltinProto(hull);
     }),
-    SPLIT: method4("Split", ([target, specification]) => {
+    SPLIT: method5("Split", ([target, specification]) => {
       if (specification !== undefined) {
         throw new Error("RationalInterval.Split currently accepts no specification; omit it to split into components");
       }
       return exactSequence([attachBuiltinProto(RationalIntervalSet.fromInterval(target))]);
     }),
-    SHORTESTDECIMAL: method4("ShortestDecimal", ([target, base]) => target.shortestDecimal(base === undefined ? undefined : exactBigInt(base, "Base"))),
-    DENOMINATORINTERVAL: method4("DenominatorInterval", ([target, denominator, onEmpty]) => target.denominatorInterval(denominator === undefined || denominator === null ? undefined : exactBigInt(denominator, "Grid denominator"), onEmpty === undefined ? undefined : stringValue4(onEmpty))),
-    RANDOM: method4("Random", ([target, parameters], _context, evaluate) => evaluate({ fn: "RANDOM", args: [target, parameters] })),
-    RANDOMPARTITION: method4("RandomPartition", ([target, parameters], _context, evaluate) => evaluate({ fn: "RANDOM_PARTITION", args: [target, parameters] })),
-    E: method4("E", ([target, exponent]) => target.E(exactBigInt(exponent, "Exponent"))),
-    BITLENGTH: method4("BitLength", ([target]) => int6(target.bitLength())),
-    TOMIXEDSTRING: method4("ToMixedString", ([target]) => stringObj3(target.toMixedString())),
-    TOREPEATINGDECIMAL: method4("ToRepeatingDecimal", ([target, options]) => {
+    SHORTESTDECIMAL: method5("ShortestDecimal", ([target, base]) => target.shortestDecimal(base === undefined ? undefined : exactBigInt(base, "Base"))),
+    DENOMINATORINTERVAL: method5("DenominatorInterval", ([target, denominator, onEmpty]) => target.denominatorInterval(denominator === undefined || denominator === null ? undefined : exactBigInt(denominator, "Grid denominator"), onEmpty === undefined ? undefined : stringValue4(onEmpty))),
+    RANDOM: method5("Random", ([target, parameters], _context, evaluate) => evaluate({ fn: "RANDOM", args: [target, parameters] })),
+    RANDOMPARTITION: method5("RandomPartition", ([target, parameters], _context, evaluate) => evaluate({ fn: "RANDOM_PARTITION", args: [target, parameters] })),
+    E: method5("E", ([target, exponent]) => target.E(exactBigInt(exponent, "Exponent"))),
+    BITLENGTH: method5("BitLength", ([target]) => int6(target.bitLength())),
+    TOMIXEDSTRING: method5("ToMixedString", ([target]) => stringObj3(target.toMixedString())),
+    TOREPEATINGDECIMAL: method5("ToRepeatingDecimal", ([target, options]) => {
       const maxDigits = optionValue(options, "maxdigits", undefined);
       const onLimit = optionValue(options, "onlimit", undefined);
       const text8 = target.toRepeatingDecimal(options?.type === "map" ? {
@@ -33828,13 +33921,13 @@ ${indented.join(`,
       } : true);
       return text8 === null ? null : stringObj3(text8);
     }),
-    TOCOMPACTDECIMAL: method4("ToCompactDecimal", ([target]) => stringObj3(target.compactedDecimalInterval())),
-    TORELATIVEMIDDECIMAL: method4("ToRelativeMidDecimal", ([target]) => stringObj3(target.relativeMidDecimalInterval())),
-    TORELATIVEDECIMAL: method4("ToRelativeDecimal", ([target]) => stringObj3(target.relativeDecimalInterval())),
-    TOSTRING: method4("ToString", ([target]) => stringObj3(target.toString()))
+    TOCOMPACTDECIMAL: method5("ToCompactDecimal", ([target]) => stringObj3(target.compactedDecimalInterval())),
+    TORELATIVEMIDDECIMAL: method5("ToRelativeMidDecimal", ([target]) => stringObj3(target.relativeMidDecimalInterval())),
+    TORELATIVEDECIMAL: method5("ToRelativeDecimal", ([target]) => stringObj3(target.relativeDecimalInterval())),
+    TOSTRING: method5("ToString", ([target]) => stringObj3(target.toString()))
   };
   var rationalIntervalSetMethods = {
-    COMPONENTS: method4("Components", ([target]) => exactSequence(target.components.map((component) => ({
+    COMPONENTS: method5("Components", ([target]) => exactSequence(target.components.map((component) => ({
       type: "map",
       entries: new Map([
         ["low", component.low],
@@ -33844,46 +33937,46 @@ ${indented.join(`,
       ]),
       _ext: mutableExt2()
     })))),
-    SPLIT: method4("Split", ([target, specification]) => {
+    SPLIT: method5("Split", ([target, specification]) => {
       if (specification !== undefined) {
         throw new Error("RationalIntervalSet.Split currently accepts no specification; omit it to split into components");
       }
       return exactSequence(target.components.map((component) => attachBuiltinProto(new RationalIntervalSet(component))));
     }),
-    UNION: method4("Union", ([target, other]) => attachBuiltinProto(target.union(exactRangeSet(other, "Other range")))),
-    INTERSECTION: method4("Intersection", ([target, other]) => attachBuiltinProto(target.intersection(exactRangeSet(other, "Other range")))),
-    CONTAINS: method4("Contains", ([target, other]) => bool3(target.contains(exactRangeSet(other, "Contained range")))),
-    CONTAINSVALUE: method4("ContainsValue", ([target, value]) => bool3(target.containsValue(exactRational4(value, "Contained value")))),
-    HULL: method4("Hull", ([target]) => attachBuiltinProto(target.hull())),
-    ADD: method4("Add", ([target, other], context) => attachBuiltinProto(executeRangeOperation("add", [target, other], context))),
-    SUBTRACT: method4("Subtract", ([target, other], context) => attachBuiltinProto(executeRangeOperation("subtract", [target, other], context))),
-    MULTIPLY: method4("Multiply", ([target, other], context) => attachBuiltinProto(executeRangeOperation("multiply", [target, other], context))),
-    DIVIDE: method4("Divide", ([target, other], context) => attachBuiltinProto(executeRangeOperation("divide", [target, other], context))),
-    NEGATE: method4("Negate", ([target], context) => attachBuiltinProto(executeRangeOperation("negate", [target], context))),
-    ABSOLUTEVALUE: method4("AbsoluteValue", ([target], context) => attachBuiltinProto(executeRangeOperation("absoluteValue", [target], context))),
-    RECIPROCAL: method4("Reciprocal", ([target], context) => attachBuiltinProto(executeRangeOperation("reciprocal", [target], context))),
-    INTEGERPOWER: method4("IntegerPower", ([target, exponent], context) => attachBuiltinProto(executeRangeOperation("integerPower", [target, exponent], context))),
-    RANGEEVIDENCE: method4("RangeEvidence", ([target]) => rangeEvidence(target)),
-    TORATIONALINTERVAL: method4("ToRationalInterval", ([target]) => target.toRationalInterval()),
-    TOSTRING: method4("ToString", ([target]) => stringObj3(target.toString()))
+    UNION: method5("Union", ([target, other]) => attachBuiltinProto(target.union(exactRangeSet(other, "Other range")))),
+    INTERSECTION: method5("Intersection", ([target, other]) => attachBuiltinProto(target.intersection(exactRangeSet(other, "Other range")))),
+    CONTAINS: method5("Contains", ([target, other]) => bool3(target.contains(exactRangeSet(other, "Contained range")))),
+    CONTAINSVALUE: method5("ContainsValue", ([target, value]) => bool3(target.containsValue(exactRational4(value, "Contained value")))),
+    HULL: method5("Hull", ([target]) => attachBuiltinProto(target.hull())),
+    ADD: method5("Add", ([target, other], context) => attachBuiltinProto(executeRangeOperation("add", [target, other], context))),
+    SUBTRACT: method5("Subtract", ([target, other], context) => attachBuiltinProto(executeRangeOperation("subtract", [target, other], context))),
+    MULTIPLY: method5("Multiply", ([target, other], context) => attachBuiltinProto(executeRangeOperation("multiply", [target, other], context))),
+    DIVIDE: method5("Divide", ([target, other], context) => attachBuiltinProto(executeRangeOperation("divide", [target, other], context))),
+    NEGATE: method5("Negate", ([target], context) => attachBuiltinProto(executeRangeOperation("negate", [target], context))),
+    ABSOLUTEVALUE: method5("AbsoluteValue", ([target], context) => attachBuiltinProto(executeRangeOperation("absoluteValue", [target], context))),
+    RECIPROCAL: method5("Reciprocal", ([target], context) => attachBuiltinProto(executeRangeOperation("reciprocal", [target], context))),
+    INTEGERPOWER: method5("IntegerPower", ([target, exponent], context) => attachBuiltinProto(executeRangeOperation("integerPower", [target, exponent], context))),
+    RANGEEVIDENCE: method5("RangeEvidence", ([target]) => rangeEvidence(target)),
+    TORATIONALINTERVAL: method5("ToRationalInterval", ([target]) => target.toRationalInterval()),
+    TOSTRING: method5("ToString", ([target]) => stringObj3(target.toString()))
   };
   var certifiedApproximationMethods = {
-    CANDIDATE: method4("Candidate", ([target]) => target.candidate),
-    ENCLOSURE: method4("Enclosure", ([target]) => target.enclosure),
-    LOW: method4("Low", ([target]) => target.low),
-    HIGH: method4("High", ([target]) => target.high),
-    NEGATE: method4("Negate", ([target]) => target.negate()),
-    RECIPROCAL: method4("Reciprocal", ([target]) => target.reciprocal()),
-    POSSIBLERELATIONS: method4("PossibleRelations", ([target, other]) => int6(possibleRelations(target, other))),
-    CERTAINLYLESSTHAN: method4("CertainlyLessThan", ([target, other]) => bool3(possibleRelations(target, other) === Relation.LESS)),
-    POSSIBLYLESSTHAN: method4("PossiblyLessThan", ([target, other]) => bool3((possibleRelations(target, other) & Relation.LESS) !== 0)),
-    TOSTRING: method4("ToString", ([target]) => stringObj3(target.toString()))
+    CANDIDATE: method5("Candidate", ([target]) => target.candidate),
+    ENCLOSURE: method5("Enclosure", ([target]) => target.enclosure),
+    LOW: method5("Low", ([target]) => target.low),
+    HIGH: method5("High", ([target]) => target.high),
+    NEGATE: method5("Negate", ([target]) => target.negate()),
+    RECIPROCAL: method5("Reciprocal", ([target]) => target.reciprocal()),
+    POSSIBLERELATIONS: method5("PossibleRelations", ([target, other]) => int6(possibleRelations(target, other))),
+    CERTAINLYLESSTHAN: method5("CertainlyLessThan", ([target, other]) => bool3(possibleRelations(target, other) === Relation.LESS)),
+    POSSIBLYLESSTHAN: method5("PossiblyLessThan", ([target, other]) => bool3((possibleRelations(target, other) & Relation.LESS) !== 0)),
+    TOSTRING: method5("ToString", ([target]) => stringObj3(target.toString()))
   };
   var structuralMethods = {
-    INSPECT: method4("Inspect", ([target]) => inspectStructuralValue(target)),
-    RENDER: method4("Render", ([target]) => stringObj3(formatStructuralValue(target, valueKey2))),
-    COLLAPSE: method4("Collapse", ([target], context) => collapseStructuralValue(target, context)),
-    TOEXACT: method4("ToExact", ([target], context, evaluate, invoke, execution) => {
+    INSPECT: method5("Inspect", ([target]) => inspectStructuralValue(target)),
+    RENDER: method5("Render", ([target]) => stringObj3(formatStructuralValue(target, valueKey2))),
+    COLLAPSE: method5("Collapse", ([target], context) => collapseStructuralValue(target, context)),
+    TOEXACT: method5("ToExact", ([target], context, evaluate, invoke, execution) => {
       if (target.type !== "structural_algebra")
         return collapseStructuralValue(target, context);
       const components = target.components.map((component) => collapseStructuralValue(component, context));
@@ -33915,14 +34008,14 @@ ${indented.join(`,
       }
       return invoke(constructor, [receiver, ...components], context, evaluate);
     }),
-    SIMPLIFY: method4("Simplify", ([target, ...nonzero]) => simplifyStructuralValue(target, { nonzero: nonzero.map(assumptionName) })),
-    HEAD: method4("Head", ([target]) => stringObj3(target.type === "structural_form" ? target.head : target.type === "structural_algebra" ? target.profile : target.type === "structural_literal" ? target.kind : target.type === "structural_symbol" ? "Symbol" : "Value")),
-    ARGUMENTS: method4("Arguments", ([target]) => ({
+    SIMPLIFY: method5("Simplify", ([target, ...nonzero]) => simplifyStructuralValue(target, { nonzero: nonzero.map(assumptionName) })),
+    HEAD: method5("Head", ([target]) => stringObj3(target.type === "structural_form" ? target.head : target.type === "structural_algebra" ? target.profile : target.type === "structural_literal" ? target.kind : target.type === "structural_symbol" ? "Symbol" : "Value")),
+    ARGUMENTS: method5("Arguments", ([target]) => ({
       type: "sequence",
       values: target.type === "structural_form" ? [...target.args] : target.type === "structural_algebra" ? [...target.components] : [],
       _ext: mutableExt2()
     })),
-    SOURCESPAN: method4("SourceSpan", ([target]) => {
+    SOURCESPAN: method5("SourceSpan", ([target]) => {
       const span = structuralSourceSpan(target);
       if (!span)
         return null;
@@ -33932,7 +34025,7 @@ ${indented.join(`,
         _ext: mutableExt2()
       };
     }),
-    MAPARGUMENTS: method4("MapArguments", ([target, mapper], context, evaluate, invoke, execution) => {
+    MAPARGUMENTS: method5("MapArguments", ([target, mapper], context, evaluate, invoke, execution) => {
       return callbackSteps(function* () {
         if (target.type === "structural_algebra") {
           const profile = createStructuralAlgebraProfile(target.profile, target.basis, {
@@ -33970,31 +34063,31 @@ ${indented.join(`,
     ["deferred", createBuiltinProto([...Object.entries(commonMethods), ...Object.entries(deferredMethods)])],
     ["exact_generator", createBuiltinProto([
       ...Object.entries(commonMethods),
-      ["CONJUGATE", method4("Conjugate", ([target]) => complexConjugate(target))],
-      ["RE", method4("Re", ([target]) => complexParts(target).real)],
-      ["IM", method4("Im", ([target]) => complexParts(target).imaginary)],
-      ["NORMSQUARED", method4("NormSquared", ([target]) => complexNormSquared(target))],
-      ["CAYLEY", method4("Cayley", ([target]) => cayleyFromCartesian(target))]
+      ["CONJUGATE", method5("Conjugate", ([target]) => complexConjugate(target))],
+      ["RE", method5("Re", ([target]) => complexParts(target).real)],
+      ["IM", method5("Im", ([target]) => complexParts(target).imaginary)],
+      ["NORMSQUARED", method5("NormSquared", ([target]) => complexNormSquared(target))],
+      ["CAYLEY", method5("Cayley", ([target]) => cayleyFromCartesian(target))]
     ])],
     ["exact_expression", createBuiltinProto([
       ...Object.entries(commonMethods),
-      ["CONJUGATE", method4("Conjugate", ([target]) => complexConjugate(target))],
-      ["RE", method4("Re", ([target]) => complexParts(target).real)],
-      ["IM", method4("Im", ([target]) => complexParts(target).imaginary)],
-      ["NORMSQUARED", method4("NormSquared", ([target]) => complexNormSquared(target))],
-      ["CAYLEY", method4("Cayley", ([target]) => cayleyFromCartesian(target))]
+      ["CONJUGATE", method5("Conjugate", ([target]) => complexConjugate(target))],
+      ["RE", method5("Re", ([target]) => complexParts(target).real)],
+      ["IM", method5("Im", ([target]) => complexParts(target).imaginary)],
+      ["NORMSQUARED", method5("NormSquared", ([target]) => complexNormSquared(target))],
+      ["CAYLEY", method5("Cayley", ([target]) => cayleyFromCartesian(target))]
     ])],
     ["cayley", createBuiltinProto([
       ...Object.entries(commonMethods),
-      ["CARTESIAN", method4("Cartesian", ([target]) => cayleyCartesian(target))],
-      ["CAYLEY", method4("Cayley", ([target]) => target)],
-      ["CONJUGATE", method4("Conjugate", ([target]) => conjugateCayley(target))],
-      ["RE", method4("Re", ([target]) => cayleyReal(target))],
-      ["IM", method4("Im", ([target]) => cayleyImaginary(target))],
-      ["NORMSQUARED", method4("NormSquared", ([target]) => multiplyScalars(target.magnitude, target.magnitude))],
-      ["MAGNITUDE", method4("Magnitude", ([target]) => target.magnitude)],
-      ["DIRECTION", method4("Direction", ([target]) => target.direction)],
-      ["INVERSE", method4("Inverse", ([target]) => inverseCayley(target))]
+      ["CARTESIAN", method5("Cartesian", ([target]) => cayleyCartesian(target))],
+      ["CAYLEY", method5("Cayley", ([target]) => target)],
+      ["CONJUGATE", method5("Conjugate", ([target]) => conjugateCayley(target))],
+      ["RE", method5("Re", ([target]) => cayleyReal(target))],
+      ["IM", method5("Im", ([target]) => cayleyImaginary(target))],
+      ["NORMSQUARED", method5("NormSquared", ([target]) => multiplyScalars(target.magnitude, target.magnitude))],
+      ["MAGNITUDE", method5("Magnitude", ([target]) => target.magnitude)],
+      ["DIRECTION", method5("Direction", ([target]) => target.direction)],
+      ["INVERSE", method5("Inverse", ([target]) => inverseCayley(target))]
     ])]
   ]);
   function isCallableValue(value) {
@@ -34009,7 +34102,7 @@ ${indented.join(`,
   function checkTraitsMethod(name) {
     if (name !== "CHECKTRAITS" && name !== "CheckTraits")
       return null;
-    return method4(name, ([target], context) => checkTraits(target, context, { warnOnly: true }));
+    return method5(name, ([target], context) => checkTraits(target, context, { warnOnly: true }));
   }
   function builtinProtoFor(target) {
     if (isUndecided(target))
@@ -36483,7 +36576,7 @@ ${indented.join(`,
   var exact = (value) => value instanceof Integer ? new Rational(value.value, 1n) : value instanceof Rational ? value : null;
   var scalar = (value) => exact(value) || (isMathExpression(value) ? exact(expressionField(expandExpression(value), "value")) : null);
   var compare3 = (a, b) => a.lessThan(b) ? -1 : a.greaterThan(b) ? 1 : 0;
-  var then = (value, finish) => value instanceof Promise ? value.then(finish) : finish(value);
+  var then2 = (value, finish) => value instanceof Promise ? value.then(finish) : finish(value);
   var binderNames = (item) => item.names || [item.name];
   function bindIR(node, symbols2) {
     if (!node || typeof node !== "object" || node instanceof Map)
@@ -36662,7 +36755,7 @@ ${indented.join(`,
         }
         if (!item.source)
           return declaration(index + 1);
-        return then(evaluateNode2(item.source), (source) => {
+        return then2(evaluateNode2(item.source), (source) => {
           const sources = item.names ? source?.type === "tuple" ? source.values : null : [source];
           if (!sources || sources.length !== binderNames(item).length)
             throw new Error("Tuple binding requires one domain per bound symbol");
@@ -36677,14 +36770,14 @@ ${indented.join(`,
           return declaration(index + 1);
         });
       }
-      return then(evaluateNode2(item.left), (left) => then(evaluateNode2(item.right), (right) => {
+      return then2(evaluateNode2(item.left), (left) => then2(evaluateNode2(item.right), (right) => {
         assumption(item.operator, left, right);
         return declaration(index + 1);
       }));
     }
     function statement(index, result) {
       if (index < body.length)
-        return then(evaluateNode2(body[index]), (value) => statement(index + 1, value));
+        return then2(evaluateNode2(body[index]), (value) => statement(index + 1, value));
       return record({
         schema: str("rix.math.context@1"),
         result,
@@ -36897,15 +36990,15 @@ ${indented.join(`,
     const extension = new Map;
     for (const name of metadata.exports) {
       const displayName = String(name);
-      const method5 = {
+      const method6 = {
         type: "method_builtin",
         name: displayName,
         impl() {
           throw new Error(`Plugin '${metadata.id}' is available but not loaded`);
         }
       };
-      entries2.set(displayName, method5);
-      extension.set(displayName.toUpperCase(), method5);
+      entries2.set(displayName, method6);
+      extension.set(displayName.toUpperCase(), method6);
     }
     return registerPluginNamespace({ type: "map", entries: entries2, _ext: extension }, {
       pluginId: metadata.id,
@@ -38421,15 +38514,15 @@ ${indented.join(`,
           if (context.getImmediateCell(localName)) {
             throw new Error(`Cannot import plugin export '${name}' as '${localDisplayName}': the current scope already defines '${localDisplayName}'`);
           }
-          let method5 = null;
+          let method6 = null;
           if (info.namespaceAvailable && target?.type !== "sysref") {
             try {
-              method5 = resolveMethod(target, name, context);
+              method6 = resolveMethod(target, name, context);
             } catch (_error) {
-              method5 = null;
+              method6 = null;
             }
           }
-          if (method5) {
+          if (method6) {
             return {
               localName,
               value: createBoundPluginMethod(target, name, info.pluginId)
@@ -82022,7 +82115,7 @@ ndNamespace._proto={=
       installs
     });
   }
-  function method5(name, impl) {
+  function method6(name, impl) {
     return { type: "method_builtin", name, impl };
   }
   function installBrowserApproxMathPlugin({ systemContext, registry, metadata = {}, options = {} }) {
@@ -82032,7 +82125,7 @@ ndNamespace._proto={=
     const entries2 = new Map;
     const extension = new Map;
     const add3 = (name, impl) => {
-      const entry2 = method5(name, impl);
+      const entry2 = method6(name, impl);
       entries2.set(name, entry2);
       extension.set(name.toUpperCase(), entry2);
     };
@@ -82074,7 +82167,7 @@ ndNamespace._proto={=
       doc: "Optional IEEE-754 Float conversion and approximate math",
       groups: ["ApproximateMath", "Float"]
     });
-    const floatExtension = method5("Float", (args, _context, evaluate) => args[1] === undefined || args[1] === null ? requireFloat(args[0], evaluate) : requireFloat(float(args[0], args[1]), evaluate));
+    const floatExtension = method6("Float", (args, _context, evaluate) => args[1] === undefined || args[1] === null ? requireFloat(args[0], evaluate) : requireFloat(float(args[0], args[1]), evaluate));
     const owner = {
       pluginId: metadata.id || "float",
       mount: options.as || metadata.mount || "float"
@@ -83009,13 +83102,13 @@ ndNamespace._proto={=
       ["restrictions", seq3(restrictionSpecs(source))],
       ["calculusRestrictions", seq3(restrictionCalculusExpressions(source))]
     ], [
-      ["SOURCE", method6("Source", () => source)],
-      ["FUNCTION", method6("Function", () => source)],
-      ["CANONICAL", method6("Canonical", () => exact3)],
-      ["PRESENTATION", method6("Presentation", () => payload)],
-      ["DOMAIN", method6("Domain", () => domainRecord3(source))],
-      ["GRID", method6("Grid", (_args, callContext, callEvaluate) => presentationGrid(source, kind, payload, callContext, callEvaluate))],
-      ["RECORD", method6("Record", () => result)]
+      ["SOURCE", method7("Source", () => source)],
+      ["FUNCTION", method7("Function", () => source)],
+      ["CANONICAL", method7("Canonical", () => exact3)],
+      ["PRESENTATION", method7("Presentation", () => payload)],
+      ["DOMAIN", method7("Domain", () => domainRecord3(source))],
+      ["GRID", method7("Grid", (_args, callContext, callEvaluate) => presentationGrid(source, kind, payload, callContext, callEvaluate))],
+      ["RECORD", method7("Record", () => result)]
     ]);
     return result;
   }
@@ -83067,10 +83160,10 @@ ndNamespace._proto={=
       ["restrictionEvidence", seq3(restrictions)],
       ["domain", domainRecord3(source)]
     ], [
-      ["HOLES", method6("Holes", () => seq3(holes))],
-      ["SOURCE", method6("Source", () => source)],
-      ["DOMAIN", method6("Domain", () => domainRecord3(source))],
-      ["RECORD", method6("Record", () => result)]
+      ["HOLES", method7("Holes", () => seq3(holes))],
+      ["SOURCE", method7("Source", () => source)],
+      ["DOMAIN", method7("Domain", () => domainRecord3(source))],
+      ["RECORD", method7("Record", () => result)]
     ]);
     return result;
   }
@@ -83092,12 +83185,12 @@ ndNamespace._proto={=
       ["holeEvidence", holes],
       ["domain", domainRecord3(source)]
     ], [
-      ["ZEROS", method6("Zeros", () => mapField3(canonicalEvidence, "zeros"))],
-      ["POLES", method6("Poles", () => mapField3(canonicalEvidence, "poles"))],
-      ["REMOVABLEHOLES", method6("RemovableHoles", () => mapField3(holes, "holes"))],
-      ["SOURCE", method6("Source", () => source)],
-      ["DOMAIN", method6("Domain", () => domainRecord3(source))],
-      ["RECORD", method6("Record", () => result)]
+      ["ZEROS", method7("Zeros", () => mapField3(canonicalEvidence, "zeros"))],
+      ["POLES", method7("Poles", () => mapField3(canonicalEvidence, "poles"))],
+      ["REMOVABLEHOLES", method7("RemovableHoles", () => mapField3(holes, "holes"))],
+      ["SOURCE", method7("Source", () => source)],
+      ["DOMAIN", method7("Domain", () => domainRecord3(source))],
+      ["RECORD", method7("Record", () => result)]
     ]);
     return result;
   }
@@ -83118,7 +83211,7 @@ ndNamespace._proto={=
       seq3([])
     ]);
   }
-  function method6(name, impl) {
+  function method7(name, impl) {
     return { type: "method_builtin", name, impl };
   }
   function conversionMethod(args, context, evaluate) {
@@ -83140,7 +83233,7 @@ ndNamespace._proto={=
     return createFractionFunction([source], context, evaluate);
   }
   function registerFractionFunctionMethods(systemContext, owner = {}) {
-    const register = (type, name, impl) => systemContext.registerMethod(type, name, method6(name, impl), owner);
+    const register = (type, name, impl) => systemContext.registerMethod(type, name, method7(name, impl), owner);
     for (const type of [
       "symbolic_spec",
       "structural_form",
@@ -83259,9 +83352,9 @@ ndNamespace._proto={=
   }
   function createFracfunPluginValue() {
     const constructor = (args, context, evaluate) => createFractionFunction(args, context, evaluate);
-    const parseMethod = method6("Parse", parseFractionFunction);
-    const presentationMethod = (name, kind) => method6(name, ([, value], context, evaluate) => presentationValue(value, kind, context, evaluate));
-    const modifier = (name) => method6(name, () => {
+    const parseMethod = method7("Parse", parseFractionFunction);
+    const presentationMethod = (name, kind) => method7(name, ([, value], context, evaluate) => presentationValue(value, kind, context, evaluate));
+    const modifier = (name) => method7(name, () => {
       throw new Error(`.${name} is a backtick parser modifier, not a callable method`);
     });
     return {
@@ -83274,13 +83367,13 @@ ndNamespace._proto={=
         ["Var", modifier("Var")],
         ["FUN", modifier("Fun")],
         ["Fun", modifier("Fun")],
-        ["FRACTIONFUNCTION", method6("FractionFunction", ([, ...args], context, evaluate) => createFractionFunction(args, context, evaluate))],
+        ["FRACTIONFUNCTION", method7("FractionFunction", ([, ...args], context, evaluate) => createFractionFunction(args, context, evaluate))],
         ["FACTOR", presentationMethod("Factor", "factored")],
         ["SQUAREFREE", presentationMethod("SquareFree", "squareFree")],
         ["PARTIALFRACTIONS", presentationMethod("PartialFractions", "partialFractions")],
-        ["POLEZEROEVIDENCE", method6("PoleZeroEvidence", ([, value], context, evaluate) => divisorEvidence(value, context, evaluate))],
-        ["REMOVABLEHOLEEVIDENCE", method6("RemovableHoleEvidence", ([, value], context, evaluate) => removableHoleEvidence(value, context, evaluate))],
-        ["TRANSFORMATIONGRID", method6("TransformationGrid", ([, value], context, evaluate) => transformationGrid(value, context, evaluate))],
+        ["POLEZEROEVIDENCE", method7("PoleZeroEvidence", ([, value], context, evaluate) => divisorEvidence(value, context, evaluate))],
+        ["REMOVABLEHOLEEVIDENCE", method7("RemovableHoleEvidence", ([, value], context, evaluate) => removableHoleEvidence(value, context, evaluate))],
+        ["TRANSFORMATIONGRID", method7("TransformationGrid", ([, value], context, evaluate) => transformationGrid(value, context, evaluate))],
         ["immutable", int12(1)]
       ])
     };
