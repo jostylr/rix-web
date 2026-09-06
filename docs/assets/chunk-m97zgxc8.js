@@ -48,7 +48,7 @@ import {
   parseAndEvaluateObservedAsync,
   renderOutputHtml,
   tokenize
-} from "./chunk-9syxftba.js";
+} from "./chunk-bngs22cd.js";
 
 // standard-profile.rix
 var standard_profile_default = `## RiX-Web standard calculator profile.
@@ -3701,7 +3701,7 @@ CalculusRegistryEvidence(semanticId, key, value) -> {;
     CalculusRegistrySet(:evidence,semanticId,evidence.Set(key,value));
 };
 
-CalculusIsExpression(value) -> (value ? :CalculusExpression) && !.ExpressionHasScopedSymbols(value);
+CalculusIsExpression(value) -> (value ? :CalculusExpression) && !.ExpressionHasScopedSymbols(value) && !.ExpressionHasExtendedConstants(value);
 CalculusIsFunction(value) -> value ? :MathematicalFunction;
 
 CalculusRequireExpression(value, label ?= "value") ->
@@ -35528,5 +35528,5 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
 
 export { pluginProfileFromUrl, stripMarkedPluginProfile, findHelp, createRixRepl };
 
-//# debugId=A751FA6C12465DA264756E2164756E21
-//# sourceMappingURL=chunk-4sx4rpkm.js.map
+//# debugId=9135A58AB62738D164756E2164756E21
+//# sourceMappingURL=chunk-m97zgxc8.js.map

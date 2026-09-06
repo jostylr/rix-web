@@ -29,5 +29,12 @@ for (const [mode,evaluate] of [["sync",parseAndEvaluate],["async",parseAndEvalua
         expect(results[10].values[0].value).toBe("unresolved");
         expect(results[10].values[1]).toBeNull();
         expect(results[10].values[2]).toBe(UNDECIDED);
+        expect(results[11].values[0].value).toBe("setEnclosure");
+        expect(results[11].values[1]).toBe(UNDECIDED);
+        expect(results[11].values[2]).toBeNull();
+        expect(results[11].values[3].value).toBe(1n);
+        expect(results[12].values[0].value).toBe("operator");
+        expect(results[12].values[1].value).toBe("exactScalar");
+        expect(results[12].values[2].value).toBe(1n);
     });
 }

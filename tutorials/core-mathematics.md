@@ -128,14 +128,41 @@ comparison remains undecided: assumption-aware reasoning is a subsequent
 stage. Inspect `assumed[:assumptions]` to see the relation as expression data.
 This context does not yet prove or simplify that relation.
 
+## Constants keep their mathematical guarantees
+
+```rix edu
+enclosed := ::position + (0:1);
+{: .ExpressionConstantInfo(enclosed.Operands()[2])[:denotation],
+   .ExpressionConstant(0:1)==(0:1),.ExpressionConstant(0:1)==(2:3),
+   .ExpressionConstant(1:1)==1 };
+```
+
+An interval is a set enclosure, not a secretly selected real number. Overlap
+does not establish equality: the second result is `?`. Disjoint enclosures
+can establish inequality, while point intervals can establish equality.
+Construction does not perform numerical evaluation or refinement.
+
+```rix edu
+exactPi := 1~{pi};
+withPi := ::position + exactPi;
+{: withPi.Kind(),.ExpressionConstantInfo(exactPi)[:provider],
+   .ExpressionConstant(exactPi)==exactPi };
+```
+
+Core exact scalars also promote, using generator identities rather than their
+display names. This is exact symbolic pi, not a refinable numerical pi. The
+provider record exposes algebraic laws; exact polynomial quotients do not
+automatically promise cancellation. Physical quantities, refinable-real
+providers, and quaternion/octonion adapters remain future work.
+
 ### Current implementation boundary
 
 Scoped symbols support core construction, arithmetic, identity, keys, and
 conservative equality. The existing name-based calculus, CAS, range, and
-specification consumers reject scoped expressions until their identity-aware
+specification consumers reject scoped expressions and extended constants until their identity/provider-aware
 conversion is implemented. The first section's constructor-based examples
 remain usable with those consumers. Context substitution, assumption-aware
-evaluation, broader numeric providers, and portable serialization remain pending.
+evaluation, remaining numeric adapters, and portable serialization remain pending.
 
 :::challenge Build and inspect
 Construct `(x+1)^3` without loading a plugin, then inspect its operands.

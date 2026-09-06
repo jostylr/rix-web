@@ -12848,6 +12848,7 @@ ${indentStr})`;
       Exact: Object.freeze(["EXACT", "Exact", "COMPLEX", "Complex", "DEFINEEXACTGENERATOR", "DefineExactGenerator", "exactalgebras"]),
       Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC", "SPECROLES", "SPECFRACTIONPARTS", "SArith", "ExpressionVariable", "ExpressionConstant", "ExpressionOperation", "ExpressionApply", "IsExpression", "ExpressionKey", "ExpressionHasScopedSymbols", "SameSymbol", "SYMBOL_RETRIEVE", "SYMBOL_DEFINE", "ExpressionDefinition", "ExpressionExpand"]),
       MathematicalContexts: Object.freeze(["MATH_CONTEXT", "BOUND_SYMBOL"]),
+      SymbolicConstants: Object.freeze(["ExpressionConstantInfo", "ExpressionHasExtendedConstants"]),
       Notation: Object.freeze(["SArith", "Poly", "NotationParser"]),
       Random: Object.freeze(["RNG", "RANDOMSEED", "RandomSeed", "RAND_NAME"]),
       Probability: Object.freeze(["probability"]),
@@ -13179,6 +13180,69 @@ ${indentStr})`;
     return filtered;
   }
 
+  // rix/src/runtime/math-constant.js
+  var rationalKey = (value) => {
+    if (value instanceof Integer)
+      return `${value.value}/1`;
+    if (!(value instanceof Rational) || value.denominator === 0n)
+      throw new Error("Expression constant provider requires finite rational components");
+    return `${value.numerator}/${value.denominator}`;
+  };
+  var isExpressionScalar = (value) => value instanceof Integer || value instanceof Rational || value instanceof RationalInterval || isExactValue(value);
+  function constantKey(value) {
+    if (value instanceof Integer || value instanceof Rational)
+      return ["rational", rationalKey(value)];
+    if (value instanceof RationalInterval)
+      return ["interval", rationalKey(value.start), rationalKey(value.end)];
+    if (value?.type === "exact_generator")
+      return ["exactGenerator", value.id];
+    if (value?.type === "exact_expression")
+      return ["exactExpression", [...value.terms.values()].map((term) => [
+        rationalKey(term.coefficient),
+        [...term.powers].map(([generator, exponent]) => [generator.id, exponent]).sort((a, b) => a[0].localeCompare(b[0]))
+      ]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))];
+    throw new Error("Expression constant requires a supported core scalar provider (Integer, Rational, RationalInterval, or exact scalar)");
+  }
+  function isEnclosureConstant(value) {
+    return value instanceof RationalInterval;
+  }
+  function constantEquality(left, right) {
+    if (left instanceof RationalInterval || right instanceof RationalInterval) {
+      const interval = (value) => value instanceof RationalInterval ? value : value instanceof Integer || value instanceof Rational ? new RationalInterval(value, value) : null;
+      const a = interval(left), b = interval(right);
+      if (!a || !b)
+        return null;
+      if (a.high.lessThan(b.low) || b.high.lessThan(a.low))
+        return false;
+      if (a.low.equals(a.high) && b.low.equals(b.high))
+        return a.low.equals(b.low);
+      return null;
+    }
+    if (!isExpressionScalar(left) || !isExpressionScalar(right))
+      return null;
+    if (equalScalars(left, right))
+      return true;
+    return isExactValue(left) || isExactValue(right) ? null : false;
+  }
+  function constantProviderInfo(value) {
+    constantKey(value);
+    const interval = isEnclosureConstant(value), exact = isExactValue(value);
+    const text = (value2) => ({ type: "string", value: value2 });
+    const decision = (value2) => value2 ? new Integer(1n) : null;
+    return { type: "map", entries: new Map([
+      ["schema", text("rix.math.constant-provider@1")],
+      ["provider", text(interval ? "rationalInterval" : exact ? "exactScalar" : "rational")],
+      ["denotation", text(interval ? "setEnclosure" : "singleton")],
+      ["exact", decision(!interval)],
+      ["refinable", null],
+      ["commutative", new Integer(1n)],
+      ["associative", new Integer(1n)],
+      ["distributive", decision(!interval)],
+      ["cancellation", exact ? UNDECIDED : decision(!interval)],
+      ["enclosure", interval ? value : null]
+    ]), _ext: new Map([["immutable", new Integer(1n)]]) };
+  }
+
   // rix/src/runtime/math-expression.js
   var EXPRESSION_SCHEMA = "rix.calculus.expression@1";
   var expressionField = (value, key) => value?.entries?.get(key.toLowerCase());
@@ -13313,6 +13377,20 @@ ${indentStr})`;
       return true;
     return ["operands", "arguments"].some((key) => expressionField(expression, key)?.values?.some(hasScopedSymbols));
   }
+  function hasExtendedConstants(expression) {
+    if (!isMathExpression(expression))
+      return false;
+    if (expressionField(expression, "kind")?.value === "constant") {
+      const value = expressionField(expression, "value");
+      return !(value instanceof Integer || value instanceof Rational);
+    }
+    return ["operands", "arguments"].some((key) => expressionField(expression, key)?.values?.some(hasExtendedConstants));
+  }
+  function hasEnclosures(expression) {
+    if (expressionField(expression, "kind")?.value === "constant")
+      return isEnclosureConstant(expressionField(expression, "value"));
+    return ["operands", "arguments"].some((key) => expressionField(expression, key)?.values?.some(hasEnclosures));
+  }
   function expressionStructuralKey(expression) {
     if (!isMathExpression(expression))
       return expressionStructuralKey(expressionConstant(expression));
@@ -13320,7 +13398,7 @@ ${indentStr})`;
     if (kind === "variable")
       return JSON.stringify([kind, symbolState(expression)?.id ?? ["named", expressionField(expression, "name")?.value]]);
     if (kind === "constant")
-      return JSON.stringify([kind, String(expressionField(expression, "value"))]);
+      return JSON.stringify([kind, constantKey(expressionField(expression, "value"))]);
     if (kind === "operator")
       return JSON.stringify([kind, expressionField(expression, "operation")?.value, expressionField(expression, "operands").values.map(expressionStructuralKey)]);
     if (kind === "apply")
@@ -13363,9 +13441,7 @@ ${indentStr})`;
     return expressionRecord("variable", [["name", string(text)]]);
   }
   function expressionConstant(value) {
-    if (!(value instanceof Integer || value instanceof Rational)) {
-      throw new Error("Expression constant currently requires an exact Integer or Rational");
-    }
+    constantKey(value);
     return expressionRecord("constant", [["value", value]]);
   }
   function promoteExpression(value) {
@@ -13402,13 +13478,19 @@ ${indentStr})`;
         priority: 250,
         prep: (args) => args.some(isMathExpression),
         impl: (args) => {
-          if (!args.every((value) => isMathExpression(value) || value instanceof Integer || value instanceof Rational))
+          if (args.some((value) => value === null))
+            return operation === "EQ" ? null : new Integer(1n);
+          if (!args.every((value) => isMathExpression(value) || isExpressionScalar(value)))
             return UNDECIDED;
           const expanded = args.map((value) => expandExpression(value));
+          if (expanded.every((value) => expressionField(value, "kind")?.value === "constant")) {
+            const equal = constantEquality(...expanded.map((value) => expressionField(value, "value")));
+            return equal === null ? UNDECIDED : equal === (operation === "EQ") ? new Integer(1n) : null;
+          }
+          if (expanded.some(hasEnclosures))
+            return UNDECIDED;
           if (equalityKey(expanded[0]) === equalityKey(expanded[1]))
             return operation === "EQ" ? new Integer(1n) : null;
-          if (expanded.every((value) => expressionField(value, "kind")?.value === "constant"))
-            return operation === "EQ" ? null : new Integer(1n);
           return UNDECIDED;
         }
       });
@@ -13418,6 +13500,8 @@ ${indentStr})`;
     SYMBOL_DEFINE: { impl: ([name, node], context, evaluate) => defineExpressionSymbol(name, node, context, evaluate), lazy: true, pure: false }
   };
   var expressionCapabilities = {
+    ExpressionConstantInfo: { impl: ([value]) => constantProviderInfo(isMathExpression(value) && expressionField(value, "kind")?.value === "constant" ? expressionField(value, "value") : value), pure: true, groups: ["Symbolic"], doc: "Inspect core constant denotation and algebraic laws without refinement" },
+    ExpressionHasExtendedConstants: { impl: ([value]) => hasExtendedConstants(value) ? new Integer(1n) : null, pure: true, groups: ["Symbolic"], doc: "Recognize constants requiring provider-aware consumers" },
     ExpressionDefinition: { impl: ([symbol]) => {
       if (!expressionField(symbol, "symbolid"))
         throw new Error("ExpressionDefinition requires a scoped symbol");
@@ -13433,7 +13517,7 @@ ${indentStr})`;
       return a === b ? new Integer(1n) : null;
     }, pure: true, groups: ["Symbolic"], doc: "Compare symbol identities independently of mathematical equality" },
     ExpressionVariable: { impl: ([name]) => expressionVariable(name), pure: true, groups: ["Symbolic"], doc: "Construct a mathematical variable expression without loading a plugin" },
-    ExpressionConstant: { impl: ([value]) => expressionConstant(value), pure: true, groups: ["Symbolic"], doc: "Construct an exact mathematical constant expression" },
+    ExpressionConstant: { impl: ([value]) => expressionConstant(value), pure: true, groups: ["Symbolic"], doc: "Construct a mathematical constant from a supported core scalar provider" },
     ExpressionOperation: { impl: ([operation, operands]) => expressionOperation(operation?.value, operands?.values), pure: true, groups: ["Symbolic"], doc: "Construct a validated mathematical arithmetic node" },
     ExpressionApply: { impl: ([id, name, args]) => {
       if (id?.type !== "string" || name?.type !== "string" || !Array.isArray(args?.values))
@@ -15052,6 +15136,8 @@ ${indentStr})`;
     return entry.values;
   }
   function requireCalculusExpression(value, path = "expression") {
+    if (hasExtendedConstants(value))
+      throw new Error("Extended mathematical constants require a provider-aware specification consumer (not yet implemented)");
     if (hasScopedSymbols(value))
       throw new Error("Scoped mathematical symbols require an identity-aware specification consumer (not yet implemented)");
     if (value?.type !== "map" || !(value.entries instanceof Map)) {
@@ -25664,6 +25750,8 @@ ${indented.join(`,
     return fallback;
   }
   function isExpression(value) {
+    if (hasExtendedConstants(value))
+      throw new Error("Extended mathematical constants require a provider-aware range consumer (not yet implemented)");
     if (hasScopedSymbols(value))
       throw new Error("Scoped mathematical symbols require an identity-aware range consumer (not yet implemented)");
     return (value?.type === "map" || value && typeof value === "object") && textValue(mapValue(value, "schema")) === "rix.calculus.expression@1";
@@ -65013,7 +65101,7 @@ CalculusRegistryEvidence(semanticId, key, value) -> {;
     CalculusRegistrySet(:evidence,semanticId,evidence.Set(key,value));
 };
 
-CalculusIsExpression(value) -> (value ? :CalculusExpression) && !.ExpressionHasScopedSymbols(value);
+CalculusIsExpression(value) -> (value ? :CalculusExpression) && !.ExpressionHasScopedSymbols(value) && !.ExpressionHasExtendedConstants(value);
 CalculusIsFunction(value) -> value ? :MathematicalFunction;
 
 CalculusRequireExpression(value, label ?= "value") ->

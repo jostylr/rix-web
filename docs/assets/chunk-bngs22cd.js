@@ -7657,6 +7657,844 @@ function rangeEvidence(value) {
   return value?._ext instanceof Map ? value._ext.get("rangeEvidence") ?? null : null;
 }
 
+// ../rix/src/runtime/exact-values.js
+var nextGeneratorId = 1;
+var squareRootGenerators = new Map;
+function int(value) {
+  return new Integer(BigInt(value));
+}
+function isRationalScalar(value) {
+  return value instanceof Integer || value instanceof Rational;
+}
+function rationalParts(value) {
+  if (value instanceof Integer)
+    return [value.value, 1n];
+  if (value instanceof Rational)
+    return [value.numerator, value.denominator];
+  return null;
+}
+function rationalFrom(value, label = "value") {
+  if (value instanceof Integer || value instanceof Rational)
+    return value;
+  if (typeof value === "bigint")
+    return new Integer(value);
+  if (typeof value === "number" && Number.isInteger(value))
+    return new Integer(BigInt(value));
+  throw new Error(`${label} must be an exact Integer or Rational`);
+}
+function isZero(value) {
+  const parts = rationalParts(value);
+  return parts ? parts[0] === 0n : false;
+}
+function isOne(value) {
+  const parts = rationalParts(value);
+  return parts ? parts[0] === parts[1] : false;
+}
+function isNegative(value) {
+  const parts = rationalParts(value);
+  return parts ? parts[0] < 0n : false;
+}
+function negateRational(value) {
+  return int(0).subtract(value);
+}
+function absRational(value) {
+  return isNegative(value) ? negateRational(value) : value;
+}
+function normalizePolynomial(polynomial) {
+  if (!polynomial)
+    return null;
+  const values = polynomial.map((value, index) => rationalFrom(value, `minimal polynomial coefficient ${index}`));
+  if (values.length < 2 || isZero(values[values.length - 1])) {
+    throw new Error("Minimal polynomial must have positive degree and nonzero leading coefficient");
+  }
+  const lead = values[values.length - 1];
+  return values.map((value) => value.divide(lead));
+}
+function createExactGenerator(name, options = {}) {
+  if (!name)
+    throw new Error("Exact generator requires a name");
+  const generator = {
+    type: "exact_generator",
+    id: options.id || `exact:${nextGeneratorId++}:${name}`,
+    name,
+    category: options.category || (options.minimalPolynomial ? "algebraic" : "transcendental"),
+    minimalPolynomial: normalizePolynomial(options.minimalPolynomial || null),
+    real: options.real ?? false,
+    positiveRoot: options.positiveRoot ?? false,
+    _ext: new Map([["key", { type: "string", value: name }], ["immutable", int(1)]])
+  };
+  return Object.freeze(generator);
+}
+function isExactValue(value) {
+  return value?.type === "exact_generator" || value?.type === "exact_expression";
+}
+function isCayleyValue(value) {
+  return value?.type === "cayley";
+}
+function isCayleyInfinity(value) {
+  return value?.type === "cayley_infinity";
+}
+var CAYLEY_INFINITY = Object.freeze({
+  type: "cayley_infinity",
+  _ext: new Map([["immutable", int(1)]])
+});
+function clonePowers(powers) {
+  return new Map(powers || []);
+}
+function monomialKey(powers) {
+  return [...powers.entries()].filter(([, exponent]) => exponent !== 0).sort(([a], [b]) => a.id.localeCompare(b.id)).map(([generator, exponent]) => `${generator.id}^${exponent}`).join("|");
+}
+function addRawTerm(target, powers, coefficient) {
+  if (isZero(coefficient))
+    return;
+  const clean = new Map([...powers.entries()].filter(([, exponent]) => exponent !== 0));
+  const key = monomialKey(clean);
+  const existing = target.get(key);
+  const next = existing ? existing.coefficient.add(coefficient) : coefficient;
+  if (isZero(next))
+    target.delete(key);
+  else
+    target.set(key, { powers: clean, coefficient: next });
+}
+function reducibleGenerator(powers) {
+  for (const [generator, exponent] of powers) {
+    const polynomial = generator.minimalPolynomial;
+    if (polynomial && exponent >= polynomial.length - 1)
+      return [generator, exponent, polynomial];
+  }
+  return null;
+}
+function reduceTerms(rawTerms) {
+  const result = new Map;
+  const queue = [...rawTerms.values()].map((term) => ({
+    powers: clonePowers(term.powers),
+    coefficient: term.coefficient
+  }));
+  while (queue.length) {
+    const term = queue.pop();
+    if (isZero(term.coefficient))
+      continue;
+    const reducible = reducibleGenerator(term.powers);
+    if (!reducible) {
+      addRawTerm(result, term.powers, term.coefficient);
+      continue;
+    }
+    const [generator, exponent, polynomial] = reducible;
+    const degree = polynomial.length - 1;
+    for (let i = 0;i < degree; i++) {
+      if (isZero(polynomial[i]))
+        continue;
+      const powers = clonePowers(term.powers);
+      const nextExponent = exponent - degree + i;
+      if (nextExponent === 0)
+        powers.delete(generator);
+      else
+        powers.set(generator, nextExponent);
+      queue.push({
+        powers,
+        coefficient: term.coefficient.multiply(negateRational(polynomial[i]))
+      });
+    }
+  }
+  return result;
+}
+function expressionFromTerms(terms) {
+  const reduced = reduceTerms(terms);
+  if (reduced.size === 0)
+    return int(0);
+  if (reduced.size === 1 && reduced.has(""))
+    return reduced.get("").coefficient;
+  return { type: "exact_expression", terms: reduced };
+}
+function trimPolynomial(polynomial) {
+  const result = [...polynomial];
+  while (result.length > 0 && isZero(result[result.length - 1]))
+    result.pop();
+  return result;
+}
+function polynomialAdd(left, right) {
+  const length = Math.max(left.length, right.length);
+  const result = Array.from({ length }, (_, index) => (left[index] || int(0)).add(right[index] || int(0)));
+  return trimPolynomial(result);
+}
+function polynomialNegate(polynomial) {
+  return polynomial.map(negateRational);
+}
+function polynomialSubtract(left, right) {
+  return polynomialAdd(left, polynomialNegate(right));
+}
+function polynomialMultiply(left, right) {
+  if (left.length === 0 || right.length === 0)
+    return [];
+  const result = Array.from({ length: left.length + right.length - 1 }, () => int(0));
+  for (let i = 0;i < left.length; i++) {
+    for (let j = 0;j < right.length; j++) {
+      result[i + j] = result[i + j].add(left[i].multiply(right[j]));
+    }
+  }
+  return trimPolynomial(result);
+}
+function polynomialDivmod(dividend, divisor) {
+  const denominator = trimPolynomial(divisor);
+  if (denominator.length === 0)
+    throw new Error("Polynomial division by zero");
+  let remainder = trimPolynomial(dividend);
+  const quotient = Array.from({ length: Math.max(0, remainder.length - denominator.length + 1) }, () => int(0));
+  while (remainder.length >= denominator.length && remainder.length > 0) {
+    const degree = remainder.length - denominator.length;
+    const factor = remainder[remainder.length - 1].divide(denominator[denominator.length - 1]);
+    quotient[degree] = quotient[degree].add(factor);
+    const shifted = Array.from({ length: degree }, () => int(0)).concat(denominator.map((value) => value.multiply(factor)));
+    remainder = polynomialSubtract(remainder, shifted);
+  }
+  return [trimPolynomial(quotient), remainder];
+}
+function polynomialExtendedGcd(left, right) {
+  if (trimPolynomial(right).length === 0)
+    return [trimPolynomial(left), [int(1)], []];
+  const [quotient, remainder] = polynomialDivmod(left, right);
+  const [gcd2, x1, y1] = polynomialExtendedGcd(right, remainder);
+  return [gcd2, y1, polynomialSubtract(x1, polynomialMultiply(quotient, y1))];
+}
+function algebraicPolynomial(value) {
+  const terms = toTerms(value);
+  let generator = null;
+  let maxExponent = 0;
+  for (const term of terms.values()) {
+    for (const [candidate, exponent] of term.powers) {
+      if (exponent < 0 || !candidate.minimalPolynomial)
+        return null;
+      if (generator && generator !== candidate)
+        return null;
+      generator = candidate;
+      maxExponent = Math.max(maxExponent, exponent);
+    }
+  }
+  if (!generator)
+    return null;
+  const polynomial = Array.from({ length: maxExponent + 1 }, () => int(0));
+  for (const term of terms.values()) {
+    const exponent = term.powers.get(generator) || 0;
+    if (term.powers.size > (exponent === 0 ? 0 : 1))
+      return null;
+    polynomial[exponent] = polynomial[exponent].add(term.coefficient);
+  }
+  return { generator, polynomial: trimPolynomial(polynomial) };
+}
+function expressionFromPolynomial(generator, polynomial) {
+  const terms = new Map;
+  for (let exponent = 0;exponent < polynomial.length; exponent++) {
+    if (isZero(polynomial[exponent]))
+      continue;
+    addRawTerm(terms, exponent === 0 ? new Map : new Map([[generator, exponent]]), polynomial[exponent]);
+  }
+  return expressionFromTerms(terms);
+}
+function invertSingleAlgebraicExpression(value) {
+  const parsed = algebraicPolynomial(value);
+  if (!parsed || parsed.polynomial.length === 0)
+    return null;
+  const [gcd2, coefficient] = polynomialExtendedGcd(parsed.polynomial, parsed.generator.minimalPolynomial);
+  if (gcd2.length !== 1 || isZero(gcd2[0]))
+    return null;
+  const normalized = coefficient.map((entry) => entry.divide(gcd2[0]));
+  const [, reduced] = polynomialDivmod(normalized, parsed.generator.minimalPolynomial);
+  return expressionFromPolynomial(parsed.generator, reduced);
+}
+function toTerms(value) {
+  if (value?.type === "exact_expression")
+    return value.terms;
+  const terms = new Map;
+  if (value?.type === "exact_generator") {
+    addRawTerm(terms, new Map([[value, 1]]), int(1));
+    return terms;
+  }
+  addRawTerm(terms, new Map, rationalFrom(value));
+  return terms;
+}
+function combinePowers(left, right, sign = 1) {
+  const powers = clonePowers(left);
+  for (const [generator, exponent] of right) {
+    const next = (powers.get(generator) || 0) + sign * exponent;
+    if (next === 0)
+      powers.delete(generator);
+    else
+      powers.set(generator, next);
+  }
+  return powers;
+}
+function addScalars(left, right) {
+  if (!isExactValue(left) && !isExactValue(right))
+    return rationalFrom(left).add(rationalFrom(right));
+  const terms = new Map;
+  for (const term of toTerms(left).values())
+    addRawTerm(terms, term.powers, term.coefficient);
+  for (const term of toTerms(right).values())
+    addRawTerm(terms, term.powers, term.coefficient);
+  return expressionFromTerms(terms);
+}
+function subtractScalars(left, right) {
+  return addScalars(left, negateScalar(right));
+}
+function negateScalar(value) {
+  if (!isExactValue(value))
+    return negateRational(rationalFrom(value));
+  const terms = new Map;
+  for (const term of toTerms(value).values()) {
+    addRawTerm(terms, term.powers, negateRational(term.coefficient));
+  }
+  return expressionFromTerms(terms);
+}
+function multiplyScalars(left, right) {
+  if (!isExactValue(left) && !isExactValue(right))
+    return rationalFrom(left).multiply(rationalFrom(right));
+  const terms = new Map;
+  for (const a of toTerms(left).values()) {
+    for (const b of toTerms(right).values()) {
+      addRawTerm(terms, combinePowers(a.powers, b.powers), a.coefficient.multiply(b.coefficient));
+    }
+  }
+  return expressionFromTerms(terms);
+}
+function divideScalars(left, right) {
+  if (!isExactValue(left) && !isExactValue(right))
+    return rationalFrom(left).divide(rationalFrom(right));
+  const algebraicInverse = invertSingleAlgebraicExpression(right);
+  if (algebraicInverse !== null)
+    return multiplyScalars(left, algebraicInverse);
+  const denominatorTerms = [...toTerms(right).values()];
+  if (denominatorTerms.length !== 1) {
+    throw new Error("Division by a multi-term exact expression is not implemented");
+  }
+  const denominator = denominatorTerms[0];
+  const terms = new Map;
+  for (const numerator of toTerms(left).values()) {
+    addRawTerm(terms, combinePowers(numerator.powers, denominator.powers, -1), numerator.coefficient.divide(denominator.coefficient));
+  }
+  return expressionFromTerms(terms);
+}
+function imaginaryGeneratorFrom(value, preferred = null) {
+  if (preferred)
+    return preferred;
+  for (const term of toTerms(value).values()) {
+    for (const generator of term.powers.keys()) {
+      if (generator.name === "i")
+        return generator;
+    }
+  }
+  return null;
+}
+function complexParts(value, preferredI = null) {
+  const imaginary = imaginaryGeneratorFrom(value, preferredI);
+  if (!imaginary)
+    return { real: value, imaginary: int(0) };
+  const realTerms = new Map;
+  const imaginaryTerms = new Map;
+  for (const term of toTerms(value).values()) {
+    const exponent = term.powers.get(imaginary) || 0;
+    if (exponent !== 0 && exponent !== 1) {
+      throw new Error("Complex decomposition expected powers of i to be reduced to zero or one");
+    }
+    const powers = clonePowers(term.powers);
+    powers.delete(imaginary);
+    addRawTerm(exponent === 0 ? realTerms : imaginaryTerms, powers, term.coefficient);
+  }
+  return {
+    real: expressionFromTerms(realTerms),
+    imaginary: expressionFromTerms(imaginaryTerms)
+  };
+}
+function complexConjugate(value, preferredI = null) {
+  const imaginary = imaginaryGeneratorFrom(value, preferredI);
+  if (!imaginary)
+    return value;
+  const terms = new Map;
+  for (const term of toTerms(value).values()) {
+    const exponent = term.powers.get(imaginary) || 0;
+    addRawTerm(terms, term.powers, exponent % 2 === 0 ? term.coefficient : negateRational(term.coefficient));
+  }
+  return expressionFromTerms(terms);
+}
+function complexFromParts(real, imaginary, iGenerator) {
+  if (!iGenerator?.minimalPolynomial)
+    throw new Error("Complex.FromParts requires the configured algebraic generator i");
+  return addScalars(real, multiplyScalars(imaginary, iGenerator));
+}
+function complexNormSquared(value, preferredI = null) {
+  const parts = complexParts(value, preferredI);
+  return addScalars(multiplyScalars(parts.real, parts.real), multiplyScalars(parts.imaginary, parts.imaginary));
+}
+function bigintSqrt(value) {
+  if (value < 0n)
+    throw new Error("Square root requires a nonnegative value");
+  if (value < 2n)
+    return value;
+  let x = 1n << (BigInt(value.toString(2).length) + 1n) / 2n;
+  let next = x + value / x >> 1n;
+  while (next < x) {
+    x = next;
+    next = x + value / x >> 1n;
+  }
+  return x;
+}
+function rationalSquareRoot(value) {
+  const [numerator, denominator] = rationalParts(rationalFrom(value));
+  if (numerator < 0n)
+    throw new Error("Cayley magnitude requires a nonnegative norm squared");
+  const numeratorRoot = bigintSqrt(numerator);
+  const denominatorRoot = bigintSqrt(denominator);
+  if (numeratorRoot * numeratorRoot !== numerator || denominatorRoot * denominatorRoot !== denominator)
+    return null;
+  return new Rational(numeratorRoot, denominatorRoot);
+}
+function exactSquareRoot(value) {
+  if (!isRationalScalar(value)) {
+    throw new Error("Cayley conversion currently requires a rational norm squared");
+  }
+  const perfect = rationalSquareRoot(value);
+  if (perfect)
+    return perfect.denominator === 1n ? new Integer(perfect.numerator) : perfect;
+  const [numerator, denominator] = rationalParts(rationalFrom(value));
+  const key = `${numerator}/${denominator}`;
+  if (squareRootGenerators.has(key))
+    return squareRootGenerators.get(key);
+  const name = denominator === 1n ? `sqrt${numerator}` : `sqrt(${numerator}/${denominator})`;
+  const generator = createExactGenerator(name, {
+    id: denominator === 1n ? `exact:${name}` : `exact:sqrt:${key}`,
+    category: "algebraic",
+    minimalPolynomial: [new Rational(-numerator, denominator), int(0), int(1)],
+    real: true,
+    positiveRoot: true
+  });
+  squareRootGenerators.set(key, generator);
+  return generator;
+}
+function scalarSign(value) {
+  const parts = rationalParts(value);
+  if (parts)
+    return parts[0] === 0n ? 0 : parts[0] < 0n ? -1 : 1;
+  if (value?.type === "exact_generator" && value.positiveRoot)
+    return 1;
+  if (value?.type === "exact_expression" && value.terms.size === 1) {
+    const term = [...value.terms.values()][0];
+    if ([...term.powers.keys()].every((generator) => generator.positiveRoot)) {
+      return isNegative(term.coefficient) ? -1 : 1;
+    }
+  }
+  return null;
+}
+function scalarZero(value) {
+  return equalScalars(value, int(0));
+}
+function requireScalar(value, label) {
+  if (!isRationalScalar(value) && !isExactValue(value)) {
+    throw new Error(`${label} must be an exact scalar`);
+  }
+  return value;
+}
+function requireRealScalar(value, label, iGenerator = null) {
+  requireScalar(value, label);
+  if (!scalarZero(complexParts(value, iGenerator).imaginary)) {
+    throw new Error(`${label} must be real`);
+  }
+  return value;
+}
+function negateCayleyDirection(direction) {
+  return isCayleyInfinity(direction) ? CAYLEY_INFINITY : negateScalar(direction);
+}
+function oppositeCayleyDirection(direction) {
+  if (isCayleyInfinity(direction))
+    return int(0);
+  if (scalarZero(direction))
+    return CAYLEY_INFINITY;
+  return negateScalar(divideScalars(int(1), direction));
+}
+function createCayley(magnitude, direction, iGenerator = null) {
+  let r = requireRealScalar(magnitude, "Cayley magnitude", iGenerator);
+  let t = isCayleyInfinity(direction) ? CAYLEY_INFINITY : requireRealScalar(direction, "Cayley direction", iGenerator);
+  const sign = scalarSign(r);
+  if (sign === null)
+    throw new Error("Cayley magnitude must have a known nonnegative sign");
+  if (sign < 0) {
+    r = negateScalar(r);
+    t = oppositeCayleyDirection(t);
+  }
+  if (scalarZero(r))
+    t = int(0);
+  return { type: "cayley", magnitude: r, direction: t, iGenerator };
+}
+function cayleyFromCartesian(value, preferredI = null) {
+  if (isCayleyValue(value))
+    return value;
+  requireScalar(value, "Complex.Cayley value");
+  const iGenerator = imaginaryGeneratorFrom(value, preferredI) || preferredI;
+  const { real: x, imaginary: y } = complexParts(value, iGenerator);
+  const q = addScalars(multiplyScalars(x, x), multiplyScalars(y, y));
+  if (scalarZero(q))
+    return createCayley(int(0), int(0), iGenerator);
+  const r = exactSquareRoot(q);
+  if (!scalarZero(y)) {
+    return createCayley(r, divideScalars(subtractScalars(r, x), y), iGenerator);
+  }
+  const sign = scalarSign(x);
+  if (sign === null)
+    throw new Error("Cayley conversion cannot determine the real-axis direction exactly");
+  return createCayley(r, sign < 0 ? CAYLEY_INFINITY : int(0), iGenerator);
+}
+function cayleyCartesian(value, preferredI = null) {
+  if (!isCayleyValue(value))
+    return value;
+  const r = value.magnitude;
+  const t = value.direction;
+  if (isCayleyInfinity(t))
+    return negateScalar(r);
+  const tSquared = multiplyScalars(t, t);
+  const denominator = addScalars(int(1), tSquared);
+  const x = multiplyScalars(r, divideScalars(subtractScalars(int(1), tSquared), denominator));
+  const y = multiplyScalars(r, divideScalars(multiplyScalars(int(2), t), denominator));
+  if (scalarZero(y))
+    return x;
+  const iGenerator = value.iGenerator || preferredI;
+  if (!iGenerator)
+    throw new Error("Cayley.Cartesian requires the configured algebraic generator i");
+  return complexFromParts(x, y, iGenerator);
+}
+function asCayley(value, reference) {
+  return isCayleyValue(value) ? value : cayleyFromCartesian(value, reference?.iGenerator);
+}
+function composeCayleyDirections(left, right) {
+  const leftInfinity = isCayleyInfinity(left);
+  const rightInfinity = isCayleyInfinity(right);
+  if (leftInfinity && rightInfinity)
+    return int(0);
+  if (leftInfinity || rightInfinity) {
+    const finite = leftInfinity ? right : left;
+    return scalarZero(finite) ? CAYLEY_INFINITY : negateScalar(divideScalars(int(1), finite));
+  }
+  const denominator = subtractScalars(int(1), multiplyScalars(left, right));
+  if (scalarZero(denominator))
+    return CAYLEY_INFINITY;
+  return divideScalars(addScalars(left, right), denominator);
+}
+function isUnsupportedExactDivision(error) {
+  return error instanceof Error && /Division by a multi-term exact expression is not implemented/.test(error.message);
+}
+function cayleyProductViaCartesian(left, right) {
+  const iGenerator = left.iGenerator || right.iGenerator;
+  const product = multiplyScalars(cayleyCartesian(left), cayleyCartesian(right));
+  return cayleyFromCartesian(product, iGenerator);
+}
+function multiplyCayley(left, right) {
+  const a = asCayley(left, right);
+  const b = asCayley(right, a);
+  try {
+    return createCayley(multiplyScalars(a.magnitude, b.magnitude), composeCayleyDirections(a.direction, b.direction), a.iGenerator || b.iGenerator);
+  } catch (error) {
+    if (!isUnsupportedExactDivision(error))
+      throw error;
+    return cayleyProductViaCartesian(a, b);
+  }
+}
+function conjugateCayley(value) {
+  return createCayley(value.magnitude, negateCayleyDirection(value.direction), value.iGenerator);
+}
+function inverseCayley(value) {
+  if (scalarZero(value.magnitude))
+    throw new Error("Cannot invert zero in Cayley form");
+  return createCayley(divideScalars(int(1), value.magnitude), negateCayleyDirection(value.direction), value.iGenerator);
+}
+function divideCayley(left, right) {
+  const a = asCayley(left, right);
+  const b = asCayley(right, a);
+  return multiplyCayley(a, inverseCayley(b));
+}
+function negateCayley(value) {
+  return createCayley(value.magnitude, oppositeCayleyDirection(value.direction), value.iGenerator);
+}
+function addCayley(left, right) {
+  const a = asCayley(left, right);
+  const b = asCayley(right, a);
+  return cayleyFromCartesian(addScalars(cayleyCartesian(a), cayleyCartesian(b)), a.iGenerator || b.iGenerator);
+}
+function subtractCayley(left, right) {
+  const a = asCayley(left, right);
+  const b = asCayley(right, a);
+  return cayleyFromCartesian(subtractScalars(cayleyCartesian(a), cayleyCartesian(b)), a.iGenerator || b.iGenerator);
+}
+function powCayley(value, exponentValue) {
+  const exponent = integerExponent(exponentValue);
+  if (exponent === 0)
+    return createCayley(int(1), int(0), value.iGenerator);
+  if (exponent < 0)
+    return powCayley(inverseCayley(value), int(-exponent));
+  let result = createCayley(int(1), int(0), value.iGenerator);
+  let factor = value;
+  let n = exponent;
+  while (n > 0) {
+    if (n % 2 === 1)
+      result = multiplyCayley(result, factor);
+    n = Math.floor(n / 2);
+    if (n)
+      factor = multiplyCayley(factor, factor);
+  }
+  return result;
+}
+function equalCayley(left, right) {
+  const a = asCayley(left, right);
+  const b = asCayley(right, a);
+  return equalScalars(cayleyCartesian(a), cayleyCartesian(b));
+}
+function cayleyReal(value) {
+  return complexParts(cayleyCartesian(value), value.iGenerator).real;
+}
+function cayleyImaginary(value) {
+  return complexParts(cayleyCartesian(value), value.iGenerator).imaginary;
+}
+function complexMethod(name, operation) {
+  return {
+    type: "method_builtin",
+    name,
+    impl(args) {
+      return operation(...args.slice(1));
+    }
+  };
+}
+function createDefaultComplexCollection(exactCollection) {
+  const iGenerator = exactCollection?.entries?.get("i");
+  const requireI = () => {
+    if (!iGenerator)
+      throw new Error("The active Exact collection does not define i");
+    return iGenerator;
+  };
+  const constructCayley = (...args) => {
+    if (args.length === 1)
+      return cayleyFromCartesian(args[0], requireI());
+    if (args.length === 2)
+      return createCayley(args[0], args[1], requireI());
+    throw new Error("Complex.Cayley expects a Cartesian value or magnitude and direction");
+  };
+  const operations = {
+    conjugate: (value) => isCayleyValue(value) ? conjugateCayley(value) : complexConjugate(value, requireI()),
+    re: (value) => isCayleyValue(value) ? cayleyReal(value) : complexParts(value, requireI()).real,
+    im: (value) => isCayleyValue(value) ? cayleyImaginary(value) : complexParts(value, requireI()).imaginary,
+    fromParts: (real, imaginary) => complexFromParts(real, imaginary, requireI()),
+    normSquared: (value) => isCayleyValue(value) ? multiplyScalars(value.magnitude, value.magnitude) : complexNormSquared(value, requireI()),
+    cayley: constructCayley,
+    cartesian: (value) => cayleyCartesian(value, requireI()),
+    magnitude: (value) => isCayleyValue(value) ? value.magnitude : cayleyFromCartesian(value, requireI()).magnitude,
+    direction: (value) => isCayleyValue(value) ? value.direction : cayleyFromCartesian(value, requireI()).direction,
+    inverse: (value) => isCayleyValue(value) ? inverseCayley(value) : divideScalars(int(1), value)
+  };
+  const entries = new Map([
+    ["i", iGenerator],
+    ["I", iGenerator],
+    ["conjugate", operations.conjugate],
+    ["Conjugate", operations.conjugate],
+    ["re", operations.re],
+    ["Re", operations.re],
+    ["im", operations.im],
+    ["Im", operations.im],
+    ["fromparts", operations.fromParts],
+    ["FromParts", operations.fromParts],
+    ["normsquared", operations.normSquared],
+    ["NormSquared", operations.normSquared],
+    ["cayley", operations.cayley],
+    ["Cayley", operations.cayley],
+    ["cartesian", operations.cartesian],
+    ["Cartesian", operations.cartesian],
+    ["magnitude", operations.magnitude],
+    ["Magnitude", operations.magnitude],
+    ["direction", operations.direction],
+    ["Direction", operations.direction],
+    ["inverse", operations.inverse],
+    ["Inverse", operations.inverse],
+    ["infinity", CAYLEY_INFINITY],
+    ["Infinity", CAYLEY_INFINITY]
+  ]);
+  return {
+    type: "map",
+    entries,
+    _ext: new Map([
+      ["CONJUGATE", complexMethod("Conjugate", operations.conjugate)],
+      ["RE", complexMethod("Re", operations.re)],
+      ["IM", complexMethod("Im", operations.im)],
+      ["FROMPARTS", complexMethod("FromParts", operations.fromParts)],
+      ["NORMSQUARED", complexMethod("NormSquared", operations.normSquared)],
+      ["CAYLEY", complexMethod("Cayley", operations.cayley)],
+      ["CARTESIAN", complexMethod("Cartesian", operations.cartesian)],
+      ["MAGNITUDE", complexMethod("Magnitude", operations.magnitude)],
+      ["DIRECTION", complexMethod("Direction", operations.direction)],
+      ["INVERSE", complexMethod("Inverse", operations.inverse)],
+      ["immutable", int(1)]
+    ])
+  };
+}
+function integerExponent(value) {
+  if (value instanceof Integer)
+    return Number(value.value);
+  if (typeof value === "number" && Number.isInteger(value))
+    return value;
+  if (typeof value === "bigint")
+    return Number(value);
+  throw new Error("Exact expression exponent must be an integer");
+}
+function powScalar(value, exponentValue) {
+  const exponent = integerExponent(exponentValue);
+  if (exponent === 0)
+    return int(1);
+  if (exponent < 0)
+    return divideScalars(int(1), powScalar(value, -exponent));
+  let result = int(1);
+  let factor = value;
+  let n = exponent;
+  while (n > 0) {
+    if (n % 2 === 1)
+      result = multiplyScalars(result, factor);
+    n = Math.floor(n / 2);
+    if (n)
+      factor = multiplyScalars(factor, factor);
+  }
+  return result;
+}
+function termsEqual(left, right) {
+  const a = toTerms(left);
+  const b = toTerms(right);
+  if (a.size !== b.size)
+    return false;
+  for (const [key, term] of a) {
+    const other = b.get(key);
+    if (!other)
+      return false;
+    const [leftNumerator, leftDenominator] = rationalParts(term.coefficient);
+    const [rightNumerator, rightDenominator] = rationalParts(other.coefficient);
+    if (leftNumerator * rightDenominator !== rightNumerator * leftDenominator)
+      return false;
+  }
+  return true;
+}
+function equalScalars(left, right) {
+  if (!isExactValue(left) && !isExactValue(right)) {
+    const [leftNumerator, leftDenominator] = rationalParts(rationalFrom(left));
+    const [rightNumerator, rightDenominator] = rationalParts(rationalFrom(right));
+    return leftNumerator * rightDenominator === rightNumerator * leftDenominator;
+  }
+  return termsEqual(left, right);
+}
+function sortedTerms(value) {
+  return [...toTerms(value).values()].sort((a, b) => {
+    if (a.powers.size === 0)
+      return -1;
+    if (b.powers.size === 0)
+      return 1;
+    const an = [...a.powers.keys()].map((generator) => generator.name).join("*");
+    const bn = [...b.powers.keys()].map((generator) => generator.name).join("*");
+    return an.localeCompare(bn);
+  });
+}
+function formatMonomial(powers) {
+  return [...powers.entries()].sort(([a], [b]) => a.name.localeCompare(b.name)).map(([generator, exponent]) => exponent === 1 ? generator.name : `${generator.name}^${exponent}`).join("*");
+}
+function formatExact(value, formatScalar = (scalar) => scalar.toString()) {
+  if (value?.type === "exact_generator")
+    return `1~{${value.name}}`;
+  const pieces = [];
+  for (const term of sortedTerms(value)) {
+    const negative = isNegative(term.coefficient);
+    const coefficient = absRational(term.coefficient);
+    const monomial = formatMonomial(term.powers);
+    const body = monomial ? `${isOne(coefficient) ? "1" : formatScalar(coefficient)}~{${monomial}}` : formatScalar(coefficient);
+    if (pieces.length === 0)
+      pieces.push(negative ? `-${body}` : body);
+    else
+      pieces.push(`${negative ? "-" : "+"} ${body}`);
+  }
+  return pieces.join(" ");
+}
+function createDefaultExactCollection() {
+  const pi = createExactGenerator("pi", { id: "exact:pi", category: "transcendental" });
+  const e = createExactGenerator("e", { id: "exact:e", category: "transcendental" });
+  const i = createExactGenerator("i", {
+    id: "exact:i",
+    category: "algebraic",
+    minimalPolynomial: [int(1), int(0), int(1)]
+  });
+  const sqrt2 = exactSquareRoot(int(2));
+  return {
+    type: "map",
+    entries: new Map([["pi", pi], ["e", e], ["i", i], ["sqrt2", sqrt2]]),
+    _ext: new Map([["immutable", int(1)]])
+  };
+}
+function exactGeneratorFromPolynomial(name, coefficients) {
+  const values = coefficients?.type === "sequence" ? coefficients.values : coefficients;
+  if (!Array.isArray(values))
+    throw new Error("DefineExactGenerator expects an array of polynomial coefficients");
+  return createExactGenerator(name, { category: "algebraic", minimalPolynomial: values });
+}
+
+// ../rix/src/runtime/math-constant.js
+var rationalKey = (value) => {
+  if (value instanceof Integer)
+    return `${value.value}/1`;
+  if (!(value instanceof Rational) || value.denominator === 0n)
+    throw new Error("Expression constant provider requires finite rational components");
+  return `${value.numerator}/${value.denominator}`;
+};
+var isExpressionScalar = (value) => value instanceof Integer || value instanceof Rational || value instanceof RationalInterval || isExactValue(value);
+function constantKey(value) {
+  if (value instanceof Integer || value instanceof Rational)
+    return ["rational", rationalKey(value)];
+  if (value instanceof RationalInterval)
+    return ["interval", rationalKey(value.start), rationalKey(value.end)];
+  if (value?.type === "exact_generator")
+    return ["exactGenerator", value.id];
+  if (value?.type === "exact_expression")
+    return ["exactExpression", [...value.terms.values()].map((term) => [
+      rationalKey(term.coefficient),
+      [...term.powers].map(([generator, exponent]) => [generator.id, exponent]).sort((a, b) => a[0].localeCompare(b[0]))
+    ]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))];
+  throw new Error("Expression constant requires a supported core scalar provider (Integer, Rational, RationalInterval, or exact scalar)");
+}
+function isEnclosureConstant(value) {
+  return value instanceof RationalInterval;
+}
+function constantEquality(left, right) {
+  if (left instanceof RationalInterval || right instanceof RationalInterval) {
+    const interval = (value) => value instanceof RationalInterval ? value : value instanceof Integer || value instanceof Rational ? new RationalInterval(value, value) : null;
+    const a = interval(left), b = interval(right);
+    if (!a || !b)
+      return null;
+    if (a.high.lessThan(b.low) || b.high.lessThan(a.low))
+      return false;
+    if (a.low.equals(a.high) && b.low.equals(b.high))
+      return a.low.equals(b.low);
+    return null;
+  }
+  if (!isExpressionScalar(left) || !isExpressionScalar(right))
+    return null;
+  if (equalScalars(left, right))
+    return true;
+  return isExactValue(left) || isExactValue(right) ? null : false;
+}
+function constantProviderInfo(value) {
+  constantKey(value);
+  const interval = isEnclosureConstant(value), exact = isExactValue(value);
+  const text3 = (value2) => ({ type: "string", value: value2 });
+  const decision = (value2) => value2 ? new Integer(1n) : null;
+  return { type: "map", entries: new Map([
+    ["schema", text3("rix.math.constant-provider@1")],
+    ["provider", text3(interval ? "rationalInterval" : exact ? "exactScalar" : "rational")],
+    ["denotation", text3(interval ? "setEnclosure" : "singleton")],
+    ["exact", decision(!interval)],
+    ["refinable", null],
+    ["commutative", new Integer(1n)],
+    ["associative", new Integer(1n)],
+    ["distributive", decision(!interval)],
+    ["cancellation", exact ? UNDECIDED : decision(!interval)],
+    ["enclosure", interval ? value : null]
+  ]), _ext: new Map([["immutable", new Integer(1n)]]) };
+}
+
 // ../rix/src/runtime/math-expression.js
 var EXPRESSION_SCHEMA = "rix.calculus.expression@1";
 var expressionField = (value, key) => value?.entries?.get(key.toLowerCase());
@@ -7791,6 +8629,20 @@ function hasScopedSymbols(expression) {
     return true;
   return ["operands", "arguments"].some((key) => expressionField(expression, key)?.values?.some(hasScopedSymbols));
 }
+function hasExtendedConstants(expression) {
+  if (!isMathExpression(expression))
+    return false;
+  if (expressionField(expression, "kind")?.value === "constant") {
+    const value = expressionField(expression, "value");
+    return !(value instanceof Integer || value instanceof Rational);
+  }
+  return ["operands", "arguments"].some((key) => expressionField(expression, key)?.values?.some(hasExtendedConstants));
+}
+function hasEnclosures(expression) {
+  if (expressionField(expression, "kind")?.value === "constant")
+    return isEnclosureConstant(expressionField(expression, "value"));
+  return ["operands", "arguments"].some((key) => expressionField(expression, key)?.values?.some(hasEnclosures));
+}
 function expressionStructuralKey(expression) {
   if (!isMathExpression(expression))
     return expressionStructuralKey(expressionConstant(expression));
@@ -7798,7 +8650,7 @@ function expressionStructuralKey(expression) {
   if (kind === "variable")
     return JSON.stringify([kind, symbolState(expression)?.id ?? ["named", expressionField(expression, "name")?.value]]);
   if (kind === "constant")
-    return JSON.stringify([kind, String(expressionField(expression, "value"))]);
+    return JSON.stringify([kind, constantKey(expressionField(expression, "value"))]);
   if (kind === "operator")
     return JSON.stringify([kind, expressionField(expression, "operation")?.value, expressionField(expression, "operands").values.map(expressionStructuralKey)]);
   if (kind === "apply")
@@ -7841,9 +8693,7 @@ function expressionVariable(name) {
   return expressionRecord("variable", [["name", string(text3)]]);
 }
 function expressionConstant(value) {
-  if (!(value instanceof Integer || value instanceof Rational)) {
-    throw new Error("Expression constant currently requires an exact Integer or Rational");
-  }
+  constantKey(value);
   return expressionRecord("constant", [["value", value]]);
 }
 function promoteExpression(value) {
@@ -7880,13 +8730,19 @@ function installExpressionVariants(registry) {
       priority: 250,
       prep: (args) => args.some(isMathExpression),
       impl: (args) => {
-        if (!args.every((value) => isMathExpression(value) || value instanceof Integer || value instanceof Rational))
+        if (args.some((value) => value === null))
+          return operation === "EQ" ? null : new Integer(1n);
+        if (!args.every((value) => isMathExpression(value) || isExpressionScalar(value)))
           return UNDECIDED;
         const expanded = args.map((value) => expandExpression(value));
+        if (expanded.every((value) => expressionField(value, "kind")?.value === "constant")) {
+          const equal = constantEquality(...expanded.map((value) => expressionField(value, "value")));
+          return equal === null ? UNDECIDED : equal === (operation === "EQ") ? new Integer(1n) : null;
+        }
+        if (expanded.some(hasEnclosures))
+          return UNDECIDED;
         if (equalityKey(expanded[0]) === equalityKey(expanded[1]))
           return operation === "EQ" ? new Integer(1n) : null;
-        if (expanded.every((value) => expressionField(value, "kind")?.value === "constant"))
-          return operation === "EQ" ? null : new Integer(1n);
         return UNDECIDED;
       }
     });
@@ -7896,6 +8752,8 @@ var expressionSyntaxFunctions = {
   SYMBOL_DEFINE: { impl: ([name, node], context, evaluate) => defineExpressionSymbol(name, node, context, evaluate), lazy: true, pure: false }
 };
 var expressionCapabilities = {
+  ExpressionConstantInfo: { impl: ([value]) => constantProviderInfo(isMathExpression(value) && expressionField(value, "kind")?.value === "constant" ? expressionField(value, "value") : value), pure: true, groups: ["Symbolic"], doc: "Inspect core constant denotation and algebraic laws without refinement" },
+  ExpressionHasExtendedConstants: { impl: ([value]) => hasExtendedConstants(value) ? new Integer(1n) : null, pure: true, groups: ["Symbolic"], doc: "Recognize constants requiring provider-aware consumers" },
   ExpressionDefinition: { impl: ([symbol]) => {
     if (!expressionField(symbol, "symbolid"))
       throw new Error("ExpressionDefinition requires a scoped symbol");
@@ -7911,7 +8769,7 @@ var expressionCapabilities = {
     return a === b ? new Integer(1n) : null;
   }, pure: true, groups: ["Symbolic"], doc: "Compare symbol identities independently of mathematical equality" },
   ExpressionVariable: { impl: ([name]) => expressionVariable(name), pure: true, groups: ["Symbolic"], doc: "Construct a mathematical variable expression without loading a plugin" },
-  ExpressionConstant: { impl: ([value]) => expressionConstant(value), pure: true, groups: ["Symbolic"], doc: "Construct an exact mathematical constant expression" },
+  ExpressionConstant: { impl: ([value]) => expressionConstant(value), pure: true, groups: ["Symbolic"], doc: "Construct a mathematical constant from a supported core scalar provider" },
   ExpressionOperation: { impl: ([operation, operands]) => expressionOperation(operation?.value, operands?.values), pure: true, groups: ["Symbolic"], doc: "Construct a validated mathematical arithmetic node" },
   ExpressionApply: { impl: ([id, name, args]) => {
     if (id?.type !== "string" || name?.type !== "string" || !Array.isArray(args?.values))
@@ -7981,6 +8839,8 @@ function integerValue(value, fallback) {
   return fallback;
 }
 function isExpression(value) {
+  if (hasExtendedConstants(value))
+    throw new Error("Extended mathematical constants require a provider-aware range consumer (not yet implemented)");
   if (hasScopedSymbols(value))
     throw new Error("Scoped mathematical symbols require an identity-aware range consumer (not yet implemented)");
   return (value?.type === "map" || value && typeof value === "object") && textValue(mapValue(value, "schema")) === "rix.calculus.expression@1";
@@ -8990,13 +9850,13 @@ function checkCalculusStrategyRangeResult(candidate) {
     strategy: recomputed.strategy
   });
 }
-function trimPolynomial(coefficients) {
+function trimPolynomial2(coefficients) {
   const result = [...coefficients];
   while (result.length > 1 && result.at(-1).equals(Rational.zero))
     result.pop();
   return result;
 }
-function polynomialAdd(left, right, subtract = false) {
+function polynomialAdd2(left, right, subtract = false) {
   const length = Math.max(left.length, right.length);
   const result = [];
   for (let index = 0;index < length; index += 1) {
@@ -9004,19 +9864,19 @@ function polynomialAdd(left, right, subtract = false) {
     const b = right[index] ?? Rational.zero;
     result.push(subtract ? a.subtract(b) : a.add(b));
   }
-  return trimPolynomial(result);
+  return trimPolynomial2(result);
 }
-function polynomialNegate(value) {
-  return trimPolynomial(value.map((coefficient) => coefficient.negate()));
+function polynomialNegate2(value) {
+  return trimPolynomial2(value.map((coefficient) => coefficient.negate()));
 }
-function polynomialMultiply(left, right) {
+function polynomialMultiply2(left, right) {
   const result = Array.from({ length: left.length + right.length - 1 }, () => Rational.zero);
   for (let i = 0;i < left.length; i += 1) {
     for (let j = 0;j < right.length; j += 1) {
       result[i + j] = result[i + j].add(left[i].multiply(right[j]));
     }
   }
-  return trimPolynomial(result);
+  return trimPolynomial2(result);
 }
 function polynomialPower(value, exponent) {
   let power = exponent;
@@ -9024,28 +9884,28 @@ function polynomialPower(value, exponent) {
   let result = [Rational.one];
   while (power > 0n) {
     if ((power & 1n) === 1n)
-      result = polynomialMultiply(result, factor);
+      result = polynomialMultiply2(result, factor);
     power >>= 1n;
     if (power > 0n)
-      factor = polynomialMultiply(factor, factor);
+      factor = polynomialMultiply2(factor, factor);
   }
-  return trimPolynomial(result);
+  return trimPolynomial2(result);
 }
 function isZeroPolynomial(value) {
   return value.length === 1 && value[0].equals(Rational.zero);
 }
 function rationalGraphValue(numerator, denominator = [Rational.one], restrictions = []) {
   return {
-    numerator: trimPolynomial(numerator),
-    denominator: trimPolynomial(denominator),
+    numerator: trimPolynomial2(numerator),
+    denominator: trimPolynomial2(denominator),
     restrictions: [...restrictions]
   };
 }
 function rationalGraphAdd(left, right, subtract = false) {
-  return rationalGraphValue(polynomialAdd(polynomialMultiply(left.numerator, right.denominator), polynomialMultiply(right.numerator, left.denominator), subtract), polynomialMultiply(left.denominator, right.denominator), [...left.restrictions, ...right.restrictions]);
+  return rationalGraphValue(polynomialAdd2(polynomialMultiply2(left.numerator, right.denominator), polynomialMultiply2(right.numerator, left.denominator), subtract), polynomialMultiply2(left.denominator, right.denominator), [...left.restrictions, ...right.restrictions]);
 }
 function rationalGraphMultiply(left, right) {
-  return rationalGraphValue(polynomialMultiply(left.numerator, right.numerator), polynomialMultiply(left.denominator, right.denominator), [...left.restrictions, ...right.restrictions]);
+  return rationalGraphValue(polynomialMultiply2(left.numerator, right.numerator), polynomialMultiply2(left.denominator, right.denominator), [...left.restrictions, ...right.restrictions]);
 }
 function recognizeRationalGraphNode(expression, variable) {
   const kind = expressionKind(expression);
@@ -9073,7 +9933,7 @@ function recognizeRationalGraphNode(expression, variable) {
     if (operands.length !== 1)
       throw new Error("graphOperatorArity");
     const value = recognizeRationalGraphNode(operands[0], variable);
-    return rationalGraphValue(polynomialNegate(value.numerator), value.denominator, value.restrictions);
+    return rationalGraphValue(polynomialNegate2(value.numerator), value.denominator, value.restrictions);
   }
   if (operands.length !== 2)
     throw new Error("graphOperatorArity");
@@ -9100,7 +9960,7 @@ function recognizeRationalGraphNode(expression, variable) {
     if (isZeroPolynomial(right.numerator))
       throw new Error("identicallyZeroDenominator");
     const divisorKnownNonzeroConstant = right.numerator.length === 1 && right.denominator.length === 1 && !right.numerator[0].equals(Rational.zero);
-    return rationalGraphValue(polynomialMultiply(left.numerator, right.denominator), polynomialMultiply(left.denominator, right.numerator), [
+    return rationalGraphValue(polynomialMultiply2(left.numerator, right.denominator), polynomialMultiply2(left.denominator, right.numerator), [
       ...left.restrictions,
       ...right.restrictions,
       ...divisorKnownNonzeroConstant ? [] : [calculusGraphStructuralKey(operands[1])]
@@ -9134,8 +9994,8 @@ function recognizeCalculusGraph(expression, variableValue) {
       kind: polynomial ? "polynomial" : "rationalFunction",
       variable,
       graphIdentity: calculusGraphStructuralKey(expression),
-      numerator: Object.freeze(trimPolynomial(numerator)),
-      denominator: Object.freeze(trimPolynomial(denominator)),
+      numerator: Object.freeze(trimPolynomial2(numerator)),
+      denominator: Object.freeze(trimPolynomial2(denominator)),
       sourceDomainRestrictions: Object.freeze([...new Set(value.restrictions)]),
       cancellationPerformed: false
     });
@@ -11281,6 +12141,7 @@ var runtimeDefaults = Object.freeze({
     Exact: Object.freeze(["EXACT", "Exact", "COMPLEX", "Complex", "DEFINEEXACTGENERATOR", "DefineExactGenerator", "exactalgebras"]),
     Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC", "SPECROLES", "SPECFRACTIONPARTS", "SArith", "ExpressionVariable", "ExpressionConstant", "ExpressionOperation", "ExpressionApply", "IsExpression", "ExpressionKey", "ExpressionHasScopedSymbols", "SameSymbol", "SYMBOL_RETRIEVE", "SYMBOL_DEFINE", "ExpressionDefinition", "ExpressionExpand"]),
     MathematicalContexts: Object.freeze(["MATH_CONTEXT", "BOUND_SYMBOL"]),
+    SymbolicConstants: Object.freeze(["ExpressionConstantInfo", "ExpressionHasExtendedConstants"]),
     Notation: Object.freeze(["SArith", "Poly", "NotationParser"]),
     Random: Object.freeze(["RNG", "RANDOMSEED", "RandomSeed", "RAND_NAME"]),
     Probability: Object.freeze(["probability"]),
@@ -11514,781 +12375,6 @@ function isRixMap(val) {
 }
 function isRixArray(val) {
   return val && (val.type === "sequence" || val.type === "array") && Array.isArray(val.values);
-}
-
-// ../rix/src/runtime/exact-values.js
-var nextGeneratorId = 1;
-var squareRootGenerators = new Map;
-function int(value) {
-  return new Integer(BigInt(value));
-}
-function isRationalScalar(value) {
-  return value instanceof Integer || value instanceof Rational;
-}
-function rationalParts(value) {
-  if (value instanceof Integer)
-    return [value.value, 1n];
-  if (value instanceof Rational)
-    return [value.numerator, value.denominator];
-  return null;
-}
-function rationalFrom(value, label = "value") {
-  if (value instanceof Integer || value instanceof Rational)
-    return value;
-  if (typeof value === "bigint")
-    return new Integer(value);
-  if (typeof value === "number" && Number.isInteger(value))
-    return new Integer(BigInt(value));
-  throw new Error(`${label} must be an exact Integer or Rational`);
-}
-function isZero(value) {
-  const parts = rationalParts(value);
-  return parts ? parts[0] === 0n : false;
-}
-function isOne(value) {
-  const parts = rationalParts(value);
-  return parts ? parts[0] === parts[1] : false;
-}
-function isNegative(value) {
-  const parts = rationalParts(value);
-  return parts ? parts[0] < 0n : false;
-}
-function negateRational(value) {
-  return int(0).subtract(value);
-}
-function absRational(value) {
-  return isNegative(value) ? negateRational(value) : value;
-}
-function normalizePolynomial(polynomial) {
-  if (!polynomial)
-    return null;
-  const values2 = polynomial.map((value, index) => rationalFrom(value, `minimal polynomial coefficient ${index}`));
-  if (values2.length < 2 || isZero(values2[values2.length - 1])) {
-    throw new Error("Minimal polynomial must have positive degree and nonzero leading coefficient");
-  }
-  const lead = values2[values2.length - 1];
-  return values2.map((value) => value.divide(lead));
-}
-function createExactGenerator(name, options = {}) {
-  if (!name)
-    throw new Error("Exact generator requires a name");
-  const generator = {
-    type: "exact_generator",
-    id: options.id || `exact:${nextGeneratorId++}:${name}`,
-    name,
-    category: options.category || (options.minimalPolynomial ? "algebraic" : "transcendental"),
-    minimalPolynomial: normalizePolynomial(options.minimalPolynomial || null),
-    real: options.real ?? false,
-    positiveRoot: options.positiveRoot ?? false,
-    _ext: new Map([["key", { type: "string", value: name }], ["immutable", int(1)]])
-  };
-  return Object.freeze(generator);
-}
-function isExactValue(value) {
-  return value?.type === "exact_generator" || value?.type === "exact_expression";
-}
-function isCayleyValue(value) {
-  return value?.type === "cayley";
-}
-function isCayleyInfinity(value) {
-  return value?.type === "cayley_infinity";
-}
-var CAYLEY_INFINITY = Object.freeze({
-  type: "cayley_infinity",
-  _ext: new Map([["immutable", int(1)]])
-});
-function clonePowers(powers) {
-  return new Map(powers || []);
-}
-function monomialKey(powers) {
-  return [...powers.entries()].filter(([, exponent]) => exponent !== 0).sort(([a], [b]) => a.id.localeCompare(b.id)).map(([generator, exponent]) => `${generator.id}^${exponent}`).join("|");
-}
-function addRawTerm(target, powers, coefficient) {
-  if (isZero(coefficient))
-    return;
-  const clean = new Map([...powers.entries()].filter(([, exponent]) => exponent !== 0));
-  const key = monomialKey(clean);
-  const existing = target.get(key);
-  const next = existing ? existing.coefficient.add(coefficient) : coefficient;
-  if (isZero(next))
-    target.delete(key);
-  else
-    target.set(key, { powers: clean, coefficient: next });
-}
-function reducibleGenerator(powers) {
-  for (const [generator, exponent] of powers) {
-    const polynomial = generator.minimalPolynomial;
-    if (polynomial && exponent >= polynomial.length - 1)
-      return [generator, exponent, polynomial];
-  }
-  return null;
-}
-function reduceTerms(rawTerms) {
-  const result = new Map;
-  const queue = [...rawTerms.values()].map((term) => ({
-    powers: clonePowers(term.powers),
-    coefficient: term.coefficient
-  }));
-  while (queue.length) {
-    const term = queue.pop();
-    if (isZero(term.coefficient))
-      continue;
-    const reducible = reducibleGenerator(term.powers);
-    if (!reducible) {
-      addRawTerm(result, term.powers, term.coefficient);
-      continue;
-    }
-    const [generator, exponent, polynomial] = reducible;
-    const degree = polynomial.length - 1;
-    for (let i = 0;i < degree; i++) {
-      if (isZero(polynomial[i]))
-        continue;
-      const powers = clonePowers(term.powers);
-      const nextExponent = exponent - degree + i;
-      if (nextExponent === 0)
-        powers.delete(generator);
-      else
-        powers.set(generator, nextExponent);
-      queue.push({
-        powers,
-        coefficient: term.coefficient.multiply(negateRational(polynomial[i]))
-      });
-    }
-  }
-  return result;
-}
-function expressionFromTerms(terms) {
-  const reduced = reduceTerms(terms);
-  if (reduced.size === 0)
-    return int(0);
-  if (reduced.size === 1 && reduced.has(""))
-    return reduced.get("").coefficient;
-  return { type: "exact_expression", terms: reduced };
-}
-function trimPolynomial2(polynomial) {
-  const result = [...polynomial];
-  while (result.length > 0 && isZero(result[result.length - 1]))
-    result.pop();
-  return result;
-}
-function polynomialAdd2(left, right) {
-  const length = Math.max(left.length, right.length);
-  const result = Array.from({ length }, (_, index) => (left[index] || int(0)).add(right[index] || int(0)));
-  return trimPolynomial2(result);
-}
-function polynomialNegate2(polynomial) {
-  return polynomial.map(negateRational);
-}
-function polynomialSubtract(left, right) {
-  return polynomialAdd2(left, polynomialNegate2(right));
-}
-function polynomialMultiply2(left, right) {
-  if (left.length === 0 || right.length === 0)
-    return [];
-  const result = Array.from({ length: left.length + right.length - 1 }, () => int(0));
-  for (let i = 0;i < left.length; i++) {
-    for (let j = 0;j < right.length; j++) {
-      result[i + j] = result[i + j].add(left[i].multiply(right[j]));
-    }
-  }
-  return trimPolynomial2(result);
-}
-function polynomialDivmod(dividend, divisor) {
-  const denominator = trimPolynomial2(divisor);
-  if (denominator.length === 0)
-    throw new Error("Polynomial division by zero");
-  let remainder = trimPolynomial2(dividend);
-  const quotient = Array.from({ length: Math.max(0, remainder.length - denominator.length + 1) }, () => int(0));
-  while (remainder.length >= denominator.length && remainder.length > 0) {
-    const degree = remainder.length - denominator.length;
-    const factor = remainder[remainder.length - 1].divide(denominator[denominator.length - 1]);
-    quotient[degree] = quotient[degree].add(factor);
-    const shifted = Array.from({ length: degree }, () => int(0)).concat(denominator.map((value) => value.multiply(factor)));
-    remainder = polynomialSubtract(remainder, shifted);
-  }
-  return [trimPolynomial2(quotient), remainder];
-}
-function polynomialExtendedGcd(left, right) {
-  if (trimPolynomial2(right).length === 0)
-    return [trimPolynomial2(left), [int(1)], []];
-  const [quotient, remainder] = polynomialDivmod(left, right);
-  const [gcd2, x1, y1] = polynomialExtendedGcd(right, remainder);
-  return [gcd2, y1, polynomialSubtract(x1, polynomialMultiply2(quotient, y1))];
-}
-function algebraicPolynomial(value) {
-  const terms = toTerms(value);
-  let generator = null;
-  let maxExponent = 0;
-  for (const term of terms.values()) {
-    for (const [candidate, exponent] of term.powers) {
-      if (exponent < 0 || !candidate.minimalPolynomial)
-        return null;
-      if (generator && generator !== candidate)
-        return null;
-      generator = candidate;
-      maxExponent = Math.max(maxExponent, exponent);
-    }
-  }
-  if (!generator)
-    return null;
-  const polynomial = Array.from({ length: maxExponent + 1 }, () => int(0));
-  for (const term of terms.values()) {
-    const exponent = term.powers.get(generator) || 0;
-    if (term.powers.size > (exponent === 0 ? 0 : 1))
-      return null;
-    polynomial[exponent] = polynomial[exponent].add(term.coefficient);
-  }
-  return { generator, polynomial: trimPolynomial2(polynomial) };
-}
-function expressionFromPolynomial(generator, polynomial) {
-  const terms = new Map;
-  for (let exponent = 0;exponent < polynomial.length; exponent++) {
-    if (isZero(polynomial[exponent]))
-      continue;
-    addRawTerm(terms, exponent === 0 ? new Map : new Map([[generator, exponent]]), polynomial[exponent]);
-  }
-  return expressionFromTerms(terms);
-}
-function invertSingleAlgebraicExpression(value) {
-  const parsed = algebraicPolynomial(value);
-  if (!parsed || parsed.polynomial.length === 0)
-    return null;
-  const [gcd2, coefficient] = polynomialExtendedGcd(parsed.polynomial, parsed.generator.minimalPolynomial);
-  if (gcd2.length !== 1 || isZero(gcd2[0]))
-    return null;
-  const normalized = coefficient.map((entry) => entry.divide(gcd2[0]));
-  const [, reduced] = polynomialDivmod(normalized, parsed.generator.minimalPolynomial);
-  return expressionFromPolynomial(parsed.generator, reduced);
-}
-function toTerms(value) {
-  if (value?.type === "exact_expression")
-    return value.terms;
-  const terms = new Map;
-  if (value?.type === "exact_generator") {
-    addRawTerm(terms, new Map([[value, 1]]), int(1));
-    return terms;
-  }
-  addRawTerm(terms, new Map, rationalFrom(value));
-  return terms;
-}
-function combinePowers(left, right, sign = 1) {
-  const powers = clonePowers(left);
-  for (const [generator, exponent] of right) {
-    const next = (powers.get(generator) || 0) + sign * exponent;
-    if (next === 0)
-      powers.delete(generator);
-    else
-      powers.set(generator, next);
-  }
-  return powers;
-}
-function addScalars(left, right) {
-  if (!isExactValue(left) && !isExactValue(right))
-    return rationalFrom(left).add(rationalFrom(right));
-  const terms = new Map;
-  for (const term of toTerms(left).values())
-    addRawTerm(terms, term.powers, term.coefficient);
-  for (const term of toTerms(right).values())
-    addRawTerm(terms, term.powers, term.coefficient);
-  return expressionFromTerms(terms);
-}
-function subtractScalars(left, right) {
-  return addScalars(left, negateScalar(right));
-}
-function negateScalar(value) {
-  if (!isExactValue(value))
-    return negateRational(rationalFrom(value));
-  const terms = new Map;
-  for (const term of toTerms(value).values()) {
-    addRawTerm(terms, term.powers, negateRational(term.coefficient));
-  }
-  return expressionFromTerms(terms);
-}
-function multiplyScalars(left, right) {
-  if (!isExactValue(left) && !isExactValue(right))
-    return rationalFrom(left).multiply(rationalFrom(right));
-  const terms = new Map;
-  for (const a of toTerms(left).values()) {
-    for (const b of toTerms(right).values()) {
-      addRawTerm(terms, combinePowers(a.powers, b.powers), a.coefficient.multiply(b.coefficient));
-    }
-  }
-  return expressionFromTerms(terms);
-}
-function divideScalars(left, right) {
-  if (!isExactValue(left) && !isExactValue(right))
-    return rationalFrom(left).divide(rationalFrom(right));
-  const algebraicInverse = invertSingleAlgebraicExpression(right);
-  if (algebraicInverse !== null)
-    return multiplyScalars(left, algebraicInverse);
-  const denominatorTerms = [...toTerms(right).values()];
-  if (denominatorTerms.length !== 1) {
-    throw new Error("Division by a multi-term exact expression is not implemented");
-  }
-  const denominator = denominatorTerms[0];
-  const terms = new Map;
-  for (const numerator of toTerms(left).values()) {
-    addRawTerm(terms, combinePowers(numerator.powers, denominator.powers, -1), numerator.coefficient.divide(denominator.coefficient));
-  }
-  return expressionFromTerms(terms);
-}
-function imaginaryGeneratorFrom(value, preferred = null) {
-  if (preferred)
-    return preferred;
-  for (const term of toTerms(value).values()) {
-    for (const generator of term.powers.keys()) {
-      if (generator.name === "i")
-        return generator;
-    }
-  }
-  return null;
-}
-function complexParts(value, preferredI = null) {
-  const imaginary = imaginaryGeneratorFrom(value, preferredI);
-  if (!imaginary)
-    return { real: value, imaginary: int(0) };
-  const realTerms = new Map;
-  const imaginaryTerms = new Map;
-  for (const term of toTerms(value).values()) {
-    const exponent = term.powers.get(imaginary) || 0;
-    if (exponent !== 0 && exponent !== 1) {
-      throw new Error("Complex decomposition expected powers of i to be reduced to zero or one");
-    }
-    const powers = clonePowers(term.powers);
-    powers.delete(imaginary);
-    addRawTerm(exponent === 0 ? realTerms : imaginaryTerms, powers, term.coefficient);
-  }
-  return {
-    real: expressionFromTerms(realTerms),
-    imaginary: expressionFromTerms(imaginaryTerms)
-  };
-}
-function complexConjugate(value, preferredI = null) {
-  const imaginary = imaginaryGeneratorFrom(value, preferredI);
-  if (!imaginary)
-    return value;
-  const terms = new Map;
-  for (const term of toTerms(value).values()) {
-    const exponent = term.powers.get(imaginary) || 0;
-    addRawTerm(terms, term.powers, exponent % 2 === 0 ? term.coefficient : negateRational(term.coefficient));
-  }
-  return expressionFromTerms(terms);
-}
-function complexFromParts(real, imaginary, iGenerator) {
-  if (!iGenerator?.minimalPolynomial)
-    throw new Error("Complex.FromParts requires the configured algebraic generator i");
-  return addScalars(real, multiplyScalars(imaginary, iGenerator));
-}
-function complexNormSquared(value, preferredI = null) {
-  const parts = complexParts(value, preferredI);
-  return addScalars(multiplyScalars(parts.real, parts.real), multiplyScalars(parts.imaginary, parts.imaginary));
-}
-function bigintSqrt(value) {
-  if (value < 0n)
-    throw new Error("Square root requires a nonnegative value");
-  if (value < 2n)
-    return value;
-  let x = 1n << (BigInt(value.toString(2).length) + 1n) / 2n;
-  let next = x + value / x >> 1n;
-  while (next < x) {
-    x = next;
-    next = x + value / x >> 1n;
-  }
-  return x;
-}
-function rationalSquareRoot(value) {
-  const [numerator, denominator] = rationalParts(rationalFrom(value));
-  if (numerator < 0n)
-    throw new Error("Cayley magnitude requires a nonnegative norm squared");
-  const numeratorRoot = bigintSqrt(numerator);
-  const denominatorRoot = bigintSqrt(denominator);
-  if (numeratorRoot * numeratorRoot !== numerator || denominatorRoot * denominatorRoot !== denominator)
-    return null;
-  return new Rational(numeratorRoot, denominatorRoot);
-}
-function exactSquareRoot(value) {
-  if (!isRationalScalar(value)) {
-    throw new Error("Cayley conversion currently requires a rational norm squared");
-  }
-  const perfect = rationalSquareRoot(value);
-  if (perfect)
-    return perfect.denominator === 1n ? new Integer(perfect.numerator) : perfect;
-  const [numerator, denominator] = rationalParts(rationalFrom(value));
-  const key = `${numerator}/${denominator}`;
-  if (squareRootGenerators.has(key))
-    return squareRootGenerators.get(key);
-  const name = denominator === 1n ? `sqrt${numerator}` : `sqrt(${numerator}/${denominator})`;
-  const generator = createExactGenerator(name, {
-    id: denominator === 1n ? `exact:${name}` : `exact:sqrt:${key}`,
-    category: "algebraic",
-    minimalPolynomial: [new Rational(-numerator, denominator), int(0), int(1)],
-    real: true,
-    positiveRoot: true
-  });
-  squareRootGenerators.set(key, generator);
-  return generator;
-}
-function scalarSign(value) {
-  const parts = rationalParts(value);
-  if (parts)
-    return parts[0] === 0n ? 0 : parts[0] < 0n ? -1 : 1;
-  if (value?.type === "exact_generator" && value.positiveRoot)
-    return 1;
-  if (value?.type === "exact_expression" && value.terms.size === 1) {
-    const term = [...value.terms.values()][0];
-    if ([...term.powers.keys()].every((generator) => generator.positiveRoot)) {
-      return isNegative(term.coefficient) ? -1 : 1;
-    }
-  }
-  return null;
-}
-function scalarZero(value) {
-  return equalScalars(value, int(0));
-}
-function requireScalar(value, label) {
-  if (!isRationalScalar(value) && !isExactValue(value)) {
-    throw new Error(`${label} must be an exact scalar`);
-  }
-  return value;
-}
-function requireRealScalar(value, label, iGenerator = null) {
-  requireScalar(value, label);
-  if (!scalarZero(complexParts(value, iGenerator).imaginary)) {
-    throw new Error(`${label} must be real`);
-  }
-  return value;
-}
-function negateCayleyDirection(direction) {
-  return isCayleyInfinity(direction) ? CAYLEY_INFINITY : negateScalar(direction);
-}
-function oppositeCayleyDirection(direction) {
-  if (isCayleyInfinity(direction))
-    return int(0);
-  if (scalarZero(direction))
-    return CAYLEY_INFINITY;
-  return negateScalar(divideScalars(int(1), direction));
-}
-function createCayley(magnitude, direction, iGenerator = null) {
-  let r = requireRealScalar(magnitude, "Cayley magnitude", iGenerator);
-  let t = isCayleyInfinity(direction) ? CAYLEY_INFINITY : requireRealScalar(direction, "Cayley direction", iGenerator);
-  const sign = scalarSign(r);
-  if (sign === null)
-    throw new Error("Cayley magnitude must have a known nonnegative sign");
-  if (sign < 0) {
-    r = negateScalar(r);
-    t = oppositeCayleyDirection(t);
-  }
-  if (scalarZero(r))
-    t = int(0);
-  return { type: "cayley", magnitude: r, direction: t, iGenerator };
-}
-function cayleyFromCartesian(value, preferredI = null) {
-  if (isCayleyValue(value))
-    return value;
-  requireScalar(value, "Complex.Cayley value");
-  const iGenerator = imaginaryGeneratorFrom(value, preferredI) || preferredI;
-  const { real: x, imaginary: y } = complexParts(value, iGenerator);
-  const q = addScalars(multiplyScalars(x, x), multiplyScalars(y, y));
-  if (scalarZero(q))
-    return createCayley(int(0), int(0), iGenerator);
-  const r = exactSquareRoot(q);
-  if (!scalarZero(y)) {
-    return createCayley(r, divideScalars(subtractScalars(r, x), y), iGenerator);
-  }
-  const sign = scalarSign(x);
-  if (sign === null)
-    throw new Error("Cayley conversion cannot determine the real-axis direction exactly");
-  return createCayley(r, sign < 0 ? CAYLEY_INFINITY : int(0), iGenerator);
-}
-function cayleyCartesian(value, preferredI = null) {
-  if (!isCayleyValue(value))
-    return value;
-  const r = value.magnitude;
-  const t = value.direction;
-  if (isCayleyInfinity(t))
-    return negateScalar(r);
-  const tSquared = multiplyScalars(t, t);
-  const denominator = addScalars(int(1), tSquared);
-  const x = multiplyScalars(r, divideScalars(subtractScalars(int(1), tSquared), denominator));
-  const y = multiplyScalars(r, divideScalars(multiplyScalars(int(2), t), denominator));
-  if (scalarZero(y))
-    return x;
-  const iGenerator = value.iGenerator || preferredI;
-  if (!iGenerator)
-    throw new Error("Cayley.Cartesian requires the configured algebraic generator i");
-  return complexFromParts(x, y, iGenerator);
-}
-function asCayley(value, reference) {
-  return isCayleyValue(value) ? value : cayleyFromCartesian(value, reference?.iGenerator);
-}
-function composeCayleyDirections(left, right) {
-  const leftInfinity = isCayleyInfinity(left);
-  const rightInfinity = isCayleyInfinity(right);
-  if (leftInfinity && rightInfinity)
-    return int(0);
-  if (leftInfinity || rightInfinity) {
-    const finite = leftInfinity ? right : left;
-    return scalarZero(finite) ? CAYLEY_INFINITY : negateScalar(divideScalars(int(1), finite));
-  }
-  const denominator = subtractScalars(int(1), multiplyScalars(left, right));
-  if (scalarZero(denominator))
-    return CAYLEY_INFINITY;
-  return divideScalars(addScalars(left, right), denominator);
-}
-function isUnsupportedExactDivision(error) {
-  return error instanceof Error && /Division by a multi-term exact expression is not implemented/.test(error.message);
-}
-function cayleyProductViaCartesian(left, right) {
-  const iGenerator = left.iGenerator || right.iGenerator;
-  const product = multiplyScalars(cayleyCartesian(left), cayleyCartesian(right));
-  return cayleyFromCartesian(product, iGenerator);
-}
-function multiplyCayley(left, right) {
-  const a = asCayley(left, right);
-  const b = asCayley(right, a);
-  try {
-    return createCayley(multiplyScalars(a.magnitude, b.magnitude), composeCayleyDirections(a.direction, b.direction), a.iGenerator || b.iGenerator);
-  } catch (error) {
-    if (!isUnsupportedExactDivision(error))
-      throw error;
-    return cayleyProductViaCartesian(a, b);
-  }
-}
-function conjugateCayley(value) {
-  return createCayley(value.magnitude, negateCayleyDirection(value.direction), value.iGenerator);
-}
-function inverseCayley(value) {
-  if (scalarZero(value.magnitude))
-    throw new Error("Cannot invert zero in Cayley form");
-  return createCayley(divideScalars(int(1), value.magnitude), negateCayleyDirection(value.direction), value.iGenerator);
-}
-function divideCayley(left, right) {
-  const a = asCayley(left, right);
-  const b = asCayley(right, a);
-  return multiplyCayley(a, inverseCayley(b));
-}
-function negateCayley(value) {
-  return createCayley(value.magnitude, oppositeCayleyDirection(value.direction), value.iGenerator);
-}
-function addCayley(left, right) {
-  const a = asCayley(left, right);
-  const b = asCayley(right, a);
-  return cayleyFromCartesian(addScalars(cayleyCartesian(a), cayleyCartesian(b)), a.iGenerator || b.iGenerator);
-}
-function subtractCayley(left, right) {
-  const a = asCayley(left, right);
-  const b = asCayley(right, a);
-  return cayleyFromCartesian(subtractScalars(cayleyCartesian(a), cayleyCartesian(b)), a.iGenerator || b.iGenerator);
-}
-function powCayley(value, exponentValue) {
-  const exponent = integerExponent(exponentValue);
-  if (exponent === 0)
-    return createCayley(int(1), int(0), value.iGenerator);
-  if (exponent < 0)
-    return powCayley(inverseCayley(value), int(-exponent));
-  let result = createCayley(int(1), int(0), value.iGenerator);
-  let factor = value;
-  let n = exponent;
-  while (n > 0) {
-    if (n % 2 === 1)
-      result = multiplyCayley(result, factor);
-    n = Math.floor(n / 2);
-    if (n)
-      factor = multiplyCayley(factor, factor);
-  }
-  return result;
-}
-function equalCayley(left, right) {
-  const a = asCayley(left, right);
-  const b = asCayley(right, a);
-  return equalScalars(cayleyCartesian(a), cayleyCartesian(b));
-}
-function cayleyReal(value) {
-  return complexParts(cayleyCartesian(value), value.iGenerator).real;
-}
-function cayleyImaginary(value) {
-  return complexParts(cayleyCartesian(value), value.iGenerator).imaginary;
-}
-function complexMethod(name, operation) {
-  return {
-    type: "method_builtin",
-    name,
-    impl(args) {
-      return operation(...args.slice(1));
-    }
-  };
-}
-function createDefaultComplexCollection(exactCollection) {
-  const iGenerator = exactCollection?.entries?.get("i");
-  const requireI = () => {
-    if (!iGenerator)
-      throw new Error("The active Exact collection does not define i");
-    return iGenerator;
-  };
-  const constructCayley = (...args) => {
-    if (args.length === 1)
-      return cayleyFromCartesian(args[0], requireI());
-    if (args.length === 2)
-      return createCayley(args[0], args[1], requireI());
-    throw new Error("Complex.Cayley expects a Cartesian value or magnitude and direction");
-  };
-  const operations = {
-    conjugate: (value) => isCayleyValue(value) ? conjugateCayley(value) : complexConjugate(value, requireI()),
-    re: (value) => isCayleyValue(value) ? cayleyReal(value) : complexParts(value, requireI()).real,
-    im: (value) => isCayleyValue(value) ? cayleyImaginary(value) : complexParts(value, requireI()).imaginary,
-    fromParts: (real, imaginary) => complexFromParts(real, imaginary, requireI()),
-    normSquared: (value) => isCayleyValue(value) ? multiplyScalars(value.magnitude, value.magnitude) : complexNormSquared(value, requireI()),
-    cayley: constructCayley,
-    cartesian: (value) => cayleyCartesian(value, requireI()),
-    magnitude: (value) => isCayleyValue(value) ? value.magnitude : cayleyFromCartesian(value, requireI()).magnitude,
-    direction: (value) => isCayleyValue(value) ? value.direction : cayleyFromCartesian(value, requireI()).direction,
-    inverse: (value) => isCayleyValue(value) ? inverseCayley(value) : divideScalars(int(1), value)
-  };
-  const entries = new Map([
-    ["i", iGenerator],
-    ["I", iGenerator],
-    ["conjugate", operations.conjugate],
-    ["Conjugate", operations.conjugate],
-    ["re", operations.re],
-    ["Re", operations.re],
-    ["im", operations.im],
-    ["Im", operations.im],
-    ["fromparts", operations.fromParts],
-    ["FromParts", operations.fromParts],
-    ["normsquared", operations.normSquared],
-    ["NormSquared", operations.normSquared],
-    ["cayley", operations.cayley],
-    ["Cayley", operations.cayley],
-    ["cartesian", operations.cartesian],
-    ["Cartesian", operations.cartesian],
-    ["magnitude", operations.magnitude],
-    ["Magnitude", operations.magnitude],
-    ["direction", operations.direction],
-    ["Direction", operations.direction],
-    ["inverse", operations.inverse],
-    ["Inverse", operations.inverse],
-    ["infinity", CAYLEY_INFINITY],
-    ["Infinity", CAYLEY_INFINITY]
-  ]);
-  return {
-    type: "map",
-    entries,
-    _ext: new Map([
-      ["CONJUGATE", complexMethod("Conjugate", operations.conjugate)],
-      ["RE", complexMethod("Re", operations.re)],
-      ["IM", complexMethod("Im", operations.im)],
-      ["FROMPARTS", complexMethod("FromParts", operations.fromParts)],
-      ["NORMSQUARED", complexMethod("NormSquared", operations.normSquared)],
-      ["CAYLEY", complexMethod("Cayley", operations.cayley)],
-      ["CARTESIAN", complexMethod("Cartesian", operations.cartesian)],
-      ["MAGNITUDE", complexMethod("Magnitude", operations.magnitude)],
-      ["DIRECTION", complexMethod("Direction", operations.direction)],
-      ["INVERSE", complexMethod("Inverse", operations.inverse)],
-      ["immutable", int(1)]
-    ])
-  };
-}
-function integerExponent(value) {
-  if (value instanceof Integer)
-    return Number(value.value);
-  if (typeof value === "number" && Number.isInteger(value))
-    return value;
-  if (typeof value === "bigint")
-    return Number(value);
-  throw new Error("Exact expression exponent must be an integer");
-}
-function powScalar(value, exponentValue) {
-  const exponent = integerExponent(exponentValue);
-  if (exponent === 0)
-    return int(1);
-  if (exponent < 0)
-    return divideScalars(int(1), powScalar(value, -exponent));
-  let result = int(1);
-  let factor = value;
-  let n = exponent;
-  while (n > 0) {
-    if (n % 2 === 1)
-      result = multiplyScalars(result, factor);
-    n = Math.floor(n / 2);
-    if (n)
-      factor = multiplyScalars(factor, factor);
-  }
-  return result;
-}
-function termsEqual(left, right) {
-  const a = toTerms(left);
-  const b = toTerms(right);
-  if (a.size !== b.size)
-    return false;
-  for (const [key, term] of a) {
-    const other = b.get(key);
-    if (!other)
-      return false;
-    const [leftNumerator, leftDenominator] = rationalParts(term.coefficient);
-    const [rightNumerator, rightDenominator] = rationalParts(other.coefficient);
-    if (leftNumerator * rightDenominator !== rightNumerator * leftDenominator)
-      return false;
-  }
-  return true;
-}
-function equalScalars(left, right) {
-  if (!isExactValue(left) && !isExactValue(right)) {
-    const [leftNumerator, leftDenominator] = rationalParts(rationalFrom(left));
-    const [rightNumerator, rightDenominator] = rationalParts(rationalFrom(right));
-    return leftNumerator * rightDenominator === rightNumerator * leftDenominator;
-  }
-  return termsEqual(left, right);
-}
-function sortedTerms(value) {
-  return [...toTerms(value).values()].sort((a, b) => {
-    if (a.powers.size === 0)
-      return -1;
-    if (b.powers.size === 0)
-      return 1;
-    const an = [...a.powers.keys()].map((generator) => generator.name).join("*");
-    const bn = [...b.powers.keys()].map((generator) => generator.name).join("*");
-    return an.localeCompare(bn);
-  });
-}
-function formatMonomial(powers) {
-  return [...powers.entries()].sort(([a], [b]) => a.name.localeCompare(b.name)).map(([generator, exponent]) => exponent === 1 ? generator.name : `${generator.name}^${exponent}`).join("*");
-}
-function formatExact(value, formatScalar = (scalar) => scalar.toString()) {
-  if (value?.type === "exact_generator")
-    return `1~{${value.name}}`;
-  const pieces = [];
-  for (const term of sortedTerms(value)) {
-    const negative = isNegative(term.coefficient);
-    const coefficient = absRational(term.coefficient);
-    const monomial = formatMonomial(term.powers);
-    const body = monomial ? `${isOne(coefficient) ? "1" : formatScalar(coefficient)}~{${monomial}}` : formatScalar(coefficient);
-    if (pieces.length === 0)
-      pieces.push(negative ? `-${body}` : body);
-    else
-      pieces.push(`${negative ? "-" : "+"} ${body}`);
-  }
-  return pieces.join(" ");
-}
-function createDefaultExactCollection() {
-  const pi = createExactGenerator("pi", { id: "exact:pi", category: "transcendental" });
-  const e = createExactGenerator("e", { id: "exact:e", category: "transcendental" });
-  const i = createExactGenerator("i", {
-    id: "exact:i",
-    category: "algebraic",
-    minimalPolynomial: [int(1), int(0), int(1)]
-  });
-  const sqrt2 = exactSquareRoot(int(2));
-  return {
-    type: "map",
-    entries: new Map([["pi", pi], ["e", e], ["i", i], ["sqrt2", sqrt2]]),
-    _ext: new Map([["immutable", int(1)]])
-  };
-}
-function exactGeneratorFromPolynomial(name, coefficients) {
-  const values2 = coefficients?.type === "sequence" ? coefficients.values : coefficients;
-  if (!Array.isArray(values2))
-    throw new Error("DefineExactGenerator expects an array of polynomial coefficients");
-  return createExactGenerator(name, { category: "algebraic", minimalPolynomial: values2 });
 }
 
 // ../rix/src/runtime/quantities.js
@@ -14567,6 +14653,8 @@ function calculusRecordValues(value, key, label) {
   return entry.values;
 }
 function requireCalculusExpression(value, path = "expression") {
+  if (hasExtendedConstants(value))
+    throw new Error("Extended mathematical constants require a provider-aware specification consumer (not yet implemented)");
   if (hasScopedSymbols(value))
     throw new Error("Scoped mathematical symbols require an identity-aware specification consumer (not yet implemented)");
   if (value?.type !== "map" || !(value.entries instanceof Map)) {
@@ -65073,7 +65161,7 @@ CalculusRegistryEvidence(semanticId, key, value) -> {;
     CalculusRegistrySet(:evidence,semanticId,evidence.Set(key,value));
 };
 
-CalculusIsExpression(value) -> (value ? :CalculusExpression) && !.ExpressionHasScopedSymbols(value);
+CalculusIsExpression(value) -> (value ? :CalculusExpression) && !.ExpressionHasScopedSymbols(value) && !.ExpressionHasExtendedConstants(value);
 CalculusIsFunction(value) -> value ? :MathematicalFunction;
 
 CalculusRequireExpression(value, label ?= "value") ->
@@ -100822,5 +100910,5 @@ var STATIC_SYSTEM_CATALOG = Object.freeze([
 ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
 export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, outputValueKind, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, formatOutputText, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateObserved, parseAndEvaluateObservedAsync, lintRix, createGeometryAuthoringProgram, mountOutputWidgets };
 
-//# debugId=9ED46027C68F53F064756E2164756E21
-//# sourceMappingURL=chunk-9syxftba.js.map
+//# debugId=B0B647AF1DBC3E8F64756E2164756E21
+//# sourceMappingURL=chunk-bngs22cd.js.map
