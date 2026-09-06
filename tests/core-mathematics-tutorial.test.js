@@ -50,5 +50,13 @@ for (const [mode,evaluate] of [["sync",parseAndEvaluate],["async",parseAndEvalua
         expect(results[17].values[0].value).toBe("realSnapshot");
         expect(results[17].values[1]).toBeNull();
         expect(results[17].values[2].value).toBe("unverifiedImport");
+        expect(results[18].values[0].value).toBe("complete");
+        expect(String(results[18].values[1])).toBe("10");
+        expect(results[19].values[0].value).toBe("conditional");
+        expect(results[19].values[1]).toBeNull();
+        expect(String(results[19].values[2])).toBe("3");
+        expect(results[19].values[3].value).toBe("invalidAssumptions");
+        expect(results[20].values[0].value).toBe(1n);
+        expect(results[20].values[1].value).toBe("unresolved");
     });
 }

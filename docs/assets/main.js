@@ -3,7 +3,7 @@ import {
   findHelp,
   pluginProfileFromUrl,
   stripMarkedPluginProfile
-} from "./chunk-59sd9kxn.js";
+} from "./chunk-841aamd6.js";
 import {
   Integer,
   Rational,
@@ -13,7 +13,7 @@ import {
   mountOutputWidgets,
   parse,
   renderOutputHtml
-} from "./chunk-b1ttzeyc.js";
+} from "./chunk-dsdgcmpj.js";
 
 // src/interval-explorer.js
 var SVG_NS = "http://www.w3.org/2000/svg";

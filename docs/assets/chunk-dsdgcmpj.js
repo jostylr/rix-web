@@ -12627,6 +12627,7 @@ var runtimeDefaults = Object.freeze({
     Symbolic: Object.freeze(["POLY", "DERIV", "INTEGRATE", "TRANSFORM", "SIMPLIFY", "SPEC", "SPECCABILITY", "INSPECTSPEC", "SPECROLES", "SPECFRACTIONPARTS", "SArith", "ExpressionVariable", "ExpressionConstant", "ExpressionOperation", "ExpressionApply", "IsExpression", "ExpressionKey", "ExpressionHasScopedSymbols", "SameSymbol", "SYMBOL_RETRIEVE", "SYMBOL_DEFINE", "ExpressionDefinition", "ExpressionExpand"]),
     MathematicalContexts: Object.freeze(["MATH_CONTEXT", "BOUND_SYMBOL"]),
     MathematicalSerialization: Object.freeze(["MathEncodeJSON", "MathDecodeJSON", "MathEncodeJSONL", "MathDecodeJSONL"]),
+    MathematicalLocalization: Object.freeze(["MathSubstitute", "MathEvaluate"]),
     SymbolicConstants: Object.freeze(["ExpressionConstantInfo", "ExpressionHasExtendedConstants", "ExpressionReal", "ExpressionRefine"]),
     Notation: Object.freeze(["SArith", "Poly", "NotationParser"]),
     Random: Object.freeze(["RNG", "RANDOMSEED", "RandomSeed", "RAND_NAME"]),
@@ -31651,6 +31652,166 @@ var mathematicalJSONCapabilities = {
   }, pure: false, groups: ["Symbolic"], doc: "Decode independent bounded JSONL documents without executing code" }
 };
 
+// ../rix/src/runtime/math-localize.js
+var str2 = (value) => ({ type: "string", value });
+var seq2 = (values2) => ({ type: "sequence", values: values2 });
+var record2 = (fields2) => ({ type: "map", entries: new Map(Object.entries(fields2)), _ext: new Map([["immutable", new Integer(1n)]]) });
+var rational = (value) => value instanceof Integer ? new Rational(value.value, 1n) : value instanceof Rational && value.denominator !== 0n ? value : null;
+var isContext = (value) => expressionField(value, "schema")?.value === "rix.math.context@1";
+var id = (value) => expressionField(value, "symbolid")?.value;
+function worker(bindings) {
+  if (!["sequence", "tuple"].includes(bindings?.type))
+    throw new Error("Mathematical bindings require a sequence of (symbol, value) pairs");
+  const replacements = new Map;
+  let visits = 0;
+  const tick = (depth) => {
+    if (++visits > 1e4 || depth > 128)
+      throw new Error("Mathematical localization traversal budget exceeded");
+  };
+  function checkReplacement(value, depth = 0) {
+    tick(depth);
+    if (expressionField(value, "bound"))
+      throw new Error("Substitution cannot introduce bound symbols; binder instantiation is not supported");
+    const definition = expressionDefinition(value);
+    if (definition)
+      checkReplacement(definition, depth + 1);
+    for (const key of ["operands", "arguments"])
+      for (const child of expressionField(value, key)?.values || [])
+        checkReplacement(child, depth + 1);
+  }
+  for (const pair of bindings.values) {
+    if (pair?.type !== "tuple" || pair.values.length !== 2)
+      throw new Error("Expected a (symbol, value) binding");
+    const [symbol, value] = pair.values;
+    if (!isMathExpression(symbol) || expressionField(symbol, "kind")?.value !== "variable" || !id(symbol) || expressionField(symbol, "bound"))
+      throw new Error("Bindings require free scoped symbols");
+    expressionDefinition(symbol);
+    if (replacements.has(id(symbol)))
+      throw new Error("Duplicate mathematical binding");
+    const replacement = promoteExpression(value);
+    checkReplacement(replacement);
+    replacements.set(id(symbol), replacement);
+  }
+  function walk(value, depth = 0) {
+    tick(depth);
+    if (isMathExpression(value)) {
+      if (replacements.has(id(value)))
+        return replacements.get(id(value));
+      const definition = expressionDefinition(value);
+      if (definition)
+        return walk(definition, depth + 1);
+      if (expressionField(value, "kind")?.value === "operator")
+        return expressionOperation(expressionField(value, "operation").value, expressionField(value, "operands").values.map((v) => walk(v, depth + 1)));
+      if (expressionField(value, "kind")?.value === "apply")
+        return expressionApplication(expressionField(value, "semanticid").value, expressionField(value, "name").value, expressionField(value, "arguments").values.map((v) => walk(v, depth + 1)));
+      return value;
+    }
+    if (["sequence", "tuple"].includes(value?.type))
+      return { type: value.type, values: value.values.map((v) => walk(v, depth + 1)) };
+    if (value?.type === "map") {
+      const fields2 = Object.fromEntries([...value.entries].map(([key, v]) => [key, walk(v, depth + 1)]));
+      if (isContext(value))
+        fields2.consistency = str2("unresolved");
+      return record2(fields2);
+    }
+    return value;
+  }
+  return { walk, tick };
+}
+function substituteMathematics(value, bindings) {
+  if (!isMathExpression(value) && !isContext(value))
+    throw new Error("MathSubstitute requires an expression or mathematical context");
+  return worker(bindings).walk(value);
+}
+function evaluateMathematics(value, bindings = seq2([])) {
+  const localized = substituteMathematics(value, bindings);
+  const { tick } = worker(seq2([]));
+  const reasons = new Set;
+  function calculate(expr, depth = 0) {
+    tick(depth);
+    const direct = rational(expr);
+    if (direct)
+      return direct;
+    if (!isMathExpression(expr)) {
+      reasons.add("unsupportedResult");
+      return null;
+    }
+    const kind = expressionField(expr, "kind")?.value;
+    if (kind === "constant") {
+      const result2 = rational(expressionField(expr, "value"));
+      if (!result2)
+        reasons.add("unsupportedConstantProvider");
+      return result2;
+    }
+    if (kind === "variable") {
+      reasons.add("unboundSymbol");
+      return null;
+    }
+    if (kind === "apply") {
+      reasons.add("unlinkedSemanticApplication");
+      return null;
+    }
+    const args = expressionField(expr, "operands").values.map((v) => calculate(v, depth + 1));
+    if (args.some((v) => v === null))
+      return null;
+    const [a, b] = args, op = expressionField(expr, "operation").value;
+    if (op === "divide" && b.numerator === 0n) {
+      reasons.add("divisionByZero");
+      return null;
+    }
+    if (op === "power") {
+      if (b.denominator !== 1n || b.numerator > 256n || b.numerator < -256n) {
+        reasons.add("unsupportedExponent");
+        return null;
+      }
+      if (a.numerator === 0n && b.numerator <= 0n) {
+        reasons.add("undefinedPower");
+        return null;
+      }
+      const magnitude = Number(b.numerator < 0n ? -b.numerator : b.numerator);
+      if (Math.max(a.numerator.toString().length, a.denominator.toString().length) * magnitude > 1e4)
+        throw new Error("Mathematical evaluation integer budget exceeded");
+    }
+    const result = { add: () => a.add(b), subtract: () => a.subtract(b), multiply: () => a.multiply(b), divide: () => a.divide(b), negate: () => a.negate(), power: () => a.pow(b.numerator) }[op]();
+    if (result.numerator.toString().length > 1e4 || result.denominator.toString().length > 1e4)
+      throw new Error("Mathematical evaluation integer budget exceeded");
+    return result;
+  }
+  const context = isContext(localized) ? localized : null;
+  const candidate = calculate(context ? expressionField(context, "result") : localized);
+  let conditional = false, invalid = false;
+  if (context) {
+    conditional = !!expressionField(context, "binders")?.values.length || !!expressionField(context, "domains")?.values.length || expressionField(context, "validation")?.value === "unverifiedImport";
+    for (const assumption of expressionField(context, "assumptions")?.values || []) {
+      const a = calculate(expressionField(assumption, "left")), b = calculate(expressionField(assumption, "right"));
+      if (!a || !b) {
+        conditional = true;
+        continue;
+      }
+      const c = a.lessThan(b) ? -1 : a.greaterThan(b) ? 1 : 0;
+      const truth3 = { "==": c === 0, "!=": c !== 0, "<": c < 0, ">": c > 0, "<=": c <= 0, ">=": c >= 0 }[expressionField(assumption, "operator")?.value];
+      if (truth3 === undefined)
+        conditional = true;
+      else if (!truth3)
+        invalid = true;
+    }
+  }
+  const status = invalid ? "invalidAssumptions" : candidate === null ? "unresolved" : conditional ? "conditional" : "complete";
+  return record2({
+    schema: str2("rix.math.evaluation@1"),
+    status: str2(status),
+    value: status === "complete" ? candidate : null,
+    candidate: invalid ? null : candidate,
+    localized,
+    context,
+    reasons: seq2([...reasons].map(str2))
+  });
+}
+var mathematicalLocalizationCapabilities = {
+  MathSubstitute: { impl: ([value, bindings]) => substituteMathematics(value, bindings), pure: false, doc: "Simultaneous identity-based free substitution retaining context conditions" },
+  MathEvaluate: { impl: ([value, bindings]) => evaluateMathematics(value, bindings), pure: false, doc: "Bounded exact rational evaluation with explicit unresolved context obligations" }
+};
+
 // ../rix/src/runtime/system-context.js
 var trustedRangeProviderDescriptors = new WeakMap;
 function isRangeProviderCallable(value) {
@@ -32033,11 +32194,11 @@ function pluginNamespaceEntry(context, catalog) {
     if (frame && !frame.permissions?.has("PLUGINS")) {
       throw new Error(".Plugin.Load is not permitted in this execution context");
     }
-    const id = rixString2(args[1], ".Plugin.Load name");
+    const id2 = rixString2(args[1], ".Plugin.Load name");
     const loader = evaluationContext?.getEnv?.("__plugin_load_rix__", null);
     const registry = evaluationContext?.getEnv?.("__registry__", null);
     const activate = promiseAware && typeof catalog.loadAsync === "function" ? catalog.loadAsync.bind(catalog) : catalog.load.bind(catalog);
-    return activate(id, {
+    return activate(id2, {
       options: args[2],
       context: evaluationContext,
       registry,
@@ -32950,10 +33111,10 @@ class PluginCatalog {
     this.activations = new Map;
     this.activationDependencies = new Map;
   }
-  registerInstaller(id, installer) {
+  registerInstaller(id2, installer) {
     if (typeof installer !== "function")
-      throw new Error(`Plugin installer '${id}' must be a function`);
-    this.installers.set(String(id), installer);
+      throw new Error(`Plugin installer '${id2}' must be a function`);
+    this.installers.set(String(id2), installer);
     return this;
   }
   addMetadata(metadata, { sourcePath = `<plugin:${metadata?.id || "unknown"}>`, source = null, kind = metadata?.kind } = {}) {
@@ -32991,8 +33152,8 @@ class PluginCatalog {
   list() {
     return Array.from(this.entries.values()).sort((left, right) => left.id.localeCompare(right.id));
   }
-  info(id) {
-    return this.entries.get(String(id)) || null;
+  info(id2) {
+    return this.entries.get(String(id2)) || null;
   }
   declareInto(systemContext) {
     for (const metadata of this.list()) {
@@ -33045,10 +33206,10 @@ class PluginCatalog {
       ])
     };
   }
-  load(id, runtime = {}) {
-    const metadata = this.info(id);
+  load(id2, runtime = {}) {
+    const metadata = this.info(id2);
     if (!metadata)
-      throw new Error(`Unknown plugin '${id}'`);
+      throw new Error(`Unknown plugin '${id2}'`);
     if (this.loaded.has(metadata.id))
       return this.infoValue(metadata);
     if (this.activations.has(metadata.id)) {
@@ -33152,10 +33313,10 @@ class PluginCatalog {
     for (const dependencies of this.activationDependencies.values())
       dependencies.delete(pluginId);
   }
-  async loadAsync(id, runtime = {}) {
-    const metadata = this.info(id);
+  async loadAsync(id2, runtime = {}) {
+    const metadata = this.info(id2);
     if (!metadata)
-      throw new Error(`Unknown plugin '${id}'`);
+      throw new Error(`Unknown plugin '${id2}'`);
     if (this.loaded.has(metadata.id))
       return this.infoValue(metadata);
     if (this.loading.has(metadata.id)) {
@@ -39429,8 +39590,8 @@ function ensureSafeDigits(baseSystem) {
     }
   }
 }
-function parseBaseInteger(str2, baseSystem, allowSign = true) {
-  let s = str2;
+function parseBaseInteger(str3, baseSystem, allowSign = true) {
+  let s = str3;
   let sign = 1n;
   if (allowSign && (s.startsWith("-") || s.startsWith("+"))) {
     sign = s[0] === "-" ? -1n : 1n;
@@ -39477,8 +39638,8 @@ function parseBaseInteger(str2, baseSystem, allowSign = true) {
   const cleaned = chars.filter((ch) => ch !== "_").join("");
   return sign * baseSystem.toDecimal(cleaned);
 }
-function parseSimpleBaseNumeral(str2, baseSystem) {
-  let s = str2;
+function parseSimpleBaseNumeral(str3, baseSystem) {
+  let s = str3;
   let sign = 1n;
   if (s.startsWith("-") || s.startsWith("+")) {
     sign = s[0] === "-" ? -1n : 1n;
@@ -39660,16 +39821,16 @@ function boundedBaseApproximation(value, baseSystem, digitLimit) {
   const limit = digitLimit ?? DEFAULT_BASE_EXPANSION_LIMIT;
   if (!Number.isSafeInteger(limit) || limit < 0)
     throw new Error("Certified radix digit limit must be nonnegative");
-  const rational = toRationalValue(value);
-  const negative = rational.numerator < 0n;
-  const numerator = negative ? -rational.numerator : rational.numerator;
-  const integer3 = numerator / rational.denominator;
-  let remainder = numerator % rational.denominator;
+  const rational2 = toRationalValue(value);
+  const negative = rational2.numerator < 0n;
+  const numerator = negative ? -rational2.numerator : rational2.numerator;
+  const integer3 = numerator / rational2.denominator;
+  let remainder = numerator % rational2.denominator;
   let digits = "";
   for (let index = 0;index < limit && remainder !== 0n; index++) {
     remainder *= BigInt(baseSystem.base);
-    digits += baseSystem.fromDecimal(remainder / rational.denominator);
-    remainder %= rational.denominator;
+    digits += baseSystem.fromDecimal(remainder / rational2.denominator);
+    remainder %= rational2.denominator;
   }
   if (remainder === 0n)
     return value;
@@ -39874,36 +40035,36 @@ function exactPrefixedText(text9, prefix, quoted = false) {
   }
   return prefixed(text9);
 }
-function parseLiteral(str2) {
-  if (typeof str2 !== "string")
-    return str2;
-  const isCoreApproximation = str2.includes("?") && !/^~?(?:0z\[\d+\]|0[a-zA-Z])/.test(str2) && !/^0[A-Z]"/.test(str2);
-  const isCoreUncertainty = isCoreApproximation || /^[+-]?(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)\[[^\]]+\]$/.test(str2);
+function parseLiteral(str3) {
+  if (typeof str3 !== "string")
+    return str3;
+  const isCoreApproximation = str3.includes("?") && !/^~?(?:0z\[\d+\]|0[a-zA-Z])/.test(str3) && !/^0[A-Z]"/.test(str3);
+  const isCoreUncertainty = isCoreApproximation || /^[+-]?(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)\[[^\]]+\]$/.test(str3);
   if (isCoreUncertainty) {
-    return parseNumber(str2);
+    return parseNumber(str3);
   }
-  if (/^(?:(?:\d(?:_?\d)*|\{\d+~\d+\})+(?:\.(?:\d(?:_?\d)*|\{\d+~\d+\})*)?|\.(?:\d(?:_?\d)*|\{\d+~\d+\})+)(?:#(?:\d(?:_?\d)*|\{\d+~\d+\})+)?$/.test(str2)) {
-    return parseNumber(str2);
+  if (/^(?:(?:\d(?:_?\d)*|\{\d+~\d+\})+(?:\.(?:\d(?:_?\d)*|\{\d+~\d+\})*)?|\.(?:\d(?:_?\d)*|\{\d+~\d+\})+)(?:#(?:\d(?:_?\d)*|\{\d+~\d+\})+)?$/.test(str3)) {
+    return parseNumber(str3);
   }
-  const basedApproximation = str2.match(/^(-?)(?:0z\[(\d+)\]|0([a-zA-Z]))([0-9a-zA-Z]+)(?:\.([0-9a-zA-Z]*))?\?([0-9a-zA-Z]*)$/);
+  const basedApproximation = str3.match(/^(-?)(?:0z\[(\d+)\]|0([a-zA-Z]))([0-9a-zA-Z]+)(?:\.([0-9a-zA-Z]*))?\?([0-9a-zA-Z]*)$/);
   if (basedApproximation) {
     const baseSystem2 = basedApproximation[2] ? BaseSystem.fromBase(parseInt(basedApproximation[2], 10)) : BaseSystem.getSystemForPrefix(basedApproximation[3]);
     if (!baseSystem2)
-      throw new Error(`Unknown base prefix in approximation: ${str2}`);
+      throw new Error(`Unknown base prefix in approximation: ${str3}`);
     return certifiedRadixPrefix({
       integerDigits: normalizeBaseDigits(basedApproximation[4], baseSystem2),
       fractionalDigits: normalizeBaseDigits(basedApproximation[5] ?? "", baseSystem2),
       provisionalDigits: normalizeBaseDigits(basedApproximation[6] ?? "", baseSystem2),
       negative: basedApproximation[1] === "-",
       baseSystem: baseSystem2,
-      original: str2
+      original: str3
     });
   }
-  const basedCfApproximation = str2.match(/^~?(-?)(?:0z\[(\d+)\]|0([a-zA-Z]))([0-9a-zA-Z]+)\.~([0-9a-zA-Z]+(?:~[0-9a-zA-Z]+)*)\?([0-9a-zA-Z]+(?:~[0-9a-zA-Z]+)*)?$/);
+  const basedCfApproximation = str3.match(/^~?(-?)(?:0z\[(\d+)\]|0([a-zA-Z]))([0-9a-zA-Z]+)\.~([0-9a-zA-Z]+(?:~[0-9a-zA-Z]+)*)\?([0-9a-zA-Z]+(?:~[0-9a-zA-Z]+)*)?$/);
   if (basedCfApproximation) {
     const baseSystem2 = basedCfApproximation[2] ? BaseSystem.fromBase(parseInt(basedCfApproximation[2], 10)) : BaseSystem.getSystemForPrefix(basedCfApproximation[3]);
     if (!baseSystem2)
-      throw new Error(`Unknown base prefix in continued-fraction approximation: ${str2}`);
+      throw new Error(`Unknown base prefix in continued-fraction approximation: ${str3}`);
     const coefficient = (digits) => baseSystem2.toDecimal(normalizeBaseDigits(digits, baseSystem2));
     const certified = [
       coefficient(basedCfApproximation[4]) * (basedCfApproximation[1] === "-" ? -1n : 1n),
@@ -39913,13 +40074,13 @@ function parseLiteral(str2) {
     return certifiedContinuedFractionPrefix({
       coefficients: certified,
       provisionalCoefficients: provisional,
-      original: str2
+      original: str3
     });
   }
-  if (/^0[a-zA-Z]$/.test(str2) || /^0z\[\d+\]$/.test(str2)) {
-    return str2;
+  if (/^0[a-zA-Z]$/.test(str3) || /^0z\[\d+\]$/.test(str3)) {
+    return str3;
   }
-  const explicitPrefixed = str2.match(/^~(-?)(?:0z\[(\d+)\]|0([a-zA-Z]))(.+)$/);
+  const explicitPrefixed = str3.match(/^~(-?)(?:0z\[(\d+)\]|0([a-zA-Z]))(.+)$/);
   if (explicitPrefixed) {
     const neg2 = explicitPrefixed[1] === "-" ? "-" : "";
     const custom = explicitPrefixed[2];
@@ -39927,23 +40088,23 @@ function parseLiteral(str2) {
     const tail = explicitPrefixed[4];
     const baseSystem2 = custom ? BaseSystem.fromBase(parseInt(custom, 10)) : BaseSystem.getSystemForPrefix(prefix);
     if (!baseSystem2) {
-      throw new Error(`Unknown base prefix in explicit continued fraction: ${str2}`);
+      throw new Error(`Unknown base prefix in explicit continued fraction: ${str3}`);
     }
     return fromBaseString(`~${neg2}${tail}`, baseSystem2);
   }
-  if (str2.startsWith("~")) {
-    const cfStr = str2.slice(1);
+  if (str3.startsWith("~")) {
+    const cfStr = str3.slice(1);
     const cfMatch = cfStr.match(/^(-?\d+)\.~(\d+(?:~\d+)*)$/);
     if (cfMatch) {
       const intPart = BigInt(cfMatch[1]);
       const cfTerms = cfMatch[2].split("~").map((t) => BigInt(t));
       return Rational.fromContinuedFraction([intPart, ...cfTerms]);
     }
-    throw new Error(`Invalid explicit continued fraction format: ${str2}`);
+    throw new Error(`Invalid explicit continued fraction format: ${str3}`);
   }
-  const isNegative2 = str2.startsWith("-");
-  const posStr = isNegative2 ? str2.slice(1) : str2;
-  const quotedPrefix = str2.match(/^(-?)0([A-Z])"((?:[^"\\]|\\.)*)"$/);
+  const isNegative2 = str3.startsWith("-");
+  const posStr = isNegative2 ? str3.slice(1) : str3;
+  const quotedPrefix = str3.match(/^(-?)0([A-Z])"((?:[^"\\]|\\.)*)"$/);
   if (quotedPrefix) {
     const sign = quotedPrefix[1] === "-" ? "-" : "";
     const prefix = quotedPrefix[2];
@@ -39957,14 +40118,14 @@ function parseLiteral(str2) {
     }
     return fromBaseString(sign + stream, baseSystem2);
   }
-  if (str2.includes(".~") && !/^-?(?:0z\[\d+\]|0[a-zA-Z])/.test(str2)) {
-    const cfMatch = str2.match(/^(\d+)\.~(\d+(?:~\d+)*)$/);
+  if (str3.includes(".~") && !/^-?(?:0z\[\d+\]|0[a-zA-Z])/.test(str3)) {
+    const cfMatch = str3.match(/^(\d+)\.~(\d+(?:~\d+)*)$/);
     if (cfMatch) {
       const intPart = BigInt(cfMatch[1]);
       const cfTerms = cfMatch[2].split("~").map((t) => BigInt(t));
       return Rational.fromContinuedFraction([intPart, ...cfTerms]);
     }
-    throw new Error(`Invalid continued fraction format: ${str2}`);
+    throw new Error(`Invalid continued fraction format: ${str3}`);
   }
   if (posStr.includes("_^")) {
     const shiftMatch = posStr.match(/^(.*?)_\^([+-]?\d(?:_?\d)*)$/);
@@ -39982,10 +40143,10 @@ function parseLiteral(str2) {
       const result = baseRat.multiply(scale);
       return result.denominator === 1n ? new Integer(result.numerator) : result;
     }
-    throw new Error(`Invalid radix shift format: ${str2}`);
+    throw new Error(`Invalid radix shift format: ${str3}`);
   }
   if (posStr.includes("#") && !/^(?:0z\[\d+\]|0[a-zA-Z])/.test(posStr)) {
-    return parseRepeatingDecimalLiteral(str2);
+    return parseRepeatingDecimalLiteral(str3);
   }
   const parseWithBase = (numStr, baseSystem2) => {
     const normalizeCase = (s, sys) => {
@@ -40040,7 +40201,7 @@ function parseLiteral(str2) {
     return new Integer(baseSystem2.toDecimal(normalizeCase(numStr, baseSystem2)));
   };
   let baseSystem = null;
-  let valueStr = str2;
+  let valueStr = str3;
   const customMatch = posStr.match(/^0z\[(\d+)\](.*)$/);
   if (customMatch) {
     baseSystem = BaseSystem.fromBase(parseInt(customMatch[1]));
@@ -40057,18 +40218,18 @@ function parseLiteral(str2) {
   }
   if (baseSystem) {
     if (!valueStr || valueStr === "-") {
-      throw new Error(`Invalid base literal: ${str2}`);
+      throw new Error(`Invalid base literal: ${str3}`);
     }
     return fromBaseString(valueStr, baseSystem);
   }
-  if (/^-?\d(?:_?\d)*$/.test(str2)) {
-    return new Integer(stripGroupedDecimalDigits(str2, { allowSign: true }));
+  if (/^-?\d(?:_?\d)*$/.test(str3)) {
+    return new Integer(stripGroupedDecimalDigits(str3, { allowSign: true }));
   }
-  const ratMatch = str2.match(/^(-?\d(?:_?\d)*)\/(\d(?:_?\d)*)$/);
+  const ratMatch = str3.match(/^(-?\d(?:_?\d)*)\/(\d(?:_?\d)*)$/);
   if (ratMatch) {
     return new Rational(BigInt(stripGroupedDecimalDigits(ratMatch[1], { allowSign: true })), BigInt(stripGroupedDecimalDigits(ratMatch[2])));
   }
-  const mixedMatch = str2.match(/^(-?\d(?:_?\d)*)\.\.(\d(?:_?\d)*)\/(\d(?:_?\d)*)$/);
+  const mixedMatch = str3.match(/^(-?\d(?:_?\d)*)\.\.(\d(?:_?\d)*)\/(\d(?:_?\d)*)$/);
   if (mixedMatch) {
     const whole = BigInt(stripGroupedDecimalDigits(mixedMatch[1], { allowSign: true }));
     const num = BigInt(stripGroupedDecimalDigits(mixedMatch[2]));
@@ -40077,8 +40238,8 @@ function parseLiteral(str2) {
     const absWhole = whole < 0n ? -whole : whole;
     return new Rational(sign * (absWhole * den + num), den);
   }
-  if (/^-?\d(?:_?\d)*\.\d(?:_?\d)*$/.test(str2)) {
-    const parts = str2.split(".");
+  if (/^-?\d(?:_?\d)*\.\d(?:_?\d)*$/.test(str3)) {
+    const parts = str3.split(".");
     const sign = parts[0].startsWith("-") ? -1n : 1n;
     const intPart = stripGroupedDecimalDigits(parts[0].startsWith("-") ? parts[0].slice(1) : parts[0]);
     const fracPart = stripGroupedDecimalDigits(parts[1]);
@@ -40087,17 +40248,17 @@ function parseLiteral(str2) {
     return new Rational(num, den);
   }
   try {
-    return new Integer(str2);
+    return new Integer(str3);
   } catch {
-    throw new Error(`Invalid number format: ${str2}`);
+    throw new Error(`Invalid number format: ${str3}`);
   }
 }
-function parseRepeatingDecimalLiteral(str2) {
-  const isNeg = str2.startsWith("-");
-  const s = isNeg ? str2.slice(1) : str2;
+function parseRepeatingDecimalLiteral(str3) {
+  const isNeg = str3.startsWith("-");
+  const s = isNeg ? str3.slice(1) : str3;
   const hashIdx = s.indexOf("#");
   if (hashIdx === -1)
-    throw new Error(`Expected # in repeating decimal: ${str2}`);
+    throw new Error(`Expected # in repeating decimal: ${str3}`);
   const nonRepStr = s.slice(0, hashIdx);
   const repStr = s.slice(hashIdx + 1);
   if (repStr === "" || repStr === "0") {
@@ -41105,20 +41266,20 @@ var coreFunctions = {
         return { type: "map", entries: entries2 };
       };
       const regexFunc = (inputVal) => {
-        const str2 = inputVal && inputVal.type === "string" ? inputVal.value : inputVal;
-        if (typeof str2 !== "string") {
+        const str3 = inputVal && inputVal.type === "string" ? inputVal.value : inputVal;
+        if (typeof str3 !== "string") {
           throw new Error("regex expects string");
         }
         re.lastIndex = 0;
         if (mode === 0) {
-          const m = re.exec(str2);
+          const m = re.exec(str3);
           return m ? buildMatchObject(m) : null;
         } else if (mode === 1) {
-          return re.test(str2) ? new Integer(1n) : null;
+          return re.test(str3) ? new Integer(1n) : null;
         } else if (mode === 2) {
           const results = [];
           let m;
-          while ((m = re.exec(str2)) !== null) {
+          while ((m = re.exec(str3)) !== null) {
             results.push(buildMatchObject(m));
             if (m[0].length === 0) {
               re.lastIndex++;
@@ -41133,7 +41294,7 @@ var coreFunctions = {
             if (isExhausted)
               return null;
             re.lastIndex = lastIdx;
-            const m = re.exec(str2);
+            const m = re.exec(str3);
             lastIdx = re.lastIndex;
             if (m) {
               const obj = buildMatchObject(m);
@@ -42678,8 +42839,8 @@ var stdlibFunctions = {
   UPPER: {
     impl(args) {
       const val = args[0];
-      const str2 = val?.value ?? String(val);
-      return { type: "string", value: str2.toUpperCase() };
+      const str3 = val?.value ?? String(val);
+      return { type: "string", value: str3.toUpperCase() };
     },
     pure: true,
     doc: "Convert string to uppercase"
@@ -42687,10 +42848,10 @@ var stdlibFunctions = {
   SUBSTR: {
     impl(args) {
       const val = args[0];
-      const str2 = val?.value ?? String(val);
+      const str3 = val?.value ?? String(val);
       const start = args[1] instanceof Integer ? Number(args[1].value) : Number(args[1]);
       const len = args[2] instanceof Integer ? Number(args[2].value) : Number(args[2]);
-      return { type: "string", value: str2.substring(start, start + len) };
+      return { type: "string", value: str3.substring(start, start + len) };
     },
     pure: true,
     doc: "Get substring"
@@ -43884,7 +44045,7 @@ function createLiveView(source, derive2, options = {}) {
   let error = null;
   let disposed = false;
   const channel = new Set;
-  const id = options.id || `live-view-${nextLiveViewId++}`;
+  const id2 = options.id || `live-view-${nextLiveViewId++}`;
   let view = null;
   const unsubscribeSource = source.subscribe((sourceEvent) => {
     if (disposed)
@@ -43933,7 +44094,7 @@ function createLiveView(source, derive2, options = {}) {
   view = Object.freeze({
     type: "output",
     kind: "live_view",
-    id,
+    id: id2,
     source,
     get current() {
       return current;
@@ -43962,7 +44123,7 @@ function createLiveView(source, derive2, options = {}) {
     },
     _ext: methods(),
     toString() {
-      return `[LiveView ${id} · revision ${revision}]`;
+      return `[LiveView ${id2} · revision ${revision}]`;
     }
   });
   return view;
@@ -44282,7 +44443,7 @@ function sectionize(entries2, parentLevel = 0) {
       index += 1;
       continue;
     }
-    const { level, title, id } = entry;
+    const { level, title, id: id2 } = entry;
     if (level > parentLevel + 1)
       throw new Error(`Heading h${level}: skips a section level after h${parentLevel}:`);
     index += 1;
@@ -44294,7 +44455,7 @@ function sectionize(entries2, parentLevel = 0) {
       body.push(following);
       index += 1;
     }
-    children.push(createSection([outputMap({ level: new Integer(BigInt(level)), title, children: sectionize(body, level), id: id ? literalValue2(id) : null })]));
+    children.push(createSection([outputMap({ level: new Integer(BigInt(level)), title, children: sectionize(body, level), id: id2 ? literalValue2(id2) : null })]));
   }
   return children;
 }
@@ -44692,11 +44853,11 @@ function documentShape(value) {
 function indexKey(index) {
   return index.join(",");
 }
-function slotId(id, index) {
-  return `${id}:slot:${index.join(":")}`;
+function slotId(id2, index) {
+  return `${id2}:slot:${index.join(":")}`;
 }
-function eventId(id, sequence5) {
-  return `${id}:event:${sequence5}`;
+function eventId(id2, sequence5) {
+  return `${id2}:event:${sequence5}`;
 }
 function linearOffset(index, shape) {
   let offset = 0;
@@ -44821,7 +44982,7 @@ function rixCelEventCommand(event, binding = "document") {
   }
   throw new Error(`Unsupported RiXCel history event type: ${event.type}`);
 }
-function normalizeEvent(rawEvent, offset, id, shape) {
+function normalizeEvent(rawEvent, offset, id2, shape) {
   const path = `$.events[${offset}]`;
   const event = plainObject(rawEvent, path);
   const sequence5 = offset + 1;
@@ -44829,7 +44990,7 @@ function normalizeEvent(rawEvent, offset, id, shape) {
   if (!EVENT_TYPES.has(type))
     fail2(`${path}.type`, `is not supported: ${type}`);
   const normalized = type === "slot:set" ? {
-    id: eventId(id, sequence5),
+    id: eventId(id2, sequence5),
     sequence: sequence5,
     type,
     index: normalizeIndex3(event.index, shape, `${path}.index`),
@@ -44849,7 +45010,7 @@ function normalizeEvent(rawEvent, offset, id, shape) {
       occupied.add(key);
       return { index, ...normalizeSlotDefinition(edit, editPath) };
     });
-    return { id: eventId(id, sequence5), sequence: sequence5, type, edits };
+    return { id: eventId(id2, sequence5), sequence: sequence5, type, edits };
   })() : (() => {
     const axis = event.axis;
     const coordinate = event.coordinate;
@@ -44862,7 +45023,7 @@ function normalizeEvent(rawEvent, offset, id, shape) {
     if (event.label !== null && (typeof event.label !== "string" || event.label.trim().length === 0)) {
       fail2(`${path}.label`, "must be null or a non-empty string");
     }
-    return { id: eventId(id, sequence5), sequence: sequence5, type, axis, coordinate, label: event.label };
+    return { id: eventId(id2, sequence5), sequence: sequence5, type, axis, coordinate, label: event.label };
   })();
   if (event.id !== undefined && event.id !== normalized.id)
     fail2(`${path}.id`, `must equal "${normalized.id}"`);
@@ -44899,7 +45060,7 @@ function normalizeDraft(rawDraft, offset, shape) {
   return { ...normalized, command: rixCelEventCommand({ type: "slot:set", ...normalized }) };
 }
 function denseVersionOne(input) {
-  const id = documentId(input.id);
+  const id2 = documentId(input.id);
   const { shape, size } = documentShape(input.shape);
   if (!Array.isArray(input.slots))
     fail2("$.slots", "must be an array");
@@ -44914,13 +45075,13 @@ function denseVersionOne(input) {
     if (occupied.has(key))
       fail2(`${path}.index`, `duplicates coordinate [${index.join(",")}]`);
     occupied.add(key);
-    const expectedId = slotId(id, index);
+    const expectedId = slotId(id2, index);
     if (slot.id !== expectedId)
       fail2(`${path}.id`, `must equal "${expectedId}"`);
     return { id: expectedId, index, ...normalizeSlotDefinition(slot, path) };
   });
   slots.sort((left, right) => linearOffset(left.index, shape) - linearOffset(right.index, shape));
-  return { id, shape, view: normalizeDocumentView(input.view, "$.view", shape), slots };
+  return { id: id2, shape, view: normalizeDocumentView(input.view, "$.view", shape), slots };
 }
 function draftToVersionOne(document) {
   const input = plainObject(document, "$");
@@ -44929,17 +45090,17 @@ function draftToVersionOne(document) {
     fail2("$.format", `must equal "${RIXCEL_FORMAT}"`);
   if (!Array.isArray(input.slots))
     fail2("$.slots", "must be an array");
-  const id = documentId(input.id);
+  const id2 = documentId(input.id);
   return {
     format: RIXCEL_FORMAT,
     version: 1,
-    id,
+    id: id2,
     shape: input.shape,
     view: input.view ?? {},
     slots: input.slots.map((rawSlot, offset) => {
       const slot = plainObject(rawSlot, `$.slots[${offset}]`);
       return {
-        id: slot.id ?? (Array.isArray(slot.index) ? slotId(id, slot.index) : undefined),
+        id: slot.id ?? (Array.isArray(slot.index) ? slotId(id2, slot.index) : undefined),
         index: slot.index,
         source: slot.source ?? slot.code,
         assignmentMode: slot.assignmentMode ?? slot.op ?? ":=",
@@ -44985,13 +45146,13 @@ function parseRixCelDocument(value) {
     return versionOneToVersionTwo(input);
   if (input.version !== RIXCEL_VERSION)
     fail2("$.version", `must equal ${RIXCEL_VERSION}`);
-  const id = documentId(input.id);
+  const id2 = documentId(input.id);
   const { shape } = documentShape(input.shape);
   const view = normalizeDocumentView(input.view, "$.view", shape);
   const defaultSlot = normalizeSlotDefinition(input.defaultSlot, "$.defaultSlot");
   if (!Array.isArray(input.events))
     fail2("$.events", "must be an array");
-  const events = input.events.map((event, offset) => normalizeEvent(event, offset, id, shape));
+  const events = input.events.map((event, offset) => normalizeEvent(event, offset, id2, shape));
   const cursor = input.cursor ?? events.length;
   if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor > events.length) {
     fail2("$.cursor", `must be an integer from 0 through ${events.length}`);
@@ -45007,7 +45168,7 @@ function parseRixCelDocument(value) {
       fail2(`$.drafts[${offset}].index`, "duplicates a draft coordinate");
     draftCoordinates.add(key);
   }
-  return { format: RIXCEL_FORMAT, version: RIXCEL_VERSION, id, shape, view, defaultSlot, events, cursor, drafts };
+  return { format: RIXCEL_FORMAT, version: RIXCEL_VERSION, id: id2, shape, view, defaultSlot, events, cursor, drafts };
 }
 function createRixCelDocument(options = {}) {
   const shape = options.shape ?? [20, 8];
@@ -45379,8 +45540,8 @@ function delimitedOptions(value, label) {
   const headerValue = option3("header");
   const header = headerValue instanceof Integer ? headerValue.value !== 0n : headerValue === null || headerValue === undefined ? false : Boolean(headerValue);
   const idValue = option3("id");
-  const id = idValue === undefined ? null : delimitedText(idValue, `${label} id`);
-  return { header, id };
+  const id2 = idValue === undefined ? null : delimitedText(idValue, `${label} id`);
+  return { header, id: id2 };
 }
 function importedFieldSource(value) {
   if (value === "")
@@ -81616,14 +81777,14 @@ function placeLabels(args) {
       unresolved += 1;
     }
     boxes.push(chosen.box);
-    const id = get2(entry.entries, "id")?.value ?? `draw-label-${index + 1}`;
+    const id2 = get2(entry.entries, "id")?.value ?? `draw-label-${index + 1}`;
     children.push(createTextMark([
       pointsValue([chosen.position])[0],
       textValue4,
-      mergedStyle(styleValue2, [["hitId", string3(id)]])
+      mergedStyle(styleValue2, [["hitId", string3(id2)]])
     ]));
     placements.push(mapValue4([
-      ["id", string3(id)],
+      ["id", string3(id2)],
       ["position", arrayValue(pointsValue([chosen.position])[0])],
       ["offset", arrayValue(pointsValue([chosen.offset])[0])],
       ["collided", int7(chosen.collided ? 1 : 0)]
@@ -81663,18 +81824,18 @@ function fromDrawable(args) {
     throw new Error("draw.From requires a Graphics node or drawable protocol map");
   const options = get2(entries2, "options")?.type === "map" ? get2(entries2, "options").entries : new Map;
   const embedded = get2(source.entries, "drawProtocol");
-  const record2 = embedded?.type === "map" ? embedded : source;
-  const schema = get2(record2.entries, "schema")?.value;
-  const kindValue = get2(record2.entries, "kind");
+  const record3 = embedded?.type === "map" ? embedded : source;
+  const schema = get2(record3.entries, "schema")?.value;
+  const kindValue = get2(record3.entries, "kind");
   const kind = kindValue?.value ?? String(kindValue ?? "");
   const viewportValue = get2(options, "viewport");
-  const styleValue2 = get2(options, "style", get2(record2.entries, "style"));
+  const styleValue2 = get2(options, "style", get2(record3.entries, "style"));
   if (schema === "rix.geometry.intersection@1") {
-    const status = get2(record2.entries, "status")?.value;
+    const status = get2(record3.entries, "status")?.value;
     if (!["one", "two"].includes(status)) {
-      return unresolvedDrawable(source, get2(record2.entries, "diagnostic")?.value ?? `Intersection status: ${status}`);
+      return unresolvedDrawable(source, get2(record3.entries, "diagnostic")?.value ?? `Intersection status: ${status}`);
     }
-    const children = sequence5(get2(record2.entries, "points"), "draw.From intersection points").map((item) => fromDrawable([item, mapValue4([...options])]));
+    const children = sequence5(get2(record3.entries, "points"), "draw.From intersection points").map((item) => fromDrawable([item, mapValue4([...options])]));
     return createGroup([children, null, mapValue4([
       ["schema", string3("rix.draw.adapter-result@1")],
       ["sourceSchema", string3(schema)],
@@ -81682,7 +81843,7 @@ function fromDrawable(args) {
     ])]);
   }
   if (schema === "rix.geometry.uncertain-point@1") {
-    const center = get2(record2.entries, "center");
+    const center = get2(record3.entries, "center");
     const position = projectProtocolPoint(get2(center.entries, "coordinates"), viewportValue, "draw.From uncertain point center");
     return createGroup([[
       createCircle([position, int7(7), mergedStyle(styleValue2, [["fill", string3("#fef3c7")], ["stroke", string3("#b45309")], ["dash", string3("3 2")]])])
@@ -81697,19 +81858,19 @@ function fromDrawable(args) {
     throw new Error(`draw.From does not support drawable schema '${schema ?? "missing"}'`);
   }
   if (kind === "point") {
-    const position = projectProtocolPoint(get2(record2.entries, "coordinates"), viewportValue, "draw.From point");
+    const position = projectProtocolPoint(get2(record3.entries, "coordinates"), viewportValue, "draw.From point");
     return createCircle([position, get2(options, "radius", int7(5)), mergedStyle(styleValue2, [["hitId", get2(options, "hitId", string3("geometry-point"))]])]);
   }
   if (kind === "segment" || kind === "polygon") {
-    const rawPoints = kind === "segment" ? [get2(get2(record2.entries, "first").entries, "coordinates"), get2(get2(record2.entries, "second").entries, "coordinates")] : sequence5(get2(record2.entries, "points"), "draw.From polygon points").map((item) => get2(item.entries, "coordinates"));
+    const rawPoints = kind === "segment" ? [get2(get2(record3.entries, "first").entries, "coordinates"), get2(get2(record3.entries, "second").entries, "coordinates")] : sequence5(get2(record3.entries, "points"), "draw.From polygon points").map((item) => get2(item.entries, "coordinates"));
     const projected = rawPoints.map((item, index) => projectProtocolPoint(item, viewportValue, `draw.From ${kind} point ${index + 1}`));
     return createPath([projected, mergedStyle(styleValue2, [["closed", kind === "polygon"], ["hitId", get2(options, "hitId", string3(`geometry-${kind}`))]])]);
   }
   if (kind === "circle") {
-    const center = get2(record2.entries, "center");
+    const center = get2(record3.entries, "center");
     const rawCenter = get2(center.entries, "coordinates");
     const centerPoint = pointNumbers(rawCenter, "draw.From circle center");
-    const radiusSquared = number(get2(record2.entries, "radiusSquared"), "draw.From circle radiusSquared");
+    const radiusSquared = number(get2(record3.entries, "radiusSquared"), "draw.From circle radiusSquared");
     if (radiusSquared < 0)
       throw new Error("draw.From circle radiusSquared must be nonnegative");
     const radius = Math.sqrt(radiusSquared);
@@ -82815,14 +82976,14 @@ function polynomialCoefficients(polynomial, context, evaluate, { trim: trim2 = t
 
 // ../rix/plugins/ratfun/rational-function.js
 var RATIONAL_FUNCTION_SCHEMA = "rix.rational-function@1";
-var str2 = (value) => ({ type: "string", value: String(value) });
-var seq2 = (values3) => ({ type: "sequence", values: values3 });
+var str3 = (value) => ({ type: "string", value: String(value) });
+var seq3 = (values3) => ({ type: "sequence", values: values3 });
 var zero = () => new Rational(0n, 1n);
 var one = () => new Rational(1n, 1n);
 function isExactScalar2(value) {
   return value instanceof Integer || value instanceof Rational || typeof value === "bigint" || Number.isInteger(value);
 }
-function rational(value, label2) {
+function rational2(value, label2) {
   if (value instanceof Rational)
     return value;
   if (value instanceof Integer)
@@ -82835,7 +82996,7 @@ var isZero4 = (value) => value.numerator === 0n;
 function normalize2(valuesList, label2 = "Polynomial coefficients") {
   if (valuesList.length === 0)
     throw new Error(`${label2} cannot be empty`);
-  const exact4 = valuesList.map((value, index) => rational(value, `${label2} ${index + 1}`));
+  const exact4 = valuesList.map((value, index) => rational2(value, `${label2} ${index + 1}`));
   const first = exact4.findIndex((value) => !isZero4(value));
   return first < 0 ? [zero()] : exact4.slice(first);
 }
@@ -82900,7 +83061,7 @@ function canonicalPair(numerator, denominator) {
   };
 }
 function polynomialValue(coefficients, variable, context, evaluate) {
-  return createPolynomial([seq2(normalize2(coefficients)), str2(variable)], context, evaluate);
+  return createPolynomial([seq3(normalize2(coefficients)), str3(variable)], context, evaluate);
 }
 function extensionValue2(value, name) {
   const requested = String(name).toLowerCase();
@@ -82984,7 +83145,7 @@ function polynomialFromValue(value, variable, context, evaluate) {
     return value;
   }
   if (isExactScalar2(value))
-    return polynomialValue([rational(value, "Rational-function scalar")], variable || "x", context, evaluate);
+    return polynomialValue([rational2(value, "Rational-function scalar")], variable || "x", context, evaluate);
   throw new Error("RationalFunction operands must be Polynomials or exact integer/rational scalars");
 }
 function activeRatfunEntry(context) {
@@ -83048,8 +83209,8 @@ var FRACTION_FUNCTION_PRESENTATION_SCHEMA = "rix.fraction-function.presentation@
 var FRACTION_FUNCTION_DIVISOR_EVIDENCE_SCHEMA = "rix.fraction-function.divisor-evidence@1";
 var FRACTION_FUNCTION_HOLE_EVIDENCE_SCHEMA = "rix.fraction-function.removable-hole-evidence@1";
 var int12 = (value) => new Integer(BigInt(value));
-var str3 = (value) => ({ type: "string", value: String(value) });
-var seq3 = (values3) => ({ type: "sequence", values: values3 });
+var str4 = (value) => ({ type: "string", value: String(value) });
+var seq4 = (values3) => ({ type: "sequence", values: values3 });
 var rixMap2 = (entries2) => ({ type: "map", entries: new Map(entries2) });
 function immutableMap(entries2, methods2 = []) {
   return {
@@ -83302,9 +83463,9 @@ function decorate(displaySpec, evaluationSpec, context, evaluate, provenance = [
   });
   if (!(callable._ext instanceof Map))
     callable._ext = new Map;
-  callable._ext.set("__type", str3("FractionFunction"));
-  callable._ext.set("_type", str3("fraction_function"));
-  callable._ext.set("_symbolicKind", str3("FractionFunction"));
+  callable._ext.set("__type", str4("FractionFunction"));
+  callable._ext.set("_type", str4("fraction_function"));
+  callable._ext.set("_symbolicKind", str4("FractionFunction"));
   callable._ext.set("immutable", int12(1));
   callable._ext.set("_spec", normalizedDisplay);
   callable._spec = normalizedDisplay;
@@ -83403,7 +83564,7 @@ function transformed(value, direction, args, context, evaluate) {
   const source = requireFractionFunction(value);
   const display = symbolicCapabilities.TRANSFORM.impl([
     metadata(source).displaySpec,
-    str3(direction),
+    str4(direction),
     ...args
   ]);
   return decorate(display, metadata(source).evaluationSpec, context, evaluate, [
@@ -83472,9 +83633,9 @@ function restrictionCalculusExpressions(value) {
 }
 function domainRecord3(value) {
   return rixMap2([
-    ["policy", str3("original denominators != 0")],
-    ["restrictions", seq3(restrictionSpecs(value))],
-    ["calculusRestrictions", seq3(restrictionCalculusExpressions(value))],
+    ["policy", str4("original denominators != 0")],
+    ["restrictions", seq4(restrictionSpecs(value))],
+    ["calculusRestrictions", seq4(restrictionCalculusExpressions(value))],
     ["cancelledRestrictionsPreserved", int12(1)]
   ]);
 }
@@ -83519,18 +83680,18 @@ function canonicalPresentation(value, kind, context, evaluate) {
     const numerator = invokeReceiver(exact4, "Numerator", [], context, evaluate);
     const denominator = invokeReceiver(exact4, "Denominator", [], context, evaluate);
     const squareFreePart = (polynomial2) => exactIntegerIs(invokeReceiver(polynomial2, "Degree", [], context, evaluate), -1) ? immutableMap([
-      ["schema", str3("rix.polynomial.square-free@1")],
-      ["valueKind", str3("polynomialSquareFreeDecomposition")],
-      ["status", str3("identicallyZero")],
+      ["schema", str4("rix.polynomial.square-free@1")],
+      ["valueKind", str4("polynomialSquareFreeDecomposition")],
+      ["status", str4("identicallyZero")],
       ["polynomial", polynomial2],
-      ["factors", seq3([])],
+      ["factors", seq4([])],
       ["verified", int12(1)]
     ]) : invokeReceiver(polynomial2, "SquareFreeDecomposition", [], context, evaluate);
     const numeratorPresentation = squareFreePart(numerator);
     const denominatorPresentation = squareFreePart(denominator);
     return immutableMap([
-      ["schema", str3("rix.fraction-function.square-free-pair@1")],
-      ["valueKind", str3("fractionFunctionSquareFreePair")],
+      ["schema", str4("rix.fraction-function.square-free-pair@1")],
+      ["valueKind", str4("fractionFunctionSquareFreePair")],
       ["exact", int12(1)],
       ["verified", exactTruth(mapField3(numeratorPresentation, "verified")) && exactTruth(mapField3(denominatorPresentation, "verified")) ? int12(1) : null],
       ["numerator", numeratorPresentation],
@@ -83549,15 +83710,15 @@ function presentationLabel(kind) {
 function presentationGrid(source, kind, payload, context, evaluate) {
   const exact4 = requireFractionFunction(source);
   return createGrid([
-    seq3([str3("Transformation"), str3("Source form"), str3("Canonical projection"), str3("Verified presentation"), str3("Authoritative domain")]),
-    seq3([seq3([
-      str3(presentationLabel(kind)),
+    seq4([str4("Transformation"), str4("Source form"), str4("Canonical projection"), str4("Verified presentation"), str4("Authoritative domain")]),
+    seq4([seq4([
+      str4(presentationLabel(kind)),
       metadata(exact4).displaySpec,
       canonical(exact4, context, evaluate),
       payload,
       domainRecord3(exact4)
     ])]),
-    seq3([])
+    seq4([])
   ]);
 }
 function presentationValue(value, kind, context, evaluate) {
@@ -83566,9 +83727,9 @@ function presentationValue(value, kind, context, evaluate) {
   const payload = canonicalPresentation(source, kind, context, evaluate);
   const verified = mapField3(payload, "verified");
   const result = immutableMap([
-    ["schema", str3(FRACTION_FUNCTION_PRESENTATION_SCHEMA)],
-    ["valueKind", str3("fractionFunctionPresentation")],
-    ["kind", str3(kind)],
+    ["schema", str4(FRACTION_FUNCTION_PRESENTATION_SCHEMA)],
+    ["valueKind", str4("fractionFunctionPresentation")],
+    ["kind", str4(kind)],
     ["exact", int12(1)],
     ["verified", exactTruth(verified) ? int12(1) : null],
     ["sourceDomainPreserved", int12(1)],
@@ -83577,8 +83738,8 @@ function presentationValue(value, kind, context, evaluate) {
     ["canonical", exact4],
     ["presentation", payload],
     ["domain", domainRecord3(source)],
-    ["restrictions", seq3(restrictionSpecs(source))],
-    ["calculusRestrictions", seq3(restrictionCalculusExpressions(source))]
+    ["restrictions", seq4(restrictionSpecs(source))],
+    ["calculusRestrictions", seq4(restrictionCalculusExpressions(source))]
   ], [
     ["SOURCE", method7("Source", () => source)],
     ["FUNCTION", method7("Function", () => source)],
@@ -83616,14 +83777,14 @@ function removableHoleEvidence(value, context, evaluate) {
     ["multiplicity", mapField3(entry2, "multiplicity")],
     ["cancelledFactor", mapField3(entry2, "factor")],
     ["canonicalPole", null],
-    ["classification", str3("removableHole")],
+    ["classification", str4("removableHole")],
     ["verified", int12(1)]
   ]));
   const complete = exactTruth(mapField3(cancelledEvidence, "complete")) && exactTruth(mapField3(polePart, "complete"));
   const restrictions = restrictionFactorEvidence(source, context, evaluate);
   const result = immutableMap([
-    ["schema", str3(FRACTION_FUNCTION_HOLE_EVIDENCE_SCHEMA)],
-    ["valueKind", str3("fractionFunctionRemovableHoleEvidence")],
+    ["schema", str4(FRACTION_FUNCTION_HOLE_EVIDENCE_SCHEMA)],
+    ["valueKind", str4("fractionFunctionRemovableHoleEvidence")],
     ["exact", int12(1)],
     ["verified", exactTruth(mapField3(cancelledEvidence, "verified")) && exactTruth(mapField3(canonicalEvidence, "verified")) ? int12(1) : null],
     ["complete", complete ? int12(1) : null],
@@ -83634,11 +83795,11 @@ function removableHoleEvidence(value, context, evaluate) {
     ["cancelledFactor", cancelled2],
     ["cancelledFactorEvidence", cancelledEvidence],
     ["canonicalPoleEvidence", polePart],
-    ["holes", seq3(holes)],
-    ["restrictionEvidence", seq3(restrictions)],
+    ["holes", seq4(holes)],
+    ["restrictionEvidence", seq4(restrictions)],
     ["domain", domainRecord3(source)]
   ], [
-    ["HOLES", method7("Holes", () => seq3(holes))],
+    ["HOLES", method7("Holes", () => seq4(holes))],
     ["SOURCE", method7("Source", () => source)],
     ["DOMAIN", method7("Domain", () => domainRecord3(source))],
     ["RECORD", method7("Record", () => result)]
@@ -83650,8 +83811,8 @@ function divisorEvidence(value, context, evaluate) {
   const canonicalEvidence = invokeReceiver(canonical(source, context, evaluate), "PoleZeroEvidence", [], context, evaluate);
   const holes = removableHoleEvidence(source, context, evaluate);
   const result = immutableMap([
-    ["schema", str3(FRACTION_FUNCTION_DIVISOR_EVIDENCE_SCHEMA)],
-    ["valueKind", str3("fractionFunctionDivisorEvidence")],
+    ["schema", str4(FRACTION_FUNCTION_DIVISOR_EVIDENCE_SCHEMA)],
+    ["valueKind", str4("fractionFunctionDivisorEvidence")],
     ["exact", int12(1)],
     ["verified", exactTruth(mapField3(canonicalEvidence, "verified")) && exactTruth(mapField3(holes, "verified")) ? int12(1) : null],
     ["sourceDomainPreserved", int12(1)],
@@ -83676,17 +83837,17 @@ function transformationGrid(value, context, evaluate) {
   const source = requireFractionFunction(value);
   const exact4 = canonical(source, context, evaluate);
   const kinds = ["factored", "squareFree", "partialFractions"];
-  const rows = kinds.map((kind) => seq3([
-    str3(presentationLabel(kind)),
+  const rows = kinds.map((kind) => seq4([
+    str4(presentationLabel(kind)),
     metadata(source).displaySpec,
     exact4,
     canonicalPresentation(source, kind, context, evaluate),
     domainRecord3(source)
   ]));
   return createGrid([
-    seq3([str3("Transformation"), str3("Source form"), str3("Canonical projection"), str3("Verified presentation"), str3("Authoritative domain")]),
-    seq3(rows),
-    seq3([])
+    seq4([str4("Transformation"), str4("Source form"), str4("Canonical projection"), str4("Verified presentation"), str4("Authoritative domain")]),
+    seq4(rows),
+    seq4([])
   ]);
 }
 function method7(name, impl) {
@@ -83733,8 +83894,8 @@ function registerFractionFunctionMethods(systemContext, owner = {}) {
   register("FractionFunction", "EvaluationSpec", ([value]) => metadata(requireFractionFunction(value)).evaluationSpec);
   register("FractionFunction", "CalculusExpression", ([value]) => symbolicSpecToCalculusExpression(metadata(requireFractionFunction(value)).displaySpec));
   register("FractionFunction", "EvaluationCalculusExpression", ([value]) => symbolicSpecToCalculusExpression(metadata(requireFractionFunction(value)).evaluationSpec));
-  register("FractionFunction", "RestrictionExpressions", ([value]) => seq3(restrictionCalculusExpressions(value)));
-  register("FractionFunction", "Variable", ([value]) => str3(requireFractionFunction(value).variable));
+  register("FractionFunction", "RestrictionExpressions", ([value]) => seq4(restrictionCalculusExpressions(value)));
+  register("FractionFunction", "Variable", ([value]) => str4(requireFractionFunction(value).variable));
   register("FractionFunction", "Evaluate", ([value, argument], context, evaluate) => callWithConcreteArgs(value, [argument], context, evaluate));
   register("FractionFunction", "Compose", ([value, argument], context, evaluate) => callWithConcreteArgs(value, [argument], context, evaluate));
   register("FractionFunction", "Numerator", ([value], context, evaluate) => formPart(value, "numerator", context, evaluate));
@@ -83783,15 +83944,15 @@ function registerFractionFunctionMethods(systemContext, owner = {}) {
     const source = requireFractionFunction(value);
     const info = metadata(source);
     return rixMap2([
-      ["schema", str3(FRACTION_FUNCTION_SCHEMA)],
-      ["variable", str3(source.variable)],
+      ["schema", str4(FRACTION_FUNCTION_SCHEMA)],
+      ["variable", str4(source.variable)],
       ["form", info.displaySpec],
       ["evaluation", info.evaluationSpec],
-      ["restrictions", seq3(restrictionSpecs(source))],
-      ["calculusRestrictions", seq3(restrictionCalculusExpressions(source))],
+      ["restrictions", seq4(restrictionSpecs(source))],
+      ["calculusRestrictions", seq4(restrictionCalculusExpressions(source))],
       ["canonicalAvailable", info.canonicalRationalFunction ? int12(1) : null],
       ["polynomialAvailable", info.canonicalPolynomial ? int12(1) : null],
-      ["canonicalError", info.canonicalError ? str3(info.canonicalError) : null]
+      ["canonicalError", info.canonicalError ? str4(info.canonicalError) : null]
     ]);
   });
 }
@@ -83946,28 +84107,28 @@ function columnType(value, index) {
 function normalizeColumns2(value) {
   const seen = new Set;
   return Object.freeze(sequence9(value, "data schema").map((source, index) => {
-    let id;
+    let id2;
     let label2;
     let type;
     let nullable = true;
     if (source?.type === "string" || typeof source === "string") {
-      id = text12(source, `data column ${index + 1}`);
-      label2 = id;
+      id2 = text12(source, `data column ${index + 1}`);
+      label2 = id2;
       type = "Any";
     } else {
       const spec2 = entries2(source, `data column ${index + 1}`);
-      id = text12(field(spec2, "id", field(spec2, "name")), `data column ${index + 1} id`);
-      label2 = field(spec2, "label") === null ? id : text12(field(spec2, "label"), `data column ${index + 1} label`);
+      id2 = text12(field(spec2, "id", field(spec2, "name")), `data column ${index + 1} id`);
+      label2 = field(spec2, "label") === null ? id2 : text12(field(spec2, "label"), `data column ${index + 1} label`);
       type = columnType(field(spec2, "type"), index);
       nullable = truthy3(field(spec2, "nullable", new Integer(1n)));
     }
-    if (!id.trim())
+    if (!id2.trim())
       throw new Error(`data column ${index + 1} id must not be empty`);
-    const canonical2 = id.toLowerCase();
+    const canonical2 = id2.toLowerCase();
     if (seen.has(canonical2))
-      throw new Error(`data schema contains duplicate column '${id}'`);
+      throw new Error(`data schema contains duplicate column '${id2}'`);
     seen.add(canonical2);
-    return Object.freeze({ id, label: label2, type, nullable });
+    return Object.freeze({ id: id2, label: label2, type, nullable });
   }));
 }
 function valueMatchesType(value, type) {
@@ -83989,13 +84150,13 @@ function valueMatchesType(value, type) {
 }
 function mapRow(source, columns, rowIndex) {
   const values4 = entries2(source, `data row ${rowIndex + 1}`);
-  const known = new Set(columns.map(({ id }) => id.toLowerCase()));
+  const known = new Set(columns.map(({ id: id2 }) => id2.toLowerCase()));
   for (const key of values4.keys()) {
     if (!known.has(String(key).toLowerCase())) {
       throw new Error(`data row ${rowIndex + 1} contains unknown column '${key}'`);
     }
   }
-  return columns.map(({ id }) => field(values4, id, null));
+  return columns.map(({ id: id2 }) => field(values4, id2, null));
 }
 function normalizeRows(value, columns) {
   return Object.freeze(sequence9(value, "data rows").map((source, rowIndex) => {
@@ -84049,10 +84210,10 @@ function createRelation(args) {
 function selectedColumnIds(value, relation, label2) {
   const requested = sequence9(value, label2).map((entry2, index) => text12(entry2, `${label2} entry ${index + 1}`));
   const byId = new Map(relation.columns.map((column, index) => [column.id.toLowerCase(), index]));
-  const selected = requested.map((id) => {
-    const index = byId.get(id.toLowerCase());
+  const selected = requested.map((id2) => {
+    const index = byId.get(id2.toLowerCase());
     if (index === undefined)
-      throw new Error(`${label2} contains unknown column '${id}'`);
+      throw new Error(`${label2} contains unknown column '${id2}'`);
     return index;
   });
   if (new Set(selected).size !== selected.length)
@@ -84087,13 +84248,13 @@ function renameRelation(args) {
     renames.set(index, target);
   }
   const ids = relation.columns.map((column, index) => renames.has(index) ? renames.get(index) : column.id);
-  if (new Set(ids.map((id) => id.toLowerCase())).size !== ids.length)
+  if (new Set(ids.map((id2) => id2.toLowerCase())).size !== ids.length)
     throw new Error("data.Rename would create duplicate column ids");
   const columns = relation.columns.map((column, index) => {
     if (!renames.has(index))
       return column;
-    const id = renames.get(index);
-    return Object.freeze({ ...column, id, label: column.label === column.id ? id : column.label });
+    const id2 = renames.get(index);
+    return Object.freeze({ ...column, id: id2, label: column.label === column.id ? id2 : column.label });
   });
   return makeRelation(Object.freeze(columns), Object.freeze([...relation.rows]), [...relation.provenance.operations, "rename"]);
 }
@@ -84209,10 +84370,10 @@ function operationName2(value, label2, fallback = null) {
   return text12(value, label2).replace(/^:/, "").toLowerCase();
 }
 function columnIndex(relation, value, label2) {
-  const id = text12(value, label2);
-  const index = relation.columns.findIndex((column) => column.id.toLowerCase() === id.toLowerCase());
+  const id2 = text12(value, label2);
+  const index = relation.columns.findIndex((column) => column.id.toLowerCase() === id2.toLowerCase());
   if (index < 0)
-    throw new Error(`${label2} contains unknown column '${id}'`);
+    throw new Error(`${label2} contains unknown column '${id2}'`);
   return index;
 }
 function joinColumns(value, left, right) {
@@ -84286,19 +84447,19 @@ function joinRelations(args) {
     if (rightKeys.has(index))
       continue;
     const column = right.columns[index];
-    let id = column.id;
-    if (used.has(id.toLowerCase()))
-      id += suffix;
-    if (!id || used.has(id.toLowerCase())) {
+    let id2 = column.id;
+    if (used.has(id2.toLowerCase()))
+      id2 += suffix;
+    if (!id2 || used.has(id2.toLowerCase())) {
       throw new Error(`data.Join cannot make a unique result column for '${column.id}'`);
     }
-    used.add(id.toLowerCase());
+    used.add(id2.toLowerCase());
     retainedRight.push({
       index,
       column: Object.freeze({
         ...column,
-        id,
-        label: id === column.id ? column.label : `${column.label}${suffix}`,
+        id: id2,
+        label: id2 === column.id ? column.label : `${column.label}${suffix}`,
         nullable: column.nullable || kind === "left" || kind === "full"
       })
     });
@@ -84429,13 +84590,13 @@ function aggregateSpec(value, groups, index) {
   if (op !== "count" && sourceIndex === null)
     throw new Error(`data.Aggregate ${op} requires a column`);
   const defaultId = sourceIndex === null ? "count" : `${op}_${groups.relation.columns[sourceIndex].id}`;
-  const id = text12(field(spec2, "id", stringValue7(defaultId)), `data.Aggregate specification ${index + 1} id`);
+  const id2 = text12(field(spec2, "id", stringValue7(defaultId)), `data.Aggregate specification ${index + 1} id`);
   const missing = operationName2(field(spec2, "missing", stringValue7("skip")), `data.Aggregate specification ${index + 1} missing policy`);
   if (!["skip", "propagate", "error"].includes(missing))
     throw new Error("data.Aggregate missing policy must be skip, propagate, or error");
   const sourceType = sourceIndex === null ? "Integer" : groups.relation.columns[sourceIndex].type;
   const type = op === "count" ? "Integer" : op === "mean" && sourceType !== "Interval" ? "Rational" : sourceType;
-  return { op, sourceIndex, id, missing, column: Object.freeze({ id, label: id, type, nullable: op !== "count" }) };
+  return { op, sourceIndex, id: id2, missing, column: Object.freeze({ id: id2, label: id2, type, nullable: op !== "count" }) };
 }
 function aggregateValue(group, spec2, relation) {
   if (spec2.op === "count" && spec2.sourceIndex === null)
@@ -84486,7 +84647,7 @@ function aggregateGroups(args) {
   if (!specs.length)
     throw new Error("data.Aggregate requires at least one aggregate specification");
   const keyColumns = groups.keyIndices.map((index) => groups.relation.columns[index]);
-  const ids = [...keyColumns.map(({ id }) => id.toLowerCase()), ...specs.map(({ id }) => id.toLowerCase())];
+  const ids = [...keyColumns.map(({ id: id2 }) => id2.toLowerCase()), ...specs.map(({ id: id2 }) => id2.toLowerCase())];
   if (new Set(ids).size !== ids.length)
     throw new Error("data.Aggregate result contains duplicate column ids");
   const rows = groups.groups.map((group) => Object.freeze([
@@ -84527,7 +84688,7 @@ function frequencyRelation(args) {
     Object.freeze({ id: countId, label: countId, type: "Integer", nullable: false }),
     ...includeProportion ? [Object.freeze({ id: proportionId, label: proportionId, type: "Rational", nullable: false })] : []
   ];
-  if (new Set(columns.map(({ id }) => id.toLowerCase())).size !== columns.length)
+  if (new Set(columns.map(({ id: id2 }) => id2.toLowerCase())).size !== columns.length)
     throw new Error("data.Frequency result contains duplicate column ids");
   const total = relation.rows.length;
   const rows = groups.map(({ key, count }) => Object.freeze([
@@ -84601,7 +84762,7 @@ function calculateRelation(args, runtime = {}) {
     throw new Error("data.Calculate requires an evaluator callback");
   const columns = normalizeColumns2(sequenceValue3([args[1]]));
   const column = columns[0];
-  if (relation.columns.some(({ id }) => id.toLowerCase() === column.id.toLowerCase())) {
+  if (relation.columns.some(({ id: id2 }) => id2.toLowerCase() === column.id.toLowerCase())) {
     throw new Error(`data.Calculate column '${column.id}' already exists`);
   }
   const values4 = relation.rows.map((row, index) => runtime.invoke(args[2], [rowMap(relation, row), new Integer(BigInt(index + 1)), relation], runtime.context, runtime.evaluate));
@@ -84628,10 +84789,10 @@ function missingRelation(args) {
     const replacements = args[3]?.type === "map" || args[3] instanceof Map ? entries2(args[3], "data.Missing replacements") : null;
     if (replacements) {
       for (const index of selected) {
-        const id = relation.columns[index].id;
-        const hasReplacement = [...replacements.keys()].some((key) => String(key).toLowerCase() === id.toLowerCase());
+        const id2 = relation.columns[index].id;
+        const hasReplacement = [...replacements.keys()].some((key) => String(key).toLowerCase() === id2.toLowerCase());
         if (!hasReplacement)
-          throw new Error(`data.Missing replacements omit selected column '${id}'`);
+          throw new Error(`data.Missing replacements omit selected column '${id2}'`);
       }
     }
     rows = relation.rows.map((row) => row.map((value, index) => {
@@ -84811,30 +84972,30 @@ function parseJsonlSource(args) {
     if (!(indexValue instanceof Integer) || indexValue.value < 1n || indexValue.value > BigInt(Number.MAX_SAFE_INTEGER)) {
       throw new Error("data.ParseJSONL row index must be a positive safe Integer");
     }
-    const record2 = records[Number(indexValue.value) - 1];
-    if (!record2 || Number(indexValue.value) > maxRows)
+    const record3 = records[Number(indexValue.value) - 1];
+    if (!record3 || Number(indexValue.value) > maxRows)
       return null;
     let parsed;
     try {
-      parsed = JSON.parse(source.slice(record2.start, record2.end));
+      parsed = JSON.parse(source.slice(record3.start, record3.end));
     } catch (error) {
-      throw new Error(`data.ParseJSONL invalid JSON at physical line ${record2.line}: ${error.message}`);
+      throw new Error(`data.ParseJSONL invalid JSON at physical line ${record3.line}: ${error.message}`);
     }
     let rawRow;
     if (Array.isArray(parsed))
       rawRow = parsed;
     else if (parsed && typeof parsed === "object") {
-      const known = new Set(columns.map(({ id }) => id));
+      const known = new Set(columns.map(({ id: id2 }) => id2));
       const unknown = Object.keys(parsed).find((key) => !known.has(key));
       if (unknown)
-        throw new Error(`data.ParseJSONL physical line ${record2.line} contains unknown column '${unknown}'`);
-      rawRow = columns.map(({ id }) => Object.hasOwn(parsed, id) ? parsed[id] : null);
+        throw new Error(`data.ParseJSONL physical line ${record3.line} contains unknown column '${unknown}'`);
+      rawRow = columns.map(({ id: id2 }) => Object.hasOwn(parsed, id2) ? parsed[id2] : null);
     } else
-      throw new Error(`data.ParseJSONL physical line ${record2.line} must be a JSON object or array`);
+      throw new Error(`data.ParseJSONL physical line ${record3.line} must be a JSON object or array`);
     if (rawRow.length !== columns.length) {
-      throw new Error(`data.ParseJSONL physical line ${record2.line} has ${rawRow.length} cells; expected ${columns.length}`);
+      throw new Error(`data.ParseJSONL physical line ${record3.line} has ${rawRow.length} cells; expected ${columns.length}`);
     }
-    const row = rawRow.map((value, columnIndex2) => decodeJsonValue(value, columns[columnIndex2], `data.ParseJSONL line ${record2.line} column '${columns[columnIndex2].id}'`));
+    const row = rawRow.map((value, columnIndex2) => decodeJsonValue(value, columns[columnIndex2], `data.ParseJSONL line ${record3.line} column '${columns[columnIndex2].id}'`));
     return sequenceValue3(row);
   };
   return Object.freeze({
@@ -84913,7 +85074,7 @@ function relationTableView(args) {
   return Object.freeze({
     type: "output",
     kind: "table",
-    columns: Object.freeze(relation.columns.map(({ id, label: label2 }) => Object.freeze({ id, label: label2, align: null, format: null }))),
+    columns: Object.freeze(relation.columns.map(({ id: id2, label: label2 }) => Object.freeze({ id: id2, label: label2, align: null, format: null }))),
     rows: Object.freeze(relation.rows.map((row) => Object.freeze([...row]))),
     caption,
     options: new Map
@@ -85141,10 +85302,10 @@ function createDocumentBibliography(args) {
   const source = sequence10(args[0], "document.Bibliography entries");
   const records = source.map((value, index) => bibliographyEntry(value, index + 1));
   const seen = new Set;
-  for (const record2 of records) {
-    if (seen.has(record2.key))
-      throw new Error(`document.Bibliography contains duplicate key '${record2.key}'`);
-    seen.add(record2.key);
+  for (const record3 of records) {
+    if (seen.has(record3.key))
+      throw new Error(`document.Bibliography contains duplicate key '${record3.key}'`);
+    seen.add(record3.key);
   }
   const options = args[1] === null || args[1] === undefined ? new Map : entries3(args[1], "document.Bibliography options");
   const title = text13(field2(options, "title", stringValue8("References")), "document.Bibliography title");
@@ -85152,13 +85313,13 @@ function createDocumentBibliography(args) {
     ["valueKind", stringValue8("documentBibliography")],
     ["schema", stringValue8("rix.document.bibliography@1")],
     ["title", stringValue8(title)],
-    ["entries", sequenceValue4(records.map((record2) => mapValue7([
-      ["key", stringValue8(record2.key)],
-      ["title", stringValue8(record2.title)],
-      ["author", stringValue8(record2.author)],
-      ["year", stringValue8(record2.year)],
-      ["url", record2.url === null ? null : stringValue8(record2.url)],
-      ["number", new Integer(BigInt(record2.number))]
+    ["entries", sequenceValue4(records.map((record3) => mapValue7([
+      ["key", stringValue8(record3.key)],
+      ["title", stringValue8(record3.title)],
+      ["author", stringValue8(record3.author)],
+      ["year", stringValue8(record3.year)],
+      ["url", record3.url === null ? null : stringValue8(record3.url)],
+      ["number", new Integer(BigInt(record3.number))]
     ])))]
   ]);
 }
@@ -85194,22 +85355,22 @@ function createDocumentAssetManifest(args) {
   const source = sequence10(args[0], "document.AssetManifest entries");
   const seen = new Set;
   const assets = source.map((value, index) => {
-    const record2 = entries3(value, `document.AssetManifest entry ${index + 1}`);
-    const id = validLabel(field2(record2, "id"), `document.AssetManifest entry ${index + 1} id`);
-    if (seen.has(id))
-      throw new Error(`document.AssetManifest contains duplicate id '${id}'`);
-    seen.add(id);
-    const path = text13(field2(record2, "path"), `document.AssetManifest entry ${index + 1} path`);
+    const record3 = entries3(value, `document.AssetManifest entry ${index + 1}`);
+    const id2 = validLabel(field2(record3, "id"), `document.AssetManifest entry ${index + 1} id`);
+    if (seen.has(id2))
+      throw new Error(`document.AssetManifest contains duplicate id '${id2}'`);
+    seen.add(id2);
+    const path = text13(field2(record3, "path"), `document.AssetManifest entry ${index + 1} path`);
     if (path.startsWith("/") || path.includes(".."))
       throw new Error("document.AssetManifest paths must be safe relative paths");
-    const mimeValue = field2(record2, "mime", stringValue8("application/octet-stream"));
-    const altValue = field2(record2, "alt", stringValue8(""));
+    const mimeValue = field2(record3, "mime", stringValue8("application/octet-stream"));
+    const altValue = field2(record3, "alt", stringValue8(""));
     return mapValue7([
-      ["id", stringValue8(id)],
+      ["id", stringValue8(id2)],
       ["path", stringValue8(path)],
       ["mime", stringValue8(text13(mimeValue, "document.AssetManifest mime"))],
       ["alt", stringValue8(text13(altValue, "document.AssetManifest alt"))],
-      ["checksum", field2(record2, "checksum")]
+      ["checksum", field2(record3, "checksum")]
     ]);
   });
   return mapValue7([
@@ -85224,10 +85385,10 @@ function documentAsset(args) {
   const manifest = entries3(args[0], "document.Asset manifest");
   if (field2(manifest, "schema")?.value !== "rix.document.assets@1")
     throw new Error("document.Asset requires an AssetManifest");
-  const id = validLabel(args[1], "document.Asset id");
-  const match = sequence10(field2(manifest, "assets"), "document.Asset manifest assets").find((asset) => field2(asset, "id")?.value === id);
+  const id2 = validLabel(args[1], "document.Asset id");
+  const match = sequence10(field2(manifest, "assets"), "document.Asset manifest assets").find((asset) => field2(asset, "id")?.value === id2);
   if (!match)
-    throw new Error(`document.AssetManifest has no asset '${id}'`);
+    throw new Error(`document.AssetManifest has no asset '${id2}'`);
   return match;
 }
 function documentRegion(args, kind) {
@@ -85301,23 +85462,23 @@ function normalizeTheme(value) {
 function labelDocumentValue(args) {
   if (args.length !== 2)
     throw new Error("document.Label expects an id and output value");
-  const id = validLabel(args[0], "document.Label id");
+  const id2 = validLabel(args[0], "document.Label id");
   const value = args[1];
   if (!isOutputValue(value) || !["heading", "section", "figure", "table"].includes(value.kind)) {
     throw new Error("document.Label accepts Heading, Section, Figure, or Table output values");
   }
   if (value.kind === "heading" || value.kind === "section")
-    return clone(value, { id });
+    return clone(value, { id: id2 });
   if (value.kind === "figure")
-    return clone(value, { label: id });
-  return clone(value, { label: id });
+    return clone(value, { label: id2 });
+  return clone(value, { label: id2 });
 }
 function createDocumentReference(args) {
   if (args.length < 1 || args.length > 2)
     throw new Error("document.Ref expects an id and optional display text");
-  const id = validLabel(args[0], "document.Ref id");
+  const id2 = validLabel(args[0], "document.Ref id");
   const display = args[1] === null || args[1] === undefined ? null : text13(args[1], "document.Ref text");
-  return textNode("", { documentReference: id, documentReferenceText: display });
+  return textNode("", { documentReference: id2, documentReferenceText: display });
 }
 function childOutputs(value) {
   if (!isOutputValue(value))
@@ -85367,15 +85528,15 @@ function collectReferences(children, numbering) {
   const numbers = new WeakMap;
   const labels = new Map;
   const ordered = [];
-  const register = (id, value, kind, number2) => {
-    if (!id)
+  const register = (id2, value, kind, number2) => {
+    if (!id2)
       return;
-    validLabel(id, `${referenceKind(kind)} label`);
-    if (labels.has(id))
-      throw new Error(`document.Report contains duplicate label '${id}'`);
+    validLabel(id2, `${referenceKind(kind)} label`);
+    if (labels.has(id2))
+      throw new Error(`document.Report contains duplicate label '${id2}'`);
     const display = displayNumber(number2, numbering);
-    const entry2 = Object.freeze({ id, kind, number: number2, display, text: `${referenceKind(kind)} ${display}` });
-    labels.set(id, entry2);
+    const entry2 = Object.freeze({ id: id2, kind, number: number2, display, text: `${referenceKind(kind)} ${display}` });
+    labels.set(id2, entry2);
     ordered.push(entry2);
   };
   const visit = (value) => {
@@ -85406,13 +85567,13 @@ function numberedCaption(kind, number2, caption) {
 function resolveCitation(value, citations) {
   const citation = value.documentCitation;
   const selected = citation.keys.map((key) => {
-    const record2 = citations.records.get(key);
-    if (!record2)
+    const record3 = citations.records.get(key);
+    if (!record3)
       throw new Error(`document.Report cannot resolve citation '${key}'`);
     citations.used.add(key);
-    return record2;
+    return record3;
   });
-  const body = citations.style === "author-year" ? selected.map((record2) => `${record2.author}, ${record2.year}`).join("; ") : `[${selected.map((record2) => record2.number).join(", ")}]`;
+  const body = citations.style === "author-year" ? selected.map((record3) => `${record3.author}, ${record3.year}`).join("; ") : `[${selected.map((record3) => record3.number).join(", ")}]`;
   return textNode(`${citation.prefix}${body}${citation.suffix}`, {
     documentCitationResolved: Object.freeze({ ...citation, records: Object.freeze(selected) })
   });
@@ -85474,7 +85635,7 @@ function citationIndex(bibliography, numbering) {
   const records = new Map;
   if (bibliography !== null) {
     for (const value of sequence10(field2(bibliography, "entries"), "document.Bibliography entries")) {
-      const record2 = {
+      const record3 = {
         key: field2(value, "key").value,
         title: field2(value, "title").value,
         author: field2(value, "author").value,
@@ -85482,7 +85643,7 @@ function citationIndex(bibliography, numbering) {
         url: field2(value, "url")?.value || null,
         number: Number(field2(value, "number").value)
       };
-      records.set(record2.key, Object.freeze(record2));
+      records.set(record3.key, Object.freeze(record3));
     }
   }
   return { records, used: new Set, style: field2(numbering, "citationStyle")?.value || "numeric" };
@@ -86333,10 +86494,10 @@ function createSelection(options) {
     return Object.freeze({ schema: "rix.selection@1", ids: Object.freeze([]), focus: null });
   const idsValue = field3(source, "ids", []);
   const ids = sequence11(idsValue, "selection ids").map((value, index) => {
-    const id = rixString4(value) || (typeof value === "string" ? value : null);
-    if (!id)
+    const id2 = rixString4(value) || (typeof value === "string" ? value : null);
+    if (!id2)
       throw new Error(`selection id ${index + 1} must be a string`);
-    return id;
+    return id2;
   });
   const focusValue = field3(source, "focus");
   const focus = focusValue === null ? null : rixString4(focusValue) || String(focusValue);
@@ -86405,10 +86566,10 @@ function pathBounds(node) {
 function recordHit(interaction, node, path, bounds2, role, label2 = null) {
   if (!bounds2)
     return;
-  const id = semanticId2(node, path);
-  const region = Object.freeze({ id, semanticId: id, role, label: label2 || id, bounds: Object.freeze(bounds2) });
+  const id2 = semanticId2(node, path);
+  const region = Object.freeze({ id: id2, semanticId: id2, role, label: label2 || id2, bounds: Object.freeze(bounds2) });
   interaction.hitRegions.push(region);
-  interaction.accessibility.push(Object.freeze({ id, role, label: region.label, bounds: region.bounds }));
+  interaction.accessibility.push(Object.freeze({ id: id2, role, label: region.label, bounds: region.bounds }));
 }
 function pathData(node) {
   if (!node.commands) {
@@ -86540,13 +86701,13 @@ function canvasAssets(options) {
   if (source === null || source === undefined)
     return [];
   return sequence11(source, "Canvas assets").map((value, index) => {
-    const id = rixString4(field3(value, "id"));
+    const id2 = rixString4(field3(value, "id"));
     const ref = rixString4(field3(value, "ref")) || rixString4(field3(value, "path"));
-    if (!id || !ref)
+    if (!id2 || !ref)
       throw new Error(`Canvas asset ${index + 1} requires string id and ref/path`);
     if (ref.startsWith("/") || ref.includes(".."))
       throw new Error("Canvas asset references must be safe relative paths or explicit URLs");
-    return Object.freeze({ id, ref, mime: rixString4(field3(value, "mime")) || "application/octet-stream", crossOrigin: rixString4(field3(value, "crossOrigin")) || null });
+    return Object.freeze({ id: id2, ref, mime: rixString4(field3(value, "mime")) || "application/octet-stream", crossOrigin: rixString4(field3(value, "crossOrigin")) || null });
   });
 }
 function createCanvasPlan(graphic, format, options = {}) {
@@ -88690,10 +88851,10 @@ function exportSceneGltf(scene, { pretty = true } = {}) {
     asset: { version: "2.0", generator: "RiX glTF renderer" },
     scene: 0,
     scenes: [{ name: "RiX Scene3D", nodes: records.map((_, index) => index) }],
-    nodes: records.map((record2, index) => ({
-      name: record2.primitive.label || record2.primitive.pickid || `RiX primitive ${index + 1}`,
+    nodes: records.map((record3, index) => ({
+      name: record3.primitive.label || record3.primitive.pickid || `RiX primitive ${index + 1}`,
       mesh: index,
-      ...record2.primitive.pickid ? { extras: { rix: { pickid: record2.primitive.pickid } } } : {}
+      ...record3.primitive.pickid ? { extras: { rix: { pickid: record3.primitive.pickid } } } : {}
     })),
     meshes: [],
     materials: [],
@@ -88704,8 +88865,8 @@ function exportSceneGltf(scene, { pretty = true } = {}) {
       rix: { schema: SCENE3D_SCHEMA, sourceCoordinates: "right-handed Z-up", exportedCoordinates: "right-handed Y-up" }
     }
   };
-  records.forEach((record2, index) => {
-    const style3 = record2.primitive.style;
+  records.forEach((record3, index) => {
+    const style3 = record3.primitive.style;
     const opacity = numberValue2(style3?.opacity ?? 1, "Scene3D material opacity");
     const material = gltf.materials.push({
       name: `RiX material ${index + 1}`,
@@ -88713,28 +88874,28 @@ function exportSceneGltf(scene, { pretty = true } = {}) {
       alphaMode: opacity < 1 ? "BLEND" : "OPAQUE",
       doubleSided: true
     }) - 1;
-    const xs = record2.positions.map((point4) => point4[0]);
-    const ys = record2.positions.map((point4) => point4[1]);
-    const zs = record2.positions.map((point4) => point4[2]);
+    const xs = record3.positions.map((point4) => point4[0]);
+    const ys = record3.positions.map((point4) => point4[1]);
+    const zs = record3.positions.map((point4) => point4[2]);
     const positionAccessor = gltf.accessors.push({
-      bufferView: record2.positionChunk,
+      bufferView: record3.positionChunk,
       componentType: 5126,
-      count: record2.positions.length,
+      count: record3.positions.length,
       type: "VEC3",
       min: [Math.min(...xs), Math.min(...ys), Math.min(...zs)],
       max: [Math.max(...xs), Math.max(...ys), Math.max(...zs)]
     }) - 1;
     const indexAccessor = gltf.accessors.push({
-      bufferView: record2.indexChunk,
+      bufferView: record3.indexChunk,
       componentType: 5125,
-      count: record2.indices.length,
+      count: record3.indices.length,
       type: "SCALAR",
-      min: record2.indices.length ? [Math.min(...record2.indices)] : [0],
-      max: record2.indices.length ? [Math.max(...record2.indices)] : [0]
+      min: record3.indices.length ? [Math.min(...record3.indices)] : [0],
+      max: record3.indices.length ? [Math.max(...record3.indices)] : [0]
     }) - 1;
     gltf.meshes.push({
       name: `RiX mesh ${index + 1}`,
-      primitives: [{ attributes: { POSITION: positionAccessor }, indices: indexAccessor, material, mode: record2.mode }]
+      primitives: [{ attributes: { POSITION: positionAccessor }, indices: indexAccessor, material, mode: record3.mode }]
     });
   });
   const diagnostics = [];
@@ -88996,14 +89157,14 @@ function inferredSchema(header) {
   const used = new Set;
   return sequenceValue5(header.map((label2, index) => {
     const base = label2.trim() || `column${index + 1}`;
-    let id = base;
+    let id2 = base;
     let suffix = 2;
-    while (used.has(id.toLowerCase()))
-      id = `${base}_${suffix++}`;
-    used.add(id.toLowerCase());
+    while (used.has(id2.toLowerCase()))
+      id2 = `${base}_${suffix++}`;
+    used.add(id2.toLowerCase());
     return mapValue8([
-      ["id", stringValue9(id)],
-      ["label", stringValue9(label2 || id)],
+      ["id", stringValue9(id2)],
+      ["label", stringValue9(label2 || id2)],
       ["type", stringValue9("String")],
       ["nullable", new Integer(1n)]
     ]);
@@ -89141,9 +89302,9 @@ function prepareImport(args) {
     }
   }
   const missing = missingTokens(options);
-  for (const record2 of records) {
-    if (record2.fields.length !== empty.columns.length) {
-      throw new Error(`csv line ${record2.line} has ${record2.fields.length} fields; expected ${empty.columns.length}`);
+  for (const record3 of records) {
+    if (record3.fields.length !== empty.columns.length) {
+      throw new Error(`csv line ${record3.line} has ${record3.fields.length} fields; expected ${empty.columns.length}`);
     }
   }
   const sidecar = Object.freeze({
@@ -89162,7 +89323,7 @@ function prepareImport(args) {
     rowCount: records.length,
     columnCount: empty.columns.length
   });
-  const convert = (record2, index) => sequenceValue5(record2.fields.map((cell, columnIndex2) => typedCell(cell, empty.columns[columnIndex2], policy, missing, index + 1)));
+  const convert = (record3, index) => sequenceValue5(record3.fields.map((cell, columnIndex2) => typedCell(cell, empty.columns[columnIndex2], policy, missing, index + 1)));
   return { schema: schemaMap(empty.columns), columns: empty.columns, records, convert, sidecar };
 }
 function attachSidecar(value, sidecar) {
@@ -89329,7 +89490,7 @@ function relationRows2(value) {
     throw new UnsupportedRenderError("csv requires a rix.data.relation@1 value", { target: "csv" });
   }
   return {
-    columns: value.columns.map(({ id, label: label2 }) => ({ id, label: label2 || id })),
+    columns: value.columns.map(({ id: id2, label: label2 }) => ({ id: id2, label: label2 || id2 })),
     rows: value.rows,
     streaming: false
   };
@@ -89344,7 +89505,7 @@ function rowSourceRows(value, runtime, options) {
   const requested = safeIntegerOption(option5(options, "limit", MISSING), "csv stream limit", value.maxRows);
   const limit = Math.min(requested, value.maxRows);
   return {
-    columns: value.columns.map(({ id, label: label2 }) => ({ id, label: label2 || id })),
+    columns: value.columns.map(({ id: id2, label: label2 }) => ({ id: id2, label: label2 || id2 })),
     streaming: true,
     *rows() {
       for (let index = 0;index < limit; index += 1) {
@@ -90041,9 +90202,9 @@ var BUNDLED_PLUGINS = [
     ["pdf", "PDF document and figure renderer orchestrated through LaTeX.", "pdf", ["Render"], ["process", "files"], install17, "application/pdf", false],
     ["gltf", "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", "gltf", ["Render"], [], install18, "model/gltf+json", true],
     ["gif", "Deterministic animated GIF rendering from Slides, Timelines, or Snapshots through PNG frames.", "gif", ["Render"], ["process", "files"], install20, "image/gif", true, [], ["Renderers"], ["rix.renderer.png@1"]]
-  ].map(([id, description, mount, exports, permissions, install21, mime, deterministic, aliases = [], groups = ["Renderers"], requires = []]) => ({
+  ].map(([id2, description, mount, exports, permissions, install21, mime, deterministic, aliases = [], groups = ["Renderers"], requires = []]) => ({
     metadata: {
-      id,
+      id: id2,
       description,
       kind: "host",
       mount,
@@ -90051,9 +90212,9 @@ var BUNDLED_PLUGINS = [
       groups,
       permissions,
       requires,
-      provides: id === "canvas" ? ["rix.renderer.canvas@1", "rix.renderer.canvas@2", "rix.viewport@1", "rix.selection@1"] : ["markdown", "html", "quarto", "latex", "pdf", "gif"].includes(id) ? [`rix.renderer.${id}@1`, `rix.renderer.${id}@2`] : [`rix.renderer.${id}@1`],
-      schemas: id === "canvas" ? ["rix.canvas-plan@1", "rix.canvas-accessibility@1", "rix.viewport@1", "rix.selection@1"] : id === "markdown" ? ["rix.markdown.render@2"] : id === "html" ? ["rix.html.render@2"] : id === "quarto" ? ["rix.quarto.project@1", "rix.quarto.render@2"] : id === "latex" ? ["rix.latex.render@2"] : id === "pdf" ? ["rix.pdf.render@2"] : id === "gif" ? ["rix.gif.render@1", "rix.gif.render@2"] : [],
-      targets: [id, mime, ...aliases],
+      provides: id2 === "canvas" ? ["rix.renderer.canvas@1", "rix.renderer.canvas@2", "rix.viewport@1", "rix.selection@1"] : ["markdown", "html", "quarto", "latex", "pdf", "gif"].includes(id2) ? [`rix.renderer.${id2}@1`, `rix.renderer.${id2}@2`] : [`rix.renderer.${id2}@1`],
+      schemas: id2 === "canvas" ? ["rix.canvas-plan@1", "rix.canvas-accessibility@1", "rix.viewport@1", "rix.selection@1"] : id2 === "markdown" ? ["rix.markdown.render@2"] : id2 === "html" ? ["rix.html.render@2"] : id2 === "quarto" ? ["rix.quarto.project@1", "rix.quarto.render@2"] : id2 === "latex" ? ["rix.latex.render@2"] : id2 === "pdf" ? ["rix.pdf.render@2"] : id2 === "gif" ? ["rix.gif.render@1", "rix.gif.render@2"] : [],
+      targets: [id2, mime, ...aliases],
       snapshot: true,
       deterministic,
       defaultEnabled: false
@@ -90781,6 +90942,8 @@ function createDefaultSystemContext(options = {}) {
   for (const [name, definition12] of Object.entries(expressionCapabilities))
     ctx.register(name, definition12);
   for (const [name, definition12] of Object.entries(mathematicalJSONCapabilities))
+    ctx.register(name, definition12);
+  for (const [name, definition12] of Object.entries(mathematicalLocalizationCapabilities))
     ctx.register(name, definition12);
   ctx.installManagementNamespaces();
   const rendererRegistry = options.rendererRegistry || new RendererRegistry;
@@ -92189,7 +92352,7 @@ function asyncTaskPath(state, fallback = "item") {
   const branch = (state.branchPath || []).map((index) => `branch ${index + 1}`).join(" / ");
   return branch ? `${scope} / ${branch}` : `${scope} / ${fallback}`;
 }
-async function orderedAsyncMap(items, state, worker) {
+async function orderedAsyncMap(items, state, worker2) {
   if (items.length === 0)
     return [];
   const window = Math.max(1, state.limit * 2);
@@ -92199,7 +92362,7 @@ async function orderedAsyncMap(items, state, worker) {
   const start = (index) => {
     let promise;
     try {
-      promise = Promise.resolve(worker(items[index], index));
+      promise = Promise.resolve(worker2(items[index], index));
     } catch (error) {
       promise = Promise.reject(error);
     }
@@ -92215,7 +92378,7 @@ async function orderedAsyncMap(items, state, worker) {
   }
   return results;
 }
-async function orderedAsyncTerminal(items, state, worker, terminal) {
+async function orderedAsyncTerminal(items, state, worker2, terminal) {
   if (items.length === 0)
     return null;
   const scheduler = state.scheduler;
@@ -92230,7 +92393,7 @@ async function orderedAsyncTerminal(items, state, worker, terminal) {
   const start = (index) => {
     let promise;
     try {
-      promise = Promise.resolve(worker(items[index], index, terminalState));
+      promise = Promise.resolve(worker2(items[index], index, terminalState));
     } catch (error) {
       promise = Promise.reject(error);
     }
@@ -92247,15 +92410,15 @@ async function orderedAsyncTerminal(items, state, worker, terminal) {
     while (nextToStart < items.length && nextToStart < window)
       start(nextToStart++);
     for (let published = 0;published < items.length; published++) {
-      const record2 = await promises[published];
-      if (!record2.dropped) {
+      const record3 = await promises[published];
+      if (!record3.dropped) {
         candidateCount++;
-        lastCandidate = record2.value;
-        if (record2.terminalState === "undecided")
+        lastCandidate = record3.value;
+        if (record3.terminalState === "undecided")
           uncertain = true;
-        if (terminal === "PANY" && record2.terminalState === "truth")
-          return await stop(record2.value);
-        if (terminal === "PALL" && record2.terminalState === "null")
+        if (terminal === "PANY" && record3.terminalState === "truth")
+          return await stop(record3.value);
+        if (terminal === "PALL" && record3.terminalState === "null")
           return await stop(null);
       }
       if (nextToStart < items.length)
@@ -92352,17 +92515,17 @@ async function consumeAsyncStreamStructured(stream, terminal, context, registry,
     while (nextToStart < window)
       start(nextToStart++);
     while (!stopped) {
-      const record2 = await promises[nextToPublish++];
-      if (record2.done) {
+      const record3 = await promises[nextToPublish++];
+      if (record3.done) {
         stopReason = { kind: "complete" };
         cancelPending(streamEarlyStop("source completion"));
         break;
       }
-      if (record2.unresolved !== undefined) {
-        finalResult = record2.unresolved;
+      if (record3.unresolved !== undefined) {
+        finalResult = record3.unresolved;
         stopped = true;
       }
-      for (const entry2 of record2.records) {
+      for (const entry2 of record3.records) {
         outputIndex++;
         if (terminal.kind === "collect")
           collected.push(entry2.value);
@@ -92396,7 +92559,7 @@ async function consumeAsyncStreamStructured(stream, terminal, context, registry,
         if (stopped)
           break;
       }
-      if (record2.stop)
+      if (record3.stop)
         stopped = true;
       if (stopped) {
         stopReason = { kind: "early terminal" };
@@ -92623,25 +92786,25 @@ function collectionItems(collection) {
   throw new Error("Async pipe requires a finite collection");
 }
 function assembleAsyncPipeResult(collection, items, records, stages = []) {
-  if (records.some((record2) => record2.unresolved === true))
+  if (records.some((record3) => record3.unresolved === true))
     return UNDECIDED;
   if (isShaped(collection)) {
-    const kept = records.filter((record2) => record2.keep);
+    const kept = records.filter((record3) => record3.keep);
     if (stages.some((stage) => stage.fn === "PFILTER")) {
       return {
         type: "sequence",
-        values: kept.map((record2) => ({
+        values: kept.map((record3) => ({
           type: "tuple",
-          values: [record2.value, items[record2.index].locator]
+          values: [record3.value, items[record3.index].locator]
         }))
       };
     }
-    return createShaped(collection.shape, kept.map((record2) => record2.value));
+    return createShaped(collection.shape, kept.map((record3) => record3.value));
   }
   if (collection?.type === "map") {
     return { type: "map", entries: new Map(records.filter((r) => r.keep).map((r) => [items[r.index].key, r.value])) };
   }
-  const values4 = records.filter((record2) => record2.keep).map((record2) => record2.value);
+  const values4 = records.filter((record3) => record3.keep).map((record3) => record3.value);
   if (typeof collection === "string" || collection?.type === "string") {
     const joined = values4.map((value) => value?.type === "string" ? value.value : value).join("");
     return collection?.type === "string" ? { type: "string", value: joined } : joined;
@@ -92725,16 +92888,16 @@ async function runAsyncPipeStages(value, index, key, collection, stages, callabl
 }
 function asyncTerminalResult(terminal, records) {
   if (terminal === "PANY") {
-    const match = records.find((record2) => !record2.dropped && record2.terminalState === "truth");
+    const match = records.find((record3) => !record3.dropped && record3.terminalState === "truth");
     if (match)
       return match.value;
-    return records.some((record2) => !record2.dropped && record2.terminalState === "undecided") ? UNDECIDED : null;
+    return records.some((record3) => !record3.dropped && record3.terminalState === "undecided") ? UNDECIDED : null;
   }
   if (terminal === "PALL") {
-    const candidates = records.filter((record2) => !record2.dropped);
-    if (candidates.length === 0 || candidates.some((record2) => record2.terminalState === "null"))
+    const candidates = records.filter((record3) => !record3.dropped);
+    if (candidates.length === 0 || candidates.some((record3) => record3.terminalState === "null"))
       return null;
-    if (candidates.some((record2) => record2.terminalState === "undecided"))
+    if (candidates.some((record3) => record3.terminalState === "undecided"))
       return UNDECIDED;
     return candidates.at(-1).value;
   }
@@ -92797,10 +92960,10 @@ function expectedPipeScalarSource(source, stages) {
   return !Array.isArray(source?.values);
 }
 async function evaluateScalarExpectedPipe(source, stages, callables, context, registry, systemContext, state) {
-  const record2 = await runAsyncPipeStages(source, 0, undefined, source, stages, callables, context, registry, systemContext, state);
+  const record3 = await runAsyncPipeStages(source, 0, undefined, source, stages, callables, context, registry, systemContext, state);
   if (stages.at(-1)?.fn === "PFOREACH")
     return null;
-  return record2.keep ? record2.value : PIPE_SKIP;
+  return record3.keep ? record3.value : PIPE_SKIP;
 }
 async function evaluateSequentialAsyncPipe(irNode, context, registry, systemContext, state) {
   const stages = [];
@@ -96130,29 +96293,29 @@ function identifier(value, label2) {
     throw new Error(`${label2} must be a lowercase RiX identifier`);
   return name;
 }
-function validateGeometryConstructionRecord(record2) {
+function validateGeometryConstructionRecord(record3) {
   const diagnostics = [];
-  if (text17(field5(record2, "schema")) !== GEOMETRY_CONSTRUCTION_RECORD_SCHEMA) {
+  if (text17(field5(record3, "schema")) !== GEOMETRY_CONSTRUCTION_RECORD_SCHEMA) {
     diagnostics.push(Object.freeze({ code: "record-schema", message: `Expected ${GEOMETRY_CONSTRUCTION_RECORD_SCHEMA}` }));
   }
-  const nodes = sequence14(field5(record2, "nodes"));
-  if (!field5(record2, "nodes") || !Array.isArray(field5(record2, "nodes")) && !Array.isArray(field5(record2, "nodes")?.values)) {
+  const nodes = sequence14(field5(record3, "nodes"));
+  if (!field5(record3, "nodes") || !Array.isArray(field5(record3, "nodes")) && !Array.isArray(field5(record3, "nodes")?.values)) {
     diagnostics.push(Object.freeze({ code: "record-nodes", message: "Construction record nodes must be an array" }));
   }
   const ids = new Set;
   for (const [index, node] of nodes.entries()) {
-    const id = text17(field5(node, "id"));
-    if (!id)
+    const id2 = text17(field5(node, "id"));
+    if (!id2)
       diagnostics.push(Object.freeze({ code: "node-id", index, message: "Construction node requires an id" }));
-    else if (ids.has(id))
-      diagnostics.push(Object.freeze({ code: "duplicate-id", id, index, message: `Duplicate construction id ${id}` }));
+    else if (ids.has(id2))
+      diagnostics.push(Object.freeze({ code: "duplicate-id", id: id2, index, message: `Duplicate construction id ${id2}` }));
     for (const dependency of sequence14(field5(node, "dependsOn"))) {
       const dependencyId = text17(dependency);
       if (!ids.has(dependencyId))
-        diagnostics.push(Object.freeze({ code: "forward-dependency", id, dependency: dependencyId, index, message: `${id || `Node ${index + 1}`} depends on missing or later node ${dependencyId}` }));
+        diagnostics.push(Object.freeze({ code: "forward-dependency", id: id2, dependency: dependencyId, index, message: `${id2 || `Node ${index + 1}`} depends on missing or later node ${dependencyId}` }));
     }
-    if (id)
-      ids.add(id);
+    if (id2)
+      ids.add(id2);
   }
   return Object.freeze({
     schema: "rix.geometry.construction-validation@1",
@@ -96174,11 +96337,11 @@ function geometryConstructionRecordFromGraph(graph) {
     deterministic: true
   });
 }
-function encodeGeometryConstructionSource(record2, options = {}) {
-  if (text17(field5(record2, "schema")) === "rix.geometry.construction-graph@1") {
-    record2 = geometryConstructionRecordFromGraph(record2);
+function encodeGeometryConstructionSource(record3, options = {}) {
+  if (text17(field5(record3, "schema")) === "rix.geometry.construction-graph@1") {
+    record3 = geometryConstructionRecordFromGraph(record3);
   }
-  const validation = validateGeometryConstructionRecord(record2);
+  const validation = validateGeometryConstructionRecord(record3);
   const graphName = identifier(options.graphName || "graph", "graphName");
   const aliases = options.aliases === true;
   const prefix = aliases ? "" : ".geometry.";
@@ -96193,20 +96356,20 @@ function encodeGeometryConstructionSource(record2, options = {}) {
     reason: diagnostic2.message
   }));
   const nodeStatement = (node) => {
-    const id = field5(node, "id");
+    const id2 = field5(node, "id");
     const dependencies = sequence14(field5(node, "dependsOn"));
     const recipe = field5(node, "recipe");
     const free = Boolean(field5(node, "free"));
     const tool = text17(field5(recipe, "tool") || field5(node, "kind"));
     const args = sequence14(field5(recipe, "arguments")).length ? sequence14(field5(recipe, "arguments")) : dependencies;
-    const commonOptions = `{= id=${idSource(id)},maxNodes=${maxNodes} }`;
+    const commonOptions = `{= id=${idSource(id2)},maxNodes=${maxNodes} }`;
     let statement = null;
     if (free && (tool === "point" || text17(field5(field5(node, "value"), "kind")) === "point")) {
       const target = field5(recipe, "target") || field5(node, "value");
       const point4 = pointSource(target, prefix);
       if (point4) {
         const snap = field5(recipe, "snap");
-        const pointOptions = snap == null ? commonOptions : `{= id=${idSource(id)},snap=${sourceValue(snap)},maxNodes=${maxNodes} }`;
+        const pointOptions = snap == null ? commonOptions : `{= id=${idSource(id2)},snap=${sourceValue(snap)},maxNodes=${maxNodes} }`;
         statement = `${graphName} := ${prefix}AddPoint(${graphName},${point4},${pointOptions});`;
       }
     } else if (["line", "circle", "intersection", "measurement"].includes(tool) && args.length === 2) {
@@ -96245,7 +96408,7 @@ function encodeGeometryConstructionSource(record2, options = {}) {
     return statement;
   };
   if (validation.valid)
-    for (const node of sequence14(field5(record2, "nodes"))) {
+    for (const node of sequence14(field5(record3, "nodes"))) {
       const idText = text17(field5(node, "id"));
       const statement = nodeStatement(node);
       if (statement)
@@ -96254,7 +96417,7 @@ function encodeGeometryConstructionSource(record2, options = {}) {
         unsupported.push(Object.freeze({ id: idText || null, reason: `Unsupported or incomplete construction recipe for ${idText || "unnamed node"}` }));
     }
   if (validation.valid)
-    for (const event of sequence14(field5(record2, "history"))) {
+    for (const event of sequence14(field5(record3, "history"))) {
       const operation = text17(field5(event, "operation"));
       const statement = movementStatement(event);
       if (statement)
@@ -96263,7 +96426,7 @@ function encodeGeometryConstructionSource(record2, options = {}) {
         unsupported.push(Object.freeze({ id: text17(field5(event, "id")) || null, reason: `Unsupported or incomplete ${operation} history event` }));
       }
     }
-  const future = validation.valid ? sequence14(field5(record2, "future")) : [];
+  const future = validation.valid ? sequence14(field5(record3, "future")) : [];
   for (const event of [...future].reverse()) {
     const operation = text17(field5(event, "operation"));
     const statement = operation === "create" ? nodeStatement(field5(event, "node")) : movementStatement(event);
@@ -96470,8 +96633,8 @@ function indexGraphicNodes(graphic) {
 }
 function graphicSelectionCatalog(graphic, format = String) {
   const nodes = indexGraphicNodes(graphic);
-  return Object.freeze([...nodes.entries()].filter(([, node]) => node.kind === "drag_point" || node.kind === "graphic_action" || !(node.children || []).length).map(([id, node]) => Object.freeze({
-    id: String(id),
+  return Object.freeze([...nodes.entries()].filter(([, node]) => node.kind === "drag_point" || node.kind === "graphic_action" || !(node.children || []).length).map(([id2, node]) => Object.freeze({
+    id: String(id2),
     role: String(node.kind || "object"),
     label: describeGraphicNode(node, format),
     anchor: graphicNodeAnchor(node)
@@ -96742,8 +96905,8 @@ function resetGraphicViewport(state) {
   state.viewport.zoom = 1;
   return state;
 }
-function gesturePointer(pointers, id) {
-  return pointers.find((pointer) => String(pointer.id) === String(id));
+function gesturePointer(pointers, id2) {
+  return pointers.find((pointer) => String(pointer.id) === String(id2));
 }
 function updateGraphicGesture(state, previousPointers, nextPointers, rect) {
   const previous = Array.from(previousPointers || []);
@@ -96876,8 +97039,8 @@ function portableGeometryValue(value, format, seen = new Set) {
     return String(value);
   }
 }
-function serializeGeometryConstructionRecord(record2, format = String) {
-  return JSON.stringify(portableGeometryValue(record2, format), null, 2);
+function serializeGeometryConstructionRecord(record3, format = String) {
+  return JSON.stringify(portableGeometryValue(record3, format), null, 2);
 }
 function installGeometryWorkbench(graphic, status, options, navigation, actionActivators = new Map, pendingActionPayloads = new Map) {
   const workbench = geometryWorkbench(options.graphic);
@@ -96959,7 +97122,7 @@ function installGeometryWorkbench(graphic, status, options, navigation, actionAc
   tree.className = "rix-output-geometry-tree";
   tree.setAttribute("role", "tree");
   for (const node of nodes) {
-    const id = stringValue11(mapField4(node, "id")) || String(mapField4(node, "id") ?? "object");
+    const id2 = stringValue11(mapField4(node, "id")) || String(mapField4(node, "id") ?? "object");
     const kind = stringValue11(mapField4(node, "kind")) || "value";
     const dependencies = sequenceValue6(mapField4(node, "dependsOn")).map((item2) => stringValue11(item2) || String(item2));
     const free = Boolean(mapField4(node, "free"));
@@ -96969,15 +97132,15 @@ function installGeometryWorkbench(graphic, status, options, navigation, actionAc
     const button = document.createElement("button");
     button.type = "button";
     button.setAttribute("aria-pressed", "false");
-    button.dataset.rixGeometryObject = id;
-    button.textContent = `${id} · ${kind} · ${free ? "free" : "derived"}`;
+    button.dataset.rixGeometryObject = id2;
+    button.textContent = `${id2} · ${kind} · ${free ? "free" : "derived"}`;
     const choose = (source = "workbench") => {
-      navigation?.selectById(id, source);
+      navigation?.selectById(id2, source);
       const statusValue = stringValue11(mapField4(node, "status"));
       const diagnostic2 = stringValue11(mapField4(node, "diagnostic"));
       const dependencyText = dependencies.length ? `depends on ${dependencies.join(", ")}` : "no dependencies";
       const exact4 = mapField4(node, "value");
-      properties.textContent = [id, kind, free ? "free" : "derived", dependencyText, statusValue, diagnostic2, exact4 === null ? null : `exact ${exactText(exact4, options.format || String)}`].filter(Boolean).join(" · ");
+      properties.textContent = [id2, kind, free ? "free" : "derived", dependencyText, statusValue, diagnostic2, exact4 === null ? null : `exact ${exactText(exact4, options.format || String)}`].filter(Boolean).join(" · ");
       if (authoringEnabled && activeTool !== "point") {
         const spec2 = specsByTool.get(activeTool);
         const label2 = stringValue11(mapField4(spec2, "label")) || activeTool;
@@ -96989,19 +97152,19 @@ function installGeometryWorkbench(graphic, status, options, navigation, actionAc
         const kindsForOperand = operandAcceptedKinds.length ? operandAcceptedKinds : acceptedKinds;
         if (!kindsForOperand.includes(kind)) {
           if (status)
-            status.textContent = `${label2} tool requires ${kindsForOperand.join(" or ")} for ${operandLabels[selectedObjectIds.length] || "this operand"}; ${id} is ${kind}.`;
+            status.textContent = `${label2} tool requires ${kindsForOperand.join(" or ")} for ${operandLabels[selectedObjectIds.length] || "this operand"}; ${id2} is ${kind}.`;
           return;
         }
-        if (selectedObjectIds.includes(id)) {
-          selectedObjectIds = selectedObjectIds.filter((selected) => selected !== id);
+        if (selectedObjectIds.includes(id2)) {
+          selectedObjectIds = selectedObjectIds.filter((selected) => selected !== id2);
         } else {
-          selectedObjectIds.push(id);
+          selectedObjectIds.push(id2);
         }
-        button.setAttribute("aria-pressed", selectedObjectIds.includes(id) ? "true" : "false");
+        button.setAttribute("aria-pressed", selectedObjectIds.includes(id2) ? "true" : "false");
         if (selectedObjectIds.length < selectionCount) {
           const nextOperand = operandLabels[selectedObjectIds.length] || `object ${selectedObjectIds.length + 1}`;
           if (status)
-            status.textContent = selectedObjectIds.length ? `${id} selected. Choose ${nextOperand} for the ${label2.toLowerCase()} tool.` : `${id} deselected. Choose ${operandLabels[0] || "the first object"} for the ${label2.toLowerCase()} tool.`;
+            status.textContent = selectedObjectIds.length ? `${id2} selected. Choose ${nextOperand} for the ${label2.toLowerCase()} tool.` : `${id2} deselected. Choose ${operandLabels[0] || "the first object"} for the ${label2.toLowerCase()} tool.`;
           return;
         }
         const actionId = stringValue11(mapField4(spec2, "actionId"));
@@ -97092,18 +97255,18 @@ function installGeometryWorkbench(graphic, status, options, navigation, actionAc
   undo.addEventListener("click", () => replay(-1));
   redo.addEventListener("click", () => replay(1));
   exportRecordButton.addEventListener("click", () => {
-    const record2 = mapField4(workbench, "construction");
-    const text18 = serializeGeometryConstructionRecord(record2, options.format || String);
+    const record3 = mapField4(workbench, "construction");
+    const text18 = serializeGeometryConstructionRecord(record3, options.format || String);
     exported.textContent = text18;
     exported.hidden = false;
     document.defaultView?.navigator?.clipboard?.writeText?.(text18).catch?.(() => {});
-    dispatchGraphicEvent(graphic, "rix-geometry-export", { schema: "rix.geometry.construction-record@1", record: record2, text: text18 });
+    dispatchGraphicEvent(graphic, "rix-geometry-export", { schema: "rix.geometry.construction-record@1", record: record3, text: text18 });
     if (status)
       status.textContent = "Portable construction record exported";
   });
   exportSourceButton.addEventListener("click", () => {
-    const record2 = mapField4(workbench, "construction");
-    const encoded = encodeGeometryConstructionSource(record2);
+    const record3 = mapField4(workbench, "construction");
+    const encoded = encodeGeometryConstructionSource(record3);
     if (!encoded.supported) {
       if (status)
         status.textContent = `Source export is unavailable: ${encoded.unsupported.map((item) => item.reason).join("; ")}`;
@@ -97326,9 +97489,9 @@ function installNavigation(graphic, svg, status, options) {
     if (!values4.length)
       appendOption(objectSelect, "", "No objects in this type");
     for (const [index, element] of values4.entries()) {
-      const id = element.dataset.rixSemanticId;
-      const entry2 = catalog.get(id);
-      appendOption(objectSelect, id, `${index + 1}. ${entry2?.label || id}`);
+      const id2 = element.dataset.rixSemanticId;
+      const entry2 = catalog.get(id2);
+      appendOption(objectSelect, id2, `${index + 1}. ${entry2?.label || id2}`);
     }
     objectSelect.disabled = values4.length === 0;
     if (values4.some((element) => element.dataset.rixSemanticId === state.selection.focus)) {
@@ -97378,15 +97541,15 @@ function installNavigation(graphic, svg, status, options) {
   };
   const setSelection = (element, source, scenePoint = null) => {
     clearClasses("rix-output-semantic-selected");
-    const id = element?.dataset?.rixSemanticId || null;
+    const id2 = element?.dataset?.rixSemanticId || null;
     if (element)
       element.classList?.add("rix-output-semantic-selected");
-    state.selection.ids = id ? [id] : [];
-    state.selection.focus = id;
-    if (objectSelect && scopedSelectable().some((candidate) => candidate.dataset.rixSemanticId === id))
-      objectSelect.value = id;
+    state.selection.ids = id2 ? [id2] : [];
+    state.selection.focus = id2;
+    if (objectSelect && scopedSelectable().some((candidate) => candidate.dataset.rixSemanticId === id2))
+      objectSelect.value = id2;
     for (const textObject of graphic.querySelectorAll?.("[data-rix-graphics-text-object]") || []) {
-      textObject.toggleAttribute?.("aria-current", textObject.dataset.rixGraphicsTextObject === id);
+      textObject.toggleAttribute?.("aria-current", textObject.dataset.rixGraphicsTextObject === id2);
     }
     const exact4 = element ? describe(element, scenePoint) : "Selection cleared";
     const plot = plotInspection(options.graphic, scenePoint, options.format || String);
@@ -97418,8 +97581,8 @@ function installNavigation(graphic, svg, status, options) {
     if (target)
       selectById(target.id, "spatial-keyboard");
   };
-  const selectById = (id, source = "workbench", focus = true) => {
-    const element = semanticElements.find((candidate) => candidate.dataset?.rixSemanticId === String(id));
+  const selectById = (id2, source = "workbench", focus = true) => {
+    const element = semanticElements.find((candidate) => candidate.dataset?.rixSemanticId === String(id2));
     if (!element)
       return false;
     setSelection(element, source);
@@ -98355,7 +98518,7 @@ function createScene3DViewState(plan, target = {}) {
     maxDistance: Math.max(bounds2.radius * 1000, distance * 32, 1)
   };
   const selectable = new Set(Object.keys(plan.picking || {}));
-  const ids = Array.isArray(target.selection?.ids) ? [...new Set(target.selection.ids.map(String))].filter((id) => selectable.has(id)) : [];
+  const ids = Array.isArray(target.selection?.ids) ? [...new Set(target.selection.ids.map(String))].filter((id2) => selectable.has(id2)) : [];
   target.selection = { schema: "rix.selection@1", ids, focus: target.selection?.focus ?? ids[0] ?? null };
   target.navigation = {
     schema: "rix.scene3d-navigation@1",
@@ -98419,8 +98582,8 @@ function toggleScene3DProjection(state) {
   state.viewport.projection = state.camera.projection;
   return state;
 }
-function gesturePointer2(pointers, id) {
-  return pointers.find((pointer) => String(pointer.id) === String(id));
+function gesturePointer2(pointers, id2) {
+  return pointers.find((pointer) => String(pointer.id) === String(id2));
 }
 function scene3DCameraStep(state) {
   return Math.max(state.bounds.radius, Math.hypot(...subtract4(state.camera.position, state.camera.target))) * 0.06;
@@ -98572,13 +98735,13 @@ function describeScene3DSelection(scene, pickId, format = String) {
   return `${label2} · ${kind} · ${points.length} exact world point${points.length === 1 ? "" : "s"}${coordinates ? ` · ${coordinates}` : ""}`;
 }
 function scene3DSelectionCatalog(scene, plan, format = String) {
-  return Object.freeze(Object.keys(plan?.picking || {}).map((id) => {
-    const primitive2 = scenePrimitiveByPickId(scene, id);
-    const role = stringValue12(mapField5(primitive2, "kind")) || plan.picking[id]?.kind || "object";
+  return Object.freeze(Object.keys(plan?.picking || {}).map((id2) => {
+    const primitive2 = scenePrimitiveByPickId(scene, id2);
+    const role = stringValue12(mapField5(primitive2, "kind")) || plan.picking[id2]?.kind || "object";
     return Object.freeze({
-      id,
+      id: id2,
       role,
-      label: describeScene3DSelection(scene, id, format)
+      label: describeScene3DSelection(scene, id2, format)
     });
   }));
 }
@@ -99283,27 +99446,27 @@ function identitySet(frameRoot) {
 function matchedIdentities(left, right) {
   const first = identitySet(left);
   const second = identitySet(right);
-  return [...first].filter((id) => second.has(id));
+  return [...first].filter((id2) => second.has(id2));
 }
 function semanticElements(root) {
-  return new Map([...root?.querySelectorAll?.("[data-rix-semantic-id]") || []].map((node) => [node.dataset.rixSemanticId, node]).filter(([id]) => Boolean(id)));
+  return new Map([...root?.querySelectorAll?.("[data-rix-semantic-id]") || []].map((node) => [node.dataset.rixSemanticId, node]).filter(([id2]) => Boolean(id2)));
 }
 function timelineTransitionDiagnostics(previousRoot, currentRoot, properties = []) {
   const previous = semanticElements(previousRoot);
   const current = semanticElements(currentRoot);
   const records = [];
-  for (const [id, node] of previous) {
-    const next = current.get(id);
+  for (const [id2, node] of previous) {
+    const next = current.get(id2);
     if (!next)
-      records.push({ id, status: "disappeared", previousKind: node.tagName?.toLowerCase?.() || "object", currentKind: null });
+      records.push({ id: id2, status: "disappeared", previousKind: node.tagName?.toLowerCase?.() || "object", currentKind: null });
     else if (node.tagName !== next.tagName)
-      records.push({ id, status: "kind_changed", previousKind: node.tagName?.toLowerCase?.(), currentKind: next.tagName?.toLowerCase?.() });
+      records.push({ id: id2, status: "kind_changed", previousKind: node.tagName?.toLowerCase?.(), currentKind: next.tagName?.toLowerCase?.() });
     else
-      records.push({ id, status: "matched", previousKind: node.tagName?.toLowerCase?.(), currentKind: next.tagName?.toLowerCase?.(), properties: [...properties] });
+      records.push({ id: id2, status: "matched", previousKind: node.tagName?.toLowerCase?.(), currentKind: next.tagName?.toLowerCase?.(), properties: [...properties] });
   }
-  for (const [id, node] of current) {
-    if (!previous.has(id))
-      records.push({ id, status: "appeared", previousKind: null, currentKind: node.tagName?.toLowerCase?.() || "object" });
+  for (const [id2, node] of current) {
+    if (!previous.has(id2))
+      records.push({ id: id2, status: "appeared", previousKind: null, currentKind: node.tagName?.toLowerCase?.() || "object" });
   }
   return Object.freeze(records.map(Object.freeze));
 }
@@ -99313,8 +99476,8 @@ function animateSemanticTransitions(previousRoot, currentRoot, state, duration, 
   const previous = semanticElements(previousRoot);
   const current = semanticElements(currentRoot);
   const properties = new Set(state.transition.properties || []);
-  for (const [id, node] of current) {
-    const before = previous.get(id);
+  for (const [id2, node] of current) {
+    const before = previous.get(id2);
     if (!before || before.tagName !== node.tagName || typeof node.animate !== "function")
       continue;
     const from = {};
@@ -99503,7 +99666,7 @@ function enhanceTimelineView(root, options = {}) {
     if (exactTextOutput)
       exactTextOutput.textContent = formatOutputText(frame.content, format);
     const identityText = matched.length === 0 ? "no semantic objects matched from the previous frame" : `${matched.length} semantic object${matched.length === 1 ? "" : "s"} matched from the previous frame`;
-    const mismatches = transitionRecords.filter((record2) => record2.status !== "matched");
+    const mismatches = transitionRecords.filter((record3) => record3.status !== "matched");
     const changeText = state.transition.mode === "crossfade" && !state.reducedMotion ? `declared ${state.transition.properties.join(", ") || "opacity"} transition; exact values remain discrete` : "discrete exact values";
     const markerLabel = timeline.markers?.find((entry2) => entry2.frame === state.frame)?.label;
     if (marker2)
@@ -99511,7 +99674,7 @@ function enhanceTimelineView(root, options = {}) {
     if (status)
       status.textContent = `Frame ${state.frame} of ${state.length}${markerLabel ? ` · marker ${markerLabel}` : ""} · exact state ${stateText} · ${identityText} · ${mismatches.length} transition mismatch${mismatches.length === 1 ? "" : "es"} · ${state.recording.length} recorded · ${changeText}${state.playing ? " · playing" : " · paused"}`;
     if (diagnostics) {
-      diagnostics.textContent = transitionRecords.length ? transitionRecords.map((record2) => `${record2.id}: ${record2.status.replaceAll("_", " ")}${record2.previousKind || record2.currentKind ? ` (${record2.previousKind || "none"} → ${record2.currentKind || "none"})` : ""}`).join(`
+      diagnostics.textContent = transitionRecords.length ? transitionRecords.map((record3) => `${record3.id}: ${record3.status.replaceAll("_", " ")}${record3.previousKind || record3.currentKind ? ` (${record3.previousKind || "none"} → ${record3.currentKind || "none"})` : ""}`).join(`
 `) : "No previous frame is available.";
     }
     if (transitioned && currentRoot?.animate && state.transition.mode === "crossfade" && !state.reducedMotion && comparisonIndices.size === 0) {
@@ -101423,5 +101586,5 @@ var STATIC_SYSTEM_CATALOG = Object.freeze([
 ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
 export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, outputValueKind, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, formatOutputText, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateObserved, parseAndEvaluateObservedAsync, lintRix, createGeometryAuthoringProgram, mountOutputWidgets };
 
-//# debugId=DF5B12CCED9CB48F64756E2164756E21
-//# sourceMappingURL=chunk-b1ttzeyc.js.map
+//# debugId=B0B2D4A91A8E462964756E2164756E21
+//# sourceMappingURL=chunk-dsdgcmpj.js.map

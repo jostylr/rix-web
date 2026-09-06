@@ -231,10 +231,43 @@ Scoped symbols support core construction, arithmetic, identity, keys, and
 conservative equality. The existing name-based calculus, CAS, range, and
 specification consumers reject scoped expressions and extended constants until their identity/provider-aware
 conversion is implemented. The first section's constructor-based examples
-remain usable with those consumers. Context substitution, assumption-aware
-evaluation, remaining numeric adapters, and safe refinement-recipe restoration
-remain pending. Graph serialization and frozen snapshots are available now.
+remain usable with those consumers. Bounded free substitution and rational evaluation
+are now available below. Binder instantiation, domain discharge, remaining numeric
+adapters, and safe refinement-recipe restoration remain pending. Graph serialization
+and frozen snapshots are available now.
 
 :::challenge Build and inspect
 Construct `(x+1)^3` without loading a plugin, then inspect its operands.
 :::
+## Localizing an expression without losing its conditions
+
+Bindings use symbol identities, not names. They are simultaneous and do not modify
+definitions or programming variables. This evaluator currently computes exact rational
+arithmetic; unsupported functions and constant providers remain explicit unresolved work.
+
+```rix edu
+localizationExpression := ::localizationX^2+1;
+localizationAnswer := .MathEvaluate(localizationExpression,[(::localizationX,3)]);
+(localizationAnswer[:status],localizationAnswer[:value]);
+```
+
+A mathematical context is more than its result expression. Conditions remain attached
+to the report. The candidate below is 3, but the positive-domain obligation keeps the
+status conditional. A negative replacement contradicts the retained assumption.
+
+```rix edu
+localizationContext := {& ::localizationX>0 & ::localizationX+1 };
+localizationGood := .MathEvaluate(localizationContext,[(::localizationX,2)]);
+localizationBad := .MathEvaluate(localizationContext,[(::localizationX,-2)]);
+(localizationGood[:status],localizationGood[:value],localizationGood[:candidate],localizationBad[:status]);
+```
+
+Same-spelled bound and free symbols remain different. Free substitution cannot replace
+a binder or insert a bound symbol. Binder instantiation is a separate, future API.
+
+```rix edu
+localizationBound := {& :::localizationX | 0:1 & :::localizationX+::localizationX };
+localizationChanged := .MathSubstitute(localizationBound,[(::localizationX,7)]);
+(.SameSymbol(localizationBound[:binders][1],localizationChanged[:result].Operands()[1]),
+ .MathEvaluate(localizationChanged)[:status]);
+```
