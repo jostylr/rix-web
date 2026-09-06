@@ -559,3 +559,42 @@ semantic calls. Use `Eval` for assumption-aware and provider-aware evaluation.
 Conversion traversal budgets are configurable; they do not limit later callable
 execution. Private slot names shown by spec inspection are not portable source:
 save expressions and their symbols together using mathematical JSON/JSONL.
+
+## Certified ranges retain identity and domain holes
+
+The arithmetic graph-range engine tracks repeated inputs, so `a-a` is exactly zero.
+Two distinct symbols both spelled `x` are independent coordinates. Binding pairs
+preserve this distinction, and the checker recomputes the range from the evidence.
+
+```rix edu
+.Plugin.Load("numerics");
+{;
+    a := ::x; b := {; ::x };
+    same := .numerics.GraphRange(a-a,[(a,1:2)]);
+    different := .numerics.GraphRange(a-b,[(a,1:2),(b,1:2)]);
+    (same[:interval],different[:interval],
+     .numerics.CheckGraphRange(different)[:certified]);
+};
+```
+
+Work limits are options, not fixed algorithmic cutoffs. The effective limits are
+inspectable in the report. `maxDepth` defaults to 128 and can be raised to 512;
+the latter is a separate host stack-safety guard while traversal code is recursive.
+`maxWork` limits preflight traversal and evaluation nodes per partition, not elapsed
+time or total work across all partitions. Increasing budgets can cost time and memory.
+
+```rix edu
+.Plugin.Load("numerics");
+{;
+    ans := .numerics.GraphRange(::x/::x,[(::x,(-1):1)],
+        {= maxDepth=200,maxWork=20000,maxSubintervals=2 });
+    (ans[:interval],ans[:domainStatus],
+     .numerics.CheckGraphRange(ans)[:certified],
+     ans[:budgets][:maxDepth],ans[:budgets][:maxWork]);
+};
+```
+
+The answer is one wherever the expression is defined, but zero remains excluded.
+Always inspect `domainStatus` alongside certification. This engine currently handles
+arithmetic graphs, not contextual assumptions or the full provider-aware `Eval` surface.
+Scoped derivative-sign, Lipschitz, and Taylor range strategies are a later increment.

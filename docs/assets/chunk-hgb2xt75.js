@@ -9294,6 +9294,39 @@ var expressionCapabilities = {
   IsExpression: { impl: ([value]) => isMathExpression(value) ? new Integer(1n) : null, pure: true, groups: ["Symbolic"], doc: "Recognize a core mathematical expression" }
 };
 
+// ../rix/src/runtime/math-budgets.js
+var DEFAULT_MATH_BUDGETS = Object.freeze({
+  maxvisits: 1e4,
+  maxdepth: 128,
+  maxdigits: 1e4,
+  maxterms: 1024,
+  maxproductpairs: 1024,
+  maxsumterms: 1024,
+  maxgenerators: 64,
+  maxpolynomialcoefficients: 64,
+  maxdegree: 1e4,
+  maxexponent: 256,
+  rootbits: 64
+});
+function mathBudgets(options) {
+  const result = { ...DEFAULT_MATH_BUDGETS };
+  if (options === undefined || options === null)
+    return result;
+  if (options?.type !== "map")
+    throw new Error("Mathematical budgets require an options map");
+  for (const [key, value] of options.entries) {
+    if (!Object.hasOwn(result, key))
+      throw new Error(`Unknown mathematical budget: ${key}`);
+    if (!(value instanceof Integer) || value.value < 1n || value.value > BigInt(Number.MAX_SAFE_INTEGER))
+      throw new Error(`Mathematical budget ${key} requires a positive safe integer`);
+    result[key] = Number(value.value);
+  }
+  if (result.maxdepth > 512)
+    throw new Error("Mathematical maxDepth exceeds the host safety ceiling of 512");
+  return result;
+}
+var mathBudgetRecord = (limits) => ({ type: "map", entries: new Map(Object.entries(limits).map(([key, value]) => [key, new Integer(BigInt(value))])), _ext: new Map([["immutable", new Integer(1n)]]) });
+
 // ../rix/src/runtime/calculus-range.js
 var CALCULUS_GRAPH_RANGE_SCHEMA = "rix.numerics.calculus-graph-range@1";
 var CALCULUS_GRAPH_RANGE_CHECKER = "rix.runtime.calculus-graph-range-checker@1";
@@ -10525,6 +10558,21 @@ function recognizeCalculusGraph(expression, variableValue) {
   }
 }
 function normalizeBindings(bindings) {
+  if (["array", "sequence", "tuple"].includes(bindings?.type)) {
+    const result2 = new Map;
+    for (const pair of bindings.values) {
+      if (!["array", "sequence", "tuple"].includes(pair?.type) || pair.values.length !== 2)
+        throw new Error("Scoped graph bindings require (symbol,range) pairs");
+      const [symbol, value] = pair.values;
+      if (!mapValue(symbol, "symbolid") || expressionKind(symbol) !== "variable")
+        throw new Error("Scoped graph bindings require symbolic identities");
+      const key = rangeVariableKey(symbol);
+      if (result2.has(key))
+        throw new Error("Duplicate scoped graph binding");
+      result2.set(key, asRationalIntervalSet(value));
+    }
+    return result2;
+  }
   if (!bindings || bindings.type !== "map" || !(bindings.entries instanceof Map)) {
     throw new Error("Calculus graph range bindings must be a Map");
   }
@@ -10537,6 +10585,45 @@ function normalizeBindings(bindings) {
     }
   }
   return result;
+}
+function rangeVariableKey(symbol) {
+  const id = textValue(mapValue(symbol, "symbolid"));
+  if (mapValue(symbol, "symbolid")) {
+    if (!id)
+      throw new Error("Invalid scoped graph symbol identity");
+    if (expressionDefinition(symbol))
+      throw new Error("Graph bindings require independent symbols; definitions expand before evaluation");
+    if (mapValue(symbol, "bound"))
+      throw new Error("Instantiate bound symbols before graph range evaluation");
+    return `scoped:${id}`;
+  }
+  return textValue(mapValue(symbol, "name"))?.toLowerCase();
+}
+function validateRangeTraversal(expression, options) {
+  const depth = mapValue(options, "maxdepth");
+  const limits = mathBudgets(depth === undefined ? null : map2([["maxdepth", depth]]));
+  const maxVisits = maxNodeCount(options);
+  const stack = [[expression, 0]];
+  let visits = 0;
+  while (stack.length) {
+    const [node, level] = stack.pop();
+    if (++visits > maxVisits)
+      throw new Error("calculusGraphWorkLimit");
+    if (level > limits.maxdepth)
+      throw new Error("calculusGraphDepthLimit");
+    const definition = expressionDefinition(node);
+    if (definition) {
+      stack.push([definition, level + 1]);
+      continue;
+    }
+    const kind = expressionKind(node);
+    if (kind === "variable")
+      rangeVariableKey(node);
+    const children = kind === "operator" ? expressionChildren(node, "operands") : kind === "apply" ? expressionChildren(node, "arguments") : [];
+    for (const child of children)
+      stack.push([child, level + 1]);
+  }
+  return Object.freeze({ maxDepth: limits.maxdepth, maxWork: maxVisits, maxSubintervals: subdivisionCount(options) });
 }
 function bindingFingerprint(bindings) {
   return [...bindings.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([name, value]) => `${name}=${value.toString()}`).join(";");
@@ -10692,7 +10779,7 @@ function evaluateNode(expression, bindings, state) {
     });
     result.nodeId = appendTrace(state, "given.constant", graphKey, [], exactSetConclusion(result));
   } else if (kind === "variable") {
-    const name = textValue(mapValue(expression, "name"))?.toLowerCase();
+    const name = rangeVariableKey(expression);
     if (!name || !bindings.has(name))
       throw new Error(`missingGraphBinding:${String(name)}`);
     const range = bindings.get(name);
@@ -10777,16 +10864,16 @@ function evaluateNode(expression, bindings, state) {
 }
 function subdivisionCount(options) {
   const raw = mapValue(options, "maxsubintervals");
-  const value = integerValue(raw, 1n);
-  if (value < 1n || value > 10000n)
-    throw new Error("maxSubintervals must be between 1 and 10000");
+  const value = integerValue(raw, raw == null ? 1n : null);
+  if (value === null || value < 1n || value > BigInt(Number.MAX_SAFE_INTEGER))
+    throw new Error("maxSubintervals must be a positive safe integer");
   return Number(value);
 }
 function maxNodeCount(options) {
   const raw = mapValue(options, "maxwork") ?? mapValue(options, "maxnodes");
-  const value = integerValue(raw, 10000n);
-  if (value < 1n || value > 1000000n)
-    throw new Error("maxWork must be between 1 and 1000000");
+  const value = integerValue(raw, raw == null ? 10000n : null);
+  if (value === null || value < 1n || value > BigInt(Number.MAX_SAFE_INTEGER))
+    throw new Error("maxWork must be a positive safe integer");
   return Number(value);
 }
 function subdivideRange(set, maximum) {
@@ -10828,8 +10915,6 @@ function aggregateCoverage(results) {
   return "allDefined";
 }
 function evaluateWithBindings(expression, bindings, options, conventions) {
-  if (hasScopedSymbols(expression))
-    throw new Error("Scoped range evaluation requires the core Eval API");
   const state = {
     cache: new Map,
     trace: [],
@@ -10851,9 +10936,14 @@ function checkedSimplificationRequested(options) {
   return ["checked", "true", "yes"].includes(textValue(value)?.toLowerCase());
 }
 function rangeResult(expression, sourceBindings, options, conventions = { zeroPowerZero: "undefined" }) {
+  const budgets = validateRangeTraversal(expression, options);
+  const scoped = hasScopedSymbols(expression);
+  if (scoped && sourceBindings?.type === "map")
+    throw new Error("Scoped graph range evaluation requires identity binding pairs, not name maps");
   const bindings = normalizeBindings(sourceBindings);
-  const simplification = checkedSimplificationRequested(options) ? simplifyCalculusGraph(expression) : null;
-  const evaluationExpression = simplification?.expression ?? expression;
+  const expanded = scoped ? expandExpression(expression) : expression;
+  const simplification = checkedSimplificationRequested(options) ? simplifyCalculusGraph(expanded) : null;
+  const evaluationExpression = simplification?.expression ?? expanded;
   const maximumPieces = subdivisionCount(options);
   let partitions = [bindings];
   if (bindings.size === 1 && maximumPieces > 1) {
@@ -10882,6 +10972,7 @@ function rangeResult(expression, sourceBindings, options, conventions = { zeroPo
         expression,
         evaluationExpression,
         simplification,
+        budgets,
         bindings,
         range: RationalIntervalSet.empty,
         status: "unknown",
@@ -10897,7 +10988,7 @@ function rangeResult(expression, sourceBindings, options, conventions = { zeroPo
           expression,
           evaluationExpression,
           simplification,
-          bindings,
+          bindings: sourceBindings,
           options,
           conventions,
           trace: Object.freeze(trace)
@@ -10916,6 +11007,7 @@ function rangeResult(expression, sourceBindings, options, conventions = { zeroPo
     expression,
     evaluationExpression,
     simplification,
+    budgets,
     bindings,
     range,
     status: certified ? "enclosed" : "unknown",
@@ -10932,7 +11024,7 @@ function rangeResult(expression, sourceBindings, options, conventions = { zeroPo
       expression,
       evaluationExpression,
       simplification,
-      bindings,
+      bindings: sourceBindings,
       options,
       conventions,
       trace: Object.freeze(trace)
@@ -10947,7 +11039,7 @@ function checkCalculusGraphRangeResult(candidate) {
   if (candidate?.schema !== CALCULUS_GRAPH_RANGE_SCHEMA || evidence?.kind !== "calculusGraphEvaluation" || evidence?.checker !== CALCULUS_GRAPH_RANGE_CHECKER) {
     return Object.freeze({ accepted: false, certified: false, reason: "unsupportedGraphRangeEvidence" });
   }
-  const recomputed = rangeResult(evidence.expression, map2([...evidence.bindings.entries()].map(([key, value]) => [key, value])), evidence.options, evidence.conventions);
+  const recomputed = rangeResult(evidence.expression, evidence.bindings, evidence.options, evidence.conventions);
   const accepted = candidate.functionId === recomputed.functionId && candidate.range.equals(recomputed.range) && candidate.domainStatus === recomputed.domainStatus && candidate.certified === recomputed.certified && candidate.exactImage === recomputed.exactImage;
   return Object.freeze({
     accepted,
@@ -10977,7 +11069,7 @@ function portable(value) {
     return sequence2([...value].map(portable));
   if (value instanceof Map)
     return map2([...value].map(([key, entry]) => [key, portable(entry)]));
-  if (value?.type === "map" || value?.type === "sequence" || value?.type === "string")
+  if (["map", "sequence", "array", "tuple", "string"].includes(value?.type))
     return value;
   if (typeof value === "object") {
     return map2(Object.entries(value).map(([key, entry]) => [key, portable(entry)]));
@@ -11007,6 +11099,7 @@ function calculusGraphRangeValue(expression, bindings, options, context) {
     ["goalMet", portable(result.goalMet)],
     ["evidenceLevel", text3(check.certified ? "checkedEvidence" : "heuristic")],
     ["work", portable(result.work)],
+    ["budgets", portable(result.budgets)],
     ["diagnostics", portable(result.diagnostics)],
     ["exclusions", portable(result.exclusions || [])],
     ["evidence", portable(result.evidence)],
@@ -11043,7 +11136,7 @@ function calculusGraphRangeCheckValue(value) {
   const options = mapValue(evidence, "options") ?? map2([]);
   const conventionValue = mapValue(evidence, "conventions");
   const zeroPowerZero = textValue(mapValue(conventionValue, "zeropowerzero")) ?? "undefined";
-  if (textValue(mapValue(value, "schema")) !== CALCULUS_GRAPH_RANGE_SCHEMA || textValue(mapValue(evidence, "kind")) !== "calculusGraphEvaluation" || textValue(mapValue(evidence, "checker")) !== CALCULUS_GRAPH_RANGE_CHECKER || !isExpression(expression) || bindings?.type !== "map") {
+  if (textValue(mapValue(value, "schema")) !== CALCULUS_GRAPH_RANGE_SCHEMA || textValue(mapValue(evidence, "kind")) !== "calculusGraphEvaluation" || textValue(mapValue(evidence, "checker")) !== CALCULUS_GRAPH_RANGE_CHECKER || !isExpression(expression) || !["map", "array", "sequence", "tuple"].includes(bindings?.type)) {
     return portable({
       accepted: false,
       certified: false,
@@ -13563,39 +13656,6 @@ function emitNoPrepWarning(context, multifnName, index, variantName) {
     ...variantName ? [["variantName", stringObj(variantName)]] : []
   ]));
 }
-
-// ../rix/src/runtime/math-budgets.js
-var DEFAULT_MATH_BUDGETS = Object.freeze({
-  maxvisits: 1e4,
-  maxdepth: 128,
-  maxdigits: 1e4,
-  maxterms: 1024,
-  maxproductpairs: 1024,
-  maxsumterms: 1024,
-  maxgenerators: 64,
-  maxpolynomialcoefficients: 64,
-  maxdegree: 1e4,
-  maxexponent: 256,
-  rootbits: 64
-});
-function mathBudgets(options) {
-  const result = { ...DEFAULT_MATH_BUDGETS };
-  if (options === undefined || options === null)
-    return result;
-  if (options?.type !== "map")
-    throw new Error("Mathematical budgets require an options map");
-  for (const [key, value] of options.entries) {
-    if (!Object.hasOwn(result, key))
-      throw new Error(`Unknown mathematical budget: ${key}`);
-    if (!(value instanceof Integer) || value.value < 1n || value.value > BigInt(Number.MAX_SAFE_INTEGER))
-      throw new Error(`Mathematical budget ${key} requires a positive safe integer`);
-    result[key] = Number(value.value);
-  }
-  if (result.maxdepth > 512)
-    throw new Error("Mathematical maxDepth exceeds the host safety ceiling of 512");
-  return result;
-}
-var mathBudgetRecord = (limits) => ({ type: "map", entries: new Map(Object.entries(limits).map(([key, value]) => [key, new Integer(BigInt(value))])), _ext: new Map([["immutable", new Integer(1n)]]) });
 
 // ../rix/src/runtime/structural-arithmetic.js
 var DEFAULT_BINARY = {
@@ -102221,5 +102281,5 @@ var STATIC_SYSTEM_CATALOG = Object.freeze([
 ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
 export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, outputValueKind, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, formatOutputText, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateObserved, parseAndEvaluateObservedAsync, lintRix, createGeometryAuthoringProgram, mountOutputWidgets };
 
-//# debugId=CBDBF73B516A8A1A64756E2164756E21
-//# sourceMappingURL=chunk-7mm8apnx.js.map
+//# debugId=01128D14472F76D364756E2164756E21
+//# sourceMappingURL=chunk-hgb2xt75.js.map

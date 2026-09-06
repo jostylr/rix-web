@@ -101,5 +101,8 @@ for (const [mode,evaluate] of [["sync",parseAndEvaluate],["async",parseAndEvalua
         expect(results[36].values.map(String)).toEqual(["32","1","1"]);
         expect(results[37].values.map(String)).toEqual(["11","11","2"]);
         expect(results[38].values.map(String)).toEqual(["16","6"]);
+        expect(results[39].values.map(String)).toEqual(["0:0","-1:1","1"]);
+        expect(results[40].values[1].value).toBe("partiallyDefined");
+        expect([results[40].values[0],...results[40].values.slice(2)].map(String)).toEqual(["1:1","1","200","20000"]);
     });
 }
