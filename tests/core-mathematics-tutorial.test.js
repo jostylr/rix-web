@@ -113,5 +113,6 @@ for (const [mode,evaluate] of [["sync",parseAndEvaluate],["async",parseAndEvalua
         expect(results[43].values.map(v=>v?.type==='string'?v.value:String(v))).toEqual(["1","checkedEvidence","0","1","derivative.graph"]);
         expect(results[44].values.map(v=>v?.type==='string'?v.value:String(v))).toEqual(["9","nondecreasing","1"]);
         expect(results[45].values.map(v=>v?.type==='string'?v.value:String(v))).toEqual(["1","enclosed","null","32","unresolved"]);
+        expect(results[46].values.map(v=>v?.type==='string'?v.value:String(v))).toEqual(["0","enclosed","null","unresolved","unresolved"]);
     });
 }

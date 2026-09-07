@@ -9133,7 +9133,52 @@ function mathBudgets(options) {
 var mathBudgetRecord = (limits) => ({ type: "map", entries: new Map(Object.entries(limits).map(([key, value]) => [key, new Integer(BigInt(value))])), _ext: new Map([["immutable", new Integer(1n)]]) });
 
 // ../rix/src/runtime/math-semantic-eval.js
-var REAL_SEMANTICS = Object.freeze(["rix.function.abs.real@1", "rix.function.sqrt.real-principal@1", "rix.function.exp@1"]);
+var REAL_SEMANTICS = Object.freeze(["rix.function.abs.real@1", "rix.function.sqrt.real-principal@1", "rix.function.exp@1", "rix.function.log.real-principal@1"]);
+function logarithmBounds(value, limits, check, unsupported) {
+  const zero = new Rational(0n), one = new Rational(1n), two = new Rational(2n);
+  if (value.equals(one))
+    return [zero, zero];
+  if (Math.ceil(limits.transcendentalbits / 3) + 1 > limits.maxdigits)
+    throw new Error("Mathematical logarithm precision integer budget exceeded");
+  const target = check(new Rational(1n, 1n << BigInt(limits.transcendentalbits)));
+  const negative = value.lessThan(one);
+  let reduced = negative ? check(value.reciprocal()) : value, halvings = 0;
+  while (reduced.greaterThan(two)) {
+    if (halvings >= limits.maxexponent)
+      return unsupported("logarithmReductionBudgetExceeded");
+    reduced = check(reduced.divide(two));
+    halvings++;
+  }
+  const tolerance = check(target.divide(new Rational(BigInt(halvings) + 1n)));
+  const series = (argument) => {
+    const z = check(check(argument.subtract(one)).divide(check(argument.add(one))));
+    const square = check(z.multiply(z));
+    let sum = zero, power = z;
+    for (let n = 0;n < limits.maxsumterms; n++) {
+      sum = check(sum.add(check(power.divide(new Rational(2n * BigInt(n) + 1n)))));
+      power = check(power.multiply(square));
+      const tail = check(check(check(two.multiply(power)).divide(new Rational(2n * BigInt(n) + 3n))).divide(check(one.subtract(square))));
+      if (tail.lessThanOrEqual(tolerance)) {
+        const low2 = check(two.multiply(sum));
+        return [low2, check(low2.add(tail))];
+      }
+    }
+    return unsupported("logarithmSeriesBudgetExceeded");
+  };
+  const part = series(reduced);
+  if (!part)
+    return null;
+  let [low, high] = part;
+  if (halvings) {
+    const base = series(two);
+    if (!base)
+      return null;
+    const count = new Rational(BigInt(halvings));
+    low = check(low.add(check(count.multiply(base[0]))));
+    high = check(high.add(check(count.multiply(base[1]))));
+  }
+  return negative ? [check(high.negate()), check(low.negate())] : [low, high];
+}
 function exponentialBounds(value, limits, check, unsupported) {
   const zero = new Rational(0n), one = new Rational(1n), two = new Rational(2n);
   if (value.equals(zero))
@@ -9197,6 +9242,21 @@ function evaluateRealSemantic(id, args, limits, check, unsupported) {
   if (!(value instanceof Rational) && !(value instanceof RationalInterval))
     return unsupported("unsupportedSemanticProvider");
   const zero = new Rational(0n);
+  if (id === "rix.function.log.real-principal@1") {
+    const lower2 = value instanceof Rational ? value : value.low;
+    const upper2 = value instanceof Rational ? value : value.high;
+    if (upper2.lessThanOrEqual(zero))
+      return unsupported("outsideRealLogarithmDomain");
+    if (lower2.lessThanOrEqual(zero))
+      return unsupported("logarithmDomainUnresolved");
+    const low = logarithmBounds(lower2, limits, check, unsupported);
+    if (!low)
+      return null;
+    const high = lower2.equals(upper2) ? low : logarithmBounds(upper2, limits, check, unsupported);
+    if (!high)
+      return null;
+    return check(low[0].equals(high[1]) ? low[0] : new RationalInterval(low[0], high[1]));
+  }
   if (id === "rix.function.exp@1") {
     const low = exponentialBounds(value instanceof Rational ? value : value.low, limits, check, unsupported);
     if (!low)
@@ -9388,7 +9448,7 @@ function createProviderEvaluation(reasons, limits) {
     apply: (id, args) => {
       semantics.add(id);
       const result = evaluateRealSemantic(id, args, limits, check, unsupported);
-      if (id === "rix.function.exp@1" && result instanceof RationalInterval)
+      if (["rix.function.exp@1", "rix.function.log.real-principal@1"].includes(id) && result instanceof RationalInterval)
         sawSemanticEnclosure = true;
       return result;
     },
@@ -103329,5 +103389,5 @@ var STATIC_SYSTEM_CATALOG = Object.freeze([
 ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
 export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, outputValueKind, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, formatOutputText, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateObserved, parseAndEvaluateObservedAsync, lintRix, createGeometryAuthoringProgram, mountOutputWidgets };
 
-//# debugId=624C70C70076364464756E2164756E21
-//# sourceMappingURL=chunk-td6wyms7.js.map
+//# debugId=BE1FE6B1FACD9DBE64756E2164756E21
+//# sourceMappingURL=chunk-wc7qrb7f.js.map

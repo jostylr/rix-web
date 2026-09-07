@@ -714,3 +714,30 @@ steps, and `maxDigits` bounds rational arithmetic. Interval inputs retain their
 input uncertainty. Stored refinable-real enclosures may be used without refinement,
 and frozen imports retain conditional status. This does not yet broaden CAS algebraic
 rules or the older arithmetic graph-range engine's semantic-function support.
+
+## Certified natural logarithms
+
+`Log` uses the same precision and work options as `Exp`. One gives exact zero;
+other positive rational inputs give enclosures. The real logarithm requires a
+strictly positive input: a range touching zero is unresolved, not silently clipped.
+
+```rix edu
+.Plugin.Load("calculus");
+{;
+    expr := .calculus.Log()(::x);
+    exact := expr.Eval([(::x,1)]);
+    ans := expr.Eval([(::x,2)],{= transcendentalBits=32 });
+    domain := expr.Eval([(::x,0:2)]);
+    limited := expr.Eval([(::x,2)],{= maxSumTerms=1 });
+    (exact[:value],ans[:status],ans[:value],domain[:status],limited[:status]);
+};
+```
+
+Read `ans[:enclosure]` for the certified bounds and `domain[:reasons]` for the
+domain diagnostic. Internally, an exact rational series with a geometric tail
+bound handles a reduced argument; powers of two restore its logarithm.
+`maxExponent` limits halving steps, `maxSumTerms` limits each of at most two
+series per endpoint, `transcendentalBits` sets endpoint precision, and `maxDigits`
+limits intermediate rational sizes. Raising these options allows more work;
+it does not resolve an invalid real domain. Stored real bounds need no refinement,
+and imported frozen-real bounds still produce conditional reports.
