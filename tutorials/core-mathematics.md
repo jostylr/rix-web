@@ -741,3 +741,36 @@ series per endpoint, `transcendentalBits` sets endpoint precision, and `maxDigit
 limits intermediate rational sizes. Raising these options allows more work;
 it does not resolve an invalid real domain. Stored real bounds need no refinement,
 and imported frozen-real bounds still produce conditional reports.
+
+## Certified sine and cosine
+
+Core `Eval` now handles real `Sin` and `Cos` in radians using exact rational
+series bounds. Zero is exact; other rational points return enclosures. Here the
+interval from 1 to 2 contains a sine maximum: evaluating only its endpoints
+would miss that maximum.
+
+```rix edu
+.Plugin.Load("calculus");
+{;
+    expr := .calculus.Sin()(::x);
+    cosine := .calculus.Cos()(::x);
+    ans := expr.Eval([(::x,1)],{= transcendentalBits=32 });
+    range := expr.Eval([(::x,1:2)]);
+    limited := expr.Eval([(::x,1)],{= maxSumTerms=1 });
+    (expr.Eval([(::x,0)])[:value],cosine.Eval([(::x,0)])[:value],
+     ans[:status],range[:enclosure].End(),range[:resultKind],limited[:status]);
+};
+```
+
+Inspect `ans[:enclosure]` for the point bounds. `transcendentalBits` controls point
+precision, `maxSumTerms` caps Taylor terms, and `maxDigits` bounds intermediate
+rational sizes. Increase those per-call limits for more work. This first version
+does not reduce large angles, so `maxExponent` has no role in these two kernels.
+
+For interval inputs, evaluation widens a certified midpoint value by half the
+input width, using the fact that both derivatives have magnitude at most one.
+Intersecting with `[-1,1]` keeps the range bounded and covers interior extrema,
+but is conservative; raising precision cannot eliminate input uncertainty.
+Stored real enclosures work without refinement, and frozen imports keep conditional
+status. Symbolic multiples of pi, tighter periodic ranges, and additional CAS
+rewrite rules remain future work.

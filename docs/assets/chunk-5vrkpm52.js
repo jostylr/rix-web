@@ -9132,8 +9132,51 @@ function mathBudgets(options) {
 }
 var mathBudgetRecord = (limits) => ({ type: "map", entries: new Map(Object.entries(limits).map(([key, value]) => [key, new Integer(BigInt(value))])), _ext: new Map([["immutable", new Integer(1n)]]) });
 
+// ../rix/src/runtime/math-trig-eval.js
+function pointBounds(value, cosine, limits, check, unsupported) {
+  const zero = new Rational(0n), one = new Rational(1n);
+  if (value.equals(zero))
+    return cosine ? [one, one] : [zero, zero];
+  if (Math.ceil(limits.transcendentalbits / 3) + 1 > limits.maxdigits)
+    throw new Error("Mathematical trigonometric precision integer budget exceeded");
+  const target = check(new Rational(1n, 1n << BigInt(limits.transcendentalbits)));
+  const square = check(value.multiply(value));
+  let term = cosine ? one : value, sum = zero;
+  for (let n = 0;n < limits.maxsumterms; n++) {
+    sum = check(sum.add(term));
+    const degree = 2n * BigInt(n) + (cosine ? 0n : 1n);
+    const ratio = check(square.divide(check(new Rational((degree + 1n) * (degree + 2n)))));
+    const next = check(check(term.multiply(ratio)).negate());
+    if (ratio.lessThanOrEqual(one) && next.abs().lessThanOrEqual(target)) {
+      const other = check(sum.add(next));
+      return sum.lessThanOrEqual(other) ? [sum, other] : [other, sum];
+    }
+    term = next;
+  }
+  return unsupported("trigonometricSeriesBudgetExceeded");
+}
+function evaluateTrigonometric(value, cosine, limits, check, unsupported) {
+  const one = new Rational(1n), minusOne = new Rational(-1n), two = new Rational(2n);
+  const interval = value instanceof RationalInterval;
+  const center = interval ? check(check(value.low.add(value.high)).divide(two)) : value;
+  const bounds = pointBounds(center, cosine, limits, check, unsupported);
+  if (!bounds)
+    return null;
+  let [low, high] = bounds;
+  if (interval) {
+    const radius = check(check(value.high.subtract(value.low)).divide(two));
+    low = check(low.subtract(radius));
+    high = check(high.add(radius));
+  }
+  if (low.lessThan(minusOne))
+    low = minusOne;
+  if (high.greaterThan(one))
+    high = one;
+  return check(low.equals(high) ? low : new RationalInterval(low, high));
+}
+
 // ../rix/src/runtime/math-semantic-eval.js
-var REAL_SEMANTICS = Object.freeze(["rix.function.abs.real@1", "rix.function.sqrt.real-principal@1", "rix.function.exp@1", "rix.function.log.real-principal@1"]);
+var REAL_SEMANTICS = Object.freeze(["rix.function.abs.real@1", "rix.function.sqrt.real-principal@1", "rix.function.exp@1", "rix.function.log.real-principal@1", "rix.function.sin@1", "rix.function.cos@1"]);
 function logarithmBounds(value, limits, check, unsupported) {
   const zero = new Rational(0n), one = new Rational(1n), two = new Rational(2n);
   if (value.equals(one))
@@ -9242,6 +9285,8 @@ function evaluateRealSemantic(id, args, limits, check, unsupported) {
   if (!(value instanceof Rational) && !(value instanceof RationalInterval))
     return unsupported("unsupportedSemanticProvider");
   const zero = new Rational(0n);
+  if (id === "rix.function.sin@1" || id === "rix.function.cos@1")
+    return evaluateTrigonometric(value, id === "rix.function.cos@1", limits, check, unsupported);
   if (id === "rix.function.log.real-principal@1") {
     const lower2 = value instanceof Rational ? value : value.low;
     const upper2 = value instanceof Rational ? value : value.high;
@@ -9448,7 +9493,7 @@ function createProviderEvaluation(reasons, limits) {
     apply: (id, args) => {
       semantics.add(id);
       const result = evaluateRealSemantic(id, args, limits, check, unsupported);
-      if (["rix.function.exp@1", "rix.function.log.real-principal@1"].includes(id) && result instanceof RationalInterval)
+      if (["rix.function.exp@1", "rix.function.log.real-principal@1", "rix.function.sin@1", "rix.function.cos@1"].includes(id) && result instanceof RationalInterval)
         sawSemanticEnclosure = true;
       return result;
     },
@@ -103389,5 +103434,5 @@ var STATIC_SYSTEM_CATALOG = Object.freeze([
 ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
 export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, outputValueKind, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, formatOutputText, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateObserved, parseAndEvaluateObservedAsync, lintRix, createGeometryAuthoringProgram, mountOutputWidgets };
 
-//# debugId=BE1FE6B1FACD9DBE64756E2164756E21
-//# sourceMappingURL=chunk-wc7qrb7f.js.map
+//# debugId=0665BDE49E8559D064756E2164756E21
+//# sourceMappingURL=chunk-5vrkpm52.js.map
