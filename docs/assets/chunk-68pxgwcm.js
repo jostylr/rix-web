@@ -8214,8 +8214,15 @@ function formatExact(value, formatScalar = (scalar) => scalar.toString()) {
   }
   return pieces.join(" ");
 }
+var canonicalPi = createExactGenerator("pi", { id: "exact:pi", category: "transcendental" });
+function exactPi() {
+  return canonicalPi;
+}
+function isExactPi(value) {
+  return value === canonicalPi;
+}
 function createDefaultExactCollection() {
-  const pi = createExactGenerator("pi", { id: "exact:pi", category: "transcendental" });
+  const pi = exactPi();
   const e = createExactGenerator("e", { id: "exact:e", category: "transcendental" });
   const i = createExactGenerator("i", {
     id: "exact:i",
@@ -9133,6 +9140,88 @@ function mathBudgets(options) {
 var mathBudgetRecord = (limits) => ({ type: "map", entries: new Map(Object.entries(limits).map(([key, value]) => [key, new Integer(BigInt(value))])), _ext: new Map([["immutable", new Integer(1n)]]) });
 
 // ../rix/src/runtime/math-trig-eval.js
+function piCoefficient(value) {
+  if (isExactPi(value))
+    return new Rational(1n);
+  if (value?.type !== "exact_expression" || value.terms.size !== 1)
+    return null;
+  const term = value.terms.values().next().value;
+  if (term.powers.size !== 1)
+    return null;
+  const [generator, power] = term.powers.entries().next().value;
+  if (!isExactPi(generator) || power !== 1)
+    return null;
+  return term.coefficient instanceof Integer ? new Rational(term.coefficient.value) : term.coefficient;
+}
+function piBounds(limits, check, unsupported) {
+  if (Math.ceil(limits.transcendentalbits / 3) + 3 > limits.maxdigits)
+    throw new Error("Mathematical pi precision integer budget exceeded");
+  const tolerance = check(new Rational(1n, 80n * (1n << BigInt(limits.transcendentalbits))));
+  const atan = (denominator) => {
+    const x = new Rational(1n, denominator), square = check(x.multiply(x));
+    let power = x, sum = new Rational(0n);
+    for (let n = 0;n < limits.maxsumterms; n++) {
+      const term = check(power.divide(new Rational(2n * BigInt(n) + 1n)));
+      sum = check(n % 2 ? sum.subtract(term) : sum.add(term));
+      power = check(power.multiply(square));
+      const next = check(power.divide(new Rational(2n * BigInt(n) + 3n)));
+      if (next.lessThanOrEqual(tolerance)) {
+        const other = check(n % 2 ? sum.add(next) : sum.subtract(next));
+        return n % 2 ? [sum, other] : [other, sum];
+      }
+    }
+    return unsupported("trigonometricPiSeriesBudgetExceeded");
+  };
+  const a = atan(5n);
+  if (!a)
+    return null;
+  const b = atan(239n);
+  if (!b)
+    return null;
+  return [
+    check(check(a[0].multiply(new Rational(16n))).subtract(check(b[1].multiply(new Rational(4n))))),
+    check(check(a[1].multiply(new Rational(16n))).subtract(check(b[0].multiply(new Rational(4n)))))
+  ];
+}
+function evaluatePiTrigonometric(value, cosine, limits, check, unsupported) {
+  const coefficient = piCoefficient(value);
+  if (!coefficient)
+    return unsupported("unsupportedSemanticProvider");
+  const modulus = 2n * coefficient.denominator;
+  let q = check(new Rational((coefficient.numerator % modulus + modulus) % modulus, coefficient.denominator));
+  const one = new Rational(1n), half = new Rational(1n, 2n);
+  if (cosine) {
+    q = check(q.add(half));
+    if (q.greaterThanOrEqual(new Rational(2n)))
+      q = check(q.subtract(new Rational(2n)));
+  }
+  const negative = q.greaterThan(one);
+  if (negative)
+    q = check(q.subtract(one));
+  if (q.greaterThan(half))
+    q = check(one.subtract(q));
+  let exact = null;
+  if (q.numerator === 0n)
+    exact = new Rational(0n);
+  else if (q.equals(half))
+    exact = one;
+  else if (q.equals(new Rational(1n, 6n)))
+    exact = half;
+  else if (q.equals(new Rational(1n, 4n)))
+    exact = check(multiplyScalars(half, exactSquareRoot(new Rational(2n))));
+  else if (q.equals(new Rational(1n, 3n)))
+    exact = check(multiplyScalars(half, exactSquareRoot(new Rational(3n))));
+  if (exact !== null)
+    return check(negative ? negateScalar(exact) : exact);
+  const pi = piBounds(limits, check, unsupported);
+  if (!pi)
+    return null;
+  const angle = new RationalInterval(check(q.multiply(pi[0])), check(q.multiply(pi[1])));
+  const result = evaluateTrigonometric(angle, false, { ...limits, transcendentalbits: limits.transcendentalbits + 1 }, check, unsupported);
+  if (!result)
+    return null;
+  return negative ? check(result.negate()) : result;
+}
 function pointBounds(value, cosine, limits, check, unsupported) {
   const zero = new Rational(0n), one = new Rational(1n);
   if (value.equals(zero))
@@ -9282,6 +9371,8 @@ function evaluateRealSemantic(id, args, limits, check, unsupported) {
   if (args.length !== 1)
     return unsupported("semanticArityMismatch");
   const value = args[0] instanceof Integer ? new Rational(args[0].value, 1n) : args[0];
+  if ((id === "rix.function.sin@1" || id === "rix.function.cos@1") && !(value instanceof Rational) && !(value instanceof RationalInterval))
+    return evaluatePiTrigonometric(value, id === "rix.function.cos@1", limits, check, unsupported);
   if (!(value instanceof Rational) && !(value instanceof RationalInterval))
     return unsupported("unsupportedSemanticProvider");
   const zero = new Rational(0n);
@@ -32991,6 +33082,8 @@ function encodeMathematicalJSON(root) {
         },
         recipe: null
       } });
+    else if (isExactPi(value))
+      Object.assign(node, { kind: "namedConstant", semanticId: "rix.constant.pi@1" });
     else if (value.type === "exact_generator")
       Object.assign(node, {
         kind: "generator",
@@ -33149,6 +33242,13 @@ function decodeMathematicalJSON(source) {
         shape("start", "end");
         result = new RationalInterval(exact2(child(n.start)), exact2(child(n.end)));
         break;
+      case "namedConstant": {
+        shape("semanticId");
+        if (n.semanticId !== "rix.constant.pi@1")
+          fail("unknown named constant semantic ID");
+        result = exactPi();
+        break;
+      }
       case "generator": {
         shape("name", "category", "real", "positiveRoot", "polynomial");
         if (typeof n.real !== "boolean" || typeof n.positiveRoot !== "boolean")
@@ -103434,5 +103534,5 @@ var STATIC_SYSTEM_CATALOG = Object.freeze([
 ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
 export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, outputValueKind, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, formatOutputText, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateObserved, parseAndEvaluateObservedAsync, lintRix, createGeometryAuthoringProgram, mountOutputWidgets };
 
-//# debugId=0665BDE49E8559D064756E2164756E21
-//# sourceMappingURL=chunk-5vrkpm52.js.map
+//# debugId=980FF9A6537DBBB064756E2164756E21
+//# sourceMappingURL=chunk-68pxgwcm.js.map

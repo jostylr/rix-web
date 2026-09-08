@@ -772,5 +772,40 @@ input width, using the fact that both derivatives have magnitude at most one.
 Intersecting with `[-1,1]` keeps the range bounded and covers interior extrema,
 but is conservative; raising precision cannot eliminate input uncertainty.
 Stored real enclosures work without refinement, and frozen imports keep conditional
-status. Symbolic multiples of pi, tighter periodic ranges, and additional CAS
-rewrite rules remain future work.
+status. Canonical rational pi multiples are supported below; tighter periodic
+interval ranges and additional CAS rewrite rules remain future work.
+
+## Pi angles and exact turns
+
+RiX already has `turn`, `deg`, and `rad` angle units. One turn is exactly two pi
+radians. Divide an angle quantity by `1~[rad]` to obtain a scalar radian argument;
+`.ConvertUnit(angle,.Units[:rad])` instead retains the angle unit.
+
+```rix edu
+.Plugin.Load("calculus");
+{;
+    expr := .calculus.Sin()(::x);
+    angle := (1/12)~[turn];
+    radians := angle/(1~[rad]);
+    exact := expr.Eval([(::x,radians)]);
+    diagonal := expr.Eval([(::x,(1/4)~{pi})]);
+    ans := expr.Eval([(::x,(1/7)~{pi})],{= transcendentalBits=32 });
+    saved := .MathDecodeJSON(.MathEncodeJSON(expr.Substitute([(::x,radians)])));
+    (radians==(1/6)~{pi},exact[:value],diagonal[:value]^2,
+     ans[:status],saved.Eval()[:value]);
+};
+```
+
+The result includes exact `sin(pi/6)=1/2` and exact `sin(pi/4)^2=1/2`.
+The latter uses an algebraic square root, not a decimal approximation.
+Rational pi coefficients reduce modulo two before numerical work, so adding
+millions of full revolutions does not require millions of Taylor terms.
+The first-quadrant course angles 0, pi/6, pi/4, pi/3, pi/2 are exact;
+other rational angles such as pi/7 receive certified bounds.
+
+`transcendentalBits`, `maxSumTerms`, and `maxDigits` control that numerical work,
+including the two bounded arctangent series used to enclose pi. Too little series
+work yields an unresolved report; exact special angles need no series. This does
+not yet simplify arbitrary symbolic identities, or accept pi+1 or pi^2 as trig
+arguments. The built-in `1~{pi}` identity survives JSON/JSONL; naming an ordinary
+symbol `::pi` or a custom generator `pi` does not grant it that identity.

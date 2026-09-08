@@ -115,5 +115,6 @@ for (const [mode,evaluate] of [["sync",parseAndEvaluate],["async",parseAndEvalua
         expect(results[45].values.map(v=>v?.type==='string'?v.value:String(v))).toEqual(["1","enclosed","null","32","unresolved"]);
         expect(results[46].values.map(v=>v?.type==='string'?v.value:String(v))).toEqual(["0","enclosed","null","unresolved","unresolved"]);
         expect(results[47].values.map(v=>v?.type==='string'?v.value:String(v))).toEqual(["0","1","enclosed","1","setEnclosure","unresolved"]);
+        expect(results[48].values.map(v=>v?.type==='string'?v.value:String(v))).toEqual(["1","1/2","1/2","enclosed","1/2"]);
     });
 }
