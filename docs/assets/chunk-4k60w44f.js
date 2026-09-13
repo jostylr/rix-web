@@ -48,7 +48,7 @@ import {
   parseAndEvaluateObservedAsync,
   renderOutputHtml,
   tokenize
-} from "./chunk-m0b9vkmr.js";
+} from "./chunk-s85zmrtk.js";
 
 // standard-profile.rix
 var standard_profile_default = `## RiX-Web standard calculator profile.
@@ -22355,12 +22355,12 @@ octonionNamespace._proto={=
 };
 .Host.RegisterValue("octonion",octonionNamespace,"Certified octonions with explicit nonassociativity and intrinsic slice functions",["Exact","Numerics"]);
 `, sourcePath: "bundled:octonion", kind: "rix" });
-  catalog.addMetadata({ id: "ode", description: "Portable initial-value problems, vector trajectories, adaptive demonstrations, checked Picard and second-order Taylor tubes, and certified event isolation.", kind: "rix", mount: "ode", exports: ["IVP", "Euler", "RK4", "AdaptiveRK4", "ValidatedPicard", "ValidatedTaylor2", "AdaptiveValidatedTaylor2", "Event", "IsolateEvents", "At", "Points", "Segments", "Record", "IsProblem", "IsSolution"], groups: ["Numerics", "ODE", "Calculus"], permissions: [], requires: ["rix.calculus@1", "rix.numerics@2"], provides: ["rix.ode@1", "rix.ode.problem@1", "rix.ode.solution@1", "rix.ode.dense-segment@1", "rix.ode.event@1", "rix.ode.event-result@1"], schemas: ["rix.ode.problem@1", "rix.ode.solution@1", "rix.ode.dense-segment@1", "rix.ode.event@1", "rix.ode.event-result@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:ode" }, { source: `/**
+  catalog.addMetadata({ id: "ode", description: "Portable initial-value problems, vector trajectories, adaptive demonstrations, checked Picard and configurable-order Taylor tubes, and certified event isolation.", kind: "rix", mount: "ode", exports: ["IVP", "Euler", "RK4", "AdaptiveRK4", "ValidatedPicard", "ValidatedTaylor2", "AdaptiveValidatedTaylor2", "ValidatedTaylor", "AdaptiveValidatedTaylor", "Event", "IsolateEvents", "At", "Points", "Segments", "Record", "IsProblem", "IsSolution"], groups: ["Numerics", "ODE", "Calculus"], permissions: [], requires: ["rix.calculus@1", "rix.numerics@2"], provides: ["rix.ode@1", "rix.ode.problem@1", "rix.ode.solution@1", "rix.ode.dense-segment@1", "rix.ode.event@1", "rix.ode.event-result@1"], schemas: ["rix.ode.problem@1", "rix.ode.solution@1", "rix.ode.dense-segment@1", "rix.ode.event@1", "rix.ode.event-result@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:ode" }, { source: `/**
 id: ode
-description: Portable initial-value problems, vector trajectories, adaptive demonstrations, checked Picard and second-order Taylor tubes, and certified event isolation.
+description: Portable initial-value problems, vector trajectories, adaptive demonstrations, checked Picard and configurable-order Taylor tubes, and certified event isolation.
 kind: rix
 mount: ode
-exports: [IVP, Euler, RK4, AdaptiveRK4, ValidatedPicard, ValidatedTaylor2, AdaptiveValidatedTaylor2, Event, IsolateEvents, At, Points, Segments, Record, IsProblem, IsSolution]
+exports: [IVP, Euler, RK4, AdaptiveRK4, ValidatedPicard, ValidatedTaylor2, AdaptiveValidatedTaylor2, ValidatedTaylor, AdaptiveValidatedTaylor, Event, IsolateEvents, At, Points, Segments, Record, IsProblem, IsSolution]
 groups: [Numerics, ODE, Calculus]
 permissions: []
 requires: [rix.calculus@1, rix.numerics@2]
@@ -22702,7 +22702,8 @@ OdeAdaptiveRK4(problemValue, options ?= {= }) -> {;
 
 OdeRangeResult(expression, problem, timeRange, stateRanges, maxSubintervals) -> {;
     bindings = OdeBindings(problem,timeRange,stateRanges);
-    result = .numerics.GraphRange(expression,bindings,{= maxSubintervals=maxSubintervals });
+    rangeOptions = maxSubintervals ? :Map ?: maxSubintervals ?_ {= maxSubintervals=maxSubintervals };
+    result = .numerics.GraphRange(expression,bindings,rangeOptions);
     result[:certified] == 1 && result[:domainStatus] == :allDefined && result[:interval] != _
       ?: result
       ?_ .Error("Validated ODE range evaluation was not certified on the complete tube");
@@ -22906,36 +22907,35 @@ OdeValidatedPicard(problemValue, options ?= {= }) -> {;
     solution;
 };
 
-OdeCheckedPartial(expression, variable, label) -> {;
+OdeCheckedPartial(expression, variable, label, options ?= {= }) -> {;
     derivative = .calculus.PartialResult(expression,variable);
-    check = .numerics.CheckDerivativeGraph(derivative);
-    check[:accepted]==1
-      ?: _
-      ?_ .Error(@"ODE could not check the @{label} derivative");
-    derivative[:obligations].Len()==0
-      ?: _
-      ?_ .Error(@"ODE @{label} derivative has unresolved domain or branch obligations");
+    check = .numerics.CheckDerivativeGraph(derivative,options);
+    check[:accepted]==1 ?_> .Error(@"ODE could not check the @{label} derivative");
+    derivative[:obligations].Len()==0 ?_> .Error(@"ODE @{label} derivative has unresolved domain or branch obligations");
     derivative;
 };
 
-OdeTotalDerivative(expression, problem, label) -> {;
-    timeDerivative = OdeCheckedPartial(expression,problem[:independent],@"time @{label}");
+OdeTotalDerivative(expression, problem, label, options ?= {= }) -> {;
+    timeDerivative = OdeCheckedPartial(expression,problem[:independent],@"time @{label}",options);
     stateDerivatives = problem[:stateNames].Map((name)->
-        OdeCheckedPartial(@expression,name,@"state @{label}")
+        OdeCheckedPartial(@expression,name,@"state @{label}",@options)
     );
     total = stateDerivatives.Reduce((sum,derivative,index)->
         sum+derivative[:expression]*@problem[:rhs][index],
         timeDerivative[:expression]
     );
+    simplified = .numerics.SimplifyGraph(total);
+    .numerics.CheckGraphSimplification(simplified)[:accepted]==1 ?_> .Error("ODE total derivative simplification could not be checked");
     {=
-        expression=total,
+        expression=simplified[:expression],
         timeDerivative=timeDerivative,
         stateDerivatives=stateDerivatives,
         evidence={=
             rule=:odeTotalDerivative,
             identity=:partialTimePlusGradientDotFlow,
             timeEvidence=timeDerivative[:evidence],
-            stateEvidence=stateDerivatives.Map((derivative)->derivative[:evidence])
+            stateEvidence=stateDerivatives.Map((derivative)->derivative[:evidence]),
+            simplification=simplified
         }
     };
 };
@@ -22949,11 +22949,52 @@ OdeIntersectIntervals(left, right, label) -> {;
 
 OdeTaylorStateRange(segment, timeRange) -> {;
     delta = timeRange-(segment[:tStart]:segment[:tStart]);
+    segment[:taylorCoefficients]==_ ?_> OdeTaylorPolynomialRange(segment,delta);
     raw = segment[:stateStart].Map((entry,axis)->
         entry+delta*segment[:taylorBaseSlopeRange][axis]
           +(delta^2)*segment[:secondDerivativeRange][axis]/2
     );
     raw.Map((entry,axis)->OdeIntersectIntervals(entry,segment[:tube][axis],"Taylor state"));
+};
+
+OdeTaylorPolynomialRange(segment, delta) -> {;
+    raw = segment[:stateStart].Map((entry,axis)->
+        segment[:taylorCoefficients].Reduce((sum,row,power)->sum+(delta^power)*row[axis],entry)
+    );
+    raw.Map((entry,axis)->OdeIntersectIntervals(entry,segment[:tube][axis],"Taylor state"));
+};
+
+OdeTaylorizeOrder(problem, segment, derivatives, identities, rangeOptions, order) -> {;
+    segment[:certified]==1 ?_> segment;
+    startTime = segment[:tStart]:segment[:tStart];
+    fullTime = segment[:tStart]:segment[:tEnd];
+    ranges = derivatives.Map((row,power)->row.Map((expression)->OdeRangeResult(
+        expression,@problem,power==@order ?: @fullTime ?_ @startTime,
+        power==@order ?: @segment[:tube] ?_ @segment[:stateStart],@rangeOptions
+    )));
+    factorial := 1;
+    coefficients := [];
+    {@ power=1; power<=@order; {;
+        @factorial ~= @factorial*power;
+        @coefficients ~= @coefficients.Push(@ranges[power].Map((result)->result[:interval]/@factorial));
+    }; power+=1 };
+    h = segment[:tEnd]-segment[:tStart];
+    model = segment.Merge({= taylorCoefficients=coefficients });
+    endpoint = OdeTaylorPolynomialRange(model,h:h).Map((entry,axis)->
+        OdeIntersectIntervals(entry,segment[:stateEnd][axis],"Taylor endpoint")
+    );
+    tube = OdeTaylorPolynomialRange(model,0:h);
+    .ImmutableValue(model.Merge({=
+        segmentKind=:validatedTaylorTube,method=:validatedTaylor,
+        interpolation=:higherOrderTaylorInterval,order=order,
+        stateEnd=endpoint,tube=tube,picardTube=segment[:tube],
+        remainderBound=coefficients[order].Reduce((largest,range)->.Max(largest,OdeIntervalMagnitude(range)*h^order),0),
+        evidence={= theorem=:higherOrderTaylorRemainderInsidePicardTube,
+            existenceAndUniqueness=segment[:evidence],
+            derivativeRanges=ranges.Map((row)->row.Map((result)->result[:evidence])),
+            totalDerivativeIdentities=identities,
+            order=order,endpointIntersection=1,tubeIntersection=1 }
+    }));
 };
 
 OdeTaylorizeSegment(problem, segment, secondDerivatives, maxSubintervals) -> {;
@@ -23023,34 +23064,46 @@ OdeTaylorizeSegment(problem, segment, secondDerivatives, maxSubintervals) -> {;
       ?_ segment;
 };
 
-OdeValidatedTaylor2(problemValue, options ?= {= }, adaptive ?= _) -> {;
+OdeValidatedTaylor2(problemValue, options ?= {= }, adaptive ?= _, general ?= _) -> {;
     problem = OdeRequireProblem(problemValue);
     options = OdeRequireOptions(options,"ODE ValidatedTaylor2 options");
-    steps = OdeRequirePositiveInteger(OdeOption(options,"steps",4),"ODE ValidatedTaylor2 steps");
+    steps = OdeRequirePositiveInteger(OdeOption(options,"steps",4),"ODE Taylor steps",9007199254740991);
+    maxOrder = OdeRequirePositiveInteger(OdeOption(options,"maxorder",8),"ODE maxOrder",9007199254740991);
+    order = general ?: OdeRequirePositiveInteger(OdeOption(options,"order",4),"ODE order",maxOrder) ?_ 2;
+    order>=2 ?_> .Error("ODE Taylor order must be at least two");
+    derivativeOptions = OdeRequireOptions(OdeOption(options,"derivativeoptions",{= }),"ODE derivativeOptions");
     maxAttempts = adaptive
-      ?: OdeRequirePositiveInteger(OdeOption(options,"maxattempts",256),"ODE maxAttempts")
+      ?: OdeRequirePositiveInteger(OdeOption(options,"maxattempts",256),"ODE maxAttempts",9007199254740991)
       ?_ steps;
     minimumStepValue = OdeOption(options,"minimumstep",1/1048576);
     minimumStep = OdeRequirePositiveRational(minimumStepValue,"ODE minimumStep");
     toleranceValue = OdeOption(options,"remaindertolerance",_);
     remainderTolerance = toleranceValue==_ ?: _ ?_ OdeRequirePositiveRational(toleranceValue,"ODE remainderTolerance");
     maxTubeIterations = OdeRequirePositiveInteger(
-        OdeOption(options,"maxtubeiterations",8),"ODE maxTubeIterations",32
+        OdeOption(options,"maxtubeiterations",8),"ODE maxTubeIterations",9007199254740991
     );
     maxSubintervals = OdeRequirePositiveInteger(
-        OdeOption(options,"maxsubintervals",4),"ODE maxSubintervals",64
+        OdeOption(options,"maxsubintervals",4),"ODE maxSubintervals",9007199254740991
     );
     tubeRadiusValue = OdeOption(options,"tuberadius",_);
     tubeRadius = tubeRadiusValue == _ ?: _ ?_ OdeRequirePositiveRational(tubeRadiusValue,"ODE tubeRadius");
     stateDerivatives = problem[:rhs].Map((expression)->problem[:stateNames].Map((name)->
-        OdeCheckedPartial(expression,name,"Picard state")
+        OdeCheckedPartial(expression,name,"Picard state",@derivativeOptions)
     ));
     secondDerivatives = problem[:rhs].Map((expression,index)->
-        OdeTotalDerivative(expression,@problem,@"right-hand side @{index}")
+        OdeTotalDerivative(expression,@problem,@"right-hand side @{index}",@derivativeOptions)
     );
+    derivativeRows := [problem[:rhs],secondDerivatives.Map((derivative)->derivative[:expression])];
+    derivativeEvidence := [secondDerivatives];
+    {@ power=3; power<=@order; {;
+        row = @derivativeRows[@derivativeRows.Len()].Map((expression)->OdeTotalDerivative(expression,@problem,"higher order",@derivativeOptions));
+        @derivativeRows ~= @derivativeRows.Push(row.Map((derivative)->derivative[:expression]));
+        @derivativeEvidence ~= @derivativeEvidence.Push(row);
+    }; power+=1 };
+    rangeOptions = OdeRequireOptions(OdeOption(options,"rangeoptions",{= }),"ODE rangeOptions").Merge({= maxSubintervals=maxSubintervals });
     normalized = {=
         maxTubeIterations=maxTubeIterations,
-        maxSubintervals=maxSubintervals,
+        maxSubintervals=rangeOptions,
         tubeRadius=tubeRadius
     };
     lower = problem[:initialTime];
@@ -23071,10 +23124,12 @@ OdeValidatedTaylor2(problemValue, options ?= {= }, adaptive ?= _) -> {;
        picard = OdeValidatedSegment(
            @problem,@points.Len(),@time,nextTime,@state,@stateDerivatives,@normalized
        );
-       segment = OdeTaylorizeSegment(@problem,picard,@secondDerivatives,@maxSubintervals);
+       segment = @general
+         ?: OdeTaylorizeOrder(@problem,picard,@derivativeRows,@derivativeEvidence,@rangeOptions,@order)
+         ?_ OdeTaylorizeSegment(@problem,picard,@secondDerivatives,@rangeOptions);
        remainderBound = segment[:certified]==1
-         ?: segment[:secondDerivativeRange].Reduce((largest,range)->
-             .Max(largest,OdeIntervalMagnitude(range)*@h*@h/2),0)
+         ?: (@general ?: segment[:remainderBound] ?_ segment[:secondDerivativeRange].Reduce((largest,range)->
+             .Max(largest,OdeIntervalMagnitude(range)*@h*@h/2),0))
          ?_ _;
        accepted = segment[:certified]==1 && (!@adaptive || @remainderTolerance==_ || remainderBound<=@remainderTolerance);
        @attempts ~= @attempts.Push({=
@@ -23107,7 +23162,7 @@ OdeValidatedTaylor2(problemValue, options ?= {= }, adaptive ?= _) -> {;
         valueKind=:odeSolution,
         schema="rix.ode.solution@1",
         problem=problem,
-        method=adaptive ?: :adaptiveValidatedTaylor2 ?_ :validatedTaylor2,
+        method=general ?: (adaptive ?: :adaptiveValidatedTaylor ?_ :validatedTaylor) ?_ (adaptive ?: :adaptiveValidatedTaylor2 ?_ :validatedTaylor2),
         status=complete ?: :validated ?_ :partial,
         classification=complete ?: :certifiedTaylorTube ?_ :unresolvedTaylorTube,
         stateNames=problem[:stateNames],
@@ -23118,10 +23173,10 @@ OdeValidatedTaylor2(problemValue, options ?= {= }, adaptive ?= _) -> {;
         finalState=complete ?: state ?_ _,
         certified=complete ?: 1 ?_ _,
         evidenceLevel=complete ?: :proof ?_ :partialProof,
-        derivative={= stateJacobian=stateDerivatives,totalRhsDerivative=secondDerivatives },
+        derivative={= stateJacobian=stateDerivatives,totalRhsDerivative=secondDerivatives,higherDerivatives=derivativeEvidence },
         wrappingControl={=
-            kind=:secondOrderTaylorRecentering,
-            order=2,
+            kind=general ?: :higherOrderTaylorRecentering ?_ :secondOrderTaylorRecentering,
+            order=order,
             baseExistenceTube=:validatedPicard,
             affineArithmetic=_
         },
@@ -23135,6 +23190,7 @@ OdeValidatedTaylor2(problemValue, options ?= {= }, adaptive ?= _) -> {;
             maxAttempts=maxAttempts,
             minimumStep=minimumStep,
             remainderTolerance=remainderTolerance,
+            order=order,maxOrder=maxOrder,rangeOptions=rangeOptions,derivativeOptions=derivativeOptions,
             stopReason=complete ?: _ ?_ stopReason,
             exhausted=!complete
         },
@@ -23491,6 +23547,8 @@ odeProblemProto = {=
     ValidatedPicard=(self, options ?= {= })->OdeValidatedPicard(self,options),
     ValidatedTaylor2=(self, options ?= {= })->OdeValidatedTaylor2(self,options),
     AdaptiveValidatedTaylor2=(self, options ?= {= })->OdeValidatedTaylor2(self,options,1),
+    ValidatedTaylor=(self, options ?= {= })->OdeValidatedTaylor2(self,options,_,1),
+    AdaptiveValidatedTaylor=(self, options ?= {= })->OdeValidatedTaylor2(self,options,1,1),
     Record=(self)->OdeRecord(self)
 };
 
@@ -23512,6 +23570,8 @@ odeNamespace._proto = {=
     ValidatedPicard=(self,problem,options ?= {= })->OdeValidatedPicard(problem,options),
     ValidatedTaylor2=(self,problem,options ?= {= })->OdeValidatedTaylor2(problem,options),
     AdaptiveValidatedTaylor2=(self,problem,options ?= {= })->OdeValidatedTaylor2(problem,options,1),
+    ValidatedTaylor=(self,problem,options ?= {= })->OdeValidatedTaylor2(problem,options,_,1),
+    AdaptiveValidatedTaylor=(self,problem,options ?= {= })->OdeValidatedTaylor2(problem,options,1,1),
     Event=(self,expression,options ?= {= })->OdeEvent(expression,options),
     IsolateEvents=(self,solution,event ?= _,options ?= {= })->OdeIsolateEvents(solution,event,options),
     At=(self,solution,time)->OdeAt(solution,time),
@@ -35558,5 +35618,5 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
 
 export { pluginProfileFromUrl, stripMarkedPluginProfile, findHelp, createRixRepl };
 
-//# debugId=2AA823BD8D0B287564756E2164756E21
-//# sourceMappingURL=chunk-xnap6qpb.js.map
+//# debugId=8F32B3C5DD8E6A5E64756E2164756E21
+//# sourceMappingURL=chunk-4k60w44f.js.map
