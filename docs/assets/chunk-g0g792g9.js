@@ -9265,17 +9265,50 @@ function taylorBounds(value, cosine, limits, check, unsupported) {
   return unsupported("trigonometricSeriesBudgetExceeded");
 }
 function evaluateTrigonometric(value, cosine, limits, check, unsupported) {
-  const one = new Rational(1n), minusOne = new Rational(-1n), two = new Rational(2n);
+  const one = new Rational(1n), minusOne = new Rational(-1n);
   const interval = value instanceof RationalInterval;
-  const center = interval ? check(check(value.low.add(value.high)).divide(two)) : value;
-  const bounds = pointBounds(center, cosine, limits, check, unsupported);
+  const bounds = pointBounds(interval ? value.low : value, cosine, limits, check, unsupported);
   if (!bounds)
     return null;
   let [low, high] = bounds;
-  if (interval) {
-    const radius = check(check(value.high.subtract(value.low)).divide(two));
-    low = check(low.subtract(radius));
-    high = check(high.add(radius));
+  if (interval && !value.low.equals(value.high)) {
+    const upper = pointBounds(value.high, cosine, limits, check, unsupported);
+    if (!upper)
+      return null;
+    if (upper[0].lessThan(low))
+      low = upper[0];
+    if (upper[1].greaterThan(high))
+      high = upper[1];
+    const magnitude = value.low.abs().greaterThan(value.high.abs()) ? value.low.abs() : value.high.abs();
+    const bits = (magnitude.numerator / magnitude.denominator).toString(2).length;
+    if (bits > limits.maxexponent)
+      return unsupported("trigonometricReductionBudgetExceeded");
+    const pi = piBounds({ ...limits, transcendentalbits: limits.transcendentalbits + bits + 3 }, check, unsupported);
+    if (!pi)
+      return null;
+    const quotients = [value.low, value.high].flatMap((x) => pi.map((p) => check(x.divide(p))));
+    let lower = quotients[0], upperQ = quotients[0];
+    for (const q of quotients) {
+      if (q.lessThan(lower))
+        lower = q;
+      if (q.greaterThan(upperQ))
+        upperQ = q;
+    }
+    if (!cosine) {
+      lower = check(lower.subtract(new Rational(1n, 2n)));
+      upperQ = check(upperQ.subtract(new Rational(1n, 2n)));
+    }
+    const floor = (q) => q.numerator >= 0n ? q.numerator / q.denominator : -((-q.numerator + q.denominator - 1n) / q.denominator);
+    const first = -floor(lower.negate()), last = floor(upperQ);
+    if (first <= last) {
+      if (first < last) {
+        low = minusOne;
+        high = one;
+      } else if (first % 2n === 0n)
+        high = one;
+      else
+        low = minusOne;
+    }
   }
   if (low.lessThan(minusOne))
     low = minusOne;
@@ -103554,5 +103587,5 @@ var STATIC_SYSTEM_CATALOG = Object.freeze([
 ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
 export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, outputValueKind, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, formatOutputText, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateObserved, parseAndEvaluateObservedAsync, lintRix, createGeometryAuthoringProgram, mountOutputWidgets };
 
-//# debugId=19CE5AAFC7D6C84364756E2164756E21
-//# sourceMappingURL=chunk-and14ag9.js.map
+//# debugId=646A10A49D1E0B5E64756E2164756E21
+//# sourceMappingURL=chunk-g0g792g9.js.map

@@ -117,5 +117,6 @@ for (const [mode,evaluate] of [["sync",parseAndEvaluate],["async",parseAndEvalua
         expect(results[47].values.map(v=>v?.type==='string'?v.value:String(v))).toEqual(["0","1","enclosed","1","setEnclosure","unresolved"]);
         expect(results[48].values.map(v=>v?.type==='string'?v.value:String(v))).toEqual(["1","1/2","1/2","enclosed","1/2"]);
         expect(results[49].values.map(v=>v.value)).toEqual(["enclosed","unresolved"]);
+        expect(results[50].values.map(String)).toEqual(["1","1","-1:1"]);
     });
 }

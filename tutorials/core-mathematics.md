@@ -768,13 +768,12 @@ rational sizes. Increase those per-call limits for more work. This first version
 now reduces large radian angles using certified pi bounds; `maxExponent` caps
 the input integer magnitude's bit length for this reduction.
 
-For interval inputs, evaluation widens a certified midpoint value by half the
-input width, using the fact that both derivatives have magnitude at most one.
-Intersecting with `[-1,1]` keeps the range bounded and covers interior extrema,
-but is conservative; raising precision cannot eliminate input uncertainty.
+For interval inputs, evaluation encloses endpoints and uses certified pi bounds
+to include every possible interior maximum or minimum. Ambiguous boundary
+membership is treated conservatively; raising precision cannot eliminate input uncertainty.
 Stored real enclosures work without refinement, and frozen imports keep conditional
-status. Canonical rational pi multiples are supported below; tighter periodic
-interval ranges and additional CAS rewrite rules remain future work.
+status. Canonical rational pi multiples are supported below; additional CAS
+rewrite rules remain future work.
 
 ## Pi angles and exact turns
 
@@ -826,3 +825,19 @@ symbol `::pi` or a custom generator `pi` does not grant it that identity.
 The kernel encloses pi accurately enough to subtract whole revolutions without
 losing the requested precision. `maxExponent` caps reduction precision amplification,
 `maxSumTerms` caps each series, and `maxDigits` limits rational sizes. All are per-call.
+
+## Extrema-aware interval ranges
+
+```rix edu
+.Plugin.Load("calculus");
+{;
+    expr := .calculus.Sin()(::x);
+    peak := expr.Eval([(::x,1:2)])[:enclosure];
+    wide := expr.Eval([(::x,(-100):100)])[:enclosure];
+    (peak.Start()>4/5,peak.End(),wide);
+};
+```
+
+The peak range retains the maximum 1 while its lower bound is above 4/5.
+A wide interval includes both extrema and returns `-1:1`. Integer-index bounds
+find extrema without iterating over the revolutions in the interval.
