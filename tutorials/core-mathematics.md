@@ -765,7 +765,8 @@ would miss that maximum.
 Inspect `ans[:enclosure]` for the point bounds. `transcendentalBits` controls point
 precision, `maxSumTerms` caps Taylor terms, and `maxDigits` bounds intermediate
 rational sizes. Increase those per-call limits for more work. This first version
-does not reduce large angles, so `maxExponent` has no role in these two kernels.
+now reduces large radian angles using certified pi bounds; `maxExponent` caps
+the input integer magnitude's bit length for this reduction.
 
 For interval inputs, evaluation widens a certified midpoint value by half the
 input width, using the fact that both derivatives have magnitude at most one.
@@ -809,3 +810,19 @@ work yields an unresolved report; exact special angles need no series. This does
 not yet simplify arbitrary symbolic identities, or accept pi+1 or pi^2 as trig
 arguments. The built-in `1~{pi}` identity survives JSON/JSONL; naming an ordinary
 symbol `::pi` or a custom generator `pi` does not grant it that identity.
+
+## Large radian arguments
+
+```rix edu
+.Plugin.Load("calculus");
+{;
+    expr := .calculus.Sin()(::x);
+    ans := expr.Eval([(::x,1000000)],{= transcendentalBits=32,maxExponent=32 });
+    limited := expr.Eval([(::x,1000000)],{= maxExponent=4 });
+    (ans[:status],limited[:status]);
+};
+```
+
+The kernel encloses pi accurately enough to subtract whole revolutions without
+losing the requested precision. `maxExponent` caps reduction precision amplification,
+`maxSumTerms` caps each series, and `maxDigits` limits rational sizes. All are per-call.

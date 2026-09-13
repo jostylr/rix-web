@@ -26228,6 +26228,26 @@ ${indented.join(`,
     return negative ? check(result.negate()) : result;
   }
   function pointBounds(value, cosine, limits, check, unsupported) {
+    if (value.abs().lessThanOrEqual(new Rational(4n)))
+      return taylorBounds(value, cosine, limits, check, unsupported);
+    const magnitudeBits = (value.numerator / value.denominator).toString(2).replace("-", "").length;
+    if (magnitudeBits > limits.maxexponent)
+      return unsupported("trigonometricReductionBudgetExceeded");
+    const pi = piBounds({ ...limits, transcendentalbits: limits.transcendentalbits + magnitudeBits + 3 }, check, unsupported);
+    if (!pi)
+      return null;
+    const period = check(pi[0].add(pi[1]));
+    const quotient = check(check(value.divide(period)).add(new Rational(1n, 2n)));
+    const k = quotient.numerator >= 0n ? quotient.numerator / quotient.denominator : -((-quotient.numerator + quotient.denominator - 1n) / quotient.denominator);
+    const multiplier = new Rational(2n * k);
+    const a = check(value.subtract(check(multiplier.multiply(pi[0]))));
+    const b = check(value.subtract(check(multiplier.multiply(pi[1]))));
+    const center = check(check(a.add(b)).divide(new Rational(2n)));
+    const radius = check(check(a.subtract(b)).abs().divide(new Rational(2n)));
+    const bounds = taylorBounds(center, cosine, { ...limits, transcendentalbits: limits.transcendentalbits + 1 }, check, unsupported);
+    return bounds ? [check(bounds[0].subtract(radius)), check(bounds[1].add(radius))] : null;
+  }
+  function taylorBounds(value, cosine, limits, check, unsupported) {
     const zero = new Rational(0n), one = new Rational(1n);
     if (value.equals(zero))
       return cosine ? [one, one] : [zero, zero];

@@ -9223,6 +9223,26 @@ function evaluatePiTrigonometric(value, cosine, limits, check, unsupported) {
   return negative ? check(result.negate()) : result;
 }
 function pointBounds(value, cosine, limits, check, unsupported) {
+  if (value.abs().lessThanOrEqual(new Rational(4n)))
+    return taylorBounds(value, cosine, limits, check, unsupported);
+  const magnitudeBits = (value.numerator / value.denominator).toString(2).replace("-", "").length;
+  if (magnitudeBits > limits.maxexponent)
+    return unsupported("trigonometricReductionBudgetExceeded");
+  const pi = piBounds({ ...limits, transcendentalbits: limits.transcendentalbits + magnitudeBits + 3 }, check, unsupported);
+  if (!pi)
+    return null;
+  const period = check(pi[0].add(pi[1]));
+  const quotient = check(check(value.divide(period)).add(new Rational(1n, 2n)));
+  const k = quotient.numerator >= 0n ? quotient.numerator / quotient.denominator : -((-quotient.numerator + quotient.denominator - 1n) / quotient.denominator);
+  const multiplier = new Rational(2n * k);
+  const a = check(value.subtract(check(multiplier.multiply(pi[0]))));
+  const b = check(value.subtract(check(multiplier.multiply(pi[1]))));
+  const center = check(check(a.add(b)).divide(new Rational(2n)));
+  const radius = check(check(a.subtract(b)).abs().divide(new Rational(2n)));
+  const bounds = taylorBounds(center, cosine, { ...limits, transcendentalbits: limits.transcendentalbits + 1 }, check, unsupported);
+  return bounds ? [check(bounds[0].subtract(radius)), check(bounds[1].add(radius))] : null;
+}
+function taylorBounds(value, cosine, limits, check, unsupported) {
   const zero = new Rational(0n), one = new Rational(1n);
   if (value.equals(zero))
     return cosine ? [one, one] : [zero, zero];
@@ -103534,5 +103554,5 @@ var STATIC_SYSTEM_CATALOG = Object.freeze([
 ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
 export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, outputValueKind, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, formatOutputText, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateObserved, parseAndEvaluateObservedAsync, lintRix, createGeometryAuthoringProgram, mountOutputWidgets };
 
-//# debugId=980FF9A6537DBBB064756E2164756E21
-//# sourceMappingURL=chunk-68pxgwcm.js.map
+//# debugId=19CE5AAFC7D6C84364756E2164756E21
+//# sourceMappingURL=chunk-and14ag9.js.map
