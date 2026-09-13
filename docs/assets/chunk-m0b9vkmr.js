@@ -11126,7 +11126,12 @@ function validateRangeTraversal(expression, options) {
     for (const child of children)
       stack.push([child, level + 1]);
   }
-  return Object.freeze({ maxDepth: limits.maxdepth, maxWork: maxVisits, maxSubintervals: subdivisionCount(options) });
+  return Object.freeze({
+    maxDepth: limits.maxdepth,
+    maxWork: maxVisits,
+    maxSubintervals: subdivisionCount(options),
+    semanticBudgets: mathBudgets(mapValue(options, "semanticbudgets"))
+  });
 }
 function bindingFingerprint(bindings) {
   return [...bindings.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([name, value]) => `${name}=${value.toString()}`).join(";");
@@ -11358,7 +11363,38 @@ function evaluateNode(expression, bindings, state) {
       }
     }
   } else if (kind === "apply") {
-    throw new Error(`unsupportedSemanticApplication:${textValue(mapValue(expression, "semanticid"))}`);
+    const id = textValue(mapValue(expression, "semanticid"));
+    if (!["rix.function.sin@1", "rix.function.cos@1"].includes(id))
+      throw new Error(`unsupportedSemanticApplication:${id}`);
+    const args = expressionChildren(expression, "arguments");
+    if (args.length !== 1)
+      throw new Error("semanticArityMismatch");
+    const child = evaluateNode(args[0], bindings, state);
+    const reasons = new Set, provider = createProviderEvaluation(reasons, state.semanticBudgets);
+    let range = RationalIntervalSet.empty;
+    for (const component of child.range.components) {
+      if (++state.nodes > state.maxNodes)
+        throw new Error("calculusGraphWorkLimit");
+      if (component.low === null || component.high === null) {
+        range = range.union(new RationalIntervalSet(new RationalInterval(-1, 1)));
+        continue;
+      }
+      const input = provider.read(new RationalInterval(component.low, component.high));
+      const output = provider.apply(id, [input]);
+      if (output === null)
+        throw new Error([...reasons].join(","));
+      range = range.union(asRationalIntervalSet(output));
+    }
+    result = graphNodeResult({
+      range,
+      coverage: child.coverage,
+      exclusions: child.exclusions,
+      certified: child.certified,
+      exactImage: false,
+      dependencies: child.dependencies,
+      nodeId: null
+    });
+    result.nodeId = appendTrace(state, "semantic.realTrigonometric", graphKey, [child.nodeId], exactSetConclusion(result), { semanticId: id, operand: child.range, budgets: state.semanticBudgets });
   } else {
     throw new Error(`unsupportedGraphKind:${String(kind)}`);
   }
@@ -11425,7 +11461,8 @@ function evaluateWithBindings(expression, bindings, options, conventions) {
     reuses: 0,
     maxNodes: maxNodeCount(options),
     bindingKey: bindingFingerprint(bindings),
-    zeroPowerZero: conventions.zeroPowerZero
+    zeroPowerZero: conventions.zeroPowerZero,
+    semanticBudgets: mathBudgets(mapValue(options, "semanticbudgets"))
   };
   const result = evaluateNode(expression, bindings, state);
   return { result, state };
@@ -103587,5 +103624,5 @@ var STATIC_SYSTEM_CATALOG = Object.freeze([
 ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
 export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, outputValueKind, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, formatOutputText, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateObserved, parseAndEvaluateObservedAsync, lintRix, createGeometryAuthoringProgram, mountOutputWidgets };
 
-//# debugId=646A10A49D1E0B5E64756E2164756E21
-//# sourceMappingURL=chunk-g0g792g9.js.map
+//# debugId=83A9AC4FE2525BB064756E2164756E21
+//# sourceMappingURL=chunk-m0b9vkmr.js.map

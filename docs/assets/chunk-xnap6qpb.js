@@ -48,7 +48,7 @@ import {
   parseAndEvaluateObservedAsync,
   renderOutputHtml,
   tokenize
-} from "./chunk-g0g792g9.js";
+} from "./chunk-m0b9vkmr.js";
 
 // standard-profile.rix
 var standard_profile_default = `## RiX-Web standard calculator profile.
@@ -35559,4 +35559,4 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
 export { pluginProfileFromUrl, stripMarkedPluginProfile, findHelp, createRixRepl };
 
 //# debugId=2AA823BD8D0B287564756E2164756E21
-//# sourceMappingURL=chunk-sejg19m3.js.map
+//# sourceMappingURL=chunk-xnap6qpb.js.map

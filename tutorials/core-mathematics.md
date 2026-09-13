@@ -841,3 +841,27 @@ losing the requested precision. `maxExponent` caps reduction precision amplifica
 The peak range retains the maximum 1 while its lower bound is above 4/5.
 A wide interval includes both extrema and returns `-1:1`. Integer-index bounds
 find extrema without iterating over the revolutions in the interval.
+
+## Certified trigonometric graph consumers
+
+```rix edu
+.Plugin.Load("calculus"); .Plugin.Load("numerics");
+{;
+    expr := .calculus.Sin()(::x);
+    ans := .numerics.GraphRange(expr,[(::x,1:2)],
+        {= semanticBudgets={= transcendentalBits=32 } });
+    d := .calculus.DifferentiateResult(expr,::x);
+    sign := .numerics.DerivativeSign(d,[(::x,0:1)]);
+    bound := .numerics.LipschitzRange(d,[(::x,0:1)]);
+    (ans[:certified],ans[:exactImage],.numerics.CheckGraphRange(ans)[:certified],
+     sign[:direction],bound[:certified]);
+};
+```
+
+GraphRange now uses the closed sine/cosine kernels and can replay their range
+claims. The results are enclosures, not exact images, and input holes remain
+attached. `semanticBudgets` configures kernel precision/work independently of
+graph traversal and subdivision. Derivative-sign and Lipschitz consumers inherit
+the support, providing a base for further solver/ODE/optimization work rather
+than a new solver by themselves. This graph path still requires rational scalar
+constants; use core `Eval` for canonical pi and extended providers.

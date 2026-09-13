@@ -118,5 +118,6 @@ for (const [mode,evaluate] of [["sync",parseAndEvaluate],["async",parseAndEvalua
         expect(results[48].values.map(v=>v?.type==='string'?v.value:String(v))).toEqual(["1","1/2","1/2","enclosed","1/2"]);
         expect(results[49].values.map(v=>v.value)).toEqual(["enclosed","unresolved"]);
         expect(results[50].values.map(String)).toEqual(["1","1","-1:1"]);
+        expect(results[51].values.map(v=>v?.type==='string'?v.value:String(v))).toEqual(["1","null","1","nondecreasing","1"]);
     });
 }

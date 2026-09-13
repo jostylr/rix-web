@@ -28131,7 +28131,12 @@ ${indented.join(`,
       for (const child of children)
         stack.push([child, level + 1]);
     }
-    return Object.freeze({ maxDepth: limits.maxdepth, maxWork: maxVisits, maxSubintervals: subdivisionCount(options) });
+    return Object.freeze({
+      maxDepth: limits.maxdepth,
+      maxWork: maxVisits,
+      maxSubintervals: subdivisionCount(options),
+      semanticBudgets: mathBudgets(mapValue(options, "semanticbudgets"))
+    });
   }
   function bindingFingerprint(bindings) {
     return [...bindings.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([name, value]) => `${name}=${value.toString()}`).join(";");
@@ -28363,7 +28368,38 @@ ${indented.join(`,
         }
       }
     } else if (kind === "apply") {
-      throw new Error(`unsupportedSemanticApplication:${textValue(mapValue(expression, "semanticid"))}`);
+      const id = textValue(mapValue(expression, "semanticid"));
+      if (!["rix.function.sin@1", "rix.function.cos@1"].includes(id))
+        throw new Error(`unsupportedSemanticApplication:${id}`);
+      const args = expressionChildren(expression, "arguments");
+      if (args.length !== 1)
+        throw new Error("semanticArityMismatch");
+      const child = evaluateNode(args[0], bindings, state);
+      const reasons = new Set, provider = createProviderEvaluation(reasons, state.semanticBudgets);
+      let range = RationalIntervalSet.empty;
+      for (const component of child.range.components) {
+        if (++state.nodes > state.maxNodes)
+          throw new Error("calculusGraphWorkLimit");
+        if (component.low === null || component.high === null) {
+          range = range.union(new RationalIntervalSet(new RationalInterval(-1, 1)));
+          continue;
+        }
+        const input = provider.read(new RationalInterval(component.low, component.high));
+        const output2 = provider.apply(id, [input]);
+        if (output2 === null)
+          throw new Error([...reasons].join(","));
+        range = range.union(asRationalIntervalSet(output2));
+      }
+      result = graphNodeResult({
+        range,
+        coverage: child.coverage,
+        exclusions: child.exclusions,
+        certified: child.certified,
+        exactImage: false,
+        dependencies: child.dependencies,
+        nodeId: null
+      });
+      result.nodeId = appendTrace(state, "semantic.realTrigonometric", graphKey, [child.nodeId], exactSetConclusion(result), { semanticId: id, operand: child.range, budgets: state.semanticBudgets });
     } else {
       throw new Error(`unsupportedGraphKind:${String(kind)}`);
     }
@@ -28430,7 +28466,8 @@ ${indented.join(`,
       reuses: 0,
       maxNodes: maxNodeCount(options),
       bindingKey: bindingFingerprint(bindings),
-      zeroPowerZero: conventions.zeroPowerZero
+      zeroPowerZero: conventions.zeroPowerZero,
+      semanticBudgets: mathBudgets(mapValue(options, "semanticbudgets"))
     };
     const result = evaluateNode(expression, bindings, state);
     return { result, state };
