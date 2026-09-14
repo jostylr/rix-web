@@ -75,6 +75,16 @@ solution := problem.ValidatedTaylor({= steps=4,order=3,maxSubintervals=1 });
 .plot.PhasePortrait(solution,{= xComponent=1,yComponent=2,title=&quot;Oscillator: certified position/velocity boxes&quot; });</code></pre></section>
 <p>Blue boxes enclose each accepted segment in both coordinates. They do not say that every point in a box is reachable, or trace a certified ellipse. Replace the solver call with <code>problem.RK4({= steps=16 })</code> for an orange <strong>approximate</strong> path. Swap <code>xComponent</code> and <code>yComponent</code> to exchange axes.</p>
 <p>Try adding <code>maxSegments=1</code> to the plot options. The visible warning reports missing time coverage; no gray spatial region is invented for unknown states. The retained metadata still gives the exact omitted time interval. Increase <code>maxSegments</code> to show more stored segments; this does not rerun the solver. Backward solutions retain their integration order in the segment records.</p>
+<h2>Mark an event</h2>
+<section class="comparison-code"><header>{.rix exec=true}</header><pre><code>.Plugin.Load(&quot;ode&quot;);
+.Plugin.Load(&quot;plot&quot;);
+y := .calculus.Variable(:y);
+event := .ode.Event(y-1/2,{= name=:half,direction=:rising });
+problem := .ode.IVP(.calculus.Constant(1),0,0,0:1,{= events=[event] });
+solution := problem.ValidatedTaylor({= steps=1,order=3,maxSubintervals=1 });
+result := solution.IsolateEvents()[1];
+.plot.EventTrajectory(result,{= title=&quot;A certified crossing of y=1/2&quot; });</code></pre></section>
+<p>The green line marks a certified unique event. With <code>problem.RK4()</code> instead, the orange overlay is only an observed candidate. For vector solutions, <code>EventPhasePortrait(result)</code> marks the source segment&#039;s entire state box, not an exact crossing point. <code>maxEvents</code> limits overlay work; <code>maxSegments</code> still limits displayed trajectory coverage. The plot consumes existing evidence and does not strengthen it.</p>
 <h2>Share a color policy</h2>
 <p>One portable scale can drive a heat map, a statistics graphic, and a complex magnitude coloring without becoming renderer state:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="9" spellcheck="false">.Plugin.Load(&quot;plot&quot;);

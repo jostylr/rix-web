@@ -2,6 +2,13 @@ import {test,expect} from 'bun:test';
 import {Context,createDefaultSystemContext,parseAndEvaluate,parseAndEvaluateAsync,renderOutputHtml,formatValue} from '../../rix/src/index.js';
 import {createBundledPluginCatalog} from '../src/generated/bundled-plugin-catalog.js';
 for(const [mode,evaluate] of [['sync',parseAndEvaluate],['async',parseAndEvaluateAsync]]) {
+    test(`${mode}: event overlay tutorial renders with retained classification`,async()=> {
+        const source=await Bun.file(new URL('../../rix/plugins/plot/tutorial.md',import.meta.url)).text();
+        const cell=[...source.matchAll(/```\{\.rix exec=true\}\n([\s\S]*?)```/g)].map(m=>m[1]).find(s=>s.includes('.plot.EventTrajectory'));
+        const result=await evaluate(cell,{context:new Context(),systemContext:createDefaultSystemContext({pluginCatalog:createBundledPluginCatalog()})});
+        expect(result.metadata.get('plot').entries.get('eventoverlays').values).toHaveLength(1);
+        expect(renderOutputHtml(result,formatValue)).toContain('certifiedUniqueEvent');
+    },30000);
     test(`${mode}: phase portrait tutorial renders retained enclosures in the browser`,async()=> {
         const source=await Bun.file(new URL('../../rix/plugins/plot/tutorial.md',import.meta.url)).text();
         const cells=[...source.matchAll(/```\{\.rix exec=true\}\n([\s\S]*?)```/g)].map(match=>match[1]);
