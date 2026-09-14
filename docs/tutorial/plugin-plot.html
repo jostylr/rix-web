@@ -85,6 +85,16 @@ solution := problem.ValidatedTaylor({= steps=1,order=3,maxSubintervals=1 });
 result := solution.IsolateEvents()[1];
 .plot.EventTrajectory(result,{= title=&quot;A certified crossing of y=1/2&quot; });</code></pre></section>
 <p>The green line marks a certified unique event. With <code>problem.RK4()</code> instead, the orange overlay is only an observed candidate. For vector solutions, <code>EventPhasePortrait(result)</code> marks the source segment&#039;s entire state box, not an exact crossing point. <code>maxEvents</code> limits overlay work; <code>maxSegments</code> still limits displayed trajectory coverage. The plot consumes existing evidence and does not strengthen it.</p>
+<h2>Link time plots and a phase portrait</h2>
+<section class="comparison-code"><header>{.rix exec=true}</header><pre><code>.Plugin.Load(&quot;ode&quot;);
+.Plugin.Load(&quot;plot&quot;);
+x := .calculus.Variable(:x);
+v := .calculus.Variable(:v);
+problem := .ode.IVP([v,-x],0,[1,0],0:1,{= stateNames=[:x,:v] });
+solution := problem.ValidatedTaylor({= steps=4,order=3,maxSubintervals=1 });
+.plot.LinkedTrajectory(solution,{= components=[1,2],phaseComponents=[1,2],columns=2 });</code></pre></section>
+<p>Select a blue segment box in any panel using the Graphics selection controls or keyboard. The corresponding solver segment highlights in all three panels. The selection links whole certified enclosures, not a guessed point on the solution. For approximate solvers the linked objects are approximate segments. <code>components</code> chooses time plots; <code>phaseComponents</code> optionally adds one phase portrait. <code>columns</code> arranges the panels; <code>size</code> sets each panel&#039;s dimensions. <code>maxPanels</code> (default 8) and <code>maxSegments</code> are adjustable display budgets.</p>
+<p>If your problem declares an event, use <code>.plot.LinkedEvents(solution.IsolateEvents()[1],options)</code> to link both segments and event overlays across the same panels. Static exports retain all panels and evidence but do not provide browser selection controls. This is segment selection, not continuous time scrubbing or a new dense-output computation.</p>
 <h2>Share a color policy</h2>
 <p>One portable scale can drive a heat map, a statistics graphic, and a complex magnitude coloring without becoming renderer state:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="9" spellcheck="false">.Plugin.Load(&quot;plot&quot;);

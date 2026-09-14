@@ -48,7 +48,7 @@ import {
   parseAndEvaluateObservedAsync,
   renderOutputHtml,
   tokenize
-} from "./chunk-704ttmtp.js";
+} from "./chunk-t03q2nq0.js";
 
 // standard-profile.rix
 var standard_profile_default = `## RiX-Web standard calculator profile.
@@ -25932,17 +25932,17 @@ oracleNamespace._proto = {=
 `, sourcePath: "bundled:oracle", kind: "rix" });
   catalog.addMetadata({ id: "pdf", description: "PDF document and figure renderer orchestrated through LaTeX.", kind: "host", mount: "pdf", exports: ["Render"], groups: ["Renderers"], permissions: ["process", "files"], provides: ["rix.renderer.pdf@1", "rix.renderer.pdf@2"], schemas: ["rix.pdf.render@2"], targets: ["pdf", "application/pdf"], snapshot: true, deterministic: false, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], operatorFiles: [], ignore: false, sourcePath: "bundled:pdf" }, { sourcePath: "bundled:pdf", kind: "host" });
   catalog.registerInstaller("pdf", install16);
-  catalog.addMetadata({ id: "plot", description: "Pure-RiX exact and numerics-backed 2D plotting that lowers to portable core Graphics scenes.", kind: "rix", mount: "plot", exports: ["Polynomial", "PolynomialPOI", "Function", "Parametric", "Scatter", "Line", "Bar", "Step", "Polar", "ErrorBand", "Interval", "Trajectory", "PhasePortrait", "EventTrajectory", "EventPhasePortrait", "Implicit", "Inequality", "Contour", "HeatMap", "VectorField", "ColorScale"], groups: ["Plot", "Graphics", "Exact"], permissions: [], requires: ["rix.numerics@1"], provides: ["rix.plot@1", "rix.plot.poi@1", "rix.plot.refinement-policy@1"], schemas: ["rix.plot@1", "rix.plot.poi@1", "rix.plot.band-evidence@1", "rix.color-scale@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:plot" }, { source: `/**
+  catalog.addMetadata({ id: "plot", description: "Pure-RiX exact and numerics-backed 2D plotting that lowers to portable core Graphics scenes.", kind: "rix", mount: "plot", exports: ["Polynomial", "PolynomialPOI", "Function", "Parametric", "Scatter", "Line", "Bar", "Step", "Polar", "ErrorBand", "Interval", "Trajectory", "PhasePortrait", "EventTrajectory", "EventPhasePortrait", "LinkedTrajectory", "LinkedEvents", "Implicit", "Inequality", "Contour", "HeatMap", "VectorField", "ColorScale"], groups: ["Plot", "Graphics", "Exact"], permissions: [], requires: ["rix.numerics@1"], provides: ["rix.plot@1", "rix.plot.poi@1", "rix.plot.refinement-policy@1"], schemas: ["rix.plot@1", "rix.plot.poi@1", "rix.plot.band-evidence@1", "rix.color-scale@1", "rix.plot.linked-trajectory@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:plot" }, { source: `/**
 id: plot
 description: Pure-RiX exact and numerics-backed 2D plotting that lowers to portable core Graphics scenes.
 kind: rix
 mount: plot
-exports: [Polynomial, PolynomialPOI, Function, Parametric, Scatter, Line, Bar, Step, Polar, ErrorBand, Interval, Trajectory, PhasePortrait, EventTrajectory, EventPhasePortrait, Implicit, Inequality, Contour, HeatMap, VectorField, ColorScale]
+exports: [Polynomial, PolynomialPOI, Function, Parametric, Scatter, Line, Bar, Step, Polar, ErrorBand, Interval, Trajectory, PhasePortrait, EventTrajectory, EventPhasePortrait, LinkedTrajectory, LinkedEvents, Implicit, Inequality, Contour, HeatMap, VectorField, ColorScale]
 groups: [Plot, Graphics, Exact]
 permissions: []
 requires: [rix.numerics@1]
 provides: [rix.plot@1, rix.plot.poi@1, rix.plot.refinement-policy@1]
-schemas: [rix.plot@1, rix.plot.poi@1, rix.plot.band-evidence@1, rix.color-scale@1]
+schemas: [rix.plot@1, rix.plot.poi@1, rix.plot.band-evidence@1, rix.color-scale@1, rix.plot.linked-trajectory@1]
 snapshot: true
 deterministic: true
 defaultEnabled: false
@@ -27201,7 +27201,7 @@ PlotVectorField(fn,xDomain,yDomain,settings ?= {= }) -> {;
 
 PlotDataCall(data, options, kind) -> PlotGeneral(data, options, kind);
 
-PlotTrajectory(solution, settings ?= {= }, phase ?= _, eventResults ?= []) -> {;
+PlotTrajectory(solution, settings ?= {= }, phase ?= _, eventResults ?= [], panel ?= _) -> {;
     settings ? :Map ?_> .Error("trajectory options must be a map");
     settings=settings.Merge({= margin=PlotOption(settings,"margin",64) });
     solution ? :Map ?_> .Error("trajectory requires an ODE solution record");
@@ -27243,7 +27243,7 @@ PlotTrajectory(solution, settings ?= {= }, phase ?= _, eventResults ?= []) -> {;
               @xmin ~= .Min(@xmin,xlow); @xmax ~= .Max(@xmax,xhigh);
               @ymin ~= .Min(@ymin,low); @ymax ~= .Max(@ymax,high);
               @records ~= @records.Push({=
-                  id=@"trajectory-@{@index}",index=@index,tStart=@a,tEnd=@b,low=low,high=high,
+                  id=@panel==_ ?: @"trajectory-@{@index}" ?_ @"panel-@{@panel}-trajectory-@{@index}",index=@index,tStart=@a,tEnd=@b,low=low,high=high,
                   xLow=xlow,xHigh=xhigh,xStart=xstart,xEnd=xend,
                   kind=@certified ?: :certifiedTube ?_ :approximateSegment,
                   sourceEvidence=@certified ?: @segment[:evidence] ?_ _,
@@ -27315,7 +27315,7 @@ PlotTrajectory(solution, settings ?= {= }, phase ?= _, eventResults ?= []) -> {;
                 ylo=@phase ?: record[:low] ?_ @bounds[:ymin];
                 yhi=@phase ?: record[:high] ?_ @bounds[:ymax];
                 a=PlotProject([xlo,yhi],@config); b=PlotProject([xhi,ylo],@config);
-                id=@"event-@{@eventCount}";
+                id=@panel==_ ?: @"event-@{@eventCount}" ?_ @"panel-@{@panel}-event-@{@eventCount}";
                 @children ~= @children.Push(xlo==xhi
                     ?: .Graphics.Path([a,b],{= stroke=color,width=2,hitId=id })
                     ?_ .Graphics.Rectangle(a,[b[1]-a[1],b[2]-a[2]],{= fill=color,opacity=1/5,stroke=color,width=2,hitId=id }));
@@ -27345,7 +27345,7 @@ PlotTrajectory(solution, settings ?= {= }, phase ?= _, eventResults ?= []) -> {;
         xlabel=PlotOption(settings,"xlabel",phase ?: solution[:stateNames][xcomponent] ?_ solution[:problem][:independent]),
         ylabel=PlotOption(settings,"ylabel",solution[:stateNames][component])
     });
-    PlotFieldGraphic(phase ?: :phase_portrait ?_ :trajectory,config,labels,children,{=
+    details={=
         status=unresolved.Len()>0 ?: :partial ?_ (approximateCount>0 ?: :approximate ?_ :enclosed),
         records=records,series=series,unresolvedRegions=unresolved,rendering=phase ?: :odeProjectedTubeBoxes ?_ :odeSegmentEnclosures,
         eventOverlays=overlays,eventDisplay={= candidates=eventCount,displayed=overlays.Len(),maxEvents=maxEvents },
@@ -27356,7 +27356,57 @@ PlotTrajectory(solution, settings ?= {= }, phase ?= _, eventResults ?= []) -> {;
             requestedInterval=domain,displayedInterval=start:cursor,
             certifiedSegments=certifiedCount,approximateSegments=approximateCount },
         legend=[{= label="Certified source tube",color="#1d4ed8" },{= label="Approximate segment",color="#c2410c" },{= label="Uncomputed / omitted",color="#cbd5e1" }]
+    };
+    panel==_ ?: PlotFieldGraphic(phase ?: :phase_portrait ?_ :trajectory,config,labels,children,details)
+      ?_ {= config=config,details=details,children=children.Concat(PlotFieldAxes(config,labels)).Concat(PlotFieldLabels(config,labels)) };
+};
+
+PlotLinkedTrajectory(solution,settings,eventResults ?= []) -> {;
+    settings ? :Map ?_> .Error("linked plot options must be a map");
+    solution ? :Map ?_> .Error("linked plot requires an ODE solution");
+    components=PlotOption(settings,"components",[1]);
+    pair=PlotOption(settings,"phasecomponents",[]);
+    (components ? :Array) && (pair ? :Array) ?_> .Error("linked components must be arrays");
+    pair.Len()==0 || pair.Len()==2 ?_> .Error("phaseComponents must have two entries or be empty");
+    count=components.Len()+(pair.Len()==2 ?: 1 ?_ 0);
+    maximum=PlotOption(settings,"maxpanels",8) ~!: :Integer;
+    count>=1 && count<=maximum && maximum<=9007199254740991 ?_> .Error("linked plot panel budget exceeded or empty selection");
+    columns=PlotOption(settings,"columns",2) ~!: :Integer;
+    columns>=1 && columns<=maximum ?_> .Error("linked columns must be between 1 and maxPanels");
+    columns=.Min(columns,count);
+    panels:=[]; children:=[]; groups:=[];
+    {@ index=1; index<=@count; {;
+        phase=index>@components.Len();
+        options=phase
+          ?: @settings.Merge({= xcomponent=@pair[1],ycomponent=@pair[2],title="Phase portrait" })
+          ?_ @settings.Merge({= component=@components[index],title=@"Component @{@components[index]} versus time" });
+        view=PlotTrajectory(@solution,options,phase,@eventResults,index);
+        @panels ~= @panels.Push(view);
+        width=view[:config][:width]; height=view[:config][:height];
+        column=(index-1)%@columns; row=(index-1-column)/@columns;
+        @children ~= @children.Push(.Graphics.Transform({= children=view[:children],translate=[column*width,row*height] }));
+    }; index+=1 };
+    first=panels[1];
+    first[:details][:records].Reduce((ignored,record)->{;
+        @groups ~= @groups.Push(@panels.Map((view)->view[:details][:records][record[:index]][:id]));
+        ignored;
+    },_);
+    first[:details][:eventOverlays].Reduce((ignored,event)->{;
+        @groups ~= @groups.Push(@panels.Map((view)->view[:details][:eventOverlays].Filter((other)->other[:candidate][:segment]==event[:candidate][:segment] && other[:name]==event[:name])[1][:id]));
+        ignored;
+    },_);
+    rows=(count+columns-1-((count+columns-1)%columns))/columns;
+    .Graphics.Graphic([columns*first[:config][:width],rows*first[:config][:height]],children,{=
+        schema="rix.plot.linked-trajectory@1",linkedSelection=groups,
+        panels=panels.Map((view)->view[:details]),components=components,phaseComponents=pair,
+        maxPanels=maximum,columns=columns,selectionMeaning=:sharedSourceSegment,plotAddsCertification=_
     });
+};
+
+PlotLinkedEvents(result,settings) -> {;
+    result ? :Map ?_> .Error("linked events require an IsolateEvents result");
+    result[:schema]=="rix.ode.event-result@1" ?_> .Error("linked events require an IsolateEvents result");
+    PlotLinkedTrajectory(result[:solution],settings,[result]);
 };
 
 PlotEventView(result,settings,phase) -> {;
@@ -27382,6 +27432,8 @@ plotNamespace._proto = {=
     PhasePortrait=(self, solution, options ?= {= })->PlotTrajectory(solution,options,1),
     EventTrajectory=(self, result, options ?= {= })->PlotEventView(result,options,_),
     EventPhasePortrait=(self, result, options ?= {= })->PlotEventView(result,options,1),
+    LinkedTrajectory=(self, solution, options ?= {= })->PlotLinkedTrajectory(solution,options),
+    LinkedEvents=(self, result, options ?= {= })->PlotLinkedEvents(result,options),
     Implicit=(self, fn, xDomain, yDomain, options ?= {= })->PlotContourBuild(fn,xDomain,yDomain,options,:implicit),
     Inequality=(self, fn, xDomain, yDomain, options ?= {= })->PlotInequality(fn,xDomain,yDomain,options),
     Contour=(self, fn, xDomain, yDomain, options ?= {= })->PlotContourBuild(fn,xDomain,yDomain,options,:contour),
@@ -35794,5 +35846,5 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
 
 export { pluginProfileFromUrl, stripMarkedPluginProfile, findHelp, createRixRepl };
 
-//# debugId=E2379E145777F4CD64756E2164756E21
-//# sourceMappingURL=chunk-rfg2ym99.js.map
+//# debugId=72753F20E8A598E764756E2164756E21
+//# sourceMappingURL=chunk-fn1jqq3h.js.map
