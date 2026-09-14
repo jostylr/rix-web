@@ -1,13 +1,13 @@
 import {
   createRixRepl
-} from "./chunk-1m113c67.js";
+} from "./chunk-y07s86v6.js";
 import {
   PluginCatalog,
   formatValue,
   lintRix,
   mountOutputWidgets,
   readPluginHeader
-} from "./chunk-b6015w0m.js";
+} from "./chunk-4x8pkqav.js";
 import {
   mountTutorialNavigation
 } from "./chunk-g5p2fpmt.js";

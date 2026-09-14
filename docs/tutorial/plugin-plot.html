@@ -64,6 +64,17 @@ problem := .ode.IVP(y,0,1,0:1);
 solution := problem.AdaptiveValidatedTaylor({= order=3,steps=2,maxSubintervals=1 });
 .plot.Trajectory(solution,{= maxSegments=1,title=&quot;One certified segment; the rest omitted&quot; });</code></pre></section>
 <p>The blue box is a retained whole-segment enclosure. Gray time is omitted by <code>maxSegments=1</code>, not solved or extrapolated by the plot. Raise <code>maxSegments</code> to show the remaining stored segments. Passing <code>problem.RK4()</code> instead produces orange approximate paths. Plotting does not improve or independently check solver evidence. For a vector solution, use <code>{= component=2 }</code> to select its second coordinate. Backward solutions work without sorting or changing their stored trajectory. Tick-label approximations do not change the exact metadata.</p>
+<h2>Plot a phase portrait</h2>
+<p>A phase portrait removes time from the axes: here position <code>x</code> is horizontal and velocity <code>v</code> is vertical for the oscillator <code>x&#039;=v</code>, <code>v&#039;=-x</code>.</p>
+<section class="comparison-code"><header>{.rix exec=true}</header><pre><code>.Plugin.Load(&quot;ode&quot;);
+.Plugin.Load(&quot;plot&quot;);
+x := .calculus.Variable(:x);
+v := .calculus.Variable(:v);
+problem := .ode.IVP([v,-x],0,[1,0],0:1,{= stateNames=[:x,:v] });
+solution := problem.ValidatedTaylor({= steps=4,order=3,maxSubintervals=1 });
+.plot.PhasePortrait(solution,{= xComponent=1,yComponent=2,title=&quot;Oscillator: certified position/velocity boxes&quot; });</code></pre></section>
+<p>Blue boxes enclose each accepted segment in both coordinates. They do not say that every point in a box is reachable, or trace a certified ellipse. Replace the solver call with <code>problem.RK4({= steps=16 })</code> for an orange <strong>approximate</strong> path. Swap <code>xComponent</code> and <code>yComponent</code> to exchange axes.</p>
+<p>Try adding <code>maxSegments=1</code> to the plot options. The visible warning reports missing time coverage; no gray spatial region is invented for unknown states. The retained metadata still gives the exact omitted time interval. Increase <code>maxSegments</code> to show more stored segments; this does not rerun the solver. Backward solutions retain their integration order in the segment records.</p>
 <h2>Share a color policy</h2>
 <p>One portable scale can drive a heat map, a statistics graphic, and a complex magnitude coloring without becoming renderer state:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="9" spellcheck="false">.Plugin.Load(&quot;plot&quot;);
