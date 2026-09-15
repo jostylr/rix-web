@@ -15,6 +15,7 @@ for(const [mode,evaluate] of [['sync',parseAndEvaluate],['async',parseAndEvaluat
         const result=await evaluate(cell,{context:new Context(),systemContext:createDefaultSystemContext({pluginCatalog:createBundledPluginCatalog()})});
         expect(result.metadata.get('panels').values).toHaveLength(3);
         expect(queryTrajectoryTime(result,'1/3').panels.every(p=>p.status==='enclosed')).toBe(true);
+        expect(queryTrajectoryTime(result,'1/3').panels.every(p=>p.method==='retainedTaylorIntersection')).toBe(true);
         expect(String(result.metadata.get('panelzoom').entries.get('maximum'))).toBe('64');
         expect(linkedGraphicSelectionIds(result,'panel-1-trajectory-1')).toHaveLength(3);
         expect(renderOutputHtml(result,formatValue)).toContain('panel-3-trajectory-4');

@@ -48,7 +48,7 @@ import {
   parseAndEvaluateObservedAsync,
   renderOutputHtml,
   tokenize
-} from "./chunk-0sbd8ftr.js";
+} from "./chunk-e0xf4pd3.js";
 
 // standard-profile.rix
 var standard_profile_default = `## RiX-Web standard calculator profile.
@@ -27201,6 +27201,12 @@ PlotVectorField(fn,xDomain,yDomain,settings ?= {= }) -> {;
 
 PlotDataCall(data, options, kind) -> PlotGeneral(data, options, kind);
 
+PlotScrubCoefficients(segment,axis) -> {;
+    segment[:segmentKind]==:validatedTaylorTube && segment[:certified]==1 ?_> [];
+    segment[:taylorCoefficients]!=_ ?: segment[:taylorCoefficients].Map((row)->row[axis])
+      ?_ [segment[:taylorBaseSlopeRange][axis],segment[:secondDerivativeRange][axis]/2];
+};
+
 PlotTrajectory(solution, settings ?= {= }, phase ?= _, eventResults ?= [], panel ?= _) -> {;
     settings ? :Map ?_> .Error("trajectory options must be a map");
     settings=settings.Merge({= margin=PlotOption(settings,"margin",64) });
@@ -27245,6 +27251,8 @@ PlotTrajectory(solution, settings ?= {= }, phase ?= _, eventResults ?= [], panel
               @records ~= @records.Push({=
                   id=@panel==_ ?: @"trajectory-@{@index}" ?_ @"panel-@{@panel}-trajectory-@{@index}",index=@index,tStart=@a,tEnd=@b,low=low,high=high,
                   xLow=xlow,xHigh=xhigh,xStart=xstart,xEnd=xend,
+                  yCoefficients=PlotScrubCoefficients(@segment,@component),
+                  xCoefficients=@phase ?: PlotScrubCoefficients(@segment,@xcomponent) ?_ [],
                   kind=@certified ?: :certifiedTube ?_ :approximateSegment,
                   sourceEvidence=@certified ?: @segment[:evidence] ?_ _,
                   stateStart=@segment[:stateStart][@component],stateEnd=@segment[:stateEnd][@component]
@@ -27377,6 +27385,10 @@ PlotLinkedTrajectory(solution,settings,eventResults ?= []) -> {;
     scrubSteps=PlotOption(settings,"scrubsteps",1000) ~!: :Integer;
     maxScrubWork=PlotOption(settings,"maxscrubwork",10000) ~!: :Integer;
     maxScrubDigits=PlotOption(settings,"maxscrubdigits",1000) ~!: :Integer;
+    maxScrubOrder=PlotOption(settings,"maxscruborder",16) ~!: :Integer;
+    scrubMode=PlotOption(settings,"scrubmode",:taylor);
+    [:taylor,:tube].Includes(scrubMode) ?_> .Error("scrubMode must be taylor or tube");
+    maxScrubOrder>=1 && maxScrubOrder<=9007199254740991 ?_> .Error("maxScrubOrder must be a positive safe integer");
     [scrubSteps,maxScrubWork,maxScrubDigits].Filter((limit)->limit>=1 && limit<=9007199254740991).Len()==3
       ?_> .Error("scrubSteps, maxScrubWork, and maxScrubDigits must be positive safe integers");
     panelMinZoom=PlotExact(PlotOption(settings,"panelminzoom",1/8),"panelMinZoom");
@@ -27410,7 +27422,7 @@ PlotLinkedTrajectory(solution,settings,eventResults ?= []) -> {;
         schema="rix.plot.linked-trajectory@1",linkedSelection=groups,
         panels=panels.Map((view)->view[:details]),components=components,phaseComponents=pair,
         panelViews=panels.Map((view)->view[:config]),
-        scrub={= steps=scrubSteps,maxWork=maxScrubWork,maxDigits=maxScrubDigits,certifiedPolicy=:wholeRetainedTube },
+        scrub={= steps=scrubSteps,maxWork=maxScrubWork,maxDigits=maxScrubDigits,maxOrder=maxScrubOrder,mode=scrubMode,certifiedPolicy=:retainedTaylorIntersection },
         panelZoom={= minimum=panelMinZoom,maximum=panelMaxZoom,step=panelZoomStep },
         maxPanels=maximum,columns=columns,selectionMeaning=:sharedSourceSegment,plotAddsCertification=_
     });
@@ -35859,5 +35871,5 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
 
 export { pluginProfileFromUrl, stripMarkedPluginProfile, findHelp, createRixRepl };
 
-//# debugId=1FBC0A177B3B70CC64756E2164756E21
-//# sourceMappingURL=chunk-w2r91bc7.js.map
+//# debugId=B7CAFBDAD64D1CB664756E2164756E21
+//# sourceMappingURL=chunk-ekx60vj6.js.map

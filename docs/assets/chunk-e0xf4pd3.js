@@ -81930,6 +81930,12 @@ PlotVectorField(fn,xDomain,yDomain,settings ?= {= }) -> {;
 
 PlotDataCall(data, options, kind) -> PlotGeneral(data, options, kind);
 
+PlotScrubCoefficients(segment,axis) -> {;
+    segment[:segmentKind]==:validatedTaylorTube && segment[:certified]==1 ?_> [];
+    segment[:taylorCoefficients]!=_ ?: segment[:taylorCoefficients].Map((row)->row[axis])
+      ?_ [segment[:taylorBaseSlopeRange][axis],segment[:secondDerivativeRange][axis]/2];
+};
+
 PlotTrajectory(solution, settings ?= {= }, phase ?= _, eventResults ?= [], panel ?= _) -> {;
     settings ? :Map ?_> .Error("trajectory options must be a map");
     settings=settings.Merge({= margin=PlotOption(settings,"margin",64) });
@@ -81974,6 +81980,8 @@ PlotTrajectory(solution, settings ?= {= }, phase ?= _, eventResults ?= [], panel
               @records ~= @records.Push({=
                   id=@panel==_ ?: @"trajectory-@{@index}" ?_ @"panel-@{@panel}-trajectory-@{@index}",index=@index,tStart=@a,tEnd=@b,low=low,high=high,
                   xLow=xlow,xHigh=xhigh,xStart=xstart,xEnd=xend,
+                  yCoefficients=PlotScrubCoefficients(@segment,@component),
+                  xCoefficients=@phase ?: PlotScrubCoefficients(@segment,@xcomponent) ?_ [],
                   kind=@certified ?: :certifiedTube ?_ :approximateSegment,
                   sourceEvidence=@certified ?: @segment[:evidence] ?_ _,
                   stateStart=@segment[:stateStart][@component],stateEnd=@segment[:stateEnd][@component]
@@ -82106,6 +82114,10 @@ PlotLinkedTrajectory(solution,settings,eventResults ?= []) -> {;
     scrubSteps=PlotOption(settings,"scrubsteps",1000) ~!: :Integer;
     maxScrubWork=PlotOption(settings,"maxscrubwork",10000) ~!: :Integer;
     maxScrubDigits=PlotOption(settings,"maxscrubdigits",1000) ~!: :Integer;
+    maxScrubOrder=PlotOption(settings,"maxscruborder",16) ~!: :Integer;
+    scrubMode=PlotOption(settings,"scrubmode",:taylor);
+    [:taylor,:tube].Includes(scrubMode) ?_> .Error("scrubMode must be taylor or tube");
+    maxScrubOrder>=1 && maxScrubOrder<=9007199254740991 ?_> .Error("maxScrubOrder must be a positive safe integer");
     [scrubSteps,maxScrubWork,maxScrubDigits].Filter((limit)->limit>=1 && limit<=9007199254740991).Len()==3
       ?_> .Error("scrubSteps, maxScrubWork, and maxScrubDigits must be positive safe integers");
     panelMinZoom=PlotExact(PlotOption(settings,"panelminzoom",1/8),"panelMinZoom");
@@ -82139,7 +82151,7 @@ PlotLinkedTrajectory(solution,settings,eventResults ?= []) -> {;
         schema="rix.plot.linked-trajectory@1",linkedSelection=groups,
         panels=panels.Map((view)->view[:details]),components=components,phaseComponents=pair,
         panelViews=panels.Map((view)->view[:config]),
-        scrub={= steps=scrubSteps,maxWork=maxScrubWork,maxDigits=maxScrubDigits,certifiedPolicy=:wholeRetainedTube },
+        scrub={= steps=scrubSteps,maxWork=maxScrubWork,maxDigits=maxScrubDigits,maxOrder=maxScrubOrder,mode=scrubMode,certifiedPolicy=:retainedTaylorIntersection },
         panelZoom={= minimum=panelMinZoom,maximum=panelMaxZoom,step=panelZoomStep },
         maxPanels=maximum,columns=columns,selectionMeaning=:sharedSourceSegment,plotAddsCertification=_
     });
@@ -98856,6 +98868,31 @@ function queryTrajectoryTime(graphic, time) {
       throw Error("maxScrubDigits exceeded");
     return q(v);
   };
+  const interval3 = (v) => new RationalInterval(check(v.low ?? v), check(v.high ?? v));
+  const spend = () => {
+    if (++work > maxWork)
+      throw Error("maxScrubWork exceeded");
+  };
+  const mode = word(field6(policy, "mode")) ?? "tube";
+  if (!["taylor", "tube"].includes(mode))
+    throw Error("Invalid scrub mode");
+  const maxOrder = limit(field6(policy, "maxOrder") ?? 16, "maxScrubOrder");
+  const atTime = (coefficients, start, delta, low, high) => {
+    const rows = list2(coefficients);
+    if (rows.length > maxOrder)
+      throw Error("maxScrubOrder exceeded");
+    let value = interval3(start), power = check(1);
+    for (const coefficient of rows) {
+      spend();
+      power = check(power.multiply(delta));
+      const term = interval3(interval3(coefficient).multiply(power));
+      value = interval3(value.add(term));
+    }
+    const result = value.intersection(new RationalInterval(low, high));
+    if (!result)
+      throw Error("Retained Taylor and tube enclosures are inconsistent");
+    return result;
+  };
   const t = check(time), panels = [];
   for (const panel of list2(field6(metadata3, "panels"))) {
     if (++work > maxWork)
@@ -98870,16 +98907,30 @@ function queryTrajectoryTime(graphic, time) {
       const certified = word(field6(record3, "kind")) === "certifiedTube";
       const phase = word(field6(panel, "rendering")) === "odeProjectedTubeBoxes";
       const interpolate = (start, end) => check(check(start).add(check(check(end).subtract(check(start))).multiply(check(t.subtract(a).divide(b.subtract(a))))));
-      const ylo = certified ? check(field6(record3, "low")) : interpolate(field6(record3, "stateStart"), field6(record3, "stateEnd"));
-      const yhi = certified ? check(field6(record3, "high")) : ylo;
-      const xlo = phase ? certified ? check(field6(record3, "xLow")) : interpolate(field6(record3, "xStart"), field6(record3, "xEnd")) : t;
-      const xhi = phase && certified ? check(field6(record3, "xHigh")) : xlo;
-      found = { id: word(field6(record3, "id")), status: certified ? "enclosed" : "approximate", xlo, xhi, ylo, yhi, phase };
+      let ylo = certified ? check(field6(record3, "low")) : interpolate(field6(record3, "stateStart"), field6(record3, "stateEnd"));
+      let yhi = certified ? check(field6(record3, "high")) : ylo;
+      let xlo = phase ? certified ? check(field6(record3, "xLow")) : interpolate(field6(record3, "xStart"), field6(record3, "xEnd")) : t;
+      let xhi = phase && certified ? check(field6(record3, "xHigh")) : xlo;
+      const taylor = certified && mode === "taylor" && list2(field6(record3, "yCoefficients")).length > 0;
+      if (taylor) {
+        const delta = check(t.subtract(a));
+        const y = atTime(field6(record3, "yCoefficients"), field6(record3, "stateStart"), delta, ylo, yhi);
+        ylo = y.low;
+        yhi = y.high;
+        if (phase) {
+          if (!list2(field6(record3, "xCoefficients")).length)
+            throw Error("Missing retained Taylor x coefficients");
+          const x = atTime(field6(record3, "xCoefficients"), field6(record3, "xStart"), delta, xlo, xhi);
+          xlo = x.low;
+          xhi = x.high;
+        }
+      }
+      found = { id: word(field6(record3, "id")), status: certified ? "enclosed" : "approximate", method: taylor ? "retainedTaylorIntersection" : certified ? "wholeRetainedTube" : "linearApproximation", xlo, xhi, ylo, yhi, phase };
       break;
     }
     panels.push(found ?? { status: "uncomputed" });
   }
-  return { time: t, panels, work, policy: "wholeRetainedTube", status: panels.some((p) => p.status === "uncomputed") ? "uncomputed" : "available" };
+  return { time: t, panels, work, policy: mode, status: panels.some((p) => p.status === "uncomputed") ? "uncomputed" : "available" };
 }
 function trajectorySliderTime(graphic, step) {
   const metadata3 = graphic.metadata, steps = limit(field6(field6(metadata3, "scrub"), "steps"), "scrubSteps");
@@ -98915,7 +98966,7 @@ function installTrajectoryScrubber(root, svg, graphic, navigation) {
         slider.value = String(Math.round(Math.max(0, Math.min(1, fraction)) * steps));
       const first = result.panels.find((p) => p.id);
       first ? navigation?.selectById(first.id, "scrub", false) : navigation?.clearSelection();
-      readout.textContent = `t=${result.time}: ` + result.panels.map((p, i) => `panel ${i + 1}: ${p.status === "uncomputed" ? "uncomputed / omitted" : `${p.status} y=[${p.ylo}, ${p.yhi}]${p.phase ? ` x=[${p.xlo}, ${p.xhi}]` : ""}`}`).join("; ");
+      readout.textContent = `t=${result.time}: ` + result.panels.map((p, i) => `panel ${i + 1}: ${p.status === "uncomputed" ? "uncomputed / omitted" : `${p.status} y=[${p.ylo}, ${p.yhi}]${p.phase ? ` x=[${p.xlo}, ${p.xhi}]` : ""} (${p.method})`}`).join("; ");
       result.panels.forEach((p, i) => {
         if (!p.id)
           return;
@@ -98929,8 +98980,9 @@ function installTrajectoryScrubber(root, svg, graphic, navigation) {
         const x = project(p.xlo, "x"), y = project(p.yhi, "y"), w = project(p.xhi, "x") - x, h = project(p.ylo, "y") - y;
         if (![x, y, w, h].every(Number.isFinite))
           return;
-        const node = doc.createElementNS("http://www.w3.org/2000/svg", p.status === "approximate" ? "circle" : w === 0 ? "line" : "rect");
-        const attrs = p.status === "approximate" ? { cx: x, cy: y, r: 4 } : w === 0 ? { x1: x, x2: x, y1: y, y2: y + h } : { x, y, width: w, height: h };
+        const point4 = p.status === "approximate" || p.xlo.equals(p.xhi) && p.ylo.equals(p.yhi);
+        const node = doc.createElementNS("http://www.w3.org/2000/svg", point4 ? "circle" : w === 0 ? "line" : "rect");
+        const attrs = point4 ? { cx: x, cy: y, r: 4 } : w === 0 ? { x1: x, x2: x, y1: y, y2: y + h } : { x, y, width: w, height: h };
         Object.entries({ ...attrs, stroke: "#be123c", "stroke-width": 3, fill: p.status === "approximate" ? "#be123c" : "none", "pointer-events": "none" }).forEach(([k, v]) => node.setAttribute(k, String(v)));
         const panel = svg.querySelector(`[data-rix-semantic-id="linked-panel-${i + 1}"]`);
         const container = panel?.querySelector?.("[data-rix-panel-viewport]") || panel;
@@ -104157,5 +104209,5 @@ var STATIC_SYSTEM_CATALOG = Object.freeze([
 ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
 export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, outputValueKind, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, formatOutputText, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateObserved, parseAndEvaluateObservedAsync, lintRix, createGeometryAuthoringProgram, mountOutputWidgets };
 
-//# debugId=17B0E85D8FCCB39B64756E2164756E21
-//# sourceMappingURL=chunk-0sbd8ftr.js.map
+//# debugId=ED36C688ED6C145D64756E2164756E21
+//# sourceMappingURL=chunk-e0xf4pd3.js.map
