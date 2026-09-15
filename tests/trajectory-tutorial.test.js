@@ -2,12 +2,14 @@ import {test,expect} from 'bun:test';
 import {Context,createDefaultSystemContext,parseAndEvaluate,parseAndEvaluateAsync,renderOutputHtml,formatValue} from '../../rix/src/index.js';
 import {createBundledPluginCatalog} from '../src/generated/bundled-plugin-catalog.js';
 import {linkedGraphicSelectionIds} from '../../rix/src/tools/graphic-view.js';
+import {queryTrajectoryTime} from '../../rix/src/tools/trajectory-view.js';
 for(const [mode,evaluate] of [['sync',parseAndEvaluate],['async',parseAndEvaluateAsync]]) {
     test(`${mode}: linked tutorial renders three coordinated panels`,async()=> {
         const source=await Bun.file(new URL('../../rix/plugins/plot/tutorial.md',import.meta.url)).text();
         const cell=[...source.matchAll(/```\{\.rix exec=true\}\n([\s\S]*?)```/g)].map(m=>m[1]).find(s=>s.includes('.plot.LinkedTrajectory'));
         const result=await evaluate(cell,{context:new Context(),systemContext:createDefaultSystemContext({pluginCatalog:createBundledPluginCatalog()})});
         expect(result.metadata.get('panels').values).toHaveLength(3);
+        expect(queryTrajectoryTime(result,'1/3').panels.every(p=>p.status==='enclosed')).toBe(true);
         expect(linkedGraphicSelectionIds(result,'panel-1-trajectory-1')).toHaveLength(3);
         expect(renderOutputHtml(result,formatValue)).toContain('panel-3-trajectory-4');
     },60000);

@@ -82043,6 +82043,11 @@ PlotLinkedTrajectory(solution,settings,eventResults ?= []) -> {;
     columns=PlotOption(settings,"columns",2) ~!: :Integer;
     columns>=1 && columns<=maximum ?_> .Error("linked columns must be between 1 and maxPanels");
     columns=.Min(columns,count);
+    scrubSteps=PlotOption(settings,"scrubsteps",1000) ~!: :Integer;
+    maxScrubWork=PlotOption(settings,"maxscrubwork",10000) ~!: :Integer;
+    maxScrubDigits=PlotOption(settings,"maxscrubdigits",1000) ~!: :Integer;
+    [scrubSteps,maxScrubWork,maxScrubDigits].Filter((limit)->limit>=1 && limit<=9007199254740991).Len()==3
+      ?_> .Error("scrubSteps, maxScrubWork, and maxScrubDigits must be positive safe integers");
     panels:=[]; children:=[]; groups:=[];
     {@ index=1; index<=@count; {;
         phase=index>@components.Len();
@@ -82053,7 +82058,7 @@ PlotLinkedTrajectory(solution,settings,eventResults ?= []) -> {;
         @panels ~= @panels.Push(view);
         width=view[:config][:width]; height=view[:config][:height];
         column=(index-1)%@columns; row=(index-1-column)/@columns;
-        @children ~= @children.Push(.Graphics.Transform({= children=view[:children],translate=[column*width,row*height] }));
+        @children ~= @children.Push(.Graphics.Transform({= children=view[:children],translate=[column*width,row*height],style={= hitId=@"linked-panel-@{index}" } }));
     }; index+=1 };
     first=panels[1];
     first[:details][:records].Reduce((ignored,record)->{;
@@ -82068,6 +82073,8 @@ PlotLinkedTrajectory(solution,settings,eventResults ?= []) -> {;
     .Graphics.Graphic([columns*first[:config][:width],rows*first[:config][:height]],children,{=
         schema="rix.plot.linked-trajectory@1",linkedSelection=groups,
         panels=panels.Map((view)->view[:details]),components=components,phaseComponents=pair,
+        panelViews=panels.Map((view)->view[:config]),
+        scrub={= steps=scrubSteps,maxWork=maxScrubWork,maxDigits=maxScrubDigits,certifiedPolicy=:wholeRetainedTube },
         maxPanels=maximum,columns=columns,selectionMeaning=:sharedSourceSegment,plotAddsCertification=_
     });
 };
@@ -98123,6 +98130,116 @@ $$${outputName} := .geometry.AuthoringWorkbench($${bindingName},${actionsName},{
 $${outputName};`;
   }
 
+  // rix/src/tools/trajectory-view.js
+  var field6 = (v, k) => v instanceof Map ? v.get(k.toLowerCase()) : v?.entries instanceof Map ? v.entries.get(k.toLowerCase()) : v?.[k];
+  var list2 = (v) => Array.isArray(v) ? v : v?.values || [];
+  var word = (v) => v?.value ?? v;
+  var q = (v) => new Rational(v);
+  var number2 = (v) => Number(q(v).numerator) / Number(q(v).denominator);
+  var limit = (v, name) => {
+    const n = number2(v);
+    if (!Number.isSafeInteger(n) || n < 1)
+      throw Error(`Invalid ${name}`);
+    return n;
+  };
+  function queryTrajectoryTime(graphic, time) {
+    const metadata3 = graphic.metadata, policy = field6(metadata3, "scrub");
+    const maxWork = limit(field6(policy, "maxWork"), "maxScrubWork");
+    const maxDigits = limit(field6(policy, "maxDigits"), "maxScrubDigits");
+    let work = 0;
+    const check = (v) => {
+      if (String(v).length > maxDigits)
+        throw Error("maxScrubDigits exceeded");
+      return q(v);
+    };
+    const t = check(time), panels = [];
+    for (const panel of list2(field6(metadata3, "panels"))) {
+      if (++work > maxWork)
+        throw Error("maxScrubWork exceeded");
+      let found = null;
+      for (const record3 of list2(field6(panel, "records"))) {
+        if (++work > maxWork)
+          throw Error("maxScrubWork exceeded");
+        const a = check(field6(record3, "tStart")), b = check(field6(record3, "tEnd"));
+        if (t.lessThan(a.lessThan(b) ? a : b) || t.greaterThan(a.greaterThan(b) ? a : b))
+          continue;
+        const certified = word(field6(record3, "kind")) === "certifiedTube";
+        const phase = word(field6(panel, "rendering")) === "odeProjectedTubeBoxes";
+        const interpolate = (start, end) => check(check(start).add(check(check(end).subtract(check(start))).multiply(check(t.subtract(a).divide(b.subtract(a))))));
+        const ylo = certified ? check(field6(record3, "low")) : interpolate(field6(record3, "stateStart"), field6(record3, "stateEnd"));
+        const yhi = certified ? check(field6(record3, "high")) : ylo;
+        const xlo = phase ? certified ? check(field6(record3, "xLow")) : interpolate(field6(record3, "xStart"), field6(record3, "xEnd")) : t;
+        const xhi = phase && certified ? check(field6(record3, "xHigh")) : xlo;
+        found = { id: word(field6(record3, "id")), status: certified ? "enclosed" : "approximate", xlo, xhi, ylo, yhi, phase };
+        break;
+      }
+      panels.push(found ?? { status: "uncomputed" });
+    }
+    return { time: t, panels, work, policy: "wholeRetainedTube", status: panels.some((p) => p.status === "uncomputed") ? "uncomputed" : "available" };
+  }
+  function trajectorySliderTime(graphic, step) {
+    const metadata3 = graphic.metadata, steps = limit(field6(field6(metadata3, "scrub"), "steps"), "scrubSteps");
+    if (!Number.isSafeInteger(step) || step < 0 || step > steps)
+      throw Error("Invalid scrub position");
+    const interval3 = field6(field6(list2(field6(metadata3, "panels"))[0], "evidence"), "requestedInterval");
+    return q(interval3.low).add(q(interval3.high).subtract(q(interval3.low)).multiply(new Rational(BigInt(step), BigInt(steps))));
+  }
+  function installTrajectoryScrubber(root, svg, graphic, navigation) {
+    if (!field6(graphic?.metadata, "scrub") || !root.ownerDocument?.createElement)
+      return;
+    const doc = root.ownerDocument, controls = doc.createElement("div"), slider = doc.createElement("input"), input = doc.createElement("input"), readout = doc.createElement("output");
+    controls.className = "rix-trajectory-controls";
+    slider.type = "range";
+    slider.min = "0";
+    slider.max = String(limit(field6(field6(graphic.metadata, "scrub"), "steps"), "scrubSteps"));
+    slider.step = "1";
+    slider.value = "0";
+    slider.setAttribute("aria-label", "Trajectory time");
+    input.setAttribute("aria-label", "Exact trajectory time");
+    readout.setAttribute("aria-live", "polite");
+    controls.append(slider, input, readout);
+    root.insertBefore(controls, svg);
+    const overlays = [];
+    const update = (time) => {
+      overlays.splice(0).forEach((node) => node.remove());
+      try {
+        const result = queryTrajectoryTime(graphic, time);
+        input.value = String(result.time);
+        const first = result.panels.find((p) => p.id);
+        first ? navigation?.selectById(first.id, "scrub", false) : navigation?.clearSelection();
+        readout.textContent = `t=${result.time}: ` + result.panels.map((p, i) => `panel ${i + 1}: ${p.status === "uncomputed" ? "uncomputed / omitted" : `${p.status} y=[${p.ylo}, ${p.yhi}]${p.phase ? ` x=[${p.xlo}, ${p.xhi}]` : ""}`}`).join("; ");
+        result.panels.forEach((p, i) => {
+          if (!p.id)
+            return;
+          const config = list2(field6(graphic.metadata, "panelViews"))[i];
+          const project = (value, axis) => {
+            const lo = q(field6(config, axis + "min")), hi = q(field6(config, axis + "max"));
+            const margin = number2(field6(config, "margin")), size2 = number2(field6(config, axis === "x" ? "width" : "height"));
+            const fraction = number2(value.subtract(lo).divide(hi.subtract(lo)));
+            return axis === "x" ? margin + fraction * (size2 - 2 * margin) : size2 - margin - fraction * (size2 - 2 * margin);
+          };
+          const x = project(p.xlo, "x"), y = project(p.yhi, "y"), w = project(p.xhi, "x") - x, h = project(p.ylo, "y") - y;
+          if (![x, y, w, h].every(Number.isFinite))
+            return;
+          const node = doc.createElementNS("http://www.w3.org/2000/svg", p.status === "approximate" ? "circle" : w === 0 ? "line" : "rect");
+          const attrs = p.status === "approximate" ? { cx: x, cy: y, r: 4 } : w === 0 ? { x1: x, x2: x, y1: y, y2: y + h } : { x, y, width: w, height: h };
+          Object.entries({ ...attrs, stroke: "#be123c", "stroke-width": 3, fill: p.status === "approximate" ? "#be123c" : "none", "pointer-events": "none" }).forEach(([k, v]) => node.setAttribute(k, String(v)));
+          const container = svg.querySelector(`[data-rix-semantic-id="linked-panel-${i + 1}"]`);
+          if (container) {
+            container.append(node);
+            overlays.push(node);
+          }
+        });
+      } catch (error) {
+        navigation?.clearSelection();
+        readout.textContent = `Time query unavailable: ${error.message}`;
+      }
+    };
+    slider.addEventListener("input", () => update(trajectorySliderTime(graphic, Number(slider.value))));
+    input.addEventListener("change", () => update(input.value));
+    update(trajectorySliderTime(graphic, 0));
+  }
+
   // rix/src/tools/graphic-view.js
   var MIN_ZOOM = 1 / 8;
   var MAX_ZOOM = 64;
@@ -99441,7 +99558,7 @@ $${outputName};`;
       applyViewport();
       announceViewport("keyboard");
     });
-    return Object.freeze({ selectById, cycleSelection, spatialSelection });
+    return Object.freeze({ selectById, cycleSelection, spatialSelection, clearSelection: () => setSelection(null, "scrub") });
   }
   function enhanceGraphic(graphic, options) {
     if (graphic.dataset.rixGraphicEnhanced === "true")
@@ -99462,6 +99579,7 @@ $${outputName};`;
     if (!svg)
       return;
     const navigation = installNavigation(graphic, svg, status, options);
+    installTrajectoryScrubber(graphic, svg, options.graphic, navigation);
     const actionActivators = new Map;
     const pendingActionPayloads = new Map;
     for (const action of actions) {

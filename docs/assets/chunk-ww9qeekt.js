@@ -48,7 +48,7 @@ import {
   parseAndEvaluateObservedAsync,
   renderOutputHtml,
   tokenize
-} from "./chunk-t03q2nq0.js";
+} from "./chunk-8nggvf3t.js";
 
 // standard-profile.rix
 var standard_profile_default = `## RiX-Web standard calculator profile.
@@ -27374,6 +27374,11 @@ PlotLinkedTrajectory(solution,settings,eventResults ?= []) -> {;
     columns=PlotOption(settings,"columns",2) ~!: :Integer;
     columns>=1 && columns<=maximum ?_> .Error("linked columns must be between 1 and maxPanels");
     columns=.Min(columns,count);
+    scrubSteps=PlotOption(settings,"scrubsteps",1000) ~!: :Integer;
+    maxScrubWork=PlotOption(settings,"maxscrubwork",10000) ~!: :Integer;
+    maxScrubDigits=PlotOption(settings,"maxscrubdigits",1000) ~!: :Integer;
+    [scrubSteps,maxScrubWork,maxScrubDigits].Filter((limit)->limit>=1 && limit<=9007199254740991).Len()==3
+      ?_> .Error("scrubSteps, maxScrubWork, and maxScrubDigits must be positive safe integers");
     panels:=[]; children:=[]; groups:=[];
     {@ index=1; index<=@count; {;
         phase=index>@components.Len();
@@ -27384,7 +27389,7 @@ PlotLinkedTrajectory(solution,settings,eventResults ?= []) -> {;
         @panels ~= @panels.Push(view);
         width=view[:config][:width]; height=view[:config][:height];
         column=(index-1)%@columns; row=(index-1-column)/@columns;
-        @children ~= @children.Push(.Graphics.Transform({= children=view[:children],translate=[column*width,row*height] }));
+        @children ~= @children.Push(.Graphics.Transform({= children=view[:children],translate=[column*width,row*height],style={= hitId=@"linked-panel-@{index}" } }));
     }; index+=1 };
     first=panels[1];
     first[:details][:records].Reduce((ignored,record)->{;
@@ -27399,6 +27404,8 @@ PlotLinkedTrajectory(solution,settings,eventResults ?= []) -> {;
     .Graphics.Graphic([columns*first[:config][:width],rows*first[:config][:height]],children,{=
         schema="rix.plot.linked-trajectory@1",linkedSelection=groups,
         panels=panels.Map((view)->view[:details]),components=components,phaseComponents=pair,
+        panelViews=panels.Map((view)->view[:config]),
+        scrub={= steps=scrubSteps,maxWork=maxScrubWork,maxDigits=maxScrubDigits,certifiedPolicy=:wholeRetainedTube },
         maxPanels=maximum,columns=columns,selectionMeaning=:sharedSourceSegment,plotAddsCertification=_
     });
 };
@@ -35846,5 +35853,5 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
 
 export { pluginProfileFromUrl, stripMarkedPluginProfile, findHelp, createRixRepl };
 
-//# debugId=72753F20E8A598E764756E2164756E21
-//# sourceMappingURL=chunk-fn1jqq3h.js.map
+//# debugId=3B0D45BE206D101D64756E2164756E21
+//# sourceMappingURL=chunk-ww9qeekt.js.map
