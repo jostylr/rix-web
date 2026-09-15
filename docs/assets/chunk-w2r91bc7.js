@@ -48,7 +48,7 @@ import {
   parseAndEvaluateObservedAsync,
   renderOutputHtml,
   tokenize
-} from "./chunk-8nggvf3t.js";
+} from "./chunk-0sbd8ftr.js";
 
 // standard-profile.rix
 var standard_profile_default = `## RiX-Web standard calculator profile.
@@ -27379,6 +27379,11 @@ PlotLinkedTrajectory(solution,settings,eventResults ?= []) -> {;
     maxScrubDigits=PlotOption(settings,"maxscrubdigits",1000) ~!: :Integer;
     [scrubSteps,maxScrubWork,maxScrubDigits].Filter((limit)->limit>=1 && limit<=9007199254740991).Len()==3
       ?_> .Error("scrubSteps, maxScrubWork, and maxScrubDigits must be positive safe integers");
+    panelMinZoom=PlotExact(PlotOption(settings,"panelminzoom",1/8),"panelMinZoom");
+    panelMaxZoom=PlotExact(PlotOption(settings,"panelmaxzoom",64),"panelMaxZoom");
+    panelZoomStep=PlotExact(PlotOption(settings,"panelzoomstep",3/2),"panelZoomStep");
+    panelMinZoom>0 && panelMinZoom<=1 && panelMaxZoom>=1 && panelZoomStep>1
+      ?_> .Error("panel zoom requires 0 < panelMinZoom <= 1 <= panelMaxZoom and panelZoomStep > 1");
     panels:=[]; children:=[]; groups:=[];
     {@ index=1; index<=@count; {;
         phase=index>@components.Len();
@@ -27406,6 +27411,7 @@ PlotLinkedTrajectory(solution,settings,eventResults ?= []) -> {;
         panels=panels.Map((view)->view[:details]),components=components,phaseComponents=pair,
         panelViews=panels.Map((view)->view[:config]),
         scrub={= steps=scrubSteps,maxWork=maxScrubWork,maxDigits=maxScrubDigits,certifiedPolicy=:wholeRetainedTube },
+        panelZoom={= minimum=panelMinZoom,maximum=panelMaxZoom,step=panelZoomStep },
         maxPanels=maximum,columns=columns,selectionMeaning=:sharedSourceSegment,plotAddsCertification=_
     });
 };
@@ -35853,5 +35859,5 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
 
 export { pluginProfileFromUrl, stripMarkedPluginProfile, findHelp, createRixRepl };
 
-//# debugId=3B0D45BE206D101D64756E2164756E21
-//# sourceMappingURL=chunk-ww9qeekt.js.map
+//# debugId=1FBC0A177B3B70CC64756E2164756E21
+//# sourceMappingURL=chunk-w2r91bc7.js.map

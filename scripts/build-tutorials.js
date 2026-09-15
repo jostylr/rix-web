@@ -74,10 +74,12 @@ function renderMarkdown(markdown, {
     };
     const flushCode = () => {
         if (code === null) return;
-        if (codeLanguage.split(/\s+/, 1)[0].toLowerCase() === "rix" && runnable) {
+        const isRix = codeLanguage.split(/\s+/, 1)[0].toLowerCase() === "rix"
+            || /^\{\.rix\s+exec=true\s*\}$/i.test(codeLanguage.trim());
+        if (isRix && runnable) {
             html.push(`<section class="tutorial-cell${lint ? " tutorial-lint-cell" : ""}"><header><span>${lint ? "Live RiX lint" : "Runnable RiX"}</span>${cellActions("Run cell")}</header><textarea class="tutorial-source" data-tutorial-source rows="${textareaRows(code)}" spellcheck="false">${escapeHtml(code)}</textarea><div class="tutorial-output" data-tutorial-output${lint ? ' aria-live="polite"' : ""}></div></section>`);
         } else {
-            const label = !runnable && codeLanguage.split(/\s+/, 1)[0].toLowerCase() === "rix" ? "Proposed RiX API" : codeLanguage || "code";
+            const label = !runnable && isRix ? "Proposed RiX API" : codeLanguage || "code";
             html.push(`<section class="comparison-code"><header>${escapeHtml(label)}</header><pre><code>${escapeHtml(code)}</code></pre></section>`);
         }
         code = null;

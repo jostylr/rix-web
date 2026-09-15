@@ -9,7 +9,7 @@ factored := .cas.Factor(source,:x);
 {: collected[:coefficients],expanded[:operation],factored[:factors].Len() };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>Integrate a specialized Polynomial directly</h2>
 <p>A collected Polynomial stores exact coefficients and its mathematical variable name. CAS can integrate that value directly, not just the original expression graph. The returned antiderivative is still a Calculus expression graph.</p>
-<section class="comparison-code"><header>{.rix exec=true}</header><pre><code>.Plugin.Load(&quot;cas&quot;);
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="9" spellcheck="false">.Plugin.Load(&quot;cas&quot;);
 t := .calculus.Variable(:t);
 polynomial := .cas.Collect(t^3+2*t,:t)[:polynomial];
 integral := .cas.Integrate(polynomial);
@@ -17,7 +17,7 @@ replay := .cas.CheckIntegral(integral);
 integral[:status]==:complete ?: 1 ?_ .Error(&quot;Polynomial integration failed&quot;);
 integral[:variable]==:t ?: 1 ?_ .Error(&quot;Expected the Polynomial&#039;s variable&quot;);
 replay[:accepted]==1 ?: 1 ?_ .Error(&quot;Polynomial rule replay failed&quot;);
-{: polynomial.Coefficients(:ascending),integral[:antiderivative],integral[:rules] };</code></pre></section>
+{: polynomial.Coefficients(:ascending),integral[:antiderivative],integral[:rules] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The primitive represents <code>t^4/4+t^2</code>, with the arbitrary additive constant omitted. CAS reads <code>:t</code> from the Polynomial even though <code>Integrate</code> defaults to <code>:x</code> for expression-graph inputs. Zero and constant Polynomial values use the same coefficient rule.</p>
 <h2>Walk the integration ladder</h2>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="17" spellcheck="false">.Plugin.Load(&quot;cas&quot;);
@@ -63,7 +63,7 @@ quadratic := .cas.Integrate(.rf`1/(x^2+1)`);
 <p>The quadratic rule proves the negative discriminant condition exactly and retains the completed-square coefficients.</p>
 <h2>Reduce powers and products</h2>
 <p>The power rule lowers the exponent by two at each step. The product rule changes two factors into a sum/difference of harmonics. Neither needs a general identity-search engine.</p>
-<section class="comparison-code"><header>{.rix exec=true}</header><pre><code>.Plugin.Load(&quot;cas&quot;);
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="10" spellcheck="false">.Plugin.Load(&quot;cas&quot;);
 x := .calculus.Variable(:x);
 Sin := .calculus.Sin();
 Cos := .calculus.Cos();
@@ -72,15 +72,15 @@ integrals := sources.Map((source)-&gt;.cas.Integrate(source,x));
 integrals.Map((result)-&gt;{;
   .cas.CheckIntegral(result)[:accepted] ?: 1 ?_ .Error(&quot;Trig rule replay failed&quot;);
   {: result[:antiderivative],result[:rules].Last() };
-});</code></pre></section>
+});</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>For the last row, the difference frequency is zero. Its cosine term is a constant, so the primitive includes <code>x/2</code>; the implementation does not divide by a zero frequency. Compare this product route with <code>Sin(x)^2</code> and differentiate both answers: primitives may look different and still differ only by a constant.</p>
-<section class="comparison-code"><header>{.rix exec=true}</header><pre><code>.Plugin.Load(&quot;cas&quot;);
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">.Plugin.Load(&quot;cas&quot;);
 x := .calculus.Variable(:x);
 Sin := .calculus.Sin();
 tooLarge := .cas.Integrate(Sin(x)^9,x);
 tooLarge[:reason]==:trigonometricDegreeBudgetExceeded
   ?: 1 ?_ .Error(&quot;Expected a bounded unsupported result&quot;);
-{: tooLarge[:status],tooLarge[:reason] };</code></pre></section>
+{: tooLarge[:status],tooLarge[:reason] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Nonnegative integer powers through degree 8 are supported. Mixed powers and nonaffine arguments remain explicit unsupported cases, not guessed answers.</p>
 <h2>Let exact partial fractions do the algebra</h2>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Plugin.Load(&quot;cas&quot;);
@@ -98,7 +98,7 @@ unsupported := .cas.Integrate(Sqrt(x^2+1),x);
 <p>This integral has a closed form involving inverse hyperbolic functions, but it is outside the current course ladder. A visible unsupported record is safer and more educational than a guessed transformation.</p>
 <h2>Keep diagnostics separate from the successful computation</h2>
 <p>CAS uses <code>?_&gt;</code> both in helper prep lists and inside selected rule branches. You can use the same style when consuming its results. This helper propagates an unsupported record before attempting to differentiate a missing primitive:</p>
-<section class="comparison-code"><header>{.rix exec=true}</header><pre><code>.Plugin.Load(&quot;cas&quot;);
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="12" spellcheck="false">.Plugin.Load(&quot;cas&quot;);
 DifferentiateIntegral(source, variable) ?!- [
     integral = .cas.Integrate(source,variable),
     integral[:status]==:complete ?_&gt; integral
@@ -109,7 +109,7 @@ supported := DifferentiateIntegral(Sin(2*x+1),x);
 unsupported := DifferentiateIntegral(Sin(x^2),x);
 unsupported[:reason]==:nonAffineSineArgument
   ?: 1 ?_ .Error(&quot;Expected the original CAS diagnostic&quot;);
-{: supported[:expression],unsupported[:status],unsupported[:reason] };</code></pre></section>
+{: supported[:expression],unsupported[:status],unsupported[:reason] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The check describes what must hold to continue. Its diagnostic is evaluated only on failure, and returns from the function call. Inside a function body, the same check can follow intermediate work, including inside a branch block. Do not use it at tutorial top level: there is no function call to return from. <code>??&gt;</code> handles undecided checks; an explicit CAS <code>:unsupported</code> result is a decided status and uses <code>?_&gt;</code>, not <code>??&gt;</code>.</p>
 <h2>Further work</h2>
 <p>1. Differentiate each returned antiderivative and compare it with the source. 2. Try repeated linear factors such as <code>1/(x-1)^2</code> through <code>.rf</code>. 3. Compare the source-domain obligation for <code>Log(x)</code> with the reciprocal-domain obligation for <code>1/x</code>. 4. Derive the completed-square formula used for <code>(m*x+n)/(a*x^2+b*x+c)</code> when <code>4*a*c-b^2 &gt; 0</code>. 5. Derive the two-degree power recurrence by integration by parts, then compare its answer for <code>Sin(x)^2</code> with the product-to-sum route.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

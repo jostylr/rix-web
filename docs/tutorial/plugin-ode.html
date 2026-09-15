@@ -85,37 +85,37 @@ partial := .ode.IVP(100*y,0,1,0:1).ValidatedPicard({=
 {: partial[:status],partial[:work],partial[:segments][1][:diagnostics] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Increase <code>maxTubeIterations</code>, increase <code>steps</code>, or both. More work may find a self-map, but work exhaustion is never reported as nonexistence.</p>
 <p>Fixed Taylor stepping likewise stops at its first unresolved tube. It keeps that failed segment so its diagnostics remain inspectable.</p>
-<section class="comparison-code"><header>{.rix exec=true}</header><pre><code>.Plugin.Load(&quot;ode&quot;);
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">.Plugin.Load(&quot;ode&quot;);
 y := .calculus.Variable(:y);
 partial := .ode.IVP(10*y,0,1,0:1).ValidatedTaylor2({= steps=2,maxSubintervals=1 });
 partial[:work][:attemptedSteps]==1 ?: 1 ?_ .Error(&quot;Fixed stepping must stop on failure&quot;);
 partial[:segments].Len()==1 ?: 1 ?_ .Error(&quot;Failed segment evidence must be retained&quot;);
-{: partial[:status],partial[:work][:stopReason],partial[:segments][1][:diagnostics] };</code></pre></section>
+{: partial[:status],partial[:work][:stopReason],partial[:segments][1][:diagnostics] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>Adapt a certified trajectory</h2>
 <p>A single step for <code>y&#039;=y</code> on <code>[0,1]</code> fails the strict contraction test because <code>h L = 1</code>. The adaptive method halves that step, validates smaller segments, and carries their certified endpoint intervals forward.</p>
-<section class="comparison-code"><header>{.rix exec=true}</header><pre><code>.Plugin.Load(&quot;ode&quot;);
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="8" spellcheck="false">.Plugin.Load(&quot;ode&quot;);
 y := .calculus.Variable(:y);
 solution := .ode.IVP(y,0,1,0:1).AdaptiveValidatedTaylor2({=
   steps=1,maxAttempts=32,maxSubintervals=1
 });
 solution[:certified]==1 ?: 1 ?_ .Error(&quot;Expected certified completion&quot;);
 solution[:work][:rejectedSteps]&gt;0 ?: 1 ?_ .Error(&quot;Expected a rejected full step&quot;);
-{: solution[:coveredInterval],solution[:finalState],solution[:work] };</code></pre></section>
+{: solution[:coveredInterval],solution[:finalState],solution[:work] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>For a vector equation with known solution <code>(t^2/2,t^2)</code>, a local remainder budget forces smaller steps even when a Picard tube is already available.</p>
-<section class="comparison-code"><header>{.rix exec=true}</header><pre><code>.Plugin.Load(&quot;ode&quot;);
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">.Plugin.Load(&quot;ode&quot;);
 t := .calculus.Variable(:t);
 solution := .ode.IVP([t,2*t],0,[0,0],0:1,{= stateNames=[:x,:y] })
   .AdaptiveValidatedTaylor2({= steps=1,remainderTolerance=1/16,maxAttempts=40,maxSubintervals=1 });
 solution[:certified]==1 ?: 1 ?_ .Error(&quot;Expected certified vector flow&quot;);
-{: solution.At(1/2),solution[:finalState],solution[:work][:rejectedSteps] };</code></pre></section>
+{: solution.At(1/2),solution[:finalState],solution[:work][:rejectedSteps] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>That tolerance bounds the local remainder, while <code>finalState</code> carries the accumulated enclosure. Exhausting attempts retains only the accepted prefix as the trajectory and stores failed candidates in <code>work.attempts</code>.</p>
-<section class="comparison-code"><header>{.rix exec=true}</header><pre><code>.Plugin.Load(&quot;ode&quot;);
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Plugin.Load(&quot;ode&quot;);
 y := .calculus.Variable(:y);
 partial := .ode.IVP(y,0,1,0:1).AdaptiveValidatedTaylor2({= steps=1,maxAttempts=2,maxSubintervals=1 });
 partial[:status]==:partial ?: 1 ?_ .Error(&quot;Expected a partial trajectory&quot;);
-{: partial[:coveredInterval],partial.At(1/4),partial[:work][:stopReason] };</code></pre></section>
+{: partial[:coveredInterval],partial.At(1/4),partial[:work][:stopReason] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <h2>Higher-order certified flow</h2>
-<section class="comparison-code"><header>{.rix exec=true}</header><pre><code>.Plugin.Load(&quot;ode&quot;);
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="9" spellcheck="false">.Plugin.Load(&quot;ode&quot;);
 y := .calculus.Variable(:y);
 problem := .ode.IVP(y,0,1,0:1/2);
 second := problem.ValidatedTaylor({= order=2,steps=2,maxSubintervals=1 });
@@ -123,16 +123,16 @@ fourth := problem.ValidatedTaylor({= order=4,maxOrder=8,steps=2,maxSubintervals=
 fourth[:certified]==1 ?: 1 ?_ .Error(&quot;Expected a certified fourth-order trajectory&quot;);
 fourth[:finalState][1].Width()&lt;second[:finalState][1].Width()
   ?: 1 ?_ .Error(&quot;Expected tighter fourth-order enclosure for this example&quot;);
-{: fourth[:finalState],fourth.At(1/4),fourth[:wrappingControl][:order] };</code></pre></section>
+{: fourth[:finalState],fourth.At(1/4),fourth[:wrappingControl][:order] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Each segment uses start-point derivative bounds and a highest-derivative bound over a Picard existence tube. Try <code>order=3</code> or raise <code>maxOrder</code> explicitly. <code>AdaptiveValidatedTaylor</code> adds the existing attempt/minimum-step controller; <code>remainderTolerance</code> bounds only the local highest-order remainder. Stored interval uncertainty and wrapping remain. <code>rangeOptions</code> configures range work and semantic precision, while <code>derivativeOptions</code> configures derivative checking. Unsupported symbolic/domain cases report errors rather than fabricated enclosures.</p>
 <h2>Integrating backward in time</h2>
 <p>Knowing the state at a later time can also define an IVP. The equation is unchanged; we take negative time steps. Here <code>y&#039;=1</code> and <code>y(1)=1</code> give <code>y(0)=0</code>.</p>
-<section class="comparison-code"><header>{.rix exec=true}</header><pre><code>.Plugin.Load(&quot;ode&quot;);
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">.Plugin.Load(&quot;ode&quot;);
 backward := .ode.IVP(.calculus.Constant(1),1,1,1:0)
     .ValidatedTaylor({= order=3,steps=2,maxSubintervals=1 });
 backward[:certified]==1 ?: 1 ?_ .Error(&quot;Expected a certified backward trajectory&quot;);
 backward.At(3/4)==(3/4:3/4) ?: 1 ?_ .Error(&quot;Expected backward dense output&quot;);
-{: backward[:problem][:direction],backward[:coveredInterval],backward[:finalState][1] };</code></pre></section>
+{: backward[:problem][:direction],backward[:coveredInterval],backward[:finalState][1] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The interval <code>1:0</code> retains its orientation; <code>0:1</code> with initial time 1 is rejected. The same convention works for Euler, RK4, Picard and adaptive methods. Certified methods use the magnitude of the step for contraction and remainder tests, but retain its sign in the integration formula. Event <code>:rising</code> means rising with increasing physical time, even when the solver is moving backward. Backward integration may amplify uncertainty; it is not guaranteed to undo numerical error.</p>
 <h2>Exercises</h2>
 <p>1. Compare Euler and RK4 for <code>y&#039;=t+y</code> at several fixed step counts. 2. Give the validated solver an interval initial state such as <code>(99/100):(101/100)</code> and inspect how it propagates measurement uncertainty. 3. Reduce the Picard step count and watch wrapping widen the endpoint. 4. Compare the vector RK4 oscillator against its validated component boxes. 5. Change an event direction and observe which endpoint sign changes qualify. 6. Explain why a validated event range containing zero still needs an existence or interval-Newton argument. 7. Compare <code>ValidatedPicard</code> and <code>ValidatedTaylor2</code> endpoint widths on <code>y&#039;=y</code> as the number of segments changes.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

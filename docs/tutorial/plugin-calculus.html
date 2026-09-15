@@ -155,12 +155,12 @@ refined := .numerics.Refine(evaluation[:value],{=
 <p>If an exact rule eliminates a semantic application—for example the outer <code>Log</code> in <code>D Log(x)=1/x</code>—the derivative no longer needs that implementation.</p>
 <h2>Course trigonometric and absolute-value graphs</h2>
 <p>The course CAS uses public Calculus nodes rather than private symbolic output. <code>Sin</code>, <code>Cos</code>, and <code>Atan</code> have exact derivative identities. <code>Abs</code> is portable and executable on exact reals, but has no unconditional derivative rule at zero.</p>
-<section class="comparison-code"><header>{.rix exec=true}</header><pre><code>.Plugin.Load(&quot;calculus&quot;);
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">.Plugin.Load(&quot;calculus&quot;);
 x := .calculus.Variable(:x);
 {: .calculus.Abs()(x),.calculus.Abs()(-3),
    .calculus.ToSpec(.calculus.Differentiate(.calculus.Sin()(x),:x)),
    .calculus.ToSpec(.calculus.Differentiate(.calculus.Cos()(x),:x)),
-   .calculus.ToSpec(.calculus.Differentiate(.calculus.Atan()(x),:x)) };</code></pre></section>
+   .calculus.ToSpec(.calculus.Differentiate(.calculus.Atan()(x),:x)) };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Conversely, an unknown semantic function cannot be differentiated merely because it has a numerical algorithm.</p>
 <h2>Reuse differential identities without broad algebraic rewriting</h2>
 <p>The differentiator uses exact identities already registered for a semantic function to retain a smaller evaluation graph. For a base satisfying <code>f&#039; = c*f</code>, the Integer power rule can keep the base as one structural node:</p>

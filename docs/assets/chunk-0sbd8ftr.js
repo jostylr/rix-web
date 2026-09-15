@@ -82108,6 +82108,11 @@ PlotLinkedTrajectory(solution,settings,eventResults ?= []) -> {;
     maxScrubDigits=PlotOption(settings,"maxscrubdigits",1000) ~!: :Integer;
     [scrubSteps,maxScrubWork,maxScrubDigits].Filter((limit)->limit>=1 && limit<=9007199254740991).Len()==3
       ?_> .Error("scrubSteps, maxScrubWork, and maxScrubDigits must be positive safe integers");
+    panelMinZoom=PlotExact(PlotOption(settings,"panelminzoom",1/8),"panelMinZoom");
+    panelMaxZoom=PlotExact(PlotOption(settings,"panelmaxzoom",64),"panelMaxZoom");
+    panelZoomStep=PlotExact(PlotOption(settings,"panelzoomstep",3/2),"panelZoomStep");
+    panelMinZoom>0 && panelMinZoom<=1 && panelMaxZoom>=1 && panelZoomStep>1
+      ?_> .Error("panel zoom requires 0 < panelMinZoom <= 1 <= panelMaxZoom and panelZoomStep > 1");
     panels:=[]; children:=[]; groups:=[];
     {@ index=1; index<=@count; {;
         phase=index>@components.Len();
@@ -82135,6 +82140,7 @@ PlotLinkedTrajectory(solution,settings,eventResults ?= []) -> {;
         panels=panels.Map((view)->view[:details]),components=components,phaseComponents=pair,
         panelViews=panels.Map((view)->view[:config]),
         scrub={= steps=scrubSteps,maxWork=maxScrubWork,maxDigits=maxScrubDigits,certifiedPolicy=:wholeRetainedTube },
+        panelZoom={= minimum=panelMinZoom,maximum=panelMaxZoom,step=panelZoomStep },
         maxPanels=maximum,columns=columns,selectionMeaning=:sharedSourceSegment,plotAddsCertification=_
     });
 };
@@ -98903,6 +98909,10 @@ function installTrajectoryScrubber(root, svg, graphic, navigation) {
     try {
       const result = queryTrajectoryTime(graphic, time);
       input.value = String(result.time);
+      const steps = Number(slider.max), start = trajectorySliderTime(graphic, 0), end = trajectorySliderTime(graphic, steps);
+      const fraction = number2(result.time.subtract(start).divide(end.subtract(start)));
+      if (Number.isFinite(fraction))
+        slider.value = String(Math.round(Math.max(0, Math.min(1, fraction)) * steps));
       const first = result.panels.find((p) => p.id);
       first ? navigation?.selectById(first.id, "scrub", false) : navigation?.clearSelection();
       readout.textContent = `t=${result.time}: ` + result.panels.map((p, i) => `panel ${i + 1}: ${p.status === "uncomputed" ? "uncomputed / omitted" : `${p.status} y=[${p.ylo}, ${p.yhi}]${p.phase ? ` x=[${p.xlo}, ${p.xhi}]` : ""}`}`).join("; ");
@@ -98913,8 +98923,8 @@ function installTrajectoryScrubber(root, svg, graphic, navigation) {
         const project = (value, axis) => {
           const lo = q(field6(config, axis + "min")), hi = q(field6(config, axis + "max"));
           const margin = number2(field6(config, "margin")), size2 = number2(field6(config, axis === "x" ? "width" : "height"));
-          const fraction = number2(value.subtract(lo).divide(hi.subtract(lo)));
-          return axis === "x" ? margin + fraction * (size2 - 2 * margin) : size2 - margin - fraction * (size2 - 2 * margin);
+          const fraction2 = number2(value.subtract(lo).divide(hi.subtract(lo)));
+          return axis === "x" ? margin + fraction2 * (size2 - 2 * margin) : size2 - margin - fraction2 * (size2 - 2 * margin);
         };
         const x = project(p.xlo, "x"), y = project(p.yhi, "y"), w = project(p.xhi, "x") - x, h = project(p.ylo, "y") - y;
         if (![x, y, w, h].every(Number.isFinite))
@@ -98922,7 +98932,8 @@ function installTrajectoryScrubber(root, svg, graphic, navigation) {
         const node = doc.createElementNS("http://www.w3.org/2000/svg", p.status === "approximate" ? "circle" : w === 0 ? "line" : "rect");
         const attrs = p.status === "approximate" ? { cx: x, cy: y, r: 4 } : w === 0 ? { x1: x, x2: x, y1: y, y2: y + h } : { x, y, width: w, height: h };
         Object.entries({ ...attrs, stroke: "#be123c", "stroke-width": 3, fill: p.status === "approximate" ? "#be123c" : "none", "pointer-events": "none" }).forEach(([k, v]) => node.setAttribute(k, String(v)));
-        const container = svg.querySelector(`[data-rix-semantic-id="linked-panel-${i + 1}"]`);
+        const panel = svg.querySelector(`[data-rix-semantic-id="linked-panel-${i + 1}"]`);
+        const container = panel?.querySelector?.("[data-rix-panel-viewport]") || panel;
         if (container) {
           container.append(node);
           overlays.push(node);
@@ -98936,6 +98947,99 @@ function installTrajectoryScrubber(root, svg, graphic, navigation) {
   slider.addEventListener("input", () => update(trajectorySliderTime(graphic, Number(slider.value))));
   input.addEventListener("change", () => update(input.value));
   update(trajectorySliderTime(graphic, 0));
+}
+function zoomTrajectoryPanel(state, factor, policy, anchor2 = [0.5, 0.5]) {
+  const minimum = number2(field6(policy, "minimum")), maximum = number2(field6(policy, "maximum"));
+  if (![minimum, maximum, factor, ...anchor2].every(Number.isFinite) || minimum <= 0 || minimum > 1 || maximum < 1 || factor <= 0)
+    throw Error("Panel zoom policy is not browser-representable");
+  const next = Math.min(maximum, Math.max(minimum, state.zoom * factor));
+  const oldWidth = state.width / state.zoom, oldHeight = state.height / state.zoom;
+  if (![state.width / next, state.height / next].every((v) => Number.isFinite(v) && v > 0))
+    throw Error("Panel zoom is not browser-representable");
+  state.x += anchor2[0] * (oldWidth - state.width / next);
+  state.y += anchor2[1] * (oldHeight - state.height / next);
+  state.zoom = next;
+  return state;
+}
+function installTrajectoryPanelZoom(root, svg, graphic, navigation) {
+  const policy = field6(graphic?.metadata, "panelZoom"), doc = root.ownerDocument;
+  if (!policy || !doc?.createElementNS)
+    return [];
+  const controls = doc.createElement("div"), select = doc.createElement("select"), readout = doc.createElement("output");
+  controls.className = "rix-trajectory-panel-controls";
+  select.setAttribute("aria-label", "Panel to zoom");
+  readout.setAttribute("aria-live", "polite");
+  controls.append(select);
+  const panels = list2(field6(graphic.metadata, "panelViews")).map((config, i) => {
+    const container = svg.querySelector(`[data-rix-semantic-id="linked-panel-${i + 1}"]`);
+    const width = number2(field6(config, "width")), height = number2(field6(config, "height"));
+    const viewport2 = doc.createElementNS("http://www.w3.org/2000/svg", "svg");
+    viewport2.setAttribute("width", String(width));
+    viewport2.setAttribute("height", String(height));
+    viewport2.setAttribute("overflow", "hidden");
+    viewport2.setAttribute("data-rix-panel-viewport", String(i + 1));
+    if (container) {
+      while (container.firstChild)
+        viewport2.append(container.firstChild);
+      container.append(viewport2);
+    }
+    const option6 = doc.createElement("option");
+    option6.value = String(i);
+    option6.textContent = `Panel ${i + 1}`;
+    select.append(option6);
+    return { viewport: viewport2, state: { x: 0, y: 0, width, height, zoom: 1 } };
+  });
+  select.value = "0";
+  const apply = (panel) => {
+    const s = panel.state;
+    panel.viewport.setAttribute("viewBox", `${s.x} ${s.y} ${s.width / s.zoom} ${s.height / s.zoom}`);
+    navigation?.invalidateHitIndex?.();
+  };
+  const change = (index, factor, anchor2) => {
+    const panel = panels[index];
+    if (!panel)
+      return;
+    try {
+      zoomTrajectoryPanel(panel.state, factor, policy, anchor2);
+      apply(panel);
+      readout.textContent = `Panel ${index + 1}: ${panel.state.zoom}× zoom`;
+    } catch (error) {
+      readout.textContent = error.message;
+    }
+  };
+  const button = (label2, action) => {
+    const b = doc.createElement("button");
+    b.type = "button";
+    b.textContent = label2;
+    b.addEventListener("click", action);
+    controls.append(b);
+  };
+  button("Zoom panel in", () => change(Number(select.value), number2(field6(policy, "step"))));
+  button("Zoom panel out", () => change(Number(select.value), 1 / number2(field6(policy, "step"))));
+  button("Reset panel", () => {
+    const p = panels[Number(select.value)];
+    if (p) {
+      Object.assign(p.state, { x: 0, y: 0, zoom: 1 });
+      apply(p);
+      readout.textContent = `Panel ${Number(select.value) + 1}: reset`;
+    }
+  });
+  controls.append(readout);
+  root.insertBefore(controls, svg);
+  panels.forEach((p, i) => {
+    apply(p);
+    p.viewport.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = p.viewport.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0)
+        return;
+      select.value = String(i);
+      const anchor2 = [(event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height].map((v) => Math.max(0, Math.min(1, v)));
+      change(i, event.deltaY < 0 ? number2(field6(policy, "step")) : 1 / number2(field6(policy, "step")), anchor2);
+    }, { passive: false });
+  });
+  return panels;
 }
 
 // ../rix/src/tools/graphic-view.js
@@ -100256,7 +100360,7 @@ function installNavigation(graphic, svg, status, options) {
     applyViewport();
     announceViewport("keyboard");
   });
-  return Object.freeze({ selectById, cycleSelection, spatialSelection, clearSelection: () => setSelection(null, "scrub") });
+  return Object.freeze({ selectById, cycleSelection, spatialSelection, invalidateHitIndex, clearSelection: () => setSelection(null, "scrub") });
 }
 function enhanceGraphic(graphic, options) {
   if (graphic.dataset.rixGraphicEnhanced === "true")
@@ -100277,6 +100381,7 @@ function enhanceGraphic(graphic, options) {
   if (!svg)
     return;
   const navigation = installNavigation(graphic, svg, status, options);
+  installTrajectoryPanelZoom(graphic, svg, options.graphic, navigation);
   installTrajectoryScrubber(graphic, svg, options.graphic, navigation);
   const actionActivators = new Map;
   const pendingActionPayloads = new Map;
@@ -104052,5 +104157,5 @@ var STATIC_SYSTEM_CATALOG = Object.freeze([
 ].map(([name, documentation]) => ({ name, kind: "function", documentation, source: "rix-core" })));
 export { tokenize, parse, BaseSystem, Rational, RationalInterval, Fraction, Integer, irToText, isReactiveNode, disposeAsyncResources, callWithConcreteArgs, outputValueKind, isOutputValue, createSliderControl, createInputControl, createChoiceControl, createToggleControl, createRangeControl, createResetControl, createActionControl, createHoldControl, createControlPanel, formatOutputText, renderOutputHtml, formatValueSource, formatValue, complete, readPluginHeader, PluginCatalog, Context, install, install2 as install1, install4 as install2, install5 as install3, install6 as install4, install7 as install5, install8 as install6, install9 as install7, install10 as install8, install11 as install9, install12 as install10, install13 as install11, install14 as install12, install15 as install13, install16 as install14, install17 as install15, install18 as install16, install19 as install17, install20 as install18, createDefaultRegistry, createDefaultSystemContext, parseAndEvaluate, parseAndEvaluateObserved, parseAndEvaluateObservedAsync, lintRix, createGeometryAuthoringProgram, mountOutputWidgets };
 
-//# debugId=7216D9DCD7ACF46664756E2164756E21
-//# sourceMappingURL=chunk-8nggvf3t.js.map
+//# debugId=17B0E85D8FCCB39B64756E2164756E21
+//# sourceMappingURL=chunk-0sbd8ftr.js.map

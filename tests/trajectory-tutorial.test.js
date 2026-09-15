@@ -3,6 +3,11 @@ import {Context,createDefaultSystemContext,parseAndEvaluate,parseAndEvaluateAsyn
 import {createBundledPluginCatalog} from '../src/generated/bundled-plugin-catalog.js';
 import {linkedGraphicSelectionIds} from '../../rix/src/tools/graphic-view.js';
 import {queryTrajectoryTime} from '../../rix/src/tools/trajectory-view.js';
+test('published trajectory examples are actual editable Run cells',async()=>{
+    const html=await Bun.file(new URL('../docs/tutorial/plugin-plot.html',import.meta.url)).text();
+    const cells=[...html.matchAll(/<textarea[^>]*data-tutorial-source[^>]*>([\s\S]*?)<\/textarea>/g)].map(m=>m[1]);
+    for(const api of ['Trajectory','PhasePortrait','EventTrajectory','LinkedTrajectory'])expect(cells.some(s=>s.includes(`.plot.${api}(`))).toBe(true);
+});
 for(const [mode,evaluate] of [['sync',parseAndEvaluate],['async',parseAndEvaluateAsync]]) {
     test(`${mode}: linked tutorial renders three coordinated panels`,async()=> {
         const source=await Bun.file(new URL('../../rix/plugins/plot/tutorial.md',import.meta.url)).text();
@@ -10,6 +15,7 @@ for(const [mode,evaluate] of [['sync',parseAndEvaluate],['async',parseAndEvaluat
         const result=await evaluate(cell,{context:new Context(),systemContext:createDefaultSystemContext({pluginCatalog:createBundledPluginCatalog()})});
         expect(result.metadata.get('panels').values).toHaveLength(3);
         expect(queryTrajectoryTime(result,'1/3').panels.every(p=>p.status==='enclosed')).toBe(true);
+        expect(String(result.metadata.get('panelzoom').entries.get('maximum'))).toBe('64');
         expect(linkedGraphicSelectionIds(result,'panel-1-trajectory-1')).toHaveLength(3);
         expect(renderOutputHtml(result,formatValue)).toContain('panel-3-trajectory-4');
     },60000);

@@ -84,27 +84,27 @@ proof := .logic.Proof([
 {: .logic.Capabilities(),.logic.Valuations([:p,:q]) };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Truth tables reject requests above their explicit atom budget. Tableaux offer a different route: expand connectives on branches and stop a branch as soon as it contains a contradiction.</p>
 <h2>Close a tableau to prove classical validity</h2>
-<section class="comparison-code"><header>{.rix exec=true}</header><pre><code>.Plugin.Load(&quot;logic&quot;);
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="8" spellcheck="false">.Plugin.Load(&quot;logic&quot;);
 p := .logic.Atom(:p);
 q := .logic.Atom(:q);
 modusPonens := p.And(p.Implies(q)).Implies(q);
 tableau := modusPonens.Tableau({= mode=:validity });
 tableau[:status]==:valid ?: 1 ?_ .Error(&quot;Expected all branches to close&quot;);
 .logic.CheckTableau(tableau)[:accepted] ?: 1 ?_ .Error(&quot;Tableau replay failed&quot;);
-{: tableau[:status],tableau[:trace],tableau[:branches] };</code></pre></section>
+{: tableau[:status],tableau[:trace],tableau[:branches] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Validity search starts by asking for a valuation making the formula <strong>false</strong>. Every branch closes, so no such valuation exists. Trace rules <code>:alpha</code> extend one branch; <code>:beta</code> splits it. A closed branch retains the contradictory signed formula and its prior literal assignments so the closure can be inspected.</p>
 <h2>Read an open branch as a countermodel</h2>
-<section class="comparison-code"><header>{.rix exec=true}</header><pre><code>.Plugin.Load(&quot;logic&quot;);
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="8" spellcheck="false">.Plugin.Load(&quot;logic&quot;);
 p := .logic.Atom(:p);
 q := .logic.Atom(:q);
 formula := p.Implies(q);
 attempt := formula.Tableau({= mode=:validity });
 attempt[:status]==:invalid ?: 1 ?_ .Error(&quot;Expected a countermodel&quot;);
 formula.Evaluate(attempt[:witness]) ?: .Error(&quot;Countermodel must falsify the source&quot;) ?_ 1;
-{: attempt[:witnessKind],attempt[:witness],attempt[:branches] };</code></pre></section>
+{: attempt[:witnessKind],attempt[:witness],attempt[:branches] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The countermodel sets <code>p=1,q=0</code>, just as the truth table did. In default satisfiability mode, an open branch instead supplies a model making the source true. All witnesses are checked against the original formula.</p>
 <h2>Distinguish an answer from exhaustive search</h2>
-<section class="comparison-code"><header>{.rix exec=true}</header><pre><code>.Plugin.Load(&quot;logic&quot;);
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="11" spellcheck="false">.Plugin.Load(&quot;logic&quot;);
 p := .logic.Atom(:p);
 q := .logic.Atom(:q);
 r := .logic.Atom(:r);
@@ -114,7 +114,7 @@ stopped[:status]==:unresolved ?: 1 ?_ .Error(&quot;A blocked split is not a proo
 partial[:status]==:satisfiable ?: 1 ?_ .Error(&quot;The p branch supplies a model&quot;);
 partial[:complete] ?: .Error(&quot;Other work must remain unresolved&quot;) ?_ 1;
 .logic.CheckTableau(partial)[:accepted] ?: 1 ?_ .Error(&quot;Partial evidence must replay&quot;);
-{: stopped[:branches],partial[:decided],partial[:complete],partial[:witness] };</code></pre></section>
+{: stopped[:branches],partial[:decided],partial[:complete],partial[:witness] };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The second search finds the open <code>p</code> branch within two steps, although the other branch remains unresolved. It has answered satisfiability without finishing every branch. Never interpret a mere budget limit as a theorem.</p>
 <p>Finally, try <code>p.Or(p.Not()).Tableau({= mode=:validity })</code>: it proves excluded middle in <strong>classical</strong> semantics. The natural-deduction core above is intuitionistic-compatible and has no excluded-middle axiom. The systems are complementary course topics, not interchangeable proof labels.</p>
 <h2>Further work</h2>

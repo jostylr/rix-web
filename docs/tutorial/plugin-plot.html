@@ -57,45 +57,47 @@ observations := [[1,2],[2,5/2],[3,7/4],[4,3]];
 ]);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p><code>Contour</code> adds multiple <code>levels</code>; <code>Inequality</code> uses <code>relation=:le</code> by default. Inspect the returned Graphic&#039;s <code>metadata.plot</code> record through a renderer or host to find the sampling record, evidence counts, stable hit identities, ambiguous cells, and unresolved regions. These records distinguish sampled boundary evidence from a certified enclosure. <code>refineDepth</code> is bounded from zero through six; <code>refinementBudget</code> caps total processed cells and must cover the base grid. With <code>certifyIntervals=1</code>, interval-compatible functions can certify whole-cell exclusion or inequality classification. The plotted crossing itself remains sampled unless a separate mathematical continuity/existence contract certifies it.</p>
 <h2>Plot an ODE trajectory</h2>
-<section class="comparison-code"><header>{.rix exec=true}</header><pre><code>.Plugin.Load(&quot;ode&quot;);
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="6" spellcheck="false">.Plugin.Load(&quot;ode&quot;);
 .Plugin.Load(&quot;plot&quot;);
 y := .calculus.Variable(:y);
 problem := .ode.IVP(y,0,1,0:1);
 solution := problem.AdaptiveValidatedTaylor({= order=3,steps=2,maxSubintervals=1 });
-.plot.Trajectory(solution,{= maxSegments=1,title=&quot;One certified segment; the rest omitted&quot; });</code></pre></section>
+.plot.Trajectory(solution,{= maxSegments=1,title=&quot;One certified segment; the rest omitted&quot; });</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The blue box is a retained whole-segment enclosure. Gray time is omitted by <code>maxSegments=1</code>, not solved or extrapolated by the plot. Raise <code>maxSegments</code> to show the remaining stored segments. Passing <code>problem.RK4()</code> instead produces orange approximate paths. Plotting does not improve or independently check solver evidence. For a vector solution, use <code>{= component=2 }</code> to select its second coordinate. Backward solutions work without sorting or changing their stored trajectory. Tick-label approximations do not change the exact metadata.</p>
 <h2>Plot a phase portrait</h2>
 <p>A phase portrait removes time from the axes: here position <code>x</code> is horizontal and velocity <code>v</code> is vertical for the oscillator <code>x&#039;=v</code>, <code>v&#039;=-x</code>.</p>
-<section class="comparison-code"><header>{.rix exec=true}</header><pre><code>.Plugin.Load(&quot;ode&quot;);
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">.Plugin.Load(&quot;ode&quot;);
 .Plugin.Load(&quot;plot&quot;);
 x := .calculus.Variable(:x);
 v := .calculus.Variable(:v);
 problem := .ode.IVP([v,-x],0,[1,0],0:1,{= stateNames=[:x,:v] });
 solution := problem.ValidatedTaylor({= steps=4,order=3,maxSubintervals=1 });
-.plot.PhasePortrait(solution,{= xComponent=1,yComponent=2,title=&quot;Oscillator: certified position/velocity boxes&quot; });</code></pre></section>
+.plot.PhasePortrait(solution,{= xComponent=1,yComponent=2,title=&quot;Oscillator: certified position/velocity boxes&quot; });</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Blue boxes enclose each accepted segment in both coordinates. They do not say that every point in a box is reachable, or trace a certified ellipse. Replace the solver call with <code>problem.RK4({= steps=16 })</code> for an orange <strong>approximate</strong> path. Swap <code>xComponent</code> and <code>yComponent</code> to exchange axes.</p>
 <p>Try adding <code>maxSegments=1</code> to the plot options. The visible warning reports missing time coverage; no gray spatial region is invented for unknown states. The retained metadata still gives the exact omitted time interval. Increase <code>maxSegments</code> to show more stored segments; this does not rerun the solver. Backward solutions retain their integration order in the segment records.</p>
 <h2>Mark an event</h2>
-<section class="comparison-code"><header>{.rix exec=true}</header><pre><code>.Plugin.Load(&quot;ode&quot;);
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="8" spellcheck="false">.Plugin.Load(&quot;ode&quot;);
 .Plugin.Load(&quot;plot&quot;);
 y := .calculus.Variable(:y);
 event := .ode.Event(y-1/2,{= name=:half,direction=:rising });
 problem := .ode.IVP(.calculus.Constant(1),0,0,0:1,{= events=[event] });
 solution := problem.ValidatedTaylor({= steps=1,order=3,maxSubintervals=1 });
 result := solution.IsolateEvents()[1];
-.plot.EventTrajectory(result,{= title=&quot;A certified crossing of y=1/2&quot; });</code></pre></section>
+.plot.EventTrajectory(result,{= title=&quot;A certified crossing of y=1/2&quot; });</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>The green line marks a certified unique event. With <code>problem.RK4()</code> instead, the orange overlay is only an observed candidate. For vector solutions, <code>EventPhasePortrait(result)</code> marks the source segment&#039;s entire state box, not an exact crossing point. <code>maxEvents</code> limits overlay work; <code>maxSegments</code> still limits displayed trajectory coverage. The plot consumes existing evidence and does not strengthen it.</p>
 <h2>Link time plots and a phase portrait</h2>
-<section class="comparison-code"><header>{.rix exec=true}</header><pre><code>.Plugin.Load(&quot;ode&quot;);
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">.Plugin.Load(&quot;ode&quot;);
 .Plugin.Load(&quot;plot&quot;);
 x := .calculus.Variable(:x);
 v := .calculus.Variable(:v);
 problem := .ode.IVP([v,-x],0,[1,0],0:1,{= stateNames=[:x,:v] });
 solution := problem.ValidatedTaylor({= steps=4,order=3,maxSubintervals=1 });
-.plot.LinkedTrajectory(solution,{= components=[1,2],phaseComponents=[1,2],columns=2,scrubSteps=2000 });</code></pre></section>
+.plot.LinkedTrajectory(solution,{= components=[1,2],phaseComponents=[1,2],columns=2,scrubSteps=2000 });</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Select a blue segment box in any panel using the Graphics selection controls or keyboard. The corresponding solver segment highlights in all three panels. The selection links whole certified enclosures, not a guessed point on the solution. For approximate solvers the linked objects are approximate segments. <code>components</code> chooses time plots; <code>phaseComponents</code> optionally adds one phase portrait. <code>columns</code> arranges the panels; <code>size</code> sets each panel&#039;s dimensions. <code>maxPanels</code> (default 8) and <code>maxSegments</code> are adjustable display budgets.</p>
 <p>If your problem declares an event, use <code>.plot.LinkedEvents(solution.IsolateEvents()[1],options)</code> to link both segments and event overlays across the same panels. Static exports retain all panels and evidence but do not provide browser selection controls. This is segment selection plus a time scrubber. Move the <strong>Trajectory time</strong> slider, or enter an exact time such as <code>1/3</code> in <strong>Exact trajectory time</strong>. The red mark moves through each time plot and displays the corresponding phase bounds. For certified segments these are the whole retained tube bounds, not tightened Taylor bounds at that time; approximate segments use exact arithmetic on their stored linear interpolation. The readout labels this distinction explicitly.</p>
 <p>Try <code>maxSegments=1</code> and scrub past the displayed prefix: the readout says uncomputed/omitted and clears old markers. <code>scrubSteps</code> controls slider resolution, while exact time entry is not restricted to its grid. <code>maxScrubWork</code> (default 10000) and <code>maxScrubDigits</code> (default 1000) bound each query. Budget failures are visible and do not call a solver or extrapolate.</p>
+<p>Choose <strong>Panel to zoom</strong>, then use <strong>Zoom panel in</strong>, <strong>Zoom panel out</strong>, or <strong>Reset panel</strong>. Scrolling over a panel zooms that panel around the pointer; the other panels keep their views. Scrub again after zooming: the selected time is still shared, and its marker follows the panel&#039;s zoom. A clipped marker has not disappeared mathematically—the exact readout remains available. Reset the panel to see its full original view.</p>
+<p><code>panelMinZoom</code> (default <code>1/8</code>), <code>panelMaxZoom</code> (default <code>64</code>), and <code>panelZoomStep</code> (default <code>3/2</code>) configure these controls. Try <code>panelMaxZoom=128,panelZoomStep=2</code>. The main Graphics toolbar still changes the whole composed view. Panel zoom changes display only, including axes and labels; it does not request tighter enclosures or recompute tick positions.</p>
 <h2>Share a color policy</h2>
 <p>One portable scale can drive a heat map, a statistics graphic, and a complex magnitude coloring without becoming renderer state:</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="9" spellcheck="false">.Plugin.Load(&quot;plot&quot;);
