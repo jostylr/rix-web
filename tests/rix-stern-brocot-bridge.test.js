@@ -42,3 +42,13 @@ describe("rix-web Stern-Brocot bridge", () => {
     expect(bridge.context.has("temporary")).toBe(false);
   });
 });
+
+ test("linked exact inspection enforces path, term and numeric work bounds", () => {
+    const bridge = createSternBrocotRixBridge();
+    expect(() => bridge.describeBounded(new Rational(1), { maxPath: 257 })).toThrow("256 path");
+    expect(() => bridge.describeBounded(new Rational(1), { maxConvergents: 65 })).toThrow("64 convergents");
+    expect(() => bridge.describeBounded(new Rational(2n ** 17000n))).toThrow("16384-bit");
+    const partial = bridge.describeBounded(new Rational(355, 113), { maxConvergents: 2 });
+    expect(partial.truncated).toBe(true);
+    expect(partial.convergents).toHaveLength(2);
+});

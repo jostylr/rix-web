@@ -14,6 +14,8 @@ import {
   parseAndEvaluate,
 } from "../../rix/src/index.js";
 
+import { boundedExactExplorationInterval } from "../../rix/src/tools/exact-exploration.js";
+
 function mapField(value, name) {
   if (value?.type !== "map" || !(value.entries instanceof Map)) {
     throw new Error("Expected a RiX map value");
@@ -83,6 +85,7 @@ export class SternBrocotRixBridge {
     if (!Number.isInteger(maxPath) || maxPath < 1 || maxPath > 256 || !Number.isInteger(maxConvergents) || maxConvergents < 1 || maxConvergents > 64) {
       throw new Error("Linked number inspection supports at most 256 path steps and 64 convergents");
     }
+    if (!boundedExactExplorationInterval(value)) throw new Error("Linked number inspection requires an exact rational value");
     this.context.setFresh("selectedfraction", value);
     const raw = parseAndEvaluate(`{;
       rational := @selectedfraction.F().Rational() ~!: :Rational;

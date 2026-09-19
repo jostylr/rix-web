@@ -4,6 +4,7 @@ import { Rational, RationalInterval, Integer } from "@ratmath/core";
 export const DASHBOARD_LIMITS = Object.freeze({ variables: 128, samples: 64, sourceBytes: 8192, groupLength: 80 });
 
 export function dashboardPresentation(value = {}) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) value = {};
     const names = Array.isArray(value.pinned) ? value.pinned : [];
     const groups = value.groups && typeof value.groups === "object" && !Array.isArray(value.groups) ? value.groups : {};
     return {
@@ -53,10 +54,15 @@ export function dashboardHistoryGraphic(history) {
     const paths = samples.map((sample, index) => ({ type: "output", kind: "path", points: [[x(index), y(sample.bounds[0])], [x(index), y(sample.bounds[1])]],
         style: new Map([["stroke", "#7c3aed"], ["width", 2], ["id", `history-${sample.revision}`]]) }));
     const points = samples.map((sample, index) => [x(index), y(sample.bounds[0])]);
+    const rangeLabel = `Range ${low} to ${high}`;
+    const label = (text, at, id) => ({ type: "output", kind: "text_mark", text,
+        position: [new Rational(15), new Rational(at)], style: new Map([["size", 9], ["fill", "#475569"], ["id", id]]) });
     return { type: "output", kind: "graphic", size: [300, 85], children: [
         { type: "output", kind: "path", points, style: new Map([["stroke", "#2563eb"], ["fill", "none"], ["width", 2], ["id", "history-series"]]) }, ...paths,
+        label(`Observed revisions ${samples[0].revision}–${samples.at(-1).revision}`, 10, "history-revisions"),
+        label(rangeLabel.length > 54 ? `${rangeLabel.slice(0, 51)}…` : rangeLabel, 82, "history-range"),
     ], metadata: new Map([["plot", new Map([["title", "Bounded exact value history"], ["kind", "history"], ["series", [new Map([
         ["id", "history"], ["label", "Retained revisions"], ["data", points],
-        ["originalData", samples.map((sample) => [new Rational(sample.revision), new Rational(sample.bounds[0])])],
+        ["originalData", samples.map((sample) => [new Rational(sample.revision), new RationalInterval(...sample.bounds)])],
     ])]]])]]) };
 }

@@ -1,3 +1,4 @@
+import { exactExplorationInterval, traceExactArithmetic } from "../../rix/src/tools/exact-exploration.js";
 import { createOutputBundleHost } from "../../rix/src/runtime/output-bundle-host.js";
 import {
     Context,
@@ -12,6 +13,7 @@ import {
     isReactiveNode,
     isOutputValue,
     outputValueKind,
+    parse,
     parseAndEvaluate,
     parseAndEvaluateObserved,
     parseAndEvaluateObservedAsync,
@@ -95,7 +97,7 @@ export const helpGroups = [
         description: "Explore exact intervals and create portable interactive graphics.",
         items: [
             ["1/3:2/3", "Create an exact closed interval; endpoint orientation is retained."],
-            ["Explore interval", "Open the exact number line, edit endpoints, inspect arithmetic provenance, and export SVG or HTML."],
+            ["Explore exact value", "Open exact rational or interval number lines, inspect bounded arithmetic and linked fractions, edit endpoints, and export SVG, HTML or text."],
             ["Arrow keys", "In the interval explorer, move a focused endpoint or the whole interval by the exact selected step."],
             [".Graphics", "Build portable figures that RiX Web can render and make interactive."],
         ],
@@ -277,8 +279,19 @@ export function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true
         return { ...numberConfig };
     };
 
+    const readExactLeaf = (source) => {
+        if (typeof source !== "string" || source.length > 8192) throw new Error("Exact inspection source exceeds 8192 characters");
+        const nodes = parse(source);
+        const node = nodes.length === 1 ? nodes[0] : null;
+        if (node?.type === "Number") return parseAndEvaluate(source, { ...state, file: "<exact-inspection-literal>" });
+        if (node?.type !== "UserIdentifier" && node?.type !== "ReactiveRef") throw new Error("Exact inspection reads only numeric literals and current variable values");
+        const value = state.context.get(node.name);
+        return isReactiveNode(value) ? value.peek() : value;
+    };
+
     return {
         ...createOutputBundleHost({ assetStore, authorizeExternal, format: configuredFormat }),
+        readExactLeaf,
         run(source) {
             const topic = inlineHelpRequest(source);
             if (topic !== null) return { type: "help", source, ...findHelp(topic) };
@@ -296,6 +309,7 @@ export function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true
                     value,
                     text: presentationFormat(value),
                     sourceText: formatValueSource(value),
+                    exactTrace: exactExplorationInterval(value) ? traceExactArithmetic(source, readExactLeaf) : null,
                     html: isOutputValue(value) ? renderOutputHtml(value, format) : null,
                     observe: observed.observe
                         ? (listener) => observed.observe((nextValue, event) => listener(makeResponse(nextValue), event))
@@ -336,6 +350,7 @@ export function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true
                     value,
                     text: presentationFormat(value),
                     sourceText: formatValueSource(value),
+                    exactTrace: exactExplorationInterval(value) ? traceExactArithmetic(source, readExactLeaf) : null,
                     html: isOutputValue(value) ? renderOutputHtml(value, format) : null,
                     observe: observed.observe
                         ? (listener) => observed.observe((nextValue, event) => listener(makeResponse(nextValue), event))

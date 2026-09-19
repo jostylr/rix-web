@@ -37,5 +37,18 @@ test("history charts normalize exact tiny intervals and export original source r
     const svg = renderGraphicSvg(graphic, String);
     expect(svg).toContain("Retained Retained revisions");
     expect(svg).toContain(String(value.start));
+    expect(svg).toContain(String(value.end));
+    expect(svg).toContain(String(value));
     expect(histories.get("a").samples[0].source).toBe(String(value));
+});
+
+test("presentation handles malformed session data and prototype-like variable names", () => {
+    expect(dashboardPresentation(null)).toEqual(dashboardPresentation());
+    expect(dashboardPresentation({ groups: JSON.parse('{"__proto__":"Data","constructor":"Bounds"}') }).groups.constructor).toBe("Bounds");
+    const histories = new Map();
+    const descriptors = Array.from({ length: 140 }, (_, index) => ({ id: String(index), name: String(index), sourceText: "1", value: new Rational(1), state: "clean" }));
+    recordDashboardHistory(histories, descriptors);
+    expect(histories.size).toBe(128);
+    expect(() => recordDashboardHistory(histories, [], 0)).toThrow("1–64");
+    expect(() => recordDashboardHistory(histories, [], 65)).toThrow("1–64");
 });

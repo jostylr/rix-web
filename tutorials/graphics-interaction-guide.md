@@ -310,3 +310,43 @@ audio trace.
         samples=33, title="Square root evidence", xLabel="x", yLabel="x squared minus 2"
     }) ;
 :::
+
+
+## Exact exploration and retained histories
+
+Run `355/113` in the calculator and choose **Explore exact value**. Open
+**Mediants, Farey parents and continued fractions** to inspect the Farey parents
+`333/106` and `22/7`, the mediant, and convergents. The error for `22/7` is
+exactly `-1/791`. Convergent buttons open that value; error and provenance
+buttons insert source into the calculator without executing it. The existing
+Stern–Brocot explorer remains available through the link.
+
+Run `(1:2) * ((3:4) + 1)` to inspect nested arithmetic. Its result is `4:10`.
+The bounded provenance table records the original response's arithmetic
+values, widths, and enclosure evidence, even after later session edits.
+Calls and assignments are not replayed. Unsupported syntax is unresolved,
+work limits are disclosed, and a divisor that contains zero is undefined.
+Editing endpoints updates the current result separately; if it becomes
+undefined, the last valid result is labelled as a reference and cannot be
+inserted as the current result.
+
+Use Tab to focus an endpoint, then Left/Right to move it by the selected exact
+step. Moving the interval line moves both endpoints. The step denominator is
+bounded to 1–1,000,000. **Use exact result** inserts the oriented result. Export
+SVG, HTML, or text to retain exact endpoints, provenance, related-number facts,
+and uncertainty disclosures. Collapsed details remain present in exports.
+
+Open the **Dashboard** after creating `$$width := .Slider(3, 0:10, 1/2, "Width")`.
+Pin its card or assign a group. Open **Value history** to see retained exact
+observations and their chart. Each historical value can be reinserted; the
+chart exports as SVG with the original interval endpoints. Group and pin
+settings survive session save/load and never change the graph's values.
+
+Histories retain the latest 64 distinct observed value/state pairs for the
+first 128 identities in name order. They deduplicate unchanged refreshes,
+prune deleted identities, and report discarded samples. Values larger than
+8,192 UTF-8 bytes remain in the current-value card but do not enter history.
+History is ephemeral and records dashboard observations, not every mutation
+while a view is closed. Arithmetic inspection defaults to 64 nodes/16 levels,
+8,192 source characters, and 16,384 bits per endpoint. Related-number views
+retain at most 128 path steps and 32 convergents, with visible limit messages.

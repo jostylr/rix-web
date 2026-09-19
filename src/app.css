@@ -288,3 +288,25 @@ body { height: 100dvh; }
 .interval-trace th, .interval-trace td, .interval-number-links th, .interval-number-links td { padding: .35rem; text-align: left; border: 1px solid #dbe2ea; overflow-wrap: anywhere; }
 .interval-trace button, .interval-number-links button { overflow-wrap: anywhere; max-width: 100%; }
 .interval-graphic .rix-output-svg { width: 100%; }
+
+/* Exact labels remain readable at narrow widths and magnified browser zoom. */
+.interval-header > div, .interval-provenance > *, .interval-graphic { min-width: 0; max-width: 100%; }
+.interval-header #interval-source { white-space: normal; overflow-wrap: anywhere; }
+.interval-provenance code, .interval-provenance button, .reactive-history td button { overflow-wrap: anywhere; white-space: normal; }
+.interval-body, .interval-provenance { overflow-wrap: anywhere; }
+.interval-trace, .interval-number-links { width: 100%; }
+.interval-header { flex-wrap: wrap; }
+
+.reactive-organization button, .reactive-organization input, .reactive-history button,
+.interval-trace button, .interval-number-links button {
+  border: 1px solid #c4b5fd; border-radius: 6px; padding: .3rem .45rem;
+  color: #43318c; background: #fff; font: inherit;
+}
+.reactive-organization { font: .75rem system-ui, sans-serif; }
+.reactive-organization label { flex: 1; min-width: 0; }
+.reactive-history summary, .interval-trace summary, .interval-number-links summary { cursor: pointer; font-weight: 650; }
+.reactive-history { font: .75rem/1.5 system-ui, sans-serif; }
+.interval-trace, .interval-number-links { font: .82rem/1.5 system-ui, sans-serif; }
+.interval-trace button:hover, .interval-number-links button:hover, .reactive-history button:hover { background: #f5f3ff; }
+.interval-trace button:focus-visible, .interval-number-links button:focus-visible,
+.reactive-organization :focus-visible, .reactive-history button:focus-visible { outline: 2px solid #6d28d9; outline-offset: 2px; }

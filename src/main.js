@@ -62,6 +62,7 @@ const clearCoordinator = new ClearCoordinator();
 const intervalExplorer = new IntervalExplorer({
     dialog: intervalDialog,
     evaluate: (source) => repl.run(source),
+    inspect: (source) => repl.readExactLeaf(source),
     onUse: (source) => setInput(source),
 });
 const reactiveDashboard = new ReactiveDashboard({
@@ -201,7 +202,7 @@ function appendOutput(source, response) {
                 explore.textContent = "Explore exact value";
                 explore.addEventListener("click", (event) => {
                     event.stopPropagation();
-                    intervalExplorer.open(source, response.value);
+                    intervalExplorer.open(source, response.value, response.exactTrace);
                 });
                 outputLine.appendChild(explore);
             }
@@ -600,6 +601,7 @@ document.addEventListener("click", (event) => {
     case "load": fileInput.click(); break;
     case "interval-export-svg": intervalExplorer.download("svg"); break;
     case "interval-export-html": intervalExplorer.download("html"); break;
+    case "interval-export-text": intervalExplorer.download("txt"); break;
     case "interval-use": intervalExplorer.useResult(); break;
     default: break;
     }

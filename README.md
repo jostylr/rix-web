@@ -15,15 +15,23 @@ can create a restricted runtime with `createRixRepl({ autoLoadPlugins: false })`
 
 The calculator includes responsive command/keypad controls, exact number-view
 presets (decimal, fraction, mixed, continued fraction, scientific, binary, and
-hexadecimal), and an interval explorer. Interval results can be inspected on a
-number line, edited in exact rational steps, traced through top-level interval
-arithmetic, copied back into the session, or exported as SVG/HTML. The visual
-uses approximate pixel positions while its labels and textual table preserve
-the exact values and interval orientation.
+hexadecimal), and an exact number explorer. Rational and interval results use
+portable number-line Graphics, exact-step editing, bounded nested arithmetic
+provenance, and linked Farey parents, mediants, Stern–Brocot paths, continued
+fractions, and exact convergent errors. Values can be reinserted or exported as
+SVG, HTML, or text. The visual uses approximate pixels while retained text
+preserves exact values and interval orientation. Unsupported operations and
+exhausted work budgets remain visible; opening a view does not replay calls
+or assignments. See [the interaction guide](tutorials/graphics-interaction-guide.md)
+and the [shared helper contracts](../rix/documentation/eval/exact-exploration.md).
 
 The Reactive Dashboard discovers session `$$` identities, renders derived
 values and dependency information live, and mounts explicit controls for
-editable inputs. RiX-Web provides concise `.Slider`, `.Input`, `.Choice`,
+editable inputs. Pin/group settings are presentation state saved with the
+session. History charts retain up to 64 distinct observations for the first 128
+identities, with exact tables, source reinsertion, and SVG export. Older
+observations are discarded visibly; histories are not saved or collected as an
+unlimited graph event log. RiX-Web provides concise `.Slider`, `.Input`, `.Choice`,
 `.Toggle`, `.Range`, `.Reset`, `.Action`, and `.Hold` shortcuts; the portable
 language forms remain available under `.Controls`.
 

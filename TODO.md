@@ -17,7 +17,7 @@ and accessibility behavior belong here. Generated files under `docs/` and
   aliases, state, and diagnostics.
 - [x] Add RiX-Web-only short control constructors while retaining `.Controls.*`
   as the portable cross-host spelling.
-- [ ] Add optional pinning, grouping, and bounded value-history charts without
+- [x] Add optional pinning, grouping, and bounded value-history charts without
   changing the reactive graph's exact semantic values.
 
 ## Numeral-system playground
@@ -38,17 +38,18 @@ and accessibility behavior belong here. Generated files under `docs/` and
   interval results, exact-step endpoint editing, pointer and keyboard controls,
   top-level arithmetic provenance, source reinsertion, SVG/HTML export, and a
   textual exact-value alternative.
-- [ ] Generalize the number-line view to rational points and reusable RiX
+- [x] Generalize the number-line view to rational points and reusable RiX
   `Graphic` scenes, while preserving exact values when the viewport uses
   approximate pixels.
-- [ ] Expand interval-arithmetic provenance beyond the top-level expression to
-  full evaluation histories, including widening, undefined regions, and
-  unresolved/certified states.
-- [ ] Add linked views for mediants, Farey neighbors, Stern-Brocot paths,
+- [x] Expand interval-arithmetic provenance beyond the top-level expression with
+  bounded response-time arithmetic snapshots, including widening, undefined
+  regions, and unresolved/certified states. Calls are not replayed; node, depth,
+  source, and exact-value limits are explicit.
+- [x] Add linked views for mediants, Farey neighbors, Stern-Brocot paths,
   continued-fraction convergents, and exact convergent-error values. Reuse RiX
   methods and plugin results rather than reimplementing the mathematics in the
   browser.
-- [ ] Ensure every view has a useful static `Graphic`/SVG snapshot with labels
+- [x] Ensure every view has a useful static `Graphic`/SVG snapshot with labels
   and alternative text so the mathematical result remains portable outside
   RiX Web.
 

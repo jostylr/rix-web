@@ -32,7 +32,7 @@ export function reactiveVariableCardsHtml(descriptors, { presentation = dashboar
             ? `<ul class="reactive-diagnostics">${descriptor.diagnostics.map((message) => `<li>${escapeHtml(message)}</li>`).join("")}</ul>`
             : "";
         const pinned = presentation.pinned.includes(descriptor.name);
-        const group = presentation.groups[descriptor.name] || "";
+        const group = (Object.hasOwn(presentation.groups, descriptor.name) ? presentation.groups[descriptor.name] : "");
         const history = histories.get(descriptor.id ?? descriptor.name);
         const graphic = dashboardHistoryGraphic(history);
         const historyHtml = history ? `<details class="reactive-history"><summary>Value history (${history.samples.length}/${DASHBOARD_LIMITS.samples})</summary>${history.dropped ? `<p>${history.dropped} older changes discarded at the history limit.</p>` : ""}${history.diagnostic ? `<p>${escapeHtml(history.diagnostic)}</p>` : ""}${graphic ? renderOutputHtml(graphic, String) : ""}<table><caption>Exact retained revisions</caption><thead><tr><th>Revision</th><th>Value</th><th>State</th></tr></thead><tbody>${history.samples.map((sample) => `<tr><th>${sample.revision}</th><td><button type="button" data-dashboard-use="${escapeHtml(sample.source)}">${escapeHtml(sample.source)}</button></td><td>${escapeHtml(sample.state)}</td></tr>`).join("")}</tbody></table>${graphic ? `<button type="button" data-dashboard-history-export="${escapeHtml(descriptor.name)}">Export history SVG</button>` : ""}</details>` : "";
@@ -147,7 +147,7 @@ export class ReactiveDashboard {
         const failed = this.descriptors.filter(({ state }) => state === "error").length;
         const count = this.descriptors.length;
         this.countElement.textContent = `${count} reactive ${count === 1 ? "value" : "values"}`;
-        this.summaryElement.innerHTML = `<span><b>${count}</b> total</span><span><b>${controlled}</b> controlled</span><span><b>${derived}</b> derived</span><span${failed ? ' class="has-error"' : ""}><b>${failed}</b> errors</span>`;
+        this.summaryElement.innerHTML = `${count > DASHBOARD_LIMITS.variables ? `<p>History is limited to the first ${DASHBOARD_LIMITS.variables} values in name order. All current values remain available.</p>` : ""}<span><b>${count}</b> total</span><span><b>${controlled}</b> controlled</span><span><b>${derived}</b> derived</span><span${failed ? ' class="has-error"' : ""}><b>${failed}</b> errors</span>`;
         this.toggle.dataset.count = String(count);
         this.toggle.setAttribute("aria-label", `Reactive dashboard, ${count} ${count === 1 ? "value" : "values"}`);
     }
@@ -164,7 +164,7 @@ export class ReactiveDashboard {
         this.historyDisposers.splice(0).forEach((dispose) => dispose());
         const groups = new Map();
         for (const descriptor of this.descriptors) {
-            const group = this.presentation.pinned.includes(descriptor.name) ? "Pinned" : this.presentation.groups[descriptor.name] || "Ungrouped";
+            const group = this.presentation.pinned.includes(descriptor.name) ? "Pinned" : (Object.hasOwn(this.presentation.groups, descriptor.name) && this.presentation.groups[descriptor.name] || "Ungrouped");
             if (!groups.has(group)) groups.set(group, []);
             groups.get(group).push(descriptor);
         }

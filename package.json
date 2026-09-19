@@ -13,7 +13,7 @@
     "build:tutorials": "bun scripts/build-tutorials.js",
     "build:tutorials:static": "bun scripts/build-tutorials.js --navigation=static",
     "test": "bun run test:suite",
-    "test:short": "bun test --dots tests/geometry-board.test.js tests/interval-explorer.test.js tests/plugin-profile.test.js tests/reactive-dashboard.test.js tests/repl-async-dispatch.test.js tests/rix-stern-brocot-bridge.test.js tests/schema-publishing.test.js tests/stern-brocot-pages.test.js tests/tutorial-editor.test.js tests/tutorial-lint.test.js tests/tutorial-source.test.js tests/workspace-state.test.js",
+    "test:short": "bun test --dots tests/dashboard-state.test.js tests/geometry-board.test.js tests/interval-explorer.test.js tests/plugin-profile.test.js tests/reactive-dashboard.test.js tests/repl-async-dispatch.test.js tests/rix-stern-brocot-bridge.test.js tests/schema-publishing.test.js tests/stern-brocot-pages.test.js tests/tutorial-editor.test.js tests/tutorial-lint.test.js tests/tutorial-source.test.js tests/workspace-state.test.js",
     "test:ten": "bun test --dots",
     "test:suite": "bun test --dots",
     "serve": "python3 -m http.server 3000 --directory docs"
