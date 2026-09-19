@@ -78,6 +78,30 @@ export class SternBrocotRixBridge {
     };
   }
 
+  /** Bounded companion for the calculator's linked exact-number inspector. */
+  describeBounded(value, { maxPath = 128, maxConvergents = 32 } = {}) {
+    if (!Number.isInteger(maxPath) || maxPath < 1 || maxPath > 256 || !Number.isInteger(maxConvergents) || maxConvergents < 1 || maxConvergents > 64) {
+      throw new Error("Linked number inspection supports at most 256 path steps and 64 convergents");
+    }
+    this.context.setFresh("selectedfraction", value);
+    const raw = parseAndEvaluate(`{;
+      rational := @selectedfraction.F().Rational() ~!: :Rational;
+      parents := @selectedfraction.F().FareyParents();
+      {= rational=rational,parents=parents,mediant=(parents[1].Denominator()+parents[2].Denominator()==0 ?: @selectedfraction.F() ?_ parents[1].Mediant(parents[2])),
+         continuedFraction=rational.ToContinuedFraction({= maxTerms=${maxConvergents + 1} }),
+         convergents=rational.Convergents(${maxConvergents}).Map(q -> {= value=q,error=@rational-q }) }
+    }`, this.runtime);
+    let path = [], pathDiagnostic = null;
+    try {
+      path = sequenceValues(parseAndEvaluate(`selectedfraction.F().SternBrocotPath(${maxPath})`, this.runtime), "bounded path").map((entry) => entry.value);
+    } catch (error) { pathDiagnostic = `Path exceeds ${maxPath} steps or is unavailable: ${error.message}`; }
+    const terms = sequenceValues(mapField(raw, "continuedfraction"), "continued fraction");
+    return { raw, rational: mapField(raw, "rational"), parents: sequenceValues(mapField(raw, "parents"), "Farey parents"),
+      mediant: mapField(raw, "mediant"), continuedFraction: terms.slice(0, maxConvergents),
+      convergents: sequenceValues(mapField(raw, "convergents"), "convergents").map((entry) => ({ value: mapField(entry, "value"), error: mapField(entry, "error") })),
+      truncated: terms.length > maxConvergents, path, pathDiagnostic, limits: { maxPath, maxConvergents } };
+  }
+
   visibleTree(fraction, descendantDepth = 2) {
     this.context.setFresh("selectedfraction", fraction);
     this.context.setFresh("descendantdepth", descendantDepth);

@@ -198,7 +198,7 @@ function appendOutput(source, response) {
                 const explore = document.createElement("button");
                 explore.type = "button";
                 explore.className = "interval-explore-button";
-                explore.textContent = "Explore interval";
+                explore.textContent = "Explore exact value";
                 explore.addEventListener("click", (event) => {
                     event.stopPropagation();
                     intervalExplorer.open(source, response.value);
@@ -289,6 +289,7 @@ function currentSessionSnapshot() {
         numberConfig: repl.numberConfig(),
         reactiveInputs,
         dashboardOpen: reactiveDashboard.isOpen,
+        dashboardPresentation: reactiveDashboard.presentation,
         pluginProfile: repl.pluginProfile(),
     });
 }
@@ -414,6 +415,7 @@ async function clearSession(options = {}) {
     transcript = [];
     outputHistory.innerHTML = "";
     displayWelcome();
+    reactiveDashboard.restorePresentation({});
     reactiveDashboard.refresh();
     setInput("");
     clearCoordinator.reset();
@@ -567,6 +569,7 @@ async function restoreSession(session) {
         const response = await repl.runAsync(`$${reactive.name} := ${reactive.source}`);
         if (response.type === "error") throw new Error(`Could not restore reactive input ${reactive.name}: ${response.text}`);
     }
+    reactiveDashboard.restorePresentation(session.dashboardPresentation);
     reactiveDashboard.refresh();
     setScriptMode(session.scriptMode);
     setInput(session.input);

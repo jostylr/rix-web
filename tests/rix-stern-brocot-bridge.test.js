@@ -3,6 +3,18 @@ import { Fraction, Rational } from "@ratmath/core";
 import { createSternBrocotRixBridge } from "../src/rix-stern-brocot-bridge.js";
 
 describe("rix-web Stern-Brocot bridge", () => {
+  test("bounded linked inspection retains exact convergent errors and reports path exhaustion", () => {
+    const bridge = createSternBrocotRixBridge();
+    const model = bridge.describeBounded(new Rational(355, 113));
+    expect(model.parents.map(String)).toEqual(["333/106", "22/7"]);
+    expect(String(model.mediant)).toBe("355/113");
+    expect(model.convergents.map(({ value }) => String(value))).toEqual(["3", "22/7", "355/113"]);
+    expect(String(model.convergents[1].error)).toBe("-1/791");
+    expect(bridge.describeBounded(new Rational(0)).path).toEqual([]);
+    const bounded = bridge.describeBounded(new Rational(1000000), { maxPath: 8 });
+    expect(bounded.pathDiagnostic).toContain("exceeds 8 steps");
+    expect(String(bounded.convergents[0].value)).toBe("1000000");
+  });
   test("returns the pure RiX node model to native page code", () => {
     const bridge = createSternBrocotRixBridge();
     const node = bridge.describeNode(new Fraction(3n, 5n));

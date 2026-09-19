@@ -1,8 +1,8 @@
 import { Integer, Rational, RationalInterval } from "@ratmath/core";
-import { parse } from "../../rix/src/index.js";
-
-const SVG_NS = "http://www.w3.org/2000/svg";
-const COLORS = ["#2563eb", "#dc2626", "#7c3aed"];
+import { parse, renderOutputHtml, renderGraphicSvg } from "../../rix/src/index.js";
+import { enhanceGraphicViews } from "../../rix/src/tools/graphic-view.js";
+import { createExactNumberLineGraphic, traceExactArithmetic } from "../../rix/src/tools/exact-exploration.js";
+import { createSternBrocotRixBridge } from "./rix-stern-brocot-bridge.js";
 
 function unwrapGrouping(node) {
     return node?.type === "Grouping" ? unwrapGrouping(node.expression) : node;
@@ -44,7 +44,7 @@ function intervalValue(value) {
 }
 
 export function isRationalIntervalValue(value) {
-    return value instanceof RationalInterval;
+    return value instanceof RationalInterval || value instanceof Rational || value instanceof Integer;
 }
 
 export function analyzeIntervalExpression(source, evaluate) {
@@ -83,21 +83,10 @@ function exactSource(value) {
     return `${value.start.toString()}:${value.end.toString()}`;
 }
 
-function approximate(value) {
-    const result = Number.parseFloat(value.toDecimal(20));
-    return Number.isFinite(result) ? result : null;
-}
-
 function escapeHtml(value) {
     return String(value).replace(/[&<>'"]/g, (character) => ({
         "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#039;", '"': "&quot;",
     })[character]);
-}
-
-function svgElement(name, attributes = {}) {
-    const element = document.createElementNS(SVG_NS, name);
-    for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, String(value));
-    return element;
 }
 
 export class IntervalExplorer {
@@ -117,6 +106,9 @@ export class IntervalExplorer {
         this.selectedIndex = 0;
         this.items = [];
         this.drag = null;
+        this.graphicState = {};
+        this.trace = null;
+        this.linkBridge = null;
 
         this.selectionElement.addEventListener("change", () => {
             this.selectedIndex = Number(this.selectionElement.value);
@@ -131,6 +123,10 @@ export class IntervalExplorer {
         this.stepElement.addEventListener("change", () => this.render());
         dialog.addEventListener("click", (event) => {
             const nudge = event.target.closest("[data-interval-nudge]");
+            const linked = event.target.closest("[data-exact-inspect]");
+            if (linked) this.open(linked.dataset.exactInspect, new Rational(linked.dataset.exactInspect));
+            const use = event.target.closest("[data-exact-use]");
+            if (use) this.onUse(use.dataset.exactUse);
             if (nudge) {
                 const [target, direction] = nudge.dataset.intervalNudge.split(":");
                 this.nudge(target, Number(direction));
@@ -143,7 +139,10 @@ export class IntervalExplorer {
     open(source, value) {
         const interval = intervalValue(value);
         if (!interval) return;
+        this.resultError = null;
         this.source = source;
+        this.trace = traceExactArithmetic(source, this.evaluate);
+        this.graphicState = {};
         const provenance = analyzeIntervalExpression(source, this.evaluate);
         if (provenance) {
             this.operator = provenance.operator;
@@ -155,13 +154,13 @@ export class IntervalExplorer {
             this.selectedIndex = 2;
         } else {
             this.operator = null;
-            this.items = [{ label: "Interval", source, value: interval, derived: false }];
+            this.items = [{ label: interval.start.equals(interval.end) ? "Rational point" : "Interval", source, value: interval, derived: false }];
             this.selectedIndex = 0;
         }
         this.statusElement.textContent = "";
         this.sourceElement.textContent = source;
         this.render();
-        this.dialog.showModal();
+        if (!this.dialog.open) this.dialog.showModal();
     }
 
     close() {
@@ -182,10 +181,14 @@ export class IntervalExplorer {
     recalculate() {
         if (!this.operator || this.items.length !== 3) return;
         try {
+            this.resultError = null;
+            this.items[2].label = `Result (${this.operator})`;
             this.items[2].value = applyOperation(this.operator, this.items[0].value, this.items[1].value);
             this.statusElement.textContent = "Result recalculated exactly from the edited operands.";
         } catch (error) {
-            this.statusElement.textContent = error.message || String(error);
+            this.resultError = error.message || String(error);
+            this.items[2].label = "Previous valid result (current result undefined)";
+            this.statusElement.textContent = this.resultError;
         }
     }
 
@@ -246,86 +249,57 @@ export class IntervalExplorer {
         this.setItemValue(this.drag.index, new RationalInterval(start, end));
     }
 
-    range() {
-        const values = this.items.flatMap(({ value }) => [value.low, value.high]);
-        const approximateValues = values.map(approximate).filter((value) => value !== null);
-        if (approximateValues.length !== values.length) return { min: -1, max: 1, reliable: false };
-        let min = Math.min(...approximateValues);
-        let max = Math.max(...approximateValues);
-        if (min === max) { min -= 1; max += 1; }
-        const padding = Math.max((max - min) * 0.12, 0.25);
-        return { min: min - padding, max: max + padding, reliable: true };
-    }
-
     renderGraphic() {
-        const width = 760;
-        const height = this.items.length === 3 ? 270 : 210;
-        const left = 54;
-        const right = width - 38;
-        const range = this.range();
-        const x = (value) => {
-            const number = approximate(value);
-            if (number === null) return (left + right) / 2;
-            return left + ((number - range.min) / (range.max - range.min)) * (right - left);
-        };
-        const svg = svgElement("svg", { viewBox: `0 0 ${width} ${height}`, role: "img", "aria-labelledby": "interval-svg-title interval-svg-description" });
-        const title = svgElement("title", { id: "interval-svg-title" });
-        title.textContent = "Exact rational intervals on an approximate number line";
-        const description = svgElement("desc", { id: "interval-svg-description" });
-        description.textContent = this.items.map(({ label, value }) => `${label}: ${exactSource(value)}`).join("; ");
-        svg.append(title, description);
-
-        const axisY = this.items.length === 3 ? 132 : 102;
-        svg.appendChild(svgElement("line", { x1: left, y1: axisY, x2: right, y2: axisY, class: "interval-axis" }));
-        for (let index = 0; index <= 4; index += 1) {
-            const position = left + ((right - left) * index) / 4;
-            const value = range.min + ((range.max - range.min) * index) / 4;
-            svg.appendChild(svgElement("line", { x1: position, y1: axisY - 6, x2: position, y2: axisY + 6, class: "interval-tick" }));
-            const label = svgElement("text", { x: position, y: axisY + 24, class: "interval-tick-label", "text-anchor": "middle" });
-            label.textContent = Number.isFinite(value) ? value.toPrecision(4).replace(/\.0+$/, "") : "approx.";
-            svg.appendChild(label);
-        }
-
+        const activeId = this.dialog.ownerDocument.activeElement?.dataset?.rixSemanticId;
+        this.graphic = createExactNumberLineGraphic(this.items.map((item, index) => ({ ...item, id: `interval-${index}` })), { title: "Exact rational points and intervals" });
+        this.graphicElement.innerHTML = renderOutputHtml(this.graphic, String);
+        this.svg = this.graphicElement.querySelector("svg");
         this.items.forEach((item, index) => {
-            const y = this.items.length === 3 ? [65, 112, 201][index] : 72;
-            const startX = x(item.value.start);
-            const endX = x(item.value.end);
-            const color = COLORS[index % COLORS.length];
-            const group = svgElement("g", { class: `interval-lane${index === this.selectedIndex ? " selected" : ""}` });
-            const laneLabel = svgElement("text", { x: left, y: y - 18, class: "interval-lane-label" });
-            laneLabel.textContent = `${item.label}  ${exactSource(item.value)}`;
-            const segment = svgElement("line", { x1: startX, y1: y, x2: endX, y2: y, stroke: color, class: "interval-segment", tabindex: item.derived ? -1 : 0, role: "button", "aria-label": `${item.label}; move both endpoints; ${exactSource(item.value)}` });
-            segment.addEventListener("pointerdown", (event) => this.pointerStart(event, index, "whole"));
-            segment.addEventListener("keydown", (event) => {
-                if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-                    event.preventDefault();
-                    this.nudge("whole", event.key === "ArrowLeft" ? -1 : 1, index);
-                }
-            });
-            group.append(laneLabel, segment);
-            [["start", startX], ["end", endX]].forEach(([target, cx]) => {
-                const handle = svgElement("circle", { cx, cy: y, r: 8, fill: color, class: "interval-handle", tabindex: item.derived ? -1 : 0, role: "slider", "aria-label": `${item.label} ${target} endpoint`, "aria-valuetext": item.value[target].toString() });
-                handle.addEventListener("pointerdown", (event) => this.pointerStart(event, index, target));
-                handle.addEventListener("keydown", (event) => {
-                    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-                        event.preventDefault();
+            for (const target of ["start", "end", "whole"]) {
+                const id = target === "whole" ? `interval-${index}` : `interval-${index}:${target}`;
+                const element = [...this.svg.querySelectorAll("[data-rix-semantic-id]")].find((node) => node.dataset.rixSemanticId === id);
+                if (!element || item.derived) continue;
+                element.dataset.rixDragTarget = `interval:${index}:${target}`;
+                element.setAttribute("tabindex", "0");
+                element.setAttribute("role", target === "whole" ? "button" : "slider");
+                element.setAttribute("aria-label", `${item.label} ${target === "whole" ? "move both endpoints" : `${target} endpoint`}`);
+                element.setAttribute("aria-valuetext", target === "whole" ? String(item.value) : String(item.value[target]));
+                element.addEventListener("pointerdown", (event) => this.pointerStart(event, index, target));
+                element.addEventListener("keydown", (event) => {
+                    if (["ArrowLeft", "ArrowRight"].includes(event.key)) {
+                        event.preventDefault(); event.stopPropagation();
                         this.nudge(target, event.key === "ArrowLeft" ? -1 : 1, index);
                     }
                 });
-                group.appendChild(handle);
-            });
-            svg.appendChild(group);
+            }
         });
-        this.graphicElement.replaceChildren(svg);
-        this.svg = svg;
+        enhanceGraphicViews(this.graphicElement, { graphic: this.graphic, state: this.graphicState, format: String });
+        if (activeId) [...this.svg.querySelectorAll("[data-rix-semantic-id]")].find((node) => node.dataset.rixSemanticId === activeId)?.focus({ preventScroll: true });
     }
 
     renderProvenance() {
         if (!this.operator) {
             this.provenanceElement.innerHTML = `<span class="provenance-node"><b>Exact source</b><code>${escapeHtml(this.source)}</code></span><span class="provenance-arrow">→</span><span class="provenance-node result"><b>Interval</b><code>${escapeHtml(exactSource(this.items[0].value))}</code></span>`;
+            this.renderExplorationDetails();
             return;
         }
         this.provenanceElement.innerHTML = `<span class="provenance-node"><b>Left operand</b><code>${escapeHtml(exactSource(this.items[0].value))}</code></span><span class="provenance-operator" aria-label="operator ${escapeHtml(this.operator)}">${escapeHtml(this.operator)}</span><span class="provenance-node"><b>Right operand</b><code>${escapeHtml(exactSource(this.items[1].value))}</code></span><span class="provenance-arrow">→</span><span class="provenance-node result"><b>Exact result</b><code>${escapeHtml(exactSource(this.items[2].value))}</code></span>`;
+        this.renderExplorationDetails();
+    }
+
+    renderExplorationDetails() {
+        if (this.resultError) this.provenanceElement.insertAdjacentHTML("beforeend", `<p role="alert">Current result is undefined: ${escapeHtml(this.resultError)}. The last valid result is shown for reference.</p>`);
+        const trace = this.trace;
+        const traceHtml = trace ? `<details class="interval-trace"><summary>Bounded arithmetic provenance (${trace.steps.length} steps)</summary>${trace.diagnostics.map((message) => `<p>${escapeHtml(message)}</p>`).join("")}<p>Opening this view inspects pure arithmetic only; calls and assignments are not replayed. This trace describes the original expression; edited endpoints are shown separately.</p><table><thead><tr><th>Step</th><th>Source</th><th>Exact result</th><th>Evidence / width</th></tr></thead><tbody>${trace.steps.map((step) => `<tr><th>${escapeHtml(step.id)}</th><td><code>${escapeHtml(step.source)}</code></td><td>${step.value === null ? "unresolved" : `<button type="button" data-exact-use="${escapeHtml(String(step.value))}">${escapeHtml(String(step.value))}</button>`}</td><td>${escapeHtml(step.status)}${step.width === null ? "" : `; width ${escapeHtml(String(step.width))}`}${step.reason ? `; ${escapeHtml(step.reason)}` : ""}</td></tr>`).join("")}</tbody></table></details>` : "";
+        this.provenanceElement.insertAdjacentHTML("beforeend", traceHtml);
+        const interval = this.items.at(-1)?.value;
+        if (!interval?.start.equals(interval.end)) return;
+        try {
+            this.linkBridge ||= createSternBrocotRixBridge();
+            const links = this.linkBridge.describeBounded(interval.start);
+            const inspect = (value) => value.denominator === 0n ? escapeHtml(String(value)) : `<button type="button" data-exact-inspect="${escapeHtml(String(value))}">${escapeHtml(String(value))}</button>`;
+            this.provenanceElement.insertAdjacentHTML("beforeend", `<details class="interval-number-links"><summary>Mediants, Farey parents and continued fractions</summary><p>Farey parents: ${links.parents.map(inspect).join(" and ")}; mediant: ${inspect(links.mediant)}.</p><p>Stern–Brocot path: ${escapeHtml(links.path.join(" ") || "root")}${links.pathDiagnostic ? `; ${escapeHtml(links.pathDiagnostic)}` : ""}</p><p>Continued fraction: ${escapeHtml(links.continuedFraction.map(String).join(", "))}${links.truncated ? "; term limit reached" : ""}.</p><table><caption>Exact convergent errors (selected value minus convergent)</caption><thead><tr><th>Convergent</th><th>Exact error</th></tr></thead><tbody>${links.convergents.map((entry) => `<tr><td>${inspect(entry.value)}</td><td><button type="button" data-exact-use="${escapeHtml(String(entry.error))}">${escapeHtml(String(entry.error))}</button></td></tr>`).join("")}</tbody></table><a href="./stern-brocot-rix/" target="_blank" rel="noopener">Open the existing Stern–Brocot explorer</a></details>`);
+        } catch (error) { this.provenanceElement.insertAdjacentHTML("beforeend", `<p>${escapeHtml(error.message)}</p>`); }
     }
 
     renderEditor() {
@@ -351,19 +325,21 @@ export class IntervalExplorer {
     }
 
     resultSource() {
-        return exactSource(this.items.at(-1).value);
+        const value = this.items.at(-1).value;
+        return value.start.equals(value.end) ? String(value.start) : exactSource(value);
     }
 
     useResult() {
+        if (this.resultError) { this.statusElement.textContent = this.resultError; return; }
         this.onUse(this.resultSource());
         this.close();
     }
 
     download(kind) {
-        const svg = this.svg?.outerHTML || "";
+        const svg = this.graphic ? renderGraphicSvg(this.graphic, String) : "";
         const content = kind === "svg"
             ? `<?xml version="1.0" encoding="UTF-8"?>\n${svg}`
-            : `<!doctype html><html lang="en"><meta charset="utf-8"><title>RiX exact interval</title><body><h1>Exact interval</h1><p><code>${escapeHtml(this.resultSource())}</code></p>${svg}<p>Coordinates are approximate pixels; labels retain exact values.</p></body></html>`;
+            : `<!doctype html><html lang="en"><meta charset="utf-8"><title>RiX exact interval</title><body><h1>Exact interval</h1><p><code>${escapeHtml(this.resultSource())}</code></p>${this.graphic ? renderOutputHtml(this.graphic, String) : svg}${this.provenanceElement.innerHTML}<p>Coordinates are approximate pixels; labels retain exact values.</p></body></html>`;
         const blob = new Blob([content], { type: kind === "svg" ? "image/svg+xml" : "text/html" });
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");

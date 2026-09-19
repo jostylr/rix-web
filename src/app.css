@@ -271,3 +271,20 @@ body { height: 100dvh; }
   .session-actions { grid-column: 1; justify-content: stretch; }
   .session-actions button { flex: 1; }
 }
+
+/* Dashboard organization is presentation state; histories retain bounded exact samples. */
+.reactive-variable-group { display: grid; gap: .7rem; min-width: 0; }
+.reactive-variable-group > h3 { margin: .4rem 0; font-size: .9rem; }
+.reactive-organization { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.reactive-organization label { display: inline-flex; gap: .35rem; align-items: center; }
+.reactive-organization input { max-width: 12rem; width: 100%; min-width: 0; }
+.reactive-history { max-width: 100%; overflow: auto; }
+.reactive-history table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+.reactive-history th, .reactive-history td { padding: .3rem; text-align: left; overflow-wrap: anywhere; }
+.reactive-history button { max-width: 100%; overflow-wrap: anywhere; }
+.reactive-history .rix-output-svg { width: 100%; max-height: 8rem; }
+.interval-trace, .interval-number-links { width: 100%; min-width: 0; overflow: auto; }
+.interval-trace table, .interval-number-links table { width: 100%; border-collapse: collapse; }
+.interval-trace th, .interval-trace td, .interval-number-links th, .interval-number-links td { padding: .35rem; text-align: left; border: 1px solid #dbe2ea; overflow-wrap: anywhere; }
+.interval-trace button, .interval-number-links button { overflow-wrap: anywhere; max-width: 100%; }
+.interval-graphic .rix-output-svg { width: 100%; }

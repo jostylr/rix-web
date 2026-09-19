@@ -1,3 +1,5 @@
+import { dashboardPresentation as normalizeDashboardPresentation } from "./dashboard-state.js";
+
 export const RIX_SESSION_FORMAT = "rix-web-session";
 export const RIX_SESSION_VERSION = 1;
 
@@ -27,6 +29,7 @@ export function createSessionSnapshot({
     numberConfig = {},
     reactiveInputs = [],
     dashboardOpen = false,
+    dashboardPresentation = {},
     pluginProfile = null,
     savedAt = new Date().toISOString(),
 } = {}) {
@@ -50,6 +53,7 @@ export function createSessionSnapshot({
             source: requiredString(entry?.source, `Reactive input ${index + 1} source`),
         })),
         dashboardOpen: Boolean(dashboardOpen),
+        dashboardPresentation: normalizeDashboardPresentation(dashboardPresentation),
         pluginProfile: sessionPluginProfile(pluginProfile),
     };
 }
