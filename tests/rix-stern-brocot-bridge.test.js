@@ -6,6 +6,9 @@ describe("rix-web Stern-Brocot bridge", () => {
   test("bounded linked inspection retains exact convergent errors and reports path exhaustion", () => {
     const bridge = createSternBrocotRixBridge();
     const model = bridge.describeBounded(new Rational(355, 113));
+    expect(model.evidence.convergence.entries.get("schema").value).toBe("rix.fraction.derivation@1");
+    expect(model.evidence.path.entries.get("details").entries.get("path").values.map(value=>value.value)).toEqual(model.path);
+    expect(String(model.evidence.convergence.entries.get("input"))).toBe("355/113");
     expect(model.parents.map(String)).toEqual(["333/106", "22/7"]);
     expect(String(model.mediant)).toBe("355/113");
     expect(model.convergents.map(({ value }) => String(value))).toEqual(["3", "22/7", "355/113"]);

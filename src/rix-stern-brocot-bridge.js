@@ -88,21 +88,22 @@ export class SternBrocotRixBridge {
     if (!boundedExactExplorationInterval(value)) throw new Error("Linked number inspection requires an exact rational value");
     this.context.setFresh("selectedfraction", value);
     const raw = parseAndEvaluate(`{;
-      rational := @selectedfraction.F().Rational() ~!: :Rational;
-      parents := @selectedfraction.F().FareyParents();
-      {= rational=rational,parents=parents,mediant=(parents[1].Denominator()+parents[2].Denominator()==0 ?: @selectedfraction.F() ?_ parents[1].Mediant(parents[2])),
-         continuedFraction=rational.ToContinuedFraction({= maxTerms=${maxConvergents + 1} }),
-         convergents=rational.Convergents(${maxConvergents}).Map(q -> {= value=q,error=@rational-q }) }
+      source := @selectedfraction.F();
+      parents := .fraction.Derivation(:parentage,source);
+      path := .fraction.Derivation(:fareyPath,source,{= maxSteps=${maxPath},maxDenominator=source.Denominator() });
+      convergents := .fraction.Derivation(:convergents,source,{= maxTerms=${maxConvergents} });
+      [parents,path,convergents].Map((record)->.fraction.CheckDerivation(record)[:accepted]).Reduce((same,accepted)->same && accepted,1)
+        ?: _ ?_ .Error("Fraction exploration evidence failed replay");
+      {= rational=source.Rational() ~!: :Rational,parentage=parents,path=path,convergence=convergents }
     }`, this.runtime);
-    let path = [], pathDiagnostic = null;
-    try {
-      path = sequenceValues(parseAndEvaluate(`selectedfraction.F().SternBrocotPath(${maxPath})`, this.runtime), "bounded path").map((entry) => entry.value);
-    } catch (error) { pathDiagnostic = `Path exceeds ${maxPath} steps or is unavailable: ${error.message}`; }
-    const terms = sequenceValues(mapField(raw, "continuedfraction"), "continued fraction");
-    return { raw, rational: mapField(raw, "rational"), parents: sequenceValues(mapField(raw, "parents"), "Farey parents"),
-      mediant: mapField(raw, "mediant"), continuedFraction: terms.slice(0, maxConvergents),
-      convergents: sequenceValues(mapField(raw, "convergents"), "convergents").map((entry) => ({ value: mapField(entry, "value"), error: mapField(entry, "error") })),
-      truncated: terms.length > maxConvergents, path, pathDiagnostic, limits: { maxPath, maxConvergents } };
+    const parentage=mapField(raw,"parentage"), walk=mapField(raw,"path"), convergence=mapField(raw,"convergence");
+    const path=sequenceValues(mapField(mapField(walk,"details"),"path"),"bounded path").map(entry=>entry.value);
+    const pathDiagnostic=mapField(walk,"status").value==="found"?null:`Path exceeds ${maxPath} steps or its denominator budget: ${mapField(walk,"status").value}`;
+    return { raw, evidence: { parentage, path:walk, convergence }, rational:mapField(raw,"rational"),
+      parents:sequenceValues(mapField(mapField(parentage,"details"),"parents"),"Farey parents"),mediant:mapField(parentage,"value"),
+      continuedFraction:sequenceValues(mapField(mapField(convergence,"details"),"coefficients"),"coefficients"),
+      convergents:sequenceValues(mapField(convergence,"steps"),"convergents").map(entry=>({value:mapField(entry,"rational"),error:mapField(entry,"error")})),
+      truncated:mapField(convergence,"status").value!=="exact",path,pathDiagnostic,limits:{maxPath,maxConvergents} };
   }
 
   visibleTree(fraction, descendantDepth = 2) {
