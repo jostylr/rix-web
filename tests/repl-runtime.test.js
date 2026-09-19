@@ -1041,3 +1041,17 @@ for (const tutorial of tutorials.filter(({ pluginGroup, status }) => !pluginGrou
         }
     }, 60_000);
 }
+
+test("web Shaped and Matrix constructors share the migrated runtime contract", () => {
+    const repl = createRixRepl();
+    const response = repl.run(`
+        grid := .Shaped.Generate({: 2, 2 }, idx -> idx[1] + idx[2]);
+        matrix := grid ~!: :Matrix;
+        [grid ? :Shaped, matrix.__type, (matrix * matrix)[1,1]];
+    `);
+    expect(response.type).toBe("result");
+    expect(response.text).toBe("[1, Matrix, 13]");
+    const diagnostic = repl.run("matrix * grid");
+    expect(diagnostic.type).toBe("error");
+    expect(diagnostic.text).toContain("~!: :Matrix");
+});

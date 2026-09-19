@@ -46,27 +46,26 @@ println(a * b)
 ## RiX
 
 ```rix edu
-a := {:2x2: 1, 2; 3, 4 };
-b := {:2x2: 5, 6; 7, 8 };
-
-Mat2Mul(left, right) -> {:2x2:
-    left[1,1] * right[1,1] + left[1,2] * right[2,1],
-    left[1,1] * right[1,2] + left[1,2] * right[2,2];
-    left[2,1] * right[1,1] + left[2,2] * right[2,1],
-    left[2,1] * right[1,2] + left[2,2] * right[2,2]
-};
-
-Mat2Mul(a, b) ;
+a := {:2x2: /Matrix/ 1, 2; 3, 4 };
+b := {:2x2: /Matrix/ 5, 6; 7, 8 };
+a * b ;
 ```
 
 ## Reading the RiX solution
 
-These are tensor literals, not arrays of arrays. The 2x2 header records the shape and semicolons separate rows. RiX indexes from one, matching mathematical subscripts: left[1,2] means row one, column two.
+The `/Matrix/` interpretation selects matrix algebra for the rectangular
+components. Without this header, the literal is `Shaped` storage and `*`
+multiplies matching entries. RiX indexes from one: `a[1,2]` means row one,
+column two.
 
-Every output entry is a two-term dot product. The fixed-size implementation is repetitive by design; it exposes the invariant a general implementation must capture. For output (i, j), multiply left[i, k] by right[k, j] and add over valid k.
+The product is `{:2x2: /Matrix/ 19, 22; 43, 50 }`. Each output entry is the
+sum of products `a[i,k] * b[k,j]`. Matrix multiplication checks the contracted
+dimensions; `a.Hadamard(b)` explicitly requests entrywise multiplication.
 
-Exact arithmetic is preserved element by element. Replace one entry with 1 / 3 and the affected outputs remain rational. A general library would validate dimensions and express the repeated reduction once.
+Exact arithmetic is preserved. Replace one entry with `1/3` and give both
+matrices the same declared scalar domain before multiplying, for example
+`a.WithScalarDomain(:Rational)` and `b.WithScalarDomain(:Rational)`.
 
 :::challenge Matrix-vector product
-Define Mat2Vec(matrix, vector) for a two-by-two tensor and a two-item array.
+Use an explicit 2x1 Matrix for the column `[5; 6]` and multiply it by `a`.
 :::
