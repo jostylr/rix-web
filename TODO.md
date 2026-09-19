@@ -60,24 +60,31 @@ and accessibility behavior belong here. Generated files under `docs/` and
 - [x] Mount retained Scene3D values as high-DPI WebGL views with orbit, truck,
   dolly, projection switching, stable-id selection, exact inspection, and an
   SVG fallback for unavailable or lost contexts.
-- [ ] Generalize the interval explorer's accessible names, focus indication,
+- [x] Generalize the interval explorer's accessible names, focus indication,
   and textual/table alternative into a shared protocol for every interactive
   mathematical graphic.
 - [x] Announce exact selected values and meaningful state changes without
   flooding assistive technology during continuous pan, zoom, or drag updates.
-- [ ] Test keyboard-only and screen-reader workflows, reduced motion, high
-  zoom, responsive layouts, and selection persistence across reactive rerenders.
+- [x] Automate keyboard-only and screen-reader DOM/ARIA semantics, reduced motion,
+  high zoom, responsive layouts, and selection persistence across reactive rerenders.
+  O4 includes real Chromium acceptance for the shared Web/Notebook mount.
+  Manual assistive-technology/user studies remain a release usability activity.
 
 ## Exact-coordinate approximation and visual QA
 
-- [ ] Display when exact mathematical coordinates were rounded, clipped,
+- [x] Display when exact mathematical coordinates were rounded, clipped,
   merged, or otherwise approximated for SVG/Canvas pixels. Let users inspect
   the original exact value and the active lowering precision.
-- [ ] Consume renderer diagnostics/metadata rather than reproducing rounding
+- [x] Consume renderer diagnostics/metadata rather than reproducing rounding
   decisions in host code; exported static artifacts should carry the same
   approximation disclosure where the target supports it.
-- [ ] Add regression cases for huge numerators, extremely narrow intervals,
+- [x] Add regression cases for huge numerators, extremely narrow intervals,
   reversed interval presentation, overlapping labels, coordinates that become
   equal only after rounding, and dense convergent/Farey views.
-- [ ] Add property tests for mathematical-to-viewport transforms and visual
+- [x] Add property tests for mathematical-to-viewport transforms and visual
   regression tests for representative SVG and Canvas snapshots.
+
+O4 implementation and repeatable checks:
+[`graphic-coordinate-disclosure.md`](../rix/documentation/eval/graphic-coordinate-disclosure.md).
+The browser check saves viewport screenshots and an accessibility snapshot;
+Canvas reports approximate pixels separately from the SVG reference enclosure.
