@@ -1,5 +1,9 @@
 # RiX Web product TODO
 
+> Reconciled 2026-09-19. The umbrella `ratmath/WORK_PLAN.md` orders execution
+> (O4, H1–H3, N1). Reuse the existing viewport/selection and SVG approximation
+> metadata; do not redesign them as prerequisites.
+
 This is the host-facing roadmap for interactive experiences that compose RiX
 semantic values, plugins, portable `Graphic` scenes, and renderer services. The
 mathematics and reusable scene values belong in RiX; browser controls, layout,

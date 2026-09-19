@@ -1,5 +1,11 @@
 # RatCalc / RiX Tutorial Plan
 
+> Curriculum design record, reconciled 2026-09-19. This outline is not a
+> missing-page checklist: many later lessons and plugin tutorials already ship.
+> `tutorials/`, the generated tutorial index, and tutorial tests determine current
+> coverage. Remaining gap verification and examples are tracked in
+> `ratmath/WORK_PLAN.md` (H3); do not recreate existing lessons.
+
 ## Purpose
 
 Build a complete, runnable learning path for RiX that starts as a friendly exact
