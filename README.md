@@ -100,3 +100,13 @@ The site publishes two explorers from the same exact RiX model:
   `../rix/examples/stern-brocot/stern-brocot-page.rix`.
 
 Both are produced by `bun run build:app` and linked from the main page.
+
+## Portable media bundles
+
+Embedding hosts can create a REPL with an explicit `assetStore` and call
+`exportOutputBundle(value)` or `importOutputBundle(json)`. The shared output
+codec keeps exact values, captions, transcripts, and content-addressed files.
+Import is inert and performs no file/network access; external video/image
+references remain links. These APIs return portable HTML/text and a file map;
+the current calculator UI does not add a separate bundle-export button.
+See `../rix/documentation/eval/output-assets.md` for grants, limits, and formats.
