@@ -118,3 +118,11 @@ Import is inert and performs no file/network access; external video/image
 references remain links. These APIs return portable HTML/text and a file map;
 the current calculator UI does not add a separate bundle-export button.
 See `../rix/documentation/eval/output-assets.md` for grants, limits, and formats.
+
+## Exact numeral playground
+
+`numeral-playground.html` (linked from Showcases) compares ordinary, multi-token,
+balanced and negative-base positional systems through public RiX Radix services.
+It shows exact place/carry tables, bounded repeating expansions and canonical
+backtick round trips. Save static HTML, text or inert exact-source snapshots;
+the generated initial example remains readable with JavaScript disabled.
