@@ -66,7 +66,7 @@
       "number": "2e",
       "parent": "2",
       "file": "tensors.html",
-      "title": "Tensors",
+      "title": "Shaped values",
       "description": "Structured multidimensional exact data.",
       "pluginGroup": false,
       "status": "implemented"
@@ -695,7 +695,7 @@
       "number": "12e",
       "parent": "12",
       "file": "sheets-and-tensor-views.html",
-      "title": "Sheets and tensor views",
+      "title": "Sheets and shaped views",
       "description": "Navigate exact grids, canonical RiX addresses, and higher-dimensional planes.",
       "pluginGroup": false,
       "status": "implemented"
