@@ -1,3 +1,4 @@
+import { createOutputBundleHost } from "../../rix/src/runtime/output-bundle-host.js";
 import {
     Context,
     createDefaultRegistry,
@@ -231,7 +232,7 @@ function createWebSessionState(registeredControls, profileRequest, autoLoadPlugi
     return state;
 }
 
-export function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, pluginProfile = {} } = {}) {
+export function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, pluginProfile = {}, assetStore, authorizeExternal = null } = {}) {
     const registeredControls = new Map();
     let profileRequest = pluginProfile;
     let state = createWebSessionState(registeredControls, profileRequest, autoLoadPlugins);
@@ -277,6 +278,7 @@ export function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true
     };
 
     return {
+        ...createOutputBundleHost({ assetStore, authorizeExternal, format: configuredFormat }),
         run(source) {
             const topic = inlineHelpRequest(source);
             if (topic !== null) return { type: "help", source, ...findHelp(topic) };
