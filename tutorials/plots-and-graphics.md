@@ -74,3 +74,39 @@ introduces rectangles, circles, text, groups, transforms, and clipping.
 Plot `x squared - 4` over the domain `[-3, 3]`. Give the curve a different
 stroke color and set a size that is wider than it is tall.
 :::
+
+## Bound a data view without hiding what was omitted
+
+Prerequisites: Arrays and exact fractions. This example runs entirely in the
+browser and produces ordinary static SVG; it does not start a live data source.
+Append batches explicitly, retaining a bounded tail with original sample IDs:
+
+```rix edu
+.Plugin.Load("plot");
+state := .plot.Stream(4);
+state := .plot.StreamAppend(state, [[1,1/3],[2,2/3],[3,1]]);
+state := .plot.StreamAppend(state, [[4,4/3],[5,5/3],[6,2]]);
+.Fragment([
+  .plot.StreamLine(state, {= maxPoints=4,title="Last four exact samples" }),
+  .plot.HeatMapData([[1,2,3],[4,5,6]], [0,3], [0,2],
+    {= maxCells=2,title="Two exact mean blocks" })
+]);
+```
+
+The line keeps samples 3–6 and discloses the two dropped samples. Heat-map
+blocks retain exact means (3 and 9/2 here), minimum, maximum, count and source
+bounds. Exact means do not reconstruct the individual cells. Likewise,
+downsampling retains selected samples and extrema, not a proof about the
+unsampled curve. The text alternative preserves these disclosures and IDs.
+
+Input rows/cells are limited to 4096. Stream capacity is 2–4096;
+`maxPoints` is 4–1024 and `maxCells` is 1–1024. Points must have exact numeric
+coordinates with strictly increasing x; grids must be rectangular. For example,
+`maxPoints=3` is rejected rather than silently enlarged. If a view is too large,
+choose explicit smaller batches or a coarser bounded view.
+
+The [plot tutorial](plugin-plot.html) continues with certified trajectories and
+linked panels. The [Canvas tutorial](plugin-canvas.html) explains host-managed
+render plans. Canvas caching and OffscreenCanvas workers are host integrations;
+loading the plugin alone does not create a worker. Static SVG and text remain
+available when those browser facilities are absent.

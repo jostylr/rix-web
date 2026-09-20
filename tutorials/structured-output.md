@@ -26,7 +26,7 @@ results ;
 
 The value is portable data, not a browser widget. Keep the calculation that
 produces it separate from the choice to show it here, in a report, or in a
-future export.
+static export. See the renderer plugin lessons for the supported destinations.
 
 ## Choose the shape that matches the meaning
 

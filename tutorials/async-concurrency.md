@@ -4,6 +4,10 @@ title: Async and concurrency
 description: Await bounded collection work, stream pipe stages, and start supervised background effects.
 ---
 
+Prerequisites: Functions, Scope and imports, and Pipes. These examples use the
+browser evaluator and require no file or network permissions. A concurrency
+limit bounds admitted work; it does not promise parallel CPU execution.
+
 ## Await a concurrency scope
 
 `{$ ... }` is a code block whose final value is awaited. It never exposes a
@@ -288,3 +292,18 @@ than 5, and return the ordered result.
 
 Concurrency changes scheduling, not value semantics. Revisit Pipes for each
 operator's ordinary result, and Scope and imports for code-block capture rules.
+
+## Host cancellation and a static alternative
+
+Timeouts and cancellation are cooperative in the current runtime. They cannot
+interrupt a synchronous host function that never yields, undo an emitted file,
+or provide hard memory isolation. A host must declare native capabilities safe
+for overlapping calls; unmarked native effects remain serialized. Increasing
+the scope limit does not override that policy.
+
+Worker execution is an explicitly selected host facility. Inputs must be
+transferable, capabilities must be allowed in that host, and unavailable workers
+must be reported or handled by an explicit main-thread fallback. A portable
+alternative is to evaluate the finite pure calculation directly and retain its
+ordered result as a static table. Do not substitute a fabricated success value
+when cancellation or a missing capability prevents the calculation.

@@ -97,8 +97,9 @@ format. A later grid or print renderer can group the linear list by
 
 `.Timeline.Sequence` accepts the same scene-entry shape and retains the exact,
 already materialized frames. `.Timeline.Render` selects a one-based frame for a
-static renderer; a future animation or video host can use the same sequence
-without changing the RiX program.
+static renderer. The [GIF tutorial](plugin-gif.html) covers bounded animation
+export from retained frames. Video codecs are a separate host capability; a
+timeline value alone does not promise video encoding.
 
 ```rix edu
 CenterCard(center, origin) -> .Paragraph(@"frame @{origin[:ordinal]}; center = @{center}");

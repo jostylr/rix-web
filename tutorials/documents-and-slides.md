@@ -146,8 +146,9 @@ a file or fetches a URL by itself.
 ## Wrap a graphic as a figure
 
 Figures are not limited to tables. This creates a small plot, then gives it a
-caption and a stable label that a future document renderer can use for cross
-references.
+caption and a stable label for document cross references. The
+[document plugin tutorial](plugin-document.html) connects these records to
+publication planning; renderer tutorials cover HTML, LaTeX and other exports.
 
 ```rix edu
 .Plugin.Load("plot");

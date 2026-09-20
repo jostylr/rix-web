@@ -416,3 +416,29 @@ Use `$values[1,2]` when a dependent needs only one coordinate.
 The same foundation now supports direct manipulation. The **Interactive
 graphics** tutorial uses `.Graphics.DragPoint` to publish a semantic position
 event into a graph source and follows this same propagation path.
+
+## From a sheet view to a workbook
+
+Prerequisites: Shaped values and Cells and assignment. The runnable examples
+above use the RiX Web Sheet host. RiXCel adds workbook operations: independent
+document namespaces, explicit cross-document exports, structural editing with
+undo/redo, named regions, per-region formatting, and XLSX value interchange.
+These are application commands, not extra methods silently granted to every
+`.Sheet` value.
+
+In RiXCel, **Tensor planes, regions and formatting** offers two explicit choices:
+**Snapshot into empty cells** copies exact scalar values as one undoable change;
+**Link read-only view** keeps a session-local view that refreshes after edits.
+Neither is implicit formula spill. Snapshots reject occupied targets atomically;
+linked views retain the last valid plane with a diagnostic if refresh fails.
+Planes are limited to 4096 cells and countable axes need a finite window.
+A static table or saved snapshot is the alternative when no live sheet host exists.
+
+Use `.rixbook` to preserve live RiX formulas, owned names and workbook history.
+XLSX export preserves values, with fractions and integers longer than 15 digits
+encoded as text to avoid Excel rounding. Imported Excel formulas remain inert
+text; cached results do not make them executable. Save the workbook before
+choosing an interchange format when the live model matters.
+
+The [pipeline capstones](https://docs.rix.ratmath.com/tutorial/capstones.html)
+link the supported host commands, interchange limitations and runnable examples.

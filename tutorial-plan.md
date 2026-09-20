@@ -1,232 +1,78 @@
-# RatCalc / RiX Tutorial Plan
+# RiX tutorial coverage and maintenance map
 
-> Curriculum design record, reconciled 2026-09-19. This outline is not a
-> missing-page checklist: many later lessons and plugin tutorials already ship.
-> `tutorials/`, the generated tutorial index, and tutorial tests determine current
-> coverage. Remaining gap verification and examples are tracked in
-> `ratmath/WORK_PLAN.md` (H3); do not recreate existing lessons.
+Reconciled 2026-09-20 for H3. This is a map of shipped sources, not a list of
+unimplemented lessons. `src/tutorial-index.js` owns numbering/navigation;
+`src/generated/plugin-tutorial-index.js` is generated from plugin tutorials.
+Do not maintain competing handwritten method catalogs: the method chips and
+capability help use runtime metadata.
 
-## Purpose
+## Learner path
 
-Build a complete, runnable learning path for RiX that starts as a friendly exact
-calculator and gradually exposes the language's scripting, semantic, and
-extension features. Every lesson is a Markdown source in `tutorials/`, is built
-to a static page in `docs/tutorial/`, and has one persistent RiX context per page.
+Each source below builds to the same basename under `docs/tutorial/` with an
+`.html` extension. Running a cell creates a fresh session and replays earlier cells within its
+current level-two heading section. Bindings do not carry across sections, and
+removed code cannot leave stale bindings behind. Keep section setup explicit.
+Editable cells are complete RiX scripts. Challenges are exercises, not claims
+that arbitrary edited input is safe or guaranteed to terminate.
 
-This plan is based on the user-facing introduction, the evaluator syntax and
-methods guides, the types-and-traits guide, the parser documentation, and the
-RiX rationale log. Implementation-oriented parser records should inform
-examples, but should not be presented as a primary learner path.
+| Section | Shipped overview and focused coverage |
+| --- | --- |
+| 1 | [1: Start with exact numbers](tutorials/getting-started.md); [1a: Capstone: exact recipe scaling](tutorials/capstone-exact-recipe.md) |
+| 2 | [2: Collections](tutorials/collections.md); [2a: Arrays](tutorials/arrays.md); [2b: Maps](tutorials/maps.md); [2c: Sets](tutorials/sets.md); [2d: Tuples and strings](tutorials/tuples-and-strings.md); [2e: Shaped values](tutorials/tensors.md); [2f: Capstone: exact inventory](tutorials/capstone-inventory.md) |
+| 3 | [3: Expressions and exact notation](tutorials/expressions.md); [3a: Operators and precedence](tutorials/operators.md); [3b: Number notation](tutorials/number-notation.md); [3c: Intervals](tutorials/intervals.md); [3d: Interval generation and sampling](tutorials/interval-generation.md); [3e: Scoped reproducible randomness](tutorials/scoped-randomness.md); [3f: Nulls and holes](tutorials/holes.md); [3g: Capstone: bounds check](tutorials/capstone-bounds.md) |
+| 4 | [4: Binding and patterns](tutorials/binding.md); [4a: Cells and assignment](tutorials/cells.md); [4b: Destructuring](tutorials/destructuring.md); [4c: Properties and metadata](tutorials/properties.md); [4d: Capstone: shared ledger](tutorials/capstone-ledger.md) |
+| 5 | [5: Functions and scope](tutorials/functions.md); [5a: Define and call](tutorials/function-basics.md); [5b: Multifunctions](tutorials/multifunctions.md); [5c: Scope and imports](tutorials/scope.md); [5d: Partial application](tutorials/partials.md); [5e: Capstone: rule dispatcher](tutorials/capstone-dispatch.md) |
+| 6 | [6: Control and deferred work](tutorials/control.md); [6a: Ternaries and cases](tutorials/ternaries.md); [6b: Brace containers](tutorials/brace-containers.md); [6c: Deferred execution](tutorials/deferred.md); [6d: Capstone: bounded simulation](tutorials/capstone-simulation.md) |
+| 7 | [7: Transforming data](tutorials/transformations.md); [7a: Pipes](tutorials/pipes.md); [7b: Generators](tutorials/generators.md); [7c: Lazy generators](tutorials/lazy-generators.md); [7d: Regexes and strings](tutorials/regex-and-strings.md); [7e: Capstone: transform a report](tutorials/capstone-report.md); [7f: Async and concurrency](tutorials/async-concurrency.md); [7g: Async streams](tutorials/async-streams.md) |
+| 8 | [8: Semantics, types, and units](tutorials/semantics.md); [8a: Conversions](tutorials/conversions.md); [8b: Headers and traits](tutorials/headers-and-traits.md); [8c: Physical units and quantities](tutorials/units.md); [8d: Exact generators](tutorials/exact-generators.md); [8d1: Core mathematical expressions](tutorials/core-mathematics.md); [8e: Exact complex numbers](tutorials/complex-numbers.md); [8f: Exact Cayley polar form](tutorials/cayley-polar.md); [8g: Capstone: exact measurement](tutorials/capstone-measurement.md) |
+| 9 | [9: System and symbolic work](tutorials/system.md); [9a: System capabilities](tutorials/system-context.md); [9b: Assertions and symbolic specs](tutorials/assertions-and-symbols.md); [9c: Exact symbolic calculus](tutorials/symbolic-calculus.md); [9d: Structural arithmetic](tutorials/structural-arithmetic.md); [9e: Backtick parsers and functions](tutorials/backtick-parsers.md); [9f: Diagnostics and tests](tutorials/diagnostics.md); [9g: Capstone: verified rule](tutorials/capstone-verified-rule.md) |
+| 10 | [10: Scripts and extensions](tutorials/scripts.md); [10a: RiX scripts](tutorials/rix-scripts.md); [10b: JavaScript modules](tutorials/javascript-modules.md); [10c: Language extensions](tutorials/extensions.md); [10d: Extend existing types](tutorials/method-extensions.md); [10e: JavaScript-to-RiX gotchas](tutorials/gotcha-tutorial.md); [10f: Live lint laboratory](tutorials/linting.md); [10g: Capstone: package design](tutorials/capstone-package-design.md) |
+| 11 | [11: Problems in four languages](tutorials/problems.md); [11a: Newton square root](tutorials/problem-newton.md); [11b: FizzBuzz](tutorials/problem-fizzbuzz.md); [11c: Collatz test](tutorials/problem-collatz.md); [11d: Prime filtering](tutorials/problem-primes.md); [11e: Matrix product](tutorials/problem-matrix.md); [11f: Symbolic differentiation](tutorials/problem-symbolic.md) |
+| 12 | [12: Structured output](tutorials/structured-output.md); [12a: Tables and mathematical grids](tutorials/tables-and-grids.md); [12b: Documents and slides](tutorials/documents-and-slides.md); [12c: Plots and graphics](tutorials/plots-and-graphics.md); [12d: Drawing with .Graphics](tutorials/drawing-with-draw.md); [12e: Sheets and shaped views](tutorials/sheets-and-tensor-views.md); [12f: Interactive graphics](tutorials/interactive-graphics.md); [12g: Reactive control panels](tutorials/control-panels.md); [12h: Reactive scenes and snapshots](tutorials/reactive-scenes-and-snapshots.md); [12i: Graphics interaction guide](tutorials/graphics-interaction-guide.md) |
+| 13 | [13: Core, host, and lowering](tutorials/core-host-lowering.md); [13a: Core operations](tutorials/core-operations.md); [13b: Lazy structural forms](tutorials/lazy-core-forms.md); [13c: Lowering syntax](tutorials/lowering-and-ir.md); [13d: Host objects and plugins](tutorials/host-and-plugins.md); [13e: Capstone: explicit core](tutorials/capstone-explicit-core.md) |
 
-## Lesson format and navigation
+Plugin sections 14–23 cover numbers/numerics, algebra/analysis, graphics,
+data/documents, renderer/exporters, higher-dimensional views, algorithms,
+analysis, fractals, and probability. Each generated page links to its actual
+`rix/plugins/*/tutorial.md` source. Proposed plugin examples are rendered as
+non-runnable acceptance documentation; they are not an implementation promise.
 
-- A numbered **overview** introduces a topic in 5–10 minutes and links down to
-  focused subpages (`2`, then `2a`, `2b`, and so on).
-- Every code sample is editable and runs in place. Every lesson ends with at
-  least one blank challenge cell.
-- Overview pages navigate among overview siblings. Subpages navigate among
-  sibling subpages. An overview with details has a **Details ↓** link to its
-  first subpage.
-- The left table of contents shows all overviews, expands the current overview,
-  and lists its subpages. RatCalc's **Tutorials** button opens the same tree.
-- Subpages for an object type end with generated method chips. A chip opens a
-  full help panel with signature, behavior, mutation rules, and examples.
-- Every advanced lesson carries a short prerequisite and a browser-runtime note
-  where a feature needs a host capability that RatCalc does not expose yet.
+## Delivered pipeline coverage
 
-## Curriculum map
+| Pipeline | Start here | Continuation and limits |
+| --- | --- | --- |
+| Publication / LaTeX / SVG / images | [Documents](tutorials/documents-and-slides.md), [graphics](tutorials/plots-and-graphics.md) | Document and renderer plugin tutorials; static assets remain useful without interaction. External PDF/TeX tooling needs a configured host. |
+| Certified nonlinear and ODE exploration | [Graphics interaction](tutorials/graphics-interaction-guide.md) | Numerics, ODE, Ball and Plot tutorials retain certified/approximate/unresolved labels and bounded work; a sampled picture is not a proof. |
+| Exact-number views | [Notation](tutorials/number-notation.md), [core mathematics](tutorials/core-mathematics.md) | Radix, continued-fraction and Stern–Brocot plugin tutorials; formatted digits do not replace exact values. |
+| Tensor coordinates | [Shaped values](tutorials/tensors.md), [sheet views](tutorials/sheets-and-tensor-views.md) | Linalg tutorial covers Frames, sparse coordinates, projections and exact support; Float tutorial covers explicitly approximate typed adapters. |
+| Async cancellation | [Async](tutorials/async-concurrency.md), [streams](tutorials/async-streams.md) | Cooperative cancellation, cleanup, host capability policy and transferable values; concurrency is not hard isolation. |
+| RiXCel interchange | [Sheet foundation](tutorials/sheets-and-tensor-views.md) | Workbook namespaces, history, explicit tensor regions and XLSX values belong to the Cel host; a browser Sheet is not the whole workbook application. |
 
-### 1. Exact calculation with RatCalc
+The [end-to-end capstones](../rix/documentation/tutorial/capstones.md) and
+[executable source guide](../rix/examples/capstones/README.md) connect these six
+pipelines without duplicating the introductory pages. Host-specific code is
+labeled; unavailable-host behavior and static alternatives are part of the
+exercise, not hidden setup.
 
-**Status:** implemented as `getting-started.md`.
+## Verification and updates
 
-Cover integers, exact fractions, mixed numbers, intervals, persistent names,
-`:=`, `=`, `~=`, calculator history, `.help`, `.Help("topic")`, `.vars`, and
-script-entry mode. Introduce the distinction between a calculator command and
-RiX source.
+- `tests/tutorial-source.test.js` verifies source/index coverage, complete script
+  syntax, generated plugin contracts and source conventions.
+- `tests/recent-feature-tutorial.test.js` executes the shaped/Float/sparse and
+  bounded plotting additions in both sync and async browser-catalog contexts,
+  and checks invalid-budget behavior and retained output disclosures.
+- `tests/repl-runtime.test.js` executes every implemented core/plugin tutorial
+  section through the actual async browser REPL with a fresh section context.
+- `tests/core-mathematics-tutorial.test.js`, `tests/trajectory-tutorial.test.js`
+  and `tests/ode-higher-order-tutorial.test.js` execute deeper numerical lessons.
+- `bun run build:tutorials` publishes navigation and lesson pages; `bun test`
+  verifies generated-page contracts too. Regenerate after changing sources.
+- New advanced lessons should name prerequisites, host requirements, bounded
+  failure behavior, exact/approximate distinctions and a static alternative.
+- Historical implementation plans live with design/archive material. Use the
+  current `rix/documentation/` sources for published references; old `rix/docs/`
+  source paths and the former curriculum numbering are obsolete.
 
-### 2. Collections
-
-**Status:** overview plus Arrays, Maps, and Sets are implemented.
-
-- **2a Arrays** — one-based and negative indexing, slices, rest/spread,
-  immutable versus bang methods, array generators, and array pipes.
-- **2b Maps** — map syntax, keys, values, lookup, `.key` identity, map
-  destructuring, and map-aware pipes.
-- **2c Sets** — membership, uniqueness, `Add`, `Remove`, union,
-  intersection, difference, and set/interval algebra.
-- **2d Tuples and strings** — tuple syntax and positional use, colon-strings,
-  string indexing/slicing, joining/splitting, and string methods.
-- **2e Tensors** — tensor literals, semicolon dimensions, indexing, slicing,
-  views, assignment, transpose, and generators.
-
-### 3. Expressions, values, and exact notation
-
-- **3a Operators and precedence** — arithmetic, comparisons, logic, implicit
-  multiplication, and adjacency-based callable application.
-- **3b Number notation** — decimals, repeating decimals (`#`), continued
-  fractions (`.~`), radix shift (`_^`), bases, mixed numbers, and number-base
-  literals.
-- **3c Intervals and uncertainty** — interval construction, betweenness,
-  interval arithmetic, and the division variants.
-- **3d Nulls and holes** — `_`, holes versus null, hole coalescing (`?|`),
-  omitted arguments, defaults (`?=`), and holes in collections and pipes.
-
-### 4. Binding, cells, and patterns
-
-- **4a The cell model** — alias, fresh-copy, deep-copy, update, deep-update,
-  combo assignments, equality (`==`) versus identity (`===`), and protections.
-- **4b Destructuring** — arrays, tuples, maps, tensors, rest captures, missing
-  entries, per-entry assignment modes, and target headers.
-- **4c Indexed destructuring** — source selectors, overlapping extraction,
-  nested patterns, slices, and tensor selectors.
-- **4d Metadata and properties** — property/index read and write, `.key`,
-  metadata merge, mutability/freeze flags, and receiver-first methods.
-
-### 5. Functions and scope
-
-- **5a Define and call** — uppercase callable names, lambdas, parameter forms,
-  rest parameters, spread calls, lexical scope, and `@` outer references.
-- **5b Function preparation and multifunctions** — `?-`, `?!-`, variants,
-  named variants, dispatch order, `$`, `$$`, recursion, and tail-self patterns.
-- **5c Closures and block imports** — isolated scope, import/copy/alias
-  headers, outer updates, and shared scope in construct positions.
-- **5d Partial application** — operator aliases, placeholders, argument
-  reordering, arity-capped callable views, and the interaction with pipes.
-
-### 6. Control, blocks, and deferred work
-
-- **6a Ternaries and cases** — `?:` / `?_` / `??`, nested decisions, and case
-  containers.
-- **6b Brace sigils** — plain blocks; map, set, tuple, loop, mutation, case,
-  and system containers; the space-after-sigil rule.
-- **6c Loops and break blocks** — loop headers, setup/body/update slots,
-  stopping conditions, and scoped code blocks.
-- **6d Deferred execution** — deferred values, `@@` dynamic evaluation,
-  caller-scope behavior, and when deferred code is appropriate.
-
-### 7. Transforming data
-
-- **7a Pipes** — plain pipe, map/filter/reduce forms, callback contract,
-  locator/source parameters, maps, strings, tensors, and lazy/early-stop
-  behavior.
-- **7b Sequences and generators** — sequence syntax, generator operators,
-  filters, limits, and composing generated values with pipes.
-- **7c Regexes and embedded values** — regex literal modes, match objects,
-  iterator use, colon-strings, and embedded-language/backtick parsing.
-
-### 8. Semantics, types, and units
-
-- **8a Semantic inquiry and conversion** — `? :type`, soft/strict conversion,
-  built-in numeric semantics, and conversion diagnostics.
-- **8b Headers, capture, and traits** — semantic headers, sticky versus
-  ephemeral metadata, capture modes, semantic names, and trait checks.
-- **8c Physical units and quantities** — unit values, conversion, dimensions,
-  affine coordinates, and lexical registry overlays.
-- **8d Exact generators** — algebraic relations, transcendental constants, and
-  exact symbolic quantity magnitudes.
-- **8e Exact complex numbers** — algebraic division, conjugation, real and
-  imaginary parts, and norm squared.
-- **8f Exact Cayley polar form** — exact magnitude generators, stereographic
-  half-angle direction, projective infinity, and Cayley arithmetic.
-- **8g Capstone: exact measurement** — combine physical dimensions with an
-  exact symbolic magnitude.
-
-### 9. System capabilities and symbolic work
-
-- **9a The system object** — `.` calls, `@_` syntax, capability groups,
-  operator aliases, and the boundary between user and system scope.
-- **9b Assertions and symbolic specs** — assertions, solve-style expressions,
-  and the three symbolic spec literal forms.
-- **9c Exact symbolic calculus** — identity symbols, anonymous outputs,
-  substitution/composition, name-preserving arithmetic, `.Poly`, `.Deriv`,
-  `.Integrate`, `.Transform`, attached function specs, and speccability.
-- **9d Structural arithmetic** — Tight and spaced forms, `@name`, and
-  `@(RiX expression)` splices.
-- **9e Backtick parsers and functions** — `.Name.modifier:` dispatch,
-  alphabetical free symbols, `.Fun`, inferred callables, and `.Poly`.
-- **9f Diagnostics and tests** — `.Warn`, `.Info`, `.Error`, `.Stop`,
-  `.Debug`, `.Trace`, `.Test`, `.TestError`, `.TestStop`, and the CLI test
-  runner.
-- **9g Capstone: verified rule** — combine a reusable rule, expected values,
-  assertions, and diagnostics into a maintainable check.
-
-### 10. Scripts, packages, and extensions
-
-- **10a RiX scripts** — script interface headers, input/output bindings,
-  capability modifiers, local imports, and import-cycle errors.
-- **10b JavaScript modules** — `.ImportJS` / `.JSCall` concepts, package
-  boundaries, and RatCalc's explicit browser trust policy. Keep this marked as
-  a host-dependent feature until browser module loading is implemented.
-- **10c Extend the language** — plugin capabilities, custom infix operators,
-  system functions, runtime groups, and sandboxing. This
-  is an advanced maintainer/tutorial track, not a prerequisite for using RiX.
-
-### 13. Core, host, and lowering
-
-**Status:** implemented as a maintainer-facing, runnable sequence.
-
-- **13a Core operations** — expression syntax and its public PascalCase core
-  counterparts, including arithmetic, comparisons, containers, and absolute
-  value.
-- **13b Lazy structural forms** — named representations for assignment, maps,
-  lambdas, and definitions; distinguish values that are evaluated now from
-  bodies and targets that the evaluator must receive structurally.
-- **13c Lowering syntax** — the parser → AST → IR → evaluator route, why
-  several spellings share one operation, and how lazy IR arguments preserve
-  source-level evaluation rules.
-- **13d Host objects and plugins** — the `.camelCase` host/plugin boundary,
-  nested PascalCase callables, display names, registration, and capability
-  grants.
-- **13e Capstone: explicit core** — translate a small expression-oriented
-  calculation to a compact program built from named core calls.
-
-## Cross-cutting reference work
-
-1. Generate method reference data from `rix/src/runtime/methods.js` rather
-   than maintaining hand-written method lists. The current Array/Map/Set chips
-   are the first slice of that work.
-2. Build a capability reference from the default system context and attach a
-   browser-availability badge to each capability.
-3. Add per-lesson tests: every runnable starter cell must execute in a fresh
-   RiX context; every challenge must be syntactically well-described; every
-   navigation edge must resolve to a generated page.
-4. Add a lightweight progress marker in browser storage only after the lesson
-   tree is stable. It should never affect a tutorial's executable state.
-5. Keep design rationale links beside the advanced lessons on cells,
-   multifunctions, conversion, method mutation, diagnostics, and dynamic
-   evaluation so learners can discover *why* RiX differs from conventional
-   expression languages.
-
-## Capstones and comparative problems
-
-Every top-level section now ends with a Markdown capstone that combines the
-ideas introduced up to that point into one inspectable task. The capstones are
-numbered as the last subsection in their section and appear in the generated
-sidebar and previous/next sequence.
-
-Section 11 adds six comparative problems. Three introductory problems cover
-Newton square root, FizzBuzz, and a bounded Collatz test. Prime filtering and
-matrix multiplication provide moderate collection and structure exercises.
-Symbolic differentiation is the advanced problem. Each page shows static
-JavaScript, Python, and Julia landmarks, followed by an explained, runnable
-RiX solution and a blank RiX challenge.
-
-## Source material coverage checklist
-
-- `rix/docs/introduction.md`: the main learner path, including cells, scopes,
-  collections, sigils, system calls, pipes, notation, regexes, units, and
-  diagnostics.
-- `rix/docs/eval/syntax-guide.md`: operator-level reference, special forms,
-  script imports, properties, comments, testing, and the complete system
-  function catalog.
-- `rix/docs/eval/methods-guide.md`: object-specific lesson references and
-  generated method help for arrays, maps, sets, strings, tuples, and tensors.
-- `rix/docs/eval/types-and-traits-guide.md` and
-  `rix/docs/design/eval/units-and-exact-generators.md`: section 8.
-- `rix/docs/parser/*.md`: learner-facing syntax clarifications plus the
-  advanced extension track; parser architecture remains supplementary.
-- `rix/docs/rix-rationales.md`: rationale callouts, especially where semantics
-  are surprising.
-- `rix/docs/design/*` and `rix/docs/report-2026-04-02.md`: maintenance notes
-  and implementation-status warnings, not default tutorial prose.
+Browser-local progress tracking is optional UI work, not a missing language
+lesson. RiX-Ed curriculum and decision-dependent features remain outside this
+coverage audit. Follow `../WORK_PLAN.md` for delivery status.

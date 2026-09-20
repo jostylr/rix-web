@@ -124,7 +124,9 @@ Create Cayley forms for `1 + i` and `1 - i`. Multiply them and confirm through
 
 ## Current boundary
 
-The first implementation adjoins a magnitude root when the Cartesian norm
-squared is rational. That covers Gaussian rational values. General
-real-algebraic root isolation is future work; RiX reports this boundary instead
-of approximating silently.
+This Cayley constructor adjoins a magnitude root when the Cartesian norm
+squared is rational. That covers Gaussian rational values. It does not
+automatically invoke algebraic root isolation for general magnitudes; unsupported
+inputs are reported instead of approximated silently. The separate
+[algebraic-real plugin](plugin-algebraic-real.html) provides bounded real-root
+isolation and exact comparison; that does not broaden this constructor implicitly.
